@@ -888,11 +888,10 @@ void MpClient::onFrame(const Frame& f) {
             // buffer, so replaying our copy reproduces the game bit-for-bit. Parsing
             // and re-serializing would risk a format drift between the two writers.
             if (recording_) replayLog_.push_back(f.payload);
-            // The same strict decoder as replay playback: a malformed bundle is
-            // dropped here rather than reaching applyCommand/applyEvent.
+            // Not strict (see getBundle): the referee already applied this bundle.
             uint32_t tk = 0;
             Bundle bd;
-            if (getBundle(r, tk, bd)) {
+            if (getBundle(r, tk, bd, /*strict=*/false)) {
                 uint64_t delay = receiveDelayMs();
                 if (delay > 0) {   // model the link: hold, then release later
                     jitterHeld_.push_back({nowMs() + delay, tk, std::move(bd)});

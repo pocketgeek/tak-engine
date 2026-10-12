@@ -79,7 +79,7 @@ void putBundle(Writer& w, uint32_t tick, const std::vector<Command>& cmds, const
     for (const auto& e : events) { w.u8(uint8_t(e.kind)); w.u8(e.player); }
 }
 
-bool getBundle(Reader& r, uint32_t& tick, Bundle& out, uint32_t proto) {
+bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict, uint32_t proto) {
     tick = r.u32();
     if (!r.ok) return false;
     // Counts are bounded by what is left before anything is reserved: a command is
@@ -89,18 +89,18 @@ bool getBundle(Reader& r, uint32_t& tick, Bundle& out, uint32_t proto) {
     const auto maxKind = proto >= 221 ? Cmd::BuildManaArea : Cmd::ShareMana;
     for (uint32_t i = 0; i < nc && r.ok; ++i) {
         const auto c = r.cmd();
-        if (uint8_t(c.kind) > uint8_t(maxKind) || c.player >= kMaxSlots ||
-            !std::isfinite(c.x) || !std::isfinite(c.z) || !std::isfinite(c.x2) || !std::isfinite(c.z2)) return false;
+        if (strict && (uint8_t(c.kind) > uint8_t(maxKind) || c.player >= kMaxSlots ||
+            !std::isfinite(c.x) || !std::isfinite(c.z) || !std::isfinite(c.x2) || !std::isfinite(c.z2))) return false;
         out.cmds.push_back(c);
     }
     const uint32_t ne = r.u32();
     if (!r.ok || uint64_t(ne) * 2 > uint64_t(r.end - r.p)) return false;
     for (uint32_t i = 0; i < ne && r.ok; ++i) {
         Event e; e.kind = Event::Kind(r.u8()); e.player = r.u8();
-        if (e.player >= kMaxSlots || uint8_t(e.kind) < 1 || uint8_t(e.kind) > uint8_t(Event::Kind::CampaignForfeit)) return false;
+        if (strict && (e.player >= kMaxSlots || uint8_t(e.kind) < 1 || uint8_t(e.kind) > uint8_t(Event::Kind::CampaignForfeit))) return false;
         out.events.push_back(e);
     }
-    return r.ok && r.p == r.end;   // truncated or trailing inner data
+    return r.ok && (!strict || r.p == r.end);   // truncated or trailing inner data
 }
 
 }  // namespace tak::net

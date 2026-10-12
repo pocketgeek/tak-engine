@@ -219,7 +219,11 @@ static void bundles() {
     golden(w.b, "d20400000300000000014d000000ffffffff0000c03f000010c0010000000000000000000000000000000017030500000000000000000020410000a04100000000000000000000000000000000000000f041000020421a0700000000000000000000404000008040005441524c4f44450000000000000000000000a0400000c0400200000002020306", "TickBundle bytes");
     auto decode = [](const std::vector<uint8_t>& b, Bundle& out, uint32_t proto = kNetVersion) {
         uint32_t tick = 0; Reader r(b.data(), b.size());
-        return getBundle(r, tick, out, proto) && tick == 1234;
+        return getBundle(r, tick, out, /*strict=*/true, proto) && tick == 1234;
+    };
+    auto live = [](const std::vector<uint8_t>& b, Bundle& out) {   // MpClient's TickBundle decode
+        uint32_t tick = 0; Reader r(b.data(), b.size());
+        return getBundle(r, tick, out, /*strict=*/false) && tick == 1234;
     };
     Bundle bd;
     check(decode(w.b, bd) && bd.cmds.size() == 3 && bd.events.size() == 2, "TickBundle decode");
@@ -227,7 +231,7 @@ static void bundles() {
         Writer again; putBundle(again, 1234, bd.cmds, bd.events);
         check(again.b == w.b, "TickBundle re-encode differs");
     }
-    // Strict, live and replay alike.
+    // Replay files are strict.
     auto mutated = [&](auto edit) { std::vector<Command> c = cmds; std::vector<Event> e = events; edit(c, e);
                                     Writer m; putBundle(m, 1234, c, e); return m.b; };
     Bundle x;
@@ -241,6 +245,18 @@ static void bundles() {
     for (size_t cut = 0; cut < w.b.size(); ++cut) {
         std::vector<uint8_t> t(w.b.begin(), w.b.begin() + long(cut));
         if (decode(t, x = {})) { check(false, "truncated TickBundle accepted", std::to_string(cut)); break; }
+        if (live(t, x = {})) { check(false, "truncated live TickBundle accepted", std::to_string(cut)); break; }
+    }
+    // The live stream is not: the referee already applied whatever it sent, so a client
+    // that dropped the bundle would stall at that tick (main's decoder took it as is).
+    {
+        auto odd = mutated([](auto& c, auto& e) {
+            c[0].kind = Cmd(uint8_t(Cmd::BuildManaArea) + 1); c[1].x2 = std::numeric_limits<float>::quiet_NaN();
+            c[2].player = kMaxSlots; e[0].kind = Event::Kind(0); e[1].player = kMaxSlots; });
+        odd.push_back(0);
+        Bundle l;
+        check(live(odd, l) && l.cmds.size() == 3 && l.events.size() == 2 && std::isnan(l.cmds[1].x2) &&
+              l.cmds[2].player == kMaxSlots && l.events[1].player == kMaxSlots, "live TickBundle decode dropped an applied bundle");
     }
 }
 

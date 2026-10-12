@@ -69,7 +69,7 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
         // The recorded tick index proves the bundle stream is intact and in order.
         uint32_t tick = 0;
         tak::net::Bundle bd;
-        if (!tak::net::getBundle(br, tick, bd, proto) || tick != t) return false;
+        if (!tak::net::getBundle(br, tick, bd, /*strict=*/true, proto) || tick != t) return false;
         out.bundles.push_back(std::move(bd));
     }
     // Hash checkpoints (format 6+). Absent in an older file, which simply means

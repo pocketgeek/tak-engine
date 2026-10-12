@@ -704,10 +704,12 @@ struct Bundle {
 
 // One TickBundle payload: u32 tick, u32 count + commands, u32 count + events. The
 // referee writes it (roomtick), clients decode it live and replays decode it from
-// the file. getBundle reads the whole of `r` and is strict: a command kind or player
-// out of range, a non-finite coordinate, an unknown event or a trailing byte fails
-// it. `proto` is the protocol the bundle was recorded under (area commands are 221+).
+// the file. A truncated bundle always fails. `strict` (replay files) also fails a
+// command kind or player out of range, a non-finite coordinate, an unknown event or a
+// trailing byte. The live stream is NOT strict: the referee has already applied that
+// bundle, so a client must too -- dropping it would stall the client at that tick.
+// `proto` is the protocol the bundle was recorded under (area commands are 221+).
 void putBundle(Writer& w, uint32_t tick, const std::vector<Command>& cmds, const std::vector<Event>& events);
-bool getBundle(Reader& r, uint32_t& tick, Bundle& out, uint32_t proto = kNetVersion);
+bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict, uint32_t proto = kNetVersion);
 
 }  // namespace tak::net
