@@ -413,7 +413,8 @@ void selections() {
     // All air, over 64.
     {
         Field f(PathfindingMode::Legion);
-        const auto ids = f.block(flyer(), 100, 30, 30, 10, 4);
+        static const auto idsType = flyer();   // the World keeps a pointer to the type
+        const auto ids = f.block(idsType, 100, 30, 30, 10, 4);
         SelectionOrder o;
         o.verb = Verb::Move; o.x = 200 * 16; o.z = 220 * 16;
         std::vector<CmdBatch> b;
@@ -424,9 +425,12 @@ void selections() {
     // The other verbs on 65 bodies, queued and not.
     {
         Field f(PathfindingMode::Legion);
-        const auto ids = f.block(ground(2), 65, 20, 20, 13, 3);
-        const auto enemy = f.block(ground(2), 1, 200, 200, 1, 3, 1);
-        const auto buddy = f.block(ground(2), 1, 10, 10, 1, 3);
+        static const auto idsType = ground(2);   // the World keeps a pointer to the type
+        const auto ids = f.block(idsType, 65, 20, 20, 13, 3);
+        static const auto enemyType = ground(2);   // the World keeps a pointer to the type
+        const auto enemy = f.block(enemyType, 1, 200, 200, 1, 3, 1);
+        static const auto buddyType = ground(2);   // the World keeps a pointer to the type
+        const auto buddy = f.block(buddyType, 1, 10, 10, 1, 3);
         for (bool queue : {false, true}) {
             const std::string q = queue ? " queued" : "";
             SelectionOrder o;
@@ -455,8 +459,10 @@ void selections() {
     // move; members of squad N outside the selection are evicted first.
     {
         Field f(PathfindingMode::Legion);
-        const auto ids = f.block(ground(2), 200, 20, 20, 20, 3);
-        const auto old = f.block(ground(2), 10, 100, 100, 5, 3);
+        static const auto idsType = ground(2);   // the World keeps a pointer to the type
+        const auto ids = f.block(idsType, 200, 20, 20, 20, 3);
+        static const auto oldType = ground(2);   // the World keeps a pointer to the type
+        const auto old = f.block(oldType, 10, 100, 100, 5, 3);
         tak::sim::TypeRegistry reg;
         for (int id : old) {
             Command c;
@@ -498,7 +504,8 @@ void selections() {
     // of the round trip into uplink and downlink.
     {
         Field f(PathfindingMode::Legion);
-        const auto ids = f.block(ground(1), 974, 10, 10, 60, 2);
+        static const auto idsType = ground(1);   // the World keeps a pointer to the type
+        const auto ids = f.block(idsType, 974, 10, 10, 60, 2);
         SelectionOrder o;
         o.verb = Verb::Move; o.x = 400 * 16; o.z = 400 * 16;
         std::vector<CmdBatch> b;

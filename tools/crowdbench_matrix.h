@@ -62,6 +62,13 @@ inline void alignedFree(void* p) noexcept {
 }
 void* operator new(size_t n) {return crowdbench_allocation::allocate(n);}
 void* operator new[](size_t n) {return crowdbench_allocation::allocate(n);}
+// The nothrow forms too (std::inplace_merge's buffer uses them): left to the
+// library they would come from malloc's arena paired with our std::free --
+// harmless, but an alloc-dealloc mismatch under AddressSanitizer.
+void* operator new(size_t n,const std::nothrow_t&) noexcept {try {return crowdbench_allocation::allocate(n);} catch (...) {return nullptr;}}
+void* operator new[](size_t n,const std::nothrow_t&) noexcept {try {return crowdbench_allocation::allocate(n);} catch (...) {return nullptr;}}
+void operator delete(void* p,const std::nothrow_t&) noexcept {std::free(p);}
+void operator delete[](void* p,const std::nothrow_t&) noexcept {std::free(p);}
 void operator delete(void* p) noexcept {std::free(p);}
 void operator delete[](void* p) noexcept {std::free(p);}
 void operator delete(void* p,size_t) noexcept {std::free(p);}
