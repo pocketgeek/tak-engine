@@ -1176,9 +1176,32 @@ and Test Map; and background/cached large-map work with workflow coverage.
 The checkpoints above record validation rather than claiming complete retail
 Cartographer or mission-runtime parity.
 
-- Windows/macOS packaging and Unicode launch paths are implemented, but live
-  platform verification remains unavailable here. Windows source compile checks
-  passed; the configured static Windows FFmpeg prefix is missing for full linking.
+- Windows/macOS packaging and Unicode launch paths are implemented. Live
+  verification (2026-10-12, main 36851895 plus the profile-isolation fix 9e436bbb;
+  Release builds of the editor and its test targets on the real hosts):
+  - Windows 11 (MSYS2 MinGW64): all 24 cartographer/scenario_placement tests pass,
+    including every `cartographer_ui_test` case that drives real SDL input on the dummy
+    driver. At 36851895 two failed (`cartographer_headless_ui`, `cartographer_sections_ui`):
+    `SDL_GetPrefPath` ignores `XDG_*` off Linux, so the tests read the user's real saved
+    data dir/preferences instead of their temp profile. The editor now honours
+    `TAK_CARTOGRAPHER_PROFILE` (preferences + recovery folder; skips the game's saved data
+    dir) and the tests set it. Scripted run against the retail install: `--shot` of Ulasem
+    Arena, `--new 8x8 --world zhon --random --bundle`, reopen the KMP by name (`--shot` and
+    `--save`), and `--bundle` of Ulasem all exit 0; the Ulasem `--shot` PNG is byte-identical
+    to Linux. A GUI-session launch (scheduled task in the console session) opened the
+    real "Cartographer -- Ulasem Arena" window, responding, and a real-window `--shot`
+    (1600x928) worked; the desktop screenshot showed the terrain and palette drawn.
+  - macOS 26.6 arm64 (MacBook Neo): same 24 tests pass (Debug -O2 build; Release also
+    builds) and the same scripted run succeeds; the Ulasem `--shot` PNG is byte-identical
+    to Linux and Windows. A real-window launch ran for 15 s without exiting, but the
+    screen capture failed ("could not create image from display": no active display),
+    so macOS rendering to a real window was not seen.
+  - Not verified: `cartographer_recovery` (Python test, Linux-only by CMake condition), the
+    packaged installer/DMG/zip, interactive mouse/keyboard use of the real window,
+    non-ASCII paths on a live host, and Windows/macOS on any other retail install. The
+    configured static Windows FFmpeg prefix is still missing for a cross-link from Linux;
+    the Windows host links natively. The editor's Windows build is a GUI-subsystem
+    executable, so its console messages are only visible when redirected to a file.
 - The embedded font covers Latin (incl. Vietnamese), Greek, Cyrillic, Armenian,
   Georgian, common symbols/arrows/box drawing/Braille, kana, Hangul and about 7,000
   common Han characters (double-width). Right-to-left, shaped/combining scripts and
