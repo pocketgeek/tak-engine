@@ -845,6 +845,7 @@ only displays it). Chat is available in live networked games (single-player also
 | **Left-click / left-drag** | Select a unit / box-select |
 | **Shift** + selection | Add to the selection |
 | **Ctrl** + selection | Remove from the selection |
+| **Left-click / Shift+left-click a type portrait** | With several units selected, the info bar shows the total and one portrait per unit type (with its count): select only that type / remove it from the selection |
 | **Right-click** | Contextual move, attack, or other applicable order; **Shift** queues |
 | **Right-click a cycling setting** | Previous choice (left-click selects the next); works in game setup, lobby, options toggles, and streaming settings |
 | **Middle-drag / screen edges** | Pan the camera |

@@ -50,6 +50,7 @@
 #include "util/png.h"
 #include "version.h"
 #include "client/cursors.h"
+#include "client/selportraits.h"   // info-bar multi-selection strip
 #include "client/dirpicker.h"   // first-run data-dir folder picker
 #include "client/distantmodels.h"
 #include "client/tacticaldots.h"   // zoomed-out unit dots (Options > Graphics)
@@ -2179,6 +2180,9 @@ private:
     std::vector<std::pair<SDL_FRect, const tak::sim::UnitType*>> iconRects_;
     SDL_FRect buildMenuRect_{};
     bool overBuildMenu(float mx, float my) const;
+    // The info bar's multi-selection strip (client/selportraits.h): one hit rect per
+    // drawn type portrait (type id) plus the overflow tile (empty id), rebuilt each draw.
+    std::vector<std::pair<SDL_FRect, std::string>> selPortraitRects_;
     static constexpr int kMiniSizeBase = 180;
     int miniSize() const { return int(kMiniSizeBase * uiScale_); }   // UI-scale (Options)
     // Right-side UI strip (minimap + command panel). The map view is kept to the
@@ -2492,6 +2496,16 @@ private:
     // keeps its own chrome) when no .gui is loaded. The build menu + mana readout stay
     // in drawPanel and draw on top.
     bool drawGuiInfoBar(int winW, int winH);
+    // A multi-selection's per-type portraits: `primary` is the single-unit portrait
+    // (slot 0, the front unit's type); the others extend left into `room` px, with a
+    // count badge on each (badge sized by `px`). Fills selPortraitRects_ and returns
+    // the width used left of the primary. Single selection: draws nothing, returns 0.
+    float drawSelPortraits(SDL_FRect primary, float room, float gap, float px);
+    std::vector<tak::selportraits::Group> selTypeGroups() const;   // live selection, by type
+    static constexpr float kSelPortraitMinScale = 0.6f;   // single-row shrink floor, then two rows
+    // A click on that strip: plain = select only that type, Shift = drop it. Consumes
+    // any press on a portrait (or the overflow tile) so it never reaches the world.
+    bool selPortraitClick(float mx, float my, bool lmb);
 
     // A one-word description of what the selected unit is doing, for the command
     // panel's HelpText recess.

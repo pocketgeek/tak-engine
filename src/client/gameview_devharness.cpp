@@ -372,6 +372,32 @@
             rightClickOrder(x0+east,z0,false);
             return;
         }
+        // Info-bar portrait strip still life (--testbuild --shot): TAK_SELPORTRAITS=
+        // "arasword:5,araarch:3,..." spawns that many of each type at the map centre and
+        // selects them all, in that order (the first type leads the strip).
+        if (const char* list=tak::devEnv("TAK_SELPORTRAITS")) {
+            const float x0=float(mapView_.map().blocksX)*16.0f,z0=float(mapView_.map().blocksY)*16.0f;
+            selection_.clear();
+            std::string spec(list);
+            int k=0;
+            for (size_t p=0;p<spec.size();) {
+                size_t comma=spec.find(',',p);
+                std::string one=spec.substr(p,comma==std::string::npos?std::string::npos:comma-p);
+                size_t colon=one.find(':');
+                const std::string type=one.substr(0,colon);
+                const int n=colon==std::string::npos?1:std::max(1,std::atoi(one.c_str()+colon+1));
+                for (int i=0;i<n;++i,++k)
+                    selection_.push_back(spawn(type,x0-300+float(k%16)*40,z0-120+float(k/16)*40,0,localPlayer_));
+                if (comma==std::string::npos) break;
+                p=comma+1;
+            }
+            std::erase_if(selection_,[](int id){return id<0;});
+            noFog_=true;edgeScrollOn_=false;
+            mapView_.setOffset(x0-640/mapView_.zoom(),z0-400/mapView_.zoom());
+            captureFrame();   // publish them, or the next frame pin prunes the selection
+            std::fprintf(stderr,"selportraits: %zu units selected\n",selection_.size());
+            return;
+        }
         if (tak::devFlag("TAK_TACTICAL_DOTS_TEST")) {
             // Tactical Dots through the real draw(): dots replace models past the
             // threshold, the hysteresis band holds either state, fog-hidden enemies

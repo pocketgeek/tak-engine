@@ -407,6 +407,10 @@ target_include_directories(legion_idmap_test PRIVATE src)
 add_test(NAME legion_idmap_test COMMAND legion_idmap_test)
 set_tests_properties(legion_idmap_test PROPERTIES LABELS legion)
 
+add_executable(selportraits_test tools/selportraits_test.cpp)   # header-only client logic, no SDL
+target_include_directories(selportraits_test PRIVATE src)
+add_test(NAME selportraits COMMAND selportraits_test)
+
 add_executable(issue_selection_test tools/issue_selection_test.cpp)
 target_link_libraries(issue_selection_test PRIVATE tak-formats)
 add_test(NAME issue_selection_test COMMAND issue_selection_test)

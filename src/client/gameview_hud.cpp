@@ -1126,6 +1126,7 @@ namespace {
                 if (t) gpuvram::destroy(t);
         guiTex_.clear();
         gui_ = {};
+        if (tak::devFlag("TAK_NOGUI")) return;   // debug: shoot the fallback stone HUD instead
         std::string path = "guis/" + side + "ingame.gui";
         try {
             gui_ = tak::gui::parse(vread(path), path);
@@ -1696,6 +1697,13 @@ namespace {
                         SDL_RenderCopyF(ren_, guiTex_[xi][size_t(tier)], nullptr, &cr);
                     }
                 }
+                // A multi-selection: the other types' portraits run LEFT from this one,
+                // into the chrome up to the EndCap scroll (never under it).
+                if (u && selection_.size() > 1) {
+                    float left = 4 * vs;
+                    if (ei >= 0) { SDL_FRect er = guiBarRect(gui_.gadgets[ei]); left += er.x + er.w; }
+                    drawSelPortraits(pr, pr.x - left, 3 * vs, 1.5f * vs);
+                }
             }
             if (int t1 = guiIdxLeft("UnitText"); u && t1 >= 0) {
                 SDL_FRect nr = place(t1);
@@ -1707,11 +1715,11 @@ namespace {
                 (u && u->type->maxMana > 0) ? u->mana / u->type->maxMana : 0.0f,
                 {90, 150, 255, 255});
 
-            // --- ActionText: status (or +N MORE for a multi-selection) ---
+            // --- ActionText: status (or the total for a multi-selection) ---
             if (int ai = guiIdx("ActionText"); u && ai >= 0) {
                 SDL_FRect ar = place(ai);
                 std::string st = selection_.size() > 1
-                    ? "+" + std::to_string(selection_.size() - 1) + " MORE"
+                    ? std::to_string(selection_.size()) + " SELECTED"
                     : std::string(unitStatusText(u));
                 blockText(st, ar.x, ar.y, tpx, {170, 205, 255, 255});
             }
@@ -1726,6 +1734,110 @@ namespace {
             bar(guiIdxRight("ManaBar"), 0.0f, {90, 150, 255, 255});
         }
         return true;
+    }
+
+    std::vector<tak::selportraits::Group> GameView::selTypeGroups() const {
+        std::vector<std::pair<int, std::string>> live;
+        live.reserve(selection_.size());
+        for (int id : selection_)
+            if (const UnitR* u = frameUnitP(id); u && u->alive() && u->type)
+                live.push_back({id, u->type->id});
+        return tak::selportraits::group(live);
+    }
+
+    float GameView::drawSelPortraits(SDL_FRect primary, float room, float gap, float px) {
+        namespace sp = tak::selportraits;
+        if (selection_.size() < 2) return 0;
+        const auto groups = selTypeGroups();
+        if (groups.empty()) return 0;
+        const sp::Layout L = sp::layout(int(groups.size()), primary.w, primary.h, gap, room,
+                                        kSelPortraitMinScale);
+        const sp::Rect p0{primary.x, primary.y, primary.w, primary.h};
+        auto rectOf = [&](int i) {
+            sp::Rect r = sp::slot(L, i, p0, gap);
+            return SDL_FRect{r.x, r.y, r.w, r.h};
+        };
+        auto hot = [&](const SDL_FRect& r) {
+            return mouseX_ >= r.x && mouseX_ <= r.x + r.w && mouseY_ >= r.y && mouseY_ <= r.y + r.h;
+        };
+        // A count in the portrait's bottom-right corner on a dark plate (the build
+        // menu's queued-count badge), sized down with a shrunk portrait.
+        auto badge = [&](const SDL_FRect& r, const std::string& num, float bpx) {
+            const float nw = blockWidth(num, bpx), pad = std::max(1.0f, bpx);
+            SDL_FRect nb{r.x + r.w - nw - 2 * pad - 1, r.y + r.h - 7 * bpx - 2 * pad - 1,
+                         nw + 2 * pad, 7 * bpx + 2 * pad};
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 205);
+            SDL_RenderFillRectF(ren_, &nb);
+            blockText(num, nb.x + pad, nb.y + pad, bpx, {255, 235, 140, 255});
+        };
+        std::string tip;
+        SDL_FRect tipAt{};
+        for (int i = 0; i < L.shown; ++i) {
+            const auto& g = groups[size_t(i)];
+            const SDL_FRect r = rectOf(i);
+            const auto* t = registry_.find(g.type);
+            if (i > 0) {   // slot 0 is the caller's own portrait, already drawn
+                SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
+                SDL_RenderFillRectF(ren_, &r);
+                SDL_Texture* ic = iconFor(g.type);
+                if (!ic && t) ic = modelIconTex(g.type, colorSlot_[localPlayer_ & 7],
+                                                t->maxVel > tak::sim::Fixed());
+                if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &r);
+            }
+            const bool h = hot(r);
+            if (i > 0 || h) {
+                SDL_SetRenderDrawColor(ren_, h ? 255 : 96, h ? 230 : 84, h ? 120 : 60, 255);
+                SDL_RenderDrawRectF(ren_, &r);
+            }
+            badge(r, std::to_string(g.ids.size()), std::max(1.0f, px * (i > 0 ? L.scale : 1.0f)));
+            if (h && t) { tip = t->name; tipAt = r; }
+            selPortraitRects_.push_back({r, g.type});
+        }
+        if (L.overflow) {   // the types that did not fit: a "+K" tile, clicks swallowed
+            const SDL_FRect r = rectOf(L.shown);
+            const int hidden = int(groups.size()) - L.shown;
+            SDL_SetRenderDrawColor(ren_, 14, 12, 10, 235);
+            SDL_RenderFillRectF(ren_, &r);
+            SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
+            SDL_RenderDrawRectF(ren_, &r);
+            const std::string k = "+" + std::to_string(hidden);
+            float kpx = std::max(1.0f, px * L.scale);
+            kpx = std::min(kpx, (r.w - 4) / std::max(1.0f, blockWidth(k, 1)));
+            blockText(k, r.x + (r.w - blockWidth(k, kpx)) * 0.5f, r.y + (r.h - 7 * kpx) * 0.5f,
+                      kpx, {236, 226, 192, 255});
+            if (hot(r)) { tip = std::to_string(hidden) + " MORE TYPES"; tipAt = r; }
+            selPortraitRects_.push_back({r, std::string()});
+        }
+        if (!tip.empty()) {   // the hovered portrait's unit name, just above the bar
+            std::transform(tip.begin(), tip.end(), tip.begin(), ::toupper);
+            const float tpx = std::max(1.0f, px), tw = blockWidth(tip, tpx);
+            const float tx = std::clamp(tipAt.x + tipAt.w / 2 - tw / 2, 6.0f,
+                                        std::max(6.0f, float(winW_) - tw - 6));
+            const float ty = float(winH_ - barH()) - 7 * tpx - 10;
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 210);
+            SDL_FRect tb{tx - 5, ty - 4, tw + 10, 7 * tpx + 8};
+            SDL_RenderFillRectF(ren_, &tb);
+            blockText(tip, tx, ty, tpx, {255, 240, 190, 255});
+        }
+        return L.width;
+    }
+
+    bool GameView::selPortraitClick(float mx, float my, bool lmb) {
+        if (spectating_ || selection_.size() < 2) return false;
+        for (const auto& [r, type] : selPortraitRects_) {
+            if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
+            if (!lmb || type.empty()) return true;   // other buttons / the "+K" tile: just swallow
+            std::vector<int> ids;
+            for (const auto& g : selTypeGroups())
+                if (g.type == type) { ids = g.ids; break; }
+            if (ids.empty()) return true;   // that type left the selection since the draw
+            const bool remove = (SDL_GetModState() & KMOD_SHIFT) != 0;
+            playClickTone();
+            selection_ = tak::selportraits::click(selection_, ids, remove);
+            if (!remove && !selection_.empty()) voice(selection_.front(), "select");
+            return true;
+        }
+        return false;
     }
 
     std::string GameView::conjureTargetName(const UnitR* u) const {
@@ -1982,6 +2094,7 @@ namespace {
     void GameView::drawPanel(int winW, int winH) {
         // Bottom bar: the retail InfoPanel chrome + unit info when a .gui is loaded,
         // else our own stone strip. The build menu + mana readout below draw on top.
+        selPortraitRects_.clear();
         bool guiBar = drawGuiInfoBar(winW, winH);
         SDL_FRect bar{0, float(winH - barH()), float(winW), float(barH())};
         if (!guiBar) {
@@ -2021,27 +2134,37 @@ namespace {
 
         // Bottom-LEFT: portrait + stats for the selected unit. Skipped when the retail
         // InfoPanel bar already drew the unit info (drawGuiInfoBar).
+        // A multi-selection's other types sit LEFT of the portrait. This block is
+        // pinned to the screen's left edge, so it widens instead: the strip takes the
+        // left of the panel, the portrait and stats move right past it (up to the
+        // mana readout at the right), and the portrait still leads its strip.
         if (!guiBar && !selection_.empty() && statFont_.ok()) {
             const auto* u = frameUnitP(selection_.front());
             if (u && u->alive() && u->type) {
                 float px = 8;
-                shade(px, 288);
+                const float gap = 4, room = std::max(0.0f, float(winW) - 200 - 8 - (px + 288));
+                SDL_FRect pr{px + 4, bar.y + 8, 56, barH() - 20.0f};
+                float strip = 0;
+                if (selection_.size() > 1)
+                    strip = tak::selportraits::layout(int(selTypeGroups().size()), pr.w, pr.h, gap,
+                                                      room, kSelPortraitMinScale).width;
+                pr.x += strip;
+                shade(px, 288 + strip);
                 SDL_Texture* ic = iconFor(u->type->id);
                 if (ic) {
-                    SDL_FRect pr{px + 4, bar.y + 8, 56, barH() - 20.0f};
                     SDL_RenderCopyF(ren_, ic, nullptr, &pr);
                     SDL_SetRenderDrawColor(ren_, 20, 18, 16, 255);
                     SDL_RenderDrawRectF(ren_, &pr);
                 }
-                float tx = px + 70;
+                if (selection_.size() > 1) drawSelPortraits(pr, room, gap, 1.8f);   // same layout as above
+                float tx = px + 70 + strip;
                 SDL_Color blk{0, 0, 0, 255};
                 blockText(u->displayName(), tx, bar.y + 9, 2.6f, blk);
                 std::snprintf(buf, sizeof buf, "HP %d/%d", int(u->hp),
                               int(u->type->maxHp));
                 blockText(buf, tx, bar.y + 32, 2.3f, blk);
                 if (selection_.size() > 1) {
-                    std::snprintf(buf, sizeof buf, "+%zu MORE",
-                                  selection_.size() - 1);
+                    std::snprintf(buf, sizeof buf, "%zu SELECTED", selection_.size());
                     blockText(buf, tx, bar.y + 52, 1.8f, blk);
                 }
             }

@@ -303,6 +303,9 @@ See [random map generation](random-map-generation.md) for the rules it follows.
 5. **Mana**: your current mana and storage, with income and spending beside the orb.
 6. **Build menu** of the selected builder or production building.
 7. **Information bar**: the selected unit's portrait, name, health and what it is doing.
+   With several units selected it shows the total selected instead, and one
+   portrait per unit type, running left from the first, each with how many of
+   that type are selected (see [Selection](#selection)).
 8. **The selected unit**, here the Monarch.
 
 ### The goal
@@ -737,6 +740,21 @@ a left-click on the map or minimap. **Esc** disarms.
 | **Ctrl+W** | All armed units except Monarchs. |
 | **Ctrl+Y** | Flyers. |
 | **N** | Next unit. |
+
+With more than one unit selected, the information bar shows **N SELECTED** and a
+portrait for each unit type in the selection. The type whose stats are shown comes
+first, in the usual portrait spot; the other types run to its left, most numerous
+first. The number on each portrait is how many of that type are selected. Hold the
+pointer over a portrait to see the unit's name.
+
+| On a portrait | Does |
+| --- | --- |
+| Left-click | Select only the units of that type. |
+| Shift + left-click | Remove that type from the selection. |
+
+When there are too many types to fit at full size, the portraits shrink, then fold
+into two rows. If they still do not fit, the last tile shows **+K**: K more types
+are selected but not shown.
 
 ### Groups and formations
 

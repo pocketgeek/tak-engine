@@ -1993,23 +1993,32 @@ int main(int argc, char** argv) {
                     // instead of only the plain game view.
                     // TAK_SHOT_CLICKS="x,y;x,y" taps those points, one per armed pass,
                     // before the capture -- enough to walk a menu into the state worth
-                    // photographing (the lobby's map picker needs two clicks).
+                    // photographing (the lobby's map picker needs two clicks). An "S"
+                    // prefix ("S120,700") holds Shift for that click.
                     static size_t clickIdx = 0;
+                    static bool clickShift = false;
+                    if (clickShift) { SDL_SetModState(KMOD_NONE); clickShift = false; }
                     bool clickSent = false;
                     if (const char* cl = tak::devEnv("TAK_SHOT_CLICKS")) {
                         std::vector<std::pair<int, int>> pts;
+                        std::vector<bool> shifted;
                         std::string acc(cl);
                         size_t p0 = 0;
                         while (p0 <= acc.size()) {
                             size_t e = acc.find(';', p0);
                             std::string one = acc.substr(p0, e == std::string::npos ? std::string::npos : e - p0);
+                            const bool sh = !one.empty() && (one[0] == 'S' || one[0] == 's');
+                            if (sh) one.erase(0, 1);
                             size_t c = one.find(',');
-                            if (c != std::string::npos)
+                            if (c != std::string::npos) {
                                 pts.push_back({std::atoi(one.c_str()), std::atoi(one.c_str() + c + 1)});
+                                shifted.push_back(sh);
+                            }
                             if (e == std::string::npos) break;
                             p0 = e + 1;
                         }
                         if (clickIdx < pts.size()) {
+                            if (shifted[clickIdx]) { SDL_SetModState(KMOD_LSHIFT); clickShift = true; }
                             SDL_Event ev{};
                             ev.type = SDL_MOUSEMOTION;
                             ev.motion.x = pts[clickIdx].first; ev.motion.y = pts[clickIdx].second;

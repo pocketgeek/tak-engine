@@ -214,6 +214,10 @@
                    overBuildMenu(float(e.button.x), float(e.button.y))) {
             // Build-strip borders and gaps are UI too, not world order targets.
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+                   selPortraitClick(float(e.button.x), float(e.button.y),
+                                    e.button.button == SDL_BUTTON_LEFT)) {
+            // info-bar type portrait: select only that type (Shift: drop it)
+        } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    e.button.y > winH - barH()) {
             // bottom bar: build icons already handled above; swallow the rest so a stray
             // click on the bar chrome doesn't deselect / order into the world
