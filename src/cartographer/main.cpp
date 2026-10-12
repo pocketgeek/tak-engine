@@ -53,6 +53,15 @@ cart::FreshMap cart::buildFreshMap(const tak::hpi::Vfs& vfs, cart::SectionLibrar
     return out;
 }
 
+// Preferences/recovery folder. TAK_CARTOGRAPHER_PROFILE (tests) overrides it because SDL_GetPrefPath
+// ignores XDG_* off Linux: Windows/macOS test runs would otherwise read and write the user's real profile.
+static std::filesystem::path profileFolder() {
+    if(const char* o=SDL_getenv("TAK_CARTOGRAPHER_PROFILE")) if(*o) return std::filesystem::u8path(o);
+    std::filesystem::path out;
+    if(char* path=SDL_GetPrefPath("TAKengine","Cartographer")) {out=std::filesystem::u8path(path);SDL_free(path);}
+    return out;
+}
+
 cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const EditorHooks& hooks)
     : frameHook(frameHook), hooks(hooks) {
     parseArguments(argc,argv);
@@ -66,7 +75,7 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
             std::fprintf(stderr, "data: using the local directory %s\n", dataRoot.c_str());
         }
     }
-    if(dataRoot.empty()) {
+    if(dataRoot.empty() && !SDL_getenv("TAK_CARTOGRAPHER_PROFILE")) {   // (a test profile ignores the game's saved data dir)
         const auto saved=tak::loadSettings();
         if(!saved.dataDir.empty() && tak::hpi::validInstall(std::filesystem::u8path(saved.dataDir),nullptr))
             dataRoot=saved.dataDir;
@@ -100,7 +109,7 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
         throw Exit{1};
     }
     sdlLifetime.active=true;
-    if(char* path=SDL_GetPrefPath("TAKengine","Cartographer")) {preferencesFolder=std::filesystem::u8path(path);SDL_free(path);}
+    preferencesFolder=profileFolder();
     preferences=cart::loadEditorPreferences(preferencesFolder);
     SDL_Rect display{0,0,1600,1000};SDL_GetDisplayUsableBounds(0,&display);
     const int initialWidth=std::min(preferences.width?preferences.width:1600,std::max(800,int(display.w*.9f)));
@@ -137,9 +146,7 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
         throw Exit{1};
     }
     interactive=shotPath.empty() && exportPath.empty() && bundlePath.empty() && stampName.empty();
-    if(char* pref=SDL_GetPrefPath("TAKengine","Cartographer")) {
-        recoveryFolder=std::filesystem::u8path(pref);SDL_free(pref);
-    }
+    recoveryFolder=profileFolder();
     if(interactive && !recoveryFolder.empty()) {
         try {
             recoverySession=cart::RecoveryFile::create(recoveryFolder);

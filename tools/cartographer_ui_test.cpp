@@ -36,10 +36,18 @@ static void text(const std::string& value) {
         SDL_Event e{};e.type=SDL_TEXTINPUT;const auto part=value.substr(i,20);SDL_strlcpy(e.text.text,part.c_str(),sizeof(e.text.text));SDL_PushEvent(&e);
     }
 }
+// Point every editor profile lookup at <root>: XDG_* isolates SDL_GetPrefPath on Linux only, so the editor's
+// own TAK_CARTOGRAPHER_PROFILE override keeps Windows/macOS runs off the user's real profile.
+static void isolateProfile(const char* root) {
+    SDL_setenv("XDG_CONFIG_HOME",root,1);SDL_setenv("XDG_DATA_HOME",root,1);
+    const auto profile=std::filesystem::path(root)/"TAKengine"/"Cartographer";
+    std::error_code ec;std::filesystem::create_directories(profile,ec);
+    SDL_setenv("TAK_CARTOGRAPHER_PROFILE",profile.string().c_str(),1);
+}
 static int objectsWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-objects-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    fs::create_directory(root);isolateProfile(root.string().c_str());
     const auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
     const auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
     std::vector<cart::PlacedUnit> units{{"ARAARCH",0,168,168},{"ARAARCH",1,808,808}};
@@ -86,7 +94,7 @@ static int modelWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-model-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directory(root);
-    SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    isolateProfile(root.string().c_str());
     const auto vfs=tak::hpi::mountRetailRoot(data);
     for(const char* id:tak::sim::kMonarchs) {
         const auto asset=ModelView::loadAsset(vfs,id);
@@ -126,7 +134,7 @@ static int generationWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-generation-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directory(root);
-    SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    isolateProfile(root.string().c_str());
     std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
     std::vector<uint8_t> originalTerrain;
@@ -247,7 +255,7 @@ static int overlayWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-overlay-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directory(root);
-    SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    isolateProfile(root.string().c_str());
     std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
     int stage=0;bool failed=false;auto began=std::chrono::steady_clock::now();
@@ -271,7 +279,7 @@ static int overlayWorkflow(const char* data) {
 static int resizeSaveWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-resize-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    fs::create_directory(root);isolateProfile(root.string().c_str());
     auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
     auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
     tak::crt::Scenario scenario;scenario.regions.push_back({"Edge region",map.width-10,map.height-10,map.width-5,map.height-5});
@@ -334,7 +342,7 @@ static int resizeSaveWorkflow(const char* data) {
 static int templateWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-templates-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    fs::create_directory(root);isolateProfile(root.string().c_str());
     auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
     auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
     tak::crt::Scenario scenario;scenario.players.resize(9);scenario.regions.push_back({"Bridge",10,10,20,20});
@@ -393,7 +401,7 @@ static int templateWorkflow(const char* data) {
 static int ruleTextWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-rules-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    fs::create_directory(root);isolateProfile(root.string().c_str());
     auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
     auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
     tak::crt::Scenario scenario;scenario.players.resize(9);scenario.players[0].resize(1);
@@ -462,7 +470,7 @@ static int regionWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-regions-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directory(root);
-    SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    isolateProfile(root.string().c_str());
     std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
     bool failed=false;int lastFrame=0;
@@ -674,7 +682,7 @@ static int thumbnailWorkflow(const char* data) {
 static int minimapWorkflow(const char* data,const char* mapName="Ulasem Arena") {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-minimap-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    fs::create_directory(root);isolateProfile(root.string().c_str());
     auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,mapName);
     const auto original=tak::tnt::Map::load(vfs.read(path),path);tak::terrain::Compositor compositor(vfs);
     auto cancelled=std::make_shared<std::atomic_bool>(true);
@@ -725,7 +733,7 @@ static int featureWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-features-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directory(root);
-    SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    isolateProfile(root.string().c_str());
     auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
     auto map=tak::tnt::Map::load(vfs.read(path),path);
     if(map.featureNames.empty())return 2;
@@ -787,7 +795,7 @@ static int validationWorkflow(const char* data,const char* mapName="Ulasem Arena
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-validation-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directory(root);
-    SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    isolateProfile(root.string().c_str());
     auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,mapName);
     auto map=tak::tnt::Map::load(vfs.read(path),path);
     std::cout<<"Validation fixture: "<<mapName<<" ("<<map.width/32<<" x "<<map.height/32<<")\n";
@@ -831,7 +839,7 @@ static int validationWorkflow(const char* data,const char* mapName="Ulasem Arena
 static int recoveryWorkflow(const char* data,const char* folder,const std::string& phase) {
     namespace fs=std::filesystem;const fs::path root=folder;
     fs::create_directories(root);
-    SDL_setenv("XDG_CONFIG_HOME",folder,1);SDL_setenv("XDG_DATA_HOME",folder,1);
+    isolateProfile(folder);
     const bool restore=phase=="restore",probe=phase=="probe";
     const auto destination=root/"original-destination";fs::create_directories(destination);
     std::vector<std::string> args={"cartographer"};if(!restore && !probe)args.push_back("Ulasem Arena");
@@ -887,7 +895,7 @@ static int recoveryWorkflow(const char* data,const char* folder,const std::strin
 static int sectionsWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-sections-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    fs::create_directory(root);isolateProfile(root.string().c_str());
     auto vfs=tak::hpi::mountRetailRoot(data);cart::SectionLibrary sections;sections.scan(vfs,"zhon");
     cart::SectionCatalog catalog;catalog.build(sections.list());
     const std::string groupId="folder:coast cliffs sandy";int groupRow=-1;
@@ -996,7 +1004,7 @@ static int sectionsWorkflow(const char* data) {
 static int headlessWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-headless-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    fs::create_directory(root);isolateProfile(root.string().c_str());
     auto run=[](std::vector<std::string> args) {
         args.insert(args.begin(),"cartographer");std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
         return cart::runEditor(int(raw.size()),raw.data());
@@ -1057,7 +1065,7 @@ static SavedMap readSaved(const std::filesystem::path& path,const tak::sim::Type
 static int symmetryWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-symmetry-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    fs::create_directory(root);isolateProfile(root.string().c_str());
     const auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
     const auto map=tak::tnt::Map::load(vfs.read(path),path);
     tak::tnt::Scenario metadata;metadata.kingdom="zhon";metadata.starts={{1,40,40}};
@@ -1136,7 +1144,7 @@ static int symmetryWorkflow(const char* data) {
 static int terrainClipboardWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-terrainclip-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    fs::create_directory(root);isolateProfile(root.string().c_str());
     const auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
     const auto map=tak::tnt::Map::load(vfs.read(path),path);
     tak::tnt::Scenario metadata;metadata.kingdom="zhon";std::string error;
@@ -1222,7 +1230,7 @@ int main(int argc,char** argv) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-ui-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directory(root);
-    SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    isolateProfile(root.string().c_str());
     std::vector<std::string> args={"cartographer","Ulasem Arena","--data",argv[1],"--out",root.string()};
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
     std::string failure;
