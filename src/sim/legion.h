@@ -323,6 +323,11 @@ public:
     // settled-arrival record and how many settled bodies share it; false if
     // it has none.
     bool arrivalPoint(int id,int32_t& x,int32_t& z,int& count) const;
+    // The centre (raw Fixed) of the member's current goal footprint: its
+    // formation slot on a shared point, else its resolved goal; false if the
+    // unit is no member or has no goal. Reads hashed member state only (the
+    // formation flyers' landing points, World::planLegionFlightStations).
+    bool goalPoint(int id,int32_t& x,int32_t& z) const;
     // W6 behaviour counters World's flyer rules raise (Stats, observation only).
     enum class FlyerEvent : uint8_t {StationOverflow,ReleaseA,ReleaseB,CapHit,GoAround,TargetPoll};
     void noteFlyerEvent(FlyerEvent);

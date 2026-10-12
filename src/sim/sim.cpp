@@ -2571,6 +2571,95 @@ static void legionStationSlot(int k,int& ox,int& oz) {
     }
 }
 
+// Legion formation flyers ride over the front of their ground: the side the
+// ground travels toward, (dx,dz) its 16.16 unit direction. The stations fill
+// rows of C lanes, `spacing` px apart across the ground's lateral extent (a
+// short last row spread over all of it), front row first. A lane holds over
+// the frontmost ground body within half a spacing of it -- a body farther out
+// counts that much farther back, so the front is continuous in the bodies'
+// positions and a body sliding across a lane edge moves no station at once --
+// and each further row sits a spacing behind; or, with `ahead` > 0 (the
+// landing points), `ahead` px beyond the front and each further row a spacing
+// farther on, clear of the ground's slots. The flyers (`flyers`: where each
+// stands, or the point it is bound for) take the rows in order of their
+// distance behind that front (beyond it, for landing points) and each row's
+// lanes in order across, so flyers in formation keep their stations, and a
+// turn re-ranks them where they are rather than by who they are. C is the
+// extent's lane count, but never so few that the rows outnumber twice the
+// lanes: over ground narrower than that (one body, a column) the rows spread
+// that wide about its centre line, so the flyers stand at most twice as deep
+// as wide rather than in a file trailing behind it, and a lane past the
+// ground's edge takes the front at that edge. Within a quarter spacing of a
+// lane boundary the flyers keep the layout of the lane count across it if
+// they stand nearer it (by a quarter spacing squared per flyer), so a
+// formation whose width hovers at a boundary does not reshuffle them each tick.
+// `at` and `flyers` hold raw positions; out[i] is flyer i's station.
+static void legionFrontSlots(const std::vector<std::array<int64_t,2>>& at,int64_t dx,int64_t dz,int spacing,int ahead,
+                             const std::vector<std::array<int64_t,2>>& flyers,std::vector<std::array<Fixed,2>>& out) {
+    const int count=int(flyers.size());
+    out.assign(size_t(count),{});
+    if (at.empty() || count==0) return;
+    int64_t cx=0,cz=0;
+    for (const auto& p:at) { cx+=p[0]; cz+=p[1]; }
+    cx/=int64_t(at.size()); cz/=int64_t(at.size());
+    // Along (toward the front) and across offsets from the centroid.
+    const auto frame=[&](const std::array<int64_t,2>& p)->std::array<int64_t,2> {
+        const int64_t rx=p[0]-cx,rz=p[1]-cz;
+        return {(rx*dx+rz*dz)>>16,(rz*dx-rx*dz)>>16};
+    };
+    std::vector<std::array<int64_t,2>> rel; rel.reserve(at.size());
+    int64_t lo=INT64_MAX,hi=INT64_MIN;
+    for (const auto& p:at) { rel.push_back(frame(p)); lo=std::min(lo,rel.back()[1]); hi=std::max(hi,rel.back()[1]); }
+    const int64_t gap=int64_t(spacing)<<16;
+    // The least lane count, rows no more than twice as many as lanes; over ground narrower than its rows they
+    // spread past its edges, each edge's front held flat.
+    int least=std::max(int(isqrt64(uint64_t(count/2))),1);
+    while (2*least*least<count) ++least;
+    const bool narrow=hi-lo<int64_t(least-1)*gap;
+    const auto front=[&](int64_t s) {
+        if (narrow) s=std::clamp(s,lo,hi);
+        int64_t a=INT64_MIN;
+        for (const auto& q:rel) a=std::max(a,q[0]-std::max<int64_t>((q[1]>s ? q[1]-s : s-q[1])-gap/2,0));
+        return ahead>0 ? a+(int64_t(ahead)<<16) : a;
+    };
+    // Each flyer's rank key: its distance behind the front (beyond it).
+    std::vector<std::array<int64_t,3>> rank(static_cast<size_t>(count));
+    for (int j=0;j<count;++j) {
+        const auto f=frame(flyers[size_t(j)]);
+        rank[size_t(j)]={ahead>0 ? f[0]-front(f[1]) : front(f[1])-f[0],f[1],j};
+    }
+    std::sort(rank.begin(),rank.end());
+    const int64_t lanesFit=(hi-lo)/gap+1,past=(hi-lo)%gap;
+    const int fit=int(std::min<int64_t>(lanesFit,count)),nominal=std::max(fit,least);
+    std::vector<std::array<int64_t,3>> row;
+    std::vector<std::array<int64_t,2>> slots(static_cast<size_t>(count)),best;
+    int64_t bestCost=INT64_MAX;
+    for (const int lanes:{nominal,nominal-1,nominal+1}) {
+        // A width set by the flyers' count has no boundary to hover at.
+        if (lanes<least || lanes>count || (lanes!=nominal && nominal!=fit)) continue;
+        // One lane fewer only just past a lane boundary, one more only just short of the next.
+        if ((lanes<nominal && (nominal<lanesFit || 4*past>=gap)) || (lanes>nominal && 4*past<=3*gap)) continue;
+        int64_t cost=lanes==nominal ? 0 : int64_t(count)*spacing*spacing/4;
+        // The rows' lateral extent: the ground's, or over narrow ground lanes-1 spacings about its centre line.
+        const int64_t wide=narrow ? int64_t(lanes-1)*gap : hi-lo,left=narrow ? lo+(hi-lo)/2-wide/2 : lo;
+        for (int first=0,r=0;first<count;first+=lanes,++r) {
+            const int n=std::min(lanes,count-first);
+            row.assign(rank.begin()+first,rank.begin()+first+n);
+            std::sort(row.begin(),row.end(),[](const auto& p,const auto& q){return p[1]!=q[1] ? p[1]<q[1] : p[2]<q[2];});
+            for (int lane=0;lane<n;++lane) {
+                const int64_t s=n<=1 ? lo+(hi-lo)/2 : left+wide*lane/(n-1);
+                const int64_t a=front(s)+(ahead>0 ? r*gap : -r*gap);
+                const int j=int(row[size_t(lane)][2]);
+                slots[size_t(j)]={cx+((dx*a-dz*s)>>16),cz+((dz*a+dx*s)>>16)};
+                const int64_t ex=(slots[size_t(j)][0]-flyers[size_t(j)][0])>>16,ez=(slots[size_t(j)][1]-flyers[size_t(j)][1])>>16;
+                cost+=ex*ex+ez*ez;
+            }
+        }
+        if (cost<bestCost) { bestCost=cost; best=slots; }
+    }
+    for (int j=0;j<count;++j) out[size_t(j)]={Fixed::raw(int32_t(best[size_t(j)][0])),Fixed::raw(int32_t(best[size_t(j)][1]))};
+}
+
 // Legion (a deliberate difference from retail, docs/legion-pathfinding.md):
 // a flyer in a squad -- an Alt+N formation (squad < 0) or a Ctrl+N group
 // (squad > 0) -- that also has ground members travels with the ground of its
@@ -2588,8 +2677,11 @@ static void legionStationSlot(int k,int& ox,int& oz) {
 // bucket (stationOverflow) and its flyers fly their own orders, as does a
 // flyer of a click with no ground (a separate air click or air patrol).
 //
-// While the bucket's ground is under way the flyer keeps a station on a
-// square spiral over the ground's centroid. It does not steer AT the station:
+// While the bucket's ground is under way the flyer keeps a station over the
+// front of the ground (legionFrontSlots: lanes across the leading bodies, one
+// row per lane width, then the rows behind), flyers taking them where they
+// stand; with no direction of travel the stations fall back to a square spiral over
+// the ground's centroid. It does not steer AT the station:
 // a point destination puts retail's flight model in its arrival regime,
 // where the navigator keeps its old heading inside 16 px and the body only
 // creeps after a target that moves a fraction of a pixel per tick (the flyer
@@ -2598,8 +2690,10 @@ static void legionStationSlot(int k,int& ox,int& oz) {
 // through turns as any flyer does, and its maximum follows the ground's mean
 // speed, raised while it is behind its station and lowered while it is
 // ahead. Once the ground's centroid is within the formation radius of the
-// flyer's destination the flyer is released to its own order, as in retail;
-// it arrives, completes the order and lands at once. A squad with one bucket
+// flyer's destination its order's point moves, once (stationFree 3), to its
+// lane just beyond the front of the ground's goals (their formation slots), and
+// it is released to that order, as in retail; it arrives, completes the order
+// and lands at once, in front of the ground rather than on its slots. A squad with one bucket
 // keeps every ground member (idle ones too) in its centroid, radius and
 // spacing, as before W6; with several, each bucket counts its own busy
 // members only. Everything here is derived from hashed state each tick, in
@@ -2623,17 +2717,30 @@ void World::planLegionFlightStations() {
         ConvoyClass cls=ConvoyClass::Move;
         uint32_t convoy=ConvoyTable::kNone;
         int64_t sx=0,sz=0,dx=0,dz=0,speed=0;
-        int busy=0,area=0,slots=0;
+        int busy=0,area=0,slots=0,landings=0;
+        // The flyers on station (stationFree 0 and 3, where each stands) and
+        // with a landing point (0, and 3 at the point it is bound for), in
+        // unit order; their stations over the front of the live ground and
+        // landing points beyond the front of its goals (legionFrontSlots),
+        // planned once per tick on the first use. arriving: the ground's
+        // centroid has come within the formation radius of a station flyer's
+        // point (every flyer of the bucket takes its landing point at once).
+        std::vector<std::array<int64_t,2>> onStation,toLand;
+        std::vector<std::array<Fixed,2>> front,landing;
+        bool planned=false,landed=false,arriving=false;
         // FL-04: a busy member still making headway (LegionNavigator::
         // advancing over kStationStall; a ground mover Legion does not route
         // counts while it moves), and one that fired lately (a reload running).
         bool advancing=false,engaged=false;
     };
+    // A ground member: its bucket (-1: idle or none), live position and goal.
+    struct Body {int bucket=-1;int64_t x=0,z=0,gx=0,gz=0;};
     struct Ground {
         int64_t sx=0,sz=0;
-        int n=0,area=0,foot=1,buckets=0;
+        int n=0,area=0,foot=1,groundFoot=1,buckets=0;
         bool flyers=false,overflow=false;
         std::array<Bucket,kBuckets> bucket{};
+        std::vector<Body> bodies;
     };
     std::array<std::array<Ground,kSquads>,kMaxPlayers> groups{};
     const auto member=[](const Unit& u) {
@@ -2656,6 +2763,8 @@ void World::planLegionFlightStations() {
         if (!g.flyers) continue;
         g.sx+=u.x.v;g.sz+=u.z.v;
         ++g.n;g.area+=u.type->footX*u.type->footZ;
+        g.groundFoot=std::max({g.groundFoot,int(u.type->footX),int(u.type->footZ)});
+        g.bodies.push_back({-1,u.x.v,u.z.v,u.x.v,u.z.v});
         if (u.orders.empty()) continue;
         const Order& last=u.orders.back();
         if (last.convoyTick==ConvoyTable::kNone) continue;
@@ -2668,6 +2777,12 @@ void World::planLegionFlightStations() {
             b=&g.bucket[size_t(g.buckets++)];
             b->cls=cls;b->convoy=last.convoyTick;
         }
+        // Its goal: the Legion slot, else its order's point.
+        auto& body=g.bodies.back();
+        body.bucket=int(b-g.bucket.data());
+        int32_t gx,gz;
+        if (legion_ && legion_->goalPoint(u.id,gx,gz)) { body.gx=gx; body.gz=gz; }
+        else { body.gx=last.x.v; body.gz=last.z.v; }
         b->sx+=u.x.v;b->sz+=u.z.v;
         ++b->busy;b->area+=u.type->footX*u.type->footZ;
         b->speed+=u.speed.v;
@@ -2676,12 +2791,48 @@ void World::planLegionFlightStations() {
         if (!b->advancing) b->advancing=engaged ||
             (legion_ && legion_->unitState(u.id) ? legion_->advancing(u.id,LegionNavigator::kStationStall) : u.speed>Fixed());
         // Direction of travel: the sum of the busy members' unit vectors
-        // toward their current legs (16.16).
+        // (16.16), the way a moving member steps (so a column turning round
+        // a wall turns its front with it) and toward its current leg for one
+        // standing still.
+        if (u.speed>Fixed()) {
+            const auto step=retailGroundStep(u.heading,Fixed::fromInt(1));
+            b->dx+=step.s.v;b->dz+=step.c.v;   // (x, z)
+            continue;
+        }
         const Order& leg=u.orders[currentLeg(u.orders)];
         const Fixed lx=leg.x-u.x,lz=leg.z-u.z,len=fxLen(lx,lz);
         if (len>Fixed::fromInt(1)) {
             b->dx+=(int64_t(lx.v)<<16)/len.v;b->dz+=(int64_t(lz.v)<<16)/len.v;
         }
+    }
+    const auto bucketOf=[&](Ground& g,const Order& last)->Bucket* {
+        const ConvoyClass cls=classOf(last);
+        for (int k=0;k<g.buckets;++k)
+            if (g.bucket[size_t(k)].cls==cls && g.bucket[size_t(k)].convoy==last.convoyTick) return &g.bucket[size_t(k)];
+        return nullptr;
+    };
+    // A bucket's ground centroid and formation radius (px): a squad with one
+    // bucket counts all its ground, idle members too.
+    const auto centre=[&](const Ground& g,const Bucket& b,Fixed& cx,Fixed& cz) {
+        const bool whole=g.buckets==1;
+        const int64_t n=whole?g.n:b.busy;
+        cx=Fixed::raw(int32_t((whole?g.sx:b.sx)/n));cz=Fixed::raw(int32_t((whole?g.sz:b.sz)/n));
+        return std::max<int64_t>(256,32*int64_t(isqrt64(uint64_t(whole?g.area:b.area))));
+    };
+    TAK_PASS();
+    for (const auto& u:units_) {
+        if (!member(u) || !u.type->canFly || !legionStationOrder(u)) continue;
+        auto& g=groups[size_t(u.player)][size_t(retailGroupIndex(u))];
+        const Order& last=u.orders.back();
+        if (g.n==0 || last.convoyTick==ConvoyTable::kNone || last.stationFree==1 || last.stationFree==2) continue;
+        Bucket* b=bucketOf(g,last);
+        if (!b) continue;
+        b->onStation.push_back({u.x.v,u.z.v});
+        if (last.stationFree==3) { b->toLand.push_back({last.x.v,last.z.v}); continue; }
+        b->toLand.push_back({u.x.v,u.z.v});
+        Fixed cx,cz;
+        const int64_t radius=centre(g,*b,cx,cz);
+        b->arriving|=b->cls!=ConvoyClass::Patrol && near(cx,cz,last.x,last.z,radius);
     }
     TAK_PASS();
     for (size_t i=0;i<units_.size();++i) {
@@ -2694,18 +2845,49 @@ void World::planLegionFlightStations() {
             g.overflow=false;
         }
         Order& last=u.orders.back();
-        if (g.n==0 || last.convoyTick==ConvoyTable::kNone || last.stationFree) continue;
-        const ConvoyClass cls=classOf(last);
-        Bucket* b=nullptr;
-        for (int k=0;k<g.buckets && !b;++k)
-            if (g.bucket[size_t(k)].cls==cls && g.bucket[size_t(k)].convoy==last.convoyTick) b=&g.bucket[size_t(k)];
+        if (g.n==0 || last.convoyTick==ConvoyTable::kNone || last.stationFree==1 || last.stationFree==2) continue;
+        Bucket* b=bucketOf(g,last);
         if (!b) continue;
-        const bool whole=g.buckets==1;
-        const int64_t n=whole?g.n:b->busy;
-        const Fixed cx=Fixed::raw(int32_t((whole?g.sx:b->sx)/n)),cz=Fixed::raw(int32_t((whole?g.sz:b->sz)/n));
-        const int area=whole?g.area:b->area;
-        const int64_t radius=std::max<int64_t>(256,32*int64_t(isqrt64(uint64_t(area))));
-        const bool arriving=cls!=ConvoyClass::Patrol && near(cx,cz,last.x,last.z,radius);
+        const bool bound=last.stationFree==3;
+        const int slot=b->slots++,landing=b->landings++;
+        Fixed cx,cz;
+        centre(g,*b,cx,cz);
+        const int spacing=16*g.foot+16;
+        // Unit direction of travel (16.16), zero when the ground has none.
+        int64_t dx=0,dz=0;
+        if (const int64_t l=int64_t(isqrt64(uint64_t(b->dx*b->dx+b->dz*b->dz)));l>0) {
+            dx=(b->dx<<16)/l;dz=(b->dz<<16)/l;
+        }
+        // The front: the bucket's busy bodies as they stand (one that has
+        // arrived waits at its slot, and the flyers stay with those still
+        // under way), or at their goals with, for a squad of one bucket, its
+        // idle ground where it stands (the first arrivals among them).
+        const auto bodies=[&](bool goals) {
+            std::vector<std::array<int64_t,2>> at;
+            for (const auto& body:g.bodies)
+                if (body.bucket==int(b-g.bucket.data()) || (goals && g.buckets==1)) at.push_back({goals?body.gx:body.x,goals?body.gz:body.z});
+            return at;
+        };
+        const bool arriving=bound || b->arriving;
+        if (arriving && !bound) {
+            // The order's point moves once to the flyer's landing point beyond
+            // the front of the ground's goals, the way the ground travelled.
+            if (!b->landed) {
+                b->landed=true;
+                int64_t ax=dx,az=dz;
+                if (!ax && !az) {
+                    const int64_t ex=int64_t(last.x.v)-cx.v,ez=int64_t(last.z.v)-cz.v;
+                    if (const int64_t l=int64_t(isqrt64(uint64_t(ex*ex+ez*ez)));l>0) { ax=(ex<<16)/l; az=(ez<<16)/l; }
+                }
+                if (ax || az) legionFrontSlots(bodies(true),ax,az,spacing,8*(g.groundFoot+g.foot)+16,b->toLand,b->landing);
+            }
+            if (size_t(landing)<b->landing.size()) {
+                const int32_t edge=8*g.foot;
+                last.x=Fixed::fromInt(std::clamp(b->landing[size_t(landing)][0].floorInt(),edge,std::max(edge,terW_*16-edge)));
+                last.z=Fixed::fromInt(std::clamp(b->landing[size_t(landing)][1].floorInt(),edge,std::max(edge,terH_*16-edge)));
+            }
+            last.stationFree=3;
+        }
         if (!arriving) {
             // FL-04 (PLAN 3.6): the ground has stopped. Release A: no busy
             // member has made headway for kStationStall ticks (a dead-end
@@ -2730,14 +2912,17 @@ void World::planLegionFlightStations() {
                 continue;
             }
         }
-        int ox,oz;
-        legionStationSlot(b->slots++,ox,oz);
-        const int spacing=16*g.foot+16;
-        const Fixed sx=cx+Fixed::fromInt(ox*spacing),sz=cz+Fixed::fromInt(oz*spacing);
-        // Unit direction of travel (16.16), zero when the ground has none.
-        int64_t dx=0,dz=0;
-        if (const int64_t l=int64_t(isqrt64(uint64_t(b->dx*b->dx+b->dz*b->dz)));l>0) {
-            dx=(b->dx<<16)/l;dz=(b->dz<<16)/l;
+        // Its station: over the front (bound for its landing point, the pace
+        // still holds it there), or with no direction of travel a square
+        // spiral over the ground's centroid.
+        Fixed sx=cx,sz=cz;
+        if (dx || dz) {
+            if (!b->planned) { b->planned=true; legionFrontSlots(bodies(false),dx,dz,spacing,0,b->onStation,b->front); }
+            sx=b->front[size_t(slot)][0]; sz=b->front[size_t(slot)][1];
+        } else {
+            int ox,oz;
+            legionStationSlot(slot,ox,oz);
+            sx=cx+Fixed::fromInt(ox*spacing); sz=cz+Fixed::fromInt(oz*spacing);
         }
         // Along-track error: positive while the flyer is behind its station.
         const int64_t behind=((int64_t(sx.v-u.x.v)*dx+int64_t(sz.v-u.z.v)*dz)>>16);
@@ -2758,9 +2943,13 @@ void World::planLegionFlightStations() {
         if (arriving) {
             // Arriving: the flyer flies its own order and lands on arrival.
             // The pace holds until it is near its point, so it does not dash
-            // ahead of the ground; the final approach is retail's.
+            // ahead of the ground; the final approach is retail's. It keeps a
+            // quarter of its own speed at least: its point is in front of the
+            // ground's goals, so a front station the settling ground no longer
+            // carries forward must not hold it short of it, hovering.
             station.steer=station.hold=false;
             station.capped=!near(u.x,u.z,last.x,last.z,kLead);
+            station.cap=Fixed::raw(int32_t(std::clamp<int64_t>(std::max(cap,base/4),0,base)));
             continue;
         }
         station.steer=station.hold=station.capped=true;

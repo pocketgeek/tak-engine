@@ -180,7 +180,15 @@ struct MixedRun {
     int groundDone=-1,flyersDone=-1;float maxAway=0,meanAway=0,endAway=0;uint64_t hash=0;int landedAhead=0;
     int windows=0,stalls=0,moving=0,misaligned=0,maxHover=0,maxLandDelay=0,landed=0;double flown=0,marched=0;
     int overlap=0,illegal=0,holdTicks=0,convoyMatch=0;uint64_t lifts=0,relifts=0;std::string text;
+    float maxOff=0;   // the farthest an airborne flyer on an order strays from its nearest ground body
 };
+// How far a flyer is from the nearest of `ground` (the formation flyers ride over the front of their ground, so
+// the distance to its centroid grows with the formation's depth; straying is the distance to the ground itself).
+float nearestBody(World& w,const Unit& u,const std::vector<int>& ground) {
+    float best=1e9f;
+    for(int id:ground)best=std::min(best,dist(u,w.unit(id)->x.toFloat(),w.unit(id)->z.toFloat()));
+    return best;
+}
 MixedRun mixedRun(const MixedOpts& o) {
     Fixture f(260,100,o.serial);
     // A wall across the straight line: the ground detours through the gap at its south end.
@@ -263,11 +271,14 @@ MixedRun mixedRun(const MixedOpts& o) {
         }
         if(groundBusy&&t>=150) {
             float cx,cz;centroid(cx,cz);
+            float leadX=-1e9f;for(int id:ground)leadX=std::max(leadX,f.world.unit(id)->x.toFloat());
             for(int id:flyers) {
                 const auto& u=*f.world.unit(id);
                 const float d=dist(u,cx,cz);
                 r.maxAway=std::max(r.maxAway,d);sum+=d;++samples;
-                if(t%30==0&&u.flightGroundMode==1&&u.x.toFloat()>cx+300)++r.landedAhead;
+                // Landed far ahead: beyond the ground's leading body (formation flyers land just in front of it).
+                if(t%30==0&&u.flightGroundMode==1&&u.x.toFloat()>leadX+300)++r.landedAhead;
+                if(t>=300&&u.flightGroundMode==2&&!u.orders.empty())r.maxOff=std::max(r.maxOff,nearestBody(f.world,u,ground));
             }
         }
         if(verbose()&&t%150==0) {
@@ -288,10 +299,11 @@ MixedRun mixedRun(const MixedOpts& o) {
     const char* kind=o.kind==tak::net::Cmd::Move?"move":o.kind==tak::net::Cmd::AttackMove?"fight":"patrol";
     char buf[700];
     std::snprintf(buf,sizeof buf,"%s %s %s squad=%d ground_done=%d flyers_done=%d away_max=%.0f away_mean=%.0f end_away=%.0f landed_ahead=%d "
-        "pace=%.2f stalls=%d/%d misaligned=%d/%d max_hover=%d land_delay=%d landed=%d overlap=%d illegal_ticks=%d hold_ticks=%d convoy_match=%d/8 lifts=%llu relifts=%llu",
+        "pace=%.2f stalls=%d/%d misaligned=%d/%d max_hover=%d land_delay=%d landed=%d overlap=%d illegal_ticks=%d hold_ticks=%d convoy_match=%d/8 lifts=%llu relifts=%llu "
+        "off_max=%.0f",
         o.seal?"mixedseal":"mixedsquad",o.legion?"legion":"retail",kind,o.squad,r.groundDone,r.flyersDone,r.maxAway,r.meanAway,r.endAway,r.landedAhead,
         r.marched>0?r.flown/r.marched:0.0,r.stalls,r.windows,r.misaligned,r.moving,r.maxHover,r.maxLandDelay,r.landed,r.overlap,r.illegal,r.holdTicks,
-        r.convoyMatch,(unsigned long long)r.lifts,(unsigned long long)r.relifts);
+        r.convoyMatch,(unsigned long long)r.lifts,(unsigned long long)r.relifts,r.maxOff);
     r.text=buf;
     return r;
 }
@@ -324,7 +336,7 @@ void mixedsquad() {
     if(requireW6()) {
         // PLAN 3.5 (T5) acceptance, Ctrl+1: the ground finishes, the flyers stay over it, none lands ahead.
         check(ctrl.groundDone>=0&&ctrl.groundDone<=2650,"Ctrl mixedformation: ground_done must be <= 2650");
-        check(ctrl.maxAway<=300.f,"Ctrl mixedformation: away_max must be <= 300");
+        check(ctrl.maxOff<=200.f,"Ctrl mixedformation: off_max (an airborne flyer from its nearest ground body) must be <= 200");
         check(ctrl.landedAhead==0,"Ctrl mixedformation: no flyer lands ahead of the ground");
         check(ctrl.maxHover<=60,"Ctrl mixedformation: max_hover must be <= 60");
         check(ctrl.overlap==0&&alt.overlap==0&&none.overlap==0,"a landed flyer shares a cell with a ground body");
@@ -573,7 +585,12 @@ CtrlRun ctrlRun(int kind,bool serial=true) {
             for(int id:sets[k].ground) {const auto& u=*f.world.unit(id);ax+=u.x.toFloat();az+=u.z.toFloat();busy|=!u.orders.empty();}
             ax/=double(sets[k].ground.size());az/=double(sets[k].ground.size());
             any|=busy;
-            if(busy&&t>=200)for(int id:sets[k].flyers)away[k]=std::max(away[k],dist(*f.world.unit(id),float(ax),float(az)));
+            // Straying: an airborne flyer's distance from its own click's nearest ground body (formation flyers
+            // ride over the front of their ground, so their distance from its centroid grows with its depth).
+            if(busy&&t>=200)for(int id:sets[k].flyers) {
+                const auto& u=*f.world.unit(id);
+                if(u.flightGroundMode==2&&!u.orders.empty())away[k]=std::max(away[k],nearestBody(f.world,u,sets[k].ground));
+            }
         }
         for(const auto& s:sets)for(int id:s.flyers) {
             run[id]=hovering(*f.world.unit(id),t)?run[id]+1:0;hover=std::max(hover,run[id]);
@@ -595,7 +612,7 @@ CtrlRun ctrlRun(int kind,bool serial=true) {
     const auto stats=f.world.legionStats();
     static const char* names[]={"two-click-separated","two-click-closed-convoy","two-click-close","big-flyers-first","big-flyers-last","huge-flyers-first","huge-flyers-last"};
     char buf[460];
-    std::snprintf(buf,sizeof buf,"ctrlmixed %s parts=%d distinct_convoys=%d away_max=%.0f convoy_own=%d/%d cross_pairs=%d max_hover=%d landed=%d/%d ground_last_busy=%d "
+    std::snprintf(buf,sizeof buf,"ctrlmixed %s parts=%d distinct_convoys=%d off_max=%.0f convoy_own=%d/%d cross_pairs=%d max_hover=%d landed=%d/%d ground_last_busy=%d "
         "lifts=%llu relifts=%llu station_overflow=%llu",names[kind],r.parts,sets.size()>1&&sets[0].convoy!=sets[1].convoy,r.awayMax,r.convoyOwn,r.convoyAll,r.cross,hover,landed,
         r.convoyAll,lastBusy,(unsigned long long)stats.lifts,(unsigned long long)stats.relifts,(unsigned long long)stats.stationOverflow);
     r.text=buf;r.hash=f.world.stateHash();

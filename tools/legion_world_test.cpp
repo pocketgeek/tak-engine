@@ -2126,12 +2126,31 @@ void squadformation() {
 }
 
 // A formation (Alt+1) of 20 ground bodies and 8 flyers given one order.
-// Measures how far the flyers stray from the ground members' centroid while
-// the ground is under way, whether they fly like flyers on the way (keep up
-// with the ground in 30-tick windows, face the way they move) and whether
-// they land as soon as their order is done (no hovering).
+// Measures whether the flyers ride over the front of the ground while it is
+// under way and land in front of it, how far they stray from the ground, whether
+// they fly like flyers on the way (keep up with the ground in 30-tick windows,
+// face the way they move) and whether they land as soon as their order is done
+// (no hovering).
+// A landed flyer behind the front of the ground: a ground body within 40 px of its lane (across the way (dx,dz))
+// stands ahead of it -- it came down among the ground's slots rather than in front of them.
+bool landedBehind(World& w,const Unit& u,const std::vector<int>& ground,float dx,float dz) {
+    if(u.flightGroundMode!=1)return false;
+    for(int id:ground) {
+        const auto& g=*w.unit(id);
+        const float ex=g.x.toFloat()-u.x.toFloat(),ez=g.z.toFloat()-u.z.toFloat();
+        if(std::abs(ez*dx-ex*dz)<=40.f&&ex*dx+ez*dz>0.f)return true;
+    }
+    return false;
+}
+// Over the front (the user's ask: flyers ride over the units in front, not the middle): in each 30-tick window
+// the ground marched >= 9 px, along its way d, leadTop is the mean along offset of the 3 leading flyers from the
+// ground's leading body (0: over it; the old centroid station sat ~-190), leadAll the mean along offset of all
+// flyers from the ground's centroid (the old station: <= 0), and maxOff the farthest an airborne flyer strays
+// from its nearest ground body. At the end, along the last window's d: landedBehind counts landed flyers
+// with a ground body ahead of it in its lane (they land in front of the ground, not among its slots).
 struct MixedRun {int groundDone=-1,flyersDone=-1;float maxAway=0,meanAway=0,endAway=0;uint64_t hash=0;int landedAhead=0;
-    int windows=0,stalls=0,moving=0,misaligned=0,maxHover=0,maxLandDelay=0,landed=0;double flown=0,marched=0;};
+    int windows=0,stalls=0,moving=0,misaligned=0,maxHover=0,maxLandDelay=0,landed=0;double flown=0,marched=0;
+    double leadTop=0,leadAll=0;int frontWindows=0,landedBehind=0;float maxOff=0;};
 MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
     Fixture f(260,100,serial);
     // A wall across the straight line: the ground detours through the gap
@@ -2168,7 +2187,8 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
                 offset?pz+std::clamp(u.z.toFloat()-sz,-60.f,60.f):pz);
     }
     MixedRun r;Watch motion;double sum=0;int samples=0;
-    std::map<int,std::pair<float,float>> windowStart;float windowCx=0,windowCz=0;
+    std::map<int,std::pair<float,float>> windowStart;float windowCx=0,windowCz=0,dirX=1,dirZ=0;
+    std::vector<std::pair<float,float>> groundAt;   // the ground's positions at the window's start
     std::map<int,int> hover,idleAt,hoverRun;
     const int ticks=kind==tak::net::Cmd::Patrol?3000:6000;
     auto centroid=[&](float& cx,float& cz) {
@@ -2186,9 +2206,23 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
         if(t%30==0) {
             // Keeping up: over each 30-tick window in which the ground's
             // centroid moved at least 9 px, a travelling flyer covers at least
-            // 40% of that distance.
+            // 40% of that distance -- or of the ground's leading body's advance
+            // along it, if less: a flyer over a front that has stopped (a
+            // patrol's leading bodies turning at its point) holds there.
             float cx,cz;centroid(cx,cz);
             const float marched=std::hypot(cx-windowCx,cz-windowCz);
+            float advance=marched;
+            if(marched>0&&groundAt.size()==ground.size()) {
+                const float ux=(cx-windowCx)/marched,uz=(cz-windowCz)/marched;
+                float was=-1e9f,now=-1e9f;
+                for(size_t i=0;i<ground.size();++i) {
+                    was=std::max(was,groundAt[i].first*ux+groundAt[i].second*uz);
+                    now=std::max(now,f.world.unit(ground[i])->x.toFloat()*ux+f.world.unit(ground[i])->z.toFloat()*uz);
+                }
+                advance=std::min(marched,now-was);
+            }
+            groundAt.clear();
+            for(int id:ground)groundAt.push_back({f.world.unit(id)->x.toFloat(),f.world.unit(id)->z.toFloat()});
             for(int id:flyers) {
                 const auto& u=*f.world.unit(id);
                 const auto it=windowStart.find(id);
@@ -2197,11 +2231,29 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
                     u.z.toFloat()-u.orders.back().z.toFloat())>300.f;
                 if(t>=300&&groundBusy&&it!=windowStart.end()&&travelling&&marched>=9.f) {
                     const float flown=std::hypot(u.x.toFloat()-it->second.first,u.z.toFloat()-it->second.second);
-                    ++r.windows;r.stalls+=flown<0.4f*marched;r.flown+=flown;r.marched+=marched;
+                    ++r.windows;r.stalls+=flown<0.4f*std::max(advance,0.f);r.flown+=flown;r.marched+=marched;
                 }
                 windowStart[id]={u.x.toFloat(),u.z.toFloat()};
             }
+            if(t>=300&&groundBusy&&marched>=9.f) {
+                dirX=(cx-windowCx)/marched;dirZ=(cz-windowCz)/marched;
+                float front=-1e9f;
+                for(int id:ground)front=std::max(front,(f.world.unit(id)->x.toFloat()-cx)*dirX+(f.world.unit(id)->z.toFloat()-cz)*dirZ);
+                std::vector<float> along;
+                for(int id:flyers)along.push_back((f.world.unit(id)->x.toFloat()-cx)*dirX+(f.world.unit(id)->z.toFloat()-cz)*dirZ);
+                std::sort(along.rbegin(),along.rend());
+                r.leadTop+=(along[0]+along[1]+along[2])/3-front;
+                double all=0;for(float a:along)all+=a;
+                r.leadAll+=all/double(along.size());++r.frontWindows;
+            }
             windowCx=cx;windowCz=cz;
+        }
+        if(groundBusy&&t>=300)for(int id:flyers) {
+            const auto& u=*f.world.unit(id);
+            if(u.flightGroundMode!=2||u.orders.empty())continue;
+            float off=1e9f;
+            for(int g:ground)off=std::min(off,std::hypot(u.x.toFloat()-f.world.unit(g)->x.toFloat(),u.z.toFloat()-f.world.unit(g)->z.toFloat()));
+            r.maxOff=std::max(r.maxOff,off);
         }
         for(int id:flyers) {
             const auto& u=*f.world.unit(id);
@@ -2226,11 +2278,13 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
         }
         if(groundBusy&&t>=150) {
             float cx,cz;centroid(cx,cz);
+            float leadX=-1e9f;for(int id:ground)leadX=std::max(leadX,f.world.unit(id)->x.toFloat());
             for(int id:flyers) {
                 const auto& u=*f.world.unit(id);
                 const float d=std::hypot(u.x.toFloat()-cx,u.z.toFloat()-cz);
                 r.maxAway=std::max(r.maxAway,d);sum+=d;++samples;
-                if(t%30==0&&u.flightGroundMode==1&&u.x.toFloat()>cx+300)++r.landedAhead;
+                // Landed far ahead: beyond the ground's leading body (they land just in front of it).
+                if(t%30==0&&u.flightGroundMode==1&&u.x.toFloat()>leadX+300)++r.landedAhead;
             }
         }
         if(std::getenv("MIXED_TRACE")&&t%150==0) {
@@ -2248,12 +2302,15 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
     for(int id:flyers)r.landed+=f.world.unit(id)->flightGroundMode==1;
     for(const auto& [id,at]:idleAt)if(at>=0)r.maxLandDelay=std::max(r.maxLandDelay,9999);
     r.meanAway=samples?float(sum/samples):0;r.hash=f.world.stateHash();
+    for(int id:flyers)r.landedBehind+=landedBehind(f.world,*f.world.unit(id),ground,dirX,dirZ);
+    if(r.frontWindows) {r.leadTop/=r.frontWindows;r.leadAll/=r.frontWindows;}
     const char* name=kind==tak::net::Cmd::Move?"move":kind==tak::net::Cmd::AttackMove?"fight":"patrol";
     std::printf("mixedformation %s %s ground_done=%d flyers_done=%d away_max=%.0f away_mean=%.0f end_away=%.0f landed_ahead=%d "
-        "pace=%.2f stalls=%d/%d misaligned=%d/%d max_hover=%d land_delay=%d landed=%d spins=%llu hash=%016llx\n",
+        "pace=%.2f stalls=%d/%d misaligned=%d/%d max_hover=%d land_delay=%d landed=%d spins=%llu lead_top=%.0f lead_all=%.0f "
+        "max_off=%.0f landed_behind=%d hash=%016llx\n",
         legion?"legion":"retail",name,r.groundDone,r.flyersDone,r.maxAway,r.meanAway,r.endAway,r.landedAhead,
         r.marched>0?r.flown/r.marched:0.0,r.stalls,r.windows,r.misaligned,r.moving,r.maxHover,r.maxLandDelay,r.landed,
-        (unsigned long long)motion.spins(),(unsigned long long)r.hash);
+        (unsigned long long)motion.spins(),r.leadTop,r.leadAll,r.maxOff,r.landedBehind,(unsigned long long)r.hash);
     return r;
 }
 void mixedformation() {
@@ -2261,10 +2318,16 @@ void mixedformation() {
         mixedformationRun(false,kind);   // Retail: reported, the 417e02 re-forming port
         const auto r=mixedformationRun(true,kind);
         if(std::getenv("MIXED_REPORT"))continue;   // measurement only
-        // Flyers stay over the ground (spiral of 8 flyers: <= ~2 rings of 64 px,
-        // plus the lag of a 4 px/tick flyer behind its moving station).
-        check(r.maxAway<=320.f,"a formation flyer strayed from the ground");
+        // Flyers stay with the ground: an airborne flyer within 240 px of a ground body (the
+        // old centroid station strayed to 185, the front stations and landing points to 186).
+        check(r.maxOff<=240.f,"a formation flyer strayed from the ground");
         check(r.landedAhead==0,"a formation flyer landed ahead of the ground");
+        // Over the front, not the middle: the 3 leading flyers within 80 px of the ground's
+        // leading body along its way (front stations -19..-49, the old centroid station
+        // -187..-241) and the flyers' mean 60 px or more ahead of the ground's centroid
+        // (108..154; old -18..-24).
+        check(r.frontWindows>0&&r.leadTop>=-80,"formation flyers did not ride over the front of the ground");
+        check(r.leadAll>=60,"formation flyers rode over the middle of the ground");
         // Flying with the formation, not parked over it: they keep the
         // ground's pace in every window and face the way they move.
         check(r.windows>0&&r.stalls==0,"a formation flyer stalled behind the ground");
@@ -2277,12 +2340,221 @@ void mixedformation() {
             check(r.endAway<=300.f,"formation flyers settled away from the ground");
             // Landing as soon as the order is done (retail's standby takes 3 ticks).
             check(r.landed==8,"formation flyers did not land");
+            // Landed in front of the ground, not among its slots.
+            check(r.landedBehind==0,"a formation flyer landed behind the front of the ground");
             check(r.maxLandDelay<=10,"a formation flyer waited before landing");
         }
     }
     const auto a=mixedformationRun(true,tak::net::Cmd::Move,true),b=mixedformationRun(true,tak::net::Cmd::Move,false);
     check(a.hash==b.hash,"mixed formation: serial and workers differ");
 }
+
+// Formation flyers over the front (the user's report: an Alt+N formation's flyers sat over its middle). An Alt+1
+// formation of 30 ground bodies -- a 10 x 3 block, wide across its way -- and 12 flyers, more than one row of
+// lanes, on an open field: a move east, then under way a move south that re-faces it. In each 30-tick window the
+// ground marched >= 9 px, along its way: lead_top is the mean offset of the 3 leading flyers from the ground's
+// leading body, lead_all the flyers' mean offset from the ground's centroid, front_row the flyers within 32 px
+// of the leading body's line or ahead of it, and depth the farthest flyer behind it (rows fill front first).
+// At the end every flyer has landed, in front of the ground. Then the same flyers alone (no ground: their own
+// orders, as before) land at their own points.
+struct FrontPhase {double top=0,all=0,row=0,span=0;float depth=0;int n=0;};
+struct FrontRun {FrontPhase east,south;int landed=0,behind=0;int done=-1;uint64_t hash=0;};
+FrontRun flyerfrontRun(bool serial=true) {
+    Fixture f(260,220,serial);f.publish();
+    const auto type=mover(2);
+    UnitType flyer{};flyer.id=flyer.name="legion-flyer";
+    flyer.canFly=flyer.canMove=true;flyer.maxHp=100;flyer.footX=flyer.footZ=3;flyer.sight=4096;
+    flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);flyer.turnRate=1200;flyer.cruiseAlt=80;flyer.buildTime=1;
+    flyer.vtolStandby=true;
+    std::vector<int> ground,flyers,all;
+    for(int i=0;i<30;++i)ground.push_back(f.spawn(type,20+(i/10)*3,60+(i%10)*3));
+    for(int i=0;i<12;++i)flyers.push_back(f.spawn(flyer,8+(i%6)*4,100+(i/6)*4));
+    all=ground;all.insert(all.end(),flyers.begin(),flyers.end());
+    f.start();
+    TypeRegistry registry;
+    auto command=[&](tak::net::Cmd k,int id,float x,float z,int target=0) {
+        tak::net::Command c;c.kind=k;c.player=0;c.unitId=id;c.targetId=target;c.x=x;c.z=z;c.queue=0;
+        applyCommand(f.world,registry,c);
+    };
+    // As the move UI does: flyers keep their offset from the selection's centre (clamped to 60 px per axis);
+    // Legion surface movers share the point.
+    auto click=[&](float px,float pz) {
+        float sx=0,sz=0;
+        for(int id:all){sx+=f.world.unit(id)->x.toFloat();sz+=f.world.unit(id)->z.toFloat();}
+        sx/=float(all.size());sz/=float(all.size());
+        for(int id:all) {
+            const auto& u=*f.world.unit(id);
+            command(tak::net::Cmd::Move,id,u.type->canFly?px+std::clamp(u.x.toFloat()-sx,-60.f,60.f):px,
+                    u.type->canFly?pz+std::clamp(u.z.toFloat()-sz,-60.f,60.f):pz);
+        }
+    };
+    for(int id:all)command(tak::net::Cmd::SetSquad,id,0,0,-1);
+    for(int t=0;t<300;++t)f.world.tick(1.f/30);
+    click(190*16,74*16);
+    FrontRun r;float wx=0,wz=0;
+    auto centroid=[&](float& cx,float& cz) {
+        double sx=0,sz=0;for(int id:ground){sx+=f.world.unit(id)->x.toFloat();sz+=f.world.unit(id)->z.toFloat();}
+        cx=float(sx/ground.size());cz=float(sz/ground.size());
+    };
+    centroid(wx,wz);
+    float dx=1,dz=0;
+    for(int t=0;t<7000;++t) {
+        if(t==900) {float cx,cz;centroid(cx,cz);click(cx,200*16);}
+        f.world.tick(1.f/30);
+        bool busy=false;for(int id:all)busy|=!f.world.unit(id)->orders.empty();
+        if(!busy&&r.done<0)r.done=t;
+        if(r.done>=0) {if(t>r.done+150)break;continue;}
+        if(t%30)continue;
+        float cx,cz;centroid(cx,cz);
+        const float marched=std::hypot(cx-wx,cz-wz);
+        if(marched>=9.f) {
+            dx=(cx-wx)/marched;dz=(cz-wz)/marched;
+            bool ground_busy=false;for(int id:ground)ground_busy|=!f.world.unit(id)->orders.empty();
+            FrontPhase* ph=t>=300&&t<900?&r.east:t>=1500?&r.south:nullptr;
+            if(ph&&ground_busy) {
+                float front=-1e9f;
+                for(int id:ground)front=std::max(front,(f.world.unit(id)->x.toFloat()-cx)*dx+(f.world.unit(id)->z.toFloat()-cz)*dz);
+                std::vector<float> along;
+                for(int id:flyers)along.push_back((f.world.unit(id)->x.toFloat()-cx)*dx+(f.world.unit(id)->z.toFloat()-cz)*dz);
+                std::sort(along.rbegin(),along.rend());
+                ph->top+=(along[0]+along[1]+along[2])/3-front;
+                double sum=0;int row=0;for(float a:along){sum+=a;row+=a>=front-32;}
+                ph->all+=sum/double(along.size());ph->row+=row;ph->depth=std::max(ph->depth,front-along.back());++ph->n;
+                // Across: the flyers' lateral span over the ground's.
+                float glo=1e9f,ghi=-1e9f,flo=1e9f,fhi=-1e9f;
+                for(int id:ground) {const float s=(f.world.unit(id)->z.toFloat()-cz)*dx-(f.world.unit(id)->x.toFloat()-cx)*dz;glo=std::min(glo,s);ghi=std::max(ghi,s);}
+                for(int id:flyers) {const float s=(f.world.unit(id)->z.toFloat()-cz)*dx-(f.world.unit(id)->x.toFloat()-cx)*dz;flo=std::min(flo,s);fhi=std::max(fhi,s);}
+                ph->span+=ghi>glo?(fhi-flo)/(ghi-glo):1.f;
+            }
+        }
+        wx=cx;wz=cz;
+    }
+    for(int id:flyers) {
+        const auto& u=*f.world.unit(id);
+        r.landed+=u.flightGroundMode==1;
+        r.behind+=landedBehind(f.world,u,ground,dx,dz);
+    }
+    for(auto* ph:{&r.east,&r.south})if(ph->n){ph->top/=ph->n;ph->all/=ph->n;ph->row/=ph->n;ph->span/=ph->n;}
+    r.hash=f.world.stateHash();
+    std::printf("flyerfront east lead_top=%.0f lead_all=%.0f front_row=%.1f span=%.2f depth=%.0f windows=%d | south lead_top=%.0f lead_all=%.0f "
+        "front_row=%.1f span=%.2f depth=%.0f windows=%d | done=%d landed=%d landed_behind=%d hash=%016llx\n",r.east.top,r.east.all,r.east.row,
+        r.east.span,r.east.depth,r.east.n,r.south.top,r.south.all,r.south.row,r.south.span,r.south.depth,r.south.n,r.done,r.landed,r.behind,
+        (unsigned long long)r.hash);
+    return r;
+}
+// The same 12 flyers as an air-only formation: no ground, so no station; each flies its own point and lands there.
+float flyerfrontAirOnly() {
+    Fixture f(260,220);f.publish();
+    UnitType flyer{};flyer.id=flyer.name="legion-flyer";
+    flyer.canFly=flyer.canMove=true;flyer.maxHp=100;flyer.footX=flyer.footZ=3;flyer.sight=4096;
+    flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);flyer.turnRate=1200;flyer.cruiseAlt=80;flyer.buildTime=1;
+    flyer.vtolStandby=true;
+    std::vector<int> flyers;
+    for(int i=0;i<12;++i)flyers.push_back(f.spawn(flyer,8+(i%6)*4,100+(i/6)*4));
+    f.start();
+    TypeRegistry registry;
+    std::map<int,std::pair<float,float>> goal;
+    for(int id:flyers) {
+        tak::net::Command c;c.kind=tak::net::Cmd::SetSquad;c.player=0;c.unitId=id;c.targetId=-1;applyCommand(f.world,registry,c);
+    }
+    for(int t=0;t<300;++t)f.world.tick(1.f/30);
+    for(int id:flyers) {
+        const auto& u=*f.world.unit(id);
+        tak::net::Command c;c.kind=tak::net::Cmd::Move;c.player=0;c.unitId=id;c.x=190*16+u.x.toFloat()-(8+10)*16;c.z=u.z.toFloat();c.queue=0;
+        goal[id]={c.x,c.z};applyCommand(f.world,registry,c);
+    }
+    for(int t=0;t<4000;++t)f.world.tick(1.f/30);
+    float worst=0;
+    for(int id:flyers) {
+        const auto& u=*f.world.unit(id);
+        check(u.flightGroundMode==1&&u.orders.empty(),"an air-only formation's flyer did not land");
+        worst=std::max(worst,std::hypot(u.x.toFloat()-goal[id].first,u.z.toFloat()-goal[id].second));
+    }
+    std::printf("flyerfront air-only farthest_from_point=%.0f\n",worst);
+    return worst;
+}
+// Formation flyers over narrow ground: a block `cols` bodies across and `rows` along its way (one body; a column
+// one or two wide) and 8 flyers moving east on an open field. In each 30-tick window the ground marched >= 9 px:
+// top the mean offset of the 3 leading flyers from the ground's leading body, depth the farthest flyer behind it,
+// behind the flyers behind the ground's centroid. Lanes one per 64 px of a narrow front would put the 8 in a file
+// 448 px long trailing it; they stand at most twice as deep as wide instead (2 lanes, 4 rows: 192 px).
+struct NarrowRun {double top=0,behind=0;float depth=0;int n=0;};
+NarrowRun flyerfrontNarrow(int cols,int rows) {
+    Fixture f(260,220);f.publish();
+    const auto type=mover(2);
+    UnitType flyer{};flyer.id=flyer.name="legion-flyer";
+    flyer.canFly=flyer.canMove=true;flyer.maxHp=100;flyer.footX=flyer.footZ=3;flyer.sight=4096;
+    flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);flyer.turnRate=1200;flyer.cruiseAlt=80;flyer.buildTime=1;
+    flyer.vtolStandby=true;
+    std::vector<int> ground,flyers,all;
+    for(int i=0;i<cols*rows;++i)ground.push_back(f.spawn(type,20+(i/cols)*3,100+(i%cols)*3));
+    for(int i=0;i<8;++i)flyers.push_back(f.spawn(flyer,8+(i%4)*4,100+(i/4)*4));
+    all=ground;all.insert(all.end(),flyers.begin(),flyers.end());
+    f.start();
+    TypeRegistry registry;
+    auto command=[&](tak::net::Cmd k,int id,float x,float z,int target=0) {
+        tak::net::Command c;c.kind=k;c.player=0;c.unitId=id;c.targetId=target;c.x=x;c.z=z;c.queue=0;
+        applyCommand(f.world,registry,c);
+    };
+    for(int id:all)command(tak::net::Cmd::SetSquad,id,0,0,-1);
+    for(int t=0;t<300;++t)f.world.tick(1.f/30);
+    for(int id:all) {
+        const auto& u=*f.world.unit(id);
+        command(tak::net::Cmd::Move,id,u.type->canFly?190*16+std::clamp(u.x.toFloat()-30*16,-60.f,60.f):190*16,
+                u.type->canFly?104*16+std::clamp(u.z.toFloat()-104*16,-60.f,60.f):104*16);
+    }
+    NarrowRun r;float wx=0;
+    for(int t=0;t<2400;++t) {
+        f.world.tick(1.f/30);
+        if(t%30||t<300)continue;
+        double sx=0,sz=0;for(int id:ground){sx+=f.world.unit(id)->x.toFloat();sz+=f.world.unit(id)->z.toFloat();}
+        const float cx=float(sx/ground.size());
+        bool busy=false;for(int id:ground)busy|=!f.world.unit(id)->orders.empty();
+        if(busy&&cx-wx>=9.f) {
+            float front=-1e9f;for(int id:ground)front=std::max(front,f.world.unit(id)->x.toFloat()-cx);
+            std::vector<float> along;for(int id:flyers)along.push_back(f.world.unit(id)->x.toFloat()-cx);
+            std::sort(along.rbegin(),along.rend());
+            r.top+=(along[0]+along[1]+along[2])/3-front;r.depth=std::max(r.depth,front-along.back());
+            for(float a:along)r.behind+=a<-1.f;
+            ++r.n;
+        }
+        wx=cx;
+    }
+    if(r.n){r.top/=r.n;r.behind/=r.n;}
+    std::printf("flyerfront narrow %dx%d lead_top=%.0f depth=%.0f behind_centroid=%.1f windows=%d\n",cols,rows,r.top,r.depth,r.behind,r.n);
+    return r;
+}
+void flyerfront() {
+    const auto r=flyerfrontRun();
+    // The leading flyers over the ground's leading body on both headings, neither behind nor ahead of it
+    // (measured: east -2, south -20; the old centroid station's spiral: east +77, wider than a 3-deep block is
+    // deep, south -120).
+    for(const auto* ph:{&r.east,&r.south}) {
+        check(ph->n>0,"flyerfront: no window measured");
+        check(ph->top>=-80,"flyerfront: the leading flyers did not ride over the ground's leading body");
+        check(ph->top<=60,"flyerfront: the leading flyers rode ahead of the ground");
+    }
+    // East the front is 10 bodies wide: the flyers spread across all of it (span 1.01; the spiral 0.34), half of
+    // them on the front line (a row of 7 lanes) and the rest in the next row, not deeper (83 px; 2 rows = 128).
+    check(r.east.span>=0.85,"flyerfront: the flyers did not spread across the front");
+    check(r.east.row>=6,"flyerfront: the front row was not filled first");
+    check(r.east.depth<=200,"flyerfront: flyers sat deeper than the second row");
+    check(r.done>=0&&r.landed==12,"flyerfront: the formation did not finish and land");
+    check(r.behind==0,"flyerfront: a flyer landed behind the front of the ground");
+    check(flyerfrontAirOnly()<=120,"flyerfront: an air-only formation's flyer landed away from its point");
+    // Narrow ground (measured: depth 193 / 219 / 220, a lane per 64 px of front 448 / 455 / 455): the 8 flyers
+    // over the front in at most 4 rows (2 lanes; 192 px plus the lag), the leading ones over the leading body,
+    // and over a 10-deep column none behind its middle (the file down a column had 4 of 8 behind it).
+    for(const auto [cols,rows]:{std::pair{1,1},std::pair{1,10},std::pair{2,10}}) {
+        const auto n=flyerfrontNarrow(cols,rows);
+        check(n.n>0,"flyerfront narrow: no window measured");
+        check(n.top>=-80&&n.top<=60,"flyerfront narrow: the leading flyers were not over the ground's leading body");
+        check(n.depth<=260,"flyerfront narrow: the flyers trailed in a file behind narrow ground");
+        if(rows>1)check(n.behind<=0.5,"flyerfront narrow: flyers sat behind the middle of a column");
+    }
+    check(flyerfrontRun(false).hash==r.hash,"flyerfront: serial and workers differ");
+}
+
 
 // Group awareness: two moving groups plan round each other as wholes.
 // Cases: two own groups crossing paths at right angles; two own groups head
@@ -3223,7 +3495,7 @@ int main(int argc,char** argv) {
         {"approachhold",approachhold},{"approachopen",approachopen},
         {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
-        {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"liftflyers",liftflyers},{"aware",aware},
+        {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
         {"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong}};

@@ -482,10 +482,28 @@ a flyer's click, offset up to 60 px per axis, in its ground's convoy, so the
 clicks of one class applied in the same tick share a `convoyTick` and so a
 station: a known limit.
 
-- **Station.** Each flyer has a station on a square spiral, `16 * foot + 16`
-  px apart, over the ground members' integer centroid (a squad with one
-  bucket: all its ground; with several, each bucket's busy members). Stations
-  are numbered in unit order.
+- **Station (over the front, user request 2026-10-12).** The flyers ride over
+  the front of their ground, not its middle: `legionFrontSlots` lays rows of
+  lanes `16 * foot + 16` px apart across the lateral extent of the bucket's
+  busy ground members (a member that has arrived waits at its slot and no
+  longer counts). A lane holds over the frontmost body within half a spacing
+  of it, a body farther out counting that much farther back, so the front is
+  continuous in the bodies' positions; the front row fills first, a short last
+  row spreads over the whole width, and each further row sits a spacing
+  behind. A row has enough lanes that the rows number at most twice the
+  lanes: over ground narrower than that (one body, a column one or two wide)
+  the row spreads that wide about the ground's centre line, a lane past its
+  edge taking the front at that edge, so the flyers stand at most twice as deep
+  as wide instead of in a file trailing behind it (8 flyers over one body: 2
+  lanes, 4 rows, 192 px deep, where a lane per spacing of front had them in
+  one file 448 px deep). Flyers take the rows in order of their distance behind the front
+  and each row's lanes in order across, so a flyer in formation keeps its
+  station and a turn re-ranks the flyers where they stand. Within a quarter
+  spacing of a lane boundary they keep the layout of the lane count across it
+  when they stand nearer it, so a formation whose width hovers at a boundary
+  does not reshuffle them. With no direction of travel the stations fall back
+  to the old square spiral over the ground members' centroid (a squad with
+  one bucket: all its ground; with several, each bucket's busy members).
 - **Release (W6, FL-04).** When the ground stops, the flyer is released for
   its order and flies it uncapped to land, as retail's VTOL_Move ends:
   release A when no busy member of its bucket has made headway for 450 ticks
@@ -505,7 +523,9 @@ station: a known limit.
   `legion-r9.takrep` the formation's bats held one heading for a whole leg
   at about 0.45 px/tick and looked parked. Instead, the flyer steers at a
   point 160 px ahead of its station along the ground's direction of travel:
-  the sum of the busy members' unit vectors toward their current legs. It
+  the sum of the busy members' unit vectors -- the way a moving member steps
+  (its heading), toward its current leg for one standing still -- so a
+  column turning round a wall turns its front with it. It
   therefore cruises facing its way and turns and banks with the formation.
   Its script animation is untouched; the Zhon bat's `FlightControl`, for
   example, flaps regardless of speed.
@@ -518,28 +538,52 @@ station: a known limit.
     so a joining or left-behind flyer can catch up.
 
   While travelling, the leg never completes.
-- **Arrival (formation-air2).** Once the ground's centroid is within the
-  formation radius (`max(256, 32 * sqrt(area))` px) of the flyer's
-  destination, the flyer flies its own order, as in retail. The pace cap
-  stays until it is within 160 px of its point. It arrives, completes the
-  order and lands through the retail landing search and the Legion overlap
-  refusal. The first version held flyers over the centroid until every
-  ground member had finished, so they hovered while stragglers arrived.
+- **Arrival (formation-air2; landing in front, 2026-10-12).** Once the
+  ground's centroid is within the formation radius
+  (`max(256, 32 * sqrt(area))` px) of a station flyer's destination, every
+  flyer of the bucket has its order's point moved, once, to a landing point
+  in front of the ground's goals (`LegionNavigator::goalPoint`: each busy
+  member's formation slot; a squad of one bucket adds its idle ground where
+  it stands): the same rows of lanes, `8 * (ground foot + flyer foot) + 16`
+  px beyond the front and each further row a spacing farther on, clear of the
+  slots. `Order::stationFree` 3 marks it. The flyer then flies that order, as
+  in retail; the pace cap, measured from its front station but never below a
+  quarter of its own speed, stays until it is within 160 px of its point. It
+  arrives, completes the order and lands through the retail landing search
+  and the Legion overlap refusal -- in front of the formation, where the old
+  click point (the middle, give or take the 60 px offset) put it among the
+  ground's slots and the landing search scattered the wing round them. The
+  first version held flyers over the centroid until every ground member had
+  finished, so they hovered while stragglers arrived.
 - **Determinism.** Everything is derived each tick from hashed state with
-  integer arithmetic; the only persistent state is the release on the
-  flyer's order, hashed when set.
+  integer arithmetic; the only persistent state is the release (or the moved
+  landing point) on the flyer's order, hashed when set.
 
 Flyers ordered on their own, or to another destination, fly as before. Test:
 `legion_world_test mixedformation` uses 20 ground bodies and 8 flyers at
 4 px/tick, with a wall the ground detours around. Under move, fight-move and
 patrol it checks:
-- distance to the ground centroid stays at most 320 px;
+- the three leading flyers ride within 80 px of the ground's leading body
+  along its way (-19 to -49 px; the centroid spiral -187 to -241) and the
+  flyers' mean is 60 px or more ahead of the ground's centroid (108 to 154;
+  the spiral -18 to -24);
+- an airborne flyer stays within 240 px of a ground body, and none lands with
+  a ground body ahead of it in its lane;
 - flyers keep the ground's pace in every 30-tick window (0.97 to 0.99 of
   the centroid's distance);
 - flyers face the way they move (1-2% of moving ticks off by more than
   30 degrees, against 56-66% before formation-air2);
 - no hover longer than the 18-tick arrival brake (before: up to 654 ticks);
 - the landing descent starts in the tick the order ends.
+
+`legion_world_test flyerfront` re-faces a 10 x 3 block of 30 bodies with 12
+flyers (more than one row of lanes) from east to south mid-move: on both
+headings the leading flyers ride over the leading body, east the flyers span
+the full width with the rest in the second row, all land in front, and an
+air-only formation still lands at its own points. It also moves 8 flyers with
+one body and with columns 1 and 2 bodies wide and 10 deep: the leading flyers
+ride over the leading body, at most 4 rows deep (193 to 220 px; the file of
+one lane per spacing 448 to 455 px), none behind a column's middle.
 
 **A third deliberate flight difference: idle landed flyers make way for an
 allied ground group.** Retail stamps a landed flyer into the ground word
