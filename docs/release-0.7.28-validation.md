@@ -3,8 +3,7 @@
 Protocol **253**, replay format **12**, generator version **8**, campaign
 payload **4**, database schema **9**.
 
-**Pending:** version 0.7.28 has not been tagged or published yet. This report
-is completed as the checks below are run.
+Tagged `v0.7.28` at `e0df0cc1` and published on 2026-10-12.
 
 ## Scope and compatibility
 
@@ -354,7 +353,24 @@ unmodified, from a clean detached worktree. SHA-256
 
 ## CI and packages
 
-Pending.
+The final source (`e0df0cc1`) passed the Determinism, Linux, Windows and macOS
+workflows on `main`. The exact tag passed all four workflows:
+
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/38202732909), started manually on the tag because the workflow is path-filtered.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/38202732682): all native package jobs and release attachment.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/38202732712): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/38202732704): x64 and ARM64.
+
+The release was created as a draft with these notes and tagged CI attached the
+packages. All **29 assets** were downloaded and matched GitHub's SHA-256
+digests and byte sizes before publication. Every ZIP passed its CRC test.
+Windows ZIP payloads are x86-64 and ARM64 PE executables; macOS ZIP payloads are
+arm64 and x86-64 Mach-O apps with bundle version 0.7.28. The Debian 13 DEB's
+client and server and the Linux debug client report `0.7.28 (build v0.7.28)`,
+and the Windows and macOS server binaries carry the `v0.7.28` id with no
+`-dirty` suffix. Windows CI signed and verified **17** files with 0 errors and 0
+warnings, and every Windows executable checked locally, plus the installer,
+carries a certificate table. Published 2026-10-12 04:46 UTC.
 
 ## Screenshots
 
