@@ -1045,16 +1045,25 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
     // A faction may have only a few permitted ships (Easy Aramon has two),
     // while its inland army inflates the economy-based wave target. Let a
     // small fleet sail without waiting for troops that cannot cross the sea.
-    const int navalCount=int(std::count_if(idle.begin(),idle.end(),[&](const auto& f) {
+    // Amphibious (hover) units are that fleet too when no ground unit can reach
+    // the objective -- Taros has no ships, only the Rictus and Lich. Where the
+    // ground army can walk there, they stay with it for the big push.
+    const bool groundReaches=std::any_of(idle.begin(),idle.end(),[&](const auto& f) {
         const auto* u=world.unit(f.id);
-        return u && !u->type->canFly && u->type->domain==tak::sim::UnitType::Domain::Water;
+        return u && !u->type->canFly && u->type->domain==tak::sim::UnitType::Domain::Ground;
+    });
+    auto seaborne=[&](const tak::sim::Unit* u) {
+        return u && !u->type->canFly && (u->type->domain==tak::sim::UnitType::Domain::Water ||
+            (!groundReaches && u->type->domain==tak::sim::UnitType::Domain::Hover));
+    };
+    const int navalCount=int(std::count_if(idle.begin(),idle.end(),[&](const auto& f) {
+        return seaborne(world.unit(f.id));
     }));
     if (int(idle.size())<bigPush && navalCount>=(diff_==Difficulty::Easy ? 2 : 3) &&
         (!scouted_ || simTick-lastRaidTick_>=25*30)) {
         int sent=0;
         for (const auto& f:idle) {
-            const auto* u=world.unit(f.id);
-            if (!u || u->type->canFly || u->type->domain!=tak::sim::UnitType::Domain::Water) continue;
+            if (!seaborne(world.unit(f.id))) continue;
             emit(sink,tak::net::Cmd::AttackMove,f.id,"",f.x,f.z);
             if (++sent==256) break;
         }
