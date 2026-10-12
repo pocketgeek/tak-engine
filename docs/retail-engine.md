@@ -120,6 +120,37 @@ MeleeWeapon vtable `0x5f3af8`, base WeaponType `0x5f3710`):
   min 2; `minrange` → `+0x94`. Unit-def weapon-type pointers at `+0x1aa`
   (3 dwords). Range-ring UI strings @0x4d6823; debug dump @0x4fbf6b.
 
+## Fire-at-will sweep and weapon slots (icd, ported 2026-10-11, protocol 252)
+
+Retail does not acquire targets per unit per tick. Each player runs a
+round-robin **sweep** (`40f330`) over its units, N/30+1 per call (cursor wraps
+and skips its start slot), right after the AI schedule. Each of a unit's three
+weapon slots is **auto** or **manual**:
+
+- **Manual** while an attack order is at the front, after a build placement
+  succeeds, during help-build / repair / reclaim / resurrect work, and while
+  incapacitated, carried or under construction. Entering manual drops every
+  slot target (TargetCleared once per slot that had one). Our orders are not
+  retail missions, so `syncSlotMode` returns the slots to auto as soon as the
+  reason ends (retail: the mission destructor's setAuto `4d6da0`).
+- **Auto** slots are filled by `retailSelectTarget` (port of `412620`): 50
+  `gameRand` draws over the player's visible list (melee 5), integer distance
+  squared, `fireatwillrandom`, turn penalty, x10 multipliers, bad-target
+  fallback. Auto slots fire en route without braking or steering; only a
+  stopped, order-less ground unit pivots (at `turninplacerate`). Only
+  hover-attack flyers and ground units with `turninplacerate > 0` must face
+  the target to fire.
+- **Vision** for the sweep is a deterministic per-player view-count plane
+  rebuilt on a 7-tick stamp (hashed; separate from the local fog `vis_`).
+- **Hit response** (`409a50`): (a) an idle unit runs a leashed retaliation
+  attack and walks back; (b) otherwise the attacker goes to every auto slot that
+  can reach it unless the current target is still good. AI owners also switch
+  weapons (`51a8b0`) and sweep `commandfire` weapons; human owners do not.
+
+Deviations: auto slots of ranged, non-lobbing ground weapons keep our 2D
+clear-shot test (retail has none); turn-rate terrain multipliers, `shootme`
+and parts of the stone/freeze/paralyze immunity checks are not modelled.
+
 ## Ship / no-walk mover animation (icd + COB, 2026-09-10)
 
 Ships have no `walk` script. The engine drives them with the **`MoveRate`**
