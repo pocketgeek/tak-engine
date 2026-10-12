@@ -255,7 +255,7 @@
             if (squadShot) {
                 for (size_t k = 0; k < playerA.size(); ++k)
                     writableWorld().unit(playerA[k])->squad = k < 3 ? 1 : -2;
-                writableWorld().unit(playerMonarchId_)->squad = 10;
+                if (auto* m = writableWorld().unit(playerMonarchId_)) m->squad = 10;
                 std::fprintf(stderr, "squad shot: player army at %.0f %.0f\n", px, pz);
             }
             if (!squadShot && !playerA.empty() && !playerB.empty()) {
