@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: write
+  actions: write    # prune superseded ccache entries
 
 jobs:
   build:
@@ -39,6 +40,14 @@ jobs:
             runner: macos-15-intel
     env:
       MACOSX_DEPLOYMENT_TARGET: '14.0'
+      # Compiler cache for our own sources (CMake picks ccache up as the launcher).
+      # The Intel runner spent ~13 of its ~25 minutes rebuilding Release + Debug from
+      # nothing on every push. The repo cache quota is shared with the FFmpeg builds,
+      # so the size is capped and only the newest entry per arch is kept.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 600M
+      CCACHE_COMPRESS: 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -49,7 +58,7 @@ jobs:
           clang --version
 
       - name: Install dependencies
-        run: brew install ninja pkg-config nasm
+        run: brew install ninja pkg-config nasm ccache
 
       # Static Bink/streaming FFmpeg so the bundle plays the door videos with no
       # runtime FFmpeg (see tools/build-ffmpeg-bink.sh). Cached by FFmpeg version.
@@ -90,6 +99,13 @@ jobs:
           path: third_party/static-deps
           key: ${{ steps.static-cache.outputs.cache-primary-key }}
 
+      - name: Restore compiler cache
+        id: ccache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-macos-${{ matrix.arch }}-${{ github.sha }}
+          restore-keys: ccache-macos-${{ matrix.arch }}-
       - name: Configure + build
         # FIND_FRAMEWORK=LAST keeps FindJPEG off Mono.framework's ancient libjpeg; the
         # vendored static zlib/jpeg/SDL2 are found via the prefix (always static).
@@ -157,7 +173,11 @@ jobs:
       # cases, the instrument selftests, the asset-free scenarios of label legion (the
       # nightly and data-gated ones are not run here), the cost gate and the baseline
       # reasons check. The movement/production/transport variants need game data.
+      # arm64 only: the sim is bit-identical across architectures (the determinism gate
+      # below checks that on x64 too), and on the slower Intel runner this selection
+      # alone took ~8.5 minutes.
       - name: Legion navigation tests and scenarios
+        if: matrix.arch == 'arm64'
         env:
           CTEST_PARALLEL_LEVEL: 3
         run: |
@@ -245,6 +265,25 @@ jobs:
           cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_FIND_FRAMEWORK=LAST
           cmake --build build-debug --target takclient takserver cartographer crusades_admin
+          ccache --show-stats
+
+      # Saved even when a test step failed, so the next push still starts warm.
+      - name: Save compiler cache
+        if: always() && steps.ccache-restore.outcome == 'success' && steps.ccache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
+      - name: Prune older compiler caches
+        if: always() && steps.ccache-restore.outcome == 'success' && steps.ccache-restore.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          keep="ccache-macos-${{ matrix.arch }}-${{ github.sha }}"
+          gh cache list --repo "$GITHUB_REPOSITORY" --key "ccache-macos-${{ matrix.arch }}-" --limit 100 \
+              --json key --jq '.[].key' | while read -r key; do
+            [ "$key" = "$keep" ] || gh cache delete "$key" --repo "$GITHUB_REPOSITORY" || true
+          done
 
       - name: Verify Debug architecture and static dependencies
         run: |
