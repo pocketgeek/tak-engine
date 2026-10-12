@@ -10,6 +10,7 @@
 //   chrome.cpp    menus, toolbar, keyboard shortcuts, status bar, minimap, hints
 //   dialogs.cpp   modal dialogs, regions/use-only/placed-unit lists, async jobs
 //   scripting.cpp the trigger-rule overlay
+//   symmetrytools.cpp Symmetry menu, Symmetrize, live mirroring, terrain clipboard
 // Declaration order is the old local order, so destruction order is unchanged.
 
 #include "cartographer/editor.h"
@@ -26,6 +27,7 @@
 #include "cartographer/ruleedit.h"
 #include "cartographer/sections.h"
 #include "cartographer/selection.h"
+#include "cartographer/symmetry.h"
 #include "cartographer/textedit.h"
 #include "cartographer/thumbnails.h"
 #include "cartographer/units.h"
@@ -268,7 +270,7 @@ struct Editor : Session {
     void drawMinimap();
 
     // --- Modal dialogs (dialogs.cpp) ------------------------------------------
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_RULENAME, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES, M_MODEL_LOADING, M_MODEL, M_OBJECTS };
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_RULENAME, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES, M_MODEL_LOADING, M_MODEL, M_OBJECTS, M_SYMMETRIZE };
     static constexpr int kMaxFields = 11;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
@@ -418,12 +420,14 @@ struct Editor : Session {
     std::string hoveredHint;Uint64 hintSince=0;
     struct ViewBookmark {float x,z,zoom;};
     std::optional<ViewBookmark> viewBookmark;
-    const std::vector<std::string> menuNames={"FILE","EDIT","VIEW","SCENARIO","HELP"};
+    const std::vector<std::string> menuNames={"FILE","EDIT","VIEW","SCENARIO","SYMMETRY","HELP"};
     const std::vector<std::vector<std::string>> menuRows={
         {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Test Map (F5)","Exit"},
-        {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)","Terrain brush: protect objects"},
+        {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)","Terrain brush: protect objects","Copy terrain selection (Ctrl+C)","Paste terrain clipboard (Ctrl+V)"},
         {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selection","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay","Smaller UI","Larger UI","Show features","Show units","Show starts","Unit model preview (F6)"},
         {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions","Validation results","Regenerate from recipe","Log Test Map triggers","Placed units"},
+        {"Live symmetry (M)","Symmetrize map (Shift+M)","Axis: vertical (left | right)","Axis: horizontal (top / bottom)","Axis: diagonal \\ (square maps)",
+         "Axis: diagonal / (square maps)","Rotate 2-way (180)","Rotate 4-way (90, square maps)","Mirror 4-way (both axes)","Locate unmirrored terrain"},
         {"Editor controls","About"}};
     void menuAction(int menu,int row);
     bool handleMenuInput(SDL_Event& e);
@@ -441,6 +445,52 @@ struct Editor : Session {
     void clearRecovery();
     void autosaveRecovery();
     void restoreHistory(const HistoryState* state);
+
+    // --- Symmetry and the terrain clipboard (symmetrytools.cpp) ---------------
+    cart::Mirror symmetryKind=cart::Mirror::Vertical;
+    bool liveSymmetry=false;
+    std::string symmetryStatus;Uint64 symmetryStatusAt=0;
+    std::vector<MapIssue> symmetryIssues;      // unmirrored terrain from the last Symmetrize
+    std::vector<std::string> symmetryKindOpts,symmetrySourceOpts;
+    const std::vector<std::string> symmetryTerrainOpts={"MIRROR SECTION TWINS","LEAVE TERRAIN"};
+    cart::SectionMatcher sectionMatcher;
+    const cart::SectionMatcher& symmetrySections();   // built lazily per world
+    cart::FootprintLookup featureFootprint();
+    bool symmetryFits(cart::Mirror) const;            // square-only kinds on square maps
+    bool symmetrySelection() const;                   // a selection can be the source
+    void setSymmetryStatus(std::string text);
+    std::string symmetryStatusText() const;
+    std::string symmetryMenuLabel(size_t row) const;
+    void symmetryMenu(int row);
+    void toggleLiveSymmetry();
+    void setupSymmetrizeFields();                     // openModal(M_SYMMETRIZE)
+    void refreshSymmetryDialog();
+    void applySymmetrize();
+    // Snapshot of the edited layer before a canvas handler; the destructor
+    // mirrors whatever the handler changed (live symmetry).
+    struct LiveEdit {
+        Editor& editor;bool active=false;
+        std::vector<PlacedUnit> units;std::vector<tak::tnt::StartPos> starts;
+        std::vector<uint16_t> features;std::vector<std::string> featureNames;
+        LiveEdit(Editor& owner,const SDL_Event& e,bool keyboard);
+        ~LiveEdit();
+    };
+    void stampMirrors(int section,int x,int z);
+    std::optional<cart::Box> terrainSelection;
+    bool terrainSelecting=false;int terrainSelX=0,terrainSelZ=0;
+    cart::TerrainClip terrainClip;
+    bool clipBrush=false;int clipBrushSection=-1;
+    std::string clipWorldAccepted;
+    std::unique_ptr<SDL_Texture,decltype(&SDL_DestroyTexture)> clipTexture{nullptr,SDL_DestroyTexture};
+    bool clipboardBrush() const;
+    cart::Box clipBrushBox(float wx,float wz) const;
+    bool handleTerrainSelection(SDL_Event& e);
+    bool handleTerrainKeys(SDL_Event& e);
+    void copyTerrainSelection();
+    void useTerrainClipboard();
+    void pasteTerrainAtMouse(int mx,int my);
+    void pasteTerrainAt(int bx,int bz);
+    void drawSymmetryOverlay();
 
     // --- --shot (headless.cpp) ------------------------------------------------
     void prepareShot();

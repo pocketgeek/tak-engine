@@ -39,6 +39,8 @@ void FeatureLibrary::scan(const tak::hpi::Vfs& vfs, const std::string& world) {
                 r.filename = lower(n->valueOr("filename", ""));
                 r.seqname = lower(n->valueOr("seqname", ""));
                 r.world = lower(n->valueOr("world", world));
+                r.footX = std::max(1, int(n->numberOr("footprintx", 1)));
+                r.footZ = std::max(1, int(n->numberOr("footprintz", 1)));
                 // Only placeable art features (skip corpses / defs with no art).
                 if (!r.filename.empty() && !r.seqname.empty())
                     refs_.push_back(std::move(r));

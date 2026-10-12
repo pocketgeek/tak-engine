@@ -6,6 +6,8 @@
 #include "cartographer/featureselection.h"
 #include "cartographer/sections.h"
 #include "cartographer/preferences.h"
+#include "cartographer/symmetry.h"
+#include <cmath>
 #include <random>
 #include <chrono>
 #include <fstream>
@@ -15,6 +17,164 @@
 static void check(bool value,const char* message) {if(!value)throw std::runtime_error(message);}
 static std::vector<uint8_t> read(const std::filesystem::path& path) {
     std::ifstream f(path,std::ios::binary);return {std::istreambuf_iterator<char>(f),{}};
+}
+
+// Symmetry math, section twins, Symmetrize, live mirroring and the terrain
+// clipboard, on synthetic maps (no retail data).
+static tak::tnt::Map blankMap(int blocksX,int blocksY) {
+    tak::tnt::Map map;map.blocksX=blocksX;map.blocksY=blocksY;map.width=blocksX*2;map.height=blocksY*2;
+    map.heights.assign(size_t(map.width)*map.height,50);map.features.assign(map.heights.size(),0xFFFF);
+    map.tileKeys.assign(size_t(blocksX)*blocksY,7);map.tileCols.assign(map.tileKeys.size(),0);map.tileRows.assign(map.tileKeys.size(),0);
+    return map;
+}
+static tak::tnt::Map prefab(uint32_t key,uint8_t height) {   // 2x2 blocks, one key, distinct cols/rows
+    auto map=blankMap(2,2);
+    for(int i=0;i<4;++i) {map.tileKeys[size_t(i)]=key;map.tileCols[size_t(i)]=uint8_t(i%2);map.tileRows[size_t(i)]=uint8_t(i/2);}
+    for(size_t i=0;i<map.heights.size();++i)map.heights[i]=uint8_t(height+i);
+    map.features[1]=0xFFFB;   // a road marker in the second cell
+    return map;
+}
+static void symmetryTests() {
+    using cart::Xf;using cart::Mirror;
+    // Facing: CRT angle a faces (sin a, cos a); 0 = south (+z), 90 = east (+x).
+    check(cart::mirrorAngle(Xf::FlipX,90)==270 && cart::mirrorAngle(Xf::FlipX,0)==0,"left-right mirror turns east to west");
+    check(cart::mirrorAngle(Xf::FlipZ,0)==180 && cart::mirrorAngle(Xf::FlipZ,90)==90,"top-bottom mirror turns south to north");
+    check(cart::mirrorAngle(Xf::Rot180,45)==225 && cart::mirrorAngle(Xf::Transpose,0)==90 && cart::mirrorAngle(Xf::AntiTranspose,0)==270,"half turn and diagonals");
+    check(cart::mirrorAngle(Xf::Rot90,90)==0 && cart::mirrorAngle(Xf::Rot270,0)==90,"clockwise quarter turn: east becomes south");
+    for(int f=1;f<8;++f)for(int a=0;a<360;a+=15) {
+        const auto [dx,dz]=cart::transformDirection(Xf(f),1000,0);(void)dx;(void)dz;
+        const double r=a*3.14159265358979/180,s=std::sin(r),c=std::cos(r);
+        // Apply the transform's linear part to the facing vector.
+        const auto x=cart::transformDirection(Xf(f),1,0),z=cart::transformDirection(Xf(f),0,1);
+        const double fx=s*x.first+c*z.first,fz=s*x.second+c*z.second;
+        int expected=int(std::lround(std::atan2(fx,fz)*180/3.14159265358979))%360;if(expected<0)expected+=360;
+        check(cart::mirrorAngle(Xf(f),a)==expected,"mirrored angle matches the transformed facing vector");
+    }
+    // Source regions and their images tile the map; only axis points repeat.
+    for(int k=0;k<cart::kMirrorKinds;++k)for(int src=0;src<int(cart::mirrorSources(Mirror(k)).size());++src)
+        for(int z=0;z<=24;++z)for(int x=0;x<=24;++x) {
+            const cart::PointF p{x*.5,z*.5};
+            int covered=cart::inSource(Mirror(k),src,p,12,12);
+            for(Xf xf:cart::mirrorImages(Mirror(k)))covered+=cart::inSource(Mirror(k),src,cart::transform(cart::inverse(xf),p,12,12),12,12);
+            check(covered>=1,"every point is a source point or the image of one");
+            bool fixed=false;for(Xf xf:cart::mirrorImages(Mirror(k))) {const auto q=cart::transform(xf,p,12,12);fixed|=q.x==p.x && q.z==p.z;}
+            const bool axisLine=Mirror(k)==Mirror::Quad && (p.x==6 || p.z==6);
+            check(covered==1 || fixed || axisLine,"source and images overlap only on the axis");
+        }
+    // Footprints: a 3x2 structure occupies the mirrored cells (save-cell exact).
+    cart::PlacedUnit keep;keep.type="KEEP";keep.footX=3;keep.footZ=2;keep.x=2*16+24;keep.z=5*16+16;keep.angle=90;keep.name="North keep";
+    const auto flipped=cart::mirrorUnit(keep,Xf::FlipX,64,64);
+    check(flipped && int((flipped->x-24)/16)==59 && int((flipped->z-16)/16)==5 && flipped->angle==270,"left-right mirror keeps the footprint inside the mirrored cells");
+    const auto turned=cart::mirrorUnit(keep,Xf::Rot180,64,64);
+    check(turned && int((turned->x-24)/16)==59 && int((turned->z-16)/16)==57,"half turn mirrors the footprint origin");
+    const auto transposed=cart::mirrorUnit(keep,Xf::Transpose,64,64);
+    check(transposed && std::abs(transposed->x/16-keep.z/16)<=.5 && std::abs(transposed->z/16-keep.x/16)<=.5 && transposed->footX==3,"non-square footprint keeps its shape, centred on the mirror");
+    check(!cart::mirrorStart({1,0,5},Xf::FlipX,64,64) && cart::mirrorStart({1,1,5},Xf::FlipX,64,64)->xpos==63,"a start on the map edge mirrors off the map");
+    check(cart::mirrorFeature(10,4,2,3,Xf::FlipX,64,64)==std::pair{52,4} && cart::mirrorFeature(10,4,2,3,Xf::FlipZ,64,64)==std::pair{10,57},"feature origin mirrors its footprint");
+    tak::crt::Region region{"Base",2,3,5,10};
+    const auto mirroredRegion=cart::mirrorRegion(region,Xf::FlipX,64,64),transposedRegion=cart::mirrorRegion(region,Xf::Transpose,64,64);
+    check(mirroredRegion && mirroredRegion->x1==58 && mirroredRegion->x2==61 && mirroredRegion->z1==3 && mirroredRegion->z2==10,"region inclusive corners mirror");
+    check(transposedRegion && transposedRegion->x1==3 && transposedRegion->x2==10 && transposedRegion->z1==2 && transposedRegion->z2==5,"region transposes");
+    check(cart::uniqueRegionName({{"Base mirror",0,0,0,0}},"Base mirror")=="Base mirror 2","mirrored region names stay unique");
+    // Section twins by direction tokens.
+    const std::vector<std::string> cliffs={"1neclif1trans","1nwclif1trans","1seclif1trans","1swclif1trans","nclif1","sclif1","sclif4","eclif1","wclif1"};
+    check(cart::sectionTwinName("1NEclif1trans","Coast Cliffs",cliffs,Xf::FlipX)=="1nwclif1trans","ne becomes nw");
+    check(cart::sectionTwinName("1neclif1trans","Coast Cliffs",cliffs,Xf::Rot180)=="1swclif1trans","half turn: ne becomes sw");
+    check(cart::sectionTwinName("sclif4","Coast Cliffs",cliffs,Xf::FlipX)=="sclif4","an invariant direction is its own twin");
+    check(!cart::sectionTwinName("sclif4","Coast Cliffs",cliffs,Xf::FlipZ),"a missing twin is reported");
+    check(cart::sectionTwinName("eclif1","Coast Cliffs",cliffs,Xf::Rot90)=="sclif1","quarter turn: east becomes south");
+    const std::vector<std::string> roads={"hwye_n01","hwyn_w01","hwye_s01","hwys_w01","e_n01","n_w01","trans_e01","trans_s01","trans_w01","nee01","nwe01","y_n_lft","y_n_rgt"};
+    check(cart::sectionTwinName("hwye_n01","Low Roads",roads,Xf::FlipX)=="hwyn_w01","connection sets are reordered");
+    check(cart::sectionTwinName("e_n01","Low Roads",roads,Xf::FlipX)=="n_w01","underscore runs are sorted like the shipped names");
+    check(cart::sectionTwinName("trans_e01","Low Roads",roads,Xf::Rot90)=="trans_s01","letters inside words are not directions");
+    check(cart::sectionTwinName("nee01","Low Roads",roads,Xf::FlipX)=="nwe01","exterior suffix is kept");
+    check(cart::sectionTwinName("y_n_lft","Low Roads",roads,Xf::FlipX)=="y_n_rgt","left/right words swap");
+    check(!cart::sectionTwinName("ariver01a","Low Rivers",{"ariver01a","ariver01b"},Xf::FlipX),"direction-free specials have no twin");
+    check(cart::sectionTwinName("cobb_80","Low Flats",{"cobb_80"},Xf::Rot90)=="cobb_80","direction-free flat ground is its own twin");
+
+    // Terrain attribution and twins on a synthetic library.
+    const auto ne=prefab(100,10),nw=prefab(200,40),river=prefab(300,70),flat=blankMap(2,2);
+    std::vector<cart::SectionRef> refs{{"Cliffs","ne01","a"},{"Cliffs","nw01","b"},{"Rivers","river01","c"},{"Low Flats","flat01","d"}};
+    const tak::tnt::Map* prefabs[]={&ne,&nw,&river,&flat};
+    cart::SectionMatcher matcher;matcher.build(refs,[&](size_t i){return prefabs[i];});matcher.setKey("test");
+    check(matcher.twin(0,Xf::FlipX)==1 && matcher.twin(1,Xf::FlipX)==0 && matcher.twin(2,Xf::FlipX)<0 && matcher.twin(3,Xf::FlipX)==3,"matcher resolves twins by index");
+    auto map=blankMap(8,4);
+    cart::stampSection(map,ne,0,0);cart::stampSection(map,river,0,2);
+    map.tileKeys[size_t(3)*8+2]=999;   // an unknown tile at block (2,3)
+    map.featureNames={"Tree","Rock"};map.features[size_t(1)*16+2]=0;map.features[size_t(1)*16+14]=1;   // Rock on the target side
+    std::vector<tak::tnt::StartPos> starts{{1,4,4},{2,12,4},{3,5,6}};
+    tak::crt::Scenario scenario;scenario.regions={{"Left camp",1,1,3,3},{"Right camp",10,1,12,3}};
+    std::vector<cart::PlacedUnit> units(3);
+    units[0].type="ARCH";units[0].player=0;units[0].x=3*16+8;units[0].z=2*16+8;units[0].angle=90;units[0].name="Hero";
+    units[1].type="ARCH";units[1].player=1;units[1].x=13*16+8;units[1].z=2*16+8;   // replaced
+    units[2].type="ARCH";units[2].player=0;units[2].x=7*16+8;units[2].z=7*16+8;units[2].footX=2;units[2].x=8*16;   // centred on the axis
+    cart::SymmetryRequest request;request.kind=Mirror::Vertical;request.source=0;
+    const auto report=cart::symmetrize(map,starts,scenario,units,request,{},&matcher);
+    check(map.tileKeys[6]==200 && map.tileCols[6]==0 && map.tileCols[7]==1 && map.tileRows[size_t(8)+6]==1,"mirrored blocks take the twin section at the mirrored placement");
+    check(map.heights[12]==40 && map.heights[size_t(3)*16+15]==40+3*4+3,"twin heights move with its tiles");
+    check(map.features[13]==0xFFFB,"twin terrain markers come along");
+    check(report.unmirroredBlocks==5 && report.terrainIssues.size()==1,"unknown tiles and twinless sections are counted");
+    check(map.tileKeys[size_t(3)*8+5]==7,"unmirrored blocks are left unchanged");
+    check(report.terrainIssues[0].message.find("river01")!=std::string::npos,"twinless section is named in the report");
+    check(map.features[size_t(1)*16+14]==0xFFFF && map.features[size_t(1)*16+13]==0 && report.removedFeatures==1 && report.features==1,"target features replaced by mirrored copies");
+    check(starts.size()==4 && starts[0].number==1 && starts[1].number==3 && starts[2].number==2 && starts[2].xpos==12 && starts[2].zpos==4 && starts[3].number==4 && starts[3].xpos==11,"source starts keep numbers; mirrors take the next free one");
+    check(scenario.regions.size()==2 && scenario.regions[1].name=="Left camp mirror" && scenario.regions[1].x1==12 && scenario.regions[1].x2==14,"target region replaced by a uniquely named mirror");
+    check(units.size()==3 && report.removedUnits==1,"target-side unit replaced, axis unit kept without a copy");
+    const auto& copy=units.back();
+    check(copy.name.empty() && units[0].name=="Hero" && copy.x==12*16+8 && copy.angle==270,"copies drop unique names and mirror facing");
+    check(copy.player==1,"copy belongs to the owner of the mirrored start");
+    auto map2=blankMap(8,4);std::vector<tak::tnt::StartPos> noStarts;std::vector<cart::PlacedUnit> noUnits;
+    // Eight starts on one side leave no number for their mirrors.
+    std::vector<tak::tnt::StartPos> crowded;for(int n=1;n<=8;++n)crowded.push_back({n,1+(n-1)%4,n<=4?1:3});
+    tak::crt::Scenario empty;
+    const auto full=cart::symmetrize(map2,crowded,empty,noUnits,request,{},nullptr);
+    check(full.skippedStarts==8 && crowded.size()==8,"mirrored starts beyond eight are skipped");
+    // Selection source: the image replaces an unselected unit under it.
+    std::vector<cart::PlacedUnit> picked(2);
+    picked[0].type="ARCH";picked[0].x=2*16+8;picked[0].z=8;picked[1].type="WALL";picked[1].x=13*16+8;picked[1].z=8;
+    cart::SymmetryRequest selection;selection.kind=Mirror::Vertical;selection.source=-1;selection.units={0};selection.terrain=false;
+    const auto picks=cart::symmetrize(map2,noStarts,empty,picked,selection,{},nullptr);
+    check(picks.units==1 && picks.removedUnits==1 && picked.size()==2 && picked[1].type=="ARCH","selection images replace what they cover");
+
+    // Live mirroring: add, move (no index shift), erase.
+    std::vector<cart::PlacedUnit> live,before;
+    cart::PlacedUnit tower;tower.type="TOWER";tower.x=2*16+8;tower.z=3*16+8;
+    live.push_back(tower);
+    check(cart::mirrorUnitEdits(before,live,Mirror::Vertical,{},16,8).copies==1 && live.size()==2 && live[1].x==13*16+8,"placing a unit places its mirror");
+    before=live;live[0].x+=16;
+    check(cart::mirrorUnitEdits(before,live,Mirror::Vertical,{},16,8).copies==0 && live.size()==2 && live[1].x==12*16+8,"moving a unit moves its mirror in place");
+    before=live;live.erase(live.begin());
+    cart::mirrorUnitEdits(before,live,Mirror::Vertical,{},16,8);
+    check(live.empty(),"erasing a unit erases its mirror");
+    auto fmap=blankMap(8,4);fmap.featureNames={"Tree"};auto fbefore=fmap.features;fmap.features[size_t(2)*16+1]=0;
+    cart::mirrorFeatureEdits(fbefore,fmap.featureNames,fmap,Mirror::Quad,[](const std::string&){return std::pair{2,1};});
+    check(fmap.features[size_t(2)*16+13]==0 && fmap.features[size_t(5)*16+1]==0 && fmap.features[size_t(5)*16+13]==0,"4-way mirror places three copies with mirrored footprints");
+    fbefore=fmap.features;fmap.features[size_t(2)*16+1]=0xFFFF;
+    cart::mirrorFeatureEdits(fbefore,fmap.featureNames,fmap,Mirror::Quad,[](const std::string&){return std::pair{2,1};});
+    check(std::count(fmap.features.begin(),fmap.features.end(),uint16_t(0))==0,"erasing a feature erases its mirrors");
+    std::vector<tak::tnt::StartPos> liveStarts{{1,3,3}},beforeStarts;
+    cart::mirrorStartEdits(beforeStarts,liveStarts,Mirror::Rotate2,16,8);
+    check(liveStarts.size()==2 && liveStarts[1].number==2 && liveStarts[1].xpos==13 && liveStarts[1].zpos==5,"a new start mirrors with the next number");
+    beforeStarts=liveStarts;liveStarts[0].xpos=4;
+    cart::mirrorStartEdits(beforeStarts,liveStarts,Mirror::Rotate2,16,8);
+    check(liveStarts.size()==2 && liveStarts[1].xpos==12,"moving a start moves its mirror");
+
+    // Terrain clipboard: copy, paste with/without objects, and its mirror.
+    auto source=blankMap(8,4);cart::stampSection(source,ne,2,0);source.featureNames={"Tree"};source.features[size_t(1)*16+5]=0;
+    std::vector<cart::PlacedUnit> sourceUnits{tower};sourceUnits[0].x=5*16+8;sourceUnits[0].z=16+8;sourceUnits[0].name="Watch";
+    const auto clip=cart::copyTerrain(source,{2,0,4,2},sourceUnits,&matcher);
+    check(clip.map.blocksX==2 && clip.units.size()==1 && clip.units[0].name.empty() && clip.attribution.size()==4 && clip.attribution[0].section==0,"copy captures tiles, objects and section placement");
+    auto target=blankMap(8,4);target.featureNames={"Rock"};target.features[size_t(5)*16+9]=0;
+    std::vector<cart::PlacedUnit> targetUnits;
+    check(cart::pasteTerrain(target,targetUnits,clip,4,2,{false}).pasted && targetUnits.empty() && target.features[size_t(5)*16+9]==0 && target.tileKeys[size_t(2)*8+4]==100,"protected paste keeps objects and adds none");
+    const auto pasted=cart::pasteTerrain(target,targetUnits,clip,4,2,{true});
+    check(pasted.units==1 && target.featureNames[target.features[size_t(5)*16+9]]=="Tree" && target.heights[size_t(4)*16+8]==10,"paste with objects brings features, units and heights");
+    std::string why;
+    const auto mirroredClip=cart::mirrorClip(clip,Xf::FlipX,matcher,{},why);
+    check(mirroredClip && mirroredClip->map.tileKeys[0]==200 && mirroredClip->units.size()==1 && mirroredClip->units[0].x==64-(5*16+8-64),"clipboard mirror uses twins");
+    auto unknown=clip;unknown.attribution[1].section=-1;
+    check(!cart::mirrorClip(unknown,Xf::FlipX,matcher,{},why) && why.find("not a known section")!=std::string::npos,"clipboard with an unknown block is not mirrored");
+    std::cout<<"PASS: symmetry angles, regions, footprints, twins, Symmetrize, live mirroring and terrain clipboard\n";
 }
 int main() {
     namespace fs=std::filesystem;
@@ -234,6 +394,7 @@ int main() {
         cart::History bounded(2500);bounded.reset(initial,true);
         for(int i=0;i<20;++i) {auto state=initial;state.name=std::to_string(i);bounded.commit(state);}
         check(bounded.retainedBytes()<2500,"history respects memory budget");
+        symmetryTests();
         fs::remove_all(root);
         std::cout<<"PASS: rule-only saves, metadata, stale deletion, backups, failed writes, names\n";
     } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';fs::remove_all(root);return 1;}

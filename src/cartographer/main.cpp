@@ -261,7 +261,8 @@ cart::Editor::Editor(int argc,char** argv,const FrameHook& frameHook,const Edito
             "Start with File > Open (Ctrl+O), or New (Ctrl+N). Pick a tool and search the left browser (Ctrl+F).\n"
             "Place adds objects; Select moves or edits them. Right-drag pans in any mode; the mouse wheel zooms. Click the minimap to travel.\n"
             "Ctrl+Z undoes edits. Ctrl+S saves a playable map bundle. Unsaved work gets recovery copies every minute.\n"
-            "Before playing, use Scenario > Check map (C). Hover over toolbar controls for help; Help > Editor controls lists shortcuts.");
+            "Before playing, use Scenario > Check map (C). Hover over toolbar controls for help; Help > Editor controls lists shortcuts.\n"
+            "For fair multiplayer maps, the Symmetry menu mirrors your edits live (M) or copies one half onto the other (Shift+M).");
         preferences.guideSeen=true;persistPreferences();
     }
     nextRecovery=recoveryClock()+60000;

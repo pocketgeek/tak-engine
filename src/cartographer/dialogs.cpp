@@ -56,6 +56,8 @@ void cart::Editor::openModal(Modal m, int unitIdx) {
         mLabel[8]="WIDTH (1-64 UNITS)";mf[8]=generatorDraft[1];mfNumeric[8]=true;
         mLabel[9]="HEIGHT (1-64 UNITS)";mf[9]=generatorDraft[2];mfNumeric[9]=true;
         mLabel[10]="WORLD";mf[10]=generatorDraft[3];mfNumeric[10]=false;mfChoices[10]=&kWorldOpts;
+    } else if(m==M_SYMMETRIZE) {
+        setupSymmetrizeFields();
     } else if(m==M_REGION) {
         editRegion=unitIdx;
         tak::crt::Region region;
@@ -336,6 +338,9 @@ void cart::Editor::applyModal() {
     } else if (modal == M_CONFIRM) {
         if (confirmAction) confirmAction();
         confirmAction = nullptr;
+    } else if (modal == M_SYMMETRIZE) {
+        applySymmetrize();   // opens its confirmation, or reports why not
+        if(!modalError.empty())return;
     }
     if(modal!=applying)return;
     modal = M_NONE; SDL_StopTextInput();
@@ -750,6 +755,7 @@ void cart::Editor::drawRegionsList() {
 }
 
 void cart::Editor::drawModal() {
+    if(modal==M_SYMMETRIZE)refreshSymmetryDialog();   // sources follow the chosen mirror
     // Save-before-exit prompt: SAVE / DON'T SAVE / CANCEL.
     if(modal==M_GENERATED && generatedPreview) {
         const auto ct=cart::drawPanel(ren,w,h,460,465,"GENERATED MAP PREVIEW");

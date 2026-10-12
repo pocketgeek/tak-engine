@@ -30,6 +30,7 @@ bool cart::Session::stampByName(const std::string& name, int bx, int by) {
 }
 
 void cart::Editor::stampAtMouse(int mx, int my, int w, int h) {
+    if (mx >= kPaletteW && clipboardBrush()) { pasteTerrainAtMouse(mx, my); return; }
     if (selected < 0 || mx < kPaletteW) return;   // palette side, not the canvas
     const auto& s = sections.list()[size_t(selected)];
     const tak::tnt::Map* sec = sections.load(vfs, s.path);
@@ -48,6 +49,7 @@ void cart::Editor::stampAtMouse(int mx, int my, int w, int h) {
     if (cart::stampSection(mapView.editMap(), *sec, snapX, snapY,stampLayers)) {
         mapView.tilesEdited(snapX,snapY,sec->blocksX,sec->blocksY);invalidateMinimap();
         edited = true; dirty = true; historyPending=true;
+        stampMirrors(selected,snapX,snapY);   // live symmetry: twin sections
     }
     (void)w; (void)h;
 }
@@ -133,6 +135,8 @@ bool cart::Editor::handleRegionDrag(SDL_Event& e) {
 
 // Region-canvas keys and the feature / unit clipboard keys.
 bool cart::Editor::handleCanvasKeys(SDL_Event& e) {
+    const LiveEdit live(*this,e,true);
+    if(handleTerrainKeys(e))return true;
     if(regionCanvas && e.type==SDL_KEYDOWN) {
         if(e.key.keysym.sym==SDLK_ESCAPE) {regionCanvas=false;return true;}
         if(e.key.keysym.sym==SDLK_RETURN && regionSelected>=0 && regionSelected<int(scen.regions.size())) {openModal(M_REGION,regionSelected);return true;}
@@ -186,6 +190,8 @@ bool cart::Editor::handleCanvasKeys(SDL_Event& e) {
 
 // Canvas zoom, clicks, drags and right-drag panning; other events reach MapView.
 void cart::Editor::handleCanvasInput(SDL_Event& e,float pointerDX,float pointerDZ) {
+    const LiveEdit live(*this,e,false);
+    if(handleTerrainSelection(e))return;
     if (e.type == SDL_MOUSEWHEEL) {
         int mxp, myp; SDL_GetMouseState(&mxp, &myp); mxp /= kUIScale; myp /= kUIScale;
         const float before=mapView.zoom();
@@ -347,7 +353,7 @@ void cart::Editor::handleCanvasInput(SDL_Event& e,float pointerDX,float pointerD
         if (clearDrag) {   // Clear Area: grow the box
             clx1 = e.motion.x; cly1 = e.motion.y;
         } else if (tool == TERRAIN) {
-            stampAtMouse(e.motion.x, e.motion.y, canvasW, canvasH);   // drag-paint
+            if (!clipboardBrush()) stampAtMouse(e.motion.x, e.motion.y, canvasW, canvasH);   // drag-paint; the clipboard pastes per click
         } else if (tool == FEATURES) {
             placeFeature(e.motion.x, e.motion.y, false);   // drag-place features
         } else if (tool == UNITS && draggingUnit >= 0) {
@@ -471,7 +477,8 @@ void cart::Editor::drawCanvas() {
             SDL_SetRenderDrawColor(ren,255,225,100,255);
             SDL_FRect footprint{sx-width/2,sy-height/2,width,height};SDL_RenderDrawRectF(ren,&footprint);
             const float angle=units[i].angle*3.14159265f/180;
-            SDL_RenderDrawLineF(ren,sx,sy,sx+std::sin(angle)*22,sy-std::cos(angle)*22);
+            // CRT angle a faces (sin a, cos a) in map x/z, as the engine spawns it.
+            SDL_RenderDrawLineF(ren,sx,sy,sx+std::sin(angle)*22,sy+std::cos(angle)*22);
         }
         if (mapView.zoom() > 0.28f) {  // label only when there's room
             const auto& label=units[i].name.empty()?units[i].type:units[i].name;
@@ -511,7 +518,11 @@ void cart::Editor::drawCanvas() {
        previewX>=kPaletteW && previewZ>=kMenuH && previewZ<h-kStatusH && !cart::pointIn(previewX,previewZ,miniRect)) {
         const float wx=mapView.offX()+(previewX-kPaletteW)/mapView.zoom(),wz=mapView.offY()+(previewZ-kMenuH)/mapView.zoom();
         SDL_FRect box{};SDL_Texture* ghost=nullptr;
-        if(tool==TERRAIN && selected>=0) {
+        if(tool==TERRAIN && clipboardBrush()) {
+            const auto b=clipBrushBox(wx,wz);
+            box={(b.x0*32-mapView.offX())*mapView.zoom(),(b.z0*32-mapView.offY())*mapView.zoom(),(b.x1-b.x0)*32*mapView.zoom(),(b.z1-b.z0)*32*mapView.zoom()};
+            ghost=clipTexture.get();
+        } else if(tool==TERRAIN && selected>=0) {
             const auto& section=sections.list()[size_t(selected)];const auto* map=sections.load(vfs,section.path);
             if(map && map->blocksX>0 && map->blocksY>0) {
                 const int x=(int(wx/32)/map->blocksX)*map->blocksX,z=(int(wz/32)/map->blocksY)*map->blocksY;
@@ -532,6 +543,7 @@ void cart::Editor::drawCanvas() {
         if(ghost) {Uint8 alpha=255;SDL_BlendMode blend;SDL_GetTextureAlphaMod(ghost,&alpha);SDL_GetTextureBlendMode(ghost,&blend);SDL_SetTextureAlphaMod(ghost,120);SDL_SetTextureBlendMode(ghost,SDL_BLENDMODE_BLEND);SDL_RenderCopyF(ren,ghost,nullptr,&box);SDL_SetTextureAlphaMod(ghost,alpha);SDL_SetTextureBlendMode(ghost,blend);}
         SDL_SetRenderDrawColor(ren,255,220,90,220);SDL_RenderDrawRectF(ren,&box);
     }
+    drawSymmetryOverlay();
     SDL_RenderSetViewport(ren, nullptr);
 }
 

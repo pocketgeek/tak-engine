@@ -7,6 +7,8 @@
 #include "cartographer/newmap.h"
 #include "cartographer/thumbnails.h"
 #include "cartographer/sections.h"
+#include "cartographer/features.h"
+#include "cartographer/symmetry.h"
 #include "terrain/terrain.h"
 #include "cartographer/textedit.h"
 #include "hpi/hpi.h"
@@ -811,6 +813,165 @@ static int headlessWorkflow(const char* data) {
     if(!failure.empty()) {std::cerr<<"FAIL: "<<failure<<'\n';return 1;}
     std::cout<<"PASS: headless exit codes, --save/--stamp/--bundle output and --shot capture\n";return 0;
 }
+
+// A saved KMP read back: terrain, metadata (starts) and placed units.
+struct SavedMap {tak::tnt::Map map;tak::tnt::Scenario metadata;std::vector<cart::PlacedUnit> units;};
+static SavedMap readSaved(const std::filesystem::path& path,const tak::sim::TypeRegistry* registry=nullptr) {
+    SavedMap saved;tak::hpi::Archive archive(path);
+    for(const auto& entry:archive.entries()) {
+        if(entry.path.ends_with(".tnt"))saved.map=tak::tnt::Map::load(archive.read(entry),entry.path);
+        if(entry.path.ends_with(".ota")) {const auto bytes=archive.read(entry);saved.metadata=tak::tnt::Scenario::parse(std::string(bytes.begin(),bytes.end()));}
+        if(entry.path.ends_with(".crt"))saved.units=cart::toPlaced(tak::crt::parse(archive.read(entry)),registry);
+    }
+    return saved;
+}
+// Symmetry > Symmetrize through its dialog and confirmation, one undo step,
+// redo and save (checked against an independent symmetrize of the fixture),
+// then live symmetry mirroring a unit placement as one undo step.
+static int symmetryWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-symmetry-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    const auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
+    const auto map=tak::tnt::Map::load(vfs.read(path),path);
+    tak::tnt::Scenario metadata;metadata.kingdom="zhon";metadata.starts={{1,40,40}};
+    tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,false);
+    cart::PlacedUnit guard;guard.type="ARAARCH";guard.player=0;guard.angle=90;guard.name="Left guard";
+    if(const auto* type=registry.find("araarch")) {guard.footX=type->footX;guard.footZ=type->footZ;}
+    guard.x=100*16+guard.footX*8.f;guard.z=50*16+guard.footZ*8.f;
+    std::string error;
+    if(!cart::writeDocumentBundle(root/"Symmetry.kmp",cart::documentFiles(map,metadata,{},{guard},{},"Symmetry"),error))throw std::runtime_error(error);
+    // The expected result, computed outside the editor.
+    cart::SectionLibrary sections;sections.scan(vfs,"zhon");cart::FeatureLibrary features;features.scan(vfs,"zhon");
+    cart::SectionMatcher matcher;matcher.build(sections.list(),[&](size_t i){return sections.load(vfs,sections.list()[i].path);});
+    auto expected=map;auto expectedStarts=metadata.starts;tak::crt::Scenario expectedScenario;std::vector<cart::PlacedUnit> expectedUnits{guard};
+    cart::SymmetryRequest request;request.kind=cart::Mirror::Vertical;request.source=0;
+    const auto report=cart::symmetrize(expected,expectedStarts,expectedScenario,expectedUnits,request,
+        [&](const std::string& name){const auto* ref=features.byName(name);return ref?std::pair{ref->footX,ref->footZ}:std::pair{1,1};},&matcher);
+    if(report.blocks<40000 || expectedUnits.size()!=2)throw std::runtime_error("fixture symmetrize did not mirror the map");
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    std::string failure;int lastFrame=0;
+    auto fail=[&](const std::string& why){if(failure.empty())failure=why;};
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);
+        auto click=[&](int x,int y) {
+            SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);
+            e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
+        };
+        const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
+        const auto saved=root/"Symmetry.kmp";
+        switch(frame) {
+        case 0:key(SDLK_o,KMOD_CTRL);break;
+        case 1:text(saved.string());key(SDLK_RETURN);break;
+        case 2:key(SDLK_m,KMOD_SHIFT);break;            // Symmetrize dialog: vertical axis, left half
+        case 3:if(dirty)fail("dialog edited the map");key(SDLK_RETURN);break;   // dry run -> confirmation
+        case 4:if(dirty)fail("confirmation edited the map");key(SDLK_RETURN);break;
+        case 5:if(!dirty)fail("symmetrize did not edit");key(SDLK_RETURN);break;   // unmirrored-terrain report
+        case 6:key(SDLK_z,KMOD_CTRL);break;
+        case 7:if(dirty)fail("one undo did not restore the map");key(SDLK_y,KMOD_CTRL);break;
+        case 8:if(!dirty)fail("redo lost the symmetrize");key(SDLK_s,KMOD_CTRL);break;
+        case 9:{
+            key(SDLK_RETURN);const auto file=readSaved(saved,&registry);
+            if(file.map.tileKeys!=expected.tileKeys || file.map.heights!=expected.heights)fail("saved terrain differs from the expected mirror");
+            if(file.map.features.size()!=expected.features.size())fail("saved feature plane size changed");
+            else for(size_t i=0;i<expected.features.size();++i) {
+                const auto name=[](const tak::tnt::Map& m,size_t c){const auto v=m.features[c];return v<0xFFFA && v<m.featureNames.size()?m.featureNames[v]:std::to_string(v);};
+                if(name(file.map,i)!=name(expected,i)) {fail("saved features differ from the expected mirror");break;}
+            }
+            if(file.metadata.starts.size()!=2 || file.metadata.starts[1].number!=2 || file.metadata.starts[1].xpos!=600)fail("mirrored start missing");
+            if(file.units.size()!=2 || file.units[1].x!=expectedUnits[1].x || file.units[1].z!=expectedUnits[1].z ||
+               file.units[1].angle!=270 || file.units[1].player!=1 || !file.units[1].name.empty() || file.units[0].name!="Left guard")fail("mirrored unit wrong");
+            key(SDLK_m);key(SDLK_TAB);key(SDLK_TAB);key(SDLK_1);break;   // live symmetry, Units tool, 100%
+        }
+        case 10:click(200+5*16+8,44+3*16+8);break;      // place a unit at cell (5,3)
+        case 11:if(!dirty)fail("live placement did not edit");key(SDLK_s,KMOD_CTRL);break;
+        case 12:{
+            key(SDLK_RETURN);const auto file=readSaved(saved,&registry);
+            if(file.units.size()!=4)fail("live symmetry did not add the mirror");
+            else if(std::abs(file.units[2].x+file.units[3].x-640*16)>.01f || file.units[2].z!=file.units[3].z)fail("live mirror is not symmetric");
+            key(SDLK_z,KMOD_CTRL);key(SDLK_s,KMOD_CTRL);break;
+        }
+        case 13:{
+            key(SDLK_RETURN);
+            if(readSaved(saved).units.size()!=2)fail("one undo did not remove the placement and its mirror");
+            SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);break;
+        }
+        default:if(frame>20)std::_Exit(3);
+        }
+    });
+    if(result || !failure.empty() || lastFrame<13) {std::cerr<<"FAIL: "<<failure<<" (frame "<<lastFrame<<"); files: "<<root<<'\n';return 1;}
+    fs::remove_all(root);
+    std::cout<<"PASS: Symmetrize dialog/confirm, one-step undo/redo, saved mirror of terrain/features/starts/units, live mirrored placement\n";return 0;
+}
+// Terrain tool + Select drags a block rectangle; Ctrl+C copies, Ctrl+V makes
+// the clipboard the brush, a click pastes (one undo step), the saved map has
+// the copy, and the clipboard survives File > Open of a map of another world.
+static int terrainClipboardWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-terrainclip-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    const auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
+    const auto map=tak::tnt::Map::load(vfs.read(path),path);
+    tak::tnt::Scenario metadata;metadata.kingdom="zhon";std::string error;
+    if(!cart::writeDocumentBundle(root/"Clip.kmp",cart::documentFiles(map,metadata,{},{},{},"Clip"),error))throw std::runtime_error(error);
+    // Another world's map to paste into after File > Open.
+    std::string other;
+    for(const auto& [name,mapPath]:tak::hpi::listMaps(vfs)) {
+        const auto ota=mapPath.substr(0,mapPath.rfind('.'))+".ota";if(!vfs.has(ota))continue;
+        const auto bytes=vfs.read(ota);const auto scenario=tak::tnt::Scenario::parse(std::string(bytes.begin(),bytes.end()));
+        auto kingdom=scenario.kingdom;std::transform(kingdom.begin(),kingdom.end(),kingdom.begin(),[](unsigned char c){return char(std::tolower(c));});
+        if(kingdom=="aramon" && cart::validDocumentName(name)) {const auto m=tak::tnt::Map::load(vfs.read(mapPath),mapPath);if(m.blocksX>=16 && m.blocksY>=12) {other=name;break;}}
+    }
+    if(other.empty()) {std::cerr<<"no aramon map\n";return 1;}
+    auto block=[&](const tak::tnt::Map& m,int x,int z){const size_t i=size_t(z)*m.blocksX+x;return std::tuple{m.tileKeys[i],m.tileCols[i],m.tileRows[i]};};
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    std::string failure;int lastFrame=0;
+    auto fail=[&](const std::string& why){if(failure.empty())failure=why;};
+    auto pastedFrom=[&](const tak::tnt::Map& saved,int ox,int oz) {
+        for(int z=0;z<2;++z)for(int x=0;x<3;++x)if(block(saved,ox+x,oz+z)!=block(map,1+x,1+z))return false;
+        for(int z=0;z<4;++z)for(int x=0;x<6;++x)if(saved.heights[size_t(oz*2+z)*saved.width+ox*2+x]!=map.heights[size_t(2+z)*map.width+2+x])return false;
+        return true;
+    };
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);
+        auto mouse=[&](Uint32 type,int x,int y) {
+            SDL_Event e{};e.type=type;
+            if(type==SDL_MOUSEMOTION) {e.motion.state=SDL_BUTTON_LMASK;e.motion.x=int(x*sx);e.motion.y=int(y*sy);}
+            else {e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);}
+            SDL_PushEvent(&e);
+        };
+        auto click=[&](int x,int y) {mouse(SDL_MOUSEBUTTONDOWN,x,y);mouse(SDL_MOUSEBUTTONUP,x,y);};
+        const std::string title=SDL_GetWindowTitle(window);const bool dirty=title.ends_with(" *");
+        switch(frame) {
+        case 0:key(SDLK_o,KMOD_CTRL);break;
+        case 1:text((root/"Clip.kmp").string());key(SDLK_RETURN);break;
+        case 2:key(SDLK_1);click(470,32);break;          // 100% zoom, Select mode (Terrain tool)
+        case 3:mouse(SDL_MOUSEBUTTONDOWN,200+32+5,44+32+5);mouse(SDL_MOUSEMOTION,200+96+5,44+64+5);mouse(SDL_MOUSEBUTTONUP,200+96+5,44+64+5);break;   // blocks 1..3 x 1..2
+        case 4:if(dirty)fail("selecting terrain edited the map");key(SDLK_c,KMOD_CTRL);key(SDLK_v,KMOD_CTRL);break;
+        case 5:if(dirty || title.find("[Checking map]")!=std::string::npos)fail("copy edited the map or ran Check Map");click(200+10*32+16,44+5*32+16);break;   // paste centred on block (10,5)
+        case 6:if(!dirty)fail("paste did not edit");key(SDLK_z,KMOD_CTRL);break;
+        case 7:if(dirty)fail("one undo did not remove the paste");key(SDLK_y,KMOD_CTRL);break;
+        case 8:if(!dirty)fail("redo lost the paste");key(SDLK_s,KMOD_CTRL);break;
+        case 9:key(SDLK_RETURN);if(!pastedFrom(readSaved(root/"Clip.kmp").map,9,4))fail("saved map lacks the pasted tiles/heights");
+            key(SDLK_o,KMOD_CTRL);break;
+        case 10:text(other);key(SDLK_RETURN);break;       // another world: the clipboard survives
+        case 11:if(title!="Cartographer -- "+other)fail("could not open "+other);key(SDLK_v,KMOD_CTRL);click(200+6*32+16,44+4*32+16);break;
+        case 12:if(dirty)fail("cross-world paste skipped its warning");key(SDLK_RETURN);break;   // accept the warning
+        case 13:if(!dirty)fail("accepted cross-world paste did not edit");key(SDLK_s,KMOD_CTRL);break;
+        case 14:{
+            key(SDLK_RETURN);
+            if(!pastedFrom(readSaved(root/(other+".kmp")).map,5,3))fail("clipboard did not survive File > Open");
+            SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);break;
+        }
+        default:if(frame>20)std::_Exit(3);
+        }
+    });
+    if(result || !failure.empty() || lastFrame<14) {std::cerr<<"FAIL: "<<failure<<" (frame "<<lastFrame<<"); files: "<<root<<'\n';return 1;}
+    fs::remove_all(root);
+    std::cout<<"PASS: terrain selection, copy, clipboard brush paste, one-step undo/redo, save, cross-world warning after File > Open\n";return 0;
+}
 int main(int argc,char** argv) {
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
@@ -827,6 +988,8 @@ int main(int argc,char** argv) {
     if(argc==3 && std::string(argv[2])=="overlay")return overlayWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="generation")return generationWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="headless")return headlessWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="symmetry")return symmetryWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="terrain-clipboard")return terrainClipboardWorkflow(argv[1]);
     if(argc!=2)return 2;
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-ui-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

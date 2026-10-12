@@ -21,6 +21,7 @@ struct FeatureRef {
     std::string filename;   // GAF stem (anims/<filename>.gaf)
     std::string seqname;    // sequence within the GAF
     std::string world;      // for the palette
+    int footX = 1, footZ = 1;   // footprintx/z cells from the anchor (symmetry)
 };
 
 // One decoded feature sprite (GAF frame 0), RGBA + its anchor.

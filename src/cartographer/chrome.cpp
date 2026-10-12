@@ -85,7 +85,9 @@ void cart::Editor::menuAction(int menu,int row) {
     } else if(menu==1) {
         if(row<2) {SDL_Event key{};key.type=SDL_KEYDOWN;key.key.keysym.sym=row?SDLK_y:SDLK_z;key.key.keysym.mod=KMOD_CTRL;SDL_PushEvent(&key);}
         else if(row==2) {clearArm=true;editMode=MODE_PLACE;}
-        else {stampLayers.objects=!stampLayers.objects;lastStampX=lastStampY=-999999;}
+        else if(row==3) {stampLayers.objects=!stampLayers.objects;lastStampX=lastStampY=-999999;}
+        else if(row==4) {tool=TERRAIN;regionCanvas=false;copyTerrainSelection();}
+        else if(row==5)useTerrainClipboard();
     } else if(menu==2) {
         int w,h;SDL_GetRendererOutputSize(ren,&w,&h);w=int(w/kUIScale)-kPaletteW;h=int(h/kUIScale)-kMenuH-kStatusH;
         if(row==17)previewModel();
@@ -132,8 +134,11 @@ void cart::Editor::menuAction(int menu,int row) {
         if(row==9) {preferences.tracePlaytest=!preferences.tracePlaytest;persistPreferences();}
         if(row==10)openObjects();
         if(row==5) {if(!mapIssues.empty())issueIndex=(issueIndex+1)%mapIssues.size();showMapIssue();}
-    } else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
-        "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move selected units or features. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute.");
+    } else if(menu==4)symmetryMenu(row);
+    else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
+        "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move selected units or features. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute. "
+        "Symmetry: M mirrors placements, moves and erasures live across the chosen axis; Shift+M (Symmetrize) copies one half or quadrant onto the rest, using mirror-twin terrain sections. "
+        "Terrain tool + Select: drag a block rectangle, Ctrl+C copies it, Ctrl+V makes it a click-to-paste brush (Esc returns to sections).");
 }
 
 bool cart::Editor::handleMenuInput(SDL_Event& e) {
@@ -222,6 +227,9 @@ bool cart::Editor::handleShortcuts(SDL_Event& e) {
         currentPlayer = (currentPlayer + 7) % 8;   // UNITS: pick placement player
     } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_RIGHTBRACKET) {
         currentPlayer = (currentPlayer + 1) % 8;
+    } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_m) {
+        if(e.key.keysym.mod & KMOD_SHIFT) openModal(M_SYMMETRIZE);   // Symmetry -> Symmetrize
+        else toggleLiveSymmetry();                                    // Symmetry -> Live symmetry
     } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_g) {
         showGrid = !showGrid;persistPreferences();   // View -> Grid
     } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_TAB) {
@@ -281,6 +289,7 @@ void cart::Editor::drawChrome() {
             std::string label=rows[i];
             if(menuOpen==1 && i==3)label=std::string(stampLayers.objects?"[ ] ":"[X] ")+"Brush: protect objects";
             if(menuOpen==3 && i==9)label=std::string(preferences.tracePlaytest?"[X] ":"[ ] ")+"Log Test Map triggers";
+            if(menuOpen==4)label=symmetryMenuLabel(i);
             if(menuOpen==2 && (i==2 || i==3 || (i>=14 && i<=16))) {
                 const bool shown=i==2?showGrid:i==3?showRegions:i==14?showFeatures:i==15?showUnits:showStarts;
                 label=std::string(shown?"[X] ":"[ ] ")+label;
@@ -309,6 +318,9 @@ void cart::Editor::drawChrome() {
     else if(minimapJob.valid() || minimapPreviewPending)status+="   Updating minimap...";
     if(!recoveryStatus.empty()) status+="   "+recoveryStatus;
     if (clearArm) status += "   CLEAR AREA: drag a box (K cancels)";
+    status += symmetryStatusText();
+    // A recent symmetry / clipboard result leads so it is not cut off.
+    if(!symmetryStatus.empty() && SDL_GetTicks64()-symmetryStatusAt<8000)status=coord+"   "+symmetryStatus+"   "+status.substr(coord.size());
     if(mxg<kPaletteW && myg>=kPaletteTop && myg<h-kStatusH) {
         const int row=paletteRowAt(mxg,myg);
         if(row>=0 && row<int(paletteItems.size()))status=paletteLabel(paletteItems[size_t(row)]);
@@ -334,13 +346,16 @@ void cart::Editor::drawHints() {
             } else if(hx>=400 && hx<656) {
                 const char* hints[]={
                     "Place: click the map to place the selected brush or object. Terrain brushes can protect objects through the Edit menu.",
-                    "Select: click or drag a box to select units/features; drag selected objects to move them. Shift extends selection. Enter opens properties.",
+                    "Select: click or drag a box to select units/features; drag selected objects to move them. Shift extends selection. Enter opens properties. With Terrain, drag a block rectangle; Ctrl+C copies it and Ctrl+V pastes it as a brush.",
                     "Erase: remove objects under the pointer. Terrain removal uses Clear Area (K). Changes can be undone with Ctrl+Z.",
                     "Pan: drag to move the view. Right-drag pans in any mode. Mouse wheel zooms around the pointer."};
                 hint=hints[(hx-400)/64];
             } else if(hx>=756 && hx<872)hint="Test Map (F5): open a temporary snapshot in the game's private lobby without saving or closing this document.";
             else if(hx>=668 && hx<748)hint="Regions: draw trigger areas in Place mode; select, move or resize them in Select mode. Enter edits the selected region.";
-        } else if(hx<kPaletteW && hy>=kMenuH && hy<kPaletteTop)hint=paletteHint(hy);
+        } else if(hy<22 && hx>=96+4*72 && hx<96+5*72)
+            hint="Symmetry: M mirrors placements, moves and erasures of units, features and starts as you edit, and stamps mirror-twin terrain sections. "
+                 "Shift+M copies a chosen half or quadrant onto the rest in one undo step. Terrain is never flipped: blocks without a twin section are reported.";
+        else if(hx<kPaletteW && hy>=kMenuH && hy<kPaletteTop)hint=paletteHint(hy);
         else if(cart::pointIn(hx,hy,miniRect))hint="Minimap: click or drag to navigate. View offers Fit map, Frame selection and a stored view bookmark.";
     }
     if(hint!=hoveredHint) {hoveredHint=hint;hintSince=SDL_GetTicks64();}
