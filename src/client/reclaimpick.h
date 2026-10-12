@@ -8,6 +8,7 @@ namespace tak::client {
 
 // Reclaim target picking, shared by the broom cursor, the right-click order and the
 // armed CLEAR order (GameView::reclaimTargetAt), plus the right-drag area preview.
+// The Revive cursor sizes corpses with the same pick circle.
 // Header-only so a test can drive it without a GameView.
 //
 // One radius rule for features AND corpses, from the FEATURE footprint. Retail

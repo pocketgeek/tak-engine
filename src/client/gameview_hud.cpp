@@ -506,9 +506,10 @@ namespace {
             for (const auto* corpse:front().live) {
                 if (corpse->alive() || !corpse->corpsePhase || corpse->corpseFeat<0 ||
                     !canPickPoint(corpse->x,corpse->z)) continue;
-                const auto& feature=worldTables().featureTypes().at(size_t(corpse->corpseFeat));
-                const float dx=corpse->x-wx,dz=corpse->z-wz,r=18.f+8.f*std::max(feature.fx,feature.fz);
-                if (!feature.resurrectable || dx*dx+dz*dz>=r*r) continue;
+                if (!worldTables().featureTypes().at(size_t(corpse->corpseFeat)).resurrectable) continue;
+                tak::client::ReclaimPick pick{wx,wz};   // same corpse pick circle as reclaim
+                pick.offer(-corpse->id,corpse->x,corpse->z,corpse->corpseFootX,corpse->corpseFootZ);
+                if (!pick.id) continue;
                 for (int id:selection_) {
                     const auto* caster=frameUnitP(id);
                     if (!caster || !caster->alive() || caster->embarked() || caster->underConstruction || !caster->type) continue;
