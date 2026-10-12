@@ -697,8 +697,9 @@ struct alignas(64) Order {
     // Legion flight stations (W6 FL-04, a flyer's last order): the release
     // from its station once the ground stops advancing (1, release A) or its
     // centroid has stood within 16 px of stationRef since stationRefTick for
-    // 900 ticks (2, release B); sticky for the order. stationRefTick 0: no
-    // reference yet. Hashed with a tag when set.
+    // 900 ticks (2, release B), or its order's point moved to its landing
+    // lane in front of the arriving ground (3); sticky for the order.
+    // stationRefTick 0: no reference yet. Hashed with a tag when set.
     uint8_t stationFree = 0;
     uint32_t missionRadius = 0;
 
