@@ -24,6 +24,7 @@ void cart::Session::parseArguments(int argc,char** argv) {
         else if (a == "--world" && i + 1 < argc) newWorld = argv[++i];
         else if (a == "--random") randomTerrain = true;   // --new: procedural terrain
         else if (a == "--shot" && i + 1 < argc) shotPath = argv[++i];   // render 1 frame -> PNG
+        else if (a == "--shot-tool" && i + 1 < argc) shotTool = argv[++i];   // palette shown in --shot
         else if (a[0] != '-') mapName = a;
     }
 }
@@ -60,11 +61,28 @@ void cart::Editor::prepareShot() {
     if (!shotPath.empty()) {
         mapView.setZoom(0.3f);          // fit-ish view for the shot
         mapView.finishChunks();         // wait for the terrain to decode+upload
+        if (shotTool == "features") tool = FEATURES;
+        else if (shotTool == "units") tool = UNITS;
+        else if (shotTool == "starts") tool = STARTS;
+        else if (!shotTool.empty() && shotTool != "terrain")
+            std::fprintf(stderr, "shot: unknown --shot-tool '%s' (terrain|features|units|starts); using terrain\n", shotTool.c_str());
     }
 }
 
 void cart::Editor::captureShot() {
     if (!shotPath.empty()) {
+        // Section thumbnails and unit portraits decode one at a time on a worker, so the
+        // first frames show empty boxes. Keep drawing (which polls them in) until every
+        // visible cell has resolved, bounded so a stuck decode cannot hang the shot.
+        // Feature art is synchronous here (featureSpriteFor), terrain chunks already finished.
+        constexpr Uint64 kShotWaitMs = 8000;
+        if (shotPending > 0) {
+            const Uint64 now = SDL_GetTicks64();
+            if (!shotWaitStart) shotWaitStart = now ? now : 1;
+            if (now - shotWaitStart < kShotWaitMs) {SDL_Delay(2); return;}
+            std::fprintf(stderr, "shot: %d palette thumbnails still loading after %llu ms; capturing without them\n",
+                         shotPending, (unsigned long long)kShotWaitMs);
+        }
         int ow, oh; SDL_GetRendererOutputSize(ren, &ow, &oh);
         std::vector<uint8_t> px(size_t(ow) * oh * 4);
         if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_RGBA32,

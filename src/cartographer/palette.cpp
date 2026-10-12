@@ -173,6 +173,7 @@ bool cart::Editor::handlePaletteWheel(SDL_Event& e) {
 }
 
 void cart::Editor::drawPalette() {
+    shotPending=0;
     fillRect(ren, 0, kMenuH, kPaletteW, canvasH, 30, 32, 40);
     SDL_Rect palClip{0,kPaletteTop,kPaletteW,h-kStatusH-kPaletteTop};
     SDL_RenderSetClipRect(ren,&palClip);
@@ -183,7 +184,10 @@ void cart::Editor::drawPalette() {
             if(tool==UNITS && i==selectedType)fillRect(ren,0,y,kPaletteW,25,70,66,40);
             if(tool==UNITS) {
                 const auto* info=unitInfo(i);
-                if(auto* portrait=unitPortraits.get("anims/buildpic/"+lowerText(unitTypes[size_t(i)])+".jpg")) {
+                const auto portraitPath="anims/buildpic/"+lowerText(unitTypes[size_t(i)])+".jpg";
+                auto* portrait=unitPortraits.get(portraitPath);
+                if(!portrait && !shotPath.empty() && !unitPortraits.resolved(portraitPath))++shotPending;
+                if(portrait) {
                     int pw=0,ph=0;SDL_QueryTexture(portrait,nullptr,nullptr,&pw,&ph);
                     if(pw>0 && ph>0) {
                         const float scale=std::min(32.f/pw,24.f/ph);
@@ -202,6 +206,7 @@ void cart::Editor::drawPalette() {
             if(y+kCellH<kPaletteTop || y>h-kStatusH)continue;
             SDL_Rect cell{x,y,kThumb,kThumb};fillRect(ren,x,y,kThumb,kThumb,44,46,54);
             auto* texture=tool==FEATURES?featTextureFor(features.list()[size_t(i)]):thumbFor(sections.list()[size_t(i)].path);
+            if(!texture && tool!=FEATURES && !shotPath.empty() && !thumbs.resolved(sections.list()[size_t(i)].path))++shotPending;
             if(texture) {
                 if(tool==FEATURES) {
                     const auto* sprite=featureSpriteFor(features.list()[size_t(i)]);

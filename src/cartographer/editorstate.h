@@ -92,7 +92,7 @@ struct Session {
     Session(int argc,char** argv,const FrameHook& frameHook,const EditorHooks& hooks);
 
     // Command line (headless.cpp).
-    std::string dataRoot, mapName, outDir = ".", exportPath, bundlePath, stampName, newWorld = "aramon", shotPath;
+    std::string dataRoot, mapName, outDir = ".", exportPath, bundlePath, stampName, newWorld = "aramon", shotPath, shotTool;   // --shot / --shot-tool terrain|features|units|starts
     int stampBX = 0, stampBY = 0, newW = 0, newH = 0;
     bool explicitOutput=false;
     bool randomTerrain = false;   // --random: generate procedural terrain for --new
@@ -506,6 +506,8 @@ struct Editor : Session {
     void drawSymmetryOverlay();
 
     // --- --shot (headless.cpp) ------------------------------------------------
+    int shotPending=0;       // visible palette cells whose async art has not resolved this frame
+    Uint64 shotWaitStart=0;  // SDL ticks of the first frame that had to wait (0 = not waiting)
     void prepareShot();
     void captureShot();
 };

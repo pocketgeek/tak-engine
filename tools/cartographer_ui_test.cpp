@@ -23,6 +23,7 @@
 #include "cartographer/font5x7.h"
 #include "util/png.h"
 #include <iostream>
+#include <set>
 #include <stdexcept>
 #include <vector>
 
@@ -921,9 +922,31 @@ static int headlessWorkflow(const char* data) {
     check(run({"Ulasem Arena","--data",data,"--stamp",sections.list().front().name,"0","0","--save",stamped.string()})==0 && written(stamped),"--stamp edits, saves and exits 0");
     check(run({"Ulasem Arena","--data",data,"--bundle",kmp.string()})==0 && written(kmp),"--bundle writes the KMP and exits 0");
     check(run({"Ulasem Arena","--data",data,"--shot",png.string()})==0 && written(png),"--shot writes one frame and exits 0");
+    // --shot waits for the async palette art: the first frame draws empty boxes (workers have not
+    // started), so the captured (last) frame must differ from it and carry real texture detail.
+    auto shotCell=[&](const char* shotTool,SDL_Rect logical,const char* name) {
+        int frames=0;std::vector<uint8_t> first,last;
+        auto read=[&](SDL_Renderer* renderer) {
+            float sx=1,sy=1;SDL_RenderGetScale(renderer,&sx,&sy);
+            SDL_Rect physical{int(logical.x*sx),int(logical.y*sy),int(logical.w*sx),int(logical.h*sy)};
+            std::vector<uint8_t> rgba(size_t(physical.w)*physical.h*4);
+            SDL_RenderReadPixels(renderer,&physical,SDL_PIXELFORMAT_RGBA32,rgba.data(),physical.w*4);return rgba;
+        };
+        std::vector<std::string> args{"cartographer","Ulasem Arena","--data",data,"--shot",png.string(),"--shot-tool",shotTool};std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+        const int code=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window*,SDL_Renderer* renderer,int frame) {
+            frames=frame+1;last=read(renderer);if(!frame)first=last;
+        });
+        auto distinct=[](const std::vector<uint8_t>& rgba) {std::set<uint32_t> colours;for(size_t i=0;i+3<rgba.size();i+=4)colours.insert(rgba[i]|rgba[i+1]<<8|rgba[i+2]<<16);return colours.size();};
+        check(code==0,"--shot-tool exits 0");
+        check(frames>1,(std::string(name)+": --shot captured before the palette art could load").c_str());
+        check(!first.empty() && distinct(first)<=3,(std::string(name)+": test premise: first frame has empty boxes").c_str());
+        check(distinct(last)>40,(std::string(name)+": captured frame still shows empty palette boxes").c_str());
+    };
+    shotCell("terrain",{8,128,80,80},"terrain thumbnails");
+    shotCell("units",{6,123,28,20},"unit portraits");
     fs::remove_all(root);
     if(!failure.empty()) {std::cerr<<"FAIL: "<<failure<<'\n';return 1;}
-    std::cout<<"PASS: headless exit codes, --save/--stamp/--bundle output and --shot capture\n";return 0;
+    std::cout<<"PASS: headless exit codes, --save/--stamp/--bundle output and --shot capture with loaded palette art\n";return 0;
 }
 
 // A saved KMP read back: terrain, metadata (starts) and placed units.

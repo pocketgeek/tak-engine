@@ -16,6 +16,8 @@ public:
     SDL_Texture* get(const std::string& path);
     void reset();
     bool loading() const {return job_.valid();}
+    // True once `path` has a decode verdict (texture or failure); false while queued/in flight.
+    bool resolved(const std::string& path) const {return cache_.count(path)!=0;}
     size_t entries() const {return cache_.size();}
 private:
     struct Entry {SDL_Texture* texture=nullptr;size_t bytes=0;uint64_t used=0;};
