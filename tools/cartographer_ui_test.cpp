@@ -789,9 +789,6 @@ static int recoveryWorkflow(const char* data,const char* folder,const std::strin
     }
     return 0;
 }
-// The command-line paths end through Session::Exit before any UI exists: usage
-// and missing maps/sections fail, --save/--stamp/--bundle write and exit, and
-// --shot renders one frame of the real editor to a PNG.
 // Section browser: open the group list, pick a folder, select its first piece,
 // click it again for the next variant, stamp and save. A second session must
 // reopen the remembered group (its first thumbnail is that folder's piece).
@@ -845,10 +842,18 @@ static int sectionsWorkflow(const char* data) {
         SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);
         e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
     };
+    // A press on a list row over the canvas that wobbles before release: the
+    // drag belongs to the list, not to the terrain brush underneath.
+    auto pressDrag=[](SDL_Renderer* renderer,int x,int y) {
+        float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);
+        SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);
+        SDL_Event m{};m.type=SDL_MOUSEMOTION;m.motion.state=SDL_BUTTON_LMASK;m.motion.x=int((x+3)*sx);m.motion.y=int((y+1)*sy);m.motion.xrel=int(3*sx);m.motion.yrel=int(sy);SDL_PushEvent(&m);
+        e.type=SDL_MOUSEBUTTONUP;e.button.x=m.motion.x;e.button.y=m.motion.y;SDL_PushEvent(&e);
+    };
     const int groupButtonY=44+40,firstCellX=48,firstCellY=44+76+4+44,menuRowY=44+53+2+groupRow*16+8;
     session({
         [&](SDL_Renderer* r,bool){click(r,100,groupButtonY);},             // open the group list
-        [&](SDL_Renderer* r,bool){click(r,100,menuRowY);},                 // Coast Cliffs Sandy
+        [&](SDL_Renderer* r,bool){pressDrag(r,260,menuRowY);},             // Coast Cliffs Sandy, over the canvas
         [&](SDL_Renderer* r,bool){click(r,firstCellX,firstCellY);},       // select its first piece
         [&](SDL_Renderer* r,bool){click(r,firstCellX,firstCellY);},       // again: next variant
         [&](SDL_Renderer* r,bool dirty){check(!dirty,"browser clicks must not edit");click(r,560,400);},
@@ -859,21 +864,43 @@ static int sectionsWorkflow(const char* data) {
         check(stampedAt(piece.variants[1])>0,"second click stamps the piece's second variant");
         check(stampedAt(piece.variants[0])==0,"first variant was not left selected");
         const auto preferences=cart::loadEditorPreferences(root/"TAKengine"/"Cartographer");
-        const auto remembered=preferences.sectionGroups.find("Zhon");
+        const auto remembered=preferences.sectionGroups.find("zhon");   // Ulasem says "Zhon"; new maps "zhon"
         check(remembered!=preferences.sectionGroups.end() && remembered->second==groupId,"chosen group remembered for the world");
     }
     if(failure.empty()) session({
+        // The menu bar's File list closes the group list (it used to stay open
+        // on top of File), so the click on its "All sections" row lands nowhere.
+        [&](SDL_Renderer* r,bool){click(r,100,groupButtonY);},
+        [&](SDL_Renderer* r,bool){click(r,110,10);},
+        [&](SDL_Renderer*,bool){key(SDLK_ESCAPE);},
+        [&](SDL_Renderer* r,bool){click(r,100,44+53+2+8);},
         [&](SDL_Renderer* r,bool){click(r,firstCellX,firstCellY);},       // first thumbnail of the reopened group
+        [&](SDL_Renderer* r,bool){click(r,195,firstCellY);},              // right margin: no cell (it picked the next row's)
         [&](SDL_Renderer* r,bool){click(r,560,400);},
         [&](SDL_Renderer*,bool dirty){check(dirty,"second stamp marks the map dirty");key(SDLK_s,KMOD_CTRL);},
         [&](SDL_Renderer*,bool){key(SDLK_RETURN);},
     });
     if(failure.empty())check(stampedAt(piece.variants[0])>0 && stampedAt(firstOfAll.variants[0])==0,"reopened editor restores the remembered group");
+    // Search looks past the remembered folder: another folder's variant, found by
+    // its raw name, is the first thumbnail and is what stamps.
+    const auto& wanted=sections.list()[size_t(firstOfAll.variants[1])].name;
+    if(failure.empty()) session({
+        [&](SDL_Renderer*,bool){key(SDLK_f,KMOD_CTRL);text(wanted);},
+        [&](SDL_Renderer*,bool){key(SDLK_RETURN);},
+        [&](SDL_Renderer* r,bool){click(r,firstCellX,firstCellY);},
+        [&](SDL_Renderer* r,bool){click(r,560,400);},
+        [&](SDL_Renderer*,bool dirty){check(dirty,"searched stamp marks the map dirty");key(SDLK_s,KMOD_CTRL);},
+        [&](SDL_Renderer*,bool){key(SDLK_RETURN);},
+    });
+    if(failure.empty())check(stampedAt(firstOfAll.variants[1])>0,"search finds a variant outside the remembered group");
     if(!failure.empty()) {std::cerr<<"FAIL: "<<failure<<"; files: "<<root<<'\n';return 1;}
     fs::remove_all(root);
-    std::cout<<"PASS: section group list, folder selection, variant cycling, stamp and remembered group\n";return 0;
+    std::cout<<"PASS: section group list, folder selection, variant cycling, stamp, remembered group and search across groups\n";return 0;
 }
 
+// The command-line paths end through Session::Exit before any UI exists: usage
+// and missing maps/sections fail, --save/--stamp/--bundle write and exit, and
+// --shot renders one frame of the real editor to a PNG.
 static int headlessWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-headless-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

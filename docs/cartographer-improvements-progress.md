@@ -1107,6 +1107,18 @@ saved tiles must be the second variant and not the first. A second session must
 reopen the remembered group. Disabling variant cycling, group restore, the
 preference line or the sibling-evidence rule fails these tests.
 
+Review fixes: a press on a list row (or the dismissing click) over the canvas no
+longer drag-paints the terrain when the pointer moves before release; the menu
+bar's lists, dialogs and overlays close the group list instead of being drawn
+under it; the remembered group is keyed by lowercase world, so retail maps
+(`Zhon`) and new maps (`zhon`) share it; search now spans every group (the
+button reads `Search: all groups`, and picking a group clears the search); the
+group button keeps its count when a long folder name is shortened; the list opens
+scrolled within range; list rows hit where they are drawn; and the grid's right
+margin no longer selects the next row's first piece. `cartographer_sections_ui`
+covers the drag, the File list, the world key, search across groups and the
+margin, and each of those checks fails with its fix reverted.
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop

@@ -52,7 +52,7 @@ std::string cart::Editor::paletteLabel(int index) {
 void cart::Editor::refreshPalette() {
     if(tool==TERRAIN && (catalogWorld!=world || catalogSize!=sections.list().size())) {
         sectionCatalog.build(sections.list());catalogWorld=world;catalogSize=sections.list().size();
-        const auto remembered=preferences.sectionGroups.find(world);
+        const auto remembered=preferences.sectionGroups.find(lowerText(world));   // retail "Zhon", new maps "zhon"
         sectionGroup=remembered!=preferences.sectionGroups.end() && sectionCatalog.group(remembered->second)?remembered->second:"";
         sectionMenuOpen=false;
     }
@@ -61,10 +61,10 @@ void cart::Editor::refreshPalette() {
     const bool toolChanged=paletteKey.empty() || paletteKey[0]!=key[0];
     paletteKey=key;
     if(tool==TERRAIN) {
-        // One row per piece; search keeps a piece when any variant matches and
-        // shows that variant, but cycling still steps through all of them.
+        // One row per piece; search spans every group, keeps a piece when any
+        // variant matches and shows that variant (cycling still steps through all).
         paletteItems.clear();paletteVariants.clear();const auto query=lowerText(paletteSearch);
-        const auto* group=sectionCatalog.group(sectionGroup);
+        const auto* group=query.empty()?sectionCatalog.group(sectionGroup):nullptr;
         if(!group)group=&sectionCatalog.groups().front();
         for(const int p:group->pieces) {
             const auto& variants=sectionCatalog.pieces()[size_t(p)].variants;
@@ -96,13 +96,14 @@ void cart::Editor::refreshPalette() {
 
 int cart::Editor::paletteRowAt(int x,int y) const {
     if(sectionMenuOpen && sectionMenuRowAt(x,y)>=0)return -1;
-    return tool==UNITS || tool==STARTS?(y-kPaletteTop+paletteScroll)/26:
-        ((y-kPaletteTop+paletteScroll)/kCellH)*cols+(x-4)/(kThumb+4);
+    if(tool==UNITS || tool==STARTS)return (y-kPaletteTop+paletteScroll)/26;
+    const int column=(x-4)/(kThumb+4);   // the right margin is no cell (it read as the next row)
+    return column<cols?((y-kPaletteTop+paletteScroll)/kCellH)*cols+column:-1;
 }
 
 std::string cart::Editor::paletteHint(int y) const {
     if(y<kMenuH+30)return "Search this browser by name or identifier (Ctrl+F). Escape returns keyboard focus to the map.";
-    if(tool==TERRAIN)return y<kMenuH+53?"Click to choose a section group: a kind (cliffs, transitions, water...) or one of its retail folders. Remembered per world.":
+    if(tool==TERRAIN)return y<kMenuH+53?"Click to choose a section group: a kind (cliffs, transitions, water...) or one of its retail folders. Remembered per world; search looks in every group.":
         "Numbered variants of a piece share one thumbnail: click the selected piece again to step through them. Hover shows the internal name.";
     if(y<kMenuH+53)return "Click to cycle browser categories or unit roles. Search and filters work together.";
     if(tool==UNITS)return "Click to cycle faction filters. Internal unit identifiers remain available in the browser details.";
@@ -121,7 +122,8 @@ bool cart::Editor::handlePaletteFocus(SDL_Event& e) {
             else if(e.button.y<kMenuH+53 && tool==TERRAIN) {
                 sectionMenuOpen=true;sectionMenuScroll=0;
                 const auto& groups=sectionCatalog.groups();
-                for(size_t i=0;i<groups.size();++i)if(groups[i].id==sectionGroup)sectionMenuScroll=std::max(0,int(i)-4)*kSectionRowH;
+                const int visible=std::max(1,(h-kStatusH-kMenuH-53)/kSectionRowH),last=std::max(0,int(groups.size())-visible);
+                for(size_t i=0;i<groups.size();++i)if(groups[i].id==sectionGroup)sectionMenuScroll=std::clamp(int(i)-4,0,last)*kSectionRowH;
             }
             else if(e.button.y<kMenuH+53) {categoryIndex=(categoryIndex+1)%int(paletteCategories.size());refreshPalette();}
             else if(tool==UNITS) {factionIndex=(factionIndex+1)%6;refreshPalette();}
@@ -222,9 +224,12 @@ void cart::Editor::drawPalette() {
     SDL_RenderSetClipRect(ren,nullptr);
     cart::drawField(ren,4,kMenuH+3,kPaletteW-8,"SEARCH (CTRL+F)",paletteSearch,paletteFocus,paletteFocus?&paletteEditor:nullptr);
     if(tool==TERRAIN) {
+        // Long folder names shorten; the count and the arrow always show.
         const auto* group=sectionCatalog.group(sectionGroup);
-        const std::string label=group?group->label+" ("+std::to_string(group->sections)+")":"All sections";
-        cart::drawButton(ren,4,kMenuH+33,kPaletteW-8,18,label.substr(0,25)+" \xe2\x96\xbe",sectionMenuOpen);
+        std::string label=!paletteSearch.empty()?"Search: all groups":group?group->label:"All sections";
+        const std::string tail=" ("+std::to_string(group && paletteSearch.empty()?group->sections:int(sections.list().size()))+") \xe2\x96\xbe";
+        while(label.size()>1 && cart::textWidth(label+tail,1)>kPaletteW-20)label.pop_back();
+        cart::drawButton(ren,4,kMenuH+33,kPaletteW-8,18,label+tail,sectionMenuOpen);
     } else cart::drawButton(ren,4,kMenuH+33,kPaletteW-8,18,paletteCategories[size_t(categoryIndex)].substr(0,28),false);
     if(tool!=TERRAIN)sectionMenuOpen=false;
     if(tool==TERRAIN) {
@@ -240,18 +245,24 @@ void cart::Editor::drawPalette() {
 // (drawn after the chrome so the panel edges stay underneath it).
 void cart::Editor::selectSectionGroup(const std::string& id) {
     sectionGroup=id;sectionMenuOpen=false;
-    preferences.sectionGroups[world]=id;persistPreferences();
+    if(!paletteSearch.empty()) {paletteSearch.clear();paletteEditor.focus(paletteSearch);}   // a search would hide the pick
+    preferences.sectionGroups[lowerText(world)]=id;persistPreferences();
     refreshPalette();
 }
 
 int cart::Editor::sectionMenuRowAt(int x,int y) const {
     const int top=kMenuH+53;
-    if(x<4 || x>=4+kSectionMenuW || y<top || y>=h-kStatusH)return -1;
-    const int row=(y-top+sectionMenuScroll)/kSectionRowH;
+    if(x<4 || x>=4+kSectionMenuW || y<top+2 || y>=h-kStatusH)return -1;
+    const int row=(y-top-2+sectionMenuScroll)/kSectionRowH;   // rows are drawn 2px below the frame
     return row<int(sectionCatalog.groups().size())?row:-1;
 }
 
 bool cart::Editor::handleSectionMenu(SDL_Event& e) {
+    if(sectionMenuPress) {   // the press that picked or dismissed: its drag and release are spent
+        if(e.type==SDL_MOUSEBUTTONDOWN)sectionMenuPress=false;
+        else if(e.type==SDL_MOUSEBUTTONUP) {sectionMenuPress=false;return true;}
+        else if(e.type==SDL_MOUSEMOTION && (e.motion.state&(SDL_BUTTON_LMASK|SDL_BUTTON_RMASK)))return true;
+    }
     if(!sectionMenuOpen)return false;
     if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE) {sectionMenuOpen=false;return true;}
     if(e.type==SDL_MOUSEWHEEL) {
@@ -264,12 +275,13 @@ bool cart::Editor::handleSectionMenu(SDL_Event& e) {
         const int row=sectionMenuRowAt(e.button.x,e.button.y);
         if(row>=0 && e.button.button==SDL_BUTTON_LEFT)selectSectionGroup(sectionCatalog.groups()[size_t(row)].id);
         else sectionMenuOpen=false;   // a click elsewhere only closes the list
-        return true;
+        sectionMenuPress=true;return true;
     }
     return false;
 }
 
 void cart::Editor::drawSectionMenu() {
+    if(menuOpen>=0 || modal!=M_NONE || scriptOpen || useOnlyOpen || regionsOpen)sectionMenuOpen=false;   // they take over input
     if(!sectionMenuOpen || tool!=TERRAIN)return;
     const int top=kMenuH+53,bottom=h-kStatusH;
     const auto& groups=sectionCatalog.groups();

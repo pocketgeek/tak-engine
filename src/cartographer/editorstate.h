@@ -249,7 +249,7 @@ struct Editor : Session {
     std::string catalogWorld,sectionGroup;   // group id, remembered per world
     size_t catalogSize=0;
     std::vector<std::vector<int>> paletteVariants;   // TERRAIN: each row's variants
-    bool sectionMenuOpen=false;
+    bool sectionMenuOpen=false,sectionMenuPress=false;
     int sectionMenuScroll=0;
     static constexpr int kSectionMenuW=300,kSectionRowH=16;
     void selectSectionGroup(const std::string& id);
