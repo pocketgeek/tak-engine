@@ -624,7 +624,7 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   cache, like other downloaded maps; the temporary source is removed after exit.
   A first-launch guide introduces editing and saving. Hover over toolbar controls,
   filters or the minimap for action help and shortcuts.
-  The embedded editor font supports mixed case, accented Latin, Greek and Cyrillic.
+  The embedded editor font supports mixed case, accented Latin (incl. Vietnamese), Greek, Cyrillic, Armenian, Georgian, common symbols, kana, Hangul and common Han (double-width); other scripts show a replacement box.
   **T** opens scenario scripting; its full-text area wraps long operands, supports
   **Page Up/Page Down** scrolling, and offers **Copy Text** for the selected rule.
   Select a rule group and press **Enter** or **Name** to label it. Names survive

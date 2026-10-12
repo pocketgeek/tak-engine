@@ -30,7 +30,7 @@ Implemented:
 - Fit the window/UI scale to the display; visible File/Edit/View/Scenario/Help
   menus, map-name/file-path Open, Save As, and Fit Map.
 - Text caret movement, selection, clipboard, select-all, UTF-8-safe deletion.
-  Font coverage and multiline visual editing are still unfinished.
+  Font coverage and multiline visual editing were unfinished here (see the later font checkpoints).
 - Cull feature iteration to the visible map area and avoid restamping the same
   snapped location repeatedly during a stroke.
 
@@ -1119,6 +1119,50 @@ margin no longer selects the next row's first piece. `cartographer_sections_ui`
 covers the drag, the File list, the world key, search across groups and the
 margin, and each of those checks fails with its fix reverted.
 
+## Font coverage and --shot checkpoint
+
+`--shot` used to capture the first frame, before the section-thumbnail and unit-portrait
+workers had delivered anything, so headless screenshots showed empty grey palette boxes.
+The capture now keeps drawing until every visible palette cell has a decode verdict
+(texture or failure), bounded at 8 s with a stderr note if something is stuck; feature art
+is already synchronous in that path and interactive runs are unchanged. `--shot-tool
+terrain|features|units|starts` picks which palette is shown. The headless test checks
+that the terrain and unit-portrait cells of the captured frame carry texture detail while
+the first frame does not (with the wait disabled it fails).
+
+The embedded editor font now merges several SIL OFL Noto faces (sources, hashes and
+licenses in `res/editor-font/` and `EDITOR-FONT-LICENSE.txt`):
+
+- Noto Sans Mono (unchanged): Latin, Latin Extended Additional (Vietnamese), Greek,
+  Cyrillic, box drawing and blocks, geometric shapes and many symbols.
+- Noto Sans Armenian and Georgian (proportional faces, shrunk/centred into one column).
+- Noto Sans Symbols and Symbols 2 for the arrows, math, technical, shapes, dingbats,
+  Braille and currency code points Noto Sans Mono lacks.
+- A subset of Noto Sans Mono CJK (SC face): kana, Bopomofo, Hangul (KS X 1001, 2,350
+  syllables), 7,174 Han (union of GB 2312, JIS X 0208 and Big5 level 1), CJK punctuation and
+  fullwidth/halfwidth forms. 5,009 narrow and 10,093 double-width glyphs are embedded.
+
+Code points with East Asian Width Wide/Fullwidth take two text columns everywhere:
+drawing, `textWidth`, the 5x7 fallback, `TextEdit` wrapping, click-to-caret (the right half
+of a wide glyph puts the caret after it), Up/Down column memory, and palette label
+clipping (`clipColumns`). Width is a pure function of the code point, generated into
+`fontwidth.inc` from `unicodedata`, so layout never depends on which glyphs exist. A
+valid code point with no glyph draws an outlined replacement box of the right width
+(previously U+FFFD, indistinguishable from invalid UTF-8, or nothing if the font lacked
+U+FFFD); invalid UTF-8 still draws U+FFFD.
+
+Cost: the Release `cartographer` binary grew by 1.76 MB (21.5 to 23.3 MB: narrow glyph
+data 0.62 to 0.86 MB, double-width glyphs 1.45 MB at 2 bits per pixel). The repo adds about
+3.1 MB of font sources (the CJK subset is 2.1 MB) and about 5 MB of generated `.inc` text
+(6.7 MB in total). The `font` test now covers every added range, both replacement boxes, wide
+advances, wrapping, click columns, vertical caret movement and clipping; each assertion
+group was shown to fail under a targeted mutation.
+
+Hebrew and Arabic are deliberately skipped (the editor lays text out left to right, so they
+would display reversed), as are scripts that need shaping or combining-mark placement
+(Indic, Thai, Khmer), color emoji, and Han outside the three level-1 sets; those draw the
+replacement box.
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop
@@ -1131,8 +1175,11 @@ Cartographer or mission-runtime parity.
 - Windows/macOS packaging and Unicode launch paths are implemented, but live
   platform verification remains unavailable here. Windows source compile checks
   passed; the configured static Windows FFmpeg prefix is missing for full linking.
-- The embedded font covers Latin, Greek and Cyrillic; it is not a full Unicode
-  shaping/fallback system. UI scale, window size and layer choices are remembered.
+- The embedded font covers Latin (incl. Vietnamese), Greek, Cyrillic, Armenian,
+  Georgian, common symbols/arrows/box drawing/Braille, kana, Hangul and about 7,000
+  common Han characters (double-width). Right-to-left, shaped/combining scripts and
+  rare Han draw a replacement box; it is not a full Unicode shaping/fallback system.
+  UI scale, window size and layer choices are remembered.
 - Unit portraits, footprint outlines, facing indicators and a 3D model inspector
   are available. The inspector is not a full unit-behavior simulator. Terrain
   stamps preserve authored lighting/relief; arbitrary terrain-art rotation is

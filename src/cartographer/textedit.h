@@ -1,4 +1,5 @@
 #pragma once
+#include "cartographer/font5x7.h"
 #include <SDL.h>
 #include <algorithm>
 #include <string>
@@ -7,6 +8,8 @@
 namespace cart {
 // Positions are UTF-8 byte offsets at code-point boundaries. All storage and
 // clipboard operations preserve Unicode even if a chosen UI font lacks a glyph.
+// "Columns" are text columns of the fixed-width editor font: a wide (CJK etc.)
+// code point takes two (glyphCells), so wrapping, clicks and Up/Down follow the pixels.
 struct TextEdit {
     size_t caret=0,anchor=0;
     int desiredColumn=-1;
@@ -19,14 +22,17 @@ struct TextEdit {
         if(p>=s.size())return s.size();
         ++p;while(p<s.size() && (uint8_t(s[p])&0xc0)==0x80)++p;return p;
     }
+    static int cellsAt(const std::string& s,size_t p) {return glyphCells(nextGlyph(s,p));}   // same decoder as drawing
     static std::vector<Line> lines(const std::string& text,int columns) {
         std::vector<Line> result;size_t begin=0,pos=0,word=0;int count=0;
         while(pos<text.size()) {
             if(text[pos]=='\n') {result.push_back({begin,pos});begin=++pos;word=begin;count=0;continue;}
-            if(columns>0 && count>=columns) {
+            const int cells=cellsAt(text,pos);
+            // A wide glyph that does not fit moves to the next row; a row always takes at least one glyph.
+            if(columns>0 && count>0 && count+cells>columns) {
                 const auto end=word>begin?word:pos;result.push_back({begin,end});begin=pos=end;word=begin;count=0;continue;
             }
-            const bool space=text[pos]==' ';pos=next(text,pos);++count;if(space)word=pos;
+            const bool space=text[pos]==' ';pos=next(text,pos);count+=cells;if(space)word=pos;
         }
         result.push_back({begin,text.size()});return result;
     }
@@ -34,8 +40,15 @@ struct TextEdit {
         for(size_t i=0;i<rows.size();++i)if(offset<=rows[i].end && (i+1==rows.size() || offset<rows[i+1].begin))return i;
         return rows.size()-1;
     }
+    // Caret offset for a clicked text column: before the glyph under the pointer, or after a wide
+    // glyph when its right half was hit. Also maps an Up/Down column back to an offset.
     static size_t offsetAt(const std::string& text,const Line& line,int column) {
-        size_t at=line.begin;while(column-->0 && at<line.end)at=next(text,at);return at;
+        size_t at=line.begin;int col=0;
+        while(at<line.end && col<column) {col+=cellsAt(text,at);at=next(text,at);}
+        return at;
+    }
+    static int columnOf(const std::string& text,const Line& line,size_t offset) {
+        int col=0;for(size_t at=line.begin;at<offset && at<line.end;at=next(text,at))col+=cellsAt(text,at);return col;
     }
     void click(const std::string& text,int columns,int row,int column,bool extend=false) {
         const auto rows=lines(text,columns);row=std::clamp(row,0,int(rows.size())-1);
@@ -66,7 +79,7 @@ struct TextEdit {
             else if(key==SDLK_DELETE) {if(!selection())anchor=next(s,caret);erase(s);}
             else if(multiline && (key==SDLK_UP || key==SDLK_DOWN)) {
                 const auto rows=lines(s,columns);const auto row=lineAt(rows,caret);
-                if(desiredColumn<0) {desiredColumn=0;for(size_t p=rows[row].begin;p<caret;p=next(s,p))++desiredColumn;}
+                if(desiredColumn<0)desiredColumn=columnOf(s,rows[row],caret);
                 const int target=std::clamp(int(row)+(key==SDLK_UP?-1:1),0,int(rows.size())-1);
                 caret=offsetAt(s,rows[target],desiredColumn);if(!shift)anchor=caret;
             } else if(key==SDLK_LEFT || key==SDLK_RIGHT || key==SDLK_HOME || key==SDLK_END) {

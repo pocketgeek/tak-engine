@@ -1,3 +1,26 @@
+The Cartographer editor font is rasterized from the following SIL OFL 1.1 fonts
+(files in res/editor-font/; the generated glyph tables embed only alpha masks):
+
+  Noto Sans Mono 2.014 (NotoSansMono-Regular.ttf)
+    Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)
+  Noto Sans Armenian 2.008 (NotoSansArmenian-VF.ttf)
+    Copyright 2022 The Noto Project Authors (https://github.com/notofonts/armenian)
+  Noto Sans Georgian 2.005 (NotoSansGeorgian-VF.ttf)
+    Copyright 2022 The Noto Project Authors (https://github.com/notofonts/georgian)
+  Noto Sans Symbols 2.003 (NotoSansSymbols-VF.ttf)
+  Noto Sans Symbols 2 2.008 (NotoSansSymbols2-Regular.ttf)
+    Copyright 2022 The Noto Project Authors (https://github.com/notofonts/symbols)
+  Noto Sans Mono CJK 2.004, SC face (NotoSansMonoCJK-subset.otf)
+    Copyright 2014-2021 Adobe (http://www.adobe.com/)
+    Modified: instanced at the regular weight and reduced to the kana, Hangul, common
+    Han and fullwidth code points the editor embeds (tools/build-editor-font.py
+    --subset-cjk). It is distributed under the upstream name without using any
+    Reserved Font Name.
+
+Noto Sans Mono, Armenian, Georgian, Symbols and Symbols 2 are unmodified apart from
+the file names of the variable-font files. Each file's SHA256 is recorded in the
+header of src/cartographer/fontdata.inc.
+
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.

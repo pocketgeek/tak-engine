@@ -7,6 +7,7 @@
 
 #include <SDL.h>
 #include "cartographer/editorfont.h"
+#include "cartographer/textwidth.h"
 
 #include <cstdint>
 #include <string>
@@ -124,13 +125,25 @@ inline void drawText(SDL_Renderer* ren, const std::string& text, int x, int y, i
             for (int col = 0; col < 5; ++col)
                 if (gp[row] & (1 << (4 - col)))
                     px.push_back({cx + col * s, y + row * s, s, s});
-        cx += 6 * s;   // 5px glyph + 1px gap
+        cx += 6 * s * glyphCells(code);   // 5px glyph + 1px gap per column
     }
     if (px.empty()) return;
     SDL_SetRenderDrawColor(ren, r, g, b, 255);
     SDL_RenderFillRects(ren, px.data(), int(px.size()));
 }
 
-inline int textWidth(const std::string& t,int s) {int count=0;for(size_t p=0;p<t.size();++count)nextGlyph(t,p);return count*6*s;}
+// Width in text columns (a wide glyph is two) and in pixels at scale `s`.
+inline int textColumns(const std::string& t) {int count=0;for(size_t p=0;p<t.size();)count+=glyphCells(nextGlyph(t,p));return count;}
+inline int textWidth(const std::string& t,int s) {return textColumns(t)*6*s;}
+// The longest prefix of `t` that fits `columns` text columns, cut at a code point boundary.
+inline std::string clipColumns(const std::string& t,int columns) {
+    int used=0;size_t p=0;
+    while(p<t.size()) {
+        const size_t before=p;const int cells=glyphCells(nextGlyph(t,p));
+        if(used+cells>columns)return t.substr(0,before);
+        used+=cells;
+    }
+    return t;
+}
 
 } // namespace cart

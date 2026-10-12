@@ -511,24 +511,108 @@ static int regionWorkflow(const char* data) {
 }
 static int fontWorkflow() {
     if(SDL_Init(SDL_INIT_VIDEO)!=0)return 2;
-    auto* surface=SDL_CreateRGBSurfaceWithFormat(0,128,64,32,SDL_PIXELFORMAT_RGBA32);
+    constexpr int W=256,H=64;
+    auto* surface=SDL_CreateRGBSurfaceWithFormat(0,W,H,32,SDL_PIXELFORMAT_RGBA32);
     auto* renderer=surface?SDL_CreateSoftwareRenderer(surface):nullptr;
     if(!renderer) {if(surface)SDL_FreeSurface(surface);SDL_Quit();return 2;}
-    int result=0;
+    std::string failure;auto check=[&](bool value,const std::string& message){if(!value && failure.empty())failure=message;};
     {
         cart::EditorFont font(renderer);
-        auto pixels=[&](const std::string& text) {
+        auto pixels=[&](const std::string& text,int scale=2) {
             SDL_SetRenderDrawColor(renderer,0,0,0,255);SDL_RenderClear(renderer);
-            cart::drawText(renderer,text,20,20,2,255,255,255);SDL_RenderPresent(renderer);
-            std::vector<uint8_t> rgba(128*64*4);SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),128*4);return rgba;
+            cart::drawText(renderer,text,20,20,scale,255,255,255);SDL_RenderPresent(renderer);
+            std::vector<uint8_t> rgba(W*H*4);SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),W*4);return rgba;
         };
-        const auto missing=pixels("�"),latin=pixels("é"),greek=pixels("Ω"),cyrillic=pixels("Ж");
-        if(latin==missing || greek==missing || cyrillic==missing || pixels("a")==pixels("A") || latin==pixels("e"))result=1;
+        // Horizontal ink extent [first,last] over all rows (-1 when blank).
+        auto extent=[&](const std::vector<uint8_t>& rgba) {
+            int first=-1,last=-1;for(int x=0;x<W;++x)for(int y=0;y<H;++y)if(rgba[(size_t(y)*W+x)*4]>0) {if(first<0)first=x;last=x;}
+            return std::pair{first,last};
+        };
+        const auto blank=pixels(""),missing=pixels("\xef\xbf\xbd"),latin=pixels("é"),greek=pixels("Ω"),cyrillic=pixels("Ж");
+        check(!(latin==missing || greek==missing || cyrillic==missing || pixels("a")==pixels("A") || latin==pixels("e")),"Latin/Greek/Cyrillic glyphs distinct");
         bool antialiased=false;for(size_t i=0;i<latin.size();i+=4)antialiased|=latin[i]>0 && latin[i]<255;
-        if(!antialiased || cart::textWidth("éΩЖ",1)!=18)result=1;
+        check(antialiased && cart::textWidth("éΩЖ",1)==18,"antialiasing and 6 px narrow advance");
+        // Every added range draws real ink that differs from the replacement box and from its neighbours.
+        const std::vector<std::pair<const char*,std::string>> covered{
+            {"Vietnamese","Ệ"},{"Armenian","Ա"},{"Armenian lower","ա"},{"Georgian","ს"},{"Georgian Mtavruli","Ა"},{"arrow","↔"},
+            {"symbol","★"},{"math","∞"},{"box drawing","┌"},{"braille","⣿"},{"currency","₹"},{"halfwidth katakana","ｱ"},
+            {"Hiragana","あ"},{"Katakana","カ"},{"Hangul","한"},{"Han simplified","图"},{"Han traditional","圖"},{"fullwidth Latin","Ａ"},{"CJK punctuation","、"}};
+        const auto narrowBox=pixels("\u0905"),wideBox=pixels("\U00020000");
+        std::vector<std::vector<uint8_t>> seen;
+        for(const auto& [name,glyph]:covered) {
+            const auto image=pixels(glyph);
+            check(image!=blank,std::string(name)+" draws nothing");
+            check(image!=narrowBox && image!=wideBox && image!=missing,std::string(name)+" shows a replacement glyph");
+            for(const auto& other:seen)check(image!=other,std::string(name)+" duplicates another glyph");
+            seen.push_back(image);
+        }
+        // Replacement boxes: valid-but-unmapped code points are visible, one or two columns wide; they
+        // differ from the U+FFFD that invalid UTF-8 produces.
+        const auto [n0,n1]=extent(narrowBox);const auto [w0,w1]=extent(wideBox);const auto [h0,h1]=extent(pixels("日"));
+        check(narrowBox!=blank && narrowBox!=missing,"narrow replacement box is visible");
+        check(n0>=0 && n1-n0+1>=8 && n1-n0+1<=12,"narrow box spans about one column");
+        check(w0>=0 && w1-w0+1>=20 && w1-w0+1<=24 && w1-w0>n1-n0+8,"wide replacement box spans about two columns");
+        check(extent(pixels("\U0001F600"))==std::pair{w0,w1},"unmapped emoji is a two column box");
+        check(h0>=20 && h1<=20+24,"wide glyph stays inside its two columns");
+        check(extent(pixels("日日"))==std::pair{h0,h1+24},"wide advance is two columns");
+        check(extent(pixels("a日"))==std::pair{extent(pixels("a")).first,h1+12},"mixed advance");
+        // Layout metrics: a wide glyph is two columns everywhere.
+        check(cart::textWidth("日本",1)==24 && cart::textColumns("a日Ж")==4 && cart::glyphCells(0x3042)==2 && cart::glyphCells(0x41)==1 && cart::glyphCells(0xff21)==2 && cart::glyphCells(0xff71)==1,"glyphCells/textWidth");
+        check(cart::clipColumns("日本語",5)=="日本" && cart::clipColumns("a日",2)=="a" && cart::clipColumns("abc",9)=="abc" && cart::clipColumns("日",1).empty(),"clipColumns");
+        // Caret, wrap and selection geometry (textedit.h) follow columns.
+        namespace te=cart;
+        const std::string jp="日本語日本語";
+        auto rows=te::TextEdit::lines(jp,6);
+        check(rows.size()==2 && rows[0].end==9 && rows[1].begin==9,"wide wrap at three glyphs per six columns");
+        rows=te::TextEdit::lines("ab日本",3);
+        check(rows.size()==3 && rows[0].end==2 && rows[1].end==5 && rows[2].begin==5,"a wide glyph that does not fit moves to the next row");
+        check(te::TextEdit::lines("日本",1).size()==2,"one column still makes progress");
+        check(te::TextEdit::lines("abcdef",3).size()==2,"narrow wrap unchanged");
+        te::TextEdit edit;const std::string pair="日本";const auto one=te::TextEdit::lines(pair,0)[0];
+        check(te::TextEdit::offsetAt(pair,one,0)==0 && te::TextEdit::offsetAt(pair,one,1)==3 && te::TextEdit::offsetAt(pair,one,2)==3 && te::TextEdit::offsetAt(pair,one,3)==6 && te::TextEdit::offsetAt(pair,one,99)==6,"click column maps left/right halves of a wide glyph");
+        check(te::TextEdit::columnOf(pair,one,3)==2 && te::TextEdit::columnOf(pair,one,6)==4,"caret column");
+        std::string multi="日本\nabcd";edit.caret=3;edit.anchor=3;
+        SDL_Event down{};down.type=SDL_KEYDOWN;down.key.keysym.sym=SDLK_DOWN;
+        edit.input(down,multi,false,true,20);
+        check(edit.caret==multi.size()-2,"Down keeps the caret in the same text column across wide glyphs");
+        SDL_Event up{};up.type=SDL_KEYDOWN;up.key.keysym.sym=SDLK_UP;
+        edit.input(up,multi,false,true,20);
+        check(edit.caret==3,"Up returns to the same column");
+        edit.click(pair,0,0,3);check(edit.caret==6,"click right half of last wide glyph");
+        SDL_Event left{};left.type=SDL_KEYDOWN;left.key.keysym.sym=SDLK_LEFT;
+        std::string copy=pair;edit.input(left,copy);check(edit.caret==3,"Left steps one wide glyph");
     }
     SDL_DestroyRenderer(renderer);SDL_FreeSurface(surface);SDL_Quit();
-    if(!result)std::cout<<"PASS: embedded mixed-case Unicode glyphs, antialiasing and fixed caret metrics\n";return result;
+    if(!failure.empty()) {std::cerr<<"FAIL: "<<failure<<'\n';return 1;}
+    std::cout<<"PASS: embedded Unicode glyph ranges (Latin to CJK), replacement boxes, double-width layout and caret metrics\n";return 0;
+}
+// Developer aid (not a ctest): `cartographer_ui_test fontsheet out.png` renders sample lines of every
+// script the embedded font covers, plus the replacement boxes, for eyeballing generator changes.
+static int fontSheet(const char* out) {
+    if(SDL_Init(SDL_INIT_VIDEO)!=0)return 2;
+    const int width=1100,height=520;
+    auto* surface=SDL_CreateRGBSurfaceWithFormat(0,width,height,32,SDL_PIXELFORMAT_RGBA32);
+    auto* renderer=surface?SDL_CreateSoftwareRenderer(surface):nullptr;
+    if(!renderer)return 2;
+    {
+        cart::EditorFont font(renderer);
+        SDL_SetRenderDrawColor(renderer,24,26,32,255);SDL_RenderClear(renderer);
+        const char* lines[]={"Latin: The quick brown fox 0123456789 \u00c9\u00f1\u00fc\u00df \u1ea0\u1ec6\u1ef2 (Vietnamese Vi\u1ec7t Nam)",
+            "Greek/Cyrillic: \u0391\u03b2\u03b3\u03b4 \u0416\u0434\u044f \u041f\u0440\u0438\u0432\u0435\u0442",
+            "Armenian: \u0540\u0561\u0575\u0561\u057d\u057f\u0561\u0576 \u0531\u0562\u0563\u0564",
+            "Georgian: \u10e1\u10d0\u10e5\u10d0\u10e0\u10d7\u10d5\u10d4\u10da\u10dd \u1c91\u1c92",
+            "Symbols: \u2190\u2191\u2192\u2193\u2194 \u21d2 \u2200\u2203\u2208 \u221e \u2264\u2265 \u2500\u2502\u250c\u2510 \u2588\u2593 \u25cf\u25a0\u25b2 \u2605\u2606 \u2713\u2717 \u20ac\u00a3\u00a5\u20b9 \u2800\u28ff",
+            "Japanese: \u30de\u30c3\u30d7\u306e\u540d\u524d \u3072\u3089\u304c\u306a \u30ab\u30bf\u30ab\u30ca \uff71\uff72\uff73 \uff21\uff22\uff23\uff11\uff12",
+            "Chinese: \u5730\u56fe\u540d\u79f0 \u81ea\u5b9a\u4e49\u5730\u56fe \u5730\u5716\u540d\u7a31 \u9f8d\u738b\u6230\u722d",
+            "Korean: \ud55c\uad6d\uc5b4 \uc9c0\ub3c4 \uc774\ub984 \uac00\ub098\ub2e4",
+            "Missing: [\u0905][\u05d0][\u0e01][\U0001f600][\U00020000] valid-but-absent, [\xff] invalid byte"};
+        int y=10;
+        for(const char* line:lines) {cart::drawText(renderer,line,10,y,1,235,235,240);cart::drawText(renderer,line,10,y+20,2,200,225,255);y+=54;}
+        SDL_RenderPresent(renderer);
+        std::vector<uint8_t> rgba(size_t(width)*height*4);
+        SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),width*4);tak::png::write(out,width,height,rgba);
+    }
+    SDL_DestroyRenderer(renderer);SDL_FreeSurface(surface);SDL_Quit();return 0;
 }
 static int thumbnailWorkflow(const char* data) {
     if(SDL_Init(SDL_INIT_VIDEO)!=0)return 2;
@@ -1111,6 +1195,7 @@ int main(int argc,char** argv) {
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
     if(argc==2 && std::string(argv[1])=="font")return fontWorkflow();
+    if(argc==3 && std::string(argv[1])=="fontsheet")return fontSheet(argv[2]);
     if(argc==3 && std::string(argv[2])=="objects")return objectsWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="model")return modelWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="thumbnails")return thumbnailWorkflow(argv[1]);
@@ -1233,7 +1318,7 @@ int main(int argc,char** argv) {
         edit.click(multiline,20,2,3);if(edit.caret!=10)throw std::runtime_error("multiline mouse caret position");
         const auto wrapped=cart::TextEdit::lines("one two three",5);
         if(wrapped.size()!=3 || wrapped[0].end!=4 || wrapped[1].begin!=4)throw std::runtime_error("word wrapping");
-        if(cart::textWidth("A\xc3\xa9\xe6\xb0\xb4",1)!=18)throw std::runtime_error("Unicode display width counts code points");
+        if(cart::textWidth("A\xc3\xa9\xe6\xb0\xb4",1)!=24)throw std::runtime_error("Unicode display width counts columns (a wide Han glyph is two)");
         fs::remove_all(root);std::cout<<"PASS: editor properties, undo/redo, save, reopen, Save As, cancel, failed open, UTF-8 editing\n";
     } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
 }

@@ -223,7 +223,7 @@ void cart::Editor::drawPalette() {
                 fillRect(ren,x+kThumb-bw-2,y+2,bw,13,20,22,28);
                 cart::drawText(ren,badge,x+kThumb-bw+1,y+5,1,255,220,120);
             }
-            cart::drawText(ren,tool==TERRAIN && catalogWorld==world?sectionCatalog.shortLabel(i):paletteLabel(i).substr(0,14),x,y+kThumb+4,1,210,210,215);
+            cart::drawText(ren,tool==TERRAIN && catalogWorld==world?sectionCatalog.shortLabel(i):cart::clipColumns(paletteLabel(i),14),x,y+kThumb+4,1,210,210,215);
         }
     }
     SDL_RenderSetClipRect(ren,nullptr);
@@ -235,7 +235,7 @@ void cart::Editor::drawPalette() {
         const std::string tail=" ("+std::to_string(group && paletteSearch.empty()?group->sections:int(sections.list().size()))+") \xe2\x96\xbe";
         while(label.size()>1 && cart::textWidth(label+tail,1)>kPaletteW-20)label.pop_back();
         cart::drawButton(ren,4,kMenuH+33,kPaletteW-8,18,label+tail,sectionMenuOpen);
-    } else cart::drawButton(ren,4,kMenuH+33,kPaletteW-8,18,paletteCategories[size_t(categoryIndex)].substr(0,28),false);
+    } else cart::drawButton(ren,4,kMenuH+33,kPaletteW-8,18,cart::clipColumns(paletteCategories[size_t(categoryIndex)],28),false);
     if(tool!=TERRAIN)sectionMenuOpen=false;
     if(tool==TERRAIN) {
         size_t count=0;for(const auto& variants:paletteVariants)count+=variants.size();
