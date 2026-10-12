@@ -1345,6 +1345,10 @@
             }
             if (it == anims_.end()) continue;
             auto& a = it->second;
+            // Before the death branch: a body killed while slowed must die at full pace
+            // (a dead unit's gaitRate is 1), or its gait thread and the pieces it holds
+            // stay gated through Dying and the corpse keeps a half-played stride.
+            a.vm->setGaitRate(u.gaitRate);
             if (!u.alive()) {
                 if (!a.dying) {
                     a.dying = true;
@@ -1458,7 +1462,6 @@
             // BAM), converted with retail's truncating /182. Retail notifies only
             // when its turn state changes sign, including the stop transition.
             const int turnDegrees=u.turnReqBam/182;
-            a.vm->setGaitRate(u.gaitRate);
             tak::updateRetailMovementAnimationCallbacks(a.hasTurnDir,turnDegrees,a.turnSign,
                 u.animationMoveRate,a.moveRate,u.animationOccupancy,a.occupancy,
                 [&](int degrees) { a.vm->start("TurnDirection",{degrees}); },

@@ -661,9 +661,11 @@ playing a gait script (`cob::gaitCode`: `walk*`, `def_walk`, `swim*`,
 `SuperDynamicWheelSpinner`) and the piece motion they started step on that
 fraction of the 30 Hz ticks. Controllers polling GET 29, aim, fire and build
 threads keep full time. A body that reports stopped snaps back to full pace,
-so its cycle plays out its static-gated frames and restores as before. Flyers
-and Retail mode always run at full pace. The authoritative COB VM in `World`
-is untouched, so the state hash and every position, path and order are the
+so its cycle plays out its static-gated frames and restores as before; so does
+a body that dies (the pace is set before the death branch), or ten shipped
+types (`vermage`, `zonkrak`, `npcwagon`, ...) kept a half-played stride through
+`Dying`. Flyers and Retail mode always run at full pace. The authoritative
+COB VM in `World` is untouched, so the state hash and every position, path and order are the
 same: the `--mpai` Inner Circle hashes are unchanged in both modes. Debug
 clients take `TAK_GAIT_LOG=<csv>` (per ground mover per tick: distance,
 maximum, GET 29, refusal, pace) and `TAK_GAIT_OFF=1` (pace held at 1).
