@@ -10527,6 +10527,10 @@ void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
             // 51a7f0 retires all targets, but only the selected callback can
             // acknowledge/reset a switcher's weapon state.
             if(u.type->weaponSwitching && int(slot)!=u.weaponSlot)continue;
+            // This callback also retires the slot's swept target, so a later
+            // dropSlotTarget (boarding's switch to manual) does not announce
+            // TargetCleared a second time.
+            u.slotTarget[slot]=0;
             if(fromCommand)u.pendingWeaponAnimations.push_back({tak::RetailWeaponAnimation::Clear,uint8_t(slot),0,0});
             else u.weaponAnimations.add(tak::RetailWeaponAnimation::Clear,int(slot));
             // Native 51a7f0 starts TargetCleared with immediate=0. The callback
