@@ -8,6 +8,7 @@
 #include "cartographer/preferences.h"
 #include "cartographer/symmetry.h"
 #include <cmath>
+#include "cartographer/sectiongroups.h"
 #include <random>
 #include <chrono>
 #include <fstream>
@@ -229,6 +230,11 @@ int main() {
         const auto loadedPreferences=cart::loadEditorPreferences(root);
         check(loadedPreferences.tracePlaytest && loadedPreferences.guideSeen && loadedPreferences.width==1440 && loadedPreferences.height==900 && loadedPreferences.scalePercent==125 && loadedPreferences.recent==preferences.recent,"window, scale and Unicode recent paths roundtrip");
         check(!loadedPreferences.showFeatures && !loadedPreferences.showUnits && !loadedPreferences.showStarts && !loadedPreferences.showRegions && loadedPreferences.showGrid,"layer preferences roundtrip");
+        {
+            auto groups=preferences;groups.sectionGroups={{"Zhon","folder:coast cliffs sandy"},{"Aramon","kind:Water & coast"}};
+            check(cart::saveEditorPreferences(root,groups,prefsError),prefsError.c_str());
+            check(cart::loadEditorPreferences(root).sectionGroups==groups.sectionGroups,"section browser group per world roundtrip");
+        }
         tak::tnt::Map map;map.width=map.height=32;map.blocksX=map.blocksY=16;
         map.heights.resize(1024,60);map.features.resize(1024,0xffff);
         map.tileKeys.resize(256);map.tileCols.resize(256);map.tileRows.resize(256);
@@ -418,7 +424,51 @@ int main() {
         for(int i=0;i<20;++i) {auto state=initial;state.name=std::to_string(i);bounded.commit(state);}
         check(bounded.retainedBytes()<2500,"history respects memory budget");
         symmetryTests();
+        // Section browser naming: retail names decompose into kind/direction/corner
+        // and numbered or lettered variants collapse into one piece.
+        {
+            auto name=[](const char* raw,bool strip=false){return cart::parseSectionName(raw,strip);};
+            auto cliff=name("1neclif2trans");
+            check(cliff.kind=="Cliff" && cliff.direction=="NE" && cliff.corner=="outer" && cliff.variant=="2" && cliff.key=="1neclif#trans","Zhon corner cliff");
+            auto trans=name("2swtrans1x");check(trans.kind=="Transition" && trans.direction=="SW" && trans.corner=="inner" && trans.variant=="1","inner transition");
+            auto road=name("hwy_e_n_s01_200");check(road.kind=="Road" && road.direction=="E+N+S" && road.variant=="1","road junction, elevation suffix dropped");
+            check(name("e_n_s_02").key==name("e_n_s01").key,"stray underscore before a variant number");
+            auto river=name("ariver01e_512x_80",true);check(river.kind=="River" && river.direction.empty() && river.number=="1" && river.tag=="e","river letter variant after footprint");
+            check(name("nswe1").direction=="N+S+W+E" && name("ene").direction=="ENE" && name("nee01").direction=="NEE","compact and 16-point directions");
+            auto mouth=name("SMOUTH");check(mouth.kind=="Mouth" && mouth.direction=="S","direction before a word");
+            check(name("sett_ne01_200").kind=="Settlement" && name("sett_ne01_200").direction=="NE","settlement is a word, not a direction");
+            auto water=name("h2o1ne2");check(water.kind=="Water" && water.direction=="NE" && water.corner=="outer" && water.variant=="2","h2o prefix");
+            auto top=name("mttp_1nse2");check(top.kind=="Mountain top" && top.direction=="N+S+E" && top.corner=="outer","mountain top junction");
+            check(name("savannah12").direction.empty() && name("savannah12").number=="12" && name("savannah12").variant.empty(),"undirected specials keep their number");
+            for(auto [folder,kind]:{std::pair{"Coast Cliffs Jungle","Cliffs"},{"Low Jungle to High Sandy","Transitions"},{"Coast Towns","Towns & forts"},
+                {"Coast Walkways","Paths & roads"},{"Sea Berms","Water & coast"},{"high tile breakers","Specials & details"},{"flatties","Flats"},
+                {"snow line","Transitions"},{"High Sinkholes","Hills & mountains"},{"walls","Cliffs"},{"Mystery","Other"}})
+                check(cart::sectionKindGroup(folder)==kind,(std::string("kind group for ")+folder).c_str());
+            std::vector<cart::SectionRef> refs;
+            for(auto [folder,names]:{std::pair<const char*,std::vector<const char*>>{"Coast Cliffs Sandy",{"nclif1","nclif2","nclif3","1neclif1","1neclif2"}},
+                {"Low Rivers",{"ariver01a_512x_80","ariver01b_512x_80","ariver02a_512x_80"}},{"Low Sandy to High Savannah",{"1netrans1a","1netrans2a"}},
+                {"Low Plazas Jungle",{"1ne","1nex"}},{"walls",{"1ne2","1ne1lit","1ne1"}},{"Low Canals",{"BRIDGENS","bridgens2"}}})
+                for(const char* n:names)refs.push_back({folder,n,std::string("sections/x/")+folder+"/"+n+".tnt"});
+            cart::SectionCatalog catalog;catalog.build(refs);
+            auto index=[&](const char* n){for(size_t i=0;i<refs.size();++i)if(refs[i].name==n)return int(i);throw std::runtime_error(std::string("missing ")+n);};
+            auto variants=[&](const char* n){return catalog.pieces()[size_t(catalog.pieceOf(index(n)))].variants;};
+            check(variants("nclif2").size()==3 && catalog.label(index("nclif2"))=="Cliff \xc2\xb7 N \xc2\xb7 variant 2","numbered cliff variants share a piece");
+            check(catalog.label(index("1neclif2"))=="Cliff \xc2\xb7 NE outer \xc2\xb7 variant 2" && catalog.shortLabel(index("1neclif2"))=="Cliff NE out","corner label");
+            check(variants("ariver01b_512x_80").size()==2 && catalog.pieceOf(index("ariver02a_512x_80"))!=catalog.pieceOf(index("ariver01a_512x_80")),"river shapes split, letters are variants");
+            check(catalog.label(index("ariver01b_512x_80"))=="River \xc2\xb7 #1 \xc2\xb7 variant b","river label");
+            check(variants("1netrans2a").size()==2 && catalog.variantText(index("1netrans2a"))=="2","constant tileset letter is not a variant");
+            check(variants("1nex").size()==2,"plaza x alternate");
+            const auto walls=variants("1ne2");
+            check(walls.size()==3 && walls[0]==index("1ne1") && walls[1]==index("1ne1lit") && walls[2]==index("1ne2"),"lit variant ordered beside its number");
+            check(variants("BRIDGENS").size()==2,"unnumbered piece joins numbered sibling");
+            const auto& groups=catalog.groups();
+            check(groups.front().id.empty() && groups.front().sections==int(refs.size()),"All group first with every section");
+            check(groups.size()>2 && groups[1].id=="kind:Cliffs" && groups[2].id=="folder:coast cliffs sandy" && groups[2].depth==1,"kind followed by its folders");
+            const auto* coast=catalog.group("kind:Water & coast");
+            check(coast && coast->sections==5 && catalog.group("folder:low rivers")->pieces.size()==2,"group counts");
+            check(catalog.searchText(index("1neclif2")).find("1neclif2")!=std::string::npos && catalog.searchText(index("1neclif2")).find("cliff ")!=std::string::npos,"search sees raw and readable names");
+        }
         fs::remove_all(root);
-        std::cout<<"PASS: rule-only saves, metadata, stale deletion, backups, failed writes, names\n";
+        std::cout<<"PASS: rule-only saves, metadata, stale deletion, backups, failed writes, names, section browser naming\n";
     } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';fs::remove_all(root);return 1;}
 }

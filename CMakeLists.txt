@@ -1476,7 +1476,7 @@ if(TAK_BUILD_CLIENT)
     endif()
 
     add_executable(cartographer_document_test tools/cartographer_document_test.cpp
-      src/cartographer/recovery.cpp src/cartographer/document.cpp src/cartographer/history.cpp src/cartographer/units.cpp src/cartographer/sections.cpp src/cartographer/preferences.cpp
+      src/cartographer/recovery.cpp src/cartographer/document.cpp src/cartographer/history.cpp src/cartographer/units.cpp src/cartographer/sections.cpp src/cartographer/preferences.cpp src/cartographer/sectiongroups.cpp
       src/cartographer/symmetry.cpp src/cartographer/regions.cpp src/cartographer/triggers.cpp)
     target_link_libraries(cartographer_document_test PRIVATE tak-formats)
     add_test(NAME cartographer_document COMMAND cartographer_document_test)
@@ -1503,7 +1503,7 @@ if(TAK_BUILD_CLIENT)
     # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
     # Shares the engine's terrain render stack (mapview + tak-formats) so maps
     # look byte-identical to the game.
-    add_executable(cartographer src/client/modelview.cpp src/cartographer/savejob.cpp src/cartographer/playtest.cpp src/cartographer/editorfont.cpp src/cartographer/thumbnails.cpp src/cartographer/recovery.cpp src/cartographer/preferences.cpp src/cartographer/ruleedit.cpp src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/session.cpp src/cartographer/headless.cpp src/cartographer/palette.cpp src/cartographer/canvas.cpp src/cartographer/chrome.cpp src/cartographer/dialogs.cpp src/cartographer/scripting.cpp src/cartographer/symmetrytools.cpp src/cartographer/symmetry.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
+    add_executable(cartographer src/client/modelview.cpp src/cartographer/savejob.cpp src/cartographer/playtest.cpp src/cartographer/editorfont.cpp src/cartographer/thumbnails.cpp src/cartographer/recovery.cpp src/cartographer/preferences.cpp src/cartographer/ruleedit.cpp src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/session.cpp src/cartographer/headless.cpp src/cartographer/palette.cpp src/cartographer/canvas.cpp src/cartographer/chrome.cpp src/cartographer/dialogs.cpp src/cartographer/scripting.cpp src/cartographer/symmetrytools.cpp src/cartographer/symmetry.cpp src/cartographer/sections.cpp src/cartographer/sectiongroups.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
     target_link_libraries(cartographer PRIVATE tak-formats ${_tak_sdl2})
     target_compile_definitions(cartographer PRIVATE SDL_MAIN_HANDLED)
     get_target_property(_cartographer_sources cartographer SOURCES)
@@ -1529,13 +1529,14 @@ if(TAK_BUILD_CLIENT)
       add_test(NAME cartographer_headless_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}" headless)
       add_test(NAME cartographer_symmetry_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}" symmetry)
       add_test(NAME cartographer_terrain_clipboard_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}" terrain-clipboard)
+      add_test(NAME cartographer_sections_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}" sections)
       find_package(Python3 COMPONENTS Interpreter QUIET)
       if(Python3_Interpreter_FOUND AND UNIX AND NOT APPLE)
         add_test(NAME cartographer_recovery COMMAND "${Python3_EXECUTABLE}"
           "${CMAKE_SOURCE_DIR}/tools/cartographer_recovery_test.py" "$<TARGET_FILE:cartographer_ui_test>" "${TAK_TEST_DATA}")
         set_tests_properties(cartographer_recovery PROPERTIES TIMEOUT 70)
       endif()
-      set_tests_properties(cartographer_objects_ui cartographer_model_ui cartographer_templates_ui cartographer_resize_save_ui cartographer_rules_ui cartographer_ui cartographer_generation_ui cartographer_overlay_ui cartographer_regions_ui cartographer_features_ui cartographer_minimap_ui cartographer_thumbnails cartographer_validation_ui cartographer_headless_ui cartographer_symmetry_ui cartographer_terrain_clipboard_ui PROPERTIES TIMEOUT 90 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
+      set_tests_properties(cartographer_objects_ui cartographer_model_ui cartographer_templates_ui cartographer_resize_save_ui cartographer_rules_ui cartographer_ui cartographer_generation_ui cartographer_overlay_ui cartographer_regions_ui cartographer_features_ui cartographer_minimap_ui cartographer_thumbnails cartographer_validation_ui cartographer_headless_ui cartographer_symmetry_ui cartographer_terrain_clipboard_ui cartographer_sections_ui PROPERTIES TIMEOUT 90 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()
     if(WIN32)
       set_target_properties(cartographer PROPERTIES WIN32_EXECUTABLE TRUE)

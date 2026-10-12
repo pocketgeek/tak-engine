@@ -25,6 +25,7 @@
 #include "cartographer/recovery.h"
 #include "cartographer/regions.h"
 #include "cartographer/ruleedit.h"
+#include "cartographer/sectiongroups.h"
 #include "cartographer/sections.h"
 #include "cartographer/selection.h"
 #include "cartographer/symmetry.h"
@@ -243,6 +244,18 @@ struct Editor : Session {
     bool handlePaletteClick(SDL_Event& e);
     bool handlePaletteWheel(SDL_Event& e);
     void drawPalette();
+    // Terrain groups: kinds and retail folders; numbered variants share one row.
+    SectionCatalog sectionCatalog;
+    std::string catalogWorld,sectionGroup;   // group id, remembered per world
+    size_t catalogSize=0;
+    std::vector<std::vector<int>> paletteVariants;   // TERRAIN: each row's variants
+    bool sectionMenuOpen=false;
+    int sectionMenuScroll=0;
+    static constexpr int kSectionMenuW=300,kSectionRowH=16;
+    void selectSectionGroup(const std::string& id);
+    int sectionMenuRowAt(int x,int y) const;
+    bool handleSectionMenu(SDL_Event& e);
+    void drawSectionMenu();
 
     // --- Canvas editing (canvas.cpp) ------------------------------------------
     void placeFeature(int mx, int my, bool erase);   // feature plane at the mouse cell

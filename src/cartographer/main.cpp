@@ -345,6 +345,7 @@ int cart::Editor::run() {
         drawMinimap();
         drawPalette();
         drawChrome();
+        drawSectionMenu();
         drawClearArea();
         drawRegionsList();
         drawScripting();

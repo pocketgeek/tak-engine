@@ -44,14 +44,40 @@ std::string cart::Editor::paletteLabel(int index) {
     if(tool==UNITS) {const auto* info=unitInfo(index);return info?info->name+" ("+unitTypes[size_t(index)]+")":unitTypes[size_t(index)];}
     if(tool==FEATURES)return features.list()[size_t(index)].name;
     if(tool==STARTS)return "PLAYER "+std::to_string(scenario.starts[size_t(index)].number);
-    return sections.list()[size_t(index)].name;
+    const auto& section=sections.list()[size_t(index)];
+    if(catalogWorld!=world || sectionCatalog.pieceOf(index)<0)return section.name;
+    return sectionCatalog.label(index)+"   "+section.name+" ("+section.category+")";
 }
 
 void cart::Editor::refreshPalette() {
-    const auto key=std::to_string(int(tool))+"/"+std::to_string(categoryIndex)+"/"+std::to_string(factionIndex)+"/"+world+"/"+paletteSearch+"/"+std::to_string(scenario.starts.size());
+    if(tool==TERRAIN && (catalogWorld!=world || catalogSize!=sections.list().size())) {
+        sectionCatalog.build(sections.list());catalogWorld=world;catalogSize=sections.list().size();
+        const auto remembered=preferences.sectionGroups.find(world);
+        sectionGroup=remembered!=preferences.sectionGroups.end() && sectionCatalog.group(remembered->second)?remembered->second:"";
+        sectionMenuOpen=false;
+    }
+    const auto key=std::to_string(int(tool))+"/"+std::to_string(categoryIndex)+"/"+std::to_string(factionIndex)+"/"+world+"/"+paletteSearch+"/"+std::to_string(scenario.starts.size())+"/"+sectionGroup+"/"+std::to_string(catalogSize);
     if(key==paletteKey)return;
     const bool toolChanged=paletteKey.empty() || paletteKey[0]!=key[0];
     paletteKey=key;
+    if(tool==TERRAIN) {
+        // One row per piece; search keeps a piece when any variant matches and
+        // shows that variant, but cycling still steps through all of them.
+        paletteItems.clear();paletteVariants.clear();const auto query=lowerText(paletteSearch);
+        const auto* group=sectionCatalog.group(sectionGroup);
+        if(!group)group=&sectionCatalog.groups().front();
+        for(const int p:group->pieces) {
+            const auto& variants=sectionCatalog.pieces()[size_t(p)].variants;
+            int shown=-1;bool selectedMatches=false;
+            for(const int v:variants)if(query.empty() || sectionCatalog.searchText(v).find(query)!=std::string::npos) {
+                if(shown<0)shown=v;
+                selectedMatches|=v==selected;
+            }
+            if(shown<0)continue;
+            paletteItems.push_back(selectedMatches?selected:shown);paletteVariants.push_back(variants);
+        }
+        paletteScroll=0;return;
+    }
     const int count=tool==UNITS?int(unitTypes.size()):tool==FEATURES?int(features.list().size()):tool==STARTS?int(scenario.starts.size()):int(sections.list().size());
     auto category=[&](int i) {return tool==UNITS?unitCategory(i):tool==FEATURES?features.list()[size_t(i)].category:tool==STARTS?std::string("STARTS"):sections.list()[size_t(i)].category;};
     std::set<std::string> categories;for(int i=0;i<count;++i)categories.insert(category(i));
@@ -69,12 +95,15 @@ void cart::Editor::refreshPalette() {
 }
 
 int cart::Editor::paletteRowAt(int x,int y) const {
+    if(sectionMenuOpen && sectionMenuRowAt(x,y)>=0)return -1;
     return tool==UNITS || tool==STARTS?(y-kPaletteTop+paletteScroll)/26:
         ((y-kPaletteTop+paletteScroll)/kCellH)*cols+(x-4)/(kThumb+4);
 }
 
 std::string cart::Editor::paletteHint(int y) const {
     if(y<kMenuH+30)return "Search this browser by name or identifier (Ctrl+F). Escape returns keyboard focus to the map.";
+    if(tool==TERRAIN)return y<kMenuH+53?"Click to choose a section group: a kind (cliffs, transitions, water...) or one of its retail folders. Remembered per world.":
+        "Numbered variants of a piece share one thumbnail: click the selected piece again to step through them. Hover shows the internal name.";
     if(y<kMenuH+53)return "Click to cycle browser categories or unit roles. Search and filters work together.";
     if(tool==UNITS)return "Click to cycle faction filters. Internal unit identifiers remain available in the browser details.";
     return {};
@@ -82,12 +111,18 @@ std::string cart::Editor::paletteHint(int y) const {
 
 // Search focus, Ctrl+F and the filter buttons above the list.
 bool cart::Editor::handlePaletteFocus(SDL_Event& e) {
+    if(handleSectionMenu(e))return true;
     if(e.type==SDL_KEYDOWN && (e.key.keysym.mod&(KMOD_CTRL|KMOD_GUI)) && e.key.keysym.sym==SDLK_f) {
         paletteFocus=true;paletteEditor.focus(paletteSearch);SDL_StartTextInput();return true;
     }
     if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
         if(e.button.x<kPaletteW && e.button.y>=kMenuH && e.button.y<kPaletteTop) {
             if(e.button.y<kMenuH+30) {paletteFocus=true;paletteEditor.focus(paletteSearch);SDL_StartTextInput();}
+            else if(e.button.y<kMenuH+53 && tool==TERRAIN) {
+                sectionMenuOpen=true;sectionMenuScroll=0;
+                const auto& groups=sectionCatalog.groups();
+                for(size_t i=0;i<groups.size();++i)if(groups[i].id==sectionGroup)sectionMenuScroll=std::max(0,int(i)-4)*kSectionRowH;
+            }
             else if(e.button.y<kMenuH+53) {categoryIndex=(categoryIndex+1)%int(paletteCategories.size());refreshPalette();}
             else if(tool==UNITS) {factionIndex=(factionIndex+1)%6;refreshPalette();}
             return true;
@@ -113,6 +148,12 @@ bool cart::Editor::handlePaletteClick(SDL_Event& e) {
         if(tool==UNITS)selectedType=index;
         else if(tool==FEATURES)selectedFeat=index;
         else if(tool==STARTS)mapView.setOffset(scenario.starts[size_t(index)].xpos*16-canvasW/(2*mapView.zoom()),scenario.starts[size_t(index)].zpos*16-canvasH/(2*mapView.zoom()));
+        else if(index==selected && row<int(paletteVariants.size()) && paletteVariants[size_t(row)].size()>1) {
+            // Clicking the selected piece again steps to its next variant.
+            const auto& variants=paletteVariants[size_t(row)];
+            const auto at=std::find(variants.begin(),variants.end(),index);
+            selected=paletteItems[size_t(row)]=at==variants.end() || at+1==variants.end()?variants.front():*(at+1);
+        }
         else selected=index;
     }
     return true;
@@ -168,14 +209,87 @@ void cart::Editor::drawPalette() {
                 } else SDL_RenderCopy(ren,texture,nullptr,&cell);
             }
             if(i==selection) {SDL_SetRenderDrawColor(ren,255,210,90,255);SDL_RenderDrawRect(ren,&cell);}
-            cart::drawText(ren,paletteLabel(i).substr(0,14),x,y+kThumb+4,1,210,210,215);
+            if(tool==TERRAIN && row<int(paletteVariants.size()) && paletteVariants[size_t(row)].size()>1) {
+                const auto& variants=paletteVariants[size_t(row)];
+                const auto badge=std::to_string(std::find(variants.begin(),variants.end(),i)-variants.begin()+1)+"/"+std::to_string(variants.size());
+                const int bw=cart::textWidth(badge,1)+6;
+                fillRect(ren,x+kThumb-bw-2,y+2,bw,13,20,22,28);
+                cart::drawText(ren,badge,x+kThumb-bw+1,y+5,1,255,220,120);
+            }
+            cart::drawText(ren,tool==TERRAIN && catalogWorld==world?sectionCatalog.shortLabel(i):paletteLabel(i).substr(0,14),x,y+kThumb+4,1,210,210,215);
         }
     }
     SDL_RenderSetClipRect(ren,nullptr);
     cart::drawField(ren,4,kMenuH+3,kPaletteW-8,"SEARCH (CTRL+F)",paletteSearch,paletteFocus,paletteFocus?&paletteEditor:nullptr);
-    cart::drawButton(ren,4,kMenuH+33,kPaletteW-8,18,paletteCategories[size_t(categoryIndex)].substr(0,28),false);
-    if(tool==UNITS) {
+    if(tool==TERRAIN) {
+        const auto* group=sectionCatalog.group(sectionGroup);
+        const std::string label=group?group->label+" ("+std::to_string(group->sections)+")":"All sections";
+        cart::drawButton(ren,4,kMenuH+33,kPaletteW-8,18,label.substr(0,25)+" \xe2\x96\xbe",sectionMenuOpen);
+    } else cart::drawButton(ren,4,kMenuH+33,kPaletteW-8,18,paletteCategories[size_t(categoryIndex)].substr(0,28),false);
+    if(tool!=TERRAIN)sectionMenuOpen=false;
+    if(tool==TERRAIN) {
+        size_t count=0;for(const auto& variants:paletteVariants)count+=variants.size();
+        cart::drawText(ren,std::to_string(paletteItems.size())+" PIECES \xc2\xb7 "+std::to_string(count)+" SECTIONS",6,kMenuH+59,1,180,190,200);
+    } else if(tool==UNITS) {
         static const char* factionNames[]={"ALL FACTIONS","ARAMON","TAROS","VERUNA","ZHON","CREON"};
         cart::drawButton(ren,4,kMenuH+54,kPaletteW-8,18,factionNames[factionIndex],false);
     } else cart::drawText(ren,std::to_string(paletteItems.size())+" MATCHES",6,kMenuH+59,1,180,190,200);
+}
+
+// The group list drops down from the category button over the browser and canvas
+// (drawn after the chrome so the panel edges stay underneath it).
+void cart::Editor::selectSectionGroup(const std::string& id) {
+    sectionGroup=id;sectionMenuOpen=false;
+    preferences.sectionGroups[world]=id;persistPreferences();
+    refreshPalette();
+}
+
+int cart::Editor::sectionMenuRowAt(int x,int y) const {
+    const int top=kMenuH+53;
+    if(x<4 || x>=4+kSectionMenuW || y<top || y>=h-kStatusH)return -1;
+    const int row=(y-top+sectionMenuScroll)/kSectionRowH;
+    return row<int(sectionCatalog.groups().size())?row:-1;
+}
+
+bool cart::Editor::handleSectionMenu(SDL_Event& e) {
+    if(!sectionMenuOpen)return false;
+    if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE) {sectionMenuOpen=false;return true;}
+    if(e.type==SDL_MOUSEWHEEL) {
+        const int visible=std::max(1,(h-kStatusH-kMenuH-53)/kSectionRowH);
+        const int total=int(sectionCatalog.groups().size());
+        sectionMenuScroll=std::clamp(sectionMenuScroll-e.wheel.y*kSectionRowH*3,0,std::max(0,total-visible)*kSectionRowH);
+        return true;
+    }
+    if(e.type==SDL_MOUSEBUTTONDOWN) {
+        const int row=sectionMenuRowAt(e.button.x,e.button.y);
+        if(row>=0 && e.button.button==SDL_BUTTON_LEFT)selectSectionGroup(sectionCatalog.groups()[size_t(row)].id);
+        else sectionMenuOpen=false;   // a click elsewhere only closes the list
+        return true;
+    }
+    return false;
+}
+
+void cart::Editor::drawSectionMenu() {
+    if(!sectionMenuOpen || tool!=TERRAIN)return;
+    const int top=kMenuH+53,bottom=h-kStatusH;
+    const auto& groups=sectionCatalog.groups();
+    const int height=std::min(bottom-top,int(groups.size())*kSectionRowH+4);
+    fillRect(ren,4,top,kSectionMenuW,height,24,26,34);
+    SDL_Rect frame{4,top,kSectionMenuW,height};SDL_SetRenderDrawColor(ren,110,115,130,255);SDL_RenderDrawRect(ren,&frame);
+    SDL_Rect clip{5,top+1,kSectionMenuW-2,height-2};SDL_RenderSetClipRect(ren,&clip);
+    int mx,my;SDL_GetMouseState(&mx,&my);mx=int(mx/kUIScale);my=int(my/kUIScale);
+    const int hover=sectionMenuRowAt(mx,my);
+    for(int row=0;row<int(groups.size());++row) {
+        const int y=top+2+row*kSectionRowH-sectionMenuScroll;
+        if(y+kSectionRowH<top || y>bottom)continue;
+        const auto& g=groups[size_t(row)];
+        if(g.id==sectionGroup)fillRect(ren,6,y,kSectionMenuW-4,kSectionRowH,70,66,40);
+        else if(row==hover)fillRect(ren,6,y,kSectionMenuW-4,kSectionRowH,44,48,62);
+        const std::string count=std::to_string(g.sections);
+        const int indent=g.depth?20:8,room=(kSectionMenuW-indent-cart::textWidth(count,1)-16)/6;
+        std::string label=g.label;if(!g.depth)for(char& c:label)c=char(std::toupper((unsigned char)c));
+        cart::drawText(ren,label.substr(0,size_t(std::max(0,room))),indent,y+4,1,g.depth?200:255,g.depth?205:225,g.depth?215:150);
+        cart::drawText(ren,count,4+kSectionMenuW-8-cart::textWidth(count,1),y+4,1,150,160,175);
+    }
+    SDL_RenderSetClipRect(ren,nullptr);
 }

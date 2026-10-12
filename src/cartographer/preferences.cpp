@@ -27,6 +27,9 @@ EditorPreferences loadEditorPreferences(const std::filesystem::path& folder) {
             std::string name;if(row>>std::quoted(name) && !name.empty() && name.size()<=4096 && p.recent.size()<12 &&
                 std::find(p.recent.begin(),p.recent.end(),name)==p.recent.end())p.recent.push_back(std::move(name));
         }
+        if(key=="sectiongroup") {
+            std::string world,group;if(row>>world>>std::quoted(group) && world.size()<=32 && group.size()<=256 && p.sectionGroups.size()<16)p.sectionGroups[world]=group;
+        }
     }
     return p;
 }
@@ -37,6 +40,8 @@ bool saveEditorPreferences(const std::filesystem::path& folder,const EditorPrefe
     text<<"guide "<<p.guideSeen<<'\n';
     text<<"trace "<<p.tracePlaytest<<'\n';
     for(size_t i=0;i<std::min(size_t(12),p.recent.size());++i)text<<"recent "<<std::quoted(p.recent[i])<<'\n';
+    for(const auto& [world,group]:p.sectionGroups)
+        if(!world.empty() && world.size()<=32 && world.find_first_of(" \t\r\n")==std::string::npos)text<<"sectiongroup "<<world<<' '<<std::quoted(group)<<'\n';
     const auto bytes=text.str();return writeDocumentFiles(folder,{{"preferences.txt",{bytes.begin(),bytes.end()}}},error);
 }
 }

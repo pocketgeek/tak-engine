@@ -1060,6 +1060,53 @@ twin, unknown tiles and twin pairs whose art is not an exact mirror leave
 visible seams at the axis or on unmirrored blocks. Non-square footprints under
 diagonal or quarter-turn mirrors are centred to the nearest cell.
 
+## Terrain section groups checkpoint
+
+The terrain browser no longer shows a world's sections as one flat grid of
+artist names (1,261 for Zhon). A survey of every retail section (sections.hpi +
+IPSections.hpi, 3,146 files) found a fixed `Sections/<World>/<Folder>/<name>.TNT`
+layout whose folders already encode elevation, kind and Zhon tileset, and names
+built from a small vocabulary: compass directions (`n`..`nw`, underscore lists
+such as `e_n_s` for junctions, compact runs such as `nse`, Taros 16-point
+`ene`), kind words (`clif`, `trans`, `ramp`, `hwy`, `sett`, `rvr`, `h2o`, `mttp`,
+...), a leading `1`/`2` for outer/inner corners (checked against the heightmaps
+of cliff, transition, plaza, cave-wall and lava pieces), and numbered or lettered
+variants. Constant noise is ignored: Aramon elevation suffixes (`_80`, `_200`),
+footprints (`_512x`), artist prefixes (`a`river, `ac`coast, `y_`) and the tileset
+letter some folders append to every name (`1netrans1x`).
+
+`sectiongroups.cpp` derives everything from that structure; no data files were
+added. The category button opens a group list: All, then kind groups (Cliffs,
+Transitions, Water & coast, Paths & roads, Towns & forts, Hills & mountains,
+Flats, Specials & details, Other) each followed by its retail folders, with
+section counts. Numbered variants of a piece share one thumbnail with a `2/3`
+badge; clicking the selected piece again steps to the next variant. A trailing
+letter or `lit` counts as a variant only when siblings show two endings for the
+same stem (`ariver01a`..`g`, `1ne1`/`1ne1lit`), so a folder-wide constant letter
+stays part of the name. Undirected numbered pieces (`unique7`, `mt12`, `isle03`)
+remain separate entries. Thumbnails read `Cliff NE out`; the status bar shows
+`Cliff · NE outer · variant 2` with the raw name and folder. Search matches raw
+names, readable labels, folders and groups across every group and shows a
+matching variant. The chosen group is remembered per world in the preferences.
+Thumbnail loading and caching are unchanged: only drawn rows request one.
+
+Groups per world (sections / pieces / kind groups / folders): Aramon 467 / 303 /
+8 / 27, Veruna 417 / 274 / 7 / 20, Taros 401 / 257 / 8 / 20, Zhon 1,261 / 555 / 7 /
+32, Creon 452 / 275 / 7 / 18. The Iron Plague caves and volcano sets group too.
+The Other group is empty on every retail world. A few odd names get only a
+fallback label (`gronq'slanding`, `ted_stinks_80`, `chunghi`, `200a01`,
+`nskuo`). Building the Zhon catalog takes about 6 ms, and a search pass takes
+under 1 ms.
+
+Coverage: `cartographer_document` checks the decomposition of representative
+retail names from all five worlds, folder kind groups, variant grouping and its
+evidence rule, labels, search text and the remembered-group preference.
+`cartographer_sections_ui` drives the real editor: open the group list, pick
+Coast Cliffs Sandy, select its first piece, click again, stamp and save. The
+saved tiles must be the second variant and not the first. A second session must
+reopen the remembered group. Disabling variant cycling, group restore, the
+preference line or the sibling-evidence rule fails these tests.
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop

@@ -1,5 +1,6 @@
 #pragma once
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 namespace cart {
@@ -9,6 +10,7 @@ struct EditorPreferences {
     bool guideSeen=false;
     bool tracePlaytest=false;
     std::vector<std::string> recent;
+    std::map<std::string,std::string> sectionGroups;   // world -> terrain browser group id
     void remember(const std::string& request);
 };
 EditorPreferences loadEditorPreferences(const std::filesystem::path& folder);

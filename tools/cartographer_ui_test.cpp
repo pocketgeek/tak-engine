@@ -9,11 +9,14 @@
 #include "cartographer/sections.h"
 #include "cartographer/features.h"
 #include "cartographer/symmetry.h"
+#include "cartographer/sectiongroups.h"
+#include "cartographer/preferences.h"
 #include "terrain/terrain.h"
 #include "cartographer/textedit.h"
 #include "hpi/hpi.h"
 #include "tnt/ota.h"
 #include <chrono>
+#include <functional>
 #include <filesystem>
 #include "crt/crt.h"
 #include "tnt/mapgen.h"
@@ -789,6 +792,88 @@ static int recoveryWorkflow(const char* data,const char* folder,const std::strin
 // The command-line paths end through Session::Exit before any UI exists: usage
 // and missing maps/sections fail, --save/--stamp/--bundle write and exit, and
 // --shot renders one frame of the real editor to a PNG.
+// Section browser: open the group list, pick a folder, select its first piece,
+// click it again for the next variant, stamp and save. A second session must
+// reopen the remembered group (its first thumbnail is that folder's piece).
+static int sectionsWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-sections-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    auto vfs=tak::hpi::mountRetailRoot(data);cart::SectionLibrary sections;sections.scan(vfs,"zhon");
+    cart::SectionCatalog catalog;catalog.build(sections.list());
+    const std::string groupId="folder:coast cliffs sandy";int groupRow=-1;
+    for(size_t i=0;i<catalog.groups().size();++i)if(catalog.groups()[i].id==groupId)groupRow=int(i);
+    if(groupRow<0 || groupRow>8) {std::cerr<<"group row "<<groupRow<<'\n';return 2;}
+    const auto& piece=catalog.pieces()[size_t(catalog.groups()[size_t(groupRow)].pieces.front())];
+    const auto& firstOfAll=catalog.pieces()[size_t(catalog.groups().front().pieces.front())];
+    if(piece.variants.size()<2 || firstOfAll.folder==piece.folder)return 2;
+    // Block positions where the saved map carries exactly this prefab's tile art
+    // (keys/cols/rows) and heights. Cliff sets share heights, so art decides.
+    auto stampedAt=[&](int section) {
+        const auto* prefab=sections.load(vfs,sections.list()[size_t(section)].path);
+        if(!prefab || prefab->blocksX!=16 || prefab->blocksY!=16)return -1;
+        int found=0;tak::hpi::Archive archive(root/"Ulasem Arena.kmp");
+        for(const auto& entry:archive.entries())if(entry.path.ends_with(".tnt")) {
+            const auto map=tak::tnt::Map::load(archive.read(entry),entry.path);
+            for(int by=0;by+16<=map.blocksY;++by)for(int bx=0;bx+16<=map.blocksX;++bx) {
+                bool same=true;
+                for(int y=0;y<16 && same;++y)for(int x=0;x<16 && same;++x) {
+                    const size_t m=size_t(by+y)*map.blocksX+bx+x,p=size_t(y)*16+x;
+                    same=map.tileKeys[m]==prefab->tileKeys[p] && map.tileCols[m]==prefab->tileCols[p] && map.tileRows[m]==prefab->tileRows[p];
+                }
+                for(int y=0;y<32 && same;++y)same=std::equal(prefab->heights.begin()+y*32,prefab->heights.begin()+y*32+32,map.heights.begin()+size_t(by*2+y)*map.width+bx*2);
+                found+=same;
+            }
+        }
+        return found;
+    };
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    std::string failure;auto check=[&](bool value,const char* message){if(!value && failure.empty())failure=message;};
+    auto session=[&](std::vector<std::function<void(SDL_Renderer*,bool)>> steps) {
+        int last=0;
+        const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+            last=frame;const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
+            if(frame<int(steps.size()))steps[size_t(frame)](renderer,dirty);
+            else if(frame==int(steps.size())) {SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);}
+            else if(frame>int(steps.size())+3) {check(false,"editor did not exit");key(SDLK_ESCAPE);key(SDLK_RETURN);}
+        });
+        check(result==0 && last>=int(steps.size()),"section browser session failed");
+    };
+    auto click=[](SDL_Renderer* renderer,int x,int y) {
+        float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);
+        SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);
+        e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
+    };
+    const int groupButtonY=44+40,firstCellX=48,firstCellY=44+76+4+44,menuRowY=44+53+2+groupRow*16+8;
+    session({
+        [&](SDL_Renderer* r,bool){click(r,100,groupButtonY);},             // open the group list
+        [&](SDL_Renderer* r,bool){click(r,100,menuRowY);},                 // Coast Cliffs Sandy
+        [&](SDL_Renderer* r,bool){click(r,firstCellX,firstCellY);},       // select its first piece
+        [&](SDL_Renderer* r,bool){click(r,firstCellX,firstCellY);},       // again: next variant
+        [&](SDL_Renderer* r,bool dirty){check(!dirty,"browser clicks must not edit");click(r,560,400);},
+        [&](SDL_Renderer*,bool dirty){check(dirty,"stamp marks the map dirty");key(SDLK_s,KMOD_CTRL);},
+        [&](SDL_Renderer*,bool dirty){check(!dirty,"stamped map saved");key(SDLK_RETURN);},
+    });
+    if(failure.empty()) {
+        check(stampedAt(piece.variants[1])>0,"second click stamps the piece's second variant");
+        check(stampedAt(piece.variants[0])==0,"first variant was not left selected");
+        const auto preferences=cart::loadEditorPreferences(root/"TAKengine"/"Cartographer");
+        const auto remembered=preferences.sectionGroups.find("Zhon");
+        check(remembered!=preferences.sectionGroups.end() && remembered->second==groupId,"chosen group remembered for the world");
+    }
+    if(failure.empty()) session({
+        [&](SDL_Renderer* r,bool){click(r,firstCellX,firstCellY);},       // first thumbnail of the reopened group
+        [&](SDL_Renderer* r,bool){click(r,560,400);},
+        [&](SDL_Renderer*,bool dirty){check(dirty,"second stamp marks the map dirty");key(SDLK_s,KMOD_CTRL);},
+        [&](SDL_Renderer*,bool){key(SDLK_RETURN);},
+    });
+    if(failure.empty())check(stampedAt(piece.variants[0])>0 && stampedAt(firstOfAll.variants[0])==0,"reopened editor restores the remembered group");
+    if(!failure.empty()) {std::cerr<<"FAIL: "<<failure<<"; files: "<<root<<'\n';return 1;}
+    fs::remove_all(root);
+    std::cout<<"PASS: section group list, folder selection, variant cycling, stamp and remembered group\n";return 0;
+}
+
 static int headlessWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-headless-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -990,6 +1075,7 @@ int main(int argc,char** argv) {
     if(argc==3 && std::string(argv[2])=="headless")return headlessWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="symmetry")return symmetryWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="terrain-clipboard")return terrainClipboardWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="sections")return sectionsWorkflow(argv[1]);
     if(argc!=2)return 2;
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-ui-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
