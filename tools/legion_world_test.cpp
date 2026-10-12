@@ -2473,6 +2473,57 @@ float flyerfrontAirOnly() {
     std::printf("flyerfront air-only farthest_from_point=%.0f\n",worst);
     return worst;
 }
+// Formation flyers over narrow ground: a block `cols` bodies across and `rows` along its way (one body; a column
+// one or two wide) and 8 flyers moving east on an open field. In each 30-tick window the ground marched >= 9 px:
+// top the mean offset of the 3 leading flyers from the ground's leading body, depth the farthest flyer behind it,
+// behind the flyers behind the ground's centroid. Lanes one per 64 px of a narrow front would put the 8 in a file
+// 448 px long trailing it; they stand at most twice as deep as wide instead (2 lanes, 4 rows: 192 px).
+struct NarrowRun {double top=0,behind=0;float depth=0;int n=0;};
+NarrowRun flyerfrontNarrow(int cols,int rows) {
+    Fixture f(260,220);f.publish();
+    const auto type=mover(2);
+    UnitType flyer{};flyer.id=flyer.name="legion-flyer";
+    flyer.canFly=flyer.canMove=true;flyer.maxHp=100;flyer.footX=flyer.footZ=3;flyer.sight=4096;
+    flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);flyer.turnRate=1200;flyer.cruiseAlt=80;flyer.buildTime=1;
+    flyer.vtolStandby=true;
+    std::vector<int> ground,flyers,all;
+    for(int i=0;i<cols*rows;++i)ground.push_back(f.spawn(type,20+(i/cols)*3,100+(i%cols)*3));
+    for(int i=0;i<8;++i)flyers.push_back(f.spawn(flyer,8+(i%4)*4,100+(i/4)*4));
+    all=ground;all.insert(all.end(),flyers.begin(),flyers.end());
+    f.start();
+    TypeRegistry registry;
+    auto command=[&](tak::net::Cmd k,int id,float x,float z,int target=0) {
+        tak::net::Command c;c.kind=k;c.player=0;c.unitId=id;c.targetId=target;c.x=x;c.z=z;c.queue=0;
+        applyCommand(f.world,registry,c);
+    };
+    for(int id:all)command(tak::net::Cmd::SetSquad,id,0,0,-1);
+    for(int t=0;t<300;++t)f.world.tick(1.f/30);
+    for(int id:all) {
+        const auto& u=*f.world.unit(id);
+        command(tak::net::Cmd::Move,id,u.type->canFly?190*16+std::clamp(u.x.toFloat()-30*16,-60.f,60.f):190*16,
+                u.type->canFly?104*16+std::clamp(u.z.toFloat()-104*16,-60.f,60.f):104*16);
+    }
+    NarrowRun r;float wx=0;
+    for(int t=0;t<2400;++t) {
+        f.world.tick(1.f/30);
+        if(t%30||t<300)continue;
+        double sx=0,sz=0;for(int id:ground){sx+=f.world.unit(id)->x.toFloat();sz+=f.world.unit(id)->z.toFloat();}
+        const float cx=float(sx/ground.size());
+        bool busy=false;for(int id:ground)busy|=!f.world.unit(id)->orders.empty();
+        if(busy&&cx-wx>=9.f) {
+            float front=-1e9f;for(int id:ground)front=std::max(front,f.world.unit(id)->x.toFloat()-cx);
+            std::vector<float> along;for(int id:flyers)along.push_back(f.world.unit(id)->x.toFloat()-cx);
+            std::sort(along.rbegin(),along.rend());
+            r.top+=(along[0]+along[1]+along[2])/3-front;r.depth=std::max(r.depth,front-along.back());
+            for(float a:along)r.behind+=a<-1.f;
+            ++r.n;
+        }
+        wx=cx;
+    }
+    if(r.n){r.top/=r.n;r.behind/=r.n;}
+    std::printf("flyerfront narrow %dx%d lead_top=%.0f depth=%.0f behind_centroid=%.1f windows=%d\n",cols,rows,r.top,r.depth,r.behind,r.n);
+    return r;
+}
 void flyerfront() {
     const auto r=flyerfrontRun();
     // The leading flyers over the ground's leading body on both headings, neither behind nor ahead of it
@@ -2491,8 +2542,19 @@ void flyerfront() {
     check(r.done>=0&&r.landed==12,"flyerfront: the formation did not finish and land");
     check(r.behind==0,"flyerfront: a flyer landed behind the front of the ground");
     check(flyerfrontAirOnly()<=120,"flyerfront: an air-only formation's flyer landed away from its point");
+    // Narrow ground (measured: depth 193 / 219 / 220, a lane per 64 px of front 448 / 455 / 455): the 8 flyers
+    // over the front in at most 4 rows (2 lanes; 192 px plus the lag), the leading ones over the leading body,
+    // and over a 10-deep column none behind its middle (the file down a column had 4 of 8 behind it).
+    for(const auto [cols,rows]:{std::pair{1,1},std::pair{1,10},std::pair{2,10}}) {
+        const auto n=flyerfrontNarrow(cols,rows);
+        check(n.n>0,"flyerfront narrow: no window measured");
+        check(n.top>=-80&&n.top<=60,"flyerfront narrow: the leading flyers were not over the ground's leading body");
+        check(n.depth<=260,"flyerfront narrow: the flyers trailed in a file behind narrow ground");
+        if(rows>1)check(n.behind<=0.5,"flyerfront narrow: flyers sat behind the middle of a column");
+    }
     check(flyerfrontRun(false).hash==r.hash,"flyerfront: serial and workers differ");
 }
+
 
 // Group awareness: two moving groups plan round each other as wholes.
 // Cases: two own groups crossing paths at right angles; two own groups head

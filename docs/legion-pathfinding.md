@@ -490,7 +490,13 @@ station: a known limit.
   of it, a body farther out counting that much farther back, so the front is
   continuous in the bodies' positions; the front row fills first, a short last
   row spreads over the whole width, and each further row sits a spacing
-  behind. Flyers take the rows in order of their distance behind the front
+  behind. A row has enough lanes that the rows number at most twice the
+  lanes: over ground narrower than that (one body, a column one or two wide)
+  the row spreads that wide about the ground's centre line, a lane past its
+  edge taking the front at that edge, so the flyers stand at most twice as deep
+  as wide instead of in a file trailing behind it (8 flyers over one body: 2
+  lanes, 4 rows, 192 px deep, where a lane per spacing of front had them in
+  one file 448 px deep). Flyers take the rows in order of their distance behind the front
   and each row's lanes in order across, so a flyer in formation keeps its
   station and a turn re-ranks the flyers where they stand. Within a quarter
   spacing of a lane boundary they keep the layout of the lane count across it
@@ -574,7 +580,10 @@ patrol it checks:
 flyers (more than one row of lanes) from east to south mid-move: on both
 headings the leading flyers ride over the leading body, east the flyers span
 the full width with the rest in the second row, all land in front, and an
-air-only formation still lands at its own points.
+air-only formation still lands at its own points. It also moves 8 flyers with
+one body and with columns 1 and 2 bodies wide and 10 deep: the leading flyers
+ride over the leading body, at most 4 rows deep (193 to 220 px; the file of
+one lane per spacing 448 to 455 px), none behind a column's middle.
 
 **A third deliberate flight difference: idle landed flyers make way for an
 allied ground group.** Retail stamps a landed flyer into the ground word

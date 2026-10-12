@@ -299,7 +299,8 @@
     void GameView::testBuild() {
         // Formation flyers over the front (Legion, for --shot captures mid-move and on arrival with --time):
         // an Alt+1 formation of 30 swordsmen and 8 flyers right-clicked TAK_FLYER_FRONT px east of the map's
-        // centre (negative: west). TAK_FLYER_FRONT_RETAIL=1 keeps Retail pathfinding for a comparison.
+        // centre (negative: west). TAK_FLYER_FRONT_RETAIL=1 keeps Retail pathfinding for a comparison;
+        // TAK_FLYER_FRONT_GROUND=N spawns N swordsmen instead of 30 (1: a squad narrower than its flyers).
         if (const char* front=tak::devEnv("TAK_FLYER_FRONT")) {
             writableWorld().setPathfindingMode(tak::devFlag("TAK_FLYER_FRONT_RETAIL") ? tak::sim::PathfindingMode::Retail
                                                                                        : tak::sim::PathfindingMode::Legion);
@@ -308,7 +309,8 @@
             const float side=east<0?1.f:-1.f;   // the block starts on the far side of the centre from its goal
             const char* flyer=tak::devEnv("TAK_FLYER_FRONT_TYPE");
             selection_.clear();
-            for(int i=0;i<30;++i)selection_.push_back(spawn("arasword",x0+side*(300+float(i/6)*40),z0-100+float(i%6)*40,0,localPlayer_));
+            const char* ground=tak::devEnv("TAK_FLYER_FRONT_GROUND");
+            for(int i=0,n=ground?std::max(std::atoi(ground),1):30;i<n;++i)selection_.push_back(spawn("arasword",x0+side*(300+float(i/6)*40),z0-100+float(i%6)*40,0,localPlayer_));
             for(int i=0;i<8;++i)selection_.push_back(spawn(flyer?flyer:"arafly",x0+side*(500+float(i/4)*60),z0-90+float(i%4)*60,0,localPlayer_));
             std::erase_if(selection_,[](int id){return id<0;});
             for(const int id:selection_)issueSquad(id,-1);

@@ -2585,10 +2585,14 @@ static void legionStationSlot(int k,int& ox,int& oz) {
 // distance behind that front (beyond it, for landing points) and each row's
 // lanes in order across, so flyers in formation keep their stations, and a
 // turn re-ranks them where they are rather than by who they are. C is the
-// extent's lane count; within a quarter spacing of a lane boundary the flyers
-// keep the layout of the lane count across it if they stand nearer it (by a
-// quarter spacing squared per flyer), so a formation whose width hovers at a
-// boundary does not reshuffle them each tick.
+// extent's lane count, but never so few that the rows outnumber twice the
+// lanes: over ground narrower than that (one body, a column) the rows spread
+// that wide about its centre line, so the flyers stand at most twice as deep
+// as wide rather than in a file trailing behind it, and a lane past the
+// ground's edge takes the front at that edge. Within a quarter spacing of a
+// lane boundary the flyers keep the layout of the lane count across it if
+// they stand nearer it (by a quarter spacing squared per flyer), so a
+// formation whose width hovers at a boundary does not reshuffle them each tick.
 // `at` and `flyers` hold raw positions; out[i] is flyer i's station.
 static void legionFrontSlots(const std::vector<std::array<int64_t,2>>& at,int64_t dx,int64_t dz,int spacing,int ahead,
                              const std::vector<std::array<int64_t,2>>& flyers,std::vector<std::array<Fixed,2>>& out) {
@@ -2607,7 +2611,13 @@ static void legionFrontSlots(const std::vector<std::array<int64_t,2>>& at,int64_
     int64_t lo=INT64_MAX,hi=INT64_MIN;
     for (const auto& p:at) { rel.push_back(frame(p)); lo=std::min(lo,rel.back()[1]); hi=std::max(hi,rel.back()[1]); }
     const int64_t gap=int64_t(spacing)<<16;
+    // The least lane count, rows no more than twice as many as lanes; over ground narrower than its rows they
+    // spread past its edges, each edge's front held flat.
+    int least=std::max(int(isqrt64(uint64_t(count/2))),1);
+    while (2*least*least<count) ++least;
+    const bool narrow=hi-lo<int64_t(least-1)*gap;
     const auto front=[&](int64_t s) {
+        if (narrow) s=std::clamp(s,lo,hi);
         int64_t a=INT64_MIN;
         for (const auto& q:rel) a=std::max(a,q[0]-std::max<int64_t>((q[1]>s ? q[1]-s : s-q[1])-gap/2,0));
         return ahead>0 ? a+(int64_t(ahead)<<16) : a;
@@ -2620,21 +2630,24 @@ static void legionFrontSlots(const std::vector<std::array<int64_t,2>>& at,int64_
     }
     std::sort(rank.begin(),rank.end());
     const int64_t lanesFit=(hi-lo)/gap+1,past=(hi-lo)%gap;
-    const int nominal=int(std::min<int64_t>(lanesFit,count));
+    const int fit=int(std::min<int64_t>(lanesFit,count)),nominal=std::max(fit,least);
     std::vector<std::array<int64_t,3>> row;
     std::vector<std::array<int64_t,2>> slots(static_cast<size_t>(count)),best;
     int64_t bestCost=INT64_MAX;
     for (const int lanes:{nominal,nominal-1,nominal+1}) {
-        if (lanes<1 || lanes>count) continue;
+        // A width set by the flyers' count has no boundary to hover at.
+        if (lanes<least || lanes>count || (lanes!=nominal && nominal!=fit)) continue;
         // One lane fewer only just past a lane boundary, one more only just short of the next.
         if ((lanes<nominal && (nominal<lanesFit || 4*past>=gap)) || (lanes>nominal && 4*past<=3*gap)) continue;
         int64_t cost=lanes==nominal ? 0 : int64_t(count)*spacing*spacing/4;
+        // The rows' lateral extent: the ground's, or over narrow ground lanes-1 spacings about its centre line.
+        const int64_t wide=narrow ? int64_t(lanes-1)*gap : hi-lo,left=narrow ? lo+(hi-lo)/2-wide/2 : lo;
         for (int first=0,r=0;first<count;first+=lanes,++r) {
             const int n=std::min(lanes,count-first);
             row.assign(rank.begin()+first,rank.begin()+first+n);
             std::sort(row.begin(),row.end(),[](const auto& p,const auto& q){return p[1]!=q[1] ? p[1]<q[1] : p[2]<q[2];});
             for (int lane=0;lane<n;++lane) {
-                const int64_t s=n<=1 ? lo+(hi-lo)/2 : lo+(hi-lo)*lane/(n-1);
+                const int64_t s=n<=1 ? lo+(hi-lo)/2 : left+wide*lane/(n-1);
                 const int64_t a=front(s)+(ahead>0 ? r*gap : -r*gap);
                 const int j=int(row[size_t(lane)][2]);
                 slots[size_t(j)]={cx+((dx*a-dz*s)>>16),cz+((dz*a+dx*s)>>16)};
