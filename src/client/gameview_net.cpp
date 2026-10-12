@@ -2,6 +2,7 @@
 #include "tnt/ota.h"
 #include "client/gameview.h"
 #include "net/matchconfig.h"
+#include "campaign/campaign.h"
 
 // Out-of-line GameView method definitions (net concern), split from the
 // class body in gameview.h so editing a body recompiles only this translation
@@ -1105,61 +1106,6 @@ void GameView::autoplayStep() {
             return mpStep();
         }
         return true;
-    }
-
-    void GameView::amphibDemo() {
-        amphib_ = true;
-        const auto* shipType = registry_.find("vertrans");
-        const auto& ground = world_.nav();
-        const auto& water = world_.navFor(shipType);
-        float cx = float(mapView_.map().width) * 8, cz = float(mapView_.map().height) * 8;
-
-        // Walk outward from the island center along a direction: last land
-        // cell with deep water a bit beyond = a beach; return both spots.
-        auto findBeach = [&](float ax, float az, float* bx, float* bz, float* wx2,
-                             float* wz2) {
-            for (float r = 0; r < 4000; r += 16) {
-                int gx = int(cx + ax * r) / 16, gz = int(cz + az * r) / 16;
-                if (!ground.walkable(gx, gz)) {
-                    for (float rw = r + 48; rw < r + 400; rw += 16) {
-                        int wxc = int(cx + ax * rw) / 16, wzc = int(cz + az * rw) / 16;
-                        if (water.walkable(wxc, wzc)) {
-                            *bx = cx + ax * (r - 32);
-                            *bz = cz + az * (r - 32);
-                            *wx2 = cx + ax * rw;
-                            *wz2 = cz + az * rw;
-                            return true;
-                        }
-                    }
-                }
-            }
-            return false;
-        };
-        float bax, baz, wax, waz, bbx, bbz, wbx, wbz;
-        if (!findBeach(-0.9f, 0.44f, &bax, &baz, &wax, &waz) ||
-            !findBeach(0.44f, -0.9f, &bbx, &bbz, &wbx, &wbz)) {
-            std::printf("amphib: no beaches found\n");
-            return;
-        }
-        std::printf("amphib: embark beach (%.0f,%.0f) landing (%.0f,%.0f)\n", bax, baz,
-                    bbx, bbz);
-        amphibLandX_ = bbx;
-        amphibLandZ_ = bbz;
-        amphibSeaX_ = wbx;
-        amphibSeaZ_ = wbz;
-
-        transportId_ = spawn("vertrans", wax, waz, 0, 0);
-        const char* squad[] = {"araarch", "araarch", "arasword", "arasword"};
-        int i = 0;
-        for (const char* t : squad) {
-            int id = spawn(t, bax + float(i % 2) * 24 - 12, baz + float(i / 2) * 24 - 12,
-                           0, 0);
-            if (id >= 0) {
-                world_.loadInto(id, transportId_);
-                ++amphibSquad_;
-            }
-            ++i;
-        }
     }
 
     const std::vector<uint8_t>* GameView::kingdomPalette(const std::string& kingdom) {

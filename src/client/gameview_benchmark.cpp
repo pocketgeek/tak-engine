@@ -2,40 +2,6 @@
 #include "client/gamespeed.h"
 #include "client/renderdriver.h"
 
-    void GameView::setupPatrolPerf() {
-#ifndef NDEBUG
-        // Exactly 16,000 living units: eight monarchs plus 1,999 troops per
-        // faction. This is a local developer fixture, not a lobby cap option.
-        tak::sim::MatchConfig cfg;
-        cfg.vfs = &vfs_;
-        cfg.mapPath = mapPath_;
-        cfg.stressTest = true;
-        cfg.stressImmediate = true;   // counts and orders the whole army below
-        cfg.unitCap = (1999 * 100 + 94) / 95;
-        for (int p = 0; p < 8; ++p)
-            cfg.slots.push_back({true, p % 5, 0, 2, true, false});
-        const auto spots = tak::sim::setupMatch(world_, registry_, cfg);
-        if (world_.units().size() != 16000)
-            throw std::runtime_error("patrol performance map must fit exactly 16000 units");
-        world_.setUnitCap(2000);
-        for (const auto& u : world_.units())
-            if (u.type && !u.type->isStructure())
-                world_.patrol(u.id, float(world_.nav().width() * 16) - u.x.toFloat(),
-                              u.z.toFloat());
-        noFog_ = true;
-        world_.setVisPlayer(-1);
-        edgeScrollOn_ = false;
-        patrolPerfAccum_ = 0.0f;
-        float zoom = 0.9f;
-        if (const char* value = tak::devEnv("TAK_PATROL_PERF_ZOOM"))
-            zoom = std::clamp(float(std::atof(value)), 0.1f, 3.0f);
-        mapView_.setZoom(zoom);
-        if (!spots.empty()) lookAt(spots[0].first, spots[0].second);
-        std::printf("PATROL_PERF initial=%zu balance=%s (local, no AI/combat/network)\n",
-                    world_.units().size(), crusades_ ? "crusades" : "standard");
-        std::fflush(stdout);
-#endif
-    }
 
 // Out-of-line GameView method definitions (benchmark concern), split from the
 // class body in gameview.h so editing a body recompiles only this translation

@@ -1,5 +1,6 @@
 #include "util/virtualpath.h"
 #include "client/gameview.h"
+#include "client/crusadesscreen.h"
 #include <cctype>
 
 // Out-of-line GameView method definitions (lobby concern), split from the
@@ -1032,4 +1033,60 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             } else if (e.key.keysym.sym == SDLK_ESCAPE) { if (lbField_ == 5) applyGenParams(); lbField_ = 0; SDL_StopTextInput(); }
             saveCreatePreferences();
         }
+    }
+
+    void GameView::lbBtn(float x, float y, float w, float h, const std::string& label, bool enabled,
+               std::function<void()> action, SDL_Color base) {
+        SDL_FRect r{x, y, w, h};
+        bool hot = enabled && lbHot(r);
+        SDL_Color c = enabled ? (hot ? SDL_Color{90, 110, 150, 255} : base)
+                              : SDL_Color{40, 42, 50, 255};
+        SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, 255);
+        SDL_RenderFillRectF(ren_, &r);
+        SDL_SetRenderDrawColor(ren_, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
+        SDL_RenderDrawRectF(ren_, &r);
+        // Shrink the label if it would overflow the button (keeps long captions like
+        // "OVERRIDES: COSMETIC" inside their box). 8px total horizontal padding.
+        float px = 2.0f;
+        float fit = (w - 8.0f) / std::max<size_t>(1, label.size()) / 6.0f;
+        if (fit < px) px = std::max(fit, 1.0f);
+        float tw = blockWidth(label, px);
+        blockText(label, x + (w - tw) / 2, y + (h - 7 * px) / 2, px,
+                  enabled ? SDL_Color{225, 230, 240, 255} : SDL_Color{110, 115, 125, 255});
+        if (enabled && action) lobbyHots_.push_back({r, std::move(action)});
+    }
+
+    bool GameView::tntIndexedImage(const std::vector<uint8_t>& d, int field,
+                                int& w, int& h, const uint8_t*& data) {
+        auto u32 = [&](size_t o) -> uint32_t {
+            return uint32_t(d[o]) | (uint32_t(d[o + 1]) << 8) | (uint32_t(d[o + 2]) << 16)
+                 | (uint32_t(d[o + 3]) << 24);
+        };
+        size_t hoff = size_t(field) * 4;
+        if (hoff + 4 > d.size()) return false;
+        size_t p = u32(hoff);
+        if (p == 0 || p + 8 > d.size()) return false;
+        uint32_t iw = u32(p), ih = u32(p + 4);
+        if (iw == 0 || ih == 0 || iw > 4096 || ih > 4096) return false;
+        if (p + 8 + size_t(iw) * ih > d.size()) return false;
+        w = int(iw); h = int(ih); data = &d[p + 8];
+        return true;
+    }
+
+    std::string GameView::otaField(const std::string& ota, const char* keyLower) {
+        std::string low = ota;
+        for (char& c : low) c = char(std::tolower((unsigned char)c));
+        std::string k = keyLower;
+        for (size_t pos = 0; (pos = low.find(k, pos)) != std::string::npos; pos += k.size()) {
+            if (pos > 0 && (std::isalnum((unsigned char)low[pos - 1]) || low[pos - 1] == '_')) continue;
+            size_t e = pos + k.size();
+            while (e < low.size() && (low[e] == ' ' || low[e] == '\t')) ++e;
+            if (e >= low.size() || low[e] != '=') continue;
+            size_t a = e + 1, end = ota.find_first_of(";\r\n", a);
+            if (end == std::string::npos) end = ota.size();
+            std::string v = ota.substr(a, end - a);
+            size_t s = v.find_first_not_of(" \t"), t = v.find_last_not_of(" \t");
+            return s == std::string::npos ? std::string() : v.substr(s, t - s + 1);
+        }
+        return {};
     }

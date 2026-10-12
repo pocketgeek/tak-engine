@@ -12,7 +12,6 @@
 // Must precede SDL.h: on Windows this pulls in winsock2 (with WIN32_LEAN_AND_MEAN)
 // before SDL's <windows.h> would otherwise pull the incompatible winsock v1.
 #include "net/netcompat.h"
-#include "client/crusadesscreen.h"
 #include "client/retailsmoke.h"
 #include "client/weaponanimationqueue.h"
 #include "client/retailpointparticle.h"
@@ -23,7 +22,6 @@
 #include "sim/retaileffectclock.h"
 #include "sim/retailrng.h"
 
-#include "campaign/campaign.h"
 #include "client/briefingscreen.h"
 #include "client/resultscreen.h"
 #include "client/loadscreen.h"
@@ -119,27 +117,17 @@
 #include <thread>
 #include <vector>
 
-// Single-player auto-launches a local takserver (AIs run only on the server).
-// Sockets come from net/netcompat.h (included first, before SDL). Process control
-// is the one genuinely platform-specific bit: fork/exec on POSIX, CreateProcess on
-// Windows.
-#ifdef _WIN32
-  #include <windows.h>
-#else
-  #include <csignal>
-  #include <sys/wait.h>
-  #include <unistd.h>
-#endif
-
-
 #include "client/shadowopaque.h"
 #include "client/geometrysubmit.h"
 #include "client/fogupload.h"
 #include "client/shadowmask.h"
 #include "client/appglobals.h"   // kProjY/kProjZ, kSortZ/kSortY
 
+namespace tak { class CrusadesScreen; }
+
 class GameView {
 public:
+#ifndef NDEBUG
     struct FactionKit {
         const char* monarch;   // hero commander the faction starts with
         const char* keep;      // production building the monarch builds first
@@ -147,22 +135,8 @@ public:
         const char* builder;
         const char* squad[4];
     };
-    static const FactionKit& kit(const std::string& side) {
-        static const std::map<std::string, FactionKit> kits = {
-            {"ara", {"araking", "arakeep", "aralode", "arabuild",
-                     {"araarch", "araarch", "arasword", "arasword"}}},
-            {"tar", {"tarnecro", "tardung", "tarlode", "tarnecro",
-                     {"tararch", "tararch", "tardemon", "tartb"}}},
-            {"ver", {"vermage", "verkeep", "verlode", "verliege",
-                     {"verarch", "verarch", "versword", "versword"}}},
-            {"zon", {"zonhunt", "", "zonlode", "zonhand",
-                     {"zongob", "zonter", "zontroll", "zonbat"}}},
-            {"cre", {"cresage", "creacad", "crelode", "cremech",
-                     {"creauto", "creauto", "crebeas", "creshoc"}}},
-        };
-        auto it = kits.find(side);
-        return it != kits.end() ? it->second : kits.at("ara");
-    }
+    static const FactionKit& kit(const std::string& side);   // gameview_devharness.cpp
+#endif
 
     // Player start positions from the current map's sibling .ota, in world pixels,
     // ordered StartPos1, StartPos2, …. Delegates to the shared sim helper so the
@@ -175,14 +149,7 @@ public:
     // gpuvram budget across sessions -- a few benchmark runs used to pin the
     // budget and starve terrain-chunk uploads (map stuck at the low-res underlay).
     // Interactive teardown: cancel, do not drain (see simCancel_).
-    ~GameView() {
-        stopSimThread(/*drain=*/false);
-        // Last chance: a player who quit, conceded or was dropped before the game
-        // was decided still gets the replay of what they played.
-        saveNetReplay();
-        resetMinimap();
-        destroyGpuTextures();
-    }
+    ~GameView();   // out of line (gameview_impl.cpp): crusadesScreen_ is forward-declared here
     // Write this client's recorded replay into the user's config directory (beside
     // settings.ini). Once per game -- called both when the result lands and from the
     // destructor, whichever happens first. A no-op when nothing was recorded (replay
@@ -193,260 +160,7 @@ public:
              const std::string& installRoot, tak::hpi::OverridePolicy policy,
              bool demo, bool scenario,
              bool bare, const std::string& side = "ara", const std::string& aiSide = "tar",
-             bool crusades = false)
-        // (side_ initialized below before loadPanel uses it; vfs_ must precede
-        //  mapView_ in the member list so the Compositor can borrow it)
-        : ren_(ren), vfs_(std::move(vfs)), mapView_(ren, vfs_, mapPath),
-          installRoot_(installRoot), policy_(policy),
-          mapPath_(mapPath), crusades_(crusades), side_(side), aiSide_(aiSide) {
-        if(vfs_.has(mapSibling(".ota"))) {
-            const auto ota=vtdf(mapSibling(".ota"));
-            if(const auto* header=ota.child("globalheader")) {
-                debrisLavaWorld_=header->numberOr("lavaworld",0)!=0;
-                debrisNoSeaTrigger_=header->numberOr("nosealeveltrigger",0)!=0;
-            }
-        }
-        // Unit registry: MOVEINFO + units + canbuild (+ Crusades overlay first).
-        // The VFS merges base + Iron Plague + community data into one namespace,
-        // precedence resolved by the retail newest-date rule.
-        tak::sim::setupRegistry(registry_, vfs_, crusades_);
-        if (crusades_)
-            std::fprintf(stderr, "balance: Crusades (unitscb/canbuildcb)%s\n",
-                         vfs_.list("unitscb").empty() ? " -- NOT FOUND" : "");
-        // DEV PATH ONLY -- this is the standalone viewer, which does not call
-        // setupMatch and so never runs retail's god roll (the 10% GameChance and the
-        // random 30-60min draw ported at matchsetup.cpp). It deliberately turns gods
-        // ON every time and uses AppearTimeMin flat, because a dev harness that has
-        // to lose a dice roll nine times out of ten to exercise gods is useless.
-        // TAK_GODTIME overrides the appear time in seconds. Not the real mechanic.
-        try {
-            auto g = vtdf("gamedata/gods.tdf");
-            if (const auto* tm = g.child("TIMING")) {
-                float appear = float(tm->numberOr("AppearTimeMin", 30.0)) * 60.0f;
-                if (const char* e = tak::devEnv("TAK_GODTIME")) appear = std::stof(e);
-                world_.enableGods(appear);
-            }
-        } catch (const std::exception&) {}
-        loadTextures();
-        mapView_.setZoom(0.9f);
-        loadInterfaceFonts();
-        loadOrderButtons();
-        sounds_.init(vfs_);
-        soundClasses_.load(vfs_);   // music is started per-state by manageMusic()
-        loadPanel(side_);
-        loadGui(side_);
-
-#ifndef NDEBUG
-        if (tak::devFlag("TAK_GUI_SMOOTH_TEST")) {
-            const auto hash = world_.stateHash();
-            const auto initial = smoothArt_;
-            tak::Settings s; s.hardwareCursor = false; s.smoothArt = false;
-            applySettings(s);
-            cursorsInit_ = true; cursors_.load(ren_, vfs_, &s);
-            const auto bytes = gpuvram::bytes(), count = gpuvram::count();
-            const auto buttons = orderBtns_.size();
-            const auto width = hudFont_.width("Smoothing test"), height = hudFont_.height();
-            auto check = [](bool ok, const char* message) {
-                if (!ok) throw std::runtime_error(message);
-            };
-            for (int i = 0; i < 3; ++i) for (bool on : {true, false}) {
-                s.smoothArt = on; applySettings(s);
-                int w = 0, h = 0;
-                check(panelTex_ && SDL_QueryTexture(panelTex_, nullptr, nullptr, &w, &h) == 0,
-                      "HUD panel missing during live smoothing toggle");
-                check(w == panelW_ * (on ? 2 : 1) && h == panelH_ * (on ? 2 : 1),
-                      "HUD smoothing did not apply live");
-                check(orderBtns_.size() == buttons && hudFont_.width("Smoothing test") == width && hudFont_.height() == height,
-                      "live smoothing changed interface layout");
-                check(world_.stateHash() == hash, "interface smoothing changed simulation state");
-                if (!on) check(gpuvram::bytes() == bytes && gpuvram::count() == count,
-                               "HUD smoothing leaks textures");
-            }
-            s.smoothArt = initial; applySettings(s);
-            std::puts("PASS: HUD smoothing applies live, keeps layout/state and releases textures");
-        }
-        if (!bare && !scenario && tak::devFlag("TAK_PATROL_PERF")) {
-            setupPatrolPerf();
-            return;
-        }
-#endif
-        if (scenario) {
-            world_.setTerrain(mapView_.map().heights, mapView_.map().width,
-                              mapView_.map().height, mapView_.map().seaLevel,
-                              &mapView_.map().features);
-            tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_, &registry_);
-            std::string crtPath = mapSibling(".crt");
-            tak::crt::Scenario scen = vhas(crtPath) ? tak::crt::parse(vread(crtPath))
-                                                    : tak::crt::Scenario{};
-            std::printf("scenario: %zu placements, %zu regions\n",
-                        scen.units.size(), scen.regions.size());
-            float cx = 0, cz = 0;
-            int n = 0;
-            for (const auto& u : scen.units) {
-                std::string id = u.objectName;
-                std::transform(id.begin(), id.end(), id.begin(), ::tolower);
-                int player = std::clamp(u.player, 0, 3);
-                float wx = float(u.x) * 16.0f + 8.0f, wz = float(u.z) * 16.0f + 8.0f;
-                // .crt facing is degrees (shipped maps use 180 = due south).
-                float heading = float(u.angle) * 3.14159265f / 180.0f;
-                int uid = spawn(id, wx, wz, heading, player);
-                if (uid >= 0) {
-                    if (tak::sim::Unit* su = world_.unit(uid)) {   // apply the .crt stats
-                        if (su->type)
-                            su->hp = tak::sim::Fixed::fromFloat(su->type->maxHp * float(std::clamp(u.health, 0, 100)) / 100.0f);
-                        su->veteran = std::clamp(u.veteran, 0, 10);
-                    }
-                    if (player == 0) { cx += wx; cz += wz; ++n; }
-                }
-            }
-            if (n) mapView_.setOffset(cx / float(n) - 640 / 0.9f,
-                                      cz / float(n) - 400 / 0.9f);
-            loadFeatures();
-
-            // The .crt's per-player trigger rules run in the SIM (lockstep +
-            // hashed) via ScenarioScript, replacing the old client-side heuristic:
-            // conditions/actions (spawn, victory/defeat, flags, timers, messages)
-            // are evaluated in World::tick and folded into stateHash. Display
-            // actions surface as HUD notices (drained in simStep).
-            if (!scen.players.empty() || !scen.regions.empty())
-                world_.setScenario(std::make_unique<tak::sim::ScenarioScript>(
-                    scen, registry_, localPlayer_, world_.numPlayers(),
-                    mapView_.map().width, mapView_.map().height));
-            return;
-        }
-
-        world_.setTerrain(mapView_.map().heights, mapView_.map().width,
-                          mapView_.map().height, mapView_.map().seaLevel,
-                          &mapView_.map().features);
-        tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_, &registry_);
-        loadFeatures();
-        float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
-
-        // Each side starts with only its Monarch, dropped on the map's real
-        // start positions (from the .ota). Pick the two furthest-apart spots
-        // so the player and the AI begin on opposite sides.
-        auto starts = parseStartPositions();
-        float px = cx - 260, pz = cz + 30;   // fallbacks near map center
-        float ax = cx + 300, az = cz + 30;
-        if (starts.size() >= 2) {
-            size_t bi = 0, bj = 1;
-            float bestD = -1;
-            for (size_t i = 0; i < starts.size(); ++i)
-                for (size_t j = i + 1; j < starts.size(); ++j) {
-                    float dx = starts[i].first - starts[j].first;
-                    float dz = starts[i].second - starts[j].second;
-                    if (dx * dx + dz * dz > bestD) { bestD = dx * dx + dz * dz; bi = i; bj = j; }
-                }
-            px = starts[bi].first;  pz = starts[bi].second;
-            ax = starts[bj].first;  az = starts[bj].second;
-        } else if (starts.size() == 1) {
-            px = starts[0].first; pz = starts[0].second;
-        }
-        // Camera opens on the player's Monarch.
-        mapView_.setOffset(px - 640 / 0.9f, pz - 400 / 0.9f);
-        // Dev harness: TAK_FFA=N or TAK_FFA=N,t0.t1.t2... sets up an N-player
-        // game (each on its own team unless a team list is given), one monarch +
-        // a small army per player at N start positions, all AI-driven. Verifies
-        // the 8-player / team / shared-vision / win-condition paths before the
-        // real lobby exists. (multiplayer M1)
-        if (const char* ff = tak::devEnv("TAK_FFA")) {
-            int n = std::atoi(ff);
-            n = std::clamp(n, 2, tak::sim::kMaxPlayers);
-            std::vector<int> teams(size_t(n), 0);
-            for (int i = 0; i < n; ++i) teams[size_t(i)] = i;   // default: FFA
-            if (const char* comma = std::strchr(ff, ',')) {     // optional team list
-                std::string ts(comma + 1);
-                int i = 0;
-                for (size_t p = 0; p < ts.size() && i < n; ) {
-                    size_t dot = ts.find('.', p);
-                    teams[size_t(i++)] = std::atoi(ts.substr(p, dot - p).c_str());
-                    if (dot == std::string::npos) break;
-                    p = dot + 1;
-                }
-            }
-            world_.setPlayerCount(n);
-            for (int i = 0; i < n; ++i) world_.setTeam(i, teams[size_t(i)]);
-            // Spread players across the N most mutually-distant start positions
-            // (fall back to a ring around centre when the map has too few).
-            std::vector<std::pair<float, float>> spots = starts;
-            while (int(spots.size()) < n) {
-                float ang = float(spots.size()) / float(n) * 6.2831853f;
-                spots.push_back({cx + std::cos(ang) * 300, cz + std::sin(ang) * 300});
-            }
-            const char* sides[5] = {"ara", "tar", "ver", "zon", "cre"};
-            for (int i = 0; i < n; ++i) {
-                std::string fkSide = sides[i % 5];
-                // Gods are resolved in setupMatch, which this harness does not call, so
-                // godType stayed null here. World::summonReadyGods marks the summon
-                // HANDLED before checking it (a player with nothing on the map must not
-                // bank one), so a null type does not defer the god -- it consumes the
-                // favour and spawns nothing, permanently. Resolve it the same way
-                // setupMatch does.
-                world_.player(i).godType = registry_.find(fkSide + "god");
-                const FactionKit& fk = kit(fkSide);
-                float mx = spots[size_t(i)].first, mz = spots[size_t(i)].second;
-                int mon = spawn(fk.monarch, mx, mz, 0, i);
-                if (i == 0) { playerMonarchId_ = mon; builderId_ = mon; }
-                for (int s = 0; s < 4; ++s)
-                    spawn(fk.squad[s % 4], mx + (s % 2) * 26 - 13, mz - 50 + (s / 2) * 26, 0, i);
-                world_.player(i).mana = 2800;
-            }
-            ffaPlayers_ = n;
-            for (auto& u : world_.units()) {
-                if (!u.type || u.type->canMove) continue;
-                tak::sim::blockFootprint(world_.nav(), *u.type, u.x.toFloat(), u.z.toFloat(), true);
-            }
-            return;
-        }
-        if (!bare) {
-        const FactionKit& pk = kit(side);
-        const FactionKit& ak = kit(aiSide);
-        // Monarchs face one another.
-        float pFace = std::atan2(ax - px, az - pz);
-        float aFace = std::atan2(px - ax, pz - az);
-        playerMonarchId_ = spawn(pk.monarch, px, pz, pFace, 0);
-        builderId_ = playerMonarchId_;
-        aiMonarchId_ = spawn(ak.monarch, ax, az, aFace, 1);
-        // Enough mogrium to bootstrap the opening: a handful of lodestones for
-        // income and the start of a keep, without being able to skip economy
-        // and rush one to completion.
-        world_.player(0).mana = 2800;
-        world_.player(1).mana = 2800;
-        if (demo) {
-            // Showcase: skip the slow build-up and pit two ready armies at the
-            // start positions against each other.
-            std::vector<int> playerA, playerB;
-            for (int i = 0; i < 6; ++i) {
-                int a = spawn(pk.squad[i % 4], px + float(i % 2) * 26,
-                              pz - 60 + float(i / 2) * 30, pFace, 0);
-                int b = spawn(ak.squad[i % 4], ax + float(i % 2) * 26,
-                              az - 60 + float(i / 2) * 30, aFace, 1);
-                if (a >= 0) playerA.push_back(a);
-                if (b >= 0) playerB.push_back(b);
-            }
-            if (pk.keep[0]) keepId_ = spawn(pk.keep, px, pz + 60, pFace, 0);
-            if (ak.keep[0]) aiKeepId_ = spawn(ak.keep, ax, az + 60, aFace, 1);
-            if (!playerA.empty() && !playerB.empty()) {
-                for (size_t k = 0; k < playerA.size(); ++k)
-                    world_.attack(playerA[k], playerB[k % playerB.size()], false);
-                for (size_t k = 0; k < playerB.size(); ++k)
-                    world_.attack(playerB[k], playerA[k % playerA.size()], false);
-            }
-            // Showcase: pre-select the player's keep so the command panel shows its
-            // conjure/build menu and the info bar shows the portrait (a fuller HUD for
-            // screenshots). Harmless otherwise -- demo is a dev/showcase mode.
-            if (keepId_ >= 0) selectOnly(keepId_);
-            else if (!playerA.empty()) selectOnly(playerA.front());
-        }
-        }
-
-        startAtMonarch();
-
-        for (auto& u : world_.units()) {
-            if (!u.type || u.type->canMove) continue;
-            tak::sim::blockFootprint(world_.nav(), *u.type, u.x.toFloat(), u.z.toFloat(), true);
-        }
-    }
+             bool crusades = false);
 
     // True while the multiplayer lobby is showing (before the game world exists).
     // Play the menu theme (track15) while in the lobby / not yet in a game, and the
@@ -559,7 +273,16 @@ public:
     bool benchmarkStatsShown() const { return benchStatsShown_; }
     // Establish the t=0 baseline for the CPU% deltas (called once when the run starts).
     void benchmarkBaseline();
+#ifndef NDEBUG
+    // Dev-harness ctor branches (gameview_devharness.cpp).
     void setupPatrolPerf();
+    void guiSmoothTest();
+    void setupScenario();
+    bool setupLocalMatch(bool demo, bool bare, const std::string& side,
+                         const std::string& aiSide,
+                         const std::vector<std::pair<float, float>>& starts,
+                         float cx, float cz, float px, float pz, float ax, float az);
+#endif
     // Record one metrics row for game-second `gameSec`: client/server CPU% (delta over the
     // wall interval since the last sample), RSS, fps and sim speed.
     void pushBenchSample(int gameSec);
@@ -741,6 +464,8 @@ public:
 
     void setFollow(float zoom) { initialCamera_.reset(); follow_ = true; mapView_.setZoom(zoom); }
 
+#ifndef NDEBUG
+    // Local dev/test harness (gameview_devharness.cpp): debug builds only.
     void amphibDemo();
 
     void navyDemo();
@@ -751,10 +476,6 @@ public:
 
     void testBuild();
 
-    void lookAt(float x, float z);
-    void startAtMonarch();
-    void cancelInitialCamera() { initialCamera_.reset(); }
-
     std::string lodeUnit;
     void soundTest();
     void faceTest();
@@ -764,6 +485,11 @@ public:
     void guardTest();
 
     void marchTo(float dx, float dz);
+#endif
+
+    void lookAt(float x, float z);
+    void startAtMonarch();
+    void cancelInitialCamera() { initialCamera_.reset(); }
 
     // Smoothed render FPS for the F4 overlay (set from the main loop each frame).
     void setFps(float f) { fps_ = fps_ > 0 ? fps_ * 0.9f + f * 0.1f : f; }
@@ -946,29 +672,7 @@ private:
     // DRAWN position (terrain lift + flyer altitude), floored for tiny units --
     // the same region click-select uses, so the hover cursor and a click always
     // agree. Optional out: squared distance to the sprite centre (tie-breaks).
-    bool unitUnderCursor(const UnitR& u, float mx, float my, float* d2 = nullptr) {
-        if (!canPickUnit(u)) return false;
-        if (dotsFrame_) {
-            // Tactical Dots on screen: the hit region is the dot, with the same
-            // 9px floor as a tiny model so a lone dot is still easy to click.
-            SDL_FPoint c = dotCentre(u);
-            float half = std::max(dotSide(u) * 0.5f + 1.0f, 9.0f);
-            if (std::fabs(mx - c.x) > half || std::fabs(my - c.y) > half) return false;
-            if (d2) { float dx = c.x - mx, dy = c.y - my; *d2 = dx * dx + dy * dy; }
-            return true;
-        }
-        float zms = mapView_.zoom();
-        SDL_FPoint p = unitScreen(u);
-        const SDL_FRect& hb = unitHitBox(u.type);
-        float ax = p.x, ay = p.y + 12.0f * zms;         // sprite draw anchor
-        float cx = ax + (hb.x + hb.w * 0.5f) * zms;
-        float cy = ay + (hb.y + hb.h * 0.5f) * zms;
-        float hw = std::max(hb.w * zms * 0.5f, 9.0f);
-        float hh = std::max(hb.h * zms * 0.5f, 9.0f);
-        if (std::fabs(mx - cx) > hw || std::fabs(my - cy) > hh) return false;
-        if (d2) { float dx = cx - mx, dy = cy - my; *d2 = dx * dx + dy * dy; }
-        return true;
-    }
+    bool unitUnderCursor(const UnitR& u, float mx, float my, float* d2 = nullptr);
 
     // Everything about a model piece that never changes: whether it draws at all,
     // and its primitives' texture names folded to lower case. collect() used to
@@ -1007,31 +711,7 @@ private:
         }
     }
     // Precompute the whole tree for a model (once, at registration).
-    void buildPieceMeta(const tak::tdo::Object& o, PieceMeta& m, bool isRoot = true) {
-        pieceMetaFor(o, isRoot, m);
-        m.primAtlas.reserve(m.primTex.size());
-        for (const auto& name : m.primTex) {
-            auto it = atlasRect_.find(name);
-            m.primAtlas.push_back(it == atlasRect_.end() ? nullptr : &it->second);
-            auto mask=shadowMasks_.find(name);
-            m.primShadowMasks.push_back(mask==shadowMasks_.end() ? nullptr : &mask->second);
-            m.primAnimated.push_back(animatedTex_.count(name)!=0);
-            m.animated |= m.primAnimated.back();
-            if(m.primAnimated.back()) {
-                const auto* frame=&modelTextureAnimations_.at(name).frame;
-                if(std::find(m.animationFrames.begin(),m.animationFrames.end(),frame)==m.animationFrames.end())
-                    m.animationFrames.push_back(frame);
-            }
-        }
-        m.children.resize(o.children.size());
-        for (size_t i = 0; i < o.children.size(); ++i) {
-            buildPieceMeta(o.children[i], m.children[i], false);
-            m.animated |= m.children[i].animated;
-            for(const auto* frame:m.children[i].animationFrames)
-                if(std::find(m.animationFrames.begin(),m.animationFrames.end(),frame)==m.animationFrames.end())
-                    m.animationFrames.push_back(frame);
-        }
-    }
+    void buildPieceMeta(const tak::tdo::Object& o, PieceMeta& m, bool isRoot = true);
 
     // Per-worker scratch: evaluate each piece and unique vertex once, then
     // share the exact rotated coordinates between the body and shadow passes.
@@ -1185,100 +865,10 @@ private:
     // was a generic yellow streak before. Same projection as a ghost, but solid,
     // lifted by the shot's altitude and yawed along its flight.
     void drawShotModel(const std::string& name, int player, float x, float z,
-                       float altPx, float facing, const tak::sim::Projectile* native=nullptr) {
-        const tak::tdo::Model* model = ghostModel(name);
-        if (!model) return;
-        // These retail bolt meshes have their arrowhead on -Z; the other
-        // directional projectile meshes (including araarrow) point along +Z.
-        if (name == "verbal1" || name == "verbal1_vet") facing += 3.14159265f;
-        tris_.clear();
-        SDL_Texture* atlas = atlasFor(playerColorSlot(player));
-        // Projectile roots contain the shot itself, unlike unit roots whose
-        // ground-reference plates are suppressed by collect().
-        const Xform base=native ? modelBodyTransform(native->angles[2],native->angles[0]) : Xform{};
-        collect(tris_, atlas, model->root, base, nullptr, facing, player,
-                false, false);
-        if (tris_.empty()) return;
-        // The authored arrow/bolt 3DOs are only about 14 world units long and
-        // less than 3 units wide. At normal map zoom their arrowheads and
-        // fletching collapse into a one-pixel streak, so the shot reads like a
-        // laser despite using the correct mesh. Keep the native trajectory,
-        // heading, altitude and texture, but enlarge the projected silhouette
-        // perpendicular to its travel axis more than along it. At close zoom
-        // the meshes retain native size. This display-only correction is limited to the
-        // arrow/bolt/harpoon/spear families; round shells and magical beams keep
-        // their native scale.
-        const auto displayScale = tak::projectileModelDisplayScale(name, mapView_.zoom());
-        if (displayScale.along > 1.0f) {
-            const float alongScale = displayScale.along;
-            const float crossScale = displayScale.across;
-            float modelAxis[3] = {0.0f, 0.0f, 1.0f};
-            if (native) base.apply(0.0f, 0.0f, 1.0f, modelAxis);
-            const float cs = std::cos(facing), sn = std::sin(facing);
-            const float axisX = modelAxis[0] * cs + modelAxis[2] * sn;
-            const float axisZ = -modelAxis[0] * sn + modelAxis[2] * cs;
-            float axisX2 = axisX;
-            float axisY2 = -(modelAxis[1] * kProjY + axisZ * kProjZ);
-            const float axisLength = std::max(std::sqrt(axisX2 * axisX2 + axisY2 * axisY2), 1e-4f);
-            axisX2 /= axisLength;
-            axisY2 /= axisLength;
-            const float crossX = -axisY2, crossY = axisX2;
-            for (auto& tri : tris_)
-                for (auto& vertex : tri.v) {
-                    const float along = vertex.position.x * axisX2 + vertex.position.y * axisY2;
-                    const float across = vertex.position.x * crossX + vertex.position.y * crossY;
-                    vertex.position.x = axisX2 * along * alongScale + crossX * across * crossScale;
-                    vertex.position.y = axisY2 * along * alongScale + crossY * across * crossScale;
-                }
-        }
-        std::stable_sort(tris_.begin(), tris_.end(),
-                         [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
-        float zm = mapView_.zoom();
-        float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
-        float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm - altPx;
-        if(native) {
-            const int y=std::bit_cast<int16_t>(uint16_t(uint32_t(native->position[1])>>16));
-            (void)heightAbove(x,z);
-            ax=(x-mapView_.offX())*zm;
-            ay=(z-float(y>>1)+float(heightRef_)*0.5f-mapView_.offY())*zm;
-        }
-        for (auto& t : tris_) for (auto& v : t.v) {
-            v.position.x = v.position.x * zm + ax;
-            v.position.y = v.position.y * zm + ay;
-        }
-        drawModelTriangles();
-    }
+                       float altPx, float facing, const tak::sim::Projectile* native=nullptr);
 
     void drawGhostAt(const tak::sim::UnitType* type, float x, float z,
-                     bool invalid = false) {
-        const tak::tdo::Model* model = ghostModel(type->id);
-        if (!model) return;
-        tris_.clear();
-        SDL_Texture* atlas = atlasFor(colorSlot_[localPlayer_ & 7]);
-        collect(tris_, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
-        std::stable_sort(tris_.begin(), tris_.end(),
-                  [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
-        float zm = mapView_.zoom();
-        // The ghost lifts onto the relief exactly like the finished unit/building will.
-        float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
-        float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm;
-        for (auto& t : tris_) for (auto& v : t.v) {
-            v.position.x = v.position.x * zm + ax;
-            v.position.y = v.position.y * zm + ay;
-            if (invalid) {
-                // Can't build here: wash the ghost red instead of the box.
-                v.color.a = 150;
-                v.color.r = Uint8(std::min(255, int(v.color.r * 0.6f) + 110));
-                v.color.g = Uint8(v.color.g * 0.30f);
-                v.color.b = Uint8(v.color.b * 0.30f);
-            } else {
-                v.color.a = 130;
-                v.color.r = Uint8(v.color.r * 0.55f);
-                v.color.g = Uint8(v.color.g * 0.8f);
-            }
-        }
-        drawModelTriangles();
-    }
+                     bool invalid = false);
 
     // Already projected, depth-sorted model triangles, one draw per texture run.
     void drawModelTriangles() {
@@ -1338,28 +928,7 @@ private:
     std::vector<SDL_Vertex> shadowCompositeBatch_;
     void drawShadowBatch(std::span<const UnitGeom* const> shadows);
     std::optional<bool> batchShadowMasks_;
-    void drawUnitShadow(const UnitGeom& g) {
-        if (!batchShadowMasks_.has_value()) {
-            SDL_RendererInfo info{};
-            batchShadowMasks_=SDL_GetRendererInfo(ren_,&info)==0 && (info.flags&SDL_RENDERER_ACCELERATED)!=0;
-        }
-        profShadowVerts_ += g.shadowVerts.size() + g.maskedShadowVerts.size();
-        if (shadowSilhouetteAtlasActive_ && g.shadowAtlasPage) {
-            SDL_RenderCopyF(ren_, g.shadowAtlasPage, &g.shadowAtlasSrc, &g.shadowAtlasDst);
-            return;
-        }
-        static const SDL_Color color{kShadowLevel,kShadowLevel,kShadowLevel,255};
-        static const float uv[2] = {0,0};
-        if (!g.shadowVerts.empty())
-            SDL_RenderGeometryRaw(ren_,nullptr,&g.shadowVerts[0].x,sizeof(SDL_FPoint),
-                                  &color,0,uv,0,int(g.shadowVerts.size()),nullptr,0,0);
-        int offset=0;
-        for (const auto& run:g.maskedShadowRuns) {
-            tak::submitShadowMaskRun(ren_,run.first,g.maskedShadowVerts.data()+offset,
-                                     run.second,*batchShadowMasks_);
-            offset+=run.second;
-        }
-    }
+    void drawUnitShadow(const UnitGeom& g);
     std::vector<const UnitR*> visUnits_;
     // Are projected unit shadows on? The Options toggle, with a dev-only TAK_NOSHADOW
     // override. Gates the BUILD as well as the draw -- skipping only the draw would still
@@ -1681,295 +1250,7 @@ private:
                  bool mirror = false, bool isRoot = true, bool shadow = false,
                  RadialExtent* ext = nullptr, const PieceMeta* meta = nullptr,
                  bool shadowCull = false, const PreparedPiece* prepared = nullptr,
-                 bool paletteLighting = false) {
-        if (mirror || ext) prepared=nullptr; // special preview/extent paths use the reference transform
-        const tak::cob::PieceState* ps = prepared ? nullptr : pieceFor(anim, o.name);
-        // Retail tests visibility per piece; hidden parents still transform
-        // their children (including after a non-subtree EXPLODE).
-        const bool hidden = prepared ? prepared->hidden : ps && !ps->visible;
-        Xform xf = prepared ? prepared->transform : scriptTransform(parent,o.x,o.y,o.z,ps);
-        // Precomputed when the model was registered; computed here only for a model
-        // that has no cached tree (ghost previews, build-icon portraits). Same
-        // function either way.
-        PieceMeta local;
-        if (!meta) { pieceMetaFor(o, isRoot, local); meta = &local; }
-        const bool shadowDisabled = shadow && (prepared ? !prepared->castsShadow :
-                                                        ps && !ps->castsShadow());
-        const bool groundPlate = meta->skip || hidden || shadowDisabled;
-        float cy = std::cos(heading), sy = std::sin(heading);
-        for (size_t pi = 0; pi < o.primitives.size(); ++pi) {
-            if (groundPlate) break;
-            if (int32_t(pi) == o.selectionPrimitive) continue;
-            const auto& p = o.primitives[pi];
-            if (p.indices.size() < 3) continue;
-            SDL_Texture* tex = nullptr;
-            const SDL_Rect* arect = nullptr;
-            const std::string& name = pi < meta->primTex.size() ? meta->primTex[pi]
-                                                                : p.texture;
-            if (!name.empty()) {
-                const SDL_Rect* packed = nullptr;
-                if (pi < meta->primAtlas.size()) packed = meta->primAtlas[pi];
-                else {
-                    // Transient metadata (ghosts/projectiles) still resolves live.
-                    auto rit = atlasRect_.find(name);
-                    if (rit != atlasRect_.end()) packed = &rit->second;
-                }
-                if (atlas && packed) {
-                    tex = atlas;             // whole model shares one atlas texture
-                    arect = packed;
-                } else {
-                    // Fallback for any texture not packed into the atlas.
-                    auto it = textures_.find(name);
-                    if (it != textures_.end() && !it->second.empty()) {
-                        // Unpacked previews/projectiles use the same animation
-                        // frame as the atlas, or the remapped player logo colour.
-                        const size_t ci = animatedTex_.count(name)
-                            ? modelTextureAnimations_.at(name).frame
-                            : (it->second.size() == 1 ? 0 : size_t(playerColorSlot(player)));
-                        tex = ci < it->second.size() ? it->second[ci] : nullptr;
-                    }
-                }
-            }
-            SDL_Texture* shadowMask = nullptr;
-            SDL_FRect shadowUV{0,0,1,1};
-            if (shadow) {
-                const std::vector<ShadowMaskFrame>* masks=nullptr;
-                bool animated=false;
-                if (pi<meta->primShadowMasks.size()) {
-                    masks=meta->primShadowMasks[pi];
-                    animated=meta->primAnimated[pi];
-                } else {
-                    auto it=shadowMasks_.find(name);
-                    if (it!=shadowMasks_.end()) masks=&it->second;
-                    animated=animatedTex_.count(name)!=0;
-                }
-                if (masks) {
-                    const size_t frame=animated ? modelTextureAnimations_.at(name).frame
-                                                : size_t(playerColorSlot(player)) % masks->size();
-                    if(frame < masks->size()) {
-                        shadowMask=(*masks)[frame].texture;shadowUV=(*masks)[frame].uv;
-                    }
-                }
-            }
-            // Transform each of this primitive's vertices ONCE. The fan below
-            // visits vertex 0 in every triangle and each middle vertex twice, so
-            // doing the transform inside the triangle loop did it 3*(n-2) times
-            // for n vertices -- six transforms for a quad that needs four. The
-            // UVs still come from the fan position (retail maps a quad's corners
-            // to the four UV corners), so only the geometry is shared.
-            struct VOut { SDL_FPoint pos; float px, py, pz, d; bool ok; };
-            thread_local std::vector<VOut> vcache;
-            vcache.resize(p.indices.size());
-            for (size_t vi2 = 0; vi2 < p.indices.size(); ++vi2) {
-                VOut& vo = vcache[vi2];
-                size_t vi = size_t(p.indices[vi2]) * 3;
-                if (vi + 2 >= o.vertices.size()) { vo.ok = false; continue; }
-                vo.ok = true;
-                float w[3];
-                if (!prepared) xf.apply(o.vertices[vi], o.vertices[vi + 1], o.vertices[vi + 2], w);
-                else { w[0]=0; w[1]=prepared->rotated[vi/3][1]; w[2]=0; }
-                const float wx = mirror ? -w[0] : w[0];   // un-mirror Zhon models on X
-                const float rx = prepared ? prepared->rotated[vi/3][0] : wx * cy + w[2] * sy;
-                const float rz = prepared ? prepared->rotated[vi/3][2] : -wx * sy + w[2] * cy;
-                // TAK billboards lean back (+y and +z together); moving away (+z)
-                // reads upward on screen, adding to height. The coefficients are
-                // retail's own (icd 0x421dad): all of z, half of y.
-                const float ry = w[1] * kProjY + rz * kProjZ;
-                vo.px = rx; vo.py = w[1]; vo.pz = rz;
-                // Farthest first: depth from the camera goes as (z - 2y).
-                vo.d = rz * kSortZ - w[1] * kSortY;
-                if (ext) {
-                    // Pre-rotation x/z, so this is independent of `heading`.
-                    const float r = std::sqrt(wx * wx + w[2] * w[2]);
-                    const float base = -(w[1] * kProjY);   // the y term of -ry
-                    ext->maxR = std::max(ext->maxR, r);
-                    ext->minY = std::min(ext->minY, base - r * kProjZ);
-                    ext->maxY = std::max(ext->maxY, base + r * kProjZ);
-                    ext->any = true;
-                }
-                if (shadow) {
-                    // Lean by the light: the silhouette of the unit, not a disc
-                    // under it. Retail's shear is (+y/4, +y/4) in screen space
-                    // (0x4ec250 flag 1), i.e. down AND right.
-                    //
-                    // PLUS on both, and verify any change to these signs on a
-                    // GROUND unit. A flyer is the wrong test: its shadow also
-                    // carries the altitude term applied at the anchor, and that
-                    // term can outweigh and mask the vertex term, so a flyer probe
-                    // reports the sign of the wrong thing. It told me to negate x,
-                    // and negating x sent every ground unit's shadow leaning left.
-                    // With alt = 0 a ground unit isolates exactly this expression.
-                    vo.pos = {rx + kShadowLX * w[1], -(rz + kShadowLZ * w[1]) * kProjZ};
-                } else {
-                    vo.pos = {rx, -ry};
-                }
-            }
-            for (size_t i = 1; i + 1 < p.indices.size(); ++i) {
-                size_t idx[3] = {0, i, i + 1};
-                Tri tri{};
-                tri.tex = tex;
-                float depth = 0;
-                bool ok = true;
-                float px[3], py[3], pz[3];   // rotated model space, for the facing test
-                for (int k = 0; k < 3; ++k) {
-                    const VOut& vo = vcache[idx[k]];
-                    if (!vo.ok) { ok = false; break; }
-                    px[k] = vo.px; py[k] = vo.py; pz[k] = vo.pz;
-                    depth += vo.d;
-                    tri.v[k].position = vo.pos;
-                    // The UV comes from the FAN POSITION, not the vertex: retail
-                    // maps a quad's four corners to the four UV corners, so a
-                    // vertex reused at another fan position takes a different one.
-                    static const SDL_FPoint uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
-                    SDL_FPoint c = uv[idx[k] & 3];
-                    tri.v[k].tex_coord = arect
-                        ? SDL_FPoint{(float(arect->x) + c.x * float(arect->w)) / float(atlasW_),
-                                     (float(arect->y) + c.y * float(arect->h)) / float(atlasH_)}
-                        : c;
-                    tri.v[k].color = tex ? SDL_Color{255, 255, 255, 255}
-                                         : SDL_Color{170, 170, 180, 255};
-                }
-                if (!ok) continue;
-                if (shadow) {
-                    // shadowCull: honour the BODY's cull for THIS unit. Off for living
-                    // units -- the measured reasons are below. On for CORPSES, where not
-                    // culling produces an artifact the no-cull rule never anticipated: a
-                    // body lying flat presents a large face PARALLEL to the projection
-                    // plane, so it projects at maximal area as a clean parallelogram --
-                    // and the body pass culls that same face, so the slab has no visible
-                    // object casting it. Reported from a screenshot as a square shadow
-                    // around some dead units; found as a single 4190px^2 shadow triangle
-                    // on corpses whose deadFor kept climbing.
-                    //
-                    // Culling a flat corpse cannot punch a meaningful hole: what survives
-                    // is the upward-facing surface, which is exactly what you can see of
-                    // it. The hole problem below is about UPRIGHT geometry.
-                    if (shadowCull) {
-                        const float cax = px[1]-px[0], cay = py[1]-py[0], caz = pz[1]-pz[0];
-                        const float cbx = px[2]-px[0], cby = py[2]-py[0], cbz = pz[2]-pz[0];
-                        const float cny = caz * cbx - cax * cbz;
-                        const float cnz = cax * cby - cay * cbx;
-                        float fc = cny * kSortY - cnz * kSortZ;
-                        if (mirror) fc = -fc;
-                        if (fc <= 0.0f) continue;
-                    }
-                    // NO BACKFACE CULL. This is the single biggest cost in a crowded
-                    // frame, so it has been measured three ways rather than assumed --
-                    // and the reason it cannot be culled is a property of the SHIPPED
-                    // MODELS, not of the projection.
-                    //
-                    // Census over the loaded models: 1039 pieces, of which only 61 are
-                    // closed edge-manifold solids. 94% are OPEN single-sided sheets, and
-                    // they hold 95.7% of the triangles. An open sheet has no back face to
-                    // discard -- cull the one face it has and the shadow loses it
-                    // outright. There is barely any redundancy here to reclaim.
-                    //
-                    // Measured by rasterising each unit's shadow with and without a cull
-                    // and comparing coverage over ~3,000,000 real unit poses:
-                    //
-                    //   cull vs CAMERA dir (0,2,-1)  -> loses 9.8% of covered pixels,
-                    //                                   96.4% of units affected
-                    //   cull vs LIGHT  dir (-1,4,-1) -> loses 5.5%, 74.7% of units
-                    //
-                    // The light direction is the correct one for a shadow -- the
-                    // projection collapses along it, since a displacement (a,b,c) leaves
-                    // the shadow fixed iff a = -kShadowLX*b and c = -kShadowLZ*b -- and
-                    // halving the damage confirms that. It is still a tear. A
-                    // piece-aware cull (light-cull closed pieces, keep both faces on open
-                    // ones) would be exactly correct, and is not worth building: it can
-                    // only ever reach the 4.3% of triangles that sit in closed pieces.
-                    //
-                    // For the record, culling IS worth a lot in cost terms -- light-cull
-                    // gives 709k -> 445k vertices, shadow 3.2ms -> 2.1ms, 54 -> 62 fps.
-                    // The fidelity is what rules it out, not the speed.
-                    //
-                    // Opaque colour, not alpha: the level is a flat multiply and the
-                    // batch is drawn with SDL_BLENDMODE_MOD. Retail's shadow has no
-                    // internal structure -- sampling a retail shot gives 124/225,
-                    // 106/192, 92/170, a flat multiply to 0.55 everywhere, which is
-                    // what its alloca'd span buffer (0x4eda83, 0x5f08 bytes) buys.
-                    // kShadowLevel is that 0.55.
-                    // No per-vertex colour or texcoord written here: buildUnitShadow
-                    // keeps POSITIONS ONLY and the flat grey is supplied once at
-                    // stride 0 when the geometry is submitted. Writing them per vertex
-                    // was filling ~8.5 MB a frame with the same two constants.
-                    tri.tex = shadowMask;
-                    if (shadowMask) {
-                        static const SDL_FPoint uv[4] = {{0,0},{1,0},{1,1},{0,1}};
-                        for (int k=0;k<3;++k) {
-                            const auto point=uv[idx[k] & 3];
-                            tri.v[k].tex_coord = {shadowUV.x+point.x*shadowUV.w,
-                                                  shadowUV.y+point.y*shadowUV.h};
-                            tri.v[k].color = {255,255,255,255};
-                        }
-                    }
-                    tri.depth = 0;
-                    out.push_back(tri);
-                    continue;
-                }
-                // BACKFACE CULL. Retail culls -- it imports grCullMode -- and
-                // without it both faces of a two-sided piece are drawn at almost
-                // the same depth, so which one wins is arbitrary and a cape
-                // comes out as a patchwork of its own front and back.
-                //
-                // Tested against the VIEW DIRECTION rather than a screen-space
-                // winding sign, because the transform negates y and may mirror
-                // x, and reasoning about the resulting handedness is how sign
-                // errors get in. 3DO polygons are wound so (v1-v0)x(v2-v0)
-                // points outward -- measured over the shipped models, 88-97% of
-                // primitives agree -- and the camera lies along (y,z) = (2,-1),
-                // the direction the projection collapses once collect()'s
-                // negation of ry is taken into account (see kProjY/kProjZ).
-                // Mirroring reflects the model and so flips the normal.
-                {
-                    const float ax = px[1] - px[0], ay = py[1] - py[0], az = pz[1] - pz[0];
-                    const float bx = px[2] - px[0], by = py[2] - py[0], bz = pz[2] - pz[0];
-                    const float ny = az * bx - ax * bz;      // normal Y
-                    const float nz = ax * by - ay * bx;      // normal Z
-                    float facing = ny * kSortY - nz * kSortZ;   // dot with (0,+2,-1)
-                    if (mirror) facing = -facing;
-                    if (facing <= 0.0f) continue;
-                }
-                if(paletteLighting && !name.empty()) {
-                    auto lit=paletteTextureSheets_.find(name);
-                    if(lit!=paletteTextureSheets_.end()) {
-                        const size_t frame=animatedTex_.count(name)
-                            ? modelTextureAnimations_.at(name).frame
-                            : (size_t(playerColorSlot(player))<lit->second.size()
-                                ? size_t(playerColorSlot(player)) : 0);
-                        if(frame<lit->second.size() && lit->second[frame].texture) {
-                            int level=15;
-                            if(prepared ? prepared->shaded : !ps || ps->shaded) {
-                                // Native shades the primitive from its first three
-                                // vertices, not separately for each triangulated fan.
-                                const auto& a=vcache[0];const auto& b=vcache[1];const auto& c=vcache[2];
-                                const float ax=b.px-a.px,ay=b.py-a.py,az=b.pz-a.pz;
-                                const float bx=c.px-a.px,by=c.py-a.py,bz=c.pz-a.pz;
-                                float nx=ay*bz-az*by,ny=az*bx-ax*bz,nz=ax*by-ay*bx;
-                                if(mirror) {nx=-nx;ny=-ny;nz=-nz;}
-                                level=tak::retailModelShadeLevel(nx,ny,nz);
-                            }
-                            const auto& sheet=lit->second[frame];
-                            tri.tex=sheet.texture;
-                            static constexpr SDL_FPoint uv[4]={{0,0},{1,0},{1,1},{0,1}};
-                            for(int k=0;k<3;++k) {
-                                const auto c=uv[idx[k]&3];
-                                tri.v[k].tex_coord={sheet.uv.x+(float((level-5)%4)+c.x)*sheet.uv.w,
-                                    sheet.uv.y+(float((level-5)/4)+c.y)*sheet.uv.h};
-                            }
-                        }
-                    }
-                }
-                tri.depth = depth / 3;
-                out.push_back(tri);
-            }
-        }
-        for (size_t ci = 0; ci < o.children.size(); ++ci) {
-            const PieceMeta* cm = (ci < meta->children.size()) ? &meta->children[ci] : nullptr;
-            collect(out, atlas, o.children[ci], xf, anim, heading, player, mirror, false,
-                    shadow, ext, cm, shadowCull, prepared ? &prepared->children[ci] : nullptr,paletteLighting);
-        }
-    }
+                 bool paletteLighting = false);
 
     // Walk the piece tree (exactly as collect(), but transform-only) to the named
     // piece and return its model-space origin M = the composed translation. Used to
@@ -1992,23 +1273,7 @@ private:
     // an effect at (u.x+rx, u.z, altitude+ry). Returns false if the model/piece is absent
     // (caller falls back to the unit centre). pieceName must be lowercase.
     bool pieceWorldFx(const UnitR& u, const Anim& a, const std::string& pieceName,
-                      float& outX, float& outZ, float& outAlt) {
-        auto vt = visuals_.find(u.type ? u.type->id : std::string());
-        if (vt == visuals_.end() || !u.type) return false;
-        float m[3];
-        if (!pieceModelOrigin(vt->second.model.root, &a, modelBodyTransform(u.bodyPitch,u.bodyRoll), pieceName, m)) return false;
-        // Match the body rotation, including a building's birth heading.
-        float facing = -u.heading;
-        float cy = std::cos(facing), sy = std::sin(facing);
-        float rx = m[0] * cy + m[2] * sy;
-        float rz = -m[0] * sy + m[2] * cy;
-        // Match the model's projected altitude and local depth at its screen anchor.
-        float ry = (m[1] + unitAltById(u.id)) * kProjY + rz * kProjZ;
-        outX = u.x + rx;
-        outZ = u.z;
-        outAlt = ry;
-        return true;
-    }
+                      float& outX, float& outZ, float& outAlt);
 
     void scriptEffectOrigin(const UnitR& u, const Anim& a, int piece,
                             float& x, float& z, float& alt) {
@@ -3120,27 +2385,7 @@ private:
     // the mixer's rate support is ready if it does. gain 2.0 undoes the /2
     // mixing headroom: retail played tones at native amplitude, and quiet
     // click.hpi replacements vanish at half volume.
-    void playClickTone(int semitone = 0) {
-        constexpr bool kPitchedBongs = false;   // pending icd proof
-        constexpr int kToneRef = 4;
-        float rate = (kPitchedBongs && semitone > 0)
-                         ? std::pow(2.0f, float(semitone - kToneRef) / 12.0f)
-                         : 1.0f;
-        std::string t = "tone" + side_;
-        if (!sounds_.has(t)) return;
-        // Peak-normalize the acknowledgment to a prominent UI level: retail's
-        // DirectSound path played tones hot (full per-ear gain, no equal-power
-        // pan loss, no mixing headroom); matching by amplitude alone leaves
-        // both retail's tone (peak 0.31) and soft click.hpi replacements
-        // (peak 0.39) buried under our /2-headroom + 0.707-pan chain. Target
-        // ~0.7 per ear: gain = 0.7 / (peak * 0.5 * 0.707), capped so a
-        // near-silent file can't amplify noise floor.
-        float peak = sounds_.peakOf(t);
-        float gain = peak > 0.01f
-                         ? std::clamp(0.7f / (peak * 0.5f * 0.707f), 1.0f, 8.0f)
-                         : 2.0f;
-        sounds_.play(t, gain, rate);
-    }
+    void playClickTone(int semitone = 0);
 
     // The conjure/build menu for a builder type, filtered by the active mission's unit
     // whitelist (missions/<stem>.tdf) when one is loaded -- so a campaign mission only
@@ -3276,42 +2521,7 @@ private:
     // A built-in 5x7 pixel font (uppercase, digits, a few symbols), drawn as
     // solid blocks — unmistakably legible at any size, unlike the game's small
     // decorative fonts. Each glyph is 5 columns; bit 0 of a column is the top.
-    static const uint8_t* glyph5x7(char c) {
-        static const std::map<char, std::array<uint8_t, 5>> F = {
-            {'0',{0x3E,0x51,0x49,0x45,0x3E}}, {'1',{0x00,0x42,0x7F,0x40,0x00}},
-            {'2',{0x42,0x61,0x51,0x49,0x46}}, {'3',{0x21,0x41,0x45,0x4B,0x31}},
-            {'4',{0x18,0x14,0x12,0x7F,0x10}}, {'5',{0x27,0x45,0x45,0x45,0x39}},
-            {'6',{0x3C,0x4A,0x49,0x49,0x30}}, {'7',{0x01,0x71,0x09,0x05,0x03}},
-            {'8',{0x36,0x49,0x49,0x49,0x36}}, {'9',{0x06,0x49,0x49,0x29,0x1E}},
-            {'A',{0x7E,0x11,0x11,0x11,0x7E}}, {'B',{0x7F,0x49,0x49,0x49,0x36}},
-            {'C',{0x3E,0x41,0x41,0x41,0x22}}, {'D',{0x7F,0x41,0x41,0x22,0x1C}},
-            {'E',{0x7F,0x49,0x49,0x49,0x41}}, {'F',{0x7F,0x09,0x09,0x09,0x01}},
-            {'G',{0x3E,0x41,0x49,0x49,0x7A}}, {'H',{0x7F,0x08,0x08,0x08,0x7F}},
-            {'I',{0x00,0x41,0x7F,0x41,0x00}}, {'J',{0x20,0x40,0x41,0x3F,0x01}},
-            {'K',{0x7F,0x08,0x14,0x22,0x41}}, {'L',{0x7F,0x40,0x40,0x40,0x40}},
-            {'M',{0x7F,0x02,0x0C,0x02,0x7F}}, {'N',{0x7F,0x04,0x08,0x10,0x7F}},
-            {'O',{0x3E,0x41,0x41,0x41,0x3E}}, {'P',{0x7F,0x09,0x09,0x09,0x06}},
-            {'Q',{0x3E,0x41,0x51,0x21,0x5E}}, {'R',{0x7F,0x09,0x19,0x29,0x46}},
-            {'S',{0x46,0x49,0x49,0x49,0x31}}, {'T',{0x01,0x01,0x7F,0x01,0x01}},
-            {'U',{0x3F,0x40,0x40,0x40,0x3F}}, {'V',{0x1F,0x20,0x40,0x20,0x1F}},
-            {'W',{0x7F,0x20,0x18,0x20,0x7F}}, {'X',{0x63,0x14,0x08,0x14,0x63}},
-            {'Y',{0x07,0x08,0x70,0x08,0x07}}, {'Z',{0x61,0x51,0x49,0x45,0x43}},
-            {'/',{0x20,0x10,0x08,0x04,0x02}}, {'+',{0x08,0x08,0x3E,0x08,0x08}},
-            {'-',{0x08,0x08,0x08,0x08,0x08}}, {':',{0x00,0x36,0x36,0x00,0x00}},
-            {'.',{0x00,0x60,0x60,0x00,0x00}}, {'%',{0x63,0x13,0x08,0x64,0x63}},
-            // An unknown glyph advances like a space, so anything missing here is
-            // silently SWALLOWED rather than shown wrong. '_' is legal in an account
-            // name (see auth::validUsername) and this table drew the lobby's player
-            // list, so "pocket_geek" read as "pocket geek"; the rest is the sentence
-            // punctuation chat needs for the same reason.
-            {'_',{0x40,0x40,0x40,0x40,0x40}}, {',',{0x00,0x50,0x30,0x00,0x00}},
-            {'!',{0x00,0x00,0x5F,0x00,0x00}}, {'\'',{0x00,0x00,0x03,0x00,0x00}},
-            {'?',{0x02,0x01,0x51,0x09,0x06}}, {'(',{0x00,0x1C,0x22,0x41,0x00}},
-            {')',{0x00,0x41,0x22,0x1C,0x00}}, {'*',{0x14,0x08,0x3E,0x08,0x14}},
-        };
-        auto it = F.find(c);
-        return it == F.end() ? nullptr : it->second.data();
-    }
+    static const uint8_t* glyph5x7(char c);
 
     // Draw text in the built-in block font. `px` is the size of one font pixel.
     void blockText(const std::string& s, float x, float y, float px, SDL_Color c);
@@ -3323,26 +2533,7 @@ private:
     // first. Returns the y for a following line so stacked messages don't collide.
     // `leftX < 0` centres the text in `winW`; otherwise it's the left edge.
     float hudBanner(const std::string& msg, float y, float scale, SDL_Color col,
-                    int winW, float leftX = -1) {
-        if (!hudFont_.ok() || msg.empty()) return y;
-        float tw = float(hudFont_.width(msg, scale));
-        float topOff, th;
-        hudFont_.vbounds(msg, scale, topOff, th);   // real text extent (draw() lifts by yoff)
-        float x = leftX < 0 ? (float(winW) - tw) / 2 : leftX;
-        const float padX = 10, padTop = 6, padBot = 6;
-        // `y` is the TOP of the banner box; the text is inset by padTop inside it. Offset
-        // the draw origin so the text's true visual top lands at y+padTop -- so the box
-        // wraps the text instead of drawing below it (draw() renders glyphs above `y`).
-        float drawY = y + padTop - topOff;
-        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-        SDL_FRect bg{x - padX, y, tw + 2 * padX, th + padTop + padBot};
-        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 180);
-        SDL_RenderFillRectF(ren_, &bg);
-        SDL_SetRenderDrawColor(ren_, 255, 255, 255, 40);   // faint hairline for definition
-        SDL_RenderDrawRectF(ren_, &bg);
-        hudFont_.draw(ren_, msg, x, drawY, scale, col);
-        return y + th + padTop + padBot + 6;
-    }
+                    int winW, float leftX = -1);
 
     // ==================== interactive multiplayer lobby ====================
 
@@ -3358,25 +2549,7 @@ private:
     bool lbHot(const SDL_FRect& r) const;
     // A clickable button: panel + centered label; registers its action.
     void lbBtn(float x, float y, float w, float h, const std::string& label, bool enabled,
-               std::function<void()> action, SDL_Color base = {60, 66, 86, 255}) {
-        SDL_FRect r{x, y, w, h};
-        bool hot = enabled && lbHot(r);
-        SDL_Color c = enabled ? (hot ? SDL_Color{90, 110, 150, 255} : base)
-                              : SDL_Color{40, 42, 50, 255};
-        SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, 255);
-        SDL_RenderFillRectF(ren_, &r);
-        SDL_SetRenderDrawColor(ren_, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
-        SDL_RenderDrawRectF(ren_, &r);
-        // Shrink the label if it would overflow the button (keeps long captions like
-        // "OVERRIDES: COSMETIC" inside their box). 8px total horizontal padding.
-        float px = 2.0f;
-        float fit = (w - 8.0f) / std::max<size_t>(1, label.size()) / 6.0f;
-        if (fit < px) px = std::max(fit, 1.0f);
-        float tw = blockWidth(label, px);
-        blockText(label, x + (w - tw) / 2, y + (h - 7 * px) / 2, px,
-                  enabled ? SDL_Color{225, 230, 240, 255} : SDL_Color{110, 115, 125, 255});
-        if (enabled && action) lobbyHots_.push_back({r, std::move(action)});
-    }
+               std::function<void()> action, SDL_Color base = {60, 66, 86, 255});
     // Only selectors accept right-click; ordinary actions stay left-click only.
     void lbCycle(float x, float y, float w, float h, const std::string& label, bool enabled,
                  std::function<void(int)> cycle) {
@@ -3396,21 +2569,7 @@ private:
     // `field` (little-endian u32 pointers). Returns false (with bounds checks) if the
     // field is absent or malformed. Field 12 = the hi-res overview, 11 = the minimap.
     static bool tntIndexedImage(const std::vector<uint8_t>& d, int field,
-                                int& w, int& h, const uint8_t*& data) {
-        auto u32 = [&](size_t o) -> uint32_t {
-            return uint32_t(d[o]) | (uint32_t(d[o + 1]) << 8) | (uint32_t(d[o + 2]) << 16)
-                 | (uint32_t(d[o + 3]) << 24);
-        };
-        size_t hoff = size_t(field) * 4;
-        if (hoff + 4 > d.size()) return false;
-        size_t p = u32(hoff);
-        if (p == 0 || p + 8 > d.size()) return false;
-        uint32_t iw = u32(p), ih = u32(p + 4);
-        if (iw == 0 || ih == 0 || iw > 4096 || ih > 4096) return false;
-        if (p + 8 + size_t(iw) * ih > d.size()) return false;
-        w = int(iw); h = int(ih); data = &d[p + 8];
-        return true;
-    }
+                                int& w, int& h, const uint8_t*& data);
 
     // The map's "kingdom" (from its sibling .ota [GlobalHeader] kingdom=...), which
     // names the preview palette. The .ota carries the preview info too:
@@ -3418,23 +2577,7 @@ private:
     std::string readOta(const std::string& tntPath) const;
     // Value of `key`=... in an .ota (up to ';' or EOL, trimmed). Keeps internal spaces
     // (so "size=9 x 7" -> "9 x 7"); matches only a whole-word key before its '='.
-    static std::string otaField(const std::string& ota, const char* keyLower) {
-        std::string low = ota;
-        for (char& c : low) c = char(std::tolower((unsigned char)c));
-        std::string k = keyLower;
-        for (size_t pos = 0; (pos = low.find(k, pos)) != std::string::npos; pos += k.size()) {
-            if (pos > 0 && (std::isalnum((unsigned char)low[pos - 1]) || low[pos - 1] == '_')) continue;
-            size_t e = pos + k.size();
-            while (e < low.size() && (low[e] == ' ' || low[e] == '\t')) ++e;
-            if (e >= low.size() || low[e] != '=') continue;
-            size_t a = e + 1, end = ota.find_first_of(";\r\n", a);
-            if (end == std::string::npos) end = ota.size();
-            std::string v = ota.substr(a, end - a);
-            size_t s = v.find_first_not_of(" \t"), t = v.find_last_not_of(" \t");
-            return s == std::string::npos ? std::string() : v.substr(s, t - s + 1);
-        }
-        return {};
-    }
+    static std::string otaField(const std::string& ota, const char* keyLower);
 
     // The 256-colour RGBA palette for a kingdom (palettes/<kingdom>.pcx), cached.
     // Returns nullptr if the kingdom is unknown / its .pcx is missing.
@@ -3653,25 +2796,7 @@ private:
     const EffectAnim* effectFor(const std::string& animName);
     // Play the named explosion class (a random variant) at (x,z). Returns false
     // if the class/art is unavailable; absence does not request substitute art.
-    bool spawnEffect(const std::string& cls, float x, float z, float alt = 0) {
-        if (cls.empty()) return false;
-        loadExplosionClasses();
-        auto it = explosionClasses_.find(cls);
-        if (it == explosionClasses_.end() || it->second.empty()) return false;
-        // Native 492fd0 scales one CRT draw into the class variant list.
-        const size_t variant = uint64_t(tak::sim::retailCrtRandom(smokeRandom_)) *
-                               it->second.size() / 32768u;
-        const std::string& anim = it->second[variant];
-        const EffectAnim* ea = effectFor(anim);
-        if (!ea) return false;
-        // Native explosion classes advance their authored clock once per sim tick.
-        effects_.push_back({ea, x, z, 0.0f, 0.0f, 0.0f, 1, alt,
-                            true, front().gameTick});
-        static const bool kLog = tak::devEnv("TAK_FXLOG") != nullptr;
-        if (kLog) std::fprintf(stderr, "t=%.2f effect '%s' anim '%s' (%zu frames)\n",
-                               animClock_, cls.c_str(), anim.c_str(), ea->frames.size());
-        return true;
-    }
+    bool spawnEffect(const std::string& cls, float x, float z, float alt = 0);
     void updateEffects(float dt);
     // A shockwave ring: `sprites` copies of an effect anim arranged around a
     // circle that expands from the centre to maxR over `dur` (TAK radiusart).
@@ -3726,22 +2851,7 @@ private:
     std::deque<tak::RetailBloodParticle> bloodStains_;
     // Spawn a burst of `n` particles at (x,z) with a colour and speed spread.
     void spawnBurst(float x, float z, int n, Uint8 r, Uint8 g, Uint8 b,
-                    float spread, float sizeMax, int kind, float baseAlt = 0) {
-        for (int i = 0; i < n; ++i) {
-            Particle p;
-            p.x = x; p.z = z;
-            float ang = float(salt_++ % 628) / 100.0f;
-            float sp = spread * (0.3f + float(salt_++ % 100) / 100.0f);
-            p.vx = std::sin(ang) * sp;
-            p.vz = std::cos(ang) * sp;
-            p.alt = 4 + baseAlt;
-            p.valt = kind == 1 ? 18.0f : (30.0f + float(salt_++ % 40));
-            p.maxLife = p.life = 0.35f + float(salt_++ % 50) / 100.0f;
-            p.size = 1.5f + float(salt_++ % 100) / 100.0f * sizeMax;
-            p.r = r; p.g = g; p.b = b; p.kind = kind;
-            particles_.push_back(p);
-        }
-    }
+                    float spread, float sizeMax, int kind, float baseAlt = 0);
     void updateParticles(float dt);
     void drawParticles();
     std::vector<SDL_Vertex> partBatch_;   // reused particle-quad batch
@@ -3765,10 +2875,12 @@ private:
     // Dev-only N-player free-for-all / teams harness (TAK_FFA=N[,teams]); the
     // real lobby (multiplayer M3) replaces it. When >0, an AI Controller drives
     // every player, not just player 1.
+#ifndef NDEBUG
     int ffaPlayers_ = 0;
     bool amphib_ = false;
     int amphibPhase_ = 0, amphibSquad_ = 0, transportId_ = -1;
     float amphibLandX_ = 0, amphibLandZ_ = 0, amphibSeaX_ = 0, amphibSeaZ_ = 0;
+#endif
     Font hudFont_, bigFont_, statFont_, scoreboardFont_;
     std::unordered_map<std::string, SDL_Texture*> scoreboardLogos_;
     std::string scoreboardSides_[8];

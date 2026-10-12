@@ -1166,6 +1166,13 @@ if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
     add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/font.cpp src/client/distantmodels.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/video/bink.cpp src/video/stream.cpp src/client/streaming.cpp)
+    # Local dev/test harness (standalone scenario/demo/FFA setup, --testbuild/--firetest...):
+    # debug builds only. The file is also wrapped in #ifndef NDEBUG, as are its callers, so
+    # this just skips an empty TU when the config's flags define NDEBUG.
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" _tak_bt)
+    if(NOT "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${_tak_bt}}" MATCHES "NDEBUG")
+      target_sources(takclient PRIVATE src/client/gameview_devharness.cpp)
+    endif()
     if(WIN32)
       target_link_libraries(takclient PRIVATE psapi)   # GetProcessMemoryInfo (benchmark metrics)
     elseif(APPLE)

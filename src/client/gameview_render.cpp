@@ -4720,3 +4720,439 @@
             }
         }
     }
+
+    void GameView::drawShotModel(const std::string& name, int player, float x, float z,
+                       float altPx, float facing, const tak::sim::Projectile* native) {
+        const tak::tdo::Model* model = ghostModel(name);
+        if (!model) return;
+        // These retail bolt meshes have their arrowhead on -Z; the other
+        // directional projectile meshes (including araarrow) point along +Z.
+        if (name == "verbal1" || name == "verbal1_vet") facing += 3.14159265f;
+        tris_.clear();
+        SDL_Texture* atlas = atlasFor(playerColorSlot(player));
+        // Projectile roots contain the shot itself, unlike unit roots whose
+        // ground-reference plates are suppressed by collect().
+        const Xform base=native ? modelBodyTransform(native->angles[2],native->angles[0]) : Xform{};
+        collect(tris_, atlas, model->root, base, nullptr, facing, player,
+                false, false);
+        if (tris_.empty()) return;
+        // The authored arrow/bolt 3DOs are only about 14 world units long and
+        // less than 3 units wide. At normal map zoom their arrowheads and
+        // fletching collapse into a one-pixel streak, so the shot reads like a
+        // laser despite using the correct mesh. Keep the native trajectory,
+        // heading, altitude and texture, but enlarge the projected silhouette
+        // perpendicular to its travel axis more than along it. At close zoom
+        // the meshes retain native size. This display-only correction is limited to the
+        // arrow/bolt/harpoon/spear families; round shells and magical beams keep
+        // their native scale.
+        const auto displayScale = tak::projectileModelDisplayScale(name, mapView_.zoom());
+        if (displayScale.along > 1.0f) {
+            const float alongScale = displayScale.along;
+            const float crossScale = displayScale.across;
+            float modelAxis[3] = {0.0f, 0.0f, 1.0f};
+            if (native) base.apply(0.0f, 0.0f, 1.0f, modelAxis);
+            const float cs = std::cos(facing), sn = std::sin(facing);
+            const float axisX = modelAxis[0] * cs + modelAxis[2] * sn;
+            const float axisZ = -modelAxis[0] * sn + modelAxis[2] * cs;
+            float axisX2 = axisX;
+            float axisY2 = -(modelAxis[1] * kProjY + axisZ * kProjZ);
+            const float axisLength = std::max(std::sqrt(axisX2 * axisX2 + axisY2 * axisY2), 1e-4f);
+            axisX2 /= axisLength;
+            axisY2 /= axisLength;
+            const float crossX = -axisY2, crossY = axisX2;
+            for (auto& tri : tris_)
+                for (auto& vertex : tri.v) {
+                    const float along = vertex.position.x * axisX2 + vertex.position.y * axisY2;
+                    const float across = vertex.position.x * crossX + vertex.position.y * crossY;
+                    vertex.position.x = axisX2 * along * alongScale + crossX * across * crossScale;
+                    vertex.position.y = axisY2 * along * alongScale + crossY * across * crossScale;
+                }
+        }
+        std::stable_sort(tris_.begin(), tris_.end(),
+                         [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+        float zm = mapView_.zoom();
+        float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
+        float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm - altPx;
+        if(native) {
+            const int y=std::bit_cast<int16_t>(uint16_t(uint32_t(native->position[1])>>16));
+            (void)heightAbove(x,z);
+            ax=(x-mapView_.offX())*zm;
+            ay=(z-float(y>>1)+float(heightRef_)*0.5f-mapView_.offY())*zm;
+        }
+        for (auto& t : tris_) for (auto& v : t.v) {
+            v.position.x = v.position.x * zm + ax;
+            v.position.y = v.position.y * zm + ay;
+        }
+        drawModelTriangles();
+    }
+
+    void GameView::drawGhostAt(const tak::sim::UnitType* type, float x, float z,
+                     bool invalid) {
+        const tak::tdo::Model* model = ghostModel(type->id);
+        if (!model) return;
+        tris_.clear();
+        SDL_Texture* atlas = atlasFor(colorSlot_[localPlayer_ & 7]);
+        collect(tris_, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
+        std::stable_sort(tris_.begin(), tris_.end(),
+                  [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+        float zm = mapView_.zoom();
+        // The ghost lifts onto the relief exactly like the finished unit/building will.
+        float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
+        float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm;
+        for (auto& t : tris_) for (auto& v : t.v) {
+            v.position.x = v.position.x * zm + ax;
+            v.position.y = v.position.y * zm + ay;
+            if (invalid) {
+                // Can't build here: wash the ghost red instead of the box.
+                v.color.a = 150;
+                v.color.r = Uint8(std::min(255, int(v.color.r * 0.6f) + 110));
+                v.color.g = Uint8(v.color.g * 0.30f);
+                v.color.b = Uint8(v.color.b * 0.30f);
+            } else {
+                v.color.a = 130;
+                v.color.r = Uint8(v.color.r * 0.55f);
+                v.color.g = Uint8(v.color.g * 0.8f);
+            }
+        }
+        drawModelTriangles();
+    }
+
+    void GameView::drawUnitShadow(const UnitGeom& g) {
+        if (!batchShadowMasks_.has_value()) {
+            SDL_RendererInfo info{};
+            batchShadowMasks_=SDL_GetRendererInfo(ren_,&info)==0 && (info.flags&SDL_RENDERER_ACCELERATED)!=0;
+        }
+        profShadowVerts_ += g.shadowVerts.size() + g.maskedShadowVerts.size();
+        if (shadowSilhouetteAtlasActive_ && g.shadowAtlasPage) {
+            SDL_RenderCopyF(ren_, g.shadowAtlasPage, &g.shadowAtlasSrc, &g.shadowAtlasDst);
+            return;
+        }
+        static const SDL_Color color{kShadowLevel,kShadowLevel,kShadowLevel,255};
+        static const float uv[2] = {0,0};
+        if (!g.shadowVerts.empty())
+            SDL_RenderGeometryRaw(ren_,nullptr,&g.shadowVerts[0].x,sizeof(SDL_FPoint),
+                                  &color,0,uv,0,int(g.shadowVerts.size()),nullptr,0,0);
+        int offset=0;
+        for (const auto& run:g.maskedShadowRuns) {
+            tak::submitShadowMaskRun(ren_,run.first,g.maskedShadowVerts.data()+offset,
+                                     run.second,*batchShadowMasks_);
+            offset+=run.second;
+        }
+    }
+
+    void GameView::collect(std::vector<Tri>& out, SDL_Texture* atlas, const tak::tdo::Object& o,
+                 const Xform& parent, const Anim* anim, float heading, int player,
+                 bool mirror, bool isRoot, bool shadow,
+                 RadialExtent* ext, const PieceMeta* meta,
+                 bool shadowCull, const PreparedPiece* prepared,
+                 bool paletteLighting) {
+        if (mirror || ext) prepared=nullptr; // special preview/extent paths use the reference transform
+        const tak::cob::PieceState* ps = prepared ? nullptr : pieceFor(anim, o.name);
+        // Retail tests visibility per piece; hidden parents still transform
+        // their children (including after a non-subtree EXPLODE).
+        const bool hidden = prepared ? prepared->hidden : ps && !ps->visible;
+        Xform xf = prepared ? prepared->transform : scriptTransform(parent,o.x,o.y,o.z,ps);
+        // Precomputed when the model was registered; computed here only for a model
+        // that has no cached tree (ghost previews, build-icon portraits). Same
+        // function either way.
+        PieceMeta local;
+        if (!meta) { pieceMetaFor(o, isRoot, local); meta = &local; }
+        const bool shadowDisabled = shadow && (prepared ? !prepared->castsShadow :
+                                                        ps && !ps->castsShadow());
+        const bool groundPlate = meta->skip || hidden || shadowDisabled;
+        float cy = std::cos(heading), sy = std::sin(heading);
+        for (size_t pi = 0; pi < o.primitives.size(); ++pi) {
+            if (groundPlate) break;
+            if (int32_t(pi) == o.selectionPrimitive) continue;
+            const auto& p = o.primitives[pi];
+            if (p.indices.size() < 3) continue;
+            SDL_Texture* tex = nullptr;
+            const SDL_Rect* arect = nullptr;
+            const std::string& name = pi < meta->primTex.size() ? meta->primTex[pi]
+                                                                : p.texture;
+            if (!name.empty()) {
+                const SDL_Rect* packed = nullptr;
+                if (pi < meta->primAtlas.size()) packed = meta->primAtlas[pi];
+                else {
+                    // Transient metadata (ghosts/projectiles) still resolves live.
+                    auto rit = atlasRect_.find(name);
+                    if (rit != atlasRect_.end()) packed = &rit->second;
+                }
+                if (atlas && packed) {
+                    tex = atlas;             // whole model shares one atlas texture
+                    arect = packed;
+                } else {
+                    // Fallback for any texture not packed into the atlas.
+                    auto it = textures_.find(name);
+                    if (it != textures_.end() && !it->second.empty()) {
+                        // Unpacked previews/projectiles use the same animation
+                        // frame as the atlas, or the remapped player logo colour.
+                        const size_t ci = animatedTex_.count(name)
+                            ? modelTextureAnimations_.at(name).frame
+                            : (it->second.size() == 1 ? 0 : size_t(playerColorSlot(player)));
+                        tex = ci < it->second.size() ? it->second[ci] : nullptr;
+                    }
+                }
+            }
+            SDL_Texture* shadowMask = nullptr;
+            SDL_FRect shadowUV{0,0,1,1};
+            if (shadow) {
+                const std::vector<ShadowMaskFrame>* masks=nullptr;
+                bool animated=false;
+                if (pi<meta->primShadowMasks.size()) {
+                    masks=meta->primShadowMasks[pi];
+                    animated=meta->primAnimated[pi];
+                } else {
+                    auto it=shadowMasks_.find(name);
+                    if (it!=shadowMasks_.end()) masks=&it->second;
+                    animated=animatedTex_.count(name)!=0;
+                }
+                if (masks) {
+                    const size_t frame=animated ? modelTextureAnimations_.at(name).frame
+                                                : size_t(playerColorSlot(player)) % masks->size();
+                    if(frame < masks->size()) {
+                        shadowMask=(*masks)[frame].texture;shadowUV=(*masks)[frame].uv;
+                    }
+                }
+            }
+            // Transform each of this primitive's vertices ONCE. The fan below
+            // visits vertex 0 in every triangle and each middle vertex twice, so
+            // doing the transform inside the triangle loop did it 3*(n-2) times
+            // for n vertices -- six transforms for a quad that needs four. The
+            // UVs still come from the fan position (retail maps a quad's corners
+            // to the four UV corners), so only the geometry is shared.
+            struct VOut { SDL_FPoint pos; float px, py, pz, d; bool ok; };
+            thread_local std::vector<VOut> vcache;
+            vcache.resize(p.indices.size());
+            for (size_t vi2 = 0; vi2 < p.indices.size(); ++vi2) {
+                VOut& vo = vcache[vi2];
+                size_t vi = size_t(p.indices[vi2]) * 3;
+                if (vi + 2 >= o.vertices.size()) { vo.ok = false; continue; }
+                vo.ok = true;
+                float w[3];
+                if (!prepared) xf.apply(o.vertices[vi], o.vertices[vi + 1], o.vertices[vi + 2], w);
+                else { w[0]=0; w[1]=prepared->rotated[vi/3][1]; w[2]=0; }
+                const float wx = mirror ? -w[0] : w[0];   // un-mirror Zhon models on X
+                const float rx = prepared ? prepared->rotated[vi/3][0] : wx * cy + w[2] * sy;
+                const float rz = prepared ? prepared->rotated[vi/3][2] : -wx * sy + w[2] * cy;
+                // TAK billboards lean back (+y and +z together); moving away (+z)
+                // reads upward on screen, adding to height. The coefficients are
+                // retail's own (icd 0x421dad): all of z, half of y.
+                const float ry = w[1] * kProjY + rz * kProjZ;
+                vo.px = rx; vo.py = w[1]; vo.pz = rz;
+                // Farthest first: depth from the camera goes as (z - 2y).
+                vo.d = rz * kSortZ - w[1] * kSortY;
+                if (ext) {
+                    // Pre-rotation x/z, so this is independent of `heading`.
+                    const float r = std::sqrt(wx * wx + w[2] * w[2]);
+                    const float base = -(w[1] * kProjY);   // the y term of -ry
+                    ext->maxR = std::max(ext->maxR, r);
+                    ext->minY = std::min(ext->minY, base - r * kProjZ);
+                    ext->maxY = std::max(ext->maxY, base + r * kProjZ);
+                    ext->any = true;
+                }
+                if (shadow) {
+                    // Lean by the light: the silhouette of the unit, not a disc
+                    // under it. Retail's shear is (+y/4, +y/4) in screen space
+                    // (0x4ec250 flag 1), i.e. down AND right.
+                    //
+                    // PLUS on both, and verify any change to these signs on a
+                    // GROUND unit. A flyer is the wrong test: its shadow also
+                    // carries the altitude term applied at the anchor, and that
+                    // term can outweigh and mask the vertex term, so a flyer probe
+                    // reports the sign of the wrong thing. It told me to negate x,
+                    // and negating x sent every ground unit's shadow leaning left.
+                    // With alt = 0 a ground unit isolates exactly this expression.
+                    vo.pos = {rx + kShadowLX * w[1], -(rz + kShadowLZ * w[1]) * kProjZ};
+                } else {
+                    vo.pos = {rx, -ry};
+                }
+            }
+            for (size_t i = 1; i + 1 < p.indices.size(); ++i) {
+                size_t idx[3] = {0, i, i + 1};
+                Tri tri{};
+                tri.tex = tex;
+                float depth = 0;
+                bool ok = true;
+                float px[3], py[3], pz[3];   // rotated model space, for the facing test
+                for (int k = 0; k < 3; ++k) {
+                    const VOut& vo = vcache[idx[k]];
+                    if (!vo.ok) { ok = false; break; }
+                    px[k] = vo.px; py[k] = vo.py; pz[k] = vo.pz;
+                    depth += vo.d;
+                    tri.v[k].position = vo.pos;
+                    // The UV comes from the FAN POSITION, not the vertex: retail
+                    // maps a quad's four corners to the four UV corners, so a
+                    // vertex reused at another fan position takes a different one.
+                    static const SDL_FPoint uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+                    SDL_FPoint c = uv[idx[k] & 3];
+                    tri.v[k].tex_coord = arect
+                        ? SDL_FPoint{(float(arect->x) + c.x * float(arect->w)) / float(atlasW_),
+                                     (float(arect->y) + c.y * float(arect->h)) / float(atlasH_)}
+                        : c;
+                    tri.v[k].color = tex ? SDL_Color{255, 255, 255, 255}
+                                         : SDL_Color{170, 170, 180, 255};
+                }
+                if (!ok) continue;
+                if (shadow) {
+                    // shadowCull: honour the BODY's cull for THIS unit. Off for living
+                    // units -- the measured reasons are below. On for CORPSES, where not
+                    // culling produces an artifact the no-cull rule never anticipated: a
+                    // body lying flat presents a large face PARALLEL to the projection
+                    // plane, so it projects at maximal area as a clean parallelogram --
+                    // and the body pass culls that same face, so the slab has no visible
+                    // object casting it. Reported from a screenshot as a square shadow
+                    // around some dead units; found as a single 4190px^2 shadow triangle
+                    // on corpses whose deadFor kept climbing.
+                    //
+                    // Culling a flat corpse cannot punch a meaningful hole: what survives
+                    // is the upward-facing surface, which is exactly what you can see of
+                    // it. The hole problem below is about UPRIGHT geometry.
+                    if (shadowCull) {
+                        const float cax = px[1]-px[0], cay = py[1]-py[0], caz = pz[1]-pz[0];
+                        const float cbx = px[2]-px[0], cby = py[2]-py[0], cbz = pz[2]-pz[0];
+                        const float cny = caz * cbx - cax * cbz;
+                        const float cnz = cax * cby - cay * cbx;
+                        float fc = cny * kSortY - cnz * kSortZ;
+                        if (mirror) fc = -fc;
+                        if (fc <= 0.0f) continue;
+                    }
+                    // NO BACKFACE CULL. This is the single biggest cost in a crowded
+                    // frame, so it has been measured three ways rather than assumed --
+                    // and the reason it cannot be culled is a property of the SHIPPED
+                    // MODELS, not of the projection.
+                    //
+                    // Census over the loaded models: 1039 pieces, of which only 61 are
+                    // closed edge-manifold solids. 94% are OPEN single-sided sheets, and
+                    // they hold 95.7% of the triangles. An open sheet has no back face to
+                    // discard -- cull the one face it has and the shadow loses it
+                    // outright. There is barely any redundancy here to reclaim.
+                    //
+                    // Measured by rasterising each unit's shadow with and without a cull
+                    // and comparing coverage over ~3,000,000 real unit poses:
+                    //
+                    //   cull vs CAMERA dir (0,2,-1)  -> loses 9.8% of covered pixels,
+                    //                                   96.4% of units affected
+                    //   cull vs LIGHT  dir (-1,4,-1) -> loses 5.5%, 74.7% of units
+                    //
+                    // The light direction is the correct one for a shadow -- the
+                    // projection collapses along it, since a displacement (a,b,c) leaves
+                    // the shadow fixed iff a = -kShadowLX*b and c = -kShadowLZ*b -- and
+                    // halving the damage confirms that. It is still a tear. A
+                    // piece-aware cull (light-cull closed pieces, keep both faces on open
+                    // ones) would be exactly correct, and is not worth building: it can
+                    // only ever reach the 4.3% of triangles that sit in closed pieces.
+                    //
+                    // For the record, culling IS worth a lot in cost terms -- light-cull
+                    // gives 709k -> 445k vertices, shadow 3.2ms -> 2.1ms, 54 -> 62 fps.
+                    // The fidelity is what rules it out, not the speed.
+                    //
+                    // Opaque colour, not alpha: the level is a flat multiply and the
+                    // batch is drawn with SDL_BLENDMODE_MOD. Retail's shadow has no
+                    // internal structure -- sampling a retail shot gives 124/225,
+                    // 106/192, 92/170, a flat multiply to 0.55 everywhere, which is
+                    // what its alloca'd span buffer (0x4eda83, 0x5f08 bytes) buys.
+                    // kShadowLevel is that 0.55.
+                    // No per-vertex colour or texcoord written here: buildUnitShadow
+                    // keeps POSITIONS ONLY and the flat grey is supplied once at
+                    // stride 0 when the geometry is submitted. Writing them per vertex
+                    // was filling ~8.5 MB a frame with the same two constants.
+                    tri.tex = shadowMask;
+                    if (shadowMask) {
+                        static const SDL_FPoint uv[4] = {{0,0},{1,0},{1,1},{0,1}};
+                        for (int k=0;k<3;++k) {
+                            const auto point=uv[idx[k] & 3];
+                            tri.v[k].tex_coord = {shadowUV.x+point.x*shadowUV.w,
+                                                  shadowUV.y+point.y*shadowUV.h};
+                            tri.v[k].color = {255,255,255,255};
+                        }
+                    }
+                    tri.depth = 0;
+                    out.push_back(tri);
+                    continue;
+                }
+                // BACKFACE CULL. Retail culls -- it imports grCullMode -- and
+                // without it both faces of a two-sided piece are drawn at almost
+                // the same depth, so which one wins is arbitrary and a cape
+                // comes out as a patchwork of its own front and back.
+                //
+                // Tested against the VIEW DIRECTION rather than a screen-space
+                // winding sign, because the transform negates y and may mirror
+                // x, and reasoning about the resulting handedness is how sign
+                // errors get in. 3DO polygons are wound so (v1-v0)x(v2-v0)
+                // points outward -- measured over the shipped models, 88-97% of
+                // primitives agree -- and the camera lies along (y,z) = (2,-1),
+                // the direction the projection collapses once collect()'s
+                // negation of ry is taken into account (see kProjY/kProjZ).
+                // Mirroring reflects the model and so flips the normal.
+                {
+                    const float ax = px[1] - px[0], ay = py[1] - py[0], az = pz[1] - pz[0];
+                    const float bx = px[2] - px[0], by = py[2] - py[0], bz = pz[2] - pz[0];
+                    const float ny = az * bx - ax * bz;      // normal Y
+                    const float nz = ax * by - ay * bx;      // normal Z
+                    float facing = ny * kSortY - nz * kSortZ;   // dot with (0,+2,-1)
+                    if (mirror) facing = -facing;
+                    if (facing <= 0.0f) continue;
+                }
+                if(paletteLighting && !name.empty()) {
+                    auto lit=paletteTextureSheets_.find(name);
+                    if(lit!=paletteTextureSheets_.end()) {
+                        const size_t frame=animatedTex_.count(name)
+                            ? modelTextureAnimations_.at(name).frame
+                            : (size_t(playerColorSlot(player))<lit->second.size()
+                                ? size_t(playerColorSlot(player)) : 0);
+                        if(frame<lit->second.size() && lit->second[frame].texture) {
+                            int level=15;
+                            if(prepared ? prepared->shaded : !ps || ps->shaded) {
+                                // Native shades the primitive from its first three
+                                // vertices, not separately for each triangulated fan.
+                                const auto& a=vcache[0];const auto& b=vcache[1];const auto& c=vcache[2];
+                                const float ax=b.px-a.px,ay=b.py-a.py,az=b.pz-a.pz;
+                                const float bx=c.px-a.px,by=c.py-a.py,bz=c.pz-a.pz;
+                                float nx=ay*bz-az*by,ny=az*bx-ax*bz,nz=ax*by-ay*bx;
+                                if(mirror) {nx=-nx;ny=-ny;nz=-nz;}
+                                level=tak::retailModelShadeLevel(nx,ny,nz);
+                            }
+                            const auto& sheet=lit->second[frame];
+                            tri.tex=sheet.texture;
+                            static constexpr SDL_FPoint uv[4]={{0,0},{1,0},{1,1},{0,1}};
+                            for(int k=0;k<3;++k) {
+                                const auto c=uv[idx[k]&3];
+                                tri.v[k].tex_coord={sheet.uv.x+(float((level-5)%4)+c.x)*sheet.uv.w,
+                                    sheet.uv.y+(float((level-5)/4)+c.y)*sheet.uv.h};
+                            }
+                        }
+                    }
+                }
+                tri.depth = depth / 3;
+                out.push_back(tri);
+            }
+        }
+        for (size_t ci = 0; ci < o.children.size(); ++ci) {
+            const PieceMeta* cm = (ci < meta->children.size()) ? &meta->children[ci] : nullptr;
+            collect(out, atlas, o.children[ci], xf, anim, heading, player, mirror, false,
+                    shadow, ext, cm, shadowCull, prepared ? &prepared->children[ci] : nullptr,paletteLighting);
+        }
+    }
+
+    float GameView::hudBanner(const std::string& msg, float y, float scale, SDL_Color col,
+                    int winW, float leftX) {
+        if (!hudFont_.ok() || msg.empty()) return y;
+        float tw = float(hudFont_.width(msg, scale));
+        float topOff, th;
+        hudFont_.vbounds(msg, scale, topOff, th);   // real text extent (draw() lifts by yoff)
+        float x = leftX < 0 ? (float(winW) - tw) / 2 : leftX;
+        const float padX = 10, padTop = 6, padBot = 6;
+        // `y` is the TOP of the banner box; the text is inset by padTop inside it. Offset
+        // the draw origin so the text's true visual top lands at y+padTop -- so the box
+        // wraps the text instead of drawing below it (draw() renders glyphs above `y`).
+        float drawY = y + padTop - topOff;
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        SDL_FRect bg{x - padX, y, tw + 2 * padX, th + padTop + padBot};
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 180);
+        SDL_RenderFillRectF(ren_, &bg);
+        SDL_SetRenderDrawColor(ren_, 255, 255, 255, 40);   // faint hairline for definition
+        SDL_RenderDrawRectF(ren_, &bg);
+        hudFont_.draw(ren_, msg, x, drawY, scale, col);
+        return y + th + padTop + padBot + 6;
+    }

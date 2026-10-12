@@ -2260,3 +2260,86 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
     }
     button("CLOSE",{x+width-164*scale,y+height-56*scale,140*scale,rowH},-1,DiplomacyAction::Close,true);
 }
+
+    bool GameView::unitUnderCursor(const UnitR& u, float mx, float my, float* d2) {
+        if (!canPickUnit(u)) return false;
+        if (dotsFrame_) {
+            // Tactical Dots on screen: the hit region is the dot, with the same
+            // 9px floor as a tiny model so a lone dot is still easy to click.
+            SDL_FPoint c = dotCentre(u);
+            float half = std::max(dotSide(u) * 0.5f + 1.0f, 9.0f);
+            if (std::fabs(mx - c.x) > half || std::fabs(my - c.y) > half) return false;
+            if (d2) { float dx = c.x - mx, dy = c.y - my; *d2 = dx * dx + dy * dy; }
+            return true;
+        }
+        float zms = mapView_.zoom();
+        SDL_FPoint p = unitScreen(u);
+        const SDL_FRect& hb = unitHitBox(u.type);
+        float ax = p.x, ay = p.y + 12.0f * zms;         // sprite draw anchor
+        float cx = ax + (hb.x + hb.w * 0.5f) * zms;
+        float cy = ay + (hb.y + hb.h * 0.5f) * zms;
+        float hw = std::max(hb.w * zms * 0.5f, 9.0f);
+        float hh = std::max(hb.h * zms * 0.5f, 9.0f);
+        if (std::fabs(mx - cx) > hw || std::fabs(my - cy) > hh) return false;
+        if (d2) { float dx = cx - mx, dy = cy - my; *d2 = dx * dx + dy * dy; }
+        return true;
+    }
+
+    void GameView::playClickTone(int semitone) {
+        constexpr bool kPitchedBongs = false;   // pending icd proof
+        constexpr int kToneRef = 4;
+        float rate = (kPitchedBongs && semitone > 0)
+                         ? std::pow(2.0f, float(semitone - kToneRef) / 12.0f)
+                         : 1.0f;
+        std::string t = "tone" + side_;
+        if (!sounds_.has(t)) return;
+        // Peak-normalize the acknowledgment to a prominent UI level: retail's
+        // DirectSound path played tones hot (full per-ear gain, no equal-power
+        // pan loss, no mixing headroom); matching by amplitude alone leaves
+        // both retail's tone (peak 0.31) and soft click.hpi replacements
+        // (peak 0.39) buried under our /2-headroom + 0.707-pan chain. Target
+        // ~0.7 per ear: gain = 0.7 / (peak * 0.5 * 0.707), capped so a
+        // near-silent file can't amplify noise floor.
+        float peak = sounds_.peakOf(t);
+        float gain = peak > 0.01f
+                         ? std::clamp(0.7f / (peak * 0.5f * 0.707f), 1.0f, 8.0f)
+                         : 2.0f;
+        sounds_.play(t, gain, rate);
+    }
+
+    const uint8_t* GameView::glyph5x7(char c) {
+        static const std::map<char, std::array<uint8_t, 5>> F = {
+            {'0',{0x3E,0x51,0x49,0x45,0x3E}}, {'1',{0x00,0x42,0x7F,0x40,0x00}},
+            {'2',{0x42,0x61,0x51,0x49,0x46}}, {'3',{0x21,0x41,0x45,0x4B,0x31}},
+            {'4',{0x18,0x14,0x12,0x7F,0x10}}, {'5',{0x27,0x45,0x45,0x45,0x39}},
+            {'6',{0x3C,0x4A,0x49,0x49,0x30}}, {'7',{0x01,0x71,0x09,0x05,0x03}},
+            {'8',{0x36,0x49,0x49,0x49,0x36}}, {'9',{0x06,0x49,0x49,0x29,0x1E}},
+            {'A',{0x7E,0x11,0x11,0x11,0x7E}}, {'B',{0x7F,0x49,0x49,0x49,0x36}},
+            {'C',{0x3E,0x41,0x41,0x41,0x22}}, {'D',{0x7F,0x41,0x41,0x22,0x1C}},
+            {'E',{0x7F,0x49,0x49,0x49,0x41}}, {'F',{0x7F,0x09,0x09,0x09,0x01}},
+            {'G',{0x3E,0x41,0x49,0x49,0x7A}}, {'H',{0x7F,0x08,0x08,0x08,0x7F}},
+            {'I',{0x00,0x41,0x7F,0x41,0x00}}, {'J',{0x20,0x40,0x41,0x3F,0x01}},
+            {'K',{0x7F,0x08,0x14,0x22,0x41}}, {'L',{0x7F,0x40,0x40,0x40,0x40}},
+            {'M',{0x7F,0x02,0x0C,0x02,0x7F}}, {'N',{0x7F,0x04,0x08,0x10,0x7F}},
+            {'O',{0x3E,0x41,0x41,0x41,0x3E}}, {'P',{0x7F,0x09,0x09,0x09,0x06}},
+            {'Q',{0x3E,0x41,0x51,0x21,0x5E}}, {'R',{0x7F,0x09,0x19,0x29,0x46}},
+            {'S',{0x46,0x49,0x49,0x49,0x31}}, {'T',{0x01,0x01,0x7F,0x01,0x01}},
+            {'U',{0x3F,0x40,0x40,0x40,0x3F}}, {'V',{0x1F,0x20,0x40,0x20,0x1F}},
+            {'W',{0x7F,0x20,0x18,0x20,0x7F}}, {'X',{0x63,0x14,0x08,0x14,0x63}},
+            {'Y',{0x07,0x08,0x70,0x08,0x07}}, {'Z',{0x61,0x51,0x49,0x45,0x43}},
+            {'/',{0x20,0x10,0x08,0x04,0x02}}, {'+',{0x08,0x08,0x3E,0x08,0x08}},
+            {'-',{0x08,0x08,0x08,0x08,0x08}}, {':',{0x00,0x36,0x36,0x00,0x00}},
+            {'.',{0x00,0x60,0x60,0x00,0x00}}, {'%',{0x63,0x13,0x08,0x64,0x63}},
+            // An unknown glyph advances like a space, so anything missing here is
+            // silently SWALLOWED rather than shown wrong. '_' is legal in an account
+            // name (see auth::validUsername) and this table drew the lobby's player
+            // list, so "pocket_geek" read as "pocket geek"; the rest is the sentence
+            // punctuation chat needs for the same reason.
+            {'_',{0x40,0x40,0x40,0x40,0x40}}, {',',{0x00,0x50,0x30,0x00,0x00}},
+            {'!',{0x00,0x00,0x5F,0x00,0x00}}, {'\'',{0x00,0x00,0x03,0x00,0x00}},
+            {'?',{0x02,0x01,0x51,0x09,0x06}}, {'(',{0x00,0x1C,0x22,0x41,0x00}},
+            {')',{0x00,0x41,0x22,0x1C,0x00}}, {'*',{0x14,0x08,0x3E,0x08,0x14}},
+        };
+        auto it = F.find(c);
+        return it == F.end() ? nullptr : it->second.data();
+    }
