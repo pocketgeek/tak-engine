@@ -729,6 +729,15 @@ struct alignas(64) Order {
     // until the first such failure. Hashed with a tag when set.
     uint32_t placementRetryTick = 0;
     uint8_t placementFailures = 0;
+    // An auto attack issued with a return (4d7de0's leash path: the idle
+    // retaliation mission, Maneuver or a patrol hit): mission +0x56 is the
+    // leash (maneuverleashlength) and +0x2e/+0x30 the origin; the attack
+    // retires once the unit itself is `chaseLeash` from the origin (0 =
+    // unlimited), and the return move queued behind it walks it back. Hashed
+    // with a tag when set.
+    bool chaseLeashed = false;
+    uint16_t chaseLeash = 0;
+    RetailGroundPoint chaseOrigin{};
 };
 // Which line each field sits on (WE D2). Moving a field across a line, or
 // growing line 0/1 past 64 bytes, is a compile error here. (offsetof on a type
@@ -1550,6 +1559,10 @@ struct Player {
     // the last budget-limited pass stopped on. INT32_MAX is the constructor's
     // "last slot of the pool" (40fed0). Hashed.
     int32_t sweepCursor = INT32_MAX;
+    // 409a8a: an AI Monarch hit sets the controller's threat deadline (ctrl
+    // +0xd = now+30+3 x rand(300)) that the unported AI planner 40c890 reads.
+    // Hashed.
+    uint32_t aiThreatUntil = 0;
     // 411700's per-player unit lists, rebuilt on the 7-tick bookkeeping clock
     // (cacheClock; visibleRefresh stands in when that clock is disabled):
     // list +5, the hostile units this player saw (4f7210) at the last rebuild,
@@ -2725,6 +2738,13 @@ private:
     bool switchWeaponSlot(Unit& u,int slot,bool fromCommand);
     // 40f411..40fb92: a computer-owned switcher's per-visit weapon choice.
     void retailAiWeaponSwitch(Unit& u);
+    // 409a50: the victim's response to a hit -- the AI Monarch block, the
+    // idle retaliation mission (part a) and, failing that, the per-slot
+    // retarget (part b).
+    void retailHitResponse(Unit& victim,const Unit* attacker,int dmgType);
+    // 4d7de0 with explicit=0, auto=1: insert an auto attack, leashed with a
+    // return move on the Maneuver/patrol path. Whether orders were inserted.
+    bool retailIssueAutoAttack(Unit& u,int targetId,bool forceReturn);
     std::vector<std::vector<int>> sweepIds_;   // per-player id-ordered scratch; not state
 public:
     // Why a unit's slots are manual (Unit::slotManual).

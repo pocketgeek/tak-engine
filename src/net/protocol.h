@@ -30,6 +30,10 @@ constexpr uint32_t kNetVersion = 252;      // 252: retail fire-at-will sweep (ic
                                            //      lists (Player::visibleEnemies/visibleAllies/visibleRefresh) feed the sweep
                                            //      and AI weapon switching (40f411): computer-owned switchers pick their weapon per
                                            //      sweep visit (aoe bands, ally/enemy counts, mana, immunity, one rand(10) revert)
+                                           //      and the idle retaliation mission (409a50 a / 4d7de0): an idle or patrolling unit hit
+                                           //      within 0.9 leash + range takes an auto attack, leashed with a return move on the
+                                           //      Maneuver/patrol path (hashed Order::chaseLeashed/chaseLeash/chaseOrigin); an AI
+                                           //      Monarch hit draws 3 x rand(300) (hashed Player::aiThreatUntil) and drops its build
                                            // 251: blocked build sites. MobileBuild placement at the site follows retail
                                            //      405824..405911 (FlyingBuild 41f301..41f3e5 alike): refused only by mobile units it
                                            //      retries every 10 ticks where the builder stands or hovers and drops after the 31st failure; refused by anything else it drops

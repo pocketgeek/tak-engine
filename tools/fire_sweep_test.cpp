@@ -8,6 +8,8 @@
 #include <cstring>
 #include <string>
 #include <tuple>
+#include <algorithm>
+#include <cmath>
 using namespace tak;
 namespace {
 int failures=0;
@@ -156,4 +158,76 @@ void weaponSwitch() {
         else check(slot==0,"switch: a human-owned switcher never auto-switches");
     }
 }
-void retaliation() {}
+void retaliation() {
+    auto victimType=[]{auto t=gunner(160);t.id="victim";t.leash=300;return t;}();
+    auto raider=[](int range){auto t=gunner(160);t.id="raider";t.maxVel=sim::Fixed::fromInt(4);
+        t.weapons[0].range=range;t.weapon=t.weapons[0];return t;};
+    const auto r1=raider(500),r2=raider(700);
+    struct Hit { int victim=0,attacker=0; bool hit=false; sim::Fixed hitX,hitZ; };
+    // Runs until the victim is first hit; returns where it stood.
+    auto firstHit=[&](sim::World& w,Hit& h,int limit) {
+        for(int t=0;t<limit && !h.hit;++t){
+            const sim::Unit& v=*w.unit(h.victim);
+            const sim::Fixed x=v.x,z=v.z,hp=v.hp;
+            ticks(w,1);
+            if(w.unit(h.victim)->hp<hp){h.hit=true;h.hitX=x;h.hitZ=z;}
+        }
+    };
+    {   // 1: idle Offensive mobile, hit from 1.5x range inside 0.9 leash + range.
+        sim::World w;setup(w,2);Hit h;
+        h.victim=w.spawn(&victimType,400,1000,0,0);h.attacker=w.spawn(&r1,850,1000,0,1);
+        auto& v=*w.unit(h.victim);v.moveState=1;v.fireState=2;
+        w.attack(h.attacker,h.victim,false);
+        firstHit(w,h,300);
+        const auto& o=w.unit(h.victim)->orders;
+        const bool attack=!o.empty() && o[0].targetId==h.attacker && o[0].autoTarget && o[0].chaseLeashed &&
+            o[0].chaseLeash==300 && o[0].chaseOrigin.x==int16_t(w.unit(h.victim)->x.floorInt());
+        // Behind the attack leg (its route waypoints share its target).
+        const auto ret=std::find_if(o.begin(),o.end(),[](const sim::Order& x){return !x.targetId;});
+        const bool back=ret!=o.end() && ret->groundMission && ret->groundResponse.mode==1;
+        check(h.hit && attack && back,"retaliation: an idle Offensive unit takes a leashed attack with a return move");
+        const int16_t originX=o.empty() ? 0 : o[0].chaseOrigin.x;
+        // The attacker flees past the leash: the attack retires, the unit walks home.
+        w.order(h.attacker,1900,1000,false);w.unit(h.attacker)->fireState=0;
+        float farthest=0;bool retired=false,home=false;
+        for(int t=0;t<1200;++t){
+            ticks(w,1);
+            const auto& u=*w.unit(h.victim);
+            farthest=std::max(farthest,u.x.toFloat()-originX);
+            if(!retired && (u.orders.empty() || u.orders[0].targetId!=h.attacker))retired=true;
+            if(retired && u.orders.empty()){home=std::abs(u.x.toFloat()-originX)<48;break;}
+        }
+        check(retired && farthest>=250 && farthest<360,"retaliation: the chase retires at the leash");
+        check(home,"retaliation: the unit then walks back to where it was hit");
+    }
+    {   // 2: idle Defensive: no mission.
+        sim::World w;setup(w,2);Hit h;
+        h.victim=w.spawn(&victimType,400,1000,0,0);h.attacker=w.spawn(&r1,850,1000,0,1);
+        auto& v=*w.unit(h.victim);v.moveState=0;v.fireState=2;
+        w.attack(h.attacker,h.victim,false);
+        firstHit(w,h,300);
+        check(h.hit && w.unit(h.victim)->orders.empty(),"retaliation: an idle Defensive unit gets no mission");
+    }
+    {   // 3: patrolling Defensive with fire at will: attack + return, then the patrol resumes.
+        sim::World w;setup(w,2);Hit h;
+        h.victim=w.spawn(&victimType,400,1000,0,0);h.attacker=w.spawn(&r1,880,1000,0,1);
+        auto& v=*w.unit(h.victim);v.moveState=0;v.fireState=2;
+        w.patrol(h.victim,400,1300);
+        w.attack(h.attacker,h.victim,false);
+        firstHit(w,h,300);
+        const auto& o=w.unit(h.victim)->orders;
+        const bool attack=!o.empty() && o[0].targetId==h.attacker && o[0].chaseLeashed;
+        const auto ret=std::find_if(o.begin(),o.end(),[](const sim::Order& x){return !x.targetId;});
+        const bool back=ret!=o.end() && ret->groundMission && ret->groundResponse.mode==1 && !ret->patrol;
+        const bool patrolKept=std::any_of(o.begin(),o.end(),[](const sim::Order& x){return x.patrol;});
+        check(h.hit && attack && back && patrolKept,"retaliation: a patrolling Defensive unit attacks with a return and keeps its patrol");
+    }
+    {   // 4: attacker beyond 0.9 leash + range: no mission.
+        sim::World w;setup(w,2);Hit h;
+        h.victim=w.spawn(&victimType,400,1000,0,0);h.attacker=w.spawn(&r2,1050,1000,0,1);
+        auto& v=*w.unit(h.victim);v.moveState=1;v.fireState=2;
+        w.attack(h.attacker,h.victim,false);
+        firstHit(w,h,400);
+        check(h.hit && w.unit(h.victim)->orders.empty(),"retaliation: an attacker beyond 0.9 x leash + range gets no mission");
+    }
+}

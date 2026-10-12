@@ -1638,6 +1638,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
         o.transportUnloadReleasePending = tmpl.transportUnloadReleasePending;
         o.transportUnloadTransferDeferred = tmpl.transportUnloadTransferDeferred;
         o.autoTarget = tmpl.autoTarget;
+        o.chaseLeashed = tmpl.chaseLeashed; o.chaseLeash = tmpl.chaseLeash; o.chaseOrigin = tmpl.chaseOrigin;
         o.issuedTick = tmpl.issuedTick;
         o.convoyTick = tmpl.convoyTick;
         o.goal = (i + 1 == path.size());
@@ -4500,7 +4501,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         }
         if (fromId) e.lastHitBy = fromId;
         e.lastHitPlayer = fromPlayer;
-        if (attacker && attacker!=&e) slotHitResponse(e,*attacker);
+        retailHitResponse(e,attacker,w.dmgType);
         if (w.status != Weapon::Status::None && e.type) {
             bool immune =
                 (w.status == Weapon::Status::Frozen && e.type->cantBeFrozen) ||
@@ -5587,6 +5588,88 @@ void World::retailAiWeaponSwitch(Unit& u) {
     if (choice>=0) switchWeaponSlot(u,choice,false);
 }
 
+bool World::retailIssueAutoAttack(Unit& u,int targetId,bool forceReturn) {
+    if (targetId==u.id) return false;
+    if (u.moveState==0 && !forceReturn) return false;   // Defensive/Hold Position: part (b) only
+    if (u.fireState==0) return false;                   // Hold Fire
+    const Unit* t=unit(targetId);
+    // 4de530 kind 3 (no attack mission for this pair) -> the closest host test.
+    if (!t || !canAttackTarget(u,*t)) return false;
+    const RetailGroundPoint pos{int16_t(u.x.floorInt()),int16_t(u.z.floorInt())};
+    Order attack{Fixed(),Fixed(),targetId};
+    attack.autoTarget=attack.goal=true;attack.issuedTick=tickCounter_;
+    if (u.type->canMove && (forceReturn || u.moveState==1)) {
+        // [Attack(leash, origin), return Move to the hit position (response
+        // mode 1), the previous head].
+        Order back{Fixed::fromInt(pos.x),Fixed::fromInt(pos.z),0};
+        back.goal=true;back.issuedTick=tickCounter_;
+        back.mission.flags=0x3000400u;
+        if (u.type->canFly) back.flightMoveMission=true;
+        else {
+            back.groundMission=true;
+            back.groundResponse.mode=1;back.groundResponse.goal=back.groundResponse.origin=pos;
+            back.segmentX=Fixed::fromInt(pos.x);back.segmentZ=Fixed::fromInt(pos.z);
+            back.hasSegment=true;back.controller=++nextMovementController_;
+        }
+        attack.chaseLeashed=true;
+        attack.chaseLeash=uint16_t(std::clamp(u.type->leash,0,65535));
+        attack.chaseOrigin=pos;
+        u.orders.insert(u.orders.begin(),back);
+    }
+    u.orders.insert(u.orders.begin(),attack);
+    setSlotsManual(u,kSlotsAttack);   // the attack mission owns the weapons
+    cancelPath(u);u.routeStamp=-1;
+    noteOrders(u.id);
+    return true;
+}
+
+void World::retailHitResponse(Unit& e,const Unit* a,int dmgType) {
+    if (dmgType==12 || dmgType==13) return;   // 51a2f2/51a333 never call 409a50
+    if (!e.alive() || !e.type || e.hp<=Fixed()) return;
+    if (a && (!a->alive() || !a->type || a->hp<=Fixed())) a=nullptr;
+    // 409a8a: an AI Monarch hit, attacker or not, rolls the threat deadline;
+    // one hit while it builds cancels the build so it can answer.
+    if (e.type->commander && computerOwned(e.player)) {
+        uint32_t until=tickCounter_+30;
+        for (int i=0;i<3;++i) until+=gameRand(300);
+        players_[size_t(e.player)].aiThreatUntil=until;
+        const bool building=e.buildSiteId || (!e.orders.empty() &&
+            (e.orders.front().buildType || e.orders.front().repairTarget));
+        if (building && a!=&e) stop(e.id);
+    }
+    if (!a || a==&e) return;
+    if (isNeutralPlayer(e.player) || !validUnitOwner(e.player)) return;
+    if (e.type->weapons.empty() && !e.type->kamikaze) return;
+    if (e.incapacitated()) return;
+    if (allied(e.player,a->player)) return;
+    // (a) 409ba8..409e4b: the retaliation mission's gates.
+    const bool mobile=e.type->canMove && !e.type->isStructure();
+    const size_t leg=e.orders.empty() ? 0 : currentLeg(e.orders);
+    const bool patrolling=!e.orders.empty() && leg<e.orders.size() && e.orders[leg].patrol &&
+        !e.orders.front().targetId;
+    const bool idle=e.orders.empty() && !e.retailBuild && e.buildQueue.empty();
+    bool mission=false;
+    if (!e.type->weapons.empty() && (idle || (mobile && patrolling))) {
+        const int s=e.type->weaponSwitching ? std::clamp(e.weaponSlot,0,int(std::min<size_t>(3,e.type->weapons.size()))-1) : 0;
+        const Weapon& w=e.type->weapons[size_t(s)];
+        const bool categoriesOk=!categoryMatch(e.type->noTargetCats,*a->type) && !slotBadTarget(e,s,*a);
+        const int32_t eff=int32_t(w.damageVs(a->type));
+        bool reach=eff>0 && slotInRange(e,*a,s);
+        if (!reach && mobile) {
+            const int32_t leash=int32_t(uint16_t(std::clamp(e.type->leash,0,65535)));
+            const int32_t oct=retailOctDistance(a->x.floorInt()-e.x.floorInt(),a->z.floorInt()-e.z.floorInt());
+            reach=oct<(leash*9)/10+(w.melee ? 0 : w.range);
+        }
+        const bool usable=canAttackTarget(e,*a) && !(w.melee && a->type->canFly) &&
+            !(w.toAir && !a->type->canFly) && !(w.noAir && a->type->canFly) && eff>0;
+        if (categoriesOk && reach && usable) {
+            const bool flag=e.fireState==2 && mobile && patrolling;
+            mission=retailIssueAutoAttack(e,a->id,flag);
+        }
+    }
+    if (!mission) slotHitResponse(e,*a);   // (b)
+}
+
 void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     if (u.type->onOffable && !u.active) return;   // explicitly powered down
 
@@ -5641,6 +5724,17 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     if (!canAttackTarget(u,*target)) {
         if(u.scriptAimTarget)clearScriptWeaponTarget(u);
         u.captureProg=0;
+        dropLeg(u);
+        cancelPath(u);
+        u.routeStamp = -1;
+        return;
+    }
+    // A leashed auto attack (4d7de0's return path) retires once the unit
+    // itself is the leash from where it was hit (Attack_Chase 403d1d, read
+    // after the target checks); the return move behind it then walks it back.
+    if (const Order& front=u.orders.front();front.chaseLeashed && front.chaseLeash &&
+        retailGroundDistance({int16_t(u.x.floorInt()),int16_t(u.z.floorInt())},front.chaseOrigin)>=front.chaseLeash) {
+        if(u.scriptAimTarget)clearScriptWeaponTarget(u);
         dropLeg(u);
         cancelPath(u);
         u.routeStamp = -1;
@@ -5710,7 +5804,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // reach; an explicitly ordered attack is unaffected, because being told to go
     // kill something is exactly the case the standing order does not govern.
     const bool mayChase = u.type->canMove &&
-                          (u.moveState != 0 || !u.orders.front().autoTarget);
+                          (u.moveState != 0 || !u.orders.front().autoTarget || u.orders.front().chaseLeashed);
     if (!mayChase && dist > reach) {
         dropLeg(u);
         cancelPath(u);
@@ -13592,6 +13686,10 @@ uint64_t World::stateHash() const {
             }
             if (order.convoyTick != ConvoyTable::kNone) {mix(0x434f4e5654494bull);mix(order.convoyTick);}
             if (order.placementFailures) {mix(0x504c4143454dull);mix(order.placementFailures);mix(order.placementRetryTick);}
+            if (order.chaseLeashed) {
+                mix(0x434841534555ull);mix(order.chaseLeash);
+                mix(uint16_t(order.chaseOrigin.x));mix(uint16_t(order.chaseOrigin.z));
+            }
             if (order.stationFree || order.stationRefTick) {
                 mix(0x53544e52454cull);mix(order.stationFree);
                 mix(uint32_t(order.stationRefX));mix(uint32_t(order.stationRefZ));mix(order.stationRefTick);
@@ -13813,6 +13911,7 @@ uint64_t World::stateHash() const {
         if (t.scenarioResourceLimit != 0) { mix(0x4352544c494d4954ull); mixf(t.scenarioResourceLimit); }
         mix(t.cacheClock.enabled); mix(t.cacheClock.lastRefresh);
         mix(uint32_t(t.sweepCursor));
+        mix(t.aiThreatUntil);
         mix(t.visibleRefresh);
         mix(t.visibleEnemies.size());for (int id:t.visibleEnemies) mix(uint32_t(id));
         mix(t.visibleAllies.size());for (int id:t.visibleAllies) mix(uint32_t(id));
