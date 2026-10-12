@@ -352,6 +352,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // cantbefrozen) -- else petrify would be an instant Monarch kill.
             if (t.commander) t.cantBeStoned = t.cantBeFrozen = true;
             t.cantBeCaptured = info->numberOr("cantbecaptured", 0) != 0;
+            t.immuneToParalyzer = info->numberOr("immunetoparalyzer", 0) != 0;
             t.cantBeTransported = info->numberOr("cantbetransported", 0) != 0;
             t.transportSize = uint16_t(int(info->numberOr("transportedsize",0)));
             {   // bloodcolor1 = "r g b"
@@ -4245,16 +4246,28 @@ void World::setWeapon(int unitId, int slot) {
     // Re-selecting the current slot must not restart its reload countdown.
     if (!u->type->weaponSwitching || slot < 0 || slot >= std::min(n,3) ||
         slot == u->weaponSlot) return;
-    if(u->scriptAimTarget)clearScriptWeaponTarget(*u,true);
-    u->weaponSlot = slot;
     u->weaponAuto = false;
-    u->reloads[size_t(slot)] = u->type->weapons[size_t(slot)].switchReloadTicks;
-    const auto script=unitScripts_.find(u->id);
-    if(script!=unitScripts_.end()) {
-        const auto& file=*u->type->script();
+    switchWeaponSlot(*u,slot,true);
+}
+
+// 51a8b0: drop the old slot's target (TargetCleared only when one was set),
+// select the new slot, give it its switchreloadtime and start COB
+// SwitchWeapon(slot). The +0xd0 0x40 event bit it also sets has no known
+// gameplay reader and is not modelled.
+bool World::switchWeaponSlot(Unit& u,int slot,bool fromCommand) {
+    const int n=int(u.type->weapons.size());
+    if (!u.type->weaponSwitching || slot<0 || slot>=std::min(n,3) || slot==u.weaponSlot) return false;
+    if (u.scriptAimTarget) clearScriptWeaponTarget(u,fromCommand);
+    dropSlotTarget(u,u.weaponSlot);
+    u.weaponSlot=slot;
+    u.reloads[size_t(slot)]=u.type->weapons[size_t(slot)].switchReloadTicks;
+    if (const auto script=unitScripts_.find(u.id);script!=unitScripts_.end()) {
+        const auto& file=*u.type->script();
         script->second.state().startArguments(file,file.scriptIndex("SwitchWeapon"),{uint32_t(slot),0,0,0},1);
-        u->pendingWeaponAnimations.push_back({tak::RetailWeaponAnimation::Switch,uint8_t(slot),0,0});
+        if (fromCommand) u.pendingWeaponAnimations.push_back({tak::RetailWeaponAnimation::Switch,uint8_t(slot),0,0});
+        else u.weaponAnimations.add(tak::RetailWeaponAnimation::Switch,slot);
     }
+    return true;
 }
 
 void World::setStance(int unitId, int stance) {
@@ -5410,7 +5423,7 @@ void World::tickFireSweep(int player) {
     }
     if (pool.empty()) return;
     const int budget=capacity/30+1;
-    const bool aiOwner=owner.automaticGates;
+    const bool aiOwner=computerOwned(player);
     // The constructor (40fed0) leaves the cursor on the pool's last slot; a
     // restored pool has a real one, a synthetic pool walks from its end.
     const int32_t start=owner.sweepCursor==INT32_MAX && retailAllocation_ && retailEntityPools_ ?
@@ -5427,6 +5440,9 @@ void World::tickFireSweep(int player) {
         Unit* u=unit(pool[i]);
         if (!u || !u->alive() || u->hp<=Fixed() || !u->type || u->player!=player || u->incapacitated()) continue;
         if (!u->type->weapons.empty()) {
+            // 40f411: the switch block, after the armed test and before the
+            // fireState test, so the new slot is swept in this same visit.
+            if (aiOwner && u->type->weaponSwitching) retailAiWeaponSwitch(*u);
             syncSlotMode(*u);
             if (u->fireState==2 && u->slotAuto && !u->type->canCapture) {
                 for (int s=0;s<int(std::min<size_t>(3,u->type->weapons.size()));++s) {
@@ -5510,6 +5526,65 @@ void World::slotHitResponse(Unit& victim,const Unit& attacker) {
             !slotInsideMinRange(victim,*t,s) && !slotBadTarget(victim,s,*t)) continue;
         if (victim.slotTarget[size_t(s)]!=attacker.id) setSlotTarget(victim,s,attacker.id);
     }
+}
+
+// 40f411..40fb92 host: the per-slot facts, the selected slot's target (the
+// 51a9a0 lookup) and the enemy/ally counts around it, from the owner's 7-tick
+// visible lists by live centre distance (411ae0/411dd0).
+void World::retailAiWeaponSwitch(Unit& u) {
+    const int sel=u.weaponSlot;
+    const int n=int(std::min<size_t>(3,u.type->weapons.size()));
+    if (sel<0 || sel>=n) return;
+    int targetId=(u.slotAuto>>sel&1) ? u.slotTarget[size_t(sel)] : u.scriptAimTarget;
+    Unit* target=targetId ? unit(targetId) : nullptr;
+    if (targetId && (!target || !target->alive() || !target->type)) {
+        if (u.slotAuto>>sel&1) dropSlotTarget(u,sel);   // 51a9a0 retires it
+        target=nullptr;
+    }
+    const bool live=target && target->hp>Fixed();
+    const float costMult=u.type->noVeteran ? 1.0f : u.vetMul();
+    RetailWeaponSwitchInput in;
+    in.selected=sel;
+    in.target=live;
+    in.targetHp=live ? int32_t(int16_t(target->hp.floorInt())) : 0;
+    in.lowMonarch=u.type->commander && u.hp.floorInt()<int(unsigned(u.type->maxHp)/3u);
+    for (int s=0;s<n;++s) {
+        const Weapon& w=u.type->weapons[size_t(s)];
+        auto& slot=in.slots[size_t(s)];
+        const float cost=w.manaCost/costMult;
+        slot.present=true;
+        slot.affordable=cost<0.01f || double(cost)<=u.mana;
+        slot.aoe=int32_t(uint16_t(w.aoe));
+        slot.mindControl=w.mindControl;
+        slot.damage=w.damage;
+        const bool stone=w.status==Weapon::Status::Stoned,freeze=w.status==Weapon::Status::Frozen;
+        const bool paralyzer=w.dmgType==4;
+        slot.costlyOrSpecial=stone || freeze || w.mindControl || paralyzer || slot.aoe>=200 ||
+            double(u.type->maxMana)*0.1<double(cost);
+        if (live) {
+            const Unit& t=*target;
+            const bool locked=t.stonedFor>0 || t.frozenFor>0;
+            slot.usable=!(stone && (t.type->cantBeStoned || locked)) &&
+                        !(freeze && (t.type->cantBeFrozen || locked)) &&
+                        !(w.mindControl && (t.type->cantBeCaptured || locked)) &&
+                        !(paralyzer && (t.type->immuneToParalyzer || t.paralyzedFor>0));
+        }
+    }
+    auto count=[&](const std::vector<int>& list,int32_t radius) {
+        const int64_t r2=int64_t(radius)*radius;
+        int found=0;
+        for (const int id:list) {
+            const Unit* o=unit(id);
+            if (o && o->alive() && o->hp>Fixed() && retailCentreDist2(*target,*o)<=r2) ++found;
+        }
+        return found;
+    };
+    const Player& owner=players_[size_t(u.player)];
+    const int choice=retailWeaponSwitchChoice(in,
+        [&](int32_t r){return count(owner.visibleEnemies,r);},
+        [&](int32_t r){return count(owner.visibleAllies,r);},
+        [&](int bound){return int(gameRand(int32_t(bound)));});
+    if (choice>=0) switchWeaponSlot(u,choice,false);
 }
 
 void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {

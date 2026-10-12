@@ -16,6 +16,7 @@
 #include "sim/retaileffectclock.h"
 #include "sim/retailheight.h"
 #include "sim/retailexploration.h"
+#include "sim/retailweaponswitch.h"
 #include "sim/retailflight.h"
 #include "sim/retailballistic.h"
 #include "sim/retailwind.h"
@@ -462,6 +463,9 @@ struct UnitType {
     bool  activateWhenBuilt = true;   // activatewhenbuilt (default on)
     bool  cantBeStoned = false, cantBeFrozen = false;
     bool  cantBeCaptured = false, cantBeTransported = false;
+    // immunetoparalyzer (UnitDef+0x260 bit 26): paralyzer weapons (damage
+    // type 4) are useless against it; read by AI weapon switching.
+    bool  immuneToParalyzer = false;
     int   transportSize = 1;      // transportedsize, default footprint area
     // selfdestructcountdown: seconds between arming a self-destruct and the unit
     // leaving. Three bits in retail (icd 0x4c09e8 masks & 7 into UnitType+0x264
@@ -2716,6 +2720,11 @@ private:
     void tickFireSweep(int player);
     void tickSlotWeapons(Unit& u);
     void slotHitResponse(Unit& victim,const Unit& attacker);
+    // 51a8b0 (SwitchWeapon): the command and AI paths share it. fromCommand
+    // routes the clear/switch animations through pendingWeaponAnimations.
+    bool switchWeaponSlot(Unit& u,int slot,bool fromCommand);
+    // 40f411..40fb92: a computer-owned switcher's per-visit weapon choice.
+    void retailAiWeaponSwitch(Unit& u);
     std::vector<std::vector<int>> sweepIds_;   // per-player id-ordered scratch; not state
 public:
     // Why a unit's slots are manual (Unit::slotManual).
@@ -2728,6 +2737,11 @@ public:
     // projected bounding-box corners lies on a cell `player`'s current-view
     // counters hold. Without terrain (no view plane) every placed unit is seen.
     bool playerSees(int player,const Unit& u) const;
+    // Owner kind 2 (computer AI): an AI seat, the campaign's strategic
+    // players, the benchmark (Player::automaticGates, hashed).
+    bool computerOwned(int player) const {
+        return player>=0 && size_t(player)<players_.size() && players_[size_t(player)].automaticGates;
+    }
     // 411700 list +5 as of the last 7-tick rebuild (may hold units that have
     // since died or left sight; callers re-check alive and distance).
     std::span<const int> visibleEnemies(int player) const {

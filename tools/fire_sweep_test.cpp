@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <tuple>
 using namespace tak;
 namespace {
 int failures=0;
@@ -97,5 +98,62 @@ int main(int argc,char** argv) {
     if(part=="retaliation" || part=="all")retaliation();
     return failures?1:0;
 }
-void weaponSwitch() {}
+void weaponSwitch() {
+    using sim::RetailWeaponSwitchInput;
+    auto row=[](int e,int f,int rnd,int* draws){
+        return std::tuple{[e](int){return e;},[f](int){return f;},[rnd,draws](int){++*draws;return rnd;}};
+    };
+    auto run=[&](const RetailWeaponSwitchInput& in,int e,int f,int rnd=5,int* drawsOut=nullptr){
+        int draws=0;auto [E,F,R]=row(e,f,rnd,&draws);
+        const int c=sim::retailWeaponSwitchChoice(in,E,F,R);
+        if(drawsOut)*drawsOut=draws;return c;
+    };
+    RetailWeaponSwitchInput base;base.target=true;base.selected=0;base.targetHp=500;
+    base.slots[0]={true,true,true,0,false,false,60};
+    {   auto in=base;in.slots[1]={true,true,true,40,false,false,30};
+        check(run(in,1,1)==1,"switch: an affordable aoe<=50 slot is taken outright");
+        in.targetHp=121;check(run(in,1,1)==-1,"switch: the primary is kept when it does half the target's HP");
+        in.targetHp=122;check(run(in,1,1)==1,"switch: ...and dropped just above that");
+        in.slots[1].affordable=false;in.targetHp=500;check(run(in,1,1)==-1,"switch: an unaffordable slot is skipped");
+    }
+    {   auto in=base;in.slots[2]={true,true,true,250,false,true,0};
+        check(run(in,2,0)==-1,"switch: aoe>=200 needs more than two enemies");
+        check(run(in,3,0)==2,"switch: aoe>=200 with three enemies and no allies");
+        check(run(in,3,1)==-1,"switch: aoe>=200 refuses unless allies are outnumbered 3:1");
+        in.lowMonarch=true;check(run(in,3,1)==2,"switch: a low Monarch ignores its allies");
+    }
+    {   auto in=base;in.slots[1]={true,true,true,100,false,false,0};
+        check(run(in,5,1)==-1 && run(in,6,1)==1,"switch: medium aoe needs allies outnumbered 5:1");
+        in.slots[1].mindControl=true;in.slots[1].aoe=40;in.targetHp=10;
+        check(run(in,1,1)==1,"switch: a mind-control slot overrides the primary-finishes-it rule");
+    }
+    {   auto in=base;in.selected=1;in.slots[1]={true,true,false,40,false,false,0};
+        check(run(in,1,1)==0,"switch: from slot 1 it returns straight to the primary");
+    }
+    {   auto in=base;in.target=false;in.selected=2;in.slots[2]={true,true,true,250,false,true,0};
+        int draws=0;
+        check(run(in,0,0,0,&draws)==0 && draws==1,"switch: no target, costly slot: back to 0 on rand(10)==0");
+        check(run(in,0,0,3,&draws)==-1 && draws==1,"switch: ...and kept otherwise (one draw)");
+        in.slots[2].costlyOrSpecial=false;
+        check(run(in,0,0,0,&draws)==-1 && draws==0,"switch: no draw for a cheap ordinary slot");
+    }
+    // World: an AI switcher facing a clump switches to its splash slot; a
+    // human-owned one keeps the primary.
+    auto caster=[]{
+        auto t=gunner(400);t.id="caster";t.weaponSwitching=true;
+        sim::Weapon a=t.weapons[0],b=a,c=a;
+        b.name="ball";b.aoe=150;c.name="wave";c.aoe=250;
+        t.weapons={a,b,c};t.weapon=a;return t;
+    }();
+    const auto d=dummy();
+    for(bool ai:{true,false}) {
+        sim::World w;setup(w,2);w.player(0).automaticGates=ai;
+        const int id=w.spawn(&caster,400,1000,0,0);
+        for(int i=0;i<4;++i)w.spawn(&d,600+40*(i%2),960+40*(i/2),0,1);
+        int slot=0;
+        for(int t=0;t<90 && !slot;++t){ticks(w,1);slot=w.unit(id)->weaponSlot;}
+        if(ai)check(slot==2,"switch: an AI switcher next to an enemy clump takes its splash weapon");
+        else check(slot==0,"switch: a human-owned switcher never auto-switches");
+    }
+}
 void retaliation() {}

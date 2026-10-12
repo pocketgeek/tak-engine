@@ -28,6 +28,8 @@ constexpr uint32_t kNetVersion = 252;      // 252: retail fire-at-will sweep (ic
                                            //      vision (4f7210/4c6800/411700): hashed view counters (World::viewCounts_,
                                            //      Unit::viewSight/viewPlayer, death revealers) and the 7-tick visible-enemy/ally
                                            //      lists (Player::visibleEnemies/visibleAllies/visibleRefresh) feed the sweep
+                                           //      and AI weapon switching (40f411): computer-owned switchers pick their weapon per
+                                           //      sweep visit (aoe bands, ally/enemy counts, mana, immunity, one rand(10) revert)
                                            // 251: blocked build sites. MobileBuild placement at the site follows retail
                                            //      405824..405911 (FlyingBuild 41f301..41f3e5 alike): refused only by mobile units it
                                            //      retries every 10 ticks where the builder stands or hovers and drops after the 31st failure; refused by anything else it drops
