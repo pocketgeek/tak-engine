@@ -335,3 +335,183 @@ jobs:
             "takclient-$VERSION-macos-${{ matrix.arch }}.zip" takclient-macos-${{ matrix.arch }}-debug.zip \
             "tak-engine-$VERSION-macos-${{ matrix.arch }}.dmg" \
             --repo "$GITHUB_REPOSITORY" --clobber
+
+  # Developer ID signing + notarization (distribution outside the App Store). Runs on its own
+  # runner after the build so the signing secrets never enter the build job. It re-signs the
+  # built bundles and binaries with the hardened runtime, notarizes them with the App Store
+  # Connect API key, staples the tickets, and rebuilds the zip and DMG from the stapled apps.
+  # Skipped (not failed) on fork PRs and wherever the secrets are not available. Decoded key
+  # material only ever lives in $RUNNER_TEMP and is deleted at the end; nothing under it is
+  # uploaded, and no step echoes it.
+  sign:
+    name: Sign + notarize macOS ${{ matrix.arch }}
+    needs: build
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    steps:
+      - name: Check signing secrets
+        id: secrets
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          if [ -n "$MACOS_CERT_P12" ] && [ -n "$NOTARY_KEY_P8" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Signing secrets not available; skipping signing and notarization"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download unsigned build
+        if: steps.secrets.outputs.enabled == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          pattern: takclient-macos-${{ matrix.arch }}*
+          path: unsigned
+
+      - name: Import signing certificate into a temporary keychain
+        if: steps.secrets.outputs.enabled == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          umask 077
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          printf '%s' "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -f pkcs12 \
+            -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign >/dev/null
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          if ! security find-identity -v -p codesigning "$KEYCHAIN" | grep -qF "\"$MACOS_SIGN_IDENTITY\""; then
+            echo "::error::MACOS_SIGN_IDENTITY is not a valid code-signing identity in the imported .p12"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/notary"
+          printf '%s' "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary/AuthKey.p8"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+      - name: Sign, notarize and staple
+        if: steps.secrets.outputs.enabled == 'true'
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          sign() {
+            codesign --force --options runtime --timestamp --keychain "$KEYCHAIN" \
+              --sign "$MACOS_SIGN_IDENTITY" "$@"
+          }
+          # notarize <file>: submit, wait, always print Apple's log, fail unless Accepted.
+          notarize() {
+            local out id status
+            out=$(xcrun notarytool submit "$1" --key "$RUNNER_TEMP/notary/AuthKey.p8" \
+              --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+              --wait --timeout 45m --output-format json) || true
+            echo "$out"
+            id=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
+            status=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)
+            if [ -n "$id" ]; then
+              xcrun notarytool log "$id" --key "$RUNNER_TEMP/notary/AuthKey.p8" \
+                --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" || true
+            fi
+            if [ "$status" != "Accepted" ]; then
+              echo "::error::Notarization of $(basename "$1") finished with status '${status:-unknown}' (submission ${id:-none})"
+              exit 1
+            fi
+          }
+
+          zip=$(ls unsigned/takclient-macos-"$ARCH"/takclient-*-macos-"$ARCH".zip)
+          VERSION=$(basename "$zip" | sed -E "s/^takclient-(.*)-macos-$ARCH\.zip$/\1/")
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p work signed
+          ditto -x -k "$zip" work/release
+          GAME="work/release/Total Annihilation - Kingdoms.app"
+          EDITOR="work/release/TAK Cartographer.app"
+
+          # Nested code first (every Mach-O in Contents/MacOS), then the bundle itself; no --deep.
+          for app in "$GAME" "$EDITOR"; do
+            for bin in "$app"/Contents/MacOS/*; do sign "$bin"; done
+            sign "$app"
+            codesign --verify --strict --verbose=2 "$app"
+          done
+          for bin in takclient takserver cartographer crusades_admin; do
+            sign "work/release/$bin"
+          done
+
+          # Release zip: notarize, staple the apps, then re-zip so the tickets ship inside.
+          ditto -c -k --sequesterRsrc work/release "$RUNNER_TEMP/release-submit.zip"
+          notarize "$RUNNER_TEMP/release-submit.zip"
+          xcrun stapler staple "$GAME"
+          xcrun stapler staple "$EDITOR"
+          for app in "$GAME" "$EDITOR"; do
+            xcrun stapler validate "$app"
+            spctl --assess --type execute --verbose=2 "$app" || echo "::warning::spctl rejected $app"
+          done
+          ditto -c -k --sequesterRsrc work/release "signed/takclient-$VERSION-macos-$ARCH.zip"
+
+          # DMG rebuilt from the stapled apps, signed, notarized and stapled itself.
+          mkdir -p work/dmg
+          ditto "$GAME" "work/dmg/Total Annihilation - Kingdoms.app"
+          ditto "$EDITOR" "work/dmg/TAK Cartographer.app"
+          ln -s /Applications work/dmg/Applications
+          DMG="signed/tak-engine-$VERSION-macos-$ARCH.dmg"
+          hdiutil create -volname "Total Annihilation - Kingdoms" -srcfolder work/dmg -ov -format UDZO "$DMG"
+          codesign --force --timestamp --keychain "$KEYCHAIN" --sign "$MACOS_SIGN_IDENTITY" "$DMG"
+          notarize "$DMG"
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG" || echo "::warning::spctl rejected the DMG"
+
+          # Debug CLI binaries: bare Mach-Os cannot hold a stapled ticket; Gatekeeper checks online.
+          mkdir -p work/debug
+          ditto unsigned/takclient-macos-"$ARCH"-debug work/debug
+          # upload-artifact drops Unix modes on a loose directory; restore the execute bit.
+          chmod 755 work/debug/takclient work/debug/takserver work/debug/cartographer work/debug/crusades_admin
+          for bin in takclient takserver cartographer crusades_admin; do
+            sign "work/debug/$bin"
+          done
+          (cd work/debug && zip -qr "$GITHUB_WORKSPACE/signed/takclient-macos-$ARCH-debug.zip" .)
+          notarize "signed/takclient-macos-$ARCH-debug.zip"
+
+      - name: Upload signed CI artifacts
+        if: steps.secrets.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: takclient-macos-${{ matrix.arch }}-signed
+          path: |
+            signed/takclient-*-macos-${{ matrix.arch }}.zip
+            signed/tak-engine-*-macos-${{ matrix.arch }}.dmg
+            signed/takclient-macos-${{ matrix.arch }}-debug.zip
+
+      # Replaces the unsigned files the build job attached (same names, --clobber).
+      - name: Attach signed files to release
+        if: steps.secrets.outputs.enabled == 'true' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            "signed/takclient-$VERSION-macos-${{ matrix.arch }}.zip" \
+            "signed/takclient-macos-${{ matrix.arch }}-debug.zip" \
+            "signed/tak-engine-$VERSION-macos-${{ matrix.arch }}.dmg" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Remove signing keychain and keys
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN:-}" ]; then security delete-keychain "$KEYCHAIN" || true; fi
+          rm -rf "$RUNNER_TEMP/notary" "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/release-submit.zip"
