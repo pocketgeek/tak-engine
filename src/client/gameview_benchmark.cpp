@@ -45,8 +45,8 @@
     }
 
     void GameView::benchmarkSample() {
-        if (!benchmarkMode_ || !world_.benchmarkMode() || benchStatsShown_) return;
-        uint32_t gt = front().gameTick, end = world_.benchmarkEndTick();
+        if (!benchmarkMode_ || !worldTables().benchmarkMode() || benchStatsShown_) return;
+        uint32_t gt = front().gameTick, end = worldTables().benchmarkEndTick();
         while (benchNextTick_ <= gt && benchNextTick_ <= end) {
             pushBenchSample(int(benchNextTick_ / 30));
             benchNextTick_ += 300;
@@ -56,14 +56,14 @@
 
     void GameView::stopBenchmark() {
         if (benchStatsShown_ || !benchmarkMode_) return;
-        if (!world_.benchmarkMode()) { menuRequested_ = true; return; }   // still in setup -> abort
+        if (!worldTables().benchmarkMode()) { menuRequested_ = true; return; }   // still in setup -> abort
         int sec = int(front().gameTick / 30);
         if (benchSamples_.empty() || benchSamples_.back().gameSec != sec) pushBenchSample(sec);
         benchStatsShown_ = true;
     }
 
     void GameView::benchmarkCamera(float dt, int winW, int winH) {
-        if (!benchmarkMode_ || benchStatsShown_ || !world_.benchmarkMode()) return;
+        if (!benchmarkMode_ || benchStatsShown_ || !worldTables().benchmarkMode()) return;
         int leg = int(front().gameTick / 225);   // 0..7, one per faction / 7.5s leg (60s / 8)
         if (leg < 0) leg = 0;
         if (leg > 7) leg = 7;

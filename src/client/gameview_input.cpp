@@ -464,13 +464,7 @@
     }
 
     bool GameView::canPlaceLocked(const tak::sim::UnitType* type, float x, float z) {
-        std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-#ifndef NDEBUG
-        lockSimTimed(lk);
-#else
-        lk.lock();
-#endif
-        return world_.canPlace(type, x, z, localPlayer_);
+        return liveWorld()->canPlace(type, x, z, localPlayer_);
     }
 
     GameView::PlacePreview& GameView::placePreviewEntry(const tak::sim::UnitType* type, float x, float z) {
@@ -485,9 +479,8 @@
         PlacePreview& e = placePreviewEntry(type, x, z);
         const uint32_t tick = front().gameTick;
         if (e.tick != tick && !placePreviewBusy_) {
-            std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-            if (!useSimThread_ || lk.try_lock()) {
-                e.ok = world_.canPlace(type, x, z, localPlayer_);
+            if (const auto live = tryLiveWorld()) {
+                e.ok = (*live)->canPlace(type, x, z, localPlayer_);
                 e.tick = tick; e.haveClear = false;
             } else placePreviewBusy_ = true;
         }
@@ -500,14 +493,13 @@
         PlacePreview& e = placePreviewEntry(type, x, z);
         const uint32_t tick = front().gameTick;
         if ((e.tick != tick || !e.haveClear) && !placePreviewBusy_) {
-            std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-            if (!useSimThread_ || lk.try_lock()) {
+            if (const auto live = tryLiveWorld()) {
                 const auto* builder = selectedBuilder();
                 std::vector<int> feats;
                 e.clearable = builder && builder->type->canReclaim &&
-                    world_.clearableForPlacement(type, x, z, feats, localPlayer_) && !feats.empty();
+                    (*live)->clearableForPlacement(type, x, z, feats, localPlayer_) && !feats.empty();
                 e.haveClear = true;
-                if (e.tick != tick) {e.ok = world_.canPlace(type, x, z, localPlayer_); e.tick = tick;}
+                if (e.tick != tick) {e.ok = (*live)->canPlace(type, x, z, localPlayer_); e.tick = tick;}
             } else placePreviewBusy_ = true;
         }
         return e.haveClear && e.clearable;
@@ -515,7 +507,7 @@
 
 #ifndef NDEBUG
     // TAK_PACELOG: how long the render thread waits for the sim worker on a per-frame check.
-    void GameView::lockSimTimed(std::unique_lock<std::mutex>& lk) {
+    void GameView::lockSimTimed(std::unique_lock<std::mutex>& lk) const {
         if (!paceOn()) { lk.lock(); return; }
         const auto t0 = std::chrono::steady_clock::now();
         lk.lock();
@@ -528,13 +520,7 @@
                                std::vector<int>& outFeatures) {
         const auto* builder=selectedBuilder();
         if (!builder || !builder->type->canReclaim) return false;
-        std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-#ifndef NDEBUG
-        lockSimTimed(lk);
-#else
-        lk.lock();
-#endif
-        return world_.clearableForPlacement(type, x, z, outFeatures, localPlayer_);
+        return liveWorld()->clearableForPlacement(type, x, z, outFeatures, localPlayer_);
     }
 
     // The simulation queues footprint reclamation before admitting construction.
@@ -632,11 +618,11 @@
         int builderId = selectedBuilder() ? selectedBuilder()->id : selection_.front();
         // Lock the sim ONCE for the whole line: a build-line drag is often dozens of sites,
         // and O(N) separate canPlaceLocked() calls would each risk waiting a full tick.
-        std::lock_guard<std::mutex> lk(simMutex_);
+        const auto live = liveWorld();
         for (auto& [x, z] : buildLinePositions(x0, z0, x1, z1)) {
             std::vector<int> clearing;
-            if (!world_.canPlace(placing_,x,z,localPlayer_) &&
-                !world_.clearableForPlacement(placing_,x,z,clearing,localPlayer_)) continue;
+            if (!live->canPlace(placing_,x,z,localPlayer_) &&
+                !live->clearableForPlacement(placing_,x,z,clearing,localPlayer_)) continue;
             tak::net::Command c;
             c.kind = tak::net::Cmd::Build;
             c.unitId = builderId;
@@ -677,20 +663,23 @@
 #endif
 
 std::array<bool,8> GameView::eligibleGiftRecipients() {
+    // Drawn every frame the menu is open, so never wait on the worker's tick for it: keep
+    // the last answer when it holds the world (giveSelectedUnits checks again, blocking).
+    const auto live = tryLiveWorld();
+    if (!live) return giftEligibleLast_;
     std::array<bool,8> eligible{};
-    std::lock_guard<std::mutex> lock(simMutex_);
-    for (int p=0;p<world_.numPlayers();++p)
+    for (int p=0;p<(*live)->numPlayers();++p)
         for (int id:selection_)
-            if (world_.canGiveUnit(id,localPlayer_,p)) {eligible[size_t(p)]=true;break;}
-    return eligible;
+            if ((*live)->canGiveUnit(id,localPlayer_,p)) {eligible[size_t(p)]=true;break;}
+    return giftEligibleLast_ = eligible;
 }
 
 void GameView::giveSelectedUnits(int recipient) {
     // Check the same rules as the referee, not just ownership. The referee
     // checks again at execution, including caps changed by earlier gifts.
-    std::lock_guard<std::mutex> lock(simMutex_);
+    const auto live = liveWorld();
     std::erase_if(selection_,[&](int id) {
-        if (!world_.canGiveUnit(id,localPlayer_,recipient)) return false;
+        if (!live->canGiveUnit(id,localPlayer_,recipient)) return false;
         tak::net::Command c;
         c.kind = tak::net::Cmd::GiveUnit;
         c.unitId = id;

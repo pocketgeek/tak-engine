@@ -1471,7 +1471,7 @@
             float mx,mz;pickWorld(mouseX_,mouseY_,mx,mz);
             // The map's deposit list is immutable during play. Preview only
             // currently visible sites; hidden ones are discovered by the builder.
-            for (const auto& [x,z]:world_.manaSpots())
+            for (const auto& [x,z]:worldTables().manaSpots())
                 if (x>=std::min(bdX0_,mx) && x<=std::max(bdX0_,mx) &&
                     z>=std::min(bdZ0_,mz) && z<=std::max(bdZ0_,mz) && (noFog_ || cellVisibleR(x,z)))
                     drawGhostAt(placing_,x,z,!canPlacePreview(placing_,x,z));
@@ -1967,7 +1967,7 @@
         if (spectating_) {
             std::string m = "SPECTATING";
             if (benchmarkMode_) {   // append a countdown from the benchmark duration to 0
-                uint32_t end = world_.benchmarkEndTick(), gt = front().gameTick;
+                uint32_t end = worldTables().benchmarkEndTick(), gt = front().gameTick;
                 int rem = (end == 0) ? int(end) : (gt < end ? int((end - gt + 29) / 30) : 0);
                 if (end == 0) rem = 60;   // not started yet -> full duration
                 char buf[40];
@@ -2545,8 +2545,8 @@
         // ice-blue (the isstone/isfrozen statue defs), through the same vertex
         // tint mix the emotes use.
         if (u.corpsePhase && u.corpseFeat >= 0 &&
-            size_t(u.corpseFeat) < world_.featureTypes().size()) {
-            const auto& cf = world_.featureTypes()[size_t(u.corpseFeat)];
+            size_t(u.corpseFeat) < worldTables().featureTypes().size()) {
+            const auto& cf = worldTables().featureTypes()[size_t(u.corpseFeat)];
             if (cf.isStone) {
                 discoCol = SDL_Color{145, 145, 150, 255};
                 discoMix = 0.65f; disco = true;
@@ -3389,7 +3389,7 @@
     // Per-frame sync of sim burning state onto the visual features: ignition
     // starts the seqnameburn playback + smoke, burn-out swaps to the burnt art.
     void GameView::syncBurningFeatures() {
-        // Takes simMutex_: this runs on the RENDER thread but reads live world_
+        // tryLiveWorld(): this runs on the RENDER thread but reads live world_
         // state the worker mutates. gameview.h documents the invariant -- the
         // render side reads the published snapshot, and any remaining live read
         // locks -- and this was the one place breaking it. Not a benign torn
@@ -3403,7 +3403,7 @@
         // The generation counter gates both the locked scan and the visual apply.
         // Smoke emission and motion use the simulation tick queue, not this scan.
         std::vector<FeatSim>& simState = featSimState_;
-        const uint32_t featGen = world_.featGeneration();   // atomic; no lock needed
+        const uint32_t featGen = worldTables().featGeneration();   // atomic; no lock needed
         const bool featDirty = featGen != lastFeatGen_ || simState.size() != features_.size();
         if (!featDirty && !tak::devFlag("TAK_FEATURE_FULL_SYNC")) return;
         struct NewFeat { int id; std::string name; };
@@ -3414,27 +3414,28 @@
         // failed retry cannot mark unseen corpses as already synchronized.
         auto refresh = [&] {
             if (!featDirty) return true;
-            std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-            if (useSimThread_ && !lk.try_lock()) return false;
-            if (world_.featureTypes().empty()) return false;
+            const auto live = tryLiveWorld();
+            if (!live) return false;
+            const tak::sim::World& world = **live;
+            if (world.featureTypes().empty()) return false;
             simState.clear();
             simState.reserve(features_.size());
             for (const auto& fi : features_) {
-                const auto* sf = world_.feature(fi.simId);
+                const auto* sf = world.feature(fi.simId);
                 simState.push_back(sf ? FeatSim{sf->type, sf->alive && sf->burn != 0,
-                                                sf->alive, sf->fx, sf->fz, true, sf->burnStarted, world_.featureReclaimable(*sf),sf->blocks}
+                                                sf->alive, sf->fx, sf->fz, true, sf->burnStarted, world.featureReclaimable(*sf),sf->blocks}
                                       : FeatSim{-1, false, true, 1, 1, false});
             }
             // The type NAMES are read below too, and featureTypes() is filled at map
             // load and never mutated after -- but copy the ones we need anyway
             // rather than reach back into world_ unlocked.
             for (auto& st : simState)
-                if (st.type >= 0 && size_t(st.type) < world_.featureTypes().size())
-                    burnNames_[size_t(st.type)] = world_.featureTypes()[size_t(st.type)].name;
-            for (const auto& sf : world_.features()) {
+                if (st.type >= 0 && size_t(st.type) < world.featureTypes().size())
+                    burnNames_[size_t(st.type)] = world.featureTypes()[size_t(st.type)].name;
+            for (const auto& sf : world.features()) {
                 if (!sf.alive || sf.type < 0 || featInstIds_.count(sf.id)) continue;
-                if (size_t(sf.type) >= world_.featureTypes().size()) continue;
-                fresh.push_back({sf.id, world_.featureTypes()[size_t(sf.type)].name});
+                if (size_t(sf.type) >= world.featureTypes().size()) continue;
+                fresh.push_back({sf.id, world.featureTypes()[size_t(sf.type)].name});
             }
             lastFeatGen_ = featGen;
             return true;
@@ -3550,7 +3551,7 @@
         for (auto& [root, a] : acc)
             manaSpots_.push_back({float(a.first.first / a.second),
                                   float(a.first.second / a.second)});
-        world_.setManaSpots(manaSpots_);
+        writableWorld().setManaSpots(manaSpots_);
         // The 2x2 lodestone carve at each deposit is likewise the SIM's job and is
         // already done there (matchsetup, same geometry, into obst_). Repeating it
         // against nav_ desynced the client from the referee -- see addFeature above.

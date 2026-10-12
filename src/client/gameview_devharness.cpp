@@ -70,10 +70,10 @@
     }
 
     void GameView::setupScenario() {
-        world_.setTerrain(mapView_.map().heights, mapView_.map().width,
+        writableWorld().setTerrain(mapView_.map().heights, mapView_.map().width,
                           mapView_.map().height, mapView_.map().seaLevel,
                           &mapView_.map().features);
-        tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_, &registry_);
+        tak::sim::registerMapFeatures(writableWorld(), mapView_.map(), vfs_, &registry_);
         std::string crtPath = mapSibling(".crt");
         tak::crt::Scenario scen = vhas(crtPath) ? tak::crt::parse(vread(crtPath))
                                                 : tak::crt::Scenario{};
@@ -90,7 +90,7 @@
             float heading = float(u.angle) * 3.14159265f / 180.0f;
             int uid = spawn(id, wx, wz, heading, player);
             if (uid >= 0) {
-                if (tak::sim::Unit* su = world_.unit(uid)) {   // apply the .crt stats
+                if (tak::sim::Unit* su = writableWorld().unit(uid)) {   // apply the .crt stats
                     if (su->type)
                         su->hp = tak::sim::Fixed::fromFloat(su->type->maxHp * float(std::clamp(u.health, 0, 100)) / 100.0f);
                     su->veteran = std::clamp(u.veteran, 0, 10);
@@ -108,7 +108,7 @@
         // are evaluated in World::tick and folded into stateHash. Display
         // actions surface as HUD notices (drained in simStep).
         if (!scen.players.empty() || !scen.regions.empty())
-            world_.setScenario(std::make_unique<tak::sim::ScenarioScript>(
+            writableWorld().setScenario(std::make_unique<tak::sim::ScenarioScript>(
                 scen, registry_, localPlayer_, world_.numPlayers(),
                 mapView_.map().width, mapView_.map().height));
     }
@@ -142,8 +142,8 @@
                     p = dot + 1;
                 }
             }
-            world_.setPlayerCount(n);
-            for (int i = 0; i < n; ++i) world_.setTeam(i, teams[size_t(i)]);
+            writableWorld().setPlayerCount(n);
+            for (int i = 0; i < n; ++i) writableWorld().setTeam(i, teams[size_t(i)]);
             // Spread players across the N most mutually-distant start positions
             // (fall back to a ring around centre when the map has too few).
             std::vector<std::pair<float, float>> spots = starts;
@@ -160,19 +160,19 @@
                 // bank one), so a null type does not defer the god -- it consumes the
                 // favour and spawns nothing, permanently. Resolve it the same way
                 // setupMatch does.
-                world_.player(i).godType = registry_.find(fkSide + "god");
+                writableWorld().player(i).godType = registry_.find(fkSide + "god");
                 const FactionKit& fk = kit(fkSide);
                 float mx = spots[size_t(i)].first, mz = spots[size_t(i)].second;
                 int mon = spawn(fk.monarch, mx, mz, 0, i);
                 if (i == 0) { playerMonarchId_ = mon; builderId_ = mon; }
                 for (int s = 0; s < 4; ++s)
                     spawn(fk.squad[s % 4], mx + (s % 2) * 26 - 13, mz - 50 + (s / 2) * 26, 0, i);
-                world_.player(i).mana = 2800;
+                writableWorld().player(i).mana = 2800;
             }
             ffaPlayers_ = n;
             for (auto& u : world_.units()) {
                 if (!u.type || u.type->canMove) continue;
-                tak::sim::blockFootprint(world_.nav(), *u.type, u.x.toFloat(), u.z.toFloat(), true);
+                tak::sim::blockFootprint(writableWorld().nav(), *u.type, u.x.toFloat(), u.z.toFloat(), true);
             }
             return true;
         }
@@ -188,8 +188,8 @@
         // Enough mogrium to bootstrap the opening: a handful of lodestones for
         // income and the start of a keep, without being able to skip economy
         // and rush one to completion.
-        world_.player(0).mana = 2800;
-        world_.player(1).mana = 2800;
+        writableWorld().player(0).mana = 2800;
+        writableWorld().player(1).mana = 2800;
         if (demo) {
             // Showcase: skip the slow build-up and pit two ready armies at the
             // start positions against each other.
@@ -206,9 +206,9 @@
             if (ak.keep[0]) aiKeepId_ = spawn(ak.keep, ax, az + 60, aFace, 1);
             if (!playerA.empty() && !playerB.empty()) {
                 for (size_t k = 0; k < playerA.size(); ++k)
-                    world_.attack(playerA[k], playerB[k % playerB.size()], false);
+                    writableWorld().attack(playerA[k], playerB[k % playerB.size()], false);
                 for (size_t k = 0; k < playerB.size(); ++k)
-                    world_.attack(playerB[k], playerA[k % playerA.size()], false);
+                    writableWorld().attack(playerB[k], playerA[k % playerA.size()], false);
             }
             // Showcase: pre-select the player's keep so the command panel shows its
             // conjure/build menu and the info bar shows the portrait (a fuller HUD for
@@ -231,16 +231,16 @@
         cfg.unitCap = (1999 * 100 + 94) / 95;
         for (int p = 0; p < 8; ++p)
             cfg.slots.push_back({true, p % 5, 0, 2, true, false});
-        const auto spots = tak::sim::setupMatch(world_, registry_, cfg);
+        const auto spots = tak::sim::setupMatch(writableWorld(), registry_, cfg);
         if (world_.units().size() != 16000)
             throw std::runtime_error("patrol performance map must fit exactly 16000 units");
-        world_.setUnitCap(2000);
+        writableWorld().setUnitCap(2000);
         for (const auto& u : world_.units())
             if (u.type && !u.type->isStructure())
-                world_.patrol(u.id, float(world_.nav().width() * 16) - u.x.toFloat(),
+                writableWorld().patrol(u.id, float(writableWorld().nav().width() * 16) - u.x.toFloat(),
                               u.z.toFloat());
         noFog_ = true;
-        world_.setVisPlayer(-1);
+        writableWorld().setVisPlayer(-1);
         edgeScrollOn_ = false;
         patrolPerfAccum_ = 0.0f;
         float zoom = 0.9f;
@@ -269,9 +269,9 @@
             if (id >= 0) (sp.player == 0 ? a : b).push_back(id);
         }
         for (size_t i = 0; i < a.size(); ++i)
-            world_.attack(a[i], b[i % b.size()], false);
+            writableWorld().attack(a[i], b[i % b.size()], false);
         for (size_t i = 0; i < b.size(); ++i)
-            world_.attack(b[i], a[i % a.size()], false);
+            writableWorld().attack(b[i], a[i % a.size()], false);
         mapView_.setOffset(1500 - 640 / 0.9f, 1380 - 400 / 0.9f);
     }
 
@@ -307,7 +307,7 @@
             };
             constexpr int W=1280,H=960;
             noFog_=false;edgeScrollOn_=false;
-            world_.setPlayerCount(2);
+            writableWorld().setPlayerCount(2);
             const float x0=float(mapView_.map().blocksX)*16.0f,z0=float(mapView_.map().blocksY)*16.0f;
             const tak::sim::UnitType* flyerType=nullptr;
             for (const auto& [name,type]:registry_.types())
@@ -463,21 +463,21 @@
             if(tak::devFlag("TAK_RETIREMENT_TEST")) {
                 tak::sim::UnitType dummy;dummy.id="retired-ui";dummy.maxHp=100;dummy.footX=dummy.footZ=1;
                 for(int i=0;i<240;++i) {
-                    retiredFixtureId=world_.spawn(&dummy,1800,2100,0,0);
-                    world_.scenarioDestroy(retiredFixtureId);
+                    retiredFixtureId=writableWorld().spawn(&dummy,1800,2100,0,0);
+                    writableWorld().scenarioDestroy(retiredFixtureId);
                 }
-                for(int i=0;i<60;++i)world_.tick(1.f/30);
+                for(int i=0;i<60;++i)writableWorld().tick(1.f/30);
                 for(const auto& u:world_.units())
                     if(u.type==&dummy)throw std::runtime_error("UI fixture retained final corpses");
             }
-            world_.setPlayerCount(8);world_.setTeam(1,0);localPlayer_=0;
+            writableWorld().setPlayerCount(8);writableWorld().setTeam(1,0);localPlayer_=0;
             resultParticipants_=uint8_t((1u<<0)|(1u<<1)|(1u<<2)|(1u<<7));
             playerName_[0]="PLAYER";playerName_[1]="ALLY";playerName_[2]="ENEMY";playerName_[7]="DEFEATED";
-            world_.player(7).defeated=true;hotkeys_.load({});
+            writableWorld().player(7).defeated=true;hotkeys_.load({});
             const int monarch=spawn("araking",1800,2100,0,0);
             const int soldier=spawn("arasword",1650,2100,0,0);
             spawn("arasword",2000,2100,0,1);spawn("tarsword",2200,2100,0,2);
-            world_.unit(soldier)->squad=3;
+            writableWorld().unit(soldier)->squad=3;
             const auto publish=[&] {captureFrame();beginFrame();};
             const auto check=[](bool yes,const char* why) {if(!yes)throw std::runtime_error(why);};
             const auto has=[&](DiplomacyAction action,int p) {
@@ -518,12 +518,12 @@
         }
         if (tak::devFlag("TAK_CURSOR_TEST")) {
             noFog_=true;edgeScrollOn_=false;
-            world_.setPlayerCount(8);
+            writableWorld().setPlayerCount(8);
             const int builder=spawn("araking",1800,2100,0,0);
             const int soldier=spawn("arasword",1650,2100,0,0);
             const int site=spawn("creacad",2000,2000,0,0);
-            world_.unit(site)->underConstruction=true;world_.unit(site)->buildBegun=true;
-            world_.unit(site)->hp=tak::sim::Fixed::fromInt(10);
+            writableWorld().unit(site)->underConstruction=true;writableWorld().unit(site)->buildBegun=true;
+            writableWorld().unit(site)->hp=tak::sim::Fixed::fromInt(10);
             mapView_.setZoom(1);
             mapView_.setOffset(1400,1500);
             const auto publish=[&] {captureFrame();beginFrame();cosmeticStep(0);};
@@ -640,7 +640,7 @@
             arm();releaseShift(SDLK_LSHIFT,KMOD_NONE);
             if(placing_!=queuedType)throw std::runtime_error("fresh icon inherited a prior Shift placement");
             placing_=nullptr;shiftBuildPlaced_=false;
-            world_.cancelBuilds(builder);world_.stop(builder);SDL_SetModState(savedMod);publish();point(site);
+            writableWorld().cancelBuilds(builder);writableWorld().stop(builder);SDL_SetModState(savedMod);publish();point(site);
             // An invalid placement must not count as a queued build.
             int invalidX=-1,invalidY=-1;
             for(int y=40;y<winH_-barH()-20 && invalidX<0;y+=16)
@@ -674,11 +674,11 @@
             releaseShift(SDLK_LSHIFT,KMOD_NONE);
             if(placing_ || world_.unit(builder)->orders.empty())
                 throw std::runtime_error("Shift release lost queued mana-area work or kept placement armed");
-            world_.stop(builder);SDL_SetModState(savedMod);publish();point(site);
+            writableWorld().stop(builder);SDL_SetModState(savedMod);publish();point(site);
             std::fprintf(stderr,"PASS: Shift placement release clears the build icon, keeps the builder and queue, supports both keys and mid-drag release\n");
             // Armed orders follow the same rule: Shift queues the order and keeps
             // the command armed for the next click; releasing Shift disarms.
-            world_.stop(builder);publish();
+            writableWorld().stop(builder);publish();
             const auto goals=[&] {
                 size_t n=0;for(const auto& o:world_.unit(builder)->orders)n+=o.goal;return n;
             };
@@ -701,13 +701,13 @@
             SDL_SetModState(KMOD_NONE);
             {SDL_Event motion{};motion.type=SDL_MOUSEMOTION;motion.motion.x=placeX;motion.motion.y=placeY;input(motion,winW_,winH_);}
             if(pendingCmd_)throw std::runtime_error("an unseen Shift release did not disarm on the next mouse event");
-            world_.stop(builder);SDL_SetModState(savedMod);publish();point(site);
+            writableWorld().stop(builder);SDL_SetModState(savedMod);publish();point(site);
             std::fprintf(stderr,"PASS: Shift keeps an armed order armed and queues each click; releasing Shift disarms\n");
             const auto* manaType=registry_.find("aralode");
             if(!manaType || manaSpots_.empty())throw std::runtime_error("area trail fixture needs lodestones and deposits");
-            world_.queueManaBuildArea(builder,manaType,0,0,float(mapView_.map().width*16-1),
+            writableWorld().queueManaBuildArea(builder,manaType,0,0,float(mapView_.map().width*16-1),
                 float(mapView_.map().height*16-1),false);
-            world_.order(builder,2200,2300,true);
+            writableWorld().order(builder,2200,2300,true);
             publish();syncBurningFeatures();
             if(!cursors_.ok()) {cursorsInit_=true;cursors_.load(ren_,vfs_,settings_);}
             const auto previewHash=world_.stateHash();SDL_SetModState(KMOD_LSHIFT);
@@ -720,25 +720,25 @@
                 throw std::runtime_error("live area-build overlay lost remaining sites, queued tail, or changed simulation state");
             drawOrderTrails(mapViewW(winW_),winH_);
             if(world_.stateHash()!=previewHash)throw std::runtime_error("cached area preview changed simulation state");
-            world_.stop(builder);publish();drawOrderTrails(mapViewW(winW_),winH_);
+            writableWorld().stop(builder);publish();drawOrderTrails(mapViewW(winW_),winH_);
             SDL_SetModState(savedMod);point(site);
             std::fprintf(stderr,"PASS: live area trail shows remaining sites and queued tail without changing simulation state\n");
             const auto* original=world_.unit(builder)->type;
             auto restricted=*original;restricted.builderLimited=true;
-            world_.unit(builder)->type=&restricted;publish();point(site);
+            writableWorld().unit(builder)->type=&restricted;publish();point(site);
             expect(tak::CursorId::Green,"restricted builder cannot assist an unavailable type");
             pendingCmd_='r';expect(tak::CursorId::Normal,"armed repair refuses unavailable construction");
-            pendingCmd_=0;world_.unit(builder)->type=original;publish();point(site);
+            pendingCmd_=0;writableWorld().unit(builder)->type=original;publish();point(site);
             rightClickOrder(2000,2000,false);
             if (world_.unit(builder)->buildSiteId!=site) throw std::runtime_error("assist cursor click did not assist");
-            world_.cancelBuilds(builder);world_.stop(builder);
-            world_.unit(site)->underConstruction=false;world_.unit(site)->hp=tak::sim::Fixed::fromInt(10);
+            writableWorld().cancelBuilds(builder);writableWorld().stop(builder);
+            writableWorld().unit(site)->underConstruction=false;writableWorld().unit(site)->hp=tak::sim::Fixed::fromInt(10);
             publish();point(site);
             expect(tak::CursorId::Repair,"damaged friendly advertises repair");
             rightClickOrder(2000,2000,false);
             if (world_.unit(builder)->orders.empty() || world_.unit(builder)->orders.back().repairTarget!=site)
                 throw std::runtime_error("repair cursor click did not repair");
-            world_.stop(builder);selection_.clear();
+            writableWorld().stop(builder);selection_.clear();
             expect(tak::CursorId::Select,"unselected building uses its displayed bounds");
             selection_={soldier};pendingCmd_='r';
             expect(tak::CursorId::Normal,"non-builder cannot arm repair");
@@ -748,7 +748,7 @@
             const auto savedPathfinding=world_.pathfindingMode();
             selection_={builder,soldier};mouseX_=mouseY_=-1000;
             for(const auto mode:{tak::sim::PathfindingMode::Retail,tak::sim::PathfindingMode::Legion}) {
-                world_.setPathfindingMode(mode);publish();
+                writableWorld().setPathfindingMode(mode);publish();
                 rightClickOrder(2400,2400,false);
                 for(const int id:selection_) {
                     const auto* u=world_.unit(id);
@@ -761,7 +761,7 @@
                         (id==builder?2460.f:2340.f);
                     if(target.first.toFloat()!=expected || target.second.toFloat()!=2400.f)
                         throw std::runtime_error("group right-click split shared destinations or changed Retail offsets");
-                    world_.stop(id);
+                    writableWorld().stop(id);
                 }
             }
             const int flyer=spawn("zonhunt",1650,2100,0,0);
@@ -770,12 +770,12 @@
             if(world_.unit(builder)->orders.back().x.toFloat()!=2400.f ||
                world_.unit(flyer)->orders.back().x.toFloat()!=2340.f)
                 throw std::runtime_error("shared group right-click changed independent flight destinations");
-            world_.stop(builder);world_.stop(flyer);
-            world_.setPathfindingMode(savedPathfinding);
+            writableWorld().stop(builder);writableWorld().stop(flyer);
+            writableWorld().setPathfindingMode(savedPathfinding);
             std::fprintf(stderr,"PASS: group right-click shares supported destination areas and preserves Retail/fallback offsets\n");
             resultParticipants_=uint8_t((1u<<0)|(1u<<3));
             playerName_[0]="PLAYER";playerName_[3]="AI";
-            world_.player(3).defeated=true;publish();
+            writableWorld().player(3).defeated=true;publish();
             const auto results=resultStats();
             if (results.rows.size()!=2 || results.rows[1].name!="AI" || !results.rows[1].defeated)
                 throw std::runtime_error("sparse results roster lost a participant or included an empty slot");
@@ -804,8 +804,8 @@
                 const int owner=battle?i%2:localPlayer_;
                 if(const int id=spawn(name,x,z,float(i%8)*0.785398163f,owner)) {
                     ++spawned;
-                    if(tak::devFlag("TAK_RENDER_MOTION"))world_.order(id,x+320,z+160,false);
-                    if(battle)world_.attackMove(id,5000,5000,false);
+                    if(tak::devFlag("TAK_RENDER_MOTION"))writableWorld().order(id,x+320,z+160,false);
+                    if(battle)writableWorld().attackMove(id,5000,5000,false);
                 }
             }
             noFog_=!tak::devFlag("TAK_PROFILE_FOG");edgeScrollOn_=false;
@@ -834,7 +834,7 @@
                     tak::net::Command command;
                     command.kind=tak::net::Cmd::Reclaim;command.player=localPlayer_;
                     command.unitId=id;command.targetId=feature.id;
-                    tak::sim::applyCommand(world_,registry_,command);
+                    tak::sim::applyCommand(writableWorld(),registry_,command);
                     selection_={id};noFog_=true;edgeScrollOn_=false;
                     mapView_.setZoom(3);
                     mapView_.setOffset(x+dx-500/3.f,
@@ -951,12 +951,12 @@
             }
             if (tak::devFlag("TAK_CONJURE_REPAIR")) {
                 const int targetId=spawn(target,siteX,siteZ,0,localPlayer_);
-                world_.unit(targetId)->hp=tak::sim::Fixed::fromFloat(targetType->maxHp*0.5f);
+                writableWorld().unit(targetId)->hp=tak::sim::Fixed::fromFloat(targetType->maxHp*0.5f);
                 tak::net::Command command;command.kind=tak::net::Cmd::Repair;
                 command.unitId=id;command.targetId=targetId;command.player=localPlayer_;
-                tak::sim::applyCommand(world_,registry_,command);
+                tak::sim::applyCommand(writableWorld(),registry_,command);
                 std::printf("repair capture: worker #%d -> target #%d\n",id,targetId);
-            } else world_.queueBuild(id,targetType,siteX,siteZ,false);
+            } else writableWorld().queueBuild(id,targetType,siteX,siteZ,false);
             if (const auto* u=world_.unit(id))
                 std::printf("conjure fixture: %s #%d at %.0f,%.0f -> %s at %.0f,%.0f; orders=%zu\n",
                             builder,id,u->x.toFloat(),u->z.toFloat(),target,siteX,siteZ,u->orders.size());
@@ -975,7 +975,7 @@
             for (float a = 0; a < 6.28f; a += 0.5f) {
                 float x = keep->x.toFloat() + std::cos(a) * r, z = keep->z.toFloat() + std::sin(a) * r;
                 if (world_.canPlace(lode, x, z)) {
-                    int id = world_.startBuild(builderId_, lode, x, z);
+                    int id = writableWorld().startBuild(builderId_, lode, x, z);
                     std::printf("testbuild: site id %d at %.0f,%.0f\n", id, x, z);
                     return;
                 }
@@ -996,7 +996,7 @@
         float ddx[4]={0,400,0,-400}, ddz[4]={-400,0,400,0};
         for (int i=0;i<4;i++){
             int id=spawn("araarch", cx+ddx[i]*0.15f, cz+ddz[i]*0.15f, 0, 0);
-            world_.order(id, cx+ddx[i], cz+ddz[i], false);
+            writableWorld().order(id, cx+ddx[i], cz+ddz[i], false);
         }
         mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
     }
@@ -1242,7 +1242,7 @@
             const uint32_t skippedTicks=front().gameTick-emission->tick;
             if(skippedTicks<2 || skippedTicks>=duration)
                 throw std::runtime_error("SFX 263 fixture did not create a live skipped-render interval");
-            auto* owner=world_.unit(ownerId);
+            auto* owner=writableWorld().unit(ownerId);
             if(!owner)throw std::runtime_error("SFX 263 fixture owner vanished before retirement check");
             owner->deadFor=tak::sim::World::kRetiredTicks;
             captureFrame();beginFrame();endFrame();
@@ -1310,7 +1310,7 @@
                     emission->tick,front().gameTick,duration);
                 throw std::runtime_error("script transient fixture did not create a live skipped-render interval");
             }
-            auto* owner=world_.unit(ownerId);
+            auto* owner=writableWorld().unit(ownerId);
             if(!owner)throw std::runtime_error("script transient owner vanished before retirement check");
             owner->deadFor=tak::sim::World::kRetiredTicks;
             captureFrame();beginFrame();endFrame();
@@ -1400,7 +1400,7 @@
             mapView_.setZoom(1);
             mapView_.setOffset(cx-float(mapViewW(width))*0.5f,cz-float(height-barH())*0.5f);
             for(bool aboard:{false,true,false}) {
-                world_.unit(passengerId)->inTransport=aboard ? carrierId : 0;
+                writableWorld().unit(passengerId)->inTransport=aboard ? carrierId : 0;
                 captureFrame();beginFrame();endFrame();
                 drawUnitFx();drawEffects();
                 const int expected=aboard ? 0 : 1;
@@ -1416,8 +1416,8 @@
                 throw std::runtime_error("boarding discarded attached effect lifetime state");
             // A passenger destroyed aboard must not spawn visible death
             // sprites/bursts at the carrier's position or run its death scripts.
-            world_.unit(passengerId)->inTransport=carrierId;
-            world_.unit(passengerId)->deadFor=0;
+            writableWorld().unit(passengerId)->inTransport=carrierId;
+            writableWorld().unit(passengerId)->deadFor=0;
             captureFrame();beginFrame();endFrame();
             const auto effectsBefore=effects_.size(),particlesBefore=particles_.size();
             cosmeticStep(0);
@@ -1427,8 +1427,8 @@
             // body blast before its authored Killed/Dying scripts are advanced.
             const int ordinary=spawn("araarch",cx+40,cz,0,localPlayer_);
             if(ordinary<0)throw std::runtime_error("ordinary death control failed to spawn");
-            world_.unit(ordinary)->deadFor=0;
-            world_.unit(ordinary)->deathType=1;
+            writableWorld().unit(ordinary)->deadFor=0;
+            writableWorld().unit(ordinary)->deathType=1;
             captureFrame();beginFrame();endFrame();
             const auto ordinaryEffects=effects_.size(),ordinaryParticles=particles_.size();
             cosmeticStep(0);
@@ -1451,8 +1451,8 @@
                             moving|=piece.moving[axis] || piece.turning[axis] || piece.spin[axis]!=0;
                 }
                 if(!moving)throw std::runtime_error("statue control never began piece motion");
-                world_.unit(statue)->deadFor=0;
-                world_.unit(statue)->deathType=deathType;
+                writableWorld().unit(statue)->deadFor=0;
+                writableWorld().unit(statue)->deathType=deathType;
                 captureFrame();beginFrame();endFrame();cosmeticStep(0);
                 const auto frozenPose=animation.vm->pieces();
                 for(int tick=0;tick<30;++tick)animFrame(1.f/30);
@@ -1800,7 +1800,7 @@
                 }
             if(!found)throw std::runtime_error("point fixture requires a stretch of deep water");
             const int owner=spawn("vertrans",cx,cz,0,0);
-            world_.order(owner,cx+240,cz,false);
+            writableWorld().order(owner,cx+240,cz,false);
             int width=0,height=0;SDL_GetRendererOutputSize(ren_,&width,&height);
             mapView_.setZoom(2.f);
             mapView_.setOffset(cx+80-float(mapViewW(width))*0.5f/mapView_.zoom(),
@@ -1810,7 +1810,7 @@
         if (tak::devEnv("TAK_SMOKE_TEST")) {
             edgeScrollOn_=false;follow_=false;initialCamera_.reset();
             const int owner=spawn("arakeep",cx,cz,0,0);
-            if(auto* unit=world_.unit(owner))unit->hp=tak::sim::Fixed::fromInt(unit->maximumHp()/5);
+            if(auto* unit=writableWorld().unit(owner))unit->hp=tak::sim::Fixed::fromInt(unit->maximumHp()/5);
             int width=0,height=0;SDL_GetRendererOutputSize(ren_,&width,&height);
             mapView_.setZoom(1.5f);
             mapView_.setOffset(cx-float(mapViewW(width))*0.5f/mapView_.zoom(),
@@ -1823,10 +1823,10 @@
             edgeScrollOn_=false;follow_=false;initialCamera_.reset();
             const int shooter=spawn(type,cx-200,cz,1.57f,0);
             const int target=spawn("tarzom",cx+200,cz,-1.57f,1);
-            if (auto* u=world_.unit(target)) {
-                u->hp=tak::sim::Fixed::fromInt(25000);world_.setStance(target,2);
+            if (auto* u=writableWorld().unit(target)) {
+                u->hp=tak::sim::Fixed::fromInt(25000);writableWorld().setStance(target,2);
             }
-            if (shooter>=0 && target>=0) world_.attack(shooter,target,false);
+            if (shooter>=0 && target>=0) writableWorld().attack(shooter,target,false);
             int width=0,height=0;SDL_GetRendererOutputSize(ren_,&width,&height);
             const float viewport=float(mapViewW(width));
             mapView_.setZoom(std::min(1.5f,std::max(0.25f,(viewport-100.f)/400.f)));
@@ -1836,13 +1836,13 @@
         }
         int a = spawn("araarch", cx - 40, cz, 1.57f, 0);
         int e = spawn("tararch", cx + 200, cz, -1.57f, 1);
-        world_.attack(a, e, false);
+        writableWorld().attack(a, e, false);
         // Aim-pipeline check: a Veruna watch tower (5-TURN AimWeapon) with an
         // enemy off-axis to its north-east -- the turret must visibly swing to
         // face it (auto-acquire), proving the AimWeapon heading sign.
         int tw = spawn("vertower", cx - 40, cz + 220, 0.0f, 0);
         int zm = spawn("tarzom", cx + 160, cz + 100, -1.57f, 1);
-        world_.attack(tw, zm, false);   // explicit order: aim runs even without LOS
+        writableWorld().attack(tw, zm, false);   // explicit order: aim runs even without LOS
         // Feature-burning check: park a victim right beside a flamable feature
         // and have a dragon breathe on it -- the splash must ignite the tree
         // (spread + burnt swap then follow on their own).
@@ -1879,23 +1879,23 @@
         }
         int dr = spawn("tardrag", tx - 260, tz - 40, 1.57f, 1);
         int ar = spawn("araarch", tx, tz, -1.57f, 0);
-        world_.attack(dr, ar, false);
+        writableWorld().attack(dr, ar, false);
         // Statue-death check: the Basilisk's gaze petrifies -- the victim must
         // die on the spot and stand as a stone-gray, resurrectable statue.
         int bs = spawn("zonbasil", tx - 120, tz + 90, 1.57f, 1);
         int vic = spawn("arabow", tx + 40, tz + 90, -1.57f, 0);
-        world_.attack(bs, vic, false);
+        writableWorld().attack(bs, vic, false);
         // Ordered corpse-reclaim check: a builder is sent (negative target id)
         // to consume a fresh corpse -- the body must vanish when it arrives.
         int rcv = spawn("arasword", cx - 200, cz + 120, 0.0f, 0);
-        if (auto* rd = world_.unit(rcv)) rd->hp = tak::sim::Fixed();   // dies this tick, normal corpse
+        if (auto* rd = writableWorld().unit(rcv)) rd->hp = tak::sim::Fixed();   // dies this tick, normal corpse
         int rcb = spawn("arabuild", cx - 250, cz + 160, 1.57f, 0);
-        world_.reclaim(rcb, -rcv, false);
+        writableWorld().reclaim(rcb, -rcv, false);
         // Animate check: an idle necromancer beside the (soon) archer corpse
         // must channel and raise a Ghoul from it. Hold-fire stance so it never
         // auto-acquires (the channel needs it order-free).
         int nec = spawn("tarpries", tx + 30, tz - 40, -1.57f, 1);
-        if (auto* np = world_.unit(nec)) np->stance = 2;
+        if (auto* np = writableWorld().unit(nec)) np->stance = 2;
         // Watch the burn, not the tower: centre the camera on the target tree.
         mapView_.setOffset(tx - 640 / mapView_.zoom(), tz - 400 / mapView_.zoom());
         if (tak::devEnv("TAK_FEATURE_FLAME_TEST")) {
@@ -1919,9 +1919,9 @@
         for (auto& u : world_.units())
             if (u.alive() && u.player == 0 && u.type && u.type->canMove) {
                 if (leader < 0) leader = u.id;
-                else world_.guard(u.id, leader, false);
+                else writableWorld().guard(u.id, leader, false);
             }
-        if (leader >= 0) world_.order(leader, 1500, 950, false);
+        if (leader >= 0) writableWorld().order(leader, 1500, 950, false);
     }
 
     void GameView::marchTo(float dx, float dz) {
@@ -1941,7 +1941,7 @@
     void GameView::amphibDemo() {
         amphib_ = true;
         const auto* shipType = registry_.find("vertrans");
-        const auto& ground = world_.nav();
+        const auto& ground = writableWorld().nav();
         const auto& water = world_.navFor(shipType);
         float cx = float(mapView_.map().width) * 8, cz = float(mapView_.map().height) * 8;
 
@@ -1986,7 +1986,7 @@
             int id = spawn(t, bax + float(i % 2) * 24 - 12, baz + float(i / 2) * 24 - 12,
                            0, 0);
             if (id >= 0) {
-                world_.loadInto(id, transportId_);
+                writableWorld().loadInto(id, transportId_);
                 ++amphibSquad_;
             }
             ++i;

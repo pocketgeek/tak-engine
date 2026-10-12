@@ -54,7 +54,7 @@
             if (const auto* tm = g.child("TIMING")) {
                 float appear = float(tm->numberOr("AppearTimeMin", 30.0)) * 60.0f;
                 if (const char* e = tak::devEnv("TAK_GODTIME")) appear = std::stof(e);
-                world_.enableGods(appear);
+                writableWorld().enableGods(appear);
             }
         } catch (const std::exception&) {}
         loadTextures();
@@ -77,10 +77,10 @@
             return;
         }
 #endif
-        world_.setTerrain(mapView_.map().heights, mapView_.map().width,
+        writableWorld().setTerrain(mapView_.map().heights, mapView_.map().width,
                           mapView_.map().height, mapView_.map().seaLevel,
                           &mapView_.map().features);
-        tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_, &registry_);
+        tak::sim::registerMapFeatures(writableWorld(), mapView_.map(), vfs_, &registry_);
         loadFeatures();
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
 
@@ -119,7 +119,7 @@
 
         for (auto& u : world_.units()) {
             if (!u.type || u.type->canMove) continue;
-            tak::sim::blockFootprint(world_.nav(), *u.type, u.x.toFloat(), u.z.toFloat(), true);
+            tak::sim::blockFootprint(writableWorld().nav(), *u.type, u.x.toFloat(), u.z.toFloat(), true);
         }
     }
 
@@ -137,7 +137,7 @@
     }
 
     void GameView::discoSound() {
-        for (int p = 0; p < 8 && p < world_.numPlayers(); ++p) {
+        for (int p = 0; p < 8 && p < worldTables().numPlayers(); ++p) {
             bool on = frameDiscoActive(p);
             if (on) {
                 // Centroid of this player's visible dancing units.
@@ -159,7 +159,7 @@
     }
 
     void GameView::headbangSound() {
-        for (int p = 0; p < 8 && p < world_.numPlayers(); ++p) {
+        for (int p = 0; p < 8 && p < worldTables().numPlayers(); ++p) {
             bool on = frameHeadbangActive(p);
             if (on) {
                 float cx = 0, cz = 0; int n = 0;
@@ -330,19 +330,19 @@
             missionStem_ = mission;
             int human = 0;
             tak::sim::MissionSetup ms;
-            if (tak::sim::setupMission(world_, registry_, vfs_, mission, human, &ms))
+            if (tak::sim::setupMission(writableWorld(), registry_, vfs_, mission, human, &ms))
                 spots = ms.slotPos;
             else
                 std::fprintf(stderr, "replay: mission '%s' not in this data\n",
                              mission.c_str());
         } else {
-            spots = tak::sim::setupMatch(world_, registry_, cfg);
+            spots = tak::sim::setupMatch(writableWorld(), registry_, cfg);
         }
         replayBundles_ = std::move(bundles);
         replayMode_ = true;
         noFog_ = true;             // a spectator sees the whole map
         localPlayer_ = 0;
-        world_.setVisPlayer(-1);   // no fog needed (noFog_) -> skip the O(units) fog pass
+        writableWorld().setVisPlayer(-1);   // no fog needed (noFog_) -> skip the O(units) fog pass
         side_ = "ara";
         loadPanel(side_);
         loadGui(side_);
@@ -387,7 +387,7 @@
             const auto& bd = replayBundles_[replayTick_];
             for (const auto& c : bd.cmds) apply(c);
             for (const auto& e : bd.events) applyEvent(e);
-            world_.tick(1.0f / 30.0f);
+            writableWorld().tick(1.0f / 30.0f);
             captureTransportEffects();
             ++replayTick_;
 #ifndef NDEBUG
@@ -495,7 +495,7 @@
 #endif
         for (float rem = dt, guard = 0; rem > 1e-5f && guard < 16; ++guard) {
             float step = std::min(rem, 1.0f / 30.0f);
-            world_.tick(step);
+            writableWorld().tick(step);
             captureTransportEffects();
             rem -= step;
         }
@@ -517,20 +517,20 @@
         // Scenario (.crt) "Display" actions: surface the sim runner's messages as
         // HUD notices for the viewing player. Drained on the sim thread (same as
         // scenario step, so no race on its queue); postNotice defers to main.
-        if (auto* sc = world_.scenario())
+        if (auto* sc = writableWorld().scenario())
             for (auto& m : sc->drainMessages()) postNotice(m.text, 8);
 #ifndef NDEBUG
         if (amphib_) {
             auto* t = world_.unit(transportId_);
             if (t && t->alive()) {
                 if (amphibPhase_ == 0 && int(t->cargo.size()) >= amphibSquad_) {
-                    world_.unloadAt(transportId_, amphibSeaX_, amphibSeaZ_);
+                    writableWorld().unloadAt(transportId_, amphibSeaX_, amphibSeaZ_);
                     amphibPhase_ = 1;
                 } else if (amphibPhase_ == 1 && t->cargo.empty()) {
                     for (auto& u : world_.units())
                         if (u.alive() && !u.embarked() && u.player == 0 && u.type &&
                             u.type->canMove && !u.type->canTransport)
-                            world_.order(u.id, amphibLandX_, amphibLandZ_, false);
+                            writableWorld().order(u.id, amphibLandX_, amphibLandZ_, false);
                     amphibPhase_ = 2;
                 }
             }
@@ -894,7 +894,7 @@
         }
         fb.shakeReq = world_.shakeRequest();       // copied under the worker's lock
         {
-            auto sounds=world_.takeSoundRequests();
+            auto sounds=writableWorld().takeSoundRequests();
             std::lock_guard<std::mutex> lock(hitQueueMutex_);
             for(auto& sound:sounds) {
                 if(missionSoundQueue_.size()>=256)missionSoundQueue_.pop_front();
@@ -903,7 +903,7 @@
         }
         fb.winningTeam = world_.winningTeam();
         fb.gameTick = world_.tickCount();
-        fb.scenarioClock = world_.scenario() && world_.scenario()->showClock();
+        fb.scenarioClock = writableWorld().scenario() && writableWorld().scenario()->showClock();
         fb.wind = world_.wind();
         // Fog snapshot: copy world_.vis_ into this buffer only when THIS buffer's fog is stale
         // (fog recomputes ~4Hz, so at most ~2 copies per change -- one per buffer). A spectator
@@ -1116,7 +1116,7 @@
                         spawnRing(h.weapon->radiusArt[i], h.x, h.z,
                                   float(i) * h.weapon->ringDelay, h.weapon->ringDur,
                                   h.weapon->spriteCount, maxR);
-                if (h.weapon->fireStarter && !world_.isWater(h.x, h.z))
+                if (h.weapon->fireStarter && !worldTables().isWater(h.x, h.z))
                     spawnEffectAnim("flame", h.x, h.z, 0.0f, 0.0f, 5);   // fire lingers
                 // Camera shake for heavy impacts you can actually see.
                 if (h.weapon->shakeMag > 0 && cellVisibleR(h.x, h.z))
@@ -2012,7 +2012,7 @@
         if (!u.type) return;
         int ct = u.corpseFeat;   // corpse OR statue def, resolved by the sim
         if (ct < 0) return;
-        const std::string& obj = world_.featureTypes()[size_t(ct)].object;
+        const std::string& obj = worldTables().featureTypes()[size_t(ct)].object;
         if (obj.empty()) return;
         auto it = unitType_.find(u.id);
         if (it == unitType_.end() || it->second == obj) return;
@@ -2253,7 +2253,7 @@
     int GameView::spawn(const std::string& typeId, float x, float z, float heading, int player) {
         const auto* type = registry_.find(typeId);
         if (!type) return -1;
-        int id = world_.spawn(type, x, z, heading, player);
+        int id = writableWorld().spawn(type, x, z, heading, player);
         // registerUnit mutates the client render maps (visuals_/cobCache_/anims_/unitType_),
         // which the render thread + the animFrame VM pool read/iterate. It must run ONLY on
         // the main thread. When spawn() is reached from the SIM WORKER (summonGod / mission
@@ -3553,7 +3553,7 @@
         // Native 529c10: only an environmental water hit selects the water
         // class. A direct hit uses the ordinary class even above water; a -1
         // (missing) selected class requests no visual, not a generic substitute.
-        const std::string& cls = (world_.isWater(x, z) && !struckUnit)
+        const std::string& cls = (worldTables().isWater(x, z) && !struckUnit)
                                      ? weapon.waterExplosionClass
                                      : weapon.explosionClass;
         if (spawnEffect(cls, x, z, alt) && position) effects_.back().worldPosition = position;

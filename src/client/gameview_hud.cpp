@@ -134,7 +134,7 @@ namespace {
                     const UnitR& u = *_up;
                     if (!canPickUnit(u)) continue;
                     if (!u.alive() || u.embarked() || !u.type || !first ||
-                        !world_.allied(u.player, first->player)) continue;
+                        !worldTables().allied(u.player, first->player)) continue;
                     float d=0;
                     if (!unitUnderCursor(u,mouseX_,mouseY_,&d)) continue;
                     if (u.underConstruction) {
@@ -189,7 +189,7 @@ namespace {
                 const UnitR& u = *_up;
                 if (!canPickUnit(u)) continue;
                 if (!u.alive() || u.embarked() || !first ||
-                    world_.allied(u.player, first->player)) continue;
+                    worldTables().allied(u.player, first->player)) continue;
                 float d=0;
                 if (unitUnderCursor(u,mouseX_,mouseY_,&d) && d<best) {best=d;enemy=u.id;}
             }
@@ -222,7 +222,7 @@ namespace {
                 voice(selection_.front(), "move");
                 // Legion packs one shared destination into arrival slots for the
                 // surface movers it plans (ground units, boats, hovercraft).
-                const bool legion=tak::sim::isLegionPathfinding(world_.pathfindingMode());
+                const bool legion=tak::sim::isLegionPathfinding(worldTables().pathfindingMode());
                 float cx = 0, cz = 0;
                 int n = 0;
                 for (int id : selection_)
@@ -391,7 +391,7 @@ namespace {
                     for (int id:selection_) {
                         const auto* u=frameUnitP(id);
                         if (!u || !u->alive() || u->embarked() || u->underConstruction ||
-                            !u->type || u->id==target->id || !world_.allied(u->player,target->player)) continue;
+                            !u->type || u->id==target->id || !worldTables().allied(u->player,target->player)) continue;
                         eligible|=pendingCmd_=='r'
                             ? canAssistSite(*u,*target) || (u->type->isBuilder && !u->type->isStructure() &&
                                 !target->underConstruction && target->hp<target->type->maxHp)
@@ -428,7 +428,7 @@ namespace {
                 if (!u.alive() || u.embarked() || !u.type) continue;
                 float d = 0;
                 if (!unitUnderCursor(u, mouseX_, mouseY_, &d)) continue;
-                bool ally = world_.allied(u.player, first->player);
+                bool ally = worldTables().allied(u.player, first->player);
                 if (ally && u.type->canTransport && u.player == first->player &&
                     !u.underConstruction) {
                     if (d < bLoad) { bLoad = d; loadId = u.id; }
@@ -506,7 +506,7 @@ namespace {
             for (const auto* corpse:front().live) {
                 if (corpse->alive() || !corpse->corpsePhase || corpse->corpseFeat<0 ||
                     !canPickPoint(corpse->x,corpse->z)) continue;
-                const auto& feature=world_.featureTypes().at(size_t(corpse->corpseFeat));
+                const auto& feature=worldTables().featureTypes().at(size_t(corpse->corpseFeat));
                 const float dx=corpse->x-wx,dz=corpse->z-wz,r=18.f+8.f*std::max(feature.fx,feature.fz);
                 if (!feature.resurrectable || dx*dx+dz*dz>=r*r) continue;
                 for (int id:selection_) {
@@ -895,7 +895,7 @@ namespace {
                     const auto* b=frameUnitP(id);
                     if (!b || !b->alive() || b->embarked() || b->underConstruction || !b->type ||
                         !b->type->isBuilder || b->type->isStructure() || b->repeatType ||
-                        b->id==target->id || !world_.allied(b->player,target->player)) continue;
+                        b->id==target->id || !worldTables().allied(b->player,target->player)) continue;
                     if (target->underConstruction ? !canAssistSite(*b,*target) : target->hp>=target->type->maxHp) continue;
                     worker=id;targetId=target->id;best=d;break;
                 }
@@ -981,7 +981,7 @@ namespace {
             for (const UnitR* _up : front().live) { const UnitR& u = *_up;
                 if (!canPickUnit(u)) continue;
                 if (!u.alive() || u.embarked() || !first ||
-                    world_.allied(u.player, first->player))
+                    worldTables().allied(u.player, first->player))
                     continue;
                 float dx = u.x - wx, dz = u.z - wz;
                 if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
@@ -1588,7 +1588,7 @@ namespace {
         const auto& all = registry_.buildable(builderType);
         std::vector<std::string> out;
         for (const auto& id : all)
-            if (world_.buildAllowed(registry_.find(id)) &&
+            if (worldTables().buildAllowed(registry_.find(id)) &&
                 (missionAllowed_.empty() || std::find(missionAllowed_.begin(), missionAllowed_.end(), id) != missionAllowed_.end()))
                 out.push_back(id);
         return out;

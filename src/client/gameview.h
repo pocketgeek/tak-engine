@@ -350,7 +350,7 @@ public:
 
     uint64_t worldHashPublic() const { return world_.stateHash(); }
     // Headless harness telemetry (observation only): Legion's counters.
-    const tak::sim::LegionNavigator* legionPublic() { return world_.legionNavigator(); }
+    const tak::sim::LegionNavigator* legionPublic() { return writableWorld().legionNavigator(); }
     int missionOutcomePublic() const { return world_.missionOutcome(); }
     // Did this game resolve, and how? +1 win, -1 loss, 0 still running. Unlike
     // missionOutcomePublic this also covers a skirmish/MP last-team-standing result.
@@ -405,11 +405,11 @@ public:
 
     bool mpAutoStep(int autoMode, const std::string& mapId, bool crusades);
 
-    void applyEvent(const tak::net::Event& e) { tak::sim::applyEvent(world_, e); }
+    void applyEvent(const tak::net::Event& e) { tak::sim::applyEvent(writableWorld(), e); }
 
     // Apply one command (shared with the server's referee sim, so both mutate
     // the world identically).
-    void apply(const tak::net::Command& c) { tak::sim::applyCommand(world_, registry_, c); }
+    void apply(const tak::net::Command& c) { tak::sim::applyCommand(writableWorld(), registry_, c); }
 
     // One lockstep step: returns false while stalled waiting for the peer.
     uint32_t netTick() const { return netTick_; }
@@ -620,7 +620,7 @@ public:
         const float direction=(frame/240)%2 ? -1.f : 1.f;
         for(const auto& unit:world_.units())
             if(unit.alive() && unit.type && unit.type->canMove)
-                world_.order(unit.id,unit.x.toFloat()+direction*320,unit.z.toFloat()+direction*160,false);
+                writableWorld().order(unit.id,unit.x.toFloat()+direction*320,unit.z.toFloat()+direction*160,false);
     }
     void renderStudyZoom(float zoom) { mapView_.setZoom(zoom); }
     void renderWork(size_t& vertices,size_t& calls,size_t& images,size_t& bakes,size_t& bakeVertices,
@@ -1323,7 +1323,12 @@ private:
         return 0;
     }
     tak::sim::TypeRegistry registry_;
-    tak::sim::World world_;
+    // The simulation, reached through the CONST view world_. A write has to name
+    // writableWorld(), so display code that mutates the sim (67868e8f: addFeature wrote
+    // world_.nav() and desynced the client from the referee) fails to compile. Who may write,
+    // and how the main thread reads it while the worker runs: see liveWorld() below.
+    tak::sim::World simWorld_;
+    const tak::sim::World& world_ = simWorld_;
     // Hash maps (not std::map): these are looked up per unit per frame in the
     // serial anim loop and the parallel projection, and tree traversals were a
     // measurable slice of the update cost at thousands of units.
@@ -1413,6 +1418,7 @@ private:
     uint8_t chatRecipients_ = 0xff;
     std::optional<uint8_t> requestedManaSharing_;
     std::array<bool,8> eligibleGiftRecipients();
+    std::array<bool,8> giftEligibleLast_{};   // its answer when the worker held the world
     void drawGiveUnitsMenu(int winW, int winH);
     void giveSelectedUnits(int recipient);
     bool showCounts_ = false;   // F4: player names, kills, losses, and score
@@ -1474,15 +1480,15 @@ public:
     double paceLastTd_ = -1;         // display time at the previous record
     // TAK_PACELOG worker columns: ns accumulated by whichever thread runs the sim (the worker,
     // or the main thread inline), read as per-frame deltas by the main thread. Lock waits are
-    // the render thread's own (canPlaceLocked / clearableAt, the per-frame placement checks).
+    // the render thread's own (every blocking liveWorld(): canPlaceLocked, clearableAt, ...).
     std::atomic<uint64_t> paceWorldNs_{0}, paceCaptureNs_{0}, paceHashNs_{0}, paceJobWallNs_{0}, paceJobCpuNs_{0};
     std::array<uint64_t, 5> paceSeenNs_{};
-    uint64_t paceLockWaitNs_ = 0;
+    mutable uint64_t paceLockWaitNs_ = 0;
     static bool paceOn() {
         static const bool on = [] { const char* v = tak::devEnv("TAK_PACELOG"); return v && *v && !(v[0] == '0' && !v[1]); }();
         return on;
     }
-    void lockSimTimed(std::unique_lock<std::mutex>& lk);
+    void lockSimTimed(std::unique_lock<std::mutex>& lk) const;
     // Adds the wall ns of its scope to `acc` (and the thread-CPU ns to `cpu`, if given) when
     // TAK_PACELOG is on.
     struct PaceSpan {
@@ -1844,15 +1850,69 @@ private:
     // The worker runs the heavy sim tick (apply commands/events + world_.tick + captureFrame)
     // off the render thread. The main thread owns the network (mp_): it drains delivered
     // bundles and hands them to the worker via simInbox_ (FIFO == lockstep tick order), and
-    // sends the worker's per-tick state hash back to the server from simOutbox_. world_ is
-    // mutated ONLY by the worker (under simMutex_); the render reads the published snapshot,
-    // and its remaining live-world_ read (canPlace) takes simMutex_. Off for headless/replay
-    // (inline path) unless wantSimThread_ (TAK_SIM_THREAD) forces it on for verification.
+    // sends the worker's per-tick state hash back to the server from simOutbox_.
+    // Off for headless/replay (inline path) unless wantSimThread_ (TAK_SIM_THREAD) forces it on
+    // for verification.
+    //
+    // world_ is mutated ONLY by whoever runs the sim: the worker (under simMutex_) while it
+    // runs, otherwise the main thread (match setup before startSimThread, the inline sim path,
+    // replay, the debug harness). writableWorld() is that route and asserts it. hud, render
+    // and input never write; they turn a click into a Command. They read the world through:
+    //   - the published snapshot (front(), framePlayer, features_/featSimState_, ...) -- the
+    //     default, and the only choice on a per-frame draw path;
+    //   - worldTables(): data fixed once the match is set up, safe without the lock;
+    //   - liveWorld() / tryLiveWorld(): anything else live (canPlace, canGiveUnit, the feature
+    //     list), under simMutex_ while the worker runs. A blocking liveWorld() is for one-off
+    //     clicks; a per-frame check uses tryLiveWorld() and keeps last frame's answer on a miss.
+    //
+    // A const World& that holds simMutex_ (only while the worker runs; inline, nothing else
+    // touches world_). Main thread only: the worker already holds the lock while it ticks.
+    class LiveWorld {
+    public:
+        const tak::sim::World* operator->() const { return w_; }
+        const tak::sim::World& operator*() const { return *w_; }
+    private:
+        friend class GameView;
+        LiveWorld(const tak::sim::World& w, std::unique_lock<std::mutex> lk) : w_(&w), lk_(std::move(lk)) {}
+        const tak::sim::World* w_;
+        std::unique_lock<std::mutex> lk_;
+    };
+    LiveWorld liveWorld() const {
+        assert(std::this_thread::get_id() == mainThreadId_);
+        std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
+        if (useSimThread_) {
+#ifndef NDEBUG
+            lockSimTimed(lk);
+#else
+            lk.lock();
+#endif
+        }
+        return LiveWorld(simWorld_, std::move(lk));
+    }
+    // Never waits: empty while the worker is mid-tick.
+    std::optional<LiveWorld> tryLiveWorld() const {
+        assert(std::this_thread::get_id() == mainThreadId_);
+        std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
+        if (useSimThread_ && !lk.try_lock()) return std::nullopt;
+        return LiveWorld(simWorld_, std::move(lk));
+    }
+    // No lock, so ONLY for what match setup fixes and the sim never changes afterwards:
+    // featureTypes(), numPlayers(), allied() (teams), pathfindingMode(), manaSpots(),
+    // buildAllowed(), isWater() (terrain), benchmarkMode()/benchmarkEndTick(), and the atomic
+    // featGeneration().
+    // Units, features, players' economy, nav and fog are live: snapshot or liveWorld().
+    const tak::sim::World& worldTables() const { return simWorld_; }
+    // The one non-const route to world_. Legal on the sim worker, and on the main thread
+    // only while no worker runs.
+    tak::sim::World& writableWorld() {
+        assert(!useSimThread_ || std::this_thread::get_id() != mainThreadId_);
+        return simWorld_;
+    }
     struct SimJob { tak::net::Bundle bundle; uint32_t tick = 0; bool wantHash = false; bool spectator = false; bool wantPos = false; };
     struct HashJob { uint32_t tick = 0; uint64_t hash = 0; uint64_t pos = 0; };
     std::thread::id mainThreadId_ = std::this_thread::get_id();   // set at construction (main thread)
     std::thread simThread_;
-    std::mutex simMutex_;               // guards world_ mutation (worker) vs live reads (canPlace)
+    mutable std::mutex simMutex_;       // guards world_ mutation (worker) vs liveWorld() reads
     std::mutex inboxMutex_;
     std::condition_variable inboxCv_;
     std::deque<SimJob> simInbox_;       // main -> worker: bundles to simulate, in tick order
@@ -1900,8 +1960,8 @@ private:
     void startSimThread();
     void stopSimThread(bool drain);
     // canPlace reads live world_ (units_, which the worker resizes on spawn/death, plus the
-    // nav grid), so it can't run lock-free while the worker ticks. Take simMutex_ for the
-    // read. Placement-UX only and rare (a ghost while positioning a building), so the brief
+    // nav grid), so it can't run lock-free while the worker ticks: liveWorld(). Placement
+    // clicks only and rare (a ghost while positioning a building), so the brief
     // wait for the current tick is invisible; uncontended and cheap when inline.
     bool canPlaceLocked(const tak::sim::UnitType* type, float x, float z);
     // The PER-FRAME form for ghosts (drawGhost, build line, mana drag): the verdict is cached per
@@ -2516,7 +2576,7 @@ private:
 
     // Is this player on the local player's team? (Allies share vision, so their
     // units render/appear on the minimap through fog just like your own.)
-    bool alliedToLocal(int player) const { return world_.allied(player, localPlayer_); }
+    bool alliedToLocal(int player) const { return worldTables().allied(player, localPlayer_); }
 
     // A built-in 5x7 pixel font (uppercase, digits, a few symbols), drawn as
     // solid blocks — unmistakably legible at any size, unlike the game's small

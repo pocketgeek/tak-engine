@@ -133,7 +133,7 @@
             mapView_.reload(vfs_, mapPath_);
             int human = 0;
             tak::sim::MissionSetup ms;
-            tak::sim::setupMission(world_, registry_, vfs_, room.mission, human, &ms);
+            tak::sim::setupMission(writableWorld(), registry_, vfs_, room.mission, human, &ms);
             missionFullVision_ = ms.fullVision;
             missionPreMapped_ = ms.preMapped;
             loadFeatures();
@@ -152,7 +152,7 @@
             // The player commands the mission's human player; for the common case its
             // index equals our room slot (TODO: seat the client at `human` otherwise).
             localPlayer_ = human;
-            world_.setVisPlayer(localPlayer_);
+            writableWorld().setVisPlayer(localPlayer_);
             for (auto& u : world_.units())
                 if (u.player == localPlayer_ && u.type) { playerMonarchId_ = u.id; builderId_ = u.id; break; }
             if (!missionAllowed_.empty())
@@ -196,7 +196,7 @@
                                      : s.type == 2 ? ("AI " + std::to_string(i + 1))
                                                    : ("Player " + std::to_string(i + 1));
         }
-        auto spots = tak::sim::setupMatch(world_, registry_, cfg);
+        auto spots = tak::sim::setupMatch(writableWorld(), registry_, cfg);
         // Rebuild the rendered feature sprites (features_) from the map we actually
         // loaded -- they were built once in the ctor from the launch map, so on a
         // different chosen map the trees/houses you SEE would be the launch map's,
@@ -208,8 +208,8 @@
         warmCursors();   // cursor art + hardware reconstruction, off the frame path
         // client-only presentation
         localPlayer_ = room.mySlot < 0 ? 0 : room.mySlot;
-        world_.setVisPlayer(localPlayer_);
-        if (room.opts.fogExplored == 1) world_.revealTerrain();
+        writableWorld().setVisPlayer(localPlayer_);
+        if (room.opts.fogExplored == 1) writableWorld().revealTerrain();
         // A mission overrides the room's fog rule with its own: lineofsight=0 plays
         // revealed, mapping=1 starts the terrain explored. Display-only either way.
         if (missionFullVision_) noFog_ = true;
@@ -268,7 +268,7 @@
         // its first tick. Poll only the connection while the player reads, so a
         // long briefing cannot trip keepalive or silently consume mission time.
         auto loading=std::move(loadScreen_);
-        world_.prepareInitialVisibility();
+        writableWorld().prepareInitialVisibility();
         int width=0,height=0;
         SDL_GetRendererOutputSize(ren_,&width,&height);
         prepare(width,height);   // apply the new map's initial camera before capture
@@ -806,14 +806,14 @@ void GameView::autoplayStep() {
         std::vector<int> mine;
         float tx = -1, tz = -1;
         {
-            std::lock_guard<std::mutex> lk(simMutex_);
-            for (const auto& u : world_.units()) {
+            const auto live = liveWorld();
+            for (const auto& u : live->units()) {
                 if (!u.alive() || !u.type) continue;
                 if (int(u.player) == localPlayer_) {
                     // The monarch stays home: sending it into the enemy base ends the game, and with it the run.
                     if (u.type->maxVel > tak::sim::Fixed() && !u.type->commander && !u.embarked() && !u.underConstruction)
                         mine.push_back(u.id);
-                } else if (!world_.allied(localPlayer_, int(u.player)) && (tx < 0 || (u.type->commander && !u.type->canFly))) {
+                } else if (!live->allied(localPlayer_, int(u.player)) && (tx < 0 || (u.type->commander && !u.type->canFly))) {
                     tx = u.x.toFloat(); tz = u.z.toFloat();   // the first enemy seen, or better, an enemy monarch
                 }
             }
@@ -854,14 +854,13 @@ void GameView::autoplayStep() {
     // Collect this player's mobile units. Stable order (units_ is append-only and
     // identical on every peer), so indexing into it is reproducible.
     //
-    // UNDER simMutex_: with TAK_SIM_THREAD the worker mutates world_ while this runs on
-    // the main thread, and a spawn that reallocates units_ invalidates the iteration
-    // outright -- not a torn read, a crash. Every other live-world_ read from this
-    // thread (canPlace) takes the same lock; this one has to as well.
+    // UNDER simMutex_ (liveWorld): with TAK_SIM_THREAD the worker mutates world_ while this
+    // runs on the main thread, and a spawn that reallocates units_ invalidates the iteration
+    // outright -- not a torn read, a crash.
     std::vector<int> mine;
     {
-        std::lock_guard<std::mutex> lk(simMutex_);
-        for (const auto& u : world_.units())
+        const auto live = liveWorld();
+        for (const auto& u : live->units())
             if (u.alive() && u.type && int(u.player) == localPlayer_ && u.type->maxVel > tak::sim::Fixed() &&
                 !u.embarked() && !u.underConstruction)
                 mine.push_back(u.id);
@@ -1049,7 +1048,7 @@ void GameView::autoplayStep() {
             // after the GameStarting; mpStep drains it, fast-forwarding to now.
             bool spec = mp_->isSpectator();
             mp_->clearRejoin();
-            world_.resetForReplay();
+            writableWorld().resetForReplay();
             netTick_ = 0; outcome_ = 0; resultStartedMs_ = 0; netError_.clear();
             // Replaying history from tick 0: hold our own orders and stop counting
             // acknowledgements until the log is spent (see cmdCatchUp_).
@@ -1064,7 +1063,7 @@ void GameView::autoplayStep() {
             if (spec) {
                 spectating_ = true;   // watch-only: no fog, no control, no resume
                 noFog_ = true;
-                world_.setVisPlayer(-1);   // sees everything -> skip the wasted O(units) fog pass
+                writableWorld().setVisPlayer(-1);   // sees everything -> skip the wasted O(units) fog pass
                 showCounts_ = true;   // the F4 scoreboard is on by default while spectating
                 gameStartMs_ = SDL_GetTicks64();
             } else {
@@ -1083,7 +1082,7 @@ void GameView::autoplayStep() {
                 // no resume ticket, and nothing to report loaded.
                 spectating_ = true;
                 noFog_ = true;
-                world_.setVisPlayer(-1);   // sees everything -> skip the wasted O(units) fog pass
+                writableWorld().setVisPlayer(-1);   // sees everything -> skip the wasted O(units) fog pass
                 showCounts_ = true;   // F4 scoreboard on by default while spectating
                 gameStartMs_ = SDL_GetTicks64();
             } else {
