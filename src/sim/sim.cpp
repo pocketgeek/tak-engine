@@ -330,6 +330,20 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.fireAtWillRandom = (int(info->numberOr("fireatwillrandom", 0)) & 1) != 0;
             t.attractsGods = info->numberOr("attractsgods", 0) != 0;
             t.weaponSwitching = info->numberOr("weaponswitching", 0) != 0;
+            t.kamikaze = info->numberOr("kamikaze", 0) != 0;
+            {
+                auto tokens=[](const std::string& text) {
+                    std::vector<std::string> out;std::string tok;
+                    for (char c : text + " ") {
+                        if (c == ' ' || c == '\t') { if (!tok.empty()) { out.push_back(tok); tok.clear(); } }
+                        else tok.push_back(char(std::tolower(static_cast<unsigned char>(c))));
+                    }
+                    return out;
+                };
+                t.noTargetCats = tokens(info->valueOr("notargetcategory", ""));
+                const char* bad[3] = {"wpri_badtargetcategory","wsec_badtargetcategory","wspe_badtargetcategory"};
+                for (size_t i = 0; i < 3; ++i) t.badTargetCats[i] = tokens(info->valueOr(bad[i], ""));
+            }
             t.onOffable = info->numberOr("onoffable", 0) != 0;
             t.activateWhenBuilt = info->numberOr("activatewhenbuilt", 1) != 0;
             t.cantBeStoned = info->numberOr("cantbestoned", 0) != 0;
@@ -587,6 +601,8 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 }
                 wp.minRange = int32_t(w->numberOr("minrange", 0));
                 wp.noAir = w->numberOr("noairweapon", 0) != 0;
+                wp.toAir = w->numberOr("toairweapon", 0) != 0;
+                wp.commandFire = w->numberOr("commandfire", 0) != 0;
                 wp.manaCost = float(w->numberOr("manapershot", 0));
                 // Status-effect weapons (Creon freeze, medusa/paralyzer, petrify),
                 // inferred from the hit-effect / damagetype / name.
@@ -4470,6 +4486,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         }
         if (fromId) e.lastHitBy = fromId;
         e.lastHitPlayer = fromPlayer;
+        if (attacker && attacker!=&e) slotHitResponse(e,*attacker);
         if (w.status != Weapon::Status::None && e.type) {
             bool immune =
                 (w.status == Weapon::Status::Frozen && e.type->cantBeFrozen) ||
@@ -5151,10 +5168,341 @@ bool World::acquireTarget(Unit& u,bool missionPoll) {
     const int target=findTarget(u,missionPoll);
     if (!target) return false;
     cancelPath(u); u.routeStamp=-1;
+    // The attack it starts owns the weapons (Attack_* calls 519b70(3)).
+    setSlotsManual(u,kSlotsAttack);
     u.orders.insert(u.orders.begin(),{Fixed(),Fixed(),target});
     u.orders.front().autoTarget=true; u.orders.front().goal=true;
     noteOrders(u.id);
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Retail's weapon-slot layer: auto/manual slots, the fire-at-will sweep
+// (icd 40f330 + 40f2e0 + 412620), the auto-slot weapon update (52ae90 ->
+// 52fe30/52fff0) and the per-slot hit response (409a50 part b). It sits under
+// the order-driven combat above: an attack order makes every slot manual, so
+// the sweep never touches what an order owns, and an auto slot never moves or
+// turns a moving unit -- which is how a retail builder on its way to a site,
+// or any unit on a plain move, shoots what it passes.
+
+// The units whose aim start (52fe30) posts a facing request and whose
+// readiness (52fff0) then waits for the body to face the target.
+static bool slotNeedsFacing(const UnitType& t) {
+    return t.canFly ? t.hoverAttack : (!t.isStructure() && t.turnInPlaceRate>0);
+}
+
+namespace {
+// Retail's squared centre distance (411ae0/412620): each axis squared as a
+// 64-bit product of the 16.16 deltas, keeping the high dword (whole px^2).
+int64_t retailCentreDist2(const Unit& a,const Unit& b) {
+    const int64_t dx=int32_t(uint32_t(b.x.v)-uint32_t(a.x.v));
+    const int64_t dz=int32_t(uint32_t(b.z.v)-uint32_t(a.z.v));
+    return ((dx*dx)>>32)+((dz*dz)>>32);
+}
+bool categoryMatch(const std::vector<std::string>& cats,const UnitType& t) {
+    for (const auto& c : cats)
+        if (std::find(t.categories.begin(),t.categories.end(),c)!=t.categories.end()) return true;
+    return false;
+}
+} // namespace
+
+void World::dropSlotTarget(Unit& u,int slot) {
+    if (slot<0 || slot>=3 || !u.slotTarget[size_t(slot)]) return;
+    u.slotTarget[size_t(slot)]=0;
+    // 51a7f0: TargetCleared(slot) only when a target was set, and for a
+    // switcher only on the selected slot.
+    if (u.type->weaponSwitching && slot!=u.weaponSlot) return;
+    if (const auto it=unitScript(u.id)) {
+        const auto& file=*u.type->script();
+        u.weaponAnimations.add(tak::RetailWeaponAnimation::Clear,slot);
+        it->state().startArguments(file,file.scriptIndex("TargetCleared"),{uint32_t(slot),0,0,0},1);
+    }
+}
+
+void World::setSlotTarget(Unit& u,int slot,int id) {
+    // 51a700: record +0x10 = target, +0x12 = 0x8000, and the slot's fire and
+    // aim events are cleared from the unit's mission event word.
+    u.slotTarget[size_t(slot)]=id;
+    u.missionEvents&=0xfe08ffffu;
+}
+
+void World::setSlotsAuto(Unit& u) {
+    u.slotManual=kSlotsAuto;
+    if (u.slotAuto==7) return;
+    u.slotAuto=7;
+    for (int s=0;s<3;++s) dropSlotTarget(u,s);
+}
+
+void World::setSlotsManual(Unit& u,uint8_t cause) {
+    u.slotManual=cause;
+    if (!u.slotAuto) return;
+    u.slotAuto=0;
+    for (int s=0;s<3;++s) dropSlotTarget(u,s);
+}
+
+// Our orders are not retail missions, so the mission destructor's setAuto
+// (4d6da0) is reproduced by retiring the manual mode once the reason that set
+// it is gone: the attack order left the front, the work job ended, the status
+// wore off. The work stage itself sets manual where retail does (placement,
+// the in-reach work call); an attack order and a status are recognised here.
+void World::syncSlotMode(Unit& u) {
+    const bool status=u.incapacitated() || u.embarked() || u.underConstruction;
+    const bool attack=!u.orders.empty() && u.orders.front().targetId!=0 &&
+        !u.orders.front().guard && !u.orders.front().load;
+    const bool work=u.buildSiteId || u.repairId || u.reclaimId || u.reviveTarget || u.workScriptWorking;
+    // A resurrect channel starts only in reach (and from the threaded ability
+    // pass, which must not start scripts), so it is recognised here too.
+    const uint8_t want=status ? kSlotsStatus : attack ? kSlotsAttack :
+        (u.reviveTarget || (u.slotManual==kSlotsWork && work)) ? kSlotsWork : kSlotsAuto;
+    if (want==u.slotManual) return;
+    if (want==kSlotsAuto) setSlotsAuto(u);
+    else setSlotsManual(u,want);
+}
+
+bool World::slotInsideMinRange(const Unit& u,const Unit& t,int slot) const {
+    const int64_t m=u.type->weapons[size_t(slot)].minRange;
+    return m>0 && retailCentreDist2(u,t)<m*m;
+}
+
+bool World::slotInRange(const Unit& u,const Unit& t,int slot) const {
+    const Weapon& w=u.type->weapons[size_t(slot)];
+    if (w.melee) return meleeInRange(u.type,t.type,(t.x-u.x).toFloat(),(t.z-u.z).toFloat());
+    // The base test (530580) is centre to centre, inclusive. A structure is
+    // padded by its footprint like the order-driven fire test (tryFire).
+    const int64_t pad=t.type->isStructure() ? 8*std::max(t.type->footX,t.type->footZ)+24 : 0;
+    const int64_t r=int64_t(w.range)+pad;
+    return retailCentreDist2(u,t)<=r*r;
+}
+
+// Engine deviation shared with findTarget and the order-driven fire test: a
+// ranged ground weapon that does not lob needs a clear 2D line to its target
+// (retail has no such test; without it a unit would empty its auto slots into
+// a wall). Part of "in range" for the sweep, the weapon update and the hit
+// response alike, so a blocked target is never selected and then held.
+bool World::slotClearShot(const Unit& u,const Unit& t,int slot) const {
+    const Weapon& w=u.type->weapons[size_t(slot)];
+    if (w.melee || w.range<=64 || u.type->canFly || t.type->canFly || u.type->lobs()) return true;
+    return combatLineOfSight(u,t);
+}
+
+bool World::slotBadTarget(const Unit& u,int slot,const Unit& t) const {
+    return categoryMatch(u.type->badTargetCats[size_t(slot)],*t.type);
+}
+
+// 40fc4b..40fd2c: a swept target is kept while it is a live, non-allied,
+// eligible body. Range is NOT re-checked: a target that walked away stays
+// assigned (the weapon update just declines to aim at it).
+bool World::sweepKeepsTarget(const Unit& u,int slot,const Unit& t) const {
+    const Weapon& w=u.type->weapons[size_t(slot)];
+    if (!t.alive() || t.hp<=Fixed() || !t.type || allied(u.player,t.player) || t.embarked()) return false;
+    if (w.melee && t.type->canFly) return false;
+    if (slotBadTarget(u,slot,t)) return false;
+    if (w.status==Weapon::Status::Paralyzed && t.paralyzedFor>0) return false;
+    return true;
+}
+
+int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
+    if (slot<0 || slot>=int(std::min<size_t>(3,u.type->weapons.size()))) return 0;
+    const Weapon& w=u.type->weapons[size_t(slot)];
+    const int64_t radius=sweep ? int64_t(w.range) : std::max<int64_t>(u.type->sight,w.range);
+    // 411ae0 over the owner's enemy list (hostile, visible, not hidden), by
+    // live centre distance. Gathered in id order, the stand-in for the
+    // list's slot order. Sites still conjuring stay out, as in findTarget.
+    std::vector<int> candidates;
+    uint64_t enemies=~uint64_t(0);
+    for (int player=0;player<numPlayers() && player<64;++player)
+        if (allied(player,u.player)) enemies&=~(uint64_t(1)<<player);
+    forEachNear(u.x.toFloat(),u.z.toFloat(),float(radius)+1.0f,[&](int idx) {
+        const Unit& e=units_[size_t(idx)];
+        if (!e.alive() || e.hp<=Fixed() || !e.type || e.embarked() || e.cloaked || e.underConstruction ||
+            isNeutralPlayer(e.player) || allied(e.player,u.player) || !playerSees(u.player,e)) return;
+        if (retailCentreDist2(u,e)>radius*radius) return;
+        candidates.push_back(e.id);
+    },enemies);
+    std::sort(candidates.begin(),candidates.end());
+    int32_t best=INT32_MAX,bestBad=INT32_MAX;
+    int pick=0,pickBad=0;
+    const bool mobile=!u.type->isStructure();
+    for (int iteration=0;iteration<50 && !candidates.empty();++iteration) {
+        const size_t index=fireRand(uint32_t(candidates.size()));
+        const int id=candidates[index];
+        candidates.erase(candidates.begin()+long(index));
+        const Unit* tp=unit(id);
+        if (!tp || !tp->alive() || tp->hp<=Fixed()) continue;
+        const Unit& t=*tp;
+        // shootme (UnitDef+0x260 bit 15) is not parsed: 200 of the 203
+        // shipped types set it, so every candidate is treated as shootable.
+        const int32_t eff=int32_t(w.damageVs(t.type));
+        if (!u.type->kamikaze && !w.melee && !(eff>0 && slotInRange(u,t,slot) && slotClearShot(u,t,slot)))
+            continue;   // 52ad60
+        if (categoryMatch(u.type->noTargetCats,*t.type)) continue;
+        if (w.status==Weapon::Status::Stoned && (t.type->cantBeStoned || t.incapacitated())) continue;
+        if (w.status==Weapon::Status::Frozen && (t.type->cantBeFrozen || t.incapacitated())) continue;
+        if (w.mindControl && (t.type->cantBeCaptured || t.incapacitated())) continue;
+        if (w.status==Weapon::Status::Paralyzed && t.paralyzedFor>0) continue;
+        if (w.melee && t.type->canFly) continue;
+        if (w.toAir && !t.type->canFly) continue;
+        if (w.noAir && t.type->canFly) continue;
+        const bool insideMin=slotInsideMinRange(u,t,slot);
+        if (insideMin && !mobile) continue;
+        if (eff<=0) continue;   // 531e50
+        // Score, lower wins, in retail's wrapping int32 arithmetic.
+        uint32_t score;
+        if (u.type->fireAtWillRandom) {
+            const uint32_t n=uint32_t(INT32_MAX/eff);
+            score=fireRand(n)/2;
+            score+=fireRand(n);
+        } else {
+            const uint32_t q=uint32_t(int32_t(retailCentreDist2(u,t))/eff);
+            score=fireRand(q)/2;
+            score+=fireRand(q);
+            if (w.melee) { score+=fireRand(q);score+=fireRand(q);score+=fireRand(q); }
+        }
+        if (mobile) {
+            // Turn penalty. 412a77..412ae2 also scale turnrate by two type
+            // words under the mover's terrain bits 11/12; not ported (TODO),
+            // the unscaled rate is used.
+            int32_t tr=u.type->turnRate&0xffff;
+            if (tr<1000) {
+                if (tr<=0) tr=1;
+                const int32_t d=std::abs(int32_t(int16_t(uint16_t(
+                    retailDirection(t.x-u.x,t.z-u.z).v-u.heading.v))));
+                const uint32_t p=uint32_t(d*250/tr/eff);
+                score+=fireRand(p);
+                score+=fireRand(p);
+            }
+        }
+        if (insideMin) score*=10u;
+        if (t.incapacitated()) score*=10u;
+        const int32_t s=int32_t(score);
+        if (slotBadTarget(u,slot,t)) { if (s<bestBad) { bestBad=s;pickBad=id; } }
+        else if (s<best) { best=s;pick=id; }
+    }
+    return pick ? pick : pickBad;
+}
+
+// 40f330's slot part, for one player: a budget of N/30+1 counted units per
+// call from a cursor that walks the player's slot range and wraps. Dead and
+// status-locked slots cost nothing; live unarmed units cost budget but get no
+// sweep. The walk stops when it returns to the slot it started on, so with
+// fewer live units than the budget that slot is skipped until the counts
+// change -- an emulated retail quirk, kept on purpose.
+void World::tickFireSweep(int player) {
+    Player& owner=players_[size_t(player)];
+    std::vector<int> pool;
+    int capacity=0;
+    if (retailAllocation_ && retailEntityPools_) {
+        const auto [first,count]=(*retailEntityPools_)[size_t(player)];
+        capacity=count;
+        pool.resize(size_t(std::max(0,count)));
+        for (int i=0;i<count;++i) pool[size_t(i)]=first+i;
+    } else {
+        capacity=unitCap_>0 ? unitCap_ : kRetailSweepPool;
+        if (size_t(player)<sweepIds_.size()) pool.swap(sweepIds_[size_t(player)]);
+        std::sort(pool.begin(),pool.end());
+    }
+    if (pool.empty()) return;
+    const int budget=capacity/30+1;
+    const bool aiOwner=owner.automaticGates;
+    // The constructor (40fed0) leaves the cursor on the pool's last slot; a
+    // restored pool has a real one, a synthetic pool walks from its end.
+    const int32_t start=owner.sweepCursor==INT32_MAX && retailAllocation_ && retailEntityPools_ ?
+        pool.back() : owner.sweepCursor;
+    const auto after=std::upper_bound(pool.begin(),pool.end(),start);
+    long position=long(after-pool.begin())-1;
+    const bool present=position>=0 && pool[size_t(position)]==start;
+    if (position<0) position=long(pool.size())-1;
+    int used=0;
+    int32_t cursor=start;
+    for (size_t step=1;step<=pool.size();++step) {
+        const size_t i=size_t(position+long(step))%pool.size();
+        if (present && step==pool.size()) break;   // back at the start slot
+        Unit* u=unit(pool[i]);
+        if (!u || !u->alive() || u->hp<=Fixed() || !u->type || u->player!=player || u->incapacitated()) continue;
+        if (!u->type->weapons.empty()) {
+            syncSlotMode(*u);
+            if (u->fireState==2 && u->slotAuto && !u->type->canCapture) {
+                for (int s=0;s<int(std::min<size_t>(3,u->type->weapons.size()));++s) {
+                    if (!(u->slotAuto>>s&1)) continue;
+                    const Weapon& w=u->type->weapons[size_t(s)];
+                    if (w.cursorAirstrike || (w.commandFire && !aiOwner)) continue;
+                    if (u->type->weaponSwitching && s!=u->weaponSlot) continue;
+                    if (const int held=u->slotTarget[size_t(s)]) {
+                        const Unit* t=unit(held);
+                        if (t && sweepKeepsTarget(*u,s,*t)) continue;
+                        // 51a9a0 retires a dead or invalid target.
+                        if (!t || !t->alive() || t->hp<=Fixed()) dropSlotTarget(*u,s);
+                    }
+                    const int found=retailSelectTarget(*u,s,true);
+                    if (found) setSlotTarget(*u,s,found);
+                    else dropSlotTarget(*u,s);
+                }
+            }
+        }
+        if (++used>=budget) { cursor=pool[i];break; }
+    }
+    owner.sweepCursor=cursor;
+}
+
+// 52ae90 for auto slots: aim and fire at the slot target without braking,
+// steering or stopping. Only a stopped mover pivots to its facing request.
+void World::tickSlotWeapons(Unit& u) {
+    syncSlotMode(u);
+    if (!u.slotAuto || u.type->weapons.empty() || (u.type->onOffable && !u.active) || u.type->canCapture) {
+        u.faceRequest=-1;
+        return;
+    }
+    bool aiming=false;
+    for (int s=0;s<int(std::min<size_t>(3,u.type->weapons.size()));++s) {
+        if (!(u.slotAuto>>s&1) || !u.slotTarget[size_t(s)]) continue;
+        if (u.type->weaponSwitching && s!=u.weaponSlot) continue;
+        Unit* t=unit(u.slotTarget[size_t(s)]);
+        if (!t || !t->alive() || t->hp<=Fixed() || !t->type) { dropSlotTarget(u,s);continue; }
+        // 52fe30 refuses to aim inside minrange or out of range; the target
+        // is kept either way.
+        if (slotInsideMinRange(u,*t,s) || !slotInRange(u,*t,s) || !slotClearShot(u,*t,s)) continue;
+        aiming=true;
+        const Bam desired=retailDirection(t->x-u.x,t->z-u.z);
+        const bool facing=slotNeedsFacing(*u.type);
+        if (facing) u.faceRequest=desired.v&0xffff;
+        if (tickScriptWeapon(u,*t,s,true)) continue;
+        const Weapon& w=u.type->weapons[size_t(s)];
+        if (u.reloads[size_t(s)]>0) continue;
+        if (facing && std::abs(bamDiff(desired,u.heading))>std::max(512,int(uint16_t(w.aimTol)))) continue;
+        fire(u,*t,s);
+    }
+    if (!aiming) { u.faceRequest=-1;return; }
+    // 4d9b6a: the request turns the body only while the navigator is idle.
+    if (u.faceRequest>=0 && !u.type->canFly && !u.type->isStructure() && u.orders.empty() &&
+        u.speed==Fixed() && u.type->turnInPlaceRate>0) {
+        const int32_t turn=bamDiff(Bam(u.faceRequest),u.heading);
+        u.heading=u.heading+Bam(std::clamp(turn,-u.type->turnInPlaceRate,u.type->turnInPlaceRate));
+        u.turnReqBam=turn;
+    }
+}
+
+// 409a50 part (b): a unit that returns fire hands the attacker to every auto
+// slot that reaches it, unless the slot's current target is still a good
+// one. No RNG. The idle retaliation mission (part a, 4d7de0) is not ported;
+// findTarget and the ground-response path cover most of it.
+void World::slotHitResponse(Unit& victim,const Unit& attacker) {
+    if (!victim.alive() || victim.hp<=Fixed() || !victim.type || victim.type->weapons.empty() ||
+        victim.fireState==0 || victim.incapacitated() || isNeutralPlayer(victim.player) ||
+        !attacker.alive() || !attacker.type || allied(victim.player,attacker.player) ||
+        victim.type->canCapture) return;
+    syncSlotMode(victim);
+    if (!victim.slotAuto) return;
+    for (int s=0;s<int(std::min<size_t>(3,victim.type->weapons.size()));++s) {
+        if (!(victim.slotAuto>>s&1)) continue;
+        if (victim.type->weapons[size_t(s)].commandFire) continue;
+        if (victim.type->weaponSwitching && s!=victim.weaponSlot) continue;
+        if (slotInsideMinRange(victim,attacker,s) || !slotInRange(victim,attacker,s) ||
+            !slotClearShot(victim,attacker,s)) continue;
+        if (const Unit* t=unit(victim.slotTarget[size_t(s)]);
+            t && t->alive() && t->hp>Fixed() && slotInRange(victim,*t,s) && slotClearShot(victim,*t,s) &&
+            !slotInsideMinRange(victim,*t,s) && !slotBadTarget(victim,s,*t)) continue;
+        if (victim.slotTarget[size_t(s)]!=attacker.id) setSlotTarget(victim,s,attacker.id);
+    }
 }
 
 void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
@@ -8316,6 +8664,8 @@ void World::tickConstruction(Unit& b, float dt) {
         return;
     }
     b.buildStuckT = 0; b.buildStuckD = INT32_MAX;      // in range: reset the watchdog
+    // HelpBuild's work stage owns the weapons, like the MobileBuild placement.
+    setSlotsManual(b,kSlotsWork);
     site->buildBegun = true;   // in range: the site starts materialising now
     // Drop the APPROACH leg, but never the queued build order itself: that entry
     // IS the job, and it is what holds the rest of the queue back until the
@@ -9873,7 +10223,7 @@ void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
     u.scriptAimTarget=0;
 }
 
-bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
+bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept) {
     const auto it=unitScript(u.id);
     if(!it || slot<0 || slot>=3)return false;
     const auto& file=*u.type->script();
@@ -9882,7 +10232,9 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
     // shot: readiness/release still require the script's SET 22 / SET 23.
     const auto solution=queryWeaponAim(u.id,target.id,slot);
     if(!solution)return true;
-    u.scriptAimTarget=target.id;
+    // A swept (auto-slot) target lives in the slot record, not in the
+    // order-driven scriptAimTarget, which tickCombat retires with its order.
+    if(!swept)u.scriptAimTarget=target.id;
     u.weaponAimPoints[size_t(slot)]=solution->target;
     u.weaponMuzzlePoints[size_t(slot)]=solution->source;
     auto& aim=u.weaponAim[size_t(slot)];const auto& weapon=u.type->weapons[size_t(slot)];
@@ -9895,10 +10247,13 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
     }
     const bool available=u.reloads[slot]==0 &&
         (u.type->maxMana<=0 || u.mana>=weapon.manaCost);
-    // Native readiness compares body heading with the mover's requested heading,
-    // not the weapon's offset SweetSpot or lead point.
+    // Native readiness (52fff0) compares body heading with the mover's requested
+    // heading, not the weapon's offset SweetSpot or lead point -- and only for
+    // the units 52fe30 posts a facing request for: a ground mover with a
+    // turninplacerate, or a HOVERATTACK flyer. Every other flyer, a ground unit
+    // that cannot pivot and a structure fire on COB readiness alone.
     const auto desired=retailDirection(target.x-u.x,target.z-u.z);
-    const bool aligned=u.type->isStructure() || !(u.type->canFly || u.type->turnInPlaceRate>0) ||
+    const bool aligned=!slotNeedsFacing(*u.type) ||
         std::abs(bamDiff(desired,u.heading))<=std::max(512,int(uint16_t(weapon.aimTol)));
     if(dropped ? available : aim.ready(solution->heading,solution->pitch,uint16_t(weapon.aimTol),available,aligned)) {
         const uint16_t nominal=uint16_t(int32_t(weapon.reload*kTick+0.5f));
@@ -9919,6 +10274,8 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
 }
 
 void World::startWorkAnimation(Unit& u,Fixed targetX,Fixed targetZ) {
+    // Repair/Reclaim's work stage (next to 4d4ab0) owns the weapons.
+    setSlotsManual(u,kSlotsWork);
     if(u.workScriptWorking)return;
     u.workScriptWorking=true;
     if(auto script=unitScript(u.id);script) {
@@ -11926,6 +12283,9 @@ void World::tick(float dt) {
                                              arrived.buildZ.toFloat(),Approach::None,&mobileBlocked);
                 if (siteId) {
                     auto& builder=*unit(builderId);
+                    // 405914/41f3e8: a successful placement takes the weapons
+                    // (519b70(3) drops every slot target) until the job ends.
+                    setSlotsManual(builder,kSlotsWork);
                     if (builder.type->canFly) {
                         // The native unit update runs its independent mover
                         // after FlyingBuild allocates the site. Continue the
@@ -12061,6 +12421,9 @@ void World::tick(float dt) {
             const auto& leg=u.orders[currentLeg(u.orders)];
             u.repairId=leg.patrolRepair ? leg.repairTarget : u.orders.front().repairTarget;
         }
+
+        // 52ae90's auto slots: fire at swept targets whatever the order.
+        tickSlotWeapons(u);
 
         bool groundMovementHandled=false;
         const size_t currentOrder=u.orders.empty()?0:currentLeg(u.orders);
@@ -12201,6 +12564,15 @@ void World::tick(float dt) {
     // Retail runs player bookkeeping after unit updates and before wind.
     // Restored priority caches use the current World economy and unit lifecycle.
     // Other availability queries continue to read live World state.
+    if (!retailAllocation_) {
+        // The fire-at-will sweep's per-player slot ranges: each seat's units
+        // in id order (units_ is id-ordered).
+        sweepIds_.resize(players_.size());
+        for (auto& ids:sweepIds_) ids.clear();
+        for (const auto& member:units_)
+            if (member.alive() && member.player>=0 && size_t(member.player)<sweepIds_.size())
+                sweepIds_[size_t(member.player)].push_back(member.id);
+    }
     for (auto& player:players_) {
         if (player.retailResources) {
             auto& r=*player.retailResources;
@@ -12295,6 +12667,9 @@ void World::tick(float dt) {
                         });
                 });
         }
+        // 40fe00 -> 40f330: the fire-at-will sweep, after the AI scheduler and
+        // before the bookkeeping clock. Every seat runs it; neutral does not.
+        if (const int seat=int(&player-players_.data()); !isNeutralPlayer(seat)) tickFireSweep(seat);
         if (player.buildCache && !player.retailResources) player.buildCache->resources.advance();
         if (retailTickPlayerCache(player.cacheClock,tickCounter_,[&](int n){return pathRand(n);}) && player.buildCache) {
             auto& cache=*player.buildCache;
@@ -12667,6 +13042,9 @@ void World::hashTrace() const {
         hUnitMisc = fnv(hUnitMisc, uint32_t(u.baseSpeed.v));
         if (u.animationTurnBam) hUnitMisc = fnv(hUnitMisc,uint16_t(u.animationTurnBam));
         hUnitMisc=fnv(hUnitMisc,uint32_t(u.scriptAimTarget));
+        for (int32_t t : u.slotTarget) hUnitMisc=fnv(hUnitMisc,uint32_t(t));
+        hUnitMisc=fnv(hUnitMisc,uint32_t(u.slotAuto)|uint32_t(u.slotManual)<<8);
+        hUnitMisc=fnv(hUnitMisc,uint32_t(u.faceRequest));
         for (int32_t rl : u.reloads) hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(rl)));
         for(const auto& aim:u.weaponAim) {
             hUnitMisc=fnv(hUnitMisc,aim.heading);hUnitMisc=fnv(hUnitMisc,aim.pitch);hUnitMisc=fnv(hUnitMisc,aim.flags);
@@ -13034,6 +13412,9 @@ uint64_t World::stateHash() const {
         for (int32_t rl : u.reloads) mix(uint64_t(uint32_t(rl)));   // ticks
         for(const auto& aim:u.weaponAim) {mix(aim.heading);mix(aim.pitch);mix(aim.flags);}
         mix(uint32_t(u.scriptAimTarget));
+        for (int32_t t : u.slotTarget) mix(uint32_t(t));
+        mix(uint32_t(u.slotAuto)|uint32_t(u.slotManual)<<8);
+        mix(uint32_t(u.faceRequest));
         mix(uint64_t(uint32_t(u.selfDestructT)));   // ticks; drives a deterministic death
         // Stance / cloak-intent / active gate auto-acquire, cloaking and firing, so a
         // divergence in them must fault directly rather than diffusing into positions.
@@ -13182,6 +13563,7 @@ uint64_t World::stateHash() const {
         { uint64_t b; std::memcpy(&b, &t.mana, 8); mix(b); }   // double: fold all 8 bytes
         if (t.scenarioResourceLimit != 0) { mix(0x4352544c494d4954ull); mixf(t.scenarioResourceLimit); }
         mix(t.cacheClock.enabled); mix(t.cacheClock.lastRefresh);
+        mix(uint32_t(t.sweepCursor));
         if (t.retailResources) {
             mix(0x5245534fu);const auto& r=*t.retailResources;
             mixf(r.stored);mixf(r.allocation);mixf(r.requested);mixf(r.produced);

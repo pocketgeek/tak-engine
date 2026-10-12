@@ -147,6 +147,11 @@ struct Weapon {
     bool  mindControl = false;
     int32_t minRange = 0;    // minrange (readInt): can't hit targets closer than this
     bool noAir = false;
+    // WeaponType+0xc8 flags the fire-at-will sweep (icd 40f330/412620) reads:
+    // toairweapon 0x4000 (only flyers are candidates) and commandfire 0x20000
+    // (never swept for a human owner; fires only on an explicit order).
+    bool toAir = false;
+    bool commandFire = false;
     bool hoverAttack = false;
     int32_t hoverAttackDistance = 0, hoverAttackAltitude = 0;
     // dontleadtargets: aim at the target's CURRENT position instead of extrapolating
@@ -435,6 +440,15 @@ struct UnitType {
     // the Crossbowman, Musketeer and Cannoneer): a rank of them sprays a crowd
     // instead of every last one focusing the same closest body.
     bool fireAtWillRandom = false;
+    // kamikaze (UnitDef+0x260 bit 28): the sweep's selector skips the in-range
+    // test for these (icd 412789).
+    bool kamikaze = false;
+    // notargetcategory (UnitDef+0x9a) and w{pri,sec,spe}_badtargetcategory
+    // (+0x8e/+0x92/+0x96), lowercased tokens matched against a target's
+    // `categories`. The sweep's selector never picks a noTarget candidate and
+    // takes a badTarget one only when nothing else qualifies (icd 412620).
+    std::vector<std::string> noTargetCats;
+    std::array<std::vector<std::string>,3> badTargetCats;
     // attractsgods. A real retail key, but NOT a summoning input: the flag lands in
     // bit 0 of the def's +0x268 and the binary tests it in exactly one place
     // (0x4ecfd3), inside drawing code, to pick which marker a unit gets. Gods arrive
@@ -1035,6 +1049,20 @@ struct alignas(64) Unit {
     std::array<tak::RetailAimState,3> weaponAim{{{0,0,0},{0,0,1},{0,0,2}}};
     std::array<std::array<int32_t,3>,3> weaponMuzzlePoints{}; // display-only captured QueryWeapon geometry
     std::array<std::array<int32_t,3>,3> weaponAimPoints{}; // display-only captured aim geometry
+    // Retail's per-slot weapon record layer under the missions (icd 52aae0,
+    // 519b10/519b70, 40f330). slotTarget is record +0x10 (0 = none): the target
+    // the fire-at-will sweep or the hit response handed an AUTO slot. slotAuto
+    // is record +0x1a bit 4 per slot (set at spawn); a mission that owns the
+    // weapons (attack, the work stage of build/repair/reclaim, a status) makes
+    // the slots manual and slotManual records why, so the slots return to auto
+    // when that mission retires (the 4d6da0 destructor rule). faceRequest is
+    // the mover's facing request (+0x34 with +0x36 bit 0x10, -1 = none) that an
+    // auto slot posts when it starts aiming; only a stopped mover honours it.
+    // All hashed.
+    std::array<int32_t,3> slotTarget{};
+    uint8_t slotAuto = 7;
+    uint8_t slotManual = 0;
+    int32_t faceRequest = -1;
     // An upgrade consumes its old building when the new site is admitted. Keep
     // its presentation independent of retired/reused unit slots.
     struct LodestoneReplacement {
@@ -1504,6 +1532,10 @@ struct Player {
     // enter stateHash (see docs/multiplayer-design.md).
     int   team = 0;
     uint8_t manaShareMask = 0xff; // outgoing overflow recipients; alliance still required
+    // Fire-at-will sweep cursor (controller +0x1a1, icd 40f330): the unit slot
+    // the last budget-limited pass stopped on. INT32_MAX is the constructor's
+    // "last slot of the pool" (40fed0). Hashed.
+    int32_t sweepCursor = INT32_MAX;
     bool  defeated = false;   // no living units; set by the sim's win check
     int32_t defeatedAt = -1;  // TICK when `defeated` first went true (-1 = still in)
     // Cosmetic emotes: sequenced in lockstep, excluded from stateHash.
@@ -2287,7 +2319,7 @@ private:
                         int ignoreId=0,bool ignoreMobile=false) const;
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
     void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
-    bool tickScriptWeapon(Unit& u,Unit& target,int slot);
+    bool tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept=false);
     void clearScriptWeaponTarget(Unit& u,bool fromCommand=false);
     // Convert a unit to another player (contact charm + mind-control weapons).
     void captureUnit(Unit& t, int newPlayer);
@@ -2638,6 +2670,36 @@ private:
     bool canCaptureTarget(int player, const Unit& target) const;
     bool canAttackTarget(const Unit& from, const Unit& target) const;
     int findTarget(Unit& u, bool missionPoll, bool groundResponse = false);
+    // --- retail weapon-slot layer (fire-at-will sweep, icd 40f330) ----------
+    void setSlotsAuto(Unit& u);                    // 519b10(3)
+    void setSlotsManual(Unit& u,uint8_t cause);    // 519b70(3)
+    void dropSlotTarget(Unit& u,int slot);         // 51a7f0
+    void setSlotTarget(Unit& u,int slot,int id);   // 51a700
+    void syncSlotMode(Unit& u);
+    bool slotInRange(const Unit& u,const Unit& t,int slot) const;
+    bool slotInsideMinRange(const Unit& u,const Unit& t,int slot) const;
+    bool slotBadTarget(const Unit& u,int slot,const Unit& t) const;
+    bool slotClearShot(const Unit& u,const Unit& t,int slot) const;
+    bool sweepKeepsTarget(const Unit& u,int slot,const Unit& t) const;
+    void tickFireSweep(int player);
+    void tickSlotWeapons(Unit& u);
+    void slotHitResponse(Unit& victim,const Unit& attacker);
+    std::vector<std::vector<int>> sweepIds_;   // per-player id-ordered scratch; not state
+public:
+    // Why a unit's slots are manual (Unit::slotManual).
+    enum : uint8_t { kSlotsAuto=0, kSlotsAttack=1, kSlotsWork=2, kSlotsStatus=3 };
+    // Port of 412620: one weapon slot's target, by retail's 50-draw sampled
+    // score. sweep=true is the fire-at-will radius (the weapon's range).
+    int retailSelectTarget(Unit& u,int slot,bool sweep);
+    // Whether `player` can see `u` for auto-targeting (retail's per-player
+    // enemy list holds only hostiles that pass 4f7210, its LOS test). The sim
+    // has no deterministic per-player vision yet, so this is a hook that
+    // answers true; the vision step replaces it.
+    bool playerSees(int player,const Unit& u) const { (void)player;(void)u;return true; }
+    // The pool size N the sweep budget N/30+1 is computed from when the
+    // restored retail entity pools are not in use.
+    static constexpr int kRetailSweepPool=250;
+private:
     void rebuildOccupancy();
     bool canFollowTraffic(const Unit& self, const Unit& other) const;
     // Is the footprint free of any other body? Terrain bounds are checked by

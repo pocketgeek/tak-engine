@@ -19,7 +19,13 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 251;      // 251: blocked build sites. MobileBuild placement at the site follows retail
+constexpr uint32_t kNetVersion = 252;      // 252: retail fire-at-will sweep (icd 40f330/412620). Weapon slots carry an auto/manual mode
+                                           //      and a swept target (hashed Unit::slotTarget/slotAuto/slotManual/faceRequest,
+                                           //      Player::sweepCursor); the per-player sweep fills auto slots by retail's sampled score,
+                                           //      so builders en route and units on a plain move fire without stopping; placement and the
+                                           //      work stage make the slots manual; a hit hands the attacker to auto slots (409a50 b);
+                                           //      only hover-attack flyers need body alignment to fire
+                                           // 251: blocked build sites. MobileBuild placement at the site follows retail
                                            //      405824..405911 (FlyingBuild 41f301..41f3e5 alike): refused only by mobile units it
                                            //      retries every 10 ticks where the builder stands or hovers and drops after the 31st failure; refused by anything else it drops
                                            //      at once (hashed Order::placementFailures/placementRetryTick). Legion: an exact goal

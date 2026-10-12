@@ -322,6 +322,107 @@ void realLodestones(const char* install) {
     }
 }
 }
+
+// Retail's fire-at-will sweep (icd 40f330): auto weapon slots fire whatever
+// the unit's order, without stopping or turning it.
+sim::UnitType gunner(bool builder,int32_t aimTol) {
+    sim::UnitType t=worker();t.id=builder?"gunbuilder":"gunner";t.isBuilder=builder;
+    t.maxVel=sim::Fixed::fromInt(2);t.turnRate=600;t.turnInPlaceRate=600;
+    sim::Weapon w;w.name="bolt";w.range=300;w.reload=0.3f;w.damage=10;w.projVel=900;w.aimTol=aimTol;
+    t.weapon=w;t.weapons={w};return t;
+}
+sim::UnitType dummy() {
+    sim::UnitType t;t.id="dummy";t.maxHp=5000;t.footX=t.footZ=2;t.maxVel=sim::Fixed::fromInt(1);
+    t.canMove=true;t.upright=true;t.turnRate=t.turnInPlaceRate=0;return t;
+}
+sim::UnitType hut() {
+    sim::UnitType t;t.id="hut";t.maxHp=100;t.maxVel={};t.footX=t.footZ=2;t.buildTime=100;t.buildCost=10;return t;
+}
+void fireSweep() {
+    const auto mode=sim::PathfindingMode::Retail;
+    {   // 1 + 3: a builder walking to its site fires at an enemy it passes,
+        // keeps its build order and keeps moving; placement takes the slots
+        // (targets cleared, no fire while building) and completion gives
+        // them back.
+        const auto b=gunner(true,33000);const auto e=dummy();const auto h=hut();
+        sim::World w;setup(w,mode);w.setPlayerCount(2);w.player(0).mana=10000;
+        const int id=w.spawn(&b,300,1000,0,0),foe=w.spawn(&e,700,1110,0,1);
+        w.queueBuild(id,&h,820,1000,false);
+        bool hitEnRoute=false,orderKept=true,advanced=false,firedBuilding=false,clearedAtPlacement=false;
+        float hitX=0;int siteSeen=0;
+        for(int tick=0;tick<900;++tick) {
+            const sim::Fixed before=w.unit(foe)->hp;
+            w.tick(1.f/30);
+            const auto& u=*w.unit(id);
+            if(!siteSeen && !u.buildSiteId) {
+                if(u.orders.empty() || u.orders.front().buildType!=&h)orderKept=false;
+                if(w.unit(foe)->hp<before && !hitEnRoute) {hitEnRoute=true;hitX=u.x.toFloat();}
+                if(hitEnRoute && u.x.toFloat()>hitX+20)advanced=true;
+            }
+            if(u.buildSiteId && !siteSeen) {
+                siteSeen=u.buildSiteId;
+                clearedAtPlacement=u.slotTarget==std::array<int32_t,3>{} && u.slotAuto==0;
+            }
+            if(u.buildSiteId && u.justFired)firedBuilding=true;
+            if(siteSeen && !u.buildSiteId)break;
+        }
+        check(hitEnRoute,"sweep: a builder on its way to a site damages an enemy it passes");
+        check(orderKept,"sweep: firing en route leaves the build order at the front");
+        check(advanced,"sweep: the builder keeps walking after it opens fire");
+        check(siteSeen && clearedAtPlacement,"sweep: placement clears every slot target and makes the slots manual");
+        check(!firedBuilding,"sweep: no auto fire while the builder works its site");
+        // The idle builder then acquires the enemy itself (an attack order,
+        // which owns the slots again); what must be gone is the work mode.
+        ticks(w,2);
+        check(w.unit(id)->slotManual!=sim::World::kSlotsWork,"sweep: the job's manual mode retires once the job ends");
+    }
+    {   // 2: a unit on a plain move fires at an enemy ahead while still moving.
+        const auto g=gunner(false,1024);const auto e=dummy();
+        sim::World w;setup(w,mode);w.setPlayerCount(2);
+        const int id=w.spawn(&g,300,1000,0,0);w.spawn(&e,760,1008,0,1);
+        w.order(id,640,1000,false);
+        bool firedMoving=false;
+        for(int tick=0;tick<300 && !firedMoving;++tick) {
+            w.tick(1.f/30);
+            const auto& u=*w.unit(id);
+            firedMoving=u.justFired && !u.orders.empty() && u.speed>sim::Fixed();
+        }
+        check(firedMoving,"sweep: a unit on a plain move fires at an enemy ahead without stopping");
+    }
+    {   // A ready target behind a turn-in-place unit is not fired at while it moves.
+        const auto g=gunner(false,1024);const auto e=dummy();
+        sim::World w;setup(w,mode);w.setPlayerCount(2);
+        const int id=w.spawn(&g,400,1000,0,0);w.spawn(&e,250,1000,0,1);
+        w.order(id,1100,1000,false);
+        bool firedBehind=false,swept=false;
+        for(int tick=0;tick<240;++tick) {
+            w.tick(1.f/30);
+            const auto& u=*w.unit(id);
+            if(u.orders.empty())break;
+            swept=swept || u.slotTarget[0]!=0;
+            firedBehind=firedBehind || u.justFired;
+        }
+        check(swept,"sweep: the enemy behind is swept into the slot");
+        check(!firedBehind,"sweep: a moving turn-in-place unit does not fire at a target behind it");
+    }
+    {   // An attack order owns the slots: the sweep never assigns them, and
+        // auto returns once the order is gone.
+        const auto g=gunner(false,1024);const auto e=dummy();
+        sim::World w;setup(w,mode);w.setPlayerCount(2);
+        const int id=w.spawn(&g,400,1000,0,0),a=w.spawn(&e,600,1000,0,1);w.spawn(&e,400,1200,0,1);
+        w.attack(id,a,false);
+        bool manual=true;
+        for(int tick=0;tick<120;++tick) {
+            w.tick(1.f/30);
+            const auto& u=*w.unit(id);
+            manual=manual && u.slotAuto==0 && u.slotTarget==std::array<int32_t,3>{} &&
+                !u.orders.empty() && u.orders.front().targetId==a;
+        }
+        check(manual,"sweep: an explicit attack keeps its slots manual and untouched by the sweep");
+        w.stop(id);w.unit(id)->fireState=0;ticks(w,2);
+        check(w.unit(id)->slotAuto==7,"sweep: the slots return to auto after the attack order");
+    }
+}
 int main(int argc,char** argv) {
     for(auto mode:{sim::PathfindingMode::Retail})
         for(bool air:{false,true}) {areaBuild(mode,air);patrolRepair(mode,air);}
@@ -330,6 +431,7 @@ int main(int argc,char** argv) {
     check(patrolRepair(sim::PathfindingMode::Retail,false,true)==patrolRepair(sim::PathfindingMode::Retail,false,false),
           "patrol repair serial/threaded hashes agree");
     areaPolicy();repairPolicy();repairEligibility();movingRepair();
+    fireSweep();
     check(areaNearestFirst(true)==areaNearestFirst(false),"nearest-first area serial/threaded hashes agree");
     areaNearestEdgeCases();
     net::Command c;c.kind=net::Cmd::BuildManaArea;c.unitId=1;c.x=100;c.z=200;c.x2=800;c.z2=900;
