@@ -6,13 +6,13 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.27-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.28-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
 [Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [Build from source](docs/development.md)
 
-<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.7.27"></a>
+<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.7.28"></a>
 
 <table>
   <tr>
@@ -40,7 +40,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.26 and 0.7.27 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
+<sub>Captured from the 0.7.26, 0.7.27 and 0.7.28 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
 
 </div>
 
@@ -52,7 +52,43 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.27
+## New in 0.7.28
+
+- **Units fire as in the original.** Each player runs the original game's
+  round-robin target sweep: units shoot while they move, armed builders
+  defend themselves on the way to a site, and idle or patrolling units hit
+  back at whoever hits them, chasing no further than their leash. Targeting
+  uses a per-player vision record kept identically on every peer, and computer
+  players switch weapons by the original rules. See the
+  [user guide](docs/user-guide.md#your-army).
+- **Original game speed.** **+** / **−** step from −9 (0.1×) through NORMAL to
+  +10 (2×), with the original's "GAME SPEED +5" banner; the stats panel and
+  Benchmark show the level. Host-only, with Allow speed change, as before.
+- **Blocked building sites** follow the original: a site blocked only by
+  units is retried for about ten seconds, anything else drops the order at
+  once, and a Legion builder no longer waits for ever.
+- **Better AI defence.** The Defensive AI answers attackers it cannot see and
+  keeps its builders out of fights, and the AI Monarch fights back.
+- **Legion pathfinding plan W0–W9** (protocols 239–248): one order per click,
+  attack rings, flyers that stay with the army, crossing groups that route
+  behind each other, gaps taken several abreast and head-on columns that keep
+  right, with the remaining limits documented.
+- **Engine-wide performance**: exact (same-hash) simulation optimizations, a
+  steadier presentation clock, ping-scaled flow control and exact server
+  pacing. Also: smoothed build-menu portraits with Smooth GUI Art, Max FPS
+  greyed out while VSync is on, VSync pacing that fixes macOS stutter, a
+  Windows **Ignore Windows Display Scaling** option, whole-file override packs
+  and nearest-first lodestone areas. See the
+  [release notes](docs/release-0.7.28-notes.md).
+
+Version **0.7.28 uses protocol 253 and replay format 12**. Update clients and
+servers together; 0.7.27 clients cannot join. Replays require the exact
+simulation protocol; older recordings need the engine that recorded them. No new
+dynamic runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.7.28-notes.md) and
+[validation report](docs/release-0.7.28-validation.md).
+
+### Previously in 0.7.27
 
 - **Faster large battles.** Legion games with 10,000 or more units spend much
   less time on bookkeeping: units held in place rest between updates, and
@@ -368,7 +404,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.27** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.28** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -636,7 +672,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.7.27 uses generator v8;
+the same named map when the game starts. Version 0.7.28 uses generator v8;
 older seed recipes are unsupported, while saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -644,7 +680,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.7.27 uses protocol **238**: update clients and servers together.
+Version 0.7.28 uses protocol **253**: update clients and servers together.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -879,8 +915,8 @@ per second is about **4 KB/s / 32 kbps**, and an order to 2,000 units creates ro
 a **70 KB burst**. These are protocol calculations, not measured typical usage;
 TCP/IP overhead, acknowledgments, checksums, chat, and retransmissions add traffic.
 
-At 4× speed, the same simulated activity generally produces about four times the
-traffic per real second. Server upload scales with the number of connected humans
+At 2× speed (the fastest level), the same simulated activity generally produces
+about twice the traffic per real second. Server upload scales with the number of connected humans
 and spectators, because each receives a copy; AIs do not require separate network
 connections. Missing-map downloads and late-spectator/reconnect catch-up are larger
 transfers. During ordinary gameplay, low latency and low packet loss matter more
@@ -917,11 +953,11 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.27 uses protocol 238**, including authoritative pathfinding
+Version **0.7.28 uses protocol 253**, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
 Update clients and servers together; earlier clients cannot join these matches.
-Replay format remains **11**, and playback requires the current simulation
-protocol. Older recordings need the engine that recorded them.
+Replay format is **12** (checkpoints also carry a position digest), and
+playback requires the current simulation protocol. Older recordings need the engine that recorded them.
 The connection checks gameplay definitions, scripts, and models. Selected map
 contents are verified separately and transferred automatically when needed.
 
@@ -939,15 +975,20 @@ your login name.
 Use **Options** to adjust audio, shadows, health bars, UI scale, cursor size,
 and camera behavior. **F4 Scorecard Scale** independently adjusts the player
 scorecard from 75–200% and is remembered between sessions. Fullscreen, VSync, Shadows, Stats Panel, Hardware Cursor,
-and Smooth Motion default to **on**; saved choices still apply.
+and Smooth Motion default to **on**; saved choices still apply. **Max FPS** caps
+the frame rate only while VSync is off, and is greyed out while VSync is on.
 The **Graphics** section holds **Renderer**, **Bilinear Filtering**, Shadows,
 **Smooth GUI Art**, **Smooth Movies**, Trees Sway in Wind, Tactical Dots,
 Hardware Cursor and Smooth Motion. Bilinear Filtering, Smooth GUI Art and Smooth Movies are **off** by
 default and remembered. Bilinear Filtering is
 retail's Visual Options filter: it smooths unit model textures and unit shadows,
 and nothing else; terrain and scenery stay point-sampled at every zoom, as in
-retail. Smooth GUI Art applies immediately to the current interface, fonts and
-cursors without a restart. **Trees Sway in Wind** is selectable,
+retail. Smooth GUI Art applies immediately to the current interface, fonts,
+cursors and build-menu portraits without a restart. On Windows, **Ignore Windows
+Display Scaling** (default **on**, applied after a restart) draws at the real
+screen resolution instead of letting Windows stretch the game blurrily; the first
+run raises UI Scale and Cursor Size to the Windows scale so the interface keeps
+its size. **Trees Sway in Wind** is selectable,
 defaults to **on**, and remembers your choice. **Tactical Dots** (default
 **off**, not in retail) draws every unit as a minimap-style player-coloured dot
 when zoomed far out, with the same fog rules as the minimap; selection works on
@@ -1011,7 +1052,7 @@ counters (including Linux Xe utilization) display N/A. On multi-GPU systems,
 NVIDIA uses its first adapter; the Windows fallback reports the busiest adapter.
 
 **Settings → Benchmark** provides a repeatable eight-AI load test and reports
-frame rate, simulation speed, memory, and other available performance metrics.
+frame rate, simulation speed (as a game-speed level), memory, and other available performance metrics.
 Client and server CPU results each use 0–100% of total machine CPU capacity.
 GPU results use the same 0–100% whole-device measurement as the stats panel;
 unavailable measurements display N/A.
@@ -1102,7 +1143,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.7.27 uses protocol **238**; update server and clients together.
+Version 0.7.28 uses protocol **253**; update server and clients together.
 
 
 ## License

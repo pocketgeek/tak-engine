@@ -2,8 +2,8 @@
 
 [Back to the README](../README.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.7.27** (network protocol **238**, replay format
-**11**). It is written for three kinds of reader:
+This guide covers **TAK Engine 0.7.28** (network protocol **253**, replay format
+**12**). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
   the game;
@@ -241,7 +241,7 @@ creator can change them.
 | **Fog of war** | **Not Explored**: the map starts hidden. **Explored**: the map starts revealed but enemies are hidden outside your sight. **Full Vision**: no fog. Terrain you have seen stays visible after your units leave. |
 | **Start locations** | **Fixed** uses the map's start positions in order. **Random** shuffles them. |
 | **Unit cap** | The most units each player may have alive: 250, 500, 1,000 or 2,000 (the default). Production pauses at the cap. |
-| **Allow speed change** | Lets the host change game speed during the match. |
+| **Allow speed change** | Lets the host change game speed during the match, from −9 (0.1×) to +10 (2×). |
 | **Pathfinding** | **Retail** (the default) or **Legion**. See [Pathfinding](#pathfinding-retail-and-legion). |
 | **Overrides** | Off, Cosmetic or Full. See [Overrides](#overrides). |
 | **Spectate (Watch AIs)** | Single-player only: fill every slot with AIs and watch. |
@@ -252,11 +252,14 @@ Your choices are remembered for next time, except passwords and Spectate.
 
 | Difficulty | What to expect |
 | --- | --- |
-| **Defensive** | Builds at home. Sends its army to meet attackers near its base, then pulls it back. Never raids. |
+| **Defensive** | Builds at home. Sends its army to meet attackers near its base, then pulls it back, including attackers it cannot see that shoot its units from out of sight. Does not build where enemy troops are about. Never raids. |
 | **Easy** | Builds slowly. First attack after about four minutes, then small waves of at most eight units, at least two minutes apart. |
 | **Normal** | Sends small raiding parties to probe and scout while it builds up a main army sized to its income. |
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
 | **Absurd** | Plays like Hard, with **double mana income**. |
+
+At every difficulty, the AI's Monarch fights back when it is attacked, or when
+an armed enemy comes within its reach, instead of carrying on with a build.
 
 The AI runs on the game server, never in your client. In single-player, the game
 starts a private server on your own computer for you.
@@ -361,8 +364,13 @@ Select a builder and its build menu appears along the bottom of the screen.
 - **Assisting**: right-click an unfinished building with another builder to help
   build it.
 - **Clearing the site**: a builder that can reclaim automatically clears trees
-  and rocks from a valid building site before it starts. Units and solid
-  obstacles still block placement.
+  and rocks from a valid building site before it starts.
+- **Blocked sites**: when the builder arrives and units stand on the site, it
+  waits where it is (a flying builder hovers) and tries again three times a
+  second; if the site is still blocked after about ten seconds, it gives up and
+  moves on to its next order. A site blocked by anything else, such as a
+  building, a rock it cannot reclaim, unsuitable ground or the unit cap, is
+  given up at once.
 
 **Training units at a building.** Select a production building and click its
 build icons:
@@ -414,8 +422,41 @@ friendly units and buildings near their route, then carry on patrolling.
 New units take their type's default stance. Direct attack orders always work,
 whatever the stance.
 
+**Firing on the move.** As in the original game, units shoot at enemies in range
+while they carry out a move or a patrol, without stopping or turning to aim:
+only hovering attack flyers, and the few ground units that must turn in place
+to aim, face their target first. A unit standing with no orders turns towards
+what it shoots. Units pick targets among the enemies their player can see.
+
+![Aramon Archers and two Mage Builders walking east along a dotted move line, with Taros Zombies attacking the back of the column and hits flashing among them; Taros Skeleton Archers stand further off](img/guide/fire-on-the-move.jpg)
+
+*Archers and Mage Builders on a plain move order (Shift is held, so the dotted
+move line shows) keep walking while they shoot the Zombies that have caught the
+back of the column. (A development scene.)*
+
+**Builders defend themselves.** An armed builder fires at enemies it passes on
+the way to a building site. While it is placing, building, repairing,
+reclaiming or resurrecting, its weapons stay quiet, as in the original; they
+start again when the job is done. An attack order also takes over the weapons
+for as long as it lasts.
+
+**Hitting back.** An idle or patrolling unit that is hit attacks its attacker
+if it can reach it:
+
+| Stance | When hit while idle or on patrol |
+| --- | --- |
+| **Offensive** | Chases the attacker, but no further than its leash from where it was hit, then walks back and carries on with what it was doing. |
+| **Defensive** | Fires back from where it stands, if the attacker is in range. On patrol it chases within its leash, like Offensive, and then returns to the patrol. |
+| **Passive** | Does not respond. |
+
+**Units that are never auto-targeted.** As in the original, your units do not
+pick a few special objects as targets on their own, such as Creon Gates. Attack
+them with an explicit attack order.
+
 **Weapons.** Units with several weapons may switch between them. Press **W** to
-cycle the active weapon.
+cycle the active weapon. Computer players switch their units' weapons
+themselves, by the original game's rules: for example a splash weapon when
+enemies are bunched together and their own units are not.
 
 **Veterancy.** Units gain experience by destroying enemies and grow stronger as
 they rank up. Some units, such as Monarchs, never gain ranks.
@@ -729,7 +770,7 @@ group automatically.
 | **F4** | Player names, kills, losses and score. |
 | **F9** | YouTube streaming setup. |
 | **Pause** | Pause or resume. This pauses the game for every player. |
-| **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×), 0.1× per level. Only the host can change it, and only if **Allow speed change** was on. |
+| **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×), 0.1× per level. A banner shows the new level, for example **GAME SPEED NORMAL** or **GAME SPEED +5**. Only the host can change it, and only if **Allow speed change** was on. |
 | **Enter** | Open chat; **Enter** sends, **Esc** cancels. |
 | **Esc** | Close a dialog, cancel placement or an armed order, clear the selection, then open the game menu. |
 
@@ -842,6 +883,9 @@ armies:
   so it is free for the next one at once. Units queued behind their own army end
   their orders where they stand. (A unit sealed in where nothing at all can be
   reached still waits up to five minutes for a way to open.)
+- **Builders do not wait for ever.** A builder held in front of another
+  player's unit that does not move stops as close as it can get, then builds
+  if the site is within reach, or gives up the order and moves on.
 - **Crossing groups take the longer route.** When two groups' ways cross, the
   later one does not stand and wait for the other to pass: it plans round,
   behind the other stream's tail, even if that is a long way. Only when no way
@@ -895,6 +939,14 @@ in a formation or Ctrl+number group with ground units keep station over them.
 - When a group goes round a parked crowd, it can still pass by one side in a
   narrow file.
 - Idle units of **other players** do not step aside for you.
+- Units in a large group swap places with each other more often than in Retail
+  at corners, in long narrow passages and after gaps they took several abreast.
+- Units attacking next to a wall, or queued at a blocked doorway, brush against
+  the wall about twice as often as in Retail.
+- From some starting positions, a single unit queued at a blocked doorway, or
+  one crossing another group, never finishes its order.
+- A flyer that lifts off to let an army pass can detour further than in Retail
+  (about five cells instead of two).
 - Two separate clicks of one kind given in the same moment share one set of flyer stations.
 - With thousands of units, Legion uses more processor time than Retail.
 
@@ -933,17 +985,17 @@ World sounds are full volume on screen and fade with distance off screen.
 
 ### Display
 
+![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, then Renderer set to Auto, the filtering, shadow, art and tree settings, Tactical Dots off, Tactical Dots Zoom 20% greyed out, and Hardware Cursor on](img/guide/options-graphics.jpg)
+
+*Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on, and Tactical Dots Zoom because Tactical Dots is off. The picture was taken in a window, so Fullscreen shows Off. Smooth Motion is just below the bottom edge.*
+
 | Option | Default | What it does |
 | --- | --- | --- |
 | **Fullscreen** | On | Borderless fullscreen. |
-| **VSync** | On | Match the frame rate to the display. |
-| **Max FPS** | 60 | Frame-rate cap when VSync is off (30–240). |
+| **VSync** | On | Match the frame rate to the display. While it is on, the game also waits for each display refresh itself if the graphics driver does not. |
+| **Max FPS** | 60 | Frame-rate cap when VSync is off (30–240). Greyed out while VSync is on, because the display then sets the frame rate. |
 
 ### Graphics
-
-![The Options screen scrolled to the Graphics settings: Renderer set to Auto, then the filtering, shadow, art, tree, Tactical Dots (off), Tactical Dots Zoom (20%, greyed out because Tactical Dots is off), cursor and motion settings, all at their defaults](img/guide/options-graphics.jpg)
-
-*Options, Graphics section, at the default settings. Tactical Dots Zoom is greyed out because Tactical Dots is off. The picture was taken in a window, so Fullscreen above shows Off.*
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -951,7 +1003,7 @@ World sounds are full volume on screen and fade with distance off screen.
 | **Ignore Windows Display Scaling** | On | Windows only. Stops Windows from enlarging the game window to match your display scaling (for example 150%), which made everything blurry. The game draws at the real screen resolution instead. Takes effect after a restart. The first time it runs, UI Scale and Cursor Size are raised to your Windows scale so the interface stays the same size, now sharp; adjust them afterwards if you like. |
 | **Bilinear Filtering** | Off | The original game's option. Smooths unit textures and unit shadows. Terrain, scenery and the interface stay sharp, as in the original. |
 | **Shadows** | On | Unit, scenery and projectile shadows. The biggest single graphics cost in a crowded battle. |
-| **Smooth GUI Art** | Off | Sharpens the low-resolution interface art, menus, fonts and cursors with an edge-aware upscale. No cost per frame; uses more video memory. |
+| **Smooth GUI Art** | Off | Sharpens the low-resolution interface art, menus, fonts, cursors and build-menu portraits with an edge-aware upscale. Applies at once. No cost per frame; uses more video memory. |
 | **Smooth Movies** | Off | Removes the blocky compression artefacts from the game's movies. |
 | **Trees Sway in Wind** | On | Animated trees and their shadows. |
 | **Tactical Dots** | Off | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. |
@@ -1104,7 +1156,7 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 ### Versions
 
 **Everyone must use the same version of TAK Engine**, client and server alike.
-Version 0.7.27 uses network protocol **238**. Older and newer versions cannot
+Version 0.7.28 uses network protocol **253**. Older and newer versions cannot
 play together, and the server turns away a mismatched client.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
@@ -1179,7 +1231,7 @@ recording. During playback:
 A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
-- **the same version of TAK Engine** that recorded it (0.7.27 plays protocol-238
+- **the same version of TAK Engine** that recorded it (0.7.28 plays protocol-253
   recordings);
 - the same game data and map.
 
@@ -1320,8 +1372,8 @@ Ulasem Arena for 60 seconds of game time. Choose an **intensity**:
 | Absurd | every 0.0625 s |
 | Extra Absurd | every 0.03125 s |
 
-The results screen shows, every ten seconds, frame rate, simulation speed,
-processor use, memory, GPU use and video memory, together with the display
+The results screen shows, every ten seconds, frame rate, simulation speed (as
+a game-speed level, like the stats panel), processor use, memory, GPU use and video memory, together with the display
 settings used. Unit limits still apply, so the highest intensities may not
 reach their requested unit counts. A slow machine can take longer than 60 real
 seconds.
