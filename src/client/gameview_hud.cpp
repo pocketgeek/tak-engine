@@ -1698,11 +1698,21 @@ namespace {
                     }
                 }
                 // A multi-selection: the other types' portraits run LEFT from this one,
-                // into the chrome up to the EndCap scroll (never under it).
+                // into the chrome up to the EndCap scroll. The centred group leaves
+                // only W/2 - ~290*vs there (86px at 1024 wide, none at 1366 / 150%),
+                // so a strip that would have to fold or cap short of the scroll takes
+                // the scroll too, out to the screen margin, rather than hide types.
                 if (u && selection_.size() > 1) {
-                    float left = 4 * vs;
-                    if (ei >= 0) { SDL_FRect er = guiBarRect(gui_.gadgets[ei]); left += er.x + er.w; }
-                    drawSelPortraits(pr, pr.x - left, 3 * vs, 1.5f * vs);
+                    const float gap = 3 * vs, margin = 4 * vs;
+                    float room = pr.x - margin;
+                    if (ei >= 0) {
+                        const SDL_FRect er = guiBarRect(gui_.gadgets[ei]);
+                        const int n = int(selTypeGroups().size());
+                        const auto L = tak::selportraits::layout(n, pr.w, pr.h, gap,
+                            pr.x - margin - (er.x + er.w), kSelPortraitMinScale);
+                        if (L.rows == 1 && L.shown == n) room -= er.x + er.w;
+                    }
+                    drawSelPortraits(pr, room, gap, 1.5f * vs);
                 }
             }
             if (int t1 = guiIdxLeft("UnitText"); u && t1 >= 0) {
