@@ -43,5 +43,11 @@ std::string disassemble(const File& f, int script);
 // Conservative control-flow reachability, indexed by code word. Unknown or
 // malformed instructions are marked unsafe along with EXPLODE itself.
 std::vector<uint8_t> explosionReachability(const File& f);
+// Display-only gait map, indexed by code word: 1 inside a script that plays a
+// movement cycle (walk*, def_walk, swim*, stumble*, row/slowrow/fastrow, drive,
+// wheel_*, SuperDynamicWheelSpinner), never a *Control poller, flight or idle
+// script. A CALL gives the callee its own thread slot, so a thread's pc names
+// the cycle it is playing. Empty when the script has no such cycle.
+std::vector<uint8_t> gaitCode(const File& f);
 
 } // namespace tak::cob

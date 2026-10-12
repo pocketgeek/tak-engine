@@ -133,6 +133,7 @@ struct UnitR {
     uint16_t movementTerrainFlags = 0; // native mover flags used by GET 28/34
     uint32_t animationOccupancy = 0;
     uint32_t animationMoveRate = 0;
+    float gaitRate = 1;                       // Legion display gait pace (gaitpace.h)
     uint32_t flightBeginCallbackSerial = 0;
     uint32_t flightLandingCallbackSerial = 0;
     void captureMoveRate(const tak::sim::Unit& u,int16_t turn) {

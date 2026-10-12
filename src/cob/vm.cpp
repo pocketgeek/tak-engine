@@ -2,6 +2,7 @@
 #include "cob/retailstate.h"
 #include "sim/retailrng.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <stdexcept>
@@ -41,6 +42,32 @@ struct Vm::Native {
     double ticks=0;
     std::vector<uint8_t> dirty;
     std::vector<size_t> changed;
+    // Gait pacing: the shared per-type map, the rate and its tick accumulator,
+    // the pieces (0-63) whose motion a gait thread started last, and the slot
+    // that is running now (-1 outside the thread loop, e.g. a query call).
+    std::span<const uint8_t> gait;
+    float gaitRate=1;
+    double gaitTicks=0;
+    uint64_t gaitPieces=0;
+    int slot=-1;
+    bool gaitThread(unsigned i) const {
+        const uint32_t pc=state.vm.threads[i].words[1];
+        return pc<gait.size() && gait[pc];
+    }
+    template<class Host> void tick(const File& file,int32_t elapsed,Host& host) {
+        if(gait.empty()) {state.tick(file,elapsed,host);return;}
+        bool full=true;
+        if(elapsed && gaitRate<1) {
+            gaitTicks+=gaitRate;
+            full=gaitTicks>=1;
+            if(full)gaitTicks-=1;
+        }
+        state.tickGated(file,elapsed,host,[&](unsigned i) {
+            slot=int(i);
+            return full || !gaitThread(i);
+        },full ? 0 : gaitPieces);
+        slot=-1;
+    }
     explicit Native(const File& file):state(file),dirty(file.pieces.size(),1) {
         changed.reserve(file.pieces.size());
         for(size_t i=0;i<file.pieces.size();++i) changed.push_back(i);
@@ -52,6 +79,12 @@ struct Vm::Native {
         Vm& vm;Native& native;
         uint32_t random(int32_t bound) { return tak::sim::retailRandom(native.seed,bound); }
         void pieceChanged(size_t i) { native.pieceChanged(i); }
+        void pieceCommanded(size_t i) {
+            if(native.gait.empty() || i>=64)return;
+            const uint64_t bit=uint64_t(1)<<i;
+            if(native.slot>=0 && native.gaitThread(unsigned(native.slot)))native.gaitPieces|=bit;
+            else native.gaitPieces&=~bit;
+        }
         uint32_t get(int id,const std::array<uint32_t,4>& args) {
             if (!vm.onGet) return 0;
             std::vector<int32_t> values;
@@ -91,6 +124,16 @@ void Vm::enableRetailAnimation() {
     native_=std::make_unique<Native>(*file_);
     exportNativePieces();
 }
+void Vm::setGaitCode(std::span<const uint8_t> code) {
+    if(native_) native_->gait=code;
+}
+void Vm::setGaitRate(float rate) {
+    if(!native_) return;
+    rate=std::clamp(rate,0.0f,1.0f);
+    if(rate>=1) native_->gaitTicks=0;
+    native_->gaitRate=rate;
+}
+float Vm::gaitRate() const { return native_ ? native_->gaitRate : 1.0f; }
 void Vm::reset() {
     threads_.clear();
     if(native_) {
@@ -182,7 +225,7 @@ bool Vm::start(const std::string& script, const std::vector<int32_t>& args) {
         for(size_t i=0;i<args.size();++i) values[i]=uint32_t(args[i]);
         const bool started=native_->state.startArguments(*file_,idx,values,unsigned(args.size()));
         Native::Host host{*this,*native_};
-        if(started) native_->state.tick(*file_,0,host);
+        if(started) native_->tick(*file_,0,host);
         exportNativePieces();
         return started;
     }
@@ -251,7 +294,7 @@ void Vm::tick(float dt) {
         if(native_->ticks+1e-7<1) return;
         Native::Host host{*this,*native_};
         while(native_->ticks+1e-7>=1) {
-            native_->state.tick(*file_,1,host);
+            native_->tick(*file_,1,host);
             native_->ticks-=1;
         }
         exportNativePieces();

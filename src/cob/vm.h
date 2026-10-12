@@ -98,6 +98,15 @@ public:
     // Advance time by dt seconds: run threads, progress animations.
     void tick(float dt);
 
+    // Display gait pacing (retail animation VMs only). `code` is the shared
+    // cob::gaitCode map. At a rate below 1, threads playing a gait script, and
+    // the pieces they last set in motion, step only on that fraction of the
+    // 30 Hz ticks, so the cycle plays slower; every other thread (aim, fire,
+    // the controller polling GET 29) keeps full time. Rate 1 is unchanged.
+    void setGaitCode(std::span<const uint8_t> code);
+    void setGaitRate(float rate);
+    float gaitRate() const;
+
     const std::vector<PieceState>& pieces() const { return pieces_; }
     std::span<const RetailPiece> retailPieces() const;
     const File& file() const { return *file_; }

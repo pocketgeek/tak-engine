@@ -971,6 +971,7 @@ private:
     struct CobCache {
         std::shared_ptr<const tak::cob::File> file;
         std::vector<uint8_t> explosionReachability;
+        std::vector<uint8_t> gaitCode;   // cob::gaitCode, shared by the type's VMs
         std::vector<std::string> pieceNames;
         std::vector<tak::sim::RetailModelPiece> modelPieces;
         std::vector<std::vector<std::array<int32_t,3>>> pieceVertices;
@@ -2937,6 +2938,17 @@ private:
     uint32_t fakeDesyncTick_ = [] {
         const char* e = tak::devEnv("TAK_FAKE_DESYNC");
         return e ? uint32_t(std::strtoul(e, nullptr, 0)) : 0u;
+    }();
+    // Legion gait pacing instruments (gaitpace.h). TAK_GAIT_OFF=1 holds every pace at 1
+    // (the before picture, same sim); TAK_GAIT_LOG=path writes one CSV row per ground
+    // mover per tick: position, covered distance, maximum, GET 29, refusal and pace. Debug-only:
+    // devEnv/devFlag read nothing in a release build.
+    const bool gaitPaceOff_ = tak::devFlag("TAK_GAIT_OFF");
+    std::FILE* gaitLog_ = [] {
+        const char* path = tak::devEnv("TAK_GAIT_LOG");
+        std::FILE* log = path ? std::fopen(path, "w") : nullptr;
+        if (log) std::fprintf(log, "tick,id,type,x,z,dist,max,get29,refused,gait\n");
+        return log;
     }();
     bool sawTeam_[tak::sim::kMaxPlayers] = {};   // teams that have ever fielded a unit
     // Dev-only N-player free-for-all / teams harness (TAK_FFA=N[,teams]); the

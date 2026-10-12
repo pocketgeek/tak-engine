@@ -206,6 +206,30 @@ std::vector<uint8_t> explosionReachability(const File& f) {
     return unsafe;
 }
 
+std::vector<uint8_t> gaitCode(const File& f) {
+    const auto gait=[](std::string name) {
+        std::transform(name.begin(),name.end(),name.begin(),[](char c){return char(std::tolower(uint8_t(c)));});
+        if(name.find("control")!=std::string::npos)return false;
+        for(const char* prefix:{"walk","def_walk","swim","stumble","wheel_"})
+            if(name.starts_with(prefix))return true;
+        for(const char* exact:{"row","slowrow","fastrow","drive","superdynamicwheelspinner"})
+            if(name==exact)return true;
+        return false;
+    };
+    std::vector<uint32_t> entries;
+    for(const auto& script:f.scripts)entries.push_back(script.entry);
+    std::sort(entries.begin(),entries.end());
+    std::vector<uint8_t> code;
+    for(const auto& script:f.scripts) {
+        if(!gait(script.name) || script.entry>=f.code.size())continue;
+        const auto next=std::upper_bound(entries.begin(),entries.end(),script.entry);
+        const size_t end=next==entries.end() ? f.code.size() : std::min<size_t>(*next,f.code.size());
+        if(code.empty())code.resize(f.code.size());
+        std::fill(code.begin()+script.entry,code.begin()+std::ptrdiff_t(end),uint8_t(1));
+    }
+    return code;
+}
+
 std::string disassemble(const File& f, int script) {
     if (script < 0 || size_t(script) >= f.scripts.size())
         throw std::runtime_error("bad script index");

@@ -645,6 +645,29 @@ Movement is unchanged, except through the game's single random stream:
 walk scripts draw from it, so different walk timing shifts later draws.
 The crowdbench screens are identical, because crowdbench has no scripts.
 
+**A second, display-only difference: gait pace follows the distance
+covered.** A body that is still reported moving can travel well under its
+maximum: Legion caps a body that does not face its way at half speed (an
+eighth past 67 degrees), and speed-matched following holds it down to half.
+GET 29 stays above 5, so retail's keyframe walk played at full pace. In
+corner-8x30, 16% of the moving-state unit-ticks travel at half speed (unit 9
+holds it for 8 s round the corner). The client (`src/client/gaitpace.h`,
+`GameView::captureUnit`) now measures each Legion ground body's distance per
+tick against its terrain-adjusted maximum (90% and over counts as full pace),
+smooths it (a quarter of the way per tick down, half of the way per tick back
+up), and hands it to the display VM (`cob::Vm::setGaitRate`). Only the threads
+playing a gait script (`cob::gaitCode`: `walk*`, `def_walk`, `swim*`,
+`stumble*`, `row`/`slowrow`/`fastrow`, `drive`, `wheel_*`,
+`SuperDynamicWheelSpinner`) and the piece motion they started step on that
+fraction of the 30 Hz ticks. Controllers polling GET 29, aim, fire and build
+threads keep full time. A body that reports stopped snaps back to full pace,
+so its cycle plays out its static-gated frames and restores as before. Flyers
+and Retail mode always run at full pace. The authoritative COB VM in `World`
+is untouched, so the state hash and every position, path and order are the
+same: the `--mpai` Inner Circle hashes are unchanged in both modes. Debug
+clients take `TAK_GAIT_LOG=<csv>` (per ground mover per tick: distance,
+maximum, GET 29, refusal, pace) and `TAK_GAIT_OFF=1` (pace held at 1).
+
 **Boats and hovercraft** are mobility classes like any other. The plane is
 built from `World::mobilePlacement`'s own predicate with the type's limits:
 a boat needs `minWaterDepth` (default 13) under every footprint cell and has

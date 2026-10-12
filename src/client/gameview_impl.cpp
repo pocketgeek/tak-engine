@@ -8,6 +8,7 @@
 #include "client/retailfeatureclock.h"
 #include "client/retailbuilderanimation.h"
 #include "client/retailmovementcallbacks.h"
+#include "client/gaitpace.h"
 #include "client/retaildeathsfx.h"
 #include "client/runtimesettings.h"
 #include "sim/retailmotion.h"
@@ -130,6 +131,7 @@
         saveNetReplay();
         resetMinimap();
         destroyGpuTextures();
+        if (gaitLog_) std::fclose(gaitLog_);
     }
 
     std::vector<std::pair<float, float>> GameView::parseStartPositions() const {
@@ -793,6 +795,19 @@
         if(prev && prev->type!=u.type)prev=nullptr;
         s.headingWord=u.heading.v;
         s.captureOccupancy(u,world_.mapSea(),prev ? prev->animationOccupancy : 0);
+        // Legion walkers pace their gait by the distance actually covered (gaitpace.h).
+        // Flyers keep their flight scripts; Retail keeps retail's full-pace cycle.
+        s.gaitRate=1;
+        if (prev && !gaitPaceOff_ && u.alive() && !u.type->canFly && !u.type->isStructure() &&
+            tak::sim::isLegionPathfinding(world_.pathfindingMode()) &&
+            std::abs(u.x.toFloat()-prev->x)<=200.0f && std::abs(u.z.toFloat()-prev->z)<=200.0f) {
+            const auto maximum=u.baseSpeed*(u.groundTerrainFlags&0x800 ? u.type->roadMult :
+                u.groundTerrainFlags&0x1000 ? u.type->waterMult : tak::sim::Fixed::fromInt(1));
+            s.gaitRate=tak::legionGaitRate(prev->gaitRate,
+                int64_t(s.worldPosition[0])-prev->worldPosition[0],
+                int64_t(s.worldPosition[2])-prev->worldPosition[2],
+                uint32_t(world_.tickCount()-pf.gameTick),maximum.v,s.animationSpeedPercent()>0);
+        }
         s.captureMoveRate(u,prev ? std::bit_cast<int16_t>(uint16_t(u.heading.v-prev->headingWord)) : 0);
         const auto multiplier=u.groundTerrainFlags&0x800 ? u.type->roadMult :
             u.groundTerrainFlags&0x1000 ? u.type->waterMult : tak::sim::Fixed::fromInt(1);
@@ -853,6 +868,22 @@
             if (!c.site) continue;
             const auto* conjureSite=world_.unit(c.site);
             s.conjuring=conjureSite && conjureSite->underConstruction && conjureSite->buildBegun;
+        }
+        if (gaitLog_) {
+            for (const UnitR* r:fb.live) {
+                if (!r->alive() || !r->type || r->type->canFly || r->type->isStructure()) continue;
+                const UnitR* p=pf.unit(r->id);
+                if (!p || p->type!=r->type) continue;
+                const auto* u=world_.unit(r->id);
+                const auto maximum=u->baseSpeed*(u->groundTerrainFlags&0x800 ? u->type->roadMult :
+                    u->groundTerrainFlags&0x1000 ? u->type->waterMult : tak::sim::Fixed::fromInt(1));
+                const double dx=double(r->worldPosition[0]-p->worldPosition[0])/65536.0;
+                const double dz=double(r->worldPosition[2]-p->worldPosition[2])/65536.0;
+                std::fprintf(gaitLog_,"%u,%d,%s,%.1f,%.1f,%.4f,%.4f,%d,%d,%.4f\n",world_.tickCount(),r->id,
+                    r->type->id.c_str(),r->x,r->z,std::sqrt(dx*dx+dz*dz),maximum.toFloat(),
+                    r->animationSpeedPercent(),int(r->movementRefused),r->gaitRate);
+            }
+            std::fflush(gaitLog_);
         }
         // Player table snapshot for the HUD/scoreboard.
         fb.numPlayers = world_.numPlayers();
@@ -1427,6 +1458,7 @@
             // BAM), converted with retail's truncating /182. Retail notifies only
             // when its turn state changes sign, including the stop transition.
             const int turnDegrees=u.turnReqBam/182;
+            a.vm->setGaitRate(u.gaitRate);
             tak::updateRetailMovementAnimationCallbacks(a.hasTurnDir,turnDegrees,a.turnSign,
                 u.animationMoveRate,a.moveRate,u.animationOccupancy,a.occupancy,
                 [&](int degrees) { a.vm->start("TurnDirection",{degrees}); },
@@ -2086,6 +2118,7 @@
                 cc.file = std::make_shared<const tak::cob::File>(
                     tak::cob::load(vread(cobPath), cobPath));
                 cc.explosionReachability=tak::cob::explosionReachability(*cc.file);
+                cc.gaitCode=tak::cob::gaitCode(*cc.file);
                 for (const auto& p : cc.file->pieces) {
                     std::string n = p;
                     std::transform(n.begin(), n.end(), n.begin(), ::tolower);
@@ -2134,6 +2167,7 @@
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             a.vm->enableRetailAnimation();
             a.explosionReachability=ci->second.explosionReachability;
+            a.vm->setGaitCode(ci->second.gaitCode);
             configureExplosionHierarchy(a,visuals_.at(typeId).model.root);
             // TA COB unit-state queries answered from the sim.
             int unitId = id;

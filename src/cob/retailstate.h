@@ -78,6 +78,7 @@ struct RetailScriptState {
         void piece(uint32_t op,int piece,int axis,int32_t target,int32_t speed) {
             auto& p=state.pieces.at(size_t(piece));
             p.command(op,axis,target,speed,state.vm.ticksPerSecond);
+            if constexpr(requires { host.pieceCommanded(size_t(piece)); }) host.pieceCommanded(size_t(piece));
             if (unsigned(piece)<64) {
                 const uint64_t bit=uint64_t(1)<<piece;
                 if (p.active) state.activePieces_|=bit;
@@ -116,6 +117,36 @@ struct RetailScriptState {
 #endif
         if (!elapsed) return;
         uint64_t pending=activePieces_;
+        while (pending) {
+            const unsigned i=std::countr_zero(pending);
+            const uint64_t bit=uint64_t(1)<<i;
+            pending&=~bit;
+            adapter.changed(i);
+            pieces[i].tick(elapsed);
+            if (!pieces[i].active) activePieces_&=~bit;
+        }
+        for (size_t i=64;i<pieces.size();++i) {
+            if constexpr(requires { host.pieceChanged(i); })
+                if (pieces[i].active) adapter.changed(i);
+            pieces[i].tick(elapsed);
+        }
+    }
+
+    // Display only, never the simulation: tick() in the same order, except
+    // that `admit(slot)` is asked before each thread runs (false holds it for
+    // this step, its sleep or wait unadvanced) and the `held` pieces (0-63)
+    // keep their motion for a later step. Holding nothing is exactly tick().
+    template<class Host,class Admit> void tickGated(const File& file,int32_t elapsed,Host& host,
+                                                   Admit&& admit,uint64_t held) {
+        Adapter<Host> adapter{*this,host};
+        uint32_t remaining=0xffffu;
+        while(const uint32_t pending=vm.activeThreadMask()&remaining) {
+            const unsigned slot=std::countr_zero(pending);
+            if(admit(slot))vm.run(file,slot,elapsed,adapter);
+            remaining=0xffffu<<(slot+1);
+        }
+        if (!elapsed) return;
+        uint64_t pending=activePieces_&~held;
         while (pending) {
             const unsigned i=std::countr_zero(pending);
             const uint64_t bit=uint64_t(1)<<i;
