@@ -5,6 +5,7 @@
 #include <functional>
 #include "client/gameview.h"
 #include "client/cursortiming.h"
+#include "client/reclaimpick.h"
 #include "client/retaillightningquad.h"
 #include "client/retailflame.h"
 #include "client/retaileffectframe.h"
@@ -1501,36 +1502,27 @@
             float minx = std::min(rdX0_, mx), maxx = std::max(rdX0_, mx);
             float minz = std::min(rdZ0_, mz), maxz = std::max(rdZ0_, mz);
             SDL_SetRenderDrawColor(ren_, 255, 210, 90, 230);
-            // Copied under the lock: the worker can push_back a feature (a corpse)
-            // and reallocate this vector while we walk it.
-            struct FPos { float x, z; };
-            static std::vector<FPos> boxFeats;
-            boxFeats.clear();
-            {
-                std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-                if (useSimThread_) lk.lock();
-                for (const auto& f : world_.features())
-                    if (f.alive && f.x.toFloat() >= minx && f.x.toFloat() <= maxx && f.z.toFloat() >= minz && f.z.toFloat() <= maxz)
-                        boxFeats.push_back({f.x.toFloat(), f.z.toFloat()});
-            }
-            for (const auto& f : boxFeats) {
-                float fsx = (f.x - mapView_.offX()) * zm - terrainLiftX(f.x, f.z) * zm;
-                float fsy = (f.z - mapView_.offY()) * zm - terrainLift(f.x, f.z) * zm;
+            // The render snapshot, not world_: no per-frame simMutex_ while dragging.
+            // Same reclaimable predicate as the click (reclaimTargetAt) and the same
+            // footprint-cell selection as the sim's tickReclaimArea.
+            const int mapW = mapView_.map().width;
+            auto mark = [&](float x, float z) {
+                float fsx = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
+                float fsy = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm;
                 SDL_FRect m{fsx - 4, fsy - 4, 8, 8};
                 SDL_RenderDrawRectF(ren_, &m);
+            };
+            for (const auto& f : features_) {
+                if (!f.hasSim || !f.aliveVis || !f.reclaimable || !canPickPoint(f.x, f.z)) continue;
+                if (tak::client::reclaimFootprintInBox(f.simId % mapW, f.simId / mapW, f.fx, f.fz, minx, maxx, minz, maxz))
+                    mark(f.x, f.z);
             }
             // Corpses / statues / rubble get the same box markers.
-            for (const UnitR* _cp : front().live) {
-                const UnitR& cu = *_cp;
-                if (cu.alive() || !cu.corpsePhase || cu.corpseFeat < 0 || !cu.type) continue;
-                if (size_t(cu.corpseFeat) >= world_.featureTypes().size() ||
-                    !world_.featureTypes()[size_t(cu.corpseFeat)].reclaimable)
-                    continue;
-                if (cu.x < minx || cu.x > maxx || cu.z < minz || cu.z > maxz) continue;
-                float fsx = (cu.x - mapView_.offX()) * zm - terrainLiftX(cu.x, cu.z) * zm;
-                float fsy = (cu.z - mapView_.offY()) * zm - terrainLift(cu.x, cu.z) * zm;
-                SDL_FRect m{fsx - 4, fsy - 4, 8, 8};
-                SDL_RenderDrawRectF(ren_, &m);
+            for (const UnitR* cu : front().live) {
+                if (cu->alive() || !cu->corpsePhase || !cu->corpseReclaimable || !canPickPoint(cu->x, cu->z)) continue;
+                if (tak::client::reclaimFootprintInBox(cu->corpseCellX, cu->corpseCellZ, cu->corpseFootX, cu->corpseFootZ,
+                                                       minx, maxx, minz, maxz))
+                    mark(cu->x, cu->z);
             }
         }
 

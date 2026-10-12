@@ -4,6 +4,7 @@
 #include "client/gamespeed.h"
 #include "client/artscale.h"
 #include "client/cursorrange.h"
+#include "client/reclaimpick.h"
 #include "client/gpuvram.h"
 #include "client/renderdriver.h"
 #include "client/blockfont.h"
@@ -29,19 +30,22 @@ namespace {
     }
 }
 
-    bool GameView::hasReclaimTarget(float wx,float wz) const {
+    // The reclaim target under a world point, read from the render snapshot: the cursor
+    // asks every frame, and the two click sites (right-click, armed CLEAR) issue what it
+    // returns. No simMutex_ anywhere -- the snapshot can be a frame stale, and the sim
+    // validates the target when it applies the Reclaim (a gone feature is dropped).
+    std::optional<int> GameView::reclaimTargetAt(float wx,float wz) const {
+        tak::client::ReclaimPick pick{wx,wz};
         for (const auto& f:features_) {
             if (!f.hasSim || !f.aliveVis || !f.reclaimable || !canPickPoint(f.x,f.z)) continue;
-            const float dx=f.x-wx,dz=f.z-wz,r=18.f+8.f*std::max(f.fx,f.fz);
-            if (dx*dx+dz*dz<r*r) return true;
+            pick.offer(f.simId,f.x,f.z,f.fx,f.fz);
         }
+        // Corpses / statues / rubble (negative id), sized by their FEATURE footprint.
         for (const auto* u:front().live) {
-            if (u->alive() || !u->corpsePhase || u->corpseFeat<0 || !canPickPoint(u->x,u->z)) continue;
-            const auto& f=world_.featureTypes().at(size_t(u->corpseFeat));
-            const float dx=u->x-wx,dz=u->z-wz,r=18.f+8.f*std::max(f.fx,f.fz);
-            if (f.reclaimable && dx*dx+dz*dz<r*r) return true;
+            if (u->alive() || !u->corpsePhase || !u->corpseReclaimable || !canPickPoint(u->x,u->z)) continue;
+            pick.offer(-u->id,u->x,u->z,u->corpseFootX,u->corpseFootZ);
         }
-        return false;
+        return pick.id;
     }
 
     bool GameView::canAssistSite(const UnitR& b,const UnitR& site) const {
@@ -192,36 +196,12 @@ namespace {
             // A reclaimer clicking directly on a reclaimable feature (with no enemy
             // there) reclaims just that one -- retail's single Reclaim.
             if (enemy < 0 && haveReclaimer()) {
-                int fid = 0; bool fhit = false; float bestF = 1e18f;
-                {   // Live read: the worker can reallocate this vector under us. One-shot
-                    // on a click, so the lock costs nothing worth measuring -- unlike the
-                    // per-frame cursor scan above, which uses the render-side snapshot.
-                    std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-                    if (useSimThread_) lk.lock();
-                    for (const auto& f : world_.features()) {
-                        if (!world_.featureReclaimable(f) || !canPickPoint(f.x.toFloat(), f.z.toFloat())) continue;
-                        float dx = f.x.toFloat() - wx, dz = f.z.toFloat() - wz, d = dx * dx + dz * dz;
-                        float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
-                        if (d < r * r && d < bestF) { bestF = d; fid = f.id; fhit = true; }
-                    }
-                }
-                // Corpses / statues / rubble under the click too (negative id).
-                for (const UnitR* _cp : front().live) {
-                    const UnitR& cu = *_cp;
-                    if (!canPickPoint(cu.x, cu.z)) continue;
-                    if (cu.alive() || !cu.corpsePhase || cu.corpseFeat < 0 || !cu.type) continue;
-                    if (size_t(cu.corpseFeat) >= world_.featureTypes().size() ||
-                        !world_.featureTypes()[size_t(cu.corpseFeat)].reclaimable) continue;
-                    float dx = cu.x - wx, dz = cu.z - wz, d = dx * dx + dz * dz;
-                    float r = 18.0f + 8.0f * float(std::max(cu.type->footX, cu.type->footZ));
-                    if (d < r * r && d < bestF) { bestF = d; fid = -cu.id; fhit = true; }
-                }
-                if (fhit) {
+                if (const auto fid = reclaimTargetAt(wx, wz)) {
                     int builderId = firstReclaimer();
                     tak::net::Command c;
                     c.kind = tak::net::Cmd::Reclaim;
                     c.unitId = builderId;
-                    c.targetId = fid;
+                    c.targetId = *fid;
                     c.queue = uint8_t(queue ? 1 : 0);
                     issue(c);
                     voice(builderId, "move");
@@ -400,7 +380,7 @@ namespace {
             if (!capable) return tak::CursorId::Normal;
             if (pendingCmd_=='c') {
                 float wx,wz;pickWorld(mouseX_,mouseY_,wx,wz);
-                return hasReclaimTarget(wx,wz) ? tak::CursorId::Reclaim : tak::CursorId::Normal;
+                return reclaimTargetAt(wx,wz) ? tak::CursorId::Reclaim : tak::CursorId::Normal;
             }
             // Repair and guard are target-dependent in the native selector.
             if (pendingCmd_=='r' || pendingCmd_=='g') {
@@ -536,7 +516,7 @@ namespace {
                         (caster->type->canAnimate && caster->type->animateType)) return tak::CursorId::Revive;
                 }
             }
-            if (haveReclaimer() && hasReclaimTarget(wx,wz)) return tak::CursorId::Reclaim;
+            if (haveReclaimer() && reclaimTargetAt(wx,wz)) return tak::CursorId::Reclaim;
 
             // Empty ground: plain arrow. The Move cursor shows ONLY when the move order
             // is armed (Move button / hotkey), not merely from having a unit selected.
@@ -892,34 +872,13 @@ namespace {
         if (selection_.empty()) return;
         if (cmd == 'c') {   // clear/reclaim: reclaim the feature under the cursor
             if (!haveReclaimer()) return;
-            int fid = 0; bool fhit = false; float bestF = 1e18f;
-            {   // Live read under the lock: one-shot on an armed order (see above).
-                std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-                if (useSimThread_) lk.lock();
-                for (const auto& f : world_.features()) {
-                    if (!world_.featureReclaimable(f) || !canPickPoint(f.x.toFloat(), f.z.toFloat())) continue;
-                    float dx = f.x.toFloat() - wx, dz = f.z.toFloat() - wz, d = dx * dx + dz * dz;
-                    float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
-                    if (d < r * r && d < bestF) { bestF = d; fid = f.id; fhit = true; }
-                }
-            }
-            // Corpses / statues / rubble under the click too (negative id).
-            for (const UnitR* _cp : front().live) {
-                const UnitR& cu = *_cp;
-                if (!canPickPoint(cu.x, cu.z)) continue;
-                if (cu.alive() || !cu.corpsePhase || cu.corpseFeat < 0 || !cu.type) continue;
-                if (size_t(cu.corpseFeat) >= world_.featureTypes().size() ||
-                    !world_.featureTypes()[size_t(cu.corpseFeat)].reclaimable) continue;
-                float dx = cu.x - wx, dz = cu.z - wz, d = dx * dx + dz * dz;
-                float r = 18.0f + 8.0f * float(std::max(cu.type->footX, cu.type->footZ));
-                if (d < r * r && d < bestF) { bestF = d; fid = -cu.id; fhit = true; }
-            }
-            if (!fhit) return;
+            const auto fid = reclaimTargetAt(wx, wz);
+            if (!fid) return;
             int builderId = firstReclaimer();
             tak::net::Command c;
             c.kind = tak::net::Cmd::Reclaim;
             c.unitId = builderId;
-            c.targetId = fid;
+            c.targetId = *fid;
             c.queue = queue ? 1 : 0;
             issue(c);
             voice(builderId, "move");
