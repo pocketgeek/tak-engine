@@ -34,6 +34,7 @@
 #include "sim/simpool.h"
 
 #include <cstddef>
+#include <span>
 #include <algorithm>
 #include <atomic>
 #include <thread>
@@ -1063,6 +1064,15 @@ struct alignas(64) Unit {
     uint8_t slotAuto = 7;
     uint8_t slotManual = 0;
     int32_t faceRequest = -1;
+    // 4c6800's current-view footprint (the sight object at unit+0x84 as the
+    // per-player view counters see it) and the plane it is counted in (-1 =
+    // none). Kept beside sightFootprint, which feeds the persistent exploration
+    // plane and skips removals; this one is always removed before it moves, so
+    // World::viewCounts_ is exactly the sum of the active footprints. Recording
+    // the counted player makes deaths and ownership changes self-correcting.
+    // Hashed.
+    RetailSightFootprint viewSight;
+    int8_t viewPlayer = -1;
     // An upgrade consumes its old building when the new site is admitted. Keep
     // its presentation independent of retired/reused unit slots.
     struct LodestoneReplacement {
@@ -1536,6 +1546,15 @@ struct Player {
     // the last budget-limited pass stopped on. INT32_MAX is the constructor's
     // "last slot of the pool" (40fed0). Hashed.
     int32_t sweepCursor = INT32_MAX;
+    // 411700's per-player unit lists, rebuilt on the 7-tick bookkeeping clock
+    // (cacheClock; visibleRefresh stands in when that clock is disabled):
+    // list +5, the hostile units this player saw (4f7210) at the last rebuild,
+    // and list +0x15, the visible allied units, own units included. Unit ids in
+    // units_ order. Callers re-check liveness and distance, never visibility,
+    // so a target stays a candidate up to 6 ticks after it leaves sight.
+    // Hashed.
+    std::vector<int> visibleEnemies, visibleAllies;
+    uint32_t visibleRefresh = 0;
     bool  defeated = false;   // no living units; set by the sim's win check
     int32_t defeatedAt = -1;  // TICK when `defeated` first went true (-1 = still in)
     // Cosmetic emotes: sequenced in lockstep, excluded from stateHash.
@@ -1742,6 +1761,19 @@ public:
     const std::vector<RetailMapFeatureCell>& mapPlacementCells() const { return mapPlacementCells_; }
     const std::vector<RetailMapFeatureType>& mapPlacementTypes() const { return mapPlacementTypes_; }
     void updateNavigationExploration();
+    // 4f6a40/4c6a70/4c6800 for the per-player current-view counters: one pass
+    // after each tick, beside updateNavigationExploration.
+    void updateViewCounts();
+    void updateExplorationPlane();
+    // Per-player current-view count of one projected 32px cell (0 = unseen).
+    int viewCount(int player,int cx,int cz) const {
+        const int width=hW_/2,height=hH_/2;
+        const size_t cells=size_t(width)*height;
+        if (player<0 || uint32_t(cx)>=uint32_t(width) || uint32_t(cz)>=uint32_t(height) ||
+            (size_t(player)+1)*cells>viewCounts_.size()) return 0;
+        return viewCounts_[size_t(player)*cells+size_t(cz)*width+cx];
+    }
+    const std::vector<uint16_t>& viewCounts() const { return viewCounts_; }
     const std::vector<uint16_t>& navigationExploration() const { return navigationExplored_; }
     bool mobilePlacement(const Unit& subject,int x,int z,bool allowMoving) const;
     Fixed surfaceHeight(const Unit& subject,uint32_t clock,uint16_t* pitch=nullptr,uint16_t* roll=nullptr) const;
@@ -1892,7 +1924,7 @@ public:
         features_.clear();
         burnSequence_ = 0;
         mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
-        explorationHeights_.clear();navigationExplored_.clear();
+        explorationHeights_.clear();navigationExplored_.clear();viewCounts_.clear();deathSights_.clear();
         restoredNavigationViewer_=-1;
         featureIdx_.clear();
         clearFeatureTypes();
@@ -2691,11 +2723,17 @@ public:
     // Port of 412620: one weapon slot's target, by retail's 50-draw sampled
     // score. sweep=true is the fire-at-will radius (the weapon's range).
     int retailSelectTarget(Unit& u,int slot,bool sweep);
-    // Whether `player` can see `u` for auto-targeting (retail's per-player
-    // enemy list holds only hostiles that pass 4f7210, its LOS test). The sim
-    // has no deterministic per-player vision yet, so this is a hook that
-    // answers true; the vision step replaces it.
-    bool playerSees(int player,const Unit& u) const { (void)player;(void)u;return true; }
+    // Port of 4f7210 (LosOn): `player` sees `u` when it owns it; otherwise
+    // never when u is cloaked, carried or dead, else when any of the four
+    // projected bounding-box corners lies on a cell `player`'s current-view
+    // counters hold. Without terrain (no view plane) every placed unit is seen.
+    bool playerSees(int player,const Unit& u) const;
+    // 411700 list +5 as of the last 7-tick rebuild (may hold units that have
+    // since died or left sight; callers re-check alive and distance).
+    std::span<const int> visibleEnemies(int player) const {
+        if (player<0 || size_t(player)>=players_.size()) return {};
+        return players_[size_t(player)].visibleEnemies;
+    }
     // The pool size N the sweep budget N/30+1 is computed from when the
     // restored retail entity pools are not in use.
     static constexpr int kRetailSweepPool=250;
@@ -2785,6 +2823,16 @@ private:
     std::vector<uint8_t> heights_;   // raw TNT heightmap, for fog line-of-sight
     std::vector<RetailExplorationHeight> explorationHeights_;
     std::vector<uint16_t> navigationExplored_; // simulation-owned persistent owner bits
+    // 4c6800's per-player current-view counts (player +0x88) on the same
+    // projected 32px grid, player-major. uint16 instead of retail's wrapping
+    // byte: our unit caps make 256 overlapping footprints reachable; equal to
+    // retail below that. Hashed.
+    std::vector<uint16_t> viewCounts_;
+    // 4c6750/4c6b30: a dying human-owned unit's footprint stays counted for
+    // 60 ticks (at most 20 per player). Hashed, in order.
+    struct RetailDeathSight { RetailSightFootprint sight; int8_t player=-1; uint32_t expiry=0; };
+    std::vector<RetailDeathSight> deathSights_;
+    void rebuildVisibleLists(int player);
     int restoredNavigationViewer_=-1; // captured query context; live matches use the unit owner
 public:
     // Corpse lifecycle, in ticks. Public because the RENDERER shares the contract:

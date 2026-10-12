@@ -1004,7 +1004,7 @@ void World::compactRetiredUnits() {
     TAK_PASS();
     for(size_t read=0;read<units_.size();++read) {
         auto& u=units_[read];
-        if(!u.alive() && u.deadFor>=kRetiredTicks+30 && u.corpseUntil==0 &&
+        if(!u.alive() && u.deadFor>=kRetiredTicks+30 && u.corpseUntil==0 && !u.viewSight.active &&
            !corpseFootprints_.contains(u.id) && !unitScripts_.contains(u.id) && !referenced.contains(u.id)) {
             const int owner=u.type ? u.player : -1;
             retiredOwners_.emplace(u.id,owner);
@@ -1253,7 +1253,8 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
         [&](int x,int z){return heights_[size_t(z)*w+x];});
     navigationExplored_.assign(explorationHeights_.size(),0);
     restoredNavigationViewer_=-1;
-    for (auto& u:units_) u.sightFootprint={};
+    for (auto& u:units_) { u.sightFootprint={};u.viewSight={};u.viewPlayer=-1; }
+    viewCounts_.clear();deathSights_.clear();
     // Road cells: the retail map format marks them as 0xFFFB in the feature
     // plane (verified against Two Castles -- the mask traces the road network).
     roads_.clear();
@@ -5305,18 +5306,24 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
     if (slot<0 || slot>=int(std::min<size_t>(3,u.type->weapons.size()))) return 0;
     const Weapon& w=u.type->weapons[size_t(slot)];
     const int64_t radius=sweep ? int64_t(w.range) : std::max<int64_t>(u.type->sight,w.range);
-    // 411ae0 over the owner's enemy list (hostile, visible, not hidden), by
-    // live centre distance. Gathered in id order, the stand-in for the
-    // list's slot order. Sites still conjuring stay out, as in findTarget.
+    // 411ae0 over the owner's enemy list +5 (hostile units it saw at the last
+    // 7-tick rebuild, in unit order): live, by live centre distance. Retail
+    // re-checks nothing else; a unit carried or converted since the rebuild
+    // is dropped here too.
+    // The list is id-sorted (see rebuildVisibleLists), so the spatial grid
+    // gathers the near units and membership is a binary search; the result
+    // is the list's own order.
     std::vector<int> candidates;
+    const auto listed=visibleEnemies(u.player);
+    if (listed.empty()) return 0;
     uint64_t enemies=~uint64_t(0);
     for (int player=0;player<numPlayers() && player<64;++player)
         if (allied(player,u.player)) enemies&=~(uint64_t(1)<<player);
     forEachNear(u.x.toFloat(),u.z.toFloat(),float(radius)+1.0f,[&](int idx) {
         const Unit& e=units_[size_t(idx)];
-        if (!e.alive() || e.hp<=Fixed() || !e.type || e.embarked() || e.cloaked || e.underConstruction ||
-            isNeutralPlayer(e.player) || allied(e.player,u.player) || !playerSees(u.player,e)) return;
+        if (!e.alive() || e.hp<=Fixed() || !e.type || e.embarked() || allied(e.player,u.player)) return;
         if (retailCentreDist2(u,e)>radius*radius) return;
+        if (!std::binary_search(listed.begin(),listed.end(),e.id)) return;
         candidates.push_back(e.id);
     },enemies);
     std::sort(candidates.begin(),candidates.end());
@@ -9417,6 +9424,11 @@ void World::visPump() {
 }
 
 void World::updateNavigationExploration() {
+    updateExplorationPlane();
+    updateViewCounts();
+}
+
+void World::updateExplorationPlane() {
     if (explorationHeights_.empty()) return;
     const int width=hW_/2,height=hH_/2;
     constexpr int blockShift=kExplorationBlockShift;
@@ -9499,6 +9511,140 @@ void World::updateNavigationExploration() {
     pool.forChunks(units_.size(),SimPool::kUnitChunk,kMinParallel,[&](size_t,size_t begin,size_t end,unsigned) {
         explore(begin,end,std::true_type{});
     });
+}
+
+// The per-player current-view counters (player +0x88). One pass per tick
+// after the tick, like exploration (retail runs it once per frame, 52654e ->
+// 4f6ae0). Every footprint change is a full removal then a full add over the
+// admitted cells, so the plane always equals the sum of the active footprints
+// plus the death revealers. Count deltas commute, so chunks add atomically
+// (relaxed) in any order to the same result.
+void World::updateViewCounts() {
+    if (explorationHeights_.empty()) return;
+    const int width=hW_/2,height=hH_/2;
+    const size_t cells=size_t(width)*height;
+    const size_t planes=players_.size();
+    if (viewCounts_.size()!=planes*cells) {
+        // Fresh plane (first pass, or a player count change): every footprint
+        // is re-added from scratch below.
+        viewCounts_.assign(planes*cells,0);
+        deathSights_.clear();
+        for (auto& u:units_) { u.viewSight={};u.viewPlayer=-1; }
+    }
+    if (!planes) return;
+    auto heightAt=[&](int x,int z){return explorationHeights_[size_t(z)*width+x];};
+    auto change=[&](RetailSightFootprint& sight,int player,bool add,auto shared) {
+        constexpr bool kShared=decltype(shared)::value;
+        uint16_t* plane=viewCounts_.data()+size_t(player)*cells;
+        retailSightFootprint(sight,add,false,width,height,uint8_t(player),heightAt,
+            [&](int x,int z,int delta,uint16_t) {
+                uint16_t& cell=plane[size_t(z)*width+x];
+                if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);
+                else cell=uint16_t(cell+delta);
+            });
+    };
+    // Deaths first, serially: a dying human-owned unit hands its footprint to
+    // the revealer list (4c6750: LosOn, fewer than 20 for that player), any
+    // other is removed at once (512ae0). The list keeps unit order.
+    for (auto& u:units_) {
+        if (u.alive() || !u.viewSight.active) continue;
+        const int p=u.viewPlayer;
+        const bool human=size_t(p)<planes && !players_[size_t(p)].automaticGates && !isNeutralPlayer(p);
+        if (human && std::count_if(deathSights_.begin(),deathSights_.end(),
+                [&](const RetailDeathSight& d){return d.player==p;})<20) {
+            deathSights_.push_back({u.viewSight,int8_t(p),tickCounter_+60});
+            u.viewSight.active=false;
+        } else if (size_t(p)<planes) change(u.viewSight,p,false,std::false_type{});
+        else u.viewSight.active=false;
+        u.viewPlayer=-1;
+    }
+    auto pass=[&](size_t begin,size_t end,auto shared) {
+        for (size_t index=begin;index<end;++index) {
+            auto& u=units_[index];
+            if (!u.alive() || !u.type || u.underConstruction) continue;
+            // 4c67d0 + 4f5a35: an ownership change moves the footprint.
+            if (u.viewSight.active && u.viewPlayer!=u.player) {
+                if (size_t(u.viewPlayer)<planes) change(u.viewSight,u.viewPlayer,false,shared);
+                u.viewSight.active=false;u.viewSight.x=-1;u.viewPlayer=-1;
+            }
+            const int16_t distance=int16_t(sightDistance(*u.type));
+            if (u.viewSight.distance!=distance || u.viewSight.sightHeight!=u.type->sightHeight) {
+                if (u.viewSight.active && size_t(u.viewPlayer)<planes) change(u.viewSight,u.viewPlayer,false,shared);
+                u.viewSight={};u.viewSight.distance=distance;u.viewSight.sightHeight=u.type->sightHeight;
+                u.viewPlayer=-1;
+            }
+            if (u.player<0 || size_t(u.player)>=planes || isNeutralPlayer(u.player)) continue;
+            // 4f6a40 skips a status-locked unit (+0x108: stone, freeze): its
+            // footprint is frozen where it stands, not removed.
+            if (u.stonedFor>0 || u.frozenFor>0) continue;
+            const Fixed y=u.type->canFly?u.flightY:u.groundY;
+            uint16_t* plane=viewCounts_.data()+size_t(u.player)*cells;
+            constexpr bool kShared=decltype(shared)::value;
+            retailUpdateSight(u.viewSight,u.x,y,u.z,uint8_t(seaLevel_),false,width,height,uint8_t(u.player),heightAt,
+                [&](int x,int z,int delta,uint16_t) {
+                    uint16_t& cell=plane[size_t(z)*width+x];
+                    if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);
+                    else cell=uint16_t(cell+delta);
+                });
+            u.viewPlayer=u.viewSight.active ? int8_t(u.player) : int8_t(-1);
+        }
+    };
+    SimPool& pool=simPool();
+    constexpr size_t kMinParallel=4096;
+    if (!pool.workers() || units_.size()<kMinParallel) pass(0,units_.size(),std::false_type{});
+    else pool.forChunks(units_.size(),SimPool::kUnitChunk,kMinParallel,[&](size_t,size_t begin,size_t end,unsigned) {
+        pass(begin,end,std::true_type{});
+    });
+    // 4c6b30: revealers whose expiry is earlier than now are removed.
+    std::erase_if(deathSights_,[&](RetailDeathSight& d) {
+        if (d.expiry>=tickCounter_) return false;
+        if (size_t(d.player)<planes) change(d.sight,d.player,false,std::false_type{});
+        return true;
+    });
+}
+
+bool World::playerSees(int player,const Unit& u) const {
+    if (u.player==player) return true;                       // own units, cloaked or not
+    if (!u.alive() || !u.type || u.cloaked || u.embarked()) return false;   // +0x114&4, 0x130&3
+    const int width=hW_/2,height=hH_/2;
+    const size_t cells=size_t(width)*height;
+    if (viewCounts_.empty() || !cells) return true;
+    if (player<0 || (size_t(player)+1)*cells>viewCounts_.size()) return false;
+    const uint16_t* plane=viewCounts_.data()+size_t(player)*cells;
+    // Bounding-box corners in non-legacy bounds (4c1410): +/-footX*8,
+    // +/-footZ*8, y..y+modelTop, as wrapping 16.16. A corner's cell is the
+    // projected (x>>5, (z-(y>>1))>>5) of its whole-pixel words.
+    const Fixed y=u.type->canFly?u.flightY:u.groundY;
+    const int32_t hx=int32_t(uint32_t(8*u.type->footX)<<16),hz=int32_t(uint32_t(8*u.type->footZ)<<16);
+    const int32_t x0=int32_t(uint32_t(u.x.v)-uint32_t(hx)),x1=int32_t(uint32_t(u.x.v)+uint32_t(hx));
+    const int32_t z0=int32_t(uint32_t(u.z.v)-uint32_t(hz)),z1=int32_t(uint32_t(u.z.v)+uint32_t(hz));
+    const int32_t top=int32_t(uint32_t(y.v)+uint32_t(u.type->modelTop)),bottom=y.v;
+    auto seen=[&](int32_t x,int32_t cy,int32_t z) {
+        const int px=int16_t(uint32_t(x)>>16),py=int16_t(uint32_t(cy)>>16),pz=int16_t(uint32_t(z)>>16);
+        const int cx=px>>5,cz=(pz-(py>>1))>>5;
+        return uint32_t(cx)<uint32_t(width) && uint32_t(cz)<uint32_t(height) &&
+            plane[size_t(cz)*width+cx]!=0;
+    };
+    return seen(x0,top,z0) || seen(x1,top,z0) || seen(x1,bottom,z1) || seen(x0,bottom,z1);
+}
+
+// 411700: the player's visible-enemy (+5) and visible-ally (+0x15) lists, in
+// unit order. Sites still conjuring and neutral scenery stay off the enemy
+// list, as they do for every other auto-targeting path here.
+void World::rebuildVisibleLists(int player) {
+    Player& owner=players_[size_t(player)];
+    owner.visibleEnemies.clear();owner.visibleAllies.clear();
+    TAK_PASS();
+    for (const auto& u:units_) {
+        if (!u.alive() || u.hp<=Fixed() || !u.type) continue;
+        if (allied(player,u.player)) {
+            if (playerSees(player,u)) owner.visibleAllies.push_back(u.id);
+        } else if (!u.underConstruction && !isNeutralPlayer(u.player) && playerSees(player,u))
+            owner.visibleEnemies.push_back(u.id);
+    }
+    // units_ is id order in practice; sort so lookups may binary-search.
+    std::sort(owner.visibleEnemies.begin(),owner.visibleEnemies.end());
+    std::sort(owner.visibleAllies.begin(),owner.visibleAllies.end());
 }
 
 SimPool& World::simPool() {
@@ -12671,6 +12817,16 @@ void World::tick(float dt) {
         // before the bookkeeping clock. Every seat runs it; neutral does not.
         if (const int seat=int(&player-players_.data()); !isNeutralPlayer(seat)) tickFireSweep(seat);
         if (player.buildCache && !player.retailResources) player.buildCache->resources.advance();
+        // 411a90 -> 411700: the visibility lists are rebuilt on the bookkeeping
+        // clock, before its rand(30) draw. A player without that clock uses
+        // the same 7-tick rule on its own stamp.
+        if (const int seat=int(&player-players_.data()); !isNeutralPlayer(seat)) {
+            uint32_t& last=player.cacheClock.enabled ? player.cacheClock.lastRefresh : player.visibleRefresh;
+            if (tickCounter_>=last+7u) {
+                rebuildVisibleLists(seat);
+                if (!player.cacheClock.enabled) player.visibleRefresh=tickCounter_;
+            }
+        }
         if (retailTickPlayerCache(player.cacheClock,tickCounter_,[&](int n){return pathRand(n);}) && player.buildCache) {
             auto& cache=*player.buildCache;
             const int owner=int(&player-players_.data());
@@ -13190,6 +13346,21 @@ uint64_t World::stateHash() const {
     mix(uint32_t(restoredNavigationViewer_));
     for (auto mask:navigationExplored_) mix(mask);
     checkpoint("exploration");
+    // Current-view counts, four cells per fold (derivable from the hashed
+    // footprints, folded anyway as a cheap consistency check).
+    mix(viewCounts_.size());
+    for (size_t i=0;i<viewCounts_.size();i+=4) {
+        uint64_t word=0;
+        std::memcpy(&word,viewCounts_.data()+i,std::min<size_t>(4,viewCounts_.size()-i)*2);
+        mix(word);
+    }
+    mix(deathSights_.size());
+    for (const auto& d:deathSights_) {
+        mix(uint16_t(d.sight.x));mix(uint16_t(d.sight.z));mix(uint32_t(d.sight.eyeHeight));
+        mix(uint16_t(d.sight.distance));mix(d.sight.sightHeight);mix(d.sight.active);
+        mix(uint8_t(d.player));mix(d.expiry);
+    }
+    checkpoint("vision");
     for (const auto& [id,factory]:unitScripts_) {
         mix(0x434f42564dull); mix(uint32_t(id));
         mix(factory.activated); mix(factory.ready); mix(factory.yardOpen); mix(factory.buggerOff);
@@ -13399,6 +13570,9 @@ uint64_t World::stateHash() const {
         mix(uint16_t(u.sightFootprint.x));mix(uint16_t(u.sightFootprint.z));
         mix(uint32_t(u.sightFootprint.eyeHeight));mix(uint16_t(u.sightFootprint.distance));
         mix(u.sightFootprint.sightHeight);mix(u.sightFootprint.active);
+        mix(uint16_t(u.viewSight.x));mix(uint16_t(u.viewSight.z));
+        mix(uint32_t(u.viewSight.eyeHeight));mix(uint16_t(u.viewSight.distance));
+        mix(u.viewSight.sightHeight);mix(u.viewSight.active);mix(uint8_t(u.viewPlayer));
         mix(u.groundGradeTick);
         mix(uint64_t(u.veteran));
         if (u.scenarioArmor != 1.0f || u.scenarioWeapon != 1.0f) {
@@ -13564,6 +13738,9 @@ uint64_t World::stateHash() const {
         if (t.scenarioResourceLimit != 0) { mix(0x4352544c494d4954ull); mixf(t.scenarioResourceLimit); }
         mix(t.cacheClock.enabled); mix(t.cacheClock.lastRefresh);
         mix(uint32_t(t.sweepCursor));
+        mix(t.visibleRefresh);
+        mix(t.visibleEnemies.size());for (int id:t.visibleEnemies) mix(uint32_t(id));
+        mix(t.visibleAllies.size());for (int id:t.visibleAllies) mix(uint32_t(id));
         if (t.retailResources) {
             mix(0x5245534fu);const auto& r=*t.retailResources;
             mixf(r.stored);mixf(r.allocation);mixf(r.requested);mixf(r.produced);
