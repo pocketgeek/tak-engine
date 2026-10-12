@@ -290,6 +290,8 @@ private:
     void overrideFrame(const Frame& f);
     void offerOverrides();
     void acceptOverrides(std::shared_ptr<overrides::Package> package,uint32_t room);
+    void resetOverrideTransfer();   // drop all override package/transfer state
+    void resetMapTransfer();        // ... and the map package/transfer state
     std::vector<std::string> hostOverridePacks_;
     std::shared_ptr<overrides::Package> overridePackage_;
     maps::Receiver overrideReceive_;

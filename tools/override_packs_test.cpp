@@ -46,6 +46,16 @@ int main(){
   put("OverrideCache/"+p->digest+".takoverrides","corrupt");
   check(!net::overrides::loadCache(root,p->digest),"corrupt cache rejected");
   net::overrides::saveCache(root,*p);check(bool(net::overrides::loadCache(root,p->digest)),"corrupt cache repaired");
+  {   // A full disk or tight quota must never cost an existing good entry.
+    const auto entry=root/"OverrideCache"/(p->digest+".takoverrides");
+    net::overrides::saveCache(root,*p,1);check(bool(net::overrides::loadCache(root,p->digest)),"existing cache needs no quota and survives it");
+    put("OverrideCache/"+p->digest+".takoverrides","corrupt");
+    rejects([&]{net::overrides::saveCache(root,*p,1);},"quota accepted a replacement");
+    check(std::filesystem::file_size(entry)==7,"quota failure deleted the existing entry first");
+    net::overrides::saveCache(root,*p);check(bool(net::overrides::loadCache(root,p->digest)),"damaged entry replaced in place");
+    auto fresh=net::overrides::build(root,{"Alpha"});rejects([&]{net::overrides::saveCache(root,*fresh,1);},"quota accepted a new entry");
+    check(!std::filesystem::exists(root/"OverrideCache"/(fresh->digest+".takoverrides")),"quota rejection left a partial entry");
+  }
   auto base=hpi::mountRetailRoot(root,hpi::OverridePolicy::None);hpi::Vfs roomA(&base),roomB(&base);roomA.setOverrideFiles(p->files);check(roomA.has("units/test.fbi")&&!roomB.has("units/test.fbi"),"room overrides do not leak");
  }catch(const std::exception& e){std::cerr<<e.what()<<'\n';++failures;}
  std::error_code ec;std::filesystem::remove_all(root,ec);std::cout<<"override packs: "<<failures<<" failures\n";return failures?1:0;

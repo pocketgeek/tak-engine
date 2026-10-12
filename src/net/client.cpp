@@ -28,7 +28,7 @@ bool MpClient::connect(const std::string& host, uint16_t port, const std::string
     auth_ = Auth::None; account_.clear(); pend_ = PendingAuth{};
     deriveDone_.store(false, std::memory_order_relaxed);
     conn_ = Conn{}; err_.clear();
-    overridePackage_.reset();overrideReceive_={};overrideSend_={};overrideOfferedRoom_=overrideReadyRoom_=0;overrideStatus_.clear();overridePendingAt_=0;
+    resetOverrideTransfer();resetMapTransfer();
     room_=RoomView{};roomRequestPending_=false;
     name_ = name;
     if (!conn_.connect(host, port)) { err_ = conn_.error(); state_ = State::Done; return false; }
@@ -809,7 +809,7 @@ void MpClient::onFrame(const Frame& f) {
             room_ = std::move(incoming);
             room_.mySlot = keep;
             if(oldPolicy!=room_.opts.overridePolicy && room_.hostId==myId_){mapPackage_.reset();mapOfferedRoom_=mapReadyRoom_=0;}
-            if(room_.opts.overridePolicy!=2){overridePackage_.reset();overrideReceive_={};overrideSend_={};overrideOfferedRoom_=overrideReadyRoom_=0;overrideStatus_.clear();overridePendingAt_=0;}
+            if(room_.opts.overridePolicy!=2)resetOverrideTransfer();
             else if(room_.hostId==myId_ && overrideOfferedRoom_!=room_.id)offerOverrides();
             gameSpeed_ = room_.opts.speed;
             if (state_ == State::Lobby) state_ = State::InRoom;
@@ -943,9 +943,7 @@ void MpClient::createGame(const std::string& name, const std::string& password,
                           const std::string& mapId, const GameOptions& o, uint8_t capacity,
                           bool spectate, bool priv, const std::string& mission) {
     if(roomRequestPending_)return;
-    overridePackage_.reset();overrideReceive_={};overrideSend_={};overrideReadyRoom_=overrideOfferedRoom_=0;overrideStatus_.clear();overridePendingAt_=0;
-    mapPackage_.reset(); mapReceive_ = {}; mapSend_ = {};
-    mapReadyRoom_ = mapOfferedRoom_ = 0; startRequested_ = false; pendingMapStart_.reset();
+    resetOverrideTransfer();resetMapTransfer();
     mapStatus_ = "CHECKING MAP";
     if (mission.empty() && !mapgen::isGeneratedMapId(mapId)) {
         try {
@@ -974,9 +972,7 @@ void MpClient::joinGame(uint32_t id, const std::string& password) {
 void MpClient::leaveGame() {
     roomRequestPending_=false;
     send(Msg::LeaveGame);
-    overridePackage_.reset();overrideReceive_={};overrideSend_={};overrideReadyRoom_=overrideOfferedRoom_=0;overrideStatus_.clear();overridePendingAt_=0;
-    mapPackage_.reset(); mapReceive_ = {}; mapSend_ = {};
-    mapReadyRoom_ = mapOfferedRoom_ = 0; startRequested_ = false; pendingMapStart_.reset(); mapStatus_.clear();
+    resetOverrideTransfer();resetMapTransfer();
     room_ = RoomView{};
     state_ = State::Lobby;
 }
@@ -1114,6 +1110,13 @@ void MpClient::mapFrame(const Frame& f) {
 }
 
 namespace tak::net {
+void MpClient::resetOverrideTransfer() {
+    overridePackage_.reset();overrideReceive_={};overrideSend_={};overrideOfferedRoom_=overrideReadyRoom_=0;overrideStatus_.clear();overridePendingAt_=0;
+}
+void MpClient::resetMapTransfer() {
+    mapPackage_.reset(); mapReceive_ = {}; mapSend_ = {};
+    mapReadyRoom_ = mapOfferedRoom_ = 0; startRequested_ = false; pendingMapStart_.reset(); mapStatus_.clear();
+}
 void MpClient::setHostOverridePacks(std::vector<std::string> names) {
     std::sort(names.begin(),names.end());if(names==hostOverridePacks_)return;
     if(overrideBusy())return;
@@ -1146,8 +1149,12 @@ hpi::Vfs MpClient::overrideVfs(hpi::OverridePolicy policy,const std::vector<std:
     vfs.setOverrideFiles(std::move(files));return vfs;
 }
 void MpClient::acceptOverrides(std::shared_ptr<overrides::Package> package,uint32_t room) {
-    overrides::saveCache(mapRoot_,*package);overridePackage_=std::move(package);overrideReceive_={};overrideReadyRoom_=room;
+    overridePackage_=std::move(package);overrideReceive_={};overrideReadyRoom_=room;
     overrideStatus_="OVERRIDE PACKS VERIFIED";
+    // Like acceptMap: the package is verified, so a cache failure (full disk)
+    // is reported but must not reject it.
+    try {overrides::saveCache(mapRoot_,*overridePackage_);}
+    catch(const std::exception& e){overrideStatus_=std::string("OVERRIDE PACKS VERIFIED; SAVE FAILED: ")+e.what();chat_.push_back({"SYSTEM",overrideStatus_});std::fprintf(stderr,"%s\n",overrideStatus_.c_str());}
     Writer w;w.u32(room);w.str(overridePackage_->digest);send(Msg::OverrideReady,w);
     if(pendingMapStart_){auto start=std::move(*pendingMapStart_);pendingMapStart_.reset();onFrame(start);}
 }

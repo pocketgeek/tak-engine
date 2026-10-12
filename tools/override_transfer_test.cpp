@@ -19,6 +19,7 @@ int main(int argc,char** argv){try{
  put(hostRoot,"overrides/Alpha/sounds/pack-test.wav",std::string(80000,'a'));
  put(peerRoot,"overrides/Local/units/araking.fbi",std::regex_replace(text,hp,"MaxDamage=99999"));
  put(peerRoot,"overrides/Local/sounds/pack-test.wav","local");
+ put(peerRoot,"OverrideCache","not a directory"); // every peer cache save fails: verified packs must still be accepted
  net::MpClient host,peer;host.setMapRoot(hostRoot);peer.setMapRoot(peerRoot);host.setHostOverridePacks({"Beta","Alpha"});
  auto stockHash=hpi::gameplayHash(base);host.setDataHash(stockHash);peer.setDataHash(stockHash);
  check(host.connect(serverHost,uint16_t(std::stoi(argv[1])),"pack-host"),"host connect");check(peer.connect(serverHost,uint16_t(std::stoi(argv[1])),"pack-peer"),"peer connect");

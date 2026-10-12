@@ -36,10 +36,16 @@ std::shared_ptr<Package> build(const std::filesystem::path& root,const std::vect
 void saveCache(const std::filesystem::path& root,const Package& package,uint64_t quota) {
     if(!maps::validDigest(package.digest))throw std::runtime_error("invalid override cache key");
     auto dir=root/"OverrideCache",path=dir/(package.digest+".takoverrides");
-    // The caller already verified these bytes. Avoid decoding another full
-    // package merely to check whether a cache entry can be reused.
-    if(std::filesystem::exists(path))std::filesystem::remove(path);
-    tak::storageRoom(quota?tak::storageUsage(dir):0,package.bytes.size(),quota);
+    // The caller already verified these bytes, so an identical file is reused
+    // without decoding it. A damaged entry is replaced by the rename below, never
+    // deleted first: a quota or disk failure must leave the old file in place.
+    std::error_code ec;const auto existing=std::filesystem::is_regular_file(path,ec)?std::filesystem::file_size(path,ec):0;
+    if(!ec && existing==package.bytes.size()) {
+        std::vector<uint8_t> b(existing);std::ifstream in(path,std::ios::binary);in.read(reinterpret_cast<char*>(b.data()),std::streamsize(existing));
+        if(in && b==package.bytes)return;
+    }
+    const auto used=quota?tak::storageUsage(dir):0;
+    tak::storageRoom(used-std::min<uint64_t>(used,ec?0:existing),package.bytes.size(),quota);
     std::filesystem::create_directories(dir);
     const auto tmp=dir/(package.digest+"."+crypto::toHex(crypto::randomVec(8))+".tmp");
     try {std::ofstream out(tmp,std::ios::binary);out.write(reinterpret_cast<const char*>(package.bytes.data()),std::streamsize(package.bytes.size()));out.close();if(!out)throw std::runtime_error("cannot save override cache");std::filesystem::rename(tmp,path);}
