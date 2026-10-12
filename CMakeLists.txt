@@ -638,6 +638,13 @@ add_executable(server_commands_test tools/server_commands_test.cpp)
 add_executable(server_address_test tools/server_address_test.cpp)
 target_include_directories(server_address_test PRIVATE src)
 add_test(NAME server_address COMMAND server_address_test)
+add_executable(session_failure_test tools/session_failure_test.cpp)
+target_include_directories(session_failure_test PRIVATE src)
+add_test(NAME session_failure COMMAND session_failure_test)
+add_executable(local_server_test tools/local_server_test.cpp)
+target_include_directories(local_server_test PRIVATE src)
+add_test(NAME local_server COMMAND local_server_test)
+set_tests_properties(local_server PROPERTIES TIMEOUT 30)
 target_link_libraries(server_commands_test PRIVATE tak-formats)
 add_test(NAME server_commands COMMAND server_commands_test)
 add_executable(override_transfer_test tools/override_transfer_test.cpp)
@@ -1237,10 +1244,22 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/gui-smooth-game.png")
       set_tests_properties(gui_smoothing_game PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: HUD smoothing applies live")
+      # A menu single-player launch whose local server cannot run must come back to
+      # the title screen with the reason (not the multiplayer sign-in dialog, not a
+      # silent exit); the --shot then captures that screen and exits.
+      add_test(NAME menu_launch_failure COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_MENU_PICK=singleplayer
+          "TAK_LOCAL_SERVER_BIN=${CMAKE_CURRENT_BINARY_DIR}/no-such-takserver"
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/menu-launch-failure-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/menu-launch-failure-profile
+          $<TARGET_FILE:takclient> menu --data "${TAK_TEST_DATA}" --winsize 1024 768
+          --shot "${CMAKE_CURRENT_BINARY_DIR}/menu-launch-failure.png")
+      set_tests_properties(menu_launch_failure PROPERTIES TIMEOUT 60
+          PASS_REGULAR_EXPRESSION "menu: launch failed -> notice: could not (run|start) the local server")
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse tactical_dots gui_smoothing_menu gui_smoothing_game
-          PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
+          menu_launch_failure PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()
     add_executable(shadow_test tools/shadow_test.cpp)
     target_include_directories(shadow_test PRIVATE src)

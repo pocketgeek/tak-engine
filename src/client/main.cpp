@@ -106,39 +106,16 @@
 #include <thread>
 #include <vector>
 
-// Single-player auto-launches a local takserver (AIs run only on the server).
-// Sockets come from net/netcompat.h (included first, before SDL). Process control
-// is the one genuinely platform-specific bit: fork/exec on POSIX, CreateProcess on
-// Windows.
+// Single-player auto-launches a local takserver (AIs run only on the server); the
+// process itself is client/localserver.h. Sockets come from net/netcompat.h
+// (included first, before SDL).
+#include "client/localserver.h"
+#include "client/sessionfailure.h"
 #ifdef _WIN32
   #include <windows.h>
-#else
-  #include <csignal>
-  #include <sys/wait.h>
-  #include <unistd.h>
 #endif
 
 namespace {
-// A local takserver spawned for single-player; killed when the client exits.
-bool gLocalServerUp = false;
-#ifdef _WIN32
-PROCESS_INFORMATION gLocalProc{};
-void killLocalServer() {
-    if (gLocalServerUp) {
-        TerminateProcess(gLocalProc.hProcess, 0);
-        CloseHandle(gLocalProc.hProcess);
-        CloseHandle(gLocalProc.hThread);
-        gLocalServerUp = false;
-    }
-}
-#else
-pid_t gLocalPid = 0;
-void killLocalServer() {
-    if (gLocalPid > 0) { kill(gLocalPid, SIGTERM); waitpid(gLocalPid, nullptr, 0); gLocalPid = 0; }
-    gLocalServerUp = false;
-}
-#endif
-
 // Pick a free loopback TCP port by binding to 0 and reading the assignment.
 int pickFreePort() {
     tak::net::netStartup();
@@ -158,39 +135,10 @@ int pickFreePort() {
 // --no-auth because there is nobody to sign in AS (this server exists for one
 // player, on one machine), and --local so that concession stays on this machine:
 // an unauthenticated server must not be reachable from the network.
-bool spawnLocalServer(const std::string& serverBin, const std::string& dataRoot, int port) {
-#ifdef _WIN32
-    const auto executable=std::filesystem::u8path(serverBin).wstring();
-    auto cmd=tak::quoteWindowsArgument(executable)+L" --port "+std::to_wstring(port)+
-        L" --data "+tak::quoteWindowsArgument(std::filesystem::u8path(dataRoot).wstring())+L" --no-auth --local";
-    STARTUPINFOW si{};si.cb=sizeof(si);
-    if(!CreateProcessW(executable.c_str(),cmd.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,
-                       nullptr,nullptr,&si,&gLocalProc))return false;
-    gLocalServerUp = true;
-    return true;
-#else
-    pid_t pid = fork();
-    if (pid < 0) return false;
-    if (pid == 0) {
-        std::string ps = std::to_string(port);
-        execl(serverBin.c_str(), serverBin.c_str(), "--port", ps.c_str(),
-              "--data", dataRoot.c_str(), "--no-auth", "--local",
-              static_cast<char*>(nullptr));
-        _exit(127);   // exec failed
-    }
-    gLocalPid = pid;
-    gLocalServerUp = true;
-    return true;
-#endif
-}
-
-// The local takserver's process id (for the benchmark's server-side CPU/memory sampling).
-long localServerPid() {
-#ifdef _WIN32
-    return gLocalServerUp ? long(gLocalProc.dwProcessId) : 0;
-#else
-    return long(gLocalPid);
-#endif
+bool spawnLocalServer(tak::LocalServer& server, const std::string& serverBin,
+                      const std::string& dataRoot, int port) {
+    return server.start(serverBin, {"--port", std::to_string(port), "--data", dataRoot,
+                                    "--no-auth", "--local"});
 }
 
 // Path to the takserver binary that sits beside this client. argv[0] is unreliable:
@@ -868,8 +816,7 @@ int main(int argc, char** argv) {
     struct GameStreamAudio { tak::video::Stream* stream; tak::MenuMusic* menu; };
     GameStreamAudio gameStreamAudio{&streaming.stream(), &menuMusic};
     tak::PresentationPacer streamPacer;
-    std::string menuConnectError;   // failed MP connect -> shown when the menu reopens
-    std::string menuReplayError;    // refused replay -> shown on the picker when it reopens
+    tak::SessionFailure menuFailure;   // failed menu launch -> shown where it came from
     // Restore strategic navigation only for the same server/account; never keep a password.
     std::string crusadesReturnServer, crusadesReturnAccount, crusadesReturnCampaign;
     uint32_t crusadesReturnTerritory = 0;
@@ -889,8 +836,13 @@ int main(int argc, char** argv) {
     int benchmarkLevel = 0;         // picked benchmark intensity 1..5
     std::string campaignStem;       // menu campaign pick -> host this mission (autoMode 8)
     std::string campaignId;         // ...its campaign id (for progress persistence)
+    // Where a failed launch goes back to; Cli (no menu) exits with an error code.
+    tak::LaunchOrigin origin = tak::LaunchOrigin::Cli;
+    auto failLaunch = [&](std::string why) { return tak::routeFailure(origin, std::move(why), menuFailure); };
+    tak::LocalServer localServer;   // single-player's private takserver; dies with the session
     // Next/Retry chosen on the previous mission's result screen: re-enter directly.
     if (!pendingCampaign.empty()) {
+        if (fromMenu) origin = tak::LaunchOrigin::Campaign;
         campaignStem = pendingCampaign; campaignId = pendingCampaignId;
         pendingCampaign.clear(); pendingCampaignId.clear();
         if (args.empty()) args.push_back("athri cay");
@@ -916,14 +868,7 @@ int main(int argc, char** argv) {
         tak::MainMenu::Choice choice;
         {
             tak::MainMenu menu(ren, vfs, dataRoot);
-            if (!menuConnectError.empty()) {   // reopen the dropdown with the error
-                menu.setConnectError(menuConnectError);
-                menuConnectError.clear();
-            }
-            if (!menuReplayError.empty()) {    // reopen the PICKER with the error
-                menu.setReplayError(menuReplayError);
-                menuReplayError.clear();
-            }
+            if (menuFailure) menu.setFailure(std::exchange(menuFailure, {}));   // reopen where it failed
             choice = menu.run(shot, &menuServer, &menuMusic, &settings, &streaming);
             tak::renderdriver::active().noticeShown = true;   // the menu showed it (if any)
             if (choice == tak::MainMenu::Choice::Campaign) {
@@ -959,7 +904,7 @@ int main(int argc, char** argv) {
                 continue;
             }
         }
-        if (!shot.empty()) { menuMusic.stop(); menuMusic.setAudioTap(nullptr,nullptr); streamingOwner.reset(); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
+        if (!shot.empty() && choice == tak::MainMenu::Choice::None) { menuMusic.stop(); menuMusic.setAudioTap(nullptr,nullptr); streamingOwner.reset(); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
         if (choice != tak::MainMenu::Choice::SinglePlayer &&
             choice != tak::MainMenu::Choice::Multiplayer &&
             choice != tak::MainMenu::Choice::Benchmark &&
@@ -968,6 +913,11 @@ int main(int argc, char** argv) {
             quitApp = true; break;   // exit / options (or campaign with no pick) -> leave the app
         }
         benchmarkLaunch = (choice == tak::MainMenu::Choice::Benchmark);
+        origin = choice == tak::MainMenu::Choice::Multiplayer ? tak::LaunchOrigin::Multiplayer
+               : choice == tak::MainMenu::Choice::Replay      ? tak::LaunchOrigin::Replay
+               : choice == tak::MainMenu::Choice::Campaign    ? tak::LaunchOrigin::Campaign
+               : benchmarkLaunch                              ? tak::LaunchOrigin::Benchmark
+                                                              : tak::LaunchOrigin::SinglePlayer;
         // A replay picked from the menu already set mode/args above, and must not be
         // overwritten with "game" here.
         if (choice != tak::MainMenu::Choice::Replay) mode = "game";
@@ -977,7 +927,7 @@ int main(int argc, char** argv) {
             rememberServer = sv;   // remembered (as picked/typed) if the connect succeeds
             const auto address = tak::parseServerAddress(sv);
             if (!address) {
-                menuConnectError = "INVALID SERVER ADDRESS OR PORT";
+                failLaunch("INVALID SERVER ADDRESS OR PORT");
                 tak::crypto::wipe(loginPass);
                 continue;
             }
@@ -1015,18 +965,23 @@ int main(int argc, char** argv) {
         lobbyLoading->step("Starting single-player",5);
     }
 
+    std::string serverBin;
     if (mode == "game" && serverHost.empty() && !mpHeadless && !localHarness) {
         // Single-player: auto-launch a private local server and play a 1-v-AI game
         // on it (the AI runs server-side). Not visible to other players.
         int p = pickFreePort();
-        std::string serverBin = resolveServerBin(argv[0]);
-        if (p <= 0 || !spawnLocalServer(serverBin, dataRoot, p)) {
+        serverBin = resolveServerBin(argv[0]);
+#ifndef NDEBUG
+        // TAK_LOCAL_SERVER_BIN=<path>: run this instead (a missing or failing server
+        // exercises the launch-failure path; see the menu_launch_failure test).
+        if (const char* bin = tak::devEnv("TAK_LOCAL_SERVER_BIN"); bin && *bin) serverBin = bin;
+#endif
+        if (p <= 0 || !spawnLocalServer(localServer, serverBin, dataRoot, p)) {
             std::fprintf(stderr, "single-player: could not launch a local server (%s)\n",
                          serverBin.c_str());
+            if (failLaunch("could not start the local server (" + serverBin + ")")) continue;
             return 1;
         }
-        static bool atexitOnce = [] { std::atexit(killLocalServer); return true; }();
-        (void)atexitOnce;   // register the safety-net teardown once (the loop kills it per session)
         serverHost = "127.0.0.1"; serverPort = p;
         // Campaign mission -> auto-host it (mode 8); menu skirmish stops in the lobby
         // (mode 0); CLI single-player auto-plays vs an AI (mode 7).
@@ -1070,9 +1025,15 @@ int main(int argc, char** argv) {
         if (lobbyLoading) lobbyLoading->step("Connecting to local server",35);
         uint64_t lobbyProgressAt=SDL_GetTicks64();
         bool ok = false;
-        for (int attempt = 0; attempt < (gLocalServerUp ? 200 : 1) && !ok; ++attempt) {
+        std::string serverDied;   // the local server exited before it would answer
+        for (int attempt = 0; attempt < (localServer.started() ? 200 : 1) && !ok; ++attempt) {
             ok = mp->connect(serverHost, uint16_t(serverPort), playerName);
-            if (!ok && gLocalServerUp) {
+            if (!ok && localServer.started()) {
+                // A dead server will never listen: say so now, not after the 10 s poll.
+                if (int code = 0; localServer.exited(&code)) {
+                    serverDied = tak::localServerExitMessage(code, serverBin);
+                    break;
+                }
                 if (lobbyLoading && SDL_GetTicks64()-lobbyProgressAt>=100) {
                     lobbyLoading->step("Waiting for local server",35);lobbyProgressAt=SDL_GetTicks64();
                 }
@@ -1080,17 +1041,16 @@ int main(int argc, char** argv) {
             }
         }
         if (!ok) {
-            std::fprintf(stderr, "server: %s\n", mp->error().c_str());
-            killLocalServer();
-            // A menu-launched connect failure returns to the front-end with the
-            // error shown in the reopened CONNECT dropdown -- never exits the app.
-            if (fromMenu) {
-                menuConnectError = mp->error().empty()
-                                       ? "COULD NOT CONNECT TO " + serverHost
-                                       : mp->error();
-                mp.reset();
-                continue;
-            }
+            const std::string why = !serverDied.empty() ? serverDied
+                                  : mp->error().empty() ? "COULD NOT CONNECT TO " + serverHost
+                                                        : mp->error();
+            std::fprintf(stderr, "server: %s\n", why.c_str());
+            localServer.stop();
+            // A menu-launched connect failure returns to the screen it was picked
+            // from with the error shown (the CONNECT dropdown for multiplayer) --
+            // never exits the app.
+            mp.reset();
+            if (failLaunch(why)) continue;
             return 1;
         }
         // The TCP connect only queued the Hello. Settle the handshake HERE, before
@@ -1126,12 +1086,9 @@ int main(int argc, char** argv) {
                 : mp->error().empty() ? std::string("the server closed the connection")
                                       : mp->error();
             std::fprintf(stderr, "server: %s\n", why.c_str());
-            killLocalServer();
-            if (fromMenu) {   // back to the sign-in panel with the reason in red
-                menuConnectError = why;
-                mp.reset();
-                continue;
-            }
+            localServer.stop();
+            mp.reset();
+            if (failLaunch(why)) continue;   // back where it was picked, the reason in red
             return 1;
         }
         if (mp->auth() == tak::net::MpClient::Auth::Created)
@@ -1177,7 +1134,7 @@ int main(int argc, char** argv) {
                 gameView = makeReplayView(ren, args[0], dataRoot, settings, fromMenu);
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "replay: cannot read %s -- %s\n", args[0].c_str(), e.what());
-                if (fromMenu) { menuReplayError = e.what(); continue; }
+                if (failLaunch(e.what())) continue;   // back to the picker with the reason
                 return 1;
             }
         } else if (mode == "map" && !args.empty() && !dataRoot.empty()) {
@@ -1186,7 +1143,11 @@ int main(int argc, char** argv) {
             std::string mapPath = tak::mapgen::isGeneratedMapId(args[0])
                                       ? args[0]
                                       : tak::hpi::findMap(vfs, args[0]);
-            if (mapPath.empty()) { std::fprintf(stderr, "map '%s' not found\n", args[0].c_str()); return 1; }
+            if (mapPath.empty()) {
+                std::fprintf(stderr, "map '%s' not found\n", args[0].c_str());
+                if (failLaunch("map '" + args[0] + "' not found")) continue;
+                return 1;
+            }
             mapView = std::make_unique<MapView>(ren, vfs, mapPath);
         } else if (mode == "game" && !args.empty() && !dataRoot.empty()) {
             std::string mapPath = tak::hpi::findMap(vfs, args[0]);
@@ -1207,7 +1168,11 @@ int main(int argc, char** argv) {
                 if (vfs.has(mpath)) mapPath = mpath;
             }
 #endif
-            if (mapPath.empty()) { std::fprintf(stderr, "map '%s' not found in %s\n", args[0].c_str(), dataRoot.c_str()); return 1; }
+            if (mapPath.empty()) {
+                std::fprintf(stderr, "map '%s' not found in %s\n", args[0].c_str(), dataRoot.c_str());
+                if (failLaunch("map '" + args[0] + "' not found")) continue;
+                return 1;
+            }
             // A multiplayer client builds the world from the server's GameStarting
             // later, so it constructs "bare" (no single-player 2-monarch spawn).
             // When looping back to the menu, keep this function's vfs alive for the
@@ -1255,7 +1220,7 @@ int main(int argc, char** argv) {
                     gameView->openCrusades();
                 }
 #endif
-                gameView->setLocalServerPid(localServerPid());
+                gameView->setLocalServerPid(localServer.pid());
                 gameView->setMpMapId(args[0]);
                 if (fromMenu) { gameView->setExternalLobbyMusic();  // front-end owns the lobby BGM
                                 gameView->setCanReturnToMenu(); }   // in-game menu can return to it
@@ -1321,7 +1286,13 @@ int main(int argc, char** argv) {
             return 2;
         }
     } catch (const std::exception& e) {
+        // Data/parse errors building the session. From the menu, go back with the
+        // reason: takclient is a GUI-subsystem app on Windows, so a bare return
+        // here just made the window vanish. The views and the local server are
+        // session-scoped and go with the `continue`.
         std::fprintf(stderr, "error: %s\n", e.what());
+        SDL_SetWindowMinimumSize(win, 0, 0);   // the game may have set its minimum
+        if (failLaunch(e.what())) continue;
         return 1;
     }
 
@@ -2168,7 +2139,7 @@ int main(int argc, char** argv) {
         crusadesReturnCampaign = mp->subscribedCampaign();
         crusadesReturnTerritory = gameView->crusadesSelectedTerritory();
         if (gameView->reconnectRequested())
-            menuConnectError = "Sign in again to restore your Crusades campaign";
+            menuFailure = {tak::FailTo::ServerSelect, "Sign in again to restore your Crusades campaign"};
     }
     // Campaign mission ended (and resolved -- not a mid-mission quit): advance
     // persisted progress on a win, then show the result screen and act on the choice.
@@ -2195,7 +2166,7 @@ int main(int argc, char** argv) {
         }
         tak::ResultStats st = gameView->resultStats();   // read before the sim is freed
         // gameView BEFORE mp: ~GameView saves the replay, which reads the net client.
-        killLocalServer(); gameView.reset(); mp.reset();   // free the mission before the movie/modal
+        localServer.stop(); gameView.reset(); mp.reset();   // free the mission before the movie/modal
         if (oc > 0) {
             // Cinematics on victory: a per-mission "post<stem>" cutscene (retail ships
             // one after Book of Darien mission 24), then the campaign's ending credits
@@ -2220,12 +2191,12 @@ int main(int argc, char** argv) {
         // so both buttons come back to the front end.
         int oc = gameView->outcomePublic();
         tak::ResultStats st = gameView->resultStats();
-        killLocalServer(); gameView.reset(); mp.reset();   // view first: it saves the replay
+        localServer.stop(); gameView.reset(); mp.reset();   // view first: it saves the replay
         tak::ResultScreen::run(ren, vfs, oc > 0, "", false, &settings, &menuMusic, &st);
     }
     // Session ended: tear down any single-player local server, then either loop back
     // to the menu or exit the app.
-    killLocalServer();
+    localServer.stop();
     // Destroy the session's views NOW (not at scope end below): the renderer is
     // reused across sessions, so their GPU textures must be freed before the next
     // session budgets against gpuvram. The log line is the leak canary -- healthy

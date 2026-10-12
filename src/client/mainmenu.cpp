@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
@@ -40,6 +41,7 @@
 #include <string>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -151,7 +153,6 @@ struct MainMenu::Impl {
     int replayScroll_ = 0;            // first listed row
     std::vector<std::string> replayFiles_;   // full paths, newest first
     std::string chosenReplay_;
-    std::string pendingReplayError;   // set via setReplayError before run()
     std::string replayError_;         // shown on the picker
     SDL_FRect replayBtnRect_[10]{};   // one per listed row (set each render)
     SDL_FRect benchBtnRect_[6]{};      // LOW..EXTRA ABSURD hit-rects (set each render)
@@ -621,7 +622,70 @@ struct MainMenu::Impl {
     SDL_FRect serverBoxRect{};              // custom text-box hit-rect
     SDL_FRect serverConnectRect{}, serverBackRect{};   // button hit-rects
     std::string serverError;                // shown in red after a failed connect
-    std::string pendingConnectError;        // set via setConnectError before run()
+    // A failed launch handed back by setFailure() before run(); applied (the screen it
+    // came from reopened) at the top of run(). notice_ is the modal panel over that
+    // screen for the destinations without an error line of their own.
+    SessionFailure pendingFailure;
+    std::string notice_;
+
+    // Reopen the screen a failed launch came from and put its message there. The
+    // CONNECT dropdown and the replay picker have their own red error line; the
+    // title screen, the benchmark and the campaign picker get the notice panel.
+    void applyFailure(SessionFailure f, Settings* settings) {
+        static constexpr const char* kTo[] = {"exit", "notice", "server select", "replay picker",
+                                              "benchmark menu", "campaign picker"};
+        std::fprintf(stderr, "menu: launch failed -> %s: %s\n", kTo[int(f.to)], f.message.c_str());
+        switch (f.to) {
+            case FailTo::ServerSelect:
+                openServerSelect(settings);
+                serverError = std::move(f.message);
+                return;
+            case FailTo::ReplayPicker:
+                scanReplays();
+                replayMenu_ = true;
+                replayError_ = std::move(f.message);
+                return;
+            case FailTo::BenchmarkMenu: benchMenu_ = true; break;
+            case FailTo::CampaignPicker:
+                if (settings)
+                    campaign_ = std::make_unique<CampaignScreen>(ren, vfs, *settings, 0,
+                        [this](const std::string& sound) { loadSfx(sound); playSfx(sound); });
+                break;
+            case FailTo::Notice: case FailTo::Exit: break;
+        }
+        notice_ = std::move(f.message);
+    }
+
+    // The launch-failure notice: a modal panel above every overlay; the next click or
+    // key press dismisses it (run() swallows that press). The message is a sentence
+    // (often an exception's text), so it wraps instead of running off the panel.
+    void renderNotice(int winW, int winH) {
+        if (notice_.empty()) return;
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        SDL_FRect dim{0, 0, float(winW), float(winH)};
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 150);
+        SDL_RenderFillRectF(ren, &dim);
+        const float px = 1.8f, cw = 6 * px, pad = 30, pw = 620;
+        const size_t perLine = size_t((pw - pad * 2) / cw);
+        std::vector<std::string> lines;
+        std::string rest = notice_.substr(0, perLine * 5);
+        while (!rest.empty()) {
+            size_t cut = rest.size() <= perLine ? rest.size() : rest.rfind(' ', perLine);
+            if (cut == std::string::npos || cut == 0) cut = std::min(perLine, rest.size());
+            lines.push_back(rest.substr(0, cut));
+            rest.erase(0, cut < rest.size() && rest[cut] == ' ' ? cut + 1 : cut);
+        }
+        const float titlePx = 3.0f, lineH = 7 * px + 8;
+        const float ph = pad * 2 + 7 * titlePx + 18 + float(lines.size()) * lineH + 20;
+        const float x0 = (winW - pw) / 2, y0 = (winH - ph) / 2;
+        SDL_FRect panel{x0, y0, pw, ph};
+        SDL_SetRenderDrawColor(ren, 28, 30, 40, 245); SDL_RenderFillRectF(ren, &panel);
+        SDL_SetRenderDrawColor(ren, 190, 110, 100, 255); SDL_RenderDrawRectF(ren, &panel);
+        blockText("COULD NOT START THE GAME", x0 + pad, y0 + pad, titlePx, {210, 205, 160, 255});
+        float y = y0 + pad + 7 * titlePx + 18;
+        for (const auto& l : lines) { blockText(l, x0 + pad, y, px, {235, 120, 110, 255}); y += lineH; }
+        shadowText("CLICK TO CONTINUE", x0 + pad, y + 8, 1.6f, {150, 155, 175, 255});
+    }
     // Account login. Servers require a name and password; an unused name is
     // registered on the spot, so there is no separate sign-up screen (the server
     // decides which of the two happened and says so). The password lives here
@@ -1055,8 +1119,7 @@ MainMenu::MainMenu(SDL_Renderer* ren, const hpi::Vfs& vfs, std::string install)
     : d_(new Impl(ren, vfs, std::move(install))) { d_->load(); }
 MainMenu::~MainMenu() { delete d_; }
 
-void MainMenu::setConnectError(const std::string& msg) { d_->pendingConnectError = msg; }
-void MainMenu::setReplayError(const std::string& msg) { d_->pendingReplayError = msg; }
+void MainMenu::setFailure(const SessionFailure& failure) { d_->pendingFailure = failure; }
 
 MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverOut,
                                MenuMusic* music, Settings* settings, Streaming* streaming) {
@@ -1068,9 +1131,33 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     if (settings && tak::devFlag("TAK_GUI_SMOOTH_TEST")) d_->testSmoothArt(*settings, w, h);
 #endif
 
+#ifndef NDEBUG
+    // TAK_MENU_PICK=singleplayer|benchmark|campaign:<stem>: the FIRST visit picks that
+    // with no input, so a headless harness can drive a menu launch -- and a failed
+    // one back here, which a --shot then captures (the menu_launch_failure test).
+    static bool menuPicked = false;
+    if (const char* pick = tak::devEnv("TAK_MENU_PICK"); pick && *pick && !menuPicked) {
+        menuPicked = true;
+        const std::string p = pick;
+        if (p == "singleplayer") return Choice::SinglePlayer;
+        if (p == "benchmark") { d_->chosenBenchmark_ = 1; return Choice::Benchmark; }
+        if (p.rfind("campaign:", 0) == 0) { d_->chosenMission_ = p.substr(9); return Choice::Campaign; }
+    }
+#endif
+    // Returning from a failed launch: reopen the screen it was picked from with the
+    // reason shown, so the player lands back where they were, not at a bare menu --
+    // and never in the server dialog for a launch that was not multiplayer.
+    if (d_->pendingFailure) d_->applyFailure(std::exchange(d_->pendingFailure, {}), settings);
+
     if (!shotPath.empty()) {
         for (auto& dr : d_->doors) d_->updateDoor(dr, 0.0);
         d_->render(w, h);
+        // A failure handed to this visit: capture the screen it reopened.
+        if (d_->serverSelect) d_->renderServerSelect(w, h);
+        if (d_->replayMenu_) d_->renderReplayMenu(w, h);
+        if (d_->benchMenu_) d_->renderBenchMenu(w, h);
+        if (d_->campaign_) d_->campaign_->render(w, h);
+        d_->renderNotice(w, h);
         // Debug: TAK_SHOT_CAMPAIGN captures the campaign picker overlay for tests.
         if (const char* sc = settings ? tak::devEnv("TAK_SHOT_CAMPAIGN") : nullptr) {
             int tab = std::atoi(sc);   // TAK_SHOT_CAMPAIGN=1 -> Iron Plague tab
@@ -1138,22 +1225,6 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     }
     SDL_ShowCursor(d_->cursors_.ok() ? SDL_DISABLE : SDL_ENABLE);
 
-    // Returning from a failed connect: reopen the dropdown with the error shown,
-    // so the player lands back where they were instead of at a bare menu.
-    if (!d_->pendingConnectError.empty()) {
-        d_->openServerSelect(settings);
-        d_->serverError = d_->pendingConnectError;
-        d_->pendingConnectError.clear();
-    }
-    // Same idea for a refused replay: land back on the PICKER with the reason, not at
-    // a bare menu and certainly not in the server dialog.
-    if (!d_->pendingReplayError.empty()) {
-        d_->scanReplays();
-        d_->replayMenu_ = true;
-        d_->replayError_ = d_->pendingReplayError;
-        d_->pendingReplayError.clear();
-    }
-
     PresentationPacer streamPacer;
     Uint64 prev = SDL_GetPerformanceCounter();
     const double freq = double(SDL_GetPerformanceFrequency());
@@ -1179,6 +1250,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             }
 
             if (streaming && streaming->input(e, w, h)) continue;
+            if (!d_->notice_.empty()) {   // launch-failure notice: the next press dismisses it
+                if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_KEYDOWN) d_->notice_.clear();
+                continue;
+            }
             if (d_->serverSelect) {   // multiplayer: server + account sign-in
                 auto connect = [&]() -> bool {
                     std::string sv = d_->serverChoice();
@@ -1447,6 +1522,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         if (d_->options_) d_->options_->render(w, h);
         if (d_->hotkeys_) d_->hotkeys_->render(w, h);   // above Options
         if (d_->campaign_) d_->campaign_->render(w, h);
+        d_->renderNotice(w, h);
         if (streaming) streaming->draw(w, h);
         // Draw the cursor last so it sits above the doors and the overlays. With the
         // hardware-cursor option the OS tracks the pointer (smooth under load); otherwise

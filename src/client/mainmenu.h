@@ -10,6 +10,7 @@
 
 #include <string>
 
+#include "client/sessionfailure.h"
 #include "hpi/hpi.h"
 
 namespace tak {
@@ -36,9 +37,14 @@ public:
     // (headless screenshot for tests). On a Multiplayer choice, *serverOut (if given)
     // receives the chosen server address (empty = default/localhost). `music` (if
     // given) is polled each frame so the shared background track keeps looping.
-    // A failed multiplayer connect loops back here: run() reopens the CONNECT
-    // dropdown with this message shown in red, instead of the app exiting.
-    void setConnectError(const std::string& msg);
+    // A launch that failed loops back here: the next run() reopens the screen the
+    // launch was picked from (failure.to: the CONNECT dropdown, the replay picker,
+    // the benchmark or campaign picker, or the bare title screen) and shows
+    // failure.message there, instead of the app exiting. One channel for every
+    // launch, so a failure cannot reopen the wrong screen -- answering a refused
+    // replay or a dead single-player server with the multiplayer sign-in dialog
+    // has shipped before.
+    void setFailure(const SessionFailure& failure);
 
     Choice run(const std::string& shotPath = "", std::string* serverOut = nullptr,
                MenuMusic* music = nullptr, Settings* settings = nullptr, Streaming* streaming = nullptr);
@@ -59,11 +65,6 @@ public:
     int chosenBenchmarkLevel() const;
     // Full path of the .takrep the user picked (Choice::Replay). Empty otherwise.
     const std::string& chosenReplay() const;
-    // Show `msg` on the replay picker when the menu next opens, and open the picker.
-    // Deliberately NOT setConnectError: that one reopens the server/account dialog,
-    // so routing a replay failure through it answered "this recording is too old"
-    // with a multiplayer login prompt.
-    void setReplayError(const std::string& msg);
 
     // Play a fullscreen intro clip (Movies/<nameLower>, e.g. "logo.bik") once, scaled
     // to fill the window (letterboxed, linear-filtered). Returns when the clip ends or
