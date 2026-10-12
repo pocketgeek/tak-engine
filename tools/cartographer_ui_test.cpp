@@ -1033,7 +1033,7 @@ static int headlessWorkflow(const char* data) {
         check(!first.empty() && distinct(first)<=3,(std::string(name)+": test premise: first frame has empty boxes").c_str());
         check(distinct(last)>40,(std::string(name)+": captured frame still shows empty palette boxes").c_str());
     };
-    shotCell("terrain",{8,128,80,80},"terrain thumbnails");
+    shotCell("terrain",{8,144,56,64},"terrain thumbnails");   // clear of the variant badge (top right of the cell)
     shotCell("units",{6,123,28,20},"unit portraits");
     fs::remove_all(root);
     if(!failure.empty()) {std::cerr<<"FAIL: "<<failure<<'\n';return 1;}

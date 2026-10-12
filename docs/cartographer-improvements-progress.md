@@ -1184,6 +1184,19 @@ Cartographer or mission-runtime parity.
   common Han characters (double-width). Right-to-left, shaped/combining scripts and
   rare Han draw a replacement box; it is not a full Unicode shaping/fallback system.
   UI scale, window size and layer choices are remembered.
+- Symmetry never flips terrain art. Sections without a mirror twin (on Ulasem
+  Arena 1,874 blocks, mostly the unique Zhon `mt3` plateau) keep the target
+  side's old terrain and are reported, so they can leave visible patches. 24
+  twins found by name are still wrong (Zhon `nstair`/`sstair`, one Zhon corner
+  path, Taros canal ends `NEND`), and twins keep the variant number rather than
+  the closest-height variant. Mirrored heights come from the twin section, not
+  from heights edited after stamping. A terrain-selection Symmetrize mirrors
+  terrain only; starts and regions follow only half/quadrant sources. Clear
+  Area, property and region edits are not mirrored live, and rule operands that
+  name mirrored regions are not rewritten.
+- The terrain browser derives groups and labels from retail folder and section
+  names. A few pieces share a label (Taros `sm_unique6hi`/`unique6hi`), odd names
+  get a fallback label, and variant cycling is left-click only.
 - Unit portraits, footprint outlines, facing indicators and a 3D model inspector
   are available. The inspector is not a full unit-behavior simulator. Terrain
   stamps preserve authored lighting/relief; arbitrary terrain-art rotation is

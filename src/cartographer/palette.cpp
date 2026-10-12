@@ -233,7 +233,7 @@ void cart::Editor::drawPalette() {
         const auto* group=sectionCatalog.group(sectionGroup);
         std::string label=!paletteSearch.empty()?"Search: all groups":group?group->label:"All sections";
         const std::string tail=" ("+std::to_string(group && paletteSearch.empty()?group->sections:int(sections.list().size()))+") \xe2\x96\xbe";
-        while(label.size()>1 && cart::textWidth(label+tail,1)>kPaletteW-20)label.pop_back();
+        label=cart::clipColumns(label,std::max(1,(kPaletteW-20)/6-cart::textColumns(tail)));
         cart::drawButton(ren,4,kMenuH+33,kPaletteW-8,18,label+tail,sectionMenuOpen);
     } else cart::drawButton(ren,4,kMenuH+33,kPaletteW-8,18,cart::clipColumns(paletteCategories[size_t(categoryIndex)],28),false);
     if(tool!=TERRAIN)sectionMenuOpen=false;
@@ -305,7 +305,7 @@ void cart::Editor::drawSectionMenu() {
         const std::string count=std::to_string(g.sections);
         const int indent=g.depth?20:8,room=(kSectionMenuW-indent-cart::textWidth(count,1)-16)/6;
         std::string label=g.label;if(!g.depth)for(char& c:label)c=char(std::toupper((unsigned char)c));
-        cart::drawText(ren,label.substr(0,size_t(std::max(0,room))),indent,y+4,1,g.depth?200:255,g.depth?205:225,g.depth?215:150);
+        cart::drawText(ren,cart::clipColumns(label,std::max(0,room)),indent,y+4,1,g.depth?200:255,g.depth?205:225,g.depth?215:150);
         cart::drawText(ren,count,4+kSectionMenuW-8-cart::textWidth(count,1),y+4,1,150,160,175);
     }
     SDL_RenderSetClipRect(ren,nullptr);

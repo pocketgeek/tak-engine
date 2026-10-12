@@ -1290,6 +1290,12 @@ application shortcut. It uses the same data folder as the game.
   **Ctrl+S** saves a playable `.kmp` map; **Ctrl+Shift+S** is Save As.
 - Search the **terrain**, **feature** and **unit** browsers to find things to
   place. Unit rows show build portraits and names.
+- The terrain browser groups sections by kind (cliffs, transitions, water and
+  coast, paths and roads, ...) and by their original folders; click the group
+  button to choose one. Numbered variants of a piece share one thumbnail, and
+  clicking the selected piece again steps to its next variant. Pieces show
+  readable names such as *Cliff · NE outer · variant 2*. Search covers every
+  group and also matches the original section names.
 - **Place**, **Select**, **Erase** and **Pan** are separate tools. Right-drag
   pans.
 - Select objects to move, copy, paste, duplicate, delete or edit their
