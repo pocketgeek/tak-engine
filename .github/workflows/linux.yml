@@ -32,6 +32,14 @@ jobs:
       volumes:
         # Slackware's minimal image lacks CA certificates during bootstrap.
         - /etc/ssl/certs:/run/host-ca:ro
+    env:
+      # Compiler cache for our own sources (CMake picks ccache up as the launcher): each leg
+      # spent 4-7.5 minutes compiling from nothing on every push. Capped, and the prune-caches
+      # job keeps only the newest entry per distro and arch.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 400M
+      CCACHE_COMPRESS: 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -83,7 +91,7 @@ jobs:
           # SDL2 with its X11/Wayland/audio drivers (the libs themselves are
           # built from source below).
           apt-get install -y --no-install-recommends \
-            cmake ninja-build g++ git make perl python3 patch dpkg-dev pkg-config file \
+            cmake ninja-build g++ ccache git make perl python3 patch dpkg-dev pkg-config file \
             curl ca-certificates xz-utils \
             libasound2-dev libpulse-dev libpipewire-0.3-dev libdbus-1-dev \
             libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxfixes-dev \
@@ -97,7 +105,7 @@ jobs:
           # libstdc++-static: Fedora splits libstdc++.a out, and without it the
           # -static-libstdc++ probe in CMakeLists fails and the binary keeps a
           # libstdc++.so.6 dependency -- which is exactly what the static gate rejects.
-          dnf -y install cmake ninja-build gcc-c++ git make perl-core python3 patch rpm-build pkgconf \
+          dnf -y install cmake ninja-build gcc-c++ ccache git make perl-core python3 patch rpm-build pkgconf \
             libstdc++-static \
             tar gzip zstd xz \
             alsa-lib-devel pulseaudio-libs-devel pipewire-devel dbus-devel \
@@ -109,7 +117,7 @@ jobs:
         if: matrix.family == 'arch'
         run: |
           pacman -Syu --noconfirm --needed \
-            base-devel perl python patch cmake ninja git nasm pkgconf curl \
+            base-devel perl python patch cmake ninja ccache git nasm pkgconf curl \
             alsa-lib libpulse pipewire dbus \
             libx11 libxext libxcursor libxi libxrandr libxfixes libxss \
             libxkbcommon wayland wayland-protocols libdecor mesa
@@ -122,7 +130,7 @@ jobs:
             /usr/share/zypp/local/service/openSUSE/repo/*.xml /etc/zypp/repos.d/*.repo
           zypper --non-interactive refresh
           zypper --non-interactive install --no-recommends \
-            cmake ninja gcc-c++ git make perl python3 patch rpm-build pkgconf-pkg-config \
+            cmake ninja gcc-c++ ccache git make perl python3 patch rpm-build pkgconf-pkg-config \
             file curl ca-certificates tar gzip zstd xz \
             alsa-devel libpulse-devel pipewire-devel dbus-1-devel \
             libX11-devel libXext-devel libXcursor-devel libXi-devel libXrandr-devel \
@@ -141,7 +149,7 @@ jobs:
           gpg --import /tmp/slackware-key
           slackpkg -batch=on -default_answer=y update
           slackpkg -batch=on -default_answer=y install \
-            gcc gcc-g++ binutils flex dcron make ninja cmake git curl ca-certificates perl python3 \
+            gcc gcc-g++ binutils flex dcron make ninja cmake ccache git curl ca-certificates perl python3 \
             pkg-config nasm glibc kernel-headers zlib libffi libmpc isl libarchive sqlite icu4c \
             libxml2 nghttp2 cyrus-sasl brotli guile gc \
             alsa-lib pulseaudio pipewire dbus libX11 libXext libXcursor libXi \
@@ -199,8 +207,19 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git describe --always --dirty --abbrev=12
 
+      # The workspace path is the same in every container; the key's distro tag keeps
+      # compilers apart.
+      - name: Restore compiler cache
+        id: ccache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-linux-${{ matrix.tag }}-${{ matrix.arch }}-${{ github.sha }}
+          restore-keys: ccache-linux-${{ matrix.tag }}-${{ matrix.arch }}-
+
       - name: Configure + build
         run: |
+          ccache --version | head -1
           if [ "${{ matrix.cxx12 }}" = "true" ]; then export CC=gcc-12 CXX=g++-12; fi
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             \
@@ -345,11 +364,53 @@ jobs:
           cp build-debug/takclient build-debug/takserver build-debug/cartographer build-debug/crusades_admin dist-linux-debug/
           tar -C dist-linux-debug -czf dist/tak-engine-linux-${{ matrix.arch }}-debug.tar.gz .
 
+      - name: Compiler cache statistics
+        if: always() && steps.ccache-restore.outcome == 'success'
+        run: ccache --show-stats || true
+
+      # Saved even when a test step failed, so the next push still starts warm.
+      - name: Save compiler cache
+        if: always() && steps.ccache-restore.outcome == 'success' && steps.ccache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
+
       - name: Upload CI artifact
         uses: actions/upload-artifact@v7
         with:
           name: tak-engine-${{ matrix.tag }}-${{ matrix.arch }}
           path: dist/*
+
+  # The repo's 10 GB cache quota is shared with the FFmpeg builds: keep only the newest
+  # compiler cache per distro and arch. (The containers have no gh, so this runs on the host.)
+  prune-caches:
+    name: Prune superseded caches
+    needs: package
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Prune
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Keep the newest entry per group; group = key minus its per-commit suffix.
+          prune() {  # prune <key prefix> <sed expression mapping key -> group>
+            gh cache list --repo "$GITHUB_REPOSITORY" --key "$1" --limit 500 \
+                --json key,createdAt --jq 'sort_by(.createdAt) | reverse | .[].key' |
+              while read -r key; do
+                group=$(printf '%s\n' "$key" | sed -E "$2")
+                if printf '%s\n' "$seen" | grep -qxF "$group"; then
+                  echo "delete $key"
+                  gh cache delete "$key" --repo "$GITHUB_REPOSITORY" || true
+                else
+                  seen="$seen"$'\n'"$group"
+                fi
+              done
+          }
+          prune ccache-linux- 's/-[0-9a-f]{40}$//'
 
   release:
     name: Attach to release

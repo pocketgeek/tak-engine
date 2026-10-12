@@ -58,6 +58,13 @@ jobs:
       TARGET_OS: mingw32
       TARGET_ARCH: ${{ matrix.ffmpeg_arch }}
       OBJDUMP: ${{ matrix.objdump }}
+      # Compiler cache for our own sources (CMake picks ccache up as the launcher); the x64
+      # job spent ~14 of its ~25 minutes compiling from nothing on every push. Capped, and
+      # the prune-caches job keeps only the newest entry per arch.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 600M
+      CCACHE_COMPRESS: 'true'
     defaults:
       run:
         shell: msys2 {0}
@@ -86,6 +93,7 @@ jobs:
             ${{ matrix.package }}-libjpeg-turbo
             ${{ matrix.package }}-zlib
             ${{ matrix.package }}-pkgconf
+            ${{ matrix.package }}-ccache
             git
             make
             perl
@@ -147,6 +155,14 @@ jobs:
           git config core.filemode false
           git status --porcelain | head -5
           git describe --always --dirty --abbrev=12
+
+      - name: Restore compiler cache
+        id: ccache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-windows-${{ matrix.arch }}-${{ github.sha }}
+          restore-keys: ccache-windows-${{ matrix.arch }}-
 
       - name: Configure + build
         # links MSYS2's static libSDL2.a/libjpeg.a/libz.a (SDL2::SDL2-static
@@ -291,6 +307,15 @@ jobs:
         run: |
           cmake -B build-debug -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Debug
           cmake --build build-debug --target takclient takserver cartographer crusades_admin
+          ccache --show-stats
+
+      # Saved even when a test step failed, so the next push still starts warm.
+      - name: Save compiler cache
+        if: always() && steps.ccache-restore.outcome == 'success' && steps.ccache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
 
       - name: Verify Debug architecture and static dependencies
         run: |
@@ -350,6 +375,38 @@ jobs:
 
   # Only this job can publish official Windows assets. It waits for BOTH native
   # builds and their tests, then signs ARM64 files on a supported x64 runner.
+  # Cache housekeeping: the repo's 10 GB cache quota is shared with the FFmpeg builds. Keep only
+  # the newest compiler cache per arch, and the newest MSYS2 package cache per package set
+  # (setup-msys2 saves a new entry whenever the package files change and never deletes the old).
+  prune-caches:
+    name: Prune superseded caches
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Prune
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Keep the newest entry per group; group = key minus its per-commit suffix.
+          prune() {  # prune <key prefix> <sed expression mapping key -> group>
+            gh cache list --repo "$GITHUB_REPOSITORY" --key "$1" --limit 500 \
+                --json key,createdAt --jq 'sort_by(.createdAt) | reverse | .[].key' |
+              while read -r key; do
+                group=$(printf '%s\n' "$key" | sed -E "$2")
+                if printf '%s\n' "$seen" | grep -qxF "$group"; then
+                  echo "delete $key"
+                  gh cache delete "$key" --repo "$GITHUB_REPOSITORY" || true
+                else
+                  seen="$seen"$'\n'"$group"
+                fi
+              done
+          }
+          prune ccache-windows- 's/-[0-9a-f]{40}$//'
+          prune msys2-pkgs- 's/-files:.*$//'
+
   sign-release:
     name: Sign and publish Windows release
     needs: build
