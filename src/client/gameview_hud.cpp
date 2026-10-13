@@ -1725,11 +1725,11 @@ namespace {
             } else if (const std::string sq = multi ? selSquadLabel() : std::string();
                        !sq.empty() && t1 >= 0) {
                 // "FORMATION 2" outruns a short name: shrink it to stop short of the
-                // "N SELECTED" status to its right.
+                // conjured target's name to its right.
                 SDL_FRect nr = place(t1);
                 float px = tpx;
-                if (int ai = guiIdx("ActionText"); ai >= 0)
-                    px = std::min(px, (place(ai).x - nr.x) / (6.0f * float(sq.size()) + 3.0f));
+                if (int t2 = guiIdxRight("UnitText"); t2 >= 0)
+                    px = std::min(px, (place(t2).x - nr.x) / (6.0f * float(sq.size()) + 3.0f));
                 blockText(sq, nr.x, nr.y, std::max(1.0f, px), {236, 226, 192, 255});
             }
             if (multi) {
@@ -1745,12 +1745,28 @@ namespace {
             }
 
             // --- ActionText: status (or the total for a multi-selection) ---
+            // Not at the .gui's ActionText spot: that sits on the name row, where a long
+            // name ("BEAST HANDLER") runs into it. Centred in the gap between the two
+            // HP / mana bar pairs instead, shrunk only if it would not fit there.
             if (int ai = guiIdx("ActionText"); u && ai >= 0) {
                 SDL_FRect ar = place(ai);
                 std::string st = multi
                     ? std::to_string(selection_.size()) + " SELECTED"
                     : std::string(unitStatusText(u));
-                blockText(st, ar.x, ar.y, tpx, {170, 205, 255, 255});
+                float px = tpx, x = ar.x, y = ar.y;
+                const int lh = guiIdxLeft("HealthBar"), lm = guiIdxLeft("ManaBar");
+                const int rh = guiIdxRight("HealthBar");
+                if (lh >= 0 && lm >= 0 && rh >= 0) {
+                    const SDL_FRect a = place(lh), m = place(lm), b = place(rh);
+                    const float l = std::max(a.x + a.w, m.x + m.w), gap = b.x - l;
+                    if (gap > 0 && !st.empty()) {
+                        px = std::max(1.0f, std::min(tpx, (gap - 2 * tpx) / (6.0f * float(st.size()))));
+                        // The glyph cell is 6 px wide with 1 px of trailing space.
+                        x = l + (gap - (blockWidth(st, px) - px)) * 0.5f;
+                        y = (std::min(a.y, m.y) + std::max(a.y + a.h, m.y + m.h) - 7 * px) * 0.5f;
+                    }
+                }
+                blockText(st, x, y, px, {170, 205, 255, 255});
             }
 
             // --- UnitInfo2: the conjured target ---
