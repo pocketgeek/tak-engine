@@ -1704,7 +1704,7 @@ static void retailRoster(const char* root) {
 // Ghost Ship and Aerial Juggernaut did the same. Each carrier of both balances,
 // in both pathfinding modes, with one passenger and with a full load, unloading
 // in range and after an approach: once released it comes to rest within its own
-// stopping distance of where it let go (plus the landing search's +-64px).
+// stopping distance of where it let go (flyers: plus the landing search's reach).
 static void postUnloadRoster(const char* root) {
     using tak::sim::Fixed;
     using tak::sim::PathfindingMode;
@@ -1796,6 +1796,49 @@ static void postUnloadRoster(const char* root) {
     }
     check(carriers==27,"post-unload roster covers all 13 standard and 14 Crusades carriers");
     std::printf("  post-unload: %d carriers, %d cases, %d drifted\n",carriers,cases,drifted);
+}
+
+// Standing by after the drop must not swallow queued work: with a move or a pickup
+// queued behind the unload, each air carrier takes it up instead of landing.
+static void postUnloadQueued(const char* root) {
+    using tak::sim::PathfindingMode;
+    std::printf("queued orders after an air unload:\n");
+    auto vfs=tak::hpi::mountRetailRoot(root);
+    for(bool crusades:{false,true}) {
+        tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,crusades);
+        const auto* foot=registry.find("araarch");
+        if(!foot)continue;
+        for(const char* id:{"zonroc","tarship","creaeri"}) {
+            const auto* type=registry.find(id);
+            if(!type)continue;
+            for(PathfindingMode mode:{PathfindingMode::Retail,PathfindingMode::Legion})
+            for(int kind=0;kind<2;++kind) {
+                World w;w.setVisPlayer(-1);
+                w.setTerrain(std::vector<uint8_t>(128*128,100),128,128,40);
+                w.buildNavClasses(registry);w.setPathService(true);w.setPathfindingMode(mode);
+                const int tid=w.spawn(type,900,700);
+                const int a=w.spawn(foot,832,620),b=w.spawn(foot,832,1500);
+                w.loadInto(a,tid);
+                for(int tick=0;tick<3000 && w.unit(a)->inTransport!=tid;++tick)w.tick(1.f/30);
+                w.unloadAt(tid,880,780);
+                if(kind==0)w.order(tid,1500,1500,true);
+                else w.loadInto(b,tid,true);
+                bool done=false;
+                for(int tick=0;tick<4000 && !done;++tick) {
+                    w.tick(1.f/30);
+                    const auto& t=*w.unit(tid);
+                    done=kind ? w.unit(b)->inTransport==tid
+                              : t.orders.empty() && std::hypot(t.x.toFloat()-1500,t.z.toFloat()-1500)<48;
+                }
+                const auto& t=*w.unit(tid);
+                char what[160];
+                std::snprintf(what,sizeof what,"%s%s %s: %s after unload (at %.0f,%.0f)",id,crusades?" (crusades)":"",
+                    mode==PathfindingMode::Retail?"retail":"legion",kind ? "queued pickup boards" : "queued move arrives",
+                    t.x.toFloat(),t.z.toFloat());
+                check(done && w.unit(a)->inTransport==0,what);
+            }
+        }
+    }
 }
 
 static void airAcrossWater() {
@@ -3327,6 +3370,7 @@ int main(int argc,char** argv) {
     }
     if(argc==3 && !std::strcmp(argv[1],"--post-unload")) {
         postUnloadRoster(argv[2]);
+        postUnloadQueued(argv[2]);
         std::printf(g_fail ? "transport_test: %d FAILURE(S)\n" : "transport_test: all passed\n",g_fail);
         return g_fail ? 1 : 0;
     }
