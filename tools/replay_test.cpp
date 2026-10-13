@@ -137,7 +137,7 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 255, "replay format 11 is kept under protocol 255");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 256, "replay format 11 is kept under protocol 256");
     check(!supportedReplayProtocol(11, 250), "previous blocked-build-site protocol is refused");
     check(!supportedReplayProtocol(11, 247), "previous Legion W8 passage-gate protocol is refused");
     check(!supportedReplayProtocol(11, 246), "previous Legion W7 crossing-group protocol is refused");

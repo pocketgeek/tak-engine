@@ -152,6 +152,37 @@ clear-shot test (retail has none); turn-rate terrain multipliers and parts of
 the stone/freeze/paralyze immunity checks are not modelled. `shootme` is: a
 human-owned shooter never auto-picks a type without it (protocol 253).
 
+## After an unload the carrier stands by and lands (icd, 2026-10-12, protocol 256)
+
+`VTOL_UNLOAD` (`41ae20`) flies its carrier along a step-out point controller
+aimed `2*(transportdistance+400)` px ahead while the passengers beam out
+(`retailUnloadStepOut`), and it retires after its one-tick empty tail with that
+controller still attached. The dispatcher (`4d8450`) removes the mission and,
+finding the list empty, builds the FBI default mission in the same call
+(`4d856a` -> `4d83b0`): for owner types (+0xea) 1 and 2, whenever the type's
+default (+0x24b) is nonzero. The mover is never consulted. `VTOL_Standby`
+(`417350`/`4175c8`) resets weapons, sleeps one tick, finds no target and, being
+airborne, installs `VTOL_LANDIFCAN`, whose stage 1 replaces the step-out
+controller with a 32 px brake point. A retail carrier therefore lands at its drop
+point. Checked by emulation:
+`tools/re/probe_transport_air_unload_default_mission.py` runs the real
+dispatcher and unload over the existing native fixture and sees the default
+mission built on the retiring tick with the controller attached, plus the gate
+over ten owner-type/default cases.
+
+World used to suppress standby until the step-out controller finished, because
+the earlier integrated native trace ran with no default mission set: the Roc,
+Ghost Ship and Aerial Juggernaut all flew 1100-1500 px past their drop points
+(user replay `game-1-1791860558`). `World::standbyEligible` no longer waits for
+an active retained controller, and the unload's own retirement starts standby
+in the same tick, as the dispatcher does. Still deviating: after an ordinary
+flyer move's point controller has arrived, World lets the detached coast settle
+before standing by. Retail does not wait there either, but landing during the
+coast scatters a packed flyer formation's touchdowns (`legion_flyerfront`
+air-only 56 -> 171 px), so that is left for a separate decision. Computer
+players (owner type 3) get no default mission in retail; World gives every
+player one, as before. `transport_post_unload` covers every shipped carrier.
+
 ## Ship / no-walk mover animation (icd + COB, 2026-09-10)
 
 Ships have no `walk` script. The engine drives them with the **`MoveRate`**

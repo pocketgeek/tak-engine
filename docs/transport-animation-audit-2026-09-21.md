@@ -939,6 +939,17 @@ ticks against the retail dispatcher plus `0x4dc800` mover. All rows match after
 normalizing the `0x500` event-storage difference described above. Retail GUI was
 not launched for this comparison.
 
+**Correction (2026-10-12, protocol 256).** Suppressing VTOL standby until the
+coast ends was wrong. The native fixture's carrier type had no default mission
+(+0x24b = 0), so its dispatcher never reached `4d856a`, which builds the default
+mission in the very call that retires VTOL_UNLOAD, controller attached or not
+(`tools/re/probe_transport_air_unload_default_mission.py`). With the type default
+set, VTOL_Standby installs VTOL_LANDIFCAN two ticks later and the carrier lands at
+its drop point; World instead flew every air carrier on to the step-out point,
+2*(range+400) px ahead. See retail-engine.md, "After an unload the carrier stands
+by and lands". The 1,200-tick comparison above still holds for its no-default
+fixture (`boatType` has no VTOL_standby).
+
 ## Standing orders and weapon holstering
 
 GET 46 (`50cee6`) returns the composite standing unit order, not whether the unit

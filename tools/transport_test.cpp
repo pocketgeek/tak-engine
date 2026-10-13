@@ -29,6 +29,7 @@
 #include "sim/retailtransport.h"
 #include "net/protocol.h"
 #include "tnt/tnt.h"
+#include <algorithm>
 #include <cstring>
 #include <cstdlib>
 #include <memory>
@@ -1693,6 +1694,110 @@ static void retailRoster(const char* root) {
     }
 }
 
+// After the last passenger leaves, every shipped carrier stays where it dropped
+// its cargo. VTOL_UNLOAD retires with its step-out controller still attached --
+// aimed 2*(transportdistance+400)px ahead -- and retail's dispatcher gives the
+// emptied list its default mission in that same call (4d856a); VTOL_Standby
+// installs VTOL_LANDIFCAN two ticks later, whose 32px brake point replaces the
+// controller. World let the controller run on instead: the user's Roc (replay
+// game-1-1791860558, Legion, Crusades) flew 1400px past its drop point, and the
+// Ghost Ship and Aerial Juggernaut did the same. Each carrier of both balances,
+// in both pathfinding modes, with one passenger and with a full load, unloading
+// in range and after an approach: once released it comes to rest within its own
+// stopping distance of where it let go (plus the landing search's +-64px).
+static void postUnloadRoster(const char* root) {
+    using tak::sim::Fixed;
+    using tak::sim::PathfindingMode;
+    std::printf("every carrier stays at its drop point after unloading:\n");
+    auto vfs=tak::hpi::mountRetailRoot(root);
+    int carriers=0,cases=0,drifted=0;
+    for(bool crusades:{false,true}) {
+        tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,crusades);
+        const auto* foot=registry.find("araarch");
+        check(foot!=nullptr,"post-unload roster passenger type is available");
+        if(!foot)continue;
+        for(const auto& [name,type]:registry.types()) {
+            if(!type.canTransport)continue;
+            ++carriers;
+            const bool landCarrier=type.canFly || type.domain==UnitType::Domain::Ground;
+            const int fits=std::min({type.transportCap,type.transportSizeCap/std::max(1,foot->transportSize),5});
+            for(PathfindingMode mode:{PathfindingMode::Retail,PathfindingMode::Legion})
+            for(int pass=0;pass<2;++pass) {
+                const int count=pass ? fits : 1;   // one passenger, then a full load
+                if(pass && fits==1)continue;
+                for(bool near:{true,false}) {
+                    World w;w.setVisPlayer(-1);
+                    // Ships need the coast; flyers and siege towers drop on open land,
+                    // where the landing mission need not search past the water.
+                    w.setTerrain(landCarrier ? std::vector<uint8_t>(128*128,100) : coastHeights(128,128,50),128,128,40);
+                    w.buildNavClasses(registry);w.setPathService(true);w.setPathfindingMode(mode);
+                    const int tid=w.spawn(&type,landCarrier ? 900 : 720,700);
+                    std::vector<int> cargo;
+                    for(int i=0;i<count;++i) {
+                        cargo.push_back(w.spawn(foot,832+40*(i%3),620+40*(i/3)));
+                        w.loadInto(cargo.back(),tid);
+                    }
+                    auto aboard=[&] {
+                        return std::all_of(cargo.begin(),cargo.end(),
+                            [&](int id){return w.unit(id)->inTransport==tid;});
+                    };
+                    for(int tick=0;tick<3000 && !aboard();++tick)w.tick(1.f/30);
+                    char what[160];
+                    std::snprintf(what,sizeof what,"%s%s %s x%d %s: boards",name.c_str(),
+                        crusades?" (crusades)":"",mode==PathfindingMode::Retail?"retail":"legion",
+                        count,near?"near":"far");
+                    check(aboard(),what);
+                    if(!aboard())continue;
+                    tak::sim::Unit* t=w.unit(tid);
+                    const float dropX=near ? std::max(880.f,t->x.toFloat()-60) : 900.f;
+                    const float dropZ=near ? t->z.toFloat()+80 : std::min(t->z.toFloat()+800,1900.f);
+                    const bool inRange=tak::sim::retailTransportInRange((Fixed::fromFloat(dropX)-t->x).v,
+                        (Fixed::fromFloat(dropZ)-t->z).v,uint16_t(type.transportDist));
+                    w.unloadAt(tid,dropX,dropZ);
+                    const bool released=runUntilUnloaded(w,tid,6000);
+                    std::snprintf(what,sizeof what,"%s%s %s x%d %s: unloads",name.c_str(),
+                        crusades?" (crusades)":"",mode==PathfindingMode::Retail?"retail":"legion",
+                        count,near?"near":"far");
+                    check(released,what);
+                    if(!released)continue;
+                    t=w.unit(tid);
+                    const float x0=t->x.toFloat(),z0=t->z.toFloat(),v0=t->speed.toFloat();
+                    const float decel=(type.canFly ? type.accel : type.brake).toFloat();
+                    // Stopping distance from the release speed, the ticks before the
+                    // default mission takes over, and (flyers) VTOL_LANDIFCAN's 32px
+                    // brake point plus its candidate search, +-240px a side
+                    // (retailLandingCandidates). The step-out point is 2*(range+400)px.
+                    const float allowance=v0*v0/(2*std::max(decel,1e-3f))+4*v0+96+(type.canFly ? 32+340 : 0);
+                    float drift=0;bool defaulted=!type.canFly;
+                    for(int tick=0;tick<900;++tick) {
+                        w.tick(1.f/30);
+                        const auto& c=*w.unit(tid);
+                        drift=std::max(drift,std::hypot(c.x.toFloat()-x0,c.z.toFloat()-z0));
+                        // 4d856a + VTOL_Standby: standing by at once, landing two ticks on.
+                        // (A ship's GROUND_UNLOAD tail first lets its route coast out.)
+                        if(type.canFly && tick<4)defaulted|=c.landing.has_value();
+                    }
+                    t=w.unit(tid);
+                    const bool atRest=t->speed==Fixed() && t->orders.empty() && t->cargo.empty() &&
+                        t->standbyActive && (!type.canFly || t->flightGroundMode==1);
+                    ++cases;drifted+=drift>allowance;
+                    std::printf("    post-unload %-9s %-10s %-6s x%d %-4s inRange=%d v0=%.2f default=%d drift=%.0f "
+                                "allowance=%.0f drop=%.0f rest=%d\n",name.c_str(),crusades?"crusades":"standard",
+                                mode==PathfindingMode::Retail?"retail":"legion",count,near?"near":"far",
+                                int(inRange),v0,int(defaulted),drift,allowance,
+                                std::hypot(t->x.toFloat()-dropX,t->z.toFloat()-dropZ),int(atRest));
+                    std::snprintf(what,sizeof what,"%s%s %s x%d %s: stays at its drop point",name.c_str(),
+                        crusades?" (crusades)":"",mode==PathfindingMode::Retail?"retail":"legion",
+                        count,near?"near":"far");
+                    check(defaulted && drift<=allowance && atRest,what);
+                }
+            }
+        }
+    }
+    check(carriers==27,"post-unload roster covers all 13 standard and 14 Crusades carriers");
+    std::printf("  post-unload: %d carriers, %d cases, %d drifted\n",carriers,cases,drifted);
+}
+
 static void airAcrossWater() {
     World w;setTestPathfinding(w);w.setVisPlayer(-1);
     auto heights=coastHeights(96,96,60);
@@ -3219,6 +3324,11 @@ int main(int argc,char** argv) {
         while (std::scanf("%u %u %u %d %d",&first,&second,&remaining,&footX,&footZ)==5)
             std::printf("%u\n",tak::sim::retailUnloadParkPadding(first,second,remaining,int16_t(footX),int16_t(footZ)));
         return 0;
+    }
+    if(argc==3 && !std::strcmp(argv[1],"--post-unload")) {
+        postUnloadRoster(argv[2]);
+        std::printf(g_fail ? "transport_test: %d FAILURE(S)\n" : "transport_test: all passed\n",g_fail);
+        return g_fail ? 1 : 0;
     }
     if (argc==2 && !std::strcmp(argv[1],"--capacity")) {
         unsigned size,maximum,count,limit,used,budget;

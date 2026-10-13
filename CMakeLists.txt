@@ -914,6 +914,7 @@ if(TAK_TEST_DATA)
     add_test(NAME naval_combat COMMAND naval_combat_test "${TAK_TEST_DATA}")
     add_test(NAME legion_naval_combat COMMAND naval_combat_test "${TAK_TEST_DATA}" --legion)
     add_test(NAME transport_roster COMMAND transport_test "${TAK_TEST_DATA}")
+    add_test(NAME transport_post_unload COMMAND transport_test --post-unload "${TAK_TEST_DATA}")
     add_test(NAME transport_map_roundtrip COMMAND transport_test
         --surface-transport-map-roundtrip-type "${TAK_TEST_DATA}"
         "Lake Lokken" vertrans araarch 240 120 240 350)

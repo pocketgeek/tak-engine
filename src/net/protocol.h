@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 255;      // 255: factory output site (BUILD stage 2, icd 401deb): admitted only by the footprint-strict mobile
+constexpr uint32_t kNetVersion = 256;      // 256: an air carrier's emptied list takes its default mission (4d856a) the call VTOL_UNLOAD retires,
+                                           //      with the step-out controller (2*(range+400)px ahead) still attached; VTOL_Standby lands it two
+                                           //      ticks on instead of flying it 1100-1400px off (zonroc, tarship, creaeri); every unload that
+                                           //      empties the queue stands by that same tick (ships one tick earlier)
+                                           // 255: factory output site (BUILD stage 2, icd 401deb): admitted only by the footprint-strict mobile
                                            //      placement test (507d10: no self, moving bodies refuse too) instead of a centre radius sized for
                                            //      the new unit alone, which let a Knight be born overlapping a departing Catapult and deadlock
                                            //      both; a refused site waits rand(15)+7 ticks (hashed Unit::productionRetryTick, folded when set)

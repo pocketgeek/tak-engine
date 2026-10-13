@@ -2966,6 +2966,31 @@ const World::LegionFlightStation* World::legionFlightStation(const Unit& u) cons
     return &legionFlightStations_[index];
 }
 
+// 4d856a: when the dispatcher finds the list empty -- including right after the
+// last mission retired in the same call -- it builds the FBI default mission for
+// owner types 1/2. The mover's controller is not a mission and does not defer it:
+// VTOL_UNLOAD retires with its step-out controller, aimed 2*(range+400)px ahead,
+// still attached, and VTOL_Standby lands the carrier two ticks later
+// (tools/re/probe_transport_air_unload_default_mission.py). Waiting for that
+// controller to finish flew a Roc 1100-1400px past its drop point.
+// Known deviation kept: after a point controller has ARRIVED (flyer moves), World
+// still lets the detached coast settle before standing by. Retail does not wait
+// there either, but landing during the coast (VTOL_LANDIFCAN's 32px brake point)
+// scatters a packed flyer formation's touchdowns (legion_flyerfront 56 -> 171px).
+bool World::standbyEligible(const Unit& u) const {
+    return u.standbyAllowed && u.type && (!u.type->canFly || u.type->vtolStandby) && !u.type->isStructure() &&
+           !u.type->wanders && !u.buildSiteId && !u.repairId && !u.reclaimId &&
+           u.buildQueue.empty() && !u.repeatType && u.orders.empty() &&
+           (!u.retainedFlightGoal || u.retainedFlightControllerActive);
+}
+
+void World::beginStandby(Unit& u) {
+    if (!standbyEligible(u)) return;
+    u.standbyState = {};
+    if (!u.type->canFly) u.standbyState.flags=0x5012000u;
+    u.standbyActive = true;
+}
+
 void World::tickGroundMission(Unit& u) {
     // Other mission kinds continue through their existing handlers.
     if (!u.orders.empty() && !u.orders.front().landing) {
@@ -2978,11 +3003,7 @@ void World::tickGroundMission(Unit& u) {
         std::optional<std::pair<Fixed,Fixed>> patrolReturn; // appended after dispatch
         uint32_t patrolReturnConvoy=ConvoyTable::kNone;      // ... with the outbound leg's convoy
         bool enabled() const { return u.alive() && !u.underConstruction && !u.embarked(); }
-        bool canStandby() const {
-            return u.standbyAllowed && u.type && (!u.type->canFly || u.type->vtolStandby) && !u.type->isStructure() &&
-                   !u.type->wanders && !u.buildSiteId && !u.repairId && !u.reclaimId &&
-                   u.buildQueue.empty() && !u.repeatType && u.orders.empty() && !u.retainedFlightGoal;
-        }
+        bool canStandby() const { return w.standbyEligible(u); }
         RetailMissionState* head() {
             if (u.landing) return &u.landing->mission;
             if (auto* o = groundMissionOrder(u,true)) {
@@ -2997,13 +3018,7 @@ void World::tickGroundMission(Unit& u) {
             return canStandby() && u.standbyActive ? &u.standbyState : nullptr;
         }
         bool hasNext(const RetailMissionState&) const { return currentLeg(u.orders)+1 < u.orders.size(); }
-        void idle() {
-            if (canStandby()) {
-                u.standbyState = {};
-                if (!u.type->canFly) u.standbyState.flags=0x5012000u;
-                u.standbyActive = true;
-            }
-        }
+        void idle() { w.beginStandby(u); }
         uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
         void remove(RetailMissionState& m) {
             if (&m == &u.standbyState) u.standbyActive = false;
@@ -3868,6 +3883,9 @@ bool World::tickTransport(Unit& u, float dt) {
     auto removeUnloadLeg=[&] {
         const size_t end=std::min(pickupLeg+1,u.orders.size());
         u.orders.erase(u.orders.begin(),u.orders.begin()+long(end));
+        // Retail retires (VTOL_)UNLOAD inside its dispatcher, which builds the
+        // default mission in that same call when nothing else is queued (4d856a).
+        if(u.orders.empty())beginStandby(u);
     };
     if(o.unload && o.transportUnloadTransferDeferred) {
         o.transportUnloadTransferDeferred=false;

@@ -2711,6 +2711,10 @@ private:
     static Order* groundMissionOrder(Unit& u, bool includeCombatMoves = false);
     static bool groundMissionAccepts(const Unit&,const Order&);
     void tickGroundMission(Unit& u);
+    // 4d856a: an empty mission list gets the FBI default mission (Standby /
+    // VTOL_Standby), even while VTOL_UNLOAD's step-out controller still flies.
+    bool standbyEligible(const Unit& u) const;
+    void beginStandby(Unit& u);
     Order* navigationMissionOrder(Unit& u);
     void tickGuardNoMove(Unit& u);
     void tickFlightMovement(Unit& u, bool persistent = false);
