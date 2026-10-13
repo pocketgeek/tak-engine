@@ -1,6 +1,7 @@
 #include "client/options.h"
 
 #include "client/blockfont.h"
+#include "client/gpuvram.h"
 #include "client/renderdriver.h"
 
 #include <algorithm>
@@ -8,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <memory>
 
@@ -324,6 +326,43 @@ void OptionsScreen::build(int channels) {
     // above 30fps, at the cost of ~one tick (33ms) of visual latency.
     toggle("SMOOTH MOTION", [&] { return s_.smoothMotion ? 1.0f : 0.0f; },
            [&](float v) { s_.smoothMotion = v > 0.5f; });
+    // GPU MEMORY LIMIT: the ceiling on the game's own texture/buffer memory (gpuvram.h),
+    // applied live by applyRuntimeSettings. The note flags a temporary post-failure
+    // tightening below the chosen limit.
+    dropdown("GPU MEMORY LIMIT",
+        [] {
+            std::vector<std::string> labels;
+            for (int mib : kGpuMemoryLimits) labels.push_back(gpuMemoryLimitLabel(mib));
+            return labels;
+        },
+        [this] {
+            const int cur = snapGpuMemoryLimit(s_.gpuMemoryLimit);
+            for (size_t i = 0; i < std::size(kGpuMemoryLimits); ++i)
+                if (kGpuMemoryLimits[i] == cur) return float(i);
+            return 0.0f;
+        },
+        [this](float idx) {
+            const size_t i = size_t(std::clamp(int(idx), 0, int(std::size(kGpuMemoryLimits)) - 1));
+            s_.gpuMemoryLimit = kGpuMemoryLimits[i];
+        });
+    ctls_.back().note = [] { return gpuvram::tightened() ? std::string("LOWERED FOR NOW") : std::string(); };
+    ctls_.back().help = [] {
+        std::vector<std::string> out = {
+            "THE MOST VIDEO MEMORY THE GAME'S OWN TEXTURES MAY USE. AUTO IS 1.25 GB. TAKES EFFECT AT ONCE.",
+            "LOWER: LESS OF THE MAP IS KEPT READY OFF-SCREEN, SO AFTER A PAN OR A MINIMAP JUMP THE "
+            "TERRAIN CAN LOOK BLURRY FOR A MOMENT BEFORE IT SHARPENS, AND BIG BATTLES MAY DRAW A "
+            "LITTLE SLOWER WITH SLIGHTLY FLATTER BUILDING SHADING. UNITS ARE NEVER HIDDEN.",
+            "HIGHER OR UNLIMITED: ONLY HELPS IF YOUR CARD HAS MEMORY TO SPARE. NOTHING CHANGES "
+            "UNTIL THE GAME ACTUALLY NEEDS MORE."};
+        char used[96];
+        if (gpuvram::cap() == gpuvram::kUnlimited)
+            std::snprintf(used, sizeof used, "IN USE NOW: %zu MB.", gpuvram::bytes() >> 20);
+        else
+            std::snprintf(used, sizeof used, "IN USE NOW: %zu MB OF %zu MB%s.", gpuvram::bytes() >> 20,
+                          gpuvram::cap() >> 20, gpuvram::tightened() ? " (LOWERED AFTER A GPU ERROR)" : "");
+        out.push_back(used);
+        return out;
+    };
 
     // INTERFACE: on-screen HUD -- its size, and the game overlays.
     section("INTERFACE");

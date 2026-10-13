@@ -1025,7 +1025,7 @@ and Smooth Motion default to **on**; saved choices still apply. **Max FPS** caps
 the frame rate only while VSync is off, and is greyed out while VSync is on.
 The **Graphics** section holds **Renderer**, **Texture Filtering**, Shadows,
 **Smooth GUI Art**, **Smooth Movies**, Trees Sway in Wind, Tactical Dots,
-Hardware Cursor and Smooth Motion. Texture Filtering, Smooth GUI Art and Smooth Movies are **off** by
+Hardware Cursor, Smooth Motion and GPU Memory Limit. Texture Filtering, Smooth GUI Art and Smooth Movies are **off** by
 default and remembered. Texture Filtering applies to the game area only and has
 three levels: **Off** (retail's look, everything point-sampled), **Units**
 (retail's Visual Options Bilinear Filter: unit model textures and unit shadows
@@ -1043,6 +1043,13 @@ defaults to **on**, and remembers your choice. **Tactical Dots** (default
 when zoomed far out, with the same fog rules as the minimap; selection works on
 the dots. **Tactical Dots Zoom** (default **20%**) sets how far out: 0% means only
 fully zoomed out, 100% means from normal size outwards.
+**GPU Memory Limit** (default **Auto**, 1.25 GB; also 512 MB to 4 GB or
+**Unlimited**) caps the video memory the game's own textures may use and
+applies at once. It is a safety net: every part of the renderer also has its own
+fixed allowance and typical games stay well under Auto. Lowering it keeps less
+terrain ready off-screen (a brief blur after panning, more often) and caches
+less building shading; units are never hidden. See the
+[user guide](docs/user-guide.md#graphics).
 **Renderer** picks the graphics backend: **Auto** (the default; OpenGL on
 Linux, Direct3D on Windows, Metal on macOS) or any backend SDL offers on the
 machine, including Software. It applies after a restart; a backend that cannot

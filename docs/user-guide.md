@@ -1066,6 +1066,7 @@ World sounds are full volume on screen and fade with distance off screen.
 | **Tactical Dots Zoom** | 20% | How far out you must zoom before dots replace models. Greyed out while Tactical Dots is off. See below. |
 | **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. |
 | **Smooth Motion** | On | Units glide between the game's 30 updates per second instead of stepping. Adds about 33 ms of visual delay. |
+| **GPU Memory Limit** | Auto (1.25 GB) | The most video memory the game's own textures may use: Auto, 512 MB, 768 MB, 1 GB, 1.5 GB, 2 GB, 3 GB, 4 GB or Unlimited. Applies at once. See below. |
 
 **Texture Filtering** applies at once. At **Off** every texture is drawn with
 sharp square pixels, which is how the original game looked: it had no camera
@@ -1082,6 +1083,24 @@ levels costs any measurable speed or video memory. The interface, cursor and
 movies have their own settings (Smooth GUI Art, Smooth Movies). Saved settings
 from an older version keep their look: Bilinear Filtering off becomes Off, on
 becomes Units.
+
+**GPU Memory Limit** is a safety net, not a quality setting. At Auto a typical
+game uses 0.4–0.7 GB of it and even a huge map with a big battle stays under
+about 0.75 GB, so on most machines it never comes into play. Each part of the
+game (terrain, building shading, shadows) also has its own fixed allowance, so
+**raising** the limit or picking **Unlimited** changes nothing unless the game
+actually needs more. **Lowering** it takes effect immediately: the game drops
+the terrain it keeps ready off-screen and stops caching extra building shading
+and shadows. You may see the map look blurry for a moment more often after you
+pan or click the minimap before it sharpens, and very large battles may draw a
+little more slowly with slightly flatter building shading. Units are never
+hidden by the limit. The count only covers the game's own textures, not the
+screen itself or what the graphics driver adds, so real video memory use is
+higher. If the graphics driver reports that it has run out of memory (this
+can happen with Direct3D on Windows and Metal on macOS), the game lowers its
+limit for a while, shows **LOWERED FOR NOW** next to the option, and returns to
+your choice after a minute without another error. The help text shown while
+the pointer is over the option says how much is in use right now.
 
 **Tactical Dots Zoom** sets when dots take over; it is greyed out and cannot be
 changed while Tactical Dots is off. It is a position along your zoom-out range:
@@ -1527,6 +1546,7 @@ itself is being starved. TAK Engine caps and backs off its own video-memory use
 to avoid this. If it still happens:
 
 - close other programs that use the GPU heavily;
+- set **Options → Graphics → GPU Memory Limit** to 768 MB or 512 MB;
 - turn **Smooth GUI Art** off and **Shadows** off;
 - use a lower resolution.
 

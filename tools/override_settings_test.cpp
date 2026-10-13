@@ -85,6 +85,31 @@ int main() {
             if(text.find("textureFilter = 2\n")==text.npos || text.find("bilinearFilter")!=text.npos)
                 throw std::runtime_error("texture filtering is not written as textureFilter");
         }
+        // GPU MEMORY LIMIT: every choice persists under its own key, a file from before
+        // the option loads as Auto, and a hand-edited value is snapped or falls back.
+        for(int mib:tak::kGpuMemoryLimits) {
+            auto limited=s;limited.gpuMemoryLimit=mib;
+            if(!tak::saveSettings(limited) || tak::loadSettings().gpuMemoryLimit!=mib)
+                throw std::runtime_error("GPU memory limit did not persist: "+std::to_string(mib));
+        }
+        {
+            auto limited=s;limited.gpuMemoryLimit=-1;tak::saveSettings(limited);
+            std::ifstream saved(path);std::string text((std::istreambuf_iterator<char>(saved)),{});
+            if(text.find("\ngpuMemoryLimit = unlimited\n")==text.npos)throw std::runtime_error("Unlimited must be written as 'gpuMemoryLimit = unlimited'");
+            limited.gpuMemoryLimit=0;tak::saveSettings(limited);
+            std::ifstream again(path);std::string autoText((std::istreambuf_iterator<char>(again)),{});
+            if(autoText.find("\ngpuMemoryLimit = auto\n")==autoText.npos)throw std::runtime_error("Auto must be written as 'gpuMemoryLimit = auto'");
+        }
+        std::ofstream(path)<<"vsync = 1\n";
+        if(tak::loadSettings().gpuMemoryLimit!=0)throw std::runtime_error("pre-option file must load GPU memory limit as Auto");
+        struct GpuCase { const char* text; int expected; };
+        for(const GpuCase& c:std::initializer_list<GpuCase>{
+                {"gpuMemoryLimit = 2048\n",2048},{"gpuMemoryLimit =  UNLIMITED \n",-1},{"gpuMemoryLimit = 900\n",1024},
+                {"gpuMemoryLimit = 64\n",512},{"gpuMemoryLimit = lots\n",0},{"gpuMemoryLimit =\n",0}}) {
+            std::ofstream(path)<<c.text;
+            if(tak::loadSettings().gpuMemoryLimit!=c.expected)
+                throw std::runtime_error(std::string("GPU memory limit value not normalised: ")+c.text);
+        }
         std::ofstream(path)<<"uiScale = 2\n";
         if(tak::loadSettings().scorecardScale!=1.0f)throw std::runtime_error("scorecard inherits HUD scale");
         std::ofstream(path)<<"scorecardScale = 9\n";

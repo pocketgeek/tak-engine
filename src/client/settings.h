@@ -7,6 +7,9 @@
 // Never include this header from src/sim, src/net, or src/server.
 
 #include <algorithm>
+#include <cctype>
+#include <charconv>
+#include <cstdlib>
 #include "sim/pathmode.h"
 #include <map>
 #include <set>
@@ -56,6 +59,11 @@ struct Settings {
                                    // magnified. Costs load time and VRAM, nothing per
                                    // frame. Changing it reloads the current interface
                                    // textures immediately; no restart required.
+    // GPU MEMORY LIMIT (client/gpuvram.h): the ceiling on the video memory the game's own
+    // textures and buffers may use, in MiB. 0 = AUTO (1.25 GiB), -1 = UNLIMITED (only each
+    // subsystem's own ceiling applies); otherwise one of kGpuMemoryLimits. Applied live.
+    // Persisted as gpuMemoryLimit = auto | unlimited | <MiB>.
+    int   gpuMemoryLimit = 0;
     bool  unitShadows = true;      // projected unit shadows (retail Glide casts them; the
                                    // single largest cost in a crowded frame, so it is worth
                                    // being able to turn off on a slow machine)
@@ -145,6 +153,7 @@ struct Settings {
             && a.treeSway == b.treeSway && a.tacticalDots == b.tacticalDots
             && a.tacticalDotsZoom == b.tacticalDotsZoom
             && a.unitShadows == b.unitShadows && a.smoothArt == b.smoothArt
+            && a.gpuMemoryLimit == b.gpuMemoryLimit
             && a.videoDeblock == b.videoDeblock
             && a.healthBars == b.healthBars && a.statsPanel == b.statsPanel
             && a.masterVol == b.masterVol && a.bgmVol == b.bgmVol && a.sfxVol == b.sfxVol
@@ -213,6 +222,43 @@ inline int resolveTextureFilter(int textureFilter, int bilinearFilter, int legac
     if (bilinearFilter >= 0) return bilinearFilter ? 1 : 0;
     if (legacyZoom >= 0) return legacyZoom == 1 ? 1 : 0;
     return legacyBilinear == 1 ? 1 : 0;
+}
+
+// GPU MEMORY LIMIT choices, in Options order (MiB; 0 = AUTO, -1 = UNLIMITED).
+inline constexpr int kGpuMemoryLimits[] = {0, 512, 768, 1024, 1536, 2048, 3072, 4096, -1};
+inline constexpr int kGpuMemoryAutoMiB = 1280;   // what AUTO means (gpuvram::kAutoLimit)
+
+// Any stored value onto a listed choice: 0 and -1 stay; another number of MiB becomes the
+// nearest listed size (a hand-edited 900 -> 1024, 100 -> 512); other negatives are AUTO.
+inline int snapGpuMemoryLimit(int mib) {
+    if (mib == 0 || mib == -1) return mib;
+    if (mib < 0) return 0;
+    int best = 512;
+    for (int c : kGpuMemoryLimits)
+        if (c > 0 && std::abs(c - mib) < std::abs(best - mib)) best = c;
+    return best;
+}
+// The settings-file value: "auto" (or anything unreadable) = 0, "unlimited" = -1, a whole
+// number of MiB = snapped. Case-insensitive.
+inline int parseGpuMemoryLimit(std::string v) {
+    std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    if (v == "unlimited") return -1;
+    int mib = 0;
+    const auto [end, ec] = std::from_chars(v.data(), v.data() + v.size(), mib);
+    if (v.empty() || ec != std::errc() || end != v.data() + v.size()) return 0;
+    return snapGpuMemoryLimit(mib);
+}
+inline std::string gpuMemoryLimitValue(int mib) {
+    mib = snapGpuMemoryLimit(mib);
+    return mib == 0 ? "auto" : mib < 0 ? "unlimited" : std::to_string(mib);
+}
+inline std::string gpuMemoryLimitLabel(int mib) {
+    mib = snapGpuMemoryLimit(mib);
+    if (mib == 0) return "Auto (1.25 GB)";
+    if (mib < 0) return "Unlimited";
+    if (mib < 1024) return std::to_string(mib) + " MB";
+    return mib % 1024 ? std::to_string(mib / 1024) + "." + std::to_string(mib % 1024 * 10 / 1024) + " GB"
+                      : std::to_string(mib / 1024) + " GB";
 }
 
 // What the running process started with (set once in main before SDL_Init), so the

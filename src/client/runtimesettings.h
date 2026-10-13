@@ -17,10 +17,16 @@
 #pragma once
 
 #include "client/artscale.h"
+#include "client/gpuvram.h"
 #include "client/settings.h"
 #include "client/videofilter.h"
 
 namespace tak {
+
+inline size_t gpuMemoryLimitBytes(int mib) {
+    mib = snapGpuMemoryLimit(mib);
+    return mib == 0 ? gpuvram::kAutoLimit : mib < 0 ? gpuvram::kUnlimited : size_t(mib) * gpuvram::kMiB;
+}
 
 inline void applyRuntimeSettings(const Settings& s) {
     // Active interface owners reload their art only when smoothArt changes. New
@@ -29,6 +35,10 @@ inline void applyRuntimeSettings(const Settings& s) {
     art::setCursorFactor(s.cursorScale);
     // Deblocking IS live: it runs per decoded frame, so this reaches the next clip.
     video::setDeblock(s.videoDeblock);
+    // GPU MEMORY LIMIT is live too: the caches grow into a raised limit and shed down
+    // to a lowered one from the next frame (gpuvram.h). Unchanged = a no-op, so a
+    // post-failure tightening survives the other options being tweaked.
+    gpuvram::setLimit(gpuMemoryLimitBytes(s.gpuMemoryLimit));
 }
 
 }  // namespace tak

@@ -94,6 +94,7 @@ Settings loadSettings() {
         else if (key == "tacticalDots")    s.tacticalDots = asBool();
         else if (key == "tacticalDotsZoom") s.tacticalDotsZoom = asInt(0, 100);
         else if (key == "unitShadows")     s.unitShadows = asBool();
+        else if (key == "gpuMemoryLimit")  s.gpuMemoryLimit = parseGpuMemoryLimit(val);
         else if (key == "smoothArt")       s.smoothArt = asBool();
         else if (key == "videoDeblock")    s.videoDeblock = asBool();
         else if (key == "healthBars")      s.healthBars = asInt(0, 2);
@@ -182,6 +183,7 @@ bool saveSettings(const Settings& s) {
     o << "tacticalDots = " << (s.tacticalDots ? 1 : 0) << "\n";
     o << "tacticalDotsZoom = " << s.tacticalDotsZoom << "\n";
     o << "unitShadows = " << (s.unitShadows ? 1 : 0) << "\n";
+    o << "gpuMemoryLimit = " << gpuMemoryLimitValue(s.gpuMemoryLimit) << "\n";
     o << "smoothArt = " << (s.smoothArt ? 1 : 0) << "\n";
     o << "videoDeblock = " << (s.videoDeblock ? 1 : 0) << "\n";
     o << "healthBars = " << s.healthBars << "\n";

@@ -58,6 +58,8 @@ int main() {
     flips("treeSway",        [](Settings& s) { s.treeSway = !s.treeSway; });
     flips("tacticalDots",    [](Settings& s) { s.tacticalDots = !s.tacticalDots; });
     flips("unitShadows",     [](Settings& s) { s.unitShadows = !s.unitShadows; });
+    flips("gpuMemoryLimit",  [](Settings& s) { s.gpuMemoryLimit = 2048; });
+    flips("gpuMemoryLimit -1", [](Settings& s) { s.gpuMemoryLimit = -1; });
     flips("smoothArt",       [](Settings& s) { s.smoothArt = !s.smoothArt; });
     flips("videoDeblock",    [](Settings& s) { s.videoDeblock = !s.videoDeblock; });
     flips("healthBars",      [](Settings& s) { s.healthBars = (s.healthBars + 1) % 3; });
@@ -159,6 +161,7 @@ int main() {
         cur.textureFilter = 2;
         cur.tacticalDots = true;
         cur.renderer = "opengles2";
+        cur.gpuMemoryLimit = 768;
 
         const Settings d = tak::preferenceDefaults(cur);
         if (!(d.gameCreate == cur.gameCreate)) ++g_fail;
@@ -189,6 +192,7 @@ int main() {
         reset("textureFilter",    d.textureFilter == fresh.textureFilter && d.textureFilter == 0);
         reset("tacticalDots",     d.tacticalDots == fresh.tacticalDots && !d.tacticalDots);
         reset("renderer",         d.renderer == fresh.renderer && d.renderer.empty());
+        reset("gpuMemoryLimit",   d.gpuMemoryLimit == fresh.gpuMemoryLimit && d.gpuMemoryLimit == 0);
 
         // And the two questions must agree: after a reset we ARE at defaults, which is
         // the invariant that broke when the preserve list and atDefaults() diverged.
@@ -246,6 +250,37 @@ int main() {
         check("tf: bilinear 1 -> Units", resolveTextureFilter(-1, 1, -1, -1) == 1);
         check("tf: old zoom smooth", resolveTextureFilter(-1, -1, 0, 1) == 1 && resolveTextureFilter(-1, -1, 1, 0) == 0);
         check("tf: 0.7.24 bilinear", resolveTextureFilter(-1, -1, 1, -1) == 1 && resolveTextureFilter(-1, -1, 0, -1) == 0);
+    }
+
+    // GPU MEMORY LIMIT values (parseGpuMemoryLimit / snap / write / label). AUTO is the
+    // default and what any unreadable value falls back to; a hand-edited size snaps to
+    // the nearest listed choice so the Options dropdown always shows what is in effect.
+    {
+        auto check = [&](const char* what, bool ok) {
+            std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++g_fail;
+        };
+        using tak::parseGpuMemoryLimit; using tak::gpuMemoryLimitValue; using tak::gpuMemoryLimitLabel;
+        check("gpu: default Auto", Settings{}.gpuMemoryLimit == 0);
+        check("gpu: words", parseGpuMemoryLimit("auto") == 0 && parseGpuMemoryLimit("AUTO") == 0 &&
+                            parseGpuMemoryLimit("unlimited") == -1 && parseGpuMemoryLimit("Unlimited") == -1);
+        check("gpu: listed sizes", parseGpuMemoryLimit("512") == 512 && parseGpuMemoryLimit("1536") == 1536 &&
+                                   parseGpuMemoryLimit("4096") == 4096);
+        check("gpu: snaps sizes", parseGpuMemoryLimit("900") == 1024 && parseGpuMemoryLimit("100") == 512 &&
+                                  parseGpuMemoryLimit("99999") == 4096 && parseGpuMemoryLimit("1300") == 1536);
+        check("gpu: junk -> Auto", parseGpuMemoryLimit("") == 0 && parseGpuMemoryLimit("lots") == 0 &&
+                                   parseGpuMemoryLimit("1 GB") == 0 && parseGpuMemoryLimit("-7") == 0 &&
+                                   parseGpuMemoryLimit("0") == 0);
+        check("gpu: -1 -> Unlimited", parseGpuMemoryLimit("-1") == -1);
+        bool roundTrip = true;
+        for (int mib : tak::kGpuMemoryLimits) roundTrip = roundTrip && parseGpuMemoryLimit(gpuMemoryLimitValue(mib)) == mib;
+        check("gpu: every choice round-trips", roundTrip);
+        check("gpu: written forms", gpuMemoryLimitValue(0) == "auto" && gpuMemoryLimitValue(-1) == "unlimited" &&
+                                    gpuMemoryLimitValue(768) == "768");
+        check("gpu: labels", gpuMemoryLimitLabel(0) == "Auto (1.25 GB)" && gpuMemoryLimitLabel(768) == "768 MB" &&
+                             gpuMemoryLimitLabel(1536) == "1.5 GB" && gpuMemoryLimitLabel(3072) == "3 GB" &&
+                             gpuMemoryLimitLabel(-1) == "Unlimited");
+        check("gpu: AUTO is 1.25 GiB", tak::kGpuMemoryAutoMiB == 1280);
     }
 
     std::printf(g_fail ? "settings_test: %d FAILURE(S)\n" : "settings_test: all passed\n",
