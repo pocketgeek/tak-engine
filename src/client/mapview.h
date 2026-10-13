@@ -51,14 +51,20 @@ public:
     void clampZoom(int winW, int winH);
     void clampOffset(int winW, int winH);
 
-    // Create any terrain chunk textures that will be visible this frame. Called
-    // BEFORE the render pass so texture creation never interleaves with draw calls.
+    // Per-frame upkeep before the render pass: clamp the view and take in sections the
+    // decode worker has finished (they upload on demand in draw()).
     void ensureChunks(int winW, int winH);
 
-    // Block until every queued chunk is composited and uploaded. Screenshot paths
-    // only -- normal play never waits.
+    // Block until every queued section is decoded, and from then on keep every section
+    // the fallback needs resident with no budget, per-frame limit or expiry (the
+    // behaviour before sections had a budget), so the next frame draws complete terrain
+    // even where chunks are still baking. Screenshot paths only -- normal play never waits.
     void finishChunks();
     void quiesce(); // cancel pending reads before changing the VFS
+
+    // Give GPU memory back for an essential allocation: drop sections and chunks not
+    // drawn this frame, oldest first, until gpuvram::wouldFit(need). Returns bytes freed.
+    size_t shedGpu(size_t need);
 
     // A low-res whole-map overview (one texel per 32px block), drawn UNDER the chunk
     // grid so a not-yet-composited chunk shows blurry terrain instead of a black
@@ -94,6 +100,12 @@ public:
     void tilesEdited() { chunks_.clear(); queueAllSections(); tileBatchDirty_ = true; }
     void tilesEdited(int bx,int by,int width,int height);
     tak::TerrainChunks::Stats chunkStats() const { return chunks_.stats(); }
+    size_t sectionBytes() const { return sectionBytes_; }   // resident section textures
+    // Every queued section JPG decoded and taken in (ensureChunks). Tests only.
+    bool sectionsDecoded() {
+        std::lock_guard<std::mutex> lk(secMu_);
+        return decodeQueue_.empty() && !secBusy_ && decoded_.empty();
+    }
 
 private:
     static constexpr int kBlock = 32;   // one map cell = a 32px tile
@@ -104,8 +116,14 @@ private:
 
     // Collect the map's unique section keys and queue them for decode.
     void queueAllSections();
-    // Main thread: turn decoded section JPGs into GPU textures (budgeted/frame).
+    // Main thread: note sections the worker has decoded (ready_), or found absent.
     void uploadReadySections();
+    // Main thread: upload the wanted_ sections (budgeted per frame), evicting idle ones
+    // to make room. Returns whether any uploaded.
+    bool uploadWantedSections();
+    // Main thread: release sections idle past kSectionIdleMs, and any not drawn this
+    // frame while over the section budget or the GPU cap.
+    void trimSections();
     // Worker thread: JPEG-decode queued sections into the Compositor cache.
     void sectionWorkerLoop();
 
@@ -113,23 +131,39 @@ private:
     tak::tnt::Map map_;
     tak::terrain::Compositor comp_;
 
-    // Terrain rendering: each referenced section JPG is uploaded ONCE as a GPU
-    // texture (~7 MiB for a whole map, resolution-independent -- the old 512px
-    // composite chunks cost ~1 MiB PER visible screen-chunk, hundreds of MiB at
-    // 4K). Visible 32px tiles draw as batched quads sampling their section, with
-    // a half-texel UV inset so bilinear filtering never bleeds across tiles.
-    struct Section { SDL_Texture* tex = nullptr; int w = 0, h = 0; };
-    std::map<uint32_t, Section> sections_;   // key -> uploaded texture (main thread)
+    // Fallback terrain: where TerrainChunks has no image yet (still baking, just panned
+    // in) or is switched off, visible 32px tiles draw as batched quads sampling their
+    // section JPG, with a half-texel UV inset so bilinear filtering never bleeds across
+    // tiles. Sections used to be uploaded at load and kept all session, duplicating the
+    // chunks (64 MiB on Ulasem Arena, 238 MiB on Middle Earth V1). Now a section uploads
+    // the frame the fallback first needs it (its JPG is already decoded in the
+    // Compositor, so that is one texture upload), and is released once the chunks have
+    // covered its tiles for kSectionIdleMs, or sooner under kSectionBudget / the GPU
+    // cap. Where neither is up yet the underlay shows, as before.
+    struct Section { SDL_Texture* tex = nullptr; int w = 0, h = 0; uint64_t frame = 0, usedMs = 0; };
+    std::map<uint32_t, Section> sections_;   // key -> resident texture, or tex=null = absent JPG
+    std::set<std::pair<uint32_t, bool>> ready_;   // (key, stockTerrain) decoded in comp_ (main thread)
+    std::vector<uint32_t> wanted_;           // sampled by the fallback this frame, not resident
+    std::vector<uint32_t> batchKeys_;        // resident sections the current batch samples
+    size_t sectionBytes_ = 0;
+    uint64_t frame_ = 0;
+    bool pinSections_ = false;               // finishChunks(): screenshot harness, no budget
+    static constexpr size_t kSectionBudget = size_t(64) << 20;
+    static constexpr uint64_t kSectionIdleMs = 3000;
+    static constexpr int kSectionUploadsPerFrame = 16;   // 16 MiB: a 1080p jump in one frame
+    void evictSection(std::map<uint32_t, Section>::iterator);
+    // The resident section not drawn this frame that was used longest ago (end() = none).
+    std::map<uint32_t, Section>::iterator oldestIdleSection();
 
     // Async section decode: the worker JPEG-decodes referenced sections into the
-    // Compositor cache off-thread; the main thread uploads them (budgeted). Until
-    // a section is up the underlay shows through, exactly like the old chunks.
+    // Compositor cache off-thread (the chunk worker reads the same cache); the main
+    // thread notes them in ready_ and uploads on demand.
     std::thread secWorker_;
     std::mutex secMu_;
     std::condition_variable secCv_;
     std::deque<uint32_t> decodeQueue_;   // keys awaiting decode
-    std::vector<uint32_t> decoded_;      // keys decoded, awaiting GPU upload
-    std::set<uint32_t> secPending_;      // queued / in flight / uploaded (dedup)
+    std::vector<uint32_t> decoded_;      // keys decoded, awaiting ready_
+    std::set<uint32_t> secPending_;      // queued / in flight / decoded (dedup)
     bool secStop_ = false, secBusy_ = false;
 
     // Per-frame tile-quad batch, keyed by section texture; cached across frames

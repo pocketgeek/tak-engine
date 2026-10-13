@@ -6,7 +6,10 @@
 #include "tnt/mapgen.h"        // "~gen1~" random-map ids -> procedural map
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
+#include <cstdio>
+#include <iterator>
 
 tak::tnt::Map MapView::genOrLoad(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
     if (tak::mapgen::isGeneratedMapId(mapPath))
@@ -46,6 +49,10 @@ void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
     comp_.clear();
     for (auto& [k, s] : sections_) if (s.tex) gpuvram::destroy(s.tex);
     sections_.clear();
+    sectionBytes_ = 0;
+    ready_.clear();   // comp_ was cleared: nothing is decoded any more
+    wanted_.clear();
+    batchKeys_.clear();
     tileBatch_.clear();
     apronBatch_.clear();
     tileBatchDirty_ = true;
@@ -133,28 +140,38 @@ void MapView::clampOffset(int winW, int winH) {
 }
 
 void MapView::ensureChunks(int winW, int winH) {
-    // Keep the small source-section set resident for immediate fallback while
-    // TerrainChunks composes camera-independent images on its own worker.
+    // Sections stay decoded in the Compositor (TerrainChunks composes from the same
+    // cache); draw() uploads the ones the fallback needs.
     clampOffset(winW, winH);
     uploadReadySections();
 }
 
 void MapView::finishChunks() {
-    // Screenshot path: block until every section is decoded AND uploaded.
+    // Screenshot path: block until every section is decoded, then pin (see header).
     {
         std::unique_lock<std::mutex> lk(secMu_);
         secCv_.wait(lk, [this] { return decodeQueue_.empty() && !secBusy_; });
     }
-    for (;;) {
-        uploadReadySections();
-        std::lock_guard<std::mutex> lk(secMu_);
-        if (decoded_.empty()) break;
+    pinSections_ = true;
+    uploadReadySections();
+}
+
+size_t MapView::shedGpu(size_t need) {
+    size_t freed = 0;
+    while (!gpuvram::wouldFit(need)) {   // duplicates of chunk terrain go first
+        auto oldest = oldestIdleSection();
+        if (oldest == sections_.end()) break;
+        freed += size_t(oldest->second.w) * oldest->second.h * 4;
+        evictSection(oldest);
     }
+    return freed + chunks_.shed(need);
 }
 
 void MapView::rebuildTileBatch(int winW, int winH) {
     for (auto& [t, v] : tileBatch_) v.clear();   // keep per-texture capacity
     for (auto& [t, v] : apronBatch_) v.clear();
+    wanted_.clear();
+    batchKeys_.clear();
     const int mapW = map_.blocksX, mapH = map_.blocksY;
     // Visible block range, clamped to the map.
     int b0x = std::max(0, int(std::floor(offX_ / kBlock)));
@@ -172,8 +189,10 @@ void MapView::rebuildTileBatch(int winW, int winH) {
             if(chunksEnabled_ && chunks_.covers(bx,by)) {bx=(bx/32+1)*32-1;continue;}
             size_t b = size_t(by) * mapW + bx;
             auto si = sections_.find(map_.tileKeys[b]);
-            if (si == sections_.end() || !si->second.tex) continue;  // underlay shows
+            if (si == sections_.end()) { wanted_.push_back(map_.tileKeys[b]); continue; }  // underlay shows
+            if (!si->second.tex) continue;   // absent JPG
             const Section& s = si->second;
+            batchKeys_.push_back(map_.tileKeys[b]);
             // Tile crop within the section (retail wraps col/row by the JPG size).
             int sx = (map_.tileCols[b] * kBlock) % std::max(s.w, 1);
             int sy = (map_.tileRows[b] * kBlock) % std::max(s.h, 1);
@@ -231,8 +250,10 @@ void MapView::rebuildTileBatch(int winW, int winH) {
                 if (join[side] || nx < 0 || ny < 0 || nx >= mapW || ny >= mapH) continue;
                 const size_t n = size_t(ny) * mapW + nx;
                 auto ni = sections_.find(map_.tileKeys[n]);
-                if (ni == sections_.end() || !ni->second.tex) continue;
+                if (ni == sections_.end()) { wanted_.push_back(map_.tileKeys[n]); continue; }
+                if (!ni->second.tex) continue;
                 const Section& ns = ni->second;
+                batchKeys_.push_back(map_.tileKeys[n]);
                 const float nsx = float((map_.tileCols[n] * kBlock) % std::max(ns.w, 1));
                 const float nsy = float((map_.tileRows[n] * kBlock) % std::max(ns.h, 1));
                 // The neighbour's texel row/column facing this tile, along its inset span.
@@ -255,6 +276,10 @@ void MapView::rebuildTileBatch(int winW, int winH) {
             }
         }
     }
+    for (auto* keys : {&wanted_, &batchKeys_}) {
+        std::sort(keys->begin(), keys->end());
+        keys->erase(std::unique(keys->begin(), keys->end()), keys->end());
+    }
     builtOffX_ = offX_; builtOffY_ = offY_; builtZoom_ = zoom_;
     builtW_ = winW; builtH_ = winH;
     tileBatchDirty_ = false;
@@ -276,18 +301,30 @@ void MapView::draw(int winW, int winH) {
 
     // Cached map chunks follow the camera with a few image copies. Only missing
     // chunks use the original tile geometry while the worker prepares them.
+    ++frame_;
     chunksEnabled_=!tak::devFlag("TAK_TERRAIN_CACHE_OFF");
     if(chunksEnabled_) {
         chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_);
         const auto revision=chunks_.stats().revision;
         if(revision!=chunkRevision_) {tileBatchDirty_=true;chunkRevision_=revision;}
         if(chunks_.draw(ren_,offX_,offY_,zoom_)) {
-            tileBatch_.clear();apronBatch_.clear();tileBatchDirty_=true;return;
+            tileBatch_.clear();apronBatch_.clear();wanted_.clear();batchKeys_.clear();
+            tileBatchDirty_=true;trimSections();return;
         }
     } else {chunks_.clear();tileBatchDirty_=true;}
     const bool changed=tileBatchDirty_ || offX_ != builtOffX_ || offY_ != builtOffY_ ||
         zoom_ != builtZoom_ || winW != builtW_ || winH != builtH_;
+    // Mark what the batch samples as in use BEFORE uploading, so making room for a
+    // missing section never evicts one this frame draws.
+    const auto stamp=[&] {
+        const uint64_t now=SDL_GetTicks64();
+        for(uint32_t key:batchKeys_)if(auto i=sections_.find(key);i!=sections_.end()) {i->second.frame=frame_;i->second.usedMs=now;}
+    };
     if(changed)rebuildTileBatch(winW,winH);
+    stamp();
+    // Same frame: the tiles that just came into the fallback get their sections now,
+    // not the frame after, so a fast pan shows terrain rather than the underlay.
+    if(!wanted_.empty() && uploadWantedSections()) {rebuildTileBatch(winW,winH);stamp();}
 
     for (auto& [tex, verts] : tileBatch_)
         if (tex && !verts.empty())
@@ -296,6 +333,7 @@ void MapView::draw(int winW, int winH) {
     for (auto& [tex, verts] : apronBatch_)
         if (tex && !verts.empty())
             SDL_RenderGeometry(ren_, tex, verts.data(), int(verts.size()), nullptr, 0);
+    trimSections();
 }
 
 void MapView::invalidateRenderTargets() {
@@ -318,42 +356,100 @@ void MapView::uploadReadySections() {
         std::lock_guard<std::mutex> lk(secMu_);
         ready.swap(decoded_);
     }
-    // A whole map is ~27 sections; upload a few per frame so a cold start never
-    // hitches, and never start the VRAM-exhaustion storm. Deferred keys stay in
-    // decoded_ (re-queued below) and upload once there's room.
-    constexpr size_t kUploadBudget = 3;
-    size_t n = 0;
-    std::vector<uint32_t> deferred;
     for (uint32_t key : ready) {
-        if (sections_.count(key)) continue;   // already uploaded
-        const tak::jpeg::Image* img = nullptr;
-        try { img = &comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) {
-            sections_[key] = {};   // absent JPG: remember so we never retry it
+        try { comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) {
+            if (!sections_.count(key)) sections_[key] = {};   // absent JPG: never retried
             continue;
         }
-        if (n >= kUploadBudget) { deferred.push_back(key); continue; }
-        if (gpuvram::blocked() ||
-            !gpuvram::wouldFit(size_t(img->width) * img->height * 4)) {
-            deferred.push_back(key); continue;
+        ready_.insert({key, map_.stockTerrain});
+    }
+}
+
+bool MapView::uploadWantedSections() {
+    // Chunks off: the fallback IS the terrain, so only the GPU cap bounds it.
+    const size_t budget = chunksEnabled_ && !pinSections_ ? kSectionBudget : SIZE_MAX;
+    const int perFrame = pinSections_ ? INT_MAX : kSectionUploadsPerFrame;
+    const uint64_t now = SDL_GetTicks64();
+    int n = 0;
+    std::vector<uint32_t> decode;
+    for (uint32_t key : wanted_) {
+        if (sections_.count(key)) continue;
+        if (!ready_.count({key, map_.stockTerrain})) { decode.push_back(key); continue; }
+        if (n >= perFrame) continue;   // the rest next frame; the underlay shows meanwhile
+        const tak::jpeg::Image* img = nullptr;
+        try { img = &comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) {
+            sections_[key] = {};
+            continue;
         }
+        const size_t size = size_t(img->width) * img->height * 4;
+        while (sectionBytes_ + size > budget || !gpuvram::wouldFit(size)) {
+            auto oldest = oldestIdleSection();
+            if (oldest == sections_.end()) break;
+            evictSection(oldest);
+        }
+        if (sectionBytes_ + size > budget || !gpuvram::wouldFit(size) || gpuvram::blocked()) continue;
         SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                            SDL_TEXTUREACCESS_STATIC, img->width, img->height);
-        if (!t) { gpuvram::noteFail(); deferred.push_back(key); continue; }
+        if (!t) { gpuvram::noteFail(); continue; }
         SDL_UpdateTexture(t, nullptr, img->rgba.data(), img->width * 4);
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);   // opaque texels; the aprons fade by vertex alpha
         SDL_SetTextureScaleMode(t, bilinear_ ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
-        sections_[key] = {t, img->width, img->height};
-        tileBatchDirty_ = true;   // a new section can fill in visible tiles
+        sections_[key] = {t, img->width, img->height, frame_, now};
+        sectionBytes_ += size;
         ++n;
-        static const bool kLog = std::getenv("TAK_TERRAINLOG") != nullptr;
-        if (kLog)
-            std::fprintf(stderr, "terrain: section %08x %dx%d uploaded; %zu total, gpu=%zuMiB\n",
-                         key, img->width, img->height, sections_.size(),
+        if (tak::devFlag("TAK_TERRAINLOG"))
+            std::fprintf(stderr, "terrain: section %08x %dx%d uploaded; %zu resident (%zu MiB), gpu=%zuMiB\n",
+                         key, img->width, img->height, sections_.size(), sectionBytes_ >> 20,
                          gpuvram::bytes() >> 20);
     }
-    if (!deferred.empty()) {
+    if (!decode.empty()) {
+        // Needed on screen now: decode these ahead of the load-time queue. A key whose
+        // decode was dropped (quiesce) is queued again.
         std::lock_guard<std::mutex> lk(secMu_);
-        for (uint32_t k : deferred) decoded_.push_back(k);
+        for (uint32_t k : decode) {
+            if (!secPending_.insert(k).second) {
+                auto it = std::find(decodeQueue_.begin(), decodeQueue_.end(), k);
+                if (it == decodeQueue_.end() || it == decodeQueue_.begin()) continue;   // in flight / decoded
+                decodeQueue_.erase(it);
+            }
+            decodeQueue_.push_front(k);
+        }
+        secCv_.notify_all();
+    }
+    return n > 0;
+}
+
+std::map<uint32_t, MapView::Section>::iterator MapView::oldestIdleSection() {
+    auto oldest = sections_.end();
+    for (auto i = sections_.begin(); i != sections_.end(); ++i)
+        if (i->second.tex && i->second.frame != frame_ &&
+            (oldest == sections_.end() || i->second.usedMs < oldest->second.usedMs)) oldest = i;
+    return oldest;
+}
+
+void MapView::evictSection(std::map<uint32_t, Section>::iterator it) {
+    sectionBytes_ -= size_t(it->second.w) * it->second.h * 4;
+    tileBatch_.erase(it->second.tex);    // emptied per-texture slots (kept for capacity)
+    apronBatch_.erase(it->second.tex);
+    gpuvram::destroy(it->second.tex);
+    sections_.erase(it);
+}
+
+void MapView::trimSections() {
+    if (pinSections_ || !sectionBytes_) return;
+    const uint64_t now = SDL_GetTicks64();
+    for (auto i = sections_.begin(); i != sections_.end();) {
+        auto next = std::next(i);
+        if (i->second.tex && i->second.frame != frame_ && now - i->second.usedMs >= kSectionIdleMs)
+            evictSection(i);
+        i = next;
+    }
+    // Over the budget or a lowered GPU limit: anything not drawn this frame, oldest first.
+    const size_t budget = chunksEnabled_ ? kSectionBudget : SIZE_MAX;
+    while (sectionBytes_ > budget || gpuvram::overCap()) {
+        auto oldest = oldestIdleSection();
+        if (oldest == sections_.end()) break;
+        evictSection(oldest);
     }
 }
 

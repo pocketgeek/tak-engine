@@ -27,6 +27,9 @@ public:
     void prepare(SDL_Renderer*,const tnt::Map&,float x,float y,float zoom,int w,int h,bool linear);
     bool draw(SDL_Renderer*,float x,float y,float zoom);
     bool covers(int blockX,int blockY) const;
+    // Evict chunks not drawn this frame, oldest first, until gpuvram::wouldFit(need)
+    // (need 0 = just get under the cap). Returns the bytes freed.
+    size_t shed(size_t need);
     Stats stats() const {
         size_t ready=0;for(const auto& key:visible_)ready+=cache_.count(key);
         return {bytes_,cache_.size(),uploads_,visible_.size(),ready,revision_,pending_.size()};

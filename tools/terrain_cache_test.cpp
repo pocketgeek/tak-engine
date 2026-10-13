@@ -2,6 +2,7 @@
 #include "client/gpuvram.h"
 #include "hpi/hpi.h"
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 #include <vector>
 static void check(bool value,const char* message) {if(!value)throw std::runtime_error(message);}
@@ -111,6 +112,63 @@ int main(int argc,char** argv) try {
             check(map.chunkStats().bytes==0,"reload frees old chunk images");
         }
         warm();
+        // Fallback sections upload on demand (this view never calls finishChunks, which
+        // pins them): a frame whose chunks are all still baking is drawn completely from
+        // sections the same frame, and once chunks cover the view the duplicate sections
+        // are released. Magenta clear = a hole (no underlay is set here).
+        {
+            MapView fresh(renderer,vfs,tak::hpi::findMap(vfs,argc==3 ? argv[2] : "Ulasem Arena"));
+            SDL_RenderSetScale(renderer,1,1);SDL_RenderSetViewport(renderer,nullptr);SDL_RenderSetClipRect(renderer,&terrainClip);
+            const auto start=SDL_GetTicks();
+            while(!fresh.sectionsDecoded()) {fresh.ensureChunks(610,450);check(SDL_GetTicks()-start<60000,"sections failed to decode");SDL_Delay(1);}
+            fresh.ensureChunks(610,450);
+            check(fresh.sectionBytes()==0,"no section is uploaded before the fallback needs it");
+            auto holes=[&] {
+                const auto px=read();size_t n=0;
+                for(int y=0;y<450;++y)for(int x=0;x<610;++x) {
+                    const auto* p=&px[(size_t(y)*1280+x)*4];n+=p[0]==255 && p[1]==0 && p[2]==255;
+                }
+                return n;
+            };
+            auto frame=[&](float x,float y) {
+                fresh.setZoom(1);fresh.setOffset(x,y);
+                SDL_SetRenderDrawColor(renderer,255,0,255,255);SDL_RenderClear(renderer);fresh.draw(610,450);
+            };
+            frame(2000,2000);
+            check(fresh.chunkStats().ready==0,"fixture: the first frame has no chunk images");
+            check(holes()==0,"chunk-less first frame is drawn completely from sections");
+            check(fresh.sectionBytes()>0,"the fallback uploaded its sections");
+            const auto fallback=read();
+            const auto settle=SDL_GetTicks();
+            do {frame(2000,2000);check(SDL_GetTicks()-settle<60000,"chunks failed to finish");SDL_Delay(1);}
+            while(fresh.chunkStats().ready!=fresh.chunkStats().visible);
+            check(holes()==0,"chunked frame has no holes");
+            // SDL's software rasteriser samples geometry slightly differently from
+            // copies, so the texel-exact comparison is a GL-only check.
+            SDL_RendererInfo info{};SDL_GetRendererInfo(renderer,&info);
+            if(info.name && !std::strcmp(info.name,"opengl"))
+                check(read()==fallback,"section fallback matches the chunk image texel for texel");
+            const auto idle=SDL_GetTicks();
+            while(fresh.sectionBytes() && SDL_GetTicks()-idle<10000) {frame(2000,2000);SDL_Delay(5);}
+            check(fresh.sectionBytes()==0,"sections are released once chunks cover the view");
+            // A jump to an unbaked spot: the fallback re-uploads in the same frame.
+            frame(9000,9000);
+            check(holes()==0,"a jump draws completely from re-uploaded sections");
+            // Lowering the limit below what is held sheds off-screen chunks next frame.
+            for(float x:{2000.f,4000.f,6000.f,8000.f}) {
+                const auto t=SDL_GetTicks();
+                do {frame(x,2000);check(SDL_GetTicks()-t<60000,"chunks failed to finish");SDL_Delay(1);}
+                while(fresh.chunkStats().ready!=fresh.chunkStats().visible);
+            }
+            const auto held=fresh.chunkStats().bytes;
+            const size_t pretend=size_t(600)<<20;   // stand-in for everything else resident
+            gpuvram::addBuffer(pretend);gpuvram::setLimit(pretend+(size_t(32)<<20));
+            frame(8000,2000);
+            check(fresh.chunkStats().bytes<held,"a lowered limit sheds off-screen chunks");
+            check(fresh.chunkStats().ready==fresh.chunkStats().visible,"...but keeps every visible one");
+            check(holes()==0,"...and leaves no hole");
+            gpuvram::setLimit(gpuvram::kAutoLimit);gpuvram::removeBuffer(pretend);
+        }
         SDL_SetRenderTarget(renderer,nullptr);SDL_DestroyTexture(target);
     }
     check(gpuvram::bytes()==baseline,"terrain teardown frees textures");

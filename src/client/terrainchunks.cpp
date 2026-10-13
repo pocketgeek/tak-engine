@@ -5,7 +5,17 @@
 #include <cstring>
 
 namespace tak {
-namespace {constexpr size_t budget=size_t(256)<<20;}
+namespace {
+constexpr size_t budget=size_t(256)<<20;
+// What the cache may hold right now: its own budget, or less when the global GPU cap
+// (Options GPU MEMORY LIMIT, or a post-failure tightening) leaves less room beside
+// everything else that is resident.
+size_t room(size_t own) {
+    const size_t others=gpuvram::bytes()-std::min(own,gpuvram::bytes());
+    const size_t cap=gpuvram::cap();
+    return cap<=others?0:std::min(budget,cap-others);
+}
+}
 TerrainChunks::TerrainChunks(terrain::Compositor& c):compositor_(c) {worker_=std::thread([this]{work();});}
 TerrainChunks::~TerrainChunks() {
     {std::lock_guard lock(mutex_);stop_=true;}
@@ -116,13 +126,17 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
     const int x1=std::clamp(int(std::floor((x+w/zoom)/span)),0,nx-1),y1=std::clamp(int(std::floor((y+h/zoom)/span)),0,ny-1);
     // If supersampling would exceed the cache, preserve logical-pixel detail
     // first. Never cycle visible chunks through an undersized cache each frame.
+    const size_t limit=room(bytes_);
     while(level_<5 && (1.f/float(2<<level_))>=zoom &&
-          size_t(x1-x0+1)*(y1-y0+1)*size_t((span>>level_)+2)*((span>>level_)+2)*4>budget)
+          size_t(x1-x0+1)*(y1-y0+1)*size_t((span>>level_)+2)*((span>>level_)+2)*4>limit)
         ++level_;
     for(int cy=y0;cy<=y1;++cy)for(int cx=x0;cx<=x1;++cx) {
         Key key{level_,cx,cy};visible_.push_back(key);
         if(auto i=cache_.find(key);i!=cache_.end())i->second.used=frame_;
     }
+    // A lowered GPU limit takes effect now: give back off-screen chunks until the
+    // total is under the cap again, rather than waiting for the next upload.
+    if(gpuvram::overCap())shed(0);
     if(linear!=linear_)for(auto& [key,e]:cache_)
         SDL_SetTextureScaleMode(e.texture,linear?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
     linear_=linear;
@@ -179,6 +193,19 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
         pending_.emplace(key,job.cancelled);
         {std::lock_guard lock(mutex_);jobs_.push_back(std::move(job));}cv_.notify_all();
     }
+}
+size_t TerrainChunks::shed(size_t need) {
+    size_t freed=0;
+    while(!gpuvram::wouldFit(need)) {
+        auto oldest=cache_.end();
+        for(auto i=cache_.begin();i!=cache_.end();++i)
+            if(i->second.used!=frame_ && (oldest==cache_.end() || i->second.used<oldest->second.used))oldest=i;
+        if(oldest==cache_.end())break;
+        const size_t size=size_t(oldest->second.w+2)*(oldest->second.h+2)*4;
+        bytes_-=size;freed+=size;
+        gpuvram::destroy(oldest->second.texture);cache_.erase(oldest);++revision_;
+    }
+    return freed;
 }
 bool TerrainChunks::covers(int bx,int by) const {return cache_.count({level_,bx/32,by/32});}
 bool TerrainChunks::draw(SDL_Renderer* renderer,float x,float y,float zoom) {
