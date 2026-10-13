@@ -1162,8 +1162,7 @@ void World::commitGroundStep(Unit& u,Fixed dx,Fixed dz,bool strictDiagonal) {
     updateBodyIndex(u);
 }
 
-bool World::mobilePlacement(const Unit& subject,int x,int z,bool allowMoving) const {
-    const auto& type=*subject.type;
+bool World::mobilePlacement(const UnitType& type,uint16_t self,int x,int z,bool allowMoving) const {
     if (mapPlacementCells_.size()!=size_t(hW_)*hH_ || mapPlacementCells_.empty())
         throw std::runtime_error("mobile placement requires loaded map feature data");
     // A placement query observes one immutable body layout. Reuse its rectangle
@@ -1195,7 +1194,7 @@ bool World::mobilePlacement(const Unit& subject,int x,int z,bool allowMoving) co
     const int minimum=type.domain==UnitType::Domain::Water
         ? (type.minWaterDepth>0?type.minWaterDepth:13) : -10000;
     return retailMobilePlacement(x,z,type.footX,type.footZ,hW_,hH_,seaLevel_,maximum,minimum,
-        type.maxSlope,type.maxWaterSlope,uint16_t(subject.id),allowMoving,1,cellAt,
+        type.maxSlope,type.maxWaterSlope,self,allowMoving,1,cellAt,
         [](uint16_t){return 0x20u;},[&](uint16_t id) {
             const auto* u=unit(id);
             return RetailPlacementEntity{u!=nullptr,u && u->alive(),u && !u->type->isStructure(),id};
@@ -11069,14 +11068,22 @@ void World::initializeRetailSite(Unit& site,int builderId) {
 bool World::canPlaceProduction(int builderId,const UnitType* t,float x,float z) const {
     const auto* producer=unit(builderId);
     if (!producer || !producer->type || !t || t->isStructure()) return false;
-    if (!producer->type->productionScript || t->canFly || t->domain!=UnitType::Domain::Water)
-        return canPlace(t,x,z);
-    // An authored factory pad can lie near the producer's centre (Creon's
-    // shipyard does). Test its open footprint, rather than rejecting the
-    // factory itself through the mobile placement radius. Solid yard cells
-    // and other units still block the output.
-    if (!placementCheck(t,x,z,-1,nullptr,nullptr,builderId)) return false;
-    const auto bodies=searchBodyRect(footprintOrigin(x,t->footX),footprintOrigin(z,t->footZ),t->footX,t->footZ);
+    if (!producer->type->productionScript || t->canFly) return canPlace(t,x,z);
+    // BUILD stage 2 (401deb) tests the QueryBuildInfo point with 507d10's
+    // mobile footprint loop: self 0 and no moving-body exemption, so any
+    // ground body on a footprint cell refuses the site, moving or not. The
+    // centre radius canPlace applies is sized for the NEW unit alone: a 3x3
+    // Knight was admitted 38 px behind a departing 4x4 Catapult, overlapping
+    // it, and the footprint-strict mover then held both for ever. An authored
+    // pad can also lie near the producer's centre (Creon's shipyard), which
+    // that radius would refuse. Open yard cells pass; solid ones block.
+    const int ox=footprintOrigin(x,t->footX),oz=footprintOrigin(z,t->footZ);
+    if (!mapPlacementCells_.empty()) return mobilePlacement(*t,0,ox,oz,false);
+    // Terrain-only harnesses have no native feature plane: their terrain
+    // grid stands in for it, without canPlace's centre radius.
+    const std::vector<int> noRadius;
+    if (!placementCheck(t,x,z,-1,nullptr,&noRadius)) return false;
+    const auto bodies=searchBodyRect(ox,oz,t->footX,t->footZ);
     return std::none_of(bodies.cells.begin(),bodies.cells.end(),[](const auto* u){return u!=nullptr;});
 }
 
@@ -11125,8 +11132,15 @@ void World::tickProduction(Unit& u, float dt) {
     if (!site) {
         if (auto it=unitScripts_.find(u.id);u.type->productionScript && it!=unitScripts_.end() && !it->second.ready) return;
         if (atUnitCap(player) || atTypeCap(player,t)) return;
+        // 401df4..401e19: a refused site sleeps the BUILD mission rand(15)+7
+        // ticks before stage 2 runs QueryBuildInfo and the footprint test again.
+        if (u.type->productionScript && tickCounter_<u.productionRetryTick) return;
         Fixed spawnX,spawnZ,spawnY;
-        if (!productionPosition(producerId,t,spawnX,spawnY,spawnZ)) return;
+        if (!productionPosition(producerId,t,spawnX,spawnY,spawnZ)) {
+            if (u.type->productionScript) u.productionRetryTick=tickCounter_+7+gameRand(15);
+            return;
+        }
+        u.productionRetryTick=0;
         // Preserve the raw script position across the public float spawn API.
         const int siteId=spawn(t,spawnX.toFloat(),spawnZ.toFloat(),std::nullopt,player);
         site=unit(siteId);
@@ -13977,6 +13991,7 @@ uint64_t World::stateHash() const {
             }
         }
         mix(uint32_t(u.productionSiteId)); mix(uint32_t(u.buildProgress));
+        if (u.productionRetryTick) {mix(0x52455452u);mix(u.productionRetryTick);}
         mix(u.underConstruction); mix(u.buildBegun); mix(uint32_t(u.conjureRate.v));
         if (u.lodestoneReplacement) {
             const auto& old=*u.lodestoneReplacement;

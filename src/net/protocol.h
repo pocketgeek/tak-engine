@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 254;      // 254: Legion formation flyers station over the front of mixed squads (flyer stations/positions/order point;
+constexpr uint32_t kNetVersion = 255;      // 255: factory output site (BUILD stage 2, icd 401deb): admitted only by the footprint-strict mobile
+                                           //      placement test (507d10: no self, moving bodies refuse too) instead of a centre radius sized for
+                                           //      the new unit alone, which let a Knight be born overlapping a departing Catapult and deadlock
+                                           //      both; a refused site waits rand(15)+7 ticks (hashed Unit::productionRetryTick, folded when set)
+                                           // 254: Legion formation flyers station over the front of mixed squads (flyer stations/positions/order point;
                                            //      Legion-only, retail unchanged)
                                            // 253: shootme -- the fire-at-will sweep's selector skips types without
                                            //      shootme=1 for human-owned shooters (aranull, cregate, npcflag)

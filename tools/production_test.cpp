@@ -396,11 +396,16 @@ static void scriptControlsReadinessAndPosition() {
     World& w = *ownedWorld;
     UnitType fac=factoryType(),sol=soldierType();
     sol.buildTime=100000;
+    // The pad lies on the Barracks' door rows, which the script opens (YARD_OPEN)
+    // before it reports ready, as the shipped factories do: BUILD stage 2
+    // refuses a site on a solid or closed yard cell.
+    fac.yardMap=std::string(7*2,'.')+std::string(7*6,'o')+std::string(7*4,'c');
     auto script=std::make_shared<tak::cob::File>();
     script->pieces={"emit","root"};
-    script->scripts={{"Create",0},{"QueryBuildInfo",14}};
+    script->scripts={{"Create",0},{"QueryBuildInfo",19}};
     script->code={0x10021001,5,0x10021001,0,0x10082000,
                   0x10021001,100,0x10013000,
+                  0x10021001,18,0x10021001,1,0x10082000,
                   0x10021001,5,0x10021001,1,0x10082000,0x10065000,
                   0x10021001,0,0x10023002,0,0x10065000};
     fac.productionScript=script;

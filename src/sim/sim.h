@@ -1111,6 +1111,9 @@ struct alignas(64) Unit {
     std::array<uint32_t,2> constructionEmissions{};
     HeapOptional<RetailFlightGoal> conjureHoverGoal;
     std::vector<int> cargo;
+    // BUILD stage 2's refusal sleep (401df4): the tick a factory whose output
+    // site was refused may test it again. 0 = not waiting. Hashed when set.
+    uint32_t productionRetryTick = 0;
     // RALLY orders for a production building: what the units it makes should do once
     // they have walked clear of the exit. Kept OUT of `orders` on purpose -- a
     // structure must never enter the mover (it has no velocity, but the mover still
@@ -1797,7 +1800,12 @@ public:
     }
     const std::vector<uint16_t>& viewCounts() const { return viewCounts_; }
     const std::vector<uint16_t>& navigationExploration() const { return navigationExplored_; }
-    bool mobilePlacement(const Unit& subject,int x,int z,bool allowMoving) const;
+    bool mobilePlacement(const Unit& subject,int x,int z,bool allowMoving) const {
+        return mobilePlacement(*subject.type,uint16_t(subject.id),x,z,allowMoving);
+    }
+    // 507d10's mobile footprint loop for a body of `type` that is not on the map
+    // yet: `self` 0 excludes no occupant (BUILD stage 2's factory output query).
+    bool mobilePlacement(const UnitType& type,uint16_t self,int x,int z,bool allowMoving) const;
     Fixed surfaceHeight(const Unit& subject,uint32_t clock,uint16_t* pitch=nullptr,uint16_t* roll=nullptr) const;
     void commitGroundStep(Unit& subject,Fixed dx,Fixed dz,bool strictDiagonal=false);
     void updateGroundTerrainFlags(Unit& subject) const;

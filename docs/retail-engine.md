@@ -1476,6 +1476,13 @@ Measured on the real COBs with our own VM (`tools/cobyard_test.cpp`): answering
 answering 1 issues it 0 times. We now grant it unconditionally, since our sim
 has no notion of a unit blocking a yard and we never act on BUGGER_OFF anyway.
 
+**Update (protocol 125, then 255).** Yard transitions now wait for bodies on the
+cells the requested state blocks (507ae0). Neither does retail act on
+BUGGER_OFF: the setter (0x50d50e) only stores bit 3 of unit +0x12f, which GET 19
+(0x50d1fd) and save/load (0x513528) alone read. A body in the door is never
+shoved; BUILD stage 2's footprint test (401deb) holds the next output until it
+leaves. See [factory-output-2026-10-12.md](factory-output-2026-10-12.md).
+
 Two false starts worth recording, because both are easy to repeat: thread counts
 do NOT work as the test observable. A factory legitimately keeps a thread open
 while active (Creon's `Go` ends with `START_SCRIPT FactoryFun`, the machinery
