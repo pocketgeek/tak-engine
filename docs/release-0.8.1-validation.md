@@ -3,7 +3,7 @@
 Protocol **256**, replay format **12**, generator version **8**, campaign
 payload **4**, database schema **9** (all unchanged since 0.8.0).
 
-Not yet tagged.
+Tagged `v0.8.1` at `24ae9f44` and published on 2026-10-13.
 
 ## Scope and compatibility
 
@@ -331,10 +331,56 @@ unmodified, from a clean detached worktree. SHA-256
 
 ## CI and packages
 
-Pending. To check at the tag in addition to the usual list: the Linux packages
-gain no libsecret dependency (it is loaded at run time), the Windows binaries
-import nothing new beyond `advapi32.dll`, and the macOS sign job still signs,
-notarizes and staples both apps and the DMG.
+The final source (`24ae9f44`) passed the Determinism, Linux, Windows and macOS
+workflows on `main` (runs 38445645281, 38445645302, 38445645509 and
+38445645342). The exact tag passed all four workflows on the first attempt,
+with no reruns:
+
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/38448261290), started manually on the tag because the workflow is path-filtered.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/38448255161): all native package jobs and release attachment.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/38448254852): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/38448255176): x64 and ARM64 builds, then the **Sign + notarize** job for each architecture, which replaced the unsigned release ZIPs and DMGs in the draft with the signed, notarized and stapled ones (the release DMGs are larger than the CI-artifact DMGs by the stapled ticket).
+
+The release was created as a draft with these notes and tagged CI attached the
+packages. All **29 assets** (the same set as 0.8.0) were downloaded and
+matched GitHub's SHA-256 digests and byte sizes before publication. Every ZIP
+passed its CRC test.
+
+- **Build ids.** The client and server in every Linux package (Debian 12 and
+  13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44, openSUSE Leap 16.0, Arch,
+  Slackware, both architectures where shipped, and both Linux debug archives),
+  in all four Windows ZIPs, and in both macOS DMGs, release ZIPs (bare programs
+  and inside the app) and debug ZIPs carry `v0.8.1` with no `-dirty` suffix.
+  Run: the Debian 13 and Fedora 44 x86-64 packages and the Linux x64 debug
+  archive report `0.8.1 (build v0.8.1)` for both programs; the signed x64
+  `takserver.exe` reports `0.8.1 (build v0.8.1)` on Windows 11; on the arm64
+  MacBook (macOS 26.6.2) the DMG app's `takclient`, the release ZIP's
+  `takserver` and the debug ZIP's `takclient` report `0.8.1 (build v0.8.1)`.
+- **No new runtime dependency.** No packaged Linux `takclient` (all 18) has a
+  `NEEDED` entry for libsecret, GLib, GIO or GObject, and no Debian, RPM or
+  Arch package declares one; libsecret is loaded at run time only. The Windows
+  x64 `takclient.exe` imports exactly the same DLL set as 0.8.0 (`advapi32.dll`
+  was already imported for TLS).
+- **Windows signatures.** Every executable in the four Windows ZIPs (16, x86-64
+  or ARM64 PE as named) and the installer carries a certificate table, and on
+  Windows `Get-AuthenticodeSignature` reports **Valid** with a timestamp for
+  the installer, `takclient.exe` and `takserver.exe` (signer Curtis Edge).
+- **macOS signing and notarization**, checked on the MacBook against the
+  downloaded release files (not the CI artifacts):
+  - Both DMGs (arm64 and x64): `xcrun stapler validate` succeeds and `spctl
+    --assess --type open --context context:primary-signature` reports
+    *accepted, source=Notarized Developer ID*, signed by Developer ID
+    Application: Curtis Edge (L479Y59RN8).
+  - Both apps inside each DMG and each release ZIP (**Total Annihilation -
+    Kingdoms.app** and **TAK Cartographer.app**): the stapled ticket
+    validates, `spctl --assess --type execute` reports *accepted,
+    source=Notarized Developer ID* and `codesign --verify --deep --strict`
+    passes.
+  - The bare programs in the release ZIPs and the debug ZIP's `takclient` pass
+    `codesign --verify --strict`; as in 0.8.0 they cannot carry a stapled
+    ticket, so Gatekeeper checks them online.
+
+Published 2026-10-13 18:58 UTC.
 
 ## Screenshots
 
@@ -381,4 +427,23 @@ committed. Each re-rendered image was inspected by eye against its caption.
 
 ## Limits
 
-Pending.
+No game mixing 0.8.0 and 0.8.1 builds was played: the compatibility statement
+rests on the source (unchanged protocol, Hello gate and replay loader), the
+unchanged `--mpai` hashes and the unchanged sweep results. Local visual
+inspection covers Linux OpenGL screenshots only; the Windows and macOS packages
+are checked from CI and by the signature, notarization and build-id checks
+above, and were not played by hand for this release. Remember Key was
+exercised against a real store only on Linux (`credstore` through KWallet);
+the Windows Credential Manager and macOS Keychain backends were built and
+signed by CI, and the panel logic is covered by `stream_key` against a fake
+store, but neither backend was run against a real store for this release. **LOWERED FOR NOW** needs a driver out-of-memory error, which OpenGL
+does not report, so the relaxing limit is covered by `gpuvram` with a fake
+clock rather than on Direct3D or Metal. The video-memory figures in the notes
+come from one Linux OpenGL machine at 3840 x 2160. The macOS first launch
+from a quarantined browser download was not exercised interactively (`spctl`
+applies the same Gatekeeper assessment). Remote simulated-time sweeps do not
+substitute for a multi-hour wall-time soak; the Retail `h-stress` end-tick
+difference from the 0.8.0 sweep (see the remote sweep) is left for a
+follow-up. The Debug (`-O0`) builds skip the nightly-labelled tests, as the
+nightly job only runs them optimized; under unoptimized Clang
+`movement_orders_trolls` keeps a thin margin (263.1 s of 300 s).
