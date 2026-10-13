@@ -55,10 +55,11 @@ public:
     // decode worker has finished (they upload on demand in draw()).
     void ensureChunks(int winW, int winH);
 
-    // Block until every queued section is decoded, and from then on keep every section
-    // the fallback needs resident with no budget, per-frame limit or expiry (the
-    // behaviour before sections had a budget), so the next frame draws complete terrain
-    // even where chunks are still baking. Screenshot paths only -- normal play never waits.
+    // Block until every queued section is decoded, and let the NEXT draw upload every
+    // section its fallback needs with no budget or per-frame limit, so that frame shows
+    // complete terrain even where chunks are still baking. Sections that frame uses stay
+    // resident while used; normal budgeting resumes after it. Screenshot paths and the
+    // campaign briefing backdrop -- normal play never waits.
     void finishChunks();
     void quiesce(); // cancel pending reads before changing the VFS
 
@@ -147,7 +148,7 @@ private:
     std::vector<uint32_t> batchKeys_;        // resident sections the current batch samples
     size_t sectionBytes_ = 0;
     uint64_t frame_ = 0;
-    bool pinSections_ = false;               // finishChunks(): screenshot harness, no budget
+    bool pinNext_ = false, pinning_ = false; // finishChunks(): the next draw has no upload limits
     static constexpr size_t kSectionBudget = size_t(64) << 20;
     static constexpr uint64_t kSectionIdleMs = 3000;
     static constexpr int kSectionUploadsPerFrame = 16;   // 16 MiB: a 1080p jump in one frame

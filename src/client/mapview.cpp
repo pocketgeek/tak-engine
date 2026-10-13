@@ -147,12 +147,12 @@ void MapView::ensureChunks(int winW, int winH) {
 }
 
 void MapView::finishChunks() {
-    // Screenshot path: block until every section is decoded, then pin (see header).
+    // Screenshot path: block until every section is decoded (see header).
     {
         std::unique_lock<std::mutex> lk(secMu_);
         secCv_.wait(lk, [this] { return decodeQueue_.empty() && !secBusy_; });
     }
-    pinSections_ = true;
+    pinNext_ = true;
     uploadReadySections();
 }
 
@@ -302,6 +302,7 @@ void MapView::draw(int winW, int winH) {
     // Cached map chunks follow the camera with a few image copies. Only missing
     // chunks use the original tile geometry while the worker prepares them.
     ++frame_;
+    pinning_=std::exchange(pinNext_,false);
     chunksEnabled_=!tak::devFlag("TAK_TERRAIN_CACHE_OFF");
     if(chunksEnabled_) {
         chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_);
@@ -367,8 +368,8 @@ void MapView::uploadReadySections() {
 
 bool MapView::uploadWantedSections() {
     // Chunks off: the fallback IS the terrain, so only the GPU cap bounds it.
-    const size_t budget = chunksEnabled_ && !pinSections_ ? kSectionBudget : SIZE_MAX;
-    const int perFrame = pinSections_ ? INT_MAX : kSectionUploadsPerFrame;
+    const size_t budget = chunksEnabled_ && !pinning_ ? kSectionBudget : SIZE_MAX;
+    const int perFrame = pinning_ ? INT_MAX : kSectionUploadsPerFrame;
     const uint64_t now = SDL_GetTicks64();
     int n = 0;
     std::vector<uint32_t> decode;
@@ -436,7 +437,7 @@ void MapView::evictSection(std::map<uint32_t, Section>::iterator it) {
 }
 
 void MapView::trimSections() {
-    if (pinSections_ || !sectionBytes_) return;
+    if (pinning_ || !sectionBytes_) return;
     const uint64_t now = SDL_GetTicks64();
     for (auto i = sections_.begin(); i != sections_.end();) {
         auto next = std::next(i);

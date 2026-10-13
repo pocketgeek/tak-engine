@@ -154,6 +154,18 @@ int main(int argc,char** argv) try {
             // A jump to an unbaked spot: the fallback re-uploads in the same frame.
             frame(9000,9000);
             check(holes()==0,"a jump draws completely from re-uploaded sections");
+            // finishChunks (screenshots, the campaign briefing) lifts the limits for ONE
+            // draw only: afterwards the sections are budgeted and released as usual.
+            fresh.finishChunks();frame(6000,6000);
+            check(holes()==0,"the finishChunks frame is complete");
+            {
+                const auto t=SDL_GetTicks();
+                do {frame(6000,6000);check(SDL_GetTicks()-t<60000,"chunks failed to finish");SDL_Delay(1);}
+                while(fresh.chunkStats().ready!=fresh.chunkStats().visible);
+                const auto idle2=SDL_GetTicks();
+                while(fresh.sectionBytes() && SDL_GetTicks()-idle2<10000) {frame(6000,6000);SDL_Delay(5);}
+                check(fresh.sectionBytes()==0,"finishChunks does not pin sections for the session");
+            }
             // Lowering the limit below what is held sheds off-screen chunks next frame.
             for(float x:{2000.f,4000.f,6000.f,8000.f}) {
                 const auto t=SDL_GetTicks();
