@@ -752,10 +752,10 @@ The bars show the whole selection. The health bar is the total health of the
 selected units out of their total maximum. The mana bar counts only the units that
 have mana, such as priests, and stays empty if none do. No unit name is shown. If
 the selection is exactly one group or formation, its name (for example **GROUP 3**
-or **FORMATION 2**) is shown where the unit name would be. Exactly means every
-selected unit is in it and none of its units is left out (builders aside, since
-recalling a group does not select them). Part of a group, or a group plus other
-units, shows no name. A unit's rank, and what it is building, show only when it is
+or **FORMATION 2**) is shown where the unit name would be. Exactly means all of
+its units, or all of them except its builders, which is what pressing its number
+selects. Part of a group, a group plus other units, or a group with only some of
+its builders shows no name. A unit's rank, and what it is building, show only when it is
 selected alone.
 
 | On a portrait | Does |

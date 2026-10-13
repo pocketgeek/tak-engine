@@ -56,15 +56,19 @@ int main() try {
     t=sp::total({{40,100,0,0},{100,100,0,0}});
     check(!t.hasMana && near(t.manaFrac(),0) && near(t.hpFrac(),0.7f),"no pool anywhere: empty mana bar");
     check(near(sp::total({}).hpFrac(),0) && !sp::total({}).hasMana,"nothing selected: empty bars");
-    // The selection is a squad only when it is all of one, builders aside.
-    check(sp::selectionSquad({3,3,3},{})==3,"the whole group");
-    check(sp::selectionSquad({-2,-2},{{1,false}})==-2,"a formation; another squad's units do not matter");
-    check(sp::selectionSquad({3,3},{{3,true}})==3,"a recalled group leaves its builder out and still counts");
-    check(sp::selectionSquad({3,3},{{3,false}})==0,"part of a group is not the group");
-    check(sp::selectionSquad({3,3,0},{})==0,"an extra unit outside it");
-    check(sp::selectionSquad({3,-3},{})==0,"mid-retype mix of group and formation");
-    check(sp::selectionSquad({3},{})==0,"one unit keeps its own name");
-    check(sp::selectionSquad({0,0},{})==0,"no squad");
+    // The selection is a squad only when it is all of one, or its recall set (no builders).
+    using SB=std::vector<std::pair<int,bool>>;
+    check(sp::selectionSquad(SB{{3,false},{3,false},{3,false}},{})==3,"the whole group");
+    check(sp::selectionSquad(SB{{-2,false},{-2,false}},{{1,false}})==-2,"a formation; another squad's units do not matter");
+    check(sp::selectionSquad(SB{{3,false},{3,false}},{{3,true}})==3,"a recalled group leaves its builder out and still counts");
+    check(sp::selectionSquad(SB{{3,false},{3,true}},{})==3,"a group with its builder is the group too");
+    check(sp::selectionSquad(SB{{3,false},{3,true}},{{3,true}})==0,"some of its builders is not the group");
+    check(sp::selectionSquad(SB{{5,true},{5,true}},{{5,true}})==0,"part of an all-builder group is not the group");
+    check(sp::selectionSquad(SB{{3,false},{3,false}},{{3,false}})==0,"part of a group is not the group");
+    check(sp::selectionSquad(SB{{3,false},{3,false},{0,false}},{})==0,"an extra unit outside it");
+    check(sp::selectionSquad(SB{{3,false},{-3,false}},{})==0,"mid-retype mix of group and formation");
+    check(sp::selectionSquad(SB{{3,false}},{})==0,"one unit keeps its own name");
+    check(sp::selectionSquad(SB{{0,false},{0,false}},{})==0,"no squad");
     check(sp::squadLabel(3)=="GROUP 3" && sp::squadLabel(-2)=="FORMATION 2","group / formation label");
     check(sp::squadLabel(10)=="GROUP 0" && sp::squadLabel(-10)=="FORMATION 0" && sp::squadLabel(0).empty(),"squad 10 is key 0");
     std::puts("selportraits_test: ok");

@@ -1785,17 +1785,19 @@ namespace {
 
     std::string GameView::selSquadLabel() const {
         if (selection_.size() < 2) return {};
-        std::vector<int> squads;
+        std::vector<std::pair<int, bool>> squads;
         for (int id : selection_)
             if (const UnitR* u = frameUnitP(id); u && u->alive() && u->type)
-                squads.push_back(u->player == localPlayer_ ? int(u->squad) : 0);
-        if (squads.empty() || squads.front() == 0) return {};   // skip the roster scan
+                squads.push_back({u->player == localPlayer_ ? int(u->squad) : 0, u->type->isBuilder});
+        if (squads.empty() || squads.front().first == 0) return {};   // skip the roster scan
         std::vector<int> sel(selection_);
         std::sort(sel.begin(), sel.end());
-        std::vector<std::pair<int, bool>> rest;   // the local squads' unselected units
+        // The local squads' unselected units. Not a conjured site: it inherits its
+        // builder's squad the moment it is laid, and is no member to command yet.
+        std::vector<std::pair<int, bool>> rest;
         for (const UnitR* u : front().live)
             if (u->alive() && u->player == localPlayer_ && u->type && u->squad &&
-                !std::binary_search(sel.begin(), sel.end(), u->id))
+                !u->underConstruction && !std::binary_search(sel.begin(), sel.end(), u->id))
                 rest.push_back({int(u->squad), u->type->isBuilder});
         return tak::selportraits::squadLabel(tak::selportraits::selectionSquad(squads, rest));
     }

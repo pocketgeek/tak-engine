@@ -133,22 +133,26 @@ inline Totals total(const std::vector<Vitals>& units) {
 }
 
 // Is a multi-selection exactly one control squad (the Ctrl+digit group or formation
-// whose number shows in green under its units)? `sel` is the squad of every LIVE
-// selected unit (0: none, or not the local player's); `unselected` is (squad, is a
-// builder) for every live unit of the local player that has a squad but is NOT
-// selected. The selection IS squad s when every selected unit is in s and no
-// non-builder member of s is left out -- recalling a squad skips its builders, so the
-// recalled selection still counts, and so does one that adds them. A partial squad,
-// or any extra unit, is not the squad: 0. One unit is never a squad here (the bar
-// shows its own name). Returns the squad value: +N group N, -N formation N.
-inline int selectionSquad(const std::vector<int>& sel,
+// whose number shows in green under its units)? `sel` is (squad, is a builder) for
+// every LIVE selected unit (squad 0: none, or not the local player's); `unselected`
+// is the same for every live, finished unit of the local player that has a squad but
+// is NOT selected. The selection IS squad s when it is all in s and is either ALL of
+// s, or exactly what recalling s selects -- recall skips builders, so its members
+// minus every builder. A partial squad, or any extra unit, is not the squad: 0 -- and
+// so is some-but-not-all of its builders (a part of an all-builder squad included).
+// One unit is never a squad here (the bar shows its own name). Returns the squad
+// value: +N group N, -N formation N.
+inline int selectionSquad(const std::vector<std::pair<int, bool>>& sel,
                           const std::vector<std::pair<int, bool>>& unselected) {
-    if (sel.size() < 2 || sel.front() == 0) return 0;
-    const int s = sel.front();
-    for (int q : sel)
+    if (sel.size() < 2 || sel.front().first == 0) return 0;
+    const int s = sel.front().first;
+    bool selBuilder = false;
+    for (const auto& [q, builder] : sel) {
         if (q != s) return 0;
+        selBuilder |= builder;
+    }
     for (const auto& [q, builder] : unselected)
-        if (std::abs(q) == std::abs(s) && !builder) return 0;
+        if (std::abs(q) == std::abs(s) && (!builder || selBuilder)) return 0;
     return s;
 }
 
