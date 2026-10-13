@@ -200,9 +200,9 @@ jobs:
       # Drag-and-drop disk image: a "Total Annihilation - Kingdoms.app" bundle (Finder-launchable
       # with NO Terminal window -- only .app bundles get that; a bare Unix binary
       # double-clicked in Finder always opens Terminal) plus an /Applications
-      # symlink, packed with hdiutil. Ad-hoc codesigned so Apple Silicon will run
-      # it (users still right-click > Open the first time -- we don't hold a
-      # notarization identity).
+      # symlink, packed with hdiutil. Ad-hoc codesigned here so Apple Silicon will
+      # run it; the `sign` job below re-signs it with the Developer ID, notarizes
+      # and staples it.
       - name: App bundle + DMG
         run: |
           APPDIR="dist-dmg/Total Annihilation - Kingdoms.app"

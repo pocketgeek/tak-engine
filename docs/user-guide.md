@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.7.28** (network protocol **253**, replay format
+This guide covers **TAK Engine 0.8.0** (network protocol **256**, replay format
 **12**). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -96,8 +96,8 @@ them.
 **Total Annihilation - Kingdoms**. The installer adds Start menu shortcuts.
 
 **macOS.** Open the DMG and drag **Total Annihilation - Kingdoms** to
-Applications. On the first launch you may need to right-click the app and choose
-**Open**.
+Applications. The app and the DMG are signed and notarized by Apple, so the game
+opens on the first launch like any other app.
 
 **Linux.** Install the package with your package manager, for example
 `sudo apt install ./tak-engine-….deb` or `sudo dnf install ./tak-engine-….rpm`.
@@ -387,7 +387,10 @@ build icons:
 | Right-click (with the same modifiers) | remove one, five or ten |
 | Ctrl + left-click | start or stop **infinite production** |
 
-Each icon shows how many are queued. Give the building a **move** or **patrol**
+Each icon shows how many are queued. A new unit is started on the building's pad
+only when there is room for its whole body there; if the last unit has not
+cleared the pad yet, the building waits a moment and tries again, as in the
+original game. Give the building a **move** or **patrol**
 order to set a **rally point** for new units; Shift adds more rally steps.
 
 **Mobile production.** Some builders conjure units in the field (Zhon's Beast
@@ -487,16 +490,18 @@ game's rules, which sometimes let them overlap.
 Flyers are much faster than most ground units. When you put flyers and ground
 units in the same group or formation:
 
-- In **Legion** mode, flyers in a formation hold their places over the ground
-  units, keep to the army's pace, and settle over it when it arrives.
+- In **Legion** mode, flyers in a formation hold their places in rows over the
+  front of the ground units, keep to the army's pace, follow the front when the
+  army turns, and land in a line just in front of the ground units when they
+  arrive.
 - In **Retail** mode, as in the original game, they are never slowed to the
   army's pace. A flyer that gets far out of place is sent back to the group,
   and a flyer that gets ahead of the group a second time has a one-in-four
   chance to drop all its orders and stop where it is.
 
-![Side-by-side pictures of the same Zhon formation: in Retail the flyers are far ahead of the ground units, in Legion they fly over them](img/guide/flyers-retail-legion.jpg)
+![Side-by-side pictures of the same Zhon formation: in Retail the flyers are far ahead of the ground units, in Legion they fly over the leading ground units](img/guide/flyers-retail-legion.jpg)
 
-*The same formation of ground units and flyers 22 seconds after one move order. Left, Retail: the flyers have gone ahead. Right, Legion: they keep over the ground units. (A development scene.)*
+*The same formation of ground units and flyers 22 seconds after one move order. Left, Retail: the flyers have gone ahead. Right, Legion: they ride over the leading ground units. (A development scene.)*
 
 ### Ships and transports
 
@@ -504,7 +509,8 @@ Ships and hovercraft move on water; some hovercraft also cross land. Several
 sides have **transports** (for example Aramon's Ark and Veruna's Transport Ship).
 
 - **L** then click a transport loads the selected units into it.
-- **U** then click a destination unloads them there.
+- **U** then click a destination unloads them there. A flying transport with no
+  further orders lands where it let its passengers go.
 
 ### Gods
 
@@ -768,6 +774,18 @@ when there are too many types to fit there at full size do they shrink, then fol
 into two rows. If they still do not fit, the last tile shows **+K**: K more types
 are selected but not shown.
 
+![The information bar for 24 selected units of group 3: five full-size type portraits with counts 2, 3, 4, 6 and 9, the last one over the end-cap scroll, the label GROUP 3, partly filled health and mana bars, and 24 SELECTED centred to their right](img/guide/selection-strip.jpg)
+
+*Group 3 selected: nine Swordsmen in the usual portrait spot, then Archers,
+Mage Archers, Horsemen and Catapults to the left, most numerous first, all at
+full size and out over the end-cap scroll. The bars
+are the group's total health and mana. (A development scene, with UI Scale at
+150%.)*
+
+The unit's status (**STANDBY**, **MOVING**, or **N SELECTED** for a group) is
+shown in the gap between the selection's bars and the bars of what it is
+building or conjuring.
+
 ### Groups and formations
 
 | Key | Action |
@@ -779,7 +797,7 @@ are selected but not shown.
 | **Ctrl+Esc** | Remove the selected units from their group or formation. |
 
 A unit belongs to one group or formation at a time. Each unit shows its number
-under it: `3` for group 3, `3F` for formation 3. With the whole group or formation
+under it in green: `3` for group 3, `3F` for formation 3. With the whole group or formation
 selected, the information bar shows its name, such as **GROUP 3**.
 
 - A **group** is a saved selection.
@@ -937,12 +955,15 @@ armies:
   circling on the spot. Units are not caught on jagged terrain unless they really
   are boxed in.
 - **Followers keep pace.** Units following others in a stream match their speed
-  instead of stop-starting.
+  instead of stop-starting, and a slowed unit's walk animation plays at the
+  speed it really moves.
 - **Flyers land cleanly.** Flyers never land on top of other flyers or ground
   units.
 - **Flyers stay with the army.** Flyers in a formation or a Ctrl+number group
-  with ground units hold places over the ground units of the same order and
-  keep to their pace, instead of racing ahead and waiting at the destination.
+  with ground units hold places in rows over the front of the ground units of
+  the same order and keep to their pace, instead of racing ahead and waiting at
+  the destination. On arrival they land just in front of the ground units. Over
+  a single unit or a narrow column they gather in a block, not a long file.
   When the ground stops, for instance at a wall or in a dead end, the flyers
   go on to land at their destination instead of hovering for minutes.
 - **Flyers do not trap walkers.** A flyer that has lifted to let an army pass
@@ -1203,7 +1224,7 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 ### Versions
 
 **Everyone must use the same version of TAK Engine**, client and server alike.
-Version 0.7.28 uses network protocol **253**. Older and newer versions cannot
+Version 0.8.0 uses network protocol **256**. Older and newer versions cannot
 play together, and the server turns away a mismatched client.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
@@ -1278,7 +1299,7 @@ recording. During playback:
 A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
-- **the same version of TAK Engine** that recorded it (0.7.28 plays protocol-253
+- **the same version of TAK Engine** that recorded it (0.8.0 plays protocol-256
   recordings);
 - the same game data and map.
 
@@ -1343,6 +1364,11 @@ application shortcut. It uses the same data folder as the game.
   clicking the selected piece again steps to its next variant. Pieces show
   readable names such as *Cliff · NE outer · variant 2*. Search covers every
   group and also matches the original section names.
+
+  ![Cartographer's terrain browser showing the All sections group (555 pieces, 1261 sections) with cliff pieces named Cliff N, Cliff E, Cliff NE out and so on, each with a variant badge such as 1/3, beside the map canvas](img/guide/cartographer-terrain.jpg)
+
+  *The grouped terrain browser on Ulasem Arena. The badge on each piece shows
+  which of its variants is chosen and how many it has.*
 - **Place**, **Select**, **Erase** and **Pan** are separate tools. Right-drag
   pans.
 - Select objects to move, copy, paste, duplicate, delete or edit their

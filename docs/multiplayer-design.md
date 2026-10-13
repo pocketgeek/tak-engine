@@ -601,7 +601,14 @@ lodestone areas. Protocol 249 adds client progress acks and ping-scaled flow
 control, 250 the original game's speed levels (0.1x-2x), 251 the original's
 blocked-site placement retry, 252 the fire-at-will weapon sweep with
 deterministic per-player vision, AI weapon switching and idle retaliation, and
-253 the sweep's `shootme` test; 0.7.28 ships protocol 253. Game options
+253 the sweep's `shootme` test; 0.7.28 shipped protocol 253. Protocol 254 moves
+Legion flyer stations in squads that mix ground units and flyers over the front
+of the ground (stations, positions and the flyer order point; Legion only), and
+255 admits a factory's ground output only by the footprint-strict mobile
+placement test, with a hashed retry delay when the site is refused, and 256
+lets an air transport whose unload empties its orders stand by (and land) at
+the drop point instead of flying on along the unload's step-out course; 0.8.0
+ships protocol 256. Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
 host sends later option updates. Both clients and the referee apply that choice
@@ -662,6 +669,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.7.28 peers and the server require protocol 253; the replay loader
+227. Version 0.8.0 peers and the server require protocol 256; the replay loader
 rejects every older simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

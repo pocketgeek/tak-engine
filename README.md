@@ -6,13 +6,13 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.28-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.8.0-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
 [Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [Build from source](docs/development.md)
 
-<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.7.28"></a>
+<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.0"></a>
 
 <table>
   <tr>
@@ -20,10 +20,10 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/dragons.jpg"><img src="docs/img/dragons.jpg" alt="Creon Neo Dragons breathe blue fire on an Aramon siege column"></a><br><sub>Creon Neo Dragons strike an Aramon siege column (development scene)</sub></td>
-    <td width="50%"><a href="docs/img/flyers.jpg"><img src="docs/img/flyers.jpg" alt="Zhon Gryphons, Harpies and Drakes flying over Trolls and Stone Giants in one formation"></a><br><sub>Legion flyers keep station over their formation (development scene)</sub></td>
+    <td width="50%"><a href="docs/img/flyers.jpg"><img src="docs/img/flyers.jpg" alt="Zhon Gryphons, Harpies and Drakes flying over the leading Trolls and Stone Giants of one formation"></a><br><sub>Legion flyers ride over the front of their formation (development scene)</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/img/hud.jpg"><img src="docs/img/hud.jpg" alt="Aramon army with Elsin selected, showing the build menu, command panel, minimap and stats panel"></a><br><sub>The Aramon interface with Elsin's build menu and the stats panel</sub></td>
+    <td width="50%"><a href="docs/img/hud.jpg"><img src="docs/img/hud.jpg" alt="An Aramon army with 45 units of eight types selected as formation 1: the information bar shows one portrait per type with its count, FORMATION 1 and 45 SELECTED"></a><br><sub>A mixed selection: one portrait per unit type in the information bar, with the stats panel (development scene)</sub></td>
     <td width="50%"><a href="docs/img/naval.jpg"><img src="docs/img/naval.jpg" alt="Veruna sailing ships trade fire with Creon ironclads on open water"></a><br><sub>Veruna's fleet against Creon ironclads (development scene)</sub></td>
   </tr>
   <tr>
@@ -40,7 +40,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.26, 0.7.27 and 0.7.28 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
+<sub>Captured from the 0.7.26, 0.7.27 and 0.8.0 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
 
 </div>
 
@@ -52,7 +52,45 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.28
+## New in 0.8.0
+
+- **Signed and notarized on macOS.** The app and the DMG are signed with a
+  Developer ID, notarized by Apple and stapled, so they open on the first
+  launch like any other app.
+- **The information bar shows the whole selection.** Several selected units
+  show **N SELECTED**, one full-size portrait per unit type with its count,
+  running out to the screen's left edge before they shrink (left-click a
+  portrait to select only that type, Shift+left-click to remove it), the
+  selection's total health and mana, and **GROUP 3** or **FORMATION 2** when the
+  selection is exactly one squad. The squad number under each unit is now solid
+  green. See the [user guide](docs/user-guide.md#selection).
+- **Texture Filtering** (Options → Graphics) replaces Bilinear Filtering:
+  **Off**, **Units** (the original game's filter) or **Everything**, which also
+  smooths terrain, scenery and effects when zoomed in past 150%.
+- **Factories no longer jam their door** with a large unit such as a Catapult:
+  the next unit is placed only where its whole footprint is clear, as in the
+  original (protocol 255).
+- **Flying transports land at the drop point.** The Zhon Roc, Taros Ghost Ship
+  and Creon Aerial Juggernaut no longer fly on far past the drop point after
+  unloading (protocol 256).
+- **Legion:** formation flyers ride over the front of their army and land in
+  front of it (protocol 254), and walk animations follow the speed a unit
+  actually moves.
+- **Cartographer:** symmetry tools (live mirroring and Symmetrize), terrain copy
+  and paste, a terrain browser grouped by kind with readable piece names, and a
+  built-in font with Armenian, Georgian, symbols, kana, Hangul and common Han.
+  Also: reclaim cursor and area preview fixes, override cache fixes, and menu
+  launch failures that return to the screen they came from. See the
+  [release notes](docs/release-0.8.0-notes.md).
+
+Version **0.8.0 uses protocol 256 and replay format 12**. Update clients and
+servers together; 0.7.28 clients cannot join. Replays require the exact
+simulation protocol; older recordings need the engine that recorded them. No new
+dynamic runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.8.0-notes.md) and
+[validation report](docs/release-0.8.0-validation.md).
+
+### Previously in 0.7.28
 
 - **Units fire as in the original.** Each player runs the original game's
   round-robin target sweep: units shoot while they move, armed builders
@@ -404,7 +442,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.28** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.8.0** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -438,7 +476,8 @@ template. They do not start the server automatically. Follow [Linux server setup
 below to configure the packaged service and obtain its certificate.
 
 Game libraries are bundled; your system still provides windowing, audio, and
-graphics support. On macOS, right-click → **Open** on the first launch if needed.
+graphics support. The macOS app and DMG are signed with a Developer ID and notarized
+by Apple, so Gatekeeper opens them on the first launch with no extra steps.
 For the ZIP, launch **Total Annihilation - Kingdoms.app**, rather than its internal executable.
 
 Packages label the client **Total Annihilation: Kingdoms**
@@ -603,6 +642,12 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   and features; move outlying units, starts and regions inside first.
   Units and features support box selection,
   group movement, copy/paste and deletion; feature moves protect occupied cells.
+  The **Symmetry** menu mirrors edits live (**M**) or copies one half, quadrant
+  or triangle onto the rest of the map (**Shift+M**), using each terrain
+  section's mirror-image twin; **Ctrl+C**/**Ctrl+V** in the Terrain tool's
+  Select mode copy and paste blocks of terrain with their objects. The terrain
+  browser groups sections by kind and folder, with one thumbnail per piece and
+  its numbered variants. See [Cartographer](docs/user-guide.md#symmetry-and-terrain-copy).
   **View** can hide features, units, starts and regions; layer choices are remembered.
   Terrain thumbnails, unit portraits and feature sprites load in the background;
   the minimap refreshes after terrain edits. Check Map reports starts, mana,
@@ -672,7 +717,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.7.28 uses generator v8;
+the same named map when the game starts. Version 0.8.0 uses generator v8;
 older seed recipes are unsupported, while saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -680,7 +725,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.7.28 uses protocol **253**: update clients and servers together.
+Version 0.8.0 uses protocol **256**: update clients and servers together.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -954,7 +999,7 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.28 uses protocol 253**, including authoritative pathfinding
+Version **0.8.0 uses protocol 256**, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
 Update clients and servers together; earlier clients cannot join these matches.
 Replay format is **12** (checkpoints also carry a position digest), and
@@ -1147,7 +1192,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.7.28 uses protocol **253**; update server and clients together.
+Version 0.8.0 uses protocol **256**; update server and clients together.
 
 
 ## License

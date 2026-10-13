@@ -20,6 +20,34 @@ strict code-signature verification rejects them. The ZIP is created with `ditto`
 and distributed intact. Native CI validates the ICNS with `iconutil` and verifies
 the bundle signature before packaging.
 
+## macOS release signing
+
+Since 0.8.0 the `sign` job in `.github/workflows/macos.yml` signs, notarizes and
+staples the macOS downloads for each architecture on a separate `macos-latest`
+runner after the build, so the signing secrets never enter the build job. It
+imports the Developer ID Application certificate into a temporary keychain,
+signs every nested Mach-O and then each `.app` (game and Cartographer) with the
+hardened runtime and a secure timestamp, notarizes the release ZIP and the debug
+ZIP with an App Store Connect API key, staples the apps, rebuilds the ZIP and the
+DMG from the stapled apps, and signs, notarizes and staples the DMG. Apple's
+notarization log is always printed. The debug ZIP's bare command-line binaries
+cannot hold a stapled ticket; Gatekeeper checks them online.
+
+| Secret | Value |
+| --- | --- |
+| `MACOS_CERT_P12` | Base64 Developer ID Application certificate and key (`.p12`) |
+| `MACOS_CERT_PASSWORD` | Password of that `.p12` |
+| `MACOS_SIGN_IDENTITY` | Signing identity name |
+| `NOTARY_KEY_P8` | Base64 App Store Connect API key (`.p8`) |
+| `NOTARY_KEY_ID` | API key id |
+| `NOTARY_ISSUER_ID` | API key issuer id |
+
+On a `v*` tag the signed ZIP, debug ZIP and DMG replace the unsigned files the
+build job attached, under the same names. On `main` they are uploaded as CI
+artifacts. The job is skipped, not failed, on fork pull requests and wherever
+the secrets are missing; decoded key material stays in `RUNNER_TEMP` and is
+removed at the end.
+
 ## Windows release signing
 
 Official `pocketgeek/tak-engine` `v*` tag builds use Azure Artifact Signing via
