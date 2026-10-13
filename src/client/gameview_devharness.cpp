@@ -404,6 +404,18 @@
                 if (hurt && su->type->maxMana>0) su->mana=double(su->type->maxMana)*(i%3==0?0.2:0.9);
                 if (sq) su->squad=int8_t(std::atoi(sq));
             }
+            // TAK_SELPORTRAITS_CONJURE=type: the front unit (a builder) lays that site at
+            // the first legal spot near it, a third built, so the bar shows a conjure target.
+            if (const char* ct=tak::devEnv("TAK_SELPORTRAITS_CONJURE"); ct && !selection_.empty())
+                if (const auto* tt=registry_.find(ct); tt)
+                    if (const auto* b=world_.unit(selection_.front()))
+                        for (float r=90,bx=b->x.toFloat(),bz=b->z.toFloat();r<400;r+=24)
+                            for (float a=0;a<6.28f;a+=0.5f)
+                                if (const float x=bx+std::cos(a)*r,z=bz+std::sin(a)*r;world_.canPlace(tt,x,z))
+                                    if (const int site=writableWorld().startBuild(selection_.front(),tt,x,z)) {
+                                        writableWorld().unit(site)->hp=tak::sim::Fixed::fromFloat(float(tt->maxHp)/3);
+                                        r=400;break;
+                                    }
             noFog_=true;edgeScrollOn_=false;
             mapView_.setOffset(x0-640/mapView_.zoom(),z0-400/mapView_.zoom());
             captureFrame();   // publish them, or the next frame pin prunes the selection

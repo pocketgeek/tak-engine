@@ -1,6 +1,7 @@
 // The info bar's multi-selection portrait strip: one portrait per unit TYPE in the
 // selection, each carrying how many of that type are selected. The first portrait
-// sits where the single-unit portrait always does; the rest extend to its LEFT.
+// anchors the strip at the single-unit portrait's right edge; the rest extend to its
+// LEFT, every one -- the first included -- the same size.
 // Clicking a portrait narrows the selection to that type, Shift+click drops it.
 //
 // Pure (no SDL, no GameView) so tools/selportraits_test.cpp can check the grouping,
@@ -23,8 +24,9 @@ struct Group {
 };
 
 // `units` is the selection in order as (unit id, type id), LIVE units only (the
-// caller drops dead/typeless ids). The front unit's type leads -- it keeps the
-// single-unit portrait spot -- then the rest by count, most first, ties by type id.
+// caller drops dead/typeless ids). The front unit's type leads -- it anchors the
+// strip at the single-unit portrait's spot -- then the rest by count, most first,
+// ties by type id.
 inline std::vector<Group> group(const std::vector<std::pair<int, std::string>>& units) {
     std::vector<Group> out;
     for (const auto& [id, type] : units) {
@@ -49,47 +51,48 @@ inline std::vector<int> click(const std::vector<int>& selection, const std::vect
     return out;
 }
 
-// Fit `n` portraits into the room LEFT of the primary one. Slot 0 is the primary
-// at full size (never moved or shrunk); slots 1.. extend left in a single row at
-// `scale` of its size, shrinking to fit but not below minScale. Past that the strip
-// folds into TWO rows of half-height portraits (column by column, top first). When
-// even that cannot hold them all, the last cell becomes an overflow tile ("+K") and
-// `shown` portraits (primary included) are drawn -- the strip never leaves `room`.
+// Fit `n` portraits (the primary included) into a strip that runs LEFT from the
+// primary's full-size spot: that spot plus `room` to its left. Every portrait --
+// the primary too -- is the same size, so the strip reads as one row: full size
+// while it fits (the primary then exactly where a single unit's sits), else one row
+// shrunk to fit but not below minScale. Past that the strip folds into TWO rows of
+// half-height portraits (column by column, top first). When even that cannot hold
+// them all, the last cell becomes an overflow tile ("+K") and `shown` portraits
+// (primary included) are drawn -- the strip never leaves its span.
 struct Layout {
     int shown = 1;           // type portraits drawn, primary included
     int rows = 1;            // 1, or 2 for the folded strip
-    float scale = 1.0f;      // size of slots 1.. relative to the primary
+    float scale = 1.0f;      // size of EVERY slot, the primary's included, vs full size
     bool overflow = false;   // a "+K" tile follows the last portrait (K = n - shown)
-    float width = 0;         // room used left of the primary (every column + its gap)
+    float width = 0;         // room used left of the primary's full-size spot
 };
 
 inline Layout layout(int n, float fullW, float fullH, float gap, float room, float minScale) {
     Layout L;
-    const int extra = n - 1;
-    if (extra <= 0 || fullW <= 0 || fullH <= 0) return L;
-    room = std::max(room, 0.0f);
-    const float s1 = std::min(1.0f, (room / float(extra) - gap) / fullW);
-    int cols = extra;
+    if (n <= 1 || fullW <= 0 || fullH <= 0) return L;
+    const float span = std::max(room, 0.0f) + fullW;   // the primary's spot + the room
+    const float s1 = std::min(1.0f, (span - float(n - 1) * gap) / (float(n) * fullW));
+    int cols = n;
     if (s1 >= minScale) {
         L.shown = n;
         L.scale = s1;
     } else {
         L.rows = 2;
         L.scale = std::max(0.0f, (fullH - gap) / (2 * fullH));   // two rows + a gap = full height
-        cols = int(std::floor(room / (gap + fullW * L.scale)));
+        cols = int(std::floor((span + gap) / (gap + fullW * L.scale)));
         const int cells = 2 * cols;
-        if (cells >= extra) {
+        if (cells >= n) {
             L.shown = n;
-            cols = (extra + 1) / 2;
-        } else if (cells >= 1) {   // the last cell holds the "+K" tile
-            L.shown = cells;
+            cols = (n + 1) / 2;
+        } else if (cells >= 2) {   // the last cell holds the "+K" tile
+            L.shown = cells - 1;
             L.overflow = true;
-        } else {                   // no room at all: the primary alone
-            L.rows = 1;
-            cols = 0;
+        } else {                   // not even one column (a degenerate gap): the primary alone
+            L = Layout{};
+            return L;
         }
     }
-    L.width = float(cols) * (gap + fullW * L.scale);
+    L.width = std::max(0.0f, float(cols) * (fullW * L.scale + gap) - gap - fullW);
     return L;
 }
 
@@ -102,17 +105,17 @@ inline float room(float lo, float hi, float margin) {
     return std::max(0.0f, hi - lo - margin);
 }
 
-// Slot i's rectangle (i >= 1; slot `shown` is the overflow tile), given the
-// primary's. A single shrunk row is centred on the primary's height; a folded strip
-// fills it, top row first.
+// Slot i's rectangle (slot 0 is the primary; slot `shown` is the overflow tile),
+// given the primary's full-size one. Every slot is the same size, the strip's right
+// edge stays on the primary's: a single row is centred on the primary's height, a
+// folded strip fills it, top row first -- the primary top-right.
 struct Rect { float x, y, w, h; };
 inline Rect slot(const Layout& L, int i, Rect primary, float gap) {
-    if (i <= 0) return primary;
     const float w = primary.w * L.scale, h = primary.h * L.scale;
-    const int col = (i - 1) / L.rows, row = (i - 1) % L.rows;
+    const int col = std::max(i, 0) / L.rows, row = std::max(i, 0) % L.rows;
     const float y = L.rows == 1 ? primary.y + (primary.h - h) * 0.5f
                                 : primary.y + float(row) * (h + gap);
-    return {primary.x - float(col + 1) * (gap + w), y, w, h};
+    return {primary.x + (primary.w - w) - float(col) * (gap + w), y, w, h};
 }
 
 // The bar's HP / mana for a multi-selection: totals over the selection, not the

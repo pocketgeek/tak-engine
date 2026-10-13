@@ -1989,3 +1989,27 @@ shadows LINEAR, but only above 1.5x zoom (off again below 1.4x; one constant,
 `client/texturefilter.h`). At 1.0-1.25x a nearest texel is one or two screen
 pixels and filtering would only soften the view. Off and Units render
 pixel-identically to the old toggle's off and on.
+
+## The InfoPanel shows only what has data -- a DELIBERATE departure (2026-10-13)
+
+Retail's bottom bar (the `.gui` InfoPanel) is a fixed layout that is always
+fully present: UnitInfo1 (the selected unit's UnitImage portrait, name,
+HealthBar and ManaBar) on the left, ActionText (the status), and UnitInfo2 (the
+conjured target's name, HealthBar and ManaBar) on the right. With nothing
+selected it still shows an empty black portrait box and four empty gauges.
+
+Ours keeps every element at its `.gui` spot, so nothing moves as the selection
+changes, but draws only what carries data (`drawGuiInfoBar`):
+
+- the portrait only with something selected -- never the empty black box;
+- the left HealthBar only with something selected, the left ManaBar only for a
+  pool (a single unit with `maxmana > 0`, or a multi-selection with casters);
+- UnitInfo2's name and progress gauge only while there is a conjure target (a
+  site under construction or a build queue's head); its ManaBar never (it never
+  carried data);
+- ActionText stays centred between the two gauge pairs' SPOTS, drawn or not.
+
+A multi-selection's front portrait is one of the type strip, the same size as
+the rest in every layout state (full, shrunk, folded, "+K"), anchored at the
+single-unit portrait's right edge (`client/selportraits.h`). A single selection
+draws exactly as before. The fallback stone bar follows the same strip rule.

@@ -1637,10 +1637,12 @@ namespace {
             SDL_FRect r = guiBarRect(gui_.gadgets[ei]);
             SDL_RenderCopyF(ren_, guiTex_[ei][0], nullptr, &r);
         }
-        // Unit info as a FIXED, always-present group centred in the bar (like retail):
-        // UnitInfo1 (selected unit: portrait + name + HP/mana bars), ActionText
-        // (status), and UnitInfo2 (the conjured target: name + progress bar). Both info
-        // blocks always render -- empty bars when absent -- so the layout never shifts.
+        // Unit info as a FIXED group centred in the bar (like retail): UnitInfo1
+        // (selected unit: portrait + name + HP/mana bars), ActionText (status), and
+        // UnitInfo2 (the conjured target: name + progress bar). Every element keeps its
+        // .gui spot so the layout never shifts, but -- unlike retail, which always shows
+        // both blocks -- only what carries data draws: no portrait box with nothing
+        // selected, no mana bar without a pool, no target block without a target.
         {
             float vs = float(barH()) / 49.0f;
             float groupW = (512.0f - 59.0f) * vs;   // UnitInfo1.x .. UnitInfo2 right edge
@@ -1681,19 +1683,19 @@ namespace {
 
             // --- UnitInfo1: selected unit ---
             int ii = guiIdx("UnitImage");
-            if (ii >= 0) {
+            if (ii >= 0 && u && !multi) {
                 SDL_FRect pr = place(ii);
-                SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
-                SDL_RenderFillRectF(ren_, &pr);
-                if (u) {
-                    SDL_Texture* ic = iconFor(u->type->id);
-                    if (!ic) ic = modelIconTex(u->type->id, colorSlot_[localPlayer_ & 7],
-                                               u->type->maxVel > tak::sim::Fixed());
-                    if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &pr);
+                SDL_Texture* ic = iconFor(u->type->id);
+                if (!ic) ic = modelIconTex(u->type->id, colorSlot_[localPlayer_ & 7],
+                                           u->type->maxVel > tak::sim::Fixed());
+                if (ic) {   // no image at all: no bare box either
+                    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
+                    SDL_RenderFillRectF(ren_, &pr);
+                    SDL_RenderCopyF(ren_, ic, nullptr, &pr);
+                    SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
+                    SDL_RenderDrawRectF(ren_, &pr);
                 }
-                SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
-                SDL_RenderDrawRectF(ren_, &pr);
-                if (u && !multi && u->veteran > 0) {
+                if (u->veteran > 0) {
                     int xi = guiIdxLeft("Experience");
                     int tier = u->veteran >= 7 ? 2 : u->veteran >= 4 ? 1 : 0;
                     if (xi >= 0 && tier < int(guiTex_[xi].size()) && guiTex_[xi][size_t(tier)]) {
@@ -1701,15 +1703,16 @@ namespace {
                         SDL_RenderCopyF(ren_, guiTex_[xi][size_t(tier)], nullptr, &cr);
                     }
                 }
-                // A multi-selection: the other types' portraits run LEFT from this one,
-                // over the chrome and the EndCap scroll out to the screen's left edge.
-                // They stay full size until a full-size strip would pass that edge --
-                // only then do they shrink, fold, or cap with "+K".
-                if (multi) {
-                    const float gap = 3 * vs, margin = 4 * vs;
-                    const float room = tak::selportraits::room(0, pr.x, margin);
-                    drawSelPortraits(pr, room, gap, 1.5f * vs);
-                }
+            } else if (ii >= 0 && multi) {
+                // A multi-selection: one portrait per type, the front unit's anchoring
+                // the strip at this spot and the rest running LEFT over the chrome and
+                // the EndCap scroll out to the screen's left edge. All full size until
+                // a full-size strip would pass that edge -- only then do they ALL
+                // (the front one too) shrink, fold, or cap with "+K".
+                const SDL_FRect pr = place(ii);
+                const float gap = 3 * vs, margin = 4 * vs;
+                const float room = tak::selportraits::room(0, pr.x, margin);
+                drawSelPortraits(pr, room, gap, 1.5f * vs);
             }
             if (int t1 = guiIdxLeft("UnitText"); u && !multi && t1 >= 0) {
                 SDL_FRect nr = place(t1);
@@ -1724,22 +1727,23 @@ namespace {
                     px = std::min(px, (place(t2).x - nr.x) / (6.0f * float(sq.size()) + 3.0f));
                 blockText(sq, nr.x, nr.y, std::max(1.0f, px), {236, 226, 192, 255});
             }
+            // HP with anything selected; mana only for a pool (the group's casters).
             if (multi) {
                 const auto t = selTotals();
                 bar(guiIdxLeft("HealthBar"), t.hpFrac(), {210, 70, 60, 255});
-                bar(guiIdxLeft("ManaBar"), t.manaFrac(), {90, 150, 255, 255});
-            } else {
-                bar(guiIdxLeft("HealthBar"), u ? u->hp / std::max(1.0f, float(u->type->maxHp)) : 0.0f,
+                if (t.hasMana) bar(guiIdxLeft("ManaBar"), t.manaFrac(), {90, 150, 255, 255});
+            } else if (u) {
+                bar(guiIdxLeft("HealthBar"), u->hp / std::max(1.0f, float(u->type->maxHp)),
                     {210, 70, 60, 255});
-                bar(guiIdxLeft("ManaBar"),
-                    (u && u->type->maxMana > 0) ? u->mana / u->type->maxMana : 0.0f,
-                    {90, 150, 255, 255});
+                if (u->type->maxMana > 0)
+                    bar(guiIdxLeft("ManaBar"), u->mana / u->type->maxMana, {90, 150, 255, 255});
             }
 
             // --- ActionText: status (or the total for a multi-selection) ---
             // Not at the .gui's ActionText spot: that sits on the name row, where a long
             // name ("BEAST HANDLER") runs into it. Centred in the gap between the two
-            // HP / mana bar pairs instead, shrunk only if it would not fit there.
+            // HP / mana bar pairs' SPOTS instead (drawn or not, so it never moves),
+            // shrunk only if it would not fit there.
             if (int ai = guiIdx("ActionText"); u && ai >= 0) {
                 SDL_FRect ar = place(ai);
                 std::string st = multi
@@ -1761,14 +1765,16 @@ namespace {
                 blockText(st, x, y, px, {170, 205, 255, 255});
             }
 
-            // --- UnitInfo2: the conjured target ---
-            if (int t2 = guiIdxRight("UnitText"); !tName.empty() && t2 >= 0) {
-                SDL_FRect nr = place(t2);
-                std::transform(tName.begin(), tName.end(), tName.begin(), ::toupper);
-                blockText(tName, nr.x, nr.y, tpx, {236, 226, 192, 255});
+            // --- UnitInfo2: the conjured target, only while there is one ---
+            // Name + progress; its ManaBar spot stays empty (a target has no pool to show).
+            if (!tName.empty()) {
+                if (int t2 = guiIdxRight("UnitText"); t2 >= 0) {
+                    SDL_FRect nr = place(t2);
+                    std::transform(tName.begin(), tName.end(), tName.begin(), ::toupper);
+                    blockText(tName, nr.x, nr.y, tpx, {236, 226, 192, 255});
+                }
+                bar(guiIdxRight("HealthBar"), std::clamp(tProg, 0.0f, 1.0f), {210, 70, 60, 255});
             }
-            bar(guiIdxRight("HealthBar"), std::clamp(tProg, 0.0f, 1.0f), {210, 70, 60, 255});
-            bar(guiIdxRight("ManaBar"), 0.0f, {90, 150, 255, 255});
         }
         return true;
     }
@@ -1841,20 +1847,16 @@ namespace {
             const auto& g = groups[size_t(i)];
             const SDL_FRect r = rectOf(i);
             const auto* t = registry_.find(g.type);
-            if (i > 0) {   // slot 0 is the caller's own portrait, already drawn
-                SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
-                SDL_RenderFillRectF(ren_, &r);
-                SDL_Texture* ic = iconFor(g.type);
-                if (!ic && t) ic = modelIconTex(g.type, colorSlot_[localPlayer_ & 7],
-                                                t->maxVel > tak::sim::Fixed());
-                if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &r);
-            }
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);   // slot 0 too: one size for all
+            SDL_RenderFillRectF(ren_, &r);
+            SDL_Texture* ic = iconFor(g.type);
+            if (!ic && t) ic = modelIconTex(g.type, colorSlot_[localPlayer_ & 7],
+                                            t->maxVel > tak::sim::Fixed());
+            if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &r);
             const bool h = hot(r);
-            if (i > 0 || h) {
-                SDL_SetRenderDrawColor(ren_, h ? 255 : 96, h ? 230 : 84, h ? 120 : 60, 255);
-                SDL_RenderDrawRectF(ren_, &r);
-            }
-            badge(r, std::to_string(g.ids.size()), std::max(1.0f, px * (i > 0 ? L.scale : 1.0f)));
+            SDL_SetRenderDrawColor(ren_, h ? 255 : 96, h ? 230 : 84, h ? 120 : 60, 255);
+            SDL_RenderDrawRectF(ren_, &r);
+            badge(r, std::to_string(g.ids.size()), std::max(1.0f, px * L.scale));
             if (h && t) { tip = t->name; tipAt = r; }
             selPortraitRects_.push_back({r, g.type});
         }
@@ -2217,12 +2219,13 @@ namespace {
                                                       room, kSelPortraitMinScale).width;
                 pr.x += strip;
                 shade(px, 288 + strip);
-                SDL_Texture* ic = iconFor(u->type->id);
+                SDL_Texture* ic = selection_.size() > 1 ? nullptr : iconFor(u->type->id);
                 if (ic) {
                     SDL_RenderCopyF(ren_, ic, nullptr, &pr);
                     SDL_SetRenderDrawColor(ren_, 20, 18, 16, 255);
                     SDL_RenderDrawRectF(ren_, &pr);
                 }
+                // A multi-selection draws its front portrait in the strip, sized like the rest.
                 if (selection_.size() > 1) drawSelPortraits(pr, room, gap, 1.8f);   // same layout as above
                 float tx = px + 70 + strip;
                 SDL_Color blk{0, 0, 0, 255};

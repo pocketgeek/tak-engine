@@ -2492,14 +2492,17 @@ private:
     SDL_FRect unitInfoOkRect_{0, 0, 0, 0};
 
     // Retail bottom InfoPanel bar: chrome (InfoPanel + EndCap) plus the selected
-    // unit's portrait/name/HP/mana at the .gui positions. Returns false (so drawPanel
+    // unit's portrait/name/HP/mana at the .gui positions -- only what has data (no
+    // empty portrait box or bars, unlike retail). Returns false (so drawPanel
     // keeps its own chrome) when no .gui is loaded. The build menu + mana readout stay
     // in drawPanel and draw on top.
     bool drawGuiInfoBar(int winW, int winH);
-    // A multi-selection's per-type portraits: `primary` is the single-unit portrait
-    // (slot 0, the front unit's type); the others extend left into `room` px, with a
-    // count badge on each (badge sized by `px`). Fills selPortraitRects_ and returns
-    // the width used left of the primary. Single selection: draws nothing, returns 0.
+    // A multi-selection's per-type portraits, ALL of them: `primary` is the single-unit
+    // portrait's full-size spot, where slot 0 (the front unit's type) anchors the strip
+    // at the same size as the rest, which extend left into `room` px; a count badge on
+    // each (badge sized by `px`). Fills selPortraitRects_ and returns the width used
+    // left of the primary's spot. Single selection: draws nothing (the caller draws
+    // that portrait), returns 0.
     float drawSelPortraits(SDL_FRect primary, float room, float gap, float px);
     std::vector<tak::selportraits::Group> selTypeGroups() const;   // live selection, by type
     // A multi-selection's bar stats: HP / mana totals over the live selected units, and

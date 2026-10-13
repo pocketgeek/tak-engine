@@ -306,7 +306,9 @@ See [random map generation](random-map-generation.md) for the rules it follows.
    With several units selected it shows the total selected instead, the health
    and mana of the whole selection, and one portrait per unit type, running left
    from the first, each with how many of that type are selected (see
-   [Selection](#selection)).
+   [Selection](#selection)). It shows only what applies: with nothing selected
+   the bar is empty, the mana bar appears only for units that have mana, and the
+   bar on the right appears only while the unit is building or conjuring something.
 8. **The selected unit**, here the Monarch.
 
 ### The goal
@@ -750,13 +752,13 @@ a left-click on the map or minimap. **Esc** disarms.
 
 With more than one unit selected, the information bar shows **N SELECTED** and a
 portrait for each unit type in the selection. The first selected unit's type comes
-first, in the usual portrait spot; the other types run to its left, most numerous
-first. The number on each portrait is how many of that type are selected. Hold the
+first, at the right end of the row where the single portrait sits; the other
+types run to its left, most numerous first. All the portraits are the same size. The number on each portrait is how many of that type are selected. Hold the
 pointer over a portrait to see the unit's name.
 
 The bars show the whole selection. The health bar is the total health of the
 selected units out of their total maximum. The mana bar counts only the units that
-have mana, such as priests, and stays empty if none do. No unit name is shown. If
+have mana, such as priests, and is hidden if none do. No unit name is shown. If
 the selection is exactly one group or formation, its name (for example **GROUP 3**
 or **FORMATION 2**) is shown where the unit name would be. Exactly means all of
 its units, or all of them except its builders, which is what pressing its number
@@ -770,8 +772,9 @@ selected alone.
 | Shift + left-click | Remove that type from the selection. |
 
 The portraits stay full size all the way to the left edge of the screen. Only
-when there are too many types to fit there at full size do they shrink, then fold
-into two rows. If they still do not fit, the last tile shows **+K**: K more types
+when there are too many types to fit there at full size do they all shrink
+together, the first one included, then fold into two rows (the first type at the
+top right). If they still do not fit, the last tile shows **+K**: K more types
 are selected but not shown.
 
 ![The information bar for 24 selected units of group 3: five full-size type portraits with counts 2, 3, 4, 6 and 9, the last one over the end-cap scroll, the label GROUP 3, partly filled health and mana bars, and 24 SELECTED centred to their right](img/guide/selection-strip.jpg)
