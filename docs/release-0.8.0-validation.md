@@ -3,8 +3,7 @@
 Protocol **256**, replay format **12**, generator version **8**, campaign
 payload **4**, database schema **9**.
 
-**Pending:** version 0.8.0 has not been tagged or published yet. This report
-is completed as the checks below are run.
+Tagged `v0.8.0` at `477c9238` and published on 2026-10-13.
 
 ## Scope and compatibility
 
@@ -320,10 +319,54 @@ unmodified, from a clean detached worktree. SHA-256
 
 ## CI and packages
 
-Pending. To check at the tag in addition to the usual list: the macOS ZIP,
-debug ZIP and DMG attached to the release are the signed set (Developer ID
-signature, stapled notarization ticket on both apps and the DMG, `spctl`
-accepts them), not the unsigned build-job files.
+The final source (`477c9238`) passed the Determinism, Linux, Windows and macOS
+workflows on `main` (runs 38357355011, 38357355033, 38357355005 and
+38357355061). The exact tag passed all four workflows:
+
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/38358663588), started manually on the tag because the workflow is path-filtered.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/38358655792): all native package jobs and release attachment.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/38358655827): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/38358655776): x64 and ARM64 builds, then the new **Sign + notarize** job for each architecture. Apple accepted every submission (release ZIP, debug ZIP and DMG per architecture, each in about a minute), and the job stapled and validated both apps and the DMG and replaced the unsigned release files in the draft.
+
+The release was created as a draft with these notes and tagged CI attached the
+packages. All **29 assets** (the same set as 0.7.28) were downloaded and
+matched GitHub's SHA-256 digests and byte sizes before publication. Every ZIP
+passed its CRC test.
+
+- **Build ids.** The client and server in every Linux package (Debian 12 and
+  13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44, openSUSE Leap 16.0, Arch,
+  Slackware, both architectures where shipped, and both Linux debug archives)
+  carry `v0.8.0` with no `-dirty` suffix; the Debian 13 and Fedora 44 x86-64
+  packages and the Linux x64 debug archive report `0.8.0 (build v0.8.0)` when
+  run. The Windows client and server in all four ZIPs carry `v0.8.0`, and the
+  signed x64 `takserver.exe` reports `0.8.0 (build v0.8.0)` on Windows 11. On
+  the arm64 MacBook (macOS 26.6.2) the DMG's `takclient`, the ZIP's
+  `takserver` and the debug ZIP's `takclient` report `0.8.0 (build v0.8.0)`.
+- **Windows signatures.** Windows CI signed **17** files (16 executables and
+  the installer) and verified each signature and timestamp with 0 errors and 0
+  warnings. Locally, every executable in the four ZIPs (x86-64 or ARM64 PE as
+  named) and the installer carries a certificate table, and on Windows
+  `Get-AuthenticodeSignature` reports **Valid** with a timestamp for the
+  installer, `takclient.exe` and `takserver.exe`.
+- **macOS signing and notarization**, checked on the MacBook against the
+  downloaded release files (not the CI artifacts):
+  - Both DMGs (arm64 and x64): `xcrun stapler validate` succeeds and `spctl
+    --assess --type open --context context:primary-signature` reports
+    *accepted, source=Notarized Developer ID*, signed by Developer ID
+    Application: Curtis Edge (L479Y59RN8).
+  - Both apps inside each DMG and each release ZIP (**Total Annihilation -
+    Kingdoms.app** and **TAK Cartographer.app**): stapled ticket validates,
+    `spctl --assess --type execute` reports *accepted, source=Notarized
+    Developer ID*, `codesign --verify --deep --strict` passes, the hardened
+    runtime flag is set, bundle version 0.8.0, and the executables are arm64 or
+    x86_64 as named.
+  - The bare programs in the release and debug ZIPs carry the Developer ID
+    signature with a secure timestamp and pass `codesign --verify --strict`.
+    As the notes say, they cannot carry a stapled ticket, so Gatekeeper checks
+    them online (`spctl` reports a bare program as valid code that is not an
+    app).
+
+Published 2026-10-13 07:07 UTC.
 
 ## Screenshots
 
@@ -367,4 +410,18 @@ caption.
 
 ## Limits
 
-Pending.
+Local visual inspection covers Linux OpenGL screenshots only; the Windows and
+macOS packages are checked from CI and by the signature, notarization and
+build-id checks above, and were not played by hand for this release. The macOS
+first launch from a quarantined browser download was not exercised
+interactively (the checks above use `spctl`, which applies the same Gatekeeper
+assessment). Remote simulated-time sweeps do not substitute for a multi-hour
+wall-time soak, and dense Legion stress battles still run below the harness's
+speed on the Debug test referees (see above). The factory fix leaves out
+retail's release of finished units (rally points or the PARK ring), and an
+ordinary flyer move's detached coast still settles before standby (see Scope).
+Texture Filtering at Units or Everything, the **+K** overflow tile and the
+Cartographer's symmetry axis overlay have no screenshots. The Debug (`-O0`)
+builds skip the nightly-labelled tests, as the nightly job only runs them
+optimized; under unoptimized Clang `movement_orders_trolls` keeps a thin
+margin (278.5 s of 300 s).
