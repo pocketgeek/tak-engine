@@ -97,10 +97,13 @@ private:
     void refreshDevices();
 
     // Width of dropdown `c`'s chip + pop-up list: as wide as the row allows (minus a
-    // label column), clamped, so long device names aren't truncated. One source of truth
-    // shared by the closed chip, the open list, and hit-testing so they line up.
+    // label column, widened for a label longer than ~12 block glyphs such as GPU MEMORY
+    // LIMIT so the chip never covers it), clamped, so long device names aren't truncated.
+    // One source of truth shared by the closed chip, the open list, and hit-testing so
+    // they line up.
     float dropWidth(const Control& c) const {
-        return std::clamp(c.row.w - 150.0f * u_, 220.0f * u_, 560.0f * u_);
+        const float label = std::max(150.0f, float(c.label.size()) * 6 * 2.0f + 6) * u_;   // labels draw at 2.0u
+        return std::clamp(c.row.w - label, 220.0f * u_, 560.0f * u_);
     }
 
     // Geometry of the open dropdown `c`'s scrollable option list: its top `y0`, per-item
