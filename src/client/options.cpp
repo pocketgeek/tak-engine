@@ -463,11 +463,19 @@ void OptionsScreen::refreshDevices() {
 void OptionsScreen::dropViewport(const Control& c, int nOpts, float& y0, float& itemH,
                                  float& viewH) {
     itemH = 24 * u_;
-    y0 = c.row.y + 5 * u_ + 24 * u_;                     // just below the closed chip
-    float footerH = 52 * u_;
+    float footerH = 52 * u_, titleH = 3.4f * 7 * u_ + 26 * u_;
+    float chipTop = c.row.y + 5 * u_, chipBot = chipTop + 24 * u_;
     float maxBottom = panel_.y + panel_.h - footerH - 6 * u_;   // keep clear of the footer
+    float minTop = panel_.y + titleH + 6 * u_;                  // ...and of the title
     float fullH = itemH * float(std::max(nOpts, 1));
-    viewH = std::clamp(maxBottom - y0, itemH, fullH);    // at least one row, at most the list
+    // Below the closed chip when the whole list fits there; otherwise ABOVE it if that
+    // side has more room (a chip low in the panel would hide its last options under the
+    // footer). Whole rows only, so no option is ever shown half cut off.
+    float below = maxBottom - chipBot, above = chipTop - minTop;
+    bool up = fullH > below && above > below;
+    float room = std::max(itemH, std::floor((up ? above : below) / itemH) * itemH);
+    viewH = std::min(room, fullH);                       // at least one row, at most the list
+    y0 = up ? chipTop - viewH : chipBot;
     float maxScroll = std::max(0.0f, fullH - viewH);
     dropScroll_ = std::clamp(dropScroll_, 0.0f, maxScroll);
 }
@@ -835,6 +843,14 @@ void OptionsScreen::render(int winW, int winH) {
             if (int(t.size()) > maxCh && maxCh > 0) t = t.substr(0, size_t(maxCh));
             drawBlockText(ren_, t, it.x + 6 * u_, it.y + (itemH - 7 * dpx) / 2, dpx,
                           int(i) == sel ? SDL_Color{215, 235, 245, 255} : SDL_Color{200, 205, 220, 255});
+        }
+        // A list longer than its pop-up gets a scrollbar thumb, so the rows past the
+        // edge (reached with the wheel) are visibly there.
+        float fullH = itemH * float(opts.size());
+        if (fullH > viewH + 0.5f) {
+            float th = std::max(12 * u_, viewH * viewH / fullH);
+            SDL_FRect thumb{x + cw - 6 * u_, y0 + (dropScroll_ / (fullH - viewH)) * (viewH - th), 4 * u_, th};
+            SDL_SetRenderDrawColor(ren_, 140, 150, 185, 255); SDL_RenderFillRectF(ren_, &thumb);
         }
         SDL_RenderSetClipRect(ren_, nullptr);
     }
