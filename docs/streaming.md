@@ -75,7 +75,9 @@ panel open counts). Characters you type are saved at the next of those moments, 
 one at a time. If the field is empty at one of those moments, the stored key is
 deleted instead, so it is never left behind stale. **Ctrl+A** empties the field and
 deletes the stored key at once. **Unticking deletes the stored key** immediately;
-the key stays in the field until you exit. A remembered key only fills an empty
+the key stays in the field until you exit. If the store refuses to delete it (for
+example, you cancel its unlock prompt), the box ticks itself again and the bottom
+line says so, because the key is still stored. A remembered key only fills an empty
 field: a key you entered before it loaded is kept, and saved at the next of those
 moments.
 

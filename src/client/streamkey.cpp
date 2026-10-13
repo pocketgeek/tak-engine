@@ -160,7 +160,9 @@ void StreamKeyMemory::poll(std::string& key) {
                 loaded_ = true;
                 // Not if the box changed meanwhile, or the player already entered a key.
                 if (d.generation == generation_ && remember_ && key.empty()) {
-                    if (d.result == credstore::Result::Ok) key.swap(d.secret);
+                    // assign, not swap: the field keeps its reserved buffer (no unwiped copy
+                    // left behind when typing would outgrow a swapped-in one).
+                    if (d.result == credstore::Result::Ok) key.assign(d.secret);
                     syncedHash_ = keyHash(key);
                     syncedValid_ = true;
                 }
@@ -168,6 +170,9 @@ void StreamKeyMemory::poll(std::string& key) {
         } else if (!d.ok) {
             error_ = d.error;
             syncedValid_ = false;   // retry at the next write point
+            // The untick's delete failed (a cancelled unlock prompt, access refused): the key
+            // is still stored, so the box ticks itself again instead of claiming it is gone.
+            if (d.kind == Op::Erase && !remember_ && d.generation == generation_) remember_ = true;
         }
         credstore::wipe(d.secret);
     }

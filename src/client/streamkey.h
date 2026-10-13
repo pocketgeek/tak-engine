@@ -9,7 +9,9 @@
 // box is ticked, when a key is pasted, when streaming starts, and when the panel closes
 // (closing the application with it open counts). A field that is empty at any of those
 // moments -- Ctrl+A clears it at once -- deletes the stored key instead of leaving a
-// stale one. Unticking deletes it. Typed characters are not written one by one.
+// stale one. Unticking deletes it; if the store refuses, the box ticks itself again
+// (remember() turns true) so it never claims a key is gone that is still stored. Typed
+// characters are not written one by one.
 //
 // Every store call runs on one worker thread, in order, so a slow Secret Service or an
 // unlock prompt never stalls the render loop. The panel calls poll() each frame to pick
@@ -35,7 +37,8 @@ public:
     // Probe the store, and load the remembered key once if the box is ticked. Called at
     // startup when ticked and whenever the panel opens; re-probes only while unavailable.
     void check();
-    // Apply finished work. A loaded key fills `key` only if the field is still empty.
+    // Apply finished work. A loaded key fills `key` only if the field is still empty. May
+    // turn remember() back on (a refused untick); the caller re-saves the preference.
     void poll(std::string& key);
     // Tick stores `key` (an empty field deletes any stale entry); untick deletes. Returns
     // false, changing nothing, while the store is not available.

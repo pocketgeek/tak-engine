@@ -4,7 +4,8 @@
 // What it holds the feature to (docs/streaming.md):
 //   * nothing reaches the store until the panel opens, unless the box was ticked last time;
 //   * ticking stores the field, pasting/starting/closing while ticked rewrites it, Ctrl+A
-//     (an empty field) deletes it, unticking deletes it; nothing is stored while unticked;
+//     (an empty field) deletes it, unticking deletes it (a refused delete re-ticks the box);
+//     nothing is stored while unticked;
 //   * a ticked box loads the stored key at startup, without overwriting a typed key;
 //   * no store = the box cannot be ticked and the preference does not change;
 //   * a store that blocks (an unlock prompt) never blocks the panel;
@@ -169,6 +170,32 @@ int main() {
         clickRemember(p); settle(p);
         expect(*fake, {"store:" + kDummy}, "ticking again stores the key the field was pre-filled with");
         type(p, "x");   // the field now differs; quitting with the panel open writes it
+    }
+    std::printf("stream_key_test: the store refuses to delete (a cancelled unlock prompt)\n");
+    {
+        auto fake = std::make_shared<Fake>();
+        fake->contents = kDummy;
+        Settings s;
+        s.streamRememberKey = true;
+        int saves = 0;
+        Streaming p(ren, &s, [&] { savedTexts.push_back(serializeSettings(s)); ++saves; }, fake);
+        settle(p);
+        key(p, SDLK_F9); settle(p); p.draw(W, H);
+        fake->take();
+        fake->failWith = "FAKE STORE REFUSED";
+        clickRemember(p); settle(p); p.draw(W, H);
+        expect(*fake, {"erase"}, "unticking asks the store to delete");
+        check(s.streamRememberKey && saves == 2 && savedTexts.back().find("streamRememberKey = 1") != std::string::npos,
+              "a refused delete ticks the box again and saves that");
+        fake->failWith.clear();
+        SDL_Event r{}; r.type = SDL_MOUSEBUTTONDOWN; r.button.button = SDL_BUTTON_RIGHT;
+        const SDL_FRect rr = p.rememberRect(W, H);
+        r.button.x = int(rr.x + rr.w / 2); r.button.y = int(rr.y + rr.h / 2);
+        p.input(r, W, H); settle(p);
+        expect(*fake, {}, "a right click does not toggle the box");
+        clickRemember(p); settle(p); p.draw(W, H);
+        expect(*fake, {"erase"}, "unticking again deletes");
+        check(!s.streamRememberKey && fake->contents.empty(), "...and the box stays unticked");
     }
     std::printf("stream_key_test: quitting with the panel open\n");
     {

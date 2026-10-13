@@ -207,6 +207,10 @@ struct Streaming::Impl {
     void pollKeys() {
         keys->poll(config.key);
         if(auto e=keys->takeError();!e.empty())error=e;
+        // A refused untick re-ticks the box (the key is still stored): keep the setting true.
+        if(settings && settings->streamRememberKey!=keys->remember()) {
+            settings->streamRememberKey=keys->remember();if(save)save();
+        }
     }
     void layout(int w,int h) {u=std::max(.4f,std::min({float(w)/680,float(h)/555,1.5f}));x=(w-640*u)/2;y=(h-515*u)/2;}
     void show(bool on) {
@@ -281,6 +285,7 @@ struct Streaming::Impl {
 Streaming::Streaming(SDL_Renderer* ren,Settings* settings,std::function<void()> save,
                      std::shared_ptr<credstore::Store> store):p_(std::make_unique<Impl>()) {
     p_->ren=ren;p_->config.fps=60;p_->settings=settings;p_->save=std::move(save);
+    p_->config.key.reserve(320); // room for 255 bytes + one text event: typing never reallocates (unwiped copies)
     const bool remember=settings && settings->streamRememberKey;
     p_->keys=std::make_unique<StreamKeyMemory>(store?std::move(store):streamKeyStore(),remember);
     if(remember)p_->keys->check(); // load the remembered key in the background now
@@ -323,7 +328,7 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
             return true;
         }
         const auto remember=p_->rememberRect();
-        if(SDL_PointInFRect(&pt,&remember)) {p_->toggleRemember();return true;}
+        if(SDL_PointInFRect(&pt,&remember)) {if(direction>0)p_->toggleRemember();return true;} // left only: untick deletes
         for(int i=0;i<6;++i) {auto r=p_->row(i);if(!SDL_PointInFRect(&pt,&r))continue;
             if(direction<0 && (i==0 || i==5))return true;
             if(i==5) {
