@@ -24,7 +24,7 @@ TerrainChunks::~TerrainChunks() {
 void TerrainChunks::clear() {
     for(const auto& [key,cancelled]:pending_)cancelled->store(true,std::memory_order_relaxed);
     {std::lock_guard lock(mutex_);++epoch_;jobs_.clear();done_.clear();}
-    cv_.notify_all();pending_.clear();visible_.clear();
+    cv_.notify_all();pending_.clear();visible_.clear();drawn_.clear();
     for(auto& [key,e]:cache_)gpuvram::destroy(e.texture);
     cache_.clear();bytes_=0;++revision_;
 }
@@ -207,19 +207,36 @@ size_t TerrainChunks::shed(size_t need) {
     }
     return freed;
 }
-bool TerrainChunks::covers(int bx,int by) const {return cache_.count({level_,bx/32,by/32});}
+bool TerrainChunks::covers(int bx,int by) const {
+    return std::binary_search(drawn_.begin(),drawn_.end(),std::pair{bx/32,by/32});
+}
 bool TerrainChunks::draw(SDL_Renderer* renderer,float x,float y,float zoom) {
-    bool complete=true;
+    bool complete=true;drawn_.clear();
     for(const auto& key:visible_) {
-        const auto i=cache_.find(key);if(i==cache_.end()){complete=false;continue;}
-        const auto [level,cx,cy]=key;const auto& e=i->second;
+        auto i=cache_.find(key);
+        const auto [want,cx,cy]=key;
+        if(i==cache_.end()) {
+            complete=false;
+            // Still baking at this level (a zoom just changed it, or a pan brought it
+            // in): stand in with the same map area at the nearest level still cached,
+            // a little softer or sharper for a few frames, rather than sending the
+            // whole view to the section fallback. Not stamped as used, so it never
+            // holds room the real level needs.
+            for(int d=1;d<=5 && i==cache_.end();++d)
+                for(int level:{want-d,want+d})
+                    if(level>=0 && level<=5 && i==cache_.end())i=cache_.find({level,cx,cy});
+            if(i==cache_.end())continue;
+        }
+        const int level=std::get<0>(i->first);const auto& e=i->second;
         // Shared rounded boundaries prevent cracks. The one-texel border lets
         // filtering sample neighbouring terrain at the edges of this crop.
         const float x0=std::round((cx*span-x)*zoom),y0=std::round((cy*span-y)*zoom);
         const float x1=std::round((cx*span+(e.w<<level)-x)*zoom),y1=std::round((cy*span+(e.h<<level)-y)*zoom);
         const SDL_Rect source{1,1,e.w,e.h};const SDL_FRect dest{x0,y0,x1-x0,y1-y0};
-        if(SDL_RenderCopyF(renderer,e.texture,&source,&dest)!=0)complete=false;
+        if(SDL_RenderCopyF(renderer,e.texture,&source,&dest)!=0) {complete=false;continue;}
+        drawn_.push_back({cx,cy});
     }
+    std::sort(drawn_.begin(),drawn_.end());
     return complete && !visible_.empty();
 }
 }

@@ -9,6 +9,8 @@
 #include <mutex>
 #include <thread>
 #include <tuple>
+#include <utility>
+#include <vector>
 
 namespace tak {
 // Camera-independent terrain images. The worker owns mip generation/composition;
@@ -26,6 +28,7 @@ public:
     void resetSource();
     void prepare(SDL_Renderer*,const tnt::Map&,float x,float y,float zoom,int w,int h,bool linear);
     bool draw(SDL_Renderer*,float x,float y,float zoom);
+    // Did the last draw() cover this block, at the wanted level or a cached stand-in?
     bool covers(int blockX,int blockY) const;
     // Evict chunks not drawn this frame, oldest first, until gpuvram::wouldFit(need)
     // (need 0 = just get under the cap). Returns the bytes freed.
@@ -60,6 +63,7 @@ private:
     std::map<Key,std::shared_ptr<std::atomic_bool>> pending_;
     std::map<Key,Entry> cache_;
     std::vector<Key> visible_;
+    std::vector<std::pair<int,int>> drawn_;   // chunk cells the last draw() covered (any level), sorted
     int level_=0;
     bool linear_=false;
 };

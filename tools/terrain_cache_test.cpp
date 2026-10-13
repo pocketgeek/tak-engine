@@ -130,8 +130,8 @@ int main(int argc,char** argv) try {
                 }
                 return n;
             };
-            auto frame=[&](float x,float y) {
-                fresh.setZoom(1);fresh.setOffset(x,y);
+            auto frame=[&](float x,float y,float zoom=1) {
+                fresh.setZoom(zoom);fresh.setOffset(x,y);
                 SDL_SetRenderDrawColor(renderer,255,0,255,255);SDL_RenderClear(renderer);fresh.draw(610,450);
             };
             frame(2000,2000);
@@ -151,6 +151,19 @@ int main(int argc,char** argv) try {
             const auto idle=SDL_GetTicks();
             while(fresh.sectionBytes() && SDL_GetTicks()-idle<10000) {frame(2000,2000);SDL_Delay(5);}
             check(fresh.sectionBytes()==0,"sections are released once chunks cover the view");
+            // A zoom that changes the chunk level: until the new level bakes, the cached
+            // images of another level stand in, so no section is needed at all.
+            {
+                const auto t=SDL_GetTicks();
+                do {frame(5000,5000,.5f);check(SDL_GetTicks()-t<60000,"chunks failed to finish");SDL_Delay(1);}
+                while(fresh.chunkStats().ready!=fresh.chunkStats().visible);
+                const auto idle2=SDL_GetTicks();
+                while(fresh.sectionBytes() && SDL_GetTicks()-idle2<10000) {frame(5000,5000,.5f);SDL_Delay(5);}
+                frame(5000,5000,1);
+                check(fresh.chunkStats().ready<fresh.chunkStats().visible,"fixture: the zoom changed the chunk level");
+                check(holes()==0,"a level change leaves no hole");
+                check(fresh.sectionBytes()==0,"a level change draws the cached level, not sections");
+            }
             // A jump to an unbaked spot: the fallback re-uploads in the same frame.
             frame(9000,9000);
             check(holes()==0,"a jump draws completely from re-uploaded sections");
