@@ -340,7 +340,7 @@
         // Retail-style per-unit silhouette coverage. Each projected
         // unit is rasterized into its own atlas tile, so folds inside one model form
         // one silhouette while later units still darken the scene independently.
-        // Bounded targets retain the output AA scale; unsupported or exhausted
+        // Bounded targets retain the output render scale; unsupported or exhausted
         // targets fall back to the direct geometry path.
         shadowSilhouetteAtlasActive_ = false;
         size_t shadowAtlasPackedUnits=0,shadowAtlasPackedPages=0,shadowAtlasReusedUnits=0;

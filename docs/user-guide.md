@@ -1099,7 +1099,8 @@ screen itself or what the graphics driver adds, so real video memory use is
 higher. If the graphics driver reports that it has run out of memory (this
 can happen with Direct3D on Windows and Metal on macOS), the game lowers its
 limit for a while, shows **LOWERED FOR NOW** next to the option, and returns to
-your choice after a minute without another error. The help text shown while
+your choice after a minute without another error (longer if it keeps happening,
+up to eight minutes). The help text shown while
 the pointer is over the option says how much is in use right now.
 
 **Tactical Dots Zoom** sets when dots take over; it is greyed out and cannot be

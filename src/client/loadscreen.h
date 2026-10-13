@@ -59,7 +59,7 @@ public:
 private:
     Font font_;
     bool fontTried_ = false;
-    // Draw and present immediately, bypassing the render loop's AA target. Used by
+    // Draw and present immediately, to the window, past any render target. Used by
     // step(), which runs inside blocking load work that never reaches a present.
     void present();
 
