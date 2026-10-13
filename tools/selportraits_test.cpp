@@ -103,7 +103,7 @@ int main() try {
     check(t.hasMana && near(t.manaFrac(),1100.f/2000),"mana only over the casters, not diluted by the knights");
     t=sp::total({{40,100,0,0},{100,100,0,0}});
     check(!t.hasMana && near(t.manaFrac(),0) && near(t.hpFrac(),0.7f),"no pool anywhere: empty mana bar");
-    check(near(sp::total({}).hpFrac(),0) && !sp::total({}).hasMana,"nothing selected: empty bars");
+    check(near(sp::total({}).hpFrac(),0) && !sp::total({}).hasMana,"no units: no totals, no mana");
     // The selection is a squad only when it is all of one, or its recall set (no builders).
     using SB=std::vector<std::pair<int,bool>>;
     check(sp::selectionSquad(SB{{3,false},{3,false},{3,false}},{})==3,"the whole group");

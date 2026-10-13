@@ -122,7 +122,7 @@ inline Rect slot(const Layout& L, int i, Rect primary, float gap) {
 // front unit's. HP is sum(hp) / sum(maxHp) over the live selected units; mana is the
 // same over only the units that HAVE a pool (maxMana > 0), so a squad of knights with
 // two priests shows the priests' mana rather than a sliver of it. No pool anywhere:
-// hasMana is false and the bar draws empty, as it does for a single unit without one.
+// hasMana is false and the bar is hidden, as it is for a single unit without one.
 struct Vitals { float hp = 0, maxHp = 0, mana = 0, maxMana = 0; };
 struct Totals {
     float hp = 0, maxHp = 0, mana = 0, maxMana = 0;
