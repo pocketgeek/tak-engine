@@ -1214,7 +1214,7 @@
                     const int th=int(std::bit_ceil(unsigned(effect.height)));
                     auto& texture=lightningTextures_[{tw,th}];
                     if(!texture) {
-                        texture=SDL_CreateTexture(ren_,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,tw,th);
+                        texture=gpuvram::create(ren_,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,tw,th);
                         if(texture){SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);SDL_SetTextureScaleMode(texture,worldScaleMode());}
                     }
                     if(texture) {
@@ -2270,7 +2270,7 @@
     }
 
     void GameView::destroyGpuTextures() {
-        for(auto& [size,texture]:lightningTextures_)SDL_DestroyTexture(texture);
+        for(auto& [size,texture]:lightningTextures_)gpuvram::destroy(texture);
         lightningTextures_.clear();
         invalidateRenderTargets();   // colour atlases + the shadow mask
         auto kill = [](SDL_Texture*& t) { if (t) { gpuvram::destroy(t); t = nullptr; } };
@@ -2433,10 +2433,18 @@
         if (atlasW_ <= 0) return nullptr;
         if (int(atlasTex_.size()) <= slot) atlasTex_.resize(size_t(slot) + 1, nullptr);
         if (atlasTex_[slot]) return atlasTex_[slot];
-        if (gpuAllocBlocked()) return nullptr;   // don't retry a failed alloc per frame
+        // ESSENTIAL, unlike the bake pages: every body of this colour samples this atlas,
+        // and a null one skips them (the units vanish). So neither the GPU cap nor another
+        // subsystem's failure backoff may refuse it. Over the cap, the terrain caches give
+        // back what they hold off-screen first; then it is created regardless (~11 MiB
+        // per colour, at most ten). Only its OWN failure delays a retry, by a second, so
+        // a NULL from the driver is not re-requested every body of every frame.
+        if (SDL_GetTicks64() < atlasRetryAt_) return nullptr;
+        const size_t bytes = size_t(atlasW_) * size_t(atlasH_) * 4;
+        if (!gpuvram::wouldFit(bytes)) mapView_.shedGpu(bytes);
         SDL_Texture* atlas = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                SDL_TEXTUREACCESS_TARGET, atlasW_, atlasH_);
-        if (!atlas) { noteGpuAllocFail(); return nullptr; }
+        if (!atlas) { noteGpuAllocFail(); atlasRetryAt_ = SDL_GetTicks64() + 1000; return nullptr; }
         SDL_SetTextureBlendMode(atlas, SDL_BLENDMODE_BLEND);
         SDL_Texture* prev = SDL_GetRenderTarget(ren_);
         SDL_SetRenderTarget(ren_, atlas);

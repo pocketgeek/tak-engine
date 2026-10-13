@@ -238,8 +238,9 @@
         const bool verifyBriefing=tak::devEnv("TAK_SHOT_BRIEFING")!=nullptr;
         const auto briefingHash=verifyBriefing ? world_.stateHash() : 0;
 #endif
-        // mpAutoStep can run with the whole-frame AA target bound. A modal must
-        // present to the actual window, then restore the caller's render state.
+        // mpAutoStep can run mid-frame with a render target, scale, viewport or clip
+        // bound. A modal must present to the actual window, then restore the caller's
+        // render state.
         struct RenderState {
             SDL_Renderer* renderer;
             SDL_Texture* target;

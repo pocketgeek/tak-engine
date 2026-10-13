@@ -70,7 +70,7 @@
 #include "client/monarchalert.h"
 #include "client/sound.h"     // WAV mixer + music + soundclasses (extracted leaf)
 #include "client/threadpool.h"   // data-parallel worker pool (extracted leaf)
-#include "client/gpuvram.h"   // central GPU-texture VRAM accountant + hard cap
+#include "client/gpuvram.h"   // GPU memory accountant + safety-net cap (Options limit)
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
@@ -1049,6 +1049,7 @@ private:
     std::unordered_map<std::string, SDL_Rect> atlasRect_;  // name -> content rect
     int atlasW_ = 0, atlasH_ = 0;
     std::vector<SDL_Texture*> atlasTex_;   // per colour slot; nullptr until built
+    uint64_t atlasRetryAt_ = 0;            // SDL_GetTicks64 after which a failed atlas create retries
     // Per-sequence authored clocks; atlas pixels are updated only on a frame
     // change or atlas rebuild. Geometry workers read the selected frame.
     bool glowDirty_ = true;
@@ -1087,16 +1088,14 @@ private:
     // mid height, none of which survives unitHitBox's projection into screen space.
     struct RingBox { float halfX = 12.0f, halfZ = 12.0f, midY = 12.0f; };
     std::map<std::string, RingBox> ringBoxes_;
-    // After a failed GPU texture allocation (VRAM pressure), pause every bake /
-    // atlas creation path for a few seconds instead of retrying next frame. The
-    // bake paths run per visible unit per frame, so an un-cached failure becomes
-    // a driver-flooding allocation storm: observed on an 8GB card driving a
-    // 7680x2160 desktop as ~6k/sec nvidia-drm NVKMS GEM allocation errors that
-    // starved the compositor itself ("Failed to start frame" = whole-screen
-    // flicker). Units render as full 3D models during the pause -- correct, just
-    // less cheap -- and baking resumes automatically once the pause lapses.
-    // Backoff now lives in the shared gpuvram accountant (so terrain chunks, which are
-    // baked by MapView, participate too). These thin forwarders keep the call sites.
+    // After a failed GPU allocation, pause the optional bake paths (palette, shadow
+    // silhouette and distant-model pages, model icons) for a few seconds instead of
+    // retrying next frame: they run per visible unit per frame, so an un-cached failure
+    // becomes a driver-flooding allocation storm (seen in 2026-09 on an 8 GB card behind
+    // a 7680x2160 desktop as NVKMS allocation errors that starved the compositor). Each
+    // falls back to direct drawing meanwhile. The colour atlases do NOT wait on this
+    // shared pause -- without one a colour's units are not drawn (see atlasFor). The
+    // backoff lives in the shared gpuvram accountant so terrain participates too.
     bool gpuAllocBlocked() const { return gpuvram::blocked(); }
     void noteGpuAllocFail() { gpuvram::noteFail(); }
 
@@ -1110,8 +1109,8 @@ public:
     // Surface-backed caches (shadows, build FX) keep their pixels and are untouched.
     void invalidateRenderTargets();
     // Session-teardown release of EVERY GPU texture GameView owns (unit frames,
-    // atlases, sprite pages, GUI/HUD art, icons, shadows, feature art, effects,
-    // fog, fonts). See the dtor comment: the renderer outlives the session.
+    // colour atlases, palette/shadow pages, GUI/HUD art, icons, shadows, feature art,
+    // effects, lightning, fog, fonts). See the dtor comment: the renderer outlives the session.
     void destroyGpuTextures();
 private:
     int buildBarAlign_ = 1;     // conjure/build row: 0=left 1=center 2=right (Options)

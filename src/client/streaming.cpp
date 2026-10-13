@@ -1,5 +1,6 @@
 #include "client/streaming.h"
 #include "client/blockfont.h"
+#include "client/gpuvram.h"
 #include <SDL_opengl.h>
 #include <algorithm>
 #include <array>
@@ -11,6 +12,9 @@ namespace tak {
 namespace {
 // Double-buffered OpenGL readback: only map after the fence signals. SDL's
 // Metal/D3D/software backends use a throttled portable readback fallback.
+// The two PBOs and the scaling renderbuffer are counted in gpuvram's total (only
+// while a stream runs: 2 x w*h*4, plus w*h*4 when scaled) but never refused by its
+// cap -- the player asked to stream, and the capture cannot work without them.
 class Capture {
 public:
     ~Capture() { clear(); }
@@ -56,7 +60,7 @@ public:
                 bind_(GL_PIXEL_PACK_BUFFER,buffers_[i]);
                 if(!allocated_[i]) {
                     data_(GL_PIXEL_PACK_BUFFER,GLsizeiptr(size_t(w)*h*4),nullptr,GL_STREAM_READ);
-                    allocated_[i]=true;
+                    allocated_[i]=true;count(size_t(w)*h*4);
                 }
                 GLint oldRead=0, oldDraw=0, oldRenderbuffer=0;
                 const bool scale=scalable_ && (sourceW!=w || sourceH!=h);
@@ -65,7 +69,7 @@ public:
                     get_(GL_RENDERBUFFER_BINDING,&oldRenderbuffer);
                     if(!fbo_) {
                         genFbo_(1,&fbo_);genRb_(1,&rb_);
-                        bindRb_(GL_RENDERBUFFER,rb_);storage_(GL_RENDERBUFFER,GL_RGBA8,w,h);
+                        bindRb_(GL_RENDERBUFFER,rb_);storage_(GL_RENDERBUFFER,GL_RGBA8,w,h);count(size_t(w)*h*4);
                         bindFbo_(GL_DRAW_FRAMEBUFFER,fbo_);
                         attach_(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_RENDERBUFFER,rb_);
                     } else bindFbo_(GL_DRAW_FRAMEBUFFER,fbo_);
@@ -123,7 +127,10 @@ private:
             if(rb_)delRb_(1,&rb_);
         }
         buffers_={};fences_={};allocated_={};fbo_=rb_=0;
+        gpuvram::removeBuffer(counted_);counted_=0;   // gone with the context otherwise
     }
+    void count(size_t b) {gpuvram::addBuffer(b);counted_+=b;}
+    size_t counted_=0;
     bool checked_=false,available_=false,scalable_=false;
     GLuint fbo_=0,rb_=0;
     int w_=0,h_=0;SDL_GLContext context_=nullptr;

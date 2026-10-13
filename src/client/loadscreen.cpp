@@ -168,9 +168,9 @@ void LoadScreen::present() {
     // blocks the main loop. Everything is swallowed: the screen takes no input.
     SDL_PumpEvents();
     SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
-    // The caller is mid-frame inside the whole-frame AA supersample target, which it
-    // will never resolve (the load blocks before the present). Draw straight to the
-    // window instead, then hand the target back exactly as we found it.
+    // The caller may be mid-frame with a render target and scale of its own bound (the
+    // load blocks before its present). Draw straight to the window at 1:1 instead, then
+    // hand the target and scale back exactly as we found them.
     SDL_Texture* prevTarget = SDL_GetRenderTarget(ren_);
     float sx = 1, sy = 1;
     SDL_RenderGetScale(ren_, &sx, &sy);

@@ -2,6 +2,7 @@
 #include "client/crusadesmap.h"
 #include "client/font.h"
 #include "client/blockfont.h"
+#include "client/gpuvram.h"
 #include "net/client.h"
 #include "net/auth.h"
 #include <algorithm>
@@ -70,11 +71,13 @@ struct CrusadesScreen::Impl {
    for(int c=0;c<128;++c)if(const auto* bits=blockGlyph(char(std::toupper(c))))for(int x=0;x<5;++x)for(int y=0;y<7;++y)if(bits[x]&(1<<y)){
     auto* row=reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(surface->pixels)+(c/16*8+y)*surface->pitch);row[c%16*6+x]=SDL_MapRGBA(surface->format,255,255,255,255);
    }
-   fallbackFont=SDL_CreateTextureFromSurface(ren,surface);SDL_FreeSurface(surface);
+   fallbackFont=gpuvram::create(ren,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,surface->w,surface->h);
+   if(fallbackFont)SDL_UpdateTexture(fallbackFont,nullptr,surface->pixels,surface->pitch);
+   SDL_FreeSurface(surface);
    if(fallbackFont){SDL_SetTextureBlendMode(fallbackFont,SDL_BLENDMODE_BLEND);SDL_SetTextureScaleMode(fallbackFont,SDL_ScaleModeNearest);}
   }
  }
- ~Impl(){if(fallbackFont)SDL_DestroyTexture(fallbackFont);if(mapTexture)SDL_DestroyTexture(mapTexture);if(focus!=Focus::None)SDL_StopTextInput();}
+ ~Impl(){gpuvram::destroy(fallbackFont);gpuvram::destroy(mapTexture);if(focus!=Focus::None)SDL_StopTextInput();}
  const cw::Snapshot* snapshot()const{return mp.campaignReplica().find(mp.subscribedCampaign());}
  bool connected()const{return mp.state()!=net::MpClient::State::Done&&mp.state()!=net::MpClient::State::Offline;}
  bool authenticated()const{return connected()&&(mp.auth()==net::MpClient::Auth::Ok||mp.auth()==net::MpClient::Auth::Created);}
@@ -103,8 +106,8 @@ struct CrusadesScreen::Impl {
   filtered.clear();if(s){std::string needle=glyphs(search,false);std::transform(needle.begin(),needle.end(),needle.begin(),[](unsigned char c){return char(std::tolower(c));});for(const auto& t:s->territories){auto name=glyphs(t.displayName,false);std::transform(name.begin(),name.end(),name.begin(),[](unsigned char c){return char(std::tolower(c));});if(needle.empty()||name.find(needle)!=std::string::npos||std::to_string(t.id).find(needle)!=std::string::npos)filtered.push_back(t.id);}if(pendingSelected){auto it=std::find_if(s->territories.begin(),s->territories.end(),[&](const auto& t){return t.id==pendingSelected;});if(it!=s->territories.end())select(pendingSelected);else pendingSelected=0;}if(selected&&!territory())selected=0;}
   listOffset=std::clamp(listOffset,0,std::max(0,int(filtered.size())-13));
   if(s&&(mapCampaign!=s->campaignId||mapRevision!=s->revision)){
-   if(mapTexture){SDL_DestroyTexture(mapTexture);mapTexture=nullptr;}mapCampaign=s->campaignId;mapRevision=s->revision;retail=local.presentation&&local.presentation->compatible(*s);
-   if(retail)try{auto im=local.presentation->compose(*s);mapTexture=SDL_CreateTexture(ren,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,int(im.width),int(im.height));if(!mapTexture||SDL_UpdateTexture(mapTexture,nullptr,im.rgba.data(),int(im.width*4))!=0){if(mapTexture)SDL_DestroyTexture(mapTexture);mapTexture=nullptr;retail=false;}}catch(...){retail=false;}
+   if(mapTexture){gpuvram::destroy(mapTexture);mapTexture=nullptr;}mapCampaign=s->campaignId;mapRevision=s->revision;retail=local.presentation&&local.presentation->compatible(*s);
+   if(retail)try{auto im=local.presentation->compose(*s);mapTexture=gpuvram::create(ren,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,int(im.width),int(im.height));if(!mapTexture||SDL_UpdateTexture(mapTexture,nullptr,im.rgba.data(),int(im.width*4))!=0){gpuvram::destroy(mapTexture);mapTexture=nullptr;retail=false;}}catch(...){retail=false;}
   }
   if(authenticated()){if(const auto* p=player()){
    // The server pushes queue changes. Only re-read when authoritative enrollment
