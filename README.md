@@ -1143,8 +1143,11 @@ For the evidence and remaining scope, see the [retail engine notes](docs/retail-
 
 Open **Settings → YouTube Streaming** at the title screen, **Esc → YouTube
 Streaming** in a game, or press **F9**. Copy your YouTube Studio stream key,
-click **Paste**, and then **Start Streaming**. The key is masked, stays in memory,
-and is excluded from captures and diagnostics.
+click **Paste**, and then **Start Streaming**. The key is masked and excluded from
+captures and diagnostics. It stays in memory only, unless you tick **Remember Key**:
+then it is kept in your system password store (Windows Credential Manager, the macOS
+Keychain, or a Linux Secret Service such as KWallet or GNOME Keyring), never in a file.
+Unticking deletes it. Without a password store the option is greyed out.
 
 The defaults are **Max 3840** and **60 FPS**. Max 3840 scales down to at most
 3840 pixels wide while preserving your window's aspect ratio: a 7680×2160

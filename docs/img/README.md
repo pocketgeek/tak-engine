@@ -55,7 +55,7 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 | `room.jpg` | Unchanged from 0.7.25: local-server lobby with three Normal AIs, example pack selections (empty UI fixtures) and Legion pathfinding |
 | `campaign.jpg` | Unchanged from 0.7.25: Book of Darien campaign picker with a fresh profile |
 | `crusades.jpg` | Unchanged from 0.7.25: imported Darien Crusades definition on an authenticated local server; no authored battle maps or ownership |
-| `streaming.jpg` | Unchanged from 0.7.25: streaming setup with no key or broadcast |
+| `streaming.jpg` | Streaming setup with no key or broadcast, showing the **Remember Key** row (off; the Secret Service is available). Rendered after 0.8.0 at 1600 × 1000, with the debug `TAK_CREDSTORE=test` store so no real key could appear |
 | `diplomacy.jpg` | Unchanged from 0.7.25: built-in input-test fixture after gifting |
 | `results.jpg` | Unchanged from 0.7.25: built-in five-player **sample statistics**, not a finished match |
 | `cartographer.png` | Cartographer Units tab on Ulasem Arena, from the 0.8.0 build: the menu bar now has **Symmetry**. A fresh editor profile, `--shot --shot-tool units`, 30% zoom |

@@ -110,6 +110,7 @@ Settings loadSettings() {
         else if (key == "smoothMotion")    s.smoothMotion = asBool();
         else if (key == "playerName")      s.playerName = val;
         else if (key == "accountName")     s.accountName = val;
+        else if (key == "streamRememberKey") s.streamRememberKey = asBool();
         else if (key == "audioDevice")     s.audioDevice = val;
         else if (key == "gameCreate.crusades") s.gameCreate.crusades = asBool();
         else if (key == "gameCreate.pathfindingMode")
@@ -162,10 +163,7 @@ Settings loadSettings() {
     return s;
 }
 
-bool saveSettings(const Settings& s) {
-    std::string path = settingsPath();
-    if (path.empty()) return false;
-
+std::string serializeSettings(const Settings& s) {
     std::ostringstream o;
     o << "# TA:Kingdoms engine settings\n";
     o << "fullscreen = " << (s.fullscreen ? 1 : 0) << "\n";
@@ -200,6 +198,7 @@ bool saveSettings(const Settings& s) {
     o << "smoothMotion = " << (s.smoothMotion ? 1 : 0) << "\n";
     o << "playerName = " << s.playerName << "\n";
     o << "accountName = " << s.accountName << "\n";
+    o << "streamRememberKey = " << (s.streamRememberKey ? 1 : 0) << "\n";
     o << "audioDevice = " << s.audioDevice << "\n";
     o << "gameCreate.crusades = " << s.gameCreate.crusades << "\n";
     o << "gameCreate.pathfindingMode = " << int(s.gameCreate.pathfindingMode) << "\n";
@@ -238,10 +237,16 @@ bool saveSettings(const Settings& s) {
         for (int m : done) { o << (first ? "" : ",") << m; first = false; }
         o << "\n";
     }
+    return o.str();
+}
 
+bool saveSettings(const Settings& s) {
+    std::string path = settingsPath();
+    if (path.empty()) return false;
+    const std::string text = serializeSettings(s);
     // Atomic write: temp file + rename, so a crash mid-write can't corrupt the file.
     std::string tmp = path + ".tmp";
-    { std::ofstream out(tmp, std::ios::trunc); if (!out) return false; out << o.str(); if (!out) return false; }
+    { std::ofstream out(tmp, std::ios::trunc); if (!out) return false; out << text; if (!out) return false; }
     std::remove(path.c_str());
     return std::rename(tmp.c_str(), path.c_str()) == 0;
 }

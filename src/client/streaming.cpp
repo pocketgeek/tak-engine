@@ -1,6 +1,8 @@
 #include "client/streaming.h"
 #include "client/blockfont.h"
 #include "client/gpuvram.h"
+#include "client/settings.h"
+#include "client/streamkey.h"
 #include <SDL_opengl.h>
 #include <algorithm>
 #include <array>
@@ -170,13 +172,18 @@ struct Streaming::Impl {
     video::Stream stream;
     video::StreamConfig config;
     Capture capture;
+    Settings* settings=nullptr;
+    std::function<void()> save;
+    std::unique_ptr<StreamKeyMemory> keys;
     int resolution=5; // 720p, 1080p, 1440p, 4K, full window, max width 3840
     bool visible=false,editing=false,wasActive=false,wasTextInput=false;
     std::string error;
     uint64_t nextCapture=0, rateTime=0, rateBytes=0;
     uint64_t rateKbps=0;
     float x=0,y=0,u=1;
-    SDL_FRect row(int n) const {return {x+20*u,y+(70+45*n)*u,600*u,34*u};}
+    // Row 0 is the key; the REMEMBER KEY row sits under it, then rows 1-5.
+    SDL_FRect row(int n) const {return {x+20*u,y+(70+45*(n+(n>0)))*u,600*u,34*u};}
+    SDL_FRect rememberRect() const {return {x+20*u,y+115*u,600*u,34*u};}
     std::pair<int,int> windowResolution(int w,int h) const {
         if(resolution!=5)return {w&~1,h&~1};
         const int width=std::max(2,std::min(w&~1,3840));
@@ -187,13 +194,24 @@ struct Streaming::Impl {
     void pasteKey() {
         char* clipboard=SDL_GetClipboardText();
         if(!clipboard || !*clipboard) {error="CLIPBOARD IS EMPTY";SDL_free(clipboard);return;}
-        config.key=clipboard;SDL_free(clipboard);
+        credstore::wipe(config.key);config.key=clipboard;
+        credstore::wipe(clipboard,std::strlen(clipboard));SDL_free(clipboard);
         if(config.key.size()>256)config.key.resize(256);
         error.clear();editing=true;SDL_StartTextInput();
+        keys->sync(config.key);
     }
-    void layout(int w,int h) {u=std::max(.4f,std::min({float(w)/680,float(h)/510,1.5f}));x=(w-640*u)/2;y=(h-470*u)/2;}
+    void toggleRemember() {
+        if(!keys->setRemember(!keys->remember(),config.key)) {keys->check();return;} // greyed out: look again
+        if(settings) {settings->streamRememberKey=keys->remember();if(save)save();}
+    }
+    void pollKeys() {
+        keys->poll(config.key);
+        if(auto e=keys->takeError();!e.empty())error=e;
+    }
+    void layout(int w,int h) {u=std::max(.4f,std::min({float(w)/680,float(h)/555,1.5f}));x=(w-640*u)/2;y=(h-515*u)/2;}
     void show(bool on) {
         if(on&&!visible)wasTextInput=SDL_IsTextInputActive();
+        if(on)keys->check();else if(visible)keys->sync(config.key);
         visible=on;editing=on&&!stream.active();
         if(editing||(!on&&wasTextInput))SDL_StartTextInput();else SDL_StopTextInput();
     }
@@ -211,11 +229,14 @@ struct Streaming::Impl {
             return;
         }
         layout(w,h);
+        pollKeys();
+        const bool storeOk=keys->state()==StreamKeyMemory::State::Available;
         SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ren,12,17,26,248);SDL_FRect panel{x,y,640*u,470*u};SDL_RenderFillRectF(ren,&panel);
+        SDL_SetRenderDrawColor(ren,12,17,26,248);SDL_FRect panel{x,y,640*u,515*u};SDL_RenderFillRectF(ren,&panel);
         auto text=[&](const std::string& t,float px,float py,SDL_Color col=SDL_Color{235,235,235,255}) {drawBlockText(ren,t,x+px*u,y+py*u,1.5f*u,col);};
         text("YOUTUBE STREAMING",20,20);
-        text("GAME VIDEO AND AUDIO - KEY IS NOT SAVED",20,45);
+        text(storeOk&&keys->remember()?"GAME VIDEO AND AUDIO - KEY SAVED IN PASSWORD STORE":
+                                       "GAME VIDEO AND AUDIO - KEY IS NOT SAVED",20,45);
         const auto [outputW,outputH]=resolution>=4&&!s.active ? windowResolution(w,h) :
             std::pair<int,int>{config.width,config.height};
         std::array<std::string,6> labels={
@@ -231,19 +252,46 @@ struct Streaming::Impl {
             SDL_SetRenderDrawColor(ren,i==0&&editing?55:35,45,60,255);SDL_RenderFillRectF(ren,&r);
             drawBlockText(ren,labels[i],r.x+10*u,r.y+11*u,1.5f*u,{240,235,210,255});
         }
+        // REMEMBER KEY: greyed out, with the reason, when there is no usable store.
+        const auto remember=rememberRect();
+        SDL_SetRenderDrawColor(ren,35,45,60,255);SDL_RenderFillRectF(ren,&remember);
+        const SDL_Color live{240,235,210,255},grey{110,115,120,255};
+        SDL_FRect box{remember.x+10*u,remember.y+7*u,20*u,20*u};
+        SDL_SetRenderDrawColor(ren,storeOk?200:90,storeOk?195:95,storeOk?175:100,255);SDL_RenderDrawRectF(ren,&box);
+        if(keys->remember()) {
+            SDL_FRect tick{box.x+5*u,box.y+5*u,10*u,10*u};
+            SDL_SetRenderDrawColor(ren,storeOk?255:90,storeOk?210:95,storeOk?100:100,255);SDL_RenderFillRectF(ren,&tick);
+        }
+        drawBlockText(ren,"REMEMBER KEY",remember.x+42*u,remember.y+11*u,1.5f*u,storeOk?live:grey);
+        const std::string where=keys->state()==StreamKeyMemory::State::Unavailable?keys->reason():
+            !storeOk?std::string("CHECKING PASSWORD STORE"):keys->busy()?std::string("SAVING..."):keys->storeName();
+        drawBlockText(ren,where,remember.x+remember.w-10*u-blockTextWidth(where,1.5f*u),remember.y+11*u,1.5f*u,
+                      storeOk?SDL_Color{170,175,180,255}:grey);
         const auto paste=pasteRect();
         SDL_SetRenderDrawColor(ren,s.active?35:50,s.active?40:65,s.active?45:85,255);
         SDL_RenderFillRectF(ren,&paste);
         drawBlockText(ren,"PASTE",paste.x+27*u,paste.y+11*u,1.5f*u,
                       s.active?SDL_Color{110,115,120,255}:SDL_Color{240,235,210,255});
-        text(s.state,20,352,{255,210,100,255});
-        text(s.encoder+"  FRAMES "+std::to_string(s.frames)+"  DROPPED "+std::to_string(s.dropped),20,375);
-        text("REPLACED "+std::to_string(s.replaced)+"  RATE "+std::to_string(rateKbps)+" KBPS",20,398);
-        text(error.empty()?"ESC / F9: CLOSE - STREAM CONTINUES UNTIL STOP":error,20,437);
+        text(s.state,20,397,{255,210,100,255});
+        text(s.encoder+"  FRAMES "+std::to_string(s.frames)+"  DROPPED "+std::to_string(s.dropped),20,420);
+        text("REPLACED "+std::to_string(s.replaced)+"  RATE "+std::to_string(rateKbps)+" KBPS",20,443);
+        text(error.empty()?"ESC / F9: CLOSE - STREAM CONTINUES UNTIL STOP":error,20,482);
     }
 };
-Streaming::Streaming(SDL_Renderer* ren):p_(std::make_unique<Impl>()) {p_->ren=ren;p_->config.fps=60;}
-Streaming::~Streaming(){if(p_->visible)SDL_StopTextInput();}
+Streaming::Streaming(SDL_Renderer* ren,Settings* settings,std::function<void()> save,
+                     std::shared_ptr<credstore::Store> store):p_(std::make_unique<Impl>()) {
+    p_->ren=ren;p_->config.fps=60;p_->settings=settings;p_->save=std::move(save);
+    const bool remember=settings && settings->streamRememberKey;
+    p_->keys=std::make_unique<StreamKeyMemory>(store?std::move(store):streamKeyStore(),remember);
+    if(remember)p_->keys->check(); // load the remembered key in the background now
+}
+Streaming::~Streaming(){
+    if(p_->visible){p_->keys->sync(p_->config.key);SDL_StopTextInput();} // quitting closes the panel
+    p_->keys.reset(); // finishes queued writes/deletes
+    credstore::wipe(p_->config.key);
+}
+SDL_FRect Streaming::rememberRect(int w,int h){p_->layout(w,h);return p_->rememberRect();}
+bool Streaming::waitKeyStore(int ms){const bool idle=p_->keys->waitIdle(ms);p_->pollKeys();return idle;}
 video::Stream& Streaming::stream(){return p_->stream;}
 bool Streaming::shown() const{return p_->visible;}
 bool Streaming::input(const SDL_Event& e,int w,int h) {
@@ -252,6 +300,7 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
     if(e.type==SDL_RENDER_TARGETS_RESET || e.type==SDL_RENDER_DEVICE_RESET)p_->capture.reset();
     if(!p_->visible)return false;
     p_->layout(w,h);
+    p_->pollKeys();
     if(e.type==SDL_KEYDOWN) {
         if(e.key.keysym.sym==SDLK_ESCAPE){p_->show(false);return true;}
         if(p_->editing&&!p_->stream.active()) {
@@ -259,7 +308,9 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
             if((e.key.keysym.mod & KMOD_CTRL) && e.key.keysym.sym==SDLK_v) {
                 p_->pasteKey();
             }
-            if((e.key.keysym.mod & KMOD_CTRL) && e.key.keysym.sym==SDLK_a)p_->config.key.clear();
+            if((e.key.keysym.mod & KMOD_CTRL) && e.key.keysym.sym==SDLK_a) {
+                credstore::wipe(p_->config.key);p_->keys->sync(p_->config.key); // deletes a remembered key
+            }
         }
     }
     if(e.type==SDL_TEXTINPUT && p_->editing && !p_->stream.active() && p_->config.key.size()<256)p_->config.key+=e.text.text;
@@ -271,6 +322,8 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
             if(direction>0 && !p_->stream.active())p_->pasteKey();
             return true;
         }
+        const auto remember=p_->rememberRect();
+        if(SDL_PointInFRect(&pt,&remember)) {p_->toggleRemember();return true;}
         for(int i=0;i<6;++i) {auto r=p_->row(i);if(!SDL_PointInFRect(&pt,&r))continue;
             if(direction<0 && (i==0 || i==5))return true;
             if(i==5) {
@@ -283,7 +336,7 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
                     if(w<2 || h<2 || p_->config.width>8192 || p_->config.height>8192)
                         p_->error="RESOLUTION MUST BE BETWEEN 2 AND 8192 PIXELS";
                     else if(!p_->stream.start(p_->config))p_->error="ENTER A VALID YOUTUBE STUDIO STREAM KEY";
-                    else {p_->error.clear();p_->editing=false;SDL_StopTextInput();}
+                    else {p_->error.clear();p_->editing=false;SDL_StopTextInput();p_->keys->sync(p_->config.key);}
                 }
             } else if(!p_->stream.active()) {
                 p_->editing=i==0;if(p_->editing)SDL_StartTextInput();else SDL_StopTextInput();

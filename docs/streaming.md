@@ -56,9 +56,57 @@ not included.
 
 **Stop Streaming** stops the upload; closing the F9 panel leaves it running.
 Returning to the title screen keeps it running. Exiting the application stops it.
-The key and preferences last for that application session
-only. Keys are masked, never written to settings, and excluded from encoder and
-network diagnostics. Ctrl+V pastes a key; Ctrl+A clears the key field.
+The video preferences last for that application session only, and so does the key
+unless you tick **Remember Key** (below). Keys are masked, never written to settings
+or any other file, and excluded from encoder and network diagnostics. Ctrl+V pastes
+a key; Ctrl+A clears the key field.
+
+## Remembering the key
+
+**Remember Key**, the box under the key field, is off by default. Ticked, it keeps
+the key in your operating system's password store and fills the key field, still
+masked, the next time the game starts. Only the on/off choice is saved in the
+settings file. The key itself never goes into settings or any other file, and
+**Defaults** in Options leaves the choice alone.
+
+While the box is ticked, the stored key follows the key field. It is saved when you
+tick the box, paste a key, start streaming, or close the panel (quitting with the
+panel open counts). Characters you type are saved at the next of those moments, not
+one at a time. If the field is empty at one of those moments, the stored key is
+deleted instead, so it is never left behind stale. **Ctrl+A** empties the field and
+deletes the stored key at once. **Unticking deletes the stored key** immediately;
+the key stays in the field until you exit. A remembered key only fills an empty
+field: a key you entered before it loaded is kept, and saved at the next of those
+moments.
+
+| Platform | Where the key is stored |
+| --- | --- |
+| Windows x64 and ARM64 | Credential Manager, under Windows Credentials: the generic credential `TAK Engine/YouTube stream key`, kept for your account on this computer |
+| macOS | Your login keychain: a password item with service `TAK Engine` and account `YouTube stream key`, visible in Keychain Access |
+| Linux | The Secret Service: KWallet, GNOME Keyring, KeePassXC or another provider of `org.freedesktop.secrets`. The item is labelled `TAK Engine: YouTube stream key`, with attributes `service` = `TAK Engine` and `account` = `YouTube stream key` |
+
+On Linux the game loads libsecret (`libsecret-1.so.0`) when it first needs the store;
+it is not a package dependency. If libsecret is missing, or nothing on the session
+bus provides the Secret Service, the box is greyed out with **NO SYSTEM PASSWORD
+STORE**. There is no fallback to a file. Install libsecret and enable a provider
+(KWallet's Secret Service integration on KDE, GNOME Keyring, or KeePassXC with its
+Secret Service integration switched on), then open the panel again. While no store
+is available the box cannot be changed; a choice saved earlier waits for a session
+where the store is back.
+
+With the box unticked, nothing contacts the store until you open the panel, and then
+only to check that one exists. That check never opens or unlocks a wallet. With the
+box ticked, the store is checked and the key loaded in the background as the game
+starts. Loading or saving can make the system ask you to unlock a locked wallet or
+keychain; the game keeps running meanwhile, and a refused or failed request is shown
+on the panel's bottom line. If the remembered key cannot be loaded, nothing is saved
+or deleted until a later load succeeds: the panel tries again each time it opens.
+
+Running the Windows build under **Proton or Wine** uses Wine's emulation of
+Credential Manager. Wine keeps the entry in the prefix's `user.reg` file, encrypted
+with a key stored beside it, so anyone who can read the prefix can recover the key.
+That is less secure than native Windows or the Linux Secret Service.
+On Linux, prefer the native build if you want to remember the key.
 
 Uploads use RTMPS with certificate and hostname verification, H.264 or HEVC video, AAC
 stereo audio at 44.1 kHz / 128 Kbps, and two-second video keyframes. After a
@@ -96,7 +144,13 @@ CMake requires the media/codec/TLS/loader archives by full path; CI additionally
 checks executable imports. `stream_test` tests H.264/AAC output, timestamps,
 configuration validation, stopping, failure and restart without any network.
 `stream_capture_test` exercises capture with an open private setup panel.
-Both are registered with CTest. For a GPU capture check:
+`stream_key_test` drives Remember Key through the panel against a fake store, and
+checks that the saved settings never contain the key. `credstore_test` makes a round
+trip through the real password store under a test-only name (service
+`TAK Engine Test`, account `credstore round-trip`) with dummy values, and is skipped
+when the session has no usable store. All are registered with CTest. In a debug build,
+`TAK_CREDSTORE=none` shows the greyed-out box, `TAK_CREDSTORE=memory` keeps the key in
+process memory only, and `TAK_CREDSTORE=test` uses the real store under the test name. For a GPU capture check:
 
 ```sh
 SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=opengl \

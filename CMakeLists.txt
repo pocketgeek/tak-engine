@@ -1177,6 +1177,35 @@ add_test(NAME streaming_overload COMMAND stream_test libx264 overload)
 add_test(NAME streaming_native COMMAND stream_test libx264 native)
 set_tests_properties(streaming PROPERTIES TIMEOUT 30)
 
+# Streaming REMEMBER KEY: the stream key in the OS credential store (src/client/credstore.h),
+# one platform file each. Linux dlopens libsecret at run time, so static release builds gain
+# no runtime dependency; without it (or without a Secret Service) the option is greyed out.
+if(WIN32)
+  set(_tak_credstore src/client/credstore_win.cpp)
+elseif(APPLE)
+  set(_tak_credstore src/client/credstore_mac.cpp)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(_tak_credstore src/client/credstore_linux.cpp)
+else()
+  set(_tak_credstore src/client/credstore_none.cpp)
+endif()
+add_library(tak-credstore STATIC ${_tak_credstore} src/client/streamkey.cpp)
+target_include_directories(tak-credstore PUBLIC src)
+target_link_libraries(tak-credstore PUBLIC Threads::Threads)
+if(WIN32)
+  target_link_libraries(tak-credstore PUBLIC advapi32)
+elseif(APPLE)
+  target_link_libraries(tak-credstore PUBLIC "-framework Security" "-framework CoreFoundation")
+else()
+  target_link_libraries(tak-credstore PUBLIC ${CMAKE_DL_LIBS})
+endif()
+# Round trip against the real store under a test-only name; exits 77 (skipped) when this
+# session has no usable store (CI containers, ssh without a keychain, no Secret Service).
+add_executable(credstore_test tools/credstore_test.cpp)
+target_link_libraries(credstore_test PRIVATE tak-credstore)
+add_test(NAME credstore COMMAND credstore_test)
+set_tests_properties(credstore PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
@@ -1217,10 +1246,17 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(crusades_effective_audit PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(crusades_effective_audit PRIVATE tak-formats ${_tak_sdl2})
     add_executable(stream_capture_test tools/stream_capture_test.cpp src/client/streaming.cpp src/video/stream.cpp)
-    target_link_libraries(stream_capture_test PRIVATE tak-formats tak_ffmpeg ${_tak_sdl2})
+    target_link_libraries(stream_capture_test PRIVATE tak-formats tak-credstore tak_ffmpeg ${_tak_sdl2})
     target_compile_definitions(stream_capture_test PRIVATE SDL_MAIN_HANDLED)
     add_test(NAME streaming_capture COMMAND stream_capture_test)
     set_tests_properties(streaming_capture PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 15)
+    # Remember Key logic and panel against a fake credential store (never the real one).
+    add_executable(stream_key_test tools/stream_key_test.cpp src/client/streaming.cpp src/video/stream.cpp
+                   src/client/settings.cpp)
+    target_link_libraries(stream_key_test PRIVATE tak-formats tak-credstore tak_ffmpeg ${_tak_sdl2})
+    target_compile_definitions(stream_key_test PRIVATE SDL_MAIN_HANDLED)
+    add_test(NAME stream_key COMMAND stream_key_test)
+    set_tests_properties(stream_key PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 30)
     add_executable(cursor_test tools/cursor_test.cpp src/client/cursors.cpp)
     target_include_directories(cursor_test PRIVATE src)
     target_compile_definitions(cursor_test PRIVATE SDL_MAIN_HANDLED)
@@ -1468,7 +1504,7 @@ if(TAK_BUILD_CLIENT)
       endif()
     endif()
 
-    target_link_libraries(takclient PRIVATE tak-crusades-map tak-formats tak-gpustats ${_tak_sdl2})
+    target_link_libraries(takclient PRIVATE tak-crusades-map tak-formats tak-gpustats tak-credstore ${_tak_sdl2})
     # We provide our own main() and call SDL_SetMainReady(). Define SDL_MAIN_HANDLED for
     # the WHOLE target (not just main.cpp) so it applies before ANY header pulls in
     # <SDL.h> -- otherwise, on Windows, SDL_main.h renames our main to SDL_main via a

@@ -84,6 +84,7 @@ int main() {
     // identity / session
     flips("playerName",      [](Settings& s) { s.playerName = "someone"; });
     flips("accountName",     [](Settings& s) { s.accountName = "someone"; });
+    flips("streamRememberKey", [](Settings& s) { s.streamRememberKey = !s.streamRememberKey; });
     flips("gameCreate.crusades", [](Settings& s) { s.gameCreate.crusades = !s.gameCreate.crusades; });
     flips("gameCreate.doubleSight", [](Settings& s) { s.gameCreate.doubleSight = !s.gameCreate.doubleSight; });
     flips("gameCreate.speedUnlock", [](Settings& s) { s.gameCreate.speedUnlock = !s.gameCreate.speedUnlock; });
@@ -148,6 +149,7 @@ int main() {
         cur.dataManifest = "abc123";
         cur.playerName = "curtis";
         cur.accountName = "curtis";
+        cur.streamRememberKey = true;
         cur.lastMap = "Inner Circle";
         cur.gameCreate.crusades = true;
         cur.gameCreate.generator = "saved recipe";
@@ -180,6 +182,7 @@ int main() {
         keep("dataManifest",      d.dataManifest == cur.dataManifest);
         keep("playerName",        d.playerName == cur.playerName);
         keep("accountName",       d.accountName == cur.accountName);
+        keep("streamRememberKey", d.streamRememberKey);
         keep("lastMap",           d.lastMap == cur.lastMap);
         keep("hotkeys",           d.hotkeys == cur.hotkeys);
 

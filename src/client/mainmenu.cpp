@@ -1194,7 +1194,9 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         }
         if (streaming && tak::devEnv("TAK_SHOT_STREAM")) {
             SDL_Event event{}; event.type=SDL_KEYDOWN; event.key.keysym.sym=SDLK_F9;
-            streaming->input(event,w,h); streaming->draw(w,h);
+            streaming->input(event,w,h);
+            streaming->waitKeyStore(3000);   // show the REMEMBER KEY row settled, not CHECKING
+            streaming->draw(w,h);
         }
         d_->screenshot(w, h, shotPath);
         // Debug: TAK_SHOT_RESULT captures the victory result screen (saves to its path).

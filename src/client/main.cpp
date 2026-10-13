@@ -807,7 +807,7 @@ int main(int argc, char** argv) {
     // dispatches on that gadget name and plays it there, once per launch (see
     // MainMenu::run). Playing both back to back at startup was wrong.
     if (fromMenu && shot.empty()) tak::MainMenu::playIntro(ren, dataRoot);
-    auto streamingOwner = std::make_unique<tak::Streaming>(ren);
+    auto streamingOwner = std::make_unique<tak::Streaming>(ren, &settings, [&settings] { tak::saveSettings(settings); });
     auto& streaming = *streamingOwner;
     menuMusic.setAudioTap(&streaming.stream(),
         [](void* context, const int16_t* pcm, int frames, int channels) {

@@ -97,6 +97,9 @@ struct Settings {
     std::string accountName;       // last multiplayer account signed in with. The
                                    // PASSWORD is deliberately not here and is never
                                    // written to disk -- see src/net/auth.h.
+    // YouTube streaming REMEMBER KEY (client/streamkey.h): only whether the stream key is
+    // kept in the OS credential store. The key itself is never in this file.
+    bool streamRememberKey = false;
     struct GameCreate {
         bool crusades = false, doubleSight = false, speedUnlock = false;
         bool monarchExpendable = false, randomStarts = false;
@@ -161,6 +164,7 @@ struct Settings {
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
             && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion
             && a.playerName == b.playerName && a.accountName == b.accountName
+            && a.streamRememberKey == b.streamRememberKey
             && a.hostOverridePacks == b.hostOverridePacks && a.cosmeticOverridePacks == b.cosmeticOverridePacks
             && a.lastMap == b.lastMap && a.gameCreate == b.gameCreate
             && a.dataDir == b.dataDir && a.dataManifest == b.dataManifest
@@ -181,6 +185,8 @@ Settings loadSettings();
 
 // Atomically write the config file. Returns false on I/O failure.
 bool saveSettings(const Settings&);
+// The exact text saveSettings writes (tests inspect it).
+std::string serializeSettings(const Settings&);
 
 // What DEFAULTS means, defined ONCE.
 //
@@ -189,7 +195,9 @@ bool saveSettings(const Settings&);
 //     Resetting an options screen must never delete those.
 //   * CONFIGURATION -- the data root and its manifest. Resetting preferences must not
 //     send someone back to the data-dir picker.
-//   * Identity and things with their own reset UI -- name, account, last map, hotkeys.
+//   * Identity and things with their own reset UI -- name, account, last map, hotkeys,
+//     and the streaming panel's Remember Key (a stored key sits behind that flag; only
+//     unticking it there deletes the key, so DEFAULTS must not orphan it).
 //
 // This used to be two separate lists: one inline in the DEFAULTS click handler, one in
 // Options::atDefaults(). They have to agree, and three times they did not -- dataDir was
@@ -199,6 +207,7 @@ inline Settings preferenceDefaults(const Settings& cur) {
     Settings d;
     d.playerName = cur.playerName;
     d.accountName = cur.accountName;
+    d.streamRememberKey = cur.streamRememberKey;
     d.lastMap = cur.lastMap;
     d.gameCreate = cur.gameCreate;
     d.hostOverridePacks=cur.hostOverridePacks;d.cosmeticOverridePacks=cur.cosmeticOverridePacks;

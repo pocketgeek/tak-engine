@@ -195,6 +195,15 @@ The **Settings** button opens:
 | **Load Replay** | Watch a recorded game. See [Replays](#replays). |
 | **YouTube Streaming** | Stream your game. See [streaming](streaming.md). |
 
+The streaming panel forgets your stream key when you exit, unless you tick
+**Remember Key** under the key field. The key is then kept in your system password
+store (Windows Credential Manager, the macOS Keychain, or KWallet, GNOME Keyring or
+another Secret Service on Linux) and filled in, masked, next time. It is never
+written to the settings file. Unticking the box, or clearing the key with **Ctrl+A**
+while it is ticked, deletes the stored key. If your system has no password store,
+the box is greyed out with **NO SYSTEM PASSWORD STORE**.
+[Remembering the key](streaming.md#remembering-the-key) has the details.
+
 The version number is shown on the title screen.
 
 In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
