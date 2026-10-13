@@ -1702,20 +1702,12 @@ namespace {
                     }
                 }
                 // A multi-selection: the other types' portraits run LEFT from this one,
-                // into the chrome up to the EndCap scroll. The centred group leaves
-                // only W/2 - ~290*vs there (86px at 1024 wide, none at 1366 / 150%),
-                // so a strip that would have to fold or cap short of the scroll takes
-                // the scroll too, out to the screen margin, rather than hide types.
+                // over the chrome and the EndCap scroll out to the screen's left edge.
+                // They stay full size until a full-size strip would pass that edge --
+                // only then do they shrink, fold, or cap with "+K".
                 if (multi) {
                     const float gap = 3 * vs, margin = 4 * vs;
-                    float room = pr.x - margin;
-                    if (ei >= 0) {
-                        const SDL_FRect er = guiBarRect(gui_.gadgets[ei]);
-                        const int n = int(selTypeGroups().size());
-                        const auto L = tak::selportraits::layout(n, pr.w, pr.h, gap,
-                            pr.x - margin - (er.x + er.w), kSelPortraitMinScale);
-                        if (L.rows == 1 && L.shown == n) room -= er.x + er.w;
-                    }
+                    const float room = tak::selportraits::room(0, pr.x, margin);
                     drawSelPortraits(pr, room, gap, 1.5f * vs);
                 }
             }
@@ -2215,7 +2207,9 @@ namespace {
             const auto* u = frameUnitP(selection_.front());
             if (u && u->alive() && u->type) {
                 float px = 8;
-                const float gap = 4, room = std::max(0.0f, float(winW) - 200 - 8 - (px + 288));
+                // The strip's room runs from the panel's right edge to the mana panel
+                // (winW - 200), less a gap: full size until it would reach the mana.
+                const float gap = 4, room = tak::selportraits::room(px + 288, float(winW) - 200, 8);
                 SDL_FRect pr{px + 4, bar.y + 8, 56, barH() - 20.0f};
                 float strip = 0;
                 if (selection_.size() > 1)

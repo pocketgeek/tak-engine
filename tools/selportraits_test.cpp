@@ -1,5 +1,6 @@
 // The info bar's multi-selection portrait strip (client/selportraits.h): type
-// grouping + order, the portrait click rule, the fit / shrink / overflow layout, and
+// grouping + order, the portrait click rule, the fit / shrink / overflow layout, the
+// strip's room (the bar's real limit, not the EndCap scroll), and
 // the bar's multi-selection HP / mana totals and squad label.
 #include "client/selportraits.h"
 #include <cstdio>
@@ -37,6 +38,35 @@ int main() try {
     const int cols=int(160/(3+48*33.f/72));
     check(L.overflow && L.rows==2 && L.shown==2*cols && L.width<=160+1e-3f,"overflow: the last cell is the +K tile");
     check(sp::layout(3,48,36,3,10,0.6f).shown==1 && !sp::layout(3,48,36,3,10,0.6f).overflow,"no room: primary only");
+    // Room runs to the bar's REAL limit, so the portraits stay full size out to it,
+    // never shrinking to stop at the retail bar's EndCap scroll (drawn over).
+    // Retail bar, uiScale 0.75 on a 1024 screen (vs = 54/49): primary 48x36*vs at
+    // x = 512 - 226.5*vs, gap 3*vs, margin 4*vs, the scroll out to x = 61*vs.
+    auto bar=[&](int n,float winW,float vs,float& left,float& scroll) {
+        const float w=48*vs,h=36*vs,gap=3*vs,margin=4*vs,px=winW/2-226.5f*vs;
+        scroll=61*vs;
+        const sp::Layout B=sp::layout(n,w,h,gap,sp::room(0,px,margin),0.6f);
+        left=sp::slot(B,B.shown==n?n-1:B.shown,{px,0,w,h},gap).x;
+        check(left>=margin-1e-2f,"the strip stops at the screen margin");
+        return B;
+    };
+    float left,scroll;
+    L=bar(5,1024,54/49.f,left,scroll);
+    check(L.shown==5 && L.rows==1 && near(L.scale,1) && left<scroll,"full size out over the scroll");
+    // The reported display: 7680 wide at uiScale 2 (vs = 144/49). 21 extras fit at
+    // full size before the screen edge; the 22nd shrinks them, out to the margin.
+    L=bar(22,7680,144/49.f,left,scroll);
+    check(L.shown==22 && L.rows==1 && near(L.scale,1) && left<scroll,"7680: 22 types at full size to the edge");
+    L=bar(23,7680,144/49.f,left,scroll);
+    check(L.shown==23 && L.rows==1 && L.scale<1 && L.scale>=0.6f && left<4*144/49.f+1e-2f,"7680: one more shrinks, still reaching the edge");
+    check(near(sp::room(0,-70,10),0),"a primary past the edge: no room");
+    // Stone bar (1024): from the 288-wide panel's right edge at 296 to the mana panel
+    // at winW - 200, less 8. Nine 56-wide types fit at full size; a tenth shrinks.
+    check(near(sp::room(296,824,8),520),"stone bar: room up to the mana panel");
+    L=sp::layout(9,56,52,4,sp::room(296,824,8),0.6f);
+    check(near(L.scale,1) && L.width<=520,"stone bar: nine at full size");
+    L=sp::layout(10,56,52,4,sp::room(296,824,8),0.6f);
+    check(L.scale<1 && L.rows==1 && near(L.width,520),"stone bar: a tenth shrinks to the mana panel");
     // Slots run LEFT of the primary: one row centred on its height, two rows filling it.
     const sp::Rect p{300,10,48,36};
     sp::Rect r=sp::slot(sp::layout(3,48,36,3,500,0.6f),2,p,3);

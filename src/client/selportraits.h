@@ -93,6 +93,15 @@ inline Layout layout(int n, float fullW, float fullH, float gap, float room, flo
     return L;
 }
 
+// The room a strip may fill: the span from `lo` to `hi` between the primary's near
+// edge and the bar's REAL limit -- the screen's left edge on the retail bar, the mana
+// panel on the stone one -- less `margin`. Nothing nearer caps it (the retail bar's
+// EndCap scroll art is drawn over), so the portraits stay full size until a
+// full-size strip would pass that limit. A primary already past it: no room.
+inline float room(float lo, float hi, float margin) {
+    return std::max(0.0f, hi - lo - margin);
+}
+
 // Slot i's rectangle (i >= 1; slot `shown` is the overflow tile), given the
 // primary's. A single shrunk row is centred on the primary's height; a folded strip
 // fills it, top row first.

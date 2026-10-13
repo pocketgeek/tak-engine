@@ -763,7 +763,8 @@ selected alone.
 | Left-click | Select only the units of that type. |
 | Shift + left-click | Remove that type from the selection. |
 
-When there are too many types to fit at full size, the portraits shrink, then fold
+The portraits stay full size all the way to the left edge of the screen. Only
+when there are too many types to fit there at full size do they shrink, then fold
 into two rows. If they still do not fit, the last tile shows **+K**: K more types
 are selected but not shown.
 
