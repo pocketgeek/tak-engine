@@ -383,12 +383,14 @@ bool MapView::uploadWantedSections() {
             continue;
         }
         const size_t size = size_t(img->width) * img->height * 4;
-        // Idle sections make room first; the budget never refuses one needed now.
+        // Idle sections make room first; the budget never refuses one needed now. Under
+        // the GPU cap, off-screen chunks go next: terrain on screen comes first.
         while (sectionBytes_ + size > budget || !gpuvram::wouldFit(size)) {
             auto oldest = oldestIdleSection();
             if (oldest == sections_.end()) break;
             evictSection(oldest);
         }
+        if (!gpuvram::wouldFit(size)) chunks_.shed(size);
         if (!gpuvram::wouldFit(size) || gpuvram::blocked()) continue;
         SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                            SDL_TEXTUREACCESS_STATIC, img->width, img->height);
