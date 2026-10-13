@@ -56,7 +56,7 @@ public:
     void ensureChunks(int winW, int winH);
 
     // Block until every queued section is decoded, and let the NEXT draw upload every
-    // section its fallback needs with no budget or per-frame limit, so that frame shows
+    // section its fallback needs with no per-frame limit, so that frame shows
     // complete terrain even where chunks are still baking. Sections that frame uses stay
     // resident while used; normal budgeting resumes after it. Screenshot paths and the
     // campaign briefing backdrop -- normal play never waits.
@@ -119,11 +119,11 @@ private:
     void queueAllSections();
     // Main thread: note sections the worker has decoded (ready_), or found absent.
     void uploadReadySections();
-    // Main thread: upload the wanted_ sections (budgeted per frame), evicting idle ones
-    // to make room. Returns whether any uploaded.
+    // Main thread: upload the wanted_ sections (a per-frame limit), first evicting idle
+    // ones over the idle budget or the GPU cap. Returns whether any uploaded.
     bool uploadWantedSections();
     // Main thread: release sections idle past kSectionIdleMs, and any not drawn this
-    // frame while over the section budget or the GPU cap.
+    // frame while over the idle budget or the GPU cap.
     void trimSections();
     // Worker thread: JPEG-decode queued sections into the Compositor cache.
     void sectionWorkerLoop();
@@ -139,8 +139,12 @@ private:
     // chunks (64 MiB on Ulasem Arena, 238 MiB on Middle Earth V1). Now a section uploads
     // the frame the fallback first needs it (its JPG is already decoded in the
     // Compositor, so that is one texture upload), and is released once the chunks have
-    // covered its tiles for kSectionIdleMs, or sooner under kSectionBudget / the GPU
-    // cap. Where neither is up yet the underlay shows, as before.
+    // covered its tiles for kSectionIdleMs. kSectionBudget bounds what is kept IDLE (over
+    // it, idle sections go at once); it never refuses a section the view needs this
+    // frame -- a zoomed-out view of a big map with nothing baked can need every section
+    // for a moment, and refusing showed the blurry underlay (measured on Middle Earth V1
+    // in a fast sweep: 1.8% of frames at a hard 64 MiB, 0.05% with idle-only). Only the
+    // GPU cap refuses; then the underlay shows, as it always did before an upload.
     struct Section { SDL_Texture* tex = nullptr; int w = 0, h = 0; uint64_t frame = 0, usedMs = 0; };
     std::map<uint32_t, Section> sections_;   // key -> resident texture, or tex=null = absent JPG
     std::set<std::pair<uint32_t, bool>> ready_;   // (key, stockTerrain) decoded in comp_ (main thread)
@@ -151,7 +155,7 @@ private:
     bool pinNext_ = false, pinning_ = false; // finishChunks(): the next draw has no upload limits
     static constexpr size_t kSectionBudget = size_t(64) << 20;
     static constexpr uint64_t kSectionIdleMs = 3000;
-    static constexpr int kSectionUploadsPerFrame = 16;   // 16 MiB: a 1080p jump in one frame
+    static constexpr int kSectionUploadsPerFrame = 32;   // 32 MiB: a 4K jump in one frame
     void evictSection(std::map<uint32_t, Section>::iterator);
     // The resident section not drawn this frame that was used longest ago (end() = none).
     std::map<uint32_t, Section>::iterator oldestIdleSection();

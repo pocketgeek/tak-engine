@@ -368,7 +368,7 @@ void MapView::uploadReadySections() {
 
 bool MapView::uploadWantedSections() {
     // Chunks off: the fallback IS the terrain, so only the GPU cap bounds it.
-    const size_t budget = chunksEnabled_ && !pinning_ ? kSectionBudget : SIZE_MAX;
+    const size_t budget = chunksEnabled_ ? kSectionBudget : SIZE_MAX;
     const int perFrame = pinning_ ? INT_MAX : kSectionUploadsPerFrame;
     const uint64_t now = SDL_GetTicks64();
     int n = 0;
@@ -383,12 +383,13 @@ bool MapView::uploadWantedSections() {
             continue;
         }
         const size_t size = size_t(img->width) * img->height * 4;
+        // Idle sections make room first; the budget never refuses one needed now.
         while (sectionBytes_ + size > budget || !gpuvram::wouldFit(size)) {
             auto oldest = oldestIdleSection();
             if (oldest == sections_.end()) break;
             evictSection(oldest);
         }
-        if (sectionBytes_ + size > budget || !gpuvram::wouldFit(size) || gpuvram::blocked()) continue;
+        if (!gpuvram::wouldFit(size) || gpuvram::blocked()) continue;
         SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                            SDL_TEXTUREACCESS_STATIC, img->width, img->height);
         if (!t) { gpuvram::noteFail(); continue; }
@@ -445,7 +446,7 @@ void MapView::trimSections() {
             evictSection(i);
         i = next;
     }
-    // Over the budget or a lowered GPU limit: anything not drawn this frame, oldest first.
+    // Over the idle budget or a lowered GPU limit: anything not drawn this frame, oldest first.
     const size_t budget = chunksEnabled_ ? kSectionBudget : SIZE_MAX;
     while (sectionBytes_ > budget || gpuvram::overCap()) {
         auto oldest = oldestIdleSection();

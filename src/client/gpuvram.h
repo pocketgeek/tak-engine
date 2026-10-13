@@ -18,7 +18,8 @@
 // exhausting an 8 GB card behind a 7680x2160 desktop (the NVKMS allocation storm that
 // starves the compositor: whole-screen flicker, frozen present). Those pages and the
 // window-sized AA targets are gone. What bounds VRAM now is each subsystem's own ceiling:
-//   terrain chunks 256 MiB LRU (terrainchunks.cpp)   map sections 64 MiB LRU (mapview.cpp)
+//   terrain chunks 256 MiB LRU (terrainchunks.cpp)   map sections: those the view needs while
+//                                                    chunks bake, 64 MiB idle (mapview.cpp)
 //   palette pages 16 x 16 MiB                         shadow silhouettes 4 x 16 MiB
 //   distant models 4 x 16 MiB                         shadow coverage 16 MiB
 //   GeometrySubmit 64 MiB per retained buffer         colour atlases ~10.7 MiB per slot
