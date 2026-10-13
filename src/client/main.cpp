@@ -58,7 +58,7 @@
 #include "client/replayfile.h"   // .takrep parser (extracted leaf)
 #include "client/sound.h"     // WAV mixer + music + soundclasses (extracted leaf)
 #include "client/threadpool.h"   // data-parallel worker pool (extracted leaf)
-#include "client/gpuvram.h"   // central GPU-texture VRAM accountant + hard cap
+#include "client/gpuvram.h"   // GPU memory accountant + safety-net cap (Options limit)
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
@@ -2222,8 +2222,9 @@ int main(int argc, char** argv) {
     // reads the client's recorded bundles -- destroying the client first left the
     // destructor reading freed memory on any quit before the result landed.
     mp.reset();
-    std::fprintf(stderr, "gpu: %zu MiB in %zu textures tracked after session teardown (cap %zu MiB)\n",
-                 gpuvram::bytes() >> 20, gpuvram::count(), gpuvram::cap() >> 20);
+    std::fprintf(stderr, "gpu: %zu MiB in %zu textures tracked after session teardown (cap %s)\n",
+                 gpuvram::bytes() >> 20, gpuvram::count(), gpuvram::cap() == gpuvram::kUnlimited
+                     ? "unlimited" : (std::to_string(gpuvram::cap() >> 20) + " MiB").c_str());
     // Clear the in-game minimum-window-size constraint (set per game at the build-icon
     // sizing above). Leaving it on the persistent window makes the returned menu's
     // surface re-negotiation-prone on Wayland (see the Options click-death bug).

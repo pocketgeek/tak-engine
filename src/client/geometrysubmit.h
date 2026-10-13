@@ -21,7 +21,7 @@ public:
     ~GeometrySubmit() { clear(); }
     void clear() {
         if(buffer_ && SDL_GL_GetCurrentContext()==context_ && deleteBuffers_)deleteBuffers_(1,&buffer_);
-        gpuvram::g_bytes-=bufferBytes_;bufferBytes_=0;buffer_=0;revision_=0;seenRevision_=0;
+        gpuvram::removeBuffer(bufferBytes_);bufferBytes_=0;buffer_=0;revision_=0;seenRevision_=0;
     }
     uint64_t uploads() const { return uploads_; }
     // A nonzero revision retains this mesh on compatible OpenGL backends.
@@ -75,7 +75,7 @@ public:
                 bufferData_(GL_ARRAY_BUFFER,GLsizeiptr(bytes),vertices.data(),GL_STATIC_DRAW);
                 GLint allocated=0;getBufferParameter_(GL_ARRAY_BUFFER,GL_BUFFER_SIZE,&allocated);
                 if(size_t(allocated)==bytes) {
-                    bufferBytes_=bytes;gpuvram::g_bytes+=bytes;revision_=revision;++uploads_;
+                    bufferBytes_=bytes;gpuvram::addBuffer(bytes);revision_=revision;++uploads_;
                 } else {clear();gpuvram::noteFail();}
             }
             retained=buffer_ && revision_==revision;

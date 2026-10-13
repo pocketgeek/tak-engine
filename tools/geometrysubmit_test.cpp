@@ -83,12 +83,12 @@ int main() {
     if(std::strcmp(info.name,"opengl")==0 && submit.uploads()!=3)ok=false;
     submit.clear();
     if(gpuvram::bytes()!=baselineBytes)ok=false;
-    const auto savedCap=gpuvram::g_cap;
-    gpuvram::g_cap=gpuvram::bytes();
+    const auto savedCap=gpuvram::g_policy.cap;
+    gpuvram::g_policy.cap=gpuvram::bytes();
     const auto uploadsBefore=submit.uploads();
     ok &= submit.draw(renderer,texture,vertices,true,3)==0;
     ok &= submit.uploads()==uploadsBefore && gpuvram::bytes()==baselineBytes;
-    gpuvram::g_cap=savedCap;
+    gpuvram::g_policy.cap=savedCap;
     // A continuously changing camera must not churn persistent allocations.
     for(uint64_t revision=4;revision<20;++revision)submit.draw(renderer,texture,vertices,true,revision);
     ok &= submit.uploads()==uploadsBefore && gpuvram::bytes()==baselineBytes;

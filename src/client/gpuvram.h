@@ -1,57 +1,104 @@
 #pragma once
-// Central GPU memory accountant for the SDL2 client. Render-thread only (every
-// SDL texture in src/client is created/destroyed on the render thread), so no locking.
-// NONE of this is folded into World::stateHash() -- it is pure display state, so the
-// deterministic lockstep sim is untouched (the headless referee never builds a GameView).
+// Central GPU memory accountant and safety-net cap for the SDL2 client. Render-thread
+// only (every SDL texture in src/client is created/destroyed on the render thread), so
+// no locking. NONE of this is folded into World::stateHash() -- it is pure display
+// state, and the headless referee never builds a GameView.
 //
-// Purpose: bound takclient's texture VRAM so a big scene (e.g. a 4K 40k-unit battle) can
-// never exhaust the GPU and trigger the NVKMS "Failed to allocate" storm that starves the
-// Wayland compositor (whole-screen flicker) and stalls present (frozen screen).
+// WHAT IS COUNTED. g_bytes is the running total the stats panel and benchmark show:
+//   * every texture made through create()/destroy() (w*h*4 -- all client textures are
+//     4 bytes/px: RGBA32/ABGR8888/ARGB8888);
+//   * GL buffers added with addBuffer()/removeBuffer(): the retained fog mesh
+//     (GeometrySubmit) and the stream-capture PBOs + scaling renderbuffer (streaming.cpp).
+// NOT counted: the swapchain/backbuffers (~63 MiB each at 7680x2160), SDL's own
+// internal objects, and driver padding and retention -- nvidia-smi measured real use at
+// 1.2-2.2x this total while terrain chunks churn. The Cartographer is a separate
+// executable and does not use this.
 //
-// DYNAMIC: the cap self-calibrates. It starts at a generous default; the instant a real
-// SDL_CreateTexture FAILS (the only portable "out of VRAM" signal there is), the cap is
-// tightened to just under what we currently hold -- so on a VRAM-tight machine it discovers
-// that machine's real ceiling and evicts down to it, while a roomy GPU never trips it and
-// keeps the generous default. No NVIDIA/NVML dependency.
+// WHY A CAP. It was added (2026-09) to stop unbounded 64 MiB sprite/impostor pages
+// exhausting an 8 GB card behind a 7680x2160 desktop (the NVKMS allocation storm that
+// starves the compositor: whole-screen flicker, frozen present). Those pages and the
+// window-sized AA targets are gone. What bounds VRAM now is each subsystem's own ceiling:
+//   terrain chunks 256 MiB LRU (terrainchunks.cpp)   map sections 64 MiB LRU (mapview.cpp)
+//   palette pages 16 x 16 MiB                         shadow silhouettes 4 x 16 MiB
+//   distant models 4 x 16 MiB                         shadow coverage 16 MiB
+//   GeometrySubmit 64 MiB per retained buffer         colour atlases ~10.7 MiB per slot
+// which add up to ~1 GiB in a pathological game; typical games account 0.4-0.7 GiB.
+// The cap is the backstop above all of them (and for any future allocator) and the
+// player's Options GPU MEMORY LIMIT (setLimit; AUTO = 1.25 GiB, UNLIMITED = no cap).
+//
+// WHO OBEYS IT. Growable caches check wouldFit() (and blocked()) before allocating and
+// fall back when told no: terrain chunks and sections evict their own LRU first (and
+// shed proactively when the cap drops below what is held), palette/shadow/distant pages
+// stop growing and draw through their fallbacks. ESSENTIALS go past it: a colour atlas
+// (no atlas = that colour's units are not drawn) first asks the terrain caches to shed,
+// then allocates anyway. Content-bounded art (model/feature/effect frames, GUI, fonts,
+// icons, movies) is created unchecked. So the total can exceed a low cap a little.
+//
+// noteFail(): a create returned NULL. Pause every bake for 3 s, clamp the cap to 87.5%
+// of what is held (not below 384 MiB), and lift that tightening after 60 s without
+// another failure (doubling per re-tightening, up to 8 min) -- a transient shortage must
+// not cost quality for the rest of the session. Where it can fire depends on the
+// renderer: D3D11/12, Metal and the software renderer return NULL when an allocation
+// fails. SDL's OpenGL and GLES2 renderers do NOT: GL_CheckAllErrors (SDL 2.32,
+// render/opengl/SDL_render_gl.c, likewise opengles2) returns 0 unless the context has
+// SDL_GL_CONTEXT_DEBUG_FLAG, which takclient never requests, so a GL_OUT_OF_MEMORY from
+// glTexImage2D never fails SDL_CreateTexture, and FBO completeness is only checked when
+// a target is bound. (NVIDIA's Linux driver also defers allocation and spills to system
+// memory.) On GL the only caller that can fire is GeometrySubmit's GL_BUFFER_SIZE check;
+// there the subsystem ceilings and the cap are the protection, not failure detection.
 #include <SDL.h>
+#include <algorithm>
 #include <unordered_map>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
+#include "client/gpuvrampolicy.h"
 
 namespace gpuvram {
 
-inline size_t   g_bytes = 0;                     // running total of live texture and retained-buffer bytes
-inline size_t   g_cap   = size_t(1280) << 20;    // budget; default 1.25 GiB, tightens on failure
-inline size_t   g_floor = size_t(384) << 20;     // never auto-tighten below this (essentials)
-inline std::unordered_map<SDL_Texture*, size_t> g_size;   // per-texture byte size
-inline uint32_t g_backoffUntil = 0;              // SDL_GetTicks() until which bakes pause
+inline size_t g_bytes = 0;                                  // live texture + counted buffer bytes
+inline Policy g_policy;                                     // limit / cap / backoff (gpuvrampolicy.h)
+inline std::unordered_map<SDL_Texture*, size_t> g_size;     // per-texture byte size
 
-inline size_t bytes() { return g_bytes; }
-inline size_t cap()   { return g_cap; }
-inline size_t count() { return g_size.size(); }   // tracked textures (teardown-leak check)
-inline bool   wouldFit(size_t add) { return g_bytes + add <= g_cap; }
-
-// Are we in a post-failure backoff? (bakes should skip while true)
-inline bool blocked() { return g_backoffUntil && SDL_GetTicks() < g_backoffUntil; }
-
-// A texture allocation failed = out of VRAM right now. Clamp the cap to just under what we
-// already hold (self-calibrating), and pause bakes for 3s so we don't hammer the driver.
-inline void noteFail() {
-    if (g_bytes > g_floor) {
-        size_t adapted = g_bytes - (g_bytes >> 3);   // 87.5% of current usage
-        if (adapted < g_floor) adapted = g_floor;
-        if (adapted < g_cap) {
-            g_cap = adapted;
-            std::fprintf(stderr, "gpu: VRAM alloc failed -- tightening texture cap to %zu MiB\n",
-                         g_cap >> 20);
-        }
-    }
-    g_backoffUntil = SDL_GetTicks() + 3000;
+inline uint64_t nowMs() { return SDL_GetTicks64(); }
+inline void relax() {
+    if (!g_policy.relax(nowMs())) return;
+    if (g_policy.cap == kUnlimited)
+        std::fprintf(stderr, "gpu: no VRAM failure for %llus -- texture cap lifted (unlimited)\n",
+                     (unsigned long long)(g_policy.relaxWait / 1000));
+    else
+        std::fprintf(stderr, "gpu: no VRAM failure for %llus -- texture cap back to %zu MiB\n",
+                     (unsigned long long)(g_policy.relaxWait / 1000), g_policy.cap >> 20);
 }
 
-// Tracked create/destroy. Every SDL_CreateTexture/SDL_DestroyTexture in the client routes
-// through these so g_bytes stays exact (all client textures are 4 bytes/px: RGBA32/RGBA8888).
+inline size_t bytes() { return g_bytes; }
+inline size_t cap()   { relax(); return g_policy.cap; }      // kUnlimited when there is none
+inline size_t limit() { return g_policy.limit; }
+inline bool   tightened() { relax(); return g_policy.tightened(); }
+inline size_t count() { return g_size.size(); }   // tracked textures (teardown-leak check)
+inline bool   wouldFit(size_t add) { relax(); return g_policy.fits(g_bytes, add); }
+inline bool   overCap() { return !wouldFit(0); }
+
+// The player's GPU MEMORY LIMIT (Options). Live: raising it lets the caches grow on
+// their next allocation; lowering it makes them shed what they can next frame.
+inline void setLimit(size_t b) {
+    if (g_policy.setLimit(b))
+        std::fprintf(stderr, "gpu: texture memory limit %zu MiB%s\n", g_policy.limit >> 20,
+                     g_policy.limit == kUnlimited ? " (unlimited)" : "");
+}
+
+// Are we in a post-failure backoff? (bakes should skip while true)
+inline bool blocked() { return g_policy.blocked(nowMs()); }
+
+// A texture/buffer allocation failed. See the header comment.
+inline void noteFail() {
+    if (g_policy.fail(g_bytes, nowMs()))
+        std::fprintf(stderr, "gpu: VRAM alloc failed -- tightening texture cap to %zu MiB for now\n",
+                     g_policy.cap >> 20);
+}
+
+// Tracked create/destroy. Every texture the client keeps should route through these so
+// the total stays honest; a raw SDL_CreateTexture is invisible to it.
 inline SDL_Texture* create(SDL_Renderer* r, Uint32 fmt, int access, int w, int h) {
     SDL_Texture* t = SDL_CreateTexture(r, fmt, access, w, h);
     if (t) { size_t b = size_t(w) * size_t(h) * 4; g_bytes += b; g_size[t] = b; }
@@ -62,5 +109,8 @@ inline void destroy(SDL_Texture* t) {
     if (auto it = g_size.find(t); it != g_size.end()) { g_bytes -= it->second; g_size.erase(it); }
     SDL_DestroyTexture(t);
 }
+// Non-texture GPU memory the client allocates itself (GL buffers, renderbuffers).
+inline void addBuffer(size_t b) { g_bytes += b; }
+inline void removeBuffer(size_t b) { g_bytes -= std::min(b, g_bytes); }
 
 }  // namespace gpuvram

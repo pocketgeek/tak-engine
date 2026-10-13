@@ -33,7 +33,7 @@
         s.serverRss = srv.rssBytes;
         s.fps = fps_;
         s.simSpeed = actualSpeed_;
-        s.gpuBytes = gpuvram::bytes();       // client GPU texture memory (bounded by the cap)
+        s.gpuBytes = gpuvram::bytes();       // accounted client GPU memory (see gpuvram.h)
         tak::proc::GpuSample gpu = tak::proc::gpuSample();   // whole-device util % + VRAM
         s.gpuPct = tak::proc::systemGpuPercent(gpu);
         if (gpu.ok) {
@@ -170,13 +170,16 @@
         else sl("MAX FPS     (VSYNC)");
         {   const int tf = settings_ ? std::clamp(settings_->textureFilter, 0, 2) : 0;
             sl(std::string("TEXFILTER   ") + (tf == 2 ? "EVERYTHING" : tf == 1 ? "UNITS" : "OFF")); }
-        // GPU texture memory: the self-calibrating cap, and this run's peak usage/pages.
+        // GPU texture memory: the cap in force (Options limit, or a tightening after a
+        // failed create), and this run's peak accounted usage.
         size_t gpuPeak = 0, sysPeak = 0;
         for (const auto& s : benchSamples_) {
             if (s.gpuBytes > gpuPeak) gpuPeak = s.gpuBytes;
             if (s.gpuSysUsed > sysPeak) sysPeak = s.gpuSysUsed;
         }
-        std::snprintf(b, sizeof b, "GPU TEX CAP %zuMB", gpuvram::cap() >> 20); sl(b);
+        if (gpuvram::cap() == gpuvram::kUnlimited) std::snprintf(b, sizeof b, "GPU TEX CAP UNLIMITED");
+        else std::snprintf(b, sizeof b, "GPU TEX CAP %zuMB", gpuvram::cap() >> 20);
+        sl(b);
         std::snprintf(b, sizeof b, "GPU PEAK    %zuMB", gpuPeak >> 20); sl(b);
         if (sysPeak) {
             if (benchGpuTotal_) std::snprintf(b, sizeof b, "SYS VRAM    %zu / %zuMB PEAK", sysPeak >> 20, benchGpuTotal_ >> 20);
