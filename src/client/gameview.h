@@ -2502,6 +2502,10 @@ private:
     // the width used left of the primary. Single selection: draws nothing, returns 0.
     float drawSelPortraits(SDL_FRect primary, float room, float gap, float px);
     std::vector<tak::selportraits::Group> selTypeGroups() const;   // live selection, by type
+    // A multi-selection's bar stats: HP / mana totals over the live selected units, and
+    // the name-slot label when the selection is exactly one control squad ("GROUP 3").
+    tak::selportraits::Totals selTotals() const;
+    std::string selSquadLabel() const;
     static constexpr float kSelPortraitMinScale = 0.6f;   // single-row shrink floor, then two rows
     // A click on that strip: plain = select only that type, Shift = drop it. Consumes
     // any press on a portrait (or the overflow tile) so it never reaches the world.

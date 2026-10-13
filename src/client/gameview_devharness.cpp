@@ -392,6 +392,18 @@
                 p=comma+1;
             }
             std::erase_if(selection_,[](int id){return id<0;});
+            // TAK_SELPORTRAITS_HURT: every other unit at a partial HP and every caster at a
+            // partial mana pool, so the bar's group totals differ from any one unit's.
+            // TAK_SELPORTRAITS_SQUAD=N (-N formation): put them all in that squad.
+            const bool hurt=tak::devFlag("TAK_SELPORTRAITS_HURT");
+            const char* sq=tak::devEnv("TAK_SELPORTRAITS_SQUAD");
+            for (size_t i=0;i<selection_.size();++i) {
+                auto* su=writableWorld().unit(selection_[i]);
+                if (!su || !su->type) continue;
+                if (hurt && i%2==0) su->hp=tak::sim::Fixed::fromFloat(float(su->type->maxHp)*(0.25f+0.1f*float(i%5)));
+                if (hurt && su->type->maxMana>0) su->mana=double(su->type->maxMana)*(i%3==0?0.2:0.9);
+                if (sq) su->squad=int8_t(std::atoi(sq));
+            }
             noFog_=true;edgeScrollOn_=false;
             mapView_.setOffset(x0-640/mapView_.zoom(),z0-400/mapView_.zoom());
             captureFrame();   // publish them, or the next frame pin prunes the selection

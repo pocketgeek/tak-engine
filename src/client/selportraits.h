@@ -4,12 +4,13 @@
 // Clicking a portrait narrows the selection to that type, Shift+click drops it.
 //
 // Pure (no SDL, no GameView) so tools/selportraits_test.cpp can check the grouping,
-// the click rule and the fit/overflow layout. Selection is local client state --
+// the click rule, the fit/overflow layout, and the bar's group totals and squad label. Selection is local client state --
 // nothing here touches the simulation.
 #pragma once
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,8 +23,8 @@ struct Group {
 };
 
 // `units` is the selection in order as (unit id, type id), LIVE units only (the
-// caller drops dead/typeless ids). The front unit's type leads -- it is the unit
-// whose stats the bar shows -- then the rest by count, most first, ties by type id.
+// caller drops dead/typeless ids). The front unit's type leads -- it keeps the
+// single-unit portrait spot -- then the rest by count, most first, ties by type id.
 inline std::vector<Group> group(const std::vector<std::pair<int, std::string>>& units) {
     std::vector<Group> out;
     for (const auto& [id, type] : units) {
@@ -103,6 +104,61 @@ inline Rect slot(const Layout& L, int i, Rect primary, float gap) {
     const float y = L.rows == 1 ? primary.y + (primary.h - h) * 0.5f
                                 : primary.y + float(row) * (h + gap);
     return {primary.x - float(col + 1) * (gap + w), y, w, h};
+}
+
+// The bar's HP / mana for a multi-selection: totals over the selection, not the
+// front unit's. HP is sum(hp) / sum(maxHp) over the live selected units; mana is the
+// same over only the units that HAVE a pool (maxMana > 0), so a squad of knights with
+// two priests shows the priests' mana rather than a sliver of it. No pool anywhere:
+// hasMana is false and the bar draws empty, as it does for a single unit without one.
+struct Vitals { float hp = 0, maxHp = 0, mana = 0, maxMana = 0; };
+struct Totals {
+    float hp = 0, maxHp = 0, mana = 0, maxMana = 0;
+    bool hasMana = false;
+    float hpFrac() const { return hp / std::max(1.0f, maxHp); }   // the single unit's guard
+    float manaFrac() const { return hasMana ? mana / maxMana : 0.0f; }
+};
+inline Totals total(const std::vector<Vitals>& units) {
+    Totals t;
+    for (const Vitals& v : units) {
+        t.hp += v.hp;
+        t.maxHp += v.maxHp;
+        if (v.maxMana > 0) {
+            t.mana += v.mana;
+            t.maxMana += v.maxMana;
+            t.hasMana = true;
+        }
+    }
+    return t;
+}
+
+// Is a multi-selection exactly one control squad (the Ctrl+digit group or formation
+// whose number shows in green under its units)? `sel` is the squad of every LIVE
+// selected unit (0: none, or not the local player's); `unselected` is (squad, is a
+// builder) for every live unit of the local player that has a squad but is NOT
+// selected. The selection IS squad s when every selected unit is in s and no
+// non-builder member of s is left out -- recalling a squad skips its builders, so the
+// recalled selection still counts, and so does one that adds them. A partial squad,
+// or any extra unit, is not the squad: 0. One unit is never a squad here (the bar
+// shows its own name). Returns the squad value: +N group N, -N formation N.
+inline int selectionSquad(const std::vector<int>& sel,
+                          const std::vector<std::pair<int, bool>>& unselected) {
+    if (sel.size() < 2 || sel.front() == 0) return 0;
+    const int s = sel.front();
+    for (int q : sel)
+        if (q != s) return 0;
+    for (const auto& [q, builder] : unselected)
+        if (std::abs(q) == std::abs(s) && !builder) return 0;
+    return s;
+}
+
+// The name slot's label for squad `s`, in the marker's terms: the recall key, so
+// squad 10 is "0". "GROUP 3", "FORMATION 2"; empty for no squad.
+inline std::string squadLabel(int s) {
+    if (s == 0) return {};
+    const int num = std::abs(s);
+    const char key = num == 10 ? '0' : char('0' + num);
+    return std::string(s < 0 ? "FORMATION " : "GROUP ") + key;
 }
 
 }  // namespace tak::selportraits

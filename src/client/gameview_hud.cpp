@@ -1660,10 +1660,14 @@ namespace {
                 selection_.empty() ? nullptr : frameUnitP(selection_.front());
             if (u && (!u->alive() || !u->type)) u = nullptr;
             float tpx = std::max(2.0f, float(barH()) / 24.0f);
+            // A multi-selection shows the GROUP, not its front unit: no unit name (the
+            // squad's label instead, when the selection is one), HP / mana totals, and
+            // none of the front unit's own extras (veterancy chevron, conjure target).
+            const bool multi = u && selection_.size() > 1;
 
             // The conjured target (site under construction, or the head of a build queue).
             std::string tName; float tProg = 0;
-            if (u) {
+            if (u && !multi) {
                 if (u->buildSiteId) {
                     if (const auto* s = frameUnitP(u->buildSiteId); s && s->type) {
                         tName = s->type->name;
@@ -1689,7 +1693,7 @@ namespace {
                 }
                 SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
                 SDL_RenderDrawRectF(ren_, &pr);
-                if (u && u->veteran > 0) {
+                if (u && !multi && u->veteran > 0) {
                     int xi = guiIdxLeft("Experience");
                     int tier = u->veteran >= 7 ? 2 : u->veteran >= 4 ? 1 : 0;
                     if (xi >= 0 && tier < int(guiTex_[xi].size()) && guiTex_[xi][size_t(tier)]) {
@@ -1702,7 +1706,7 @@ namespace {
                 // only W/2 - ~290*vs there (86px at 1024 wide, none at 1366 / 150%),
                 // so a strip that would have to fold or cap short of the scroll takes
                 // the scroll too, out to the screen margin, rather than hide types.
-                if (u && selection_.size() > 1) {
+                if (multi) {
                     const float gap = 3 * vs, margin = 4 * vs;
                     float room = pr.x - margin;
                     if (ei >= 0) {
@@ -1715,20 +1719,35 @@ namespace {
                     drawSelPortraits(pr, room, gap, 1.5f * vs);
                 }
             }
-            if (int t1 = guiIdxLeft("UnitText"); u && t1 >= 0) {
+            if (int t1 = guiIdxLeft("UnitText"); u && !multi && t1 >= 0) {
                 SDL_FRect nr = place(t1);
                 blockText(u->displayName(), nr.x, nr.y, tpx, {236, 226, 192, 255});
+            } else if (const std::string sq = multi ? selSquadLabel() : std::string();
+                       !sq.empty() && t1 >= 0) {
+                // "FORMATION 2" outruns a short name: shrink it to stop short of the
+                // "N SELECTED" status to its right.
+                SDL_FRect nr = place(t1);
+                float px = tpx;
+                if (int ai = guiIdx("ActionText"); ai >= 0)
+                    px = std::min(px, (place(ai).x - nr.x) / (6.0f * float(sq.size()) + 3.0f));
+                blockText(sq, nr.x, nr.y, std::max(1.0f, px), {236, 226, 192, 255});
             }
-            bar(guiIdxLeft("HealthBar"), u ? u->hp / std::max(1.0f, float(u->type->maxHp)) : 0.0f,
-                {210, 70, 60, 255});
-            bar(guiIdxLeft("ManaBar"),
-                (u && u->type->maxMana > 0) ? u->mana / u->type->maxMana : 0.0f,
-                {90, 150, 255, 255});
+            if (multi) {
+                const auto t = selTotals();
+                bar(guiIdxLeft("HealthBar"), t.hpFrac(), {210, 70, 60, 255});
+                bar(guiIdxLeft("ManaBar"), t.manaFrac(), {90, 150, 255, 255});
+            } else {
+                bar(guiIdxLeft("HealthBar"), u ? u->hp / std::max(1.0f, float(u->type->maxHp)) : 0.0f,
+                    {210, 70, 60, 255});
+                bar(guiIdxLeft("ManaBar"),
+                    (u && u->type->maxMana > 0) ? u->mana / u->type->maxMana : 0.0f,
+                    {90, 150, 255, 255});
+            }
 
             // --- ActionText: status (or the total for a multi-selection) ---
             if (int ai = guiIdx("ActionText"); u && ai >= 0) {
                 SDL_FRect ar = place(ai);
-                std::string st = selection_.size() > 1
+                std::string st = multi
                     ? std::to_string(selection_.size()) + " SELECTED"
                     : std::string(unitStatusText(u));
                 blockText(st, ar.x, ar.y, tpx, {170, 205, 255, 255});
@@ -1753,6 +1772,32 @@ namespace {
             if (const UnitR* u = frameUnitP(id); u && u->alive() && u->type)
                 live.push_back({id, u->type->id});
         return tak::selportraits::group(live);
+    }
+
+    tak::selportraits::Totals GameView::selTotals() const {
+        std::vector<tak::selportraits::Vitals> v;
+        v.reserve(selection_.size());
+        for (int id : selection_)
+            if (const UnitR* u = frameUnitP(id); u && u->alive() && u->type)
+                v.push_back({u->hp, float(u->type->maxHp), u->mana, u->type->maxMana});
+        return tak::selportraits::total(v);
+    }
+
+    std::string GameView::selSquadLabel() const {
+        if (selection_.size() < 2) return {};
+        std::vector<int> squads;
+        for (int id : selection_)
+            if (const UnitR* u = frameUnitP(id); u && u->alive() && u->type)
+                squads.push_back(u->player == localPlayer_ ? int(u->squad) : 0);
+        if (squads.empty() || squads.front() == 0) return {};   // skip the roster scan
+        std::vector<int> sel(selection_);
+        std::sort(sel.begin(), sel.end());
+        std::vector<std::pair<int, bool>> rest;   // the local squads' unselected units
+        for (const UnitR* u : front().live)
+            if (u->alive() && u->player == localPlayer_ && u->type && u->squad &&
+                !std::binary_search(sel.begin(), sel.end(), u->id))
+                rest.push_back({int(u->squad), u->type->isBuilder});
+        return tak::selportraits::squadLabel(tak::selportraits::selectionSquad(squads, rest));
     }
 
     float GameView::drawSelPortraits(SDL_FRect primary, float room, float gap, float px) {
@@ -2169,9 +2214,15 @@ namespace {
                 if (selection_.size() > 1) drawSelPortraits(pr, room, gap, 1.8f);   // same layout as above
                 float tx = px + 70 + strip;
                 SDL_Color blk{0, 0, 0, 255};
-                blockText(u->displayName(), tx, bar.y + 9, 2.6f, blk);
-                std::snprintf(buf, sizeof buf, "HP %d/%d", int(u->hp),
-                              int(u->type->maxHp));
+                if (selection_.size() > 1) {   // the group: its squad label + HP totals
+                    blockText(selSquadLabel(), tx, bar.y + 9, 2.6f, blk);
+                    const auto t = selTotals();
+                    std::snprintf(buf, sizeof buf, "HP %d/%d", int(t.hp), int(t.maxHp));
+                } else {
+                    blockText(u->displayName(), tx, bar.y + 9, 2.6f, blk);
+                    std::snprintf(buf, sizeof buf, "HP %d/%d", int(u->hp),
+                                  int(u->type->maxHp));
+                }
                 blockText(buf, tx, bar.y + 32, 2.3f, blk);
                 if (selection_.size() > 1) {
                     std::snprintf(buf, sizeof buf, "%zu SELECTED", selection_.size());

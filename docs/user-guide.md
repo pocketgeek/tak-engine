@@ -303,9 +303,10 @@ See [random map generation](random-map-generation.md) for the rules it follows.
 5. **Mana**: your current mana and storage, with income and spending beside the orb.
 6. **Build menu** of the selected builder or production building.
 7. **Information bar**: the selected unit's portrait, name, health and what it is doing.
-   With several units selected it shows the total selected instead, and one
-   portrait per unit type, running left from the first, each with how many of
-   that type are selected (see [Selection](#selection)).
+   With several units selected it shows the total selected instead, the health
+   and mana of the whole selection, and one portrait per unit type, running left
+   from the first, each with how many of that type are selected (see
+   [Selection](#selection)).
 8. **The selected unit**, here the Monarch.
 
 ### The goal
@@ -742,10 +743,20 @@ a left-click on the map or minimap. **Esc** disarms.
 | **N** | Next unit. |
 
 With more than one unit selected, the information bar shows **N SELECTED** and a
-portrait for each unit type in the selection. The type whose stats are shown comes
+portrait for each unit type in the selection. The first selected unit's type comes
 first, in the usual portrait spot; the other types run to its left, most numerous
 first. The number on each portrait is how many of that type are selected. Hold the
 pointer over a portrait to see the unit's name.
+
+The bars show the whole selection. The health bar is the total health of the
+selected units out of their total maximum. The mana bar counts only the units that
+have mana, such as priests, and stays empty if none do. No unit name is shown. If
+the selection is exactly one group or formation, its name (for example **GROUP 3**
+or **FORMATION 2**) is shown where the unit name would be. Exactly means every
+selected unit is in it and none of its units is left out (builders aside, since
+recalling a group does not select them). Part of a group, or a group plus other
+units, shows no name. A unit's rank, and what it is building, show only when it is
+selected alone.
 
 | On a portrait | Does |
 | --- | --- |
@@ -767,7 +778,8 @@ are selected but not shown.
 | **Ctrl+Esc** | Remove the selected units from their group or formation. |
 
 A unit belongs to one group or formation at a time. Each unit shows its number
-under it: `3` for group 3, `3F` for formation 3.
+under it: `3` for group 3, `3F` for formation 3. With the whole group or formation
+selected, the information bar shows its name, such as **GROUP 3**.
 
 - A **group** is a saved selection.
 - A **formation** also travels together: it moves at the pace of its slowest

@@ -1,5 +1,6 @@
 // The info bar's multi-selection portrait strip (client/selportraits.h): type
-// grouping + order, the portrait click rule, and the fit / shrink / overflow layout.
+// grouping + order, the portrait click rule, the fit / shrink / overflow layout, and
+// the bar's multi-selection HP / mana totals and squad label.
 #include "client/selportraits.h"
 #include <cstdio>
 #include <stdexcept>
@@ -48,6 +49,24 @@ int main() try {
     L=sp::layout(20,48,36,3,160,0.6f);
     r=sp::slot(L,L.shown,p,3);
     check(r.x>=300-160-1e-3f,"overflow tile inside the room");
+    // Totals: HP over everyone, mana over only the units with a pool.
+    auto t=sp::total({{50,100,0,0},{100,100,0,0},{30,60,200,1000},{0,60,900,1000}});
+    check(near(t.hp,180) && near(t.maxHp,320) && near(t.hpFrac(),180.f/320),"HP is the sum over the selection");
+    check(t.hasMana && near(t.manaFrac(),1100.f/2000),"mana only over the casters, not diluted by the knights");
+    t=sp::total({{40,100,0,0},{100,100,0,0}});
+    check(!t.hasMana && near(t.manaFrac(),0) && near(t.hpFrac(),0.7f),"no pool anywhere: empty mana bar");
+    check(near(sp::total({}).hpFrac(),0) && !sp::total({}).hasMana,"nothing selected: empty bars");
+    // The selection is a squad only when it is all of one, builders aside.
+    check(sp::selectionSquad({3,3,3},{})==3,"the whole group");
+    check(sp::selectionSquad({-2,-2},{{1,false}})==-2,"a formation; another squad's units do not matter");
+    check(sp::selectionSquad({3,3},{{3,true}})==3,"a recalled group leaves its builder out and still counts");
+    check(sp::selectionSquad({3,3},{{3,false}})==0,"part of a group is not the group");
+    check(sp::selectionSquad({3,3,0},{})==0,"an extra unit outside it");
+    check(sp::selectionSquad({3,-3},{})==0,"mid-retype mix of group and formation");
+    check(sp::selectionSquad({3},{})==0,"one unit keeps its own name");
+    check(sp::selectionSquad({0,0},{})==0,"no squad");
+    check(sp::squadLabel(3)=="GROUP 3" && sp::squadLabel(-2)=="FORMATION 2","group / formation label");
+    check(sp::squadLabel(10)=="GROUP 0" && sp::squadLabel(-10)=="FORMATION 0" && sp::squadLabel(0).empty(),"squad 10 is key 0");
     std::puts("selportraits_test: ok");
     return 0;
 } catch(const std::exception& e) {std::fprintf(stderr,"selportraits_test: FAIL: %s\n",e.what());return 1;}
