@@ -83,9 +83,9 @@ inline bool   overCap() { return !wouldFit(0); }
 // The player's GPU MEMORY LIMIT (Options). Live: raising it lets the caches grow on
 // their next allocation; lowering it makes them shed what they can next frame.
 inline void setLimit(size_t b) {
-    if (g_policy.setLimit(b))
-        std::fprintf(stderr, "gpu: texture memory limit %zu MiB%s\n", g_policy.limit >> 20,
-                     g_policy.limit == kUnlimited ? " (unlimited)" : "");
+    if (!g_policy.setLimit(b)) return;
+    if (g_policy.limit == kUnlimited) std::fprintf(stderr, "gpu: texture memory limit unlimited\n");
+    else std::fprintf(stderr, "gpu: texture memory limit %zu MiB\n", g_policy.limit >> 20);
 }
 
 // Are we in a post-failure backoff? (bakes should skip while true)
