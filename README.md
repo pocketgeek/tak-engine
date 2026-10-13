@@ -6,13 +6,13 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.8.0-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.8.1-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
 [Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [Build from source](docs/development.md)
 
-<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.0"></a>
+<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.1"></a>
 
 <table>
   <tr>
@@ -40,7 +40,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.26, 0.7.27 and 0.8.0 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
+<sub>Captured from the 0.7.25 to 0.8.1 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
 
 </div>
 
@@ -52,7 +52,36 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.8.0
+## New in 0.8.1
+
+0.8.1 is a client update: the rules, protocol (256) and replay format (12) are
+unchanged, so **0.8.1 and 0.8.0 players and servers can play together**, and
+replays play in either version.
+
+- **The information bar shows only what has data.** With nothing selected it is
+  plain: no empty portrait box and no empty bars. The mana bar appears only for
+  units with mana, and the right-hand bar only while something is being built or
+  conjured. Nothing moves; the first portrait of a multi-selection is now the
+  same size as the rest of the strip. See the [user guide](docs/user-guide.md#selection).
+- **Less video memory for terrain.** The low-detail fill-in terrain is uploaded
+  only where the view needs it instead of whole for the entire game. Measured at
+  3840 × 2160 on Middle Earth V1, peak use with the camera parked fell from
+  498 MiB to 309 MiB zoomed out and from 350 MiB to 121 MiB zoomed in.
+- **GPU Memory Limit** (Options → Graphics): Auto (1.25 GB), 512 MB to 4 GB or
+  Unlimited, applied at once. Lowering it keeps less terrain ready off-screen;
+  units are never hidden. A driver out-of-memory error now lowers the limit only
+  for a while (**LOWERED FOR NOW**) instead of for the rest of the session.
+- **Streaming: Remember Key.** An opt-in box keeps your stream key in the system
+  password store (Windows Credential Manager, the macOS Keychain or a Linux
+  Secret Service), never in a file. See [streaming](docs/streaming.md#remembering-the-key).
+- **Options dropdowns** open upward when there is no room below and scroll when
+  they fit neither way.
+
+No new required runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.8.1-notes.md) and
+[validation report](docs/release-0.8.1-validation.md).
+
+### Previously in 0.8.0
 
 - **Signed and notarized on macOS.** The app and the DMG are signed with a
   Developer ID, notarized by Apple and stapled, so they open on the first
@@ -442,7 +471,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.8.0** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.8.1** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -717,7 +746,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.8.0 uses generator v8;
+the same named map when the game starts. Version 0.8.1 uses generator v8;
 older seed recipes are unsupported, while saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -725,7 +754,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.8.0 uses protocol **256**: update clients and servers together.
+Version 0.8.1 uses protocol **256**, like 0.8.0, so the two play together.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -998,10 +1027,10 @@ saved create preference. The experimental Retail+, Flowfield and Cooperative
 modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
-Use the **same engine build and compatible game data** on every participant.
-Version **0.8.0 uses protocol 256**, including authoritative pathfinding
+Use the **same network protocol and compatible game data** on every participant.
+Version **0.8.1 uses protocol 256**, like 0.8.0, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
-Update clients and servers together; earlier clients cannot join these matches.
+0.8.0 and 0.8.1 clients and servers play together; earlier clients cannot join these matches.
 Replay format is **12** (checkpoints also carry a position digest), and
 playback requires the current simulation protocol. Older recordings need the engine that recorded them.
 The connection checks gameplay definitions, scripts, and models. Selected map
@@ -1202,7 +1231,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.8.0 uses protocol **256**; update server and clients together.
+Version 0.8.1 uses protocol **256**, like 0.8.0; servers and clients of either version play together.
 
 
 ## License

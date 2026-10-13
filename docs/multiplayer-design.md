@@ -669,6 +669,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.8.0 peers and the server require protocol 256; the replay loader
-rejects every older simulation protocol.
+227. Versions 0.8.0 and 0.8.1 (peers and server) require protocol 256; the replay
+loader rejects every older simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

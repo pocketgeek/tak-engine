@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.0** (network protocol **256**, replay format
+This guide covers **TAK Engine 0.8.1** (network protocol **256**, replay format
 **12**). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -1050,9 +1050,9 @@ World sounds are full volume on screen and fade with distance off screen.
 
 ### Display
 
-![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, then Renderer set to Auto, the filtering, shadow, art and tree settings, Tactical Dots off, Tactical Dots Zoom 20% greyed out, and Hardware Cursor on](img/guide/options-graphics.jpg)
+![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, then Renderer set to Auto, the filtering, shadow, art and tree settings, Tactical Dots off, Tactical Dots Zoom 20% greyed out, Hardware Cursor and Smooth Motion on, and GPU Memory Limit set to Auto (1.25 GB)](img/guide/options-graphics.jpg)
 
-*Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on, and Tactical Dots Zoom because Tactical Dots is off. The picture was taken in a window, so Fullscreen shows Off. Smooth Motion is just below the bottom edge.*
+*Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on, and Tactical Dots Zoom because Tactical Dots is off. The picture was taken in a window, so Fullscreen shows Off.*
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -1256,9 +1256,10 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 
 ### Versions
 
-**Everyone must use the same version of TAK Engine**, client and server alike.
-Version 0.8.0 uses network protocol **256**. Older and newer versions cannot
-play together, and the server turns away a mismatched client.
+**Everyone must use the same network protocol**, client and server alike.
+Version 0.8.1 uses network protocol **256**, the same as 0.8.0, so 0.8.0 and 0.8.1
+players and servers can play together. Versions with a different protocol cannot,
+and the server turns away a mismatched client.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
 This should not happen between matching versions with matching game data; if it
@@ -1332,8 +1333,8 @@ recording. During playback:
 A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
-- **the same version of TAK Engine** that recorded it (0.8.0 plays protocol-256
-  recordings);
+- **a version of TAK Engine with the same network protocol** as the one that
+  recorded it (0.8.1 plays protocol-256 recordings, so 0.8.0 replays play too);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -1492,7 +1493,7 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together.** A server only accepts clients of
-the same protocol version.
+the same protocol version (0.8.0 and 0.8.1 share protocol 256).
 
 ---
 
@@ -1588,7 +1589,8 @@ unplugged, the game falls back to the system default.
 
 ### My old replays will not play
 
-Replays only play on the engine version that recorded them. See
+Replays only play on an engine version with the same network protocol as the
+one that recorded them (0.8.0 and 0.8.1 share protocol 256). See
 [Replays](#replays).
 
 ### Where files are kept
