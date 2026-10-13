@@ -753,7 +753,8 @@ a left-click on the map or minimap. **Esc** disarms.
 With more than one unit selected, the information bar shows **N SELECTED** and a
 portrait for each unit type in the selection. The first selected unit's type comes
 first, at the right end of the row where the single portrait sits; the other
-types run to its left, most numerous first. All the portraits are the same size. The number on each portrait is how many of that type are selected. Hold the
+types run to its left, most numerous first. All the portraits are the same size.
+The number on each portrait is how many of that type are selected. Hold the
 pointer over a portrait to see the unit's name.
 
 The bars show the whole selection. The health bar is the total health of the
