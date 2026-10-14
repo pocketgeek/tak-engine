@@ -1490,8 +1490,9 @@ objects and **Ctrl+V** turns it into a brush. See
 Cartographer can add placed units, named **regions**, trigger **rules**
 (**T**, with ready-made objective templates) and a **Use Only** unit list to a
 map. **Scenario content runs only in a test game** (Test Map, or the game's
-`--play-map` option); from the ordinary map list the map plays as a normal
-skirmish map. **Scenario → Check map** (**C**) lists problems such as cut-off
+`--play-map` option, or the test copy that a test leaves in the map list);
+from the ordinary map list your saved map plays as a normal skirmish map.
+**Scenario → Check map** (**C**) lists problems such as cut-off
 starts, missing mana and wrong rule values. See
 [Scenario maps](cartographer-guide.md#scenario-maps) and the
 [scenario reference](crt-triggers.md).

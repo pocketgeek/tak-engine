@@ -22,8 +22,10 @@ spectator views, menus or the Cartographer. Encoding is
 the only change after capture: JPEG with full chroma resolution, quality 90 for
 the title, 88 for the gallery and 86 for the guide; guide images are scaled from
 1600 × 900 to 1280 × 720. The title is cropped to its 4:3 artwork, and
-`guide/selection-strip.jpg` to the information bar. The Cartographer images are
-the editor's own `--shot` output at its 921 × 691 default window. Nothing was painted into a scene. The guide's HUD picture has
+`guide/selection-strip.jpg` to the information bar. `cartographer.png` and
+`guide/cartographer-terrain.jpg` are the editor's own `--shot` output at its
+921 × 691 default window; the pictures in `cartographer/` come from the capture
+driver described below. Nothing was painted into a scene. The guide's HUD picture has
 numbered markers drawn on top, and the Retail/Legion and Tactical Dots comparisons
 put two captures side by side under text labels. The Cartographer guide's pictures
 are described in [their own section](#cartographer-guide-docsimgcartographer).

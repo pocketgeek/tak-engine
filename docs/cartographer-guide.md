@@ -12,12 +12,20 @@ This guide is for players and mapmakers. It explains what you see on screen and
 what each control does, from a first map to sharing a finished one.
 
 > **Version note.** This guide describes the current development version, which
-> follows the 0.8.2 release. If you have 0.8.2, a few things described here are
-> not there yet and come with the next release: the **View → Preferences**
-> dialog (borderless fullscreen, edge scrolling, UI scale and the game data
-> folder), **F11** fullscreen, the browser scrollbar, and the check that a
-> chosen game folder really is an installation. Otherwise the guide matches
-> 0.8.2, apart from bug fixes.
+> follows the 0.8.2 release. If you have 0.8.2, these things described here are
+> not there yet and come with the next release:
+>
+> - the **View → Preferences** dialog (borderless fullscreen, edge scrolling, UI
+>   scale and the game data folder), **F11** fullscreen, and the game's
+>   **Options → Data folder** setting that Cartographer shares;
+> - the browser scrollbar;
+> - the check that a chosen game folder really is an installation (the **Not a
+>   game folder** message and the new folder-picker title);
+> - opening a map file named on the command line;
+> - undefined features drawn as red dots;
+> - the limit of eight start positions (*START POSITIONS FULL*).
+>
+> Apart from these and bug fixes, the guide matches 0.8.2.
 
 Every picture in this guide is a real Cartographer screen (the Test Map lobby is
 the game's), using the original game's art. Some put two moments side by side,
@@ -68,11 +76,13 @@ multiplayer games.
 
 > **Scenario content plays only in a test game.** Placed units, trigger rules
 > and the Use Only unit list run when you open the map with **Test Map (F5)**,
-> or with the game's `--play-map` option. When the same map is chosen from the
-> game's ordinary skirmish or multiplayer map list, it plays as a normal
+> or with the game's `--play-map` option. When your saved `.kmp` is chosen from
+> the game's ordinary skirmish or multiplayer map list, it plays as a normal
 > skirmish map: its terrain, features and start positions are used, every
 > player starts with the usual Monarch, and the scenario content is ignored.
-> See [Scenario maps](#scenario-maps).
+> The one exception is the test copy that Test Map and `--play-map` leave in
+> the game's map list (with a fingerprint in brackets after its name): it keeps
+> its scenario. See [When scenarios run](#when-scenarios-run).
 
 ---
 
@@ -85,7 +95,7 @@ Every TAK Engine package installs Cartographer beside the game:
 | System | How to start it |
 | --- | --- |
 | Windows | **TAK Cartographer** in the Start menu (installer), or `cartographer.exe` in the same folder as `takclient.exe` (portable ZIP). |
-| macOS | **TAK Cartographer.app**, which the disk image places next to **Total Annihilation - Kingdoms.app**. Keep both apps in the same folder, for example Applications. |
+| macOS | **TAK Cartographer.app**, which the disk image places next to **Total Annihilation - Kingdoms.app**. Keep both apps in the same folder, for example Applications. (Test Map from the app cannot find the game yet; see [Known limits](#known-limits).) |
 | Linux | **Cartographer** (Map Editor) in your application menu, or `cartographer` in a terminal. |
 
 Test Map starts the game from the folder Cartographer runs from, so keep the
@@ -167,7 +177,7 @@ options work in every build:
 | --- | --- |
 | `"<map name>"` | Open an installed map by name, for example `cartographer "Ulasem Arena"`. Case does not matter; leave out `.tnt`. |
 | `<file.kmp>` or `<file.tnt>` | Open a map file on disk. |
-| `--data <folder>` | Use this game folder. It overrides the saved setting, and Preferences then shows the folder as locked. |
+| `--data <folder>` | Use this game folder for this launch only. It overrides the saved setting without changing it, and Preferences then shows the folder as locked. |
 | `--out <folder>` | Save into this folder instead of the game's `Maps` folder. |
 | `--new WxH --world <world> [--random]` | Start on a new blank (or randomly generated) map of W × H units instead of showing the New Map dialog. |
 | `--save <file.tnt>` | Write the map (an installed map named on the same command line, or one made with `--new`) as loose files (see [Export loose files](#export-loose-files)) and exit without starting the editor. |
@@ -180,11 +190,13 @@ options work in every build:
 This builds a small, fair two-player map from scratch and plays it. Each step
 links to the section that explains it in full.
 
-1. **Create the map.** Press **N**. Type a name, for example *Twin Rivers*. Set
-   **WIDTH** and **HEIGHT** to 16 and keep **WORLD** at aramon. Click
-   **CREATE**.
+1. **Create the map.** Cartographer starts with the **New Map** dialog open. (If
+   you closed it, press **N** and click **OK** to discard the blank Untitled
+   map.) The name *Untitled* is already selected, so type over it, for example
+   *Twin Rivers*. Set **WIDTH** and **HEIGHT** to 16 and **WORLD** to aramon.
+   Click **CREATE**.
 2. **Turn on live symmetry.** Press **M**. A cyan line appears down the middle
-   of the map (choose **View → Fit map** to see all of it), and the status bar
+   of the map (choose **View → Fit map** to see more of it), and the status bar
    reads *LIVE SYMMETRY ON*. From now on, what you place on the left half is
    mirrored onto the right half. ([Symmetry](#symmetry))
 3. **Shape the land.** With the **TERRAIN** tool and **PLACE** mode, choose a
@@ -201,9 +213,10 @@ links to the section that explains it in full.
    ([Start positions](#start-positions))
 5. **Add mana and scenery.** Choose **FEATURES** and clear the search box if it
    still holds your terrain search. Click the category button until it shows
-   **mana**, pick a mana deposit and click near each start. Then
-   switch the category to trees or rocks and scatter some. Everything is
-   mirrored. ([Features](#features-trees-rocks-mana-and-ruins))
+   **mana**, pick a mana deposit and click near start 1: the mirrored copy
+   appears near start 2 by itself. Then switch the category to trees or rocks
+   and scatter some on the left half only; live symmetry fills in the right
+   half. ([Features](#features-trees-rocks-mana-and-ruins))
 6. **Check it.** Press **C**. Cartographer checks the starts, mana deposits and
    paths and lists anything that would cause problems in a game. Click an entry
    to jump to it. ([Checking your map](#checking-your-map))
@@ -252,6 +265,11 @@ links to the section that explains it in full.
 12. **Minimap**: the whole map, with the visible area outlined and start
     positions as small squares. Click or drag in it to move the view.
 13. **Status bar**: see below.
+
+> **Mind the Esc key.** This guide often says to press **Esc** to cancel or
+> close something. When there is nothing left to cancel, Esc closes
+> Cartographer, and if the map is saved it closes without asking. See
+> [What Esc does](#what-esc-does).
 
 The window title shows the map name, `*` when there are unsaved changes, and
 what is open, for example `[Validation results]` or `[Terrain overlay]`.
@@ -322,7 +340,8 @@ for the rest.
 
 **Edge scrolling** is off by default. Turn it on in
 [Preferences](#preferences) to scroll the view by resting the pointer near the
-edge of the map, or against the edge of the screen in fullscreen.
+edge of the map, or on the outermost edge of the window (the screen, in
+fullscreen).
 
 **F11** switches between a window and borderless fullscreen.
 
@@ -506,9 +525,9 @@ The **View** menu can colour the map to show how the game sees it:
 | **Overlay: water depth** | Brighter blue is deeper water. |
 | **Overlay: slopes** | Darker green is flat ground; brighter orange is steeper. |
 
-![The movement overlay for a Horseman on Ulasem Arena: the sandy arena floor is green, the rocky ring around it and the bases of trees and ruins are red; a legend at the top left reads Horseman: GREEN=allowed RED=blocked (terrain/features only)](img/cartographer/overlay-movement.jpg)
+![The movement overlay for a Horseman on Ulasem Arena: the sandy arena floor and the jungle floor are green; the steep band along the edge of the arena floor, the ground around a stone ruin and the bases of trees are red; a legend at the top left reads Horseman: GREEN=allowed RED=blocked (terrain/features only)](img/cartographer/overlay-movement.jpg)
 
-*Overlay: movement for the Horseman on Ulasem Arena. The rocks around the arena, the ruins and every tree block a Horseman.*
+*Overlay: movement for the Horseman on Ulasem Arena. The steep edge of the arena floor, the stone ruin and every tree block a Horseman.*
 
 The movement and buildability overlays use the unit chosen in the **Units**
 browser, so choose a unit there first. An overlay takes a moment to work out
@@ -545,7 +564,9 @@ over. Dragging fills cells densely, so for a natural look click features one at
 a time.
 
 Each cell holds one feature. Placing on a cell that already has one replaces it
-without asking.
+without asking. A cell holding one of the invisible road or blocker markers
+that terrain sections bring (see [What a stamp replaces](#what-a-stamp-replaces))
+loses the marker too.
 
 ### Selecting and moving features
 
@@ -572,7 +593,9 @@ In **SELECT** mode:
 ### Removing features
 
 In **ERASE** mode, click or drag over features to remove them, one cell at a
-time. For a large area use [Clear Area](#clearing-an-area) (**K**).
+time. Erasing clears the whole cell, so it also removes any invisible road or
+blocker marker there. For a large area use [Clear Area](#clearing-an-area)
+(**K**).
 
 A feature that the map's world does not define (for example one pasted from a
 map of another world) is drawn as a small **red dot**. You can select and erase
@@ -612,8 +635,10 @@ on a map are listed.
 
 New units belong to the **current owner**, shown as `PLAYER: n` in the status
 bar. Press **[** and **]** to change it (0 to 7). Units are drawn as small
-squares in their owner's colour, with their name above them when you are
-zoomed in.
+squares in their owner's colour, with their type ID (such as *ARAARCH*), or
+their display name if you gave one, above them when you are zoomed in. These
+colours are only the editor's markers; the game lobby gives players their own
+colours.
 
 | Owner number | In the game | Colour in the editor |
 | --- | --- | --- |
@@ -667,7 +692,7 @@ In **ERASE** mode, click a unit to remove it.
 
 ![The UNIT PROPERTIES dialog for an Aramon Archer: PLAYER 0, HEALTH % 100, ARMOR % 100, WEAPON % 100, VETERAN 0, ANGLE 180, DISPLAY NAME Captain Aldric, X (CELL) 14, Z (CELL) 99](img/cartographer/unit-properties.jpg)
 
-*Unit Properties for one of Player 1's Archers on King of the Hill, with a display name typed in.*
+*Unit Properties for one of Player 1's Archers on King of the Hill, with a display name typed in. The unit's type ID, ARAARCH, is printed at the top, partly over the title bar.*
 
 Press **Enter** with a unit selected, or double-click it. The fields:
 
@@ -690,16 +715,19 @@ or Z moves the whole selection by the same amount. The name field then reads
 ### Finding placed units
 
 **Scenario → Placed units** lists every placed unit, with its number, name, type,
-owner and position. Type in **SEARCH NAME, TYPE OR OWNER** to filter, for
+owner and position. The position is the centre of its footprint in game
+pixels (16 per cell), for example *X 232.000000 Z 1592.000000*, not the cell
+numbers that the status bar and Unit Properties use. Type in
+**SEARCH NAME, TYPE OR OWNER** to filter, for
 example *flag*, *player 2* or *neutral*. Use **Up** and **Down** to move through
 the list. **Click** or **Enter** selects the unit and centres the map on it;
 **Shift+Enter** also opens its properties.
 
 ### Previewing a unit model
 
-**F6** (**View → Unit model preview**) shows a 3D view of the selected unit, or
-of the unit chosen in the browser. Drag to turn it and use the wheel
-to zoom. **Esc** or **Enter** closes it.
+**F6** (**View → Unit model preview**) shows a 3D view of the selected unit
+when exactly one is selected, otherwise of the unit chosen in the browser.
+Drag to turn it and use the wheel to zoom. **Esc** or **Enter** closes it.
 
 ![The UNIT MODEL: Knight window showing the Aramon Knight on horseback with lance and blue shield; the browser behind lists Knight, Black Knight, Sky Knight and Amazon Knight for the search knight](img/cartographer/unit-model.jpg)
 
@@ -778,6 +806,8 @@ the clipboards or preferences.
   command is one step.
 - The history keeps up to about 64 MB of changes; the oldest steps are dropped
   first.
+- Undo works only from the map: while a dialog or the Scripting, Use Only or
+  Regions window is open, those take the keys. Close it first.
 - Undo clears the current selection.
 - Undoing back to the last save shows **SAVED** again.
 - Opening a map or making a new one starts a fresh history.
@@ -839,12 +869,14 @@ While it is on:
   *Cliff · NE outer*. A cyan outline previews where the twin will go. Terrain is
   never flipped, because its lighting is painted in; a section with no known
   twin is stamped only where you clicked, and the status bar says so
-  (*NO MIRROR TWIN for section …*). A stamp that touches the axis is not
-  mirrored either.
+  (*NO MIRROR TWIN for section …*). A stamp that crosses the axis (overlaps its
+  own mirror image) is not mirrored either; one that ends exactly on the axis
+  is.
 - **Terrain clipboard pastes** are mirrored only when every block of the copy
-  has a twin and the paste does not touch the axis; otherwise the status bar
+  has a twin and the paste does not cross the axis; otherwise the status bar
   says it was pasted at the source only.
 - **Not mirrored**: Clear Area, property changes, and region editing.
+- Mirrored copies of units do not get the original's display name.
 - An edit and its mirrored copies undo together with one **Ctrl+Z**.
 
 ### Symmetrize
@@ -872,6 +904,9 @@ would be copied and replaced, then asks you to confirm. The whole change is
   units go to the player whose start position mirrors the original owner's.
 - With **CURRENT SELECTION**, only the selected objects are copied (and terrain
   only for a terrain rectangle). Start positions and regions are not copied.
+- Copied regions get the original name with *mirror* added (for example
+  *Player 1 mirror*). Rules do not use them until you rename them or point
+  rules at them. Copied units lose their display names.
 
 Where a terrain section has no known twin, the old terrain on the other side is
 left as it was. The result message says how many blocks were left, and
@@ -903,7 +938,7 @@ uses for its random maps.
 | **PLAYERS (2-8)** | How many start positions to make. |
 | **LAYOUT** | Mainland, Lakes, Islands, Taros Maze, Veruna Ports, Aramon Riverlands, Zhon Clearings or Creon Highlands. |
 | **TREES**, **ROCKS**, **MANA** | How many of each, from 0 to 255. More mana adds more mana sites per player. |
-| **WATER INTENSITY** | How strongly lakes appear on Mainland and Lakes maps, from 0 (dry) to 255. Islands and the themed layouts add their own water. |
+| **WATER INTENSITY** | How strongly lakes appear, from 0 (dry) to 255. Used by Mainland, Lakes and Zhon Clearings. Ignored by Islands, Veruna Ports and Aramon Riverlands, which make their own water, and by Taros Maze and Creon Highlands. |
 | **RELIEF** | How many hills, from 0 (flat) to 255. |
 | **WIDTH**, **HEIGHT** | 1 to 64 units. |
 | **WORLD** | The world to use. |
@@ -952,6 +987,12 @@ such as "hold the hill for five minutes to win".
 > if it contains a scenario. This also applies to the shipped scripted maps such
 > as *King of the Hill*: Cartographer shows their rules, but the skirmish game
 > does not run them.
+>
+> The exception is the test copy that each Test Map or `--play-map` run leaves
+> in the game's `MapCache` folder. It appears in the map list with a
+> fingerprint in brackets after its name (see
+> [Testing a map in the game](#testing-a-map-in-the-game)), and choosing it
+> plays the scenario, just as the test did.
 
 In a test game:
 
@@ -1059,7 +1100,7 @@ conditions are true, its actions run.
 
 | Field | Choices |
 | --- | --- |
-| **UNIT TYPE** | *Any Unit*, or a unit type ID such as ARASWORD. |
+| **UNIT TYPE** | *Any Unit*, or a unit type ID such as ARASWORD. The **Create** action needs a real type. |
 | **PLAYER** | *All Players* or *Player 1* to *Player 8*. |
 | **LOCATION** | *Anywhere* or one of the map's regions. |
 | **VALUE** | A whole number (a count, a number of seconds, an amount of mana, a timer number…). |
@@ -1069,11 +1110,13 @@ conditions are true, its actions run.
 **Tab** moves between fields, **Alt+Down** opens a list, **Left** and **Right**
 step through it, **Enter** saves and **Esc** cancels. Cartographer will not save
 a value the game cannot use (an unknown region or unit type, a number out of
-range, text longer than 63 bytes) and says what is wrong.
+range, text longer than 63 bytes) and says what is wrong. *Any Unit* in a
+Create action is the exception: it is saved, but only Check Map warns that it
+does nothing.
 
 **Templates.** **TEMPLATES** inserts a ready-made rule after the selected one:
 
-![The OBJECTIVE TEMPLATES list: Opening message, Timed victory, Reach a region, Eliminate all opponents, Lose all forces and Timed reinforcements, each with a one-line description, above a search box](img/cartographer/templates.jpg)
+![The OBJECTIVE TEMPLATES list: a SEARCH field at the top, then Opening message, Timed victory, Reach a region, Eliminate all opponents, Lose all forces and Timed reinforcements, each with a one-line description](img/cartographer/templates.jpg)
 
 *The six objective templates.*
 
@@ -1137,7 +1180,7 @@ otherwise the first type in the list. Check and edit both after inserting.
 | Victory for me / Defeat for me | Defeat removes that player's units. |
 | Victory for me and all of my teammates / Defeat for me and all of my teammates | |
 | Victory for all of my opponents / Defeat for all of my opponents | |
-| Create *unit type* at *location* | Creates one unit for me in a free spot in the area. |
+| Create *unit type* at *location* | Creates one unit for me in a free spot in the area. Needs a real unit type: a new Create action starts as *Any Unit*, which creates nothing (Check Map warns about it). |
 | Destroy *unit type* at *location* | Destroys **my** units of that type there. |
 | I own all *unit type* at *location* | Takes over every unit of that type in the area, whoever owns it. |
 | Heal / Damage *unit type* by *value* at *location* | Changes the hit points of my units there by *value* hit points (not a percentage). |
@@ -1270,8 +1313,12 @@ Notes:
 - Each test leaves a verified copy of the map in the game's `MapCache` folder.
   These copies appear in the game's and Cartographer's map lists as
   *Test* followed by a number and a fingerprint, for example
-  `Test 1792011008282376239 [bc9730de769612c0]`. They are harmless; delete
-  them from `MapCache` if the list gets long.
+  `Test 1792011008282376239 [bc9730de769612c0]`, and they keep their scenario
+  (see [When scenarios run](#when-scenarios-run)). They are harmless. On disk
+  each copy is a pair of files, `.kmp` and `.takmap`, whose long names start
+  with the 16 characters in brackets. The same folder also holds the maps the
+  game has downloaded for multiplayer games, so if you clear out test copies,
+  delete only the pairs whose names match a test copy's fingerprint.
 
 ### Trigger log
 
@@ -1397,19 +1444,21 @@ A `.kmp` file is a single archive holding these files:
 
 #### Sharing a scenario
 
-A scenario's placed units and rules do not run from the ordinary map list (see
-[When scenarios run](#when-scenarios-run)). To play a scenario `.kmp`, open it in
-the game's test lobby directly, from a command prompt or terminal:
+A scenario's placed units and rules do not run from your saved `.kmp` in the
+ordinary map list (see [When scenarios run](#when-scenarios-run)). To play a
+scenario `.kmp`, open it in the game's test lobby directly, from a command
+prompt or terminal, giving the full path of the file, for example:
 
 ```sh
-takclient --play-map "Twin Rivers.kmp"
+takclient --play-map "/home/player/Games/TA Kingdoms/Maps/Twin Rivers.kmp"
 ```
 
-On Windows the program is `takclient.exe` in the game's folder; on macOS it is
-inside the app, at
+On Windows the program is `takclient.exe`, in the same folder as
+`cartographer.exe`; on macOS it is inside the app, at
 `Total Annihilation - Kingdoms.app/Contents/MacOS/takclient`. This opens the
 same private lobby as F5 in Cartographer. The `.kmp` must contain exactly one
-map.
+map. Afterwards the scenario's test copy stays in the player's map list (with a
+fingerprint in brackets), so they can choose it from there next time.
 
 ### Where Cartographer keeps its files
 
@@ -1446,7 +1495,7 @@ and saves them at once; **CANCEL** (**Esc**) leaves them unchanged.
 | Setting | Choices | Notes |
 | --- | --- | --- |
 | **DISPLAY (F11 TOGGLES)** | WINDOWED, BORDERLESS FULLSCREEN | Fullscreen covers the screen at its own resolution. Leaving it restores the window's size and position. **F11** switches at any time. |
-| **EDGE SCROLLING (POINTER AT THE MAP EDGE)** | OFF (default), ON | When on, resting the pointer within a few pixels of the map's edge for a moment scrolls the view that way, and stops at the edge of the map. In fullscreen, pushing the pointer against the edge of the screen works too. It does not scroll over the browser, the minimap, menus or dialogs, or while a mouse button is held. |
+| **EDGE SCROLLING (POINTER AT THE MAP EDGE)** | OFF (default), ON | When on, resting the pointer within a few pixels of the map's edge for a moment scrolls the view that way, and stops at the edge of the map. Resting the pointer on the outermost pixel of the window (of the screen, in fullscreen) also scrolls, even over the browser, menu bar or status bar. It does not scroll over the minimap, while a menu, dialog or window is open, or while a mouse button is held. |
 | **UI SCALE (CAPPED TO FIT THE WINDOW)** | 50% to 200% (default 200%) | Makes all of the editor's text and controls bigger or smaller. The scale is reduced automatically so the editor always fits the window, so on a small window you may see less than the chosen size. **View → Smaller UI** and **Larger UI** change it in 25% steps. |
 
 ### Game data folder
@@ -1530,8 +1579,10 @@ and so on), except where a Ctrl combination is listed below.
 | | **Delete** | Delete the selected region |
 | | **Esc** | Cancel a drag, or leave region mode |
 
-With the Starts tool, or in region mode, **Ctrl+C** runs Check Map (there is
-nothing to copy there, so the **C** shortcut takes it).
+With the Starts tool, in region mode, or when the current tool's layer is
+hidden, **Ctrl+C** runs Check Map (there is nothing to copy there, so the **C**
+shortcut takes it). With the Features or Units tool, **Ctrl+C** with nothing
+selected empties that clipboard.
 
 ### Dialogs and lists
 
@@ -1542,7 +1593,7 @@ nothing to copy there, so the **C** shortcut takes it).
 | Scenario description | **Shift+Enter** new line |
 | Unsaved changes | **Enter** save and close, **Esc** cancel |
 | Generated map preview | **Enter** accept, **Esc** discard |
-| Busy boxes (checking, overlays, generating, model loading) | **Esc** cancel |
+| Busy boxes (checking, overlays, generating, model loading, saving) | **Esc** cancel |
 | Validation results, Use Only, model preview | **Enter** or **Esc** close |
 | Placed units | type to filter, **Up** / **Down**, **Enter** select, **Shift+Enter** properties, **Esc** close |
 | Regions list | **Ctrl+N** new, **Enter** edit, **Esc** close |
@@ -1583,7 +1634,8 @@ Open your copy with **File → Open** (it is in the Recent list), then **Save As
 under a new name.
 
 **My placed units, rules or Use Only list do nothing in a skirmish.**
-That is expected: scenario content runs only in a test game. See
+That is expected: scenario content runs only in a test game, or from the test
+copy that a test leaves in the map list. See
 [When scenarios run](#when-scenarios-run).
 
 **The game says "Seat player N in the lobby to play this scenario".**
@@ -1592,9 +1644,11 @@ N. Remember that owner 0 in the editor is Player 1.
 
 **Test Map says "Cannot find takclient beside Cartographer".**
 Cartographer starts the game from its own folder. Install the game and
-Cartographer from the same package and keep them together (on macOS, both apps
-in the same folder). You can also save the map and open it with
-`takclient --play-map` (see [Sharing a scenario](#sharing-a-scenario)).
+Cartographer from the same package and keep them together. On macOS the apps
+from the disk image currently show this message even when they are side by side
+(see [Known limits](#known-limits)). In every case you can save the map and
+open it with `takclient --play-map` (see
+[Sharing a scenario](#sharing-a-scenario)).
 
 **Cartographer closed when I pressed Esc.**
 With nothing left to cancel, Esc closes Cartographer; if everything was saved it
@@ -1616,16 +1670,17 @@ Brush: protect objects** first, or press **Ctrl+Z**.
 
 **The terrain I stamped is not mirrored.**
 Either the section has no mirror twin (the status bar says *NO MIRROR TWIN*),
-or the stamp touched the symmetry axis. Stamp another piece, or fix the other
+or the stamp crossed the symmetry axis. Stamp another piece, or fix the other
 side by hand.
 
 **Ctrl+C opened Check Map.**
-With the Starts tool (or in region mode) there is nothing to copy, so Ctrl+C
-acts as **C**. Close the results with Esc.
+With the Starts tool, in region mode, or with the current tool's layer hidden,
+there is nothing to copy, so Ctrl+C acts as **C**. Close the results with Esc.
 
 **Cartographer cannot find my game data, or I want to switch installs.**
-Use **View → Preferences → GAME DATA FOLDER**, or start Cartographer once with
-`--data <folder>`. The folder must contain `data.hpi`, `terrain.hpi`,
+Use **View → Preferences → GAME DATA FOLDER**, which saves the folder for
+Cartographer and the game. Starting Cartographer with `--data <folder>` also
+works, but only for that launch: it is not remembered. The folder must contain `data.hpi`, `terrain.hpi`,
 `sections.hpi` and `maps.hpi`.
 
 **The text is too small or too big.**
@@ -1642,7 +1697,15 @@ Start Cartographer from its shortcut and choose **Recover**. See
 ## Known limits
 
 - **Scenarios run only in test games.** A map from the ordinary map list plays
-  as a skirmish map; the shipped scripted maps behave the same way.
+  as a skirmish map; the shipped scripted maps behave the same way. Only the
+  test copies that Test Map and `--play-map` leave in the list keep their
+  scenario.
+- **Test Map on macOS.** Started from **TAK Cartographer.app**, Test Map looks
+  for the game in the wrong place and reports *Cannot find takclient beside
+  Cartographer*, even with both apps in the same folder. Save the map and open
+  it with `takclient --play-map` instead (see
+  [Sharing a scenario](#sharing-a-scenario)). The macOS ZIP, which keeps
+  `cartographer` and `takclient` in one folder, is not affected.
 - **No height brush.** Heights come with terrain sections; there is no tool for
   raising or lowering ground directly.
 - **Terrain is never flipped.** Symmetry uses twin sections, which are found by
