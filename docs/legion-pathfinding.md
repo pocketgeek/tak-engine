@@ -1694,7 +1694,9 @@ third of it or less, or 90 degrees of turning keeping a third or less):
   rise in `island-1x150`, whose strip and abreast crossings go from 10 and 9
   to 55 and 43 (2,187 to 2,637 in the lane), from the side-step guard: a body
   that may not step back takes another field step inward or holds and
-  side-steps (without the guard 3, 3 and 2,278).
+  side-steps (without the guard 3, 3 and 2,278). The six Retail-floor
+  exceptions and the lane-crossing rise were accepted by user decision
+  (2026-10-14).
 - The crowdbench screen (86 rows): the 43 Retail rows are identical; Legion
   settles 29,300 arrivals against 29,219, spins 40,716 unit-ticks against
   41,981, and 65 units are ever terrain-stuck against 61.

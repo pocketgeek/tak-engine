@@ -285536,37 +285536,37 @@
   {
    "cluster": "LL-257",
    "key": "g.H.arrived",
-   "reason": "protocol 257 (task-legion-livelock, the 0.8.1 walk-in-place fix): Retail floor: legion 1 vs retail 2 (needs legion x1.1 >= retail) (3 -> 1 (median of the core offsets); the base head's own per-offset range is 1..7). the livelock latch (a body that walked or turned to and fro over a headway window is held: no flow-round, arc or lane pass while it lasts, so the hold's own ways out start) and the side-step guard (no flow straight back after a blocked step toward the arc) change which bodies hold, step aside or yield, so the run takes another course. A borderline key: the base head passed it narrowly; Retail is unchanged",
+   "reason": "protocol 257 (task-legion-livelock, the 0.8.1 walk-in-place fix): Retail floor: legion 1 vs retail 2 (needs legion x1.1 >= retail) (3 -> 1 (median of the core offsets); the base head's own per-offset range is 1..7). the livelock latch (a body that walked or turned to and fro over a headway window is held: no flow-round, arc or lane pass while it lasts, so the hold's own ways out start) and the side-step guard (no flow straight back after a blocked step toward the arc) change which bodies hold, step aside or yield, so the run takes another course. A borderline key: the base head passed it narrowly; Retail is unchanged. Accepted by user decision LL-257 (2026-10-14)",
    "scenario": "corner-1x448"
   },
   {
    "cluster": "LL-257",
    "key": "gate.top.crossings",
-   "reason": "protocol 257 (task-legion-livelock, the 0.8.1 walk-in-place fix): Retail floor: legion 1 vs retail 0 (needs legion <= retail x1.1) (0 -> 1 (eleven-offset median); the base head's own per-offset range is 0..6). the livelock latch (a body that walked or turned to and fro over a headway window is held: no flow-round, arc or lane pass while it lasts, so the hold's own ways out start) and the side-step guard (no flow straight back after a blocked step toward the arc) change which bodies hold, step aside or yield, so the run takes another course. A borderline key: the base head passed it narrowly; Retail is unchanged",
+   "reason": "protocol 257 (task-legion-livelock, the 0.8.1 walk-in-place fix): Retail floor: legion 1 vs retail 0 (needs legion <= retail x1.1) (0 -> 1 (eleven-offset median); the base head's own per-offset range is 0..6). the livelock latch (a body that walked or turned to and fro over a headway window is held: no flow-round, arc or lane pass while it lasts, so the hold's own ways out start) and the side-step guard (no flow straight back after a blocked step toward the arc) change which bodies hold, step aside or yield, so the run takes another course. A borderline key: the base head passed it narrowly; Retail is unchanged. Accepted by user decision LL-257 (2026-10-14)",
    "scenario": "corner-8x30"
   },
   {
    "cluster": "LL-257",
    "key": "gate.top.crossings",
-   "reason": "protocol 257 (task-legion-livelock, the 0.8.1 walk-in-place fix): Retail floor per file (W8-1): legion 2.13 vs retail 0.65 (needs legion <= retail x1.1) (6 -> 8 (eleven-offset median); the base head's own per-offset range is 2..20). the livelock latch (a body that walked or turned to and fro over a headway window is held: no flow-round, arc or lane pass while it lasts, so the hold's own ways out start) and the side-step guard (no flow straight back after a blocked step toward the arc) change which bodies hold, step aside or yield, so the run takes another course. A borderline key: the base head passed it narrowly; Retail is unchanged",
+   "reason": "protocol 257 (task-legion-livelock, the 0.8.1 walk-in-place fix): Retail floor per file (W8-1): legion 2.13 vs retail 0.65 (needs legion <= retail x1.1) (6 -> 8 (eleven-offset median); the base head's own per-offset range is 2..20). the livelock latch (a body that walked or turned to and fro over a headway window is held: no flow-round, arc or lane pass while it lasts, so the hold's own ways out start) and the side-step guard (no flow straight back after a blocked step toward the arc) change which bodies hold, step aside or yield, so the run takes another course. A borderline key: the base head passed it narrowly; Retail is unchanged. Accepted by user decision LL-257 (2026-10-14)",
    "scenario": "gap10"
   },
   {
    "cluster": "LL-257",
    "key": "contact_other_permille",
-   "reason": "protocol 257 (task-legion-livelock, the 0.8.1 walk-in-place fix): Retail floor: legion 482 vs retail 421 (needs legion <= retail x1.1) (456 -> 482 (median of the core offsets); the base head's own per-offset range is 450..483). the livelock latch (a body that walked or turned to and fro over a headway window is held: no flow-round, arc or lane pass while it lasts, so the hold's own ways out start) and the side-step guard (no flow straight back after a blocked step toward the arc) change which bodies hold, step aside or yield, so the run takes another course. A borderline key: the base head passed it narrowly; Retail is unchanged",
+   "reason": "protocol 257 (task-legion-livelock, the 0.8.1 walk-in-place fix): Retail floor: legion 482 vs retail 421 (needs legion <= retail x1.1) (456 -> 482 (median of the core offsets); the base head's own per-offset range is 450..483). the livelock latch (a body that walked or turned to and fro over a headway window is held: no flow-round, arc or lane pass while it lasts, so the hold's own ways out start) and the side-step guard (no flow straight back after a blocked step toward the arc) change which bodies hold, step aside or yield, so the run takes another course. A borderline key: the base head passed it narrowly; Retail is unchanged. Accepted by user decision LL-257 (2026-10-14)",
    "scenario": "gen1-route-61923"
   },
   {
    "cluster": "LL-257",
    "key": "gate.strip.crossings",
-   "reason": "protocol 257 (task-legion-livelock, the 0.8.1 walk-in-place fix): Retail floor: legion 6 vs retail 4 (needs legion <= retail x1.1) (3 -> 6 (eleven-offset median); the base head's own per-offset range is 0..13). the livelock latch (a body that walked or turned to and fro over a headway window is held: no flow-round, arc or lane pass while it lasts, so the hold's own ways out start) and the side-step guard (no flow straight back after a blocked step toward the arc) change which bodies hold, step aside or yield, so the run takes another course. A borderline key: the base head passed it narrowly; Retail is unchanged",
+   "reason": "protocol 257 (task-legion-livelock, the 0.8.1 walk-in-place fix): Retail floor: legion 6 vs retail 4 (needs legion <= retail x1.1) (3 -> 6 (eleven-offset median); the base head's own per-offset range is 0..13). the livelock latch (a body that walked or turned to and fro over a headway window is held: no flow-round, arc or lane pass while it lasts, so the hold's own ways out start) and the side-step guard (no flow straight back after a blocked step toward the arc) change which bodies hold, step aside or yield, so the run takes another course. A borderline key: the base head passed it narrowly; Retail is unchanged. Accepted by user decision LL-257 (2026-10-14)",
    "scenario": "wall-1x48"
   },
   {
    "cluster": "LL-257",
    "key": "contact_own_permille",
-   "reason": "protocol 257 (task-legion-livelock, the 0.8.1 walk-in-place fix): Retail floor: legion 718 vs retail 652 (needs legion <= retail x1.1) (695 -> 718 (median of the core offsets); the base head's own per-offset range is 683..711). the livelock latch (a body that walked or turned to and fro over a headway window is held: no flow-round, arc or lane pass while it lasts, so the hold's own ways out start) and the side-step guard (no flow straight back after a blocked step toward the arc) change which bodies hold, step aside or yield, so the run takes another course. A borderline key: the base head passed it narrowly; Retail is unchanged",
+   "reason": "protocol 257 (task-legion-livelock, the 0.8.1 walk-in-place fix): Retail floor: legion 718 vs retail 652 (needs legion <= retail x1.1) (695 -> 718 (median of the core offsets); the base head's own per-offset range is 683..711). the livelock latch (a body that walked or turned to and fro over a headway window is held: no flow-round, arc or lane pass while it lasts, so the hold's own ways out start) and the side-step guard (no flow straight back after a blocked step toward the arc) change which bodies hold, step aside or yield, so the run takes another course. A borderline key: the base head passed it narrowly; Retail is unchanged. Accepted by user decision LL-257 (2026-10-14)",
    "scenario": "wall-4x50"
   }
  ],
