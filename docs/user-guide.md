@@ -1454,9 +1454,10 @@ the folder in either program changes it for both.
   picks another install. An invalid choice keeps the current folder and says
   what is missing; a good one is saved at once for both the editor and the
   game. **Restart now** then restarts the editor to load it. It asks first if
-  you have unsaved changes, and reopens your map. The folder cannot be changed
-  here when the editor was started with `--data` or from inside an install
-  folder.
+  you have unsaved changes, and reopens your map (if the new install does not
+  have that map, the editor opens on a blank map and says so). The folder
+  cannot be changed here when the editor was started with `--data` or from
+  inside an install folder.
 
 ### Symmetry and terrain copy
 

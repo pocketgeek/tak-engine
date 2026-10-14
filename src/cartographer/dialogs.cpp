@@ -666,6 +666,7 @@ void cart::Editor::handleModal(SDL_Event& e) {
             if (saveBundle(outDir + "/" + mapName + ".kmp")) {
                 dirty = false; running = false; modal = M_NONE;
             } else {
+                restartAfterQuit = false;   // a pending RESTART NOW is off too: the work is still unsaved
                 openMessage("SAVE FAILED",
                             saveError);
             }

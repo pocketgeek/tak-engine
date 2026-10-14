@@ -367,7 +367,12 @@ registry key the retail installer wrote.
   and headless options dropped, and the document reopened -- its saved
   `.kmp`/`.tnt` file, or the installed map's name, or nothing for an unsaved
   new map. A file named on the command line now opens through File > Open once
-  the editor is up, which is how the restarted editor gets it back.
+  the editor is up, which is how the restarted editor gets it back. So does a
+  map name the install does not have, in an interactive launch: the editor
+  opens on the blank map with OPEN FAILED instead of exiting, since the new
+  install may lack the map that was open (headless runs still exit 1). If the
+  prompt's SAVE fails, the restart is called off with it, so a later exit is
+  only an exit.
 - **Greyed** with the reason when `--data` or the launch folder chose the
   install: either would win again after the restart.
 - Tests: `datafolder` (precedence, pick outcomes, elision, both programs'
@@ -376,7 +381,9 @@ registry key the retail installer wrote.
   the other's change, DEFAULTS) and `cartographer_datafolder_ui` (invalid,
   cancel, saved at once with its manifest, RESTART NOW relaunching with this
   map, the restarted editor mounting the new folder, the unsaved prompt's
-  CANCEL and DISCARD, `--data` greying it). The test profile
+  CANCEL and DISCARD, `--data` greying it, SAVE relaunching with the saved
+  file and the new editor reopening it, a missing map opening the editor, a
+  failed SAVE calling the restart off). The test profile
   (`TAK_CARTOGRAPHER_PROFILE`) redirects the game's settings file to
   `game-settings.ini` inside it (`tak::setSettingsPath`), in every build type,
   so no test reads or writes the player's real settings.

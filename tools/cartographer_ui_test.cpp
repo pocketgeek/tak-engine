@@ -1540,9 +1540,72 @@ static int dataFolderWorkflow(const char* data) {
         }
     });
     check(result==0 && relaunches.size()==2,"quitting a --data launch does not restart");
+
+    // 4. What the restarted editor is handed. SAVE in the restart prompt relaunches with the
+    // saved file, which the new editor opens from disk on the new install; a map the new
+    // install lacks still opens the editor (OPEN FAILED over the blank map, not an exit); a
+    // SAVE that fails cancels the pending restart, so a later Esc exit is only an exit.
+    const auto saved=root/"Ulasem Arena.kmp";
+    auto edit=[&] {editor->scenario.missionName+=" (edited)";editor->historyPending=editor->dirty=true;};   // a real, undoable change
+    picks={other};picked=0;editor=nullptr;
+    if(failure.empty())result=run(args,[&](SDL_Window*,SDL_Renderer*,const Pointer& pointer,Uint64) {
+        switch(phase) {
+        case 0:check(editor->dataRoot==original,"part 4 starts on the original folder");edit();openPreferences(pointer);next();break;
+        case 1:{const auto c=center(editor->mFolderChange);pointer.click(c.x,c.y);}next();break;
+        case 2:if(!editor->folderPick.busy())next();break;
+        case 3:next();break;
+        case 4:{const auto c=center(editor->mFolderRestart);pointer.click(c.x,c.y);}next();break;
+        case 5:check(editor->modal==cart::Editor::M_QUITSAVE,"unsaved work is asked about");{const auto c=center(editor->mOK);pointer.click(c.x,c.y);}next();break;
+        case 6:if(!editor->running)break;check(false,"SAVE restarts");quit();next();break;
+        }
+    });
+    std::error_code same;
+    check(result==0 && relaunches.size()==3 && relaunches.back().size()==3 && relaunches.back()[0]=="--out" &&
+          fs::equivalent(fs::u8path(relaunches.back()[2]),saved,same),"SAVE relaunches with the saved file");
+    std::vector<std::string> reopened={"cartographer"};
+    if(relaunches.size()==3)reopened.insert(reopened.end(),relaunches.back().begin(),relaunches.back().end());
+    editor=nullptr;
+    if(failure.empty())result=run(reopened,[&](SDL_Window*,SDL_Renderer*,const Pointer&,Uint64) {
+        if(phase!=0)return;
+        check(editor && editor->dataRoot==other && editor->modal!=cart::Editor::M_MESSAGE && editor->mapName=="Ulasem Arena" &&
+              !editor->dirty && fs::equivalent(fs::u8path(editor->documentRequest),saved,same),
+              "the restarted editor reopens the saved file on the new folder ("+(editor?editor->mapName+", "+editor->mTitle:std::string())+")");
+        if(editor)editor->dirty=false;   // leave without the save prompt, whatever was open
+        quit();next();
+    });
+    check(result==0,"the reopened editor exits cleanly");
+    editor=nullptr;
+    if(failure.empty())result=run({"cartographer","No Such Map","--out",root.string()},[&](SDL_Window*,SDL_Renderer*,const Pointer&,Uint64) {
+        if(phase!=0)return;
+        check(editor && editor->running && editor->modal==cart::Editor::M_MESSAGE && editor->mTitle=="OPEN FAILED",
+              "a map the new folder lacks opens the editor and says so");
+        if(editor)editor->dirty=false;
+        quit();next();
+    });
+    check(result==0,"a missing map is not an exit code");
+    const auto notFolder=root/"not-a-folder";{std::ofstream(notFolder)<<"x";}
+    picks={original};picked=0;editor=nullptr;
+    if(failure.empty())result=run({"cartographer","Ulasem Arena","--out",text(notFolder)},[&](SDL_Window*,SDL_Renderer*,const Pointer& pointer,Uint64) {
+        switch(phase) {
+        case 0:edit();openPreferences(pointer);next();break;
+        case 1:{const auto c=center(editor->mFolderChange);pointer.click(c.x,c.y);}next();break;
+        case 2:if(!editor->folderPick.busy())next();break;
+        case 3:next();break;
+        case 4:{const auto c=center(editor->mFolderRestart);pointer.click(c.x,c.y);}next();break;
+        case 5:{const auto c=center(editor->mOK);pointer.click(c.x,c.y);}next();break;   // SAVE, into a file: fails
+        case 6:
+            check(editor->running && editor->modal==cart::Editor::M_MESSAGE && editor->mTitle=="SAVE FAILED" && !editor->restartAfterQuit,
+                  "a failed save keeps the editor and cancels the restart");
+            editor->modal=cart::Editor::M_NONE;key(SDLK_ESCAPE);next();break;   // then leave with Esc
+        case 7:check(editor->modal==cart::Editor::M_QUITSAVE,"Esc asks about the unsaved work");next();break;
+        case 8:{const auto c=center(editor->mQuit);pointer.click(c.x,c.y);}next();break;
+        case 9:if(!editor->running)break;check(false,"DISCARD exits");quit();next();break;
+        }
+    });
+    check(result==0 && relaunches.size()==3,"an exit after a failed restart save is not a restart");
     fs::remove_all(root,ec);
     if(!failure.empty()) {std::cerr<<"data folder: "<<failure<<'\n';return 1;}
-    std::cout<<"PASS: preferences data folder (invalid kept, cancel, shared setting saved at once, RESTART NOW reopens the map, restarted editor mounts it, unsaved prompt CANCEL/DISCARD, --data greys it)\n";return 0;
+    std::cout<<"PASS: preferences data folder (invalid kept, cancel, shared setting saved at once, RESTART NOW reopens the map, restarted editor mounts it, unsaved prompt CANCEL/DISCARD, --data greys it, SAVE reopens the saved file, a missing map opens anyway, a failed save cancels the restart)\n";return 0;
 }
 
 int main(int argc,char** argv) {

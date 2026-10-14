@@ -196,8 +196,8 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     showWelcome=interactive && mapName.empty() && pendingOpen.empty() && !newW && !preferences.guideSeen;
     mapPath=recoveredMapPath;
     if(recoveredMapPath.empty())documentRequest=mapName;   // an installed map reopens by name
-    if (!mapName.empty()) {
-        if(mapPath.empty())for (const auto& [name, path] : tak::hpi::listMaps(vfs)) {
+    if (!mapName.empty() && mapPath.empty()) {
+        for (const auto& [name, path] : tak::hpi::listMaps(vfs)) {
             std::string lo = name;
             for (char& c : lo) c = char(std::tolower((unsigned char)c));
             std::string want = mapName;
@@ -206,8 +206,14 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
         }
         if (mapPath.empty()) {
             std::fprintf(stderr, "map '%s' not found in %s\n", mapName.c_str(), dataRoot.c_str());
-            throw Exit{1};
+            // Headless runs fail. The editor itself opens and says why (File > Open's
+            // OPEN FAILED over the blank map): a restart onto a new GAME DATA FOLDER that
+            // lacks the open map, or a VFS path File > Open accepted, must not just vanish.
+            if(!interactive) throw Exit{1};
+            pendingOpen=mapName;mapName.clear();
         }
+    }
+    if (!mapName.empty()) {
         mapViewPtr = std::make_unique<MapView>(ren, vfs, mapPath);
         // Companion .ota (metadata + start positions), so a Save round-trips the
         // whole map. Missing/parse-fail = defaults.
