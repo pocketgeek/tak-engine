@@ -25,7 +25,8 @@ the title, 88 for the gallery and 86 for the guide; guide images are scaled from
 `guide/selection-strip.jpg` to the information bar. The Cartographer images are
 the editor's own `--shot` output at its 921 × 691 default window. Nothing was painted into a scene. The guide's HUD picture has
 numbered markers drawn on top, and the Retail/Legion and Tactical Dots comparisons
-put two captures side by side under text labels.
+put two captures side by side under text labels. The Cartographer guide's pictures
+are described in [their own section](#cartographer-guide-docsimgcartographer).
 
 Several scenes were set up with debug-build harnesses. Release builds do not have
 these switches. Captions say when a picture is a **development scene**:
@@ -110,6 +111,81 @@ none shows the Options screen, and none has a selection or a squad marker.
 
 The first-launch folder picker is the operating system's own dialog
 (`kdialog`/`zenity`, Finder or Explorer), so it has no in-engine screenshot.
+
+## Cartographer guide (`docs/img/cartographer/`)
+
+Added on 2026-10-14 for the [Cartographer user guide](../cartographer-guide.md),
+from a build of `main` after 0.8.2 (Debug with `-O2`). Every picture is real
+editor output, inspected by eye; the Test Map lobby is the game's.
+
+**How they were captured.** A scratch capture driver, kept outside Git, links the
+editor objects that the `cartographer_ui_test` target builds (the release editor
+code; the test define only removes `main`) and drives the editor through its own
+SDL input path from the frame hook, as a player's clicks and keys would: menu and
+toolbar clicks, browser picks, drags, key presses and a warped pointer for hover
+states such as previews and the status-bar name. Nothing was drawn into the
+editor. Before each capture the driver waited until terrain thumbnails, unit
+portraits and feature sprites had stopped loading and the terrain was fully
+composed, so no browser cell or tree is a placeholder.
+
+- **Window.** The SDL `offscreen` driver gives the editor's default window,
+  921 × 691, as for `cartographer.png` (UI scale about 102%). Pictures are either
+  that whole window or a crop of it, as listed.
+- **Profiles.** Each run used scratch `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+  `TAK_CARTOGRAPHER_PROFILE` and `TAK_SETTINGS_FILE`, never a user profile.
+- **Data folder.** The retail `.hpi` archives were linked into a scratch install
+  with an empty `Maps` folder. The capture runs saw that install at
+  `/home/player/Games/TA Kingdoms` through a private mount namespace
+  (`unshare`), so the paths shown in Save As, Open Map and Preferences are
+  neutral. *Twin Rivers*, *Silverford* and *Practice* are maps made in the
+  editor during the captures; *Ulasem Arena* and *King of the Hill* are shipped
+  maps. Edits made for a picture were not saved over them.
+- **Test Map.** `test-map.jpg` was taken with a stand-in `takclient` beside the
+  driver (it kept a copy of the snapshot and waited), so no game opened. That
+  snapshot was then opened with the debug game client
+  (`takclient --data … --play-map <snapshot> --shot`, `TAK_SHOT_MS=9000`,
+  `SDL_RENDER_DRIVER=opengl`, offscreen at 1024 × 768) for `test-lobby.jpg`;
+  the release client opens the same lobby but has no `--shot`.
+- **Markers and composites.** `window-annotated.jpg` has numbered markers drawn
+  on a copy of the capture with Pillow. `random-generator.jpg`,
+  `symmetry-stamp.jpg`, `terrain-clipboard.jpg` and `features-select.jpg` put two
+  crops side by side under text labels, and `menus.jpg` puts six crops of the
+  opened menus together (each with only its own menu title).
+- **Encoding.** JPEG, full chroma resolution, quality 86, not scaled. The 26
+  files total about 2.7 MB.
+
+| Image | Scene |
+| --- | --- |
+| `window-annotated.jpg` | Ulasem Arena, Terrain tool, view centred on the arena at 35%, whole window. Markers 1–13: menu bar, tools, modes, REGIONS, TEST MAP, search, group button, counter line, variant badge, scrollbar, canvas, minimap, status bar |
+| `new-map.jpg` | Bare launch with a fresh profile: the New Map dialog over the blank Untitled 8 × 8 Aramon map, whole window |
+| `random-generator.jpg` | Composite. Left: Random Map Settings (seed 2026, 4 players, Aramon Riverlands, 16 × 16, other fields default). Right: the Generated Map Preview it produced. Dialog crops |
+| `terrain-groups.jpg` | Ulasem Arena, the terrain group list open, whole window |
+| `terrain-variant.jpg` | Ulasem Arena, Cliff W clicked twice (variant 2/3) with the pointer on it, so the status bar shows its full name. Crop of the left 470 px |
+| `symmetry-stamp.jpg` | Composite of two crops. Ulasem Arena, live symmetry (vertical axis), Low Sandy to High Sandy *Transition NW outer* chosen. Left: the preview before the click; right: the stamped section and its twin |
+| `terrain-clipboard.jpg` | Composite of two crops. Ulasem Arena, Terrain + Select: a 15 × 15-block rectangle (left); after Ctrl+C and Ctrl+V, the clipboard brush under the pointer (right) |
+| `symmetrize.jpg` | Ulasem Arena, Shift+M, the Symmetrize dialog. Dialog crop |
+| `features.jpg` | Ulasem Arena, Features tool, category *trees*: five palm trees placed by clicking, the preview of a sixth under the pointer, whole window |
+| `features-select.jpg` | Composite of two crops of the same trees: the selection box being dragged in Select mode, then the selected anchor cells |
+| `units.jpg` | King of the Hill, Units tool filtered to GROUND and ARAMON; Player 1's units box-selected in Select mode at 75%, whole window |
+| `unit-properties.jpg` | King of the Hill, Unit Properties of one of Player 1's Archers (opened with Shift+Enter in Placed units) with *Captain Aldric* typed as the display name, not applied. Dialog crop |
+| `unit-model.jpg` | Ulasem Arena, Units browser searched for *knight*, F6 on the Aramon Knight. Crop of the browser and the model window |
+| `starts.jpg` | Ulasem Arena, Starts tool, View → Fit map (7%), whole window |
+| `regions.jpg` | King of the Hill at Fit map, REGIONS on in Select mode with The Hill selected, whole window |
+| `scripting.jpg` | King of the Hill, Scenario Scripting with Rule 1 of All Players selected. Crop of the scripting window |
+| `rule-editor.jpg` | The same, with Rule 1's condition open for editing and its LOCATION list opened with Alt+Down. Crop of the scripting window |
+| `templates.jpg` | King of the Hill, Objective Templates. Dialog crop |
+| `check-map.jpg` | *Practice*: a new 8 × 8 Aramon map with one start, a Horseman, and a War Galley placed on dry land; then Check Map. Dialog crop |
+| `overlay-movement.jpg` | Ulasem Arena at 40%, Horseman chosen in the Units browser, View → Overlay: movement, whole window |
+| `preferences.jpg` | View → Preferences with default settings. Dialog crop |
+| `open-map.jpg` | Open Map after opening King of the Hill and saving *Twin Rivers*, so two Recent rows lead the list. Dialog crop |
+| `save-as.jpg` | Save As for the new map *Twin Rivers*. Dialog crop |
+| `test-map.jpg` | King of the Hill after F5: the TEST MAP message, with TEST RUNNING on the toolbar, whole window |
+| `test-lobby.jpg` | The game's private lobby for that King of the Hill snapshot (four seats open), 1024 × 768 cropped to the lobby panel |
+| `menus.jpg` | Composite: the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each opened over Ulasem Arena or King of the Hill and cropped to the menu |
+
+The native dialogs (the first-start folder picker, *Not a game folder*,
+*Recover map* and *Restart failed*) belong to the operating system and are not
+pictured.
 
 ## Capture settings
 

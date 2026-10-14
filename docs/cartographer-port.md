@@ -10,6 +10,7 @@ This document records the retail research and original port milestones. The
 editor's newer workflow, validation and authoring improvements are tracked in
 [the current implementation ledger](cartographer-improvements-progress.md);
 the historical milestone lists below are not a current feature checklist.
+For how to use the editor, see the [Cartographer user guide](cartographer-guide.md).
 
 ## What it is (from the PE)
 

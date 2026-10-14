@@ -10,7 +10,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
-[Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [Build from source](docs/development.md)
+[Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [Map editor guide](docs/cartographer-guide.md) · [Build from source](docs/development.md)
 
 <a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.2"></a>
 
@@ -701,7 +701,7 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   section's mirror-image twin; **Ctrl+C**/**Ctrl+V** in the Terrain tool's
   Select mode copy and paste blocks of terrain with their objects. The terrain
   browser groups sections by kind and folder, with one thumbnail per piece and
-  its numbered variants. See [Cartographer](docs/user-guide.md#symmetry-and-terrain-copy).
+  its numbered variants. See [Symmetry](docs/cartographer-guide.md#symmetry) in the Cartographer guide.
   **View** can hide features, units, starts and regions; layer choices are remembered.
   Terrain thumbnails, unit portraits and feature sprites load in the background;
   the minimap refreshes after terrain edits. Check Map reports starts, mana,
@@ -721,8 +721,9 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   means the scenario can remain a sandbox. See [scenario details and limits](docs/crt-triggers.md).
   Close the test game to return to editing. Verified snapshots remain in the map
   cache, like other downloaded maps; the temporary source is removed after exit.
-  A first-launch guide introduces editing and saving. Hover over toolbar controls,
-  filters or the minimap for action help and shortcuts.
+  Hover over toolbar controls, filters or the minimap for action help and
+  shortcuts. The [Cartographer user guide](docs/cartographer-guide.md) explains
+  every tool, with pictures and a first-map walkthrough.
   The embedded editor font supports mixed case, accented Latin (incl. Vietnamese), Greek, Cyrillic, Armenian, Georgian, common symbols, kana, Hangul and common Han (double-width); other scripts show a replacement box.
   **T** opens scenario scripting; its full-text area wraps long operands, supports
   **Page Up/Page Down** scrolling, and offers **Copy Text** for the selected rule.

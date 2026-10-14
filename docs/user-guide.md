@@ -1,6 +1,6 @@
 # TAK Engine user guide
 
-[Back to the README](../README.md) · [Build and development guide](development.md)
+[Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
 This guide covers **TAK Engine 0.8.2** (network protocol **257**, replay format
 **12**). It is written for three kinds of reader:
@@ -68,7 +68,8 @@ What you can play:
 - **The campaigns**: the base game's *Book of Darien* and the *Iron Plague*
   campaign, including its alternate ending.
 - **Replays** of your finished games.
-- **Cartographer**, a map and scenario editor.
+- **Cartographer**, a map and scenario editor, with its own
+  [user guide](cartographer-guide.md).
 
 ---
 
@@ -1436,107 +1437,73 @@ same file.
 *Cartographer's Units browser, map canvas and minimap.*
 
 **Cartographer** is TAK Engine's map and scenario editor. Launch it from its
-application shortcut. It uses the same data folder as the game, and changing
-the folder in either program changes it for both.
+application shortcut (**TAK Cartographer** on Windows and macOS, **Cartographer**
+on Linux). It uses the same data folder as the game, and changing the folder in
+either program changes it for both.
+
+> **The [Cartographer user guide](cartographer-guide.md) covers the editor in
+> full**, with pictures: a walkthrough for a first 2-player map, every tool,
+> symmetry, random maps, scenarios and trigger rules, Check Map, Test Map,
+> saving and sharing, preferences, and a complete keyboard reference. This
+> section is a short overview.
 
 ### Basics
 
-- **File** offers New, Open (with recent maps), Save and Save As.
-  **Ctrl+S** saves a playable `.kmp` map; **Ctrl+Shift+S** is Save As.
-- Search the **terrain**, **feature** and **unit** browsers to find things to
-  place. Unit rows show build portraits and names.
-- The terrain browser groups sections by kind (cliffs, transitions, water and
-  coast, paths and roads, ...) and by their original folders; click the group
-  button to choose one. Numbered variants of a piece share one thumbnail, and
-  clicking the selected piece again steps to its next variant. Pieces show
-  readable names such as *Cliff · NE outer · variant 2*. Search covers every
-  group and also matches the original section names.
+- A plain start opens the **New Map** dialog: choose a name, a size and a world
+  and click **Create**, or **Random** for a generated map. **Ctrl+O** opens an
+  existing map.
+- **Ctrl+S** saves a playable `.kmp` map, by default in your install's `Maps`
+  folder, where the game finds it the next time it starts; **Ctrl+Shift+S** is
+  Save As. Saving keeps the previous version as a `.bak` file, and unsaved work
+  gets recovery copies every minute.
+- The four tools, **Terrain**, **Features**, **Units** and **Starts**, each have a
+  searchable browser on the left. The modes **Place**, **Select**, **Erase** and
+  **Pan** decide what a left click does. Right-drag pans, the mouse wheel zooms,
+  and the minimap at the top right moves the view.
+- Terrain is built from the original game's sections, which bring their own
+  heights. The terrain browser groups them by kind and by their original
+  folders; numbered variants of a piece share one thumbnail, and clicking the
+  selected piece again steps to its next variant.
 
   ![Cartographer's terrain browser showing the All sections group (555 pieces, 1261 sections) with cliff pieces named Cliff N, Cliff E, Cliff NE out and so on, each with a variant badge such as 1/3, beside the map canvas](img/guide/cartographer-terrain.jpg)
 
   *The grouped terrain browser on Ulasem Arena. The badge on each piece shows
   which of its variants is chosen and how many it has.*
-- Long browser lists have a scrollbar: drag it, click above or below it to
-  move a page, or use the mouse wheel over the browser.
-- **Place**, **Select**, **Erase** and **Pan** are separate tools. Right-drag
-  pans.
-- Select objects to move, copy, paste, duplicate, delete or edit their
-  properties.
-- **Ctrl+Z** / **Ctrl+Y** undo and redo. The editor keeps recovery copies, and
-  saving keeps the previous version as a `.bak` file.
-- **View** has a minimap, Fit Map, Frame Selection, layer visibility and
-  overlays for movement, buildability, water and slope.
-- **F6** opens a rotating 3D preview of the selected unit.
-- **View → Preferences** sets the display (a window or borderless fullscreen;
-  **F11** switches), edge scrolling (off by default: when on, resting the
-  pointer at an edge of the map view, or against the edge of the screen in
-  fullscreen, scrolls that way) and the UI scale. They are remembered between
-  sessions.
-- **View → Preferences** also shows the **game data folder**. **Change...**
-  picks another install. An invalid choice keeps the current folder and says
-  what is missing; a good one is saved at once for both the editor and the
-  game. **Restart now** then restarts the editor to load it. It asks first if
-  you have unsaved changes, and reopens your map (if the new install does not
-  have that map, the editor opens on a blank map and says so). The folder
-  cannot be changed here when the editor was started with `--data` or from
-  inside an install folder.
+- **Ctrl+Z** / **Ctrl+Y** undo and redo. **F6** previews a unit's 3D model.
+- **View → Preferences** sets borderless fullscreen (**F11**), edge scrolling,
+  the UI scale and the game data folder.
+- With nothing left to cancel, **Esc** closes the editor (asking first only if
+  there are unsaved changes).
 
 ### Symmetry and terrain copy
 
-For fair multiplayer maps, the **Symmetry** menu picks a mirror: left/right,
-top/bottom, either diagonal, a 2-way or 4-way rotation, or a 4-way mirror.
-Diagonals and 4-way rotation need a square map.
-
-- **M** turns on live symmetry. Units, features and start positions you place,
-  move or erase are mirrored as you go, and terrain stamps use the matching
-  mirrored section. The axis is drawn on the map. **Ctrl+Z** undoes an edit and
-  its mirrors together.
-- **Shift+M** (**Symmetrize**) copies one half, quadrant or triangle (or the
-  current selection) onto the rest of the map, replacing what is there. It
-  shows what will change first, and one **Ctrl+Z** undoes it. Mirrored starts
-  get the next free numbers, and mirrored units belong to the player whose
-  start mirrors the original owner's.
-- Terrain art is never flipped, because its lighting is painted in. Each
-  terrain section is replaced by its mirror-image section (for example a
-  north-east cliff by its north-west twin). Areas with no such section are left
-  unchanged; **Symmetry → Locate unmirrored terrain** visits them.
-
-To copy terrain, choose the **Terrain** tool and **Select** mode, then drag a
-rectangle. **Ctrl+C** copies it and **Ctrl+V** turns it into a brush. Click to
-paste; **Esc** returns to the section brushes. The copy includes trees, rocks
-and units unless **Edit → Terrain brush: protect objects** is on. It stays
-available after you open another map.
+The **Symmetry** menu mirrors edits live across a chosen axis (**M**) or copies
+one half, triangle or quadrant onto the rest of the map (**Shift+M**). Terrain
+is never flipped; each section is replaced by its mirror-image twin. In the
+Terrain tool's **Select** mode, **Ctrl+C** copies a rectangle of terrain with its
+objects and **Ctrl+V** turns it into a brush. See
+[Symmetry](cartographer-guide.md#symmetry) and
+[Copying and pasting terrain](cartographer-guide.md#copying-and-pasting-terrain).
 
 ### Scenarios
 
-- The **Regions** tool draws named trigger areas on the map.
-- **T** opens scenario scripting: rules that run actions when their conditions
-  are met. **Templates** inserts ready-made rules for common objectives
-  (timed victory, reaching an area, elimination, reinforcements and more).
-- **Scenario → Placed units** finds placed units by name, type or owner.
-- **Scenario → Check Map** lists problems: unreachable starts or mana spots,
-  isolated areas, missing resources, and scenario errors. Click a result to go
-  to it.
-
-See [scenario runtime details and limits](crt-triggers.md) before sharing a
-scenario.
+Cartographer can add placed units, named **regions**, trigger **rules**
+(**T**, with ready-made objective templates) and a **Use Only** unit list to a
+map. **Scenario content runs only in a test game** (Test Map, or the game's
+`--play-map` option); from the ordinary map list the map plays as a normal
+skirmish map. **Scenario → Check map** (**C**) lists problems such as cut-off
+starts, missing mana and wrong rule values. See
+[Scenario maps](cartographer-guide.md#scenario-maps) and the
+[scenario reference](crt-triggers.md).
 
 ### Testing a map
 
-Press **F5** (**Test Map**) to open the current map in a private game lobby.
-Seat the players your scenario uses and start; the editor stays open with your
-unsaved work. Close the game to return to editing. An authored scenario can
-start with one player; an ordinary skirmish map needs two.
-
-Turn on **Scenario → Log Test Map triggers** before pressing F5 to record which
-rules fired. The launch message shows where the log is saved.
-
-The game itself can also open a Cartographer snapshot directly with
-`--play-map` (see [Command line](#command-line)); Cartographer does this for you
-when you press F5.
-
-See [the Cartographer progress notes](cartographer-improvements-progress.md)
-for remaining limitations.
+Press **F5** (**Test Map**) to open the current map, unsaved changes included,
+in the game's private lobby. Seat the players your map needs and start; close
+the game to return to the editor. A map with scenario content can start with
+one player; an ordinary map needs two. The game can also open a Cartographer map
+directly with `--play-map` (see [Command line](#command-line)). See
+[Testing a map in the game](cartographer-guide.md#testing-a-map-in-the-game).
 
 ---
 
