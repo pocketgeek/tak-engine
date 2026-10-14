@@ -148,9 +148,10 @@ constexpr int kPivotAhead=4;                   // an arc aim is at least this ma
 constexpr int kPivotNear=32;                   // no pinwheel within this many cells of the destination
 constexpr int kPivotLead=6;                    // pursuit distance along the arc (cells)
 // A lone tree or rock is no wall end (user decision 2026-10-13, see
-// wallOrigin): an 8-connected run of blocked cells that are all blocking
-// tree/rock features and fit in kLoneSpan x kLoneSpan cells (the largest
-// shipped tree or rock, ararock07, is 7x6).
+// wallOrigin): a run of blocked cells, linked where the body cannot pass
+// between them, that are all blocking tree/rock features and fit in
+// kLoneSpan x kLoneSpan cells (the largest shipped tree or rock, ararock07,
+// is 7x6).
 constexpr int kLoneSpan=7;
 // Blocked on the cell a flow-around toward its pinwheel arc took it to, a
 // body does not flow straight back (see drive) for this many hold updates
@@ -271,11 +272,12 @@ struct LegionNavigator::Impl {
         mutable uint64_t spanEpoch=~0ull;
         // The pinwheel's lone tree/rock cells (see loneCell): per 1x1 cell,
         // 1 lone, 0 a wall, valid where loneGen holds loneGenCur. A pure
-        // function of `cell` and the map's features; derived, never hashed.
+        // function of `cell` and the map's features (a generation per epoch
+        // and cellGen); derived, never hashed.
         mutable std::vector<uint8_t> loneMemo;
         mutable std::vector<uint32_t> loneGen;
         mutable uint32_t loneGenCur=0;
-        mutable uint64_t loneEpoch=~0ull;
+        mutable uint64_t loneEpoch=~0ull,loneCells=~0ull;
     };
     // Running totals of the live fields (every Field lives in some group's
     // field or next): startField's cap test reads them instead of walking
@@ -1669,6 +1671,10 @@ struct LegionNavigator::Impl {
     }
     int nextGroup=1;
     uint64_t structureSignature=0,epoch=0,lastWorldEpoch=~0ull;
+    // Bumped by every syncStatic that takes in a static change rectangle
+    // (a plane's cell layer may have changed, its legality perhaps not).
+    // Keys loneCell's memo only; derived, never hashed.
+    uint64_t cellGen=0;
     uint64_t fieldSerial=0;   // fields built so far (Field::serial)
     // Plane rebuild work (cells) not yet charged to the per-tick quota.
     uint64_t planeDebt=0;
@@ -3051,6 +3057,7 @@ struct LegionNavigator::Impl {
         auto probeT1=gProbe?ProbeClock::now():ProbeClock::time_point{};
         if(gProbe) {probeSync.rects=rects.size();probeSync.gatherMs=probeMs(probeT0,probeT1);}
         if(all||!rects.empty()) {
+            ++cellGen;
             auto& refreshed=refreshList;
             refreshed.clear();
             touch.assign(planes.size(),{0,0,-1,-1});
@@ -6457,16 +6464,24 @@ struct LegionNavigator::Impl {
     }
     // Pinwheel walls. A blocked 1x1 cell is a lone tree or rock (user
     // decision 2026-10-13: "ignore single trees and rocks") when every cell
-    // of its 8-connected run of blocked cells is covered by a blocking
-    // feature of TDF category trees, plant(s) or rocks
-    // (RetailMapFeatureType::treeOrRock) and the run fits in kLoneSpan x
-    // kLoneSpan cells; terrain, water, structures, the map edge or any other
-    // feature in the run make it a wall. Bodies path and collide round a
-    // lone one as before; only the pinwheel's wall contact, outward normal
-    // and free width ignore it. (A formation member ranked at a real wall
-    // end took every scattered tree on its later way for one: the arc point
-    // R cells off it switched sides between neighbouring origins and the
-    // body turned back and forth on the spot, the 0.8.1 walk-in-place.)
+    // of its run of blocked cells is covered by a blocking feature of TDF
+    // category trees, plant(s) or rocks (RetailMapFeatureType::treeOrRock)
+    // and the run fits in kLoneSpan x kLoneSpan cells; terrain, water,
+    // structures, the map edge or any other feature in the run make it a
+    // wall. A run links the blocked cells the plane's body cannot pass
+    // between (at most footX columns and footZ rows apart: their illegal
+    // origins touch), so a forest or hedge whose gaps are narrower than the
+    // body is one run, a wall, as round the 1-cell gaps of a strip of 2x2
+    // trees (legion_forestedge), and so is a tree that close to a cliff, a
+    // building or the map edge. (Most shipped trees stand apart: over the
+    // 1,367 maps of the test install 96% of tree/rock cells are lone by
+    // 8-connected runs, and 34% of those (59% for a 3x3 body) lie in such
+    // forests.) Bodies path and collide round a lone one as before; only
+    // the pinwheel's wall contact, outward normal and free width ignore it.
+    // (A formation member ranked at a real wall end took every scattered
+    // tree on its later way for one: the arc point R cells off it switched
+    // sides between neighbouring origins and the body turned back and forth
+    // on the spot, the 0.8.1 walk-in-place.)
     bool treeCell(int cx,int cz) const {
         const int W=width();
         const auto& c=w.mapPlacementCells_[size_t(cz)*W+cx];
@@ -6477,13 +6492,16 @@ struct LegionNavigator::Impl {
     }
     // Blocked cell (cx,cz) of plane p: is its run a lone tree or rock? One
     // bounded flood (it stops at the first wall cell or past the span); the
-    // verdict holds for every cell it reached (one run), memoised per epoch.
+    // verdict holds for every cell it reached (one run), memoised until the
+    // plane's epoch or its cell layer changes (cellGen: a feature swapped
+    // or put down where every origin was illegal already changes runs but
+    // no legality, so no epoch).
     bool loneCell(const Plane& p,int cx,int cz) const {
         const int W=width(),H=height();
         const size_t n=size_t(W)*size_t(H);
-        if(p.loneMemo.size()!=n) {p.loneMemo.assign(n,0);p.loneGen.assign(n,0);p.loneGenCur=0;p.loneEpoch=~0ull;}
-        if(p.loneEpoch!=p.epoch) {
-            p.loneEpoch=p.epoch;
+        if(p.loneMemo.size()!=n) {p.loneMemo.assign(n,0);p.loneGen.assign(n,0);p.loneGenCur=0;p.loneEpoch=p.loneCells=~0ull;}
+        if(p.loneEpoch!=p.epoch||p.loneCells!=cellGen) {
+            p.loneEpoch=p.epoch;p.loneCells=cellGen;
             if(++p.loneGenCur==0) {std::fill(p.loneGen.begin(),p.loneGen.end(),0u);p.loneGenCur=1;}
         }
         const size_t c0=size_t(cz)*W+cx;
@@ -6494,8 +6512,8 @@ struct LegionNavigator::Impl {
         for(size_t head=0;head<count&&lone;++head) {
             const int x=run[head]%W,z=run[head]/W;
             if(!treeCell(x,z)) {lone=false;break;}
-            for(const auto& d:kDirections) {
-                const int nx=x+d[0],nz=z+d[1];
+            for(int dz=-p.footZ;dz<=p.footZ&&lone;++dz)for(int dx=-p.footX;dx<=p.footX;++dx) {
+                const int nx=x+dx,nz=z+dz;
                 if(nx<0||nz<0||nx>=W||nz>=H) {lone=false;break;}
                 const int c=nz*W+nx;
                 if(p.cell[size_t(c)]||std::find(run.begin(),run.begin()+count,c)!=run.begin()+count)continue;

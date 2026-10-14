@@ -860,7 +860,7 @@ workers (`legion_movement_orders_trolls_maze`).
   liftflyers and aware. All pass. Boats and hovercraft: navalclearance,
   navalisland, hovershore, navalmissions (see "Scope"). Their metrics come
   from the shared observer (see "Instruments"). Since protocol 257 also
-  lonetrees, slideback and stillturn, and `legion_still_test` for the
+  lonetrees, slideback, stillturn and forestedge, and `legion_still_test` for the
   headway window alone (see "Livelock").
 * `legion_acceptance_test`, five checks run in all five modes; Legion
   asserts, the others report. singleunit, jagged, trapped and group pass for
@@ -1589,14 +1589,25 @@ above 5 while the body is under 8 px from where it was 30 ticks earlier, for
 
 User decision (2026-10-13): "ignore single trees and rocks", with the
 livelock backstop. What changed, Legion only (Retail is bit-identical):
-- **Lone trees and rocks are no wall ends** (`wallOrigin`). A blocked cell
-  counts for the pinwheel's wall contact, outward normal and free width only
-  when its 8-connected run of blocked cells is not all blocking features of
+- **Lone trees and rocks are no wall ends** (`wallOrigin`, `loneCell`). A
+  blocked cell counts for the pinwheel's wall contact, outward normal and free
+  width only when its run of blocked cells is not all blocking features of
   TDF category trees, plant(s) or rocks (`RetailMapFeatureType::treeOrRock`)
   inside `kLoneSpan` x `kLoneSpan` = 7 x 7 cells (the largest shipped tree or
   rock, ararock07, is 7x6; trees reach 5x5). Terrain, water, structures, the
-  map edge or any other feature in the run make it a wall. Bodies path and
-  collide round a lone tree as before. No hysteresis on the arc point: far
+  map edge or any other feature in the run make it a wall. A run links the
+  blocked cells the plane's body cannot pass between (at most `footX` columns
+  and `footZ` rows apart, so their illegal origins touch): a forest or hedge
+  whose gaps are narrower than the body is one run and stays a wall, and so
+  does a tree that close to a cliff, a building or the map edge. Most shipped
+  trees stand apart (96% of the tree and rock cells on the 1,367 maps of the
+  test install are lone by 8-connected runs), but 34% of those lie in such
+  forests for a 2x2 body (59% for 3x3, 74% for 4x4): taken as 8-connected
+  runs (the first cut of this change, never released) they made every such
+  forest no wall at all, and `legion_forestedge`'s formation filed round the
+  end of a strip of 2x2 trees with 1-cell gaps at 1.23 files abreast (5.49
+  now, 5.37 on 9f677c87). Bodies path and collide round a lone tree as
+  before. No hysteresis on the arc point: far
   flips (an arc point more than 12 cells from the one of the neighbouring
   origin just left) fell from 21,997 to 1,953 in the recording's situations
   below and from 1,812 to 0 in `legion_lonetrees`; what is left is real wall
@@ -1653,16 +1664,22 @@ third of it or less, or 90 degrees of turning keeping a third or less):
   to-and-fro member-ticks, 1,841 walking, 9,225 of arc steering among the
   trees; now 0 / 0 / 0 at five offsets), `legion_slideback` (211 and 180, now
   0), `legion_stillturn` (22,008 standing member-ticks requested a turn, now
-  0) and `legion_still` (the rule on the recording's motion and on genuine slow
+  0), `legion_forestedge` (a forest is a wall: above) and `legion_still` (the
+  rule on the recording's motion and on genuine slow
   motion: a walker at a pace, a speed-matched follower, slow pivots, a start
   from rest; 9f677c87's rule stands none of the four walk-in-place cases).
 - The recording's own moments, cut as situations (`TAK_SITUATION` on the
   0.8.1 build, ticks 30200 to 38200 = 16:46 to 21:13, each the world and its
   next 2700 ticks of commands, run 3000 ticks, Legion, offsets 0 and +-1, the
   observer's `walk_net`, the replay's rule): 25,719 walk-in-place unit-ticks in
-  200 runs on 9f677c87 (857 unit-s), 1,038 in 17 now (35 unit-s). The cut at
-  18:50 went from 9,793 to 36, 19:13 from 6,147 to 67, 19:43 from 3,948 to
+  200 runs on 9f677c87 (857 unit-s), 1,007 in 16 now (34 unit-s). The cut at
+  18:50 went from 9,793 to 36, 19:13 from 6,147 to 36, 19:43 from 3,948 to
   126; the most left is 503 at 17:16 (Goblins in a crowd, cell (153, 118)).
+  The rule reads GET 29, which the stand now zeroes for every body without
+  net headway, so it counts what the player sees, not motion. The motion keys
+  of these combat cuts moved a few percent either way: arrivals 2,314 on
+  9f677c87 and 2,261 now, left behind 2,933 and 2,984, reversals 2,384 and
+  2,294.
 - The scenario set (131 fixtures, Legion, offsets 0 and +-1): walk-in-place
   88,443 to 1,380 unit-ticks. At the gate offsets (both modes, every key)
   Retail is identical to origin/main record for record. Legion's motion keys
@@ -1782,7 +1799,7 @@ Rules that came out of using them:
   in the strip and abreast windows (10 and 9 before). Gap, wall and corner
   fixtures swap a few more too (`gap10` 91 to 138), while summed over every
   fixture the motion keys moved both ways ("Livelock" above). Walk-in-place is
-  not gone in crowds: 35 unit-seconds were left in the recording's situations
+  not gone in crowds: 34 unit-seconds were left in the recording's situations
   (857 before). Measured by `island-1x150:gate.abreast.crossings`,
   `island-1x150:gate.lane.crossings`, `gap10:gate.top.crossings` and
   `ctest:legion_slideback`.

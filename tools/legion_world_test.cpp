@@ -1644,6 +1644,70 @@ void slideback() {
     check(fro==0,"side-steps undid each other");
 }
 
+// (v) A forest is a wall (the other half of "ignore single trees and
+// rocks"): the pinwheel fixture with its wall made of single 2x2 trees (TDF
+// category trees) three cells apart, 3 x 30 of them. No 8-connected run of
+// blocked cells is bigger than one tree, but a 2x2 body passes none of the
+// 1-cell gaps, so to the body the strip is a wall and the formation must
+// wheel round its end as round the wall (LegionNavigator::loneCell links
+// blocked cells the body cannot pass between). Taking lone runs as
+// 8-connected (3d4737ad) the pinwheel saw no wall there: no member steered
+// by its arc and the group filed round the end, median files abreast 1.23
+// (1.13-1.73 over five offsets). With the trees plain walls (as every
+// feature was to the pinwheel on 9f677c87: files 5.37) and now: 5.49.
+// FORESTEDGE_TREES=0 makes the trees plain walls; FORESTEDGE_REPORT
+// measures only.
+constexpr double kForestFiles=5.49,kForestFilesBand=1.20;   // median of five offsets, one-sided band
+struct ForestResult {int arrived=0,total=0;double files=0;int64_t pivot=0;ToFro fro;};
+ForestResult forestRun() {
+    Fixture f(200,140);
+    std::vector<RetailMapFeatureType> types{{"legion-wall",1,1,true,true,false,0},{"legion-tree",2,2,true,false,true,0}};
+    types[1].treeOrRock=!std::getenv("FORESTEDGE_TREES")||std::atoi(std::getenv("FORESTEDGE_TREES"))!=0;
+    for(int z=48;z<138;z+=3)for(int x=96;x<=102;x+=3) {f.cells[size_t(z)*200+x]=1;f.world.blockCells(x,z,2,2,true);}
+    f.world.setMapPlacementFeatures(f.cells,types);
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<48;++i)ids.push_back(f.spawn(type,40+(i%8)*3,96+(i/8)*3));
+    f.start();
+    for(int id:ids)f.world.order(id,150*16,110*16,false);
+    Watch motion;
+    {
+        tak::legion_observe::Gate g;g.name="end";g.region={95,0,104,47};g.lateral=1;g.band=2;g.minCount=3;
+        motion.cfg.gates.push_back(g);
+    }
+    ForestResult r;r.total=int(ids.size());
+    ToFroWatch watch;
+    for(int t=0;t<6000&&r.arrived<r.total;++t) {
+        f.world.tick(1.f/30);motion.observe(f.world,ids);watch.sample(f.world,ids);
+        r.arrived=0;
+        for(int id:ids) {
+            r.arrived+=f.world.unit(id)->orders.empty();
+            r.pivot+=f.world.legionNavigator()->steerSite(id)==LegionNavigator::SitePivot;
+        }
+    }
+    for(int id:ids)check(f.legal(id),"illegal footprint round the forest");
+    r.files=double(tak::legion_observe::Observer::get(motion.keys(),"gate.end.files_x100",0))/100;
+    r.fro=watch.r;
+    std::printf("forestedge shift=%d arrived=%d/%d files=%.2f pivot=%lld to_fro=%lld walking=%lld\n",g_shift,r.arrived,r.total,r.files,
+        (long long)r.pivot,(long long)r.fro.ticks,(long long)r.fro.walking);
+    return r;
+}
+void forestedge() {
+    double files[5];
+    for(int i=0;i<5;++i) {
+        g_shift=kShifts[i];
+        const auto r=forestRun();files[i]=r.files;
+        if(std::getenv("FORESTEDGE_REPORT"))continue;
+        check(r.arrived==r.total,"formation did not get round the forest");
+        check(r.pivot>0,"the pinwheel took the forest for no wall");
+        check(r.fro.walking==0,"a member walked on the spot round the forest");
+    }
+    g_shift=0;
+    std::printf("forestedge median files=%.2f\n",medianOf(files));
+    if(std::getenv("FORESTEDGE_REPORT"))return;
+    check(medianOf(files)*kForestFilesBand>=kForestFiles,"the formation folded into a file at the forest's end");
+}
+
 // (iv) A standing body requests no turn. Legion's display VM dispatches its
 // scripts' TurnDirection on the sign of Unit::turnReqBam, and the zontroll /
 // zongob gait walks on its last argument: a body standing in its scripts
@@ -3676,7 +3740,7 @@ int main(int argc,char** argv) {
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
-        {"lonetrees",lonetrees},{"slideback",slideback},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong}};
+        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

@@ -926,7 +926,8 @@ armies:
 - **Wheeling round walls.** When a large group (16 or more) goes round the end of
   a wall, it swings round in several ranks instead of narrowing to single file.
   It drops to single file only when the gap really is too narrow. A single tree
-  or rock (or a small clump) is not a wall end: the group walks past it.
+  or rock (or a small clump) is not a wall end: the group walks past it. A wood
+  too dense to walk through still is.
 - **Groups take gaps several abreast.** A large group (16 or more) sent through
   a short gap in a wall or a doorway that is wide enough for two or three units
   now splits across the gap and goes through two or three abreast, each unit
