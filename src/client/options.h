@@ -12,9 +12,19 @@
 #include <string>
 #include <vector>
 
+#include "client/datafolderpick.h"
 #include "client/settings.h"
 
 namespace tak {
+
+// The GAME DATA FOLDER row (client/datafolder.h). The host says which folder this
+// launch mounted and whether the setting may be changed from where Options is open.
+struct DataFolderRow {
+    std::string inUse;     // the install this process mounted
+    std::string locked;    // why it cannot be changed here ("" = it can): in a game or a
+                           // lobby, or a --data / launch-folder override that would win again
+    DataFolderPicker::Picker picker;   // empty = the native dialog (tests substitute one)
+};
 
 // The process-wide output-channel count (1/2/4/6/8) of the chosen device (or the
 // system default), probed once and cached. Shared by SoundBank (which requests it) and
@@ -52,9 +62,12 @@ public:
     // onAudioDevice: invoked when the user picks a DIFFERENT output device, so the host can
     // re-open its audio streams (SoundBank / menu music) on it live -- no restart. The
     // speaker-slider row set is rebuilt for the new channel count automatically.
+    // dataFolder: the GAME DATA FOLDER row. A valid pick is written to the settings file
+    // at once (saveDataFolderSetting) and offers RESTART NOW; see restartRequested().
     OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
                   std::function<void()> onSave, int audioChannels = 0,
-                  std::function<void()> onHotkeys = {}, std::function<void()> onAudioDevice = {});
+                  std::function<void()> onHotkeys = {}, std::function<void()> onAudioDevice = {},
+                  DataFolderRow dataFolder = {});
 
     ~OptionsScreen() { if (nameEditing_) SDL_StopTextInput(); }
 
@@ -66,9 +79,25 @@ public:
     // Draw the overlay (call after the host's own frame so it sits on top).
     void render(int winW, int winH);
 
+    // True once the player chose RESTART NOW after changing the data folder; input()
+    // returned true for it. The host then leaves its loop and relaunches the game.
+    bool restartRequested() const { return restartRequested_; }
+
+    // For the in-process UI tests: a row's rectangle as last laid out (nullptr if no row
+    // has that label), the data-folder row's status line, and the restart prompt's
+    // buttons (empty rects while it is closed).
+    const SDL_FRect* rowRect(const std::string& label) const {
+        for (auto& c : ctls_) if (c.label == label) return &c.row;
+        return nullptr;
+    }
+    std::string folderStatus() const { return folderStatusText(); }
+    bool folderPicking() const { return folderPick_.busy(); }
+    SDL_FRect restartNowRect() const { return restartPrompt_ ? restartNowRect_ : SDL_FRect{}; }
+    SDL_FRect restartLaterRect() const { return restartPrompt_ ? restartLaterRect_ : SDL_FRect{}; }
+
 private:
     struct Control {
-        enum Kind { Section, Slider, Toggle, Button, Dropdown, PlayerName } kind;
+        enum Kind { Section, Slider, Toggle, Button, Dropdown, PlayerName, Folder } kind;
         std::string label;
         float lo = 0, hi = 1;
         std::function<float()> get;              // Dropdown: the selected option index
@@ -136,6 +165,21 @@ private:
     int drag_ = -1;         // index of the slider being dragged, or -1
     float hoverX_ = -1, hoverY_ = -1;   // last pointer position (help text for the row under it)
     void drawHelp(const Control& c);    // the hovered row's help lines in a box beside it
+
+    // GAME DATA FOLDER (client/datafolder.h): the row, its picker, the outcome of the last
+    // pick, and the RESTART NOW / LATER prompt a valid pick opens.
+    DataFolderRow folder_;
+    DataFolderPicker folderPick_;
+    enum class FolderNote { None, NoPicker, Invalid, Saved, SaveFailed } folderNote_ = FolderNote::None;
+    std::string folderNoteText_;        // Invalid: the reason; SaveFailed: the folder
+    bool restartPrompt_ = false, restartRequested_ = false;
+    SDL_FRect restartNowRect_{}, restartLaterRect_{};
+    void clickFolder();                 // the row was clicked: start the picker
+    void pollFolder();                  // fold in a finished pick (input() and render())
+    std::string folderStatusText() const;
+    void drawFolderRow(const Control& c);
+    void drawRestartPrompt(int winW, int winH);
+    bool restartPromptInput(const SDL_Event& e);   // true = leave Options (RESTART NOW)
     int openDrop_ = -1;     // index of the open Dropdown control (-1 = none)
     float dropScroll_ = 0;  // scroll offset (px) INSIDE the open dropdown's option list
     std::vector<std::string> devSnapshot_;   // output devices ([0]="" system default, rest A-Z)

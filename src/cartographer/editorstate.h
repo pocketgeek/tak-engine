@@ -34,6 +34,7 @@
 #include "cartographer/thumbnails.h"
 #include "cartographer/units.h"
 #include "cartographer/validation.h"
+#include "client/datafolderpick.h"
 #include "client/mapview.h"
 #include "client/modelview.h"
 #include "hpi/hpi.h"
@@ -99,6 +100,13 @@ struct Session {
     bool randomTerrain = false;   // --random: generate procedural terrain for --new
     void parseArguments(int argc,char** argv);
     std::optional<int> runHeadless();   // --stamp / --save / --bundle exit code
+    // GAME DATA FOLDER (client/datafolder.h): where dataRoot came from (a --data or
+    // launch-folder override greys the Preferences row), the launch's arguments and
+    // what reopens the open document, for the restart that applies a new folder.
+    tak::DataFolderOrigin dataOrigin=tak::DataFolderOrigin::Picker;
+    std::vector<std::string> launchArgs;
+    std::string documentRequest;   // its saved file, or the installed map's name ("" = none)
+    std::string pendingOpen;       // a .kmp/.tnt FILE named at launch: opened once the editor is up
 
     const FrameHook& frameHook;
     const EditorHooks& hooks;
@@ -288,6 +296,22 @@ struct Editor : Session {
     void updateLiveMinimap();
     bool handleMinimapInput(SDL_Event& e);
     void drawMinimap();
+
+    // --- GAME DATA FOLDER (dialogs.cpp, drawn in View > Preferences) ------------
+    // One setting shared with the game (Settings::dataDir). A valid pick is saved at
+    // once; it is LOADED by restarting, after the usual save prompt, and the restarted
+    // editor reopens this document (cart::restartArguments).
+    tak::DataFolderPicker folderPick;
+    std::string folderSaved;            // the shared setting, as last read or written
+    std::string folderNote;             // the last pick's outcome, if it needs saying
+    bool folderNoteError=false;
+    SDL_Rect mFolderChange{}, mFolderRestart{};
+    bool restartAfterQuit=false;        // M_QUITSAVE asks before a RESTART, not an exit
+    std::optional<std::vector<std::string>> restartArgs;   // set once run() ends to restart
+    void clickDataFolder();
+    void pollDataFolder();
+    void requestRestart();
+    void drawDataFolder(const SDL_Rect& content);
 
     // --- Modal dialogs (dialogs.cpp) ------------------------------------------
     enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_RULENAME, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES, M_MODEL_LOADING, M_MODEL, M_OBJECTS, M_SYMMETRIZE, M_PREFERENCES };

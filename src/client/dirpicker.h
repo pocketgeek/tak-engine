@@ -35,27 +35,56 @@ inline bool dpHaveCmd(const char* c) {
 }
 #endif
 
+// Quote one argument for the POSIX shell popen runs: single quotes, with each embedded
+// ' closed, escaped and reopened. The start folder comes from the saved settings (a
+// folder name may hold quotes, spaces or $), so nothing is pasted in unquoted.
+inline std::string dpShellQuote(const std::string& s) {
+    std::string q = "'";
+    for (char c : s) q += c == '\'' ? std::string("'\\''") : std::string(1, c);
+    return q + "'";
+}
+// The same for a PowerShell single-quoted string literal ('' is a literal quote), which
+// itself sits inside the double-quoted -Command argument: a " would end that, so it is
+// left out (no Windows path contains one).
+inline std::string dpPowerShellQuote(const std::string& s) {
+    std::string q = "'";
+    for (char c : s) { if (c == '"') continue; q += c; if (c == '\'') q += c; }
+    return q + "'";
+}
+
 // Pop up the OS folder picker. Returns the chosen absolute path, or "" if cancelled or
-// no picker is available. `start` seeds the initial folder where the platform supports it.
+// no picker is available. `start` seeds the initial folder where the platform supports it
+// (Windows, kdialog, zenity; macOS's choose folder opens where it last was).
+//
+// Blocks until the dialog closes: first-run startup calls it before any window exists,
+// and the in-app GAME DATA FOLDER rows (Options, Cartographer's Preferences) call it from
+// a worker thread so the window keeps drawing behind the dialog.
 inline std::string pickDirectory(const std::string& title, const std::string& start) {
 #if defined(_WIN32)
     std::string ps =
         "powershell -NoProfile -STA -Command \""
         "Add-Type -AssemblyName System.Windows.Forms;"
+        "[Console]::OutputEncoding=New-Object Text.UTF8Encoding $false;"   // UTF-8 (no BOM), not the ANSI code page
         "$f=New-Object System.Windows.Forms.FolderBrowserDialog;"
-        "$f.Description='" + title + "';$f.ShowNewFolderButton=$false;"
+        "$f.Description=" + dpPowerShellQuote(title) + ";$f.ShowNewFolderButton=$false;"
+        + (start.empty() ? std::string() : "$f.SelectedPath=" + dpPowerShellQuote(start) + ";") +
         "if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($f.SelectedPath)}\"";
-    return dpRunCapture(ps);
+    std::string picked = dpRunCapture(ps);
+    if (picked.rfind("\xEF\xBB\xBF", 0) == 0) picked.erase(0, 3);   // in case a host still adds a BOM
+    return picked;
 #elif defined(__APPLE__)
     (void)start;
-    return dpRunCapture("osascript -e 'try' -e 'POSIX path of (choose folder with prompt \""
-                        + title + "\")' -e 'end try' 2>/dev/null");
+    std::string t;   // an AppleScript string literal: escape \ and "
+    for (char c : title) { if (c == '"' || c == '\\') t += '\\'; t += c; }
+    return dpRunCapture("osascript -e 'try' -e " + dpShellQuote("POSIX path of (choose folder with prompt \"" + t + "\")")
+                        + " -e 'end try' 2>/dev/null");
 #else
-    std::string s = start.empty() ? std::string("$HOME") : ("\"" + start + "\"");
+    const std::string s = start.empty() ? std::string("\"$HOME\"") : dpShellQuote(start);
     if (dpHaveCmd("kdialog"))
-        return dpRunCapture("kdialog --title \"" + title + "\" --getexistingdirectory " + s + " 2>/dev/null");
-    if (dpHaveCmd("zenity"))
-        return dpRunCapture("zenity --file-selection --directory --title=\"" + title + "\" 2>/dev/null");
+        return dpRunCapture("kdialog --title " + dpShellQuote(title) + " --getexistingdirectory " + s + " 2>/dev/null");
+    if (dpHaveCmd("zenity"))   // a trailing / makes --filename open INSIDE the folder
+        return dpRunCapture("zenity --file-selection --directory --title=" + dpShellQuote(title) +
+                            (start.empty() ? std::string() : " --filename=" + dpShellQuote(start + "/")) + " 2>/dev/null");
     return "";
 #endif
 }

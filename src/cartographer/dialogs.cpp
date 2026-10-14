@@ -7,6 +7,7 @@
 #include "cartographer/document.h"
 #include "cartographer/generator.h"
 #include "cartographer/triggers.h"
+#include "client/settings.h"
 
 #include <charconv>
 #include <cmath>
@@ -65,6 +66,9 @@ void cart::Editor::openModal(Modal m, int unitIdx) {
         mLabel[2]="UI SCALE (CAPPED TO FIT THE WINDOW)";mf[2]=std::to_string(preferences.scalePercent)+"%";mfChoices[2]=&kScaleOpts;
         if(std::find(kScaleOpts.begin(),kScaleOpts.end(),mf[2])==kScaleOpts.end())mf[2]="100%";
         for(int i=0;i<3;++i)mfNumeric[i]=false;
+        // GAME DATA FOLDER below the fields: the shared setting as it is NOW (the game
+        // may have changed it since this editor started).
+        folderSaved=tak::loadSettings().dataDir;folderNote.clear();folderNoteError=false;
     } else if(m==M_REGION) {
         editRegion=unitIdx;
         tak::crt::Region region;
@@ -153,6 +157,7 @@ void cart::Editor::adoptFreshMap(FreshMap fm,const std::string& nm,const std::st
     if(!fm.recipe.empty())scenario.missionDescription="Generator recipe: "+fm.recipe;
     if(regeneratingCurrent) {scenario.missionName=previousName;scenario.missionDescription=previousDescription;}
     scenario.starts = std::move(fm.starts);
+    if(!regeneratingCurrent)documentRequest.clear();   // a new, unsaved map: a restart cannot reopen it
     mapName = nm;
     selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();selectedFeatures.clear();
     regionDrag.cancel();regionSelected=-1;
@@ -667,16 +672,18 @@ void cart::Editor::handleModal(SDL_Event& e) {
         };
         if (e.type == SDL_KEYDOWN) {
             SDL_Keycode k = e.key.keysym.sym;
-            if (k == SDLK_ESCAPE) modal = M_NONE;                    // cancel
+            if (k == SDLK_ESCAPE) {modal = M_NONE;restartAfterQuit=false;}   // cancel
             else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) saveThenQuit();
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
             int mx = e.button.x, my = e.button.y;
             if (cart::pointIn(mx, my, mOK)) saveThenQuit();
             else if (cart::pointIn(mx, my, mQuit)) { running = false; modal = M_NONE; }
-            else if (cart::pointIn(mx, my, mCancel)) modal = M_NONE;
+            else if (cart::pointIn(mx, my, mCancel)) {modal = M_NONE;restartAfterQuit=false;}
         }
         return;
     }
+    // The folder dialog is up (its own window): leave Preferences exactly as it is.
+    if(modal==M_PREFERENCES && folderPick.busy() && (e.type==SDL_KEYDOWN || e.type==SDL_TEXTINPUT || e.type==SDL_MOUSEBUTTONDOWN))return;
     if(modal==M_SCENARIO && e.type==SDL_MOUSEWHEEL) {descriptionScroll=std::max(0,descriptionScroll-e.wheel.y*3);descriptionFollowCaret=false;return;}
     if(e.type==SDL_TEXTINPUT || e.type==SDL_KEYDOWN)descriptionFollowCaret=true;
     if(modal==M_OPENPATH && e.type==SDL_MOUSEWHEEL) {openScroll=std::clamp(openScroll-e.wheel.y*40,0,std::max(0,int(openMatches.size())*20-openList.h));return;}
@@ -726,6 +733,10 @@ void cart::Editor::handleModal(SDL_Event& e) {
             return;
         }
         if (cart::pointIn(mx, my, mOK)) { applyModal(); return; }
+        if(modal==M_PREFERENCES && cart::pointIn(mx,my,mFolderChange)) {clickDataFolder();return;}
+        if(modal==M_PREFERENCES && cart::pointIn(mx,my,mFolderRestart)) {   // apply the fields, as OK would, then restart
+            applyModal();if(modal==M_NONE)requestRestart();return;
+        }
         if (modal == M_NEW && cart::pointIn(mx, my, mRandom)) {
             if(!mf[0].empty() && !cart::validDocumentName(mf[0])) {modalError="Choose a map name without path separators or reserved filename characters.";return;}
             modalError.clear();
@@ -845,7 +856,7 @@ void cart::Editor::drawModal() {
         cart::drawText(ren,"Esc cancels. Your current map is retained.",ct.x,ct.y+25,1,190,205,220);
     } else if (modal == M_QUITSAVE) {
         SDL_Rect ct = cart::drawPanel(ren, w, h, 380, 92, "UNSAVED CHANGES");
-        cart::drawText(ren, "Save changes before exiting?", ct.x, ct.y, 1, 225, 228, 236);
+        cart::drawText(ren, restartAfterQuit?"Save changes before restarting?":"Save changes before exiting?", ct.x, ct.y, 1, 225, 228, 236);
         mOK = cart::drawButton(ren, ct.x, ct.y + ct.h - 20, 60, 18, "SAVE", true);
         mQuit = cart::drawButton(ren, ct.x + 66, ct.y + ct.h - 20, 78, 18, "DISCARD", false);
         mCancel = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18, "CANCEL", false);
@@ -866,8 +877,8 @@ void cart::Editor::drawModal() {
         }
     } else if (modal != M_NONE) {
         // N-field dialog; height fits the field count.
-        int ph = modal==M_OPENPATH?420:modal==M_SCENARIO?300:70+mN*40;
-        const int panelWidth=(modal==M_OPENPATH || modal==M_SCENARIO)?560:320;
+        int ph = modal==M_OPENPATH?420:modal==M_SCENARIO?300:70+mN*40+(modal==M_PREFERENCES?84:0);
+        const int panelWidth=(modal==M_OPENPATH || modal==M_SCENARIO)?560:modal==M_PREFERENCES?460:320;
         const auto errorLines=cart::TextEdit::lines(modalError,(panelWidth-36)/6);
         const int errorHeight=modalError.empty()?0:int(errorLines.size())*12+8;
         ph+=errorHeight;
@@ -901,6 +912,8 @@ void cart::Editor::drawModal() {
                 mBox[i] = cart::drawField(ren, ct.x, ct.y + i * 40, ct.w, mLabel[i],
                                           mf[i], mfocus == i,mfocus==i?&fieldEditor:nullptr);
         }
+        mFolderChange=mFolderRestart={};
+        if(modal==M_PREFERENCES)drawDataFolder(ct);
         // New Map gets a RANDOM shortcut (procedural terrain, jump straight in).
         if (modal == M_NEW) {
             mOK = cart::drawButton(ren, ct.x, ct.y + ct.h - 20, 74, 18, "CREATE", true);
@@ -957,4 +970,61 @@ void cart::Editor::drawUseOnly() {
         uoClear = cart::drawButton(ren, ct.x, ct.y + ct.h - 20, 100, 18, "UNRESTRICT", false);
         uoDone = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18, "DONE", true);
     }
+}
+
+// ---- GAME DATA FOLDER (View > Preferences) -----------------------------------------
+
+void cart::Editor::clickDataFolder() {
+    if(!tak::dataFolderOverrideReason(dataOrigin).empty() || folderPick.busy())return;
+    if(!hooks.pickFolder && !tak::haveDirPicker()) {
+        folderNote="No folder picker: install kdialog or zenity, or start Cartographer with --data.";folderNoteError=true;return;
+    }
+    folderNote.clear();folderNoteError=false;
+    folderPick.start(hooks.pickFolder,folderSaved.empty()?dataRoot:folderSaved,folderSaved);
+}
+
+void cart::Editor::pollDataFolder() {
+    const auto pick=folderPick.poll();if(!pick)return;
+    if(pick->outcome==tak::DataFolderPick::Invalid) {
+        folderNote=tak::dataFolderInvalidMessage(pick->reason)+" The current folder is kept.";folderNoteError=true;
+    } else if(pick->outcome==tak::DataFolderPick::Accepted) {
+        // Saved straight away and only that key: the game reads the same setting.
+        if(!tak::saveDataFolderSetting(pick->folder,pick->manifest)) {folderNote="Could not save the setting. The current folder is kept.";folderNoteError=true;return;}
+        folderSaved=pick->folder;folderNote.clear();folderNoteError=false;
+        std::fprintf(stderr,"preferences: data folder set to %s\n",folderSaved.c_str());
+    }
+}
+
+// Restart to load the saved folder: ask to save unsaved work first (M_QUITSAVE), then
+// leave run(); runEditor relaunches with cart::restartArguments.
+void cart::Editor::requestRestart() {
+    restartAfterQuit=true;
+    if(dirty) {useOnlyOpen=scriptOpen=pickOpen=regionsOpen=false;modal=M_QUITSAVE;SDL_StopTextInput();}
+    else running=false;
+}
+
+void cart::Editor::drawDataFolder(const SDL_Rect& ct) {
+    const std::string locked=tak::dataFolderOverrideReason(dataOrigin);
+    const bool busy=folderPick.busy(),pending=tak::dataFolderNeedsRestart(folderSaved,dataRoot);
+    const int y=ct.y+mN*40,buttonW=84,boxW=ct.w-buttonW-6;
+    cart::drawText(ren,"GAME DATA FOLDER (SHARED WITH THE GAME)",ct.x,y,1,locked.empty()?190:120,locked.empty()?195:124,locked.empty()?205:134);
+    // The folder in use, elided at its start (the tail is what tells installs apart).
+    SDL_Rect box{ct.x,y+10,boxW,16};
+    fillRect(ren,box.x,box.y,box.w,box.h,24,26,34);
+    SDL_SetRenderDrawColor(ren,90,92,104,255);SDL_RenderDrawRect(ren,&box);
+    cart::drawText(ren,tak::elidePathStart(dataRoot,size_t(std::max(4,(boxW-8)/6))),box.x+4,box.y+4,1,locked.empty()?230:140,locked.empty()?235:145,locked.empty()?245:155);
+    if(locked.empty() && !busy)mFolderChange=cart::drawButton(ren,ct.x+ct.w-buttonW,y+10,buttonW,16,"CHANGE...",false);
+    else {   // greyed: nothing to click
+        fillRect(ren,ct.x+ct.w-buttonW,y+10,buttonW,16,34,36,44);
+        cart::drawText(ren,"CHANGE...",ct.x+ct.w-buttonW+(buttonW-cart::textWidth("CHANGE...",1))/2,y+14,1,110,112,122);
+    }
+    std::string note=!locked.empty()?locked:busy?"Choosing a folder...":!folderNote.empty()?folderNote:
+        pending?"Saved. Restart Cartographer to load "+tak::elidePathStart(folderSaved,48)+". The game uses it from its next start.":
+        "The game reads this folder too. A new one loads when Cartographer restarts.";
+    const auto lines=cart::TextEdit::lines(note,std::max(1,ct.w/6));
+    const bool warn=folderNoteError,amber=busy || (pending && folderNote.empty());
+    for(size_t i=0;i<std::min<size_t>(3,lines.size());++i)
+        cart::drawText(ren,note.substr(lines[i].begin,lines[i].end-lines[i].begin),ct.x,y+32+int(i)*12,1,
+                       warn?255:amber?240:170,warn?150:amber?200:180,warn?135:amber?120:195);
+    if(pending && locked.empty() && !busy)mFolderRestart=cart::drawButton(ren,ct.x,ct.y+ct.h-20,110,18,"RESTART NOW",false);
 }

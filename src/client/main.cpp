@@ -62,6 +62,8 @@
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
+#include "client/datafolder.h"
+#include "util/relaunch.h"
 #include "client/settings.h"
 #include "client/renderdriver.h"
 #include "net/crypto.h"
@@ -234,65 +236,73 @@ void screenshot(SDL_Renderer* ren, int w, int h, const std::string& path) {
 
 // ReplayFile + loadReplayFile() moved to client/replayfile.h + replayfile.cpp.
 
-// Resolve the retail data folder. Priority: an explicit --data (dataRoot already set) >
+// Resolve the retail data folder (tak::chooseDataFolder, shared with Cartographer):
+// an explicit --data (dataRoot already set) > the folder the game was started from >
 // the folder saved in config (re-validated each launch) > a native folder picker. On a
 // successful pick/validate the location + an authenticity manifest are saved to config.
 // `allowPrompt` gates the picker (off for headless runs, which always pass --data).
-// Leaves dataRoot empty if it can't be resolved; the caller then aborts.
-static void resolveDataDir(std::string& dataRoot, tak::Settings& settings, bool allowPrompt) {
+// Leaves dataRoot empty if it can't be resolved; the caller then aborts. Returns where
+// the folder came from, which decides whether Options may change it (an override would
+// win again after the restart that applies a change).
+static tak::DataFolderOrigin resolveDataDir(std::string& dataRoot, tak::Settings& settings, bool allowPrompt) {
     namespace hpi = tak::hpi;
-    // 1. Explicit --data wins. Honour it even if it doesn't validate (a dev override);
-    //    if it DOES validate, remember it so a later launch needs no --data.
-    if (!dataRoot.empty()) {
-        if (settings.dataDir != dataRoot && hpi::validInstall(dataRoot, nullptr)) {
-            settings.dataDir = dataRoot;
-            settings.dataManifest = hpi::rootManifest(dataRoot);
-            tak::saveSettings(settings);
-        }
-        return;
-    }
-    // 2. The local directory: drop the binary into a game folder and it just
-    //    works, no --data or picker. Used for THIS run without clobbering the
-    //    saved install path (so launching elsewhere later still finds it).
+    const auto valid = [](const std::string& f, std::string* why) {
+        return hpi::validInstall(std::filesystem::u8path(f), why);
+    };
+    std::string here;
     {
         std::error_code ec;
-        std::filesystem::path here = std::filesystem::current_path(ec);
-        if (!ec && hpi::validInstall(here, nullptr)) {
-            dataRoot = here.string();
-            std::fprintf(stderr, "data: using the local directory %s\n", dataRoot.c_str());
-            return;
-        }
+        const auto cwd = std::filesystem::current_path(ec);
+        if (!ec) { const auto text = cwd.u8string(); here.assign(text.begin(), text.end()); }
     }
-    // 3. The saved folder, if it still holds a valid install.
-    if (!settings.dataDir.empty() && hpi::validInstall(settings.dataDir, nullptr)) {
-        dataRoot = settings.dataDir;
-        std::string m = hpi::rootManifest(dataRoot);   // note if the root archives changed
-        if (m != settings.dataManifest) { settings.dataManifest = m; tak::saveSettings(settings); }
-        return;
+    const tak::DataFolderChoice choice = tak::chooseDataFolder(dataRoot, here, settings.dataDir, valid);
+    switch (choice.origin) {
+        // 1. Explicit --data wins. Honour it even if it doesn't validate (a dev override);
+        //    if it DOES validate, remember it so a later launch needs no --data.
+        case tak::DataFolderOrigin::CommandLine:
+            if (!tak::sameFolder(settings.dataDir, dataRoot) && valid(dataRoot, nullptr)) {
+                settings.dataDir = dataRoot;
+                settings.dataManifest = hpi::rootManifest(std::filesystem::u8path(dataRoot));
+                tak::saveSettings(settings);
+            }
+            return choice.origin;
+        // 2. The local directory: drop the binary into a game folder and it just
+        //    works, no --data or picker. Used for THIS run without clobbering the
+        //    saved install path (so launching elsewhere later still finds it).
+        case tak::DataFolderOrigin::LaunchFolder:
+            dataRoot = choice.folder;
+            std::fprintf(stderr, "data: using the local directory %s\n", dataRoot.c_str());
+            return choice.origin;
+        // 3. The saved folder, if it still holds a valid install.
+        case tak::DataFolderOrigin::Saved: {
+            dataRoot = choice.folder;
+            std::string m = hpi::rootManifest(std::filesystem::u8path(dataRoot));   // note if the root archives changed
+            if (m != settings.dataManifest) { settings.dataManifest = m; tak::saveSettings(settings); }
+            return choice.origin;
+        }
+        case tak::DataFolderOrigin::Picker: break;
     }
     // 4. Ask (interactive only). Loop so a wrong pick can be corrected in place.
-    if (!allowPrompt) return;
+    if (!allowPrompt) return choice.origin;
     if (!tak::haveDirPicker()) {
         std::fprintf(stderr, "no folder picker available (install kdialog or zenity) and no "
                              "--data given -- cannot locate the game data\n");
-        return;
+        return choice.origin;
     }
     for (int tries = 0; tries < 6; ++tries) {
-        std::string picked = tak::pickDirectory(
-            "Select your Total Annihilation: Kingdoms install folder", settings.dataDir);
-        if (picked.empty()) return;   // cancelled
+        std::string picked = tak::pickDirectory(tak::kDataFolderPickerTitle, settings.dataDir);
+        if (picked.empty()) return choice.origin;   // cancelled
         std::string why;
-        if (hpi::validInstall(picked, &why)) {
+        if (valid(picked, &why)) {
             dataRoot = picked;
             settings.dataDir = picked;
-            settings.dataManifest = hpi::rootManifest(picked);
+            settings.dataManifest = hpi::rootManifest(std::filesystem::u8path(picked));
             tak::saveSettings(settings);
-            return;
+            return choice.origin;
         }
-        tak::errorBox("Not a game folder",
-                      "That folder isn't a Total Annihilation: Kingdoms install (" + why +
-                      ").\n\nChoose the folder that contains data.hpi, terrain.hpi and Maps/.");
+        tak::errorBox("Not a game folder", tak::dataFolderInvalidMessage(why));
     }
+    return choice.origin;
 }
 
 // Ordinary local replay launch and campaign Watch Replay share this loader and
@@ -619,8 +629,9 @@ int main(int argc, char** argv) {
     // Locate the retail data folder now that SDL (message boxes) and the config are up:
     // explicit --data, else the saved folder, else a native picker. Headless/harness runs
     // always pass --data, so they never prompt. Then mount it (must precede menu/game use).
+    tak::DataFolderOrigin dataOrigin = tak::DataFolderOrigin::CommandLine;
     if (!dataRoot.empty() || !localHarness) {
-        resolveDataDir(dataRoot, settings, /*allowPrompt=*/mpHeadless == 0);
+        dataOrigin = resolveDataDir(dataRoot, settings, /*allowPrompt=*/mpHeadless == 0);
         if (dataRoot.empty()) {
             std::fprintf(stderr, "no Total Annihilation: Kingdoms data folder selected -- exiting\n");
             SDL_Quit();
@@ -767,6 +778,7 @@ int main(int argc, char** argv) {
     const int launchServerPort = serverPort;
     const std::vector<std::string> launchArgs = args;
     bool quitApp = false;
+    bool restartApp = false;   // Options changed the data folder: relaunch after teardown
     // Campaign chaining: a Next/Retry from the result screen re-enters the game
     // directly (skipping the menu) with this mission, movie + briefing and all.
     std::string pendingCampaign, pendingCampaignId;
@@ -869,6 +881,23 @@ int main(int argc, char** argv) {
         {
             tak::MainMenu menu(ren, vfs, dataRoot);
             if (menuFailure) menu.setFailure(std::exchange(menuFailure, {}));   // reopen where it failed
+            {   // Options -> GAME DATA FOLDER: greyed when --data or the launch folder chose it.
+                tak::DataFolderRow row{dataRoot, tak::dataFolderOverrideReason(dataOrigin), {}};
+#ifndef NDEBUG
+                // TAK_DATADIR_PICK="a;b;..." stands in for the native picker: each pick
+                // returns the next folder, then "" (cancel). Debug builds only.
+                if (const char* fake = tak::devEnv("TAK_DATADIR_PICK")) {
+                    auto picks = std::make_shared<std::vector<std::string>>();
+                    std::stringstream list(fake);
+                    for (std::string one; std::getline(list, one, ';');) picks->push_back(one);
+                    auto next = std::make_shared<size_t>(0);
+                    row.picker = [picks, next](const std::string&, const std::string&) {
+                        return *next < picks->size() ? (*picks)[(*next)++] : std::string();
+                    };
+                }
+#endif
+                menu.setDataFolder(std::move(row));
+            }
             choice = menu.run(shot, &menuServer, &menuMusic, &settings, &streaming);
             tak::renderdriver::active().noticeShown = true;   // the menu showed it (if any)
             if (choice == tak::MainMenu::Choice::Campaign) {
@@ -904,6 +933,7 @@ int main(int argc, char** argv) {
                 continue;
             }
         }
+        if (choice == tak::MainMenu::Choice::Restart) { restartApp = true; quitApp = true; break; }
         if (!shot.empty() && choice == tak::MainMenu::Choice::None) { menuMusic.stop(); menuMusic.setAudioTap(nullptr,nullptr); streamingOwner.reset(); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
         if (choice != tak::MainMenu::Choice::SinglePlayer &&
             choice != tak::MainMenu::Choice::Multiplayer &&
@@ -1988,6 +2018,11 @@ int main(int argc, char** argv) {
                 else if (mapView) mapView->finishChunks();
                 if (!shotArmed) {
                     shotArmed = true;
+#ifndef NDEBUG
+                    // TAK_SHOT_OPTIONS=1: capture the in-game Options overlay (its GAME
+                    // DATA FOLDER row greyed, with the reason).
+                    if (gameView && tak::devFlag("TAK_SHOT_OPTIONS")) gameView->openOptions();
+#endif
                     // TAK_SHOT_PRESS=<SDL key name> taps one key before the capture, so
                     // a harness run can shoot an overlay (Unit Info, the F4 scoreboard)
                     // instead of only the plain game view.
@@ -2238,6 +2273,24 @@ int main(int argc, char** argv) {
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
+    if (restartApp) {
+        // A new GAME DATA FOLDER is loaded by a fresh process (client/datafolder.h): the
+        // same arguments, so the --data / launch-folder rules apply exactly as before.
+        // POSIX: exec replaces this process (returns only on failure). Windows: starts
+        // a new copy, and this one exits.
+        std::string why;
+        const auto restartArgs = tak::clientRestartArguments(std::vector<std::string>(argv + 1, argv + argc));
+        std::fprintf(stderr, "restart: relaunching with %zu argument(s) for data folder %s\n", restartArgs.size(),
+                     tak::loadSettings().dataDir.c_str());
+#ifndef NDEBUG
+        SDL_setenv("TAK_MENU_PICK", "", 1);   // a scripted restart pick must not repeat in the new process
+#endif
+        if (!tak::relaunchSelf(restartArgs, why)) {
+            std::fprintf(stderr, "restart failed: %s\n", why.c_str());
+            tak::errorBox("Restart failed", "The new game data folder is saved. Start the game again to use it.\n\n(" + why + ")");
+            return 1;
+        }
+    }
     return 0;
 }
 

@@ -21,9 +21,42 @@ namespace {
 template <typename T>
 T clampv(T v, T lo, T hi) { return std::max(lo, std::min(hi, v)); }
 
+void trim(std::string& t) {
+    size_t a = t.find_first_not_of(" \t\r\n");
+    size_t b = t.find_last_not_of(" \t\r\n");
+    t = (a == std::string::npos) ? std::string() : t.substr(a, b - a + 1);
+}
+
+// Split one line into key and value; false for a blank or comment line. '#' starts a
+// comment, except inside a dataDir value, where it is part of a folder name
+// ("D:\Games\TAK #2"). serializeSettings never writes an inline comment, so only a
+// hand-edited file could put one there.
+bool splitLine(const std::string& line, std::string& key, std::string& val) {
+    const size_t eq = line.find('='), hash = line.find('#');
+    if (eq == std::string::npos || (hash != std::string::npos && hash < eq)) return false;
+    key = line.substr(0, eq);
+    trim(key);
+    val = line.substr(eq + 1);
+    if (hash != std::string::npos && key != "dataDir") val.erase(hash - eq - 1);
+    trim(val);
+    return !key.empty();
+}
+
+std::string& pathOverride() { static std::string p; return p; }
+
+// The data-folder keys as this process last read or wrote them (see saveSettings).
+struct DiskDataFolder { bool known = false; std::string dir, manifest; };
+DiskDataFolder& diskDataFolder() { static DiskDataFolder d; return d; }
+
 }  // namespace
 
+void setSettingsPath(std::string path) {
+    pathOverride() = std::move(path);
+    diskDataFolder() = {};   // a different file: nothing is known about it yet
+}
+
 std::string settingsPath() {
+    if (!pathOverride().empty()) return pathOverride();
     if (const char* o = devEnv("TAK_SETTINGS_FILE")) if (*o) return o;   // debug builds: test profile
     char* base = SDL_GetPrefPath("TAKengine", "TAKingdoms");
     if (!base) return {};
@@ -37,7 +70,7 @@ Settings loadSettings() {
     std::string path = settingsPath();
     if (path.empty()) return s;
     std::ifstream in(path);
-    if (!in) return s;
+    if (!in) { diskDataFolder() = {true, {}, {}}; return s; }
 
     // Filtering keys, resolved after the loop so line order does not matter (see
     // resolveTextureFilter): textureFilter, else 0.7.25-0.7.28's bilinearFilter, else
@@ -48,18 +81,8 @@ Settings loadSettings() {
     int textureFilter=-1,bilinearFilter=-1,legacyBilinear=-1,legacyZoom=-1;
     std::string line;
     while (std::getline(in, line)) {
-        auto hash = line.find('#');
-        if (hash != std::string::npos) line.erase(hash);
-        auto eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        std::string key = line.substr(0, eq), val = line.substr(eq + 1);
-        auto trim = [](std::string& t) {
-            size_t a = t.find_first_not_of(" \t\r\n");
-            size_t b = t.find_last_not_of(" \t\r\n");
-            t = (a == std::string::npos) ? std::string() : t.substr(a, b - a + 1);
-        };
-        trim(key); trim(val);
-        if (key.empty()) continue;
+        std::string key, val;
+        if (!splitLine(line, key, val)) continue;
 
         auto asInt   = [&](int lo, int hi) { return clampv(std::atoi(val.c_str()), lo, hi); };
         auto asFloat = [&](float lo, float hi) { return clampv(float(std::atof(val.c_str())), lo, hi); };
@@ -160,6 +183,7 @@ Settings loadSettings() {
         }
     }
     s.textureFilter = resolveTextureFilter(textureFilter, bilinearFilter, legacyBilinear, legacyZoom);
+    diskDataFolder() = {true, s.dataDir, s.dataManifest};
     return s;
 }
 
@@ -243,12 +267,34 @@ std::string serializeSettings(const Settings& s) {
 bool saveSettings(const Settings& s) {
     std::string path = settingsPath();
     if (path.empty()) return false;
-    const std::string text = serializeSettings(s);
+    Settings out = s;
+    auto& seen = diskDataFolder();
+    if (seen.known && s.dataDir == seen.dir && s.dataManifest == seen.manifest) {
+        // Unchanged by this process since it last read or wrote the file, so the file's
+        // CURRENT value wins: another program (Cartographer, a second game) may have set it.
+        std::ifstream in(path);
+        std::string line, key, val;
+        while (in && std::getline(in, line))
+            if (splitLine(line, key, val)) {
+                if (key == "dataDir") out.dataDir = val;
+                else if (key == "dataManifest") out.dataManifest = val;
+            }
+    }
+    const std::string text = serializeSettings(out);
     // Atomic write: temp file + rename, so a crash mid-write can't corrupt the file.
     std::string tmp = path + ".tmp";
-    { std::ofstream out(tmp, std::ios::trunc); if (!out) return false; out << text; if (!out) return false; }
+    { std::ofstream o(tmp, std::ios::trunc); if (!o) return false; o << text; if (!o) return false; }
     std::remove(path.c_str());
-    return std::rename(tmp.c_str(), path.c_str()) == 0;
+    if (std::rename(tmp.c_str(), path.c_str()) != 0) return false;
+    seen = {true, out.dataDir, out.dataManifest};
+    return true;
+}
+
+bool saveDataFolderSetting(const std::string& folder, const std::string& manifest) {
+    Settings s = loadSettings();   // the file as it is now; nothing else in it changes
+    s.dataDir = folder;
+    s.dataManifest = manifest;
+    return saveSettings(s);
 }
 
 }  // namespace tak

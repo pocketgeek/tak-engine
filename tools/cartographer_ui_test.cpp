@@ -1,5 +1,6 @@
 #include <fstream>
 #include "cartographer/editor.h"
+#include "cartographer/editorstate.h"
 #include "client/modelview.h"
 #include "sim/matchsetup.h"
 #include "cartographer/document.h"
@@ -1414,6 +1415,136 @@ static int displayWorkflow(const char* data) {
     std::cout<<"PASS: preferences dialog, borderless fullscreen (live, persisted, restored, pointer mapping, windowed size), edge scrolling (dwell, edges, browser, screen edge, map limit, off)\n";return 0;
 }
 
+// View > Preferences > GAME DATA FOLDER, the setting shared with the game: an invalid
+// pick keeps the folder, a cancel changes nothing, a valid pick is written to the game's
+// settings file at once and offers RESTART NOW, which relaunches with this document;
+// the restarted editor mounts the new folder; unsaved work is asked about first (CANCEL
+// keeps the editor, DISCARD restarts); a --data launch greys the row. The game's file is
+// the profile's copy (TAK_CARTOGRAPHER_PROFILE), never the player's.
+static int dataFolderWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-datafolder-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);isolateProfile(root.string().c_str());
+    const auto gameSettings=root/"TAKengine"/"Cartographer"/"game-settings.ini";
+    const auto text=[](const fs::path& p) {const auto t=p.u8string();return std::string(t.begin(),t.end());};
+    // A second spelling of the install that does not compare equal to the first: a
+    // directory symlink, else the root archives hard-linked into a folder of their own.
+    const auto alt=root/"alt-install";std::error_code ec;
+    fs::create_directory_symlink(fs::absolute(data),alt,ec);
+    if(ec) {
+        ec.clear();fs::create_directory(alt,ec);
+        for(const auto& entry:fs::directory_iterator(data))if(entry.is_regular_file() && entry.path().extension().string().size()==4)fs::create_hard_link(entry.path(),alt/entry.path().filename(),ec);
+    }
+    fs::create_directory(root/"not-an-install");
+    const std::string original=data,other=text(alt),bad=text(root/"not-an-install");
+    {std::ofstream seed(gameSettings);seed<<"dataDir = "<<original<<"\n";}
+    const char* shots=std::getenv("TAK_CARTO_SHOT_DIR");
+    std::string failure;int phase=0,lastFrame=0;Uint64 since=0;
+    auto check=[&](bool value,const std::string& message) {if(!value && failure.empty())failure=message+" (phase "+std::to_string(phase)+", frame "+std::to_string(lastFrame)+")";};
+    auto savedDir=[&] {const auto t=readText(gameSettings);const auto at=t.find("dataDir = ");return at==std::string::npos?std::string():t.substr(at+10,t.find('\n',at)-at-10);};
+    std::vector<std::string> picks;size_t picked=0;
+    std::vector<std::vector<std::string>> relaunches;
+    cart::Editor* editor=nullptr;
+    cart::EditorHooks hooks;
+    hooks.attached=[&](cart::Editor& e) {editor=&e;};
+    hooks.pickFolder=[&](const std::string&,const std::string&) {return picked<picks.size()?picks[picked++]:std::string();};
+    hooks.relaunch=[&](const std::vector<std::string>& args) {relaunches.push_back(args);};
+    auto quit=[] {SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);};
+    auto run=[&](std::vector<std::string> args,const std::function<void(SDL_Window*,SDL_Renderer*,const Pointer&,Uint64)>& step) {
+        phase=0;since=SDL_GetTicks64();std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+        return cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+            lastFrame=frame;float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);const Uint64 now=SDL_GetTicks64();
+            if(now-since>15000) {check(false,"workflow stalled");quit();phase=99;return;}
+            step(window,renderer,Pointer{window,sx,sy},now);
+        },hooks);
+    };
+    auto next=[&] {++phase;since=SDL_GetTicks64();};
+    auto center=[](const SDL_Rect& r) {return SDL_Point{r.x+r.w/2,r.y+r.h/2};};
+    auto openPreferences=[](const Pointer& pointer) {pointer.click(96+2*72+20,10);pointer.click(300,22+18*20+10);};
+
+    // 1. Saved folder in use: invalid, cancel, then a valid pick and RESTART NOW (clean document).
+    picks={bad,"",other};
+    const std::vector<std::string> args={"cartographer","Ulasem Arena","--out",root.string()};
+    int result=run(args,[&](SDL_Window*,SDL_Renderer* renderer,const Pointer& pointer,Uint64) {
+        switch(phase) {
+        case 0:check(editor && editor->dataRoot==original,"the saved shared folder is the one mounted");openPreferences(pointer);next();break;
+        case 1:
+            check(editor->modal==cart::Editor::M_PREFERENCES && editor->mFolderChange.w>0,"Preferences shows an enabled CHANGE button");
+            if(shots)savePng(renderer,fs::path(shots)/"preferences-datafolder.png");
+            {const auto c=center(editor->mFolderChange);pointer.click(c.x,c.y);}next();break;
+        // Each pick: wait for the worker, then check on the NEXT frame, which collects
+        // the outcome before its events and draws it.
+        case 2:case 4:case 6:if(!editor->folderPick.busy())next();break;
+        case 3:
+            check(editor->folderNoteError && editor->folderNote.find("missing")!=std::string::npos,"an invalid pick says what is missing ("+editor->folderNote+")");
+            check(savedDir()==original && editor->folderSaved==original,"an invalid pick keeps the shared setting");
+            check(editor->mFolderRestart.w==0,"an invalid pick offers no restart");
+            if(shots)savePng(renderer,fs::path(shots)/"preferences-datafolder-invalid.png");
+            {const auto c=center(editor->mFolderChange);pointer.click(c.x,c.y);}next();break;
+        case 5:
+            check(!editor->folderNoteError && savedDir()==original && editor->mFolderRestart.w==0,"a cancelled pick changes nothing");
+            {const auto c=center(editor->mFolderChange);pointer.click(c.x,c.y);}next();break;
+        case 7:
+            check(savedDir()==other && editor->folderSaved==other,"a valid pick is written to the game's settings at once ("+savedDir()+")");
+            check(readText(gameSettings).find("dataManifest = "+tak::hpi::rootManifest(alt))!=std::string::npos,"a valid pick saves its manifest");
+            check(editor->mFolderRestart.w>0 && editor->dataRoot==original,"a valid pick offers RESTART NOW and the open install stays mounted");
+            if(shots)savePng(renderer,fs::path(shots)/"preferences-datafolder-restart.png");
+            {const auto c=center(editor->mFolderRestart);pointer.click(c.x,c.y);}next();break;
+        case 8:if(!editor->running)break;check(false,"RESTART NOW on a clean document leaves the editor");quit();next();break;   // the frame that handled it still finishes
+        }
+    });
+    check(result==0,"the first editor exits cleanly");
+    check(relaunches.size()==1 && relaunches.back()==std::vector<std::string>{"--out",root.string(),"Ulasem Arena"},
+          "RESTART NOW relaunches with the same output folder and this map");
+
+    // 2. The restarted editor mounts the new folder. Unsaved work: RESTART NOW asks; CANCEL
+    // stays; RESTART NOW + DISCARD restarts.
+    picks={original};picked=0;
+    if(failure.empty())result=run(args,[&](SDL_Window*,SDL_Renderer* renderer,const Pointer& pointer,Uint64) {
+        switch(phase) {
+        case 0:
+            check(editor->dataRoot==other && editor->dataOrigin==tak::DataFolderOrigin::Saved,"the restarted editor mounts the folder chosen ("+editor->dataRoot+")");
+            editor->dirty=true;   // unsaved work, as any edit would leave
+            openPreferences(pointer);next();break;
+        case 1:check(editor->mFolderRestart.w==0,"nothing to restart for while the setting is the folder in use");
+            {const auto c=center(editor->mFolderChange);pointer.click(c.x,c.y);}next();break;
+        case 2:if(!editor->folderPick.busy())next();break;
+        case 3:next();break;   // collected and drawn
+        case 4:check(editor->mFolderRestart.w>0,"changing back offers RESTART NOW");{const auto c=center(editor->mFolderRestart);pointer.click(c.x,c.y);}next();break;
+        case 5:
+            check(editor->modal==cart::Editor::M_QUITSAVE && editor->restartAfterQuit,"unsaved work is asked about before a restart");
+            if(shots)savePng(renderer,fs::path(shots)/"preferences-datafolder-unsaved.png");
+            {const auto c=center(editor->mCancel);pointer.click(c.x,c.y);}next();break;
+        case 6:check(editor->modal==cart::Editor::M_NONE && !editor->restartAfterQuit && editor->running,"CANCEL keeps editing");
+            openPreferences(pointer);next();break;
+        case 7:{const auto c=center(editor->mFolderRestart);pointer.click(c.x,c.y);}next();break;
+        case 8:check(editor->modal==cart::Editor::M_QUITSAVE,"asked again");{const auto c=center(editor->mQuit);pointer.click(c.x,c.y);}next();break;
+        case 9:if(!editor->running)break;check(false,"DISCARD restarts");quit();next();break;
+        }
+    });
+    check(result==0 && relaunches.size()==2 && savedDir()==original,"DISCARD restarts after asking");
+
+    // 3. --data overrides the setting: the row is greyed and says so, and never picks.
+    picks={bad};picked=0;
+    const std::vector<std::string> cli={"cartographer","Ulasem Arena","--data",original,"--out",root.string()};
+    if(failure.empty())result=run(cli,[&](SDL_Window*,SDL_Renderer* renderer,const Pointer& pointer,Uint64) {
+        switch(phase) {
+        case 0:openPreferences(pointer);next();break;
+        case 1:{
+            check(editor->mFolderChange.w==0 && editor->mFolderRestart.w==0,"a --data launch has no CHANGE button");
+            if(shots)savePng(renderer,fs::path(shots)/"preferences-datafolder-locked.png");
+            check(editor->dataOrigin==tak::DataFolderOrigin::CommandLine,"--data is the folder's origin");
+            editor->clickDataFolder();next();break;   // the handler itself refuses, not just the missing button
+        }
+        case 2:check(!editor->folderPick.busy() && picked==0,"a locked row never opens the picker");key(SDLK_ESCAPE);quit();next();break;
+        }
+    });
+    check(result==0 && relaunches.size()==2,"quitting a --data launch does not restart");
+    fs::remove_all(root,ec);
+    if(!failure.empty()) {std::cerr<<"data folder: "<<failure<<'\n';return 1;}
+    std::cout<<"PASS: preferences data folder (invalid kept, cancel, shared setting saved at once, RESTART NOW reopens the map, restarted editor mounts it, unsaved prompt CANCEL/DISCARD, --data greys it)\n";return 0;
+}
+
 int main(int argc,char** argv) {
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
@@ -1436,6 +1567,7 @@ int main(int argc,char** argv) {
     if(argc==3 && std::string(argv[2])=="sections")return sectionsWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="palette-scroll")return paletteScrollWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="display")return displayWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="datafolder")return dataFolderWorkflow(argv[1]);
     if(argc!=2)return 2;
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-ui-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

@@ -117,7 +117,9 @@ struct Settings {
     std::vector<std::string> knownServers;
 
     // ---- data / install location ----
-    std::string dataDir;           // retail install folder (picked once; re-checked at launch)
+    std::string dataDir;           // retail install folder (picked at first run, changeable in
+                                   // Options and in Cartographer's Preferences, which share it;
+                                   // re-checked at launch). See client/datafolder.h.
     std::string dataManifest;      // authenticity digest of the root HPIs when last validated
                                    // (hpi::rootManifest); a mismatch re-runs validation
 
@@ -179,12 +181,28 @@ struct Settings {
 
 // The config file path (SDL_GetPrefPath based). Empty only if SDL can't provide one.
 std::string settingsPath();
+// Point settingsPath() at another file for the rest of the process ("" = back to the
+// default). Cartographer's test profile uses it so a UI test of the shared GAME DATA
+// FOLDER setting can never read or write the player's real game settings -- in any
+// build type, which the debug-only TAK_SETTINGS_FILE hook cannot promise.
+void setSettingsPath(std::string path);
 
 // Read the config file; returns defaults for anything missing/corrupt (never throws).
 Settings loadSettings();
 
 // Atomically write the config file. Returns false on I/O failure.
+//
+// The data folder is the one setting another PROGRAM writes too: Cartographer reads
+// and changes the game's dataDir (client/datafolder.h). So a save from a process that
+// has not itself changed dataDir/dataManifest since it last read or wrote the file
+// keeps whatever the file holds for them NOW, instead of writing back its stale copy --
+// otherwise changing the folder in Cartographer while the game is open would be undone
+// by the game's next save of anything (an Options SAVE, a won campaign mission).
 bool saveSettings(const Settings&);
+// Change ONLY the data folder in the file (read, set dataDir + dataManifest, write):
+// what Options and Cartographer's Preferences call on a valid pick, so unsaved edits
+// on the open Options screen are not persisted along with it.
+bool saveDataFolderSetting(const std::string& folder, const std::string& manifest);
 // The exact text saveSettings writes (tests inspect it).
 std::string serializeSettings(const Settings&);
 

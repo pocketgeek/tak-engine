@@ -19,7 +19,10 @@
 #include "cartographer/document.h"
 #include "cartographer/generator.h"
 #include "client/settings.h"
+#include "client/datafolder.h"
 #include "client/dirpicker.h"
+#include "cartographer/restart.h"
+#include "util/relaunch.h"
 #include "util/appicon.h"
 #include "util/virtualpath.h"
 #include "terrain/terrain.h"
@@ -65,26 +68,31 @@ static std::filesystem::path profileFolder() {
 cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const EditorHooks& hooks)
     : frameHook(frameHook), hooks(hooks) {
     parseArguments(argc,argv);
-    // Data root: --data wins; otherwise the local directory if it holds a valid
-    // install (drop the editor into a game folder and it just works).
-    if (dataRoot.empty()) {
-        std::error_code ec;
-        std::filesystem::path here = std::filesystem::current_path(ec);
-        if (!ec && tak::hpi::validInstall(here, nullptr)) {
-            dataRoot = pathText(here);
-            std::fprintf(stderr, "data: using the local directory %s\n", dataRoot.c_str());
-        }
-    }
-    if(dataRoot.empty() && !SDL_getenv("TAK_CARTOGRAPHER_PROFILE")) {   // (a test profile ignores the game's saved data dir)
-        const auto saved=tak::loadSettings();
-        if(!saved.dataDir.empty() && tak::hpi::validInstall(std::filesystem::u8path(saved.dataDir),nullptr))
-            dataRoot=saved.dataDir;
-    }
-    if(dataRoot.empty() && (!std::getenv("SDL_VIDEODRIVER") || (std::string(std::getenv("SDL_VIDEODRIVER"))!="dummy" && std::string(std::getenv("SDL_VIDEODRIVER"))!="offscreen"))) {
-        auto picked=tak::pickDirectory("Choose your Total Annihilation Kingdoms installation","");
-        if(!picked.empty() && tak::hpi::validInstall(std::filesystem::u8path(picked),nullptr)) {
-            dataRoot=picked;auto settings=tak::loadSettings();settings.dataDir=picked;tak::saveSettings(settings);
-        }
+    launchArgs.assign(argv+std::min(argc,1),argv+argc);
+    // A test profile has its own copy of the game's settings file, so a test can
+    // exercise the shared data folder without ever touching the player's real one.
+    if(const char* profile=SDL_getenv("TAK_CARTOGRAPHER_PROFILE"); profile && *profile)
+        tak::setSettingsPath(pathText(std::filesystem::u8path(profile)/"game-settings.ini"));
+    // Data root, by the game's own rules (tak::chooseDataFolder): --data wins; then the
+    // local directory if it holds a valid install (drop the editor into a game folder
+    // and it just works); then the GAME's saved folder, which Preferences changes for
+    // both programs; then ask.
+    {
+        const auto valid=[](const std::string& folder,std::string* why) {return tak::hpi::validInstall(std::filesystem::u8path(folder),why);};
+        std::error_code ec;const auto here=std::filesystem::current_path(ec);
+        const auto choice=tak::chooseDataFolder(dataRoot,ec?std::string():pathText(here),tak::loadSettings().dataDir,valid);
+        dataOrigin=choice.origin;
+        if(choice.origin!=tak::DataFolderOrigin::CommandLine)dataRoot=choice.folder;
+        if(choice.origin==tak::DataFolderOrigin::LaunchFolder)std::fprintf(stderr,"data: using the local directory %s\n",dataRoot.c_str());
+        const char* video=std::getenv("SDL_VIDEODRIVER");
+        if(dataRoot.empty() && (!video || (std::string(video)!="dummy" && std::string(video)!="offscreen")))
+            for(int tries=0;tries<6 && dataRoot.empty();++tries) {
+                const auto picked=tak::pickDirectory(tak::kDataFolderPickerTitle,"");
+                if(picked.empty())break;   // cancelled
+                std::string why;
+                if(valid(picked,&why)) {dataRoot=picked;tak::saveDataFolderSetting(picked,tak::hpi::rootManifest(std::filesystem::u8path(picked)));}
+                else SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Not a game folder",tak::dataFolderInvalidMessage(why).c_str(),nullptr);
+            }
     }
     if (dataRoot.empty()) {
         std::fprintf(stderr,
@@ -102,6 +110,13 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     }
 
     if(!explicitOutput) outDir=pathText(std::filesystem::u8path(dataRoot)/"Maps");
+    // A .kmp/.tnt FILE named at launch (how a restart reopens a saved document) opens
+    // through File > Open once the editor is up; a bare name is an installed map.
+    {
+        std::error_code ec;
+        if(!mapName.empty() && shotPath.empty() && exportPath.empty() && bundlePath.empty() && stampName.empty() &&
+           std::filesystem::is_regular_file(std::filesystem::u8path(mapName),ec)) {pendingOpen=mapName;mapName.clear();}
+    }
 
     SDL_SetMainReady();   // we own main() (SDL_MAIN_HANDLED); tell SDL not to hijack it
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -150,7 +165,7 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     if(interactive && !recoveryFolder.empty()) {
         try {
             recoverySession=cart::RecoveryFile::create(recoveryFolder);
-            if(mapName.empty() && !newW)recoveredSession=cart::RecoveryFile::claimNewest(recoveryFolder);
+            if(mapName.empty() && pendingOpen.empty() && !newW)recoveredSession=cart::RecoveryFile::claimNewest(recoveryFolder);
         } catch(const std::exception& e) {recoveryStatus=std::string("Recovery unavailable: ")+e.what();}
         if(recoveredSession) {
             const SDL_MessageBoxButtonData buttons[]={{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT,1,"Recover"},{0,2,"Discard recovery"},{SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT,0,"Cancel"}};
@@ -178,8 +193,9 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     // kmap/<name>.tnt), same resolution the game uses. An empty name (or --new
     // without --save) starts a fresh blank map instead -- mapPath stays empty so
     // there are no sibling scenario files to load.
-    showWelcome=interactive && mapName.empty() && !newW && !preferences.guideSeen;
+    showWelcome=interactive && mapName.empty() && pendingOpen.empty() && !newW && !preferences.guideSeen;
     mapPath=recoveredMapPath;
+    if(recoveredMapPath.empty())documentRequest=mapName;   // an installed map reopens by name
     if (!mapName.empty()) {
         if(mapPath.empty())for (const auto& [name, path] : tak::hpi::listMaps(vfs)) {
             std::string lo = name;
@@ -281,7 +297,8 @@ cart::Editor::Editor(int argc,char** argv,const FrameHook& frameHook,const Edito
     prepareShot();
     // A bare launch (no map named, no --new size) opens on the blank map with
     // the New Map dialog already up, so the first thing is "what shall we make?".
-    if (mapPath.empty() && newW == 0 && shotPath.empty()) openModal(M_NEW);
+    if(!pendingOpen.empty()) openDocument(pendingOpen);   // a failure says why (OPEN FAILED) over the blank map
+    else if (mapPath.empty() && newW == 0 && shotPath.empty()) openModal(M_NEW);
 }
 
 int cart::Editor::run() {
@@ -300,6 +317,7 @@ int cart::Editor::run() {
         miniRect={w-148,kMenuH+8,std::max(1,int(mapView.map().width*miniScale)),std::max(1,int(mapView.map().height*miniScale))};
 
         pollJobs();
+        pollDataFolder();
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             // The browser's rows index the current tool's list (sections, features,
@@ -321,6 +339,7 @@ int cart::Editor::run() {
             if(handleRegionDrag(e))continue;
             if(handleGeneratedPreview(e))continue;
             if (e.type == SDL_QUIT) {
+                restartAfterQuit=false;   // closing the window is an exit, whatever was pending
                 if (dirty) {
                     // Close any transient overlay so the quit prompt gets input.
                     useOnlyOpen = false; scriptOpen = false; pickOpen = false;regionsOpen=false;
@@ -379,6 +398,7 @@ int cart::Editor::run() {
     }
 
     minimapCancel->store(true,std::memory_order_relaxed);
+    if(restartAfterQuit)restartArgs=cart::restartArguments(launchArgs,documentRequest);
     if(interactive) {clearRecovery();persistPreferences();}
     thumbs.reset();unitPortraits.reset();modelPreview.reset();
     for (auto& [k, t] : featTex) if (t) SDL_DestroyTexture(t);
@@ -386,10 +406,23 @@ int cart::Editor::run() {
 }
 
 int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,SDL_Renderer*,int)>& frameHook,const EditorHooks& hooks) {
+    std::optional<std::vector<std::string>> restart;int code=0;
     try {
         Editor editor(argc,argv,frameHook,hooks);
-        return editor.run();
+        code=editor.run();restart=std::move(editor.restartArgs);
     } catch(const Session::Exit& exit) {return exit.code;}
+    // Preferences changed the GAME DATA FOLDER and the player chose Restart: the editor
+    // (window, renderer, SDL) is gone, so the new process owns everything afresh.
+    if(restart) {
+        if(hooks.relaunch) {hooks.relaunch(*restart);return code;}
+        std::string why;
+        if(!tak::relaunchSelf(*restart,why)) {
+            std::fprintf(stderr,"restart failed: %s\n",why.c_str());
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Restart failed",("The new game data folder is saved. Start Cartographer again to use it.\n\n("+why+")").c_str(),nullptr);
+            return 1;
+        }
+    }
+    return code;
 }
 
 #ifndef TAK_CARTOGRAPHER_TEST

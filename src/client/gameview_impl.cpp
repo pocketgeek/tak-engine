@@ -242,7 +242,13 @@
             [this] { saveSettings(*settings_); },
             sounds_.channelCount(),
             [this] { openHotkeys(); },
-            [this] { sounds_.reopenDevice(); });
+            [this] { sounds_.reopenDevice(); },
+            // GAME DATA FOLDER: shown, never changeable here -- this view's whole session
+            // (and in multiplayer, its agreed gameplay data) sits on the mounted install.
+            tak::DataFolderRow{installRoot_,
+                replayMode_ ? "Change it from Options on the main menu, not while watching a replay."
+                : inLobbyPhase() ? "Change it from Options on the main menu, not in a lobby."
+                                 : "Change it from Options on the main menu, not during a game.", {}});
     }
 
     void GameView::writeResume(uint32_t gid, uint64_t tok) const {

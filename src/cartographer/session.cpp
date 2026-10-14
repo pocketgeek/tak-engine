@@ -78,6 +78,7 @@ bool cart::Session::saveDocument(const std::string& destination,bool bundle) {
         if(result.ok) {
             history.markSaved();dirty=false;
             preferences.remember(pathText(std::filesystem::absolute(path)));
+            documentRequest=pathText(std::filesystem::absolute(path));   // a restart reopens the saved file
             if(interactive)persistPreferences();
         }
         return result.ok;
@@ -135,6 +136,7 @@ bool cart::Editor::openDocument(const std::string& request) {
         editRule=nullptr;editUnit=draggingUnit=draggingStart=-1;scrGroup=-1;
         if(std::filesystem::is_regular_file(disk)) {outDir=pathText(std::filesystem::absolute(disk).parent_path());mapName=pathText(disk.stem());}
         preferences.remember(request);persistPreferences();
+        documentRequest=std::filesystem::is_regular_file(disk)?pathText(std::filesystem::absolute(disk)):request;
         modal=M_NONE;SDL_StopTextInput();return true;
     } catch(const std::exception& error) {openMessage("OPEN FAILED",error.what());return false;}
 }

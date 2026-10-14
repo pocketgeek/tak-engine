@@ -1,6 +1,7 @@
 #include "client/options.h"
 
 #include "client/blockfont.h"
+#include "client/datafolder.h"
 #include "client/gpuvram.h"
 #include "client/renderdriver.h"
 
@@ -157,9 +158,11 @@ SDL_AudioDeviceID openAudioDevice(int iscapture, const SDL_AudioSpec* want,
 
 OptionsScreen::OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
                              std::function<void()> onSave, int audioChannels,
-                             std::function<void()> onHotkeys, std::function<void()> onAudioDevice)
+                             std::function<void()> onHotkeys, std::function<void()> onAudioDevice,
+                             DataFolderRow dataFolder)
     : ren_(ren), s_(s), onChange_(std::move(onChange)), onSave_(std::move(onSave)),
-      onHotkeys_(std::move(onHotkeys)), onAudioDevice_(std::move(onAudioDevice)) {
+      onHotkeys_(std::move(onHotkeys)), onAudioDevice_(std::move(onAudioDevice)),
+      folder_(std::move(dataFolder)) {
     build(audioChannels > 0 ? audioChannels : detectOutputChannels());
 }
 
@@ -194,6 +197,22 @@ void OptionsScreen::build(int channels) {
 
     section("PLAYER (NEW GAMES)");
     ctls_.push_back({Control::PlayerName, "PLAYER NAME", 0, 0, {}, {}, {}, {}, {}});
+
+    // GAME DATA: the retail install this launch reads, shared with Cartographer. A
+    // change is saved at once and applied by restarting (client/datafolder.h); the row
+    // is greyed wherever that is unsafe or would not take.
+    section("GAME DATA");
+    ctls_.push_back({Control::Folder, "DATA FOLDER", 0, 0, {}, {}, {}, {}, {}});
+    ctls_.back().enabled = [this] { return folder_.locked.empty(); };
+    ctls_.back().help = [this] {
+        std::vector<std::string> out = {"IN USE: " + folder_.inUse};
+        if (dataFolderNeedsRestart(s_.dataDir, folder_.inUse)) out.push_back("> AFTER A RESTART: " + s_.dataDir);
+        out.push_back(folder_.locked.empty()
+            ? "THE TOTAL ANNIHILATION: KINGDOMS INSTALL THE GAME READS. CARTOGRAPHER USES THE SAME ONE. "
+              "CLICK TO CHOOSE ANOTHER. THE GAME RESTARTS TO LOAD IT."
+            : folder_.locked);
+        return out;
+    };
 
     section("AUDIO");
     // Output device: "System Default" plus every current output device. On startup a
@@ -409,7 +428,9 @@ void OptionsScreen::build(int channels) {
 
 void OptionsScreen::layout(int winW, int winH) {
     u_ = std::clamp(std::min(winW / 1280.0f, winH / 720.0f), 1.0f, 3.0f);
-    auto rowH = [&](Control::Kind k) { return (k == Control::Section) ? 30 * u_ : 36 * u_; };
+    auto rowH = [&](Control::Kind k) {
+        return k == Control::Section ? 30 * u_ : k == Control::Folder ? 56 * u_ : 36 * u_;
+    };
     float panelW = std::min(660 * u_, winW * 0.72f);
     float titleH = 3.4f * 7 * u_ + 26 * u_;
     float footerH = 52 * u_;    // SAVE / BACK buttons, fixed at the panel bottom
@@ -492,6 +513,11 @@ void OptionsScreen::appendPlayerName(const std::string& text) {
 bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
     applyPendingRebuild();   // fold in a pending device-change rebuild before this event
     layout(winW, winH);
+    pollFolder();
+    if (restartPrompt_) return restartPromptInput(e);
+    // The folder dialog is up (in its own window): nothing here may change underneath it.
+    if (folderPick_.busy() && (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN ||
+                               e.type == SDL_MOUSEWHEEL || e.type == SDL_TEXTINPUT)) return false;
     if (nameEditing_) {
         if (e.type == SDL_TEXTINPUT) { appendPlayerName(e.text.text); return false; }
         if (e.type == SDL_KEYDOWN) {
@@ -607,6 +633,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
                 drag_ = int(i); commit(c, mx); return false;
             }
             if (c.kind == Control::Button) { if (c.action) c.action(); return false; }
+            if (c.kind == Control::Folder) { clickFolder(); return false; }
             if (c.kind == Control::Dropdown) { refreshDevices(); openDrop_ = int(i); dropScroll_ = 0; return false; }   // fresh A-Z list
         }
         return false;
@@ -635,7 +662,15 @@ void OptionsScreen::drawHelp(const Control& c) {
             size_t end = text.find(' ', at + 1);
             if (end == std::string::npos) end = text.size();
             std::string word = text.substr(at, end - at);
-            if (!line.empty() && int(line.size() + word.size()) > maxCh) {
+            if (int(word.size()) > maxCh - 4) {
+                // Longer than any line (a folder path): break it wherever the line ends.
+                while (!word.empty()) {
+                    const size_t room = size_t(std::max(1, maxCh - int(line.size())));
+                    line += word.substr(0, room);
+                    word.erase(0, std::min(room, word.size()));
+                    if (!word.empty()) { lines.push_back({line, mark}); line = "    "; }
+                }
+            } else if (!line.empty() && int(line.size() + word.size()) > maxCh) {
                 lines.push_back({line, mark}); line = "    " + word.substr(word[0] == ' ' ? 1 : 0);
             } else line += word;
             at = end;
@@ -657,6 +692,7 @@ void OptionsScreen::drawHelp(const Control& c) {
 void OptionsScreen::render(int winW, int winH) {
     applyPendingRebuild();   // in case the change came between input() and this frame
     layout(winW, winH);
+    pollFolder();            // a folder pick finishes while the player is not touching anything
     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
 
     // Dim the whole screen, then the panel.
@@ -708,6 +744,8 @@ void OptionsScreen::render(int winW, int winH) {
             if (nameEditing_ && !nameSelectAll_) text += "_";
             const float px = std::min(1.6f*u_, (field.w-12*u_)/std::max(1.0f,blockTextWidth(text,1)));
             drawBlockText(ren_,text,field.x+6*u_,field.y+(field.h-7*px)/2,px,{225,230,240,255});
+        } else if (c.kind == Control::Folder) {
+            drawFolderRow(c);
         } else if (c.kind == Control::Button) {
             drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx, {225, 230, 240, 255});
             SDL_FRect chip{c.row.x + c.row.w - 96 * u_, c.row.y + 5 * u_, 96 * u_, 24 * u_};
@@ -854,6 +892,151 @@ void OptionsScreen::render(int winW, int winH) {
         }
         SDL_RenderSetClipRect(ren_, nullptr);
     }
+    drawRestartPrompt(winW, winH);   // over everything, the open dropdown included
+}
+
+// ---- GAME DATA FOLDER ----------------------------------------------------------------
+
+void OptionsScreen::clickFolder() {
+    if (!folder_.locked.empty() || folderPick_.busy()) return;
+    if (!folder_.picker && !haveDirPicker()) { folderNote_ = FolderNote::NoPicker; return; }
+    folderNote_ = FolderNote::None;
+    folderPick_.start(folder_.picker, s_.dataDir.empty() ? folder_.inUse : s_.dataDir, s_.dataDir);
+}
+
+void OptionsScreen::pollFolder() {
+    auto r = folderPick_.poll();
+    if (!r) return;
+    switch (r->outcome) {
+        case DataFolderPick::Cancelled: break;
+        case DataFolderPick::Unchanged:    // the saved folder again: re-offer a pending restart
+            restartPrompt_ = dataFolderNeedsRestart(s_.dataDir, folder_.inUse);
+            break;
+        case DataFolderPick::Invalid:      // the setting is untouched
+            folderNote_ = FolderNote::Invalid;
+            folderNoteText_ = r->reason;
+            break;
+        case DataFolderPick::Accepted:
+            // Written straight away, and ONLY these keys (not the rest of this screen's
+            // unsaved edits): the folder is configuration, and Cartographer reads it too.
+            if (!saveDataFolderSetting(r->folder, r->manifest)) {
+                folderNote_ = FolderNote::SaveFailed;
+                folderNoteText_ = r->folder;
+                break;
+            }
+            s_.dataDir = r->folder;
+            s_.dataManifest = r->manifest;
+            folderNote_ = FolderNote::Saved;
+            restartPrompt_ = dataFolderNeedsRestart(s_.dataDir, folder_.inUse);
+            std::fprintf(stderr, "options: data folder set to %s%s\n", s_.dataDir.c_str(),
+                         restartPrompt_ ? " (restart required)" : "");
+            break;
+    }
+}
+
+std::string OptionsScreen::folderStatusText() const {
+    if (folderPick_.busy()) return "CHOOSING A FOLDER...";
+    if (!folder_.locked.empty()) return folder_.locked;
+    switch (folderNote_) {
+        case FolderNote::NoPicker:
+            return "NO FOLDER PICKER: INSTALL KDIALOG OR ZENITY, OR START THE GAME WITH --DATA.";
+        case FolderNote::Invalid: return "NOT A GAME FOLDER (" + folderNoteText_ + "). KEPT THE CURRENT ONE.";
+        case FolderNote::SaveFailed: return "COULD NOT SAVE THE SETTING. KEPT THE CURRENT ONE.";
+        default: break;
+    }
+    if (dataFolderNeedsRestart(s_.dataDir, folder_.inUse)) return "RESTART TO USE: " + s_.dataDir;
+    return "SHARED WITH CARTOGRAPHER. A NEW FOLDER IS LOADED BY RESTARTING THE GAME.";
+}
+
+void OptionsScreen::drawFolderRow(const Control& c) {
+    const bool on = folder_.locked.empty();
+    const float fpx = 2.0f * u_, dpx = 1.6f * u_, npx = 1.3f * u_;
+    drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
+                  on ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
+    // CHANGE button at the right; the folder in use in a chip to its left, elided at
+    // its START (the end of a path is the part that tells installs apart).
+    const float bw = 96 * u_, gap = 8 * u_;
+    SDL_FRect btn{c.row.x + c.row.w - bw, c.row.y + 5 * u_, bw, 24 * u_};
+    const float cw = std::max(60 * u_, dropWidth(c) - bw - gap);
+    SDL_FRect chip{btn.x - gap - cw, c.row.y + 5 * u_, cw, 24 * u_};
+    SDL_SetRenderDrawColor(ren_, on ? 35 : 30, on ? 40 : 33, on ? 56 : 42, 255); SDL_RenderFillRectF(ren_, &chip);
+    SDL_SetRenderDrawColor(ren_, on ? 110 : 70, on ? 120 : 76, on ? 150 : 92, 255); SDL_RenderDrawRectF(ren_, &chip);
+    const size_t pathCh = size_t(std::max(4.0f, (chip.w - 12 * u_) / (6 * dpx)));
+    drawBlockText(ren_, elidePathStart(folder_.inUse, pathCh), chip.x + 6 * u_, chip.y + (chip.h - 7 * dpx) / 2,
+                  dpx, on ? SDL_Color{215, 225, 245, 255} : SDL_Color{120, 126, 140, 255});
+    const bool busy = folderPick_.busy();
+    SDL_SetRenderDrawColor(ren_, on && !busy ? 52 : 34, on && !busy ? 60 : 38, on && !busy ? 82 : 46, 255);
+    SDL_RenderFillRectF(ren_, &btn);
+    SDL_SetRenderDrawColor(ren_, on ? 130 : 70, on ? 140 : 76, on ? 170 : 92, 255); SDL_RenderDrawRectF(ren_, &btn);
+    const char* t = "CHANGE";
+    drawBlockText(ren_, t, btn.x + (btn.w - blockTextWidth(t, fpx)) / 2, btn.y + (btn.h - 7 * fpx) / 2, fpx,
+                  on && !busy ? SDL_Color{215, 225, 245, 255} : SDL_Color{110, 115, 125, 255});
+    // Status line under it: why it is greyed, what the last pick did, or a pending restart.
+    const size_t maxCh = size_t(std::max(8.0f, c.row.w / (6 * npx)));
+    std::string note = folderStatusText();
+    SDL_Color col{130, 140, 160, 255};
+    if (!on) col = {150, 155, 170, 255};
+    else if (busy) col = {240, 190, 90, 255};
+    else if (folderNote_ == FolderNote::Invalid || folderNote_ == FolderNote::SaveFailed ||
+             folderNote_ == FolderNote::NoPicker) col = {240, 130, 120, 255};
+    else if (dataFolderNeedsRestart(s_.dataDir, folder_.inUse)) {
+        col = {240, 190, 90, 255};
+        const std::string head = "RESTART TO USE: ";
+        note = head + elidePathStart(s_.dataDir, maxCh > head.size() + 8 ? maxCh - head.size() : 8);
+    }
+    if (note.size() > maxCh) note = note.substr(0, maxCh - 3) + "...";
+    drawBlockText(ren_, note, c.row.x, c.row.y + 38 * u_, npx, col);
+}
+
+void OptionsScreen::drawRestartPrompt(int winW, int winH) {
+    if (!restartPrompt_) return;
+    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 150);
+    SDL_FRect dim{0, 0, float(winW), float(winH)}; SDL_RenderFillRectF(ren_, &dim);
+    const float w = std::min(panel_.w - 40 * u_, 560 * u_), lpx = 1.6f * u_, tpx = 2.4f * u_;
+    std::vector<std::string> lines = {"THE GAME WILL USE", "", "AFTER IT RESTARTS. CARTOGRAPHER USES IT TOO."};
+    lines[1] = elidePathStart(s_.dataDir, size_t(std::max(8.0f, (w - 40 * u_) / (6 * lpx))));
+    if (dirty_) lines.push_back("YOUR UNSAVED OPTIONS ARE SAVED FIRST.");
+    const float h = 40 * u_ + float(lines.size()) * 14 * u_ + 64 * u_;
+    SDL_FRect box{panel_.x + (panel_.w - w) / 2, panel_.y + (panel_.h - h) / 2, w, h};
+    SDL_SetRenderDrawColor(ren_, 30, 33, 44, 252); SDL_RenderFillRectF(ren_, &box);
+    SDL_SetRenderDrawColor(ren_, 170, 180, 210, 255); SDL_RenderDrawRectF(ren_, &box);
+    const char* title = "GAME DATA FOLDER CHANGED";
+    drawBlockText(ren_, title, box.x + (box.w - blockTextWidth(title, tpx)) / 2, box.y + 14 * u_, tpx,
+                  {235, 225, 180, 255});
+    for (size_t i = 0; i < lines.size(); ++i)
+        drawBlockText(ren_, lines[i], box.x + (box.w - blockTextWidth(lines[i], lpx)) / 2,
+                      box.y + 40 * u_ + float(i) * 14 * u_, lpx,
+                      i == 1 ? SDL_Color{150, 200, 235, 255} : SDL_Color{205, 210, 222, 255});
+    const float bw = 170 * u_, bh = 32 * u_, gap = 18 * u_, by = box.y + box.h - bh - 14 * u_;
+    restartNowRect_ = {box.x + (box.w - 2 * bw - gap) / 2, by, bw, bh};
+    restartLaterRect_ = {restartNowRect_.x + bw + gap, by, bw, bh};
+    for (int i = 0; i < 2; ++i) {
+        const SDL_FRect& r = i ? restartLaterRect_ : restartNowRect_;
+        SDL_SetRenderDrawColor(ren_, i ? 60 : 62, i ? 66 : 92, i ? 86 : 80, 255); SDL_RenderFillRectF(ren_, &r);
+        SDL_SetRenderDrawColor(ren_, 130, 140, 170, 255); SDL_RenderDrawRectF(ren_, &r);
+        const char* label = i ? "LATER" : "RESTART NOW";
+        const float bpx = 2.2f * u_;
+        drawBlockText(ren_, label, r.x + (r.w - blockTextWidth(label, bpx)) / 2, r.y + (r.h - 7 * bpx) / 2, bpx,
+                      {228, 232, 242, 255});
+    }
+}
+
+bool OptionsScreen::restartPromptInput(const SDL_Event& e) {
+    auto in = [](const SDL_FRect& r, float x, float y) { return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h; };
+    bool now = false, later = false;
+    if (e.type == SDL_KEYDOWN) {
+        now = e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER;
+        later = e.key.keysym.sym == SDLK_ESCAPE;
+    } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+        now = in(restartNowRect_, float(e.button.x), float(e.button.y));
+        later = in(restartLaterRect_, float(e.button.x), float(e.button.y));
+    }
+    if (later) restartPrompt_ = false;   // the row keeps saying RESTART TO USE
+    if (!now) return false;
+    restartPrompt_ = false;
+    if (dirty_ && onSave_) { onSave_(); dirty_ = false; }   // as the prompt said
+    restartRequested_ = true;
+    return true;
 }
 
 }  // namespace tak

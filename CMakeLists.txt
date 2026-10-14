@@ -1216,7 +1216,7 @@ set_tests_properties(credstore PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/font.cpp src/client/distantmodels.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/video/bink.cpp src/video/stream.cpp src/client/streaming.cpp)
+    add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/font.cpp src/client/distantmodels.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/client/streaming.cpp)
     # Local dev/test harness (standalone scenario/demo/FFA setup, --testbuild/--firetest...):
     # debug builds only. The file is also wrapped in #ifndef NDEBUG, as are its callers, so
     # this just skips an empty TU when the config's flags define NDEBUG.
@@ -1244,6 +1244,13 @@ if(TAK_BUILD_CLIENT)
       target_link_libraries(override_settings_test PRIVATE tak-formats ${_tak_sdl2})
       add_test(NAME override_settings COMMAND override_settings_test)
     endif()
+    # GAME DATA FOLDER (client/datafolder.h): precedence, picks, elision, restart
+    # arguments for takclient and Cartographer, the Windows restart command line, and
+    # the shared settings file (a private temp file via setSettingsPath).
+    add_executable(datafolder_test tools/datafolder_test.cpp src/client/settings.cpp src/util/relaunch.cpp)
+    target_compile_definitions(datafolder_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(datafolder_test PRIVATE tak-formats ${_tak_sdl2})
+    add_test(NAME datafolder COMMAND datafolder_test)
     add_executable(crusades_ui_test tools/crusades_ui_test.cpp src/client/crusadesscreen.cpp src/client/font.cpp)
     target_compile_definitions(crusades_ui_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(crusades_ui_test PRIVATE tak-crusades-map ${_tak_sdl2})
@@ -1310,6 +1317,24 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/gui-smooth-game.png")
       set_tests_properties(gui_smoothing_game PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: HUD smoothing applies live")
+      # Options > GAME DATA FOLDER through real input and a fake picker (invalid, cancel,
+      # valid + restart prompt, LATER, RESTART NOW, the locked form), and the menu's own
+      # row greyed by this launch's --data.
+      add_test(NAME options_datafolder COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_OPTIONS_DATADIR_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/options-datafolder-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/options-datafolder-profile
+          $<TARGET_FILE:takclient> --data "${TAK_TEST_DATA}" --winsize 1280 960
+          --shot "${CMAKE_CURRENT_BINARY_DIR}/options-datafolder.png")
+      set_tests_properties(options_datafolder PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: Options data folder")
+      # RESTART NOW end to end: the client execs itself and the new process mounts the
+      # new folder (POSIX exec; Windows starts a second process, not testable this way).
+      if(Python3_EXECUTABLE AND NOT WIN32)
+        add_test(NAME client_restart COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/client_restart_test.py" "$<TARGET_FILE:takclient>" "${TAK_TEST_DATA}")
+        set_tests_properties(client_restart PROPERTIES TIMEOUT 150)
+      endif()
       # A menu single-player launch whose local server cannot run must come back to
       # the title screen with the reason (not the multiplayer sign-in dialog, not a
       # silent exit); the --shot then captures that screen and exits.
@@ -1325,7 +1350,7 @@ if(TAK_BUILD_CLIENT)
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse tactical_dots gui_smoothing_menu gui_smoothing_game
-          menu_launch_failure PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
+          menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()
     add_executable(shadow_test tools/shadow_test.cpp)
     target_include_directories(shadow_test PRIVATE src)
@@ -1343,7 +1368,7 @@ if(TAK_BUILD_CLIENT)
     target_link_libraries(fogupload_test PRIVATE ${_tak_sdl2})
     add_test(NAME fogupload COMMAND fogupload_test)
     set_tests_properties(fogupload PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
-    add_executable(audio_device_test tools/audio_device_test.cpp src/client/options.cpp)
+    add_executable(audio_device_test tools/audio_device_test.cpp src/client/options.cpp src/client/settings.cpp)
     target_compile_definitions(audio_device_test PRIVATE SDL_MAIN_HANDLED
       SDL_GetNumAudioDevices=TAK_Test_GetNumAudioDevices
       SDL_OpenAudioDevice=TAK_Test_OpenAudioDevice)
@@ -1561,7 +1586,7 @@ if(TAK_BUILD_CLIENT)
     # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
     # Shares the engine's terrain render stack (mapview + tak-formats) so maps
     # look byte-identical to the game.
-    add_executable(cartographer src/client/modelview.cpp src/cartographer/savejob.cpp src/cartographer/playtest.cpp src/cartographer/editorfont.cpp src/cartographer/thumbnails.cpp src/cartographer/recovery.cpp src/cartographer/preferences.cpp src/cartographer/ruleedit.cpp src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/session.cpp src/cartographer/headless.cpp src/cartographer/palette.cpp src/cartographer/canvas.cpp src/cartographer/chrome.cpp src/cartographer/dialogs.cpp src/cartographer/scripting.cpp src/cartographer/symmetrytools.cpp src/cartographer/symmetry.cpp src/cartographer/sections.cpp src/cartographer/sectiongroups.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
+    add_executable(cartographer src/client/modelview.cpp src/util/relaunch.cpp src/cartographer/savejob.cpp src/cartographer/playtest.cpp src/cartographer/editorfont.cpp src/cartographer/thumbnails.cpp src/cartographer/recovery.cpp src/cartographer/preferences.cpp src/cartographer/ruleedit.cpp src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/session.cpp src/cartographer/headless.cpp src/cartographer/palette.cpp src/cartographer/canvas.cpp src/cartographer/chrome.cpp src/cartographer/dialogs.cpp src/cartographer/scripting.cpp src/cartographer/symmetrytools.cpp src/cartographer/symmetry.cpp src/cartographer/sections.cpp src/cartographer/sectiongroups.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
     target_link_libraries(cartographer PRIVATE tak-formats ${_tak_sdl2})
     target_compile_definitions(cartographer PRIVATE SDL_MAIN_HANDLED)
     get_target_property(_cartographer_sources cartographer SOURCES)
@@ -1590,7 +1615,8 @@ if(TAK_BUILD_CLIENT)
       add_test(NAME cartographer_sections_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}" sections)
       add_test(NAME cartographer_palette_scroll_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}" palette-scroll)
       add_test(NAME cartographer_display_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}" display)
-      set_tests_properties(cartographer_palette_scroll_ui cartographer_display_ui PROPERTIES TIMEOUT 120 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
+      add_test(NAME cartographer_datafolder_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}" datafolder)
+      set_tests_properties(cartographer_palette_scroll_ui cartographer_display_ui cartographer_datafolder_ui PROPERTIES TIMEOUT 120 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
       find_package(Python3 COMPONENTS Interpreter QUIET)
       if(Python3_Interpreter_FOUND AND UNIX AND NOT APPLE)
         add_test(NAME cartographer_recovery COMMAND "${Python3_EXECUTABLE}"

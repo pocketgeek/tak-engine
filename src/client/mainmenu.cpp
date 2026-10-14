@@ -143,6 +143,7 @@ struct MainMenu::Impl {
 
     // The Options overlay, opened from the SETTINGS menu (see run()).
     std::unique_ptr<OptionsScreen> options_;
+    DataFolderRow dataFolder_;   // its GAME DATA FOLDER row (MainMenu::setDataFolder)
     std::unique_ptr<HotkeysScreen> hotkeys_;   // opened from the SETTINGS menu -> CONTROLS
     // The SETTINGS menu overlay -- the lower-right menu button opens THIS (OPTIONS / CONTROLS)
     // instead of jumping straight into Options, mirroring the in-game Esc GAME MENU.
@@ -530,6 +531,110 @@ struct MainMenu::Impl {
         }
         applyArtSettings(current);
         std::puts("PASS: title art smoothing applies live, restores pixels and releases textures");
+    }
+
+    // TAK_OPTIONS_DATADIR_TEST: the Options GAME DATA FOLDER row, driven with real input
+    // through a fake picker -- an invalid folder, a cancel, a valid install, the same one
+    // again -- checking the settings FILE and the screen after each, then RESTART NOW and
+    // the locked form. The launch itself passed --data, so the menu's own row must say
+    // that overrides it. TAK_OPTIONS_SHOT_DIR=<dir> also writes each state as a PNG. The
+    // file written is the test profile's (XDG_* / TAK_SETTINGS_FILE), never the player's.
+    void testDataFolder(const Settings& current, int width, int height) {
+        namespace fs = std::filesystem;
+        auto check = [](bool ok, const std::string& message) {
+            if (!ok) throw std::runtime_error("data folder option: " + message);
+        };
+        auto text = [](const fs::path& p) { const auto t = p.u8string(); return std::string(t.begin(), t.end()); };
+        check(dataFolder_.locked.find("--data") != std::string::npos,
+              "a --data launch greys the menu's row and names --data (got '" + dataFolder_.locked + "')");
+        const fs::path scratch = fs::temp_directory_path() / ("tak-datadir-test-" + std::to_string(SDL_GetPerformanceCounter()));
+        fs::create_directories(scratch / "not-an-install");
+        const std::string bad = text(scratch / "not-an-install"), old = text(scratch / "old-install"), good = install;
+        // The launch "mounted" a folder that is not the real install, so picking the real
+        // one is a change that needs a restart.
+        auto picks = std::make_shared<std::vector<std::string>>(std::vector<std::string>{bad, "", good, good, good});
+        auto next = std::make_shared<size_t>(0);
+        auto picker = [picks, next](const std::string&, const std::string&) {
+            return *next < picks->size() ? (*picks)[(*next)++] : std::string();
+        };
+        check(saveDataFolderSetting(old, "old"), "cannot write the test profile's settings file");
+        Settings s = current; s.dataDir = old; s.dataManifest = "old";
+        const char* shotDir = devEnv("TAK_OPTIONS_SHOT_DIR");
+        auto frame = [&](OptionsScreen& o, const char* name) {
+            render(width, height);
+            o.render(width, height);
+            if (!shotDir || !name) return;
+            std::vector<uint8_t> px(size_t(width) * height * 4);
+            if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_RGBA32, px.data(), width * 4) == 0)
+                png::write(text(fs::u8path(shotDir) / name), width, height, px);
+        };
+        auto send = [&](OptionsScreen& o, Uint32 type, float x, float y) {
+            SDL_Event e{}; e.type = type;
+            if (type == SDL_MOUSEMOTION) { e.motion.x = int(x); e.motion.y = int(y); }
+            else { e.button.button = SDL_BUTTON_LEFT; e.button.x = int(x); e.button.y = int(y); }
+            return o.input(e, width, height);
+        };
+        auto settle = [&](OptionsScreen& o) {
+            for (int i = 0; i < 4000 && o.folderPicking(); ++i) SDL_Delay(5);
+            frame(o, nullptr);   // folds the finished pick in
+        };
+        auto fileDir = [] { return loadSettings().dataDir; };
+        bool saved = false;
+        OptionsScreen opts(ren, s, [] {}, [&] { saved = true; }, 2, {}, {}, DataFolderRow{old, {}, picker});
+        frame(opts, nullptr);
+        const SDL_FRect* row = opts.rowRect("DATA FOLDER");
+        check(row && row->w > 0, "Options has a DATA FOLDER row");
+        const float rx = row->x + row->w - 30, ry = row->y + 16;
+        send(opts, SDL_MOUSEMOTION, rx, ry);   // hover: the help box shows the full path
+        frame(opts, "options-datafolder.png");
+        check(opts.folderStatus().rfind("SHARED WITH CARTOGRAPHER", 0) == 0, "an idle row explains itself");
+
+        send(opts, SDL_MOUSEBUTTONDOWN, rx, ry); settle(opts);   // 1: not an install
+        check(opts.folderStatus().rfind("NOT A GAME FOLDER", 0) == 0, "an invalid pick says so (got '" + opts.folderStatus() + "')");
+        check(s.dataDir == old && fileDir() == old, "an invalid pick keeps the folder, in memory and on disk");
+        check(opts.restartNowRect().w == 0, "an invalid pick offers no restart");
+        send(opts, SDL_MOUSEMOTION, 1, 1);
+        frame(opts, "options-datafolder-invalid.png");
+
+        send(opts, SDL_MOUSEBUTTONDOWN, rx, ry); settle(opts);   // 2: cancelled
+        check(s.dataDir == old && fileDir() == old && opts.restartNowRect().w == 0, "a cancelled pick changes nothing");
+
+        send(opts, SDL_MOUSEBUTTONDOWN, rx, ry); settle(opts);   // 3: the real install
+        check(s.dataDir == good && fileDir() == good, "a valid pick is saved at once (file has '" + fileDir() + "')");
+        check(loadSettings().dataManifest == hpi::rootManifest(fs::u8path(good)), "a valid pick saves its manifest");
+        check(opts.restartNowRect().w > 0, "a valid pick offers RESTART NOW");
+        check(!saved, "picking a folder does not press SAVE for the rest of the screen");
+        frame(opts, "options-datafolder-restart.png");
+        check(!send(opts, SDL_MOUSEBUTTONDOWN, rx, ry) && !opts.folderPicking(), "the prompt takes every click");
+        const SDL_FRect later = opts.restartLaterRect();
+        check(!send(opts, SDL_MOUSEBUTTONDOWN, later.x + 4, later.y + 4), "LATER stays in Options");
+        check(opts.restartNowRect().w == 0 && opts.folderStatus().rfind("RESTART TO USE: ", 0) == 0,
+              "after LATER the row says a restart is pending");
+        frame(opts, "options-datafolder-pending.png");
+
+        send(opts, SDL_MOUSEBUTTONDOWN, rx, ry); settle(opts);   // 4: the same folder again
+        check(opts.restartNowRect().w > 0, "re-picking the pending folder offers the restart again");
+        const SDL_FRect now = opts.restartNowRect();
+        check(send(opts, SDL_MOUSEBUTTONDOWN, now.x + 4, now.y + 4) && opts.restartRequested(),
+              "RESTART NOW leaves Options asking for a restart");
+
+        // Where it is unsafe (in a game, a lobby) the row is greyed and never opens the picker.
+        Settings g = s;
+        OptionsScreen locked(ren, g, [] {}, [] {}, 2, {}, {},
+                             DataFolderRow{good, "Change it from Options on the main menu, not during a game.", picker});
+        frame(locked, nullptr);
+        const SDL_FRect* lrow = locked.rowRect("DATA FOLDER");
+        const size_t before = *next;
+        send(locked, SDL_MOUSEBUTTONDOWN, lrow->x + lrow->w - 30, lrow->y + 16);
+        check(!locked.folderPicking() && *next == before, "a locked row never opens the picker");
+        check(locked.folderStatus().find("not during a game") != std::string::npos, "a locked row says why");
+        frame(locked, "options-datafolder-locked.png");
+        // DEFAULTS is not a way to lose the folder.
+        check(preferenceDefaults(s).dataDir == good, "DEFAULTS keeps the data folder");
+
+        std::error_code ec;
+        fs::remove_all(scratch, ec);
+        std::puts("PASS: Options data folder (invalid kept, cancel, saved at once, restart prompt, LATER, RESTART NOW, locked)");
     }
 #endif
 
@@ -1120,6 +1225,7 @@ MainMenu::MainMenu(SDL_Renderer* ren, const hpi::Vfs& vfs, std::string install)
 MainMenu::~MainMenu() { delete d_; }
 
 void MainMenu::setFailure(const SessionFailure& failure) { d_->pendingFailure = failure; }
+void MainMenu::setDataFolder(DataFolderRow row) { d_->dataFolder_ = std::move(row); }
 
 MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverOut,
                                MenuMusic* music, Settings* settings, Streaming* streaming) {
@@ -1129,6 +1235,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
 
 #ifndef NDEBUG
     if (settings && tak::devFlag("TAK_GUI_SMOOTH_TEST")) d_->testSmoothArt(*settings, w, h);
+    if (settings && tak::devFlag("TAK_OPTIONS_DATADIR_TEST")) d_->testDataFolder(*settings, w, h);
 #endif
 
 #ifndef NDEBUG
@@ -1142,6 +1249,13 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         if (p == "singleplayer") return Choice::SinglePlayer;
         if (p == "benchmark") { d_->chosenBenchmark_ = 1; return Choice::Benchmark; }
         if (p.rfind("campaign:", 0) == 0) { d_->chosenMission_ = p.substr(9); return Choice::Campaign; }
+        // restart:<folder> = Options' GAME DATA FOLDER pick + RESTART NOW, so the
+        // client_restart test can drive the real relaunch (main clears this pick first).
+        if (p.rfind("restart:", 0) == 0) {
+            const std::string folder = p.substr(8);
+            saveDataFolderSetting(folder, hpi::rootManifest(std::filesystem::u8path(folder)));
+            return Choice::Restart;
+        }
     }
 #endif
     // Returning from a failed launch: reopen the screen it was picked from with the
@@ -1197,6 +1311,12 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             streaming->input(event,w,h);
             streaming->waitKeyStore(3000);   // show the REMEMBER KEY row settled, not CHECKING
             streaming->draw(w,h);
+        }
+        // Debug: TAK_SHOT_OPTIONS captures the Options screen as this launch opens it
+        // (its GAME DATA FOLDER row free, or greyed by --data / the launch folder).
+        if (settings && tak::devFlag("TAK_SHOT_OPTIONS")) {
+            OptionsScreen o(d_->ren, *settings, [] {}, [] {}, 2, {}, {}, d_->dataFolder_);
+            o.render(w, h);
         }
         d_->screenshot(w, h, shotPath);
         // Debug: TAK_SHOT_RESULT captures the victory result screen (saves to its path).
@@ -1349,7 +1469,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 continue;
             }
             if (d_->options_) {   // Options overlay is up: route everything to it
-                if (d_->options_->input(e, w, h)) d_->options_.reset();   // BACK / Esc (SAVE is explicit)
+                if (d_->options_->input(e, w, h)) {   // BACK / Esc (SAVE is explicit), or RESTART NOW
+                    const bool restart = d_->options_->restartRequested();
+                    d_->options_.reset();
+                    if (restart) return Choice::Restart;
+                }
                 continue;
             }
             if (d_->settingsMenu_) {   // the SETTINGS menu (OPTIONS / CONTROLS) is up
@@ -1360,6 +1484,12 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     SDL_Renderer* ren = d_->ren;
                     if (hit(d_->setBtnRect_[0])) {          // OPTIONS -> the audio/display screen
                         d_->settingsMenu_ = false;
+                        // Cartographer may have changed the shared data folder since this
+                        // launch read the file: show the setting as it is now.
+                        if (const Settings disk = loadSettings(); !disk.dataDir.empty()) {
+                            settings->dataDir = disk.dataDir;
+                            settings->dataManifest = disk.dataManifest;
+                        }
                         d_->options_ = std::make_unique<OptionsScreen>(ren, *settings,
                             [this, ren, music, settings, fsWas = settings->fullscreen,
                              vsWas = settings->vsync]() mutable {
@@ -1383,7 +1513,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                                 }
                             },
                             [settings] { saveSettings(*settings); }, 0, [] {},
-                            [music] { if (music) music->reopen(); });   // live output-device switch
+                            [music] { if (music) music->reopen(); },   // live output-device switch
+                            d_->dataFolder_);
                     } else if (hit(d_->setBtnRect_[4]) && streaming) {
                         d_->settingsMenu_ = false;
                         SDL_Event event{};event.type=SDL_USEREVENT;event.user.code=kStreamingEvent;

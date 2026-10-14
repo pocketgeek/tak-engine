@@ -10,6 +10,7 @@
 
 #include <string>
 
+#include "client/options.h"
 #include "client/sessionfailure.h"
 #include "hpi/hpi.h"
 
@@ -21,8 +22,10 @@ struct Settings;
 
 class MainMenu {
 public:
+    // Restart: Options changed the GAME DATA FOLDER and the player chose RESTART NOW;
+    // main() leaves its loop, tears down and relaunches (client/datafolder.h).
     enum class Choice { None, SinglePlayer, Campaign, Multiplayer, Options, Benchmark,
-                        Credits, Replay, Exit };
+                        Credits, Replay, Exit, Restart };
 
     // ren: the app renderer. vfs: the mounted retail root (for guis/anims). install:
     // the retail install dir on disk (the door .bik videos are loose files under
@@ -45,6 +48,10 @@ public:
     // replay or a dead single-player server with the multiplayer sign-in dialog
     // has shipped before.
     void setFailure(const SessionFailure& failure);
+
+    // The Options screen's GAME DATA FOLDER row: the folder this launch mounted, and why
+    // it cannot be changed (a --data or launch-folder override), if it cannot.
+    void setDataFolder(DataFolderRow row);
 
     Choice run(const std::string& shotPath = "", std::string* serverOut = nullptr,
                MenuMusic* music = nullptr, Settings* settings = nullptr, Streaming* streaming = nullptr);
