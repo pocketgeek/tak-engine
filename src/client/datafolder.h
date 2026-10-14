@@ -21,6 +21,7 @@
 // right; a fresh process gets every one of them right by construction.
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <functional>
 #include <string>
