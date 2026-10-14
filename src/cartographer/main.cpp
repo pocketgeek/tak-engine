@@ -281,6 +281,7 @@ cart::Editor::Editor(int argc,char** argv,const FrameHook& frameHook,const Edito
 
 int cart::Editor::run() {
     int frameNumber=0;
+    if(hooks.attached)hooks.attached(*this);
     while (running) {
         if(const auto result=playtest.poll();result && *result!=0)
             openMessage("TEST MAP ENDED", "The game exited with an error ("+std::to_string(*result)+"). Your map is still open here.");
@@ -293,10 +294,13 @@ int cart::Editor::run() {
         const float miniScale=140.0f/std::max(mapView.map().width,mapView.map().height);
         miniRect={w-148,kMenuH+8,std::max(1,int(mapView.map().width*miniScale)),std::max(1,int(mapView.map().height*miniScale))};
 
-        refreshPalette();
         pollJobs();
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            // The browser's rows index the current tool's list (sections, features,
+            // unit types or starts). An earlier event may have switched the tool or
+            // changed the list, so rebuild before anything reads a row.
+            refreshPalette();
             if(swallowWhileBusy(e))continue;
             const float pointerDX=e.type==SDL_MOUSEMOTION?float(e.motion.xrel)/kUIScale:0;
             const float pointerDZ=e.type==SDL_MOUSEMOTION?float(e.motion.yrel)/kUIScale:0;
@@ -335,6 +339,7 @@ int cart::Editor::run() {
         // A confirmed New (discarding unsaved edits) opens the dialog now, after
         // the confirm's applyModal has closed itself.
         if (wantNew) { wantNew = false; openModal(M_NEW); }
+        refreshPalette();   // the drawn browser and status bar follow this frame's edits
 
         if(overlayInvalidated || historyPending || resetHistory) {overlayTexture.reset();overlayLegend.clear();overlayInvalidated=false;}
         if((historyPending || resetHistory) && !(SDL_GetMouseState(nullptr,nullptr)&(SDL_BUTTON_LMASK|SDL_BUTTON_RMASK)))
