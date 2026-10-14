@@ -45,12 +45,14 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -496,7 +498,7 @@ std::string definitionSource(const tak::hpi::Vfs& vfs,const tak::hpi::Vfs& plain
 struct FeatureTraits {bool animated=false,reclaimable=false,blocking=false;int height=0;std::string source;};
 std::map<std::string,FeatureTraits> featureTraits(const tak::hpi::Vfs& vfs,const tak::hpi::Vfs& plain,const std::string& world) {
     std::map<std::string,FeatureTraits> out;
-    for(const std::string dir:{"features/"+world,std::string("features/all worlds")})for(const auto& path:vfs.list(dir)) {
+    for(const std::string& dir:{"features/"+world,std::string("features/all worlds")})for(const auto& path:vfs.list(dir)) {
         if(!path.ends_with(".tdf"))continue;
         try {
             const auto bytes=vfs.read(path);const auto root=tak::tdf::parseText(std::string(bytes.begin(),bytes.end()),path);
@@ -957,7 +959,7 @@ SDL_Point overview(Editor& e,float zoom,int cx,int cz) {
 size_t cellOf(const tak::tnt::Map& map,int x,int z) {return size_t(z)*map.width+x;}
 std::string nameAt(const tak::tnt::Map& map,size_t cell) {
     const auto v=cell<map.features.size()?map.features[cell]:0xFFFF;
-    return v<0xFFFA && v<map.featureNames.size()?map.featureNames[v]:std::string{};
+    return v<0xFFFA && size_t(v)<map.featureNames.size()?map.featureNames[v]:std::string{};
 }
 // A held modifier for the next frame's events (the editor reads SDL_GetModState).
 void holdShift(bool held) {SDL_SetModState(held?KMOD_LSHIFT:KMOD_NONE);}
@@ -982,7 +984,7 @@ struct FeatureOps {
     }
     // Browser pick + Place click at cell (x,z): two steps.
     void place(int index,int x,int z) {
-        script.then([this,index](Editor& e,const Input& in) {pick.search(in,index,refs[size_t(index)].name);return true;});
+        script.then([this,index](Editor&,const Input& in) {pick.search(in,index,refs[size_t(index)].name);return true;});
         script.then([this,index,x,z](Editor& e,const Input& in) {
             const int clicked=pick.click(e,in);
             if(!clicked)return false;
@@ -1017,7 +1019,7 @@ bool featureOpsSession(const std::string& data,const std::string& world) {
         size_t big=0;for(size_t i=0;i<ops.refs.size();++i)if(ops.refs[i].footX*ops.refs[i].footZ>ops.refs[big].footX*ops.refs[big].footZ)big=i;
         ops.place(0,0,map.height-1);ops.place(0,map.width-1,0);ops.place(int(big),map.width-1,map.height-1);ops.place(int(big),map.width-2,map.height-2);
         ops.verify("every feature placed by a browser pick and a click");
-        s.then([&](Editor& e,const Input&) {original=ops.placed;return true;});
+        s.then([&](Editor&,const Input&) {original=ops.placed;return true;});
         // One by one: select, drag a cell right, undo; every tenth also shift-clicks its neighbour.
         for(size_t i=0;i<ops.refs.size();++i) {
             s.then([&,i](Editor& e,const Input& in) {
@@ -1096,7 +1098,7 @@ bool featureOpsSession(const std::string& data,const std::string& world) {
         });
         s.then([&,withCopy](Editor& e,const Input& in) {ops.placed=withCopy(256,200);ops.matches(e,"Ctrl+D duplicates at the pointer");in.key(SDLK_z,KMOD_CTRL);return true;});
         s.then([&,boxSelect](Editor& e,const Input& in) {ops.placed=original;ops.matches(e,"duplicate undone");boxSelect(e,in);return true;});
-        s.then([&](Editor& e,const Input& in) {in.key(SDLK_x,KMOD_CTRL);return true;});
+        s.then([&](Editor&,const Input& in) {in.key(SDLK_x,KMOD_CTRL);return true;});
         s.then([&](Editor& e,const Input& in) {
             ops.placed.clear();for(const auto& [cell,name]:original)if(!(int(cell%512)<boxX && int(cell/512)<boxZ))ops.placed[cell]=name;
             ops.matches(e,"Ctrl+X cuts the group");
@@ -1151,7 +1153,7 @@ bool featureOpsSession(const std::string& data,const std::string& world) {
         // Sources near the centre: no image of one reaches the populated block.
         for(int kind=1;kind<cart::kMirrorKinds;++kind)for(size_t i=0;i<std::min<size_t>(6,ops.refs.size());++i) {
             const int x=150+int(i)*12,z=200+kind*8;
-            if(i==0)s.then([kind](Editor& e,const Input& in) {menu(in,4,2+kind);return true;});
+            if(i==0)s.then([kind](Editor&,const Input& in) {menu(in,4,2+kind);return true;});
             ops.place(int(i),x,z);
             s.then([&,i,x,z,kind,width,height](Editor& e,const Input& in) {
                 const auto& map=e.mapView.map();const auto& ref=ops.refs[i];
@@ -1163,7 +1165,7 @@ bool featureOpsSession(const std::string& data,const std::string& world) {
             });
             ops.verify(std::string(cart::mirrorLabel(cart::Mirror(kind)))+" erases '"+ops.refs[i].name+"' and its images");
         }
-        s.then([](Editor& e,const Input& in) {menu(in,4,2);in.key(SDLK_m);return true;});   // vertical again, live off
+        s.then([](Editor&,const Input& in) {menu(in,4,2);in.key(SDLK_m);return true;});   // vertical again, live off
         s.then([&](Editor& e,const Input& in) {
             ops.expect(!e.liveSymmetry,"live symmetry off");
             // Symmetrize (Shift+M): left half onto the right, terrain left alone.
@@ -1171,7 +1173,7 @@ bool featureOpsSession(const std::string& data,const std::string& world) {
         });
         s.then([&](Editor& e,const Input& in) {
             if(!ops.expect(e.modal==Editor::M_SYMMETRIZE,"Shift+M opens Symmetrize"))return true;
-            for(int i=0;i<2;++i)in.key(SDLK_TAB);in.key(SDLK_RIGHT);   // TERRAIN: LEAVE TERRAIN
+            for(int i=0;i<2;++i) {in.key(SDLK_TAB);}in.key(SDLK_RIGHT);   // TERRAIN: LEAVE TERRAIN
             in.key(SDLK_RETURN);return true;
         });
         s.then([&](Editor& e,const Input& in) {
@@ -1197,7 +1199,7 @@ bool featureOpsSession(const std::string& data,const std::string& world) {
             ops.expect(mirrored>0,"mirrored copies of the original features");
             in.key(SDLK_z,KMOD_CTRL);return true;
         });
-        s.then([&](Editor& e,const Input& in) {ops.placed=original;ops.matches(e,"Symmetrize undone in one step");return true;});
+        s.then([&](Editor& e,const Input&) {ops.placed=original;ops.matches(e,"Symmetrize undone in one step");return true;});
         return true;
     });
     // Terrain over features: a stamp with objects protected keeps them, an
@@ -1297,7 +1299,7 @@ bool featureOpsSession(const std::string& data,const std::string& world) {
     // Analysis with features: the four terrain overlays and Check Map, frame
     // selection and hiding the layer under a selection.
     for(int row=7;row<=10;++row) {
-        s.then([row](Editor& e,const Input& in) {menu(in,2,row);return true;});
+        s.then([row](Editor&,const Input& in) {menu(in,2,row);return true;});
         s.then([&,row](Editor& e,const Input& in) {
             if(e.modal==Editor::M_ANALYZING)return false;
             ops.expect(e.overlayTexture!=nullptr,"View overlay "+std::to_string(row-6)+" built with features");
@@ -1305,7 +1307,7 @@ bool featureOpsSession(const std::string& data,const std::string& world) {
             return true;
         });
     }
-    s.then([](Editor& e,const Input& in) {menu(in,2,11);in.key(SDLK_c);return true;});
+    s.then([](Editor&,const Input& in) {menu(in,2,11);in.key(SDLK_c);return true;});
     s.then([&](Editor& e,const Input& in) {
         if(e.modal==Editor::M_CHECKING)return false;
         if(!ops.expect(e.modal==Editor::M_ISSUES,"Check Map reports"))return true;
@@ -1318,7 +1320,7 @@ bool featureOpsSession(const std::string& data,const std::string& world) {
         ops.expect(e.modal==Editor::M_NONE && e.mapView.zoom()<=1,"Frame selection frames the selected feature");
         menu(in,2,14);in.key(SDLK_DELETE);menu(in,2,14);return true;   // hide features, Delete (ignored), show
     });
-    s.then([&](Editor& e,const Input& in) {ops.matches(e,"a hidden layer's selection is protected");return true;});
+    s.then([&](Editor& e,const Input&) {ops.matches(e,"a hidden layer's selection is protected");return true;});
     // Test Map's snapshot: the package the game builds from it resolves every feature.
     s.then([&](Editor& e,const Input& in) {
         try {
@@ -1371,7 +1373,7 @@ bool featureOpsSession(const std::string& data,const std::string& world) {
         ops.expect(foreign>0,"features of another world stay in the map (drawn as markers)");
         in.key(SDLK_DELETE);return true;
     });
-    s.then([&](Editor& e,const Input& in) {
+    s.then([&](Editor& e,const Input&) {
         const auto& map=e.mapView.map();
         ops.expect(std::none_of(map.features.begin(),map.features.end(),[&](uint16_t v){return v<0xFFFA && v<map.featureNames.size();}),"pasted foreign features delete");
         return true;
@@ -1434,7 +1436,7 @@ bool manyFeaturesSession(const std::string& data,const std::string& world,int si
     s.then([&](Editor& e,const Input& in) {matches(e,field(0,0),"Delete removes the pasted field");in.key(SDLK_m,KMOD_SHIFT);return true;});
     s.then([&](Editor& e,const Input& in) {
         if(!check(e.modal==Editor::M_SYMMETRIZE,label+": Symmetrize opens"))return true;
-        for(int i=0;i<2;++i)in.key(SDLK_TAB);in.key(SDLK_RIGHT);in.key(SDLK_RETURN);in.key(SDLK_RETURN);return true;
+        for(int i=0;i<2;++i) {in.key(SDLK_TAB);}in.key(SDLK_RIGHT);in.key(SDLK_RETURN);in.key(SDLK_RETURN);return true;
     });
     s.then([&](Editor& e,const Input& in) {
         auto want=field(0,0);for(const auto& [cell,n]:field(0,0))want[cell/1024*1024+(1023-cell%1024)]=n;
@@ -1445,7 +1447,7 @@ bool manyFeaturesSession(const std::string& data,const std::string& world,int si
         check(e.modal==Editor::M_ISSUES,label+": Check Map finishes");in.key(SDLK_ESCAPE);
         saveAndReopen(e,in,label,root);return true;
     });
-    s.then([&](Editor& e,const Input& in) {if(reopened(e,label))matches(e,field(0,0),"saved and reopened field");return true;});
+    s.then([&](Editor& e,const Input&) {if(reopened(e,label))matches(e,field(0,0),"saved and reopened field");return true;});
     const auto began=std::chrono::steady_clock::now();
     const bool ran=drive({"cartographer","--new","32x32","--world",world,"--data",data,"--out",root},[&](Editor& e,const Input& in){return s.frame(e,in);},900,label);
     if(s.at<s.steps.size())check(false,label+": script stopped at step "+std::to_string(s.at));
@@ -1493,7 +1495,7 @@ bool generatedFeaturesSession(const std::string& data,const std::string& world) 
         matches(e,"Symmetrize undone");check(e.modal==Editor::M_ISSUES,label+": Check Map finishes");in.key(SDLK_ESCAPE);
         saveAndReopen(e,in,label,root);return true;
     });
-    s.then([&](Editor& e,const Input& in) {if(reopened(e,label))matches(e,"saved and reopened scatter");return true;});
+    s.then([&](Editor& e,const Input&) {if(reopened(e,label))matches(e,"saved and reopened scatter");return true;});
     const bool ran=drive({"cartographer","--new","16x16","--world",world,"--random","--data",data,"--out",root},[&](Editor& e,const Input& in){return s.frame(e,in);},600,label);
     if(s.at<s.steps.size())check(false,label+": script stopped at step "+std::to_string(s.at));
     std::error_code ec;fs::remove_all(root,ec);
@@ -1570,7 +1572,7 @@ bool smokeSession(const std::string& data,const std::string& label,std::vector<s
                 return true;
             });
             if(t==Editor::UNITS)for(int f=0;f<6;++f)action([](Editor&,const Input& in) {in.click(60,Editor::kMenuH+62);});
-            action([=](Editor& e,const Input& in) {
+            action([=](Editor&,const Input& in) {
                 tool(in,Editor::Tool(t));in.pointer(Editor::kPaletteW/2,Editor::kPaletteTop+60);
                 for(int i=0;i<60;++i) {SDL_Event wheel{};wheel.type=SDL_MOUSEWHEEL;wheel.wheel.y=-2;SDL_PushEvent(&wheel);}
             });
