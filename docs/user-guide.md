@@ -243,7 +243,8 @@ The game opens centred on your **Monarch**. Your first steps:
 ### Match options
 
 These are chosen on the game setup screen. The lobby shows them, but only the
-creator can change them.
+creator can change them. **Allow spectators** is the one the host can still
+change in the room, until the game starts.
 
 | Option | What it does |
 | --- | --- |
@@ -257,6 +258,7 @@ creator can change them.
 | **Allow speed change** | Lets the host change game speed during the match, from −9 (0.1×) to +10 (2×). |
 | **Pathfinding** | **Retail** (the default) or **Legion**. See [Pathfinding](#pathfinding-retail-and-legion). |
 | **Overrides** | Off, Cosmetic or Full. See [Overrides](#overrides). |
+| **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. The host can change it in the room by clicking it, until the game starts; then it is fixed. See [Spectating](#spectating). |
 | **Spectate (Watch AIs)** | Single-player only: fill every slot with AIs and watch. |
 
 Your choices are remembered for next time, except passwords and Spectate.
@@ -1242,7 +1244,9 @@ player's game stays in step.
 *A game room, here for a single-player game: player and AI slots, override packs and the read-only match rules.*
 
 The host can open and close slots, add AIs and kick players. Match options are
-set when the game is created; see [Match options](#match-options).
+set when the game is created, except **Allow spectators**, which the host can
+click in the room's rules to turn on or off until the game starts; see
+[Match options](#match-options).
 
 ### Maps and content
 
@@ -1277,6 +1281,23 @@ See [unit gifting](unit-gifting.md) for which units can be given.
 
 Click **Watch** on a running game in the browser to watch it live. Spectators
 see the whole map without fog and cannot give orders.
+
+The host decides whether a game can be watched with **Allow spectators** (on by
+default). When it is off, the browser shows a red **No watch** button instead of
+**Watch**, and the server refuses any request to watch the game, including from a
+player who left it or whose connection dropped. Clicking **No watch** shows the
+reason under the game list: **Cannot join: spectators are not allowed in this
+game**. A player who drops out still gets their own slot back (see
+[Disconnects](#disconnects)). The setting is fixed once the game starts, so
+nobody who is already watching is removed.
+
+| Allow spectators | Browser shows | Asking to watch |
+| --- | --- | --- |
+| On (default) | **Watch** | Allowed |
+| Off | **No watch** (red) | Refused, with the reason |
+
+In single-player, **Spectate (Watch AIs)** is separate and always available: it is
+your own game.
 
 ### Disconnects
 

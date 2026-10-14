@@ -217,6 +217,18 @@ player commands. Production count requests are limited to the client’s maximum
 batch of ten, preventing a forged count from allocating billions of queue entries.
 Ownership is stamped by the server and checked by the simulation.
 
+Spectating is a per-room rule. The host's **Allow spectators** setting
+(`GameOptions.allowSpectators`, protocol 258) travels in every room snapshot and
+in the game list. When it is off, the server refuses every `Spectate` into that
+room with "spectators are not allowed in this game". That covers a browser's
+watch request, a player who left the game and asks to watch, and a reconnecting
+client, because `Spectate` is the only way to join a room without a slot. Seated
+players' `Rejoin` with their resume token is unaffected. The host may change the
+rule in the lobby. Once the game starts, it is fixed: an in-game `SetGameOptions`
+changes only speed. A host who created the room to watch it keeps that seat.
+Crusades battle rooms never allow spectators. `server_spectators_test.py` checks
+each of these against a real server.
+
 Public games cannot enable benchmark/stress workloads or launch local campaign
 missions. Private `--local --no-auth` games retain those features. Debug builds
 have an explicit `--allow-benchmarks` override for isolated performance harnesses;
@@ -533,7 +545,7 @@ for local suites, remote TLS matches, and the deployment boundary.
 untrusted/expired certificates, abrupt peer closure and plaintext rejection.
 `server_public_test.py` exercises real-server admission, map reservation,
 registration closure, floods, invalid configuration, TLS login and ordinary
-lobby traffic. `server_commands_test` checks malformed command batches and
+lobby traffic. `server_spectators_test.py` checks the per-room spectator rule. `server_commands_test` checks malformed command batches and
 unsafe coordinates. Existing authentication, campaign, map-transfer and multiplayer
 regressions remain required. Native platform CI runs the TLS test and verifies
 that executable imports contain no new non-system dynamic libraries.

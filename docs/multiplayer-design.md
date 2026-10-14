@@ -480,7 +480,9 @@ The retail binary confirms these existed; all are natural extensions of this
 design and none block v1:
 
 - **Spectators** ("Watching" lobby checkbox, host-deniable) — a watcher is a
-  bundle subscriber with no slot; needs per-team fog toggling.
+  bundle subscriber with no slot. The host-deniable part landed in protocol 258
+  as the room's ALLOW SPECTATORS rule (see the protocol history); per-team fog
+  toggling for watchers is still open.
 - **In-lobby map transfer:** implemented in protocol 193; see [map transfer](map-transfer.md).
 - **Alliance economy:** `AutoShareMana` with limit/percentage, unit gifting
   (`ShareUnits`).
@@ -617,6 +619,26 @@ value, includes it in the authoritative rules digest, and retains it when a
 host sends later option updates. Both clients and the referee apply that choice
 through shared match setup. Campaign missions and Crusades battle rooms remain
 Retail. The lobby reports the selected mode without changing it.
+
+Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
+wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
+in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each
+`GameList` entry ends with it. With the rule off the server answers every
+`Spectate` with a failed `JoinResult` ("spectators are not allowed in this
+game"). `Spectate` is the only way into a room without a slot, so this one check
+covers the browser's watch request, a seated player who left and asks to watch,
+and a dropped watcher reconnecting (watchers hold no resume token, and `Rejoin`
+seats only held slots). The host changes the rule in the lobby. In a running
+game `SetGameOptions` adopts only speed, so the rule is fixed at start and an
+admitted watcher is never stranded. The only lobby spectator is a host who
+created the room to watch it. The rule governs who else may watch, so that host
+is never removed. Crusades battle rooms carry 0. The Crusades rules digest still
+hashes 257's option bytes (`putRules`), so battles issued before the upgrade
+still verify. Because the simulation is unchanged, protocol-257 replays still
+play (`supportedReplayProtocol`). The client keeps a refusal's reason for the
+browser (`MpClient::joinError`). It also clears the pending spectate on any
+refusal; before this, a refused watch turned the next ordinary join's start into
+a spectator start.
 
 Replay format 11 records the pathfinder. Playback requires the current
 simulation protocol; older recordings require their original engine.
