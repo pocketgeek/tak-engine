@@ -37,6 +37,7 @@
 #include "sim/sim.h"
 #include "tdf/tdf.h"
 #include "tnt/ota.h"
+#include "util/png.h"
 
 #include <SDL.h>
 
@@ -101,6 +102,13 @@ struct Input {
     // Move the real pointer (paste targets and wheel routing read SDL_GetMouseState).
     void pointer(int x,int y) const {SDL_WarpMouseInWindow(window,physical(x),physical(y));}
 };
+
+// With TAK_CARTO_CAPTURE=<folder>, a PNG of the frame just drawn (for review).
+void capture(const Input& in,const std::string& name) {
+    const char* folder=std::getenv("TAK_CARTO_CAPTURE");if(!folder || !*folder)return;
+    int w=0,h=0;SDL_GetRendererOutputSize(in.renderer,&w,&h);std::vector<uint8_t> pixels(size_t(w)*h*4);
+    if(SDL_RenderReadPixels(in.renderer,nullptr,SDL_PIXELFORMAT_RGBA32,pixels.data(),w*4)==0)tak::png::write((fs::path(folder)/(name+".png")).string(),w,h,pixels);
+}
 
 // Toolbar and canvas geometry, from the editor's own layout constants.
 void tool(const Input& in,Editor::Tool t) {in.click(96+int(t)*72+30,32);}
@@ -214,6 +222,7 @@ bool startsCase(const std::string& data,const std::string& label,std::vector<std
             return true;
         case 2:   // and every switch into STARTS within one frame
             expect(e.tool==Editor::STARTS,"STARTS tool chosen");
+            capture(in,"starts "+label);
             for(const auto from:{Editor::TERRAIN,Editor::FEATURES,Editor::UNITS}) {tool(in,from);tool(in,Editor::STARTS);}
             for(int i=0;i<4;++i)in.key(SDLK_TAB);   // Tab cycles back round to STARTS
             in.key(SDLK_l,KMOD_CTRL);in.key(SDLK_l,KMOD_CTRL);tool(in,Editor::STARTS);
@@ -1355,6 +1364,7 @@ bool featureOpsSession(const std::string& data,const std::string& world) {
         const auto p=overview(e,.0625f,511,0);in.pointer(p.x,p.y);in.key(SDLK_v,KMOD_CTRL);return true;
     });
     s.then([&](Editor& e,const Input& in) {
+        capture(in,ops.label+" pasted into "+e.world);
         const auto& map=e.mapView.map();int foreign=0;
         if(!ops.expect(e.selectedFeatures.cells.size()==original.size(),"every feature pasted into the "+e.world+" map ("+std::to_string(e.selectedFeatures.cells.size())+")"))return true;
         for(const int cell:e.selectedFeatures.cells)foreign+=!e.features.byName(nameAt(map,size_t(cell)));
