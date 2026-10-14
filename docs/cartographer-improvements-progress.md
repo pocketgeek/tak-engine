@@ -1167,6 +1167,63 @@ would display reversed), as are scripts that need shaping or combining-mark plac
 (Indic, Thai, Khmer), color emoji, and Han outside the three level-1 sets; those draw the
 replacement box.
 
+## Placement coverage and browser-row checkpoint
+
+Choosing STARTS crashed: the frame loop rebuilt the left browser's rows once, before
+handling input, so a toolbar click (or Tab, Ctrl+L, a row of the placed-unit list) drew
+the same frame's browser and status bar with the previous tool's rows. Section indices
+were read as starts (an empty list on a new map: SIGSEGV), features or unit types; erasing
+a start, undo or a new document under the STARTS browser did the same. The browser is now
+rebuilt before every event and before drawing, and its key includes the feature and
+section libraries' scan generations: opening a map from disk drops the features of the
+Maps/ archives, which retail mounts for every map, and the FEATURES browser read past the
+shortened list.
+
+`cartographer_placement_test` drives the real editor with SDL input -- browser search, a
+click on the item's row (scrolled into view, terrain variants stepped), a Place click on
+the canvas -- and checks the document after each event batch:
+
+- `starts` (the regression): every world's blank, generated, New-dialog and shipped map;
+  one tool switch per frame through every browser, every switch into STARTS in one frame,
+  then start place, browse, erase, undo/redo and drag. Every frame of every mode checks that
+  the browser lists only items of the current tool's list.
+- `terrain`, `features`, `units`, `slots`, `rescan`: every section (467/417/401/1261/452 for
+  Aramon/Veruna/Taros/Zhon/Creon), every feature (284/242/153/215/157), every unit type
+  (202, owners cycling, on land, deep water or shore wherever the game's placement accepts
+  it), start slots 1-8 and a region. Each is placed at the clicked cell (sections equal
+  `stampSection` at the snapped block), undone, redone, erased and restored where the
+  editor can, saved with Ctrl+S, reopened through Open and compared; the game resolves
+  every placed feature with the browser's footprint, and tile images decode.
+- `feature-ops`: every feature operation on every feature of a world -- select,
+  shift-select, drag, box select, Enter, group drag, copy/paste/duplicate/cut/delete, live
+  symmetry of every kind, Symmetrize, stamps with objects protected or not, Clear Area, the
+  terrain clipboard, Resize crop and grow, overlays, Check Map, Frame selection, the
+  package Test Map builds from its snapshot, save/reopen, a paste into another world's map,
+  a generated map's scatter, and a 57,600-feature field painted one cell per motion event.
+- `smoke`: every tool and edit mode, browser tab, category, terrain group, faction, menu
+  row (not Test Map, which starts the game) and shortcut, the scripting buttons, regions
+  list and Use Only, then Exit through the save prompt, on a blank and a shipped map of
+  each world.
+
+All modes run clean under ASan, UBSan and `_GLIBCXX_ASSERTIONS` on a retail install with
+1,345 downloaded maps. They also found and fixed: a ninth start (numbered 9, rejected by
+Check Map) is refused with a message; the Units browser no longer offers TARNECR2, whose
+Iron Plague campaign file declares objectname TARNECRO, so a scenario naming it would not
+start; a feature name the world does not define (another world's, a downloaded map's) is
+drawn as a red marker rather than not at all, so it can be selected and deleted; a new
+blank Veruna or Taros map is no longer paved with cobbles (road markers in every cell
+refused feature moves and pastes and gave every unit the road bonus) -- the fill is the
+first flat section with an empty feature plane; a feature selection that lost a member to
+Erase mode or Clear Area still drags.
+
+Known limits found and left as they are: features that only a downloaded map in Maps/
+defines are offered (retail mounts those archives globally) and play from Maps/, but a map
+opened from disk and Test Map's snapshot see only the install, so they do not resolve there
+(63 Aramon features on the test install). Saving a downloaded map that ships its own
+terrain images or feature files writes only its `kmap/` members. The editor mounts no
+override packs, so no browser item comes from one. Click placement overwrites a road or
+blocker marker; moves and pastes refuse such cells.
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop
