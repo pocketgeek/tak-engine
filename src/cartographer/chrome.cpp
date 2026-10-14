@@ -91,6 +91,7 @@ void cart::Editor::menuAction(int menu,int row) {
     } else if(menu==2) {
         int w,h;SDL_GetRendererOutputSize(ren,&w,&h);w=int(w/kUIScale)-kPaletteW;h=int(h/kUIScale)-kMenuH-kStatusH;
         if(row==17)previewModel();
+        if(row==18)openModal(M_PREFERENCES);
         if(row==0) {mapView.setZoom(std::min(float(w)/(mapView.map().width*16),float(h)/(mapView.map().height*16)));mapView.setOffset(0,0);}
         if(row==1)mapView.setZoom(1);
         if(row==2) {showGrid=!showGrid;persistPreferences();}
@@ -138,7 +139,8 @@ void cart::Editor::menuAction(int menu,int row) {
     else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
         "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move selected units or features. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute. "
         "Symmetry: M mirrors placements, moves and erasures live across the chosen axis; Shift+M (Symmetrize) copies one half or quadrant onto the rest, using mirror-twin terrain sections. "
-        "Terrain tool + Select: drag a block rectangle, Ctrl+C copies it, Ctrl+V makes it a click-to-paste brush (Esc returns to sections).");
+        "Terrain tool + Select: drag a block rectangle, Ctrl+C copies it, Ctrl+V makes it a click-to-paste brush (Esc returns to sections). "
+        "View > Preferences sets borderless fullscreen (F11), edge scrolling and the UI scale.");
 }
 
 bool cart::Editor::handleMenuInput(SDL_Event& e) {
@@ -217,6 +219,8 @@ bool cart::Editor::handleShortcuts(SDL_Event& e) {
         useOnlyOpen = true;      // Scenario -> Use Only (unit restriction)
     } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F6) {
         previewModel();
+    } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F11) {
+        toggleFullscreen();      // View -> Preferences -> Display
     } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F5) {
         testMap();
     } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_c) {
@@ -328,6 +332,47 @@ void cart::Editor::drawChrome() {
     if(!regionCanvas && !toolVisible())status="LAYER HIDDEN: choose its toolbar or palette to show it before editing.";
     if(regionCanvas)status=coord+"   REGIONS: PLACE DRAWS; SELECT MOVES/RESIZES; ENTER NAMES; ESC CANCELS"+(dirty?std::string("   UNSAVED"):std::string("   SAVED"));
     cart::drawText(ren, status, 6, h - kStatusH + 7, 1, 200, 205, 215);
+}
+
+// Borderless fullscreen covers the desktop at its own resolution (as the game does);
+// the frame loop re-derives kUIScale and the logical size from the new output size,
+// so drawing and pointer mapping follow without anything else changing.
+void cart::Editor::applyDisplayMode() {
+    const bool current=(SDL_GetWindowFlags(win)&SDL_WINDOW_FULLSCREEN)!=0;
+    if(current==preferences.fullscreen)return;
+    if(preferences.fullscreen) {
+        SDL_Rect r{};SDL_GetWindowPosition(win,&r.x,&r.y);SDL_GetWindowSize(win,&r.w,&r.h);windowedRect=r;
+        if(SDL_SetWindowFullscreen(win,SDL_WINDOW_FULLSCREEN_DESKTOP)!=0) {
+            preferences.fullscreen=false;openMessage("FULLSCREEN UNAVAILABLE",std::string("The display refused borderless fullscreen: ")+SDL_GetError());
+        }
+    } else {
+        SDL_SetWindowFullscreen(win,0);
+        if(windowedRect) {SDL_SetWindowSize(win,windowedRect->w,windowedRect->h);SDL_SetWindowPosition(win,windowedRect->x,windowedRect->y);}
+    }
+}
+
+void cart::Editor::toggleFullscreen() {
+    preferences.fullscreen=!preferences.fullscreen;
+    persistPreferences();   // while still windowed, so the windowed size is what is kept
+    applyDisplayMode();
+}
+
+// Optional hover scrolling: resting the pointer just inside a canvas edge pans that
+// way. Only for an idle pointer over the bare canvas -- not over the browser, menus,
+// minimap or a dialog, not with a button held (drags), and only while focused.
+void cart::Editor::edgeScroll() {
+    const Uint64 now=SDL_GetTicks64();
+    const float dt=edgeLast?std::min(.1f,float(now-edgeLast)/1000.f):0.f;edgeLast=now;
+    int x,y;const Uint32 buttons=SDL_GetMouseState(&x,&y);x=int(x/kUIScale);y=int(y/kUIScale);
+    const bool idle=preferences.edgeScroll && SDL_GetMouseFocus()==win && (SDL_GetWindowFlags(win)&SDL_WINDOW_INPUT_FOCUS) && !buttons &&
+        modal==M_NONE && menuOpen<0 && !scriptOpen && !useOnlyOpen && !regionsOpen && !sectionMenuOpen && !minimapDrag && !paletteThumbDrag && !cart::pointIn(x,y,miniRect);
+    const auto d=idle?cart::edgeScrollDirection(x,y,kPaletteW,kMenuH,canvasW,canvasH,cart::kEdgeScrollBand):cart::EdgeDirection{};
+    if(!d.any()) {edgeSince=0;return;}
+    if(!edgeSince)edgeSince=now;
+    if(now-edgeSince<cart::kEdgeScrollDelayMs)return;
+    // MapView clamps the view to the map every frame, so this stops at the map edge like the arrow keys.
+    const float step=cart::kEdgeScrollPixelsPerSecond*dt/mapView.zoom();
+    mapView.setOffset(mapView.offX()+d.x*step,mapView.offY()+d.z*step);
 }
 
 void cart::Editor::drawHints() {

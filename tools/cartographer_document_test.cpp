@@ -6,6 +6,7 @@
 #include "cartographer/featureselection.h"
 #include "cartographer/sections.h"
 #include "cartographer/preferences.h"
+#include "cartographer/scrolling.h"
 #include "cartographer/symmetry.h"
 #include <cmath>
 #include "cartographer/sectiongroups.h"
@@ -35,6 +36,30 @@ static tak::tnt::Map prefab(uint32_t key,uint8_t height) {   // 2x2 blocks, one 
     map.features[1]=0xFFFB;   // a road marker in the second cell
     return map;
 }
+// The browser scrollbar and edge-scroll band (SDL-free math in scrolling.h).
+static void scrollingTests() {
+    cart::ScrollBar bar;bar.x=190;bar.w=8;bar.y=120;bar.h=500;bar.view=500;bar.content=400;
+    check(!bar.active() && bar.maxScroll()==0 && bar.clamp(90)==0 && !bar.inTrack(194,200),"a list that fits has no scrollbar");
+    bar.content=2000;
+    check(bar.active() && bar.maxScroll()==1500 && bar.clamp(-5)==0 && bar.clamp(9999)==1500,"scroll clamps to the content");
+    check(bar.thumbHeight()==125 && bar.thumbTop(0)==120 && bar.thumbTop(1500)==120+500-125 && bar.thumbTop(750)==120+187,"thumb size and position follow the viewport share");
+    check(bar.inTrack(190,120) && bar.inTrack(197,619) && !bar.inTrack(189,300) && !bar.inTrack(198,300) && !bar.inTrack(194,620),"track hit area");
+    check(bar.inThumb(194,130,0) && !bar.inThumb(194,300,0) && bar.inThumb(194,600,1500),"thumb hit area moves with the scroll");
+    check(bar.scrollForThumb(120)==0 && bar.scrollForThumb(120+375)==1500 && bar.scrollForThumb(120+188)==752 && bar.scrollForThumb(-50)==0 && bar.scrollForThumb(900)==1500,"thumb drag maps back to a clamped scroll");
+    for(int s=0;s<=1500;s+=7)check(std::abs(bar.scrollForThumb(bar.thumbTop(s))-s)<=4,"thumb position and drag invert each other");
+    check(bar.page(0,400)==500 && bar.page(1500,130)==1000 && bar.page(1400,600)==1500 && bar.page(100,150)==100,"track clicks page one viewport toward the pointer");
+    bar.content=200000;check(bar.thumbHeight()==cart::ScrollBar::kMinThumb && bar.thumbTop(bar.maxScroll())+bar.thumbHeight()==bar.y+bar.h,"long lists keep a grabbable thumb inside the track");
+    // Canvas at (200,44) 800x600, 16px band.
+    auto edge=[](int x,int y) {const auto d=cart::edgeScrollDirection(x,y,200,44,800,600,16);return std::pair{d.x,d.z};};
+    check(edge(600,300)==std::pair{0,0},"canvas middle does not scroll");
+    check(edge(200,300)==std::pair{-1,0} && edge(215,300)==std::pair{-1,0} && edge(216,300)==std::pair{0,0},"left band is 16px inside the canvas");
+    check(edge(999,300)==std::pair{1,0} && edge(984,300)==std::pair{1,0} && edge(983,300)==std::pair{0,0},"right band");
+    check(edge(600,44)==std::pair{0,-1} && edge(600,643)==std::pair{0,1} && edge(205,640)==std::pair{-1,1},"top, bottom and corners");
+    check(edge(199,300)==std::pair{0,0} && edge(100,300)==std::pair{0,0} && edge(600,43)==std::pair{0,0} && edge(600,644)==std::pair{0,0} && edge(1000,300)==std::pair{0,0},"browser, menus, status bar and outside never scroll");
+    const auto tiny=cart::edgeScrollDirection(20,20,0,0,40,40,16);
+    check(!tiny.any() && cart::edgeScrollDirection(5,20,0,0,40,40,16).x==-1,"a tiny canvas shrinks the band and keeps a still middle");
+}
+
 static void symmetryTests() {
     using cart::Xf;using cart::Mirror;
     // Facing: CRT angle a faces (sin a, cos a); 0 = south (+z), 90 = east (+x).
@@ -230,6 +255,16 @@ int main() {
         const auto loadedPreferences=cart::loadEditorPreferences(root);
         check(loadedPreferences.tracePlaytest && loadedPreferences.guideSeen && loadedPreferences.width==1440 && loadedPreferences.height==900 && loadedPreferences.scalePercent==125 && loadedPreferences.recent==preferences.recent,"window, scale and Unicode recent paths roundtrip");
         check(!loadedPreferences.showFeatures && !loadedPreferences.showUnits && !loadedPreferences.showStarts && !loadedPreferences.showRegions && loadedPreferences.showGrid,"layer preferences roundtrip");
+        check(!loadedPreferences.edgeScroll && !loadedPreferences.fullscreen,"edge scrolling and fullscreen default off");
+        {
+            auto display=preferences;display.edgeScroll=display.fullscreen=true;
+            check(cart::saveEditorPreferences(root,display,prefsError),prefsError.c_str());
+            const auto loaded=cart::loadEditorPreferences(root);
+            check(loaded.edgeScroll && loaded.fullscreen && loaded.width==1440 && loaded.height==900,"edge scrolling, fullscreen and windowed size roundtrip");
+            std::ofstream(root/"preferences.txt")<<"edgescroll 2\nfullscreen yes\n";
+            const auto rejected=cart::loadEditorPreferences(root);
+            check(!rejected.edgeScroll && !rejected.fullscreen,"malformed display preferences keep the defaults");
+        }
         {
             auto groups=preferences;groups.sectionGroups={{"Zhon","folder:coast cliffs sandy"},{"Aramon","kind:Water & coast"}};
             check(cart::saveEditorPreferences(root,groups,prefsError),prefsError.c_str());
@@ -424,6 +459,7 @@ int main() {
         for(int i=0;i<20;++i) {auto state=initial;state.name=std::to_string(i);bounded.commit(state);}
         check(bounded.retainedBytes()<2500,"history respects memory budget");
         symmetryTests();
+        scrollingTests();
         // Section browser naming: retail names decompose into kind/direction/corner
         // and numbered or lettered variants collapse into one piece.
         {

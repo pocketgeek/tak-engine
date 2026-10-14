@@ -17,7 +17,7 @@
 Uint64 cart::Session::recoveryClock() const {return hooks.recoveryClock?hooks.recoveryClock():SDL_GetTicks64();}
 
 void cart::Session::persistPreferences() {
-    SDL_GetWindowSize(win,&preferences.width,&preferences.height);
+    if(!(SDL_GetWindowFlags(win)&SDL_WINDOW_FULLSCREEN))SDL_GetWindowSize(win,&preferences.width,&preferences.height);   // remember the windowed size
     std::string error;if(!cart::saveEditorPreferences(preferencesFolder,preferences,error))std::fprintf(stderr,"editor preferences: %s\n",error.c_str());
 }
 

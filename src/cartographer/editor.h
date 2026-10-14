@@ -14,6 +14,9 @@ struct EditorHooks {
     // White-box tests: the editor before its first frame, so a frame hook can
     // check document and browser state after the real input path handled events.
     std::function<void(Editor&)> attached;
+    // Per-frame view and browser state, reported before the frame hook (scroll workflows).
+    struct FrameState {float viewX=0,viewZ=0,zoom=1;int tool=0,paletteScroll=0,paletteMaxScroll=0,selection=-1,modal=0;};
+    std::function<void(const FrameState&)> frameState;
 };
 // The frame hook drives real SDL input in workflow tests. It is empty in the app.
 int runEditor(int argc,char** argv,

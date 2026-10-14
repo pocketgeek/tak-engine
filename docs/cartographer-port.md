@@ -274,6 +274,57 @@ Feature Del 0x40b460 · StartPos Del 0x40b750 · Trigger Del/Props
 TXT 0x41c4e0 · CRT 0x40d8d0 · bundle 0x418b80. GetCell 0x419120 · SectionStamp
 0x41d2d0 · SetZoom 0x419790.
 
+## Browser scrollbar, edge scrolling and borderless fullscreen (2026-10-14)
+
+Next-release UI work (not in 0.8.2). The math is SDL-free in
+`src/cartographer/scrolling.h`; `palette.cpp` draws and wires the scrollbar,
+`chrome.cpp` the display mode, F11 and edge scrolling, `dialogs.cpp` the
+Preferences dialog.
+
+- **Browser scrollbar.** Every tool's list (terrain pieces, features, units,
+  starts) gets an 8px track in the browser's right margin when it overflows:
+  a draggable thumb (min 20px; it owns the pointer until release, so a drag
+  that ends over the map never paints), track clicks page one viewport, the
+  wheel scrolls 40px a notch. The scroll is clamped every frame (list shrink,
+  window resize). A different list (tool, category, faction, search, group,
+  world) starts at the top; the same list growing or shrinking (a start placed
+  or undone) keeps its place. Grid hit-testing now subtracts the 4px top pad
+  the cells are drawn with. There is no keyboard navigation of the browser, so
+  nothing to keep in view.
+- **View > Preferences** (`M_PREFERENCES`): DISPLAY windowed / borderless
+  fullscreen, EDGE SCROLLING off / on, UI SCALE 50-200%. Retail had no options
+  dialog; earlier editor options lived as View toggles, which stay. All three
+  persist in `preferences.txt` (`fullscreen`, `edgescroll`, `scale`).
+- **Borderless fullscreen** is `SDL_WINDOW_FULLSCREEN_DESKTOP` as in the game
+  client, applied live, toggled by **F11** (an editor function key beside F5
+  Test Map / F6 model) and restored on startup (interactive runs only; `--shot`
+  keeps its window). The frame loop already re-derives `kUIScale` and the
+  logical size from the renderer output each frame, so drawing and pointer
+  mapping follow the desktop size unchanged. Only the windowed size is
+  remembered (`persistPreferences` skips fullscreen sizes); leaving fullscreen
+  restores the windowed size and position.
+- **Edge scrolling** (default **off**): an idle pointer resting 150ms within
+  16px inside a canvas edge pans that way at six keyboard arrow steps (6 x 200
+  screen px) per second, stopping once the map edge is in view. Never over the
+  browser, menus, status bar or minimap, with a dialog/menu/overlay open, with
+  any mouse button held, or without input and mouse focus.
+  **Retail:** Cartographer has no hover edge scrolling. Its canvas is a
+  scroll-bar view; the only cursor-driven scroll is drag auto-scroll: a
+  button-down handler calls `SetCapture` then `SetTimer(id 0x14, 100ms)`
+  (0x4077c2/0x4077d8), and the view's `OnTimer` (0x40bd90, id 0x14) reads
+  `GetCursorPos` -> `ScreenToClient` -> `GetClientRect` and, only when the
+  cursor is OUTSIDE the client rectangle, moves each scroll bar by the
+  overshoot (`GetScrollPos`/`SetScrollPos` wrappers 0x4cd879/0x4cd849). Hence
+  the default off.
+- Tests: `cartographer_document` (scrollbar/band math, preference round-trip
+  and malformed-value rejection), `cartographer_palette_scroll_ui` (wheel,
+  thumb drag past the window, track paging, clamping and scrolled hit-testing
+  in all four tools on a 30-start map) and `cartographer_display_ui` (dialog,
+  fullscreen live/persisted/restored, menu clicks at the fullscreen scale,
+  windowed size kept, F11, edge scroll dwell/direction/browser/map limit/off).
+  `TAK_CARTO_SHOT_DIR=<dir>` makes the two UI workflows write screenshots.
+  Each check was shown to fail against a deliberately broken build.
+
 ## RE status
 - Resource map + command handlers + tool behaviours + trigger opcode tables +
   TNT/OTA write formats + coordinate model + world types: **DONE**.

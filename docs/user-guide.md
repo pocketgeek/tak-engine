@@ -1409,6 +1409,8 @@ application shortcut. It uses the same data folder as the game.
 
   *The grouped terrain browser on Ulasem Arena. The badge on each piece shows
   which of its variants is chosen and how many it has.*
+- Long browser lists have a scrollbar: drag it, click above or below it to
+  move a page, or use the mouse wheel over the browser.
 - **Place**, **Select**, **Erase** and **Pan** are separate tools. Right-drag
   pans.
 - Select objects to move, copy, paste, duplicate, delete or edit their
@@ -1418,6 +1420,10 @@ application shortcut. It uses the same data folder as the game.
 - **View** has a minimap, Fit Map, Frame Selection, layer visibility and
   overlays for movement, buildability, water and slope.
 - **F6** opens a rotating 3D preview of the selected unit.
+- **View → Preferences** sets the display (a window or borderless fullscreen;
+  **F11** switches), edge scrolling (off by default: when on, resting the
+  pointer at an edge of the map view scrolls that way) and the UI scale. They
+  are remembered between sessions.
 
 ### Symmetry and terrain copy
 

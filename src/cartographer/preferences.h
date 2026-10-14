@@ -9,6 +9,8 @@ struct EditorPreferences {
     bool showFeatures=true,showUnits=true,showStarts=true,showRegions=true,showGrid=false;
     bool guideSeen=false;
     bool tracePlaytest=false;
+    bool edgeScroll=false;    // hover at the canvas edge pans (retail only auto-scrolled drags past the view)
+    bool fullscreen=false;    // borderless desktop fullscreen; width/height stay the windowed size
     std::vector<std::string> recent;
     std::map<std::string,std::string> sectionGroups;   // world -> terrain browser group id
     void remember(const std::string& request);

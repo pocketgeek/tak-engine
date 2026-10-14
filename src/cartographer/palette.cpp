@@ -61,6 +61,10 @@ void cart::Editor::refreshPalette() {
     if(key==paletteKey)return;
     const bool toolChanged=paletteKey.empty() || paletteKey[0]!=key[0];
     paletteKey=key;
+    // A different list starts at the top; the same one growing or shrinking (a start
+    // placed or undone) keeps its place, clamped when drawn.
+    const auto listKey=std::to_string(int(tool))+"/"+std::to_string(categoryIndex)+"/"+std::to_string(factionIndex)+"/"+world+"/"+paletteSearch+"/"+sectionGroup;
+    if(listKey!=paletteListKey) {paletteListKey=listKey;paletteScroll=0;paletteThumbDrag=false;}
     if(tool==TERRAIN) {
         // One row per piece; search spans every group, keeps a piece when any
         // variant matches and shows that variant (cycling still steps through all).
@@ -77,7 +81,7 @@ void cart::Editor::refreshPalette() {
             if(shown<0)continue;
             paletteItems.push_back(selectedMatches?selected:shown);paletteVariants.push_back(variants);
         }
-        paletteScroll=0;return;
+        return;
     }
     const int count=tool==UNITS?int(unitTypes.size()):tool==FEATURES?int(features.list().size()):tool==STARTS?int(scenario.starts.size()):int(sections.list().size());
     auto category=[&](int i) {return tool==UNITS?unitCategory(i):tool==FEATURES?features.list()[size_t(i)].category:tool==STARTS?std::string("STARTS"):sections.list()[size_t(i)].category;};
@@ -92,14 +96,26 @@ void cart::Editor::refreshPalette() {
         if(!query.empty() && lowerText(paletteLabel(i)+" "+category(i)).find(query)==std::string::npos)continue;
         paletteItems.push_back(i);
     }
-    paletteScroll=0;
+}
+
+int cart::Editor::paletteContentHeight() const {
+    const int count=int(paletteItems.size());
+    if(tool==UNITS || tool==STARTS)return count*26;
+    return count?(count+cols-1)/cols*kCellH+4:0;   // grid cells start 4px below the list top
+}
+
+// The track runs down the browser's right margin, beside the two thumbnail columns.
+cart::ScrollBar cart::Editor::paletteScrollBar() const {
+    ScrollBar bar;bar.x=kPaletteW-10;bar.w=8;bar.y=kPaletteTop;bar.h=std::max(0,h-kStatusH-kPaletteTop);
+    bar.content=paletteContentHeight();bar.view=bar.h;return bar;
 }
 
 int cart::Editor::paletteRowAt(int x,int y) const {
     if(sectionMenuOpen && sectionMenuRowAt(x,y)>=0)return -1;
+    if(paletteScrollBar().inTrack(x,y))return -1;
     if(tool==UNITS || tool==STARTS)return (y-kPaletteTop+paletteScroll)/26;
     const int column=(x-4)/(kThumb+4);   // the right margin is no cell (it read as the next row)
-    return column<cols?((y-kPaletteTop+paletteScroll)/kCellH)*cols+column:-1;
+    return column<cols?((y-kPaletteTop-4+paletteScroll)/kCellH)*cols+column:-1;   // cells are drawn 4px down
 }
 
 std::string cart::Editor::paletteHint(int y) const {
@@ -166,17 +182,36 @@ bool cart::Editor::handlePaletteWheel(SDL_Event& e) {
     if(e.type != SDL_MOUSEWHEEL)return false;
     int mxp, myp; SDL_GetMouseState(&mxp, &myp); mxp /= kUIScale; myp /= kUIScale;
     if (mxp >= kPaletteW)return false;   // the canvas zooms instead
-    // Scroll the palette (tool-dependent count).
-    const int contentH=h-kStatusH-kPaletteTop;
-    const int total=tool==UNITS || tool==STARTS?int(paletteItems.size())*26:((int(paletteItems.size())+cols-1)/cols)*kCellH;
-    paletteScroll=std::clamp(paletteScroll-e.wheel.y*40,0,std::max(0,total-contentH));
+    paletteScroll=paletteScrollBar().clamp(paletteScroll-e.wheel.y*40);
+    return true;
+}
+
+// Thumb drags own the pointer until release, so dragging onto the canvas never paints.
+bool cart::Editor::handlePaletteScrollbar(SDL_Event& e) {
+    const auto bar=paletteScrollBar();
+    if(paletteThumbDrag) {
+        if(e.type==SDL_MOUSEMOTION) {
+            if(!(e.motion.state&SDL_BUTTON_LMASK))paletteThumbDrag=false;   // released outside the window
+            else paletteScroll=bar.scrollForThumb(e.motion.y-paletteThumbGrab);
+            return true;
+        }
+        if(e.type==SDL_MOUSEBUTTONUP && e.button.button==SDL_BUTTON_LEFT) {paletteThumbDrag=false;return true;}
+        if(e.type==SDL_MOUSEBUTTONDOWN)return true;
+        return false;
+    }
+    if(sectionMenuOpen || e.type!=SDL_MOUSEBUTTONDOWN || e.button.button!=SDL_BUTTON_LEFT || !bar.inTrack(e.button.x,e.button.y))return false;
+    if(bar.inThumb(e.button.x,e.button.y,paletteScroll)) {paletteThumbDrag=true;paletteThumbGrab=e.button.y-bar.thumbTop(paletteScroll);}
+    else paletteScroll=bar.page(paletteScroll,e.button.y);
+    if(paletteFocus) {paletteFocus=false;SDL_StopTextInput();}
     return true;
 }
 
 void cart::Editor::drawPalette() {
     shotPending=0;
     fillRect(ren, 0, kMenuH, kPaletteW, canvasH, 30, 32, 40);
-    SDL_Rect palClip{0,kPaletteTop,kPaletteW,h-kStatusH-kPaletteTop};
+    const auto bar=paletteScrollBar();
+    paletteScroll=bar.clamp(paletteScroll);   // the list shrank or the window got taller
+    SDL_Rect palClip{0,kPaletteTop,bar.active()?bar.x-2:kPaletteW,h-kStatusH-kPaletteTop};
     SDL_RenderSetClipRect(ren,&palClip);
     if(tool==UNITS || tool==STARTS) {
         for(int row=0;row<int(paletteItems.size());++row) {
@@ -228,6 +263,12 @@ void cart::Editor::drawPalette() {
         }
     }
     SDL_RenderSetClipRect(ren,nullptr);
+    if(bar.active()) {   // track, then the thumb (brighter while hovered or dragged)
+        int mx,my;SDL_GetMouseState(&mx,&my);mx=int(mx/kUIScale);my=int(my/kUIScale);
+        const bool hot=paletteThumbDrag || (!sectionMenuOpen && bar.inThumb(mx,my,paletteScroll));
+        fillRect(ren,bar.x,bar.y,bar.w,bar.h,22,24,30);
+        fillRect(ren,bar.x+1,bar.thumbTop(paletteScroll)+1,bar.w-2,bar.thumbHeight()-2,hot?140:96,hot?150:104,hot?185:132);
+    }
     cart::drawField(ren,4,kMenuH+3,kPaletteW-8,"SEARCH (CTRL+F)",paletteSearch,paletteFocus,paletteFocus?&paletteEditor:nullptr);
     if(tool==TERRAIN) {
         // Long folder names shorten; the count and the arrow always show.

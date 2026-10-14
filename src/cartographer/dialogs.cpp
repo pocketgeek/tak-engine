@@ -58,6 +58,13 @@ void cart::Editor::openModal(Modal m, int unitIdx) {
         mLabel[10]="WORLD";mf[10]=generatorDraft[3];mfNumeric[10]=false;mfChoices[10]=&kWorldOpts;
     } else if(m==M_SYMMETRIZE) {
         setupSymmetrizeFields();
+    } else if(m==M_PREFERENCES) {
+        mTitle="PREFERENCES";mN=3;
+        mLabel[0]="DISPLAY (F11 TOGGLES)";mf[0]=kDisplayOpts[preferences.fullscreen];mfChoices[0]=&kDisplayOpts;
+        mLabel[1]="EDGE SCROLLING (POINTER AT THE MAP EDGE)";mf[1]=kOnOffOpts[preferences.edgeScroll];mfChoices[1]=&kOnOffOpts;
+        mLabel[2]="UI SCALE (CAPPED TO FIT THE WINDOW)";mf[2]=std::to_string(preferences.scalePercent)+"%";mfChoices[2]=&kScaleOpts;
+        if(std::find(kScaleOpts.begin(),kScaleOpts.end(),mf[2])==kScaleOpts.end())mf[2]="100%";
+        for(int i=0;i<3;++i)mfNumeric[i]=false;
     } else if(m==M_REGION) {
         editRegion=unitIdx;
         tak::crt::Region region;
@@ -341,6 +348,11 @@ void cart::Editor::applyModal() {
     } else if (modal == M_SYMMETRIZE) {
         applySymmetrize();   // opens its confirmation, or reports why not
         if(!modalError.empty())return;
+    } else if(modal==M_PREFERENCES) {
+        preferences.fullscreen=mf[0]==kDisplayOpts[1];preferences.edgeScroll=mf[1]==kOnOffOpts[1];
+        preferences.scalePercent=std::clamp(std::atoi(mf[2].c_str()),50,200);
+        persistPreferences();   // before a fullscreen switch, so the windowed size is kept
+        modal=M_NONE;SDL_StopTextInput();applyDisplayMode();return;
     }
     if(modal!=applying)return;
     modal = M_NONE; SDL_StopTextInput();

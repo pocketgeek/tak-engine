@@ -242,6 +242,10 @@ Six Release tests pass, including preference/path roundtrips and an SDL workflow
 that filters and opens a recent map. Unicode paths are preserved in preferences;
 Unicode glyph rendering and multiline field display are still unfinished.
 
+View > Preferences (2026-10-14, next release) adds borderless fullscreen
+(F11; the windowed size is still what is remembered) and optional edge
+scrolling, and every browser list has a scrollbar; see the port notes.
+
 ## Multiline metadata checkpoint
 
 Descriptions now wrap and scroll, with mouse caret placement, line-aware

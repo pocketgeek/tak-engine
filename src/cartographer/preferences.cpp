@@ -21,7 +21,7 @@ EditorPreferences loadEditorPreferences(const std::filesystem::path& folder) {
         if(key=="width" && row>>value && value>=640 && value<=8192)p.width=value;
         if(key=="height" && row>>value && value>=480 && value<=8192)p.height=value;
         if(key=="scale" && row>>value && value>=50 && value<=200)p.scalePercent=value;
-        for(auto [name,setting]:{std::pair{"features",&p.showFeatures}, {"units",&p.showUnits}, {"starts",&p.showStarts}, {"regions",&p.showRegions}, {"grid",&p.showGrid}, {"guide",&p.guideSeen}, {"trace",&p.tracePlaytest}})
+        for(auto [name,setting]:{std::pair{"features",&p.showFeatures}, {"units",&p.showUnits}, {"starts",&p.showStarts}, {"regions",&p.showRegions}, {"grid",&p.showGrid}, {"guide",&p.guideSeen}, {"trace",&p.tracePlaytest}, {"edgescroll",&p.edgeScroll}, {"fullscreen",&p.fullscreen}})
             if(key==name && row>>value && (value==0 || value==1))*setting=value!=0;
         if(key=="recent") {
             std::string name;if(row>>std::quoted(name) && !name.empty() && name.size()<=4096 && p.recent.size()<12 &&
@@ -39,6 +39,7 @@ bool saveEditorPreferences(const std::filesystem::path& folder,const EditorPrefe
     text<<"features "<<p.showFeatures<<"\nunits "<<p.showUnits<<"\nstarts "<<p.showStarts<<"\nregions "<<p.showRegions<<"\ngrid "<<p.showGrid<<'\n';
     text<<"guide "<<p.guideSeen<<'\n';
     text<<"trace "<<p.tracePlaytest<<'\n';
+    text<<"edgescroll "<<p.edgeScroll<<"\nfullscreen "<<p.fullscreen<<'\n';
     for(size_t i=0;i<std::min(size_t(12),p.recent.size());++i)text<<"recent "<<std::quoted(p.recent[i])<<'\n';
     for(const auto& [world,group]:p.sectionGroups)
         if(!world.empty() && world.size()<=32 && world.find_first_of(" \t\r\n")==std::string::npos)text<<"sectiongroup "<<world<<' '<<std::quoted(group)<<'\n';

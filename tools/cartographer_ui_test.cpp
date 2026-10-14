@@ -11,6 +11,7 @@
 #include "cartographer/symmetry.h"
 #include "cartographer/sectiongroups.h"
 #include "cartographer/preferences.h"
+#include "cartographer/scrolling.h"
 #include "terrain/terrain.h"
 #include "cartographer/textedit.h"
 #include "hpi/hpi.h"
@@ -1206,6 +1207,207 @@ static int terrainClipboardWorkflow(const char* data) {
     fs::remove_all(root);
     std::cout<<"PASS: terrain selection, copy, clipboard brush paste, one-step undo/redo, save, cross-world warning after File > Open\n";return 0;
 }
+// Logical-pixel input for the frame hook: events carry physical window pixels.
+struct Pointer {
+    SDL_Window* window;float sx,sy;
+    void send(Uint32 type,int x,int y,Uint32 state=SDL_BUTTON_LMASK) const {
+        SDL_Event e{};e.type=type;
+        if(type==SDL_MOUSEMOTION) {e.motion.state=state;e.motion.x=int(x*sx);e.motion.y=int(y*sy);}
+        else {e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);e.button.clicks=1;}
+        SDL_PushEvent(&e);
+    }
+    void click(int x,int y) const {send(SDL_MOUSEBUTTONDOWN,x,y);send(SDL_MOUSEBUTTONUP,x,y);}
+    void warp(int x,int y) const {SDL_WarpMouseInWindow(window,int(x*sx),int(y*sy));}   // what SDL_GetMouseState reports
+    void wheel(int y) const {SDL_Event e{};e.type=SDL_MOUSEWHEEL;e.wheel.y=y;SDL_PushEvent(&e);}
+};
+static void savePng(SDL_Renderer* renderer,const std::filesystem::path& path) {
+    int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);std::vector<uint8_t> rgba(size_t(w)*h*4);
+    if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),w*4)==0)tak::png::write(path.string(),w,h,rgba);
+}
+
+// The left browser scrolls in every tool: the wheel, a thumb drag (which must not
+// paint the canvas it ends over), track paging, and clicks on scrolled rows/cells.
+// TAK_CARTO_SHOT_DIR=<dir> also writes each tool's scrolled browser as a PNG.
+static int paletteScrollWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    constexpr int kPaletteW=200,kPaletteTop=120,kStatusH=22,kCellH=106;   // editorstate.h layout
+    const auto root=fs::temp_directory_path()/("tak-editor-scroll-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);isolateProfile(root.string().c_str());
+    const auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
+    const auto map=tak::tnt::Map::load(vfs.read(path),path);
+    tak::tnt::Scenario metadata;metadata.kingdom="zhon";
+    for(int i=0;i<30;++i)metadata.starts.push_back({i+1,40+(i%6)*60,40+(i/6)*60});   // 30 rows overflow the STARTS list
+    std::string error;
+    if(!cart::writeDocumentBundle(root/"Scroll.kmp",cart::documentFiles(map,metadata,{},{},{},"Scroll"),error))throw std::runtime_error(error);
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    const char* shots=std::getenv("TAK_CARTO_SHOT_DIR");
+    cart::EditorHooks hooks;cart::EditorHooks::FrameState state;hooks.frameState=[&](const auto& s) {state=s;};
+    std::string failure;int lastFrame=0,before=-1,expected=-1,toolScroll=0,held=0;float expectX=0;Uint64 holdUntil=0;
+    auto check=[&](bool value,const std::string& message) {if(!value && failure.empty())failure=message+" (frame "+std::to_string(lastFrame)+", tool "+std::to_string(state.tool)+", scroll "+std::to_string(state.paletteScroll)+"/"+std::to_string(state.paletteMaxScroll)+")";};
+    const char* toolNames[]={"terrain","features","units","starts"};
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);const Pointer pointer{window,sx,sy};
+        int ow,oh;SDL_GetRendererOutputSize(renderer,&ow,&oh);const int lw=int(ow/sx),lh=int(oh/sy);
+        cart::ScrollBar bar;bar.x=kPaletteW-10;bar.w=8;bar.y=kPaletteTop;bar.h=lh-kStatusH-kPaletteTop;bar.view=bar.h;bar.content=state.paletteMaxScroll+bar.h;
+        const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
+        if(frame==0) {key(SDLK_o,KMOD_CTRL);return;}
+        if(frame==1) {text((root/"Scroll.kmp").string());key(SDLK_RETURN);return;}
+        const int tool=(frame-2-held)/12,step=(frame-2-held)%12;
+        if(tool>=4) {
+            if(frame==2+4*12+held) {SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);}
+            else if(frame>2+4*12+held+3) {check(false,"editor did not exit");std::cerr<<"palette scroll: "<<failure<<'\n';std::_Exit(3);}
+            return;
+        }
+        if(step>0 && step<11)check(!dirty,std::string("browser scrolling edited the map in ")+toolNames[tool]);
+        switch(step) {
+        case 0:pointer.click(96+tool*72+20,32);pointer.warp(100,lh/2);break;
+        case 1:
+            check(state.tool==tool && state.paletteScroll==0,"a new tool's list starts at the top");
+            check(state.paletteMaxScroll>0,std::string("the ")+toolNames[tool]+" list overflows the browser");
+            pointer.wheel(-3);break;
+        case 2:
+            check(state.paletteScroll==std::min(120,state.paletteMaxScroll),"the wheel scrolls the browser");
+            pointer.send(SDL_MOUSEBUTTONDOWN,bar.x+4,bar.thumbTop(state.paletteScroll)+bar.thumbHeight()/2);
+            pointer.send(SDL_MOUSEMOTION,lw/2,lh-60);pointer.send(SDL_MOUSEMOTION,lw/2,lh+40);   // dragged over the canvas and past the window
+            pointer.send(SDL_MOUSEBUTTONUP,lw/2,lh+40);break;
+        case 3:
+            check(state.paletteScroll==state.paletteMaxScroll,"dragging the thumb down reaches the end of the list");
+            pointer.click(bar.x+4,bar.y+4);break;   // the track above the thumb pages up
+        case 4:
+            check(state.paletteScroll==std::max(0,state.paletteMaxScroll-bar.view),"a track click pages one viewport");
+            toolScroll=state.paletteScroll;pointer.wheel(-1);break;
+        case 5: {
+            check(state.paletteScroll==std::min(toolScroll+40,state.paletteMaxScroll),"the wheel scrolls from a paged position");
+            const int y=kPaletteTop+230;before=state.selection;
+            if(tool==1)expected=(230-4+state.paletteScroll)/kCellH*2+1;
+            if(tool==2)expected=(230+state.paletteScroll)/26;
+            if(tool==3) {
+                const auto& start=metadata.starts[size_t((230+state.paletteScroll)/26)];
+                expectX=start.xpos*16-(lw-kPaletteW)/(2*state.zoom);
+            }
+            pointer.click(tool==1?kPaletteW-90:60,y);break;   // FEATURES: the second column
+        }
+        case 6:
+            if(tool==0)check(state.selection!=before && state.selection>=0,"a scrolled terrain cell selects its section");
+            if(tool==1 || tool==2)check(state.selection==expected,"a scrolled row selects the item drawn under the pointer");
+            if(tool==3)check(std::abs(state.viewX-expectX)<1,"a scrolled start row centres the view on that start");
+            holdUntil=SDL_GetTicks64()+4000;break;
+        case 7:pointer.warp(lw/2,lh/2);   // off the thumb so it draws idle
+            if(shots && SDL_GetTicks64()<holdUntil)++held;   // thumbnails and portraits decode one per frame
+            break;
+        case 8:if(shots)savePng(renderer,fs::path(shots)/(std::string("palette-")+toolNames[tool]+".png"));
+            pointer.warp(100,lh/2);pointer.wheel(1000);break;
+        case 9:check(state.paletteScroll==0,"scrolling up clamps at the top");break;
+        }
+    },hooks);
+    fs::remove_all(root);
+    if(result || !failure.empty()) {std::cerr<<"palette scroll: "<<failure<<'\n';return 1;}
+    std::cout<<"PASS: browser scrollbar (wheel, thumb drag, track paging, clamping, scrolled hit-testing) in terrain, features, units and starts\n";return 0;
+}
+
+static std::string readText(const std::filesystem::path& path) {std::ifstream in(path);return {std::istreambuf_iterator<char>(in),{}};}
+
+// View > Preferences: borderless fullscreen (live, persisted, restored on startup,
+// pointer mapping intact at the desktop size, windowed size kept) and edge scrolling
+// (dwell, direction, map-edge stop, nothing over the browser, off by preference).
+static int displayWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    constexpr int kPaletteW=200;
+    const auto root=fs::temp_directory_path()/("tak-editor-display-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);isolateProfile(root.string().c_str());
+    const auto profile=root/"TAKengine"/"Cartographer";
+    const auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
+    const auto map=tak::tnt::Map::load(vfs.read(path),path);
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    const char* shots=std::getenv("TAK_CARTO_SHOT_DIR");
+    cart::EditorHooks hooks;cart::EditorHooks::FrameState state;hooks.frameState=[&](const auto& s) {state=s;};
+    std::string failure;int lastFrame=0,phase=0,windowedW=0,windowedH=0;Uint64 since=0;float mark=0,markZ=0;
+    auto check=[&](bool value,const std::string& message) {if(!value && failure.empty())failure=message+" (phase "+std::to_string(phase)+", frame "+std::to_string(lastFrame)+")";};
+    auto fullscreen=[](SDL_Window* window) {return (SDL_GetWindowFlags(window)&SDL_WINDOW_FULLSCREEN_DESKTOP)==SDL_WINDOW_FULLSCREEN_DESKTOP;};
+    auto quit=[] {SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);};
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);const Pointer pointer{window,sx,sy};
+        int ow,oh;SDL_GetRendererOutputSize(renderer,&ow,&oh);const int lw=int(ow/sx),lh=int(oh/sy);
+        const Uint64 now=SDL_GetTicks64();auto next=[&] {++phase;since=now;};
+        if(phase>0 && now-since>8000) {check(false,"workflow stalled");quit();phase=99;return;}
+        switch(phase) {
+        case 0:
+            check(!fullscreen(window),"the editor starts windowed by default");SDL_GetWindowSize(window,&windowedW,&windowedH);
+            pointer.click(96+2*72+20,10);pointer.click(300,22+18*20+10);next();break;   // View > Preferences
+        case 1:
+            check(state.modal==23,"View > Preferences opens the preferences dialog");
+            if(shots)savePng(renderer,fs::path(shots)/"preferences-dialog.png");
+            key(SDLK_RIGHT);key(SDLK_TAB);key(SDLK_RIGHT);next();break;   // BORDERLESS FULLSCREEN, edge scrolling ON
+        case 2:
+            if(shots)savePng(renderer,fs::path(shots)/"preferences-dialog-changed.png");
+            key(SDLK_RETURN);next();break;
+        case 3: {
+            SDL_Rect desktop{};SDL_GetDisplayBounds(SDL_GetWindowDisplayIndex(window),&desktop);
+            check(fullscreen(window),"OK switches to borderless fullscreen at once");
+            check(ow==desktop.w && oh==desktop.h,"fullscreen covers the desktop ("+std::to_string(ow)+"x"+std::to_string(oh)+" vs "+std::to_string(desktop.w)+"x"+std::to_string(desktop.h)+")");
+            const auto saved=readText(profile/"preferences.txt");
+            check(saved.find("fullscreen 1\n")!=std::string::npos && saved.find("edgescroll 1\n")!=std::string::npos,"preferences persist at once");
+            check(saved.find("width "+std::to_string(windowedW)+"\n")!=std::string::npos,"the windowed size is what is remembered");
+            next();break;   // this frame was laid out before the switch; input from now on is at the new scale
+        }
+        case 4:pointer.click(96+3*72+20,10);pointer.click(330,22+10*20+10);next();break;   // Scenario > Placed units, in fullscreen coordinates
+        case 5:
+            check(std::string(SDL_GetWindowTitle(window)).find("[Placed units]")!=std::string::npos,"menu clicks map correctly at the fullscreen scale");
+            if(shots)savePng(renderer,fs::path(shots)/"fullscreen.png");
+            key(SDLK_ESCAPE);key(SDLK_1);pointer.warp(lw-4,lh/2);next();break;   // rest just inside the right canvas edge
+        case 6:mark=state.viewX;markZ=state.viewZ;next();break;
+        case 7:check(state.viewX==mark,"edge scrolling waits for a short dwell");next();break;
+        case 8:
+            if(state.viewX>mark+100) {check(state.viewZ==markZ,"the right edge scrolls only horizontally");pointer.warp(kPaletteW-20,lh/2);next();}
+            break;
+        case 9:mark=state.viewX;next();break;
+        case 10:
+            check(state.viewX==mark,"the browser beside the canvas does not edge-scroll");
+            if(now-since>400) {pointer.click(96+3*72+20,10);pointer.click(330,22+10*20+10);pointer.warp(lw-4,lh/2);next();}   // Placed units, pointer at the edge
+            break;
+        case 11:mark=state.viewX;check(state.modal!=0,"Placed units is open");next();break;
+        case 12:
+            check(state.viewX==mark,"an open dialog stops edge scrolling");
+            if(now-since>400) {key(SDLK_ESCAPE);key(SDLK_5);next();}   // 12.5%: reach the map's right edge quickly
+            break;
+        case 13: {
+            const float limit=map.width*16.f-(lw-kPaletteW)/state.zoom;
+            check(state.viewX<=std::max(mark,limit)+0.5f,"edge scrolling stops at the map edge");
+            if(now-since>2500) {check(std::abs(state.viewX-limit)<0.5f,"edge scrolling reaches the map edge ("+std::to_string(state.viewX)+" vs "+std::to_string(limit)+")");
+                pointer.warp(lw/2,lh/2);pointer.click(96+2*72+20,10);pointer.click(300,22+18*20+10);next();}
+            break;
+        }
+        case 14:key(SDLK_TAB);key(SDLK_LEFT);key(SDLK_RETURN);next();break;   // edge scrolling OFF
+        case 15:check(fullscreen(window) && state.modal==0,"turning edge scrolling off keeps fullscreen");key(SDLK_1);pointer.warp(lw-4,lh/2);next();break;
+        case 16:mark=state.viewX;next();break;
+        case 17:check(state.viewX==mark,"edge scrolling off leaves the view alone");if(now-since>500) {key(SDLK_F11);next();}break;
+        case 18: {
+            int ww,wh;SDL_GetWindowSize(window,&ww,&wh);
+            check(!fullscreen(window) && ww==windowedW && wh==windowedH,"F11 returns to the remembered window size");
+            check(readText(profile/"preferences.txt").find("fullscreen 0\n")!=std::string::npos,"F11 persists windowed mode");
+            key(SDLK_F11);next();break;
+        }
+        case 19:check(fullscreen(window),"F11 toggles fullscreen back on");quit();next();break;
+        }
+    },hooks);
+    // A restart restores fullscreen; the windowed size stays the remembered one.
+    bool restored=false;int restartFrame=0;
+    const int second=failure.empty()?cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer*,int frame) {
+        restartFrame=frame;if(frame==0)restored=fullscreen(window);
+        if(frame==1)quit();
+        if(frame>10)std::_Exit(3);
+    },hooks):0;
+    if(failure.empty()) {
+        check(restored,"fullscreen is restored on startup");
+        check(readText(profile/"preferences.txt").find("width "+std::to_string(windowedW)+"\nheight "+std::to_string(windowedH)+"\n")!=std::string::npos,"a fullscreen session keeps the windowed size");
+    }
+    fs::remove_all(root);
+    if(result || second || phase<20 || !failure.empty()) {std::cerr<<"display: "<<(failure.empty()?"editor exited early":failure)<<'\n';return 1;}
+    std::cout<<"PASS: preferences dialog, borderless fullscreen (live, persisted, restored, pointer mapping, windowed size), edge scrolling (dwell, edges, browser, map limit, off)\n";return 0;
+}
+
 int main(int argc,char** argv) {
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
@@ -1226,6 +1428,8 @@ int main(int argc,char** argv) {
     if(argc==3 && std::string(argv[2])=="symmetry")return symmetryWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="terrain-clipboard")return terrainClipboardWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="sections")return sectionsWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="palette-scroll")return paletteScrollWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="display")return displayWorkflow(argv[1]);
     if(argc!=2)return 2;
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-ui-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

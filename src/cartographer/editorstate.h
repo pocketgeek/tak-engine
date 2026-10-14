@@ -24,6 +24,7 @@
 #include "cartographer/preferences.h"
 #include "cartographer/recovery.h"
 #include "cartographer/regions.h"
+#include "cartographer/scrolling.h"
 #include "cartographer/ruleedit.h"
 #include "cartographer/sectiongroups.h"
 #include "cartographer/sections.h"
@@ -243,6 +244,12 @@ struct Editor : Session {
     bool handlePaletteFocus(SDL_Event& e);
     bool handlePaletteClick(SDL_Event& e);
     bool handlePaletteWheel(SDL_Event& e);
+    // Browser scrollbar: drag the thumb, click the track to page; the wheel scrolls too.
+    std::string paletteListKey;   // the list's identity: a new list starts at the top
+    bool paletteThumbDrag=false;int paletteThumbGrab=0;
+    int paletteContentHeight() const;
+    ScrollBar paletteScrollBar() const;
+    bool handlePaletteScrollbar(SDL_Event& e);
     void drawPalette();
     // Terrain groups: kinds and retail folders; numbered variants share one row.
     SectionCatalog sectionCatalog;
@@ -283,7 +290,7 @@ struct Editor : Session {
     void drawMinimap();
 
     // --- Modal dialogs (dialogs.cpp) ------------------------------------------
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_RULENAME, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES, M_MODEL_LOADING, M_MODEL, M_OBJECTS, M_SYMMETRIZE };
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_RULENAME, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES, M_MODEL_LOADING, M_MODEL, M_OBJECTS, M_SYMMETRIZE, M_PREFERENCES };
     static constexpr int kMaxFields = 11;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
@@ -303,6 +310,8 @@ struct Editor : Session {
     // Dropdown option lists (New Map): map sizes in units, and the four worlds.
     const std::vector<std::string> kSizeOpts = {"8", "16", "24", "32", "48", "64"};
     const std::vector<std::string> kWorldOpts = {"aramon", "veruna", "taros", "zhon", "creon"};
+    const std::vector<std::string> kDisplayOpts={"WINDOWED","BORDERLESS FULLSCREEN"},kOnOffOpts={"OFF","ON"},
+        kScaleOpts={"50%","75%","100%","125%","150%","175%","200%"};
     tak::mapgen::Params generatorParams;
     bool regeneratingCurrent=false;
     std::array<std::string,4> generatorDraft;
@@ -437,7 +446,7 @@ struct Editor : Session {
     const std::vector<std::vector<std::string>> menuRows={
         {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Test Map (F5)","Exit"},
         {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)","Terrain brush: protect objects","Copy terrain selection (Ctrl+C)","Paste terrain clipboard (Ctrl+V)"},
-        {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selection","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay","Smaller UI","Larger UI","Show features","Show units","Show starts","Unit model preview (F6)"},
+        {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selection","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay","Smaller UI","Larger UI","Show features","Show units","Show starts","Unit model preview (F6)","Preferences (F11 fullscreen)"},
         {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions","Validation results","Regenerate from recipe","Log Test Map triggers","Placed units"},
         {"Live symmetry (M)","Symmetrize map (Shift+M)","Axis: vertical (left | right)","Axis: horizontal (top / bottom)","Axis: diagonal \\ (square maps)",
          "Axis: diagonal / (square maps)","Rotate 2-way (180)","Rotate 4-way (90, square maps)","Mirror 4-way (both axes)","Locate unmirrored terrain"},
@@ -449,6 +458,12 @@ struct Editor : Session {
     bool handleToolbarTools(SDL_Event& e);
     void drawChrome();
     void drawHints();
+    // Display mode and edge scrolling, both editor preferences (View > Preferences).
+    std::optional<SDL_Rect> windowedRect;   // size/position to restore on leaving fullscreen
+    void applyDisplayMode();                // preferences.fullscreen -> the window, live
+    void toggleFullscreen();                // F11
+    Uint64 edgeSince=0,edgeLast=0;          // dwell start / previous frame (SDL ticks)
+    void edgeScroll();                      // once per frame, after input
 
     // --- Recovery and undo (session.cpp) --------------------------------------
     bool recoveryFilesPresent=!recoveredFrom.empty();

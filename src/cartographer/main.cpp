@@ -277,6 +277,7 @@ cart::Editor::Editor(int argc,char** argv,const FrameHook& frameHook,const Edito
         preferences.guideSeen=true;persistPreferences();
     }
     nextRecovery=recoveryClock()+60000;
+    if(interactive)applyDisplayMode();   // a remembered borderless fullscreen (shots keep their window size)
     prepareShot();
     // A bare launch (no map named, no --new size) opens on the blank map with
     // the New Map dialog already up, so the first thing is "what shall we make?".
@@ -328,7 +329,7 @@ int cart::Editor::run() {
                 continue;
             }
             if(modal==M_NONE && !scriptOpen && !useOnlyOpen && !regionsOpen && handleMenuInput(e))continue;
-            if(modal==M_NONE && !scriptOpen && !useOnlyOpen && !regionsOpen && (handleMinimapInput(e) || handlePaletteFocus(e)))continue;
+            if(modal==M_NONE && !scriptOpen && !useOnlyOpen && !regionsOpen && (handleMinimapInput(e) || handlePaletteScrollbar(e) || handlePaletteFocus(e)))continue;
             if(regionsOpen && modal==M_NONE) {handleRegionsList(e);continue;}
             if (useOnlyOpen) {handleUseOnly(e);continue;}
             if (modal != M_NONE) {handleModal(e);continue;}
@@ -343,6 +344,7 @@ int cart::Editor::run() {
         // A confirmed New (discarding unsaved edits) opens the dialog now, after
         // the confirm's applyModal has closed itself.
         if (wantNew) { wantNew = false; openModal(M_NEW); }
+        edgeScroll();
         refreshPalette();   // the drawn browser and status bar follow this frame's edits
 
         if(overlayInvalidated || historyPending || resetHistory) {overlayTexture.reset();overlayLegend.clear();overlayInvalidated=false;}
@@ -369,6 +371,8 @@ int cart::Editor::run() {
         drawUseOnly();
         drawHints();
 
+        if(hooks.frameState)hooks.frameState({mapView.offX(),mapView.offY(),mapView.zoom(),int(tool),paletteScroll,paletteScrollBar().maxScroll(),
+            tool==UNITS?selectedType:tool==FEATURES?selectedFeat:tool==TERRAIN?selected:-1,int(modal)});
         if(frameHook)frameHook(win,ren,frameNumber++);
         SDL_RenderPresent(ren);
         captureShot();
