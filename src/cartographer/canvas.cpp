@@ -276,13 +276,12 @@ void cart::Editor::handleCanvasInput(SDL_Event& e,float pointerDX,float pointerD
             int cx, cz;
             if (hit >= 0) draggingStart = hit;
             else if (mouseCell(e.button.x, e.button.y, cx, cz)) {
-                int num = 1;   // next free StartPosN
-                for (bool used = true; used; ++num) {
-                    used = false;
-                    for (auto& s : scenario.starts) if (s.number == num) used = true;
-                }
-                scenario.starts.push_back({num - 1, cx, cz}); dirty = true; historyPending=true;
-                draggingStart = int(scenario.starts.size()) - 1;
+                // Next free StartPos1..8: a match seats at most eight players, and
+                // Check Map rejects any other number.
+                if (const int num = cart::nextStartNumber(scenario.starts)) {
+                    scenario.starts.push_back({num, cx, cz}); dirty = true; historyPending=true;
+                    draggingStart = int(scenario.starts.size()) - 1;
+                } else openMessage("START POSITIONS FULL", "All eight start positions are on the map; a match seats at most eight players. Move or erase one first.");
             }
         }
     } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
@@ -440,12 +439,15 @@ void cart::Editor::drawCanvas() {
                 float bx = (cx * 16.0f - mapView.offX()) * zm;
                 float by = (cz * 16.0f - mapView.offY()) * zm;
                 if (bx < -64 || by < -64 || bx > canvasW + 64 || by > canvasH + 64) continue;
+                // A name no feature file of this world defines (another world's, or
+                // a downloaded map's own) still occupies the cell: mark it in red so
+                // it can be seen, selected and erased.
                 const cart::FeatureRef* r = features.byName(mp.featureNames[v]);
-                if (!r) continue;
-                SDL_Texture* t = featTextureFor(*r);
-                const cart::FeatSprite* sp = featureSpriteFor(*r);
+                SDL_Texture* t = r ? featTextureFor(*r) : nullptr;
+                const cart::FeatSprite* sp = r ? featureSpriteFor(*r) : nullptr;
                 if (!t || !sp || sp->w == 0) {   // no art: a small marker
-                    SDL_SetRenderDrawColor(ren, 90, 200, 90, 220);
+                    if (r) SDL_SetRenderDrawColor(ren, 90, 200, 90, 220);
+                    else SDL_SetRenderDrawColor(ren, 235, 70, 60, 230);
                     SDL_Rect dot{int(bx) - 2, int(by) - 2, 4, 4};
                     SDL_RenderFillRect(ren, &dot);
                     continue;

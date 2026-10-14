@@ -251,6 +251,10 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     // Unit-type list for the palette (units + scen loaded above, before saveMap).
     unitTypes = cart::unitTypeNames(vfs);
     tak::sim::setupRegistry(unitRegistry,vfs,false);
+    // Offer only types the game spawns by that name: a scenario naming any other
+    // stops the match ("Scenario unit type is missing"). Iron Plague's campaign
+    // tarnecr2.fbi declares objectname TARNECRO, so the registry has no TARNECR2.
+    std::erase_if(unitTypes,[&](const std::string& type){return !unitRegistry.find(lowerText(type));});
     units=cart::toPlaced(scen,&unitRegistry);
     std::fprintf(stderr, "cartographer: %zu placed units, %zu unit types\n",
                  units.size(), unitTypes.size());

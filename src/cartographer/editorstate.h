@@ -247,7 +247,7 @@ struct Editor : Session {
     // Terrain groups: kinds and retail folders; numbered variants share one row.
     SectionCatalog sectionCatalog;
     std::string catalogWorld,sectionGroup;   // group id, remembered per world
-    size_t catalogSize=0;
+    size_t catalogSize=0;unsigned catalogGeneration=0;
     std::vector<std::vector<int>> paletteVariants;   // TERRAIN: each row's variants
     bool sectionMenuOpen=false,sectionMenuPress=false;
     int sectionMenuScroll=0;

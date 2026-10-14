@@ -50,13 +50,14 @@ std::string cart::Editor::paletteLabel(int index) {
 }
 
 void cart::Editor::refreshPalette() {
-    if(tool==TERRAIN && (catalogWorld!=world || catalogSize!=sections.list().size())) {
-        sectionCatalog.build(sections.list());catalogWorld=world;catalogSize=sections.list().size();
+    if(tool==TERRAIN && (catalogWorld!=world || catalogSize!=sections.list().size() || catalogGeneration!=sections.generation())) {
+        sectionCatalog.build(sections.list());catalogWorld=world;catalogSize=sections.list().size();catalogGeneration=sections.generation();
         const auto remembered=preferences.sectionGroups.find(lowerText(world));   // retail "Zhon", new maps "zhon"
         sectionGroup=remembered!=preferences.sectionGroups.end() && sectionCatalog.group(remembered->second)?remembered->second:"";
         sectionMenuOpen=false;
     }
-    const auto key=std::to_string(int(tool))+"/"+std::to_string(categoryIndex)+"/"+std::to_string(factionIndex)+"/"+world+"/"+paletteSearch+"/"+std::to_string(scenario.starts.size())+"/"+sectionGroup+"/"+std::to_string(catalogSize);
+    const auto key=std::to_string(int(tool))+"/"+std::to_string(categoryIndex)+"/"+std::to_string(factionIndex)+"/"+world+"/"+paletteSearch+"/"+std::to_string(scenario.starts.size())+"/"+sectionGroup+"/"+std::to_string(catalogSize)+
+        "/"+std::to_string(features.generation())+"/"+std::to_string(sections.generation());   // a rescan voids every row index
     if(key==paletteKey)return;
     const bool toolChanged=paletteKey.empty() || paletteKey[0]!=key[0];
     paletteKey=key;

@@ -26,6 +26,7 @@ legion_scenario_battle-assault 36
 mapgen_mana 35
 legion_scenario_densehead 34
 legion_situation_r9-65850_retail 32
+cartographer_place_terrain_zhon 31
 naval_ai 30
 legion_gen1_route_45941_o0 29
 legion_deadend 28
@@ -48,6 +49,7 @@ legion_gen1_route_45941_om1 21
 legion_scenario_wall-4x50 21
 legion_situation_r9-65850_legion 21
 legion_gen1_route_54772_om1 20
+cartographer_place_features 20
 crusades_ui_network 19
 legion_scenario_strait-2x150 19
 legion_check_unreach-200 18
@@ -58,11 +60,15 @@ structure_combat 16
 legion_situation_r10-46292_retail 15
 override_transfer 15
 legion_gen1_route_36057_om1 14
+cartographer_place_units 14
 server_speed_pacing 13
 issue_selection_test_data 13
+cartographer_place_terrain_aramon 13
+cartographer_place_terrain_creon 13
 legion_scenario_gapsweep 12
 legion_scenario_strait-3x80 12
 legion_situation_r10-46292_legion 12
+cartographer_place_terrain_veruna 12
 legion_gen1_route_27459_om1 11
 legion_scenario_battle-field-2x250 11
 legion_scenario_island-1x150 11
@@ -78,6 +84,7 @@ legion_gen1_route_21096_o0 9
 legion_motion_cross 9
 legion_scenario_refreshchurn 9
 legion_tail 9
+cartographer_place_terrain_taros 9
 legion_motion_open 8
 legion_situation_r9-36060_legion 8
 legion_scenario_goalblock-fight-200 8
@@ -95,6 +102,7 @@ legion_scenario_strait-3x48 7
 server_public 7
 legion_scenario_goalblock-200 7
 legion_scenario_goalblock-near-200 7
+cartographer_starts_ui 7
 build_controls 6
 gui_smoothing_game 6
 legion_check_mazeapproach 6

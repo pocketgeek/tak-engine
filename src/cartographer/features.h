@@ -44,8 +44,11 @@ public:
     // Must precede replacing the borrowed VFS. scan() also drains old work.
     void quiesce();
     bool loading() const {return job_.valid();}
+    // Bumped by scan(): indices into list() from an earlier scan are void.
+    unsigned generation() const { return generation_; }
 
 private:
+    unsigned generation_ = 0;
     std::vector<FeatureRef> refs_;
     std::map<std::string,size_t> names_;
     std::map<std::string, FeatSprite> spriteCache_;   // keyed by feature name

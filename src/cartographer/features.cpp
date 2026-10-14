@@ -20,7 +20,7 @@ std::string lower(std::string s) {
 void FeatureLibrary::scan(const tak::hpi::Vfs& vfs, const std::string& world) {
     quiesce();
     refs_.clear();names_.clear();
-    spriteCache_.clear();
+    spriteCache_.clear();++generation_;
     const std::string dirs[] = {"features/" + lower(world), "features/all worlds"};
     for (const std::string& dir : dirs) {
         for (const std::string& path : vfs.list(dir)) {
