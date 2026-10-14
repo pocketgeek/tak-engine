@@ -49,6 +49,16 @@ inline EdgeDirection edgeScrollDirection(int px,int py,int left,int top,int widt
     if(py<top+band)d.z=-1;else if(py>=top+height-band)d.z=1;
     return d;
 }
+// The window's outermost pixel row and column (window coordinates), whatever lies
+// under them: a fullscreen or maximised window's pointer stops there at the screen
+// edge, over the browser, menu bar or status bar. Outside the window: nothing.
+inline EdgeDirection windowRimDirection(int px,int py,int width,int height) {
+    EdgeDirection d;
+    if(width<=0 || height<=0 || px<0 || py<0 || px>=width || py>=height)return d;
+    if(px==0)d.x=-1;else if(px==width-1)d.x=1;
+    if(py==0)d.z=-1;else if(py==height-1)d.z=1;
+    return d;
+}
 // Edge scrolling moves six keyboard arrow steps (MapView: 200 screen px each) per
 // second, in screen pixels, so it is as quick as holding an arrow at a slow repeat.
 constexpr float kEdgeScrollPixelsPerSecond=6*200.0f;

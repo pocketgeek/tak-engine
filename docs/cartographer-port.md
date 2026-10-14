@@ -307,7 +307,11 @@ Preferences dialog.
   16px inside a canvas edge pans that way at six keyboard arrow steps (6 x 200
   screen px) per second, stopping once the map edge is in view. Never over the
   browser, menus, status bar or minimap, with a dialog/menu/overlay open, with
-  any mouse button held, or without input and mouse focus.
+  any mouse button held, or without input and mouse focus -- except the
+  window's outermost pixel row/column (`windowRimDirection`): in fullscreen or
+  a maximised window the pointer stops at the screen edge, which is the
+  browser, menu bar or status bar on three sides, so the canvas band alone
+  would only ever scroll right.
   **Retail:** Cartographer has no hover edge scrolling. Its canvas is a
   scroll-bar view; the only cursor-driven scroll is drag auto-scroll: a
   button-down handler calls `SetCapture` then `SetTimer(id 0x14, 100ms)`
@@ -321,7 +325,8 @@ Preferences dialog.
   thumb drag past the window, track paging, clamping and scrolled hit-testing
   in all four tools on a 30-start map) and `cartographer_display_ui` (dialog,
   fullscreen live/persisted/restored, menu clicks at the fullscreen scale,
-  windowed size kept, F11, edge scroll dwell/direction/browser/map limit/off).
+  windowed size kept, F11, edge scroll dwell/direction/browser/screen
+  edge/map limit/off).
   `TAK_CARTO_SHOT_DIR=<dir>` makes the two UI workflows write screenshots.
   Each check was shown to fail against a deliberately broken build.
 

@@ -1422,8 +1422,9 @@ application shortcut. It uses the same data folder as the game.
 - **F6** opens a rotating 3D preview of the selected unit.
 - **View → Preferences** sets the display (a window or borderless fullscreen;
   **F11** switches), edge scrolling (off by default: when on, resting the
-  pointer at an edge of the map view scrolls that way) and the UI scale. They
-  are remembered between sessions.
+  pointer at an edge of the map view, or against the edge of the screen in
+  fullscreen, scrolls that way) and the UI scale. They are remembered between
+  sessions.
 
 ### Symmetry and terrain copy
 

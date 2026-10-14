@@ -1310,7 +1310,8 @@ static std::string readText(const std::filesystem::path& path) {std::ifstream in
 
 // View > Preferences: borderless fullscreen (live, persisted, restored on startup,
 // pointer mapping intact at the desktop size, windowed size kept) and edge scrolling
-// (dwell, direction, map-edge stop, nothing over the browser, off by preference).
+// (dwell, direction, map-edge stop, nothing over the browser but the screen edge,
+// off by preference).
 static int displayWorkflow(const char* data) {
     namespace fs=std::filesystem;
     constexpr int kPaletteW=200;
@@ -1376,20 +1377,25 @@ static int displayWorkflow(const char* data) {
             const float limit=map.width*16.f-(lw-kPaletteW)/state.zoom;
             check(state.viewX<=std::max(mark,limit)+0.5f,"edge scrolling stops at the map edge");
             if(now-since>2500) {check(std::abs(state.viewX-limit)<0.5f,"edge scrolling reaches the map edge ("+std::to_string(state.viewX)+" vs "+std::to_string(limit)+")");
-                pointer.warp(lw/2,lh/2);pointer.click(96+2*72+20,10);pointer.click(300,22+18*20+10);next();}
+                SDL_WarpMouseInWindow(window,0,oh/2);next();}   // the screen's left edge: the browser's outermost column
             break;
         }
-        case 14:key(SDLK_TAB);key(SDLK_LEFT);key(SDLK_RETURN);next();break;   // edge scrolling OFF
-        case 15:check(fullscreen(window) && state.modal==0,"turning edge scrolling off keeps fullscreen");key(SDLK_1);pointer.warp(lw-4,lh/2);next();break;
-        case 16:mark=state.viewX;next();break;
-        case 17:check(state.viewX==mark,"edge scrolling off leaves the view alone");if(now-since>500) {key(SDLK_F11);next();}break;
-        case 18: {
+        case 14:mark=state.viewX;markZ=state.viewZ;next();break;
+        case 15:
+            if(state.viewX<mark-100) {check(state.viewZ==markZ,"the left screen edge scrolls only horizontally");
+                pointer.warp(lw/2,lh/2);pointer.click(96+2*72+20,10);pointer.click(300,22+18*20+10);next();}
+            break;
+        case 16:key(SDLK_TAB);key(SDLK_LEFT);key(SDLK_RETURN);next();break;   // edge scrolling OFF
+        case 17:check(fullscreen(window) && state.modal==0,"turning edge scrolling off keeps fullscreen");key(SDLK_1);pointer.warp(lw-4,lh/2);next();break;
+        case 18:mark=state.viewX;next();break;
+        case 19:check(state.viewX==mark,"edge scrolling off leaves the view alone");if(now-since>500) {key(SDLK_F11);next();}break;
+        case 20: {
             int ww,wh;SDL_GetWindowSize(window,&ww,&wh);
             check(!fullscreen(window) && ww==windowedW && wh==windowedH,"F11 returns to the remembered window size");
             check(readText(profile/"preferences.txt").find("fullscreen 0\n")!=std::string::npos,"F11 persists windowed mode");
             key(SDLK_F11);next();break;
         }
-        case 19:check(fullscreen(window),"F11 toggles fullscreen back on");quit();next();break;
+        case 21:check(fullscreen(window),"F11 toggles fullscreen back on");quit();next();break;
         }
     },hooks);
     // A restart restores fullscreen; the windowed size stays the remembered one.
@@ -1404,8 +1410,8 @@ static int displayWorkflow(const char* data) {
         check(readText(profile/"preferences.txt").find("width "+std::to_string(windowedW)+"\nheight "+std::to_string(windowedH)+"\n")!=std::string::npos,"a fullscreen session keeps the windowed size");
     }
     fs::remove_all(root);
-    if(result || second || phase<20 || !failure.empty()) {std::cerr<<"display: "<<(failure.empty()?"editor exited early":failure)<<'\n';return 1;}
-    std::cout<<"PASS: preferences dialog, borderless fullscreen (live, persisted, restored, pointer mapping, windowed size), edge scrolling (dwell, edges, browser, map limit, off)\n";return 0;
+    if(result || second || phase<22 || !failure.empty()) {std::cerr<<"display: "<<(failure.empty()?"editor exited early":failure)<<'\n';return 1;}
+    std::cout<<"PASS: preferences dialog, borderless fullscreen (live, persisted, restored, pointer mapping, windowed size), edge scrolling (dwell, edges, browser, screen edge, map limit, off)\n";return 0;
 }
 
 int main(int argc,char** argv) {

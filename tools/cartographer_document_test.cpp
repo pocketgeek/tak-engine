@@ -58,6 +58,10 @@ static void scrollingTests() {
     check(edge(199,300)==std::pair{0,0} && edge(100,300)==std::pair{0,0} && edge(600,43)==std::pair{0,0} && edge(600,644)==std::pair{0,0} && edge(1000,300)==std::pair{0,0},"browser, menus, status bar and outside never scroll");
     const auto tiny=cart::edgeScrollDirection(20,20,0,0,40,40,16);
     check(!tiny.any() && cart::edgeScrollDirection(5,20,0,0,40,40,16).x==-1,"a tiny canvas shrinks the band and keeps a still middle");
+    // The window rim (fullscreen: the screen edge over the browser, menus and status bar).
+    auto rim=[](int x,int y) {const auto d=cart::windowRimDirection(x,y,1600,900);return std::pair{d.x,d.z};};
+    check(rim(0,450)==std::pair{-1,0} && rim(1599,450)==std::pair{1,0} && rim(800,0)==std::pair{0,-1} && rim(800,899)==std::pair{0,1} && rim(0,0)==std::pair{-1,-1},"the window's outermost pixels scroll toward their edge");
+    check(rim(1,450)==std::pair{0,0} && rim(800,1)==std::pair{0,0} && rim(-1,450)==std::pair{0,0} && rim(1600,450)==std::pair{0,0} && !cart::windowRimDirection(0,0,0,0).any(),"one pixel in, outside the window or no window: no rim scroll");
 }
 
 static void symmetryTests() {

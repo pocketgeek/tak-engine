@@ -359,14 +359,19 @@ void cart::Editor::toggleFullscreen() {
 
 // Optional hover scrolling: resting the pointer just inside a canvas edge pans that
 // way. Only for an idle pointer over the bare canvas -- not over the browser, menus,
-// minimap or a dialog, not with a button held (drags), and only while focused.
+// minimap or a dialog, not with a button held (drags), and only while focused. The
+// window's outermost pixels scroll too: in fullscreen (or a maximised window) the
+// pointer stops at the screen edge, which is the browser, menu bar or status bar on
+// three sides, so the canvas band alone would only ever scroll right.
 void cart::Editor::edgeScroll() {
     const Uint64 now=SDL_GetTicks64();
     const float dt=edgeLast?std::min(.1f,float(now-edgeLast)/1000.f):0.f;edgeLast=now;
-    int x,y;const Uint32 buttons=SDL_GetMouseState(&x,&y);x=int(x/kUIScale);y=int(y/kUIScale);
+    int px,py;const Uint32 buttons=SDL_GetMouseState(&px,&py);const int x=int(px/kUIScale),y=int(py/kUIScale);
+    int ww=0,wh=0;SDL_GetWindowSize(win,&ww,&wh);   // the pointer's own (window) coordinates
     const bool idle=preferences.edgeScroll && SDL_GetMouseFocus()==win && (SDL_GetWindowFlags(win)&SDL_WINDOW_INPUT_FOCUS) && !buttons &&
         modal==M_NONE && menuOpen<0 && !scriptOpen && !useOnlyOpen && !regionsOpen && !sectionMenuOpen && !minimapDrag && !paletteThumbDrag && !cart::pointIn(x,y,miniRect);
-    const auto d=idle?cart::edgeScrollDirection(x,y,kPaletteW,kMenuH,canvasW,canvasH,cart::kEdgeScrollBand):cart::EdgeDirection{};
+    auto d=idle?cart::edgeScrollDirection(x,y,kPaletteW,kMenuH,canvasW,canvasH,cart::kEdgeScrollBand):cart::EdgeDirection{};
+    if(const auto rim=idle?cart::windowRimDirection(px,py,ww,wh):cart::EdgeDirection{};rim.any()) {if(rim.x)d.x=rim.x;if(rim.z)d.z=rim.z;}
     if(!d.any()) {edgeSince=0;return;}
     if(!edgeSince)edgeSince=now;
     if(now-edgeSince<cart::kEdgeScrollDelayMs)return;
