@@ -653,7 +653,9 @@ for count definitions and monitoring details.
 1. Install or unpack TAK Engine.
 2. Launch **Total Annihilation: Kingdoms** and choose your original game's installation folder
    when prompted. Select the folder containing the retail `.hpi` archives;
-   no extraction is needed. The engine remembers this location.
+   no extraction is needed. The engine remembers this location; change it later
+   under **Settings → Options → Data folder** (the map editor's
+   **View → Preferences** changes the same setting).
 3. Choose the single-player door for a skirmish, multiplayer to join a server,
    or campaign to browse the missions.
 4. Pick your map, faction, opponents, and balance settings, then start playing.

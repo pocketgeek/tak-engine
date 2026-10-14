@@ -245,6 +245,8 @@ Unicode glyph rendering and multiline field display are still unfinished.
 View > Preferences (2026-10-14, next release) adds borderless fullscreen
 (F11; the windowed size is still what is remembered) and optional edge
 scrolling, and every browser list has a scrollbar; see the port notes.
+It also shows the game data folder, shared with the game: CHANGE... picks and
+saves another install, and RESTART NOW reopens the editor (and this map) on it.
 
 ## Multiline metadata checkpoint
 

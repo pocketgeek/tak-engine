@@ -330,6 +330,59 @@ Preferences dialog.
   `TAK_CARTO_SHOT_DIR=<dir>` makes the two UI workflows write screenshots.
   Each check was shown to fail against a deliberately broken build.
 
+## Game data folder in Preferences (2026-10-14)
+
+View > Preferences ends with **GAME DATA FOLDER (SHARED WITH THE GAME)**: the
+install this editor mounted, elided at its start, and **CHANGE...**, which opens
+the same native folder picker the game uses (`client/dirpicker.h`: PowerShell's
+FolderBrowserDialog on Windows, `osascript` on macOS, kdialog or zenity on
+Linux), off the UI thread (`client/datafolderpick.h`), so the window keeps
+drawing behind it. Retail Cartographer had no such setting; it read the
+registry key the retail installer wrote.
+
+- **One setting.** It is the game's `Settings::dataDir` (with its
+  `dataManifest`); Cartographer keeps no copy. Startup resolves the folder by
+  the game's own precedence (`tak::chooseDataFolder`): `--data` > the folder it
+  was started from, if that is an install > the saved setting > the picker. A
+  folder picked in either program is what both start with next time, and the
+  game's Options shows Cartographer's change the next time it is opened.
+- **A pick** is validated (`hpi::validInstall`, the root-archive allow-list
+  mount) before anything is written. An invalid one keeps the current folder
+  and says what is missing; a valid one is written at once, and only that key
+  (`tak::saveDataFolderSetting` re-reads the file and changes `dataDir` and
+  `dataManifest`). Both programs write the same file, so a save from a process
+  that has not itself changed the folder keeps the file's current value
+  (`saveSettings`): the game, open at the same time, cannot undo
+  Cartographer's change with its next unrelated save, and vice versa.
+- **Applying it restarts the editor**, not a live reload. `openDocument`
+  already remounts per open, but the unit registry and type list, section
+  catalogue, thumbnails and portraits, the default output folder and the open
+  document all hang off the install, and a map from the old install may not
+  exist in the new one. A fresh process gets all of it right by construction.
+  **RESTART NOW** (shown once the saved folder differs from the mounted one)
+  applies the dialog's other fields as OK would, then asks to save unsaved work
+  (the exit prompt, worded for a restart; CANCEL keeps editing), and relaunches
+  (`util/relaunch.h`: exec on Linux/macOS, `CreateProcessW` on Windows) with
+  `cart::restartArguments`: `--out` kept, the one-shot `--new/--world/--random`
+  and headless options dropped, and the document reopened -- its saved
+  `.kmp`/`.tnt` file, or the installed map's name, or nothing for an unsaved
+  new map. A file named on the command line now opens through File > Open once
+  the editor is up, which is how the restarted editor gets it back.
+- **Greyed** with the reason when `--data` or the launch folder chose the
+  install: either would win again after the restart.
+- Tests: `datafolder` (precedence, pick outcomes, elision, both programs'
+  restart arguments, the Windows command line round trip, the shared settings
+  file: a `#` in `dataDir`, a folder-only write, one program's save not undoing
+  the other's change, DEFAULTS) and `cartographer_datafolder_ui` (invalid,
+  cancel, saved at once with its manifest, RESTART NOW relaunching with this
+  map, the restarted editor mounting the new folder, the unsaved prompt's
+  CANCEL and DISCARD, `--data` greying it). The test profile
+  (`TAK_CARTOGRAPHER_PROFILE`) redirects the game's settings file to
+  `game-settings.ini` inside it (`tak::setSettingsPath`), in every build type,
+  so no test reads or writes the player's real settings.
+  `TAK_CARTO_SHOT_DIR=<dir>` writes the dialog's states as screenshots. Each
+  check was shown to fail against a deliberately broken build.
+
 ## RE status
 - Resource map + command handlers + tool behaviours + trigger opcode tables +
   TNT/OTA write formats + coordinate model + world types: **DONE**.

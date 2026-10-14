@@ -127,6 +127,10 @@ remembers it, and does not ask again.
 - On Linux, the folder picker needs `kdialog` or `zenity`. Without either one,
   start the game with `--data` instead (see [Command line](#command-line)).
 
+To use a different install later, open **Settings → Options** on the main menu
+and click **Change** beside **Data folder** (see
+[Game data folder](#game-data-folder)). The map editor uses the same setting.
+
 You can also give the folder on the command line:
 
 ```sh
@@ -1041,6 +1045,26 @@ game. Changes apply immediately; **Save** keeps them.
 | --- | --- | --- |
 | **Player name** | blank | Your name in local and unauthenticated games. Signed-in multiplayer uses your account name. |
 
+### Game data folder
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| **Data folder** | The folder chosen at first start | The *Total Annihilation: Kingdoms* install the game reads. **Change** opens a folder picker. |
+
+The row shows the folder in use; hover over it for the full path. The folder you
+choose is checked first: if it is not an install, the game says what is missing
+and keeps the current one. A good folder is saved at once, then the game offers
+**Restart now** (or **Later**) to load it, because everything the game has
+loaded comes from that folder. Restarting saves any Options changes you have
+not saved yet.
+
+You can change the folder only from **Options** on the main menu. During a game,
+in a lobby or while watching a replay the row is greyed out. It is also greyed
+out when the game was started with `--data` or from inside an install folder,
+because those always win over the setting. **Defaults** never changes the data
+folder. The map editor shares this setting: a folder chosen in either program
+is the one both use next time.
+
 ### Audio
 
 | Option | Default | What it does |
@@ -1390,7 +1414,8 @@ same file.
 *Cartographer's Units browser, map canvas and minimap.*
 
 **Cartographer** is TAK Engine's map and scenario editor. Launch it from its
-application shortcut. It uses the same data folder as the game.
+application shortcut. It uses the same data folder as the game, and changing
+the folder in either program changes it for both.
 
 ### Basics
 
@@ -1425,6 +1450,13 @@ application shortcut. It uses the same data folder as the game.
   pointer at an edge of the map view, or against the edge of the screen in
   fullscreen, scrolls that way) and the UI scale. They are remembered between
   sessions.
+- **View → Preferences** also shows the **game data folder**. **Change...**
+  picks another install. An invalid choice keeps the current folder and says
+  what is missing; a good one is saved at once for both the editor and the
+  game. **Restart now** then restarts the editor to load it. It asks first if
+  you have unsaved changes, and reopens your map. The folder cannot be changed
+  here when the editor was started with `--data` or from inside an install
+  folder.
 
 ### Symmetry and terrain copy
 
@@ -1542,6 +1574,8 @@ seconds.
 
 - Choose the folder that contains `data.hpi`, `terrain.hpi`, `sections.hpi` and
   `maps.hpi`, not a parent or child folder.
+- To switch to another install, use **Data folder** in Options (or
+  **View → Preferences** in the map editor) and restart when asked.
 - If the game says core data is unreadable, the archives may be damaged; copy
   them again from your original installation.
 - On Linux with no folder picker, install `kdialog` or `zenity`, or start the
