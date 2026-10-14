@@ -111,7 +111,7 @@ bool cart::Editor::openDocument(const std::string& request) {
             nextVfs.setMapFiles(files);chosen=tak::vpath::stem(path);
         } else if(tak::vpath::extension(request)==".tnt" && nextVfs.has(request)) {path=request;chosen=tak::vpath::stem(request);}
         else path=tak::hpi::findMap(nextVfs,request);
-        if(path.empty())throw std::runtime_error("Map not found. Enter an installed map name or a full KMP / TNT path.");
+        if(path.empty())throw std::runtime_error("Map not found: "+request+". Enter an installed map name or a full KMP / TNT path.");
         (void)tak::tnt::Map::load(nextVfs.read(path),path);
         const auto stem=path.substr(0,path.rfind('.'));
         tak::tnt::Scenario nextMetadata;

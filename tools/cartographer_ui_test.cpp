@@ -1575,10 +1575,12 @@ static int dataFolderWorkflow(const char* data) {
     });
     check(result==0,"the reopened editor exits cleanly");
     editor=nullptr;
-    if(failure.empty())result=run({"cartographer","No Such Map","--out",root.string()},[&](SDL_Window*,SDL_Renderer*,const Pointer&,Uint64) {
+    if(failure.empty())result=run({"cartographer","No Such Map","--out",root.string()},[&](SDL_Window*,SDL_Renderer* renderer,const Pointer&,Uint64) {
         if(phase!=0)return;
-        check(editor && editor->running && editor->modal==cart::Editor::M_MESSAGE && editor->mTitle=="OPEN FAILED",
-              "a map the new folder lacks opens the editor and says so");
+        std::string message;if(editor)for(const auto& line:editor->mMsg)message+=line+" ";
+        check(editor && editor->running && editor->modal==cart::Editor::M_MESSAGE && editor->mTitle=="OPEN FAILED" &&
+              message.find("No Such Map")!=std::string::npos,"a map the new folder lacks opens the editor and names it ("+message+")");
+        if(shots)savePng(renderer,fs::path(shots)/"preferences-datafolder-missing-map.png");
         if(editor)editor->dirty=false;
         quit();next();
     });
