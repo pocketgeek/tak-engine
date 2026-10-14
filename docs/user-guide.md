@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.1** (network protocol **256**, replay format
+This guide covers **TAK Engine 0.8.2** (network protocol **257**, replay format
 **12**). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -1262,9 +1262,9 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.1 uses network protocol **256**, the same as 0.8.0, so 0.8.0 and 0.8.1
-players and servers can play together. Versions with a different protocol cannot,
-and the server turns away a mismatched client.
+Version 0.8.2 uses network protocol **257**. It cannot play with 0.8.0 or 0.8.1
+(protocol 256): the server turns away a client whose protocol differs from its
+own, so a server and all of its players must update to 0.8.2 together.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
 This should not happen between matching versions with matching game data; if it
@@ -1339,7 +1339,8 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.1 plays protocol-256 recordings, so 0.8.0 replays play too);
+  recorded it (0.8.2 plays protocol-257 recordings only, so replays recorded by
+  0.8.0 or 0.8.1 need one of those versions);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -1498,7 +1499,7 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together.** A server only accepts clients of
-the same protocol version (0.8.0 and 0.8.1 share protocol 256).
+the same protocol version (0.8.2 uses protocol 257; 0.8.0 and 0.8.1 use 256).
 
 ---
 
@@ -1595,7 +1596,7 @@ unplugged, the game falls back to the system default.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.0 and 0.8.1 share protocol 256). See
+one that recorded them (0.8.2 uses protocol 257, 0.8.0 and 0.8.1 use 256). See
 [Replays](#replays).
 
 ### Where files are kept

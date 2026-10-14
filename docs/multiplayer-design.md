@@ -611,7 +611,7 @@ the drop point instead of flying on along the unload's step-out course; 0.8.0
 and 0.8.1 ship protocol 256. Protocol 257 ends Legion's walk-in-place livelock
 (Legion only): the pinwheel no longer takes a lone tree or rock for a wall end,
 a blocked side-step does not step straight back, and a body without net
-headway stands in its scripts and is held. Game options
+headway stands in its scripts and is held; 0.8.2 ships protocol 257. Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
 host sends later option updates. Both clients and the referee apply that choice
@@ -672,6 +672,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Versions 0.8.0 and 0.8.1 (peers and server) require protocol 256; the replay
-loader rejects every older simulation protocol.
+227. Version 0.8.2 (peers and server) requires protocol 257; 0.8.0 and 0.8.1 required
+256. The replay loader rejects every other simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

@@ -1,15 +1,20 @@
 # README and user-guide screenshots
 
-Refreshed on 2026-10-13 for **0.8.1**. Every image below is actual engine output
+Refreshed on 2026-10-14 for **0.8.2**. Every image below is actual engine output
 from a release-preparation build (Debug with `-O2`, OpenGL renderer) and was
-inspected by eye. The 0.8.1 information bar no longer draws an empty portrait box
-or empty bars, so every picture that shows the bar was re-rendered by the 0.8.1
-build: `title.jpg`, `hud.jpg`, `flyers.jpg`, `naval.jpg`, `diplomacy.jpg`,
-`guide/hud-annotated.jpg`, `guide/selection-strip.jpg`, the five
-`guide/side-*.jpg`, `guide/shift-queue.jpg`, `guide/flyers-retail-legion.jpg`,
-`guide/fire-on-the-move.jpg`, `guide/campaign-briefing.jpg` and
-`guide/replay.jpg`, plus `guide/options-graphics.jpg` for the new GPU Memory
-Limit row. `streaming.jpg` was rendered after 0.8.0 for Remember Key;
+inspected by eye. 0.8.2 changes only the Legion simulation (protocol 257), so the
+0.8.2 build re-rendered `title.jpg` (VERSION 0.8.2) and the three pictures of a
+Legion army moving past Ulasem Arena's trees, whose positions the change moves:
+`flyers.jpg`, `guide/flyers-retail-legion.jpg` (both halves, so the pair comes
+from one build) and `guide/replay.jpg` (a fresh recording, since 0.8.2 cannot
+play a 0.8.1 replay). The 0.8.1 build re-rendered the pictures that show the
+information bar, whose empty portrait box and empty bars it removed: `hud.jpg`,
+`naval.jpg`, `diplomacy.jpg`, `guide/hud-annotated.jpg`,
+`guide/selection-strip.jpg`, the five `guide/side-*.jpg`,
+`guide/shift-queue.jpg`, `guide/fire-on-the-move.jpg` and
+`guide/campaign-briefing.jpg`, plus `guide/options-graphics.jpg` for the GPU
+Memory Limit row. None of those shows Legion movement. `streaming.jpg` was
+rendered after 0.8.0 for Remember Key;
 `cartographer.png` and `guide/cartographer-terrain.jpg` are from the 0.8.0 build,
 `guide/tactical-dots.jpg` from the 0.7.27 build, and the rest are from the 0.7.26
 build (or older, where noted). None of those shows the information bar: they are
@@ -50,10 +55,10 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.8.1, 1920 × 1080 window cropped to the 1440 × 1080 artwork |
+| `title.jpg` | Title menu showing version 0.8.2, 1920 × 1080 window cropped to the 1440 × 1080 artwork |
 | `battle.jpg` | **Benchmark** run (Settings → Benchmark, Absurd intensity) on Ulasem Arena, 55 game seconds in. Eight server AIs fight, all five sides. The camera, at 1.3× zoom, shows Aramon (magenta) and Taros (yellow) armies, with Black Dragons, clashing at a sandy arena. A real feature with no fixture; spectator view, so no fog |
 | `dragons.jpg` | **Development scene.** Five server AIs, one per side, from a stress-test start (300-unit cap) with gods on, 90 game seconds in. Creon Neo Dragons breathe fire on an Aramon siege column. Spectator view, 1.4× zoom |
-| `flyers.jpg` | **Development scene, spawned.** Legion pathfinding, 22 s after one move order east-south-east. A 44-unit Zhon formation: Trolls, Stone Giants and Jungle Orcs, with Gryphons, Harpies and Drakes holding rows of stations over the front of the ground (new in 0.8.0, protocol 254; before, over its middle). `1F`, solid green, marks members of formation 1. Nothing is selected, so the information bar is empty (0.8.1). Fog off, 1.45× zoom. Rendered by the 0.8.1 build |
+| `flyers.jpg` | **Development scene, spawned.** Legion pathfinding, 22 s after one move order east-south-east. A 44-unit Zhon formation: Trolls, Stone Giants and Jungle Orcs, with Gryphons, Harpies and Drakes holding rows of stations over the front of the ground (new in 0.8.0, protocol 254; before, over its middle). `1F`, solid green, marks members of formation 1. Nothing is selected, so the information bar is empty (0.8.1). Fog off, 1.45× zoom. Re-rendered by the 0.8.2 build: the ground units walk past the lone trees (protocol 257) |
 | `hud.jpg` | Aramon player in a local-server game, about 10 s in. **Stress-test start**: Normal AI opponent, 250-unit cap. **Scripted orders**: 45 units of eight types (Archers, Swordsmen, Knights, Catapults, Mage Archers, Cannoneers, Horsemen, Rolling Towers) were made formation 1 and selected, so the information bar shows the portrait strip (one portrait per type with its count), FORMATION 1 and 45 SELECTED, and the selected units show `1F` in solid green (new in 0.8.0). The empty right-hand bar is gone (0.8.1). Stats panel on, 1.15× zoom; its VID row reads 87 MB, against 151 MB in the 0.8.0 capture of the same scene. Rendered by the 0.8.1 build |
 | `naval.jpg` | **Development scene, spawned.** Cairbray Coast Landing, 10 s in. Veruna Flagship, Men of War, Trebuchet Ships and Harpoon Ships fight Creon Iron Clads, Stern Wheelers and Submersibles. Nothing is selected, so the information bar is empty. 1.6× zoom, fog off. Rendered by the 0.8.1 build |
 | `generated.jpg` | Generated Aramon Riverlands map "Silverford" (generator v8, seed 7, 256 × 256, four players). Four Hard AIs at 8× speed, seven game minutes in. Spectator view of a lake shore at 1× |
@@ -85,13 +90,13 @@ unchanged views contain no version text.
 | `selection-strip.jpg` | **Selection still life.** Ulasem Arena, `--testbuild` with `TAK_SELPORTRAITS=arasword:9,araarch:6,arabow:4,arapal:3,arapult:2`, `TAK_SELPORTRAITS_HURT` and `TAK_SELPORTRAITS_SQUAD=3`, 1920 × 1080 at UI Scale 150%, cropped to the left of the information bar (1160 × 110, not scaled). Five full-size type portraits with counts, running out over the end-cap scroll, GROUP 3, the group's partial health and mana totals and 24 SELECTED. Re-rendered by the 0.8.1 build |
 | `side-aramon.jpg` … `side-creon.jpg` | One per side, re-rendered by the 0.8.1 build (the right-hand bars no longer draw). A local-server game with a **stress-test start** (250-unit cap, Normal AI opponent), about 10 s in. The player's Monarch is selected: Elsin, Lokken, Kirenna, Thirsha or the Sage. Each shows that side's interface and build menu |
 | `shift-queue.jpg` | From the 0.8.1 build. Elsin with a move and three Shift-queued moves (**scripted orders**), Shift held, about 3 s after the orders; the status reads MOVING. 1.7× zoom |
-| `flyers-retail-legion.jpg` | **Development scene, spawned.** From the 0.8.1 build. The `flyers.jpg` formation and order, 22 s in, run once in Retail (flyers far ahead) and once in Legion (flyers over the leading ground units). The same 1.05× camera is used for both, and the two captures are placed side by side with labels |
+| `flyers-retail-legion.jpg` | **Development scene, spawned.** From the 0.8.2 build (both halves). The `flyers.jpg` formation and order, 22 s in, run once in Retail (flyers far ahead) and once in Legion (flyers over the leading ground units). The same 1.05× camera is used for both, and the two captures are placed side by side with labels |
 | `options-graphics.jpg` | 0.8.1. Options screen scrolled until the whole Graphics section shows (Display's heading is just off the top), cropped to the panel: Fullscreen (OFF), VSync (ON), Max FPS (60, greyed out because VSync is on), Renderer (AUTO), the Texture Filtering slider at OFF, Shadows through Trees Sway in Wind, Tactical Dots (OFF), Tactical Dots Zoom (20%, greyed out), Hardware Cursor, Smooth Motion and the new GPU Memory Limit dropdown at AUTO (1.25 GB). A fresh profile whose only setting is `fullscreen = 0`, so the window takes the capture size; everything else, VSync included, is at its default. Linux build, so the Windows-only Ignore Windows Display Scaling row is absent |
 | `fire-on-the-move.jpg` | **From the 0.8.1 build. Development scene, two-player spawned.** Ulasem Arena, Retail pathfinding, 14 s after one plain move order east (**scripted orders**). 14 Aramon Archers and 2 Mage Builders were spawned in a 4-wide grid; 6 Taros Zombies and 6 Skeleton Archers (enemy, no AI) stand south of their path. Shift is held, so the move line shows. Zombies have reached the back of the column, which keeps walking and shooting; the flashes are hits, and five of the sixteen have fallen, so the information bar shows two portraits (2 Mage Builders, 9 Archers) and 11 SELECTED. 1.4× zoom, fog off |
 | `cartographer-terrain.jpg` | **New in 0.8.0.** Cartographer Terrain tab on Ulasem Arena (`--shot --shot-tool terrain`, fresh editor profile, 921 × 691): the grouped section browser, All sections (555 pieces, 1261 sections), with readable piece names and variant badges |
 | `tactical-dots.jpg` | 0.7.27. **Benchmark** run (Absurd) on Ulasem Arena, 50 game seconds in, spectator view at zoom 0.23 in a 1920 × 1080 window, inside the range where the default Tactical Dots Zoom of 20% shows dots. The deterministic run was rendered twice at the same tick and camera, with Tactical Dots off and on in otherwise identical profiles. The same 800 × 900 region is cropped from each at 1:1 and placed side by side under labels |
 | `campaign-briefing.jpg` | *Book of Darien* chapter 1 briefing over the paused battlefield, from a direct mission launch. Re-rendered by the 0.8.1 build: nothing is selected, so the information bar is empty |
-| `replay.jpg` | Replay playback of a recorded local-server game, 9 s of 16 s, with the time bar. **Stress-test start**: an Aramon army given one Legion move order (**scripted orders**). Recorded and played back by the 0.8.1 build |
+| `replay.jpg` | Replay playback of a recorded local-server game, 9 s of 16 s, with the time bar. **Stress-test start**: an Aramon army given one Legion move order (**scripted orders**). Recorded and played back by the 0.8.2 build |
 | `benchmark.jpg` | Benchmark run (Absurd), 55 s in; the BENCHMARKING badge counts down the remaining time (0:05 of 60 s): Zhon and Creon armies, with Creon Neo Dragons breathing fire; scaled from 1920 × 1080 |
 | `scorecard.jpg` | F4 scorecard over a benchmark battle (Absurd), 55 s in, at 1.1× zoom |
 
@@ -99,7 +104,7 @@ The guide also uses `title.jpg`, `lobby.jpg`, `room.jpg`, `campaign.jpg`,
 `diplomacy.jpg`, `generated.jpg` and `cartographer.png` from the gallery.
 
 The other guide images (benchmark and scorecard) are from the 0.7.26 build and
-show nothing that 0.7.27 to 0.8.1 changed: they are spectator views with no
+show nothing that 0.7.27 to 0.8.2 changed: they are spectator views with no
 information bar, their profiles had the stats panel off and Smooth GUI Art off,
 none shows the Options screen, and none has a selection or a squad marker.
 
@@ -125,7 +130,8 @@ timing is not a performance measurement.
 Capture scripts, job lists and the encoder are in the release-preparation
 scratch directories, `$SCR/shared/release-0.7.26/shots`,
 `$SCR/shared/release-0.7.27/shots`, `$SCR/shared/release-0.7.28/shots`,
-`$SCR/shared/release-0.8.0/shots` and `$SCR/shared/release-0.8.1/shots`. Raw PNGs, logs, profiles
+`$SCR/shared/release-0.8.0/shots`, `$SCR/shared/release-0.8.1/shots` and
+`$SCR/shared/release-0.8.2/shots`. Raw PNGs, logs, profiles
 and the SHA-256 manifest are kept locally in the worktree's ignored
 `build-o2/capture` folder. Keep retail archives, extracted assets and temporary
 capture files out of Git. When refreshing, rerender and inspect every view, then

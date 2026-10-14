@@ -6,13 +6,13 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.8.1-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.8.2-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
 [Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [Build from source](docs/development.md)
 
-<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.1"></a>
+<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.2"></a>
 
 <table>
   <tr>
@@ -40,7 +40,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.25 to 0.8.1 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
+<sub>Captured from the 0.7.25 to 0.8.2 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
 
 </div>
 
@@ -52,7 +52,30 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.8.1
+## New in 0.8.2
+
+0.8.2 fixes Legion units walking on the spot. It changes the Legion simulation,
+so the protocol moves to **257**: **0.8.2 cannot play with 0.8.0 or 0.8.1, and
+cannot play their replays**. Update the server and every player together.
+Retail pathfinding plays exactly as in 0.8.1.
+
+- **Legion: no more walking on the spot.** In 0.8.1, Legion units could play
+  their walk on the spot for over a minute, stepping back and forth or turning
+  left and right near scattered trees. Now a single tree or rock (or a small
+  clump) is no longer taken for the end of a wall, so a large group walks past
+  it; a wood too dense to walk through still is a wall. A unit that gets
+  nowhere stands still instead of walking on the spot, and one that keeps
+  stepping back and forth is held for a moment so it tries another way round.
+  In moments cut from the 0.8.1 recording that showed the problem, walking on
+  the spot fell from 857 to 34 unit-seconds. See the
+  [user guide](docs/user-guide.md#legion).
+
+Generated-map recipes, saved `.kmp` maps and settings carry over. No new
+runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.8.2-notes.md) and
+[validation report](docs/release-0.8.2-validation.md).
+
+### Previously in 0.8.1
 
 0.8.1 is a client update: the rules, protocol (256) and replay format (12) are
 unchanged, so **0.8.1 and 0.8.0 players and servers can play together**, and
@@ -754,7 +777,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.8.1 uses protocol **256**, like 0.8.0, so the two play together.
+Version 0.8.2 uses protocol **257** and generator version 8; generated-map recipes from 0.8.0 and 0.8.1 still work.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -1028,9 +1051,10 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same network protocol and compatible game data** on every participant.
-Version **0.8.1 uses protocol 256**, like 0.8.0, including authoritative pathfinding
+Version **0.8.2 uses protocol 257**, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
-0.8.0 and 0.8.1 clients and servers play together; earlier clients cannot join these matches.
+0.8.0 and 0.8.1 (protocol 256) and earlier clients cannot join 0.8.2 matches, and
+0.8.2 clients cannot join older servers: update the server and all players together.
 Replay format is **12** (checkpoints also carry a position digest), and
 playback requires the current simulation protocol. Older recordings need the engine that recorded them.
 The connection checks gameplay definitions, scripts, and models. Selected map
@@ -1231,7 +1255,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.8.1 uses protocol **256**, like 0.8.0; servers and clients of either version play together.
+Version 0.8.2 uses protocol **257**; servers and clients must all run 0.8.2 (0.8.0 and 0.8.1 use 256).
 
 
 ## License
