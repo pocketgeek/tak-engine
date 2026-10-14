@@ -47,6 +47,7 @@ static GameOptions fxOpts(uint8_t stress) {
     o.crusades = 3; o.forfeitSelfDestruct = 4; o.overridePolicy = 2; o.speed = 17; o.speedUnlock = 5;
     o.unitCap = 0xBEEF; o.monarchExpendable = 6; o.stressTest = stress; o.fogExplored = 8;
     o.benchmark = 11; o.randomStarts = 9; o.doubleSight = 10; o.pathfindingMode = tak::sim::PathfindingMode::Legion;
+    o.allowSpectators = 12;
     return o;
 }
 // Humans, an Absurd AI (2x income), a passive AI, open and closed gaps, the last
@@ -89,7 +90,8 @@ static bool sameOpts(const GameOptions& a, const GameOptions& b) {
            a.overridePolicy == b.overridePolicy && a.speed == b.speed && a.speedUnlock == b.speedUnlock &&
            a.unitCap == b.unitCap && a.monarchExpendable == b.monarchExpendable && a.stressTest == b.stressTest &&
            a.fogExplored == b.fogExplored && a.benchmark == b.benchmark && a.randomStarts == b.randomStarts &&
-           a.doubleSight == b.doubleSight && a.pathfindingMode == b.pathfindingMode;
+           a.doubleSight == b.doubleSight && a.pathfindingMode == b.pathfindingMode &&
+           a.allowSpectators == b.allowSpectators;
 }
 static bool sameSlot(const SlotInfo& a, const SlotInfo& b) {
     return a.type == b.type && a.faction == b.faction && a.color == b.color && a.team == b.team &&
@@ -100,15 +102,16 @@ static void optionsCodec() {
     const GameOptions o = fxOpts(7);
     Writer w; put(w, o);
     // CreateGame / SetGameOptions carry exactly these bytes; LobbyState/GameStarting embed them.
-    golden(w.b, "0304021105efbe00000607080b090a04", "GameOptions wire bytes");
-    GameOptions back; back.overridePolicy = 0; back.speed = 0; back.fogExplored = 0;
+    // Protocol 258 appended allowSpectators (0c) after the pathfinder byte.
+    golden(w.b, "0304021105efbe00000607080b090a040c", "GameOptions wire bytes");
+    GameOptions back; back.overridePolicy = 0; back.speed = 0; back.fogExplored = 0; back.allowSpectators = 0;
     Reader r(w.b.data(), w.b.size()); get(r, back);
     check(r.ok && r.p == r.end && sameOpts(o, back), "GameOptions round trip");
     // unitCap travels as a u32; the raw get() keeps the low 16 bits (the server clamps).
     { Writer big; put(big, o); big.b[7] = 0x12; Reader rb(big.b.data(), big.b.size()); GameOptions g; get(rb, g);
       check(rb.ok && g.unitCap == 0xBEEF, "GameOptions unitCap high bytes not truncated"); }
     // An unknown pathfinder fails the read but keeps the byte, so the server can say why.
-    { Writer bad; put(bad, o); bad.b.back() = 2; Reader rb(bad.b.data(), bad.b.size()); GameOptions g; get(rb, g);
+    { Writer bad; put(bad, o); bad.b[15] = 2; Reader rb(bad.b.data(), bad.b.size()); GameOptions g; get(rb, g);
       check(!rb.ok && uint8_t(g.pathfindingMode) == 2, "invalid pathfinding mode accepted or lost"); }
     for (size_t cut = 0; cut < w.b.size(); ++cut) {
         Reader rt(w.b.data(), cut); GameOptions g; get(rt, g);
@@ -122,7 +125,7 @@ static void slotCodec() {
     Writer w; w.u32(0x01020304); w.str("room name"); w.str("Inner Circle"); w.str("");
     put(w, fxOpts(7)); w.u32(0xA0B0C0D0); w.u8(1);
     for (const auto& s : slots) put(w, s);
-    golden(w.b, "040302010900726f6f6d206e616d650c00496e6e657220436972636c6500000304021105efbe00000607080b090a04d0c0b0a0010107030101090500616c7068610204090000040600414920626f740002050601000000020301020000070070617373697665030108050003000002010703010101007800090204000200000300000700020000", "LobbyState slot table bytes");
+    golden(w.b, "040302010900726f6f6d206e616d650c00496e6e657220436972636c6500000304021105efbe00000607080b090a040cd0c0b0a0010107030101090500616c7068610204090000040600414920626f740002050601000000020301020000070070617373697665030108050003000002010703010101007800090204000200000300000700020000", "LobbyState slot table bytes");
     for (const auto& s : slots) {
         Writer one; put(one, s); Reader r(one.b.data(), one.b.size()); SlotInfo back; back.aiLevel = 77;
         get(r, back);
@@ -133,6 +136,8 @@ static void slotCodec() {
 static void crusadesDigest() {
     SlotInfo slots[kMaxSlots]; fxSlots(slots, false);
     const Writer rules = crusadesRulesPreimage(0xC0FFEE11, fxOpts(7), slots);
+    // Frozen at 257's options layout: allowSpectators (an admission rule, 258) is not
+    // in the preimage, so a battle issued before the upgrade still verifies after it.
     golden(rules.b, "17006d6f6465726e2d63727573616465732d6475656c2d763111eeffc00304021105efbe00000607080b090a0401070301090204090004000205060002030102000301080503020107030100090204020300000702", "Crusades rules preimage bytes");
     const std::string digest = tak::crypto::toHex(tak::crypto::sha256(rules.b.data(), rules.b.size()));
     check(digest == "73e3f3410da7565bd0101cbdc680617f9ea5fc0da4b5f910f5621fea9ad1d807", "Crusades rulesDigest changed", digest);

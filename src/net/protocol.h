@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 257;      // 257: Legion livelock (the 0.8.1 walk-in-place): the pinwheel takes no lone tree or rock for a wall
+constexpr uint32_t kNetVersion = 258;      // 258: ALLOW SPECTATORS room option -- GameOptions.allowSpectators (u8, appended after the pathfinder
+                                           //      byte: CreateGame/SetGameOptions/LobbyState/GameStarting) and a trailing GameInfo u8 in GameList.
+                                           //      The server refuses Spectate when it is off. Lobby wire only: the sim is 257's, so 257 replays
+                                           //      still play (supportedReplayProtocol) and the Crusades rules digest keeps its 257 bytes
+                                           // 257: Legion livelock (the 0.8.1 walk-in-place): the pinwheel takes no lone tree or rock for a wall
                                            //      end; a side-step toward the arc is not undone straight back for 60 holds (hashed Member slide
                                            //      cells); a ground body stands (legionStill) after 8 ticks without NET headway, and a to-and-fro
                                            //      window latches a livelock that holds it (hashed Unit::legionWindow/legionShuffle + its window)
@@ -428,7 +432,7 @@ enum class Msg : uint8_t {
     Bye,                // clean shutdown, reason string
     // lobby
     ListGames,          // C->S
-    GameList,           // S->C: list of GameInfo
+    GameList,           // S->C: list of GameInfo (allowSpectators last, from 258)
     CreateGame,         // C->S: name, password, mapId, options
     JoinGame,           // C->S: gameId, password
     JoinResult,         // S->C: ok+slot or error reason
@@ -552,6 +556,7 @@ struct GameInfo {
     uint8_t running = 0;      // 0=lobby (joinable), 1=running (view only)
     uint8_t passworded = 0;
     uint32_t uptimeSec = 0;
+    uint8_t allowSpectators = 1;   // 0 = the room refuses Spectate (GameOptions::allowSpectators)
 };
 
 // Live game speed, in tenths (10 = 1x). Retail's -10..+10 setting is linear:
@@ -603,6 +608,14 @@ struct GameOptions {
     // Benchmark INTENSITY: 0=off, 1=Low..6=Extra Absurd -- an all-AI perf run with a spawn ramp
     // (see MatchConfig::benchmark). Deterministic, so it IS part of the hashed sim.
     uint8_t benchmark = 0;
+    // ALLOW SPECTATORS (host-set; 1 = on, the default and every room's rule before 258):
+    // 0 makes the server refuse every Spectate into this room -- a browser's WATCH, a
+    // seated player who left and asks to watch, a dropped spectator reconnecting. The
+    // host's own create-as-spectator seat is the host's choice and is exempt; seated
+    // players' Rejoin is untouched. Changeable in the lobby, fixed once the game starts
+    // (in-game SetGameOptions changes only speed). An admission rule, never part of the
+    // sim or the Crusades rules digest; campaign battle rooms are always 0.
+    uint8_t allowSpectators = 1;
 };
 
 // A sim-affecting server decision, sequenced inside a TickBundle so every peer

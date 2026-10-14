@@ -1766,6 +1766,11 @@ add_executable(crusades_client_network_test tools/crusades_client_network_test.c
 target_link_libraries(crusades_client_network_test PRIVATE tak-formats)
 add_test(NAME crusades_client_network COMMAND crusades_client_network_test)
 set_tests_properties(crusades_client_network PROPERTIES TIMEOUT 60)
+# ALLOW SPECTATORS as a real MpClient sees it (scripted loopback server, no data).
+add_executable(spectator_client_test tools/spectator_client_test.cpp)
+target_link_libraries(spectator_client_test PRIVATE tak-formats)
+add_test(NAME spectator_client COMMAND spectator_client_test)
+set_tests_properties(spectator_client PROPERTIES TIMEOUT 60)
 # TAK_PACELOG's summary (src/client/pacelog.h, header-only).
 add_executable(pacelog_test tools/pacelog_test.cpp)
 target_include_directories(pacelog_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -1825,6 +1830,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_public_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>" --map-tool "$<TARGET_FILE:map_transfer_test>")
     set_tests_properties(server_public PROPERTIES TIMEOUT 120)
+    add_test(NAME server_spectators COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_spectators_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(server_spectators PROPERTIES TIMEOUT 120)
     add_test(NAME server_status COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_status_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>")

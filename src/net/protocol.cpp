@@ -33,11 +33,19 @@ Command Reader::cmd() {
     return c;
 }
 
-void put(Writer& w, const GameOptions& o) {
+// The options as 257 wrote them -- frozen, because the Crusades rules digest hashes
+// exactly these bytes (match_codec_test pins it) and an issued battle's stored digest
+// must still match after an upgrade. Append new fields in put(), not here.
+static void putRules(Writer& w, const GameOptions& o) {
     w.u8(o.crusades); w.u8(o.forfeitSelfDestruct); w.u8(o.overridePolicy);
     w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap); w.u8(o.monarchExpendable);
     w.u8(o.stressTest); w.u8(o.fogExplored); w.u8(o.benchmark); w.u8(o.randomStarts);
     w.u8(o.doubleSight); w.u8(uint8_t(o.pathfindingMode));
+}
+
+void put(Writer& w, const GameOptions& o) {
+    putRules(w, o);
+    w.u8(o.allowSpectators);   // 258: room admission, outside the rules digest
 }
 
 void get(Reader& r, GameOptions& o) {
@@ -48,6 +56,7 @@ void get(Reader& r, GameOptions& o) {
     const auto pathMode = r.u8();
     if (!sim::validPathfindingMode(pathMode)) r.ok = false;
     o.pathfindingMode = sim::PathfindingMode(pathMode);
+    o.allowSpectators = r.u8();
 }
 
 void put(Writer& w, const SlotInfo& s) {
@@ -63,7 +72,7 @@ void get(Reader& r, SlotInfo& s) {
 Writer crusadesRulesPreimage(uint32_t seed, const GameOptions& o, const SlotInfo* slots) {
     Writer w;
     w.str("modern-crusades-duel-v1"); w.u32(seed);
-    put(w, o);
+    putRules(w, o);
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = slots[i];
         w.u8(s.type); w.u8(s.faction); w.u8(s.color); w.u8(s.team); w.u8(s.aiLevel);

@@ -142,14 +142,25 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             if (g.passworded)
                 blockText("LOCK", x + w - (g.running ? 232 : 120), y + 8, 1.6f, {230, 200, 120, 255});
             if (g.running) {
-                // A running game can't be joined, but it can be watched live.
+                // A running game can't be joined, but it can be watched live -- unless
+                // its host turned ALLOW SPECTATORS off. Then the button says so (muted
+                // red) and a click still asks: the server is the authority, and its
+                // refusal puts the reason on the CANNOT JOIN line below.
                 blockText("LIVE", x + w - 158, y + 8, 1.6f, {230, 140, 120, 255});
-                lbBtn(x + w - 96, y + 3, 92, 24, "WATCH", true,
-                      [this, id = g.id] { mp_->spectate(id, joinPass_); });
+                lbBtn(x + w - 96, y + 3, 92, 24, g.allowSpectators ? "WATCH" : "NO WATCH", true,
+                      [this, id = g.id] { mp_->spectate(id, joinPass_); },
+                      g.allowSpectators ? SDL_Color{60, 66, 86, 255} : SDL_Color{86, 52, 52, 255});
             } else {
                 lobbyHots_.push_back({row, [this, id = g.id] { mp_->joinGame(id, joinPass_); }});
             }
             y += 34;
+        }
+        // Why the server turned the last JOIN / WATCH away (wrong password, game full,
+        // spectators not allowed...) -- until the next request clears it.
+        if (!mp_->joinError().empty()) {
+            std::string why = "CANNOT JOIN: " + mp_->joinError();
+            for (char& ch : why) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+            blockText(why, x, winH - 98.0f, 1.6f, {255, 130, 110, 255});
         }
         // password entry for locked games
         lbField(x, winH - 70.0f, 200, "PASSWORD (for locked games)", joinPass_, 3);
@@ -372,6 +383,7 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         pref.speedUnlock = createSpeedUnlock_;
         pref.monarchExpendable = createMonarchExp_;
         pref.randomStarts = createRandomStarts_;
+        pref.allowSpectators = createAllowSpectators_;
         pref.unitCap = createUnitCap_;
         pref.fog = createFog_;
         pref.overrides = createOverride_;
@@ -394,6 +406,7 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             createSpeedUnlock_ = pref.speedUnlock;
             createMonarchExp_ = pref.monarchExpendable;
             createRandomStarts_ = pref.randomStarts;
+            createAllowSpectators_ = pref.allowSpectators;
             spSpectate_ = false;  // Opt in for each skirmish; never restore from settings.
             createUnitCap_ = pref.unitCap == 250 || pref.unitCap == 500 || pref.unitCap == 1000 || pref.unitCap == 2000
                 ? uint16_t(pref.unitCap) : 2000;
@@ -418,32 +431,41 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             lbField(x, y, 260, "PASSWORD (optional)", createPass_, 2); y += 44;
         }
         blockText(std::string("MAP: ") + mapDisplayName(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 28;
+        // Option rows (26 high): a 27 pitch keeps all ten multiplayer rows clear of the
+        // BACK/CREATE footer.
+        const float kRow = 27;
         lbCycle(x, y, 170, 26, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
-              [this](int) { createCrusades_ = !createCrusades_; }); y += 28;
+              [this](int) { createCrusades_ = !createCrusades_; }); y += kRow;
         lbCycle(x, y, 240, 26, createDoubleSight_ ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF", true,
-              [this](int) { createDoubleSight_ = !createDoubleSight_; }); y += 28;
+              [this](int) { createDoubleSight_ = !createDoubleSight_; }); y += kRow;
         lbCycle(x, y, 280, 26, pathfindingLabel(createPathfindingMode_), true,
-              [this](int direction) { createPathfindingMode_=tak::sim::cyclePathfindingMode(createPathfindingMode_,direction); }); y += 28;
+              [this](int direction) { createPathfindingMode_=tak::sim::cyclePathfindingMode(createPathfindingMode_,direction); }); y += kRow;
         lbCycle(x,y,240,26,"UNIT CAP: " + std::to_string(createUnitCap_),true,[this](int direction) {
             static constexpr uint16_t limits[]={250,500,1000,2000};
             auto at=std::find(std::begin(limits),std::end(limits),createUnitCap_);
             int index=at==std::end(limits) ? 0 : int(at-std::begin(limits));
             createUnitCap_=limits[(index+direction+4)%4];
-        }); y+=28;
+        }); y+=kRow;
         // When OFF, losing your Monarch loses the game (retail commander rule); ON
         // makes the Monarch just another unit.
         lbCycle(x, y, 240, 26, createMonarchExp_ ? "MONARCH EXPENDABLE: ON"
                                                : "MONARCH EXPENDABLE: OFF", true,
-              [this](int) { createMonarchExp_ = !createMonarchExp_; }); y += 28;
+              [this](int) { createMonarchExp_ = !createMonarchExp_; }); y += kRow;
         lbCycle(x, y, 240, 26, createSpeedUnlock_ ? "ALLOW SPEED CHANGE: ON"
                                               : "ALLOW SPEED CHANGE: OFF", true,
-              [this](int) { createSpeedUnlock_ = !createSpeedUnlock_; }); y += 28;
+              [this](int) { createSpeedUnlock_ = !createSpeedUnlock_; }); y += kRow;
         // SP only: spectate mode -- you take no slot and just watch the AIs fight.
         // Seat AIs in the slots below, then START.
         if (singlePlayer_) {
             lbCycle(x, y, 240, 26, spSpectate_ ? "SPECTATE (WATCH AIS): ON"
                                              : "SPECTATE (WATCH AIS): OFF", true,
-                  [this](int) { spSpectate_ = !spSpectate_; }); y += 28;
+                  [this](int) { spSpectate_ = !spSpectate_; }); y += kRow;
+        } else {
+            // MP only: may others WATCH this game once it runs? The server enforces it;
+            // the host can still flip it in the room until START.
+            lbCycle(x, y, 240, 26, createAllowSpectators_ ? "ALLOW SPECTATORS: ON"
+                                                        : "ALLOW SPECTATORS: OFF", true,
+                  [this](int) { createAllowSpectators_ = !createAllowSpectators_; }); y += kRow;
         }
         // Fog of war: a room rule, so it is picked here and not only after the
         // room exists. Display-only (never hashed) -- every peer applies the same
@@ -453,14 +475,14 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             lbCycle(x, y, 240, 26,
                   std::string("FOG OF WAR: ") + kFogName[std::min<int>(createFog_, 2)], true,
                   [this](int direction) { createFog_ = uint8_t((createFog_ + direction + 3) % 3); });
-            y += 28;
+            y += kRow;
         }
         // Random Start Locations: also a room rule, picked here like fog so it is set
         // before the room exists. FIXED = slot N always takes the map's Nth start
         // (spawns are memorisable); RANDOM = the starts are shuffled for the match.
         lbCycle(x, y, 240, 26, std::string("START LOCATIONS: ") +
               (createRandomStarts_ ? "RANDOM" : "FIXED"), true,
-              [this](int) { createRandomStarts_ = !createRandomStarts_; }); y += 28;
+              [this](int) { createRandomStarts_ = !createRandomStarts_; }); y += kRow;
         static const char* kTier[] = {"OFF", "COSMETIC", "FULL"};
         lbCycle(x, y, 240, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
               [this](int direction) { createOverride_ = uint8_t((createOverride_ + direction + 3) % 3); }); y += 44;
@@ -479,6 +501,9 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             o.monarchExpendable = createMonarchExp_ ? 1 : 0;
             o.fogExplored = std::min<uint8_t>(createFog_, 2);
             o.randomStarts = createRandomStarts_ ? 1 : 0;
+            // A private single-player room is never listed, so the rule means nothing
+            // there; leave it at the default rather than a remembered MP choice.
+            o.allowSpectators = singlePlayer_ || createAllowSpectators_ ? 1 : 0;
             // SP spectate: create as a spectator (no slot) so every slot can be an AI;
             // the game-start path flags spectating_ + noFog_ from mp_->isSpectator().
             mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity(),
@@ -913,6 +938,15 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         info(2,1,std::string("FOG OF WAR: ")+fogNames[std::min<int>(room.opts.fogExplored,2)]);
         info(3,0,std::string("START LOCATIONS: ")+(room.opts.randomStarts?"RANDOM":"FIXED"));
         info(4,0,pathfindingLabel(room.opts.pathfindingMode));
+        // ALLOW SPECTATORS is the one room rule the host may still flip here: it only
+        // decides who may WATCH once the game runs, so no player has planned around it.
+        // The server adopts it until START and refuses Spectate while it is off.
+        if(!singlePlayer_ && !campaign) {
+            const std::string label=std::string("ALLOW SPECTATORS: ")+onOff(room.opts.allowSpectators);
+            info(4,1,label);
+            if(host) lobbyHots_.push_back({SDL_FRect{x+300.0f,y+80.0f-2,blockWidth(label,1.6f),18},[this](int) {
+                auto o=mpRoom().opts; o.allowSpectators=o.allowSpectators?0:1; mp_->setGameOptions(o); }});
+        }
         if(singlePlayer_)
             info(3,1,std::string("SPECTATE (WATCH AIS): ")+onOff(mp_->isSpectator()));
         else if(!campaign) {

@@ -38,7 +38,9 @@ inline constexpr uint32_t kReplayFormat = 12;   // 12: checkpoints carry posDige
 // Simulation changes require the matching engine; do not emulate older rules.
 inline bool supportedReplayProtocol(uint32_t format, uint32_t protocol) {
     if (format < 1 || format > kReplayFormat) return false;
-    return protocol == kNetVersion;
+    // 258 changed only the lobby wire (ALLOW SPECTATORS); 257's simulation is 258's,
+    // so a 0.8.2 recording still plays exactly.
+    return protocol == kNetVersion || (kNetVersion == 258 && protocol == 257);
 }
 
 struct ReplayHeader {

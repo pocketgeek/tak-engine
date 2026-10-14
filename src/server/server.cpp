@@ -1587,7 +1587,7 @@ bool Server::createCampaignBattle(Client& c,const std::string& campaign,uint32_t
         room.mapId=*map;room.mapPackage=std::move(package);room.mapVfs=std::make_unique<tak::hpi::Vfs>(&retail_.vfs);
         room.mapVfs->setMapFiles(room.mapPackage->files);room.cap=2;room.createdMs=nowMs();
         room.seed=fixedSeedSet_?fixedSeed_:uint32_t(randToken());room.opts.crusades=1;room.opts.overridePolicy=0;
-        room.opts.fogExplored=0;room.opts.forfeitSelfDestruct=1;
+        room.opts.fogExplored=0;room.opts.forfeitSelfDestruct=1;room.opts.allowSpectators=0; // never watched (Spectate refuses)
         room.campaignId=campaign;room.campaignTerritory=territory;room.campaignAccounts[0]=caller;room.campaignAccounts[1]=opponent;
         room.campaignRoomToken=campaignSession_+":"+std::to_string(room.id);
         room.campaignExpires=campaignNow()+600;
@@ -1635,6 +1635,7 @@ void Server::sendGameList(Client& c) {
         w.u8(r.running ? 1 : 0);
         w.u8(r.password.empty() ? 0 : 1);
         w.u32(uint32_t((t - r.createdMs) / 1000));
+        w.u8(r.opts.allowSpectators);   // 258: the browser's WATCH honours it
     }
     c.conn.send(Msg::GameList, w);
 }
@@ -1765,6 +1766,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             o.fogExplored = std::min<uint8_t>(o.fogExplored, 2);
             o.randomStarts = o.randomStarts ? 1 : 0;
             o.doubleSight = o.doubleSight ? 1 : 0;
+            o.allowSpectators = o.allowSpectators ? 1 : 0;
             if (!mission.empty()) { o.pathfindingMode = tak::sim::PathfindingMode::Retail; o.doubleSight = 0; }
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
@@ -1799,7 +1801,8 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             }
             if (spectate) {
                 // Host watches without a slot -- every capacity slot stays open (fill
-                // with AIs). The host still owns the room (add AIs, start).
+                // with AIs). The host still owns the room (add AIs, start). ALLOW
+                // SPECTATORS does not apply: it governs who ELSE may watch.
                 room.spectators.push_back(c.id);
                 c.cmdQueue.clear();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = room.id; c.slot = -1;
@@ -1916,6 +1919,16 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if (it == rooms_.end() || !it->second.running) { reject("game not found or ended"); break; }
             Room& room = it->second;
             if(!room.campaignBattleId.empty()) {reject("campaign battles do not allow spectators");break;}
+            // The host's ALLOW SPECTATORS rule. This is the ONLY way into a room without
+            // a slot after creation, so refusing it here covers a browser's WATCH, a
+            // seated player who left and asks to watch, and a dropped spectator coming
+            // back (spectators hold no resume token; Rejoin seats only held slots).
+            // Checked before the password so a locked room still says why.
+            if (!room.opts.allowSpectators) {
+                reject("spectators are not allowed in this game");
+                std::fprintf(stderr, "game %u: client %u refused as a spectator (spectators off)\n", room.id, c.id);
+                break;
+            }
             if (!room.password.empty() && room.password != pass) { reject("wrong password"); break; }
             // Seat nothing: a spectator has no slot, sends no commands or hashes,
             // and holds nothing on disconnect. It just receives the stream.
@@ -2492,6 +2505,12 @@ void Server::gameMsg(Client& c, const Frame& f) {
             o.fogExplored = std::min<uint8_t>(o.fogExplored, 2);   // 0/1/2, see CreateGame
             o.randomStarts = o.randomStarts ? 1 : 0;
             o.doubleSight = o.doubleSight ? 1 : 0;
+            // ALLOW SPECTATORS is adopted here in the lobby only: the running branch
+            // below takes nothing but speed, so it is fixed once the game starts and a
+            // spectator admitted while it was on is never stranded by a later change.
+            // The only lobby spectator is a host who created the room to watch, whom
+            // the rule never removes (see Spectate).
+            o.allowSpectators = o.allowSpectators ? 1 : 0;
             // Creation-only: lobby updates cannot change the selected pathfinder.
             o.pathfindingMode = r->opts.pathfindingMode;
             if (!r->mission.empty()) o.doubleSight = 0;

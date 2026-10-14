@@ -764,14 +764,24 @@ void MpClient::onFrame(const Frame& f) {
                 g.id = r.u32(); g.name = r.str(); g.mapId = r.str();
                 g.players = r.u8(); g.capacity = r.u8(); g.running = r.u8();
                 g.passworded = r.u8(); g.uptimeSec = r.u32();
+                g.allowSpectators = r.u8();
+                if (!r.ok) break;
                 games_.push_back(g);
             }
             break;
         }
         case Msg::JoinResult: {
-            uint8_t ok = r.u8(); uint8_t slot = r.u8(); r.str();
-            if(!ok)roomRequestPending_=false;
+            uint8_t ok = r.u8(); uint8_t slot = r.u8(); std::string why = r.str();
+            if(!ok) {
+                roomRequestPending_=false;
+                // Keep the reason for the browser, and drop the pending kind: left
+                // set, a refused watch made the NEXT ordinary join's GameStarting
+                // read as a spectator start.
+                joinError_ = why.empty() ? std::string("the server refused the request") : why;
+                expectingSpectate_ = expectingRejoin_ = false;
+            }
             if (ok) {
+                joinError_.clear();
                 // 0xFF = the host created the game as a slot-less spectator.
                 room_.mySlot = (slot == 0xFF) ? -1 : int(slot);
                 spectator_ = (slot == 0xFF);
@@ -921,6 +931,7 @@ void MpClient::createGame(const std::string& name, const std::string& password,
                           const std::string& mapId, const GameOptions& o, uint8_t capacity,
                           bool spectate, bool priv, const std::string& mission) {
     if(roomRequestPending_)return;
+    joinError_.clear();
     resetOverrideTransfer();resetMapTransfer();
     mapStatus_ = "CHECKING MAP";
     if (mission.empty() && !mapgen::isGeneratedMapId(mapId)) {
@@ -941,6 +952,7 @@ void MpClient::createGame(const std::string& name, const std::string& password,
 void MpClient::joinGame(uint32_t id, const std::string& password) {
     if(roomRequestPending_)return;
     roomRequestPending_=true;
+    joinError_.clear();
     Writer w; w.u32(id); w.str(password);
     send(Msg::JoinGame, w);
 }
@@ -982,6 +994,7 @@ void MpClient::reportLoaded(uint64_t dataHash) { Writer w; w.u64(dataHash); send
 void MpClient::rejoin(uint32_t gameId, uint64_t token) {
     if(roomRequestPending_)return;
     roomRequestPending_=true;
+    joinError_.clear();
     expectingRejoin_ = true;
     Writer w; w.u32(gameId); w.u64(token);
     send(Msg::Rejoin, w);
@@ -990,6 +1003,7 @@ void MpClient::rejoin(uint32_t gameId, uint64_t token) {
 void MpClient::spectate(uint32_t gameId, const std::string& password) {
     if(roomRequestPending_)return;
     roomRequestPending_=true;
+    joinError_.clear();
     expectingSpectate_ = true;
     Writer w; w.u32(gameId); w.str(password);
     send(Msg::Spectate, w);

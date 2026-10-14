@@ -924,6 +924,9 @@ void GameView::autoplayStep() {
             // the lobby by hand.
             if (const char* fg = tak::devEnv("TAK_FOG"))
                 o.fogExplored = uint8_t(std::clamp(std::atoi(fg), 0, 2));
+            // TAK_NO_SPECTATORS=1: the room refuses watchers (ALLOW SPECTATORS off), so
+            // a --mpspectate client can be shown the server's refusal.
+            o.allowSpectators = tak::devFlag("TAK_NO_SPECTATORS") ? 0 : 1;
             // TAK_MP_WATCH: host creates the game as a spectator (no slot) so every
             // slot can be an AI -- an all-AI game to watch.
             if (benchmarkMode_) o.benchmark = uint8_t(benchmarkLevel_);   // menu Benchmark: intensity level
@@ -948,10 +951,13 @@ void GameView::autoplayStep() {
             uint32_t gid = 0; uint64_t tok = 0;
             if (readResume(gid, tok) && gid) { mp_->rejoin(gid, tok); mpReadied_ = true; }
         } else if (st == S::Lobby && autoMode == 6) {
-            // Spectate: poll the list and watch the first running game.
+            // Spectate: poll the list and watch the first running game. Ask once
+            // per refusal, not every frame: a room with ALLOW SPECTATORS off says no,
+            // and the browser keeps showing why.
             if (SDL_GetTicks64() - mpListMs_ > 300) { mp_->listGames(); mpListMs_ = SDL_GetTicks64(); }
-            for (const auto& g : mp_->games())
-                if (g.running) { mp_->spectate(g.id, ""); break; }
+            if (mp_->joinError().empty())
+                for (const auto& g : mp_->games())
+                    if (g.running) { mp_->spectate(g.id, ""); break; }
         } else if (st == S::Lobby && (autoMode == 2 || autoMode == 3)) {
             // Poll the game list; join the first, or (mode 3) create if none appear.
             if (SDL_GetTicks64() - mpListMs_ > 300) { mp_->listGames(); mpListMs_ = SDL_GetTicks64(); }

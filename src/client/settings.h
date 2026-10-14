@@ -103,6 +103,7 @@ struct Settings {
     struct GameCreate {
         bool crusades = false, doubleSight = false, speedUnlock = false;
         bool monarchExpendable = false, randomStarts = false;
+        bool allowSpectators = true;   // multiplayer ALLOW SPECTATORS (on, as every room was before it)
         bool generated = false;
         sim::PathfindingMode pathfindingMode = sim::PathfindingMode::Retail;
         int unitCap = 2000, fog = 1, overrides = 1;

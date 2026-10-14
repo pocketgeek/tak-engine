@@ -1567,6 +1567,7 @@ private:
     uint8_t createFog_ = 1;
     bool createRandomStarts_ = false;   // create dialog: Random Start Locations (default OFF = fixed)
     bool createMonarchExp_ = false;   // create dialog: Monarch Expendable (default OFF = monarch matters)
+    bool createAllowSpectators_ = true;   // create dialog (MP): ALLOW SPECTATORS (default ON, as before the option)
     // One selectable map plus the attributes the picker can sort by, read once from
     // the map's .ota GlobalHeader (a tiny text file -- no need to decompress the TNT).
     struct MapInfo {

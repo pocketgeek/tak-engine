@@ -163,6 +163,10 @@ public:
 
     const std::vector<GameInfo>& games() const { return games_; }
     const RoomView& room() const { return room_; }
+    // Why the server refused the last join / watch / rejoin ("wrong password",
+    // "spectators are not allowed in this game", ...); empty once a later request is
+    // sent or one succeeds. The connection stays in the lobby, so the browser shows it.
+    const std::string& joinError() const { return joinError_; }
     // Ticks of HISTORY the server is replaying to us after a rejoin or spectate.
     // The authoritative end of the replay: local buffer depth cannot tell history
     // from a gap between chunks.
@@ -312,6 +316,7 @@ private:
 
     std::vector<GameInfo> games_;
     RoomView room_;
+    std::string joinError_;   // the last JoinResult refusal (see joinError())
     uint8_t gameSpeed_ = 10;   // live game speed (from opts + in-game SpeedUpdate)
     int missionOutcome_ = 0;   // campaign mission result (0 running / +1 win / -1 loss)
     std::vector<std::pair<std::string, std::string>> chat_;
