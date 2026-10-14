@@ -1245,7 +1245,8 @@ player's game stays in step.
 
 The host can open and close slots, add AIs and kick players. Match options are
 set when the game is created, except **Allow spectators**, which the host can
-click in the room's rules to turn on or off until the game starts; see
+click in the room's rules to turn on or off until the game starts. It lights up
+under the host's pointer; for everyone else it is read-only. See
 [Match options](#match-options).
 
 ### Maps and content

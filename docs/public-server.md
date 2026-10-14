@@ -223,11 +223,12 @@ in the game list. When it is off, the server refuses every `Spectate` into that
 room with "spectators are not allowed in this game". That covers a browser's
 watch request, a player who left the game and asks to watch, and a reconnecting
 client, because `Spectate` is the only way to join a room without a slot. Seated
-players' `Rejoin` with their resume token is unaffected. The host may change the
-rule in the lobby. Once the game starts, it is fixed: an in-game `SetGameOptions`
-changes only speed. A host who created the room to watch it keeps that seat.
-Crusades battle rooms never allow spectators. `server_spectators_test.py` checks
-each of these against a real server.
+players' `Rejoin` with their resume token is unaffected. Only the host may change
+the rule, in the lobby; if the host leaves the lobby, the player who inherits the
+room inherits the rule too. Once the game starts, it is fixed: an in-game
+`SetGameOptions` changes only speed. A host who created the room to watch it
+keeps that seat. Crusades battle rooms never allow spectators.
+`server_spectators_test.py` checks each of these against a real server.
 
 Public games cannot enable benchmark/stress workloads or launch local campaign
 missions. Private `--local --no-auth` games retain those features. Debug builds

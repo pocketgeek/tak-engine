@@ -941,10 +941,13 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         // ALLOW SPECTATORS is the one room rule the host may still flip here: it only
         // decides who may WATCH once the game runs, so no player has planned around it.
         // The server adopts it until START and refuses Spectate while it is off.
+        // For the host it lights up under the pointer (the button hover colour), the one
+        // hint that this line of the read-only list is a toggle.
         if(!singlePlayer_ && !campaign) {
             const std::string label=std::string("ALLOW SPECTATORS: ")+onOff(room.opts.allowSpectators);
-            info(4,1,label);
-            if(host) lobbyHots_.push_back({SDL_FRect{x+300.0f,y+80.0f-2,blockWidth(label,1.6f),18},[this](int) {
+            const SDL_FRect hit{x+300.0f,y+80.0f-2,blockWidth(label,1.6f),18};
+            blockText(label,hit.x,y+80.0f,1.6f,host && lbHot(hit) ? SDL_Color{180,200,240,255} : infoColor);
+            if(host) lobbyHots_.push_back({hit,[this](int) {
                 auto o=mpRoom().opts; o.allowSpectators=o.allowSpectators?0:1; mp_->setGameOptions(o); }});
         }
         if(singlePlayer_)

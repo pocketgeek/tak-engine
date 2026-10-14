@@ -12,6 +12,8 @@ the Spectate check shows exactly which admission paths it leaves open:
   switch        OFF: a seated player who leaves the running game cannot watch it
   lobby toggle  the host flips it in the lobby; the last value is what the game
                 starts with and what the list reports
+  host only     a seated non-host cannot change it; when the host leaves the lobby
+                the rule stays with the room and the new host may change it
   host watcher  OFF with the host watching its all-AI room: the host keeps its
                 seat (the rule governs who ELSE may watch), outsiders are refused
 """
@@ -189,6 +191,27 @@ def scenario_lobby_toggle(port, h):
         expect_refused(viewer, state[0], 'WATCH after a lobby toggle to off')
 
 
+def scenario_host_only(port, h):
+    with contextlib.closing(login(port, h, 'Alice')) as host, \
+         contextlib.closing(login(port, h, 'Alice')) as player, \
+         contextlib.closing(login(port, h, 'Alice')) as viewer:
+        state = create(host, 'host only', 0)
+        player.send('JoinGame', struct.pack('<I', state[0]) + auth.field(''))
+        assert player.receive('JoinResult').num('<B') == 1
+        lobby(player.receive('LobbyState')); lobby(host.receive('LobbyState'))
+        # A seated non-host's options message is ignored, this rule with the rest.
+        set_spectators(player, 1)
+        player.send('Ping'); player.receive('Pong')
+        assert games(viewer)[state[0]][2] == 0, 'a non-host changed ALLOW SPECTATORS'
+        # The host leaves the lobby: the room passes to the player with its rule kept,
+        # and only now may that player change it.
+        host.send('LeaveGame')
+        assert lobby(player.receive('LobbyState'))[2][ALLOW] == 0, 'the rule did not survive the host leaving'
+        set_spectators(player, 1)
+        assert lobby(player.receive('LobbyState'))[2][ALLOW] == 1, 'the new host could not change the rule'
+        assert games(viewer)[state[0]][2] == 1
+
+
 def scenario_host_watcher(port, h):
     with contextlib.closing(login(port, h, 'Alice')) as host, contextlib.closing(login(port, h, 'Alice')) as viewer:
         state = create(host, 'watched', 1, watch=True)
@@ -209,7 +232,7 @@ def scenario_host_watcher(port, h):
 
 
 SCENARIOS = [scenario_allowed, scenario_refused, scenario_reconnect, scenario_switch,
-             scenario_lobby_toggle, scenario_host_watcher]
+             scenario_lobby_toggle, scenario_host_only, scenario_host_watcher]
 
 
 def main():
@@ -233,7 +256,7 @@ def main():
     if failed:
         raise SystemExit('FAIL: ' + ', '.join(failed))
     print('PASS: ALLOW SPECTATORS -- open watch, refused watch (locked in game), reconnect, '
-          'switch to spectator, lobby toggle into the start, host-watched room')
+          'switch to spectator, lobby toggle into the start, host only (and handed over), host-watched room')
 
 
 if __name__ == '__main__':
