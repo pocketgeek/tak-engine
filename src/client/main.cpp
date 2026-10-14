@@ -64,6 +64,7 @@
 #include "client/options.h"
 #include "client/datafolder.h"
 #include "util/relaunch.h"
+#include "util/prefpath.h"
 #include "client/settings.h"
 #include "client/renderdriver.h"
 #include "net/crypto.h"
@@ -648,10 +649,10 @@ int main(int argc, char** argv) {
             const auto metadata=tak::tdf::parseText(std::string(ota.begin(),ota.end()));
             const auto* test=metadata.child("takplaytest");
             if(test && test->numberOr("trace",0)!=0) {
-                std::unique_ptr<char,decltype(&SDL_free)> folder(SDL_GetPrefPath("TAKengine","Cartographer"),SDL_free);
-                if(!folder)throw std::runtime_error("Cannot locate the trigger log folder");
+                const std::string folder=tak::prefPath("Cartographer");
+                if(folder.empty())throw std::runtime_error("Cannot locate the trigger log folder");
                 playtestTrace=std::make_shared<tak::ScenarioTraceLog>(tak::scenarioTracePath(
-                    std::filesystem::u8path(folder.get()),std::filesystem::u8path(playMap)));
+                    std::filesystem::u8path(folder),std::filesystem::u8path(playMap)));
             }
             tak::net::maps::saveCache(std::filesystem::u8path(dataRoot), *snapshot);
             vfs.refreshMapCache(std::filesystem::u8path(dataRoot));

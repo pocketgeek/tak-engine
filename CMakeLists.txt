@@ -1543,7 +1543,9 @@ if(TAK_BUILD_CLIENT)
     # the WHOLE target (not just main.cpp) so it applies before ANY header pulls in
     # <SDL.h> -- otherwise, on Windows, SDL_main.h renames our main to SDL_main via a
     # transitive include and the MinGW link fails with "undefined reference to WinMain".
-    target_compile_definitions(takclient PRIVATE SDL_MAIN_HANDLED)
+    # TAK_PRODUCT: a shipped program. Its Release build keeps SDL's per-user folder
+    # off Linux even under XDG_DATA_HOME, which test executables honour (util/prefpath.h).
+    target_compile_definitions(takclient PRIVATE SDL_MAIN_HANDLED TAK_PRODUCT)
     if(TARGET tak_ffmpeg)
       target_link_libraries(takclient PRIVATE tak_ffmpeg)
     else()
@@ -1590,7 +1592,7 @@ if(TAK_BUILD_CLIENT)
     # look byte-identical to the game.
     add_executable(cartographer src/client/modelview.cpp src/util/relaunch.cpp src/cartographer/savejob.cpp src/cartographer/playtest.cpp src/cartographer/editorfont.cpp src/cartographer/thumbnails.cpp src/cartographer/recovery.cpp src/cartographer/preferences.cpp src/cartographer/ruleedit.cpp src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/session.cpp src/cartographer/headless.cpp src/cartographer/palette.cpp src/cartographer/canvas.cpp src/cartographer/chrome.cpp src/cartographer/dialogs.cpp src/cartographer/scripting.cpp src/cartographer/symmetrytools.cpp src/cartographer/symmetry.cpp src/cartographer/sections.cpp src/cartographer/sectiongroups.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
     target_link_libraries(cartographer PRIVATE tak-formats ${_tak_sdl2})
-    target_compile_definitions(cartographer PRIVATE SDL_MAIN_HANDLED)
+    target_compile_definitions(cartographer PRIVATE SDL_MAIN_HANDLED TAK_PRODUCT)   # see takclient
     get_target_property(_cartographer_sources cartographer SOURCES)
     add_executable(cartographer_ui_test tools/cartographer_ui_test.cpp ${_cartographer_sources})
     target_compile_definitions(cartographer_ui_test PRIVATE SDL_MAIN_HANDLED TAK_CARTOGRAPHER_TEST)
@@ -1976,6 +1978,71 @@ elseif(WIN32)
 elseif(APPLE)
   install(TARGETS takserver crusades_admin RUNTIME DESTINATION bin)
 endif()
+
+# Per-user files. Every test gets its own XDG_DATA_HOME, XDG_CONFIG_HOME and (Linux)
+# HOME under test-profiles/<test>/, unless its ENVIRONMENT names that variable itself,
+# so whatever a test writes to the per-user folder (util/prefpath.h: settings.ini,
+# replays, Cartographer's preferences and recovery files) stays in the build dir. The
+# per-user folder follows XDG_DATA_HOME on every platform in Debug builds and test
+# executables; SDL alone honours it only on Linux. On 2026-10-14 diplomacy_ui and four
+# more takclient tests, which set no XDG_DATA_HOME, saved their --data folder as the
+# player's dataDir in the real ~/.local/share/TAKengine/TAKingdoms/settings.ini. A new
+# test needs nothing to be safe. The tak_prefs fixture brackets every run:
+# pref_guard_check fails if anything wrote a TAKengine folder into a test's sentinel
+# HOME (a process that dropped its XDG_DATA_HOME, i.e. the real profile outside ctest);
+# pref_guard_lint fails on an SDL_GetPrefPath call outside prefpath.h;
+# pref_guard_selftest replays the leak and checks that the guard names it. Keep this
+# block after the last add_test.
+set(TAK_TEST_PROFILES "${CMAKE_CURRENT_BINARY_DIR}/test-profiles")
+set(TAK_PREF_GUARD "${CMAKE_SOURCE_DIR}/tools/pref_guard.cmake")
+add_test(NAME pref_guard_setup COMMAND ${CMAKE_COMMAND} -DMODE=setup "-DPROFILES=${TAK_TEST_PROFILES}" -P "${TAK_PREF_GUARD}")
+add_test(NAME pref_guard_check COMMAND ${CMAKE_COMMAND} -DMODE=check "-DPROFILES=${TAK_TEST_PROFILES}" -P "${TAK_PREF_GUARD}")
+set_tests_properties(pref_guard_setup PROPERTIES FIXTURES_SETUP tak_prefs)
+set_tests_properties(pref_guard_check PROPERTIES FIXTURES_CLEANUP tak_prefs)
+add_test(NAME pref_guard_lint COMMAND ${CMAKE_COMMAND} -DMODE=lint "-DSOURCE=${CMAKE_SOURCE_DIR}" -P "${TAK_PREF_GUARD}")
+if(TARGET takclient AND TAK_TEST_DATA AND CMAKE_BUILD_TYPE STREQUAL "Debug" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_test(NAME pref_guard_selftest COMMAND ${CMAKE_COMMAND} -DMODE=selftest "-DCLIENT=$<TARGET_FILE:takclient>"
+           "-DDATA=${TAK_TEST_DATA}" "-DROOT=${CMAKE_CURRENT_BINARY_DIR}/pref-guard-selftest" -P "${TAK_PREF_GUARD}")
+  set_tests_properties(pref_guard_selftest PROPERTIES TIMEOUT 60)
+endif()
+# A scratch HOME hides the user's own Python modules (unicorn, for the native_*
+# emulation checks); keep them importable.
+set(tak_python_userbase "")
+if(UNIX AND NOT APPLE AND Python3_EXECUTABLE)
+  execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import site; print(site.getuserbase())"
+                  OUTPUT_VARIABLE tak_python_userbase OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
+get_property(tak_all_tests DIRECTORY PROPERTY TESTS)
+foreach(tak_test IN LISTS tak_all_tests)
+  if(tak_test MATCHES "^pref_guard_(setup|check)$")
+    continue()
+  endif()
+  set(tak_profile "${TAK_TEST_PROFILES}/${tak_test}")
+  set(tak_defaults "XDG_DATA_HOME=${tak_profile}/data" "XDG_CONFIG_HOME=${tak_profile}/config"
+                   "XDG_CACHE_HOME=${TAK_TEST_PROFILES}/cache")
+  if(UNIX AND NOT APPLE)
+    list(APPEND tak_defaults "HOME=${tak_profile}/home")
+    if(tak_python_userbase)
+      list(APPEND tak_defaults "PYTHONUSERBASE=${tak_python_userbase}")
+    endif()
+  endif()
+  # Plain ENVIRONMENT (not ENVIRONMENT_MODIFICATION), so runners that read only that,
+  # like the Windows host's runctest.py, isolate tests too.
+  get_test_property(${tak_test} ENVIRONMENT tak_env)
+  if(NOT tak_env)
+    set(tak_env "")
+  endif()
+  set(tak_merged "")
+  foreach(tak_pair IN LISTS tak_defaults)
+    string(REGEX MATCH "^[A-Z_]+" tak_var "${tak_pair}")
+    if(NOT tak_env MATCHES "(^|;)${tak_var}=")
+      list(APPEND tak_merged "${tak_pair}")
+    endif()
+  endforeach()
+  list(APPEND tak_merged ${tak_env})
+  set_property(TEST ${tak_test} PROPERTY ENVIRONMENT ${tak_merged})
+  set_property(TEST ${tak_test} APPEND PROPERTY FIXTURES_REQUIRED tak_prefs)
+endforeach()
 
 # Test scheduling and the `quick` label. tools/ctest_costs.txt lists the tests that take
 # 5 s or more on an optimized Debug build (`<test> <seconds>`, longest first). Each gets a

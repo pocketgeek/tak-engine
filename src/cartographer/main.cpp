@@ -23,6 +23,7 @@
 #include "client/dirpicker.h"
 #include "cartographer/restart.h"
 #include "util/relaunch.h"
+#include "util/prefpath.h"
 #include "util/appicon.h"
 #include "util/virtualpath.h"
 #include "terrain/terrain.h"
@@ -56,13 +57,12 @@ cart::FreshMap cart::buildFreshMap(const tak::hpi::Vfs& vfs, cart::SectionLibrar
     return out;
 }
 
-// Preferences/recovery folder. TAK_CARTOGRAPHER_PROFILE (tests) overrides it because SDL_GetPrefPath
-// ignores XDG_* off Linux: Windows/macOS test runs would otherwise read and write the user's real profile.
+// Preferences/recovery folder. TAK_CARTOGRAPHER_PROFILE (tests) names it outright, in any build type;
+// otherwise the per-user folder, which follows XDG_DATA_HOME in tests on every platform (util/prefpath.h).
 static std::filesystem::path profileFolder() {
     if(const char* o=SDL_getenv("TAK_CARTOGRAPHER_PROFILE")) if(*o) return std::filesystem::u8path(o);
-    std::filesystem::path out;
-    if(char* path=SDL_GetPrefPath("TAKengine","Cartographer")) {out=std::filesystem::u8path(path);SDL_free(path);}
-    return out;
+    const std::string path=tak::prefPath("Cartographer");
+    return path.empty()?std::filesystem::path():std::filesystem::u8path(path);
 }
 
 cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const EditorHooks& hooks)

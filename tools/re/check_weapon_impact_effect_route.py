@@ -31,6 +31,10 @@ def main():
             "SDL_VIDEODRIVER": "dummy",
             "SDL_AUDIODRIVER": "dummy",
             "TAK_WEAPON_IMPACT_EFFECT_TEST": "1",
+            # A scratch profile: a --data launch saves that folder as the player's
+            # data folder setting (src/util/prefpath.h).
+            "XDG_DATA_HOME": tmp,
+            "XDG_CONFIG_HOME": tmp,
         })
         result = subprocess.run(
             [str(binary), "game", args.map, "--data", str(data), "--firetest",

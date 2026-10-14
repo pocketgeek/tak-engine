@@ -180,7 +180,8 @@ struct Settings {
     friend bool operator!=(const Settings& a, const Settings& b) { return !(a == b); }
 };
 
-// The config file path (SDL_GetPrefPath based). Empty only if SDL can't provide one.
+// The config file path: settings.ini in the per-user folder (util/prefpath.h). Empty only
+// if there is no such folder.
 std::string settingsPath();
 // Point settingsPath() at another file for the rest of the process ("" = back to the
 // default). Cartographer's test profile uses it so a UI test of the shared GAME DATA

@@ -2,8 +2,7 @@
 
 #include "client/dev.h"
 #include "client/renderdriver.h"
-
-#include <SDL.h>
+#include "util/prefpath.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -58,11 +57,8 @@ void setSettingsPath(std::string path) {
 std::string settingsPath() {
     if (!pathOverride().empty()) return pathOverride();
     if (const char* o = devEnv("TAK_SETTINGS_FILE")) if (*o) return o;   // debug builds: test profile
-    char* base = SDL_GetPrefPath("TAKengine", "TAKingdoms");
-    if (!base) return {};
-    std::string p = std::string(base) + "settings.ini";
-    SDL_free(base);
-    return p;
+    const std::string base = prefPath("TAKingdoms");
+    return base.empty() ? std::string() : base + "settings.ini";
 }
 
 Settings loadSettings() {

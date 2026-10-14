@@ -156,6 +156,16 @@ the platform checks, Windows signing and complete asset verification pass.
   6 minutes for the full suite). Use it for a task's own checks; run the full suite
   (`ctest -j 8`) before handing a change over. Other labels: `legion`, `w2`, `nightly`
   (`ctest -L legion`, `-LE nightly`).
+- **Tests never touch your profile.** CTest gives every test its own `XDG_DATA_HOME`,
+  `XDG_CONFIG_HOME` and, on Linux, `HOME` under `<build>/test-profiles/<test>/`, so the
+  settings file, replays and Cartographer preferences a test writes stay in the build
+  dir; a new test needs nothing. Debug builds and test executables follow
+  `XDG_DATA_HOME` on Windows and macOS too (`src/util/prefpath.h`; SDL alone honours it
+  only on Linux), so the same variable isolates an ad-hoc debug run outside ctest,
+  such as a `--mpai` harness game: `XDG_DATA_HOME=$(mktemp -d)`. Every ctest run ends with
+  `pref_guard_check`, which fails if a test wrote a `TAKengine` folder into its scratch
+  `HOME` (a process that lost its `XDG_DATA_HOME`: the real profile outside ctest);
+  `pref_guard_lint` fails on an `SDL_GetPrefPath` call outside `prefpath.h`.
 - **Long tests start first.** `tools/ctest_costs.txt` lists the tests of 5 s or more;
   CMake turns it into `COST` properties, so even in a fresh build dir (no
   `CTestCostData.txt` yet) the 150 s scenario runs start at once instead of last. After adding a

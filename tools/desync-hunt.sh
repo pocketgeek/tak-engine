@@ -195,8 +195,11 @@ run_one() {
   case "$envs" in *TAK_BENCH*) flowonly=1;; esac
 
   local secs=$((MINUTES * 60))
+  # A per-run profile: the client saves its --data folder as the data folder setting
+  # and writes a replay, which must never land in the player's own settings.ini.
   # shellcheck disable=SC2086
-  env TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy TAK_MP_AIS=7 $SPEED_DEFAULT $MONARCH_DEFAULT $envs \
+  env XDG_DATA_HOME="$OUT/preferences/$name" XDG_CONFIG_HOME="$OUT/config/$name" \
+      TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy TAK_MP_AIS=7 $SPEED_DEFAULT $MONARCH_DEFAULT $envs \
       timeout -k 30 $((secs + 300)) $CLIENT game "$map" --data "$DATA" \
       --server 127.0.0.1 --serverport "$port" --mphost --time "$secs" $flags \
       >"$clog" 2>&1
