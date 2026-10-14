@@ -8133,7 +8133,7 @@ bool World::placeMapFeature(const Feature& f) {
     if (f.type>=0) {
         const auto& definition=featTypes_.at(size_t(f.type));
         type.name=definition.name;type.indestructible=definition.indestructible;
-        type.projectileHeight=definition.projectileHeight;
+        type.projectileHeight=definition.projectileHeight;type.treeOrRock=definition.treeOrRock;
         type.clearable=!type.indestructible;
         std::vector<int> pending{f.type};
         std::vector<bool> seen(featTypes_.size(),false);
@@ -10842,17 +10842,69 @@ void World::notifyUnitScript(Unit& u,const char* name) {
 // cycle, so the legs walk while the body all but stands (measured with
 // legion_group_motion: 4022 unit-ticks of walk cycles with under 8 px of
 // headway per second in the open 60-unit case, Retail 405). So in Legion a
-// body whose step this tick is under a quarter of its maximum speed counts
-// toward standing, unless it turned; after kLegionStillAfter such ticks in
-// a row it reports stopped (GET 29 = 0, MoveRate 0, like the refusal bit)
-// and stands; it walks again on kLegionStepAfter consecutive steps of at
-// least that pace or turns (hysteresis: no flipping each tick). Flyers
-// keep retail's rule.
+// body that makes no real headway over a window of LegionHeadway::kWindow
+// ticks reports stopped (GET 29 = 0, MoveRate 0, like the refusal bit) and
+// stands; it walks again on the tick it makes real headway. Headway is NET,
+// measured from where the window began: a displacement of kWindow paces (a
+// pace is a quarter of the base speed, so two full-speed steps), or a turn
+// one way of half the window at the full turn rate (a body pivoting on the
+// spot steps round: retail's MoveRate is "slow" while only turning). A body
+// stepping back and forth over a cell edge, or turning left and right toward
+// two aims that swap, gains neither however long each step is: the 0.8.1
+// walk-in-place (0.1-1 px steps every tick in cycles of 1-6 ticks, its net
+// turn about nothing) passed the old per-tick rule (a step of a pace, or any
+// turn, was headway) on every tick. A window
+// spans two such cycles of 4 ticks or three shorter ones; a genuine slow
+// walker (a pace a tick, a speed-matched follower at half its cap or more)
+// reaches the window's displacement by its end, and a pivot its turn on the
+// fourth tick. A window that stands although the body walked a whole reach
+// or turned a whole turn in it, three times what that came to (to and fro),
+// also marks a livelock (legionShuffle): its navigator then neither flows
+// round blockers, nor follows its pinwheel arc, nor passes, so it holds or
+// walks down the field and the hold's own ways out start
+// (LegionNavigator::drive). A held or merely
+// creeping body is still without being a livelock. The livelock ends when
+// the body is a body length clear of where it began (16 px per footprint
+// cell, plus one cell), not on the next headway: a slow cycle (a side-step
+// crept for 50 ticks, undone by a dash back) clears the window's reach on
+// every dash. Or after kLock ticks: long enough for the hold's ways out
+// (side-step at 6 hold updates, yield at 6 and 12, parting at 12, the
+// formation detour at 60), and short enough that a body in a crowd that has
+// since moved on flows again (a latch of 120 ticks stood the foot-3 landed
+// flyer block's crowd 235 member-ticks against it, base 159, past
+// legion_landedflyers' band). Flyers keep retail's rule.
+void LegionHeadway::tick(uint8_t& ticks,bool& still,bool& shuffle,int32_t beforeX,int32_t beforeZ,int32_t atX,int32_t atZ,
+                         int16_t turnBam,int32_t speed,int32_t rate,int foot) {
+    if (!ticks) {x=beforeX;z=beforeZ;turn=path=turned=0;}
+    ++ticks;
+    const int64_t sx=int64_t(atX)-beforeX,sz=int64_t(atZ)-beforeZ;
+    turn+=turnBam;turned+=std::abs(int32_t(turnBam));
+    path=int32_t(std::min<int64_t>(INT32_MAX,path+int64_t(isqrt64(uint64_t(sx*sx+sz*sz)))));
+    const int64_t dx=int64_t(atX)-x,dz=int64_t(atZ)-z;
+    const int64_t reach=int64_t(kWindow)*std::max<int64_t>(1,speed/4);
+    const int64_t turnReach=std::max<int64_t>(1,rate)*kWindow/2;
+    if (dx*dx+dz*dz>=reach*reach || std::abs(int64_t(turn))>=turnReach) {
+        ticks=0;still=false;
+    } else if (ticks>=kWindow) {
+        ticks=0;still=true;
+        // To and fro: a reach walked, or a turn turned, at least three times
+        // what it came to (a corner turned and then crept along is not).
+        const int64_t net2=dx*dx+dz*dz,walked=path,total=turned;
+        if (!shuffle && ((walked>=reach && 9*net2<walked*walked) || (total>=turnReach && 3*std::abs(int64_t(turn))<total))) {
+            shuffle=true;lockX=x;lockZ=z;lockTicks=0;
+        }
+    }
+    if (shuffle) {
+        const int64_t lx=int64_t(atX)-lockX,lz=int64_t(atZ)-lockZ;
+        const int64_t clear=int64_t(foot+1)*16*Fixed::kOne;
+        if (lx*lx+lz*lz>=clear*clear || ++lockTicks>=kLock) shuffle=false;
+    }
+}
+
 void World::updateLegionStill(Unit& u,Fixed beforeX,Fixed beforeZ) {
-    constexpr uint8_t kLegionStillAfter=6,kLegionStepAfter=2;
     if (!isLegionPathfinding(pathfindingMode_) || !u.type || u.type->canFly || u.type->isStructure() ||
         !u.alive()) {
-        u.legionStillTicks=u.legionStepTicks=0;u.legionStill=false;
+        u.legionWindow=0;u.legionStill=u.legionShuffle=false;
         return;
     }
     // Measured from the start of the tick (Legion's yields step before the
@@ -10860,19 +10912,16 @@ void World::updateLegionStill(Unit& u,Fixed beforeX,Fixed beforeZ) {
     if (size_t(u.id)<legionTickStart_.size() && legionTickStartAt_[size_t(u.id)]==tickCounter_) {
         beforeX=Fixed::raw(legionTickStart_[size_t(u.id)][0]);beforeZ=Fixed::raw(legionTickStart_[size_t(u.id)][1]);
     }
-    const int64_t dx=int64_t(u.x.v)-beforeX.v,dz=int64_t(u.z.v)-beforeZ.v;
-    const int64_t pace=std::max<int64_t>(1,u.baseSpeed.v/4);
-    // Turning toward its way counts as headway: a body pivoting on the
-    // spot steps round (retail's MoveRate is "slow" while only turning).
-    if (dx*dx+dz*dz>=pace*pace || uint16_t(u.heading.v)!=u.tickStartHeadingBam) {
-        u.legionStillTicks=0;
-        u.legionStepTicks=uint8_t(std::min(u.legionStepTicks+1,255));
-        if (u.legionStepTicks>=kLegionStepAfter) u.legionStill=false;
-    } else {
-        u.legionStepTicks=0;
-        u.legionStillTicks=uint8_t(std::min(u.legionStillTicks+1,255));
-        if (u.legionStillTicks>=kLegionStillAfter) u.legionStill=true;
-    }
+    if (size_t(u.id)>=legionWindow_.size()) legionWindow_.resize(size_t(u.id)+1);
+    const int32_t rate=int32_t(std::max<int64_t>(1,int64_t(uint16_t(std::max(u.type->turnRate,u.type->turnInPlaceRate)))*
+                                                    groundTerrainMultiplier(u).v/65536));
+    legionWindow_[size_t(u.id)].tick(u.legionWindow,u.legionStill,u.legionShuffle,beforeX.v,beforeZ.v,u.x.v,u.z.v,
+        std::bit_cast<int16_t>(uint16_t(uint16_t(u.heading.v)-u.tickStartHeadingBam)),u.baseSpeed.v,rate,
+        std::max(u.type->footX,u.type->footZ));
+    // A standing body requests no turn either: the display VM's TurnDirection
+    // (the zontroll/zongob MoveWatcher walks on its last argument) stays quiet.
+    // turnReqBam is display only, never hashed.
+    if (u.legionStill) u.turnReqBam=0;
 }
 
 void World::notifyMovementRate(Unit& u) {
@@ -13836,8 +13885,11 @@ uint64_t World::stateHash() const {
         mix(u.standbyAllowed); mix(u.standbyActive);
         if (u.legionLift) { mix(0x4c494654u); mix(u.legionLiftUntil); mix(uint32_t(u.legionLiftX.v)); mix(uint32_t(u.legionLiftZ.v)); mix(u.legionLiftSince); }
         if (u.legionLiftRest) { mix(0x52455354u); mix(u.legionLiftRest); }
-        if (unitScript(u.id) && (u.legionStillTicks || u.legionStepTicks || u.legionStill)) {
-            mix(0x5354494cu); mix(u.legionStillTicks); mix(u.legionStepTicks); mix(u.legionStill);
+        if (u.legionWindow || u.legionStill || u.legionShuffle) {
+            mix(0x5354494cu); mix(u.legionWindow); mix(u.legionStill); mix(u.legionShuffle);
+            const auto& w=legionWindow_[size_t(u.id)];
+            if (u.legionWindow) {mix(uint32_t(w.x)); mix(uint32_t(w.z)); mix(uint32_t(w.turn)); mix(uint32_t(w.path)); mix(uint32_t(w.turned));}
+            if (u.legionShuffle) {mix(uint32_t(w.lockX)); mix(uint32_t(w.lockZ)); mix(uint32_t(w.lockTicks));}
         }
         mix(u.guardNoMoveAllowed); mix(u.guardNoMoveActive);
         if (u.guardNoMoveActive) {

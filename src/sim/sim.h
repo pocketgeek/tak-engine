@@ -778,6 +778,26 @@ static_assert(sizeof(Order) == 320, "Order is five cache lines (the cold tail ha
 #pragma GCC diagnostic pop
 #endif
 
+// Legion's headway window (World::updateLegionStill): one Legion ground
+// body's tallies since its window began, and one tick of the rule as a pure
+// function of the tick's inputs (tools/legion_still_test drives it with
+// made-up motion). (x, z): where the window began (raw px); turn: the signed
+// turn since (BAM); path: the distance walked (raw px); turned: the turns'
+// total (BAM); all valid while the body's window ticks are above 0. (lockX,
+// lockZ): where its livelock began (raw px), and lockTicks its age, valid
+// while it lasts (at most kLock ticks).
+struct LegionHeadway {
+    static constexpr uint8_t kWindow=8;
+    static constexpr int32_t kLock=64;
+    int32_t x=0,z=0,turn=0,path=0,turned=0,lockX=0,lockZ=0,lockTicks=0;
+    // One tick: the body's raw position at its start (beforeX, beforeZ) and
+    // end (x, z), its heading change (BAM), base speed (raw px a tick), turn
+    // rate this tick (BAM) and larger footprint side (cells). Updates the
+    // window's ticks and the still and livelock (shuffle) flags.
+    void tick(uint8_t& ticks,bool& still,bool& shuffle,int32_t beforeX,int32_t beforeZ,int32_t x,int32_t z,
+              int16_t turn,int32_t speed,int32_t rate,int foot);
+};
+
 // Laid out by cache line (WE D1), alignas(64), with offset static_asserts after
 // the struct (TAK_UNIT_LINE): a new field has to name its line.
 // - line 0: what a neighbour probe reads (forEachNear callbacks, rebuildGrid/
@@ -833,7 +853,7 @@ struct alignas(64) Unit {
                            // its stragglers rejoin. Set via Cmd::SetSquad; folded in the hash.
     uint8_t flightGroundMode=1; // retail unit +130 low bits: 1 landed, 2 airborne
     bool legionLift=false; // see the lift block below
-    bool legionStill = false; // see legionStillTicks below
+    bool legionStill = false; // see legionWindow below
     // Retail keeps TWO independent standing orders, and the single "stance" the
     // HUD shows is only a front-end that writes both (icd setter 0x5198a0):
     //   Offensive -> move 1, fire 2      Defensive -> move 0, fire 2
@@ -965,9 +985,13 @@ struct alignas(64) Unit {
     uint16_t groundPitch=0,groundRoll=0;
     // Legion (deliberate, not retail): a ground body that makes no real
     // headway stands in its scripts (GET 29 and MoveRate report it stopped)
-    // instead of walking on the spot. See World::updateLegionStill. Hashed
-    // for units with a COB script, the only readers.
-    uint8_t legionStillTicks = 0, legionStepTicks = 0;
+    // instead of walking on the spot. The ticks of the current headway
+    // window (0: the next tick starts one; its start and tallies live in
+    // World::legionWindow_), and whether the body stands although it went on
+    // stepping or turning (a livelock: its navigator then holds it). See
+    // World::updateLegionStill. Hashed in Legion.
+    uint8_t legionWindow = 0;
+    bool legionShuffle = false;
     uint16_t variationPhase=0; // original per-unit random phase at +82
     // --- extended runtime state --------------------------------------------
     // DOUBLE, like Player::mana and for the same reason: retail's pools are 64-bit
@@ -1178,8 +1202,8 @@ TAK_UNIT_LINE(flightY, 6); TAK_UNIT_LINE(groundY, 6); TAK_UNIT_LINE(sightFootpri
 TAK_UNIT_LINE(baseSpeed, 6); TAK_UNIT_LINE(groundMoveTick, 6); TAK_UNIT_LINE(groundScanTick, 6);
 TAK_UNIT_LINE(groundGradeTick, 6); TAK_UNIT_LINE(repathLeft, 6); TAK_UNIT_LINE(stuckFor, 6);
 TAK_UNIT_LINE(stuckX, 6); TAK_UNIT_LINE(stuckZ, 6); TAK_UNIT_LINE(bodyBlockStreak, 6);
-TAK_UNIT_LINE(groundPitch, 6); TAK_UNIT_LINE(groundRoll, 6); TAK_UNIT_LINE(legionStillTicks, 6);
-TAK_UNIT_LINE(legionStepTicks, 6); TAK_UNIT_LINE(variationPhase, 6);
+TAK_UNIT_LINE(groundPitch, 6); TAK_UNIT_LINE(groundRoll, 6); TAK_UNIT_LINE(legionWindow, 6);
+TAK_UNIT_LINE(legionShuffle, 6); TAK_UNIT_LINE(variationPhase, 6);
 static_assert(offsetof(Unit, weaponAnimations) / 64 == 4 &&
               (offsetof(Unit, weaponAnimations) + offsetof(tak::RetailWeaponAnimations, events) - 1) / 64 == 4,
               "Unit::weaponAnimations' count and overflow (what the per-tick clear touches) must sit on line 4");
@@ -1264,6 +1288,7 @@ struct FeatType {
     int  deadType = -1;      // TDF featuredead -> destroyed-replacement (placed neutral)
     uint8_t projectileHeight = 0; // Native feature collision height.
     std::string object;      // TDF object= (3D corpse mesh; client visual)
+    bool treeOrRock = false; // see RetailMapFeatureType::treeOrRock
 };
 
 struct SacredSite {
@@ -2421,6 +2446,9 @@ private:
     // never hashed. A unit spawned during the tick has none (generation).
     std::vector<std::array<int32_t,2>> legionTickStart_;
     std::vector<uint32_t> legionTickStartAt_;
+    // Each Legion ground unit's headway window (see updateLegionStill), by
+    // id. Hashed while valid.
+    std::vector<LegionHeadway> legionWindow_;
     void notifyFlightOccupancy(Unit& u);
     bool prepareBuildApproach(Unit& u);
     Order makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fixed z) const;

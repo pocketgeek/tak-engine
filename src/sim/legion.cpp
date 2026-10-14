@@ -147,6 +147,15 @@ constexpr int kPivotSweeps=48;                 // line probes per pivot aim (bou
 constexpr int kPivotAhead=4;                   // an arc aim is at least this many descent cells ahead
 constexpr int kPivotNear=32;                   // no pinwheel within this many cells of the destination
 constexpr int kPivotLead=6;                    // pursuit distance along the arc (cells)
+// A lone tree or rock is no wall end (user decision 2026-10-13, see
+// wallOrigin): an 8-connected run of blocked cells that are all blocking
+// tree/rock features and fit in kLoneSpan x kLoneSpan cells (the largest
+// shipped tree or rock, ararock07, is 7x6).
+constexpr int kLoneSpan=7;
+// Blocked on the cell a flow-around toward its pinwheel arc took it to, a
+// body does not flow straight back (see drive) for this many hold updates
+// (the formation detour's threshold, so the hold's own ways out come first).
+constexpr uint32_t kSlideHold=60;
 // C1 (W9 lane C, see meetScan): a head-on meet of a formation Point of kPivotMembers or more is
 // released once the other group's tail is behind its rearmost body, or after kMeetQuiet ticks with no
 // contact (no oncoming body found ahead, no head-on awareness entry) before the two have met.
@@ -260,6 +269,13 @@ struct LegionNavigator::Impl {
         mutable std::vector<uint32_t> spanMemo,spanGen;
         mutable uint32_t spanGenCur=0;
         mutable uint64_t spanEpoch=~0ull;
+        // The pinwheel's lone tree/rock cells (see loneCell): per 1x1 cell,
+        // 1 lone, 0 a wall, valid where loneGen holds loneGenCur. A pure
+        // function of `cell` and the map's features; derived, never hashed.
+        mutable std::vector<uint8_t> loneMemo;
+        mutable std::vector<uint32_t> loneGen;
+        mutable uint32_t loneGenCur=0;
+        mutable uint64_t loneEpoch=~0ull;
     };
     // Running totals of the live fields (every Field lives in some group's
     // field or next): startField's cap test reads them instead of walking
@@ -663,6 +679,10 @@ struct LegionNavigator::Impl {
         // rounds (cells; 0 not yet measured, -1 hugs as the inner file), and
         // the arc cell it aims at from origin pivotCell.
         int16_t pivotR=0;int pivotCell=-1,pivotAim=-1;
+        // The cell the body's last blocked flow-around toward its pinwheel
+        // arc stepped it into, and the cell it stepped it out of (-1 none):
+        // blocked again there, it does not flow straight back (see drive).
+        int slideCell=-1,slideFrom=-1;
         // W8 step 1: the origin of the last vertex probe (instrument only:
         // it gates a Stats-only probe, never a decision; not hashed).
         int vertexCell=-1;
@@ -5901,7 +5921,9 @@ struct LegionNavigator::Impl {
             const bool lanes=f->done&&m.slot>=0&&m.pt&&partRefs(m)>=kPivotMembers&&formationMember(m);
             if(!lanes)m.gateCell=-1;
             else if(gateAim(u,m,g,p,*f,ox,oz,cell)) {pivoting=&m;pivotTarget=cell;m.site=LegionNavigator::SiteGate;}
-            else if(m.pivotR>=0) {
+            // A livelocked body (Unit::legionShuffle, World::updateLegionStill)
+            // walks down the field instead: its arc aim is what swapped.
+            else if(m.pivotR>=0&&!livelock(u)) {
                 if(m.pivotCell!=here) {m.pivotCell=here;m.pivotAim=pivotAim(u,m,p,*f,ox,oz);}
                 if(m.pivotAim>=0) {cell=m.pivotAim;pivoting=&m;pivotTarget=cell;m.site=LegionNavigator::SitePivot;}
             }
@@ -5910,7 +5932,9 @@ struct LegionNavigator::Impl {
         // C1: a member of a Point latched in a head-on meet narrows before it (see meetAim).
         if(m.pt&&m.pt->meet.tick!=kNoTick&&here!=m.goal&&pivoting!=&m&&partRefs(m)>=kPivotMembers&&formationMember(m)&&
            meetAim(u,m,p,f,ox,oz,aimX,aimZ)&&f)direct=false;
-        if(here!=m.goal&&passAhead(u,m,p,f,maximum,ox,oz,aimX,aimZ,direct)) {m.site=LegionNavigator::SitePass;return;}
+        // Nor does a livelocked body pass (a lane pass a cell over, undone by
+        // the field's next step, was a 42-tick to-and-fro of its own).
+        if(here!=m.goal&&!livelock(u)&&passAhead(u,m,p,f,maximum,ox,oz,aimX,aimZ,direct)) {m.site=LegionNavigator::SitePass;return;}
         drive(u,m,p,f,maximum,aimX,aimZ,here==m.goal,direct);
     }
     // The cell a field follower at origin (ox,oz) aims at; -1 when no
@@ -6431,6 +6455,70 @@ struct LegionNavigator::Impl {
         cell=m.gateCell;
         return true;
     }
+    // Pinwheel walls. A blocked 1x1 cell is a lone tree or rock (user
+    // decision 2026-10-13: "ignore single trees and rocks") when every cell
+    // of its 8-connected run of blocked cells is covered by a blocking
+    // feature of TDF category trees, plant(s) or rocks
+    // (RetailMapFeatureType::treeOrRock) and the run fits in kLoneSpan x
+    // kLoneSpan cells; terrain, water, structures, the map edge or any other
+    // feature in the run make it a wall. Bodies path and collide round a
+    // lone one as before; only the pinwheel's wall contact, outward normal
+    // and free width ignore it. (A formation member ranked at a real wall
+    // end took every scattered tree on its later way for one: the arc point
+    // R cells off it switched sides between neighbouring origins and the
+    // body turned back and forth on the spot, the 0.8.1 walk-in-place.)
+    bool treeCell(int cx,int cz) const {
+        const int W=width();
+        const auto& c=w.mapPlacementCells_[size_t(cz)*W+cx];
+        if(c.feature>=0xfffa&&c.feature!=0xfffe)return false;
+        const int ax=cx-(c.feature==0xfffe?c.backX:0),az=cz-(c.feature==0xfffe?c.backZ:0);
+        const auto index=w.mapPlacementCells_[size_t(az)*W+ax].feature;
+        return index<w.mapPlacementTypes_.size()&&w.mapPlacementTypes_[index].blocking&&w.mapPlacementTypes_[index].treeOrRock;
+    }
+    // Blocked cell (cx,cz) of plane p: is its run a lone tree or rock? One
+    // bounded flood (it stops at the first wall cell or past the span); the
+    // verdict holds for every cell it reached (one run), memoised per epoch.
+    bool loneCell(const Plane& p,int cx,int cz) const {
+        const int W=width(),H=height();
+        const size_t n=size_t(W)*size_t(H);
+        if(p.loneMemo.size()!=n) {p.loneMemo.assign(n,0);p.loneGen.assign(n,0);p.loneGenCur=0;p.loneEpoch=~0ull;}
+        if(p.loneEpoch!=p.epoch) {
+            p.loneEpoch=p.epoch;
+            if(++p.loneGenCur==0) {std::fill(p.loneGen.begin(),p.loneGen.end(),0u);p.loneGenCur=1;}
+        }
+        const size_t c0=size_t(cz)*W+cx;
+        if(p.loneGen[c0]==p.loneGenCur)return p.loneMemo[c0]!=0;
+        std::array<int,kLoneSpan*kLoneSpan> run{};size_t count=0;
+        run[count++]=int(c0);
+        int x0=cx,x1=cx,z0=cz,z1=cz;bool lone=true;
+        for(size_t head=0;head<count&&lone;++head) {
+            const int x=run[head]%W,z=run[head]/W;
+            if(!treeCell(x,z)) {lone=false;break;}
+            for(const auto& d:kDirections) {
+                const int nx=x+d[0],nz=z+d[1];
+                if(nx<0||nz<0||nx>=W||nz>=H) {lone=false;break;}
+                const int c=nz*W+nx;
+                if(p.cell[size_t(c)]||std::find(run.begin(),run.begin()+count,c)!=run.begin()+count)continue;
+                x0=std::min(x0,nx);x1=std::max(x1,nx);z0=std::min(z0,nz);z1=std::max(z1,nz);
+                if(x1-x0>=kLoneSpan||z1-z0>=kLoneSpan) {lone=false;break;}
+                run[count++]=c;
+            }
+        }
+        for(size_t i=0;i<count;++i) {p.loneGen[size_t(run[i])]=p.loneGenCur;p.loneMemo[size_t(run[i])]=lone;}
+        return lone;
+    }
+    // Is origin (x,z) a wall to the pinwheel: illegal, and its footprint
+    // reaches the map's last row or column or beyond (the edge is a wall), or
+    // covers a blocked cell that is no lone tree or rock? A legacy plane
+    // keeps no cell layer: there every illegal origin is one.
+    bool wallOrigin(const Plane& p,int x,int z) const {
+        if(legal(p,x,z))return false;
+        const int W=width(),H=height();
+        if(p.cell.empty()||x<0||z<0||x+p.footX>=W||z+p.footZ>=H)return true;
+        for(int j=0;j<p.footZ;++j)for(int i=0;i<p.footX;++i)
+            if(!p.cell[size_t(z+j)*W+x+i]&&!loneCell(p,x+i,z+j))return true;
+        return false;
+    }
     // Pinwheel: a formation keeps its width round the end of a wall. The
     // field's shortest ways past a convex wall end all touch its tip, so
     // members descending it fold into one file there. Instead, when a turn
@@ -6458,12 +6546,14 @@ struct LegionNavigator::Impl {
             chain[size_t(n++)]=next;
         }
         ++stats.pivotCalls;stats.pivotWork+=uint64_t(n);   // W8 step 0: the chain cells
-        // Outward (away from illegal origins) vector at a chain cell; zero
-        // when no illegal origin is within a cell.
+        // Outward (away from wall origins, wallOrigin) vector at a chain
+        // cell; zero when no wall origin is within a cell.
         auto wall=[&](int c,int& vx,int& vz) {
             const int x=c%W,z=c/W;vx=vz=0;
-            for(const auto& d:kDirections)if(!legal(p,x+d[0],z+d[1])) {vx-=d[0];vz-=d[1];}
-            return vx||vz||!legal(p,x+1,z)||!legal(p,x,z+1)||!legal(p,x-1,z)||!legal(p,x,z-1);
+            uint32_t hit=0;
+            for(size_t k=0;k<kDirections.size();++k)
+                if(wallOrigin(p,x+kDirections[k][0],z+kDirections[k][1])) {hit|=1u<<k;vx-=kDirections[k][0];vz-=kDirections[k][1];}
+            return vx||vz||(hit&0xfu)!=0;   // kDirections 0-3: the orthogonal neighbours
         };
         int touch=-1;
         for(int i=0;i<n&&touch<0;++i) {int vx,vz;if(wall(chain[size_t(i)],vx,vz))touch=i;}
@@ -6588,13 +6678,17 @@ struct LegionNavigator::Impl {
             // Round the end the arc is a level set of the field (every point
             // on it is as far from the tip), so the aim is not required to
             // be lower than here: its chain cell is ahead.
+            // A lone tree or rock (wallOrigin) narrows nothing: the free
+            // width runs on over it, and an arc point on it backs off to the
+            // nearest legal origin short of it.
             auto open=[&](int64_t k) {
                 const int x=cx+int(nx*k/len),z=cz+int(nz*k/len);
-                return legal(p,x,z)&&f.at(size_t(z)*W+x)!=kUnreached;
+                return legal(p,x,z)?f.at(size_t(z)*W+x)!=kUnreached:!wallOrigin(p,x,z);
             };
             int64_t r=0;
             while(r<R&&open(r+1))++r;
             stats.pivotWork+=uint64_t(r)+1;   // W8 step 0: the free-width probes
+            while(r>0&&!legal(p,cx+int(nx*r/len),cz+int(nz*r/len))) {--r;++stats.pivotWork;}
             if(r<int64_t(kPivotMinBodies)*foot)continue;
             const int qx=cx+int(nx*r/len),qz=cz+int(nz*r/len);
             if((qx-mx)*(qx-mx)+(qz-mz)*(qz-mz)<int64_t(kPivotLead)*kPivotLead&&j+1<n)continue;
@@ -6774,6 +6868,9 @@ struct LegionNavigator::Impl {
         }
         return false;
     }
+    // A livelock (World::updateLegionStill): the body stands by its net
+    // headway although it went on stepping or turning to and fro.
+    static bool livelock(const Unit& u) {return u.legionShuffle;}
     void drive(Unit& u,Member& m,const Plane& p,const Field* f,Fixed maximum,Fixed aimX,Fixed aimZ,bool final,
                bool towardGoal=false,bool face=true,bool pass=false) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
@@ -6868,13 +6965,29 @@ struct LegionNavigator::Impl {
             // Blocked by a body. Flow around it through any other free cell
             // that is strictly closer to the goal (field descent), committing
             // to that neighbour for this update; otherwise hold still.
+            // Blocked again on the cell a flow-around toward its arc took it
+            // to, the body never flows straight back to the cell it came
+            // from (slideFrom): "closer" is the arc point's distance on the
+            // cell that has one and the field's (or the own goal's line) on
+            // the next that has none, and those two side-steps undid each
+            // other for good, a body walking on the spot over one cell edge
+            // (the 0.8.1 walk-in-place: every case in the user's recording
+            // was arc against field). It holds instead, its hold's own ways
+            // out first (below), and after kSlideHold hold updates there it
+            // may step back. Other side-steps still may (barring them too
+            // cost a crowd crossing a firing ring its arrivals: ringcross
+            // 40 -> 35 of 40). Nor does a livelocked body flow round at all
+            // (Unit::legionShuffle, World::updateLegionStill): a flow-around
+            // that keeps it shuffling in place is a hold, and the hold's own
+            // ways out (side-step, detour, yield, parting, settling) take over.
             bool moved=false,passFiltered=false;
-            if(f) {
+            if(f&&!livelock(u)) {
                 // Direct-line members measure progress toward their own goal
                 // cell; field followers by the group potential.
                 const int goalX=m.goal%W,goalZ=m.goal/W;
                 const bool arc=pivoting==&m&&!towardGoal;
                 const int arcX=pivotTarget%W,arcZ=pivotTarget/W;
+                const int back=m.slideCell==oz*W+ox&&m.holdUpdates<kSlideHold?m.slideFrom:-1;
                 auto metric=[&](int x,int z)->int64_t {
                     if(arc)return int64_t(arcX-x)*(arcX-x)+int64_t(arcZ-z)*(arcZ-z);
                     if(towardGoal)return int64_t(goalX-x)*(goalX-x)+int64_t(goalZ-z)*(goalZ-z);
@@ -6893,6 +7006,7 @@ struct LegionNavigator::Impl {
                     // opposingcolumns spin +35-117% for 3-10% fewer of these
                     // holds. MV-16 stays an intended trade.)
                     if(m.passUntil>w.tickCounter_&&d[0]*m.passRX+d[1]*m.passRZ<0) {passFiltered=true;continue;}
+                    if((oz+d[1])*W+ox+d[0]==back)continue;
                     const int64_t v=metric(ox+d[0],oz+d[1]);
                     if(v<here)options[size_t(count++)]={v,k};
                 }
@@ -6912,6 +7026,8 @@ struct LegionNavigator::Impl {
                         // keeps facing its route while it shuffles.
                         moved=true;++stats.slides;face=false;
                         m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;m.detourPass=false;
+                        if(arc) {m.slideCell=m.detour;m.slideFrom=oz*W+ox;}
+                        else m.slideCell=-1;
                     }
                 }
             }
@@ -6956,7 +7072,9 @@ struct LegionNavigator::Impl {
         // its string-pulled aim shifts by a cell in a crowd; motion is exact
         // regardless, and a real course change (> ~5.6 deg) still turns.
         if(face&&std::abs(diff)>1024)u.heading=u.heading+Bam(std::clamp(diff,-turn,turn));
-        u.turnReqBam=diff;
+        // A step that does not turn the body requests no turn of its
+        // scripts either (TurnDirection walks the zontroll/zongob gait).
+        u.turnReqBam=face?diff:0;
         // A reach member leaving its ring spot is no soft obstacle any more.
         if(m.state==Holding&&!policy(m.kind).completes)unstamp(u.id);
         m.state=Moving;m.heldSince=kNoTick;m.holdUpdates=0;
@@ -7709,6 +7827,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
             if(std::get<0>(m.point)>=0&&m.part!=std::get<1>(m.point)) {h=mix(h,0x70617274ull);h=mix(h,m.part);}
             if(m.pivotR||m.pivotCell>=0) {h=mix(h,uint64_t(uint16_t(m.pivotR)));h=mix(h,uint64_t(uint32_t(m.pivotCell))<<32|uint32_t(m.pivotAim));}
+            if(m.slideCell>=0) {h=mix(h,0x736c696465ull);h=mix(h,uint64_t(uint32_t(m.slideCell))<<32|uint32_t(m.slideFrom));}
             if(m.meetSeen!=kNoTick) {h=mix(h,0x6d73656eull);h=mix(h,m.meetSeen);}
             if(m.gateCell>=0) {
                 h=mix(h,0x67617465ull);h=mix(h,uint32_t(m.gateCell));

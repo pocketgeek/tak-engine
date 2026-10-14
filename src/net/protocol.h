@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 256;      // 256: an air carrier's emptied list takes its default mission (4d856a) the call VTOL_UNLOAD retires,
+constexpr uint32_t kNetVersion = 257;      // 257: Legion livelock (the 0.8.1 walk-in-place): the pinwheel takes no lone tree or rock for a wall
+                                           //      end; a side-step toward the arc is not undone straight back for 60 holds (hashed Member slide
+                                           //      cells); a ground body stands (legionStill) after 8 ticks without NET headway, and a to-and-fro
+                                           //      window latches a livelock that holds it (hashed Unit::legionWindow/legionShuffle + its window)
+                                           // 256: an air carrier's emptied list takes its default mission (4d856a) the call VTOL_UNLOAD retires,
                                            //      with the step-out controller (2*(range+400)px ahead) still attached; VTOL_Standby lands it two
                                            //      ticks on instead of flying it 1100-1400px off (zonroc, tarship, creaeri); every unload that
                                            //      empties the queue stands by that same tick (ships one tick earlier)

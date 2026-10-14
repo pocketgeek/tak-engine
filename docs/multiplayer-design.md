@@ -608,7 +608,10 @@ of the ground (stations, positions and the flyer order point; Legion only), and
 placement test, with a hashed retry delay when the site is refused, and 256
 lets an air transport whose unload empties its orders stand by (and land) at
 the drop point instead of flying on along the unload's step-out course; 0.8.0
-ships protocol 256. Game options
+and 0.8.1 ship protocol 256. Protocol 257 ends Legion's walk-in-place livelock
+(Legion only): the pinwheel no longer takes a lone tree or rock for a wall end,
+a blocked side-step does not step straight back, and a body without net
+headway stands in its scripts and is held. Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
 host sends later option updates. Both clients and the referee apply that choice

@@ -895,6 +895,14 @@ first/repeated refusal, attachment and four headings. The real shipped Hunter
 refusal and resumes without restarting the script. Both client builds and the
 34 Debug / 27 Release CTests pass. No game asset is added to the repository.
 
+Legion (not retail) adds its own stand on top of the refusal bit
+(`World::updateLegionStill`): since protocol 257 a ground body without NET
+headway over 8 ticks reads GET 29 = 0 and requests no `TurnDirection`, and a
+body walking or turning to and fro is held by its navigator. The 0.8.1
+recording that showed Zhon units walking on the spot with both refusal and the
+old per-tick Legion rule silent is described in docs/legion-pathfinding.md,
+"Livelock: the 0.8.1 walk-in-place".
+
 Example reproduction (local retail capture/assets required):
 
 ```sh

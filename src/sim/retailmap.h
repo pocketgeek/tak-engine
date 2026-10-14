@@ -17,6 +17,9 @@ struct RetailMapFeatureType {
     bool blocking=false,indestructible=false;
     bool clearable=false; // No indestructible blocker in the dead/burnt replacement graph.
     uint8_t projectileHeight=0; // Feature TDF height, stored as a byte by retail.
+    // TDF category trees, plant, plants or rocks. Legion only (not retail): a
+    // lone one is no wall end to its pinwheel (LegionNavigator, wallOrigin).
+    bool treeOrRock=false;
 };
 
 struct RetailMapFeatureCell : RetailMapBoundaryCell {

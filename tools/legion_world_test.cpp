@@ -1503,6 +1503,184 @@ void pinwheel() {
     check(gap90!=INT_MAX&&gap90<=kPinwheelGap90*kPinwheelGapBand,"group took longer through the gap than the baseline");
 }
 
+// The 0.8.1 walk-in-place (user decision 2026-10-13: "ignore single trees and
+// rocks" plus the livelock backstop). Bodies that step or turn every tick and
+// get nowhere: a member whose last 30 ticks walked 8 px or more and came to a
+// third of that or less, or turned 90 degrees or more and kept a third of it or
+// less, and is under 8 px from where it was 30 ticks ago, for 30 ticks or more
+// in a row (the user replay's rule, with the path to tell a jammed creep from
+// a livelock). `walking` counts the ticks of those runs, from their 30th on,
+// on which the body also shows a walk: it stepped and stands in no script
+// (not legionStill, no repeated refusal, the GET 29 / MoveRate gate). Per
+// steering site, at the member's last update (LegionNavigator::Site).
+struct ToFro {int64_t ticks=0,walking=0,runs=0;std::array<int64_t,LegionNavigator::kSites> site{};};
+struct ToFroWatch {
+    struct Trail {std::vector<std::array<int64_t,3>> at;int run=0;};
+    std::map<int,Trail> trail;ToFro r;
+    void sample(World& w,const std::vector<int>& ids) {
+        for(int id:ids) {
+            const auto& u=*w.unit(id);
+            auto& t=trail[id];
+            const bool stepped=!t.at.empty()&&(t.at.back()[0]!=u.x.v||t.at.back()[1]!=u.z.v);
+            t.at.push_back({u.x.v,u.z.v,int64_t(uint16_t(u.heading.v))});
+            if(t.at.size()>31)t.at.erase(t.at.begin());
+            bool fro=false;
+            if(!u.orders.empty()&&t.at.size()==31) {
+                int64_t path=0,turned=0,turn=0;
+                for(size_t i=1;i<t.at.size();++i) {
+                    const int64_t dx=(t.at[i][0]-t.at[i-1][0])>>8,dz=(t.at[i][1]-t.at[i-1][1])>>8;
+                    path+=int64_t(std::sqrt(double(dx*dx+dz*dz)));
+                    const int d=int16_t(uint16_t(t.at[i][2]-t.at[i-1][2]));turned+=std::abs(d);turn+=d;
+                }
+                const int64_t nx=(t.at.back()[0]-t.at.front()[0])>>8,nz=(t.at.back()[1]-t.at.front()[1])>>8,net2=nx*nx+nz*nz;
+                fro=net2<int64_t(8*256)*(8*256)&&((path>=8*256&&9*net2<path*path)||(turned>=16384&&3*std::abs(turn)<turned));
+            }
+            t.run=fro?t.run+1:0;
+            if(t.run<30)continue;
+            const int64_t add=t.run==30?30:1;
+            r.ticks+=add;r.runs+=t.run==30;
+            r.site[size_t(std::clamp(w.legionNavigator()->steerSite(id),0,LegionNavigator::kSites-1))]+=add;
+            r.walking+=stepped&&!u.legionStill&&u.bodyBlockStreak<2;
+        }
+    }
+};
+
+// (i) A ranked formation crossing scattered single trees. 48 2x2 bodies round
+// the pinwheel fixture's wall end (they take their ranks there) and walk on
+// east, 190 cells, through a field of single 2x2 trees, one every 9 cells or
+// so: each a lone blocking feature of TDF category trees. On 9f677c87 every
+// tree in a ranked member's 48-cell look-ahead was a wall end to it: its arc
+// point R cells off the tree switched sides between neighbouring origins, and
+// the body turned left and right on the spot, or its side-steps by the arc and
+// by the field undid each other (offset 0: 2325 to-and-fro member-ticks, 1841
+// of them walking, 1532 on the arc; 9225 member-ticks of arc steering in the
+// tree field). Now the pinwheel ignores the trees (LegionNavigator::
+// wallOrigin): no member steers by its arc more than kPivotChain cells past
+// the wall end (with the trees made walls again the new build still steers
+// 6892 member-ticks by them, though the backstop stops the to and fro), and no
+// member walks to and fro.
+constexpr int kPivotChainCells=48;   // legion.cpp kPivotChain: the pinwheel look-ahead
+struct LoneTreesResult {int arrived=0,total=0;ToFro fro;int64_t farPivot=0;};
+LoneTreesResult loneTreesRun() {
+    constexpr int kW=320,kH=140;
+    Fixture f(kW,kH);
+    f.rect(98,48,4,92);
+    std::vector<RetailMapFeatureType> types{{"legion-wall",1,1,true,true,false,0},{"legion-tree",2,2,true,false,true,0}};
+    types[1].treeOrRock=true;
+    uint32_t rng=4;
+    for(int z=20;z<80;z+=9)for(int x=106;x<250;x+=9) {
+        rng=rng*1103515245u+12345u;const int jx=int(rng>>16)%9;rng=rng*1103515245u+12345u;const int jz=int(rng>>16)%9;
+        f.cells[size_t(z+jz)*kW+x+jx]=1;f.world.blockCells(x+jx,z+jz,2,2,true);
+    }
+    f.world.setMapPlacementFeatures(f.cells,types);
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<48;++i)ids.push_back(f.spawn(type,40+(i%8)*3,96+(i/8)*3));
+    f.start();
+    for(int id:ids)f.world.order(id,310*16,44*16,false);
+    LoneTreesResult r;r.total=int(ids.size());
+    ToFroWatch watch;
+    for(int t=0;t<8000&&r.arrived<r.total;++t) {
+        f.world.tick(1.f/30);watch.sample(f.world,ids);
+        r.arrived=0;
+        for(int id:ids) {
+            const auto& u=*f.world.unit(id);
+            r.arrived+=u.orders.empty();
+            if(!u.orders.empty()&&(u.x.v>>20)>101+kPivotChainCells+8&&f.world.legionNavigator()->steerSite(id)==LegionNavigator::SitePivot)++r.farPivot;
+        }
+    }
+    for(int id:ids)check(f.legal(id),"illegal footprint among the trees");
+    r.fro=watch.r;
+    std::printf("lonetrees shift=%d arrived=%d/%d to_fro=%lld walking=%lld arc=%lld blocked=%lld far_pivot=%lld\n",g_shift,
+        r.arrived,r.total,(long long)r.fro.ticks,(long long)r.fro.walking,(long long)r.fro.site[LegionNavigator::SitePivot],
+        (long long)r.fro.site[LegionNavigator::SiteBlocked],(long long)r.farPivot);
+    return r;
+}
+void lonetrees() {
+    for(int i=0;i<5;++i) {
+        g_shift=kShifts[i];
+        const auto r=loneTreesRun();
+        check(r.arrived==r.total,"formation did not cross the tree field");
+        check(r.farPivot==0,"a member steered by its pinwheel arc round a lone tree");
+        check(r.fro.ticks==0,"a member walked to and fro among the trees");
+    }
+    g_shift=0;
+}
+
+// (ii) Side-steps that undo each other. 32 bodies round the wall end of the
+// pinwheel fixture to a point 180 cells east, and 64 to one 120 east; no
+// trees. On 9f677c87 a blocked body flowed round into the next cell by one
+// measure (the arc, the field or its own goal's line) and straight back by
+// the other, every other tick, a pixel either side of the cell edge (offset
+// 0: body 27 at x 1479-1480 for 191 ticks, walking all along: each step was
+// half its speed); 211 and 180 to-and-fro member-ticks, 162 and 122 of them
+// walking, and up to 239 at the other offsets. Now a body blocked on the cell
+// a flow-around toward its pinwheel arc took it to does not flow straight
+// back for kSlideHold hold updates, and a livelock that slips through holds
+// (Unit::legionShuffle).
+void slidebackRun(int count,int gx,int gz,int64_t& fro,int64_t& walking) {
+    Fixture f(320,140);
+    f.rect(98,48,4,92);f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<count;++i)ids.push_back(f.spawn(type,40+(i%8)*3,96+(i/8)*3));
+    f.start();
+    for(int id:ids)f.world.order(id,float(gx*16),float(gz*16),false);
+    ToFroWatch watch;int arrived=0;
+    for(int t=0;t<8000&&arrived<count;++t) {
+        f.world.tick(1.f/30);watch.sample(f.world,ids);
+        arrived=0;for(int id:ids)arrived+=f.world.unit(id)->orders.empty();
+    }
+    std::printf("slideback shift=%d count=%d goal=%d,%d arrived=%d to_fro=%lld walking=%lld arc=%lld blocked=%lld\n",g_shift,count,gx,gz,arrived,
+        (long long)watch.r.ticks,(long long)watch.r.walking,(long long)watch.r.site[LegionNavigator::SitePivot],(long long)watch.r.site[LegionNavigator::SiteBlocked]);
+    check(arrived==count,"bodies did not reach the point past the wall end");
+    fro+=watch.r.ticks;walking+=watch.r.walking;
+}
+void slideback() {
+    int64_t fro=0,walking=0;
+    for(int i=0;i<5;++i) {g_shift=kShifts[i];slidebackRun(32,280,60,fro,walking);slidebackRun(64,220,60,fro,walking);}
+    g_shift=0;
+    check(walking==0,"a body walked on the spot");
+    check(fro==0,"side-steps undid each other");
+}
+
+// (iv) A standing body requests no turn. Legion's display VM dispatches its
+// scripts' TurnDirection on the sign of Unit::turnReqBam, and the zontroll /
+// zongob gait walks on its last argument: a body standing in its scripts
+// (legionStill) or stepping without turning (a shuffle, side-step or route
+// step, face=false) must request none, or its legs walk on. On 9f677c87 drive
+// wrote the aim's turn after every step: in the 64-body slideback world
+// (offset 0) 22008 of 47066 standing member-ticks requested a turn, and 29465
+// of 144185 steps that turned nothing.
+void stillturn() {
+    Fixture f(320,140);
+    f.rect(98,48,4,92);f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<64;++i)ids.push_back(f.spawn(type,40+(i%8)*3,96+(i/8)*3));
+    f.start();
+    for(int id:ids)f.world.order(id,220*16,60*16,false);
+    std::map<int,std::array<int32_t,3>> before;
+    int64_t still=0,stillTurn=0,flat=0,flatTurn=0;int arrived=0;
+    for(int t=0;t<8000&&arrived<int(ids.size());++t) {
+        for(int id:ids) {const auto& u=*f.world.unit(id);before[id]={u.x.v,u.z.v,u.heading.v};}
+        f.world.tick(1.f/30);
+        arrived=0;
+        for(int id:ids) {
+            const auto& u=*f.world.unit(id);
+            arrived+=u.orders.empty();
+            if(u.orders.empty())continue;
+            const auto& b=before[id];
+            if(u.legionStill) {++still;stillTurn+=u.turnReqBam!=0;}
+            if((u.x.v!=b[0]||u.z.v!=b[1])&&u.heading.v==b[2]) {++flat;flatTurn+=std::abs(u.turnReqBam)>1024;}
+        }
+    }
+    std::printf("stillturn still=%lld still_turn=%lld unturned_steps=%lld unturned_turn=%lld\n",(long long)still,(long long)stillTurn,(long long)flat,(long long)flatTurn);
+    check(still>0&&flat>0,"the crowd never stood or shuffled (no test)");
+    check(stillTurn==0,"a standing body requested a turn");
+    check(flatTurn==0,"a step that turned nothing requested a turn");
+}
+
 // A member whose own goal lies inside a lattice of settled same-player
 // arrivals (2x2 bodies at a 3-cell stride: the 1-cell gaps fit no body). The
 // way in exists only if the settled bodies yield. It must ask them to, and
@@ -3498,7 +3676,7 @@ int main(int argc,char** argv) {
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
-        {"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong}};
+        {"lonetrees",lonetrees},{"slideback",slideback},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

@@ -240,7 +240,8 @@ struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx
                  bool isStone = false; bool isFrozen = false;
                  bool indestructible = false;
                  float hp = 0; std::string dead;
-                 std::string object; };
+                 std::string object;
+                 bool treeOrRock = false; };
 
 std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
     std::unordered_map<std::string, FeatDef> defs;
@@ -259,6 +260,8 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
                     std::string cat = node.valueOr("category", "");
                     std::transform(cat.begin(), cat.end(), cat.begin(), ::tolower);
                     d.mana = (cat == "mana");
+                    // Lone scenery Legion's pinwheel ignores (RetailMapFeatureType::treeOrRock).
+                    d.treeOrRock = cat == "trees" || cat == "plant" || cat == "plants" || cat == "rocks";
                     // The buildable deposit is the animated Sacred Stone centre;
                     // the static Standing Stones (animating=0) around it are ruins.
                     d.glowy = d.mana && node.numberOr("animating", 0) != 0;
@@ -316,6 +319,7 @@ struct FeatTypeInterner {
         t.fx = di->second.fx; t.fz = di->second.fz;
         t.blocking = di->second.blocking != 0;
         t.projectileHeight = di->second.projectileHeight;
+        t.treeOrRock = di->second.treeOrRock;
         t.decomposeTicks = di->second.decomposeTicks;
         t.resurrectable = di->second.resurrectable;
         t.reclaimable = di->second.reclaimable != 0;
@@ -357,6 +361,7 @@ static void scanFeaturePlane(World& world, const tak::tnt::Map& map,
         if (auto it=defs.find(name);it!=defs.end()) {
             type={name,it->second.fx,it->second.fz,it->second.blocking!=0,it->second.indestructible};
             type.projectileHeight=it->second.projectileHeight;
+            type.treeOrRock=it->second.treeOrRock;
             // 4945bb: grade-1 blockers must remain removable through every
             // dead/burnt replacement, including cycles and shared successors.
             type.clearable=!type.indestructible;

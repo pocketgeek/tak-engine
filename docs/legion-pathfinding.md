@@ -655,18 +655,29 @@ that do not turn it: an eighth of its speed while it faces away. Every
 sample that lands on one of those creeping ticks starts another full cycle,
 so the legs walk while the body all but stands.
 
-In Legion, `World::updateLegionStill` therefore measures each scripted
-ground body's step from the start of the tick. Six ticks in a row under a
-quarter of its maximum speed, without turning, make it report stopped:
-GET 29 is 0 and MoveRate is 0, as with the refusal bit, so it stands. Two
-consecutive steps at that pace or more, or turns, make it walk again (a
-body pivoting on the spot steps round). This hysteresis stops it flipping
-every tick. Flyers and Retail mode keep retail's rule.
+In Legion, `World::updateLegionStill` therefore measures each ground body's
+NET headway over a window of 8 ticks (`LegionHeadway`), from where the window
+began. A window that ends without a displacement of 8 paces (a pace is a
+quarter of the base speed: two full-speed steps) or a turn one way of 4 ticks
+at the full turn rate makes it report stopped: GET 29 is 0 and MoveRate is 0,
+as with the refusal bit, so it stands, and it requests no turn of its scripts
+(`turnReqBam` 0, so the display VM sends no `TurnDirection`). The tick its
+headway reaches either mark it walks again (a body pivoting on the spot steps
+round). Until protocol 257 the rule was per tick: six ticks in a row under a
+pace and without turning made a body stand, and two steps of a pace or any
+turn made it walk. A body stepping back and forth over a cell edge, or
+turning left and right toward two aims that swap, passed that on every tick
+and walked on the spot for good (the 0.8.1 walk-in-place, "Livelock" below);
+by net headway it gains nothing. A window that stands although the body
+walked a whole reach in it, or turned a whole turn, three times what that
+came to, also latches a livelock (`legionShuffle`): see "Livelock" below.
+Flyers and Retail mode keep retail's rule.
 
 The rule applies to every Legion ground body, whatever blocks it: another
 body of any player (held, waiting, queued behind, pressed against, a crowd)
-or terrain. Its state is hashed only for units with a COB script, the only
-readers.
+or terrain. Since protocol 257 its state is hashed for every Legion ground
+unit (the navigator reads the livelock); before, only for units with a COB
+script.
 
 Measured as unit-ticks in which the body "walks" while it moves less than
 8 px in 30 ticks. "Walks" means that a `walk*` script runs, or, where there
@@ -848,7 +859,9 @@ workers (`legion_movement_orders_trolls_maze`).
   place), staticblock, squadformation, pinwheel, landedflyers, mixedformation,
   liftflyers and aware. All pass. Boats and hovercraft: navalclearance,
   navalisland, hovershore, navalmissions (see "Scope"). Their metrics come
-  from the shared observer (see "Instruments").
+  from the shared observer (see "Instruments"). Since protocol 257 also
+  lonetrees, slideback and stillturn, and `legion_still_test` for the
+  headway window alone (see "Livelock").
 * `legion_acceptance_test`, five checks run in all five modes; Legion
   asserts, the others report. singleunit, jagged, trapped and group pass for
   Legion; crowdheld is a ratchet (61 of 64 in goal or better, below).
@@ -1155,6 +1168,7 @@ within 32 cells of the destination (the area logic places the slots). The
 group's field window gets the arc margin. Ranks and the aim memo are hashed;
 the work is bounded. Seen in `corner-1x48:gate.top.files_x100` (files abreast
 at the corner), `uturn:gate.top.files_x100` and the `pinwheel` world test.
+Since protocol 257 a lone tree or rock is no wall end (see "Livelock" below).
 
 ### Passage gate (W8, protocol 247)
 
@@ -1555,6 +1569,126 @@ group is planned from a done field (`ringClaim`); a paused field never finishes 
 covered, so the ring came late or not at all (attackring-r200-64 `reach.ring.ever_end` 57 -> 37 on the
 first merged head). Reach groups build to done, as on the W5 head.
 
+### Livelock: the 0.8.1 walk-in-place (protocol 257)
+
+The user's 0.8.1 recording (The Upper Humber, Legion, Crusades balance) showed
+Zhon units walking on the spot for up to 72 s after 17:00: 24 episodes of a
+second or more, 15 units, about 340 unit-seconds by the replay's rule (GET 29
+above 5 while the body is under 8 px from where it was 30 ticks earlier, for
+30 ticks or more). Each was a livelock of 1-6 tick cycles with 0.1-1 px steps:
+- **Arc flips.** A formation member ranked at a real wall end (its `pivotR`
+  lasts the order) took every scattered single tree in its 48-cell look-ahead
+  for a wall end: the arc point `pivotR` cells off the tree switched sides
+  between neighbouring origins, so the body turned left and right at an eighth
+  of its speed, stepping back over the cell edge each time.
+- **Side-steps that undo each other.** Blocked, a body flowed round toward
+  its arc point; on the next cell `pivotAim` found none and the field's
+  measure picked the cell just left, two or five ticks a cycle.
+- Neither ever held, so the hold's ways out never started, and the old
+  per-tick still rule counted every step of a pace and every turn as headway.
+
+User decision (2026-10-13): "ignore single trees and rocks", with the
+livelock backstop. What changed, Legion only (Retail is bit-identical):
+- **Lone trees and rocks are no wall ends** (`wallOrigin`). A blocked cell
+  counts for the pinwheel's wall contact, outward normal and free width only
+  when its 8-connected run of blocked cells is not all blocking features of
+  TDF category trees, plant(s) or rocks (`RetailMapFeatureType::treeOrRock`)
+  inside `kLoneSpan` x `kLoneSpan` = 7 x 7 cells (the largest shipped tree or
+  rock, ararock07, is 7x6; trees reach 5x5). Terrain, water, structures, the
+  map edge or any other feature in the run make it a wall. Bodies path and
+  collide round a lone tree as before. No hysteresis on the arc point: far
+  flips (an arc point more than 12 cells from the one of the neighbouring
+  origin just left) fell from 21,997 to 1,953 in the recording's situations
+  below and from 1,812 to 0 in `legion_lonetrees`; what is left is real wall
+  geometry at its old rate (the 131 fixtures 6,909 to 5,270, `mazeform`
+  1,479 to 1,390; Legion, offsets 0 and +-1). Keeping the old arc point while
+  it was still ahead in a straight legal line cut those flips to 1,255 but
+  raised walk-in-place from 1,380 to 2,718 unit-ticks (`corner-8x56` 75 to
+  1,018: a kept point pursued after the formation had wheeled past it), with
+  arrivals equal, so the backstop alone handles the flips by real walls.
+- **A side-step toward the arc is not undone straight back.** Blocked again on
+  the cell such a flow-around took it to, a body does not flow into the cell
+  it came from for `kSlideHold` = 60 hold updates (hashed `Member::slideCell`
+  / `slideFrom`); it holds, and the hold's own ways out come first. Every
+  livelock of this kind in the recording was arc against field. Barring every
+  undo instead (any flow-around, or the previous origin of any step) cost
+  `ringcross` its Move group's arrivals (40 -> 35 of 40) and stood bodies
+  against landed flyers; keeping one measure per run of flow-arounds (the next
+  one measured by the arc point the last one aimed at) tripled the corner
+  fixtures' lane crossings (`corner-1x448` 69 to 195, `corner-8x56` 39 to 148,
+  summed over the gate offsets); committing side-steps to the cell centre
+  would only enlarge any cycle left to a whole cell. Without this guard the
+  backstop alone leaves a 30-tick to-and-fro in `legion_slideback`.
+- **The backstop** (`World::updateLegionStill`, `LegionHeadway`): a body
+  stands after 8 ticks without NET headway (above), and a window that stands
+  although the body walked or turned to and fro latches a livelock
+  (`Unit::legionShuffle`). While it lasts the body neither flows round
+  blockers, nor follows its arc, nor takes a lane pass (in the recording's
+  situations a pass a cell over, undone by the field's next steps, made a
+  42-tick cycle of its own), so it holds or walks down the field and the
+  hold's ways out start; it ends when the body is a body length clear of where
+  it began (16 px per footprint cell plus one cell), not on the next headway
+  (a side-step crept for 50 ticks and undone by a dash back clears the
+  window's reach on every dash), or after `kLock` = 64 ticks (a 120-tick latch
+  stood the foot-3 landed-flyer crowd 235 member-ticks against the flyers, base
+  159, past `legion_landedflyers`' band). A held or merely creeping body is
+  still but no livelock. Steps that do not turn the body (side-steps, routes,
+  shuffles) and a standing body request no turn of its scripts (`turnReqBam`
+  0), so the display VM sends no `TurnDirection` (the zontroll / zongob
+  `MoveWatcher` walks on its last argument).
+
+Measured (synthetic 2x2 movers round the pinwheel fixture's wall end, the
+`lonetrees` world on varied layouts in a scratch build; to-and-fro
+member-ticks: the replay's rule, with a path of 8 px or more coming to a
+third of it or less, or 90 degrees of turning keeping a third or less):
+- Scattered single trees after a ranked wall end (112 layouts: a 1x1 or 2x2
+  tree every 5-12 cells, 8 seeds): 50,029 on 9f677c87, 249 now; every body
+  arrives in both; last arrival 3% earlier (median).
+- The same with the trees made walls (the backstop alone, 96 dense layouts, a
+  tree every 4-6 cells): 20,340 to 604; arrivals 4,600 of 4,608 in both,
+  all-arrived in 93 of 96 in both.
+- Wall end only, 168 layouts (16-64 bodies, 42 goals): 3,861 to 0; arrivals
+  equal (167 of 168 all-arrived in both); last arrival median ratio 1.000.
+- Regression tests: `legion_lonetrees` (offset 0 on 9f677c87: 2,325
+  to-and-fro member-ticks, 1,841 walking, 9,225 of arc steering among the
+  trees; now 0 / 0 / 0 at five offsets), `legion_slideback` (211 and 180, now
+  0), `legion_stillturn` (22,008 standing member-ticks requested a turn, now
+  0) and `legion_still` (the rule on the recording's motion and on genuine slow
+  motion: a walker at a pace, a speed-matched follower, slow pivots, a start
+  from rest; 9f677c87's rule stands none of the four walk-in-place cases).
+- The recording's own moments, cut as situations (`TAK_SITUATION` on the
+  0.8.1 build, ticks 30200 to 38200 = 16:46 to 21:13, each the world and its
+  next 2700 ticks of commands, run 3000 ticks, Legion, offsets 0 and +-1, the
+  observer's `walk_net`, the replay's rule): 25,719 walk-in-place unit-ticks in
+  200 runs on 9f677c87 (857 unit-s), 1,038 in 17 now (35 unit-s). The cut at
+  18:50 went from 9,793 to 36, 19:13 from 6,147 to 67, 19:43 from 3,948 to
+  126; the most left is 503 at 17:16 (Goblins in a crowd, cell (153, 118)).
+- The scenario set (131 fixtures, Legion, offsets 0 and +-1): walk-in-place
+  88,443 to 1,380 unit-ticks. At the gate offsets (both modes, every key)
+  Retail is identical to origin/main record for record. Legion's motion keys
+  move both ways within the old per-offset spread (summed medians: reversals
+  7,266 to 5,709, backward steps 281,418 to 254,718, arrivals 11,525 to 11,542,
+  left behind 5,145 to 5,117, completion distance max 6,803 to 6,894). 461
+  Legion keys left their gates (389 bands, 59 offset spreads, 6 Retail floors,
+  5 bounds, 2 new counters; 449 of the values inside the base's own range of
+  start offsets) and 20 that failed now pass; the baseline licenses, excepts
+  (cluster `LL-257`) or re-bounds each with its numbers. The cost is lane
+  crossings: 6,578 to 7,117 over every fixture and gate offset, 529 of the
+  rise in `island-1x150`, whose strip and abreast crossings go from 10 and 9
+  to 55 and 43 (2,187 to 2,637 in the lane), from the side-step guard: a body
+  that may not step back takes another field step inward or holds and
+  side-steps (without the guard 3, 3 and 2,278).
+- The crowdbench screen (86 rows): the 43 Retail rows are identical; Legion
+  settles 29,300 arrivals against 29,219, spins 40,716 unit-ticks against
+  41,981, and 65 units are ever terrain-stuck against 61.
+- `--mpai` Inner Circle seed 1 (twice each): Legion 300 s `70e826bb0db70ced`,
+  60 s `55b0eec316e45071`; Retail unchanged (`95b05c8290b55317`,
+  `84fdef37bbb3606e`).
+
+The observer gains `walk_net` / `walk_net_runs` (the replay's rule, exact GET
+29) and its `walk_in_place` now waits two headway windows (16 ticks) before it
+counts.
+
 ## Instruments
 
 What each tool sees, and what it cannot. A number is only as good as the
@@ -1641,6 +1775,17 @@ Rules that came out of using them:
   `doorplug-112:wall_touch_permille`, `ringcross:g.M.t90`,
   `doorplug-124:g.A.done`, `motion-cross:click.u01.done` and
   `ctest:legion_liftflyers`.
+* **The livelock fix costs some lane order (protocol 257).** A body blocked
+  again after a side-step toward its arc may not step straight back, so it
+  takes another field step inward or holds and side-steps: the 150 bodies
+  round `island-1x150`'s rock swap files 55 and 43 times over the gate offsets
+  in the strip and abreast windows (10 and 9 before). Gap, wall and corner
+  fixtures swap a few more too (`gap10` 91 to 138), while summed over every
+  fixture the motion keys moved both ways ("Livelock" above). Walk-in-place is
+  not gone in crowds: 35 unit-seconds were left in the recording's situations
+  (857 before). Measured by `island-1x150:gate.abreast.crossings`,
+  `island-1x150:gate.lane.crossings`, `gap10:gate.top.crossings` and
+  `ctest:legion_slideback`.
 * **Approaching an unreachable goal counts as trapped movement.** The
   acceptance and matrix observers classify a unit as Trapped whenever its
   origin cannot statically reach its goal disc, and any move or turn more

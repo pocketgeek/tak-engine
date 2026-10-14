@@ -46,8 +46,16 @@
 //   (A -> B -> A over the last 6 cells). stop_go: a start after a stop while
 //   the orders last. sideways/backward: a real step (> 1/4 px) more than
 //   45/90 degrees off the facing. walk_in_place: ticks a ground member with
-//   orders keeps its walk (speed > 0, not legionStill) after 6 or more ticks
-//   without headway (a step under baseSpeed/4 and no turn). statue_ticks: a
+//   orders keeps its walk (speed > 0, not legionStill) after 16 or more ticks
+//   without headway (a step under baseSpeed/4 and no turn): two of Legion's
+//   8-tick headway windows (World::updateLegionStill), within which such a
+//   body always stands (6 ticks before protocol 257's net-headway window, and
+//   still 6 in Retail, whose count is a comparison).
+//   walk_net /
+//   walk_net_runs: the user replay's walk-in-place rule (2026-10-13): ticks a
+//   ground body's GET 29 reads above 5 (its gait walks) while it is under 8
+//   px from where it was 30 ticks earlier, in runs of 30 ticks or more (runs
+//   15 ticks apart or less are one), and how many such runs. statue_ticks: a
 //   ground member with orders steps at no more than cap/8 (maxVel/8, 1/8
 //   slack for rounding) without turning. back: a decision sample whose last
 //   step opposes the member's 10-sample mean direction (cos < -0.3; the
@@ -137,6 +145,7 @@
 #include "sim/sim.h"
 #include "sim/footprint.h"
 #include "sim/retailmotion.h"
+#include "sim/retailanimationqueries.h"
 
 #include <algorithm>
 #include <array>
@@ -380,6 +389,11 @@ public:
         put("spins",spins_);put("reversals",reversals_);put("stop_go",stopGo_);
         put("sideways",sideways_);put("backward",backward_);put("back",back_);
         put("walk_in_place",walkInPlace_);put("statue_ticks",statue_);put("crawl_samples",crawl_);
+        {
+            int64_t ticks=walkNet_,runs=walkNetRuns_;
+            for(const auto& m:m_)if(m.walkFrom>=0&&m.walkTo-m.walkFrom+1>=30) {ticks+=m.walkTo-m.walkFrom+1;++runs;}
+            put("walk_net",ticks);put("walk_net_runs",runs);
+        }
         {   // AR-01/AR-02 tails (W3 tail fixture): bodies whose order is open while they stood still 900+ ticks.
             int64_t openStill=0,stillEver=0;
             for(const auto& m:m_) {
@@ -506,6 +520,8 @@ private:
         std::vector<std::pair<int64_t,int64_t>> cells;
         bool moved=false,everMoved=false,hadOrders=false;
         int stillRun=0,noHeadRun=0,maxStillRun=0;
+        // walk_net: the last 31 positions (a ring) and the open run (-1 none).
+        std::array<std::array<int32_t,2>,31> netAt{};int netN=0,netHead=0;int64_t walkFrom=-1,walkTo=-1;
         int completeDist=-1;bool completeOutside=false;
         // decision samples: positions at the last 11 samples (10 steps).
         std::vector<std::pair<int32_t,int32_t>> ring;
@@ -653,7 +669,22 @@ private:
             if(!m.flyer) {
                 const int64_t pace=std::max<int64_t>(1,u->baseSpeed.v/4);
                 m.noHeadRun=(step2>=pace*pace||turned)?0:m.noHeadRun+1;
-                if(m.noHeadRun>=6&&u->speed.v>0&&!u->legionStill)++walkInPlace_;
+                // (Retail keeps the 6 ticks of Legion's old per-tick rule: its count is a comparison only.)
+                if(m.noHeadRun>=(nav?2*sim::LegionHeadway::kWindow:6)&&u->speed.v>0&&!u->legionStill)++walkInPlace_;
+                m.netAt[size_t(m.netHead)]={u->x.v,u->z.v};m.netHead=(m.netHead+1)%31;m.netN=std::min(m.netN+1,31);
+                if(m.netN==31) {
+                    // GET 29 (World::ScriptHost, 4dc100): the step at the body's speed against its
+                    // terrain-scaled base speed, 0 while it stands in its scripts.
+                    const auto step=sim::retailGroundStep(u->heading,u->speed);
+                    const int32_t get29=sim::retailHorizontalAnimationPercent(step.s.v,step.c.v,(u->baseSpeed*w.groundTerrainMultiplier(*u)).v,
+                        u->bodyBlockStreak>=2||u->legionStill,u->embarked());
+                    const auto& old=m.netAt[size_t(m.netHead)];
+                    const int64_t nx=(int64_t(u->x.v)-old[0])>>8,nz=(int64_t(u->z.v)-old[1])>>8;
+                    if(get29>5&&nx*nx+nz*nz<int64_t(8*256)*(8*256)) {
+                        if(m.walkFrom>=0&&tick-m.walkTo<=15)m.walkTo=tick;
+                        else {closeWalk(m);m.walkFrom=m.walkTo=tick;}
+                    } else if(m.walkFrom>=0&&tick-m.walkTo>15)closeWalk(m);
+                }
                 const int64_t cap=int64_t(u->type->maxVel.v)*9/64;   // cap/8 plus 1/8 slack
                 if(moved&&!turned&&step2<=cap*cap)++statue_;
             }
@@ -1144,6 +1175,11 @@ private:
     std::vector<int> bands_;
     int64_t start_=-1,samples_=0;
     int64_t spins_=0,reversals_=0,stopGo_=0,sideways_=0,backward_=0,back_=0,walkInPlace_=0,statue_=0,crawl_=0;
+    int64_t walkNet_=0,walkNetRuns_=0;
+    void closeWalk(Member& m) {
+        if(m.walkFrom>=0&&m.walkTo-m.walkFrom+1>=30) {walkNet_+=m.walkTo-m.walkFrom+1;++walkNetRuns_;}
+        m.walkFrom=m.walkTo=-1;
+    }
     int64_t waitingHeld_=0,waitingNoProgress_=0,parkedHeld_=0,parkedNoProgress_=0;
     int64_t transit_=0,transitHeld_=0,transitFar_=0,transitFarHeld_=0;
     int64_t ordered_=0,stopped_=0,flipSamples_=0,flips_=0,aimReversals_=0,engagement_=0,followMax_=0,followSum_=0,followSamples_=0;

@@ -925,7 +925,8 @@ armies:
   destination area follows the wall or the corridor.
 - **Wheeling round walls.** When a large group (16 or more) goes round the end of
   a wall, it swings round in several ranks instead of narrowing to single file.
-  It drops to single file only when the gap really is too narrow.
+  It drops to single file only when the gap really is too narrow. A single tree
+  or rock (or a small clump) is not a wall end: the group walks past it.
 - **Groups take gaps several abreast.** A large group (16 or more) sent through
   a short gap in a wall or a doorway that is wide enough for two or three units
   now splits across the gap and goes through two or three abreast, each unit
@@ -967,6 +968,9 @@ armies:
 - **No spinning.** A unit that is truly trapped stops and waits, instead of
   circling on the spot. Units are not caught on jagged terrain unless they really
   are boxed in.
+- **No walking on the spot.** A unit that gets nowhere stands still instead of
+  playing its walk on the spot. One that keeps stepping back and forth, or
+  turning left and right, is held for a moment so it tries another way round.
 - **Followers keep pace.** Units following others in a stream match their speed
   instead of stop-starting, and a slowed unit's walk animation plays at the
   speed it really moves.

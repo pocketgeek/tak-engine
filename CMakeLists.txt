@@ -336,7 +336,8 @@ add_executable(legion_world_test tools/legion_world_test.cpp)
 target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreachable quota pens determinism formation
     slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice wallend staticblock
-    navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation flyerfront liftflyers aware b3events lanegeom)
+    navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation flyerfront liftflyers aware b3events lanegeom
+    lonetrees slideback stillturn)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
   # TAK_LEGION_VERIFY (debug builds; compiled out of Release): every derived index, work list
   # and the incrementally kept soft state (W4 B2's softHash, C31) against a recompute, each tick.
@@ -391,6 +392,12 @@ foreach(legion_probe pocket deadend tail)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
 endforeach()
+# Legion's headway window (World::updateLegionStill, LegionHeadway) on made-up motion: the 0.8.1
+# walk-in-place stands, genuine slow motion never does.
+add_executable(legion_still_test tools/legion_still_test.cpp)
+target_link_libraries(legion_still_test PRIVATE tak-formats)
+add_test(NAME legion_still COMMAND legion_still_test)
+set_tests_properties(legion_still PROPERTIES LABELS legion)
 # The const scenario observer (tools/legion_observe.h) on hand-placed bodies.
 add_executable(legion_observe_selftest tools/legion_observe_selftest.cpp)
 target_link_libraries(legion_observe_selftest PRIVATE tak-formats)
