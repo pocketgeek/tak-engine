@@ -21,6 +21,9 @@
 //                         Area, terrain clipboard, resize crop/grow, overlays, Check
 //                         Map, Test Map's snapshot, cross-world paste, a generated
 //                         map's scatter and a dense field of 10k-58k features
+//   ... smoke [world...]  every tool x mode, browser tab, category, terrain group,
+//                         faction, menu row (but Test Map) and shortcut, the
+//                         scripting buttons, regions list, Use Only, then Exit
 // Each placement mode then saves the map, reopens it through Open and compares.
 // Every frame checks that the browser lists only items of the current list.
 // Without data every mode exits 77 (skipped).
@@ -1499,6 +1502,153 @@ int featureOpsWorkflow(const std::string& data,std::vector<std::string> worlds) 
     return 0;
 }
 
+// ---- smoke: every browser tab, tool, mode, menu row and shortcut ---------------
+
+// Waits for background jobs, then closes whatever a step left open (a message
+// with Return, anything else with Escape). Returns true once nothing is open.
+bool settle(Editor& e,const Input& in) {
+    if(e.modal==Editor::M_ANALYZING || e.modal==Editor::M_CHECKING || e.modal==Editor::M_MODEL_LOADING || e.modal==Editor::M_GENERATING)return false;
+    if(e.menuOpen>=0 || e.sectionMenuOpen || e.paletteFocus) {in.key(SDLK_ESCAPE);return false;}
+    if(e.modal==Editor::M_MESSAGE) {in.key(SDLK_RETURN);return false;}
+    if(e.modal!=Editor::M_NONE || e.scriptOpen || e.useOnlyOpen || e.regionsOpen || e.regionCanvas || e.clearArm) {
+        if(e.clearArm)in.key(SDLK_k);else in.key(SDLK_ESCAPE);
+        return false;
+    }
+    return true;
+}
+
+bool smokeSession(const std::string& data,const std::string& label,std::vector<std::string> args) {
+    const auto root=tempRoot("smoke");isolateProfile(root);
+    args.insert(args.begin(),"cartographer");args.insert(args.end(),{"--data",data,"--out",root});
+    Script s;int actions=0;
+    // One action a frame, then settle; `act` may push any input.
+    auto action=[&s,&actions](std::function<void(Editor&,const Input&)> act) {
+        s.then([act,&actions](Editor& e,const Input& in) {act(e,in);++actions;return true;});
+        s.then(settle);
+    };
+    auto canvas=[](const Editor& e,int dx=0,int dy=0) {return SDL_Point{Editor::kPaletteW+e.canvasW/3+dx,Editor::kMenuH+e.canvasH/2+dy};};
+    auto rect=[](const SDL_Rect& r) {return SDL_Point{r.x+r.w/2,r.y+r.h/2};};
+    s.then(settle);
+    s.then([&,canvas,rect,action](Editor& e,const Input&) {   // built here: menu rows and group counts come from the editor
+        // Every tool with every mode: click, drag, right-drag pan, wheel zoom, undo.
+        for(int t=0;t<4;++t)for(int m=0;m<4;++m)action([=](Editor& e,const Input& in) {
+            tool(in,Editor::Tool(t));mode(in,Editor::EditMode(m));
+            const auto p=canvas(e);in.click(p.x,p.y);in.drag(p.x,p.y,p.x+40,p.y+24);
+            in.button(SDL_MOUSEBUTTONDOWN,p.x,p.y,SDL_BUTTON_RIGHT,1);in.motion(p.x-30,p.y-20,SDL_BUTTON_RMASK);in.button(SDL_MOUSEBUTTONUP,p.x-30,p.y-20,SDL_BUTTON_RIGHT,1);
+            in.pointer(p.x,p.y);SDL_Event wheel{};wheel.type=SDL_MOUSEWHEEL;wheel.wheel.y=1;SDL_PushEvent(&wheel);wheel.wheel.y=-1;SDL_PushEvent(&wheel);
+            in.key(SDLK_z,KMOD_CTRL);
+        });
+        action([=](Editor& e,const Input& in) {   // the REGIONS canvas: draw, select, move
+            in.click(700,32);mode(in,Editor::MODE_PLACE);const auto p=canvas(e);in.drag(p.x,p.y,p.x+50,p.y+30);
+            mode(in,Editor::MODE_SELECT);in.drag(p.x+20,p.y+10,p.x+60,p.y+40);
+        });
+        // Every browser: search, each category (or terrain group) and faction, scroll, rows.
+        for(int t=0;t<4;++t) {
+            action([=](Editor&,const Input& in) {tool(in,Editor::Tool(t));in.click(60,Editor::kMenuH+12);in.text("a");in.key(SDLK_BACKSPACE);in.key(SDLK_ESCAPE);});
+            if(t==Editor::TERRAIN)for(int g=0;g<int(e.sectionCatalog.groups().size()) || (g==0 && e.sectionCatalog.groups().empty());++g) {
+                s.then([](Editor&,const Input& in) {tool(in,Editor::TERRAIN);in.click(60,Editor::kMenuH+40);return true;});
+                s.then([=,&actions](Editor& e,const Input& in) {
+                    bool hit=false;
+                    if(e.sectionMenuOpen)for(int y=Editor::kMenuH+55;y<e.h-Editor::kStatusH && !hit;y+=2)if(e.sectionMenuRowAt(40,y)==g) {in.click(40,y);hit=true;}
+                    if(!hit)in.key(SDLK_ESCAPE);   // scrolled out of the list
+                    ++actions;return true;
+                });
+                s.then(settle);
+            }
+            else for(int c=0;c<=40;++c)s.then([=,&actions](Editor& e,const Input& in) {
+                if(c<=int(e.paletteCategories.size())) {tool(in,Editor::Tool(t));in.click(60,Editor::kMenuH+40);++actions;}
+                return true;
+            });
+            if(t==Editor::UNITS)for(int f=0;f<6;++f)action([](Editor&,const Input& in) {in.click(60,Editor::kMenuH+62);});
+            action([=](Editor& e,const Input& in) {
+                tool(in,Editor::Tool(t));in.pointer(Editor::kPaletteW/2,Editor::kPaletteTop+60);
+                for(int i=0;i<60;++i) {SDL_Event wheel{};wheel.type=SDL_MOUSEWHEEL;wheel.wheel.y=-2;SDL_PushEvent(&wheel);}
+            });
+            action([](Editor& e,const Input& in) {
+                for(int row=0;row<4;++row)if(const auto p=paletteRow(e,e.paletteRowAt(10,Editor::kPaletteTop+4)+row))in.click(p->x,p->y);
+                in.pointer(Editor::kPaletteW/2,Editor::kPaletteTop+60);
+                for(int i=0;i<80;++i) {SDL_Event wheel{};wheel.type=SDL_MOUSEWHEEL;wheel.wheel.y=2;SDL_PushEvent(&wheel);}
+            });
+            action([](Editor& e,const Input& in) {for(int row=0;row<6;++row)if(const auto p=paletteRow(e,row))in.click(p->x,p->y);});
+        }
+        // Every menu row but File > Test Map and Exit (Test Map starts the game).
+        for(int m=0;m<int(e.menuRows.size());++m)for(int r=0;r<int(e.menuRows[size_t(m)].size());++r) {
+            if(m==0 && (r==5 || r==6))continue;
+            action([=](Editor&,const Input& in) {menu(in,m,r);});
+        }
+        // Shortcuts.
+        for(const auto& [key,mod]:std::vector<std::pair<SDL_Keycode,Uint16>>{
+                {SDLK_g,0},{SDLK_g,0},{SDLK_TAB,0},{SDLK_TAB,0},{SDLK_TAB,0},{SDLK_TAB,0},{SDLK_1,0},{SDLK_2,0},{SDLK_3,0},{SDLK_4,0},{SDLK_5,0},
+                {SDLK_LEFTBRACKET,0},{SDLK_RIGHTBRACKET,0},{SDLK_k,0},{SDLK_p,0},{SDLK_r,0},{SDLK_u,0},{SDLK_c,0},{SDLK_t,0},{SDLK_m,0},{SDLK_m,0},
+                {SDLK_m,KMOD_SHIFT},{SDLK_F6,0},{SDLK_l,KMOD_CTRL},{SDLK_l,KMOD_CTRL},{SDLK_f,KMOD_CTRL},{SDLK_z,KMOD_CTRL},{SDLK_y,KMOD_CTRL},
+                {SDLK_o,KMOD_CTRL},{SDLK_n,0},{SDLK_s,KMOD_CTRL|KMOD_SHIFT},{SDLK_b,KMOD_CTRL},{SDLK_s,KMOD_CTRL}})
+            action([key=key,mod=mod](Editor&,const Input& in) {in.key(key,mod);});
+        // The scripting overlay's buttons (pickers they open take a row or close).
+        s.then([](Editor&,const Input& in) {in.key(SDLK_t);return true;});
+        for(int b=0;b<12;++b) {
+            s.then([=,&actions](Editor& e,const Input& in) {
+                if(!e.scriptOpen) {in.key(SDLK_t);return true;}
+                const SDL_Rect buttons[]={e.rAddRule,e.rAddCond,e.rPickList,e.rAddAct,e.rPickList,e.rNameRule,e.rNextP,e.rPrevP,e.rDelCond,e.rDelAct,e.rDelRule,e.rTemplates};
+                const auto p=rect(buttons[b]);if(buttons[b].w>0)in.click(p.x,p.y);++actions;return true;
+            });
+            s.then([](Editor& e,const Input& in) {if(e.modal!=Editor::M_NONE || (e.pickOpen && e.pickTemplate))in.key(SDLK_ESCAPE);return true;});
+        }
+        s.then(settle);
+        // The regions list and Use Only.
+        s.then([](Editor&,const Input& in) {menu(in,3,6);return true;});
+        for(int b=0;b<5;++b)s.then([=,&actions](Editor& e,const Input& in) {
+            if(e.modal==Editor::M_REGION) {in.key(SDLK_RETURN);return true;}
+            if(!e.regionsOpen) {menu(in,3,6);return true;}
+            const SDL_Rect buttons[]={e.regionNew,e.regionEdit,e.regionList,e.regionDelete,e.regionOnMap};
+            const auto p=rect(buttons[b]);if(buttons[b].w>0)in.click(p.x,b==2?buttons[b].y+5:p.y);++actions;return true;
+        });
+        s.then(settle);
+        s.then([](Editor&,const Input& in) {in.key(SDLK_u);return true;});
+        s.then([&,rect](Editor& e,const Input& in) {
+            if(e.useOnlyOpen) {in.click(rect(e.uoList).x,e.uoList.y+3);in.click(rect(e.uoClear).x,rect(e.uoClear).y);in.click(rect(e.uoDone).x,rect(e.uoDone).y);}
+            ++actions;return true;
+        });
+        s.then(settle);
+        // File > Exit; a dirty map asks, DISCARD ends the editor.
+        s.then([](Editor&,const Input& in) {menu(in,0,6);return true;});
+        s.then([](Editor& e,const Input& in) {   // the quit request arrives a frame after the menu pushes it
+            if(e.modal!=Editor::M_QUITSAVE)return !e.running;
+            in.click(e.mQuit.x+e.mQuit.w/2,e.mQuit.y+e.mQuit.h/2);return true;
+        });
+        s.then([](Editor& e,const Input&) {return !e.running;});   // the editor stops on its own
+        return true;
+    });
+    size_t lastStep=SIZE_MAX;int stalled=0;
+    const bool ran=drive(args,[&](Editor& e,const Input& in) {
+        if(!std::isfinite(e.mapView.offX()) || !std::isfinite(e.mapView.offY()) || !std::isfinite(e.mapView.zoom()))check(false,label+": view went non-finite");
+        stalled=s.at==lastStep?stalled+1:0;lastStep=s.at;
+        if(stalled>400) {   // a dialog or overlay that does not close
+            check(false,label+": stuck at step "+std::to_string(s.at)+" (modal "+std::to_string(int(e.modal))+", menu "+std::to_string(e.menuOpen)+
+                  ", script "+std::to_string(e.scriptOpen)+"/"+std::to_string(e.pickOpen)+", useonly "+std::to_string(e.useOnlyOpen)+", regions "+std::to_string(e.regionsOpen)+
+                  "/"+std::to_string(e.regionCanvas)+", clear "+std::to_string(e.clearArm)+", focus "+std::to_string(e.paletteFocus)+", groups "+std::to_string(e.sectionMenuOpen)+")");
+            return false;
+        }
+        if(!s.frame(e,in))return false;
+        return e.running || s.at+1<s.steps.size();
+    },600,label);
+    check(s.at+1>=s.steps.size(),label+": smoke stopped at step "+std::to_string(s.at)+" of "+std::to_string(s.steps.size()));
+    std::error_code ec;fs::remove_all(root,ec);
+    if(ran)std::cout<<"ok: "<<label<<" ("<<actions<<" actions)\n";
+    return ran;
+}
+
+int smokeWorkflow(const std::string& data,std::vector<std::string> worlds) {
+    if(worlds.empty())worlds=kWorlds;
+    const auto shipped=mapsByWorld(data);
+    for(const auto& world:worlds) {
+        smokeSession(data,world+" blank map smoke",{"--new","8x8","--world",world});
+        if(const auto found=shipped.find(world);found!=shipped.end())smokeSession(data,world+" map '"+found->second+"' smoke",{found->second});
+    }
+    if(!failures.empty())return 1;
+    std::cout<<"PASS: every tool, mode, browser tab, menu row and shortcut on blank and shipped maps of "<<worlds.size()<<" worlds\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc,char** argv) {
@@ -1513,5 +1663,6 @@ int main(int argc,char** argv) {
     if(mode=="slots")return slotsWorkflow(data,rest);
     if(mode=="rescan")return rescanWorkflow(data);
     if(mode=="feature-ops")return featureOpsWorkflow(data,rest);
+    if(mode=="smoke")return smokeWorkflow(data,rest);
     return 2;
 }
