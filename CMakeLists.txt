@@ -1319,11 +1319,13 @@ if(TAK_BUILD_CLIENT)
           PASS_REGULAR_EXPRESSION "PASS: HUD smoothing applies live")
       # Options > GAME DATA FOLDER through real input and a fake picker (invalid, cancel,
       # valid + restart prompt, LATER, RESTART NOW, the locked form), and the menu's own
-      # row greyed by this launch's --data.
+      # row greyed by this launch's --data. The test writes the settings file, so it is
+      # named outright: SDL_GetPrefPath ignores XDG_* on Windows and macOS.
       add_test(NAME options_datafolder COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_OPTIONS_DATADIR_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/options-datafolder-profile
           XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/options-datafolder-profile
+          TAK_SETTINGS_FILE=${CMAKE_CURRENT_BINARY_DIR}/options-datafolder-settings.ini
           $<TARGET_FILE:takclient> --data "${TAK_TEST_DATA}" --winsize 1280 960
           --shot "${CMAKE_CURRENT_BINARY_DIR}/options-datafolder.png")
       set_tests_properties(options_datafolder PROPERTIES TIMEOUT 90

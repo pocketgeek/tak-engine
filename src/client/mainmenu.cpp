@@ -538,12 +538,15 @@ struct MainMenu::Impl {
     // again -- checking the settings FILE and the screen after each, then RESTART NOW and
     // the locked form. The launch itself passed --data, so the menu's own row must say
     // that overrides it. TAK_OPTIONS_SHOT_DIR=<dir> also writes each state as a PNG. The
-    // file written is the test profile's (XDG_* / TAK_SETTINGS_FILE), never the player's.
+    // file written must be named by TAK_SETTINGS_FILE, never the player's: XDG_* alone
+    // does not move SDL_GetPrefPath on Windows or macOS, so the test refuses to run without it.
     void testDataFolder(const Settings& current, int width, int height) {
         namespace fs = std::filesystem;
         auto check = [](bool ok, const std::string& message) {
             if (!ok) throw std::runtime_error("data folder option: " + message);
         };
+        const char* file = devEnv("TAK_SETTINGS_FILE");
+        check(file && *file && settingsPath() == file, "TAK_SETTINGS_FILE must name a scratch settings file");
         auto text = [](const fs::path& p) { const auto t = p.u8string(); return std::string(t.begin(), t.end()); };
         check(dataFolder_.locked.find("--data") != std::string::npos,
               "a --data launch greys the menu's row and names --data (got '" + dataFolder_.locked + "')");

@@ -6,7 +6,8 @@ pick and RESTART NOW: saves the folder to the settings file and leaves the menu.
 then tears down and execs itself with the same arguments. The new process must mount
 the NEW folder (it was started without --data, from a folder that is not an install, so
 the saved setting decides) and must not restart again. The profile is a scratch
-XDG_* tree, never the player's settings.
+XDG_* tree and the settings file is named by TAK_SETTINGS_FILE (inherited across the
+exec): SDL_GetPrefPath ignores XDG_* on macOS, so XDG alone would reach the player's.
 
 usage: client_restart_test.py <takclient> <retail-install>
 """
@@ -16,14 +17,11 @@ client, data = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
 with tempfile.TemporaryDirectory(prefix="tak-client-restart-") as root:
     alt = os.path.join(root, "alt-install")   # the same install under another name
     os.symlink(data, alt)
-    profile = os.path.join(root, "TAKengine", "TAKingdoms")
-    os.makedirs(profile)
-    settings = os.path.join(profile, "settings.ini")
+    settings = os.path.join(root, "settings.ini")
     with open(settings, "w") as f:
         f.write("dataDir = %s\n" % data)
     env = dict(os.environ, XDG_CONFIG_HOME=root, XDG_DATA_HOME=root, SDL_VIDEODRIVER="dummy",
-               SDL_AUDIODRIVER="dummy", TAK_MENU_PICK="restart:" + alt)
-    env.pop("TAK_SETTINGS_FILE", None)
+               SDL_AUDIODRIVER="dummy", TAK_MENU_PICK="restart:" + alt, TAK_SETTINGS_FILE=settings)
     shot = os.path.join(root, "after-restart.png")
     run = subprocess.run([client, "--winsize", "640", "480", "--shot", shot], cwd=root, env=env,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=150)
