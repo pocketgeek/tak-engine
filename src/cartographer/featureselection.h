@@ -36,10 +36,11 @@ struct FeatureSelection {
         clear();return changed;
     }
     bool move(tak::tnt::Map& map,int dx,int dz) {
+        // Members erased since they were selected (Erase mode, Clear Area) leave the group.
+        std::erase_if(cells,[&](int i){return !selectable(map,i);});
         if(cells.empty() || (!dx && !dz))return false;
         std::vector<std::pair<int,uint16_t>> moved;
         for(int i:cells) {
-            if(!selectable(map,i))return false;
             const int x=i%map.width+dx,z=i/map.width+dz;
             if(x<0 || z<0 || x>=map.width || z>=map.height)return false;
             const int to=z*map.width+x;

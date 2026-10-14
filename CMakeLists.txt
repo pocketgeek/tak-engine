@@ -1597,7 +1597,7 @@ if(TAK_BUILD_CLIENT)
       set_tests_properties(cartographer_objects_ui cartographer_model_ui cartographer_templates_ui cartographer_resize_save_ui cartographer_rules_ui cartographer_ui cartographer_generation_ui cartographer_overlay_ui cartographer_regions_ui cartographer_features_ui cartographer_minimap_ui cartographer_thumbnails cartographer_validation_ui cartographer_headless_ui cartographer_symmetry_ui cartographer_terrain_clipboard_ui cartographer_sections_ui PROPERTIES TIMEOUT 90 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()
     # Placement and robustness: every browser item placed through the real click
-    # path, and the STARTS crash regression.
+    # path, the STARTS crash regression and every feature operation.
     add_executable(cartographer_placement_test tools/cartographer_placement_test.cpp ${_cartographer_sources})
     target_compile_definitions(cartographer_placement_test PRIVATE SDL_MAIN_HANDLED TAK_CARTOGRAPHER_TEST)
     target_link_libraries(cartographer_placement_test PRIVATE tak-formats ${_tak_sdl2})
@@ -1611,7 +1611,8 @@ if(TAK_BUILD_CLIENT)
           cartographer_place_features cartographer_place_units)
       foreach(_world aramon veruna taros zhon creon)
         add_test(NAME cartographer_place_terrain_${_world} COMMAND cartographer_placement_test "${TAK_TEST_DATA}" terrain ${_world})
-        list(APPEND _cartographer_placement_tests cartographer_place_terrain_${_world})
+        add_test(NAME cartographer_feature_ops_${_world} COMMAND cartographer_placement_test "${TAK_TEST_DATA}" feature-ops ${_world})
+        list(APPEND _cartographer_placement_tests cartographer_place_terrain_${_world} cartographer_feature_ops_${_world})
       endforeach()
       set_tests_properties(${_cartographer_placement_tests} PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77 LABELS cartographer
         ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")

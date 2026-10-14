@@ -163,15 +163,21 @@ void resizeMap(tak::tnt::Map& map, tak::terrain::Compositor& comp,
 tak::tnt::Map newBlankMap(const tak::hpi::Vfs& vfs, SectionLibrary& sections,
                           tak::terrain::Compositor& comp, const std::string& world,
                           int wUnits, int hUnits) {
-    // Pick a flat ground section for the fill (prefer a "flat"/"ground" category).
+    // Pick a flat ground section for the fill (prefer a "flat"/"ground" category)
+    // with nothing in its feature plane: the first Taros and Veruna flats are
+    // cobbles, whose road markers would pave the whole map (and refuse every
+    // feature move or paste, which protect terrain markers).
     const SectionRef* fill = nullptr;
+    const SectionRef* plain = nullptr;
     for (const auto& s : sections.list()) {
         std::string c = s.category;
         std::transform(c.begin(), c.end(), c.begin(), ::tolower);
-        if (c.find("flat") != std::string::npos || c.find("ground") != std::string::npos) {
-            fill = &s; break;
-        }
+        if (c.find("flat") == std::string::npos && c.find("ground") == std::string::npos) continue;
+        if (!fill) fill = &s;
+        const tak::tnt::Map* m = sections.load(vfs, s.path);
+        if (m && std::all_of(m->features.begin(), m->features.end(), [](uint16_t v) { return v == 0xFFFF; })) { plain = &s; break; }
     }
+    if (plain) fill = plain;
     if (!fill && !sections.list().empty()) fill = &sections.list().front();
     if (!fill) return {};
     const tak::tnt::Map* sec = sections.load(vfs, fill->path);

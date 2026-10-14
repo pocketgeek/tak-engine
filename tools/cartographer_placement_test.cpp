@@ -14,13 +14,22 @@
 //   ... features [world...] every feature: pick, place, undo, redo, erase, undo
 //   ... units [world...]    every unit type, on terrain the game accepts
 //   ... slots [world...]    start slots 1-8 (a ninth is refused) and a region
+//   ... feature-ops [world...]  every feature operation on every feature: select,
+//                         shift-select, drag, box select, properties, group drag,
+//                         copy/paste/duplicate/cut/delete, live symmetry (all kinds),
+//                         Symmetrize, stamps with objects protected or not, Clear
+//                         Area, terrain clipboard, resize crop/grow, overlays, Check
+//                         Map, Test Map's snapshot, cross-world paste, a generated
+//                         map's scatter and a dense field of 10k-58k features
 // Each placement mode then saves the map, reopens it through Open and compares.
 // Every frame checks that the browser lists only items of the current list.
 // Without data every mode exits 77 (skipped).
 
 #include "cartographer/editor.h"
+#include "cartographer/document.h"
 #include "cartographer/editorstate.h"
 #include "hpi/hpi.h"
+#include "net/mappackage.h"
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
 #include "tdf/tdf.h"
@@ -906,6 +915,590 @@ int rescanWorkflow(const std::string& data) {
     return 0;
 }
 
+// ---- feature operations ------------------------------------------------------
+
+// A frame script: a step runs each frame until it returns true; the input it
+// pushed is handled during the next frame, where the next step checks it. Steps
+// a running step adds run right after it, in the order added.
+struct Script {
+    using Step=std::function<bool(Editor&,const Input&)>;
+    std::vector<Step> steps;size_t at=0,insertAt=SIZE_MAX;
+    void then(Step step) {
+        if(insertAt==SIZE_MAX)steps.push_back(std::move(step));
+        else steps.insert(steps.begin()+ptrdiff_t(insertAt++),std::move(step));
+    }
+    bool frame(Editor& e,const Input& in) {
+        if(at>=steps.size())return false;
+        const auto step=steps[at];insertAt=at+1;
+        const bool done=step(e,in);insertAt=SIZE_MAX;
+        if(done)++at;
+        return true;
+    }
+};
+
+// The whole map at 1/8 (2 px a cell) or 1/16 scale, top-left at the origin: one
+// view in which every click of a frame can land, whatever its cell.
+SDL_Point overview(Editor& e,float zoom,int cx,int cz) {
+    e.mapView.setZoom(zoom);e.mapView.setOffset(0,0);
+    return cellScreen(e,cx*16+8.f,cz*16+8.f);
+}
+size_t cellOf(const tak::tnt::Map& map,int x,int z) {return size_t(z)*map.width+x;}
+std::string nameAt(const tak::tnt::Map& map,size_t cell) {
+    const auto v=cell<map.features.size()?map.features[cell]:0xFFFF;
+    return v<0xFFFA && v<map.featureNames.size()?map.featureNames[v]:std::string{};
+}
+// A held modifier for the next frame's events (the editor reads SDL_GetModState).
+void holdShift(bool held) {SDL_SetModState(held?KMOD_LSHIFT:KMOD_NONE);}
+void menu(const Input& in,int column,int row) {in.click(96+column*72+20,10);in.click(96+column*72+40,22+row*20+10);}
+
+struct FeatureOps {
+    std::string root,label;
+    Script script;
+    std::vector<cart::FeatureRef> refs;             // the world's browser list
+    std::vector<std::pair<int,int>> slots;          // feature i's anchor cell
+    std::map<size_t,std::string> placed;            // cell -> name (the session's expectation)
+    BrowserPick pick;
+    bool expect(bool ok,const std::string& what) {return check(ok,label+": "+what);}
+    // The document's named features are exactly `placed`.
+    bool matches(const Editor& e,const std::string& what) {
+        const auto& map=e.mapView.map();size_t named=0;
+        for(size_t i=0;i<map.features.size();++i)if(!nameAt(map,i).empty())++named;
+        if(named!=placed.size())return expect(false,what+": "+std::to_string(named)+" features on the map, expected "+std::to_string(placed.size()));
+        for(const auto& [cell,name]:placed)if(nameAt(map,cell)!=name)
+            return expect(false,what+": cell "+std::to_string(cell%map.width)+","+std::to_string(cell/map.width)+" holds '"+nameAt(map,cell)+"', expected '"+name+"'");
+        return true;
+    }
+    // Browser pick + Place click at cell (x,z): two steps.
+    void place(int index,int x,int z) {
+        script.then([this,index](Editor& e,const Input& in) {pick.search(in,index,refs[size_t(index)].name);return true;});
+        script.then([this,index,x,z](Editor& e,const Input& in) {
+            const int clicked=pick.click(e,in);
+            if(!clicked)return false;
+            if(!expect(clicked>0,"browser lists '"+refs[size_t(index)].name+"'"))return true;
+            const auto p=focus(e,x*16+8.f,z*16+8.f);mode(in,Editor::MODE_PLACE);in.click(p.x,p.y);
+            placed[cellOf(e.mapView.map(),x,z)]=refs[size_t(index)].name;
+            return true;
+        });
+    }
+    void verify(const std::string& what) {script.then([this,what](Editor& e,const Input&) {matches(e,what);return true;});}
+};
+
+// Every feature of `world` on one 16x16-unit map, then every feature operation
+// the editor has, on each of them and on all of them at once.
+bool featureOpsSession(const std::string& data,const std::string& world) {
+    FeatureOps ops;ops.root=tempRoot("featureops");ops.label=world+" feature ops";
+    isolateProfile(ops.root);
+    auto& s=ops.script;
+    std::map<size_t,std::string> original;   // the populated map's features
+    int boxX=0,boxZ=0;                       // the populated block (cells)
+    std::shared_ptr<cart::SymmetryReport> report=std::make_shared<cart::SymmetryReport>();
+    s.then([&](Editor& e,const Input& in) {
+        ops.refs=e.features.list();
+        const auto& map=e.mapView.map();
+        if(!ops.expect(map.width==512 && !ops.refs.empty(),"a 16x16 map with features"))return true;
+        ops.expect(std::all_of(map.features.begin(),map.features.end(),[](uint16_t v){return v==0xFFFF;}),"a new blank map has an empty feature plane (no road markers)");
+        for(size_t i=0;i<ops.refs.size();++i)ops.slots.push_back({8+int(i%28)*8,8+int(i/28)*8});
+        tool(in,Editor::FEATURES);
+        // Populate: every feature by browser pick + click, then the map's corners
+        // (the largest footprint reaches past the bottom-right edge).
+        for(size_t i=0;i<ops.refs.size();++i)ops.place(int(i),ops.slots[i].first,ops.slots[i].second);
+        size_t big=0;for(size_t i=0;i<ops.refs.size();++i)if(ops.refs[i].footX*ops.refs[i].footZ>ops.refs[big].footX*ops.refs[big].footZ)big=i;
+        ops.place(0,0,map.height-1);ops.place(0,map.width-1,0);ops.place(int(big),map.width-1,map.height-1);ops.place(int(big),map.width-2,map.height-2);
+        ops.verify("every feature placed by a browser pick and a click");
+        s.then([&](Editor& e,const Input&) {original=ops.placed;return true;});
+        // One by one: select, drag a cell right, undo; every tenth also shift-clicks its neighbour.
+        for(size_t i=0;i<ops.refs.size();++i) {
+            s.then([&,i](Editor& e,const Input& in) {
+                const auto [x,z]=ops.slots[i];const auto p=focus(e,x*16+8.f,z*16+8.f);
+                mode(in,Editor::MODE_SELECT);in.drag(p.x,p.y,p.x+16,p.y);return true;
+            });
+            s.then([&,i](Editor& e,const Input& in) {
+                const auto& map=e.mapView.map();const auto [x,z]=ops.slots[i];
+                ops.expect(nameAt(map,cellOf(map,x,z)).empty() && nameAt(map,cellOf(map,x+1,z))==ops.refs[i].name &&
+                           e.selectedFeatures.cells==std::set<int>{int(cellOf(map,x+1,z))},"'"+ops.refs[i].name+"' selected and dragged a cell right (at "+
+                           nameAt(map,cellOf(map,x,z))+", right "+nameAt(map,cellOf(map,x+1,z))+", "+std::to_string(e.selectedFeatures.cells.size())+" selected, mode "+std::to_string(int(e.editMode))+")");
+                in.key(SDLK_z,KMOD_CTRL);return true;
+            });
+            s.then([&,i](Editor& e,const Input& in) {
+                ops.expect(nameAt(e.mapView.map(),cellOf(e.mapView.map(),ops.slots[i].first,ops.slots[i].second))==ops.refs[i].name,"undo returns '"+ops.refs[i].name+"'");
+                if(i%10 || i+1>=ops.refs.size())return true;
+                const auto [x,z]=ops.slots[i];const auto [x2,z2]=ops.slots[i+1];
+                in.click(focus(e,x*16+8.f,z*16+8.f).x,focus(e,x*16+8.f,z*16+8.f).y);holdShift(true);
+                const auto p=cellScreen(e,x2*16+8.f,z2*16+8.f);in.click(p.x,p.y);return true;
+            });
+            if(i%10==0 && i+1<ops.refs.size())s.then([&,i](Editor& e,const Input& in) {
+                holdShift(false);const auto& map=e.mapView.map();
+                ops.expect(e.selectedFeatures.cells==std::set<int>{int(cellOf(map,ops.slots[i].first,ops.slots[i].second)),int(cellOf(map,ops.slots[i+1].first,ops.slots[i+1].second))},
+                           "shift-click adds '"+ops.refs[i+1].name+"' to the selection");
+                const auto p=focus(e,ops.slots[i].first*16+72.f,ops.slots[i].second*16+72.f);in.click(p.x,p.y);   // an empty cell clears it
+                return true;
+            });
+        }
+        ops.verify("single moves undone");
+        // All at once (1/8 view): box select, properties, group drag, undo/redo.
+        boxX=8+28*8;boxZ=8+int((ops.refs.size()+27)/28)*8;
+        auto boxSelect=[&](Editor& e,const Input& in) {
+            const auto a=overview(e,.125f,2,2),b=overview(e,.125f,boxX,boxZ);mode(in,Editor::MODE_SELECT);in.drag(a.x,a.y,b.x,b.y);
+        };
+        auto selectionIsOriginal=[&](const Editor& e) {
+            std::set<int> want;for(const auto& [cell,name]:original)if(int(cell%512)<boxX && int(cell/512)<boxZ)want.insert(int(cell));
+            return e.selectedFeatures.cells==want;
+        };
+        s.then([=](Editor& e,const Input& in) {boxSelect(e,in);return true;});   // boxSelect holds only references to the session
+        s.then([&,selectionIsOriginal](Editor& e,const Input& in) {
+            ops.expect(selectionIsOriginal(e),"box select takes every feature in the box ("+std::to_string(e.selectedFeatures.cells.size())+")");
+            in.key(SDLK_RETURN);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            ops.expect(e.modal==Editor::M_MESSAGE && e.mTitle=="SELECTED FEATURES","Enter shows the selected features");
+            in.key(SDLK_RETURN);
+            const auto [x,z]=ops.slots[0];const auto a=overview(e,.125f,x,z),b=overview(e,.125f,x+2,z+1);in.drag(a.x,a.y,b.x,b.y);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            std::map<size_t,std::string> moved;for(const auto& [cell,name]:original)moved[int(cell%512)<boxX && int(cell/512)<boxZ?cell+512+2:cell]=name;
+            ops.placed=moved;ops.matches(e,"group drag moves every selected feature by (2,1)");
+            in.key(SDLK_z,KMOD_CTRL);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {ops.placed=original;ops.matches(e,"group drag undone");in.key(SDLK_y,KMOD_CTRL);return true;});
+        s.then([&](Editor& e,const Input& in) {
+            std::map<size_t,std::string> moved;for(const auto& [cell,name]:original)moved[int(cell%512)<boxX && int(cell/512)<boxZ?cell+512+2:cell]=name;
+            ops.placed=moved;ops.matches(e,"group drag redone");in.key(SDLK_z,KMOD_CTRL);return true;
+        });
+        // Clipboard: copy + paste (right half), duplicate (lower right), cut + paste back, delete.
+        s.then([&,boxSelect](Editor& e,const Input& in) {ops.placed=original;ops.matches(e,"undone again");boxSelect(e,in);return true;});
+        s.then([&](Editor& e,const Input& in) {
+            in.key(SDLK_c,KMOD_CTRL);const auto p=overview(e,.125f,ops.slots[0].first+256,ops.slots[0].second);in.pointer(p.x,p.y);in.key(SDLK_v,KMOD_CTRL);return true;
+        });
+        auto withCopy=[&](int dx,int dz) {
+            auto out=original;for(const auto& [cell,name]:original)if(int(cell%512)<boxX && int(cell/512)<boxZ)out[cell+size_t(dz)*512+dx]=name;
+            return out;
+        };
+        s.then([&,withCopy](Editor& e,const Input& in) {
+            ops.placed=withCopy(256,0);ops.matches(e,"Ctrl+C / Ctrl+V pastes the group at the pointer");
+            ops.expect(e.selectedFeatures.cells.size()==size_t(std::count_if(original.begin(),original.end(),[&](const auto& f){return int(f.first%512)<boxX && int(f.first/512)<boxZ;})),"the pasted group is selected");
+            in.key(SDLK_z,KMOD_CTRL);return true;
+        });
+        s.then([&,boxSelect](Editor& e,const Input& in) {ops.placed=original;ops.matches(e,"paste undone");boxSelect(e,in);return true;});
+        s.then([&](Editor& e,const Input& in) {
+            const auto p=overview(e,.125f,ops.slots[0].first+256,ops.slots[0].second+200);in.pointer(p.x,p.y);in.key(SDLK_d,KMOD_CTRL);return true;
+        });
+        s.then([&,withCopy](Editor& e,const Input& in) {ops.placed=withCopy(256,200);ops.matches(e,"Ctrl+D duplicates at the pointer");in.key(SDLK_z,KMOD_CTRL);return true;});
+        s.then([&,boxSelect](Editor& e,const Input& in) {ops.placed=original;ops.matches(e,"duplicate undone");boxSelect(e,in);return true;});
+        s.then([&](Editor& e,const Input& in) {in.key(SDLK_x,KMOD_CTRL);return true;});
+        s.then([&](Editor& e,const Input& in) {
+            ops.placed.clear();for(const auto& [cell,name]:original)if(!(int(cell%512)<boxX && int(cell/512)<boxZ))ops.placed[cell]=name;
+            ops.matches(e,"Ctrl+X cuts the group");
+            const auto p=overview(e,.125f,ops.slots[0].first,ops.slots[0].second);in.pointer(p.x,p.y);in.key(SDLK_v,KMOD_CTRL);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {ops.placed=original;ops.matches(e,"Ctrl+V puts the cut group back");in.key(SDLK_DELETE);return true;});
+        s.then([&](Editor& e,const Input& in) {
+            ops.placed.clear();for(const auto& [cell,name]:original)if(!(int(cell%512)<boxX && int(cell/512)<boxZ))ops.placed[cell]=name;
+            ops.matches(e,"Delete removes the selection");in.key(SDLK_z,KMOD_CTRL);return true;
+        });
+        // A stale selection (one member erased in Erase mode) still drags the rest.
+        s.then([&](Editor& e,const Input& in) {
+            ops.placed=original;ops.matches(e,"delete undone");
+            const auto [x,z]=ops.slots[0];const auto [x2,z2]=ops.slots[1];
+            const auto a=focus(e,x*16+8.f,z*16+8.f),b=cellScreen(e,x2*16+8.f,z2*16+8.f);
+            mode(in,Editor::MODE_SELECT);in.click(a.x,a.y);holdShift(true);in.click(b.x,b.y);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            holdShift(false);const auto [x,z]=ops.slots[0];const auto a=focus(e,x*16+8.f,z*16+8.f);
+            mode(in,Editor::MODE_ERASE);in.click(a.x,a.y);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            const auto [x2,z2]=ops.slots[1];const auto b=focus(e,x2*16+8.f,z2*16+8.f);
+            mode(in,Editor::MODE_SELECT);in.drag(b.x,b.y,b.x,b.y+16);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            const auto& map=e.mapView.map();const auto [x2,z2]=ops.slots[1];
+            ops.expect(nameAt(map,cellOf(map,x2,z2+1))==ops.refs[1].name,"a selection that lost a member in Erase mode still drags");
+            in.key(SDLK_z,KMOD_CTRL);in.key(SDLK_z,KMOD_CTRL);return true;
+        });
+        ops.script.then([&](Editor& e,const Input&) {ops.placed=original;ops.matches(e,"erase and drag undone");return true;});
+        return true;
+    });
+    // Live symmetry (vertical): each feature placed in the lower left gets its
+    // mirror copy; Erase removes both. Then the 4-way kinds on a few.
+    s.then([&](Editor& e,const Input& in) {
+        in.key(SDLK_m);
+        const auto& map=e.mapView.map();const int width=map.width,height=map.height;
+        for(size_t i=0;i<ops.refs.size();++i) {
+            const int x=8+int(i%28)*8,z=300+int(i/28)*8;
+            ops.place(int(i),x,z);
+            s.then([&,i,x,z,width,height](Editor& e,const Input& in) {
+                const auto& map=e.mapView.map();const auto& ref=ops.refs[i];
+                const auto image=cart::mirrorFeature(x,z,ref.footX,ref.footZ,cart::Xf::FlipX,width,height);
+                ops.expect(e.liveSymmetry && image && nameAt(map,cellOf(map,image->first,image->second))==ref.name,"live symmetry mirrors '"+ref.name+"'");
+                const auto p=focus(e,x*16+8.f,z*16+8.f);mode(in,Editor::MODE_ERASE);in.click(p.x,p.y);
+                ops.placed.erase(cellOf(map,x,z));return true;
+            });
+            ops.verify("live symmetry erases '"+ops.refs[i].name+"' and its mirror");
+        }
+        // Other kinds: Symmetry menu rows 2..8 choose the kind (the map is square).
+        // Sources near the centre: no image of one reaches the populated block.
+        for(int kind=1;kind<cart::kMirrorKinds;++kind)for(size_t i=0;i<std::min<size_t>(6,ops.refs.size());++i) {
+            const int x=150+int(i)*12,z=200+kind*8;
+            if(i==0)s.then([kind](Editor& e,const Input& in) {menu(in,4,2+kind);return true;});
+            ops.place(int(i),x,z);
+            s.then([&,i,x,z,kind,width,height](Editor& e,const Input& in) {
+                const auto& map=e.mapView.map();const auto& ref=ops.refs[i];
+                for(const auto xf:cart::mirrorImages(cart::Mirror(kind)))
+                    if(const auto image=cart::mirrorFeature(x,z,ref.footX,ref.footZ,xf,width,height))
+                        ops.expect(nameAt(map,cellOf(map,image->first,image->second))==ref.name,std::string(cart::mirrorLabel(cart::Mirror(kind)))+" mirrors '"+ref.name+"'");
+                const auto p=focus(e,x*16+8.f,z*16+8.f);mode(in,Editor::MODE_ERASE);in.click(p.x,p.y);
+                ops.placed.erase(cellOf(map,x,z));return true;
+            });
+            ops.verify(std::string(cart::mirrorLabel(cart::Mirror(kind)))+" erases '"+ops.refs[i].name+"' and its images");
+        }
+        s.then([](Editor& e,const Input& in) {menu(in,4,2);in.key(SDLK_m);return true;});   // vertical again, live off
+        s.then([&](Editor& e,const Input& in) {
+            ops.expect(!e.liveSymmetry,"live symmetry off");
+            // Symmetrize (Shift+M): left half onto the right, terrain left alone.
+            in.key(SDLK_m,KMOD_SHIFT);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            if(!ops.expect(e.modal==Editor::M_SYMMETRIZE,"Shift+M opens Symmetrize"))return true;
+            for(int i=0;i<2;++i)in.key(SDLK_TAB);in.key(SDLK_RIGHT);   // TERRAIN: LEAVE TERRAIN
+            in.key(SDLK_RETURN);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            if(!ops.expect(e.modal==Editor::M_CONFIRM,"Symmetrize asks to confirm ("+e.modalError+")"))return true;
+            // The same request through the shared function, for the expected result.
+            auto copy=e.mapView.map();auto starts=e.scenario.starts;auto scen=e.scen;auto units=e.units;
+            cart::SymmetryRequest request;request.terrain=false;
+            *report=cart::symmetrize(copy,starts,scen,units,request,e.featureFootprint(),nullptr);
+            ops.placed.clear();for(size_t i=0;i<copy.features.size();++i)if(const auto name=nameAt(copy,i);!name.empty())ops.placed[i]=name;
+            in.key(SDLK_RETURN);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            ops.matches(e,"Symmetrize mirrors every feature of the left half");
+            ops.expect(report->features>0,"Symmetrize reports feature copies ("+report->summary()+")");
+            // Every source feature's mirror holds its name, unless it would leave the map.
+            const auto& map=e.mapView.map();int mirrored=0;
+            for(const auto& [cell,name]:original) {
+                const int x=int(cell%map.width),z=int(cell/map.width);const auto* ref=e.features.byName(name);
+                if(!ref || x>=map.width/2)continue;
+                if(const auto image=cart::mirrorFeature(x,z,ref->footX,ref->footZ,cart::Xf::FlipX,map.width,map.height))
+                    mirrored+=nameAt(map,cellOf(map,image->first,image->second))==name;
+            }
+            ops.expect(mirrored>0,"mirrored copies of the original features");
+            in.key(SDLK_z,KMOD_CTRL);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {ops.placed=original;ops.matches(e,"Symmetrize undone in one step");return true;});
+        return true;
+    });
+    // Terrain over features: a stamp with objects protected keeps them, an
+    // unprotected one replaces them with the section's own; Clear Area; the
+    // terrain clipboard carries them; Resize crops and grows.
+    auto stampOver=std::make_shared<tak::tnt::Map>();
+    s.then([&,stampOver](Editor& e,const Input& in) {
+        int section=-1;
+        for(size_t i=0;i<e.sections.list().size() && section<0;++i)if(const auto* m=e.sections.load(e.vfs,e.sections.list()[i].path))
+            if(m->blocksX==16 && m->blocksY==16 && std::any_of(m->features.begin(),m->features.end(),[](uint16_t v){return v<0xFFFA;}))section=int(i);
+        if(section<0)for(size_t i=0;i<e.sections.list().size() && section<0;++i)if(const auto* m=e.sections.load(e.vfs,e.sections.list()[i].path);m && m->blocksX==16)section=int(i);
+        if(!ops.expect(section>=0,"a 16x16 section"))return true;
+        tool(in,Editor::TERRAIN);ops.pick.search(in,section,e.sections.list()[size_t(section)].name);
+        for(int protect=0;protect<2;++protect) {
+            s.then([&,section,protect,stampOver](Editor& e,const Input& in) {
+                if(protect==0) {
+                    const int clicked=ops.pick.click(e,in);
+                    if(!clicked)return false;
+                    if(!ops.expect(clicked>0,"section listed"))return true;
+                }
+                if(protect)menu(in,1,3);   // Edit > Terrain brush: protect objects
+                const auto* m=e.sections.load(e.vfs,e.sections.list()[size_t(section)].path);
+                *stampOver=e.mapView.map();cart::StampLayers layers;layers.objects=protect==0;
+                cart::stampSection(*stampOver,*m,0,0,layers);
+                const auto p=overview(e,.125f,16,16);mode(in,Editor::MODE_PLACE);in.click(p.x,p.y);return true;
+            });
+            s.then([&,protect,stampOver](Editor& e,const Input& in) {
+                ops.expect(planeDifference(e.mapView.map(),*stampOver).empty(),protect?"a protected stamp keeps the features under it":"an unprotected stamp replaces the features under it");
+                if(protect) {
+                    const auto& map=e.mapView.map();
+                    for(const auto& [cell,name]:original)if(int(cell%map.width)<32 && int(cell/map.width)<32)
+                        ops.expect(nameAt(map,cell)==name,"protected stamp keeps '"+name+"'");
+                    menu(in,1,3);
+                }
+                in.key(SDLK_z,KMOD_CTRL);return true;
+            });
+            ops.verify(protect?"protected stamp undone":"unprotected stamp undone");
+        }
+        // Clear Area over the top-left block of features.
+        s.then([&](Editor& e,const Input& in) {
+            tool(in,Editor::FEATURES);in.key(SDLK_k);
+            const auto a=overview(e,.125f,1,1),b=overview(e,.125f,100,40);in.drag(a.x,a.y,b.x,b.y);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            if(!ops.expect(e.modal==Editor::M_CONFIRM && e.mTitle=="CLEAR AREA","Clear Area asks to confirm"))return true;
+            in.key(SDLK_RETURN);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            ops.placed.clear();
+            for(const auto& [cell,name]:original) {const int x=int(cell%512),z=int(cell/512);if(!(x>=1 && x<=100 && z>=1 && z<=40))ops.placed[cell]=name;}
+            ops.matches(e,"Clear Area removes the features in its box");in.key(SDLK_z,KMOD_CTRL);return true;
+        });
+        // Terrain clipboard: blocks 0..64 x 0..32 copied with their features, pasted at block (0,60).
+        s.then([&](Editor& e,const Input& in) {
+            ops.placed=original;ops.matches(e,"Clear Area undone");
+            tool(in,Editor::TERRAIN);mode(in,Editor::MODE_SELECT);
+            const auto a=overview(e,.125f,0,0),b=overview(e,.125f,127,63);in.drag(a.x,a.y,b.x,b.y);in.key(SDLK_c,KMOD_CTRL);in.key(SDLK_v,KMOD_CTRL);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            if(!ops.expect(e.clipboardBrush() && e.terrainClip.map.blocksX==64 && e.terrainClip.map.blocksY==32,"Ctrl+C / Ctrl+V makes a 64x32-block clipboard brush"))return true;
+            const auto p=overview(e,.125f,(0+32)*2,(60+16)*2);in.click(p.x,p.y);return true;   // the brush centres on the pointer
+        });
+        s.then([&](Editor& e,const Input& in) {
+            auto want=original;for(const auto& [cell,name]:original)if(int(cell%512)<128 && int(cell/512)<64)want[cell+size_t(120)*512]=name;
+            ops.placed=want;ops.matches(e,"the terrain clipboard pastes the features with the terrain");
+            in.key(SDLK_z,KMOD_CTRL);in.key(SDLK_ESCAPE);return true;
+        });
+        // Resize: crop to 4x16 units (features beyond x=128 go), undo; grow to 20x20.
+        s.then([&](Editor& e,const Input& in) {ops.placed=original;ops.matches(e,"clipboard paste undone");tool(in,Editor::FEATURES);in.key(SDLK_r);return true;});
+        s.then([&](Editor& e,const Input& in) {
+            if(!ops.expect(e.modal==Editor::M_RESIZE,"R opens Resize"))return true;
+            in.text("4");in.key(SDLK_RETURN);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            if(!ops.expect(e.modal==Editor::M_CONFIRM && e.mTitle=="CROP MAP","a crop asks to confirm"))return true;
+            in.key(SDLK_RETURN);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            ops.expect(e.mapView.map().width==128 && e.mapView.map().height==512,"cropped to 128x512 cells");
+            ops.placed.clear();for(const auto& [cell,name]:original)if(int(cell%512)<128)ops.placed[cell/512*128+cell%512]=name;
+            ops.matches(e,"the crop keeps the features inside and drops the rest");
+            in.key(SDLK_z,KMOD_CTRL);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            ops.placed=original;ops.matches(e,"crop undone");
+            in.key(SDLK_r);in.text("20");in.key(SDLK_TAB);in.text("20");in.key(SDLK_RETURN);return true;
+        });
+        s.then([&](Editor& e,const Input& in) {
+            ops.expect(e.mapView.map().width==640 && e.mapView.map().height==640,"grown to 640x640 cells");
+            ops.placed.clear();for(const auto& [cell,name]:original)ops.placed[cell/512*640+cell%512]=name;
+            ops.matches(e,"growing keeps every feature in its cell");
+            in.key(SDLK_z,KMOD_CTRL);return true;
+        });
+        ops.script.then([&](Editor& e,const Input&) {ops.placed=original;ops.matches(e,"growth undone");return true;});
+        return true;
+    });
+    // Analysis with features: the four terrain overlays and Check Map, frame
+    // selection and hiding the layer under a selection.
+    for(int row=7;row<=10;++row) {
+        s.then([row](Editor& e,const Input& in) {menu(in,2,row);return true;});
+        s.then([&,row](Editor& e,const Input& in) {
+            if(e.modal==Editor::M_ANALYZING)return false;
+            ops.expect(e.overlayTexture!=nullptr,"View overlay "+std::to_string(row-6)+" built with features");
+            if(e.modal!=Editor::M_NONE)in.key(SDLK_RETURN);
+            return true;
+        });
+    }
+    s.then([](Editor& e,const Input& in) {menu(in,2,11);in.key(SDLK_c);return true;});
+    s.then([&](Editor& e,const Input& in) {
+        if(e.modal==Editor::M_CHECKING)return false;
+        if(!ops.expect(e.modal==Editor::M_ISSUES,"Check Map reports"))return true;
+        for(const auto& issue:e.mapIssues)if(issue.message.starts_with("Missing feature definition"))ops.expect(false,"Check Map: "+issue.message);
+        in.key(SDLK_ESCAPE);
+        const auto [x,z]=ops.slots[0];const auto p=focus(e,x*16+8.f,z*16+8.f);mode(in,Editor::MODE_SELECT);in.click(p.x,p.y);
+        menu(in,2,4);return true;   // View > Frame selection
+    });
+    s.then([&](Editor& e,const Input& in) {
+        ops.expect(e.modal==Editor::M_NONE && e.mapView.zoom()<=1,"Frame selection frames the selected feature");
+        menu(in,2,14);in.key(SDLK_DELETE);menu(in,2,14);return true;   // hide features, Delete (ignored), show
+    });
+    s.then([&](Editor& e,const Input& in) {ops.matches(e,"a hidden layer's selection is protected");return true;});
+    // Test Map's snapshot: the package the game builds from it resolves every feature.
+    s.then([&](Editor& e,const Input& in) {
+        try {
+            const auto path=fs::path(ops.root)/"Test snapshot.kmp";std::string error;
+            if(!cart::writeDocumentBundle(path,cart::documentFiles(e.mapView.map(),e.scenario,e.scen,e.units,e.useOnly,"Test snapshot"),error))throw std::runtime_error(error);
+            const auto package=tak::net::maps::importSnapshot(e.vfs,path);
+            tak::hpi::Vfs view(&e.vfs);view.setMapFiles(package->files);
+            const auto map=tak::tnt::Map::load(package->files->at(package->mapPath),package->mapPath);
+            auto game=std::make_unique<tak::sim::World>();
+            game->setTerrain(map.heights,map.width,map.height,map.seaLevel,&map.features);
+            tak::sim::registerMapFeatures(*game,map,view,&e.unitRegistry);
+            // Names only a downloaded map in Maps/ defines: the install alone does not resolve them either.
+            tak::hpi::Vfs installed(&e.vfs,true);auto own=std::make_unique<tak::sim::World>();
+            own->setTerrain(map.heights,map.width,map.height,map.seaLevel,&map.features);
+            tak::sim::registerMapFeatures(*own,map,installed,&e.unitRegistry);
+            const auto& types=game->mapPlacementTypes();const auto& installedTypes=own->mapPlacementTypes();int resolved=0,downloaded=0;
+            for(size_t i=0;i<map.featureNames.size();++i) {
+                if(i<types.size() && !types[i].name.empty()) {++resolved;continue;}
+                if(i>=installedTypes.size() || installedTypes[i].name.empty()) {++downloaded;continue;}
+                ops.expect(false,"Test Map snapshot cannot resolve '"+map.featureNames[i]+"'");
+            }
+            std::cout<<"note: "<<world<<" Test Map snapshot resolves "<<resolved<<" of "<<map.featureNames.size()<<" feature names";
+            if(downloaded)std::cout<<"; "<<downloaded<<" are defined only by downloaded maps in Maps/, which a snapshot does not carry";
+            std::cout<<'\n';
+        } catch(const std::exception& error) {ops.expect(false,std::string("Test Map snapshot: ")+error.what());}
+        saveAndReopen(e,in,ops.label,ops.root);return true;
+    });
+    // Save and reopen, then paste the whole set into a map of another world.
+    s.then([&](Editor& e,const Input& in) {
+        if(reopened(e,ops.label))ops.matches(e,"saved and reopened features");
+        const auto a=overview(e,.0625f,0,0),b=overview(e,.0625f,511,511);tool(in,Editor::FEATURES);mode(in,Editor::MODE_SELECT);
+        in.drag(a.x,a.y,b.x,b.y);in.key(SDLK_c,KMOD_CTRL);in.key(SDLK_n,KMOD_CTRL);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        if(!ops.expect(e.modal==Editor::M_NEW && e.selectedFeatures.clipboard.size()==original.size(),"copied every feature ("+std::to_string(e.selectedFeatures.clipboard.size())+
+                       " of "+std::to_string(original.size())+"), New Map open (modal "+std::to_string(int(e.modal))+")"))return true;
+        for(int i=0;i<3;++i) {in.key(SDLK_TAB);in.key(SDLK_RIGHT);}   // width 16, height 16, the next world
+        in.key(SDLK_RETURN);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        if(!ops.expect(e.modal==Editor::M_NONE && e.world!=world,"a new map of another world ("+e.world+")"))return true;
+        // The clipboard anchors its lowest cell -- the corner feature at (511,0) -- at the pointer.
+        const auto p=overview(e,.0625f,511,0);in.pointer(p.x,p.y);in.key(SDLK_v,KMOD_CTRL);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        const auto& map=e.mapView.map();int foreign=0;
+        if(!ops.expect(e.selectedFeatures.cells.size()==original.size(),"every feature pasted into the "+e.world+" map ("+std::to_string(e.selectedFeatures.cells.size())+")"))return true;
+        for(const int cell:e.selectedFeatures.cells)foreign+=!e.features.byName(nameAt(map,size_t(cell)));
+        ops.expect(foreign>0,"features of another world stay in the map (drawn as markers)");
+        in.key(SDLK_DELETE);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        const auto& map=e.mapView.map();
+        ops.expect(std::none_of(map.features.begin(),map.features.end(),[&](uint16_t v){return v<0xFFFA && v<map.featureNames.size();}),"pasted foreign features delete");
+        return true;
+    });
+    const bool ran=drive({"cartographer","--new","16x16","--world",world,"--data",data,"--out",ops.root},[&](Editor& e,const Input& in){return s.frame(e,in);},900,ops.label);
+    if(s.at<s.steps.size())check(false,ops.label+": script stopped at step "+std::to_string(s.at)+" of "+std::to_string(s.steps.size()));
+    std::error_code ec;fs::remove_all(ops.root,ec);
+    if(ran)std::cout<<ops.label<<": "<<ops.refs.size()<<" features through "<<s.steps.size()<<" steps\n";
+    return ran;
+}
+
+// Very many features: drag-paint a dense field of one feature (one cell per
+// motion event), then select it all, drag, delete, copy/paste, symmetrize,
+// Check Map, and save/reopen.
+bool manyFeaturesSession(const std::string& data,const std::string& world,int side) {
+    const auto root=tempRoot("manyfeatures");isolateProfile(root);
+    const std::string label=world+" "+std::to_string(side*side)+" features";
+    Script s;BrowserPick pick;int feature=-1;std::string name;
+    auto field=[&](int dx,int dz) {std::map<size_t,std::string> out;for(int z=0;z<side;++z)for(int x=0;x<side;++x)out[size_t(z+4+dz)*1024+x+4+dx]=name;return out;};
+    auto matches=[&](const Editor& e,const std::map<size_t,std::string>& want,const std::string& what) {
+        const auto& map=e.mapView.map();size_t named=0;bool ok=true;
+        for(size_t i=0;i<map.features.size();++i)if(!nameAt(map,i).empty())++named;
+        for(const auto& [cell,n]:want)if(nameAt(map,cell)!=n) {ok=false;break;}
+        return check(ok && named==want.size(),label+": "+what+" ("+std::to_string(named)+" on the map, "+std::to_string(want.size())+" expected)");
+    };
+    s.then([&](Editor& e,const Input& in) {
+        const auto& refs=e.features.list();
+        for(size_t i=0;i<refs.size() && feature<0;++i)if(refs[i].footX==1 && refs[i].footZ==1)feature=int(i);
+        if(feature<0)feature=0;
+        name=refs[size_t(feature)].name;tool(in,Editor::FEATURES);pick.search(in,feature,name);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        const int clicked=pick.click(e,in);if(!clicked)return false;
+        if(!check(clicked>0,label+": feature listed"))return true;
+        mode(in,Editor::MODE_PLACE);const auto p=overview(e,.125f,4,4);in.button(SDL_MOUSEBUTTONDOWN,p.x,p.y,SDL_BUTTON_LEFT,1);return true;
+    });
+    for(int band=0;band<side;band+=20)s.then([&,band](Editor& e,const Input& in) {   // ~20 rows of motion events a frame
+        for(int z=band;z<std::min(side,band+20);++z)for(int x=0;x<side;++x) {const auto p=overview(e,.125f,x+4,z+4);in.motion(p.x,p.y,SDL_BUTTON_LMASK);}
+        if(band+20>=side) {const auto p=overview(e,.125f,side+3,side+3);in.button(SDL_MOUSEBUTTONUP,p.x,p.y,SDL_BUTTON_LEFT,1);}
+        return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        matches(e,field(0,0),"drag-painting fills every cell");
+        const auto a=overview(e,.125f,2,2),b=overview(e,.125f,side+6,side+6);mode(in,Editor::MODE_SELECT);in.drag(a.x,a.y,b.x,b.y);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        check(int(e.selectedFeatures.cells.size())==side*side,label+": box select takes them all");
+        const auto a=overview(e,.125f,4,4),b=overview(e,.125f,5,5);in.drag(a.x,a.y,b.x,b.y);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {matches(e,field(1,1),"the whole field drags by (1,1)");in.key(SDLK_z,KMOD_CTRL);return true;});
+    s.then([&](Editor& e,const Input& in) {
+        matches(e,field(0,0),"field drag undone");
+        const auto a=overview(e,.125f,2,2),b=overview(e,.125f,side+6,side+6);in.drag(a.x,a.y,b.x,b.y);
+        in.key(SDLK_c,KMOD_CTRL);const auto p=overview(e,.125f,side+20,4);in.pointer(p.x,p.y);in.key(SDLK_v,KMOD_CTRL);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        auto want=field(0,0);for(const auto& [cell,n]:field(side+16,0))want[cell]=n;
+        matches(e,want,"copy/paste of the whole field");in.key(SDLK_DELETE);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {matches(e,field(0,0),"Delete removes the pasted field");in.key(SDLK_m,KMOD_SHIFT);return true;});
+    s.then([&](Editor& e,const Input& in) {
+        if(!check(e.modal==Editor::M_SYMMETRIZE,label+": Symmetrize opens"))return true;
+        for(int i=0;i<2;++i)in.key(SDLK_TAB);in.key(SDLK_RIGHT);in.key(SDLK_RETURN);in.key(SDLK_RETURN);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        auto want=field(0,0);for(const auto& [cell,n]:field(0,0))want[cell/1024*1024+(1023-cell%1024)]=n;
+        matches(e,want,"Symmetrize mirrors the field");in.key(SDLK_z,KMOD_CTRL);in.key(SDLK_c);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        if(e.modal==Editor::M_CHECKING)return false;
+        check(e.modal==Editor::M_ISSUES,label+": Check Map finishes");in.key(SDLK_ESCAPE);
+        saveAndReopen(e,in,label,root);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {if(reopened(e,label))matches(e,field(0,0),"saved and reopened field");return true;});
+    const auto began=std::chrono::steady_clock::now();
+    const bool ran=drive({"cartographer","--new","32x32","--world",world,"--data",data,"--out",root},[&](Editor& e,const Input& in){return s.frame(e,in);},900,label);
+    if(s.at<s.steps.size())check(false,label+": script stopped at step "+std::to_string(s.at));
+    std::error_code ec;fs::remove_all(root,ec);
+    std::cout<<label<<": "<<std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-began).count()<<" ms\n";
+    return ran;
+}
+
+// Random scatter: a generated map's trees, rocks and mana, all selected,
+// deleted, restored, symmetrized, checked, saved and reopened.
+bool generatedFeaturesSession(const std::string& data,const std::string& world) {
+    const auto root=tempRoot("generated");isolateProfile(root);
+    const std::string label=world+" generated features";
+    Script s;std::map<size_t,std::string> original;
+    auto matches=[&](const Editor& e,const std::string& what) {
+        const auto& map=e.mapView.map();std::map<size_t,std::string> now;
+        for(size_t i=0;i<map.features.size();++i)if(const auto n=nameAt(map,i);!n.empty())now[i]=n;
+        return check(now==original,label+": "+what+" ("+std::to_string(now.size())+" of "+std::to_string(original.size())+")");
+    };
+    s.then([&](Editor& e,const Input& in) {
+        const auto& map=e.mapView.map();for(size_t i=0;i<map.features.size();++i)if(const auto n=nameAt(map,i);!n.empty())original[i]=n;
+        check(!original.empty(),label+": the generator scatters features");
+        tool(in,Editor::FEATURES);mode(in,Editor::MODE_SELECT);
+        // Start the box on a cell without a feature.
+        int x0=0;while(x0<16 && !nameAt(map,size_t(x0)).empty())++x0;
+        const auto a=overview(e,.0625f,x0,0),b=overview(e,.0625f,map.width-1,map.height-1);in.drag(a.x,a.y,b.x,b.y);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        check(e.selectedFeatures.cells.size()>=original.size()-16,label+": box select takes the scatter ("+std::to_string(e.selectedFeatures.cells.size())+")");
+        in.key(SDLK_DELETE);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        const auto& map=e.mapView.map();size_t left=0;for(size_t i=0;i<map.features.size();++i)left+=!nameAt(map,i).empty();
+        check(left+e.selectedFeatures.cells.size()<=original.size() && left<=16,label+": Delete removes the scatter");
+        in.key(SDLK_z,KMOD_CTRL);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {matches(e,"undo restores the scatter");in.key(SDLK_m,KMOD_SHIFT);return true;});
+    s.then([&](Editor& e,const Input& in) {
+        if(!check(e.modal==Editor::M_SYMMETRIZE,label+": Symmetrize opens"))return true;
+        in.key(SDLK_RETURN);in.key(SDLK_RETURN);return true;   // mirror section twins too
+    });
+    s.then([&](Editor& e,const Input& in) {check(e.modal==Editor::M_NONE || e.modal==Editor::M_MESSAGE,label+": Symmetrize applied");in.key(SDLK_RETURN);in.key(SDLK_z,KMOD_CTRL);in.key(SDLK_c);return true;});
+    s.then([&](Editor& e,const Input& in) {
+        if(e.modal==Editor::M_CHECKING)return false;
+        matches(e,"Symmetrize undone");check(e.modal==Editor::M_ISSUES,label+": Check Map finishes");in.key(SDLK_ESCAPE);
+        saveAndReopen(e,in,label,root);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {if(reopened(e,label))matches(e,"saved and reopened scatter");return true;});
+    const bool ran=drive({"cartographer","--new","16x16","--world",world,"--random","--data",data,"--out",root},[&](Editor& e,const Input& in){return s.frame(e,in);},600,label);
+    if(s.at<s.steps.size())check(false,label+": script stopped at step "+std::to_string(s.at));
+    std::error_code ec;fs::remove_all(root,ec);
+    return ran;
+}
+
+int featureOpsWorkflow(const std::string& data,std::vector<std::string> worlds) {
+    if(worlds.empty())worlds=kWorlds;
+    for(const auto& world:worlds) {
+        featureOpsSession(data,world);
+        generatedFeaturesSession(data,world);
+        manyFeaturesSession(data,world,world==worlds.front()?240:100);
+    }
+    if(!failures.empty())return 1;
+    std::cout<<"PASS: feature operations (select, drag, clipboard, delete, symmetry, terrain, Clear Area, resize, overlays, Check Map, Test Map snapshot, save/reopen, cross-world paste, generated scatter, dense fields) on "<<worlds.size()<<" worlds\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc,char** argv) {
@@ -919,5 +1512,6 @@ int main(int argc,char** argv) {
     if(mode=="units")return unitsWorkflow(data,rest);
     if(mode=="slots")return slotsWorkflow(data,rest);
     if(mode=="rescan")return rescanWorkflow(data);
+    if(mode=="feature-ops")return featureOpsWorkflow(data,rest);
     return 2;
 }
