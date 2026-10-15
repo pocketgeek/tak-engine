@@ -19,7 +19,13 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 262;      // 262: a flyer held still in range of its attack target stops its velocity and speed
+constexpr uint32_t kNetVersion = 263;      // 263: air combat, all hashed: every World flyer hold (wait, ambush, emptied order list,
+                                           //      guard within 70px, builder at its point, FlyingBuild's retry) stops flightVelocity and speed; retail
+                                           //      impact dispatch (529c10: an aoe<=16 weapon that struck a unit hits it alone, every other impact
+                                           //      damages units by 3D distance to their boxes, 529dc0; PendingEffect::y); a slot's facing request points
+                                           //      at its led SweetSpot (52fe30 -> 51aa50, faceRequest); a flyer without hoverattack flies AirToGround
+                                           //      attack runs (41bf80) at a target that cannot fly, attackrunlength loaded. 262 replays refused
+                                           // 262: a flyer held still in range of its attack target stops its velocity and speed
                                            //      (hashed flightVelocity/speed): shooters lead a hovering attacker by
                                            //      its real motion (51aa50), not the speed it flew in at. 261 replays refused
                                            // 261: healtime self-repair is retail's (icd 51e152): every 8th tick a finished, living unit

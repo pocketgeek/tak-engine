@@ -701,7 +701,15 @@ self-repair) changed the simulation, so playback again requires the current
 protocol, and protocol 262 changed it again: a flyer held still in range of its
 attack target zeroes its hashed `flightVelocity` and speed, so shooters stop
 leading it by the speed it flew in at (see "Shooting at flyers" in
-`retail-engine.md`). Older recordings require their original engine.
+`retail-engine.md`). Protocol 263 changes air combat, and protocol 262
+recordings no longer play: World's other flyer holds stop the velocity and
+speed too; impacts follow retail's dispatch, a weapon with areaofeffect 16 or
+less that struck a unit damaging it alone and every other impact damaging units
+by 3D distance to the blast; each weapon slot's facing request points at its led
+SweetSpot; and a flyer without hoverattack flies attack runs at a target that
+cannot fly instead of holding still in range (see "World's other flyer holds",
+"Impact damage", "The facing request" and "Attack runs" in `retail-engine.md`).
+Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
 reading an older file). Saved

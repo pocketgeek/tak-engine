@@ -196,7 +196,7 @@ its cell between its altitude (type +0x13e is zeroed at `4c1419`) and its model
 top (+0x14a, `546f40`); a shot that runs out of range vanishes without splash.
 
 World held a non-`hoverattack` flyer still once its attack target was in range
-(retail flies it on attack runs instead; World does too since protocol 265, see
+(retail flies it on attack runs instead; World does too since protocol 263, see
 "Attack runs" below, except against a flying target). That hold skipped the flight
 body but kept `flightVelocity`, so every leading shooter aimed ahead of a flyer
 hanging still: a Lokken's Fire Ball missed a held Gryphon, Fallen Angel or Wrath
@@ -218,12 +218,12 @@ flyers at similar rates is an inference from the parts, not an emulated whole
 engagement.
 
 Splash, facing and attack runs, the items this section listed as not ported,
-are ported: see "Impact damage" (protocol 263), "The facing request" (protocol
-264) and "Attack runs" (protocol 265) below. The run mission is AirToGround
+are ported: see "Impact damage", "The facing request" and "Attack runs" below (all
+protocol 263). The run mission is AirToGround
 (`41bf80`), not `VTOL_SeekAttack`: `41b6e8` is a `VTOL_SEEKATTACK` push inside
 AirStrike, and the `41bc3b` read belongs to AirStrike too.
 
-### World's other flyer holds (protocol 262)
+### World's other flyer holds (protocol 263)
 
 World holds a flyer still, skipping its flight body, in six more places:
 SetMission's wait (`w N`) and ambush (`wa`), an emptied order list until
@@ -234,7 +234,7 @@ the velocity the flyer came in with and only braked its speed; the emptied list
 zeroed the velocity but only braked the speed; the repair or reclaim point kept
 a velocity with no speed. A Gryphon told to wait mid-flight hung still reporting
 3.4 px/tick (and 1 px/tick of climb), a Dirigible's 0.005 brake left its speed
-up for about 16 s, and MoveRate stayed at 1-3. Since protocol 262 every hold
+up for about 16 s, and MoveRate stayed at 1-3. Since protocol 263 every hold
 zeroes both (`holdFlight`), as the attack hold does. `flyer_combat_test` checks
 all six for the Gryphon, the Dirigible and the Aramon flying builder in both
 balances, with MoveRate 0 where the flyer is not turning and `moving()` false
@@ -342,7 +342,7 @@ Still deviating:
   Remote Effect lands on its target's position at fire time; retail uses the
   slot's aim point (+8), lead included.
 
-### The facing request: the led SweetSpot (protocol 264)
+### The facing request: the led SweetSpot (protocol 263)
 
 Aim start `52fe30` (called for every slot by the weapon update `52ae90`, which
 runs before the unit's missions and mover) posts a facing request on the mover
@@ -377,7 +377,7 @@ direction from the flyer to the target's SweetSpot (`4dd4f0`), unled, taken
 whenever the navigator asks (`524af0`, within 320 px). So the body heads at the
 SweetSpot and fires once the led SweetSpot is within tolerance.
 
-World faced the target's centre in all three places. Since protocol 264,
+World faced the target's centre in all three places. Since protocol 263,
 `queryWeaponAim` returns the request (`retailSlotFacing`), the gate checks it,
 an auto slot posts it as `faceRequest`, and an attacking pivoting ground unit
 brakes and turns to the request of its last aiming slot. `tickHoverAttack` rings
@@ -422,14 +422,14 @@ Still deviating:
   controller never accepts.
 - A non-hover flyer held in range of a flying target turns to its centre.
   Retail posts no request for it and would be flying AirToAir (`41ca50`, not
-  ported). Against a target that cannot fly it flies attack runs (protocol 265).
+  ported). Against a target that cannot fly it flies attack runs (protocol 263).
 - World releases a Dropped bomb without `52fff0` (no SET 22 acknowledgement and
   no facing test). `52ae90` runs aim start and the gate for every class, and
   `DroppedBallisticWeapon`'s angle virtual (+0x28, `4d4450`) is a bare `ret
   0xc`, so its angle test always passes, but a Tarbeak's Egg Bomb would still
   wait on its facing request (static reading).
 
-### Attack runs (protocol 265)
+### Attack runs (protocol 263)
 
 The attack order's mission comes from `4de530` (action 3). A flyer gets
 AIRSTRIKE (`41b5e0`) when its selected weapon is `dropped` (WeaponType +0xc8
@@ -527,8 +527,19 @@ The Gryphon and the Fallen Angel lose most of their damage because their shots
 from a run land along their path: a Gryphon spear thrown 497 px out came down
 180 px from the dummy, past it, and the Fallen Angel's Death Sword, released
 about 31 px out, lands 15-25 px past. The angles freeze at the gate and the
-shot leaves from the moved muzzle at the release frame. Whether retail's shots
-from a moving flyer fall the same way is not established by emulation.
+shot leaves from the moved muzzle at the release frame, and each step of that is
+retail's, checked natively: the readiness gate `52fff0` writes the aim record's
+heading and pitch (+0x16/+0x18) only when it passes, and while the reload runs
+it neither recomputes the geometry (`52fd80`) nor touches them; aim start
+`52fe30` refreshes them only when no aim is pending (flags & 0xe0 clear)
+(`check_animation_readiness.py`); and the launch builds the shot from those
+stored angles, the body's heading at release (+0x7e) and the QueryWeapon muzzle
+at release (`52c540`, `probe_straight_projectile_launch.py`; `52be80` is wired
+the same way). The Gryphon's gate passes 15 ticks before its FireWeapon script
+sets 23 (traced on the 497 px throw: gate at tick 65, spear at tick 80), over which it
+closes about 54 px and climbs 15, so its pitch is the one for 497 px from a
+lower muzzle and the spear lands long. Retail's spear from a closing Gryphon
+should land as far off; a whole native engagement has not been run.
 
 Shooting at a Gryphon on its runs (3 trials x 1800 ticks, the shooter starting
 150 px beside the target, free to chase), hits / shots:
