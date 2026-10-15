@@ -108,6 +108,9 @@ struct Needs {
     int   builderCap = 2;      // stop making builders past this, the Monarch included
     int   desiredFactories = 1;// how many factories the current income wants to feed;
                                // a side with no factory buildings adds its builder allowance
+    int   mobileBuilders = 0;  // every builder=1 mobile unit of either category, the
+                               // Monarch, those unfinished and those queued or ordered
+    int   mobileBuilderCap = 2;// builderCap; a side with no factory buildings adds its factories
     bool  storeFull = false;   // mana at 90% of capacity or more: income goes unspent
 };
 

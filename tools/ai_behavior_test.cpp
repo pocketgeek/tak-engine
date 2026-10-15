@@ -355,6 +355,103 @@ static void mobileProducers() {
           "Easy Zhon stops at two factories and one builder");
 }
 
+// Every builder=1 mobile unit counts against the difficulty's cap, the Monarch,
+// the unfinished and the queued included; no builder type passes its own limit.
+static void builderTotals() {
+    auto files=std::make_shared<hpi::Vfs::Files>();
+    auto file=[&](const std::string& path,const std::string& text) {
+        std::string lines;
+        for (char ch : text) { lines += ch; if (ch == ';' || ch == '{' || ch == '}') lines += '\n'; }
+        (*files)[path]={lines.begin(),lines.end()};
+    };
+    auto type=[&](const char* id,const char* fields) {
+        file(std::string("units/")+id+".fbi",std::string("[UNITINFO]{unitname=")+id+
+            ";objectname="+id+";maxdamage=100;footprintx=2;footprintz=2;buildtime=30;buildcost=10;"+fields+"}");
+    };
+    // ARA: a keep trains masons and priests; a priest's menu is troops, so it is
+    // a factory by category but a builder all the same. ZON: no factory building.
+    type("arakeep","side=ARA;builder=1;workertime=30;");
+    type("araking","side=ARA;builder=1;commander=1;workertime=30;canmove=1;maxvelocity=1;");
+    type("aramason","side=ARA;builder=1;workertime=30;canmove=1;maxvelocity=1;");
+    type("arapries","side=ARA;builder=1;workertime=30;canmove=1;maxvelocity=1;");
+    type("aramonk","side=ARA;canmove=1;maxvelocity=1;");
+    file("canbuild/arakeep/aramason.tdf","[CANBUILD]{sortbias=0;}");
+    file("canbuild/arakeep/arapries.tdf","[CANBUILD]{sortbias=0;}");
+    file("canbuild/arapries/aramonk.tdf","[CANBUILD]{sortbias=0;}");
+    type("zonking","side=ZON;builder=1;commander=1;workertime=30;canmove=1;maxvelocity=1;");
+    type("zonhand","side=ZON;builder=1;workertime=30;canmove=1;maxvelocity=1;");
+    type("zongob","side=ZON;canmove=1;maxvelocity=1;");
+    file("canbuild/zonking/zonhand.tdf","[CANBUILD]{sortbias=0;}");
+    file("canbuild/zonhand/zonhand.tdf","[CANBUILD]{sortbias=0;}");
+    file("canbuild/zonhand/zongob.tdf","[CANBUILD]{sortbias=0;}");
+    hpi::Vfs vfs;vfs.setMapFiles(files);
+    sim::TypeRegistry reg;reg.loadDir(vfs,"units");reg.loadBuildTree(vfs,"canbuild");
+    auto builders=[](const std::vector<net::Command>& cs,std::initializer_list<const char*> ids) {
+        return int(std::count_if(cs.begin(),cs.end(),[&](const auto& c) {
+            return (c.kind==net::Cmd::Train || c.kind==net::Cmd::Build) &&
+                std::any_of(ids.begin(),ids.end(),[&](const char* id){return std::string(c.type)==id;});
+        }));
+    };
+    // keeps idle keeps; masons/priests already standing; queued masons in one
+    // more, busy keep that has not begun them.
+    auto aramon=[&](ai::Difficulty difficulty,float income,int keeps,int masons,int priests,int queued,
+                    int masonLimit=4) {
+        sim::World w;terrain(w);w.buildNavClasses(reg);
+        w.player(0).mana=100000;w.player(0).income=income;
+        w.spawn(reg.find("araking"),800,800,0,0);
+        for (int i=0;i<keeps;++i) w.spawn(reg.find("arakeep"),300+float(i)*100,300,0,0);
+        if (queued) {
+            const int id=w.spawn(reg.find("arakeep"),300,1600,0,0);
+            for (int i=0;i<queued;++i) w.unit(id)->buildQueue.push_back(reg.find("aramason"));
+        }
+        for (int i=0;i<masons;++i) w.spawn(reg.find("aramason"),1400+float(i)*60,1400,0,0);
+        for (int i=0;i<priests;++i) {
+            // Busy priests: each is already training, so none of them acts this think.
+            const int id=w.spawn(reg.find("arapries"),1400+float(i)*60,1600,0,0);
+            sim::Order o;o.buildType=reg.find("aramonk");w.unit(id)->orders.push_back(o);
+        }
+        for (int i=0;i<12;++i) w.spawn(reg.find("aramonk"),2000+float(i)*40,800,0,0);
+        ai::Profile p;
+        p.weight["aramason"]=10;p.limit["aramason"]=masonLimit;
+        p.weight["arapries"]=10;p.limit["arapries"]=4;p.weight["aramonk"]=10;p.limit["aramonk"]=40;
+        ai::Controller controller(0,reg,p,1,difficulty);
+        return builders(think(controller,w,difficulty==ai::Difficulty::Easy ? 90 : 0),{"aramason","arapries"});
+    };
+    // Income 1000: Normal's cap is five, the Monarch included, and eight factories.
+    check(aramon(ai::Difficulty::Normal,1000,1,0,4,0)==0,
+          "priests count against the builder cap though their menus make them factories");
+    check(aramon(ai::Difficulty::Normal,1000,1,2,1,0)==1,
+          "below the cap a factory race still adds a builder");
+    check(aramon(ai::Difficulty::Normal,1000,1,3,0,1)==0,
+          "a builder queued in a factory counts against the cap before it begins");
+    check(aramon(ai::Difficulty::Normal,1000,3,3,0,0)==1,
+          "several producers in one think stop at the cap");
+    check(aramon(ai::Difficulty::Hard,100000,1,4,4,0)==0,
+          "Hard holds a builder type to its own ai/default.txt limit");
+    auto zhon=[&](ai::Difficulty difficulty,float income,int handlers,int conjuring) {
+        sim::World w;terrain(w);w.buildNavClasses(reg);
+        w.player(0).mana=100000;w.player(0).income=income;
+        w.spawn(reg.find("zonking"),800,800,0,0);
+        for (int i=0;i<handlers;++i) {
+            // Busy handlers: the first `conjuring` walk to conjure a handler.
+            const int id=w.spawn(reg.find("zonhand"),1400+float(i%6)*60,1400+float(i/6)*60,0,0);
+            sim::Order o;o.buildType=reg.find(i<conjuring ? "zonhand" : "zongob");
+            w.unit(id)->orders.push_back(o);
+        }
+        for (int i=0;i<12;++i) w.spawn(reg.find("zongob"),2000+float(i)*40,800,0,0);
+        ai::Profile p;p.weight["zonhand"]=10;p.limit["zonhand"]=3;p.weight["zongob"]=10;p.limit["zongob"]=40;
+        if (difficulty==ai::Difficulty::Normal) p.limit["zonhand"]=16;
+        ai::Controller controller(0,reg,p,1,difficulty);
+        return builders(think(controller,w,difficulty==ai::Difficulty::Easy ? 90 : 0),{"zonhand"});
+    };
+    // Income 100: three factories and four builders, so the Monarch and six handlers.
+    check(zhon(ai::Difficulty::Normal,100,5,0)==1,"Zhon's producers grow to its own allowance");
+    check(zhon(ai::Difficulty::Normal,100,5,1)==0,
+          "a handler ordered but not yet conjured counts against Zhon's allowance");
+    check(zhon(ai::Difficulty::Hard,100000,3,0)==0,
+          "Hard Zhon holds each producer type to its ai/default.txt limit");
+}
+
 // The income target met, an idle builder still builds income while the store
 // is full (retail's builders draw from the whole menu, the lodestone among it).
 static void fullStore() {
@@ -408,6 +505,7 @@ int main(int argc,char** argv) {
     }
     builderCaps();
     mobileProducers();
+    builderTotals();
     fullStore();
     defensiveResponses(empty,profile,soldier);
     defensiveShooters(empty,profile,soldier);

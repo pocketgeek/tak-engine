@@ -117,6 +117,11 @@ BuildCat Controller::categoryOf(const tak::sim::UnitType* t) const {
     return BuildCat::Army;
 }
 
+// A builder=1 unit that walks: the Monarch, constructors, priests, Zhon's producers.
+static bool mobileBuilder(const tak::sim::UnitType* t) {
+    return t && !t->isStructure() && t->isBuilder;
+}
+
 bool Controller::mobileProduction(const std::string& side) const {
     if (side.empty()) return false;
     auto [it,inserted]=mobileProduction_.try_emplace(side,true);
@@ -260,6 +265,21 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
             case BuildCat::Army:     ++n.army;      break;
             case BuildCat::Defense:  ++n.defenses; break;
         }
+        if (mobileBuilder(u.type)) ++n.mobileBuilders;
+        // A builder trained or conjured but not yet begun is no unit yet: a
+        // factory's queue, or a producer walking to its conjuring spot. Count
+        // it, or every think hands the next idle producer one more builder.
+        auto planned = [&](const tak::sim::UnitType* t) {
+            if (!mobileBuilder(t)) return;
+            ++n.population;++n.counts[t];++n.mobileBuilders;
+            if (categoryOf(t) == BuildCat::Factory) ++n.factories; else ++n.builders;
+        };
+        for (size_t i = 0; i < u.buildQueue.size(); ++i)
+            if (i > 0 || !u.productionSiteId) planned(u.buildQueue[i]);
+        const auto* bound = u.buildSiteId ? world.unit(u.buildSiteId) : nullptr;
+        for (size_t i = 0; i < u.orders.size(); ++i)
+            if (u.orders[i].buildType && (i > 0 || !bound || bound->type != u.orders[i].buildType))
+                planned(u.orders[i].buildType);
     }
     // One factory per ~40 income so production can actually spend what we earn.
     // Builders count the Monarch. Normal grows to the Monarch plus four as income
@@ -294,7 +314,14 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
     // factories another side would have plus that side's builders past the
     // Monarch, so Zhon is not held to the producers of a side that has both.
     // Normal's most is 8 + 4 = 12, the four types' retail limits together.
-    if (mobileProduction(side)) n.desiredFactories += n.builderCap - 1;
+    // Every builder=1 mobile unit counts against the cap: Aramon's and Taros's
+    // priests are factories by their menus, but builders all the same. Zhon's
+    // cap is its producers' allowance plus the Monarch.
+    n.mobileBuilderCap = n.builderCap;
+    if (mobileProduction(side)) {
+        n.mobileBuilderCap += n.desiredFactories;
+        n.desiredFactories += n.builderCap - 1;
+    }
     const float capacity = me.manaCapacity();
     n.storeFull = capacity > 0.01f && float(me.mana) >= capacity * 0.9f;
     return n;
@@ -467,16 +494,23 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
         auto li = profile_.limit.find(ut->id);
         int lim = li == profile_.limit.end() ? -1 : li->second;
         if (lim == 0) return 0;
+        // The difficulty's builder cap, the Monarch included (see assessNeeds).
+        if (mobileBuilder(ut) && needs.mobileBuilders >= needs.mobileBuilderCap) return 0;
         if (lim > 0) {
             int limit = std::max(1, lim * dp_.limitScale / 100);
             const auto cat = categoryOf(ut);
             // Profile limits pace the old small armies. Keep disabled entries
             // disabled and enforce actual gameplay limits, but let these modes
             // grow ordinary troops, defenses and expanding income beyond them.
-            if (sustained && cat == BuildCat::Army) limit = std::max(limit, needs.desiredArmy);
-            if (sustained && cat == BuildCat::Factory) limit = std::max(limit, needs.desiredFactories);
-            if (sustained && cat == BuildCat::Builder) limit = std::max(limit, needs.builderCap);
-            if (sustained && cat == BuildCat::Defense) limit = std::max(limit, needs.desiredDefenses);
+            // A builder type never passes its own retail limit (ai/default.txt
+            // has no difficulty levels): Hard's 150% made four arabuilds six,
+            // and its factory target took Zhon's handlers far past three.
+            if (mobileBuilder(ut)) limit = std::min(limit, lim);
+            else {
+                if (sustained && cat == BuildCat::Army) limit = std::max(limit, needs.desiredArmy);
+                if (sustained && cat == BuildCat::Factory) limit = std::max(limit, needs.desiredFactories);
+                if (sustained && cat == BuildCat::Defense) limit = std::max(limit, needs.desiredDefenses);
+            }
             if (aggressive && cat == BuildCat::Economy && ut->income > 0) limit = INT_MAX;
             if (have >= limit) return 0;
         }
@@ -1531,6 +1565,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                     if (navalFactory(pick)) ++needs.navalFactories;
                     if (navalProducer(pick)) ++needs.navalProducers;
                     if (pick->onMana && pick->isStructure()) ++needs.lodestoneProjects;
+                    if (mobileBuilder(pick)) ++needs.mobileBuilders;
                     if (!pick->isStructure() && !pick->canFly && !pick->isBuilder &&
                         pick->domain==tak::sim::UnitType::Domain::Water) ++needs.navalArmy;
                     switch (categoryOf(pick)) {
