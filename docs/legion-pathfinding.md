@@ -418,6 +418,15 @@ footprint class (mixed footprints form one group per class but share one
   body -- when that is deeper and scores above its own slot; the two exchange
   slots (one footprint only; a body already through when it got its slot keeps
   it). The slots fill from the far side in the order the bodies really arrive.
+  The entrance is one footprint's: an origin of the member it was found for,
+  on that member's group field. A member of another footprint reads the same
+  cell on its own field, an origin whose centre lies (its foot less the
+  finder's) x 8 px off on each axis, so in a mixed formation its "through"
+  test, and the entrance it measures slot depth from, are that far off (a 4x4
+  behind a 2x2's entrance: one cell, against the 12-cell margin); since only
+  bodies of one footprint exchange, no slot moves across footprints. No fixture takes an entrance with
+  mixed footprints (each of the 19 that take one, and `farroom`, has a single
+  unit type).
   `farroom` completes at 9 of the 11 gate offsets (60 of 60 in at 9), where it
   never completed; over the existing fixtures it changes the 19 that take an
   entrance (the twelve dead-end rooms, `doorplug-124`, the six straits) and no

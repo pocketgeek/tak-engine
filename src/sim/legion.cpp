@@ -1661,8 +1661,9 @@ struct LegionNavigator::Impl {
         // front first, handed out at most kSlotsPerTick a tick (see
         // serveHandOut; hashed while not empty).
         std::vector<int> queue;
-        // The cell where the way into the area enters it past a narrowing (see entrance; -1: none). Its
-        // members exchange slots there (enterArea). Hashed while set.
+        // The cell where the way into the area enters it past a narrowing (see entrance; -1: none): an
+        // origin of the footprint of the member it was found for. Its members exchange slots there
+        // (enterArea). Hashed while set.
         int entry=-1;
         // C1 (W9 lane C, see meetScan): a head-on meet latched for this Point. tick: the latch (kNoTick:
         // none); contact: the last tick a member found the other command oncoming or awareness kept its
@@ -5113,7 +5114,11 @@ struct LegionNavigator::Impl {
     // out again within the probes (a corridor that runs on into the area, a closed dead end, is none), and
     // the area may not reach back past it into open ground (a door the crowd's own area spills through).
     // Then that first cell inside is the entrance. A function of the finished field and the static plane;
-    // the search is a passage search and counts with the passage gate's (laneWork).
+    // the search is a passage search and counts with the passage gate's (laneWork). One footprint's: the
+    // cell is an origin of that member's footprint, found on its group's field. A member of another
+    // footprint reads the same cell index on its own field (enterArea), an origin whose centre lies
+    // (its foot - the finder's foot) x 8 px off the entrance's on each axis, and measures slot depth
+    // from there too; only members of one footprint exchange, so no slot moves across footprints.
     int entrance(const Point& pt,const std::vector<std::pair<int,Member*>>& list,int64_t px,int64_t pz) {
         const int W=width();
         size_t pick=list.size();int64_t nearest=0;
