@@ -11,6 +11,10 @@ namespace tak::sim { struct RetailReplayProbe {
         const auto* source=w.unit(from);auto* victim=w.unit(target);
         w.applyHit(weapon,victim->x.toFloat(),victim->z.toFloat(),source->player,from,victim);
     }
+    static uint32_t moveRate(World& w,int id) {
+        const auto* script=w.unitScript(id);
+        return script ? script->movementRate : ~0u;
+    }
 }; }
 
 int main(int argc,char** argv) {
@@ -305,6 +309,88 @@ int main(int argc,char** argv) {
             std::printf("held flyer balance=%s unit=%s velocity=(%d,%d,%d) lokken shots=%d hits=%d\n",
                 crusades?"Crusades":"standard",name.c_str(),v.x,v.y,v.z,shots,hits);
             check(shots>=5 && hits*4>=shots*3,"a Lokken's Fire Ball connects with a flyer holding still to attack");
+        }
+        // World's other flyer holds skip the flight body the same way, and none
+        // stopped both. SetMission's wait ("w N") and ambush ("wa"), a guard
+        // within 70 px of its charge and FlyingBuild waiting out mobile units on
+        // its site kept the velocity the flyer came in with and only braked its
+        // speed; an emptied order list (until standby lands it) zeroed the
+        // velocity but only braked the speed; a flying builder at its repair or
+        // reclaim point kept a velocity with no speed. Shooters lead by the
+        // velocity (51aa50), the COB speed queries and MoveRate read both, and
+        // the next flight step starts from them, so a held flyer reports neither.
+        auto still=[](const tak::sim::Unit& u,int32_t x,int32_t y,int32_t z) {
+            return u.flightGroundMode==2 && u.x.v==x && u.flightY.v==y && u.z.v==z;
+        };
+        auto reportHold=[&](tak::sim::World& w,int id,const char* hold,bool held,bool turning) {
+            const auto& u=*w.unit(id);
+            const auto& v=u.flightVelocity;
+            const uint32_t rate=tak::sim::RetailReplayProbe::moveRate(w,id);
+            std::printf("hold balance=%s unit=%s hold=%s held=%d velocity=(%d,%d,%d) speed=%d rate=%u\n",
+                crusades?"Crusades":"standard",u.type->id.c_str(),hold,int(held),v.x,v.y,v.z,u.speed.v,rate);
+            check(held,"the flyer holds still");
+            check(v.x==0 && v.y==0 && v.z==0 && u.speed==tak::sim::Fixed(),"a held flyer reports no velocity or speed");
+            if (!turning) check(rate==0,"a held flyer that is not turning reports MoveRate 0");
+        };
+        for (const char* name:{"zongryp","creaeri"}) for (int hold=0;hold<5;++hold) {
+            static const char* const holds[]={"wait","ambush","queued wait","stop","guard"};
+            tak::sim::World w;w.setVisPlayer(-1);
+            w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            w.buildNavClasses(registry);
+            const int charge=hold==4 ? w.spawn(registry.find("tarzom"),1600,1000,0,0) : 0;
+            const int flyer=w.spawn(registry.find(name),1000,1000,0,0);
+            w.order(flyer,hold==2 ? 1300.f : hold==4 ? 1050.f : 3000.f,1000,false);
+            // The queued wait starts where VTOL_Move retires: on its coarse
+            // arrival, still flying, because another order follows.
+            if (hold==2) w.orderWait(flyer,10,true);
+            auto waiting=[&] { const auto& o=w.unit(flyer)->orders; return !o.empty() && o.front().wait>0; };
+            for (int tick=0;tick<(hold==2 ? 600 : 120) && !(hold==2 && waiting());++tick) w.tick(1.f/30.f);
+            if (hold==0) w.orderWait(flyer,10,false);
+            if (hold==1) w.orderWaitAttack(flyer,false);
+            if (hold==3) w.stop(flyer);
+            if (hold==4) w.guard(flyer,charge,false);
+            bool held=false;
+            for (int tick=0;tick<(hold==4 ? 600 : 1) && !held;++tick) {
+                const auto* u=w.unit(flyer);
+                const int32_t x=u->x.v,y=u->flightY.v,z=u->z.v;
+                w.tick(1.f/30.f);
+                held=still(*w.unit(flyer),x,y,z);
+            }
+            reportHold(w,flyer,holds[hold],held,false);
+            if (hold==3) check(!w.unit(flyer)->moving(),"a flyer stopped with no orders is not moving");
+        }
+        for (int hold=0;hold<3;++hold) {
+            static const char* const holds[]={"repair","reclaim","placement retry"};
+            tak::sim::World w;w.setVisPlayer(-1);w.setPlayerCount(2);
+            w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            w.buildNavClasses(registry);
+            tak::sim::FeatType rock;rock.reclaimable=true;w.setFeatureTypes({rock});
+            w.player(0).mana=100000;
+            const int flyer=w.spawn(registry.find("arafly"),1000,1000,0,0);
+            w.order(flyer,1050,1000,false);
+            for (int tick=0;tick<60;++tick) w.tick(1.f/30.f);
+            auto patient=*registry.find("tarzom");patient.maxVel={};patient.healTime=0;
+            auto blocker=*registry.find("tarzom");blocker.weapons.clear();blocker.weapon.damage=0;
+            if (hold==0) {
+                const int id=w.spawn(&patient,1400,1000,0,0);
+                w.unit(id)->hp=tak::sim::Fixed::fromInt(patient.maxHp/2);
+                w.repair(flyer,id,false);
+            }
+            if (hold==1) { w.addFeature(4242,1400,1000,50,400,1,1,true,0);w.reclaim(flyer,4242,false); }
+            if (hold==2) {
+                w.queueBuild(flyer,registry.find("arawall"),1400,1000,false);
+                w.spawn(&blocker,1400,1000,0,1);   // another player's unit on the site
+            }
+            bool held=false;
+            for (int tick=0;tick<600 && !held;++tick) {
+                const auto* u=w.unit(flyer);
+                const int32_t x=u->x.v,y=u->flightY.v,z=u->z.v;
+                const bool refused=!u->orders.empty() && u->orders.front().placementFailures>0;
+                w.tick(1.f/30.f);
+                held=still(*w.unit(flyer),x,y,z) && (hold!=2 || refused);
+            }
+            // A working builder pivots toward its job, so MoveRate may be 1.
+            reportHold(w,flyer,holds[hold],held,true);
         }
         // Preserve the intentional off switch for units that actually support it.
         auto turret=*registry.find("zondrake");turret.onOffable=true;

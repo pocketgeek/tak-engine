@@ -2075,11 +2075,18 @@ void World::tickFlightPatrol(Unit& u) {
     noteOrders(u.id);
 }
 
+// World holds a flyer in place by skipping its flight body, so the flyer does
+// not move -- and a retail mover's velocity is what moves it (tickFlightBody
+// keeps speed as its length). Every hold stops both: shooters lead a target by
+// its velocity (51aa50), the COB speed queries and MoveRate read it, and the
+// flight step that ends the hold starts from it.
+static void holdFlight(Unit& u) { u.flightVelocity={}; u.speed=Fixed(); }
+
 void World::tickFlightMovement(Unit& u, bool persistent) {
     auto& order=u.orders.front();
     if (order.guard) {
         const auto* target=unit(order.targetId);
-        if (target && fxLen(target->x-u.x,target->z-u.z)<=Fixed::fromInt(70)) return;
+        if (target && fxLen(target->x-u.x,target->z-u.z)<=Fixed::fromInt(70)) { holdFlight(u); return; }
     }
     u.flightGroundMode=2;
     const int cruise=flightGround(u)+u.type->cruiseAlt;
@@ -2123,7 +2130,8 @@ void World::tickFlightMovement(Unit& u, bool persistent) {
             return;
         }
         const bool flyingBuild=u.retailBuild && u.retailBuild->flying;
-        if (!flyingBuild && (order.buildType || order.reclaimFeat || order.repairTarget)) return;
+        // A builder at its build, reclaim or repair point holds there.
+        if (!flyingBuild && (order.buildType || order.reclaimFeat || order.repairTarget)) { holdFlight(u); return; }
         // Point controllers used by both move and patrol are nonpersistent:
         // arrival posts 0x100 and releasing the controller posts 0x400.
         if (flyingBuild) u.retailBuild->mission.pending|=0x500;
@@ -11509,28 +11517,32 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
     // MobileBuild stopped navigating at its site while mobile units stand on
     // it (405824..405911): the body brakes and stays for the 10-tick retry.
     // FlyingBuild (41f2a8) has no controller left after arrival: the flyer
-    // hovers where it arrived, braking as a scripted wait does.
+    // hovers where it arrived, held as a scripted wait is.
     if (!u.orders.empty() && u.orders.front().buildType && u.orders.front().placementFailures) {
-        if (u.type->canFly) u.speed=fxMax(Fixed(),u.speed-u.type->brake);
+        if (u.type->canFly) holdFlight(u);
         else brakeGround(u);
         return;
     }
     // Queued mobile production already advanced its hover controller this tick.
     if (u.type->canFly && u.orders.empty() && u.productionSiteId &&
         u.conjureHoverTarget==u.productionSiteId) return;
+    // A flyer in these holds runs no flight body. They used to brake only the
+    // speed, and the wait and ambush kept the velocity too: a Gryphon told to
+    // wait mid-flight hung still reporting the 3.4 px/tick it flew in at, and
+    // MoveRate stayed at 1-3.
     if (u.orders.empty()) {
-        if (u.type->canFly) { u.speed=fxMax(Fixed(),u.speed-u.type->brake);u.flightVelocity={}; }
+        if (u.type->canFly) holdFlight(u);
         else if (!u.type->isStructure()) brakeGround(u);
     } else if (u.orders.front().wait > 0) {
         // SetMission "w N": hold position while the scripted wait counts down.
-        if (u.type->canFly) u.speed=fxMax(Fixed(),u.speed-u.type->brake);
+        if (u.type->canFly) holdFlight(u);
         else if (!u.type->isStructure()) brakeGround(u);
         --u.orders.front().wait;
         if (u.orders.front().wait <= 0.0f) u.orders.erase(u.orders.begin());
     } else if (u.orders.front().waitAttack) {
         // SetMission "wa": ambush -- hold until a non-allied unit is within sight,
         // then release to the next order (usually an attack).
-        if (u.type->canFly) u.speed=fxMax(Fixed(),u.speed-u.type->brake);
+        if (u.type->canFly) holdFlight(u);
         else if (!u.type->isStructure()) brakeGround(u);
         float sight = u.type->sight > 0 ? sightDistance(*u.type) : 200.0f;
         // THROUGH THE SPATIAL GRID. This scanned every unit in the world, for every
@@ -12862,8 +12874,8 @@ void World::tick(float dt) {
         if (u.legionLift && tickLegionLift(u)) continue;
         // MobileBuild/FlyingBuild standing (or hovering) at its site, waiting
         // out mobile units on it (405824..405911, 41f301..41f3e5): navigation
-        // has stopped (tickNavigationMovement only brakes it); only the retry
-        // below runs.
+        // has stopped (tickNavigationMovement only brakes or holds it); only
+        // the retry below runs.
         const bool placementWait=!u.orders.empty() &&
             u.orders.front().buildType && !u.orders.front().buildRectangle &&
             u.orders.front().placementFailures>0;
@@ -12927,8 +12939,10 @@ void World::tick(float dt) {
                     if (mobileBlocked && ++order.placementFailures<31) {
                         order.placementRetryTick=tickCounter_+10;
                         // FlyingBuild's point controller detached on arrival:
-                        // nothing steers the hovering flyer during the wait.
+                        // nothing steers the hovering flyer during the wait,
+                        // and its hold starts with this update's skipped body.
                         order.flightGoal.reset();
+                        if (builder.type->canFly) holdFlight(builder);
                     } else popBuildOrder(builder);
                 }
                 // spawn invalidates references; re-establish slot order before
@@ -13103,7 +13117,7 @@ void World::tick(float dt) {
             // Lokken's Fire Ball missed an attacking Gryphon 47 times of 47.
             // Speed is |velocity| (tickFlightBody), so it stops too; the next
             // flight step reads it for its vertical limit.
-            if (u.type->canFly) { u.flightVelocity={}; u.speed=Fixed(); }
+            if (u.type->canFly) holdFlight(u);
             continue;
         }
 

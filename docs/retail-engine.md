@@ -233,8 +233,44 @@ Still deviating (not ported):
   (`529c10`/`52a460`); above it `529dc0` uses 3D distance to each unit's box.
   World uses flat 2D distance to the unit centre, so a ground blast also hurts a
   flyer overhead.
-- The `wait`, `waitAttack` and flying-build-retry holds also skip the flight
-  body without zeroing `flightVelocity`.
+
+### World's other flyer holds (protocol 262)
+
+World holds a flyer still, skipping its flight body, in six more places:
+SetMission's wait (`w N`) and ambush (`wa`), an emptied order list until
+standby lands it, a guard within 70 px of its charge, a flying builder at its
+repair or reclaim point, and FlyingBuild waiting out mobile units on its site.
+None stopped both. The wait, the ambush, the guard and FlyingBuild's retry kept
+the velocity the flyer came in with and only braked its speed; the emptied list
+zeroed the velocity but only braked the speed; the repair or reclaim point kept
+a velocity with no speed. A Gryphon told to wait mid-flight hung still reporting
+3.4 px/tick (and 1 px/tick of climb), a Dirigible's 0.005 brake left its speed
+up for about 16 s, and MoveRate stayed at 1-3. Since protocol 262 every hold
+zeroes both (`holdFlight`), as the attack hold does. `flyer_combat_test` checks
+all six for the Gryphon, the Dirigible and the Aramon flying builder in both
+balances, with MoveRate 0 where the flyer is not turning and `moving()` false
+after a stop: 50 failures before, none after.
+
+Still deviating: retail does not hold a flyer in these states at all; its mover
+is independent of the mission (static reading). The unit update runs the mission
+dispatcher (`4d8450`) and then the mover (`4dc800`, `51e1e4..51e215`) for every
+unit with one; `4dc800` updates the navigator (VTOLNavigator `524af0`) and then
+runs the VTOL velocity kernel `4da7d0` for any `canfly` type, controller or not.
+`524af0` returns at once when no controller is attached, so the destination
+(+0xc) and its velocity (+0x18) stay as the last controller left them, and
+`524ab0` hands them to the kernel. Clearing a mission's controller (`4d4d40` ->
+`4e4de0`) posts 0x400 and stores the new one without touching the destination.
+The Wait (`401480`) and WaitForAttack (`4017a0`) handlers only sleep or wait on
+events. So a retail VTOL in a wait, an ambush or FlyingBuild's retry keeps
+flying to its navigator's last destination and settles there. World stops it
+where the hold began: with `m 1300 1000 w 5` a Gryphon stops about 123 px short
+of the move point, where VTOL_Move's coarse controller (radius 80-144 px) arrived
+and retired because another order follows; FlyingBuild's retry hovers at its
+first controller's 2 x `builddistance` ring (about 290 px out for the Aramon
+flyer) instead of over the site. Porting that means running the flight body on
+the retained navigation during these holds, as `tickRetainedFlightMovement`
+does for an empty list (and `pathblock_test`'s flying-builder case expects the
+flyer to stay where it arrived).
 
 ## Ship / no-walk mover animation (icd + COB, 2026-09-10)
 
