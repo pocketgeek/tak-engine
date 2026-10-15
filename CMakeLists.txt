@@ -1991,8 +1991,9 @@ endif()
 # pref_guard_check fails if anything wrote a TAKengine folder into a test's sentinel
 # HOME (a process that dropped its XDG_DATA_HOME, i.e. the real profile outside ctest);
 # pref_guard_lint fails on an SDL_GetPrefPath call outside prefpath.h;
-# pref_guard_selftest replays the leak and checks that the guard names it. Keep this
-# block after the last add_test.
+# pref_guard_selftest replays the leak and checks that the guard names it. The defaults
+# are applied at the end of this file (cmake_language DEFER), so a test added or an
+# ENVIRONMENT set anywhere below is covered too.
 set(TAK_TEST_PROFILES "${CMAKE_CURRENT_BINARY_DIR}/test-profiles")
 set(TAK_PREF_GUARD "${CMAKE_SOURCE_DIR}/tools/pref_guard.cmake")
 add_test(NAME pref_guard_setup COMMAND ${CMAKE_COMMAND} -DMODE=setup "-DPROFILES=${TAK_TEST_PROFILES}" -P "${TAK_PREF_GUARD}")
@@ -2012,37 +2013,40 @@ if(UNIX AND NOT APPLE AND Python3_EXECUTABLE)
   execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import site; print(site.getuserbase())"
                   OUTPUT_VARIABLE tak_python_userbase OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 endif()
-get_property(tak_all_tests DIRECTORY PROPERTY TESTS)
-foreach(tak_test IN LISTS tak_all_tests)
-  if(tak_test MATCHES "^pref_guard_(setup|check)$")
-    continue()
-  endif()
-  set(tak_profile "${TAK_TEST_PROFILES}/${tak_test}")
-  set(tak_defaults "XDG_DATA_HOME=${tak_profile}/data" "XDG_CONFIG_HOME=${tak_profile}/config"
-                   "XDG_CACHE_HOME=${TAK_TEST_PROFILES}/cache")
-  if(UNIX AND NOT APPLE)
-    list(APPEND tak_defaults "HOME=${tak_profile}/home")
-    if(tak_python_userbase)
-      list(APPEND tak_defaults "PYTHONUSERBASE=${tak_python_userbase}")
+function(tak_isolate_test_profiles)
+  get_property(tak_all_tests DIRECTORY PROPERTY TESTS)
+  foreach(tak_test IN LISTS tak_all_tests)
+    if(tak_test MATCHES "^pref_guard_(setup|check)$")
+      continue()
     endif()
-  endif()
-  # Plain ENVIRONMENT (not ENVIRONMENT_MODIFICATION), so runners that read only that,
-  # like the Windows host's runctest.py, isolate tests too.
-  get_test_property(${tak_test} ENVIRONMENT tak_env)
-  if(NOT tak_env)
-    set(tak_env "")
-  endif()
-  set(tak_merged "")
-  foreach(tak_pair IN LISTS tak_defaults)
-    string(REGEX MATCH "^[A-Z_]+" tak_var "${tak_pair}")
-    if(NOT tak_env MATCHES "(^|;)${tak_var}=")
-      list(APPEND tak_merged "${tak_pair}")
+    set(tak_profile "${TAK_TEST_PROFILES}/${tak_test}")
+    set(tak_defaults "XDG_DATA_HOME=${tak_profile}/data" "XDG_CONFIG_HOME=${tak_profile}/config"
+                     "XDG_CACHE_HOME=${TAK_TEST_PROFILES}/cache")
+    if(UNIX AND NOT APPLE)
+      list(APPEND tak_defaults "HOME=${tak_profile}/home")
+      if(tak_python_userbase)
+        list(APPEND tak_defaults "PYTHONUSERBASE=${tak_python_userbase}")
+      endif()
     endif()
+    # Plain ENVIRONMENT (not ENVIRONMENT_MODIFICATION), so runners that read only that,
+    # like the Windows host's runctest.py, isolate tests too.
+    get_test_property(${tak_test} ENVIRONMENT tak_env)
+    if(NOT tak_env)
+      set(tak_env "")
+    endif()
+    set(tak_merged "")
+    foreach(tak_pair IN LISTS tak_defaults)
+      string(REGEX MATCH "^[A-Z_]+" tak_var "${tak_pair}")
+      if(NOT tak_env MATCHES "(^|;)${tak_var}=")
+        list(APPEND tak_merged "${tak_pair}")
+      endif()
+    endforeach()
+    list(APPEND tak_merged ${tak_env})
+    set_property(TEST ${tak_test} PROPERTY ENVIRONMENT ${tak_merged})
+    set_property(TEST ${tak_test} APPEND PROPERTY FIXTURES_REQUIRED tak_prefs)
   endforeach()
-  list(APPEND tak_merged ${tak_env})
-  set_property(TEST ${tak_test} PROPERTY ENVIRONMENT ${tak_merged})
-  set_property(TEST ${tak_test} APPEND PROPERTY FIXTURES_REQUIRED tak_prefs)
-endforeach()
+endfunction()
+cmake_language(DEFER CALL tak_isolate_test_profiles)
 
 # Test scheduling and the `quick` label. tools/ctest_costs.txt lists the tests that take
 # 5 s or more on an optimized Debug build (`<test> <seconds>`, longest first). Each gets a
