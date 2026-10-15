@@ -137,6 +137,17 @@ class Gate(unittest.TestCase):
         self.assertTrue(run_check(doc, rec({"work.field_work.total": 1000, "work.convoy_tests.total": 20})).ok)
         self.assertFalse(run_check(doc, rec({"work.field_work.total": 1000, "work.convoy_tests.total": 21})).ok)
 
+    def test_reported_work_sums_are_never_baselined_or_gated(self):
+        # work.legion_all (legion_total plus the aware and lane work) is report-only (tools/legion_observe.h)
+        keys = {"work.field_work.total": 1000, "work.legion_all.total": 5000, "work.legion_all.max": 70}
+        doc = lc.empty_baseline()
+        lc.write_base(doc, {(S, "legion"): rec(keys)}, "step 0", "W0", ["*"], False, [])
+        self.assertEqual(sorted(doc["entries"][S]["legion"]), ["work.field_work.total"])
+        self.assertTrue(run_check(doc, rec(dict(keys, **{"work.legion_all.total": 9000}))).ok)
+        # one a baseline still carries is skipped too
+        doc["entries"][S]["legion"]["work.legion_all.total"] = entry(5000)
+        self.assertTrue(run_check(doc, rec(dict(keys, **{"work.legion_all.total": 9000}))).ok)
+
     def test_cumulative_combat_is_x1_00_of_the_w0_base(self):
         scn = "battle-field-2x60"
         key = "work.legion_total.max"

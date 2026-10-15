@@ -90,8 +90,8 @@ TIME_SUFFIXES = (".t50", ".t90", ".done", ".orders_done")
 COMBAT_SCENARIOS = ("battle-field*", "battle-assault*")
 COMBAT_KEYS = ("work.legion_total.total", "work.legion_total.max", "work.legion_total.p99")
 # Work sums reported, never gated (tools/legion_observe.h): legion_all is legion_total plus the aware and
-# lane steering work the instruments report (2026-10-14 review, item 5). It needs no baseline entry; a
-# retake that takes it in gates it like any work key.
+# lane steering work the instruments report (2026-10-14 review, item 5). It needs no baseline entry, a
+# retake (write_base) never takes one in, and check() skips one a baseline still carries.
 REPORT_WORK = ("work.legion_all.",)
 SKIP_KEYS = ("members", "samples", "commands", "last_command_tick", "decision_samples",
              # W5 step 0: the claims audit's report-only classes (claims.bad_max, their sum, is the safety key)
@@ -685,8 +685,8 @@ def check(doc, recs, skipped=(), step=None, cumulative=False, require_all=False)
                     rpt.fail("%s/%s" % (scn, mode), "no result in the run")
                 continue
             for key, e in sorted(keys.items()):
-                if is_report_only(key, rec):
-                    continue        # ruling (f): judged at click level
+                if is_report_only(key, rec) or key.startswith(REPORT_WORK):
+                    continue        # ruling (f): judged at click level; a reported work sum is never gated
                 exc = exception_for(doc, scn, mode, key)
                 if exc:
                     need_median5(rpt, "%s/%s/%s" % (scn, mode, key), exc, rec)
@@ -778,7 +778,7 @@ def write_base(doc, recs, reason, since, patterns, hashes, clusters):
     for (scn, mode), rec in sorted(recs.items()):
         slot = entries.setdefault(scn, {}).setdefault(mode, {})
         todo = {k: v for k, v in rec.get("keys", {}).items()
-                if k not in SKIP_KEYS and not is_report_only(k, rec)
+                if k not in SKIP_KEYS and not is_report_only(k, rec) and not k.startswith(REPORT_WORK)
                 and any(fnmatch.fnmatch(k, p) for p in patterns)}
         if hashes:
             for off, h in rec.get("hash", {}).items():
