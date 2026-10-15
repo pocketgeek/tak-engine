@@ -372,7 +372,9 @@ struct RetailReplayProbe {
         };
         // Past every crowded-retry draw (at most 38 x halfCellTicks).
         world.tickCounter_=20000;
-        for (int n=0;n<4 && world.paths_.requests()==0;++n) tick();
+        // A production pool may place it anywhere in 250 slots: at most six
+        // ticks of 43 scans reach it.
+        for (int n=0;n<8 && world.paths_.requests()==0;++n) tick();
         const auto active=world.paths_.scheduler_.active;
         if (world.paths_.requests()!=1 || delivered || !world.paths_.pending(id) ||
             world.paths_.activeId_!=id) return -1;
@@ -390,6 +392,109 @@ struct RetailReplayProbe {
                           !(world.paths_.scheduler_.active==active))) return -1;
         for (int n=0;n<2000 && !delivered;++n) tick();
         return delivered ? int(world.paths_.requests()) : -1;
+    }
+    // Production entity pools (no fixture setEntityPool). 511570 gives each
+    // player maxunits contiguous records; 5121d8 places a unit in a CRT-ranked
+    // free slot; 416430 scans those slots, holes included, at 7 work each.
+    // Native: check_entity_slots.py (5121d8) and check_crowd_arrival.py
+    // --world-tick, whose native pool is built by 5121d8 at capacity 2000.
+    static std::vector<int> referenceSlots(uint32_t seed,int capacity,const std::vector<int>& owners) {
+        std::array<std::vector<bool>,10> used;std::array<int,10> allocated{};std::vector<int> slots;
+        for (int owner:owners) {
+            auto& pool=used[size_t(owner)];if (pool.empty()) pool.assign(size_t(capacity),false);
+            const int slot=retailAllocateSlot(seed,capacity,allocated[size_t(owner)]++,[&](int i){return bool(pool[size_t(i)]);});
+            pool[size_t(slot)]=true;slots.push_back(slot);
+        }
+        return slots;
+    }
+    static bool productionPoolSlots() {
+        World world;world.setPlayerCount(2);world.setGameSeed(2631);
+        world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);
+        UnitType type;type.maxVel=Fixed::fromInt(1);type.footX=type.footZ=2;
+        const std::vector<int> owners{0,1,0,1,0};
+        std::vector<int> ids;
+        for (size_t i=0;i<owners.size();++i) ids.push_back(world.spawn(&type,float(4+3*i)*16,64.0f,{},owners[i]));
+        // Uncapped: retail's default maxunits; one shared CRT stream, but each
+        // player's free slots are ranked within its own pool only.
+        const auto expected=referenceSlots(2631,250,owners);
+        for (size_t i=0;i<ids.size();++i) if (world.entitySlot(ids[i])!=expected[i]) return false;
+        if (world.entitySlots_.unitAt[0].size()!=250 || world.entitySlots_.unitAt[1].size()!=250) return false;
+        uint32_t crt=2631;for (size_t i=0;i<owners.size();++i) retailCrtRandom(crt);
+        if (world.windRng_!=crt) return false;
+        // A capture moves the unit to a new record in its new owner's pool.
+        auto& moved=*world.unit(ids[0]);const int old=world.entitySlot(moved.id);
+        world.captureUnit(moved,1);
+        std::vector<bool> taken(250,false);
+        for (size_t i=0;i<ids.size();++i) if (owners[i]==1) taken[size_t(expected[i])]=true;
+        const int next=retailAllocateSlot(crt,250,2,[&](int i){return bool(taken[size_t(i)]);});
+        return world.entitySlot(moved.id)==next && world.entitySlots_.unitAt[1][size_t(next)]==moved.id &&
+            world.entitySlots_.unitAt[0][size_t(old)]==-1 && world.windRng_==crt;
+    }
+    // 512ae0 frees a record when it retires the unit (after the death
+    // animation, where 512ee0 places the corpse), not when the corpse decays.
+    static bool productionPoolReuse() {
+        World world;world.setGameSeed(77);world.setUnitCap(20);
+        world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);
+        UnitType type;type.maxVel=Fixed::fromInt(1);
+        std::vector<int> ids;
+        for (int i=0;i<20;++i) ids.push_back(world.spawn(&type,float(16+16*(i%10)),float(16+32*(i/10)),{},0));
+        if (world.entitySlots_.unitAt[0].size()!=20) return false;
+        auto& dying=*world.unit(ids[3]);dying.deadFor=5;dying.deathAnimationTicks=10;dying.corpseUntil=900;
+        auto& retired=*world.unit(ids[11]);retired.deadFor=10;retired.deathAnimationTicks=10;retired.corpseUntil=900;
+        const int freed=world.entitySlot(retired.id);
+        const uint32_t before=world.windRng_;
+        // One free record (the retired one): rank 0, still one CRT draw.
+        const int reuse=world.spawn(&type,400,400,{},0);
+        uint32_t crt=before;retailCrtRandom(crt);
+        if (world.entitySlot(reuse)!=freed || world.entitySlot(retired.id)!=-1 || world.windRng_!=crt) return false;
+        if (world.entitySlot(dying.id)<0) return false;
+        // Full (the dying unit still holds its record): no draw. Retail
+        // refuses the creation; the engine grows the pool by one slot.
+        const int extra=world.spawn(&type,432,400,{},0);
+        return world.windRng_==crt && world.entitySlot(extra)==20 && world.entitySlots_.unitAt[0].size()==21;
+    }
+    // 416430 admits in slot order, paying 7 per scanned slot: at budget 300 a
+    // tick scans 43 slots. Seed 2631 places units 1,2,3 in slots 65,60,248,
+    // so unit 2 is admitted first, on tick 2. ID-addressed pools admitted
+    // unit 1 on tick 1. A cursor restored to slot 249 wraps on its first scan
+    // and stamps the wrap tick that weights the next initialization.
+    static bool productionPoolAdmission(bool wrap) {
+        World world;world.setPathService(true);world.setPathBudget(300);world.setGameSeed(2631);
+        world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);
+        world.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
+        UnitType type;type.maxVel=Fixed::fromInt(1);type.footX=type.footZ=2;
+        std::vector<int> ids;
+        for (int i=0;i<3;++i) {
+            const int id=world.spawn(&type,6*16+16,float(10+12*i)*16+16);ids.push_back(id);
+            auto& u=*world.unit(id);u.routeStamp=0;
+            Order goal;goal.goal=goal.groundMission=true;goal.controller=uint64_t(9+i);
+            goal.x=Fixed::fromInt(56*16+16);goal.z=u.z;goal.missionTarget=std::pair{goal.x,goal.z};
+            goal.hasSegment=true;goal.segmentX=u.x;goal.segmentZ=u.z;u.orders={goal};
+        }
+        const auto slots=referenceSlots(2631,250,{0,0,0});
+        if (slots!=std::vector<int>{65,60,248}) return false;
+        for (int id:ids) {
+            auto& u=*world.unit(id);
+            if (!world.requestPath(u,u.orders.front().x.toFloat(),u.orders.front().z.toFloat())) return false;
+        }
+        world.tickCounter_=20000;
+        if (wrap) world.paths_.restoreTraversal(0,{249},{5});
+        std::vector<int> delivered,admittedAt;uint64_t admissions=0;
+        for (int n=0;n<4000 && delivered.size()<ids.size();++n) {
+            const uint32_t now=++world.tickCounter_;
+            world.paths_.tick([](int,int,int){return 0;},[&](int who,const std::vector<PathCell>& route,
+                    Fixed x,Fixed z,bool failed,bool crowded,bool traffic,bool detour) {
+                delivered.push_back(who);world.deliverSearchRoute(who,route,x,z,failed,crowded,traffic,detour);
+            },[&](int who,PathCell& start,int& heading,RetailCostSearch::Costs& costs) {
+                world.refreshSearchRequest(who,start,heading,costs);
+            },now,[&](int who,uint32_t at) { return world.admitSearchRequest(who,at); });
+            for (;admissions<world.paths_.requests();++admissions) admittedAt.push_back(int(now-20000));
+            if (wrap && n==0 && (world.paths_.scheduler_.lastWrapTick[0]!=int(now) || world.paths_.requests())) return false;
+        }
+        if (delivered.size()!=ids.size()) return false;
+        // Slot 60 is scan 60 from slot 0, or scan 61 after wrapping 249 -> 0:
+        // tick 2 either way, and slot order thereafter.
+        return delivered==std::vector<int>{ids[1],ids[0],ids[2]} && admittedAt.front()==2;
     }
     // Whether a ground request from `player` joins retail's 5x budget class.
     static bool budgetClass(PathfindingMode mode,bool narrowed,int player) {
@@ -582,6 +687,14 @@ static int selfTest() {
     check(RetailReplayProbe::gateOwnerGrade(1,1,0,false,0,false,false,0,0)==3,"manual gate capability does not bypass passage");
     check(RetailReplayProbe::completedPointDetaches(false),"arrival detaches controller but advances stored points without re-requesting");
     check(RetailReplayProbe::completedPointDetaches(true),"arrival preserves a very recent admission timestamp");
+    check(RetailReplayProbe::productionPoolSlots(),
+          "production pools: 5121d8 ranked CRT slot per owner pool, capacity maxunits, capture reallocates");
+    check(RetailReplayProbe::productionPoolReuse(),
+          "production pools: retirement frees a record for reuse, a dying unit keeps it");
+    check(RetailReplayProbe::productionPoolAdmission(false),
+          "production pools: 416430 admits in slot order and pays for every scanned hole");
+    check(RetailReplayProbe::productionPoolAdmission(true),
+          "production pools: the slot cursor wraps at the pool capacity and stamps the wrap tick");
     for (int drift : {0,1,2,9})
         check(RetailReplayProbe::pendingRetryAfterDrift(drift,false)==1,
               ("retry ladder leaves a pending search alone after "+std::to_string(drift)+"-cell drift").c_str());

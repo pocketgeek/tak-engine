@@ -483,6 +483,29 @@ void PathService::setEntityPool(int player,int first,int count) {
     fixedPool_[size_t(player)]=true;
 }
 
+int PathService::slotOf(int unitId,int player) const {
+    const size_t owner=size_t(player);
+    if (fixedPool_[owner] || !slots_) {
+        const int slot=unitId-poolFirst_[owner];
+        return slot>=0 && slot<poolSize_[owner] ? slot : -1;
+    }
+    const int slot=slots_->slot(unitId);
+    return slot>=0 && size_t(slot)<slots_->unitAt[owner].size() &&
+        slots_->unitAt[owner][size_t(slot)]==unitId ? slot : -1;
+}
+
+int PathService::poolCapacity(int player) const {
+    const size_t owner=size_t(player);
+    return fixedPool_[owner] || !slots_ ? poolSize_[owner] : int(slots_->unitAt[owner].size());
+}
+
+int PathService::unitAtSlot(int player,int slot) const {
+    const size_t owner=size_t(player);
+    if (fixedPool_[owner] || !slots_) return poolFirst_[owner]+slot;
+    const auto& pool=slots_->unitAt[owner];
+    return slot>=0 && size_t(slot)<pool.size() ? pool[size_t(slot)] : -1;
+}
+
 void PathService::retireActive() {
     if (activeId_>=0 && gradeHost_.finish) gradeHost_.finish(activeId_);
     activeId_=-1;
@@ -497,8 +520,8 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
     if (player<0 || player>=10 || unitId<0 || unitId==INT32_MAX)
         throw std::invalid_argument("invalid search owner");
     const size_t owner=size_t(player);
-    if (!fixedPool_[owner]) poolSize_[owner]=std::max(poolSize_[owner],unitId+1);
-    if (unitId<poolFirst_[owner] || unitId-poolFirst_[owner]>=poolSize_[owner])
+    if (!fixedPool_[owner] && !slots_) poolSize_[owner]=std::max(poolSize_[owner],unitId+1);
+    if (slotOf(unitId,player)<0)
         throw std::invalid_argument("search owner outside allocated entity range");
     // Coordinates alone do not identify an order. A replacement controller
     // cannot inherit the old controller's search or undelivered events.
@@ -544,7 +567,7 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
             // pass no refresh get the current one here instead; a running
             // attempt keeps the start it was admitted with.
             if (activeId_ != unitId && !(scheduler_.active==
-                    RetailSearchScheduler::Request{ex.player,unitId-poolFirst_[owner]})) {
+                    RetailSearchScheduler::Request{ex.player,slotOf(unitId,ex.player)})) {
                 ex.start = start; ex.heading = heading; ex.costs = costs;
             }
             if (priority && !ex.priority) {
@@ -554,7 +577,7 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
         }
     }
     if (auto it=q_.find(unitId); it!=q_.end() && scheduler_.active==
-        RetailSearchScheduler::Request{it->second.player,unitId-poolFirst_[size_t(it->second.player)]})
+        RetailSearchScheduler::Request{it->second.player,slotOf(unitId,it->second.player)})
         retireActive();
     auto [entry,inserted]=q_.try_emplace(unitId);
     Entry& e=entry->second;
@@ -602,7 +625,7 @@ void PathService::cancel(int unitId,NavigationTelemetry::Cancel reason) {
     if (it == q_.end()) return;
     if(telemetry_)telemetry_->cancelled(it->second.telemetryToken,reason);
     if (scheduler_.active==RetailSearchScheduler::Request{
-        it->second.player,unitId-poolFirst_[size_t(it->second.player)]}) retireActive();
+        it->second.player,slotOf(unitId,it->second.player)}) retireActive();
     // A finish callback may queue other requests and rehash the lookup table.
     eraseRequest(q_.find(unitId));
 }
@@ -627,10 +650,11 @@ void PathService::tick(const std::function<int(int,int,int)>& score,
     for (size_t i=0;i<players.size();++i) {
         auto& p=players[i];
         p.enabled=pendingByPlayer_[i]!=0;p.priority=priorityByPlayer_[i]!=0;
-        p.pending=pendingByPlayer_[i];p.slots=p.enabled ? poolSize_[i] : 0;
+        p.pending=pendingByPlayer_[i];p.slots=p.enabled ? poolCapacity(int(i)) : 0;
     }
     auto lookup=[&](RetailSearchScheduler::Request r) {
-        const int id=poolFirst_[size_t(r.player)]+r.slot;
+        const int id=unitAtSlot(r.player,r.slot);
+        if (id<0) return q_.end();
         auto it=q_.find(id);
         return it!=q_.end() && it->second.player==r.player ? it : q_.end();
     };

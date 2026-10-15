@@ -2030,6 +2030,7 @@ public:
         wind_ = {}; wind_.minimum = windMin; wind_.maximum = windMax;
         nextId_ = 1;
         retailAllocation_=false;retailEntityPools_.reset();spawnGeneration_=0;
+        entitySlots_.unitAt={};entitySlots_.slotOf.clear();
         nextMovementController_ = 0;
         tickCounter_ = 0;
         winningTeam_ = -1;
@@ -2080,8 +2081,20 @@ public:
     // are not construction requests and deliberately bypass this restriction.
     void setBuildRestrictions(std::vector<std::string> types, bool enabled = true);
     bool buildAllowed(const UnitType* type) const;
-    void setUnitCap(int c) { unitCap_ = c; }
+    // The cap is also each player's entity pool capacity (retail maxunits,
+    // 511570); pools already allocated grow to a raised cap.
+    void setUnitCap(int c) {
+        unitCap_ = c;
+        for (auto& pool:entitySlots_.unitAt)
+            if (!pool.empty() && c>0 && pool.size()<size_t(c)) pool.resize(size_t(c),-1);
+    }
     int unitCap() const { return unitCap_; }
+    // A unit's offset in its owner's entity pool (the order 416430 admits
+    // path searches in), or -1 for a restored-pool fixture or no unit.
+    int entitySlot(int unitId) const { return entitySlots_.slot(unitId); }
+    // An ownership change gives the unit a new record in the new owner's pool,
+    // as retail's transfer allocates a new object. Call before setting player.
+    void transferEntitySlot(Unit& u,int newPlayer);
     bool atUnitCap(int player) const {
         return unitCap_ > 0 && player >= 0 && player < int(players_.size()) &&
                players_[size_t(player)].unitCount >= unitCap_;
@@ -3157,6 +3170,14 @@ private:
     uint32_t acqStride_ = 4;     // auto-acquire re-scan period, widened with crowd size
                                  // (deterministic: derived from the live-unit count)
     PathService paths_;          // retail's request queue + budget scheduler
+    // Per-player entity pools for live matches (5121d8 placement, retirement
+    // frees). Restored retail fixtures use retailEntityPools_ instead.
+    EntitySlotTable entitySlots_;
+    // 4c7c7a: maxunits defaults to 250. An uncapped world (tests, tools)
+    // starts there and appends a slot whenever its pool is full.
+    static constexpr int kDefaultEntityCapacity = 250;
+    void allocateEntitySlot(int unitId,int player);
+    void releaseEntitySlot(int unitId);
     PathfindingMode pathfindingMode_=PathfindingMode::Retail;
     std::unique_ptr<LegionNavigator> legion_; // Legion mode only
     ConvoyTable convoys_;                     // Legion mode only; hashed while not empty

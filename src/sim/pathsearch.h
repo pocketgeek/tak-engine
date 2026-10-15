@@ -5,6 +5,7 @@
 // admission wrapper still differs from the retail singleton scheduler; see
 // docs/pathfinding-port.md for integration gaps and executable comparisons.
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <unordered_map>
@@ -237,6 +238,20 @@ private:
 inline constexpr size_t kRawRouteCap = 256;
 inline constexpr int kMaxActiveSearches = 1;
 
+// Each player's allocated entity slots, as 416430 traverses them. Retail
+// (511570) gives every player a contiguous pool of maxunits records at game
+// start; 5121d8 places each new unit in a CRT-ranked free slot, and a record
+// stays allocated until it is retired, so a pool has holes wherever units
+// died. World owns this table (its unit IDs stay global and are never reused);
+// the scheduler reads it to walk slots, holes included, in retail order.
+struct EntitySlotTable {
+    std::array<std::vector<int32_t>,10> unitAt; // slot -> unit ID, -1 = hole
+    std::vector<int32_t> slotOf;                // unit ID -> slot, -1 = none
+    int slot(int unitId) const {
+        return unitId>=0 && size_t(unitId)<slotOf.size() ? slotOf[size_t(unitId)] : -1;
+    }
+};
+
 class PathService {
   public:
     void setTelemetry(NavigationTelemetry* observer) {
@@ -270,8 +285,15 @@ class PathService {
             a.trace.scratch.touched.capacity()*sizeof(uint32_t)+a.route.points.capacity()*sizeof(RetailReachability::Point);
         return result;
     }
-    // Allocated entity ranges include empty slots. The default range starts
-    // at zero and grows with observed IDs; replay hosts can restore exact pools.
+    // Allocated entity ranges include empty slots. A host binds its live slot
+    // table (World does, for every match); replay hosts that restore captured
+    // ID-addressed pools fix a player's range instead, which takes precedence.
+    // A standalone service with neither treats IDs as slots from zero.
+    void setEntitySlots(const EntitySlotTable* table) {
+        if (activeId_>=0 || !q_.empty())
+            throw std::logic_error("entity slots rebind requires an empty request queue");
+        slots_=table;
+    }
     void setEntityPool(int player,int first,int count);
     void restoreTraversal(int playerCursor,const std::array<int,10>& slots,
                           const std::array<int,10>& wraps) {
@@ -394,6 +416,11 @@ class PathService {
     RetailSearchScheduler scheduler_;
     std::array<int,10> poolFirst_{},poolSize_{};
     std::array<bool,10> fixedPool_{};
+    const EntitySlotTable* slots_=nullptr;
+    // A unit's offset in its player's pool, or -1 when it has none.
+    int slotOf(int unitId,int player) const;
+    int poolCapacity(int player) const;
+    int unitAtSlot(int player,int slot) const;
     int activeId_=-1;
     GradeHost gradeHost_;
     void retireActive();

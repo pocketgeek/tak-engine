@@ -862,6 +862,54 @@ std::vector<const UnitType*> TypeRegistry::combatUnits(const std::string& side) 
     return out;
 }
 
+// 5121d8: a new record takes a uniformly ranked FREE slot of its owner's pool,
+// one CRT draw (none when the pool is full). Retirement 512ae0 frees the
+// record (512e23 clears +0x130 bit 24, 512e52 drops the allocated count)
+// right after it places the corpse feature (512ee0): a dying unit keeps its
+// slot through the death animation, not through the corpse window, which is
+// a map feature in retail. Here that is deadFor reaching corpseAnimationTicks,
+// where the corpse is placed. Freed slots are reclaimed when the pool is next
+// searched, which no other state observes in between.
+void World::allocateEntitySlot(int unitId,int player) {
+    auto& table=entitySlots_;
+    auto& pool=table.unitAt[size_t(player)];
+    if (pool.empty()) pool.assign(size_t(unitCap_>0 ? unitCap_ : kDefaultEntityCapacity),-1);
+    int allocated=0;
+    for (auto& id:pool) {
+        if (id<0) continue;
+        const Unit* member=unit(id);
+        if (member && member->deadFor<std::min(member->corpseAnimationTicks(),kRetiredTicks)) {
+            ++allocated;continue;
+        }
+        if (size_t(id)<table.slotOf.size()) table.slotOf[size_t(id)]=-1;
+        id=-1;
+    }
+    int slot=retailAllocateSlot(int(pool.size()),allocated,[&](int index){return pool[size_t(index)]>=0;},
+        [&]{return crtRand(0x5121dd);});
+    // Retail refuses the creation instead. Engine caps count live units only
+    // and an uncapped world has no maxunits, so a full pool grows by a slot.
+    if (slot<0) { slot=int(pool.size());pool.push_back(-1); }
+    pool[size_t(slot)]=unitId;
+    if (table.slotOf.size()<=size_t(unitId)) table.slotOf.resize(size_t(unitId)+1,-1);
+    table.slotOf[size_t(unitId)]=slot;
+}
+
+void World::releaseEntitySlot(int unitId) {
+    const int slot=entitySlots_.slot(unitId);
+    if (slot<0) return;
+    for (auto& pool:entitySlots_.unitAt)
+        if (size_t(slot)<pool.size() && pool[size_t(slot)]==unitId) pool[size_t(slot)]=-1;
+    entitySlots_.slotOf[size_t(unitId)]=-1;
+}
+
+void World::transferEntitySlot(Unit& u,int newPlayer) {
+    if (retailAllocation_ || u.player==newPlayer || !validUnitOwner(newPlayer) || entitySlot(u.id)<0) return;
+    // The old record's request goes with it (cancel resolves the old slot).
+    paths_.cancel(u.id,NavigationTelemetry::Cancel::Replaced);
+    releaseEntitySlot(u.id);
+    allocateEntitySlot(u.id,newPlayer);
+}
+
 int World::spawn(const UnitType* type, float x, float z, std::optional<float> heading, int player) {
     Unit u;
     u.groundGradeTick=tickCounter_;
@@ -894,7 +942,10 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
         if (slot<0) throw std::runtime_error("restored entity pool exhausted");
         u.id=first+slot;
         if (unit(u.id)) throw std::runtime_error("restored entity slot reuse lifecycle is not ported");
-    } else u.id=nextId_++;
+    } else {
+        u.id=nextId_++;
+        allocateEntitySlot(u.id,player);
+    }
     players_[size_t(player)].unitCount++;   // keep the cap count exact within a tick
     players_[size_t(player)].built++;        // end-of-game "Units" column
     u.player = player;
@@ -3414,6 +3465,16 @@ bool World::requestPath(Unit& u, float x, float z) {
     // slots (+0x24e7) and the scheduler weighs whole players. Only Retail mode
     // carries retail's classes; the other modes keep their unweighted split.
     const int32_t tolerance = mission ? std::bit_cast<int32_t>(mission->missionRadius + 4u) : 4;
+    // A tool that edits an owner directly bypasses transferEntitySlot; give
+    // the unit its record in the owner's pool before it is scheduled there.
+    if (!retailAllocation_ && u.player>=0 && u.player<int(entitySlots_.unitAt.size())) {
+        const auto& pool=entitySlots_.unitAt[size_t(u.player)];
+        const int slot=entitySlot(u.id);
+        if (slot<0 || size_t(slot)>=pool.size() || pool[size_t(slot)]!=u.id) {
+            paths_.cancel(u.id,NavigationTelemetry::Cancel::Replaced);
+            releaseEntitySlot(u.id);allocateEntitySlot(u.id,u.player);
+        }
+    }
     const bool newlyPending=!paths_.pending(u.id);
     paths_.request(u.id, from, to, g.width(), g.height(),
                    target.first, target.second,
@@ -6226,6 +6287,7 @@ bool World::giveUnit(int unitId, int fromPlayer, int toPlayer) {
     stop(unitId);
     if (players_[size_t(fromPlayer)].unitCount > 0) --players_[size_t(fromPlayer)].unitCount;
     ++players_[size_t(toPlayer)].unitCount;
+    transferEntitySlot(u,toPlayer);
     u.player = toPlayer;
     u.rally.clear();
     u.selfDestructT = -1;
@@ -6370,6 +6432,7 @@ bool World::scenarioTransfer(int unitId, int newPlayer) {
         --players_[size_t(oldPlayer)].unitCount;
     ++players_[size_t(newPlayer)].unitCount;
     if (mission_) mission_->unitCaptured(*this, unitId);
+    transferEntitySlot(*u,newPlayer);
     u->player = newPlayer;
     u->rally.clear();
     u->selfDestructT = -1;
@@ -6403,6 +6466,7 @@ void World::captureUnit(Unit& t, int newPlayer) {
             players_[size_t(newPlayer)].unitCount++;
     }
     if (mission_) mission_->unitCaptured(*this,t.id);
+    transferEntitySlot(t,newPlayer);
     t.player = newPlayer;
     gPlayersValid_=false;
     t.orders.clear();
@@ -14725,6 +14789,12 @@ uint64_t World::stateHash() const {
     // that future-affecting state in the peer hash.
     if (damageCrtUsed_) { mix(0x444d47524354ull); mix(windRng_); }
     mix(windEnabled_);
+    if (!retailAllocation_) {
+        // Pool slots order path admission and every allocation draws CRT.
+        mix(0x504f4f4cull);mix(windRng_);
+        for (const auto& pool:entitySlots_.unitAt) mix(pool.size());
+        for (const auto& u:units_) mix(uint32_t(entitySlots_.slot(u.id)));
+    }
     if (retailAllocation_) {
         mix(0x534c4f5453ull);
         for (const auto& [first,count]:*retailEntityPools_) { mix(first);mix(count); }
@@ -14753,6 +14823,7 @@ uint64_t World::stateHash() const {
 // Mission runner ownership -- ctor/dtor defined here where MissionScript is a complete
 // type, so no other TU instantiates the unique_ptr<MissionScript> deleter.
 World::World() {
+    paths_.setEntitySlots(&entitySlots_);
     paths_.setGradeHost({
         [this](int id,bool last) { prepareSearchGrade(id,last); },
         [this](int id,int x,int z,int retry,PathCell start) { return searchGrade(id,x,z,retry,start); },

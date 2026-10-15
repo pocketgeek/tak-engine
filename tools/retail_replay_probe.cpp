@@ -83,11 +83,17 @@ struct RetailReplayProbe {
         for (auto& player:world.players_) player.cacheClock.enabled=false;
         for (int id:ids) { auto& u=*world.unit(id);gateMoverStart(u,base);u.groundY=Fixed(); }
         world.rebuildOccupancy();
-        world.paths_.clear();world.paths_.restoreTraversal(0,{},{});
-        world.paths_.setEntityPool(world.unit(ids.front())->player,1,int(ids.size()));world.setPathBudget(budget);
+        // Production pools: World placed each Hunter in its owner's pool when
+        // it spawned (5121d8); the harness builds the native pool the same way.
+        world.paths_.clear();world.paths_.restoreTraversal(0,{},{});world.setPathBudget(budget);
         for (size_t i=0;i<ids.size();++i)
             for (size_t leg=0;leg<goals[i].size();++leg)
                 world.order(ids[i],float(goals[i][leg].first),float(goals[i][leg].second),leg!=0);
+    }
+    // Native CRT seed at the first allocation; spawn draws slots from it.
+    static void crtSeed(World& world,uint32_t seed) { world.windRng_=seed; }
+    static int entityCapacity(const World& world,int player) {
+        return int(world.entitySlots_.unitAt[size_t(player)].size());
     }
     static void crowdTick(World& world,const std::vector<int>& ids,uint32_t tick) {
         world.tickCounter_=tick;world.rebuildOccupancy();
@@ -713,9 +719,11 @@ int main(int argc, char** argv) {
         config.pathfindingMode=PathfindingMode::Retail;
         World world;setupMatch(world,registry,config);world.setVisPlayer(-1);
         std::ifstream input(argv[5]);
-        int count,rounds,budget;int32_t base;
-        if (!(input>>count>>rounds>>budget>>base) || count<1 || count>1000 || rounds<1 || rounds>5000 || budget<1) return 2;
+        int count,rounds,budget;int32_t base;uint32_t crt;
+        if (!(input>>count>>rounds>>budget>>base>>crt) || count<1 || count>1000 || rounds<1 || rounds>5000 || budget<1) return 2;
         const auto* type=registry.find("zonter");if (!type) return 2;
+        if (!world.units().empty()) return 2;
+        RetailReplayProbe::crtSeed(world,crt);
         std::vector<int> ids;std::vector<std::vector<std::pair<int,int>>> goals;
         for (int i=0;i<count;++i) {
             int x,z,legs;if (!(input>>x>>z>>legs) || legs<1 || legs>8) return 2;
@@ -727,6 +735,11 @@ int main(int argc, char** argv) {
                 o.retailReturnAddress,o.caller.file_name(),unsigned(o.caller.line()),o.caller.function_name());
         });
         RetailReplayProbe::crowdWorldStart(world,ids,goals,base,budget);
+        // The production pool World built, for the harness to check against
+        // the native allocation: capacity, then each Hunter's slot.
+        std::printf("SLOTS %d",RetailReplayProbe::entityCapacity(world,0));
+        for (int id:ids) std::printf(" %d",world.entitySlot(id));
+        std::printf("\n");std::fflush(stdout);
         FILE* output=std::fopen(argv[6],"w");if (!output) return 2;
         for (int tick=1;tick<=rounds;++tick) {
             world.tick(1.f/30);

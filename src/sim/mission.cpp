@@ -203,7 +203,7 @@ int32_t MissionScript::mapCommand(World& w, int nameIdx, const std::vector<int32
     if (ieq(verb, "capture")) {
         if (!a.empty()) if (Unit* u=w.unit(a[0])) {
             const int next=a.size()>=2 ? a[1] : human_;
-            if(u->player!=next) { unitCaptured(w,u->id);u->player=next; }
+            if(u->player!=next) { unitCaptured(w,u->id);w.transferEntitySlot(*u,next);u->player=next; }
         }
         return 0;
     }
@@ -292,7 +292,7 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders)
             float x = num(), y = num();
             w.patrolTo(unitId, cellToWorld(x), cellToWorld(y), queue); queue = true;
         } else if (c == 's') {                            // hand the unit to the human player
-            if(u->player!=human_) { unitCaptured(w,unitId);u->player=human_; }
+            if(u->player!=human_) { unitCaptured(w,unitId);w.transferEntitySlot(*u,human_);u->player=human_; }
         } else if (c == 'd') {                            // self-destruct / remove
             u->hp = Fixed();
         } else if (c == 'w') {                            // w N (wait N s) / wa (wait-for-attack)

@@ -12,6 +12,9 @@ from pathlib import Path
 import struct
 import subprocess
 
+from unicorn import UC_HOOK_CODE
+from unicorn.x86_const import UC_X86_REG_EBP, UC_X86_REG_EBX, UC_X86_REG_EDI, UC_X86_REG_EIP, UC_X86_REG_ESI, UC_X86_REG_ESP
+
 from balance_inputs import set_balance_inputs
 from check_captured_tick import find_crt_thread
 from emureload import CapturedProcess
@@ -40,11 +43,18 @@ def main():
                     help='print native 2x2 footprint passability over a region and exit')
     ap.add_argument('--world-tick',action='store_true',
                     help='drive World through World::order and full World::tick (Retail mode) instead of the composed probe calls')
+    ap.add_argument('--capacity',type=int,default=2000,
+                    help='--world-tick: entity pool capacity (maxunits); World matches use the unit cap, 2000 by default')
     ap.add_argument('--output',type=Path,required=True)
     args=ap.parse_args()
     extras=[(x,z,x,z) for x,z in args.blocker]+[tuple(m) for m in args.mover]
     total=args.count+len(extras)
     if not 1<=args.count<=1000 or not 1<=args.rounds<=5000 or args.budget<1 or args.spacing<2:ap.error('invalid bounds')
+    # The composed probe keeps its fixture pool (one slot per Hunter, in
+    # order). --world-tick runs World's production pools: the native pool has
+    # the match capacity and 5121d8 places each Hunter, holes included.
+    capacity=args.capacity if args.world_tick else total
+    if not total<=capacity<=65535:ap.error('capacity must hold every Hunter')
     args.output.mkdir(parents=True,exist_ok=True)
     capture=json.loads(args.capture.read_text());p=CapturedProcess(capture)
     selected=set_balance_inputs(p,capture,args.save,args.root,args.balance=='crusades',surface=True,motion=True)
@@ -69,14 +79,14 @@ def main():
     data=bytearray(p.uc.mem_read(cells,width*height*14))
     for i in range(width*height):struct.pack_into('<H',data,i*14,0)
     p.put(cells,bytes(data))
-    pool=alloc((total+1)*312)
-    write('I',p.game+0x14e84,pool);write('I',p.game+0x14e88,pool+total*312)
+    pool=alloc((capacity+1)*312)
+    write('I',p.game+0x14e84,pool);write('I',p.game+0x14e88,pool+capacity*312)
     owner=p.game+0x2404
     write('I',owner,1);write('B',owner+0xea,2);write('B',owner+0xeb,0);write('B',owner+0xe3,1)
-    write('2I',owner+0x74,pool+312,pool+total*312)
+    write('2I',owner+0x74,pool+312,pool+capacity*312)
     ai=alloc(0x200);write('I',ai,owner);write('B',ai+0x1a5,1);write('I',owner+0x80,ai)
     for i in range(1,10):write('I',p.game+0x2404+i*0x110,0)
-    write('I',p.u32(p.u32(0x62d558)+8)+12,total)
+    write('I',p.u32(p.u32(0x62d558)+8)+12,capacity);write('H',p.game+0x14e7c,capacity);write('H',owner+0xe8,0)
     write('B',p.game+0x306f,0)
     visibility=alloc((width//2)*(height//2)*2)
     p.put(visibility,struct.pack('<H',0xffff)*((width//2)*(height//2)))
@@ -90,6 +100,22 @@ def main():
     clock=0;p.icd.hooks[0x53ff20]=lambda uc,a:(0,clock)
     thread=find_crt_thread(p,capture['rng_calls'][0]['registers']['ebp'])
     p.icd.hooks[0x5dc403]=lambda uc,a:(0,thread)
+    crt_seed=p.u32(thread+0x14)
+    frame=alloc(0x2000)
+    def allocate_entity():
+        # 512162..512255 with player 0's record: the CRT-ranked free slot.
+        uc=p.uc;stops=[uc.hook_add(UC_HOOK_CODE,lambda uc,a,s,d:uc.emu_stop(),begin=a,end=a) for a in (0x512255,0x5121cd)]
+        try:
+            write('I',frame+0x1800+0x24,0)
+            for reg,value in ((UC_X86_REG_EBP,frame+0x1800),(UC_X86_REG_ESP,frame+0x1000),(UC_X86_REG_EBX,p.game),(UC_X86_REG_EDI,p.game)):uc.reg_write(reg,value)
+            uc.emu_start(0x512162,0,timeout=5_000_000)
+        finally:
+            for h in stops:uc.hook_del(h)
+        if uc.reg_read(UC_X86_REG_EIP)!=0x512255:raise RuntimeError('native entity pool exhausted')
+        entity=uc.reg_read(UC_X86_REG_ESI)
+        write('I',entity+0x130,p.u32(entity+0x130)|0x1000000)
+        write('H',p.game+0x24ec,read('H',p.game+0x24ec)[0]+1)
+        return (entity-pool)//312-1
     nav_vtable=struct.unpack_from('<I',nav_template)[0]
     p.icd.hooks[p.u32(nav_vtable+0x34)]=lambda uc,a:(0,0)
     p.icd.freeze_hooks()
@@ -120,8 +146,10 @@ def main():
     goal_of=[(gx,gz)]*len(positions)+[(a,b) for _,_,a,b in extras]
     positions=positions+[(x,z) for x,z,_,_ in extras]
     actors=[]
-    for identity,(x,z) in enumerate(positions,1):
-        point=alloc(12);write('3i',point,goal_of[identity-1][0]*65536,0,goal_of[identity-1][1]*65536)
+    slots=[allocate_entity() for _ in positions] if args.world_tick else list(range(len(positions)))
+    for index,(x,z) in enumerate(positions):
+        identity=slots[index]+1
+        point=alloc(12);write('3i',point,goal_of[index][0]*65536,0,goal_of[index][1]*65536)
         unit=pool+identity*312;mover=alloc(56);nav=alloc(277);mission=alloc(0x72)
         p.put(unit,unit_template);p.put(mover,mover_template);p.put(nav,nav_template)
         write('H',unit+2,identity);write('I',unit+8,mover);write('I',mover,nav);write('I',mover+4,grid)
@@ -135,7 +163,7 @@ def main():
         write('I',nav+8,unit);write('I',nav+4,0);write('I',nav+0x10c,0);write('I',nav+0x110,0);write('B',nav+0x114,0)
         call(0x4d6c40,(28,0,point,0,0,0,0,0,0,0,0,0),mission)
         write('I',mission+0xe,unit);write('I',unit+0x60,mission)
-        if args.then and identity<=args.count:
+        if args.then and index<args.count:
             second=alloc(0x72);write('3i',point,args.then[0]*65536,0,args.then[1]*65536)
             call(0x4d6c40,(28,0,point,0,0,0,0,0,0,0,0,0),second)
             write('I',second+0xe,unit);write('I',mission+0x66,second)
@@ -147,13 +175,18 @@ def main():
     for unit,mover,nav,mission in actors:call(0x4d4da0,(mission+0x22,4),mission)
     command=args.output/'input.txt';world_output=args.output/'world.jsonl'
     if args.world_tick:
-        command.write_text(f'{total} {args.rounds} {args.budget} {base}\n'+''.join(f'{x} {z} {2 if args.then and i<args.count else 1} {a} {b}'+(f' {args.then[0]} {args.then[1]}' if args.then and i<args.count else '')+'\n'
+        command.write_text(f'{total} {args.rounds} {args.budget} {base} {crt_seed}\n'+''.join(f'{x} {z} {2 if args.then and i<args.count else 1} {a} {b}'+(f' {args.then[0]} {args.then[1]}' if args.then and i<args.count else '')+'\n'
                 for i,((x,z),(a,b)) in enumerate(zip(positions,goal_of))))
     else:
         if extras or args.then:ap.error('--blocker/--mover/--then require --world-tick')
         command.write_text(f'{args.count} {args.rounds} {args.budget} {gx} {gz} {base}\n'+''.join(f'{x} {z}\n' for x,z in positions))
     print(f'World: {args.count} Hunters + {len(args.blocker)} blockers + {len(args.mover)} movers, goal={(gx,gz)}, budget={args.budget}, rounds={args.rounds}, world_tick={args.world_tick}',flush=True)
-    subprocess.run([args.binary,str(args.root),'--crowd-world' if args.world_tick else '--crowd-movement','ulasem arena',str(int(args.balance=='crusades')),str(command),str(world_output)],check=True)
+    run=subprocess.run([args.binary,str(args.root),'--crowd-world' if args.world_tick else '--crowd-movement','ulasem arena',str(int(args.balance=='crusades')),str(command),str(world_output)],check=True,stdout=subprocess.PIPE,text=True)
+    if args.world_tick:
+        reported=next(line.split()[1:] for line in run.stdout.splitlines() if line.startswith('SLOTS '))
+        world_slots=[int(v) for v in reported]
+        if world_slots!=[capacity]+slots:raise AssertionError({'native_capacity':capacity,'native_slots':slots,'world':world_slots})
+        print(f'Entity pool: capacity {capacity}, CRT seed {crt_seed:#x}; World and 5121d8 place the Hunters in slots {slots}',flush=True)
     stats=[{'blocked_ticks':0,'longest_blocked_run':0,'run':0,'arrival_tick':None,'previous':(x*65536,z*65536)} for x,z in positions]
     with world_output.open() as port:
         for clock in range(1,args.rounds+1):
