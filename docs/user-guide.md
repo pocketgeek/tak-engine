@@ -1080,6 +1080,12 @@ is the one both use next time.
 
 World sounds are full volume on screen and fade with distance off screen.
 
+A dying unit's cry is the one the game itself chose, as in the original, so every
+player, spectator and replay of a game hears the same cry for the same death. You
+hear an enemy's cry only when you can see where it died. After a rejoin, or when
+you start spectating a game in progress, the deaths of the part of the game you
+missed are silent while the game catches up.
+
 ### Display
 
 ![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, then Renderer set to Auto, the filtering, shadow, art and tree settings, Tactical Dots off, Tactical Dots Zoom 20% greyed out, Hardware Cursor and Smooth Motion on, and GPU Memory Limit set to Auto (1.25 GB)](img/guide/options-graphics.jpg)
