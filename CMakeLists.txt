@@ -341,7 +341,7 @@ target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped longroute crowdhold replace unreachable quota pens determinism formation
     slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice wallend staticblock
     navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation flyerfront liftflyers aware b3events lanegeom
-    lonetrees slideback stillturn forestedge)
+    lonetrees slideback stillturn forestedge mixedsettle)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
   # TAK_LEGION_VERIFY (debug builds; compiled out of Release): every derived index, work list
   # and the incrementally kept soft state (W4 B2's softHash, C31) against a recompute, each tick.

@@ -7360,7 +7360,42 @@ struct LegionNavigator::Impl {
             const int64_t ax=(int64_t(std::get<2>(q))-px)>>16,az=(int64_t(std::get<3>(q))-pz)>>16;
             return ax*ax+az*az<=4*body*body;
         };
+        // A body of another footprint has no origin on this body's lattice.
+        // Its centre converted with this footprint (footprintOrigin) sits half
+        // a cell off where the parities differ, and the field read there, in
+        // the middle of a big body, could stand above this body's potential
+        // while that body reached across this one's way down: a 2x2 held
+        // against settled 3x3s or 4x4s of its own order (a 3x3 against 4x4s)
+        // never queued, and its order never ended. It is read over the
+        // origins of this footprint whose centre stands on it instead (on the
+        // cells it covers, edges included): `lo` the lowest potential the
+        // field reaches there, `mid` the middle of the lowest and the highest
+        // (its centre, without the half-cell bias). Only reached origins
+        // count. Memoised per window by unit id; like the single read for a
+        // body of this footprint, these field reads are not ring cells and go
+        // uncounted.
+        struct Spread {int id=0;uint32_t lo=kUnreached,mid=kUnreached;};
+        std::array<Spread,8> spreads{};size_t spreadN=0;
+        auto spread=[&](const Unit& other)->Spread {
+            for(size_t k=0;k<spreadN;++k)if(spreads[k].id==other.id)return spreads[k];
+            const int bfx=other.type->footX,bfz=other.type->footZ;
+            const int bx=footprintOrigin(other.x,bfx),bz=footprintOrigin(other.z,bfz);
+            uint32_t lo=kUnreached,hi=0;
+            for(int z=std::max(0,bz-fz/2);z<=std::min(height()-1,bz+bfz-(fz+1)/2);++z)
+                for(int x=std::max(0,bx-fx/2);x<=std::min(W-1,bx+bfx-(fx+1)/2);++x)
+                    if(const uint32_t v=f->known(size_t(z*W+x));v!=kUnreached) {lo=std::min(lo,v);hi=std::max(hi,v);}
+            const Spread s{other.id,lo,lo==kUnreached?kUnreached:uint32_t((uint64_t(lo)+hi)/2)};
+            if(spreadN<spreads.size())spreads[spreadN++]=s;
+            return s;
+        };
+        auto sameFootprint=[&](const Unit& other) {return other.type->footX==fx&&other.type->footZ==fz;};
+        // Nearer the point. A body of this footprint: by the field's
+        // potential at its origin where the field reaches it, else by pixel
+        // distance. A body of another footprint: when some origin centred on
+        // it is below this body's potential (it reaches farther down the
+        // field); one the field does not reach (across a wall) never counts.
         auto nearer=[&](const Unit& other) {
+            if(!sameFootprint(other)) {const uint32_t lo=spread(other).lo;return lo!=kUnreached&&lo<potential;}
             const int qx=footprintOrigin(other.x,fx),qz=footprintOrigin(other.z,fz);
             if(qx>=0&&qz>=0&&qx<W&&qz<height()) {
                 const uint32_t q=f->known(size_t(qz*W+qx));
@@ -7369,8 +7404,6 @@ struct LegionNavigator::Impl {
             const int64_t dx=(int64_t(other.x.v)-px)>>16,dz=(int64_t(other.z.v)-pz)>>16;
             return dx*dx+dz*dz<dist*dist;
         };
-        // Nearer the point: by the field's potential at the other body's
-        // origin where the field reaches it, else by pixel distance.
         bool queued=false,foreign=false,stranger=false;uint32_t front=kUnreached;
         const int r=foot<=5?2:1;
         uint64_t ring=0;
@@ -7397,9 +7430,12 @@ struct LegionNavigator::Impl {
                     queued=true;
                     // The settled row in front (its potential): the queue
                     // behind it may settle one row further back (C29 below).
-                    const int qx=footprintOrigin(other->x,fx),qz=footprintOrigin(other->z,fz);
-                    if(qx>=0&&qz>=0&&qx<W&&qz<height())
-                        if(const uint32_t q=f->known(size_t(qz*W+qx));q!=kUnreached&&(front==kUnreached||q>front))front=q;
+                    // A body of another footprint: the middle of its spread.
+                    uint32_t q=kUnreached;
+                    if(!sameFootprint(*other))q=spread(*other).mid;
+                    else if(const int qx=footprintOrigin(other->x,fx),qz=footprintOrigin(other->z,fz);qx>=0&&qz>=0&&qx<W&&qz<height())
+                        q=f->known(size_t(qz*W+qx));
+                    if(q!=kUnreached&&(front==kUnreached||q>front))front=q;
                 }
             } else if(other->orders.empty())foreign=true;
             else if(area&&!queued) {

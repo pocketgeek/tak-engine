@@ -395,7 +395,18 @@ footprint class (mixed footprints form one group per class but share one
 * **Settling** (`settleWindow`, PLAN 3.1 T1-B, one rule): once per 45-tick
   window, a body that gained less than half a body on its point over the
   window looks at the bodies touching it (a ring of at most 64 cells) that
-  stand nearer the point. It is *queued* when one of them is a settled arrival
+  stand nearer the point: by the group field, a body of its own footprint at
+  the potential of that body's origin (by pixel distance where the field does
+  not reach it), a body of another footprint when the field reaches one of the
+  waiting body's origins centred on it below the waiting body's own potential
+  (a body the field reaches nowhere under it never counts). Until the
+  2026-10-14 review the other footprint was read at its centre converted with
+  the waiting body's footprint: half a cell off where the parities differ, and
+  in the middle of a big body, which read a step above a 2x2 or 3x3 it held
+  while its cells reached farther down the field, so that body never queued
+  and its order never ended (`legion_mixedsettle`; mixedfootprints 500x4 left
+  three such orders open for good, the parked W9 A1 attempt two in 200x1). It
+  is *queued* when one of them is a settled arrival
   of its own order at that point, an idle body of the player, or a held member
   of the same point that is itself queued, or when (a shared point) it stands
   inside the destination area itself: the chain can only start at the
@@ -416,7 +427,9 @@ footprint class (mixed footprints form one group per class but share one
   and grows by Retail's foot*32 px per window. No settle is farther from the
   click than twice the crowd's reach, the bound of the old far rule (C29),
   unless the body stands within one row (two bodies of potential) behind a
-  settled arrival of its own command: the cap is measured along a queue that
+  settled arrival of its own command (an arrival of another footprint at the
+  middle of the lowest and highest potential of the origins centred on it,
+  its centre without the half-cell bias): the cap is measured along a queue that
   is contiguous with the settled crowd, so a dead-end queue settles back from
   the crowd row by row however long it is, and a jam the settled crowd does
   not reach never does. Every settle is field-connected and outside any
@@ -1929,6 +1942,20 @@ Rules that came out of using them:
     players, at 12000 ticks, or on dynamicobstacle, rapidreplacement and
     exploration. Findings 2, 4, 5, 6, 7, 8, 10 and 11 have no dedicated test;
     `battle-field-2x60:spins` and `ctest:crowdbench_matrix` are what watch them.
+* **A body held off its own slot by settled bodies of its own footprint can
+  wait for good.** A formation member steers by the line to its own slot, while
+  the settle rule reads nearness on its class's field, which descends to the
+  nearest slot of any member of that class. Where settled arrivals stand across
+  that line uphill of the body, none reads nearer, so the body never queues and
+  its order stays open, holding with its yields refused. Since the 2026-10-14
+  review a settled body of another footprint counts when its cells reach below
+  the waiting body (section 5, Settling); bodies of its own footprint are still
+  read at their origin. In 12,800 random one-click formations of 30 to 100
+  bodies of two footprints (4x4/2x2, 4x4/3x3, 3x3/2x2, on a grid, shuffled or in
+  column order) 38 layouts kept an order open after 5,000 ticks before that
+  review and 5 after, each such a body among settled bodies of its own size.
+  Measured by `ctest:legion_mixedsettle` (the other-footprint case) and the
+  crowdbench screen's `mixedfootprints` rows (`orders_complete`).
 * **A 2-cell dead-end corridor still jams at its mouth.** A queue of 120
   bodies into a 4-cell corridor now settles back from the crowd row by row
   (all 120 by tick 5500), and a 615-body click into a wall pocket arrives as

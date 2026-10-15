@@ -3765,6 +3765,55 @@ void crosslong() {
         std::getenv("W7_DET")!=nullptr);
 }
 
+// Settling beside bodies of another footprint (2026-10-14 Legion review, item 2). The settle rule's queue test
+// read a ring body of another footprint at its centre converted with the waiting body's own footprint: half a
+// cell off where the parities differ, and in the middle of a big body, which can read a step above the waiting
+// body while its cells reach farther down the field. Bodies of two footprints on a grid (`rows` to a column,
+// `pitch` cells apart, column-major; `layout` gives each one's footprint), one click to a point 100 cells east.
+// On the parent a body of the smaller footprint ends among settled bodies of the other, the line to its own slot
+// blocked by one of them, and no ring body reads nearer, so it never queues and its order never ends: the 2x2
+// second in the 4x4 crowd's fifth column stops against a settled 4x4 read 1 above it, though that 4x4 stands
+// nearer the click and covers origins 13 below it; the 2x2 last in the 3x3/2x2 crowd's fourth column stops
+// against a settled 3x3 read 1 above it, whose origins reach 8 below. Every order must end.
+struct MixedSettleRun {int done=0,last=-1;std::string open;uint64_t hash=0;};
+MixedSettleRun mixedsettleRun(std::string_view layout,int rows,int pitch) {
+    Fixture f(200,120);f.publish();
+    const std::array<UnitType,4> types{mover(1),mover(2),mover(3),mover(4)};
+    std::vector<int> ids;
+    for(size_t i=0;i<layout.size();++i) {
+        const int foot=layout[i]-'0',x=20+int(i)/rows*pitch,z=60-rows*pitch/2+int(i)%rows*pitch;
+        const int id=f.world.spawn(&types[size_t(foot-1)],float(x*16+foot*8),float(z*16+foot*8),std::nullopt,0);
+        check(id>0,"spawn failed");ids.push_back(id);
+    }
+    f.start();
+    for(int id:ids)f.world.order(id,120*16,60*16,false);
+    MixedSettleRun r;
+    for(int t=0;t<4000&&r.done<int(ids.size());++t) {
+        f.world.tick(1.f/30);
+        int done=0;for(int id:ids)done+=f.world.unit(id)->orders.empty();
+        if(done>r.done)r.last=t;
+        r.done=done;
+    }
+    for(size_t i=0;i<ids.size();++i)
+        if(!f.world.unit(ids[i])->orders.empty())r.open+=" "+std::to_string(ids[i])+"("+layout[i]+"x"+layout[i]+")";
+    r.hash=f.world.stateHash();
+    return r;
+}
+void mixedsettle() {
+    struct Case {const char* name;std::string_view layout;int rows,pitch;};
+    const Case cases[]={
+        {"4x4/2x2","444424442444424424444444444424442444424442444244424442244444444444444444",9,5},
+        {"3x3/2x2","2332233232332233322232332333233223332322322232322223333332233323233222232323323323223232232322222323",10,3}};
+    std::string open;
+    for(const auto& c:cases) {
+        const auto r=mixedsettleRun(c.layout,c.rows,c.pitch);
+        std::printf("mixedsettle %s bodies=%zu done=%d last_done=%d open:%s hash=%016llx\n",c.name,c.layout.size(),r.done,r.last,
+            r.open.empty()?" none":r.open.c_str(),(unsigned long long)r.hash);
+        if(!r.open.empty())open+=std::string(" ")+c.name;
+    }
+    check(open.empty(),"mixedsettle: an order beside settled bodies of another footprint never ended:"+open);
+}
+
 }
 
 int main(int argc,char** argv) {
@@ -3779,7 +3828,7 @@ int main(int argc,char** argv) {
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
-        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong}};
+        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
