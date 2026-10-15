@@ -1413,13 +1413,13 @@ same moves, with its per-tick formation search falling from 602,176 ring cells
 to 134,237, its total Legion work per tick (`work.legion_total.max`) from
 694,537 to 322,489 and its Legion work over the run by 24% (the formation
 search by 74%). Over the 134 other fixtures (Legion, every gate offset, serial
-equal to workers; Retail untouched) 128 keep their hashes; 6 change:
+equal to workers; Retail untouched) 130 keep their hashes; 4 change:
 `battle-assault`, `battle-field-2x250` and `-2x500` (two armies' formations now
-share the budget), `corner-8x56`, `gen1-route-45941` and `gen1-route-54772`.
-Summed: arrivals +9, complete orders +12, left behind -2, never -2, lane swaps
--1 (per file unchanged), stopped and held permille -7 and -6, Legion work
--0.7%; `walk_net` +34, from `corner-8x56`'s core-five median (0 to 34; its runs
-over the nine offsets fall from 1,545 ticks to 156). The largest per-tick
+share the budget) and `corner-8x56`. Summed: arrivals +8, complete orders +11,
+left behind -1, never -2, lane swaps -1 (per file unchanged), stopped and held
+permille -7 and -6, Legion work -0.7%; `walk_net` +34, from `corner-8x56`'s
+core-five median (0 to 34; its runs over the nine offsets fall from 1,545 ticks
+to 156). The largest per-tick
 formation search over the fixtures falls from 527,351 ring cells to 139,991,
 and `work.legion_total.max` on `deadend-w2-n40-closed-plain` from 601,062 to
 149,758, `corner-8x56` 535,568 to 246,728, `densehead` 450,864 to 218,183 and
