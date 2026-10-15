@@ -215,7 +215,10 @@ expand, a Defensive AI (600 map units from home), or a Normal or Easy AI, whose
 builders search 1,600 from home: on "4x4 team" a team's starts stand 2,200 to
 6,300 apart, so the open deposits of an Absurd AI that does not expand would
 wait for a Normal neighbour that never comes. Two human allies side by side keep
-each other's open deposits from the AIs on their team.
+each other's open deposits from the AIs on their team. "Nearest" is the
+straight-line distance between starts: it does not ask whether that ally has a
+land path to the deposit or any builders left, so on a map of islands the
+nearest ally may be one that cannot get there at all.
 
 **A stalled builder holds nothing.** A reservation now lasts only while its
 builder is getting somewhere. Each think the AI follows every allied builder
@@ -240,7 +243,10 @@ Stalls are common on "4x4 team": 1,034 stops in the 13 games below. 666 of
 those builders had moved less than 300 map units since their order (wedged in
 their own base or in a crowd); most of the others stopped at the front on their
 way to an enemy base. Only 22 had walked 300 or more while gaining less than
-half of it, the signature of a long detour. A stopped builder
+half of it, the signature of a long detour. Progress is straight-line distance,
+so a builder going round a lake or a cliff for a minute without coming 64 nearer
+counts as stalled, and since that builder is never sent back to the deposit, an
+AI whose builders all meet the same detour in turn stops expanding there. A stopped builder
 sent on to another deposit beyond the same jam may stall again; each time it
 holds that deposit for a minute at most.
 
