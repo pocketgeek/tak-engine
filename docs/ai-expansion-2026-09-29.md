@@ -143,6 +143,28 @@ Below 70% allocation it skips the ordinary pick but still builds that
 lodestone. These AIs keep their own ladder and add that trigger; Hard and
 Absurd are unchanged.
 
+The trigger's lodestone takes retail's radius with it: its deposit must lie
+within `16 * max(5b, b*sqrt(n)/2)` map units of home (`0x40cf30`, ported as
+`sim::retailAiBaseRadius`), n the summed footprint (footX + footZ) of the AI's
+buildings and b 7 for the Monarch, 10 for any other builder (`0x40cfc0`) --
+560 and 800 until n passes 100 -- and never beyond the tier's own reach
+(Defensive's 600). With no free deposit there the trigger stands aside and the
+ordinary ladder picks as before, with its own 1,600 (Monarch 900). The first
+version searched the ladder's radius for the trigger too: on Inner Circle,
+where one deposit per player keeps the store under 30% nearly all game, a
+Normal builder walked 1,250 map units into an enemy base for a freed home
+deposit and was lost there with the lodestone.
+
+The ordinary ladder still reaches that far, as it did before the trigger:
+Inner Circle's home deposits lie 830-850 from the start positions, beyond
+retail's 800, so a retail-sized ladder would never build its first
+lodestone there without retail's base centre, which moves with the base and is
+not ported. In the same Inner Circle game (four Normal, seed 1, 300 s) every
+lodestone the trigger placed was within 500 of home; the one 1,168-unit walk
+into an enemy base (Creon, at 220 s, for the Aramon AI's freed home deposit)
+came from the ladder, and the builder made the identical walk before either
+change, when the deposit's owner happened to rebuild first.
+
 The ladder alone held Normal to one lodestone for a whole game on "4x4 team".
 Every deposit there pays 100 mana a second (sacred multiplier 10), and Normal
 wants economy only while income is below 25 + 20 per factory, three factories
@@ -164,6 +186,9 @@ once, near the end. With two builders and three factories, one deposit paying
 Aramon's `ai/default.txt` allows four builders, four flying builders and four
 priests -- and so expand more often.
 
-`--mpai` (Inner Circle, seed 1, 300 s): Retail unchanged at `3785014928b7ab9a`;
-Legion `cc1c4b26954597df` (was `bdcf4c85ab2fc01e`). The 60 s hashes were not
-retaken.
+`--mpai` (Inner Circle, seed 1) is unchanged with the radius in place: Retail
+300 s `3785014928b7ab9a`, 60 s `8db23af1b0260ba1`; Legion 300 s
+`bdcf4c85ab2fc01e`, 60 s `5bc7e8001c06611f` (protocol 262). The first version,
+searching the ladder's radius for the trigger, had moved Legion 300 s to
+`cc1c4b26954597df`. "4x4 team" is as in the table above: every deposit there
+lies within the trigger's radius.

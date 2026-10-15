@@ -719,6 +719,37 @@ int main(int argc,char** argv) {
                         break;
                 }
             }
+        // ...within retail's base radius of home (0x40cf30): 800 px for a builder,
+        // 560 for the Monarch, while the base is small. Searching Normal's own 1600
+        // instead sent a builder 1250 px into an enemy base on Inner Circle for a
+        // freed home deposit, where it died with the lodestone.
+        for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal})
+            for (bool monarch : {false,true})
+                for (bool inside : {true,false}) {
+                    sim::World w;terrain(w);w.buildNavClasses(reg);
+                    w.spawn(reg.find("factory"),800,800,0,0);
+                    w.spawn(reg.find("lode"),1200,800,0,0);   // home is the buildings' centre, (1000,800)
+                    const float d=monarch ? (inside ? 500.f : 700.f) : (inside ? 700.f : 1100.f);
+                    w.setManaSpots({{1200,800},{1000,800+d}});
+                    auto king=*reg.find("worker");king.commander=monarch;
+                    const int worker=w.spawn(&king,1000,1000,0,0);
+                    auto& me=w.player(0);
+                    me.income=110;me.storage=6000;me.mana=100;
+                    for (auto& sample:me.displayResources.samples) sample={110.f/30,10.f};
+                    ai::Profile p;p.weight["lode"]=100;
+                    ai::Controller controller(0,reg,p,1,difficulty);
+                    const auto cs=think(controller,w);
+                    const bool builds=std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+                        return c.unitId==worker && c.kind==net::Cmd::Build && std::string(c.type)=="lode";
+                    });
+                    // Defensive's own 600 px leash still holds its builders closer.
+                    const bool expected=inside && !(difficulty==ai::Difficulty::Passive && !monarch);
+                    check(builds==expected,monarch
+                          ? (inside ? "the Monarch builds the short-of-mana lodestone within 560 px of home"
+                                    : "the Monarch leaves a deposit beyond 560 px of home to the ordinary ladder")
+                          : (inside ? "a builder builds the short-of-mana lodestone within 800 px of home"
+                                    : "a builder leaves a deposit beyond 800 px of home to the ordinary ladder"));
+                }
     }
     if (argc>1) {
         auto vfs=hpi::mountRetailRoot(argv[1]);

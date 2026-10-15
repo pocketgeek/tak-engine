@@ -284,7 +284,8 @@ an armed enemy comes within its reach, instead of carrying on with a build.
 
 Defensive, Easy and Normal also build another lodestone whenever they run short
 of mana (less than 30% of their storage left while spending faster than they
-earn), one at a time, as the original game's AI does.
+earn), one at a time, on a free deposit near their own base, as the original
+game's AI does.
 
 The AI runs on the game server, never in your client. In single-player, the game
 starts a private server on your own computer for you.

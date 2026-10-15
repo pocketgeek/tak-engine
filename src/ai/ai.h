@@ -149,19 +149,25 @@ private:
     int   desire(BuildCat, const Needs&) const;
     // Retail's lodestone trigger: short of mana, with no lodestone under way.
     bool  manaShort(const tak::sim::World&, const Needs&) const;
+    // Retail's base radius around home for that lodestone's deposit (icd 0x40cf30).
+    float retailLodestoneRadius(const tak::sim::World&, const tak::sim::Unit& builder) const;
     // `excludeCats` is a bitmask of 1<<int(BuildCat): categories already tried and
     // found unproducible this think, so the pick falls through to the next best.
     // `lodestoneOnly` limits the pick to the lodestone manaShort() asks for.
+    // `siteLimit`, when given, receives the radius from home the pick's site must
+    // lie within (retail's base radius for the trigger's lodestone), else 0.
     const tak::sim::UnitType* weightedPick(const tak::sim::World&,
                                            const tak::sim::Unit& producer, const Needs&,
-                                           int excludeCats = 0, bool lodestoneOnly = false);
+                                           int excludeCats = 0, bool lodestoneOnly = false,
+                                           float* siteLimit = nullptr);
     // True if an order was actually emitted. False means the pick could not be
     // acted on (no build site, nowhere to conjure) -- the caller then retries in
     // another category rather than burning the producer's turn on it.
     bool produce(const tak::sim::World&, const tak::sim::Unit& producer,
-                 const tak::sim::UnitType* pick, const CommandSink&);
+                 const tak::sim::UnitType* pick, const CommandSink&, float siteLimit = 0);
+    // `limit` > 0 narrows the radius from home a site may lie within.
     bool placeSite(const tak::sim::World&, const tak::sim::UnitType*, const tak::sim::Unit& builder, float nx, float nz,
-                   float& outX, float& outZ) const;
+                   float& outX, float& outZ, float limit = 0) const;
     // Fog of war for the AI: an enemy is targeted only when one of the AI's own units
     // is within its sight/radar. For direction (before anything is spotted) the AI
     // falls back to the known enemy start positions.

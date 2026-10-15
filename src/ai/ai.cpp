@@ -6,6 +6,7 @@
 #include "hpi/hpi.h"
 #include "sim/detmath.h"
 #include "sim/footprint.h"
+#include "sim/retailai.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -302,10 +303,11 @@ int Controller::desire(BuildCat c, const Needs& n) const {
 // over the last second, and none of that lodestone unfinished. Its constructor
 // planner then draws among the menu's lodestones separately (0x412d00) and builds
 // that instead of the ordinary pick wherever 0x412f80 finds a free deposit in the
-// base radius -- unless a builder of the base is already on one (0x40c830). Normal
-// and the tiers sharing its economy add that trigger to their own ladder, whose
-// income target alone held them to one lodestone where a deposit pays 100 a second
-// and the store ran dry; Hard and Absurd keep their own expansion ladder.
+// base radius (retailLodestoneRadius) -- unless a builder of the base is already on
+// one (0x40c830). Normal and the tiers sharing its economy add that trigger to their
+// own ladder, whose income target alone held them to one lodestone where a deposit
+// pays 100 a second and the store ran dry; Hard and Absurd keep their own expansion
+// ladder.
 bool Controller::manaShort(const tak::sim::World& world, const Needs& needs) const {
     if (diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd || !world.hasManaSpots() ||
         needs.lodestoneProjects > 0) return false;
@@ -315,6 +317,22 @@ bool Controller::manaShort(const tak::sim::World& world, const Needs& needs) con
         me.displayResources.shortfall(float(me.mana));
 }
 
+// The base radius retail searches for that lodestone's deposit (0x412f80 ->
+// 0x411510, radius 0x40cf30): 16 * max(5b, b*sqrt(n)/2), n the summed footprint
+// (footX + footZ) of the base's buildings and b 7 for the Monarch, 10 for any
+// other builder (0x40cfc0) -- 560 and 800 px until n passes 100. Our own
+// ladder reaches 1600 from home: with the trigger firing nearly every think on a
+// one-deposit-per-player map, a Normal builder walked 1250 px into an enemy's
+// base for a freed home deposit and was lost there with the lodestone.
+float Controller::retailLodestoneRadius(const tak::sim::World& world,
+                                        const tak::sim::Unit& builder) const {
+    int32_t footprint = 0;
+    for (const auto& u : world.units())
+        if (u.alive() && u.player == player_ && u.type && u.type->isStructure())
+            footprint += u.type->footX + u.type->footZ;
+    return float(tak::sim::retailAiBaseRadius(footprint, builder.type->commander ? 2 : 1));
+}
+
 // Pick what a producer should build: the most-needed category its menu can supply
 // (desire()), then a weighted-random draw WITHIN that category (profile weights, for
 // variety + retail flavour). A candidate must be affordable to finish and under its
@@ -322,7 +340,8 @@ bool Controller::manaShort(const tak::sim::World& world, const Needs& needs) con
 const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
                                                    const tak::sim::Unit& producer,
                                                    const Needs& needs, int excludeCats,
-                                                   bool lodestoneOnly) {
+                                                   bool lodestoneOnly, float* siteLimit) {
+    if (siteLimit) *siteLimit = 0;
     const auto& menu = registry_.buildable(producer.type->id);
     const auto& me = world.player(player_);
     float income = me.income;   // include the Absurd income bonus
@@ -350,9 +369,25 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
         }
         return false;
     };
-    const bool lodestoneTrigger = manaShort(world, needs);
+    // The trigger's lodestone replaces the ordinary pick only where retail would
+    // build it: a free deposit within the base radius of home. Otherwise the
+    // ordinary ladder, with its own reach, decides as before.
+    const bool lodestoneTrigger = manaShort(world, needs) && !producer.type->isStructure() &&
+                                  producer.type->isBuilder;
+    const float triggerRadius = lodestoneTrigger ? retailLodestoneRadius(world, producer) : 0.0f;
+    std::unordered_map<const tak::sim::UnitType*,bool> triggerSites;
+    auto triggered = [&](const tak::sim::UnitType* type) {
+        if (!lodestoneTrigger || !type->onMana || !type->isStructure() || needs.unfinished.count(type)) return false;
+        auto [it,inserted] = triggerSites.try_emplace(type,false);
+        if (inserted) {
+            float ox = producer.x.toFloat(), oz = producer.z.toFloat(), x, z;
+            if (producer.type->commander) { auto h = homeOf(world); ox = h.first; oz = h.second; }
+            it->second = placeSite(world, type, producer, ox, oz, x, z, triggerRadius);
+        }
+        return it->second;
+    };
     auto priority = [&](const tak::sim::UnitType* type) {
-        if (lodestoneTrigger && type->onMana && type->isStructure() && !needs.unfinished.count(type)) return 96;
+        if (triggered(type)) return 96;
         if (lodestoneOnly) return 0;
         const auto cat = categoryOf(type);
         int value = desire(cat, needs);
@@ -469,6 +504,7 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
         total += w;
         if (rand(total) < w) chosen = ut;   // reservoir sample
     }
+    if (siteLimit && chosen && triggered(chosen)) *siteLimit = triggerRadius;
     return chosen;
 }
 
@@ -566,7 +602,7 @@ int Controller::terrainWeight(const tak::sim::World& world,const tak::sim::Unit&
 // mobile builder places a structure or conjures a mobile unit near itself. The
 // placement spot is probed against the (const) world, then issued as a Build.
 bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
-                         const tak::sim::UnitType* pick, const CommandSink& sink) {
+                         const tak::sim::UnitType* pick, const CommandSink& sink, float siteLimit) {
     if (pick->isStructure()) {                  // structure
         if (!p.type->isStructure() && p.type->isBuilder) {
             // The Monarch builds relative to HOME, not wherever it has drifted -- so a
@@ -577,7 +613,7 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
             float ox = p.x.toFloat(), oz = p.z.toFloat();
             if (p.type->commander) { auto h = homeOf(world); ox = h.first; oz = h.second; }
             float x, z;
-            if (placeSite(world, pick, p, ox, oz, x, z)) {
+            if (placeSite(world, pick, p, ox, oz, x, z, siteLimit)) {
                 if (pick->onMana) plannedManaSites_.emplace_back(x,z);
                 emit(sink, tak::net::Cmd::Build, p.id, pick->id, x, z);
                 return true;
@@ -620,7 +656,8 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
 // (when the map has any), everything else probes outward from the builder.
 // Returns true and the chosen (outX,outZ) if a spot was found.
 bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitType* t,
-                           const tak::sim::Unit& builder, float nx, float nz, float& outX, float& outZ) const {
+                           const tak::sim::Unit& builder, float nx, float nz, float& outX, float& outZ,
+                           float limit) const {
     if (!t) return false;
     const auto home=homeOf(world);
     const bool aggressive=diff_==Difficulty::Hard || diff_==Difficulty::Absurd;
@@ -630,7 +667,8 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     // A coastal outpost may be farther away than an ordinary base building.
     // Send an expansion builder; keep the Monarch and Defensive AI near home.
     const float navalRadius=builder.type->commander || !dp_.attack ? 900.0f : 2400.0f;
-    const float radius=naval ? std::max(homeRadius,navalRadius) : waterUnit ? std::max(homeRadius,900.0f) : homeRadius;
+    const float fullRadius=naval ? std::max(homeRadius,navalRadius) : waterUnit ? std::max(homeRadius,900.0f) : homeRadius;
+    const float radius=limit>0 ? std::min(fullRadius,limit) : fullRadius;
     // Reserve the largest lodestone this faction may use, including upgrades.
     // This is AI policy, not a change to the player's placement/navigation rules.
     int manaFootX=0,manaFootZ=0;
@@ -1341,9 +1379,10 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
             // is one pass over the five.
             int exclude = 0;
             for (int attempt = 0; attempt < 5; ++attempt) {
-                const auto* pick = weightedPick(world, *p, needs, exclude, throttle);
+                float siteLimit = 0;
+                const auto* pick = weightedPick(world, *p, needs, exclude, throttle, &siteLimit);
                 if (!pick) break;
-                if (produce(world, *p, pick, sink)) {
+                if (produce(world, *p, pick, sink, siteLimit)) {
                     if (p->type && p->type->commander) commanderActed = true;
                     ++acted;
                     assigned.push_back(pid);
