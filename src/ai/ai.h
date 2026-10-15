@@ -106,7 +106,8 @@ struct Needs {
     int   desiredDefenses = 1;
     int   army = 0;            // count: mobile combatants
     int   builderCap = 2;      // stop making builders past this, the Monarch included
-    int   desiredFactories = 1;// how many factories the current income wants to feed
+    int   desiredFactories = 1;// how many factories the current income wants to feed;
+                               // a side with no factory buildings adds its builder allowance
 };
 
 // Sink for the commands a Controller decides to issue this tick. Offline this
@@ -141,6 +142,10 @@ private:
     // target, and let a producer build the most-needed thing its menu offers.
     Needs assessNeeds(const tak::sim::World&) const;
     BuildCat categoryOf(const tak::sim::UnitType*) const;
+    // True for a side with no factory buildings (Zhon): its mobile builders do the
+    // production other sides' factories do as well as the construction.
+    bool mobileProduction(const std::string& side) const;
+    mutable std::unordered_map<std::string,bool> mobileProduction_;
     bool navalFactory(const tak::sim::UnitType*) const;
     bool navalProducer(const tak::sim::UnitType*) const;
     const std::vector<std::pair<float,float>>& navalLaunchOffsets(const tak::sim::UnitType*) const;

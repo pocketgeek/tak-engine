@@ -291,6 +291,70 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         check(attacks(think(defensive,w))==0,"Defensive preserves an existing explicit attack order");
     }
 }
+// Zhon has no factory buildings: its mobile builders train the army and build
+// the lodestones. Their allowance is another side's factories plus its builders
+// past the Monarch, not the factories alone.
+static void mobileProducers() {
+    auto files=std::make_shared<hpi::Vfs::Files>();
+    auto file=[&](const std::string& path,const std::string& text) {
+        std::string lines;
+        for (char ch : text) { lines += ch; if (ch == ';' || ch == '{' || ch == '}') lines += '\n'; }
+        (*files)[path]={lines.begin(),lines.end()};
+    };
+    auto type=[&](const char* id,const char* fields) {
+        file(std::string("units/")+id+".fbi",std::string("[UNITINFO]{unitname=")+id+
+            ";objectname="+id+";maxdamage=100;footprintx=2;footprintz=2;buildtime=30;buildcost=10;"+fields+"}");
+    };
+    // ZON: the Monarch conjures handlers, which conjure creatures. TAR: the same
+    // menus, plus a factory building.
+    for (const char* side : {"zon","tar"}) {
+        const std::string s=side,upper=s=="zon" ? "ZON" : "TAR";
+        type((s+"king").c_str(),("side="+upper+";builder=1;commander=1;workertime=30;canmove=1;maxvelocity=1;").c_str());
+        type((s+"hand").c_str(),("side="+upper+";builder=1;workertime=30;canmove=1;maxvelocity=1;").c_str());
+        type((s+"gob").c_str(),("side="+upper+";canmove=1;maxvelocity=1;").c_str());
+        type((s+"troll").c_str(),("side="+upper+";canmove=1;maxvelocity=1;").c_str());
+        file("canbuild/"+s+"king/"+s+"hand.tdf","[CANBUILD]{sortbias=0;}");
+        file("canbuild/"+s+"hand/"+s+"gob.tdf","[CANBUILD]{sortbias=0;}");
+        file("canbuild/"+s+"hand/"+s+"troll.tdf","[CANBUILD]{sortbias=0;}");
+    }
+    type("tarhell","side=TAR;builder=1;workertime=30;");
+    file("canbuild/tarhell/targob.tdf","[CANBUILD]{sortbias=0;}");
+    hpi::Vfs vfs;vfs.setMapFiles(files);
+    sim::TypeRegistry reg;reg.loadDir(vfs,"units");reg.loadBuildTree(vfs,"canbuild");
+    auto conjuresHandler=[&](const std::string& side,ai::Difficulty difficulty,float income,int handlers) {
+        sim::World w;terrain(w);w.buildNavClasses(reg);
+        w.player(0).mana=100000;w.player(0).income=income;
+        w.spawn(reg.find(side+"king"),800,800,0,0);
+        // Busy handlers: each is already conjuring, so none of them acts this think.
+        for (int i=0;i<handlers;++i) {
+            const int id=w.spawn(reg.find(side+"hand"),1400+float(i%6)*60,1400+float(i/6)*60,0,0);
+            sim::Order o;o.buildType=reg.find(side+"gob");
+            w.unit(id)->orders.push_back(o);
+        }
+        for (int i=0;i<12;++i) w.spawn(reg.find(side+"troll"),2000+float(i)*40,800,0,0);
+        ai::Profile p;
+        for (const char* id : {"hand","gob","troll"}) {p.weight[side+id]=10;p.limit[side+id]=16;}
+        ai::Controller controller(0,reg,p,1,difficulty);
+        const auto cs=think(controller,w,difficulty==ai::Difficulty::Easy ? 90 : 0);
+        return std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+            return c.kind==net::Cmd::Build && std::string(c.type)==side+"hand";
+        });
+    };
+    // Income 100: three factories (100/40 + 1) and four builders, the Monarch included.
+    check(conjuresHandler("zon",ai::Difficulty::Normal,100,3),
+          "Zhon's mobile producers count as builders as well as factories");
+    check(conjuresHandler("zon",ai::Difficulty::Normal,100,5),
+          "Zhon's producers grow to its factories plus its builders past the Monarch");
+    check(!conjuresHandler("zon",ai::Difficulty::Normal,100,6),
+          "Zhon's producers stop at its factories plus its builders past the Monarch");
+    check(!conjuresHandler("tar",ai::Difficulty::Normal,100,3),
+          "a side with factory buildings keeps its mobile producers to the factory count");
+    check(conjuresHandler("zon",ai::Difficulty::Easy,100,2),
+          "Easy Zhon keeps the Monarch's one builder on top of its two factories");
+    check(!conjuresHandler("zon",ai::Difficulty::Easy,100,3),
+          "Easy Zhon stops at two factories and one builder");
+}
+
 int main(int argc,char** argv) {
     sim::TypeRegistry empty;ai::Profile profile;auto soldier=fighter();
     for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
@@ -305,6 +369,7 @@ int main(int argc,char** argv) {
         }
     }
     builderCaps();
+    mobileProducers();
     defensiveResponses(empty,profile,soldier);
     defensiveShooters(empty,profile,soldier);
     monarchFightsBack(empty,profile,soldier);

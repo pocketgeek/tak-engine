@@ -117,6 +117,18 @@ BuildCat Controller::categoryOf(const tak::sim::UnitType* t) const {
     return BuildCat::Army;
 }
 
+bool Controller::mobileProduction(const std::string& side) const {
+    if (side.empty()) return false;
+    auto [it,inserted]=mobileProduction_.try_emplace(side,true);
+    if (inserted)
+        for (const auto& [id,type]:registry_.types())
+            if (type.side==side && type.isStructure() && !registry_.buildable(id).empty()) {
+                it->second=false;
+                break;
+            }
+    return it->second;
+}
+
 bool Controller::navalFactory(const tak::sim::UnitType* type) const {
     if (!type || !type->isStructure()) return false;
     bool ships = false;
@@ -214,8 +226,11 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
     Needs n;
     const auto& me = world.player(player_);
     n.income = me.income;   // spend the income actually available
+    std::string side;       // the Monarch's, else a mobile builder's
     for (const auto& u : world.units()) {
         if (!u.alive() || u.player != player_ || !u.type) continue;
+        if (!u.type->isStructure() && u.type->isBuilder && (side.empty() || u.type->commander))
+            side = u.type->side;
         if (u.type->isBuilder) {
             const auto* site = u.buildSiteId ? world.unit(u.buildSiteId) : nullptr;
             bool economyProject = site && site->underConstruction && site->type &&
@@ -273,6 +288,13 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
         n.desiredArmy = std::clamp(8 + int(n.income * 0.5f), 8, 36);
         n.desiredDefenses = std::min(n.desiredDefenses, 2);
     }
+    // Zhon has no factory buildings: its Beast Handlers, Tamers, Lords and Shamans
+    // (builder=1, limit 3 each in ai/default.txt) train its army AND build its
+    // lodestones, and they count as factories here. Their allowance is the
+    // factories another side would have plus that side's builders past the
+    // Monarch, so Zhon is not held to the producers of a side that has both.
+    // Normal's most is 8 + 4 = 12, the four types' retail limits together.
+    if (mobileProduction(side)) n.desiredFactories += n.builderCap - 1;
     return n;
 }
 
