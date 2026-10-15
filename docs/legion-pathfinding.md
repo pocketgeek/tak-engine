@@ -1379,6 +1379,14 @@ alone, now completes at all 11 where it missed 3); `strait-3x48:g.B.done`
 `ctest:legion_passagelanes` runs `gap14` over the core five: 17 to 47 swaps on
 the parent (median 27), none here.
 
+The lane follows the field, not the member's own slot, and the guard against
+the destination is the field's 32 cells. A destination area can reach farther
+than that from its point (very large bodies, or a formation of many hundreds),
+and then a member inside a strip whose slot lies behind it is led through to
+the far end first and placed by the settle rule from there (an automated
+review's probe: 64 8x8 bodies and a 22-cell gap). No fixture has such an area
+at a passage; a guard of the area's own reach is the fix to try.
+
 ### Slot hand-out budget (2026-10-14 review, item 5)
 
 A member's formation slot search (`formationCell`) walks Chebyshev rings round
