@@ -19,7 +19,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 261;      // 261: healtime self-repair is retail's (icd 51e152): every 8th tick a finished, living unit
+constexpr uint32_t kNetVersion = 262;      // 262: a flyer held still in range of its attack target stops its velocity and speed
+                                           //      (hashed flightVelocity/speed): shooters lead a hovering attacker by
+                                           //      its real motion (51aa50), not the speed it flew in at. 261 replays refused
+                                           // 261: healtime self-repair is retail's (icd 51e152): every 8th tick a finished, living unit
                                            //      below full health repairs itself with healtime*8/30 of worker time through the shared repair routine,
                                            //      maxdamage*healtime/buildtime HP/s, with a 1/256-HP remainder (hashed Unit::healCarry); was dt/healtime
                                            //      HP a tick, and unfinished units no longer self-repair. The sim changed, so 257-260 replays no longer play

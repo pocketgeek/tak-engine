@@ -698,7 +698,10 @@ Replay format 11 records the pathfinder. Playback requires a protocol that
 `supportedReplayProtocol` accepts. While 258-260 were current that included
 257 onward (their simulation is the same); protocol 261 (retail healtime
 self-repair) changed the simulation, so playback again requires the current
-protocol. Older recordings require their original engine.
+protocol, and protocol 262 changed it again: a flyer held still in range of its
+attack target zeroes its hashed `flightVelocity` and speed, so shooters stop
+leading it by the speed it flew in at (see "Shooting at flyers" in
+`retail-engine.md`). Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
 reading an older file). Saved

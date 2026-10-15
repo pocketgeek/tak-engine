@@ -153,8 +153,10 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 261, "replay format 11 is kept under protocol 261");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 261");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 262, "replay format 11 is kept under protocol 262");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 262");
+    // 262 stops a held flyer's velocity (hashed).
+    check(!supportedReplayProtocol(13, 261), "previous held-flyer protocol is refused");
     // 261 changed the simulation (retail healtime self-repair), which ends the 257-260
     // allowance the lobby/setup-only 258-260 kept.
     check(!supportedReplayProtocol(13, 260) && !supportedReplayProtocol(13, 259) && !supportedReplayProtocol(12, 258),

@@ -260,6 +260,52 @@ int main(int argc,char** argv) {
                       "hover flyer follows a moving target");
             }
         }
+        // A flyer without hover attack stops dead where its target comes into
+        // range: World's combat hold skips its flight body. Shooters lead a
+        // target by its mover velocity (retail 51aa50), so the hold has to stop
+        // the velocity too. A stale one put the Lokken's Fire Balls ahead of an
+        // attacking Gryphon, Fallen Angel, Wrath of Tammuz or Dirigible, and most
+        // or all of them missed.
+        for (const auto& name:flyers) {
+            auto type=*registry.find(name);
+            if (type.hoverAttack || type.weapon.hoverAttack) continue;
+            for (auto& weapon:type.weapons) { weapon.mindControl=false;weapon.damage=1;weapon.aoe=0; }
+            type.canCapture=false;type.weapon=type.weapons.front();
+            type.maxHp=30000;type.healTime=0;   // Fixed is 16.16: keep hp below 32768
+            auto dummy=*registry.find("tarzom");dummy.maxHp=30000;dummy.healTime=0;
+            dummy.maxVel={};dummy.weapon.damage=0;dummy.weapons.clear();
+            const auto& shooter=*registry.find("tarnecro");
+            tak::sim::World w;w.setVisPlayer(-1);
+            w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            w.buildNavClasses(registry);
+            const int ground=w.spawn(&dummy,2300,2000,0,0),flyer=w.spawn(&type,2300,2600,0,1);
+            w.attack(flyer,ground,false);
+            bool held=false;
+            for (int tick=0;tick<600 && !held;++tick) {
+                const auto* before=w.unit(flyer);
+                const int32_t x=before->x.v,y=before->flightY.v,z=before->z.v;
+                w.tick(1.f/30.f);
+                const auto* u=w.unit(flyer);
+                held=u->flightGroundMode==2 && u->x.v==x && u->flightY.v==y && u->z.v==z;
+            }
+            check(held,"a non-hover flyer holds still once its target is in range");
+            const auto v=w.unit(flyer)->flightVelocity;
+            check(v.x==0 && v.y==0 && v.z==0 && w.unit(flyer)->speed==tak::sim::Fixed(),
+                  "a flyer held in attack range reports no velocity or speed");
+            const float fx=w.unit(flyer)->x.toFloat(),fz=w.unit(flyer)->z.toFloat();
+            const int lokken=w.spawn(&shooter,fx-300,fz,0,0);
+            w.attack(lokken,flyer,false);   // WEAPON1, the unguided Fire Ball
+            int shots=0,hits=0;
+            for (int tick=0;tick<900;++tick) {
+                w.tick(1.f/30.f);
+                if (w.unit(lokken)->firedWeapons&1) ++shots;
+                for (const auto& hit:w.hits())
+                    if (hit.weapon==&shooter.weapons.front() && hit.victimId==flyer) ++hits;
+            }
+            std::printf("held flyer balance=%s unit=%s velocity=(%d,%d,%d) lokken shots=%d hits=%d\n",
+                crusades?"Crusades":"standard",name.c_str(),v.x,v.y,v.z,shots,hits);
+            check(shots>=5 && hits*4>=shots*3,"a Lokken's Fire Ball connects with a flyer holding still to attack");
+        }
         // Preserve the intentional off switch for units that actually support it.
         auto turret=*registry.find("zondrake");turret.onOffable=true;
         auto victim=*registry.find("tarzom");victim.maxHp=30000;victim.healTime=0;victim.weapon.damage=0;victim.weapons.clear();

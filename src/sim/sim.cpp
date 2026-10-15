@@ -13095,7 +13095,17 @@ void World::tick(float dt) {
                 return !needLoS ||
                        combatLineOfSight(u,*t);
             }();
-        if (combatHold) continue;
+        if (combatHold) {
+            // The hold skips the flight body, so a flyer stops dead where it
+            // came into range. Its velocity has to stop with it: retail's lead
+            // (51aa50) reads the target mover's velocity, so a stale one made
+            // every leading shooter aim ahead of a flyer hanging still -- a
+            // Lokken's Fire Ball missed an attacking Gryphon 47 times of 47.
+            // Speed is |velocity| (tickFlightBody), so it stops too; the next
+            // flight step reads it for its vertical limit.
+            if (u.type->canFly) { u.flightVelocity={}; u.speed=Fixed(); }
+            continue;
+        }
 
         Fixed target = u.baseSpeed;
         // Formation pacing uses the slowest member, except for a member

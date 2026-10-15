@@ -183,6 +183,59 @@ air-only 56 -> 171 px), so that is left for a separate decision. Computer
 players (owner type 3) get no default mission in retail; World gives every
 player one, as before. `transport_post_unload` covers every shipped carrier.
 
+## Shooting at flyers: lead, hit band, and the held attacker (icd, 2026-10-14, protocol 262)
+
+A leading shooter aims at the target's SweetSpot (a model point, at the flyer's
+altitude) plus 80% of the lead (`52fd80` -> `51aa50`, factor 0xcccc), and the
+lead comes from the target mover's velocity at +8/+0xc/+0x10 (`51ac3b..51ac82`),
+vertical included. The angles freeze when the aim gate passes (`52fff0`); the
+shot is made at the cast's release frame (`530220` -> `52c540`) with those
+angles and the body's current heading, so a Lokken's `attack1` Fire Ball pitch
+is about 29 ticks old. `52a4d0` hits a flyer only when the shot passes through
+its cell between its altitude (type +0x13e is zeroed at `4c1419`) and its model
+top (+0x14a, `546f40`); a shot that runs out of range vanishes without splash.
+
+World holds a non-`hoverattack` flyer still once its attack target is in range
+(retail flies it on attack runs instead, below). That hold skipped the flight
+body but kept `flightVelocity`, so every leading shooter aimed ahead of a flyer
+hanging still: a Lokken's Fire Ball missed a held Gryphon, Fallen Angel or Wrath
+of Tammuz every time (0/47, 0/50, 0/50). Since protocol 262 the hold zeroes the
+velocity and the speed (speed is |velocity| in `tickFlightBody`), as a retail
+mover with no velocity is still. `flyer_combat_test` covers the five flyers that
+hold (zongryp, tarang, zongod, verball, creaeri) in both balances.
+
+Side effect, retail arithmetic: the Gryphon's and the Dirigible's SweetSpots sit
+0.05 and 0.08 px above the bottom of their hit bands, so an unled straight shot
+at a still one arrives about 2 px low and passes underneath. Mage Archers, Mage
+Towers, Strongholds, Gatling Crossbows, Beast Riders, Heket and the Beast Lord
+stopped hitting a held Gryphon (they hit before only because the stale climb
+velocity raised their aim). The low Crusades Wisp is missed the same way.
+Against moving flyers the unguided Fire Ball hits about 29% (Gryphon 11/34, Bat
+0/39) and the Guided Fire Ball 70-95%; every part probe (aim, SweetSpot, lead,
+gate, launch, shot update, hit test) matches native, so retail missing moving
+flyers at similar rates is an inference from the parts, not an emulated whole
+engagement.
+
+Still deviating (not ported):
+- **Facing.** Retail turns the body toward the LED SweetSpot every tick
+  (`52fe30`: the Line of Sight handler's +0x14 is `42a6b0`, which returns 0, so
+  `52ff67` -> `51aa50`, then `51b340` -> `4dc0b0`) and gates on that. World
+  faces the target centre. Facing the led point raised Fire Ball hits on moving
+  flyers from 328/1147 to 373/1154; it affects 105 of 203 unit types.
+- **Attack runs.** `VTOL_SeekAttack` (`0x41b6e8..`) flies non-hover attackers
+  on runs, reading `attackrunlength` (type +0x234; `4c082e`) at
+  `41bc3b..41c6ea`. Both branches at `41c56c` make a run waypoint (length + 128
+  + rand(128), or 3x another quantity when the length is 0), so Gryphons,
+  Wraths and Dirigibles fly runs too. World holds them still, and against a
+  moving ground target a held flyer now alternates hold and move every 1-2
+  ticks.
+- **Splash.** Retail deals only the direct hit at `areaofeffect` <= 16
+  (`529c10`/`52a460`); above it `529dc0` uses 3D distance to each unit's box.
+  World uses flat 2D distance to the unit centre, so a ground blast also hurts a
+  flyer overhead.
+- The `wait`, `waitAttack` and flying-build-retry holds also skip the flight
+  body without zeroing `flightVelocity`.
+
 ## Ship / no-walk mover animation (icd + COB, 2026-09-10)
 
 Ships have no `walk` script. The engine drives them with the **`MoveRate`**
