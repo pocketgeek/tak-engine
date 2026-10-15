@@ -635,20 +635,24 @@ struct LegionNavigator::Impl {
         // only the detour, yield, part and side-step back-offs read it.
         uint32_t heldSince=kNoTick,stallTick=0,progress=0xffffffffu;
         uint32_t holdUpdates=0;
+        // The measure `progress` is in (see move): 1 the potential x64 of the
+        // field whose serial is progressSerial, 2 squared cells to the own
+        // goal (0: none yet). A new measure re-baselines progress without
+        // counting a gain (a first step onto a seed excepted). Not hashed,
+        // like headSerial below: a function of the member updates, whose
+        // inputs (and `progress`) are hashed.
+        uint8_t progressKind=0;uint64_t progressSerial=0;
         // W6 headway clock (PLAN 3.6 advancing()): the tick this body last
         // reached a new best potential on its group's current field (headBest
         // on field headSerial; a new field re-baselines the best without
         // counting as progress). Unlike stallTick it runs on through a
         // committed route or side-step: a body wiggling between side-steps
-        // for good (mixed2's straggler) is not advancing. stallTick cannot
-        // serve anyway: `progress`
-        // mixes two scales (squared cells before the field is done, potential
-        // x64 after), so a body that registers before its field is built
-        // makes no "progress" for most of its walk. Read only by the flyer
-        // rules (LegionNavigator::advancing). Not hashed, like the group's
-        // movingTick/blockedTick: a function of the member updates, whose
-        // inputs are hashed, and recomputed by a rejoining client replaying
-        // from tick 0.
+        // for good (mixed2's straggler) is not advancing. Read by the flyer
+        // rules (LegionNavigator::advancing), and headBest by the progress
+        // test (a first step onto a seed, see move). Not hashed, like the
+        // group's movingTick/blockedTick: a function of the member updates,
+        // whose inputs are hashed, and recomputed by a rejoining client
+        // replaying from tick 0.
         uint32_t headTick=0;uint32_t headBest=kUnreached;uint64_t headSerial=0;
         // The tick of this body's last move() call (rested or not). Within a
         // tick it tells a peer already updated from one still to come (see
@@ -5841,16 +5845,43 @@ struct LegionNavigator::Impl {
         }
         const int goalX=m.goal%W,goalZ=m.goal/W;
         const Fixed gx=centre(goalX,fx),gz=centre(goalZ,fz);
-        // Progress is the integer distance still to go: field potential, or
-        // squared cells to the own goal once that is in a straight line.
+        // Progress is the integer distance still to go, in one measure: the
+        // field potential (x64) where the field reaches this cell above its
+        // seeds, else squared cells to the own goal (no field here yet, the
+        // outside of a bounded field, a seed). Only a gain in the same
+        // measure, on the same field, is progress. A new measure (the field
+        // reached the body, a refresh swapped in, it left a seed) re-baselines
+        // `progress` without counting a gain: the stall clock runs on and the
+        // detour back-off stays (so a body blocked with no field still makes
+        // B1's re-request below), and "no gain since the last detour"
+        // (detourBest, the yield-first rule in drive) carries over to the new
+        // measure. A first step onto one of the field's seeds is a gain on the
+        // field all the same (potential 0, below its best so far there,
+        // headBest) and counts, as it does on the headway clock: re-based, a
+        // body arriving at its destination read stalled, which moved settles
+        // and re-requests at corner-8x56 and corner-4x50 for nothing. Compared
+        // across the two measures, a body 200 cells out that registered before
+        // its field arrived read 40,000 squared cells, then 64,000 on the
+        // field, and made no progress until it was within 125 cells: its stall
+        // clock aged through most of a free walk (battle-field-2x60's
+        // stall_stale_ticks, about 9,400 member updates at an offset).
         {
+            const uint32_t at=f?f->at(size_t(here)):kUnreached;
+            const bool onField=at!=kUnreached&&at>0;
             const uint32_t left=uint32_t(std::min<int64_t>(0xfffffff,
-                f&&f->at(size_t(here))!=kUnreached&&f->at(size_t(here))>0
-                    ? int64_t(f->at(size_t(here)))*64
-                    : (int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz))));
-            if(left<m.progress) {m.progress=left;m.stallTick=w.tickCounter_;m.detourCount=0;}
+                onField?int64_t(at)*64:(int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz))));
+            const uint8_t kind=onField?1:2;
+            const uint64_t serial=onField?f->serial:0;
+            const bool fresh=m.progress!=0xffffffffu&&(kind!=m.progressKind||serial!=m.progressSerial);
+            const bool ontoSeed=fresh&&at==0&&m.headSerial==f->serial&&m.headBest>0;
+            if(fresh&&!ontoSeed) {
+                m.detourBest=m.detourBest==int64_t(m.progress)?int64_t(left):-1;
+                m.progress=left;m.progressKind=kind;m.progressSerial=serial;
+            } else if(ontoSeed||left<m.progress) {
+                if(ontoSeed)m.detourBest=-1;   // a gain since the last detour, on a new scale
+                m.progress=left;m.progressKind=kind;m.progressSerial=serial;m.stallTick=w.tickCounter_;m.detourCount=0;
+            }
             if(f) {
-                const uint32_t at=f->at(size_t(here));
                 if(f->serial!=m.headSerial) {m.headSerial=f->serial;m.headBest=at;}
                 else if(at<m.headBest) {m.headBest=at;m.headTick=w.tickCounter_;}
             }

@@ -226,8 +226,33 @@ yard, or under a new structure) leaves it through Retail's own steering.
 
 ### 4. Traffic and stuck classification
 
-Progress is the integer distance still to go: field potential, or squared
-cells to the own goal while on a straight line.
+Progress is the integer distance still to go, in one measure at a time: the
+field potential (x64) where the group's field reaches the body's cell above
+its seeds, else squared cells to its own goal (the field does not reach the
+cell yet, a bounded field's outside, a seed). Only a gain in the same measure,
+on the same field, is progress: it restarts the stall clock that the arrival
+on contact, the settle rule, B1's blocked re-request and the detour back-off
+read. A new measure (the field reaches the body, a refresh swaps in, the body
+leaves a seed) re-baselines progress without counting a gain: the stall clock
+runs on, so a body blocked with no field still makes B1's re-request, and "no
+gain since the last detour" (the yield-first rule) carries over. A first step
+onto one of the field's seeds is a gain on the field (potential 0, below the
+field's best so far) and counts, as it does on the headway clock. Until
+2026-10-14 the two measures were compared as one number: a body 200 cells out
+that registered before its field arrived read 40,000 squared cells, then
+64,000 on the field, and made no progress until it was within 125 cells, so
+its stall clock aged through most of a free walk while its headway clock
+advanced (the observer's `stall_stale_ticks`: 9,401 member updates on
+`battle-field-2x60` at offset 0; now 0 on every fixture at every gate offset;
+`legion_progressclock`). A shadow of the old clock, run on the twelve
+fixtures whose results moved, found the arrival on contact deciding the same
+every time and the settle rule's stall gate differing on a few dozen updates;
+the detour back-off now resets on the gains it missed, so `battle-assault`
+plans 11% more detours (reversals +5%, standing samples -2.3%) and makes half
+the blocked re-requests. Over the scenario set (133 fixtures, Legion, every
+gate offset) the judge families move within noise: arrivals 120,807 to
+120,795, left behind 56,351 to 56,333, lane crossings 7,117 to 7,108, Legion
+work +0.1%.
 
 * **Terrain-trapped**: the unit's origin has no finite potential once its
   group's field is complete, or its goal could not be resolved. No legal

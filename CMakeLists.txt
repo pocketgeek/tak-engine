@@ -575,6 +575,14 @@ foreach(legion_scn serplong serplong-control)
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;nightly" TIMEOUT 1800)
 endforeach()
+# One progress clock (2026-10-14 Legion review, item 1): a body that registered before its field reached it
+# measured squared cells to its goal, then potential x64, so its stall clock aged through most of a free walk
+# while its headway clock advanced (the observer's stall_stale_ticks, tools/legion_observe.h: 9,401 at offset 0
+# on the parent, 8,248 to 9,664 over the gate offsets). Passes at two digits or fewer, serial equal to workers.
+add_test(NAME legion_progressclock
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/battle-field-2x60.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_progressclock PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"stall_stale_ticks\":[0-9][0-9]?[,}]")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
