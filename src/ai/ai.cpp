@@ -829,8 +829,9 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             if (std::any_of(reservedSites.begin(),reservedSites.end(),[sx,sz](const auto& spot) {
                 const float dx=spot.first-sx,dz=spot.second-sz;return dx*dx+dz*dz<32*32;
             })) continue;
-            // An ally still claiming its home deposit keeps it (updateAllyClaims);
-            // upgrading our own lodestone there is not a claim on it.
+            // An ally still claiming its home deposit keeps it, and a nearer ally
+            // takes it after (updateAllyClaims); upgrading our own lodestone
+            // there is not a claim on it.
             if (i<allyHeldDeposits_.size() && allyHeldDeposits_[i] &&
                 !world.lodestoneUpgradeSource(t,sx,sz,player_)) continue;
             if (!usable(sx, sz)) continue;   // taken or blocked
@@ -958,12 +959,21 @@ bool Controller::buildsLodestone(const tak::sim::UnitType* type) const {
 //    kAllyClaimTicks.
 // Unclaimed means no lodestone on it and no builder bound for it, counted in game
 // ticks from the first think or from the end of its last claim, so a lodestone
-// lost in a raid gives the ally the same two minutes to rebuild. A defeated ally,
-// or one left with no builder that can reach (its Monarch lost under Monarch
-// Expendable), claims nothing. Retail's AI never builds there at all -- icd
+// lost in a raid gives the ally the same two minutes to rebuild. A defeated ally
+// claims nothing. Retail's AI never builds there at all -- icd
 // 411510 takes the nearest free sacred site within its own base radius -- but
 // leaving deposits to an ally that never takes them (a Normal or Defensive AI, a
 // human who does not expand) cost a mixed team 20-35% of its income.
+// Once the ally whose home it is no longer holds it -- two minutes unclaimed, or
+// no builder of its own that can reach it (its Monarch lost under Monarch
+// Expendable) -- the deposit goes to whichever other living ally's start is
+// nearest it, not to all of them: a far ally's builder, once bound for it, held
+// it for its whole walk across the map while the nearer allies, the owner
+// included, could not race it (Aramon reserved Zhon's deposits from 6,000 map
+// units away while Zhon's builders went to the enemy's base). Its cost: a
+// deposit whose nearest other ally never builds there -- a human, or a Normal
+// AI whose builders do not reach that far -- stays empty, though a farther AI
+// would take it.
 void Controller::updateAllyClaims(const tak::sim::World& world, uint32_t simTick) {
     constexpr float kAllyHome=900;
     constexpr uint32_t kAllyClaimTicks=2*60*30;   // two minutes of game time
@@ -994,16 +1004,21 @@ void Controller::updateAllyClaims(const tak::sim::World& world, uint32_t simTick
         if (std::any_of(claims.begin(),claims.end(),[sx,sz](const auto& claim) {
             const float dx=claim.first-sx,dz=claim.second-sz;return dx*dx+dz*dz<44*44;
         })) { depositClaimedAt_[i]=simTick; continue; }
-        if (simTick-depositClaimedAt_[i]>=kAllyClaimTicks) continue;   // sat unclaimed: open
-        const float hx=sx-home.first,hz=sz-home.second;
-        float nearest=std::min(kAllyHome*kAllyHome,hx*hx+hz*hz);
-        const std::vector<const tak::sim::Unit*>* owner=nullptr;
+        const float hx=sx-home.first,hz=sz-home.second,own=hx*hx+hz*hz;
+        float nearest=std::min(kAllyHome*kAllyHome,own);
+        size_t owner=allyHomes_.size();
         for (size_t a=0;a<allyHomes_.size();++a) {
             const float dx=sx-allyHomes_[a].x,dz=sz-allyHomes_[a].z,d=dx*dx+dz*dz;
-            if (d<nearest && !world.player(allyHomes_[a].player).defeated) { nearest=d; owner=&claimers[a]; }
+            if (d<nearest && !world.player(allyHomes_[a].player).defeated) { nearest=d; owner=a; }
         }
-        allyHeldDeposits_[i]=owner && std::any_of(owner->begin(),owner->end(),[&](const tak::sim::Unit* b) {
-            return b->type->canFly || world.pathExists(b->type,sx,sz,b->x.toFloat(),b->z.toFloat());
+        if (owner==allyHomes_.size()) continue;   // nobody's home but perhaps ours
+        if (simTick-depositClaimedAt_[i]<kAllyClaimTicks &&
+            std::any_of(claimers[owner].begin(),claimers[owner].end(),[&](const tak::sim::Unit* b) {
+                return b->type->canFly || world.pathExists(b->type,sx,sz,b->x.toFloat(),b->z.toFloat());
+            })) { allyHeldDeposits_[i]=1; continue; }
+        allyHeldDeposits_[i]=std::any_of(allyHomes_.begin(),allyHomes_.end(),[&](const AllyHome& ally) {
+            const float dx=sx-ally.x,dz=sz-ally.z;
+            return &ally!=&allyHomes_[owner] && !world.player(ally.player).defeated && dx*dx+dz*dz<own;
         });
     }
 }

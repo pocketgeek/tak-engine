@@ -205,13 +205,14 @@ private:
     std::optional<std::pair<float,float>> home_;
     // Allied players' home anchors, fixed at the first think like home_ (homeOf's
     // rule applied to each ally). Expansion leaves a living ally's home deposits
-    // to that ally while it can still claim them (updateAllyClaims).
+    // to that ally while it can still claim them, then to the nearest other ally
+    // (updateAllyClaims).
     struct AllyHome { int player; float x, z; };
     std::vector<AllyHome> allyHomes_;
     bool allyHomesKnown_ = false;
     // Per mana deposit (World::manaSpots() index): the last think tick it was
     // claimed -- a lodestone on it or a builder bound for it -- and whether this
-    // think leaves it to the ally whose home it is.
+    // think leaves it to an ally.
     std::vector<uint32_t> depositClaimedAt_;
     std::vector<uint8_t> allyHeldDeposits_;
     void updateAllyClaims(const tak::sim::World&, uint32_t simTick);

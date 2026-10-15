@@ -582,6 +582,34 @@ int main(int argc,char** argv) {
             check(claims!=reaches,reaches ? "an ally builder that can reach its home deposit holds it"
                                           : "an ally builder that cannot reach its home deposit does not hold it");
         }
+        // Once the ally whose home it is no longer holds a deposit -- unclaimed for
+        // two minutes, or no builder of its own that can reach it -- the deposit
+        // goes to the nearest of the other allies, not to one that would walk across
+        // the map and hold it all the way. Every difficulty that reaches it alike.
+        for (auto difficulty : {ai::Difficulty::Easy,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd})
+            for (bool ownerBuilds : {true,false})
+                for (bool nearer : {true,false}) {
+                    sim::World w;terrain(w);w.buildNavClasses(reg);
+                    w.setManaSpots({{2560,800},{1600,1792}});   // the owner's home deposit, a free one
+                    w.spawn(reg.find("factory"),1200,800,0,0);   // our base, 1360 from the owner's deposit
+                    // The owner's start: an idle builder, or a building and no builder left.
+                    w.spawn(reg.find(ownerBuilds ? "worker" : "factory"),3000,800,0,1);
+                    // A third ally's base, 1092 from the owner's deposit or 3083.
+                    w.spawn(reg.find("factory"),nearer ? 3000 : 400,nearer ? 1800 : 3000,0,2);
+                    const int idle=w.spawn(reg.find("worker"),2000,800,0,0);
+                    w.setTeam(1,0);w.setTeam(2,0);w.player(0).mana=10000;
+                    ai::Profile p;p.weight["lode"]=100;
+                    ai::Controller controller(0,reg,p,1,difficulty);
+                    think(controller,w);
+                    const auto cs=think(controller,w,ownerBuilds ? kClaimTicks : 0);
+                    const bool claims=std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+                        return c.unitId==idle && c.kind==net::Cmd::Build && c.x==2560 && c.z==800;
+                    });
+                    check(claims!=nearer,nearer ? (ownerBuilds ? "an ally home deposit open after two minutes is left to a nearer ally"
+                                                               : "a builderless ally's home deposit is left to a nearer ally")
+                                                : (ownerBuilds ? "an ally home deposit open after two minutes goes to its nearest ally"
+                                                               : "a builderless ally's home deposit goes to its nearest ally"));
+                }
         // Normal, Easy and Defensive reserve deposits the same way: a site an own or
         // allied builder is walking to, and one planned earlier in the same think.
         // Without it two Normal allies, or two builders of one Normal AI, raced
