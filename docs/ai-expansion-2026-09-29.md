@@ -379,3 +379,49 @@ lodestones and the Taros ones stayed at 3 and 1.
 `--mpai` (Inner Circle, seed 1) is unchanged: Retail 300 s `76f7e976cd6a00c9`,
 60 s `8db23af1b0260ba1`; Legion 300 s `99e2f137cde8d769`, 60 s
 `5bc7e8001c06611f`.
+
+## Update 2026-10-15: every race inside its builder cap
+
+The difficulty's builder cap (Easy and Defensive 2, Normal 2 to 5 with income,
+Hard and Absurd 4 to 12, the Monarch included) is ours; retail has no
+difficulty levels. What is retail is the per-type limit in `ai/default.txt`:
+`arabuild`, `arafly`, `arapries`, `cremech`, `crechie` 4; `tarpries`, `tartb`,
+`verlihr`, `verliege` and Zhon's four 3; `verflag` 2. A `teamsim` sweep of
+every race at every difficulty ("4x4 team", 8 AIs of one difficulty, 3 seeds x
+2 race layouts, 900 s, sampled each second, Monarch included) found the cap
+exceeded at Normal (Aramon up to 11 of 5, Creon 7, Taros 7), Defensive (Aramon
+and Taros 17 of 2) and Hard/Absurd (Aramon 32 of 12, Taros 36), and per-type
+limits passed at every difficulty but Easy (Normal `arabuild` 5 of 4, Hard
+`arabuild` 14, Zhon's handlers and tamers past 20 of 3). Three causes:
+
+* Priests are factories by their menus (`arapries`, `tarpries`), so only the
+  factory target held them. Every `builder=1` mobile unit now counts against
+  the cap. Zhon, with no factory building, keeps its own allowance: its factory
+  target plus the cap (the Monarch and 12 on Normal, its four types' limits).
+* A builder queued in a factory, or ordered but not yet conjured by a producer
+  walking to its spot, was no unit yet, so the next think's idle producer
+  added another. Both now count; so does each builder picked earlier in the
+  same think, of either category.
+* Hard's 150% limit scale and the sustained modes' factory/builder targets
+  raised builder types past their limits. A builder type is now held to its
+  shipped limit at every difficulty (Easy's 50% still lowers it).
+
+| 900 s | AIs over the cap, before / after | An AI's own types over their limit |
+| --- | ---: | ---: |
+| Easy | 4 / 0 | 0 / 0 |
+| Normal | 29 / 0 (6 counting captured builders) | 10 / 0 |
+| Defensive | 26 / 0 | 17 / 0 |
+| Hard, Absurd | 76 / 0 | 107 / 0 |
+
+Zhon's own builders never pass 13 (the Monarch and 3 of each type); its sampled
+totals reach 18 only with captured Aramon and Creon builders, which the AI
+counts but did not build. Expansion held: Normal lodestones per AI at 900 s,
+before / after, Aramon 9.42 / 8.50, Taros 7.89 / 7.22, Veruna 7.67 / 7.56,
+Zhon 9.44 / 9.33, Creon 7.22 / 7.22; army 66.0 / 72.1, 56.6 / 58.4,
+94.9 / 95.4, 119.8 / 120.9, 64.4 / 69.1. Aramon's Normal income falls
+1728 / 886, since its priests (`aramana` upgrades) now share five places with
+its constructors; Defensive Aramon and Taros, who had 15 priests on a cap of
+2, fall most (1510 / 534, 683 / 559). No AI was defeated in either set.
+`--mpai` (Inner Circle, seed 1) is unchanged: Retail 300 s `76f7e976cd6a00c9`,
+60 s `8db23af1b0260ba1`; Legion 300 s `99e2f137cde8d769`, 60 s
+`5bc7e8001c06611f`.
