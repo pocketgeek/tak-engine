@@ -873,7 +873,7 @@ std::vector<const UnitType*> TypeRegistry::combatUnits(const std::string& side) 
 void World::allocateEntitySlot(int unitId,int player) {
     auto& table=entitySlots_;
     auto& pool=table.unitAt[size_t(player)];
-    if (pool.empty()) pool.assign(size_t(unitCap_>0 ? unitCap_ : kDefaultEntityCapacity),-1);
+    if (pool.empty()) pool.assign(size_t(entityPoolCapacity(unitCap_)),-1);
     int allocated=0;
     for (auto& id:pool) {
         if (id<0) continue;
@@ -886,8 +886,11 @@ void World::allocateEntitySlot(int unitId,int player) {
     }
     int slot=retailAllocateSlot(int(pool.size()),allocated,[&](int index){return pool[size_t(index)]>=0;},
         [&]{return crtRand(0x5121dd);});
-    // Retail refuses the creation instead. Engine caps count live units only
-    // and an uncapped world has no maxunits, so a full pool grows by a slot.
+    // Retail refuses the creation instead. Engine caps count live units only,
+    // may exceed retail's 500 and an uncapped world has none, so a full pool
+    // grows by the one slot this unit needs (no draw): a pool is only ever as
+    // large as its player's most records held at once demands, so normal
+    // games scan exactly retail's pool.
     if (slot<0) { slot=int(pool.size());pool.push_back(-1); }
     pool[size_t(slot)]=unitId;
     if (table.slotOf.size()<=size_t(unitId)) table.slotOf.resize(size_t(unitId)+1,-1);

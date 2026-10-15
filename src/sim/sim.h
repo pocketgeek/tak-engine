@@ -2081,12 +2081,22 @@ public:
     // are not construction requests and deliberately bypass this restriction.
     void setBuildRestrictions(std::vector<std::string> types, bool enabled = true);
     bool buildAllowed(const UnitType* type) const;
-    // The cap is also each player's entity pool capacity (retail maxunits,
-    // 511570); pools already allocated grow to a raised cap.
+    // The cap also sizes each player's entity pool (retail maxunits, 511570):
+    // see entityPoolCapacity. Pools already allocated grow to a raised size.
     void setUnitCap(int c) {
         unitCap_ = c;
+        const size_t size=size_t(entityPoolCapacity(c));
         for (auto& pool:entitySlots_.unitAt)
-            if (!pool.empty() && c>0 && pool.size()<size_t(c)) pool.resize(size_t(c),-1);
+            if (!pool.empty() && pool.size()<size) pool.resize(size,-1);
+    }
+    // The pool a player starts with under unit cap `cap`: what retail's
+    // 511570 allocates for that maxunits. 499590 clamps maxunits to 20..500,
+    // so every lobby cap retail allows (20..500) is its own size, and the
+    // engine's larger caps (1,000, 2,000) start where retail's setter would
+    // put them, at 500. Uncapped worlds (tests, tools) start at the options
+    // default 250 (4c7c7a). A pool grows a slot only when a unit needs one.
+    static int entityPoolCapacity(int cap) {
+        return cap>0 ? std::clamp(cap,kMinEntityCapacity,kMaxEntityCapacity) : kDefaultEntityCapacity;
     }
     int unitCap() const { return unitCap_; }
     // A unit's offset in its owner's entity pool (the order 416430 admits
@@ -3173,8 +3183,8 @@ private:
     // Per-player entity pools for live matches (5121d8 placement, retirement
     // frees). Restored retail fixtures use retailEntityPools_ instead.
     EntitySlotTable entitySlots_;
-    // 4c7c7a: maxunits defaults to 250. An uncapped world (tests, tools)
-    // starts there and appends a slot whenever its pool is full.
+    // 499590's maxunits bounds and 4c7c7a's default (entityPoolCapacity).
+    static constexpr int kMinEntityCapacity = 20, kMaxEntityCapacity = 500;
     static constexpr int kDefaultEntityCapacity = 250;
     void allocateEntitySlot(int unitId,int player);
     void releaseEntitySlot(int unitId);

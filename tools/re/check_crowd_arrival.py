@@ -43,8 +43,9 @@ def main():
                     help='print native 2x2 footprint passability over a region and exit')
     ap.add_argument('--world-tick',action='store_true',
                     help='drive World through World::order and full World::tick (Retail mode) instead of the composed probe calls')
-    ap.add_argument('--capacity',type=int,default=2000,
-                    help='--world-tick: entity pool capacity (maxunits); World matches use the unit cap, 2000 by default')
+    ap.add_argument('--unit-cap',type=int,default=2000,
+                    help='--world-tick: the match unit cap (default 2000, the lobby default); the native pool is maxunits '
+                         'for it as 499590 sets it (clamped to 20..500; 0 = uncapped, the 250 default)')
     ap.add_argument('--output',type=Path,required=True)
     args=ap.parse_args()
     extras=[(x,z,x,z) for x,z in args.blocker]+[tuple(m) for m in args.mover]
@@ -53,8 +54,7 @@ def main():
     # The composed probe keeps its fixture pool (one slot per Hunter, in
     # order). --world-tick runs World's production pools: the native pool has
     # the match capacity and 5121d8 places each Hunter, holes included.
-    capacity=args.capacity if args.world_tick else total
-    if not total<=capacity<=65535:ap.error('capacity must hold every Hunter')
+    if args.unit_cap<0:ap.error('invalid unit cap')
     args.output.mkdir(parents=True,exist_ok=True)
     capture=json.loads(args.capture.read_text());p=CapturedProcess(capture)
     selected=set_balance_inputs(p,capture,args.save,args.root,args.balance=='crusades',surface=True,motion=True)
@@ -66,6 +66,15 @@ def main():
         result,error=p.icd.call(address,values,ecx=this)
         if error or p.missing:raise RuntimeError((hex(address),error,p.missing))
         return result
+    capacity=total
+    if args.world_tick:
+        # 499590 sets maxunits (thiscall on the options object, +0xc), which
+        # 511570 then gives every pool. Uncapped is no retail setting: World
+        # uses the options default 250 (4c7c7a).
+        options=p.u32(p.u32(0x62d558)+8)
+        if args.unit_cap:call(0x499590,(args.unit_cap,),options);capacity=read('I',options+12)[0]
+        else:capacity=250
+        if not total<=capacity:ap.error(f'the entity pool ({capacity}) must hold every Hunter')
     source=next(u['address'] for u in p.runtime['units']
                 if bytes(p.uc.mem_read(p.u32(u['address']+0xb4)+32,32)).split(b'\0')[0].lower()==b'zonter')
     source_id=read('H',source+2)[0];grid=selected[source_id]
@@ -175,7 +184,7 @@ def main():
     for unit,mover,nav,mission in actors:call(0x4d4da0,(mission+0x22,4),mission)
     command=args.output/'input.txt';world_output=args.output/'world.jsonl'
     if args.world_tick:
-        command.write_text(f'{total} {args.rounds} {args.budget} {base} {crt_seed}\n'+''.join(f'{x} {z} {2 if args.then and i<args.count else 1} {a} {b}'+(f' {args.then[0]} {args.then[1]}' if args.then and i<args.count else '')+'\n'
+        command.write_text(f'{total} {args.rounds} {args.budget} {base} {crt_seed} {args.unit_cap}\n'+''.join(f'{x} {z} {2 if args.then and i<args.count else 1} {a} {b}'+(f' {args.then[0]} {args.then[1]}' if args.then and i<args.count else '')+'\n'
                 for i,((x,z),(a,b)) in enumerate(zip(positions,goal_of))))
     else:
         if extras or args.then:ap.error('--blocker/--mover/--then require --world-tick')
@@ -186,7 +195,7 @@ def main():
         reported=next(line.split()[1:] for line in run.stdout.splitlines() if line.startswith('SLOTS '))
         world_slots=[int(v) for v in reported]
         if world_slots!=[capacity]+slots:raise AssertionError({'native_capacity':capacity,'native_slots':slots,'world':world_slots})
-        print(f'Entity pool: capacity {capacity}, CRT seed {crt_seed:#x}; World and 5121d8 place the Hunters in slots {slots}',flush=True)
+        print(f'Entity pool: unit cap {args.unit_cap}, capacity {capacity}, CRT seed {crt_seed:#x}; World and 5121d8 place the Hunters in slots {slots}',flush=True)
     stats=[{'blocked_ticks':0,'longest_blocked_run':0,'run':0,'arrival_tick':None,'previous':(x*65536,z*65536)} for x,z in positions]
     with world_output.open() as port:
         for clock in range(1,args.rounds+1):

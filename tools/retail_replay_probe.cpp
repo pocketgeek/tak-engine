@@ -711,18 +711,21 @@ int main(int argc, char** argv) {
         std::fclose(output);return 0;
     }
     if (argc==7 && std::string(argv[2])=="--crowd-world") {
-        // Input: count rounds budget base, then "x z legs gx gz..." per unit;
-        // legs after the first are queued.
+        // Input: count rounds budget base crt unitCap, then "x z legs gx gz..."
+        // per unit; legs after the first are queued. unitCap sizes the
+        // production pools (World::entityPoolCapacity).
         auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
         TypeRegistry registry;setupRegistry(registry,vfs,std::stoi(argv[4])!=0);
         MatchConfig config;config.vfs=&vfs;config.mapPath=hpi::findMap(vfs,argv[3]);config.slots.resize(1);
         config.pathfindingMode=PathfindingMode::Retail;
         World world;setupMatch(world,registry,config);world.setVisPlayer(-1);
         std::ifstream input(argv[5]);
-        int count,rounds,budget;int32_t base;uint32_t crt;
-        if (!(input>>count>>rounds>>budget>>base>>crt) || count<1 || count>1000 || rounds<1 || rounds>5000 || budget<1) return 2;
+        int count,rounds,budget,unitCap;int32_t base;uint32_t crt;
+        if (!(input>>count>>rounds>>budget>>base>>crt>>unitCap) || count<1 || count>1000 || rounds<1 || rounds>5000 ||
+            budget<1 || unitCap<0 || (unitCap>0 && count>unitCap)) return 2;
         const auto* type=registry.find("zonter");if (!type) return 2;
         if (!world.units().empty()) return 2;
+        world.setUnitCap(unitCap);
         RetailReplayProbe::crtSeed(world,crt);
         std::vector<int> ids;std::vector<std::vector<std::pair<int,int>>> goals;
         for (int i=0;i<count;++i) {

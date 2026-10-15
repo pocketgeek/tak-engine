@@ -47,5 +47,19 @@ def main():
     actual=subprocess.run([args.runner,'--slot'],input='\n'.join(fixtures)+'\n',text=True,capture_output=True,check=True).stdout.splitlines()
     assert actual==expected,next(((i,a,b) for i,(a,b) in enumerate(zip(actual,expected)) if a!=b),(len(actual),len(expected)))
     print(f'PASS: {len(expected)} entity allocations; selected free slot and CRT stream match retail')
+    # 511570 gives every pool maxunits records, as 499590 (thiscall, stores
+    # +0xc) clamps the requested unit cap. World starts a pool at that size
+    # for every positive cap: retail's own 20..500 and the engine's larger
+    # lobby caps alike. (Cap 0 is the engine's "uncapped", no retail value.)
+    options=HEAP+0x60000; caps=list(range(1,2101))+[4000,65535,0x7fffffff]; natives=[]
+    for cap in caps:
+        write(options+0xc,0xdeadbeef)
+        _,error=p.call(0x499590,(cap,),ecx=options); assert error is None,error
+        natives.append(struct.unpack('<I',uc.mem_read(options+0xc,4))[0])
+    world=subprocess.run([args.runner,'--pool-capacity'],input='\n'.join(map(str,caps))+'\n',text=True,capture_output=True,check=True).stdout.split()
+    world=[int(v) for v in world]
+    assert world==natives,next((c,a,b) for c,a,b in zip(caps,world,natives) if a!=b)
+    print(f'PASS: {len(caps)} unit caps; World pool capacity matches 499590 maxunits '
+          f'(250 -> {natives[249]}, 500 -> {natives[499]}, 2000 -> {natives[1999]})')
 
 if __name__=='__main__': main()

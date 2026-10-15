@@ -397,7 +397,7 @@ struct RetailReplayProbe {
     // player maxunits contiguous records; 5121d8 places a unit in a CRT-ranked
     // free slot; 416430 scans those slots, holes included, at 7 work each.
     // Native: check_entity_slots.py (5121d8) and check_crowd_arrival.py
-    // --world-tick, whose native pool is built by 5121d8 at capacity 2000.
+    // --world-tick, whose native pool is built by 5121d8 at the match's capacity.
     static std::vector<int> referenceSlots(uint32_t seed,int capacity,const std::vector<int>& owners) {
         std::array<std::vector<bool>,10> used;std::array<int,10> allocated{};std::vector<int> slots;
         for (int owner:owners) {
@@ -452,6 +452,35 @@ struct RetailReplayProbe {
         // refuses the creation; the engine grows the pool by one slot.
         const int extra=world.spawn(&type,432,400,{},0);
         return world.windRng_==crt && world.entitySlot(extra)==20 && world.entitySlots_.unitAt[0].size()==21;
+    }
+    // Grow as needed: a pool starts at what 511570 allocates for the cap
+    // (499590 clamps maxunits to 20..500; uncapped is the 250 default) and
+    // gains a slot only when a unit finds it full. At the engine's default
+    // cap of 2,000, 416430 then pays 7 x 500 a scan, not 7 x 2,000.
+    static bool productionPoolCapacity() {
+        UnitType type;type.maxVel=Fixed::fromInt(1);
+        const std::pair<int,int> sizes[]={{20,20},{250,250},{500,500},{1000,500},{2000,500},{0,250},{5,20}};
+        for (const auto& [cap,size]:sizes) {
+            World world;world.setGameSeed(77);world.setUnitCap(cap);
+            world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);
+            world.spawn(&type,64,64,{},0);
+            if (World::entityPoolCapacity(cap)!=size || world.entitySlots_.unitAt[0].size()!=size_t(size) ||
+                world.paths_.poolCapacity(0)!=size || !world.entitySlots_.unitAt[1].empty()) return false;
+        }
+        // A raised cap grows an allocated pool to its new size, never past 500.
+        World raised;raised.setUnitCap(250);raised.setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);
+        raised.spawn(&type,64,64,{},0);raised.setUnitCap(2000);
+        if (raised.entitySlots_.unitAt[0].size()!=500) return false;
+        // Default cap: 500 live units fill the pool, one CRT draw each; the
+        // 501st takes the one new slot without a draw.
+        World world;world.setGameSeed(2631);world.setUnitCap(2000);
+        world.setTerrain(std::vector<uint8_t>(128*128,0),128,128,0);
+        for (int i=0;i<500;++i) world.spawn(&type,float(16+16*(i%100)),float(16+16*(i/100)),{},0);
+        uint32_t crt=2631;for (int i=0;i<500;++i) retailCrtRandom(crt);
+        if (world.entitySlots_.unitAt[0].size()!=500 || world.windRng_!=crt) return false;
+        const int extra=world.spawn(&type,16,400,{},0);
+        return world.entitySlot(extra)==500 && world.entitySlots_.unitAt[0].size()==501 &&
+            world.windRng_==crt && world.paths_.poolCapacity(0)==501;
     }
     // 416430 admits in slot order, paying 7 per scanned slot: at budget 300 a
     // tick scans 43 slots. Seed 2631 places units 1,2,3 in slots 65,60,248,
@@ -689,6 +718,8 @@ static int selfTest() {
     check(RetailReplayProbe::completedPointDetaches(true),"arrival preserves a very recent admission timestamp");
     check(RetailReplayProbe::productionPoolSlots(),
           "production pools: 5121d8 ranked CRT slot per owner pool, capacity maxunits, capture reallocates");
+    check(RetailReplayProbe::productionPoolCapacity(),
+          "production pools: start at retail's maxunits for the cap (20..500, 250 uncapped), grow only when full");
     check(RetailReplayProbe::productionPoolReuse(),
           "production pools: retirement frees a record for reuse, a dying unit keeps it");
     check(RetailReplayProbe::productionPoolAdmission(false),
@@ -1205,6 +1236,12 @@ int main(int argc, char** argv) {
             const int slot=tak::sim::retailAllocateSlot(seed,capacity,allocated,[&](int i) { return (flags[size_t(i)] & 0x1000000)!=0; });
             std::cout << slot << ' ' << seed << '\n';
         }
+        return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--pool-capacity") {
+        // The pool World starts a player with under each unit cap.
+        int cap;
+        while (std::cin >> cap) std::cout << tak::sim::World::entityPoolCapacity(cap) << '\n';
         return 0;
     }
     if (argc == 2 && std::string(argv[1]) == "--worker") {

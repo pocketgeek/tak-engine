@@ -7,6 +7,58 @@
 > [Legion](legion-pathfinding.md) remain. Mentions of the removed modes in the
 > Retail port log and Retail audit sections below are history.
 
+## Retail audit: entity pools grow as needed (2026-10-15)
+
+The production pools below were sized to the engine's unit cap, 2,000 by
+default. Retail's pool is maxunits, which `499590` clamps to 20..500 (options
+default 250), so at the default cap `416430` paid 7 x 2,000 = 14,000 work to
+walk one player's pool against a 12,000 budget a tick: admission was slower
+than at any retail setting. User decision (2026-10-15): grow as needed.
+
+The rule (`World::entityPoolCapacity`): a player's pool starts at the maxunits
+`499590` would store for the unit cap -- the cap itself for every retail cap
+(20..500), 500 for the engine's 1,000 and 2,000 lobby caps (what `499590`
+does with them), 20 for a cap below 20, and the options default 250 (`4c7c7a`)
+when uncapped, which is no retail setting. It gains a slot only when a unit is
+created into a full pool (no CRT draw, as `5121d8` makes none when full), and
+a raised cap grows an allocated pool to the new start size. A pool is
+therefore never larger than retail's for the cap until a player actually holds
+more records at once than retail allows; normal games scan exactly retail's
+slots (500 a player at the default cap, 3,500 work, not 14,000).
+
+Native evidence: `check_entity_slots.py` now also emulates `499590` (thiscall,
+stores `+0xc`) for every cap 1..2,100 plus 4,000, 65,535 and 2^31 - 1 and
+requires `World::entityPoolCapacity` to match each (2,103 caps; 250 -> 250,
+500 -> 500, 2,000 -> 500). `check_crowd_arrival.py --world-tick` takes
+`--unit-cap` (default 2,000) and gets the native pool size by running `499590`
+on the capture's options object; `retail_replay_probe --crowd-world` sets the
+same cap on World. Three Hunters for 300 ticks, all fields match, at unit cap
+250 (slots 2, 86, 24 of 250), 500 (5, 172, 49 of 500), 2,000 (5, 172, 49 of
+500, identical to retail's 500), 20 (0, 7, 2 of 20) and uncapped (250).
+`check_entity_slots.py` (160 allocations), `check_scheduler.py` (106
+fixtures), `emuscheduler.py`, `check_navigation_retry.py` (8,192) and
+`fuzz_world_search.py --cases 500 --seed 12` pass.
+
+Regression (`retail_trace --selftest`, `productionPoolCapacity`): pool size
+for caps 20, 250, 500, 1,000, 2,000, uncapped and 5; a raised cap grows an
+allocated pool to 500, not 2,000; at cap 2,000, 500 live units fill the pool
+with one draw each and the 501st takes slot 500 without one. With the parent's
+sizing it fails (pool 1,000 at cap 1,000).
+
+Protocol 266 (`kNetVersion`; `replay_test` refuses 265). Validation on -O2
+Debug: `tools/navigation_checkpoints.json` regenerated in both modes and
+unchanged (the checkpoint worlds are uncapped, 250 before and after; serial ==
+workers). `--mpai` Inner Circle seed 1 (`takserver --local --no-auth --seed 1`,
+scratch XDG dirs): Retail 60 s `2c39430636a3dbda`, 300 s `7535cb08ee787b75`
+(was `42a9fc16c5df77b8` / `9b48eb78e62650cb`); Legion 60 s
+`532539f51d70840b`, 300 s `c707e1a8063bc0c7` (was `24b3ccbd8e6bb61e` /
+`96fa40176b9881d5`). `check-determinism.sh` golden `dcef618cd2e4d558`
+unchanged; `ctest -L quick` passes (374). The scenario baseline
+(`tools/scenarios/baseline.json`) is retaken separately.
+
+The fire sweep's budget (`tickFireSweep`, `capacity / 30 + 1`) still reads the
+engine cap, not the pool; it is a separate retail reading and unchanged here.
+
 ## Retail audit: production entity pools for path admission (2026-10-15)
 
 `416430` admits path searches by walking each player's allocated entity
@@ -67,15 +119,15 @@ What World does now:
 - `retail_replay_probe --crowd-world` no longer overrides the pool. It takes
   the native CRT seed, spawns through production, and reports the capacity
   and each Hunter's slot. `check_crowd_arrival.py --world-tick` builds the
-  native pool at that capacity (`--capacity`, default 2000, the match
-  default unit cap) and places each Hunter by running `512162..512255`
+  native pool at that capacity (now `--unit-cap`, see the grow-as-needed
+  audit above) and places each Hunter by running `512162..512255`
   (`5121d8`) itself, then requires World's slots to match before ticking.
 
 Deliberate differences: retail refuses a creation when the pool is full;
 World's cap counts live units, so a pool full of dying records, or an
 uncapped World past 250, grows by one slot instead (no draw). Unit caps of
 1,000 and 2,000 are not retail settings (maxunits clamps to 500); the pool
-follows the engine's cap. Unit IDs stay global, so per-unit processing order
+followed the engine's cap (superseded by the grow-as-needed audit above). Unit IDs stay global, so per-unit processing order
 is still `units_` order, not retail's record order.
 
 Regression (`retail_trace --selftest`, no fixture pools): per-owner ranked
