@@ -578,8 +578,7 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
             if (p.type->commander) { auto h = homeOf(world); ox = h.first; oz = h.second; }
             float x, z;
             if (placeSite(world, pick, p, ox, oz, x, z)) {
-                if (pick->onMana && (diff_==Difficulty::Hard || diff_==Difficulty::Absurd))
-                    plannedManaSites_.emplace_back(x,z);
+                if (pick->onMana) plannedManaSites_.emplace_back(x,z);
                 emit(sink, tak::net::Cmd::Build, p.id, pick->id, x, z);
                 return true;
             } else {
@@ -769,22 +768,21 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     if (t->onMana && world.hasManaSpots()) {
         float bestD = 1e18f;
         bool found = false;
-        std::vector<std::pair<float,float>> reservedSites;
-        if (aggressive) {
-            reservedSites=plannedManaSites_;
-            // Walking builders do not occupy their deposits yet. Gather queued
-            // destinations once, rather than scan every unit for every deposit.
-            // Reserve the SITE (buildX/buildZ): a MobileBuild order's x/z is the
-            // builder's approach point beside it (World::makeBuildOrder), 32-70 px
-            // from the deposit for a lodestone, so it never matched -- own and
-            // allied builders kept walking to a deposit already being claimed.
-            // A flyer's conjure orbit carries no site; its building already stands.
-            for (const auto& u:world.units()) {
-                if(!u.alive() || u.id==builder.id || !world.allied(player_,u.player))continue;
-                for(const auto& order:u.orders)
-                    if(order.buildType && order.buildType->onMana && (order.buildX.v || order.buildZ.v))
-                        reservedSites.emplace_back(order.buildX.toFloat(),order.buildZ.toFloat());
-            }
+        // Every difficulty reserves: Normal allies, and two builders of one AI,
+        // raced for the same free deposit as Hard and Absurd once did.
+        std::vector<std::pair<float,float>> reservedSites=plannedManaSites_;
+        // Walking builders do not occupy their deposits yet. Gather queued
+        // destinations once, rather than scan every unit for every deposit.
+        // Reserve the SITE (buildX/buildZ): a MobileBuild order's x/z is the
+        // builder's approach point beside it (World::makeBuildOrder), 32-70 px
+        // from the deposit for a lodestone, so it never matched -- own and
+        // allied builders kept walking to a deposit already being claimed.
+        // A flyer's conjure orbit carries no site; its building already stands.
+        for (const auto& u:world.units()) {
+            if(!u.alive() || u.id==builder.id || !world.allied(player_,u.player))continue;
+            for(const auto& order:u.orders)
+                if(order.buildType && order.buildType->onMana && (order.buildX.v || order.buildZ.v))
+                    reservedSites.emplace_back(order.buildX.toFloat(),order.buildZ.toFloat());
         }
         const auto& deposits=world.manaSpots();
         for (size_t i=0;i<deposits.size();++i) {
@@ -795,7 +793,7 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             })) continue;
             // An ally still claiming its home deposit keeps it (updateAllyClaims);
             // upgrading our own lodestone there is not a claim on it.
-            if (aggressive && i<allyHeldDeposits_.size() && allyHeldDeposits_[i] &&
+            if (i<allyHeldDeposits_.size() && allyHeldDeposits_[i] &&
                 !world.lodestoneUpgradeSource(t,sx,sz,player_)) continue;
             if (!usable(sx, sz)) continue;   // taken or blocked
             float dx = sx - nx, dz = sz - nz, d = dx * dx + dz * dz;
@@ -911,9 +909,10 @@ bool Controller::buildsLodestone(const tak::sim::UnitType* type) const {
     return it->second;
 }
 
-// Hard/Absurd expand map-wide, but a free deposit in a living ally's home area --
-// within kAllyHome of its start and nearer that start than ours -- stays the
-// ally's while the ally is claiming it:
+// Hard/Absurd expand map-wide, and Normal's and Easy's builders 1600 px from home
+// (Defensive's 600), far enough to reach a close ally's base. At every difficulty
+// a free deposit in a living ally's home area -- within kAllyHome of its start
+// and nearer that start than ours -- stays the ally's while the ally is claiming it:
 //  - a builder is bound for it (placeSite's reservation never races one, the
 //    ally's, another ally's or our own), or
 //  - the ally has a builder that can reach it -- finished, not carried, not
@@ -1229,18 +1228,16 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     if (world.player(player_).defeated) return;
 
     if (!home_) home_=homeOf(world);
-    if (diff_==Difficulty::Hard || diff_==Difficulty::Absurd) {
-        if (!allyHomesKnown_) {
-            allyHomesKnown_=true;
-            for (int p=0;p<world.numPlayers();++p)
-                if (p!=player_ && world.allied(player_,p) &&
-                    std::any_of(world.units().begin(),world.units().end(),[p](const auto& u){return u.alive() && u.player==p;})) {
-                    const auto [x,z]=anchorOf(world,p);
-                    allyHomes_.push_back({p,x,z});
-                }
-        }
-        if (!allyHomes_.empty() && world.hasManaSpots()) updateAllyClaims(world,simTick);
+    if (!allyHomesKnown_) {
+        allyHomesKnown_=true;
+        for (int p=0;p<world.numPlayers();++p)
+            if (p!=player_ && world.allied(player_,p) &&
+                std::any_of(world.units().begin(),world.units().end(),[p](const auto& u){return u.alive() && u.player==p;})) {
+                const auto [x,z]=anchorOf(world,p);
+                allyHomes_.push_back({p,x,z});
+            }
     }
+    if (!allyHomes_.empty() && world.hasManaSpots()) updateAllyClaims(world,simTick);
     plannedManaSites_.clear();
     Needs needs = assessNeeds(world);   // one empire assessment drives every producer
     // Snapshot the idle producers, then act on up to producersPerThink of them -- the

@@ -120,3 +120,50 @@ the game.
 
 No AI ever built on a deposit an ally's lodestone occupied; placement refuses
 that for every player. `--mpai` hashes are unchanged (its AI plays Normal).
+
+## Update 2026-10-14: Normal, Easy and Defensive
+
+Normal, Easy and Defensive now keep the same reservations -- a deposit that one
+of their own or an ally's builders is walking to, and a site planned earlier in
+the same think -- and leave a living ally's home deposits to it under the rule
+above. Their builders search 1,600 map units from home (Defensive's 600, the
+Monarch's 900), which reaches a close ally's base; on "4x4 team" no ally starts
+that close, so there the ally rule changes nothing.
+
+They also build a lodestone when they run short of mana, as retail does.
+Retail's lodestone priority (icd `0x410810`, ported as
+`sim::retailBuildPriority`) is zero unless the store is under 30% full,
+spending has outpaced income over the last second, and none of that lodestone
+is unfinished. Its constructor planner (`0x40c890`) then draws among the menu's
+lodestones separately and builds one instead of its ordinary pick wherever the
+deposit search (`0x412f80`/`0x411510`) finds a free deposit in the base radius
+(`0x40cf30`: 560 map units for the Monarch, 800 for other builders, growing
+with the base), unless a builder of the base is already on one (`0x40c830`).
+Below 70% allocation it skips the ordinary pick but still builds that
+lodestone. These AIs keep their own ladder and add that trigger; Hard and
+Absurd are unchanged.
+
+The ladder alone held Normal to one lodestone for a whole game on "4x4 team".
+Every deposit there pays 100 mana a second (sacred multiplier 10), and Normal
+wants economy only while income is below 25 + 20 per factory, three factories
+at that income, so the first lodestone met the target for good, even when the
+store ran dry. The search radius was not the cause: every start has 6-10
+deposits within 560 map units and all 10 within 965. Completed lodestones per
+AI at 300/600/900 s (`teamsim`, Crusades, seed 1):
+
+| Game | Before | After |
+| --- | --- | --- |
+| Eight Normal, 4v4 | 1/1/1 each | 2/2/2, 1/1/1, 1/1/1, 3/3/3, 3/4/4, 1/1/1, 1/1/1, 2/3/3 |
+| Absurd+Defensive vs Hard+Normal: Normal | 1/1/1, 1/1/1 | 1/1/2, 1/1/1 |
+| Same game: Defensive | 1/1/1, 1/1/1 | 1/1/1, 1/1/1 |
+
+In the mixed game retail's rule seldom asks: the Creon Normal AI, traced there,
+kept its store at least 45% full for ten minutes, and the Taros one ran short
+once, near the end. With two builders and three factories, one deposit paying
+100 a second outruns what these AIs spend. Retail's own AI would spend more --
+Aramon's `ai/default.txt` allows four builders, four flying builders and four
+priests -- and so expand more often.
+
+`--mpai` (Inner Circle, seed 1, 300 s): Retail unchanged at `3785014928b7ab9a`;
+Legion `cc1c4b26954597df` (was `bdcf4c85ab2fc01e`). The 60 s hashes were not
+retaken.

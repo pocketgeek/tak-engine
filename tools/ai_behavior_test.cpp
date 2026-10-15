@@ -582,6 +582,91 @@ int main(int argc,char** argv) {
             check(claims!=reaches,reaches ? "an ally builder that can reach its home deposit holds it"
                                           : "an ally builder that cannot reach its home deposit does not hold it");
         }
+        // Normal, Easy and Defensive reserve deposits the same way: a site an own or
+        // allied builder is walking to, and one planned earlier in the same think.
+        // Without it two Normal allies, or two builders of one Normal AI, raced
+        // for the nearest free deposit and the later one walked there for nothing.
+        for (auto owner : {Owner::Self,Owner::Ally,Owner::Enemy})
+            for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Easy,ai::Difficulty::Normal}) {
+                sim::World w;terrain(w);w.buildNavClasses(reg);
+                w.setManaSpots({{2000,800},{2000,1200}});
+                w.spawn(reg.find("factory"),1800,1000,0,0);   // home, within Defensive's 600
+                const int player=owner==Owner::Self ? 0 : 1;
+                const int walker=w.spawn(reg.find("worker"),1200,400,0,player);
+                const int idle=w.spawn(reg.find("worker"),1900,800,0,0);   // nearer the walker's deposit
+                if (player==1) w.setTeam(1,owner==Owner::Ally ? 0 : 1);
+                w.player(0).mana=10000;
+                net::Command order;order.kind=net::Cmd::Build;order.player=uint8_t(player);order.unitId=walker;
+                order.x=2000;order.z=800;std::snprintf(order.type,sizeof order.type,"lode");
+                sim::applyCommand(w,reg,order);
+                ai::Profile p;p.weight["lode"]=100;
+                ai::Controller controller(0,reg,p,1,difficulty);
+                const auto cs=think(controller,w);
+                auto builds=[&](float z) {
+                    return std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+                        return c.unitId==idle && c.kind==net::Cmd::Build && c.x==2000 && c.z==z;
+                    });
+                };
+                if (owner==Owner::Enemy)
+                    check(builds(800),"Normal, Easy and Defensive ignore an enemy builder's destination");
+                else
+                    check(builds(1200) && !builds(800),owner==Owner::Self
+                          ? "Normal, Easy and Defensive leave a deposit their own walking builder will take"
+                          : "Normal, Easy and Defensive leave a deposit an ally's walking builder will take");
+            }
+        for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal}) {
+            sim::World w;terrain(w);w.buildNavClasses(reg);
+            w.setManaSpots({{2000,800},{2000,1200}});
+            w.spawn(reg.find("factory"),1800,1000,0,0);
+            w.spawn(reg.find("worker"),1900,800,0,0);
+            w.spawn(reg.find("worker"),1900,820,0,0);   // both nearest the same deposit
+            w.player(0).mana=10000;
+            ai::Profile p;p.weight["lode"]=100;
+            ai::Controller controller(0,reg,p,1,difficulty);
+            std::vector<float> sites;
+            for (const auto& c:think(controller,w)) if (c.kind==net::Cmd::Build) sites.push_back(c.z);
+            check(sites.size()==2 && sites[0]!=sites[1],"Normal and Defensive builders take different deposits in one think");
+        }
+        // ...and leave a living ally's home deposit to it while the ally is claiming
+        // it. Normal's and Easy's builders reach 1600 from home, far enough to take a
+        // close ally's deposits before the ally gets to them.
+        for (auto difficulty : {ai::Difficulty::Easy,ai::Difficulty::Normal})
+            for (auto ally : {Ally::Idle,Ally::Bound,Ally::Enemy}) {
+                sim::World w;terrain(w);w.buildNavClasses(reg);
+                w.setManaSpots({{2560,800},{1600,1792}});   // the ally's home deposit, a free one
+                w.spawn(reg.find("factory"),1200,800,0,0);   // our base, 1360 from the ally's deposit
+                auto monarch=*reg.find("worker");monarch.commander=true;
+                const int allyBuilder=w.spawn(&monarch,3000,800,0,1);   // the ally's start
+                const int idle=w.spawn(reg.find("worker"),2000,800,0,0);   // nearer the ally's deposit
+                w.setTeam(1,ally==Ally::Enemy ? 1 : 0);
+                w.player(0).mana=10000;
+                if (ally==Ally::Bound) {
+                    net::Command order;order.kind=net::Cmd::Build;order.player=1;order.unitId=allyBuilder;
+                    order.x=2560;order.z=800;std::snprintf(order.type,sizeof order.type,"lode");
+                    sim::applyCommand(w,reg,order);
+                }
+                ai::Profile p;p.weight["lode"]=100;
+                ai::Controller controller(0,reg,p,1,difficulty);
+                const uint32_t lastHeld=kClaimTicks-uint32_t(ai::paramsFor(difficulty).thinkPeriod);
+                auto expands=[&](uint32_t tick) {
+                    for (const auto& c:think(controller,w,tick))
+                        if (c.unitId==idle && c.kind==net::Cmd::Build) return c.x==2560 && c.z==800 ? 'A' : c.x==1600 && c.z==1792 ? 'F' : '?';
+                    return '-';
+                };
+                switch (ally) {
+                    case Ally::Idle:
+                        check(expands(0)=='F' && expands(lastHeld)=='F' && expands(kClaimTicks)=='A',
+                              "Normal and Easy leave a close ally's home deposit to it for two minutes, then take it");
+                        break;
+                    case Ally::Bound:
+                        check(expands(0)=='F' && expands(kClaimTicks)=='F' && expands(2*kClaimTicks)=='F',
+                              "Normal and Easy never race an ally's builder bound for its home deposit");
+                        break;
+                    default:
+                        check(expands(0)=='A',"Normal and Easy take an enemy's home deposit");
+                        break;
+                }
+            }
         // Retail builds a lodestone whenever it runs short of mana -- store under
         // 30% full, spending outpacing income -- with none unfinished and no
         // builder already on one; that lodestone then replaces the planner's

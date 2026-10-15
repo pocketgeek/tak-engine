@@ -198,8 +198,8 @@ private:
     std::vector<std::pair<float, float>> enemyStarts_;
     std::optional<std::pair<float,float>> home_;
     // Allied players' home anchors, fixed at the first think like home_ (homeOf's
-    // rule applied to each ally). Hard/Absurd expansion leaves a living ally's home
-    // deposits to that ally while it can still claim them (updateAllyClaims).
+    // rule applied to each ally). Expansion leaves a living ally's home deposits
+    // to that ally while it can still claim them (updateAllyClaims).
     struct AllyHome { int player; float x, z; };
     std::vector<AllyHome> allyHomes_;
     bool allyHomesKnown_ = false;
