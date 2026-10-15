@@ -228,9 +228,9 @@ In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
    the slot. **Easy** is a good first opponent.
 6. Click **Start**.
 
-![The game setup screen with the map list, a map preview and the match options; King of the Hill is selected with MAP SCENARIO: ON, and the lines under it read UNITS PLACED FOR 1-4, NEEDS SEATS 1-4, BUILDS 6 UNIT TYPES and ENDS BY SCENARIO RULES](img/lobby.jpg)
+![The game setup screen with the map list, a map preview and the match options](img/lobby.jpg)
 
-*The game setup screen: pick a map, check its preview and player count, and set the match rules. Here King of the Hill's own scenario is turned on with **Map scenario**.*
+*The game setup screen: pick a map, check its preview and player count, and set the match rules.*
 
 The game opens centred on your **Monarch**. Your first steps:
 
@@ -261,7 +261,7 @@ change in the room, until the game starts.
 | **Overrides** | Off, Cosmetic or Full. See [Overrides](#overrides). |
 | **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. The host can change it in the room by clicking it, until the game starts; then it is fixed. See [Spectating](#spectating). |
 | **Spectate (Watch AIs)** | Single-player only: fill every slot with AIs and watch. |
-| **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one; a map that needs a unit type your install lacks is offered under **Overrides: Full** with the warning *NEEDS AN OVERRIDE PACK*, in case a selected pack supplies it. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
+| **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered under **Overrides: Full**, if you have an override pack, with the warning *PACK NEEDED:* and the unit, in case a selected pack supplies it. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
 
 Your choices are remembered for next time, except passwords, Spectate and Map
 scenario.
@@ -346,6 +346,23 @@ wins: losing your Monarch or every unit does not knock you out. A scenario
 without such rules never ends by itself; the create screen warns *NO VICTORY
 RULES: ENDLESS*, and the game ends when the players leave. Every seat the
 scenario gives units or rules to must be filled before the game can start.
+
+![The single-player setup screen with King of the Hill selected and MAP SCENARIO: ON under the preview; the lines under it read UNITS PLACED FOR 1-4, NEEDS SEATS 1-4, BUILDS 6 UNIT TYPES and ENDS BY SCENARIO RULES, a gold S marks the scenario maps in the list, and Monarch Expendable and Start Locations are greyed](img/lobby-scenario.jpg)
+
+*King of the Hill with **Map scenario** turned on.*
+
+Some things to know before you play one:
+
+- **You are player 1.** The player who creates the game always takes seat 1,
+  and players who join take the lowest open seat. If the scenario gives seat 1
+  nothing to command, the option is greyed. Close the seats the scenario does
+  not need before others join, so that they land in seats that have units.
+- **Computer players do not read the scenario.** They ignore its regions and
+  objectives and play with the units they are given; a computer player in a
+  seat with no units does nothing. The room warns about such a seat in amber
+  (*NO PLACED UNITS: PLAYER N*).
+- Maps made for the original game sometimes list units in their Use Only list
+  that no install has; those names are ignored.
 
 ### Mana: the only resource
 
@@ -1272,8 +1289,9 @@ under the host's pointer; for everyone else it is read-only. See
 Under the rules, the room says whether the game plays the map's scenario
 (**MAP SCENARIO: ON**) and, if so, what it changes and which seats it needs.
 Each empty seat it needs is tagged **NEEDED BY SCENARIO**, and **Start** stays
-greyed until they are all filled. If the server still refuses to start the
-game, the reason appears in red under the buttons.
+greyed until they are all filled. A seated player whom the scenario gives no
+units is named in amber (*NO PLACED UNITS: PLAYER N*). If the server still
+refuses to start the game, the reason appears in red under the buttons.
 
 ### Maps and content
 

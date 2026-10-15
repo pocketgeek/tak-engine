@@ -77,13 +77,13 @@ multiplayer games.
 > **Scenario content plays when a game asks for it.** Placed units, trigger
 > rules and the Use Only unit list run when you open the map with **Test Map
 > (F5)** or the game's `--play-map` option, and in any skirmish or multiplayer
-> game created with **MAP SCENARIO** turned on. That option appears under the
-> map preview when the map's scenario has placed units or rules, and it starts
-> off: chosen with it off, your `.kmp` plays as a normal skirmish map (its
-> terrain, features and start positions, a Monarch for every player). The test
-> copy that Test Map and `--play-map` leave in the map list (with a fingerprint
-> in brackets after its name) always plays its scenario. See
-> [When scenarios run](#when-scenarios-run).
+> game created with **MAP SCENARIO** turned on. That button sits under the map
+> preview and can be turned on when the map's scenario has placed units or
+> rules. It starts off: chosen with it off, your `.kmp` plays as a normal
+> skirmish map (its terrain, features and start positions, a Monarch for every
+> player). The test copy that Test Map and `--play-map` leave in the map list
+> (with a fingerprint in brackets after its name) always plays the scenario of a
+> map that has one. See [When scenarios run](#when-scenarios-run).
 
 ---
 
@@ -992,21 +992,31 @@ such as "hold the hill for five minutes to win".
 >   scenario changes. It starts off and turns off again whenever another map is
 >   picked, so a map chosen with it off plays as a plain skirmish map. It is
 >   greyed, with the reason, for a map without a playable scenario: one with no
->   scenario, an empty one, or one that needs a unit type this install lacks.
->   With **Overrides: Full** that last kind is offered with the warning *NEEDS AN
->   OVERRIDE PACK*, because a pack the host selects in the room may supply the
->   unit; if none does, the game refuses to start and says which unit is missing.
->   Maps with a playable scenario carry a gold **S** in the map list.
+>   scenario, an empty one, one that needs a placed or custom unit type this
+>   install lacks, or one whose placed units give Player 1 nothing to command
+>   (*PLAYER 1 GETS NO ARMY*). Player 1 is the player who creates the game, and
+>   placed units replace every Monarch, so Player 1 needs a placed unit that can
+>   fight, build or move (animals, villagers, monsters and unarmed buildings such
+>   as lodestones do not count) or a rule that creates units for it. Many
+>   downloaded maps used the scenario editor only to place scenery or wildlife,
+>   and play as ordinary skirmish maps. With **Overrides: Full**, a map that needs
+>   a unit type this install lacks is offered with the warning *PACK NEEDED:*
+>   and the unit, when the install has an override pack the host could select in
+>   the room; if no selected pack supplies the unit, the game refuses to start
+>   and says which unit is missing. Maps with a playable scenario carry a gold
+>   **S** in the map list.
 >
 > The test copy that each Test Map or `--play-map` run leaves in the game's
 > `MapCache` folder appears in the map list with a fingerprint in brackets after
 > its name (see [Testing a map in the game](#testing-a-map-in-the-game)).
-> Choosing it always plays the scenario, just as the test did: its MAP SCENARIO
-> button reads ON and cannot be changed.
+> Choosing the test copy of a map with a scenario always plays that scenario,
+> just as the test did: its MAP SCENARIO button reads ON and cannot be changed.
 >
 > A map whose only scenario content is a Use Only list has no scenario (the
 > original Cartographer did not mark one either), so MAP SCENARIO is not
-> offered for it; its list applies only in a test game.
+> offered for it and its list applies only in a test game. Its test copy's
+> button reads OFF, and the lines under it say *TEST COPY: USE ONLY LIST* and
+> how many unit types can be built; the lobby says the same.
 
 In a scenario game:
 
@@ -1021,6 +1031,10 @@ In a scenario game:
   player whose rules are all empty.
 - **Start Locations** are always fixed, and **Monarch Expendable** reads
   *SCENARIO*: the scenario decides how the game ends.
+- A **Use Only** entry that names no unit type installed stops a test game from
+  starting (*Unknown authored Use Only unit*), so a typo is caught. In a game
+  created with MAP SCENARIO such an entry is left out instead: maps made for the
+  original game often list units that no install has.
 - A map with scenario content can be started with only one player; other maps
   need two, as in any skirmish.
 - The usual endings are switched off: losing your Monarch, or every unit, does
@@ -1725,9 +1739,17 @@ Start Cartographer from its shortcut and choose **Recover**. See
 ## Known limits
 
 - **Maps with rules but no placed units keep the Monarchs.** Every player
-  starts with the usual Monarch, which the original game did not give them: its
-  scenario games started with only the placed units, and such maps create their
-  armies with rules.
+  starts with the usual Monarch as well as anything the rules create. The
+  original game may have started such maps with no units at all; that is not
+  yet confirmed.
+- **Computer players do not read scenarios.** They ignore regions and
+  objectives and simply play with the units they are given; a computer player
+  in a seat that has no units does nothing. The lobby warns about such a seat
+  (*NO PLACED UNITS: PLAYER N*).
+- **You always play seat 1.** The player who creates the game takes seat 1, and
+  players who join take the lowest open seat; nobody can pick a seat. Close the
+  seats your scenario does not need before others join, so that they land in
+  seats that have units.
 - **Test Map on macOS.** Started from **TAK Cartographer.app**, Test Map looks
   for the game in the wrong place and reports *Cannot find takclient beside
   Cartographer*, even with both apps in the same folder. Save the map and open

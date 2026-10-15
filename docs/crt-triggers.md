@@ -53,9 +53,11 @@ the flag value and suffix in action 25 messages.
 to `World` when the map OTA declares `hasscenario=1` and either the room's MAP
 SCENARIO option is on (protocol 259, `MatchConfig::mapScenario`) or the map
 carries the Test Map opt-in `[TAKPlaytest] { authoredscenario=1; }`; the world
-ticks it and hashes its rule state. `src/sim/scenarioinfo.cpp` reads the same
-files without building a world, for the create screens, the room and the
-server's START checks.
+ticks it and hashes its rule state. On the MAP SCENARIO route a Use Only entry
+that names no installed unit type is left out (maps made for the original game
+list such names); a Test Map copy refuses it, as the author's typo.
+`src/sim/scenarioinfo.cpp` reads the same files without building a world, for
+the create screens, the room and the server's START checks.
 Messages are filtered for the local viewer without changing that state.
 Released **0.7.13 uses protocol 198**. The implementation described below is the
 **0.7.14, protocol 200**; update every client and server together.

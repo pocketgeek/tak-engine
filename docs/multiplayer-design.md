@@ -644,37 +644,49 @@ Protocol 259 adds the room's MAP SCENARIO option: `GameOptions.mapScenario` (u8,
 default 0) follows `allowSpectators` in `CreateGame`, `SetGameOptions`,
 `LobbyState` and `GameStarting`; `GameList` is unchanged. With it on, shared
 match setup plays the map's own scenario -- the `.crt` placements and rules and
-the Use Only `.tdf` -- exactly as for a Cartographer Test Map copy. Setup runs
-the scenario when the map's `.ota` carries the Test Map opt-in
-(`[TAKPlaytest] authoredscenario=1`) or when the option is on and the `.ota`
-declares `hasscenario`. The opt-in route is unchanged, so Test Map and
-`--play-map` games, and their recordings, behave as before. The option is
-creation-only: the server keeps the created value through later
-`SetGameOptions`, because players choose seats, sides and READY for the game it
-makes, and the creating client sized the room's open seats for it (a scenario
-can need seats past the map's start positions). At creation the server clears
-it for campaign missions, generated maps, stress tests and benchmarks, and
-forces Random Start Locations off with it. At START it reads the verified
-package's own files (`maps::scenarioInfo` over the package, never the host's
-claim): it refuses a room whose map has no scenario content ("this map has no
-scenario to play"), and refuses while a seat the scenario needs is empty, with
-setupMatch's own message ("Seat player N in the lobby to play this scenario").
-A start refusal reaches the host as `MapError` and the client shows it in the
-room (`MpClient::startError`); before this, a setup refusal at START was
-invisible, because the room shows its map status only while maps are being
-verified. The seats a scenario needs are its placement owners 0-7 and every
-Player N rule bank with a group that has a condition or an action; a bank
-holding only empty groups no longer demands a seat. That fix only lets a
-refused setup start, so with the option off the simulation is 258's and
-protocol-257 and 258 replays still play. The option is sim-affecting and is
-recorded in replay format 13. It is outside the Crusades rules digest
-(`putRules` keeps 257's bytes); Crusades battle rooms carry 0, and the Crusades
-replay archive refuses a recording that has it on. The map package already
-carries every map's `.ota`, `.crt` and `.tdf` and its digest covers them, so
+the Use Only `.tdf` -- as for a Cartographer Test Map copy, except that a Use
+Only entry no unit type answers to is left out rather than refused (maps made
+for the original game name such units; NeverGlory names 44). Setup runs the
+scenario when the map's `.ota` carries the Test Map opt-in (`[TAKPlaytest]
+authoredscenario=1`) or when the option is on and the `.ota` declares
+`hasscenario`. The opt-in route is unchanged, so Test Map and `--play-map`
+games, and their recordings, behave as before. The option is creation-only: the
+server keeps the created value through later `SetGameOptions`, because players
+choose seats, sides and READY for the game it makes, and the creating client
+sized the room's open seats for it (a scenario can need seats past the map's
+start positions). The server clears it for campaign missions, generated maps,
+stress tests and benchmarks (at creation, and when a lobby update turns a stress
+test or benchmark on), and forces Random Start Locations off with it. At START
+it reads the verified package's own files (`maps::scenarioInfo` over the
+package, never the host's claim): it refuses a room whose map has no scenario
+content ("this map has no scenario to play"), refuses while a seat the scenario
+needs is empty, with setupMatch's own message ("Seat player N in the lobby to
+play this scenario"), and refuses a package that leaves out a scenario file
+setupMatch will read (below). A start refusal reaches the host as `MapError` and
+the client shows it in the room (`MpClient::startError`) without recording it as
+a map or connection error; before this, a setup refusal at START was invisible,
+because the room shows its map status only while maps are being verified. The
+seats a scenario needs are its placement owners 0-7 and every Player N rule bank
+with a group that has a condition or an action; a bank holding only empty groups
+no longer demands a seat. That fix only lets a refused setup start, so with the
+option off the simulation is 258's and protocol-257 and 258 replays still play.
+The option is sim-affecting and is recorded in replay format 13. It is outside
+the Crusades rules digest (`putRules` keeps 257's bytes); Crusades battle rooms
+carry 0, and the Crusades replay archive refuses a recording that has it on. The
+map package carries every map's `.ota`, `.crt` and `.tdf`, and its digest covers
+the files it contains. A package may leave a companion out, though, and
+setupMatch would then read each machine's own copy (from `maps.hpi`, or from an
+override pack, since `maps/*.tdf` is not gameplay data), which no digest covers.
+So at START the server refuses a room whose setup will read a scenario file the
+package lacks: the `.crt` of a declared scenario, or the named Use Only list
+("the map package leaves out its Use Only list"). A damaged or misnamed file
+inside the package is setupMatch's to refuse, with its own message. With that,
 every peer and the referee play the same scenario files.
 
-Replay format 11 records the pathfinder. Playback requires the current
-simulation protocol; older recordings require their original engine.
+Replay format 11 records the pathfinder. Playback requires a protocol that
+`supportedReplayProtocol` accepts: the current one, plus 257 and 258 while 259
+is current (their simulation is unchanged). Older recordings require their
+original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
 reading an older file). Saved

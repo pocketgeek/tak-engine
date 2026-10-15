@@ -65,7 +65,8 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 | `hud.jpg` | Aramon player in a local-server game, about 10 s in. **Stress-test start**: Normal AI opponent, 250-unit cap. **Scripted orders**: 45 units of eight types (Archers, Swordsmen, Knights, Catapults, Mage Archers, Cannoneers, Horsemen, Rolling Towers) were made formation 1 and selected, so the information bar shows the portrait strip (one portrait per type with its count), FORMATION 1 and 45 SELECTED, and the selected units show `1F` in solid green (new in 0.8.0). The empty right-hand bar is gone (0.8.1). Stats panel on, 1.15× zoom; its VID row reads 87 MB, against 151 MB in the 0.8.0 capture of the same scene. Rendered by the 0.8.1 build |
 | `naval.jpg` | **Development scene, spawned.** Cairbray Coast Landing, 10 s in. Veruna Flagship, Men of War, Trebuchet Ships and Harpoon Ships fight Creon Iron Clads, Stern Wheelers and Submersibles. Nothing is selected, so the information bar is empty. 1.6× zoom, fog off. Rendered by the 0.8.1 build |
 | `generated.jpg` | Generated Aramon Riverlands map "Silverford" (generator v8, seed 7, 256 × 256, four players). Four Hard AIs at 8× speed, seven game minutes in. Spectator view of a lake shore at 1× |
-| `lobby.jpg` | Single-player create screen on King of the Hill with **MAP SCENARIO** turned on (protocol 259): the gold **S** marks scenario maps in the list, the lines under the button say what the scenario changes, and Monarch Expendable and Start Locations are greyed. Debug client with a fresh profile and an empty `MapCache`, offscreen at 1024 × 768 (`TAK_MENU_PICK=singleplayer`, one `TAK_SHOT_CLICKS` click on the button), cropped to the lobby panel; rendered on 2026-10-14 |
+| `lobby.jpg` | Unchanged from 0.7.25: create-game screen with Ulasem Arena preview and Retail pathfinding |
+| `lobby-scenario.jpg` | Single-player create screen on King of the Hill with **MAP SCENARIO** turned on (protocol 259): the gold **S** marks the maps with a playable scenario in the list, the lines under the button say what the scenario changes, and Monarch Expendable and Start Locations are greyed. Debug client with a fresh profile on a scratch copy of the retail install with downloaded maps and an empty `MapCache`, offscreen at 1024 × 768 (`TAK_MENU_PICK=singleplayer`, `TAK_SHOT_CLICKS` clicks the button, then moves the pointer off the panel), cropped to the lobby panel; rendered on 2026-10-14. Used only by the user guide |
 | `room.jpg` | Unchanged from 0.7.25: local-server lobby with three Normal AIs, example pack selections (empty UI fixtures) and Legion pathfinding |
 | `campaign.jpg` | Unchanged from 0.7.25: Book of Darien campaign picker with a fresh profile |
 | `crusades.jpg` | Unchanged from 0.7.25: imported Darien Crusades definition on an authenticated local server; no authored battle maps or ownership |
@@ -104,7 +105,8 @@ unchanged views contain no version text.
 | `scorecard.jpg` | F4 scorecard over a benchmark battle (Absurd), 55 s in, at 1.1× zoom |
 
 The guide also uses `title.jpg`, `lobby.jpg`, `room.jpg`, `campaign.jpg`,
-`diplomacy.jpg`, `generated.jpg` and `cartographer.png` from the gallery.
+`diplomacy.jpg`, `generated.jpg` and `cartographer.png` from the gallery, and
+`lobby-scenario.jpg` from the table above.
 
 The other guide images (benchmark and scorecard) are from the 0.7.26 build and
 show nothing that 0.7.27 to 0.8.2 changed: they are spectator views with no
@@ -150,7 +152,8 @@ composed, so no browser cell or tree is a placeholder.
   the release client opens the same lobby but has no `--shot`. On 2026-10-14
   `test-lobby.jpg` was recaptured the same way for MAP SCENARIO (protocol 259),
   from a snapshot of the shipped King of the Hill files packed under the same
-  *Test* name, as F5 would have written it.
+  *Test* name, as F5 would have written it, and again after the room's
+  scenario lines moved up clear of the panel edge.
 - **Markers and composites.** `window-annotated.jpg` has numbered markers drawn
   on a copy of the capture with Pillow. `random-generator.jpg`,
   `symmetry-stamp.jpg`, `terrain-clipboard.jpg` and `features-select.jpg` put two
