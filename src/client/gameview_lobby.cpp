@@ -2,7 +2,9 @@
 #include "client/gameview.h"
 #include "client/crusadesscreen.h"
 #include "net/matchconfig.h"
+#include "client/startmarkers.h"
 #include <cctype>
+#include <cmath>
 
 // Out-of-line GameView method definitions (lobby concern), split from the
 // class body in gameview.h so editing a body recompiles only this translation
@@ -236,11 +238,13 @@ std::string startLocationsLabel(uint8_t mode) {
         });
     }
 
-    void GameView::buildMapPreview(const std::string& tntPath) {
+    void GameView::buildMapPreview(const std::string& tntPath, const tak::hpi::Vfs* src) {
         if (mapPreviewTex_) { gpuvram::destroy(mapPreviewTex_); mapPreviewTex_ = nullptr; }
         mapPreviewFor_ = tntPath;
         mapPreviewW_ = mapPreviewH_ = 0;
         mapPreviewDims_.clear();
+        mapPreviewStarts_.clear();
+        mapPreviewWorldW_ = mapPreviewWorldH_ = 0;
         if (tntPath.empty()) return;
         genPreviewInfo_.clear(); genPreviewError_.clear();
         if (tak::mapgen::isGeneratedMapId(tntPath)) {
@@ -248,12 +252,21 @@ std::string startLocationsLabel(uint8_t mode) {
             catch (const std::exception& e) { genPreviewError_ = e.what(); }
             return;
         }
+        const tak::hpi::Vfs& from = src ? *src : vfs_;
         std::vector<uint8_t> d;
-        try { d = vfs_.read(tntPath); } catch (...) { return; }
+        try { d = from.read(tntPath); } catch (...) { return; }
         if (d.size() < 52) return;
+        auto u32 = [&](size_t o) { return uint32_t(d[o]) | (uint32_t(d[o + 1]) << 8)
+                 | (uint32_t(d[o + 2]) << 16) | (uint32_t(d[o + 3]) << 24); };
+        // The radar pictures cover the whole map (16 px cells), so a start's world
+        // position scales straight onto the drawn image.
+        mapPreviewStarts_ = tak::sim::parseStartPositions(from, tntPath);
+        mapPreviewWorldW_ = float(u32(4)) * 16; mapPreviewWorldH_ = float(u32(8)) * 16;
         int w = 0, h = 0; const uint8_t* idx = nullptr;
         if (!tntIndexedImage(d, 12, w, h, idx) && !tntIndexedImage(d, 11, w, h, idx)) return;
-        std::string ota = readOta(tntPath);
+        std::string ota;
+        if (!src) ota = readOta(tntPath);
+        else if (auto o = src->tryRead(tak::vpath::replaceExtension(tntPath, ".ota"))) ota.assign(o->begin(), o->end());
         const std::vector<uint8_t>* pal = kingdomPalette(otaField(ota, "kingdom"));
         if (!pal) pal = kingdomPalette("aramon");   // maps without a kingdom get a default
         if (!pal) return;
@@ -273,15 +286,11 @@ std::string startLocationsLabel(uint8_t mode) {
         // Info line under the preview, retail-style: "<size>  <N> PLAYER" (memory
         // dropped). The .ota supplies size ("9 x 7", already in 32-cell units) and
         // numplayers; derive them from the tnt / start positions if the .ota omits them.
-        auto u32 = [&](size_t o) { return uint32_t(d[o]) | (uint32_t(d[o + 1]) << 8)
-                 | (uint32_t(d[o + 2]) << 16) | (uint32_t(d[o + 3]) << 24); };
         std::string size = otaField(ota, "size");
         if (size.empty()) size = std::to_string(u32(4) / 32) + " x " + std::to_string(u32(8) / 32);
         std::string players = otaField(ota, "numplayers");
-        if (players.empty()) {
-            int n = int(tak::sim::parseStartPositions(vfs_, tntPath).size());
-            if (n > 0) players = std::to_string(n);
-        }
+        if (players.empty() && !mapPreviewStarts_.empty())
+            players = std::to_string(mapPreviewStarts_.size());
         mapPreviewDims_ = size + (players.empty() ? "" : "   " + players + " PLAYER");
     }
 
@@ -337,12 +346,10 @@ std::string startLocationsLabel(uint8_t mode) {
                 else if (nm.find("Rock") != std::string::npos) put(tx, ty, 150, 148, 140);      // rock: grey
                 else put(tx, ty, 28, 66, 28);                                                   // tree: dark green
             }
-        // Start positions: bright 3x3 markers.
-        for (auto& [sx, sz] : g.starts) {
-            int tx = sx * TW / W, ty = sz * TH / H;
-            for (int dy = -1; dy <= 1; ++dy)
-                for (int dx = -1; dx <= 1; ++dx) put(tx + dx, ty + dy, 250, 250, 255);
-        }
+        // Start positions: drawn over the thumbnail as numbered markers (drawStartMarkers),
+        // in world px like a shipped map's -- the same cell -> px setupMatch applies.
+        for (auto& [sx, sz] : g.starts) mapPreviewStarts_.push_back({float(sx * 16), float(sz * 16)});
+        mapPreviewWorldW_ = float(W) * 16; mapPreviewWorldH_ = float(H) * 16;
         mapPreviewTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, TW, TH);
         if (!mapPreviewTex_) return;
         SDL_SetTextureBlendMode(mapPreviewTex_, SDL_BLENDMODE_BLEND);
@@ -771,6 +778,7 @@ std::string startLocationsLabel(uint8_t mode) {
             float iw = mapPreviewW_ * sc, ih = mapPreviewH_ * sc;
             SDL_FRect dst{pvx + (pvW - iw) / 2, pvy + (pvH - ih) / 2, iw, ih};
             SDL_RenderCopyF(ren_, mapPreviewTex_, nullptr, &dst);
+            drawStartMarkers(dst);   // no slots yet: the room tints them
         } else {
             blockText(gen ? "GENERATING" : "NO PREVIEW", pvx + 34, pvy + pvH / 2 - 7, 1.6f,
                       {120, 125, 140, 255});
@@ -862,19 +870,23 @@ std::string startLocationsLabel(uint8_t mode) {
         // The room's own MAP SCENARIO line reads ON from the option alone (a joiner sees it
         // before the package is verified); the rule cells that follow it agree with it.
         const bool scenarioShown = fileMap && !campaign && (room.opts.mapScenario != 0 || scenarioOn);
-        float overrideBottom=112;
+        // The room's map, with its starts numbered and coloured by who opens there,
+        // heads the right column; the override packs and the chat sit below it.
+        const bool roomMap = !campaign && room.mission.empty();
+        const float kRoomMap = 140, mapDrop = roomMap ? kRoomMap + 5 : 0;
+        float overrideBottom=112+mapDrop;
         if(!campaign && room.mission.empty()) {
             scanOverridePacks();
             static const char* tiers[]={"OFF","COSMETIC","FULL"};
             const auto tier=std::min<uint8_t>(room.opts.overridePolicy,2);
             blockText(std::string("OVERRIDES: ")+tiers[tier],
-                      winW-296.0f,87,1.6f,{205,210,225,255});
+                      winW-296.0f,87+mapDrop,1.6f,{205,210,225,255});
             if(tier) {
                 auto selected=host?mp_->hostOverridePacks():settings_?settings_->cosmeticOverridePacks:std::vector<std::string>{};
                 auto names=availableOverridePacks_;for(const auto& n:selected)if(std::find(names.begin(),names.end(),n)==names.end())names.push_back(n);
                 std::sort(names.begin(),names.end());
                 const size_t pages=std::max<size_t>(1,(names.size()+4)/5);overridePage_=std::min(overridePage_,pages-1);
-                float py=112;blockText(host?"SELECT PACKS":"COSMETIC FILES ONLY",winW-296.0f,py,1.4f,{180,190,205,255});py+=22;
+                float py=112+mapDrop;blockText(host?"SELECT PACKS":"COSMETIC FILES ONLY",winW-296.0f,py,1.4f,{180,190,205,255});py+=22;
                 if(names.empty()){blockText("NO PACK SUBFOLDERS",winW-296.0f,py,1.3f,{150,155,165,255});py+=24;}
                 for(size_t i=overridePage_*5;i<std::min(names.size(),overridePage_*5+5);++i){
                     const auto name=names[i];const bool enabled=std::find(selected.begin(),selected.end(),name)!=selected.end();
@@ -1031,6 +1043,8 @@ std::string startLocationsLabel(uint8_t mode) {
                 mp_->setSlot(mpRoom().mySlot, 1, s.faction, s.color, s.team, iAmReady ? 0 : 1, s.aiLevel); });
             bx = x + 142;
         }
+        // A scenario that places its own armies opens nobody at the map's starts.
+        if (roomMap) drawRoomPreview({winW - 300.0f, 84, kRoomMap, kRoomMap}, scenarioOn && scenarioLobby_.placed > 0);
         // A room playing its map's scenario may start solo, once every seat the scenario
         // needs is played; ordinary skirmishes need two.
         bool canStart = host && startValid(room, scenarioOn, needSeats) && room.mapsReady && !mp_->overridePending() &&
@@ -1195,6 +1209,75 @@ std::string startLocationsLabel(uint8_t mode) {
             } catch (const std::exception&) {}
         }
         return roomStarts_;
+    }
+
+    void GameView::drawStartMarkers(const SDL_FRect& img, const std::vector<int>& colorOfStart) {
+        if (mapPreviewStarts_.empty() || img.w <= 0 || img.h <= 0) return;
+        // Sized from the preview, so the 192 px create preview and the room's smaller
+        // one both read: a black rim and a white ring keep it legible on any terrain.
+        const float r = std::clamp(std::min(img.w, img.h) * 0.06f, 7.0f, 11.0f);
+        auto disc = [&](float cx, float cy, float rad, SDL_Color c) {
+            constexpr int kSeg = 20;
+            SDL_Vertex v[kSeg + 1];
+            int ix[kSeg * 3];
+            v[0] = {{cx, cy}, c, {0, 0}};
+            for (int k = 0; k < kSeg; ++k) {
+                const float a = float(k) * 6.2831853f / kSeg;
+                v[k + 1] = {{cx + rad * std::cos(a), cy + rad * std::sin(a)}, c, {0, 0}};
+                ix[k * 3] = 0; ix[k * 3 + 1] = k + 1; ix[k * 3 + 2] = (k + 1) % kSeg + 1;
+            }
+            SDL_RenderGeometry(ren_, nullptr, v, kSeg + 1, ix, kSeg * 3);
+        };
+        for (size_t k = 0; k < mapPreviewStarts_.size(); ++k) {
+            const auto p = tak::startmarkers::place(mapPreviewStarts_[k], mapPreviewWorldW_, mapPreviewWorldH_,
+                                                    img.x, img.y, img.w, img.h, r + 2);
+            const int color = k < colorOfStart.size() ? colorOfStart[k] : -1;
+            // Neutral (nobody, or nobody knows yet) is a dark disc: the slot palette has
+            // both a white and a grey, so neither can stand for "no one".
+            const SDL_Color fill = color >= 0 ? playerColors_[color % 10] : SDL_Color{34, 36, 46, 255};
+            disc(p.x, p.y, r + 2, {0, 0, 0, 255});
+            disc(p.x, p.y, r + 1, {235, 235, 240, 255});
+            disc(p.x, p.y, r, fill);
+            const std::string n = std::to_string(k + 1);
+            const float px = r * (n.size() > 1 ? 0.15f : 0.19f);
+            const bool light = fill.r * 299 + fill.g * 587 + fill.b * 114 > 150000;
+            blockText(n, p.x - blockWidth(n, px) / 2 + px / 2, p.y - 3.5f * px, px,
+                      light ? SDL_Color{16, 16, 20, 255} : SDL_Color{250, 250, 252, 255});
+        }
+    }
+
+    void GameView::drawRoomPreview(const SDL_FRect& box, bool authored) {
+        const auto& room = mpRoom();
+        // A verified map package is the map every peer plays (a joiner may not have it,
+        // or may hold a different map under the same name); otherwise the room's map is
+        // in the VFS, or it is a generated id. Rebuilt only when the map changes.
+        const auto pkg = mp_->mapPackage();
+        const bool gen = tak::mapgen::isGeneratedMapId(room.mapId);
+        const std::string key = "room:" + room.mapId + "#" + (pkg && !gen ? pkg->digest : std::string());
+        if (mapPreviewFor_ != key) {
+            if (pkg && !gen && pkg->files) {
+                tak::hpi::Vfs view; view.setMapFiles(pkg->files);
+                buildMapPreview(pkg->mapPath, &view);
+            } else {
+                buildMapPreview(gen ? room.mapId : tak::hpi::findMap(vfs_, room.mapId));
+            }
+            mapPreviewFor_ = key;
+        }
+        SDL_SetRenderDrawColor(ren_, 18, 20, 28, 255); SDL_RenderFillRectF(ren_, &box);
+        if (mapPreviewTex_ && mapPreviewW_ > 0) {
+            const float sc = std::min(box.w / float(mapPreviewW_), box.h / float(mapPreviewH_));
+            const float iw = mapPreviewW_ * sc, ih = mapPreviewH_ * sc;
+            const SDL_FRect dst{box.x + (box.w - iw) / 2, box.y + (box.h - ih) / 2, iw, ih};
+            SDL_RenderCopyF(ren_, mapPreviewTex_, nullptr, &dst);
+            // Each start in the colour of the slot that opens there. An authored scenario
+            // places its own forces, so its starts belong to nobody.
+            std::vector<int> colors;
+            if (!authored)
+                for (int slot : tak::startmarkers::occupants(room.opts, room.slots, mapPreviewStarts_.size()))
+                    colors.push_back(slot >= 0 ? room.slots[slot].color : -1);
+            drawStartMarkers(dst, colors);
+        }
+        SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &box);
     }
 
     void GameView::lobbyMouse(float& mx, float& my) const {

@@ -219,11 +219,14 @@ In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
 ## Your first skirmish
 
 1. Click the **Single-Player** door.
-2. In the game setup screen, pick a **map**. The preview shows its layout and how
-   many players it supports. You can also choose **Generate Random Map**.
+2. In the game setup screen, pick a **map**. The preview shows its layout, its
+   numbered start positions and how many players it supports. You can also choose **Generate Random Map**.
 3. Set the match rules (all explained in [Match options](#match-options)). The
    defaults are fine for a first game.
 4. Click **Create**. In the lobby, choose your **side**, **colour** and **team**.
+   The lobby's map numbers each start position and colours it for the player who
+   starts there. With **Random** start locations the markers stay dark, because
+   nobody knows who starts where until the game begins.
 5. Set each other slot to an AI, choose its side and **difficulty**, or close
    the slot. **Easy** is a good first opponent.
 6. Click **Start**.

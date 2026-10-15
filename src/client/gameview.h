@@ -1641,6 +1641,10 @@ private:
     std::string mapPreviewFor_;        // mapPath_ the current preview was built for
     int mapPreviewW_ = 0, mapPreviewH_ = 0;
     std::string mapPreviewDims_;       // "W x H" cell size, shown under the preview
+    // The previewed map's start positions (world px, in StartPosN order) and its world
+    // size, read along with the preview so the numbered start markers never reparse.
+    std::vector<std::pair<float, float>> mapPreviewStarts_;
+    float mapPreviewWorldW_ = 0, mapPreviewWorldH_ = 0;
     std::map<std::string, std::vector<uint8_t>> kingdomPals_;  // kingdom -> RGBA palette (256*4)
     std::vector<std::string> availableOverridePacks_;
     bool overridePacksScanned_=false;
@@ -2727,7 +2731,16 @@ private:
     // in the chosen direction.
     void sortMapList();
 
-    void buildMapPreview(const std::string& tntPath);
+    // `src` reads a map the VFS does not hold (a room's verified map package).
+    void buildMapPreview(const std::string& tntPath, const tak::hpi::Vfs* src = nullptr);
+    // Numbered start markers over a preview image drawn at `img` (the whole map):
+    // marker k is the map's (k+1)-th start in StartPosN order (the order setupMatch
+    // assigns), filled with player colour colorOfStart[k]
+    // (the slot rows' palette), or neutral where that is -1 or missing.
+    void drawStartMarkers(const SDL_FRect& img, const std::vector<int>& colorOfStart = {});
+    // The room's map preview with its start markers, fitted into `box`. `authored`:
+    // a scenario that places its own forces, whose starts no slot takes.
+    void drawRoomPreview(const SDL_FRect& box, bool authored);
     void buildGenPreview(const std::string& id);   // thumbnail for a "~gen1~" map
 
     void drawCreate(int winW, int winH);
