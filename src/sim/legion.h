@@ -350,7 +350,8 @@ public:
     // decision the listed members take at the traced sites (settle window, re-choice, yield request,
     // gate commit / release). Process-wide; the scenario runner (--trace) and the world tests set it.
     static void setTrace(const std::vector<int>& ids);
-    // Test hook: the unit's group field potential at an origin (-1 if none).
+    // Test hook: the unit's group field potential at an origin (-1 if none,
+    // INT_MAX where the field does not reach).
     int fieldPotential(int id,int originX,int originZ) const;
     // Test hook: the slot shape of the unit's formation (valid=false if it
     // has none), and of the formation assigned last.

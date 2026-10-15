@@ -320,6 +320,45 @@ void trapped() {
     }
 }
 
+void longroute() {
+    // A connected route farther than 16-bit potentials reach: the serpentine
+    // of tools/scenarios/serplong.scn (30 lanes of 600 cells, 14 high, about
+    // 17,500 cells to the click). A 16-bit field saturated at 65535, so the
+    // bodies never got a finite potential and stood trapped; the field must
+    // reach them (87,356 and 87,331) and they must walk.
+    constexpr int kLanes=30,kLength=600,kLane=14;
+    const int boxH=2+kLanes*kLane+(kLanes-1)*2;
+    Fixture f(16+kLength+4+16,16+boxH+16);
+    f.rect(16,16,kLength+4,2);f.rect(16,16+boxH-2,kLength+4,2);
+    f.rect(16,16,2,boxH);f.rect(18+kLength,16,2,boxH);
+    for(int k=0;k+1<kLanes;++k)f.rect(k%2?18+kLane:18,18+(k+1)*kLane+k*2,kLength-kLane,2);   // gaps alternate ends
+    f.publish();
+    const auto type=mover(2);
+    const std::vector<int> ids{f.spawn(type,26,25),f.spawn(type,30,25)};
+    f.start();
+    for(int id:ids)f.world.order(id,30*16,float((18+(kLanes-1)*(kLane+2)+7)*16),false);
+    std::vector<int32_t> x0;for(int id:ids)x0.push_back(f.world.unit(id)->x.v);
+    auto* nav=f.world.legionNavigator();
+    std::vector<int> potential(ids.size(),-1);
+    for(int t=0;t<400;++t) {
+        f.world.tick(1.f/30);
+        if(t==100)for(size_t i=0;i<ids.size();++i) {
+            const auto& u=*f.world.unit(ids[i]);
+            potential[i]=nav->fieldPotential(ids[i],footprintOrigin(u.x,2),footprintOrigin(u.z,2));
+        }
+    }
+    std::vector<int> moved;
+    for(size_t i=0;i<ids.size();++i)moved.push_back(int((int64_t(f.world.unit(ids[i])->x.v)-x0[i])>>20));
+    std::printf("longroute potential=%d,%d moved_cells=%d,%d states=%d,%d trapped=%llu\n",potential[0],potential[1],moved[0],moved[1],
+        nav->unitState(ids[0]),nav->unitState(ids[1]),(unsigned long long)f.world.legionStats().trapped);
+    for(size_t i=0;i<ids.size();++i) {
+        check(potential[i]>65535&&potential[i]<INT_MAX,"the field does not reach a body past the 16-bit range");
+        check(nav->unitState(ids[i])!=5,"a body on a long connected route is trapped");
+        check(moved[i]>=24,"a body on a long connected route did not walk");
+    }
+    check(f.world.legionStats().trapped==0,"trapped classification recorded on a connected route");
+}
+
 void crowdhold() {
     // A one-body corridor plugged by an enemy that never moves: the column
     // behind it must hold still -- no turning in place, no back-and-forth.
@@ -3730,7 +3769,7 @@ void crosslong() {
 
 int main(int argc,char** argv) {
     const std::map<std::string_view,std::function<void()>> cases{
-        {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},
+        {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},{"longroute",longroute},
         {"crowdhold",crowdhold},{"replace",replace},{"unreachable",unreachable},{"quota",quota},{"pens",pens},
         {"determinism",determinism},{"formation",formation},{"slotblock",slotblock},
         {"staticblock",staticblock},{"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},

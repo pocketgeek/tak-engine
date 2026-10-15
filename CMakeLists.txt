@@ -338,7 +338,7 @@ target_link_libraries(navigation_telemetry_test PRIVATE tak-formats)
 add_test(NAME navigation_telemetry COMMAND navigation_telemetry_test)
 add_executable(legion_world_test tools/legion_world_test.cpp)
 target_link_libraries(legion_world_test PRIVATE tak-formats)
-foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreachable quota pens determinism formation
+foreach(legion_case clearance groupreuse jagged trapped longroute crowdhold replace unreachable quota pens determinism formation
     slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice wallend staticblock
     navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation flyerfront liftflyers aware b3events lanegeom
     lonetrees slideback stillturn forestedge)
@@ -566,6 +566,14 @@ foreach(legion_scn lateblock-none lateblock-before-16 lateblock-late-16)
                      --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
     set_tests_properties(legion_check_${legion_scn} PROPERTIES LABELS "legion;w5;nightly" TIMEOUT 1800)
   endif()
+endforeach()
+# Long routes (2026-10-14 Legion review, item 6): serplong's serpentine puts the bodies past the old 16-bit
+# field potentials (87,356 at its head), serplong-control is the same shape inside that range. Both walk the
+# whole route (180,000 and 100,000 ticks), so they run nightly; legion_longroute is the per-commit check.
+foreach(legion_scn serplong serplong-control)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;nightly" TIMEOUT 1800)
 endforeach()
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle

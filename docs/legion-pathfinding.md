@@ -128,6 +128,20 @@ and per 256 distinct goals, not 2,000 searches. The 256-goal cap exists
 because a field is "distance to the nearest seed of anyone": seeded with an
 army's whole goal lattice it pulls every body to the lattice's near edge.
 
+Potentials are 32-bit (`kUnreached`, all ones, means no route). Until the
+2026-10-14 review they were 16-bit and saturated at 65,535, about 13,100
+orthogonal steps from the nearest seed: a body farther than that along a
+connected route never got a finite potential and stood as terrain-trapped
+(section 4). `serplong.scn` is that case: two bodies at the head of a 30-lane
+serpentine at potential 87,356 stood trapped, and now walk it and arrive
+(about 168,000 ticks; Retail's orders complete 408 cells short).
+`serplong-control.scn`, the same shape with 16 lanes (46,560), stays inside
+the old range, and like every other existing fixture its hashes did not change
+(`legion_longroute` checks the long case on every commit). The cell budget
+below is unchanged, so a field costs 4 bytes a cell instead of 2: the 8-AI
+Ulasem benchmark replay fills the budget (19.7 million cells on its 640 x 640
+plane), and its peak heap grew by 39 MB, from 469 to 508 MB.
+
 Field work runs at the start of `World::tick` under a deterministic quota of
 384k relaxations per tick (`kFieldQuota`), shared by plane debt and all fields
 in group-id order. A refresh of a group that already steers by a finished
@@ -142,7 +156,8 @@ whole-map fields, and by a count of 1,024. A field that has served its group
 for 300 ticks can be displaced, oldest build first. Before regions bounded
 fields, 1,000 single-unit orders each in its own walled pen competed for 48
 whole-map slots: 633 evictions, 623 of 1,000 settled and 222 MB of fields.
-Bounded, all 1,000 settle by tick 548 with no evictions and 2.3 MB.
+Bounded, all 1,000 settle by tick 548 with no evictions and 2.3 MB (both
+measured with 16-bit potentials, which now take twice the memory).
 Otherwise a new group waits for a slot; LRU eviction was tried first and
 thrashed. Group state is in `std::map`, so iteration order is deterministic.
 
