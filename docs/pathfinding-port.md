@@ -36,7 +36,17 @@ the new start, heading and costs for hosts that pass no refresh. CTest:
 `pathsearch` (circle, rectangle and ring after 2- and 9-cell drift, plus
 changed destination) and `retail_trace --selftest` (the production retry
 ladder after 0/1/2/9 cells of drift, plus a changed mission point), both
-without a fixture entity pool.
+without a fixture entity pool. Before the fix the 2- and 9-cell cases fail
+(two admissions, the worker retired); afterwards one admission delivers.
+
+Validation: all targets rebuilt in Debug and Release; both regressions pass in
+Debug, Release and -O2 Debug. `check_scheduler.py` (4,072 admission gates, 106
+fixtures), `check_navigation_retry.py` (8,192 retry decisions),
+`check_navigator_reset.py` (4,352), `check_destination_setup.py` (320 World
+submissions), `fuzz_world_search.py --cases 500 --seed 12`, and
+`check_crowd_arrival.py` with three Hunters for 300 World ticks and 450
+Hunters for 1,800 rounds all match. The `--mpai` Inner Circle seed 1 hash is
+the same with and without the change (60 s and 300 s).
 
 ## Retail audit: flyer landing site and airborne occupancy (2026-10-06, all modes)
 
