@@ -310,13 +310,72 @@ Means over all 48 AIs:
 The army is 16% smaller at 300 s while the builders are made, and larger from
 then on. No AI was defeated in either set, and none of the 185 lodestone orders
 (80 before) lay outside the AI's own home. Of the 17 AIs still on one lodestone,
-12 are Zhon's (both in every game) and 5 Taros'. Zhon has no Builder-category
-unit but its Monarch -- its handlers count as factories -- so this cap does not
-reach it; every Taros lodestone in these games was ordered by Lokken or `tartb`,
-never a Dark Priest.
+12 are Zhon's (both in every game) and 5 Taros'. This cap does not reach Zhon:
+its four mobile builders (Beast Handler, Beast Tamer, Beast Lord, Shaman) count
+as factories, not builders, and Zhon has no factory building (see the next
+update). Every Taros lodestone in these games was ordered by Lokken or `tartb`,
+never a Dark Priest, whose menu has no lodestone.
 
 `--mpai` (Inner Circle, seed 1; four Normal AIs) moves at 300 s: Retail
 `76f7e976cd6a00c9`, Legion `99e2f137cde8d769`. The 60 s runs are unchanged
 (Retail `8db23af1b0260ba1`, Legion `5bc7e8001c06611f`): no extra builder
 comes in the first minute. The AI runs on the server only, so the protocol
 is unchanged (263).
+
+## Update 2026-10-15: Zhon's builders, and a full store
+
+Zhon has four mobile builders, all `builder=1`, `builderlimited=1`, workertime
+10, limit 3 each in `ai/default.txt`: `zonhand` (Beast Handler: `zonlode`, its
+first creatures, `zontrain`), `zontrain` (Beast Tamer: `zonlode`, mid creatures,
+`zonhand`, `zonlord`), `zonlord` (Beast Lord: `zonlode`, heavy creatures,
+`zontrain`, `zonsham`) and `zonsham` (Shaman: `zonmana`, the dragon). Its
+Monarch builds `zonlode`, the two towers and `zonhand`. Zhon has no factory
+building, so these four train its army as well as build its lodestones.
+Retail's planner draws each builder's menu by weight with no factory/builder
+distinction, so all twelve may be fielded.
+
+`categoryOf` counts a mobile builder whose menu is mostly creatures as a
+factory, so Normal held Zhon to its factory count alone: three at one deposit's
+income, against another side's three factories plus three builders past the
+Monarch. Three slow producers (workertime 10) could not spend 110 a second,
+the store sat full, retail's mana-short trigger needs a store under 30% and
+never fired, and income met the ladder's target of 25 plus 20 per factory. A
+side with no factory building (decided from the type registry, per side) now
+adds its builder allowance past the Monarch to its factory target, at every
+difficulty: Normal's most is 8 + 4 = 12, the four types' retail limits
+together; Easy's 2 + 1.
+
+Taros stalled the other way. Its Dark Priest (`tarpries`: `tarmana`, the angel,
+the dragon) is also counted a factory, which matches what it builds. The stall
+was its Dark Masons: on one lodestone with income past the target, the
+factories at their target and the store full, nothing on a mason's menu was
+wanted and they stood idle for ten minutes (seed 2: three idle, store at 7,094
+of 7,100). Retail's builders draw from their whole menu, the lodestone among
+it (weight 10, limit 7). Normal and Defensive now keep economy at priority 45
+while the store is 90% full or more: below the army's 50, so a producer that
+can train one still does. Easy keeps its lean economy; Hard and Absurd want
+economy at 60 or more already.
+
+`teamsim`, "4x4 team", eight Normal AIs (4v4), Crusades, Monarch Expendable,
+seeds 1-6, against main (12 AIs per side; lodestones count upgraded ones):
+
+| Side, 900 s | Lodestones | On one lodestone | Income | Army | Mobile builders |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Aramon, before / after | 4.50 / 10.00 | 0 / 0 | 488 / 1830 | 70.8 / 70.4 | 9.0 / 9.3 |
+| Taros | 2.25 / 7.00 | 5 / 0 | 251 / 753 | 67.8 / 63.0 | 5.8 / 6.1 |
+| Zhon | 1.00 / 9.33 | 12 / 0 | 113 / 1651 | 56.2 / 128.8 | 4.0 / 13.0 |
+| Creon | 4.58 / 7.75 | 0 / 0 | 477 / 794 | 79.5 / 82.8 | 5.2 / 5.3 |
+| All 48 | 3.08 / 8.52 | 17 / 0 | 332 / 1257 | 68.6 / 86.2 | 6.0 / 8.4 |
+
+At 300 s: lodestones 2.83 / 4.75, AIs on one 21 / 3, army 16.5 / 16.2 (Zhon
+40.2 / 27.4 while it raises producers; at 600 s Zhon's army is 55.7 / 96.1).
+No AI was defeated in either set. "Mobile builders" counts every mobile
+`builder=1` unit, so Zhon's producers and the priests are in it -- why it
+exceeds Normal's builder total. Most of the late income is priests' and
+shamans' mana upgrades (`aramana`, limit 8; `zonmana`, 9) on the home deposits.
+With the Zhon change alone (seed 1, 600 s) the Zhon AIs reached 5 and 4
+lodestones and the Taros ones stayed at 3 and 1.
+
+`--mpai` (Inner Circle, seed 1) is unchanged: Retail 300 s `76f7e976cd6a00c9`,
+60 s `8db23af1b0260ba1`; Legion 300 s `99e2f137cde8d769`, 60 s
+`5bc7e8001c06611f`.
