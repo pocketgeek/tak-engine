@@ -6,13 +6,13 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.8.2-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.8.3-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
 [Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [Map editor guide](docs/cartographer-guide.md) · [Build from source](docs/development.md)
 
-<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.2"></a>
+<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.3"></a>
 
 <table>
   <tr>
@@ -28,10 +28,10 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/generated.jpg"><img src="docs/img/generated.jpg" alt="A wooded lake shore on a generated Aramon Riverlands map"></a><br><sub>A generated Aramon Riverlands map</sub></td>
-    <td width="50%"><a href="docs/img/lobby.jpg"><img src="docs/img/lobby.jpg" alt="The create-game screen with map selection and preview"></a><br><sub>Maps and match setup</sub></td>
+    <td width="50%"><a href="docs/img/lobby.jpg"><img src="docs/img/lobby.jpg" alt="The create-game screen with map selection and a preview with numbered start positions"></a><br><sub>Maps and match setup</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/img/room.jpg"><img src="docs/img/room.jpg" alt="Game lobby with remembered override-pack selections and read-only match settings"></a><br><sub>Lobby settings and override packs</sub></td>
+    <td width="50%"><a href="docs/img/room.jpg"><img src="docs/img/room.jpg" alt="Game lobby with AI slots, start markers in the players' colours, override-pack selections and read-only match settings"></a><br><sub>Lobby settings and override packs</sub></td>
     <td width="50%"><a href="docs/img/campaign.jpg"><img src="docs/img/campaign.jpg" alt="The Book of Darien campaign mission picker"></a><br><sub>Campaign selection</sub></td>
   </tr>
   <tr>
@@ -40,7 +40,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.25 to 0.8.2 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
+<sub>Captured from the 0.7.25 to 0.8.3 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
 
 </div>
 
@@ -52,7 +52,47 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.8.2
+## New in 0.8.3
+
+0.8.3 changes the simulation in both pathfinding modes, so the protocol moves
+to **266**: **0.8.3 cannot play with 0.8.2 or earlier, and cannot play their
+replays**. Update the server and every player together.
+
+- **New match options.** **Allow Spectators** lets a multiplayer host refuse
+  watchers. **Map Scenario** plays a map's own scenario (placed armies, rules
+  and Use Only list) in skirmish or multiplayer; a gold **S** marks such maps,
+  and it starts off. **Start Locations: By Slot** starts slot N at the map's
+  position N. The map preview numbers every start position, and the lobby
+  colours each one for the player who starts there. See
+  [match options](docs/user-guide.md#match-options).
+- **Retail self-repair.** Damaged units and buildings regain health at the
+  original game's rate (most units heal fully in about four minutes); Aramon
+  buildings repaired themselves far too slowly before.
+- **Retail air combat.** Flyers without hover attack fly attack runs; a flyer
+  holding still is no longer led as if it were moving; area damage is measured
+  in 3D, so a blast on the ground no longer hurts a flyer high above it.
+- **Smarter computer players.** Allies share mana deposits instead of racing
+  for them, stuck builders give up, Normal, Easy and Defensive build a lodestone
+  when short of mana, Normal grows to its Monarch plus four builders, Zhon no
+  longer stalls on one deposit, and every side keeps to the original's per-type
+  limits.
+- **Legion** walks very long routes, settles mixed unit sizes, fills a room
+  through a narrow entrance in arrival order and keeps its order through short
+  passages. **Path search** in both modes follows the original's admission
+  order and ground ownership more closely.
+- **Map editor:** a **Blocked** tool for painting impassable cells, a
+  **Game data folder** setting shared with the game's Options, borderless
+  fullscreen, edge scrolling, browser scrollbars and several crash fixes. See
+  the [Cartographer guide](docs/cartographer-guide.md).
+- Spectators see every side's health bars, and every player hears the same
+  death cry, chosen at the original's odds.
+
+Generated-map recipes, saved `.kmp` maps and settings carry over. No new
+runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.8.3-notes.md) and
+[validation report](docs/release-0.8.3-validation.md).
+
+### Previously in 0.8.2
 
 0.8.2 fixes Legion units walking on the spot. It changes the Legion simulation,
 so the protocol moves to **257**: **0.8.2 cannot play with 0.8.0 or 0.8.1, and
@@ -774,7 +814,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.8.1 uses generator v8;
+the same named map when the game starts. Version 0.8.3 uses generator v8;
 older seed recipes are unsupported, while saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -782,7 +822,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.8.2 uses protocol **257** and generator version 8; generated-map recipes from 0.8.0 and 0.8.1 still work.
+Version 0.8.3 uses protocol **266** and generator version 8; generated-map recipes from 0.8.0 to 0.8.2 still work.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -1056,11 +1096,12 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same network protocol and compatible game data** on every participant.
-Version **0.8.2 uses protocol 257**, including authoritative pathfinding
+Version **0.8.3 uses protocol 266**, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
-0.8.0 and 0.8.1 (protocol 256) and earlier clients cannot join 0.8.2 matches, and
-0.8.2 clients cannot join older servers: update the server and all players together.
-Replay format is **12** (checkpoints also carry a position digest), and
+0.8.2 (protocol 257) and earlier clients cannot join 0.8.3 matches, and
+0.8.3 clients cannot join older servers: update the server and all players together.
+Replay format is **13** (checkpoints also carry a position digest, and the header
+records the Map Scenario option), and
 playback requires the current simulation protocol. Older recordings need the engine that recorded them.
 The connection checks gameplay definitions, scripts, and models. Selected map
 contents are verified separately and transferred automatically when needed.
@@ -1260,7 +1301,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.8.2 uses protocol **257**; servers and clients must all run 0.8.2 (0.8.0 and 0.8.1 use 256).
+Version 0.8.3 uses protocol **266**; servers and clients must all run 0.8.3 (0.8.2 uses 257).
 
 
 ## License

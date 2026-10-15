@@ -2,8 +2,8 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.2** (network protocol **257**, replay format
-**12**). It is written for three kinds of reader:
+This guide covers **TAK Engine 0.8.3** (network protocol **266**, replay format
+**13**). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
   the game;
@@ -231,7 +231,7 @@ In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
    the slot. **Easy** is a good first opponent.
 6. Click **Start**.
 
-![The game setup screen with the map list, a map preview and the match options](img/lobby.jpg)
+![The game setup screen with the map list, a map preview with numbered start positions and the match options](img/lobby.jpg)
 
 *The game setup screen: pick a map, check its preview and player count, and set the match rules.*
 
@@ -294,6 +294,13 @@ the map into an ally's base; if that nearest ally never expands, the deposits
 stay free. An AI also stops treating a deposit as taken once the builder headed
 for it, its own or an ally's, has got no nearer for a minute, and sends its own
 stuck builders to other work.
+
+Normal starts with its Monarch and one builder and adds builders as its income
+grows, up to the Monarch and four; Easy and Defensive keep two. No AI builds more
+of one builder type than the original game's AI file allows. Zhon has no factory
+buildings, so its AI counts its Beast Handlers, Tamers, Lords and Shamans as
+both producers and builders. An AI whose mana store is nearly full keeps its
+builders building income rather than leaving them idle.
 
 The AI runs on the game server, never in your client. In single-player, the game
 starts a private server on your own computer for you.
@@ -480,6 +487,11 @@ Press **H** (or use the heal button) and click a damaged friendly unit or
 building. Repair costs mana. Builders on **patrol** automatically repair damaged
 friendly units and buildings near their route, then carry on patrolling.
 
+Damaged units and buildings also repair themselves slowly, for free, at the rate
+the original game's data sets: most mobile units are back to full health in
+about four minutes, and many buildings in about eight. Unfinished units and
+buildings do not repair themselves.
+
 ### Your army
 
 **Stances.** Every unit has a stance, set from the command panel:
@@ -550,6 +562,12 @@ Flyers ignore terrain and walls, and set down on the ground when they land. A
 landed flyer can be attacked by ground units and blocks ground movement. In **Legion** mode, flyers never land on top
 of other flyers or ground units; in **Retail** mode they follow the original
 game's rules, which sometimes let them overlap.
+
+Flyers that cannot hover to attack, such as the Gryphon and the Dirigible,
+attack ground targets in **attack runs**, as in the original game: they fly in,
+fire as they pass, fly on past the target, turn and come back. Their shots land along the flight path, so some miss. Blast
+damage is measured in three dimensions, so a shell bursting on the ground does
+not hurt a flyer high above it, and a blast never hurts the unit that fired it.
 
 Flyers are much faster than most ground units. When you put flyers and ground
 units in the same group or formation:
@@ -985,8 +1003,15 @@ armies:
   a short gap in a wall or a doorway that is wide enough for two or three units
   now splits across the gap and goes through two or three abreast, each unit
   taking the place with the fewest friends queued before it, instead of
-  queueing into one file. Units may swap sides a little after the gap as the
-  group re-forms. A gap that fits only one unit is still taken in single file.
+  queueing into one file. Through a short passage, each unit keeps its place
+  from side to side until it is out the far end, so the group does not cross
+  over inside it. A gap that fits only one unit is still taken in single file.
+- **Rooms fill from the back.** When the way into the destination narrows just
+  before it, as through a doorway, the units that come through first take the
+  places furthest in, so they do not settle in the doorway and shut the others
+  out.
+- **Long routes.** A unit sent along a very long winding route walks it instead
+  of standing still as if trapped.
 - **Columns meeting head on keep right.** Two large groups (16 or more) walking
   towards each other along the same route now narrow a little before they meet
   and each passes on its own right, instead of ploughing into one another.
@@ -1063,7 +1088,7 @@ in a formation or Ctrl+number group with ground units keep station over them.
   narrow file.
 - Idle units of **other players** do not step aside for you.
 - Units in a large group swap places with each other more often than in Retail
-  at corners, in long narrow passages and after gaps they took several abreast.
+  at corners and in long narrow passages.
 - Units attacking next to a wall, or queued at a blocked doorway, brush against
   the wall about twice as often as in Retail.
 - From some starting positions, a single unit queued at a blocked doorway, or
@@ -1292,9 +1317,9 @@ player's game stays in step.
 5. In the room, choose your side, colour and team, then click **Ready**. The host
    starts the game when everyone is ready.
 
-![A game room with player and AI slots, override pack choices and the read-only match rules](img/room.jpg)
+![A game room with player and AI slots, the map with start markers 1 to 4 in the seated players' colours, override pack choices and the read-only match rules](img/room.jpg)
 
-*A game room, here for a single-player game: player and AI slots, override packs and the read-only match rules.*
+*A game room, here for a single-player game: player and AI slots, the map with each start marked in the colour of the player who starts there, override packs and the read-only match rules.*
 
 The host can open and close slots, add AIs and kick players. Match options are
 set when the game is created, except **Allow spectators**, which the host can
@@ -1341,7 +1366,8 @@ See [unit gifting](unit-gifting.md) for which units can be given.
 ### Spectating
 
 Click **Watch** on a running game in the browser to watch it live. Spectators
-see the whole map without fog and cannot give orders.
+see the whole map without fog, including every side's health bars, and cannot
+give orders.
 
 The host decides whether a game can be watched with **Allow spectators** (on by
 default). When it is off, the browser shows a red **No watch** button instead of
@@ -1368,9 +1394,10 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.2 uses network protocol **257**. It cannot play with 0.8.0 or 0.8.1
-(protocol 256): the server turns away a client whose protocol differs from its
-own, so a server and all of its players must update to 0.8.2 together.
+Version 0.8.3 uses network protocol **266**. It cannot play with 0.8.2 (protocol
+257) or any earlier version: the server turns away a client whose protocol
+differs from its own, so a server and all of its players must update to 0.8.3
+together.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
 This should not happen between matching versions with matching game data; if it
@@ -1445,8 +1472,8 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.2 plays protocol-257 recordings only, so replays recorded by
-  0.8.0 or 0.8.1 need one of those versions);
+  recorded it (0.8.3 plays protocol-266 recordings only, so replays recorded by
+  0.8.2 or earlier need the version that recorded them);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -1590,7 +1617,7 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together.** A server only accepts clients of
-the same protocol version (0.8.2 uses protocol 257; 0.8.0 and 0.8.1 use 256).
+the same protocol version (0.8.3 uses protocol 266; 0.8.2 uses 257).
 
 ---
 
@@ -1614,7 +1641,7 @@ settings used. Unit limits still apply, so the highest intensities may not
 reach their requested unit counts. A slow machine can take longer than 60 real
 seconds.
 
-![A benchmark battle between Zhon and Creon armies, with Creon Neo Dragons breathing blue fire](img/guide/benchmark.jpg)
+![A benchmark battle between Zhon and Creon armies at the edge of a sandy clearing, with health bars over the damaged units](img/guide/benchmark.jpg)
 
 *A benchmark run at Absurd intensity, 55 seconds in. The badge at the top counts down the time remaining.*
 
@@ -1689,7 +1716,7 @@ unplugged, the game falls back to the system default.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.2 uses protocol 257, 0.8.0 and 0.8.1 use 256). See
+one that recorded them (0.8.3 uses protocol 266, 0.8.2 uses 257). See
 [Replays](#replays).
 
 ### Where files are kept
