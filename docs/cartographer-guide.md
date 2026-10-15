@@ -993,6 +993,9 @@ such as "hold the hill for five minutes to win".
 >   picked, so a map chosen with it off plays as a plain skirmish map. It is
 >   greyed, with the reason, for a map without a playable scenario: one with no
 >   scenario, an empty one, or one that needs a unit type this install lacks.
+>   With **Overrides: Full** that last kind is offered with the warning *NEEDS AN
+>   OVERRIDE PACK*, because a pack the host selects in the room may supply the
+>   unit; if none does, the game refuses to start and says which unit is missing.
 >   Maps with a playable scenario carry a gold **S** in the map list.
 >
 > The test copy that each Test Map or `--play-map` run leaves in the game's

@@ -415,7 +415,7 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
     bool GameView::createScenarioOn() const {
         if (createScenarioFor_ != mapPath_ || tak::mapgen::isGeneratedMapId(mpMapId_)) return false;
         // An offerable map plays its scenario when chosen; a Test Map copy always does.
-        return createScenario_.active(createMapScenario_ && createScenario_.offerable());
+        return createScenario_.active(createMapScenario_ && scenarioOffered(createScenario_, createOverride_));
     }
 
     void GameView::drawCreate(int winW, int winH) {
@@ -532,14 +532,14 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             // plays its scenario through its opt-in and sends 0 (the server checks the
             // verified package either way). Seats and rule regions follow fixed starts.
             o.mapScenario = !tak::mapgen::isGeneratedMapId(mpMapId_) && createScenarioFor_ == mapPath_ &&
-                createScenario_.offerable() && createMapScenario_ ? 1 : 0;
+                scenarioOffered(createScenario_, createOverride_) && createMapScenario_ ? 1 : 0;
             o.randomStarts = createRandomStarts_ && !createScenarioOn() ? 1 : 0;
             // A private single-player room is never listed, so the rule means nothing
             // there; leave it at the default rather than a remembered MP choice.
             o.allowSpectators = singlePlayer_ || createAllowSpectators_ ? 1 : 0;
             // SP spectate: create as a spectator (no slot) so every slot can be an AI;
             // the game-start path flags spectating_ + noFog_ from mp_->isSpectator().
-            mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity(),
+            mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity(o.mapScenario != 0),
                             singlePlayer_ && spSpectate_, singlePlayer_);
             specAutoSeated_ = false;   // arm the one-shot auto-seat for this new room
             lobbyScreen_ = singlePlayer_ ? LobbyScreen::Create : LobbyScreen::Browser;
@@ -648,7 +648,7 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             blockText(info, infoX, row.y + (rowH - 11) / 2, 1.5f,
                       sel ? SDL_Color{170, 210, 170, 255} : SDL_Color{150, 160, 178, 255});
             // MAP SCENARIO: a gold S marks a map with a playable scenario (or a Test Map copy).
-            if (m.scenario.offerable() || (m.scenario.marker && m.scenario.runnable()))
+            if (scenarioOffered(m.scenario, createOverride_) || (m.scenario.marker && m.scenario.runnable()))
                 blockText("S", infoX - 14, row.y + (rowH - 11) / 2, 1.5f, {230, 200, 120, 255});
             lobbyHots_.push_back({row, [this, nm, pth] {
                 mpMapId_ = nm; mapPath_ = pth;
@@ -786,8 +786,9 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         if (!gen && !mapPath_.empty()) {
             const float y0 = pvy + pvH + 68;
             const bool testCopy = createScenario_.marker && createScenario_.runnable();
-            lbCycle(pvx, y0, pvW, 26, createMapScenario_ || testCopy ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF",
-                    createScenario_.offerable(), [this](int) { createMapScenario_ = !createMapScenario_; });
+            const bool offered = scenarioOffered(createScenario_, createOverride_);
+            lbCycle(pvx, y0, pvW, 26, (createMapScenario_ && offered) || testCopy ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF",
+                    offered, [this](int) { createMapScenario_ = !createMapScenario_; });
             float ly = y0 + 32;
             auto line = [&](const std::string& text, SDL_Color color) {
                 if (ly > y0 + 32 + 3 * 16) return;   // four lines fit above the footer
@@ -799,9 +800,11 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             if (testCopy) {
                 line("TEST COPY: ALWAYS ON", grey);
                 for (const auto& l : tak::sim::scenarioSummary(createScenario_, true)) line(l.text, l.warning ? amber : normal);
-            } else if (!createScenario_.offerable()) {
+            } else if (!offered) {
                 for (const auto& l : tak::sim::scenarioReason(createScenario_)) line(l, grey);
             } else {
+                // Offered only because an override pack may supply a missing unit type.
+                if (!createScenario_.offerable()) line("NEEDS AN OVERRIDE PACK", amber);
                 for (const auto& l : tak::sim::scenarioSummary(createScenario_, true))
                     line(l.text, !createMapScenario_ ? dim : l.warning ? amber : normal);
             }

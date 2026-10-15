@@ -9,7 +9,7 @@
 // unit. Trivial getters, ctors, static, template, constexpr and default-arg
 // methods stay inline in the header. Grouping is by name heuristic.
 
-    uint8_t GameView::mpCapacity() const {
+    uint8_t GameView::mpCapacity(bool mapScenario) const {
         // A generated map's capacity is the player count baked into its "~gen1~" id.
         // The lobby sets mpMapId_; the headless "game" flow only has mapPath_ -- honour
         // either, since sim::parseStartPositions can't parse a synthetic id.
@@ -27,7 +27,7 @@
             path=cached->first;scenarioData.setMapFiles(cached->second);
         }
         const auto scenario=tak::sim::inspectScenario(scenarioData,path);
-        if(scenario.active(createMapScenario_))
+        if(scenario.active(mapScenario))
             for(int i=0;i<tak::net::kMaxSlots;++i)
                 if(scenario.requiredSeats()>>i & 1)n=std::max(n,i+1);
         return uint8_t(std::clamp(n < 2 ? 2 : n, 2, tak::net::kMaxSlots));
@@ -971,9 +971,8 @@ void GameView::autoplayStep() {
             std::string mission = autoMode == 8 ? missionStem_ : std::string();
             // TAK_MAP_SCENARIO=1: create the room with MAP SCENARIO on (the server refuses START when
             // the map has no scenario or a needed seat is empty -- a harness can test both).
-            createMapScenario_ = autoMode != 8 && tak::devFlag("TAK_MAP_SCENARIO");
-            o.mapScenario = createMapScenario_ ? 1 : 0;
-            uint8_t cap = (autoMode == 8 || benchmarkMode_) ? tak::net::kMaxSlots : mpCapacity();
+            o.mapScenario = autoMode != 8 && tak::devFlag("TAK_MAP_SCENARIO") ? 1 : 0;
+            uint8_t cap = (autoMode == 8 || benchmarkMode_) ? tak::net::kMaxSlots : mpCapacity(o.mapScenario != 0);
             // Exact stem match (findMap): the map file is "ulasem arena.tnt".
             std::string createMap = benchmarkMode_ ? std::string("Ulasem Arena") : mapId;
             mp_->createGame(benchmarkMode_ ? "Benchmark" : (priv ? "Single Player" : "headless"),
@@ -998,9 +997,8 @@ void GameView::autoplayStep() {
             else if (autoMode == 3 && mpListMs_ && SDL_GetTicks64() - mpFirstListMs_ > 800) {
                 tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
             o.overridePolicy = uint8_t(policy_);   // room tier = this host's launch tier
-                createMapScenario_ = tak::devFlag("TAK_MAP_SCENARIO");   // as for modes 1/4/7
-                o.mapScenario = createMapScenario_ ? 1 : 0;
-                mp_->createGame(mapId, "", mapId, o, mpCapacity());
+                o.mapScenario = tak::devFlag("TAK_MAP_SCENARIO") ? 1 : 0;   // as for modes 1/4/7
+                mp_->createGame(mapId, "", mapId, o, mpCapacity(o.mapScenario != 0));
             }
             if (!mpFirstListMs_) mpFirstListMs_ = SDL_GetTicks64();
         } else if (st == S::InRoom && autoMode && !mpReadied_) {

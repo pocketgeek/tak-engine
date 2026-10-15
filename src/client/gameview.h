@@ -228,9 +228,9 @@ public:
     bool readResume(uint32_t& gid, uint64_t& tok) const;
     // The map's player capacity = its start-position count (2..8). The server has
     // no map data, so a creating client tells it how many slots the map supports.
-    // A room that plays its map's scenario (MAP SCENARIO on, or a Test Map copy) also
-    // opens every seat the scenario needs.
-    uint8_t mpCapacity() const;
+    // A room that plays its map's scenario (`mapScenario`: the room's MAP SCENARIO
+    // option; a Test Map copy always does) also opens every seat the scenario needs.
+    uint8_t mpCapacity(bool mapScenario = false) const;
     // MAP SCENARIO facts of an installed map (sim::inspectScenario with this client's
     // registry). A MapCache entry's companions live in its archive, not the plain VFS.
     tak::sim::ScenarioInfo mapScenarioInfo(const std::string& path) const;
@@ -1594,6 +1594,13 @@ private:
     tak::sim::ScenarioInfo createScenario_;   // the selected map's scenario facts (with registry check)
     void syncCreateScenario();
     bool createScenarioOn() const;            // the create choice plays the map's scenario
+    // Whether the create screen offers a map's scenario. With the FULL override tier a
+    // unit type this install lacks may come from an override pack the host selects in
+    // the room, so MissingType is offered there (with a warning); the server's START
+    // refuses it if no selected pack supplies the type.
+    static bool scenarioOffered(const tak::sim::ScenarioInfo& s, uint8_t overrideTier) {
+        return s.offerable() || (overrideTier == 2 && !s.marker && s.status == tak::sim::ScenarioStatus::MissingType);
+    }
     // One selectable map plus the attributes the picker can sort by, read once from
     // the map's .ota GlobalHeader (a tiny text file -- no need to decompress the TNT).
     struct MapInfo {
