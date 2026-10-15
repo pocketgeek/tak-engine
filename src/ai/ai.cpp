@@ -760,12 +760,17 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
                         reservedSites.emplace_back(order.buildX.toFloat(),order.buildZ.toFloat());
             }
         }
-        for (const auto& deposit : world.manaSpots()) {
+        const auto& deposits=world.manaSpots();
+        for (size_t i=0;i<deposits.size();++i) {
             // Apple Clang 15 cannot capture structured bindings in this lambda.
-            const float sx=deposit.first,sz=deposit.second;
+            const float sx=deposits[i].first,sz=deposits[i].second;
             if (std::any_of(reservedSites.begin(),reservedSites.end(),[sx,sz](const auto& spot) {
                 const float dx=spot.first-sx,dz=spot.second-sz;return dx*dx+dz*dz<32*32;
             })) continue;
+            // An ally still claiming its home deposit keeps it (updateAllyClaims);
+            // upgrading our own lodestone there is not a claim on it.
+            if (aggressive && i<allyHeldDeposits_.size() && allyHeldDeposits_[i] &&
+                !world.lodestoneUpgradeSource(t,sx,sz,player_)) continue;
             if (!usable(sx, sz)) continue;   // taken or blocked
             float dx = sx - nx, dz = sz - nz, d = dx * dx + dz * dz;
             // Claim new income before replacing a nearby existing lodestone.
@@ -840,6 +845,23 @@ bool Controller::nearestEnemyStart(float cx, float cz, float& tx, float& tz) con
     return found;
 }
 
+// A player's base anchor: the centroid of its buildings, else its Monarch, else
+// the centroid of its units (0,0 with none).
+static std::pair<float, float> anchorOf(const tak::sim::World& world, int player) {
+    double sx = 0, sz = 0; int n = 0;
+    float kx = 0, kz = 0; bool haveKing = false;
+    for (const auto& u : world.units()) {
+        if (!u.alive() || u.player != player || !u.type) continue;
+        if (u.type->isStructure()) { sx += u.x.toFloat(); sz += u.z.toFloat(); ++n; }
+        if (u.type->commander && !haveKing) { kx = u.x.toFloat(); kz = u.z.toFloat(); haveKing = true; }
+    }
+    if (n) return {float(sx / n), float(sz / n)};   // centroid of the buildings
+    if (haveKing) return {kx, kz};                  // no buildings yet: anchor on the Monarch
+    for (const auto& u : world.units())
+        if (u.alive() && u.player==player) { sx+=u.x.toFloat();sz+=u.z.toFloat();++n; }
+    return n ? std::pair{float(sx/n),float(sz/n)} : std::pair{0.0f,0.0f};
+}
+
 // Pool idle (non-builder) fighters; once a strike force has gathered (waveSize, per
 // difficulty), attack-move the whole group at ONE target so the wave arrives together
 // rather than trickling in: the nearest enemy it can SEE, else the nearest enemy start
@@ -849,18 +871,78 @@ bool Controller::nearestEnemyStart(float cx, float cz, float& tx, float& tz) con
 // Also sends one early scout so the AI reveals + commits rather than turtling forever.
 std::pair<float, float> Controller::homeOf(const tak::sim::World& world) const {
     if (home_) return *home_;
-    double sx = 0, sz = 0; int n = 0;
-    float kx = 0, kz = 0; bool haveKing = false;
-    for (const auto& u : world.units()) {
-        if (!u.alive() || u.player != player_ || !u.type) continue;
-        if (u.type->isStructure()) { sx += u.x.toFloat(); sz += u.z.toFloat(); ++n; }
-        if (u.type->commander && !haveKing) { kx = u.x.toFloat(); kz = u.z.toFloat(); haveKing = true; }
+    return anchorOf(world, player_);
+}
+
+// Whether a builder of this type can claim a deposit: a lodestone in its menu.
+bool Controller::buildsLodestone(const tak::sim::UnitType* type) const {
+    auto [it,inserted]=lodestoneBuilders_.try_emplace(type,false);
+    if (inserted)
+        for (const auto& id:registry_.buildable(type->id)) {
+            const auto* child=registry_.find(id);
+            if (child && child->onMana && child->isStructure()) { it->second=true; break; }
+        }
+    return it->second;
+}
+
+// Hard/Absurd expand map-wide, but a free deposit in a living ally's home area --
+// within kAllyHome of its start and nearer that start than ours -- stays the
+// ally's while the ally is claiming it:
+//  - a builder is bound for it (placeSite's reservation never races one, the
+//    ally's, another ally's or our own), or
+//  - the ally has a builder that can reach it -- finished, not carried, not
+//    disabled, with a lodestone in its menu -- and it has not sat unclaimed for
+//    kAllyClaimTicks.
+// Unclaimed means no lodestone on it and no builder bound for it, counted in game
+// ticks from the first think or from the end of its last claim, so a lodestone
+// lost in a raid gives the ally the same two minutes to rebuild. A defeated ally,
+// or one left with no builder that can reach (its Monarch lost under Monarch
+// Expendable), claims nothing. Retail's AI never builds there at all -- icd
+// 411510 takes the nearest free sacred site within its own base radius -- but
+// leaving deposits to an ally that never takes them (a Normal or Defensive AI, a
+// human who does not expand) cost a mixed team 20-35% of its income.
+void Controller::updateAllyClaims(const tak::sim::World& world, uint32_t simTick) {
+    constexpr float kAllyHome=900;
+    constexpr uint32_t kAllyClaimTicks=2*60*30;   // two minutes of game time
+    const auto& deposits=world.manaSpots();
+    if (depositClaimedAt_.size()!=deposits.size()) depositClaimedAt_.assign(deposits.size(),simTick);
+    allyHeldDeposits_.assign(deposits.size(),0);
+    // Every lodestone standing and every site an allied builder is bound for, and
+    // each ally's builders that could claim a deposit.
+    std::vector<std::pair<float,float>> claims;
+    std::vector<std::vector<const tak::sim::Unit*>> claimers(allyHomes_.size());
+    for (const auto& u:world.units()) {
+        if (!u.alive() || !u.type) continue;
+        if (u.type->onMana) claims.emplace_back(u.x.toFloat(),u.z.toFloat());
+        if (!world.allied(player_,u.player)) continue;
+        for (const auto& order:u.orders)
+            if (order.buildType && order.buildType->onMana && (order.buildX.v || order.buildZ.v))
+                claims.emplace_back(order.buildX.toFloat(),order.buildZ.toFloat());
+        if (u.type->isStructure() || !u.type->isBuilder || u.underConstruction || u.embarked() ||
+            u.incapacitated() || !buildsLodestone(u.type)) continue;
+        for (size_t a=0;a<allyHomes_.size();++a)
+            if (allyHomes_[a].player==u.player) claimers[a].push_back(&u);
     }
-    if (n) return {float(sx / n), float(sz / n)};   // centroid of my buildings
-    if (haveKing) return {kx, kz};                  // no buildings yet: anchor on the Monarch
-    for (const auto& u : world.units())
-        if (u.alive() && u.player==player_) { sx+=u.x.toFloat();sz+=u.z.toFloat();++n; }
-    return n ? std::pair{float(sx/n),float(sz/n)} : std::pair{0.0f,0.0f};
+    const auto home=homeOf(world);
+    for (size_t i=0;i<deposits.size();++i) {
+        const float sx=deposits[i].first,sz=deposits[i].second;
+        // Lodestone placement keeps 44 px between lodestones: a claim that near
+        // takes this deposit too.
+        if (std::any_of(claims.begin(),claims.end(),[sx,sz](const auto& claim) {
+            const float dx=claim.first-sx,dz=claim.second-sz;return dx*dx+dz*dz<44*44;
+        })) { depositClaimedAt_[i]=simTick; continue; }
+        if (simTick-depositClaimedAt_[i]>=kAllyClaimTicks) continue;   // sat unclaimed: open
+        const float hx=sx-home.first,hz=sz-home.second;
+        float nearest=std::min(kAllyHome*kAllyHome,hx*hx+hz*hz);
+        const std::vector<const tak::sim::Unit*>* owner=nullptr;
+        for (size_t a=0;a<allyHomes_.size();++a) {
+            const float dx=sx-allyHomes_[a].x,dz=sz-allyHomes_[a].z,d=dx*dx+dz*dz;
+            if (d<nearest && !world.player(allyHomes_[a].player).defeated) { nearest=d; owner=&claimers[a]; }
+        }
+        allyHeldDeposits_[i]=owner && std::any_of(owner->begin(),owner->end(),[&](const tak::sim::Unit* b) {
+            return b->type->canFly || world.pathExists(b->type,sx,sz,b->x.toFloat(),b->z.toFloat());
+        });
+    }
 }
 
 void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& sink) {
@@ -1121,6 +1203,18 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     if (world.player(player_).defeated) return;
 
     if (!home_) home_=homeOf(world);
+    if (diff_==Difficulty::Hard || diff_==Difficulty::Absurd) {
+        if (!allyHomesKnown_) {
+            allyHomesKnown_=true;
+            for (int p=0;p<world.numPlayers();++p)
+                if (p!=player_ && world.allied(player_,p) &&
+                    std::any_of(world.units().begin(),world.units().end(),[p](const auto& u){return u.alive() && u.player==p;})) {
+                    const auto [x,z]=anchorOf(world,p);
+                    allyHomes_.push_back({p,x,z});
+                }
+        }
+        if (!allyHomes_.empty() && world.hasManaSpots()) updateAllyClaims(world,simTick);
+    }
     plannedManaSites_.clear();
     Needs needs = assessNeeds(world);   // one empire assessment drives every producer
     // Snapshot the idle producers, then act on up to producersPerThink of them -- the

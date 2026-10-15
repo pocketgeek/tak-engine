@@ -192,6 +192,20 @@ private:
     DiffParams dp_;
     std::vector<std::pair<float, float>> enemyStarts_;
     std::optional<std::pair<float,float>> home_;
+    // Allied players' home anchors, fixed at the first think like home_ (homeOf's
+    // rule applied to each ally). Hard/Absurd expansion leaves a living ally's home
+    // deposits to that ally while it can still claim them (updateAllyClaims).
+    struct AllyHome { int player; float x, z; };
+    std::vector<AllyHome> allyHomes_;
+    bool allyHomesKnown_ = false;
+    // Per mana deposit (World::manaSpots() index): the last think tick it was
+    // claimed -- a lodestone on it or a builder bound for it -- and whether this
+    // think leaves it to the ally whose home it is.
+    std::vector<uint32_t> depositClaimedAt_;
+    std::vector<uint8_t> allyHeldDeposits_;
+    void updateAllyClaims(const tak::sim::World&, uint32_t simTick);
+    bool buildsLodestone(const tak::sim::UnitType*) const;
+    mutable std::unordered_map<const tak::sim::UnitType*,bool> lodestoneBuilders_;
     struct DefenseResponse {
         float homeX, homeZ, goalX, goalZ;
         bool returning = false;

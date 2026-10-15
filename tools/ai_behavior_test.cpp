@@ -497,6 +497,91 @@ int main(int argc,char** argv) {
                           ? "expansion leaves a deposit its own walking builder will take"
                           : "expansion leaves a deposit an ally's walking builder will take");
             }
+        // Map-wide expansion leaves a free deposit in a living ally's home area to the
+        // ally only while the ally is claiming it: a builder bound for it (never
+        // raced), or one of the ally's that can reach it while the deposit has sat
+        // unclaimed for less than two minutes of game time. Retail's base-radius
+        // search never builds there at all, but leaving a deposit to an ally that
+        // never takes it cost a mixed team 20-35% of its income. An enemy's, a
+        // defeated ally's and a builderless ally's home deposits are open.
+        constexpr uint32_t kClaimTicks=2*60*30;
+        enum class Ally { Idle, Bound, Lapsed, NoBuilder, Defeated, Enemy };
+        for (auto difficulty : {ai::Difficulty::Hard,ai::Difficulty::Absurd})
+            for (auto ally : {Ally::Idle,Ally::Bound,Ally::Lapsed,Ally::NoBuilder,Ally::Defeated,Ally::Enemy}) {
+                sim::World w;terrain(w);w.buildNavClasses(reg);
+                w.setManaSpots({{2560,800},{1600,1792}});   // the ally's home deposit, a free one
+                w.spawn(reg.find("factory"),400,800,0,0);    // our base
+                auto monarch=*reg.find("worker");monarch.commander=true;
+                const int allyBuilder=ally==Ally::NoBuilder ? 0 : w.spawn(&monarch,3000,800,0,1);   // the ally's start
+                if (ally==Ally::NoBuilder) w.spawn(reg.find("factory"),3000,800,0,1);   // its Monarch lost, a building left
+                const int idle=w.spawn(reg.find("worker"),2000,800,0,0);   // nearer the ally's deposit
+                w.setTeam(1,ally==Ally::Enemy ? 1 : 0);
+                if (ally==Ally::Defeated) w.player(1).defeated=true;
+                w.player(0).mana=10000;
+                if (ally==Ally::Bound || ally==Ally::Lapsed) {
+                    net::Command order;order.kind=net::Cmd::Build;order.player=1;order.unitId=allyBuilder;
+                    order.x=2560;order.z=800;std::snprintf(order.type,sizeof order.type,"lode");
+                    sim::applyCommand(w,reg,order);
+                }
+                ai::Profile p;p.weight["lode"]=100;
+                ai::Controller controller(0,reg,p,1,difficulty);
+                // Where the idle builder expands at `tick`: 'A' the ally's deposit, 'F' the free one.
+                auto expands=[&](uint32_t tick) {
+                    for (const auto& c:think(controller,w,tick))
+                        if (c.unitId==idle && c.kind==net::Cmd::Build) return c.x==2560 && c.z==800 ? 'A' : c.x==1600 && c.z==1792 ? 'F' : '?';
+                    return '-';
+                };
+                switch (ally) {
+                    case Ally::Idle: {
+                        const bool held=expands(0)=='F' && expands(kClaimTicks-20)=='F';
+                        check(held,"an ally's home deposit stays its own for two minutes while its idle builder can reach it");
+                        check(expands(kClaimTicks)=='A',"an ally's home deposit left unclaimed for two minutes opens to expansion");
+                        break;
+                    }
+                    case Ally::Bound:
+                        check(expands(0)=='F' && expands(kClaimTicks)=='F' && expands(2*kClaimTicks)=='F',
+                              "expansion never races an ally's builder bound for its home deposit, however long it walks");
+                        break;
+                    case Ally::Lapsed: {
+                        bool held=expands(0)=='F' && expands(2000)=='F';
+                        w.unit(allyBuilder)->orders.clear();   // the claim lapses at tick 2000
+                        held=held && expands(kClaimTicks)=='F' && expands(2000+kClaimTicks-20)=='F';
+                        check(held,"an ally's home deposit stays its own for two minutes after its last claim lapsed");
+                        check(expands(2000+kClaimTicks)=='A',"an ally's home deposit opens two minutes after its last claim lapsed");
+                        break;
+                    }
+                    case Ally::NoBuilder:
+                        check(expands(0)=='A',"an ally with no builder left (Monarch Expendable) holds no deposit");
+                        break;
+                    case Ally::Defeated:
+                        check(expands(0)=='A',"expansion claims a defeated ally's home deposit");
+                        break;
+                    case Ally::Enemy:
+                        check(expands(0)=='A',"expansion claims an enemy's home deposit");
+                        break;
+                }
+            }
+        // Only a builder that can reach the deposit holds it for the ally.
+        for (bool reaches : {true,false}) {
+            sim::World w;w.setVisPlayer(-1);
+            std::vector<uint8_t> h(256*256,100);
+            for (int z=0;z<256;++z) for (int x=96;x<160;++x) h[z*256+x]=0;
+            w.setTerrain(std::move(h),256,256,60);w.buildNavClasses(reg);   // too deep to wade from x=1536 to 2560
+            w.setManaSpots({{2640,800},{3600,2600}});   // the ally's home deposit, a free one
+            w.spawn(reg.find("factory"),3800,3200,0,0);  // our base
+            w.spawn(reg.find("factory"),2960,800,0,1);   // the ally's base
+            w.spawn(reg.find("worker"),reaches ? 3200 : 1000,800,0,1);   // its only builder, across the water or not
+            const int idle=w.spawn(reg.find("worker"),3400,1400,0,0);   // nearer the ally's deposit
+            w.setTeam(1,0);w.player(0).mana=10000;
+            ai::Profile p;p.weight["lode"]=100;
+            ai::Controller controller(0,reg,p,1,ai::Difficulty::Absurd);
+            const auto cs=think(controller,w);
+            const bool claims=std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+                return c.unitId==idle && c.kind==net::Cmd::Build && c.x==2640 && c.z==800;
+            });
+            check(claims!=reaches,reaches ? "an ally builder that can reach its home deposit holds it"
+                                          : "an ally builder that cannot reach its home deposit does not hold it");
+        }
     }
     if (argc>1) {
         auto vfs=hpi::mountRetailRoot(argv[1]);
