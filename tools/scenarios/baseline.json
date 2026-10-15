@@ -45387,35 +45387,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "6fcdba5d87dc0013"
+     "value": "a9560c5fd652e970"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "9c43368436ab43b0"
+     "value": "c50cf21654af590b"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "aa2f5866bb72baca"
+     "value": "6f79687e641d61f1"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "182579cb30b51fa6"
+     "value": "e282cfb01047cb51"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "16d8ae2ea13d1d39"
+     "value": "bc2fef0202f158ca"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -46917,35 +46917,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "63e7d0fadaf9b4f0"
+     "value": "1fe8bfbe00a351f9"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "d5def81dd34f5503"
+     "value": "0a34b5f8c9d90ca8"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "a1bdfe99f0519220"
+     "value": "663255854a28f321"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "73af9331072abfbf"
+     "value": "8fe06205c831dfd9"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "4074c152688a2965"
+     "value": "5570b81017065e06"
     },
     "pair.contacts.permille_x100": {
      "band": 1.1,
@@ -48383,35 +48383,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "aeeb5905b25e4e15"
+     "value": "0a76f3a0a25c6ed3"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "5f72720592c479f3"
+     "value": "aafa7cb4508bdec3"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "de1f621e0644bb3b"
+     "value": "793b28f72a8b7707"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "3480298b669f2a11"
+     "value": "fd1364e06bdb458b"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "ff40a4f239dc91d0"
+     "value": "6dc5dc471820e8bd"
     },
     "pair.contacts.permille_x100": {
      "band": 1.1,
@@ -59918,35 +59918,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "6fba9cfa56ee0d23"
+     "value": "c77a76ea035513ad"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "c4f46efb28b1e0aa"
+     "value": "6460013a7b28b621"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "f39ba478b1692da0"
+     "value": "c0c7cffb6af33927"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "1a5c1c8cbfe34748"
+     "value": "dd0afee656ae51ae"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "8aeb87ed6676a972"
+     "value": "995ad3b92133bcb0"
     },
     "pair.contacts.permille_x100": {
      "band": 1.1,
@@ -61383,35 +61383,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "0a0a78407755747f"
+     "value": "2d4832e24b3363c1"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "4404cb9148e465a3"
+     "value": "e9dbfe77b6d765bd"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "7c9998e673fdc30e"
+     "value": "df4ce5dfe94dc0ae"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "3a4a7ad4db8c9c0e"
+     "value": "64d4a4c418940336"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "646f9e31330d7dca"
+     "value": "c36247c88d35ed22"
     },
     "pair.contacts.permille_x100": {
      "band": 1.1,
@@ -62776,35 +62776,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "6f4f96ef094570df"
+     "value": "a46049235e551681"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "5d92e8076a5ca903"
+     "value": "857c5a2f56d1339d"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "82f2b34de601e9ee"
+     "value": "945f6ba39d42ee4e"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "8901fb93734bc9ce"
+     "value": "7aefbbbefc1debd6"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "dc69b59db56ea38a"
+     "value": "2cd0ec1ecb643802"
     },
     "pair.contacts.permille_x100": {
      "band": 1.1,
@@ -64306,35 +64306,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "0df9668e4d7d12d6"
+     "value": "da624c79093d30eb"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "73d7bea6d8edecd4"
+     "value": "4aba9acd074e0d01"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "19e2ab702f4d872a"
+     "value": "4899a0c9a94a54f3"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "38a3ecf3297bfa6b"
+     "value": "0e3de9ac7194fe3a"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "0b6a6598dbc35d39"
+     "value": "0c7b0695411756cf"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -66031,35 +66031,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "69699b47ce9dc8a4"
+     "value": "0afa08a6f59f8bc8"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "b3292e68de6694d4"
+     "value": "5937e65142982afa"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "0f59ec8e6fd854c7"
+     "value": "b68117466b341fef"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "4d4f360b6c2fdb63"
+     "value": "803653c179ba51fa"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "cdaa1b5a26a1aa7a"
+     "value": "5c05e689694c3dbe"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -67796,35 +67796,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "e39726eba24bcd74"
+     "value": "7affa12f6367b8f6"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "1a289bf8b13a7345"
+     "value": "613431808a0f6129"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "1c277a29f6ba5b1b"
+     "value": "a9723ba5fe9dfb97"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "896a627110c93705"
+     "value": "42702fa971827902"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "053deb17893322d2"
+     "value": "86b2284c38c3cbcc"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -69481,35 +69481,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "a8d6a2103fa0d5f1"
+     "value": "329d3c6693448c34"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "c523dc6b307b1d1d"
+     "value": "fa0bb569fbc6e4b4"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "8c75d393377bb8f1"
+     "value": "0094db0174e3af7f"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "bab7f997467276be"
+     "value": "d5e06517ff34ccb8"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "83f231bfd71b90ee"
+     "value": "a42d03091862ce59"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -70778,35 +70778,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "59acba94f8d5128e"
+     "value": "82173017889750ad"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "c3acf88afe00b082"
+     "value": "8137f1db4716d436"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "f6d6e2a34b88e61a"
+     "value": "2cc86d4cf5075c65"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "48153ef835b0e299"
+     "value": "e1df2392cf871bd7"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "1b05c5d6a7787c6e"
+     "value": "3beed84a63e1a2c0"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -79373,35 +79373,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "7bfcddd037e19ed6"
+     "value": "33259d0c67eb79fa"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "88e74b4ac60a46e9"
+     "value": "eb26d0d4ef2368f1"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "bf8855d263700019"
+     "value": "b385541540938258"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "ee90b4dc6e2f7251"
+     "value": "89d59c45b04ecfdf"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "8d0b4420510ef201"
+     "value": "0e945cc5e59b970c"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -80671,35 +80671,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "224ddd978ad5ba3a"
+     "value": "626f3417f4319eff"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "d1bfe2572a5a4949"
+     "value": "95b611dfbbabd2cb"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "9261e05c806a47e4"
+     "value": "f7f7acf5c3b3a519"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "d72b219903c2ca03"
+     "value": "23b96e059ea5311b"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "27ed4ec218fb6aa8"
+     "value": "5f43ba47244a6351"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -82327,35 +82327,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "5ce5dfe3a915d949"
+     "value": "0b52ac04c2f4eb69"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "539ead62c75f0656"
+     "value": "b823777ee1a86fde"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "c5e21fa13d76066a"
+     "value": "2dffa99ca1702598"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "89f597662b447319"
+     "value": "16f70f16fcd7c0d8"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "df41dbeb8c81df4d"
+     "value": "aab206289ed7efdc"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -86196,63 +86196,63 @@
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "fcc05b4e546269a0"
+     "value": "49254bee63bbc947"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "6654db098116c0bf"
+     "value": "884cdd25ea125a8d"
     },
     "hash@-3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "ba7c36632df54de5"
+     "value": "4a24add76455c973"
     },
     "hash@-4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "6c38869233b94d41"
+     "value": "c03ab86df61620c8"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "dcdc0df926e2511d"
+     "value": "9e5d4d8175084298"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "da50923c87298e1a"
+     "value": "1145c0981ab58a49"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "85a22b8defa859cf"
+     "value": "8817b877a64c21a8"
     },
     "hash@3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "a90ae14eaeb065a8"
+     "value": "6a2532d262e2ae51"
     },
     "hash@4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "e438cb4b96ca4482"
+     "value": "fee36127ac17e91d"
     },
     "open_still900": {
      "band": 1.1,
@@ -88391,35 +88391,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "4fd85b6ae8af6260"
+     "value": "e6624b8968959ec1"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "0a39bb387ac0660a"
+     "value": "567f95d19cdefdae"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "93110c494cf4b73e"
+     "value": "6cb7c405190d6b28"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "85b87640549fa745"
+     "value": "fbdfa50f14bea432"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "2fc39b460f76b732"
+     "value": "a8d999f0a096153e"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -89743,35 +89743,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "cd5078628c09087c"
+     "value": "50e3499692b030db"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "9db505b30e52f9b3"
+     "value": "32def4fc1a1438c8"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "95c5bb39d79a0f94"
+     "value": "512512eb5c98b156"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "fdd7b8e6eacb07cc"
+     "value": "46650ee8c2210605"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "f63285475a905c70"
+     "value": "4b23a88f66731a96"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -91144,35 +91144,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "52b9b593b62d76a7"
+     "value": "35bab01479c5feac"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "510db3d96880a0db"
+     "value": "a2963990e8e0ee6a"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "79e53d97d3004297"
+     "value": "2e82ffc898143200"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "f89e656e52c73c85"
+     "value": "cb2d58c1f0d52577"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "f263424ba8d35fcf"
+     "value": "6329e5e30fee59bd"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -135930,35 +135930,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "702b65c7481954d3"
+     "value": "681d6dca59e72d22"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "22d7aa6e06f702f5"
+     "value": "888e876b4224324c"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "a58e0c2069dcf99a"
+     "value": "ade72d10c0a27304"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "35608a4837833db1"
+     "value": "2ed0e30ce1290def"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "5c9b911f213969f4"
+     "value": "e5dc05a970f2f11e"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -137226,35 +137226,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "d398b21961ceb3e4"
+     "value": "4f409c2c616e5414"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "cf4c37b2aa47e284"
+     "value": "7bf4423b5569bfa6"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "8a8a710737561352"
+     "value": "85a1ca29e74333da"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "c12e7111fa6f3d84"
+     "value": "342486c5de8b82fd"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "75ead3e698415383"
+     "value": "2475f9b81f3e4843"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -143129,77 +143129,77 @@
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "a0d6bacc9022065f"
+     "value": "0dcbb6a133149672"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "ab160dee83994917"
+     "value": "77b0e08915a75e75"
     },
     "hash@-3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "be390b6d70da39f2"
+     "value": "aab57187d75e71a1"
     },
     "hash@-4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "ed44b506f80916d2"
+     "value": "9194118dfe23922b"
     },
     "hash@-5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "0ebc9819d2af683f"
+     "value": "31154daaaddc97c3"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "aa465e6dd3a9f787"
+     "value": "a05d59394d9e1f9b"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "9daf4d1022c5c256"
+     "value": "fff98015f856f237"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "39477c5e3a9b9e0e"
+     "value": "a5219f6ec4f135b2"
     },
     "hash@3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "3e0479a7fab25f50"
+     "value": "3f45424333e2a1e9"
     },
     "hash@4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "605553c549adf76d"
+     "value": "26eaccd0977256a3"
     },
     "hash@5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "92ee4052910875a7"
+     "value": "9200f25baeb84fda"
     },
     "open_still900": {
      "band": 1.1,
@@ -148315,77 +148315,77 @@
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "20a48820e2e19ade"
+     "value": "a5d4340bc6f2f033"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "c55bc6bf850f15a4"
+     "value": "1c1f8fe9bf01457d"
     },
     "hash@-3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "56ab8e13f9d0369c"
+     "value": "3df784619d671a19"
     },
     "hash@-4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "103ca66f79e83189"
+     "value": "6c824e54b8337303"
     },
     "hash@-5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "5121cc53672701c9"
+     "value": "3a148d81f0118adc"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "c17b7659a2633ea9"
+     "value": "e56a03a0e414e03a"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "1b1a769ebbefb89e"
+     "value": "0c5ca7c939f8f88d"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "0db9a33b21826508"
+     "value": "cc8ba53869c64cd9"
     },
     "hash@3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "c0cae8163317731c"
+     "value": "e7ffde3f136fa5e4"
     },
     "hash@4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "56902f5f2ed40c23"
+     "value": "b6c7fa4098aca085"
     },
     "hash@5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "befc5c49b3f0e0dc"
+     "value": "9751e80f11f39a45"
     },
     "open_still900": {
      "band": 1.1,
@@ -150736,77 +150736,77 @@
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "662b395517f03d9b"
+     "value": "8990c3f0dce0ba54"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "ff75ade06edac41f"
+     "value": "ec7869ad67c039a6"
     },
     "hash@-3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "5a92087ff5887c61"
+     "value": "a0ea91095a3d7ba8"
     },
     "hash@-4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "84c5617edb34af67"
+     "value": "cc17c4932ec574ce"
     },
     "hash@-5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "d7ac5bd9cc419da0"
+     "value": "602f8ed02a294a46"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "a3b34a7e587526e3"
+     "value": "2d6dc77aa1d6f919"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "f010ed1659f34895"
+     "value": "377f2cf569772d68"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "8e1d63d2ef01e020"
+     "value": "0d786d10c194effc"
     },
     "hash@3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "328cf499a6cd1773"
+     "value": "8f4072c0942d2376"
     },
     "hash@4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "dd0c9637844be555"
+     "value": "5d4da41ae891528c"
     },
     "hash@5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "4086d8ea51399281"
+     "value": "3f7356eecf36e337"
     },
     "open_still900": {
      "band": 1.1,
@@ -153181,77 +153181,77 @@
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "4207c16f4cc738c5"
+     "value": "676cf59b0029d782"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "e99fc048a9671b5d"
+     "value": "78b42b4550069488"
     },
     "hash@-3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "0c7e65fb22f3b73f"
+     "value": "cd19d64b83020a9e"
     },
     "hash@-4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "7af65fd5e6b9f619"
+     "value": "023b84fa1cd43964"
     },
     "hash@-5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "29426932b801d742"
+     "value": "9a69ffc3307fa9c8"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "d77c6f1380666375"
+     "value": "2ef7d69ca7ea1bf3"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "de3119df424a2b37"
+     "value": "60c85d65957f150e"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "fec0405ca1965b4a"
+     "value": "d4fb3eb1cab1853a"
     },
     "hash@3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "0ca8234b786ca8e1"
+     "value": "a99db41fb3088c1c"
     },
     "hash@4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "11d7b3e5404b5d67"
+     "value": "b3c2f46ae7ae30ee"
     },
     "hash@5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "565c01fd150f1113"
+     "value": "3b3ae3c480a8eebd"
     },
     "open_still900": {
      "band": 1.1,
@@ -154710,35 +154710,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "3ced93a8b7a2164e"
+     "value": "497c865b3d1d91c0"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "792a84e25ac0f717"
+     "value": "6dceb960d0935a99"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "a759a43d959c7264"
+     "value": "3711c2a5a2fc4ae9"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "e75c43e476ce411c"
+     "value": "8762f6778ae2428d"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "546978f41dc8f31c"
+     "value": "cc93c6abab14c530"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -156913,77 +156913,77 @@
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "81271519187947d7"
+     "value": "b969abb197954346"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "d689b7231eb32e4d"
+     "value": "21719e79b6ee32d0"
     },
     "hash@-3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "0c71c86127589dd8"
+     "value": "86048098d6dd7bd1"
     },
     "hash@-4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "f3906bb4b4dbf376"
+     "value": "d105621e26d8be7c"
     },
     "hash@-5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "8ec48c59b608c132"
+     "value": "684810726e09ebc3"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "71c4e69f6f4d2a16"
+     "value": "05b915f19cf57b82"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "60613e22ed76ce96"
+     "value": "a3e5e956a01b4c24"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "5ea53b689e5968da"
+     "value": "8d1386bc053356bd"
     },
     "hash@3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "fb959e0c78fa4ae7"
+     "value": "a6b162a10e6a7fcc"
     },
     "hash@4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "bd58c73770fb5c97"
+     "value": "7806bd70ea0f56c3"
     },
     "hash@5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "c8b9f22ee4739031"
+     "value": "7886b725ecad60c6"
     },
     "open_still900": {
      "band": 1.1,
@@ -158778,35 +158778,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "e4fa78dfd32e41f7"
+     "value": "8195206dd1ec0434"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "b84f9a154b984c73"
+     "value": "599d01e613aadcfc"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "6feecc2bee3dbf44"
+     "value": "347f98f1bad60de9"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "4b737c1e1c5c846f"
+     "value": "1c13e2eb8449d6e4"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "35f125a55f4df9dd"
+     "value": "ff8d332bb10df02f"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -160176,35 +160176,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "bf9548e7719bbce8"
+     "value": "8f618a371b497720"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "ffda42e50e4baf31"
+     "value": "a3e4fb4c1e0ed123"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "67782cc4465048eb"
+     "value": "68954c910bb504d3"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "b3955c76bd155bfa"
+     "value": "bd9f711c2f16c988"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "fc0c8da306b43747"
+     "value": "b677e44f12485209"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -161606,35 +161606,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "37b107290053415a"
+     "value": "b4441b3ec5449131"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "04e361020bd76db8"
+     "value": "6c0ee22a3ebe4e04"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "ea9ddebec70e1e1e"
+     "value": "d758fe6857a8c019"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "82762fb34a3306b1"
+     "value": "a1a602f1456f95d8"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "7297aee6de0f30b8"
+     "value": "8933b28e4f34e02d"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -163166,35 +163166,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "ab2253b61bce2c53"
+     "value": "ece6aea82d40ab4d"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "843ea30e51b22b91"
+     "value": "e18bee7bcd1000ea"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "992c6d4fc3a734dc"
+     "value": "725f70a0969cfa72"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "9cdd78cc8b72abb0"
+     "value": "959ffa5da6683a09"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "8f717dd053734c7d"
+     "value": "3911f622d026984c"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -164726,35 +164726,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "7d9a511398e9905f"
+     "value": "2fb3bf4ad11a1498"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "3aad09daba8845cb"
+     "value": "6cc10fe321a01368"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "4096ae3e3ac8d896"
+     "value": "42ea8b51870faa72"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "70d0e5a14465a5a1"
+     "value": "9ddb0bd8614f4812"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "be2b6d0629fd30f1"
+     "value": "7bad445c6f06c5f8"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -166311,35 +166311,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "aee7b6df2c9b6502"
+     "value": "c424d784794ff039"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "56254b7445d04e92"
+     "value": "a058c1c57770a9b9"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "d8ab7474f0848814"
+     "value": "e4efcb5dce9d2688"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "dc84aa900ba4c803"
+     "value": "328aee86e8ae2bed"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "898cd6119325ebd7"
+     "value": "88fa7d5feaa63735"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -167943,35 +167943,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "f991661211f8236b"
+     "value": "33ed384507cc3dc3"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "2a6b1e6daff3883c"
+     "value": "3fcff7955d060d74"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "8e5b4bad9bc7943a"
+     "value": "1a3423e9740e3d64"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "f73c3db37830c2ac"
+     "value": "cb867ac6889fe9d5"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "6eddf5fc04b2fc1b"
+     "value": "023d69476ab81e3b"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -169575,35 +169575,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "836488b172024efe"
+     "value": "945a54f556ab5770"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "5f804f2d9e3f5059"
+     "value": "74a07007d30ce57f"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "82fd5805be75f229"
+     "value": "20267156bc289961"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "6b3c87778b8eecc5"
+     "value": "3bcfefbb8852060c"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "f2f8a358798526bb"
+     "value": "cf16a5ff0214df26"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -178001,35 +178001,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "fefd3d7498a96094"
+     "value": "e068d288b227a5e8"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "faf1ee786ddecd94"
+     "value": "d8316c54aa9b8122"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "8ebc8ba50f26a855"
+     "value": "cea77bd502d79de8"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "2bb7edab04714602"
+     "value": "a334ddd02c944c47"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "985cffacebb3b053"
+     "value": "8c5579f4b59e2056"
     },
     "lane.cross.swaps_permille": {
      "band": 1.1,
@@ -179354,35 +179354,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "8ea88bfd7a4078cc"
+     "value": "bb5623d6ccb74233"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "031fc2e66b31593c"
+     "value": "ff476880614ea59e"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "d025b4775d8caa72"
+     "value": "f40cdd255fbbf2f9"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "0284e14bfb8750fc"
+     "value": "35294531b8841821"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "2a8c2ba3c67c7f77"
+     "value": "dca164b06cdcfe19"
     },
     "lane.cross.swaps_permille": {
      "band": 1.1,
@@ -192858,35 +192858,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "890b334450bf822e"
+     "value": "71de742af3a425bd"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "0a43de347789d1f6"
+     "value": "563885c963f9fcbf"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "7c1795e240e973e8"
+     "value": "454170076ecc5bd4"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "f81f28c64b6d5939"
+     "value": "d7507c569e7cfaf7"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "8206558c5430bf0f"
+     "value": "80d776f02d32f81f"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -195460,35 +195460,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "95b3413dcdefbbd7"
+     "value": "074fa981bbb7c6c4"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "c0da6d8b7675723e"
+     "value": "bac364f5fbf311f1"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "497bb89d56ba1371"
+     "value": "2aeffe5e5c0eaab2"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "2bbfd8c172bed09b"
+     "value": "d7e6ff60efe3cadc"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "0a17354cdc177756"
+     "value": "92270199b4597ae3"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -197767,77 +197767,77 @@
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "a1f66603fb87c606"
+     "value": "fd9cbea33c6c0af2"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "6653165711d4fc10"
+     "value": "5adb7c9d33ab199c"
     },
     "hash@-3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "e70fb5f38eb46c74"
+     "value": "a56fcf635ba10d61"
     },
     "hash@-4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "bab83d6f8b253775"
+     "value": "b34072f6afb97ebd"
     },
     "hash@-5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "d55f6964944f7785"
+     "value": "2ec352c5ab178716"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "94c9382a6f3dfb98"
+     "value": "e95f1d9fa5c59d43"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "4ca56ba9e371594d"
+     "value": "66748d16c0724b0f"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "e855f0bd31077abf"
+     "value": "e951202e92792873"
     },
     "hash@3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "39f04926af52f64b"
+     "value": "614d31efb61d4693"
     },
     "hash@4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "ae80601335d2cc49"
+     "value": "8a06c5d6e201934c"
     },
     "hash@5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "1ccb159b25da629a"
+     "value": "68f191a849bb6047"
     },
     "open_still900": {
      "band": 1.1,
@@ -200324,77 +200324,77 @@
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "de884373746943f0"
+     "value": "b0518ab294ac7e30"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "19c52d9f6f656df6"
+     "value": "df91bf9d2ad9429a"
     },
     "hash@-3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "fd4304207f138df2"
+     "value": "b69c4c76d8bb059f"
     },
     "hash@-4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "be7eeccb9cc64ab7"
+     "value": "49d764cf8f5724e8"
     },
     "hash@-5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "1c548f38f731c867"
+     "value": "d04b973335102813"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "a634c29950d8d5a2"
+     "value": "fbaf9775956ec2b2"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "ebc8a2230420729b"
+     "value": "a575f9c29179266e"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "321fc6bc3cc93729"
+     "value": "64f84b398842c6a7"
     },
     "hash@3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "52e72df87a655941"
+     "value": "a76d401979723e2f"
     },
     "hash@4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "a9b14ab938acc815"
+     "value": "1fb02a2055c0a3f1"
     },
     "hash@5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "a358f4f808b1d898"
+     "value": "96a0c94774e62afe"
     },
     "open_still900": {
      "band": 1.1,
@@ -202833,77 +202833,77 @@
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "56fd28355774e208"
+     "value": "d6f6140e6b279f23"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "b74749c250f14ad3"
+     "value": "3809383cb125b156"
     },
     "hash@-3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "5b4a7900ca798169"
+     "value": "8c67bee8bf55dfde"
     },
     "hash@-4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "b2cabf1089a65d8d"
+     "value": "ae80f4becbcad889"
     },
     "hash@-5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "b34a4d74d7d1efc6"
+     "value": "b0ef67bdb1940a39"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "f3c01631e3e61d28"
+     "value": "e7430a9d958835eb"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "ec8f9421af06b97e"
+     "value": "1d1e9cf68f1ea1b6"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "db8593d5c4b2dcc2"
+     "value": "d16055f68f9e0a8a"
     },
     "hash@3": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "93101a15874ff094"
+     "value": "9d60606a958723af"
     },
     "hash@4": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "01f38c2f339eaaf7"
+     "value": "76cd96193bf6b79c"
     },
     "hash@5": {
      "dir": "lower",
      "reason": "W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
      "since": "W8 exit (2026-10-10)",
-     "value": "f3ff7d4989ebeb8d"
+     "value": "bd93ca1cc43ad9de"
     },
     "open_still900": {
      "band": 1.1,
@@ -204672,35 +204672,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "b3b3a4456fb81561"
+     "value": "0308a4bdd623315d"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "9f76436082a6f74e"
+     "value": "7caf529f5566d4fb"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "4a3d15fa4b1114a9"
+     "value": "a9ba053789316758"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "5af13701e2947066"
+     "value": "b324322530a9e9d2"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "cc8893afb8087e3c"
+     "value": "be741e27a0afb781"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -206073,35 +206073,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "a2e6c37426b0c1bd"
+     "value": "dd5f52ee4f8d0d50"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "2744c07d5b518187"
+     "value": "ceaf9921b2c6cfb5"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "b0555dfbe2f970f3"
+     "value": "5a5c61a6172eb8a8"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "f596ad58e11af4be"
+     "value": "f627fd53b9e35f37"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "7ea80db1f719c48a"
+     "value": "0792c210c4638de5"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -207355,35 +207355,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "c8611a8e39c3d5bd"
+     "value": "7d6fe6a903fc39eb"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "e8742dc1de196696"
+     "value": "d67512bb68c592b2"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "8253563e632a0e69"
+     "value": "70b4a27e73fa52bd"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "31f2b2fa2480c840"
+     "value": "d3f5351edfdeba10"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "e057317eaaedb5b0"
+     "value": "fd8db8b24e17d262"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -208629,35 +208629,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "30b255e242d2d61d"
+     "value": "e8811b26c7d6dc04"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "46950bde035fb07c"
+     "value": "9927adf65e532b18"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "e7b2ea0b352865cd"
+     "value": "bc40ea452f9b82b0"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "b7639bd375ecd28f"
+     "value": "3c24ec3ab026b8a5"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "d495311a4d660d5f"
+     "value": "b7c63b256c651eb8"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -209926,35 +209926,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "3fdbfc5df4016223"
+     "value": "3527146ed828624b"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "3af4878326cca9ef"
+     "value": "22372dbc7c7c4118"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "47fb81e4b2839e5d"
+     "value": "e3ea2c948c8e3740"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "0b331b2c001e0d21"
+     "value": "a8af72e6854484d4"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "a464027d3764dd66"
+     "value": "badc630078e3ccf4"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -218048,35 +218048,35 @@
      "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "eq",
      "since": "W0-followups",
-     "value": "61f05037f7ae2f05"
+     "value": "02e22c12703e2013"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "eq",
      "since": "W0-followups",
-     "value": "51dce4f1a937b3aa"
+     "value": "478d76e165e103da"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "eq",
      "since": "W0-followups",
-     "value": "65bc1dd272fbb6d0"
+     "value": "cc5e16e758c5cba4"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "eq",
      "since": "W0-followups",
-     "value": "171550a6da3b110e"
+     "value": "8d8cd81d2def7ddb"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "eq",
      "since": "W0-followups",
-     "value": "9a2ae5367c009ab4"
+     "value": "1a855efe5567f4a0"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -218882,35 +218882,35 @@
      "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
      "rule": "eq",
      "since": "W0-followups",
-     "value": "3118e573184faaa0"
+     "value": "48e5b25ccc8e4c1e"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
      "rule": "eq",
      "since": "W0-followups",
-     "value": "48a6b9f5fa424aeb"
+     "value": "8cd82711a84fd083"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
      "rule": "eq",
      "since": "W0-followups",
-     "value": "b338ad62228fd8d1"
+     "value": "c94dda2fdf60a885"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
      "rule": "eq",
      "since": "W0-followups",
-     "value": "6de8bbedf0ac049f"
+     "value": "92b7afc24cc329ca"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
      "rule": "eq",
      "since": "W0-followups",
-     "value": "b4970f4d000074ad"
+     "value": "47e6a74e4fb9a3a9"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -223112,35 +223112,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "d8d66cfb20e64644"
+     "value": "a9a6c6126795ae1a"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "b5a117ea8a8be769"
+     "value": "622ab2206a2cecda"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "68a5d853880b479c"
+     "value": "ac0a87c60b4dcb5e"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "459a6a19b2615fc9"
+     "value": "120af8697165769e"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "2683b9873282692e"
+     "value": "949e7196efd07cc9"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -224658,35 +224658,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "a9e37941acd104c4"
+     "value": "165e51c0b41d4f37"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "326f4254d21eff9d"
+     "value": "4a055c9d20594943"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "ed32b4273942c599"
+     "value": "8ac392e1ee253184"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "9c59c1f9faa700f7"
+     "value": "7d0a7d56b4ac31b2"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "bf8d6f747691f986"
+     "value": "ebb8611d3873a48f"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -225956,35 +225956,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "7737b524a6427fe5"
+     "value": "f69713b3b8600a26"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "7d6acdf581809fb6"
+     "value": "2a63a89089ad5215"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "f5a6fd9c83e33a96"
+     "value": "6333fc812e1e15e5"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "4898f97dec8ae00a"
+     "value": "3fcbc328e6269242"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "84beeb4fe088ec20"
+     "value": "073251f7cdc8007b"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -227389,35 +227389,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "8650af1c69cb09de"
+     "value": "545567c4c104b67a"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "18d771f0fdcdf5b5"
+     "value": "73ea5d434fa67ad8"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "eaec71c5a305e872"
+     "value": "4c3ff7baaf1bc560"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "39373dd0f6954a9e"
+     "value": "38cb192422374fc1"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "d3afdaf36fe52202"
+     "value": "659cbe8b8ce3ca13"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -228822,35 +228822,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "c929dde7124e8337"
+     "value": "b6f55bd633c324ff"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "4c894a9871332a9d"
+     "value": "47ab44e8924cd8a5"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "a7720d717a3b98a5"
+     "value": "a1000eed78432e32"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "ff51a7789b7bbe6a"
+     "value": "91089fb59e52cc24"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "2e0fa834d62a2a33"
+     "value": "4a3c2a04e377a267"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -237062,35 +237062,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "373093e1775bc306"
+     "value": "85539a37111d2ac9"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "e2100b458b9be1c7"
+     "value": "f26aefd03f5f937a"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "9efb9373ae550005"
+     "value": "a2cb3b538ebf055e"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "8a9fb9d0ac83722e"
+     "value": "1543cadc32ccdb4d"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "4a7e30fc35e3cbca"
+     "value": "0f527275a5741602"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -238534,35 +238534,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "51dfefb5a987b48a"
+     "value": "9a15b816cb8a82bf"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "810735de2e275c72"
+     "value": "59c7fda0be2651fb"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "44b2ebcc4892f2ec"
+     "value": "9ae4f536b70e7213"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "55df3fc5272309c4"
+     "value": "037cceafa3077c78"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "551ac6370086c945"
+     "value": "b1158ad378482996"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -239855,35 +239855,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "fdca0e871c78a69b"
+     "value": "9bc6ea82ee87a07c"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "e81336992e9f4c90"
+     "value": "272374ae4cc2c258"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "b3a7a8335ffd8a33"
+     "value": "866dc6fcf38a78de"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "0472ff96f787ee1b"
+     "value": "31a3965e1f6f513d"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "34e427bd6dcaa324"
+     "value": "a4c6bfec18307b78"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -241181,35 +241181,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "a8c926adff24eabf"
+     "value": "1cb8338e8931ff9b"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "a3d8e66a9b8ac208"
+     "value": "68ea4ad651b1e063"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "3101bf67006bc91c"
+     "value": "9064d0c17ba7f080"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "7aeac131f676ee53"
+     "value": "3a3259d062d8ef7c"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "6e05ca5bf98b43a0"
+     "value": "ea4d5dfa6fa4ae7f"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -242645,35 +242645,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "d5a4dea678a25348"
+     "value": "b2feb276c46e775a"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "63cb0214889c11ce"
+     "value": "85ba3e033dd22c55"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "a54d8adea106edc6"
+     "value": "b9aa10954d785210"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "e74ed5fee64f77d5"
+     "value": "d69c4d68c3d3aa4c"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "a6024e190fb2e479"
+     "value": "5710d5cd2d207efd"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -243965,35 +243965,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "d861caf2022daeff"
+     "value": "d98a9ec5d863e421"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "f70a4fc5c0f4a2a2"
+     "value": "f99baab19d6a98df"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "29da5bfbde9c20d8"
+     "value": "3b14db26a2bf97eb"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "a46d4b96c850fb7f"
+     "value": "995886406df23310"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "0bdd607a189e0962"
+     "value": "a16cc07e3b5e0843"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -256116,35 +256116,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "4071b5dcbe9b5022"
+     "value": "c91f6133b28a6515"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "b9a4bceba8c4495e"
+     "value": "4dad97374fcb9e63"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "895aeef6a54b0a1e"
+     "value": "3d2277ee743e5c38"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "df71ef5cecd75704"
+     "value": "bea14fa09d44f76d"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "f19f7f99d5dda67d"
+     "value": "b11e5c5ad24fdc15"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -257438,35 +257438,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "e2963201f318787d"
+     "value": "d8761adbdc6161d1"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "5de8e31720ca9e32"
+     "value": "288c0e44e5a54f2c"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "c5157b35b4a7a575"
+     "value": "396bdd86fd483da6"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "1f34e7a5dcc4b716"
+     "value": "61d074bf142aa786"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "a2c4ddf36a2240a6"
+     "value": "2e64480a04907ba0"
     },
     "lane.cross.swaps_permille": {
      "band": 1.1,
@@ -259135,35 +259135,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "22618d1e17bf703f"
+     "value": "273c5fae6a40dbf4"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "3fcb63c255ce9e0b"
+     "value": "836a7ef0a2f97b3c"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "508b9b3d10dfb846"
+     "value": "a09d2f81e2961f74"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "1309dcfba97cb333"
+     "value": "951c06e7a61ac2e3"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "840b0c427afbd62c"
+     "value": "0794c07d7677a066"
     },
     "lane.cross.swaps_permille": {
      "band": 1.1,
