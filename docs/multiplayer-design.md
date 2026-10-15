@@ -712,6 +712,9 @@ cannot fly instead of holding still in range (see "World's other flyer holds",
 Its `--mpai` Inner Circle seed 1 hashes: Retail 300 s `bf6f1ac3081f9ee6`, 60 s
 `8db23af1b0260ba1`; Legion 300 s `7def7a0fa5dedfc6`, 60 s `5bc7e8001c06611f`
 (the 60 s ones are 262's: no flyer fights in the first minute).
+Normal's larger builder total (up to the Monarch and four, see
+`ai-expansion-2026-09-29.md`) moves the 300 s ones, protocol unchanged: Retail
+`76f7e976cd6a00c9`, Legion `99e2f137cde8d769`; the 60 s ones stand.
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when

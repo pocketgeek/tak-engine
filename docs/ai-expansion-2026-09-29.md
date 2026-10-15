@@ -275,3 +275,48 @@ before).
 300 s `bf6f1ac3081f9ee6`, Legion 300 s `7def7a0fa5dedfc6` (protocol 263). Its
 60 s run ends before any builder could have stalled for a minute. The AI runs
 on the server only, so the protocol is unchanged.
+
+## Update 2026-10-15: Normal's builders
+
+Normal now keeps up to the Monarch plus four builders, two plus one per 50
+income (the Monarch and one builder below 50, all five from 150). It kept the
+Monarch and one before, whatever its income. Retail's `ai/default.txt` (the
+`IPData.hpi` copy, which the game loads) limits each builder type, not the total:
+`arabuild`, `arafly` and `arapries` 4 each; `cremech` and `crechie` 4; `tarpries`,
+`verlihr` and `verliege` 3. It has no difficulty levels ("no difficulty in Kingdoms",
+icd `0x605190`), so four is the most retail lets any one builder type field.
+Those per-type limits still apply on top of the new total. Easy and Defensive
+keep the Monarch and one builder; Hard and Absurd are unchanged.
+
+`teamsim`, "4x4 team", eight Normal AIs (4v4), Crusades, Monarch Expendable,
+seeds 1-6 (48 AIs), against main. Completed lodestones per AI at 300/600/900 s
+for seed 1 (compare the table above):
+
+| Seed 1 | Lodestones per AI, 300/600/900 s |
+| --- | --- |
+| Before | 2/2/2, 1/1/1, 1/1/1, 3/3/3, 3/4/4, 1/1/1, 1/1/1, 2/3/3 |
+| After | 6/6/6, 1/4/4, 1/1/1, 5/5/5, 5/5/5, 1/3/3, 1/1/1, 4/4/4 |
+
+Means over all 48 AIs:
+
+| | 300 s | 600 s | 900 s |
+| --- | ---: | ---: | ---: |
+| Lodestones, before / after | 1.48 / 2.83 | 1.67 / 3.08 | 1.67 / 3.08 |
+| AIs on one lodestone | 29 / 21 | 28 / 17 | 28 / 17 |
+| Income | 161 / 299 | 185 / 332 | 185 / 332 |
+| Army | 19.7 / 16.5 | 44.3 / 46.5 | 59.0 / 68.6 |
+| Mobile builders, Monarch and Zhon handlers included | 2.5 / 4.2 | 3.3 / 5.9 | 3.4 / 6.0 |
+
+The army is 16% smaller at 300 s while the builders are made, and larger from
+then on. No AI was defeated in either set, and none of the 185 lodestone orders
+(80 before) lay outside the AI's own home. Of the 17 AIs still on one lodestone,
+12 are Zhon's (both in every game) and 5 Taros'. Zhon has no Builder-category
+unit but its Monarch -- its handlers count as factories -- so this cap does not
+reach it; every Taros lodestone in these games was ordered by Lokken or `tartb`,
+never a Dark Priest.
+
+`--mpai` (Inner Circle, seed 1; four Normal AIs) moves at 300 s: Retail
+`76f7e976cd6a00c9`, Legion `99e2f137cde8d769`. The 60 s runs are unchanged
+(Retail `8db23af1b0260ba1`, Legion `5bc7e8001c06611f`): no extra builder
+comes in the first minute. The AI runs on the server only, so the protocol
+is unchanged (263).
