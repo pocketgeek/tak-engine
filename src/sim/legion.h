@@ -319,6 +319,12 @@ public:
     // and kStationStall (formation stations). Reads hashed member state only.
     static constexpr uint32_t kLiftStall=120,kStationStall=450;
     bool advancing(int id,uint32_t limit) const;
+    // Observation hook (read-only, never hashed; the observer's stall_stale_ticks): when the unit's
+    // move() update of this tick reached a new best potential on its group's field (the headway clock
+    // above) without restarting its stall clock (the progress clock contactArrival, B1's blocked
+    // re-request and the settle rule read), that clock's age in ticks; otherwise 0, as for a unit that
+    // is no member or did not update this tick. The two clocks measure one walk.
+    uint32_t staleStall(int id) const;
     // W6 (PLAN 3.5 rejoin): the destination point (raw Fixed) of the unit's
     // settled-arrival record and how many settled bodies share it; false if
     // it has none.

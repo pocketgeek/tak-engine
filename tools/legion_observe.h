@@ -60,6 +60,13 @@
 //   slack for rounding) without turning. back: a decision sample whose last
 //   step opposes the member's 10-sample mean direction (cos < -0.3; the
 //   pinwheel2/lanes2 'back').
+// - Progress clocks (Legion only: the key is left out of a run without a Legion
+//   navigator). stall_stale_ticks: member updates that reached a new best
+//   potential on the group's field (the headway clock) without restarting the
+//   stall clock, the progress clock the contact arrival, B1's blocked re-request
+//   and the settle rule read (LegionNavigator::staleStall). The two clocks
+//   measure one walk; a body whose progress mixed squared cells with potential
+//   x64 walked on with a stale stall clock.
 // - Decision stability (every decisionEvery ticks, from observed state only).
 //   flips: a member's moving/still class changed between two samples while it
 //   has orders; flip_rate_per30_permille = flips per 30 ordered member-ticks,
@@ -311,6 +318,7 @@ public:
         const bool decide=cfg_.decisionEvery>0&&tick%cfg_.decisionEvery==0;
         // Read-only: legionNavigator() is a plain accessor; unitState is const.
         const auto* nav=const_cast<sim::World&>(w).legionNavigator();
+        legion_=legion_||nav;
         const bool anyFlyer=hasFlyers(w);
         if(anyFlyer||decide)buildGrid(w,anyFlyer);
         for(auto& m:m_)perTick(w,m,tick,nav);
@@ -404,6 +412,7 @@ public:
         }
         put("waiting_held",waitingHeld_);put("waiting_no_progress",waitingNoProgress_);
         put("parked_held",parkedHeld_);put("parked_no_progress",parkedNoProgress_);
+        if(legion_)put("stall_stale_ticks",stallStale_);
         put("transit_samples",transit_);put("transit_held_permille",detail::permille(transitHeld_,transit_));
         put("transit_far_samples",transitFar_);put("transit_far_held_permille",detail::permille(transitFarHeld_,transitFar_));
         put("decision_samples",ordered_);put("stopped_permille",detail::permille(stopped_,ordered_));
@@ -629,6 +638,7 @@ private:
             m.x=m.startX=u->x.v;m.z=m.startZ=u->z.v;m.heading=uint16_t(u->heading.v);m.mode=u->flightGroundMode;
             m.landing=u->landing.has_value();
         }
+        if(nav&&nav->staleStall(m.id))++stallStale_;
         const bool orders=!u->orders.empty();
         const int64_t dx=int64_t(u->x.v)-m.x,dz=int64_t(u->z.v)-m.z;
         const bool moved=!fresh&&(dx||dz);
@@ -1181,6 +1191,7 @@ private:
         m.walkFrom=m.walkTo=-1;
     }
     int64_t waitingHeld_=0,waitingNoProgress_=0,parkedHeld_=0,parkedNoProgress_=0;
+    bool legion_=false;int64_t stallStale_=0;   // a Legion navigator was seen; LegionNavigator::staleStall updates
     int64_t transit_=0,transitHeld_=0,transitFar_=0,transitFarHeld_=0;
     int64_t ordered_=0,stopped_=0,flipSamples_=0,flips_=0,aimReversals_=0,engagement_=0,followMax_=0,followSum_=0,followSamples_=0;
     int64_t spacingSamples_=0,contactOwn_=0,contactOther_=0,contactSettled_=0;

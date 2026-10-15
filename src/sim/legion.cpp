@@ -8062,6 +8062,13 @@ bool LegionNavigator::advancing(int id,uint32_t limit) const {
     const auto& m=found->second;
     return (m.state==Impl::Moving||m.state==Impl::Holding||m.state==Impl::Waiting)&&impl_->peerHeadFor(m)<limit;
 }
+uint32_t LegionNavigator::staleStall(int id) const {
+    const auto found=impl_->members.find(id);
+    if(found==impl_->members.end())return 0;
+    const auto& m=found->second;
+    const uint32_t now=impl_->w.tickCount();
+    return m.movedTick==now&&m.headTick==now&&m.stallTick!=now?now-m.stallTick:0;
+}
 int LegionNavigator::routeLength(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:int(found->second.route.size());
