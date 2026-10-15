@@ -816,10 +816,13 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
         // from the deposit for a lodestone, so it never matched -- own and
         // allied builders kept walking to a deposit already being claimed.
         // A flyer's conjure orbit carries no site; its building already stands.
+        // A builder that has stalled short of its deposit holds it no longer
+        // (updateBuilderProgress).
         for (const auto& u:world.units()) {
             if(!u.alive() || u.id==builder.id || !world.allied(player_,u.player))continue;
             for(const auto& order:u.orders)
-                if(order.buildType && order.buildType->onMana && (order.buildX.v || order.buildZ.v))
+                if(order.buildType && order.buildType->onMana && (order.buildX.v || order.buildZ.v) &&
+                   !stalledBuilder(u.id))
                     reservedSites.emplace_back(order.buildX.toFloat(),order.buildZ.toFloat());
         }
         const auto& deposits=world.manaSpots();
@@ -828,6 +831,10 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             const float sx=deposits[i].first,sz=deposits[i].second;
             if (std::any_of(reservedSites.begin(),reservedSites.end(),[sx,sz](const auto& spot) {
                 const float dx=spot.first-sx,dz=spot.second-sz;return dx*dx+dz*dz<32*32;
+            })) continue;
+            // Nor does this builder go back to a deposit it stalled on.
+            if (std::any_of(stalledSites_.begin(),stalledSites_.end(),[&](const StalledSite& site) {
+                const float dx=site.x-sx,dz=site.z-sz;return site.unit==builder.id && dx*dx+dz*dz<32*32;
             })) continue;
             // An ally still claiming its home deposit keeps it, and a nearer ally
             // takes it after (updateAllyClaims); upgrading our own lodestone
@@ -953,14 +960,15 @@ bool Controller::buildsLodestone(const tak::sim::UnitType* type) const {
 // a free deposit in a living ally's home area -- within kAllyHome of its start
 // and nearer that start than ours -- stays the ally's while the ally is claiming it:
 //  - a builder is bound for it (placeSite's reservation never races one, the
-//    ally's, another ally's or our own), or
+//    ally's, another ally's or our own, while it is still getting there), or
 //  - the ally has a builder that can reach it -- finished, not carried, not
 //    disabled, with a lodestone in its menu -- and it has not sat unclaimed for
 //    kAllyClaimTicks.
 // Unclaimed means no lodestone on it and no builder bound for it, counted in game
 // ticks from the first think or from the end of its last claim, so a lodestone
-// lost in a raid gives the ally the same two minutes to rebuild. A defeated ally
-// claims nothing. Retail's AI never builds there at all -- icd
+// lost in a raid gives the ally the same two minutes to rebuild; a builder's
+// claim ends when it last gained on the deposit (updateBuilderProgress). A
+// defeated ally claims nothing. Retail's AI never builds there at all -- icd
 // 411510 takes the nearest free sacred site within its own base radius -- but
 // leaving deposits to an ally that never takes them (a Normal or Defensive AI, a
 // human who does not expand) cost a mixed team 20-35% of its income.
@@ -980,17 +988,22 @@ void Controller::updateAllyClaims(const tak::sim::World& world, uint32_t simTick
     const auto& deposits=world.manaSpots();
     if (depositClaimedAt_.size()!=deposits.size()) depositClaimedAt_.assign(deposits.size(),simTick);
     allyHeldDeposits_.assign(deposits.size(),0);
-    // Every lodestone standing and every site an allied builder is bound for, and
-    // each ally's builders that could claim a deposit.
-    std::vector<std::pair<float,float>> claims;
+    // Every lodestone standing and every site an allied builder is bound for
+    // and still getting to, each with the tick it last counted, and each ally's
+    // builders that could claim a deposit.
+    struct Claim { float x, z; uint32_t tick; };
+    std::vector<Claim> claims;
     std::vector<std::vector<const tak::sim::Unit*>> claimers(allyHomes_.size());
     for (const auto& u:world.units()) {
         if (!u.alive() || !u.type) continue;
-        if (u.type->onMana) claims.emplace_back(u.x.toFloat(),u.z.toFloat());
+        if (u.type->onMana) claims.push_back({u.x.toFloat(),u.z.toFloat(),simTick});
         if (!world.allied(player_,u.player)) continue;
-        for (const auto& order:u.orders)
-            if (order.buildType && order.buildType->onMana && (order.buildX.v || order.buildZ.v))
-                claims.emplace_back(order.buildX.toFloat(),order.buildZ.toFloat());
+        const auto progress=builderProgress_.find(u.id);
+        if (progress==builderProgress_.end() || !progress->second.stalled)
+            for (const auto& order:u.orders)
+                if (order.buildType && order.buildType->onMana && (order.buildX.v || order.buildZ.v))
+                    claims.push_back({order.buildX.toFloat(),order.buildZ.toFloat(),
+                                      progress==builderProgress_.end() ? simTick : progress->second.gainedAt});
         if (u.type->isStructure() || !u.type->isBuilder || u.underConstruction || u.embarked() ||
             u.incapacitated() || !buildsLodestone(u.type)) continue;
         for (size_t a=0;a<allyHomes_.size();++a)
@@ -1001,9 +1014,12 @@ void Controller::updateAllyClaims(const tak::sim::World& world, uint32_t simTick
         const float sx=deposits[i].first,sz=deposits[i].second;
         // Lodestone placement keeps 44 px between lodestones: a claim that near
         // takes this deposit too.
-        if (std::any_of(claims.begin(),claims.end(),[sx,sz](const auto& claim) {
-            const float dx=claim.first-sx,dz=claim.second-sz;return dx*dx+dz*dz<44*44;
-        })) { depositClaimedAt_[i]=simTick; continue; }
+        bool claimed=false;
+        for (const auto& claim:claims) {
+            const float dx=claim.x-sx,dz=claim.z-sz;
+            if (dx*dx+dz*dz<44*44) { claimed=true; depositClaimedAt_[i]=std::max(depositClaimedAt_[i],claim.tick); }
+        }
+        if (claimed) continue;
         const float hx=sx-home.first,hz=sz-home.second,own=hx*hx+hz*hz;
         float nearest=std::min(kAllyHome*kAllyHome,own);
         size_t owner=allyHomes_.size();
@@ -1021,6 +1037,77 @@ void Controller::updateAllyClaims(const tak::sim::World& world, uint32_t simTick
             return &ally!=&allyHomes_[owner] && !world.player(ally.player).defeated && dx*dx+dz*dz<own;
         });
     }
+}
+
+// A builder bound for a deposit can stall short of it -- wedged in a crowd, or on
+// ground its route does not clear -- while its order still reserves the deposit
+// for every ally and claims it for the deposit's owner. In a 4v4 a Zhon handler
+// sent 3,300 map units into a human ally's base moved 109 px in 440 s, and no
+// ally built there for the rest of the game. So every think follows each allied
+// builder whose orders hold a deposit on the task it is on now, the leg the sim
+// is working (World::currentLeg): the lodestone itself for an AI's builder, but
+// a human's may wait behind a move, a repair or another building. It notes the
+// nearest the builder has come to that task's point (its site, or the leg's
+// goal) and the tick it last came kGain nearer or was at work -- building, or
+// repairing or reclaiming within reach (the sim assigns those jobs before the
+// builder gets there) -- and a new task counts as a gain. One that has not for
+// kBuilderStallTicks is stalled: placeSite no longer reserves its deposits,
+// updateAllyClaims no longer counts them claimed (the claim ended when it last
+// gained), and when it is ours this AI stops it, so that it is idle to take
+// other work, and never sends it back to those deposits. A builder walking
+// across the map gains every few seconds and keeps its claim however long the
+// walk. One that arrives to find units on its site gives up on its own within
+// the sim's 31 retries (310 ticks).
+void Controller::updateBuilderProgress(const tak::sim::World& world, uint32_t simTick,
+                                       const CommandSink& sink) {
+    constexpr float kGain=64;
+    constexpr uint32_t kBuilderStallTicks=60*30;   // a minute of game time
+    std::erase_if(stalledSites_,[&](const StalledSite& site) {
+        const auto* u=world.unit(site.unit);return !u || !u->alive();
+    });
+    auto holds=[](const tak::sim::Order& order) {
+        return order.buildType && order.buildType->onMana && (order.buildX.v || order.buildZ.v);
+    };
+    std::unordered_map<int,BuilderProgress> next;
+    for (const auto& u:world.units()) {
+        if (!u.alive() || !u.type || !world.allied(player_,u.player) ||
+            std::none_of(u.orders.begin(),u.orders.end(),holds)) continue;
+        const auto& task=u.orders[tak::sim::World::currentLeg(u.orders)];
+        const bool site=task.buildType && (task.buildX.v || task.buildZ.v);
+        const float sx=(site ? task.buildX : task.x).toFloat(),sz=(site ? task.buildZ : task.z).toFloat();
+        const float dx=u.x.toFloat()-sx,dz=u.z.toFloat()-sz,d=std::sqrt(dx*dx+dz*dz);
+        BuilderProgress progress{sx,sz,d,simTick,false};
+        const auto last=builderProgress_.find(u.id);
+        if (last!=builderProgress_.end() && last->second.siteX==sx && last->second.siteZ==sz) {
+            progress=last->second;
+            if (u.buildSiteId || u.workScriptWorking || d<=progress.best-kGain) {
+                progress.best=std::min(progress.best,d);
+                progress.gainedAt=simTick;
+            }
+        }
+        progress.stalled=simTick-progress.gainedAt>=kBuilderStallTicks;
+        next.emplace(u.id,progress);
+        if (!progress.stalled || u.player!=player_) continue;
+        bool known=false;
+        for (const auto& order:u.orders) {
+            if (!holds(order)) continue;
+            const float ox=order.buildX.toFloat(),oz=order.buildZ.toFloat();
+            const bool listed=std::any_of(stalledSites_.begin(),stalledSites_.end(),[&](const StalledSite& site) {
+                return site.unit==u.id && site.x==ox && site.z==oz;
+            });
+            known=known || listed;
+            if (!listed) stalledSites_.push_back({u.id,ox,oz});
+        }
+        if (known) continue;   // stopped already; the Stop has not reached the world yet
+        tak::net::Command stop;stop.kind=tak::net::Cmd::Stop;stop.player=uint8_t(player_);stop.unitId=u.id;
+        sink(stop);
+    }
+    builderProgress_.swap(next);
+}
+
+bool Controller::stalledBuilder(int unitId) const {
+    const auto progress=builderProgress_.find(unitId);
+    return progress!=builderProgress_.end() && progress->second.stalled;
 }
 
 void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& sink) {
@@ -1290,6 +1377,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                 allyHomes_.push_back({p,x,z});
             }
     }
+    if (world.hasManaSpots()) updateBuilderProgress(world,simTick,sink);
     if (!allyHomes_.empty() && world.hasManaSpots()) updateAllyClaims(world,simTick);
     plannedManaSites_.clear();
     Needs needs = assessNeeds(world);   // one empire assessment drives every producer

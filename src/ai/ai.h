@@ -216,6 +216,18 @@ private:
     std::vector<uint32_t> depositClaimedAt_;
     std::vector<uint8_t> allyHeldDeposits_;
     void updateAllyClaims(const tak::sim::World&, uint32_t simTick);
+    // Each allied builder whose orders hold a deposit, by unit id: the point of
+    // the task it is on now (its build site, or its leg's goal), the nearest it
+    // has come to it, and the think tick it last came 64 px nearer than that or
+    // was at work. `stalled` once it has not for a minute: it then holds no
+    // deposit, and this AI stops its own (updateBuilderProgress) and never sends
+    // that builder back to them.
+    struct BuilderProgress { float siteX, siteZ, best; uint32_t gainedAt; bool stalled; };
+    std::unordered_map<int, BuilderProgress> builderProgress_;
+    struct StalledSite { int unit; float x, z; };
+    std::vector<StalledSite> stalledSites_;
+    void updateBuilderProgress(const tak::sim::World&, uint32_t simTick, const CommandSink&);
+    bool stalledBuilder(int unitId) const;
     bool buildsLodestone(const tak::sim::UnitType*) const;
     mutable std::unordered_map<const tak::sim::UnitType*,bool> lodestoneBuilders_;
     struct DefenseResponse {

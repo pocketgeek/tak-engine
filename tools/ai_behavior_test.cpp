@@ -538,12 +538,20 @@ int main(int argc,char** argv) {
                         check(expands(kClaimTicks)=='A',"an ally's home deposit left unclaimed for two minutes opens to expansion");
                         break;
                     }
-                    case Ally::Bound:
-                        check(expands(0)=='F' && expands(kClaimTicks)=='F' && expands(2*kClaimTicks)=='F',
-                              "expansion never races an ally's builder bound for its home deposit, however long it walks");
+                    case Ally::Bound: {
+                        // It walks: 100 px nearer by each think (see the stalled builders below).
+                        bool held=expands(0)=='F';
+                        for (uint32_t tick : {kClaimTicks,2*kClaimTicks}) {
+                            w.unit(allyBuilder)->x-=sim::Fixed::fromInt(100);
+                            held=held && expands(tick)=='F';
+                        }
+                        check(held,"expansion never races an ally's builder bound for its home deposit, however long it walks");
                         break;
+                    }
                     case Ally::Lapsed: {
-                        bool held=expands(0)=='F' && expands(2000)=='F';
+                        bool held=expands(0)=='F';
+                        w.unit(allyBuilder)->x-=sim::Fixed::fromInt(100);   // still walking at tick 2000
+                        held=held && expands(2000)=='F';
                         w.unit(allyBuilder)->orders.clear();   // the claim lapses at tick 2000
                         held=held && expands(kClaimTicks)=='F' && expands(2000+kClaimTicks-20)=='F';
                         check(held,"an ally's home deposit stays its own for two minutes after its last claim lapsed");
@@ -686,14 +694,106 @@ int main(int argc,char** argv) {
                         check(expands(0)=='F' && expands(lastHeld)=='F' && expands(kClaimTicks)=='A',
                               "Normal and Easy leave a close ally's home deposit to it for two minutes, then take it");
                         break;
-                    case Ally::Bound:
-                        check(expands(0)=='F' && expands(kClaimTicks)=='F' && expands(2*kClaimTicks)=='F',
-                              "Normal and Easy never race an ally's builder bound for its home deposit");
+                    case Ally::Bound: {
+                        bool held=expands(0)=='F';
+                        for (uint32_t tick : {kClaimTicks,2*kClaimTicks}) {
+                            w.unit(allyBuilder)->x-=sim::Fixed::fromInt(100);   // walking
+                            held=held && expands(tick)=='F';
+                        }
+                        check(held,"Normal and Easy never race an ally's builder bound for its home deposit");
                         break;
+                    }
                     default:
                         check(expands(0)=='A',"Normal and Easy take an enemy's home deposit");
                         break;
                 }
+            }
+        // A builder holds its deposit only while it is getting there: one that has
+        // come no nearer by 64 px for a minute of game time no longer reserves it,
+        // for its own AI or an ally, and its own AI stops it and never sends it
+        // back there. In a 4v4 a Zhon handler bound for a human ally's deposit
+        // moved 109 px in 440 s and kept every ally off it for the rest of the game.
+        constexpr uint32_t kStallTicks=60*30;
+        for (auto owner : {Owner::Self,Owner::Ally})
+            for (auto difficulty : {ai::Difficulty::Normal,ai::Difficulty::Absurd})
+                for (bool walks : {true,false}) {
+                    sim::World w;terrain(w);w.buildNavClasses(reg);
+                    w.setManaSpots({{2000,800},{2000,1600}});
+                    w.spawn(reg.find("factory"),1800,1000,0,0);
+                    const int player=owner==Owner::Self ? 0 : 1;
+                    const int walker=w.spawn(reg.find("worker"),1000,800,0,player);
+                    const int idle=w.spawn(reg.find("worker"),1800,800,0,0);   // nearer the walker's deposit
+                    if (player==1) w.setTeam(1,0);
+                    w.player(0).mana=10000;
+                    net::Command order;order.kind=net::Cmd::Build;order.player=uint8_t(player);order.unitId=walker;
+                    order.x=2000;order.z=800;std::snprintf(order.type,sizeof order.type,"lode");
+                    sim::applyCommand(w,reg,order);
+                    ai::Profile p;p.weight["lode"]=100;
+                    ai::Controller controller(0,reg,p,1,difficulty);
+                    // A think every 20 s, the walker 100 px nearer by each when it walks.
+                    auto takes=[&](const std::vector<net::Command>& out) {
+                        return std::any_of(out.begin(),out.end(),[&](const auto& c) {
+                            return c.unitId==idle && c.kind==net::Cmd::Build && c.x==2000 && c.z==800;
+                        });
+                    };
+                    bool heldBefore=true,stopped=false;
+                    std::vector<net::Command> cs;
+                    for (uint32_t tick=0;tick<=kStallTicks;tick+=600) {
+                        if (walks && tick) w.unit(walker)->x+=sim::Fixed::fromInt(100);
+                        cs=think(controller,w,tick);
+                        if (tick<kStallTicks && takes(cs)) heldBefore=false;
+                        stopped=stopped || std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+                            return c.unitId==walker && c.kind==net::Cmd::Stop;
+                        });
+                    }
+                    if (walks) {
+                        check(heldBefore && !takes(cs) && !stopped,"a builder still gaining on its deposit keeps it reserved");
+                        continue;
+                    }
+                    check(heldBefore && takes(cs),owner==Owner::Self
+                          ? "a deposit its own builder has stalled short of for a minute goes to another builder"
+                          : "a deposit an ally's builder has stalled short of for a minute goes to another builder");
+                    check(stopped==(owner==Owner::Self),owner==Owner::Self ? "the AI stops its own stalled builder"
+                                                                           : "the AI leaves an ally's stalled builder alone");
+                    if (owner!=Owner::Self) continue;
+                    net::Command stop;stop.kind=net::Cmd::Stop;stop.player=0;stop.unitId=walker;
+                    sim::applyCommand(w,reg,stop);
+                    char walkerSite='-';
+                    for (const auto& c:think(controller,w,kStallTicks+60))
+                        if (c.unitId==walker && c.kind==net::Cmd::Build) walkerSite=c.z==800 ? 'S' : 'F';
+                    check(walkerSite=='F',"a stopped builder is sent to another deposit, not back to the one it stalled on");
+                }
+        // ...but one at work on an earlier order -- here a repair within reach, its
+        // lodestone queued behind -- holds it however long the work takes. The
+        // sim assigns the repair before the builder gets there, so one assigned it
+        // but getting no nearer is stalled all the same.
+        for (auto difficulty : {ai::Difficulty::Normal,ai::Difficulty::Absurd})
+            for (bool atWork : {true,false}) {
+                sim::World w;terrain(w);w.buildNavClasses(reg);
+                w.setManaSpots({{2000,800},{2000,1600}});
+                w.spawn(reg.find("factory"),1800,1000,0,0);
+                const int repairer=w.spawn(reg.find("worker"),1000,800,0,1);
+                const int hurt=w.spawn(reg.find("soldier"),atWork ? 1040 : 400,atWork ? 800 : 1600,0,1);
+                const int idle=w.spawn(reg.find("worker"),1800,800,0,0);
+                w.setTeam(1,0);w.player(0).mana=10000;
+                w.unit(hurt)->hp=sim::Fixed::fromInt(50);
+                w.repair(repairer,hurt,false);
+                w.queueBuild(repairer,reg.find("lode"),2000,800,true);
+                w.unit(repairer)->repairId=hurt;
+                w.unit(repairer)->workScriptWorking=atWork;   // in reach and repairing, or not there yet
+                ai::Profile p;p.weight["lode"]=100;
+                ai::Controller controller(0,reg,p,1,difficulty);
+                bool heldBefore=w.unit(repairer)->orders.size()==2,takenAtStall=false;
+                for (uint32_t tick=0;tick<=kStallTicks;tick+=600) {
+                    const auto cs=think(controller,w,tick);
+                    const bool takes=std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+                        return c.unitId==idle && c.kind==net::Cmd::Build && c.x==2000 && c.z==800;
+                    });
+                    if (tick<kStallTicks) heldBefore=heldBefore && !takes; else takenAtStall=takes;
+                }
+                check(heldBefore && takenAtStall!=atWork,atWork
+                      ? "an ally's builder repairing before its queued lodestone keeps the deposit reserved"
+                      : "an ally's builder sent to repair that gets no nearer gives up its queued deposit");
             }
         // Retail builds a lodestone whenever it runs short of mana -- store under
         // 30% full, spending outpacing income -- with none unfinished and no
