@@ -1695,6 +1695,9 @@
         // into one draw call (each was two state-changing FillRects, so a damaged
         // crowd used to break the render batch thousands of times a frame).
         overlayBatch_.clear();
+#ifndef NDEBUG
+        debugHealthBarIds_.clear();
+#endif
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
             if (dotsFrame_) break;   // Tactical Dots: no per-unit bars
@@ -1710,6 +1713,9 @@
             float bx = (u.x - mapView_.offX()) * zm - bw / 2 - uLiftX(u) * zm;
             float by = (u.z - mapView_.offY()) * zm - 30 * zm - uLiftY(u) * zm;
             if (bx < -40 || bx > mvw + 40 || by < -40 || by > winH + 40) continue;
+#ifndef NDEBUG
+            debugHealthBarIds_.push_back(u.id);
+#endif
             pushQuad(overlayBatch_, bx - 1, by - 1, bw + 2, bh + 2,
                      SDL_Color{10, 10, 10, 220});
             pushQuad(overlayBatch_, bx, by, bw * frac, bh,

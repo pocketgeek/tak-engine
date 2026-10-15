@@ -318,6 +318,7 @@ public:
     // table: one player per used slot (sim player index == slot), teams/colours
     // per slot, a monarch spawned at a start position each, seeded starting mana.
     void startMpGame(const tak::net::RoomView& room, uint32_t seed);
+    void beginSpectating();   // watch-only: noFog_, no control, scoreboard on
     bool showInitialCampaignBriefing(const std::string& stem);
     bool consumeBriefingPause() { const bool value=briefingPaused_;briefingPaused_=false;return value; }
 
@@ -1813,6 +1814,7 @@ private:
 #ifndef NDEBUG
     size_t debugDotCount_ = 0;                  // dots in the last drawTacticalDots
     std::vector<int> debugDotIds_;              // ...and whose they were
+    std::vector<int> debugHealthBarIds_;        // units given a health bar in the last draw
 #endif
 
     // Per-type on-screen sprite box (offset from the draw anchor, px @ zoom 1),

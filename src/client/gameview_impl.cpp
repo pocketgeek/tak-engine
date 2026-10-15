@@ -945,7 +945,8 @@
         fb.wind = world_.wind();
         // Fog snapshot: copy world_.vis_ into this buffer only when THIS buffer's fog is stale
         // (fog recomputes ~4Hz, so at most ~2 copies per change -- one per buffer). A spectator
-        // (noFog_) leaves vis_ empty, so the copy is a no-op and cellVisibleR reveals all.
+        // (noFog_) stops the fog pass, so vis_ stops changing and the copy stops too; what is
+        // left in it is stale, and cellVisibleR answers from noFog_ instead.
         if (fb.visGen != world_.visGeneration() || fb.vis.size() != world_.visibility().size()) {
             fb.vis = world_.visibility();
             fb.visW = world_.visW(); fb.visH = world_.visH();
@@ -996,6 +997,11 @@
     }
 
     bool GameView::cellVisibleR(float x, float z) const {
+        // No fog (spectator, replay, FULL VISION, a lineofsight=0 mission) sees every
+        // cell. The world's fog buffer is not empty then: setTerrain pre-fills it and
+        // the seat's last pass stays behind when the fog pass stops, so answering
+        // from it hid every side but the seat's from the overlays (health bars).
+        if (noFog_) return true;
         const Frame& f = front();
         if (f.vis.empty()) return true;
         int cx = int(x) / 16, cz = int(z) / 16;

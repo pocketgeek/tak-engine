@@ -422,6 +422,52 @@
             std::fprintf(stderr,"selportraits: %zu units selected\n",selection_.size());
             return;
         }
+        if (tak::devFlag("TAK_SPECTATOR_BARS_TEST")) {
+            // A spectator sees every side's health bars. Spectating stops the fog
+            // pass, but the world keeps the last fog it built for the seat the client
+            // was given (localPlayer_), so the overlays must answer from noFog_ and
+            // not from that stale buffer. As a player the same fixture still hides
+            // an enemy's bar under fog.
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("spectator bars: "+what);
+                std::fprintf(stderr,"PASS: spectator bars: %s\n",what.c_str());
+            };
+            constexpr int W=1280,H=960;
+            constexpr float zoom=0.6f;
+            noFog_=false;edgeScrollOn_=false;tacticalDotsOpt_=false;healthBars_=1;
+            writableWorld().setPlayerCount(3);
+            const float x0=float(mapView_.map().blocksX)*16.0f,z0=float(mapView_.map().blocksY)*16.0f;
+            const int own=spawn("arasword",x0,z0,0,0);
+            const int foeSeen=spawn("arasword",x0+60,z0-80,0,1);
+            const int foeHidden=spawn("arasword",x0+700,z0+200,0,1);
+            const int thirdHidden=spawn("arasword",x0-700,z0-200,0,2);
+            check(own>=0 && foeSeen>=0 && foeHidden>=0 && thirdHidden>=0,"fixture spawned");
+            check(!world_.allied(0,1) && !world_.allied(0,2) && !world_.allied(1,2),"three separate sides");
+            // A third of a second of sim builds the seat's fog the way a game's opening does.
+            for (int i=0;i<10;++i) writableWorld().tick(1.f/30);
+            for (const int id:{own,foeSeen,foeHidden,thirdHidden})
+                if (auto* u=writableWorld().unit(id)) u->hp=tak::sim::Fixed::fromFloat(float(u->type->maxHp)/2);
+            const auto frame=[&] {
+                captureFrame();beginFrame();cosmeticStep(0);
+                mapView_.setZoom(zoom);
+                mapView_.setOffset(x0-float(W-300)*0.5f/zoom,z0-float(H)*0.5f/zoom);
+                prepare(W,H);draw(W,H);
+                endFrame();
+            };
+            const auto bar=[&](int id) {
+                return std::find(debugHealthBarIds_.begin(),debugHealthBarIds_.end(),id)!=debugHealthBarIds_.end();
+            };
+            frame();
+            check(bar(own) && bar(foeSeen),"player: own and in-sight enemy bars drawn");
+            check(!bar(foeHidden) && !bar(thirdHidden),"player: enemy bars under fog stay hidden");
+            beginSpectating();
+            frame();
+            check(!frameVisibility().empty(),"spectator: the seat's fog buffer is still there (stale)");
+            check(bar(own) && bar(foeSeen) && bar(foeHidden) && bar(thirdHidden),
+                  "spectator: every side's bars drawn");
+            std::fprintf(stderr,"PASS: spectator bars (%zu bars)\n",debugHealthBarIds_.size());
+            return;
+        }
         if (tak::devFlag("TAK_TACTICAL_DOTS_TEST")) {
             // Tactical Dots through the real draw(): dots replace models past the
             // threshold, the hysteresis band holds either state, fog-hidden enemies

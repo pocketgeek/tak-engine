@@ -39,6 +39,18 @@
         mp_ = mp;
     }
 
+    // Watch-only view of a live net game (spectator join or create-as-spectator):
+    // no fog, no control, the F4 scoreboard on. The fog pass stops here, but the
+    // world keeps the last fog it built for localPlayer_ -- noFog_, not an empty
+    // visibility buffer, is what tells the overlays the spectator sees everything.
+    void GameView::beginSpectating() {
+        spectating_ = true;
+        noFog_ = true;
+        writableWorld().setVisPlayer(-1);   // sees everything -> skip the wasted O(units) fog pass
+        showCounts_ = true;
+        gameStartMs_ = SDL_GetTicks64();
+    }
+
     void GameView::saveNetReplay() {
         if (replaySaved_ || !mp_ || !mp_->recording() || mp_->replayLog().empty()) return;
         if (benchmarkMode_) return;   // a performance run, not a game worth keeping
@@ -1068,11 +1080,7 @@ void GameView::autoplayStep() {
             outboxHead_ = 0;
             startMpGame(mp_->startRoom(), mp_->startSeed());
             if (spec) {
-                spectating_ = true;   // watch-only: no fog, no control, no resume
-                noFog_ = true;
-                writableWorld().setVisPlayer(-1);   // sees everything -> skip the wasted O(units) fog pass
-                showCounts_ = true;   // the F4 scoreboard is on by default while spectating
-                gameStartMs_ = SDL_GetTicks64();
+                beginSpectating();   // watch-only: no fog, no control, no resume
             } else {
                 mp_->reportLoaded(gameDataHash());
                 writeResume(mp_->gameId(), mp_->resumeToken());
@@ -1087,11 +1095,7 @@ void GameView::autoplayStep() {
             if (mp_->isSpectator()) {
                 // Host-spectator (create-as-spectator): watch-only, no fog, no slot,
                 // no resume ticket, and nothing to report loaded.
-                spectating_ = true;
-                noFog_ = true;
-                writableWorld().setVisPlayer(-1);   // sees everything -> skip the wasted O(units) fog pass
-                showCounts_ = true;   // F4 scoreboard on by default while spectating
-                gameStartMs_ = SDL_GetTicks64();
+                beginSpectating();
             } else {
                 mp_->reportLoaded(gameDataHash());
                 writeResume(mp_->gameId(), mp_->resumeToken());   // reconnect ticket
