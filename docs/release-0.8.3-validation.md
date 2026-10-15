@@ -4,7 +4,7 @@ Protocol **266** (0.8.2: 257), replay format **13** (0.8.2: 12), generator
 version **8**, campaign payload **4**, database schema **9** (the last three
 unchanged since 0.8.0).
 
-Tag and publication: *Pending.*
+Tagged `v0.8.3` at `9895fb86` and published on 2026-10-15.
 
 ## Scope and compatibility
 
@@ -412,7 +412,56 @@ replay-compatible with 0.8.2 or earlier.
 
 ## CI and packages
 
-*Pending.*
+The final source (`9895fb86`) passed the Determinism, Linux, Windows and macOS
+workflows on `main` (runs 38792206207, 38792206237, 38792206337 and
+38792206355). On the exact tag, Determinism, Linux and Windows passed on the
+first attempt; macOS needed one rerun:
+
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/38794790552), started manually on the tag because the workflow is path-filtered.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/38794786369): all native package jobs and release attachment.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/38794786300): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/38794786218): on the first attempt the x64 job failed its streaming encode step (`stream_test`: `FAIL: video frames encoded`, 22 frames encoded and 53 dropped on the hosted Intel runner), so the **Sign + notarize** jobs were skipped. No streaming code changed since 0.8.2 and the same source passed that step on `main` an hour earlier, so it was classed as a runner timing flake and the failed jobs were rerun once. Attempt 2 passed both builds and the **Sign + notarize** job for each architecture, which replaced the unsigned macOS ZIPs and DMGs in the draft with the signed, notarized and stapled ones (upload times 20:08 UTC, after the sign jobs).
+
+The release was created as a draft with these notes and tagged CI attached the
+packages. All **29 assets** (the same set as 0.8.2) were downloaded and
+matched GitHub's SHA-256 digests and byte sizes before publication. Every ZIP
+passed its CRC test.
+
+- **Build ids.** The client and server in every Linux package (Debian 12 and
+  13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44, openSUSE Leap 16.0, Arch,
+  Slackware, both architectures where shipped, and both Linux debug archives),
+  in all four Windows ZIPs, and in both macOS release ZIPs (bare programs and
+  inside the app) and debug ZIPs carry `v0.8.3` with no `-dirty` suffix.
+  Run: the Debian 13 and Fedora 44 x86-64 packages and the Linux x64 debug
+  archive report `0.8.3 (build v0.8.3)` for both programs; the signed x64
+  `takserver.exe` reports `0.8.3 (build v0.8.3)` on Windows 11; on the arm64
+  MacBook (macOS 26.6.2) the DMG app's `takclient` and `takserver`, the release
+  ZIP's `takserver` and the debug ZIP's `takclient` report
+  `0.8.3 (build v0.8.3)`.
+- **No new runtime dependency.** No packaged Linux `takclient` (all 18) has a
+  `NEEDED` entry for libsecret, GLib, GIO or GObject, and no Debian, RPM or
+  Arch package declares one.
+- **Windows signatures.** Every executable in the four Windows ZIPs (16, x86-64
+  or ARM64 PE as named) and the installer carries a certificate table, and on
+  Windows `Get-AuthenticodeSignature` reports **Valid** with a timestamp for
+  the installer and all eight executables of the two release ZIPs (signer
+  Curtis Edge).
+- **macOS signing and notarization**, checked on the MacBook against the
+  downloaded release files (not the CI artifacts):
+  - Both DMGs (arm64 and x64): `xcrun stapler validate` succeeds and `spctl
+    --assess --type open --context context:primary-signature` reports
+    *accepted, source=Notarized Developer ID*, signed by Developer ID
+    Application: Curtis Edge (L479Y59RN8).
+  - Both apps inside each DMG and each release ZIP (**Total Annihilation -
+    Kingdoms.app** and **TAK Cartographer.app**): the stapled ticket
+    validates, `spctl --assess --type execute` reports *accepted,
+    source=Notarized Developer ID* and `codesign --verify --deep --strict`
+    passes.
+  - The bare programs in the release ZIPs and the debug ZIP's `takclient` pass
+    `codesign --verify --strict`; as before they cannot carry a stapled
+    ticket, so Gatekeeper checks them online.
+
+Published 2026-10-15 20:10 UTC.
 
 ## Screenshots
 
@@ -464,4 +513,26 @@ re-rendered image was inspected by eye against its caption.
 
 ## Limits
 
-*Pending.*
+No game mixing 0.8.2 and 0.8.3 builds was played, and none can be: the
+incompatibility statement rests on the source (protocol 266 against 257, replay
+format 13 against 12, the Hello gate and the replay loader). Local visual
+inspection covers Linux OpenGL screenshots only; the Windows and macOS packages
+are checked from CI and by the signature, notarization and build-id checks
+above, and were not played by hand for this release. Attack runs and
+self-repair are motion, measured by `flyer_combat_test`, the retail emulation
+checks and the scenario fixtures, not by a picture; the 26 older Cartographer
+guide pictures still show four tool buttons. The macOS first launch from a
+quarantined browser download was not exercised interactively (`spctl` applies
+the same Gatekeeper assessment). Remote simulated-time sweeps do not substitute
+for a multi-hour wall-time soak. The Retail `h-stress` reference is now tick
+4,789 (`8e7c0acbf9752f10`); whether it repeats is for the next sweep, and the
+0.8.0 end-tick difference (5,634 against 5,606) can no longer be studied on the
+current simulation. The Retail `h-cramped` case (gods from tick 0, an idle seat)
+now concludes at tick 1,303 instead of 11,045; it is deterministic and seat and
+referee agree, but the cause was not investigated. The Debug (`-O0`) builds skip
+the nightly-labelled tests; `movement_orders_trolls` now has a 600 s limit in
+unoptimized builds (`8682bd3e`) after one timeout at 300 s in Clang Debug. The
+macOS x64 streaming encode step failed once on the tag (above) and passed on
+rerun; it is timing-sensitive on hosted runners. The Release build's warnings
+rose from 530 to 725 (`u8path` deprecation and missing field initializers),
+with no new warning kind.
