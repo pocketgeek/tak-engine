@@ -17,20 +17,23 @@ seed 0, 6000 ticks, turn rate 2500).
 Head: `task-legion-review` on `origin/main` 34425983 (protocol 263): item 6 (`f7d1b40c`, 32-bit potentials), item 1
 (`f5bdcab5` instrument, `b2ecc86e`, `a8ed05b3`), item 2 (`c3dcb932`), item 4 (`1861aff9`), item 3 (`9987e4fd`), item 5
 (`14d6e89d` instruments, `e5df18b7`), the review fixes (`73e7c7c4` legion_check, `0d2d9dd0` entrance note, `3e61205b`
-item 5's count), protocol 264 with the Legion navigation golden (`cecdd0e1`), and two baseline commits: the hash and
-work retake (`44c77cbd`) and the behaviour trades and new-fixture floor failures (`44263867`) the lead rules on.
-Each item, its proof and its judge-together row: `legion-pathfinding.md`, "The 2026-10-14 review (protocol 264)".
+item 5's count), protocol 264 with the Legion navigation golden (`cecdd0e1`), two baseline commits: the hash and work
+retake (`44c77cbd`) and the behaviour trades and new-fixture floor failures (`44263867`) the lead rules on, the docs
+(`d67bb061`), and the findings of the automated reviews of the rebased commits: slots by arrival within one movement
+plane (`af879323`, `legion_entryplanes`), `work.legion_all` with the pinwheel's own reads (`02199a2f`) and the passage
+lanes' limit for very large areas (`b0357d95`, documented). Each item, its proof and its judge-together row:
+`legion-pathfinding.md`, "The 2026-10-14 review (protocol 264)".
 
 ### Gates on the final head
 
 | Gate | Result |
 |---|---|
-| Scenario set (`legion_check check --cumulative`, all 135 files, both modes, gate offsets, `--data`; build-o2) | 270 records, serial == workers on all. Every Retail record equals the 04f142b3 base's; every Legion record equals the pre-rebase review head's (main's commits since moved no scenario). Against main's baseline: 533 failed keys (the base head: 23). After `44c77cbd`: 42. After `44263867`: **16, every one failing on main's sim already** (battle-field-2x250 `reversals` and five work keys, -2x500 four work keys, -2x60 `work.line_sweeps.p99`, mixed2 `reversals` and four work keys; seven of the base head's 23 cleared). 16 Retail-floor exceptions pass again (CLEARED; removed at the next ratchet) |
+| Scenario set (`legion_check check --cumulative`, all 135 files, both modes, gate offsets, `--data`; build-o2) | 270 records, serial == workers on all. A Legion sweep after `af879323` / `02199a2f` equals it record for record in every hash and key but the report-only `work.legion_all.*`. Every Retail record equals the 04f142b3 base's; every Legion record equals the pre-rebase review head's (main's commits since moved no scenario). Against main's baseline: 533 failed keys (the base head: 23). After `44c77cbd`: 42. After `44263867`: **16, every one failing on main's sim already** (battle-field-2x250 `reversals` and five work keys, -2x500 four work keys, -2x60 `work.line_sweeps.p99`, mixed2 `reversals` and four work keys; seven of the base head's 23 cleared). 16 Retail-floor exceptions pass again (CLEARED; removed at the next ratchet) |
 | Retail identity | every Retail record of the scenario set equal; Retail navigation golden 24 of 24 unchanged; `--mpai` Retail unchanged |
 | Navigation goldens | Legion regenerated (24 checkpoints, serial == workers; tick 300 `302f2986afd66a4c` -> `465af65dbcbc562f`) |
 | `check-determinism.sh` | OK, golden `dcef618cd2e4d558` (g++ and clang++ at -O0/-O2/-O3; aarch64 skipped: no target libc) |
-| `--mpai` Inner Circle seed 1 (`takserver --local --no-auth --seed 1`, scratch XDG, build-o2, once each) | unchanged in both modes: Retail 300 s `76f7e976cd6a00c9`, 60 s `8db23af1b0260ba1`; Legion 300 s `99e2f137cde8d769`, 60 s `5bc7e8001c06611f` |
-| ctest | `ctest -L quick` on build-o2 (scratch per-user profile): 297 of 297 pass, `navigation_determinism`, `legion_baseline_reasons`, `legion_doc_links` and `replay` among them |
+| `--mpai` Inner Circle seed 1 (`takserver --local --no-auth --seed 1`, scratch XDG, build-o2, once each) | unchanged in both modes: Retail 300 s `76f7e976cd6a00c9`, 60 s `8db23af1b0260ba1`; Legion 300 s `99e2f137cde8d769`, 60 s `5bc7e8001c06611f` (Legion run again after `af879323`: the same) |
+| ctest | `ctest -L quick` on build-o2 (scratch per-user profile), on the final head: 298 of 298 pass, `legion_entryplanes`, `navigation_determinism`, `legion_baseline_reasons`, `legion_doc_links` and `replay` among them |
 
 ### W9 hard gates (W9-1 known limits) on the final head
 
@@ -78,6 +81,11 @@ wall touch / near 208 / 466 vs 84 / 170, `serplong` 939 / 939 vs 488 / 488, `ser
 (MV-02, the dead-end wall-touch class).
 
 The 16 failures main's sim already has are left as they were (open since before the review).
+
+Open, not changed: the passage lanes follow the shared field, so with a destination area wider than the field's 32-cell
+guard (very large bodies, or a formation of many hundreds) a member inside a strip whose slot lies behind it is led
+through to the far end first (an automated review's probe: 64 8x8 bodies, a 22-cell gap); no fixture has such an area
+at a passage. The fix to try is a guard of the area's own reach.
 
 ## W9 exit (2026-10-10): head-on meets narrow before contact (C1) -- the other lanes kept nothing (protocol 248)
 

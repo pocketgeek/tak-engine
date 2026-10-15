@@ -2043,7 +2043,13 @@ report-only in `check` but would have taken it into the baseline at a retake
 (it now never does, `legion_baseline_reasons`); an entrance is one footprint's
 (section 5, Slots by arrival: documented, as no fixture takes one with mixed
 footprints); the slot budget's first count of moved fixtures came from a stale
-parent sweep (4, not 6). Baselines: the scenario baseline's Legion hashes
+parent sweep (4, not 6). The automated reviews of the rebased commits found
+two more: slots by arrival exchanged slots across movement planes, so a
+ground body could take a hovercraft's slot in water (now one plane only,
+`ctest:legion_entryplanes`; no fixture changes), and `work.legion_all` left
+out the pinwheel's own reads (now in); a third, the passage lanes' guard
+against a very large destination area, is a documented limit ("Passage
+lanes"). Baselines: the scenario baseline's Legion hashes
 retaken from a full gate-offset run of both modes, the four new fixtures first
 baselined, `stall_stale_ticks` gated at 0 on every Legion record, the moved
 work and gate-instrument keys licensed and the offset spreads the review
