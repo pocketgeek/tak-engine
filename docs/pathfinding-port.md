@@ -7,6 +7,37 @@
 > [Legion](legion-pathfinding.md) remain. Mentions of the removed modes in the
 > Retail port log and Retail audit sections below are history.
 
+## Retail audit: a pending request survives displacement (2026-10-15)
+
+`PathService::request` kept a queued or running search for a re-request of
+the same controller and goal only while the new start stayed within one cell
+of the recorded one. A unit that moved two cells and was re-asked by the retry
+ladder (`World::tickNavigationMovement`, the crowded/traffic/random branches)
+retired the running worker and was readmitted from scratch.
+
+Retail's retry at `4e5268` is `push 1; call 4e4f50`. `4e4f50(1)` tests the
+navigator's pending bit (`+0x114 & 2`, `4e4f5e..4e4f68`) and, when it is set,
+returns at `4e5026` without touching the request, the per-player count
+`0x634674`, the outcome bits or the worker. Nothing in it reads the unit's
+position: `416430` reads the start only when it admits a request (World's
+`refreshSearchRequest`). Only `setDestination` `4e54e0` cancels (`415f30`)
+before resubmitting, which World expresses as a new controller or destination.
+
+Emulating `4e4f50(1)` on a pending navigator after 0, 2 and 9 cells of drift,
+with and without the worker attached (`OBJ+0x58/+0x64`), leaves the worker,
+`+0x114 = 2` and `0x634674 = 1` unchanged in all six cases.
+
+The displacement test is gone. A re-request for the same controller and
+destination now never restarts; a changed controller or destination still
+cancels. For a rectangle or ring controller the destination is the shape:
+World projects the anchor cell from the unit's position (`navigationCell`,
+`navigationPoint`), so that cell is not compared. An unadmitted request takes
+the new start, heading and costs for hosts that pass no refresh. CTest:
+`pathsearch` (circle, rectangle and ring after 2- and 9-cell drift, plus
+changed destination) and `retail_trace --selftest` (the production retry
+ladder after 0/1/2/9 cells of drift, plus a changed mission point), both
+without a fixture entity pool.
+
 ## Retail audit: flyer landing site and airborne occupancy (2026-10-06, all modes)
 
 > **Follow-up (flyer-landing2, 2026-10-06).** Flyers do land on each other in

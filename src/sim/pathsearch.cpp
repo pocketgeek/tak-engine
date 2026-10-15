@@ -515,19 +515,23 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
     // It never got a route, and with no local obstacle avoidance in the steering,
     // waiting for a route means walking straight at the goal into whatever is between.
     //
-    // "The same search" is the same GOAL from ~the same PLACE. The start is allowed to
-    // drift a cell because a unit shuffling on the spot has not invalidated anything;
-    // move further than that and the old answer really is for a different question, so
-    // it restarts as before. A unit that is actually travelling is making headway and
-    // never reaches the retry path at all.
+    // "The same search" is the same controller and DESTINATION; where the unit
+    // now stands does not enter into it. Retail's retry (4e5268) calls
+    // 4e4f50(1), which returns at 4e4f68 once the navigator's pending bit
+    // (+0x114 & 2) is set: queued or running, the request is left alone
+    // however far the unit has moved, and 416430 reads the start only when it
+    // admits the request (refresh). Only setDestination (4e54e0) cancels
+    // (415f30) and resubmits, which here is a new controller or destination.
+    // This used to restart past a one-cell drift, retiring a running worker
+    // that retail keeps. A rectangle or ring controller's destination is its
+    // shape; the anchor cell is projected from the unit and moves with it.
     if (auto it = q_.find(unitId); it != q_.end()) {
         Entry& ex = it->second;
-        const int dx = ex.start.x - start.x, dz = ex.start.z - start.z;
-        if (ex.goal.x == goal.x && ex.goal.z == goal.z &&
+        const bool shaped = rectangle || ring;
+        if ((shaped || (ex.goal.x == goal.x && ex.goal.z == goal.z)) &&
             ex.cellOffset.x == cellOffset.x && ex.cellOffset.z == cellOffset.z &&
             ex.goalTolerance == goalTolerance && ex.goalRadiusSquared == goalRadiusSquared &&
-            ex.rectangle == rectangle && ex.ring == ring &&
-            dx >= -1 && dx <= 1 && dz >= -1 && dz <= 1) {
+            ex.rectangle == rectangle && ex.ring == ring) {
             // Keep the search's PROGRESS (cap, slot) but take the new request's exact
             // destination. goalX/goalZ never enter the search -- it works in cells --
             // they are carried through to done(), which installs them as the order's
@@ -536,6 +540,13 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
             // had pointed.
             ex.goalX = goalX;
             ex.goalZ = goalZ;
+            // A request not yet admitted has not read its start. Hosts that
+            // pass no refresh get the current one here instead; a running
+            // attempt keeps the start it was admitted with.
+            if (activeId_ != unitId && !(scheduler_.active==
+                    RetailSearchScheduler::Request{ex.player,unitId-poolFirst_[owner]})) {
+                ex.start = start; ex.heading = heading; ex.costs = costs;
+            }
             if (priority && !ex.priority) {
                 ex.priority=true;++priorityByPlayer_[owner];
             }

@@ -468,6 +468,51 @@ int main() {
                    : "never completed -- the re-request restarted it each time");
     }
 
+    // A pending search is left alone however far its unit has moved. Native
+    // 4e4f50(1) returns at 4e4f68 once the navigator's pending bit is set, and
+    // 416430 reads the start only when it admits a request. Production setup:
+    // no fixture entity pool. A rectangle/ring destination is the controller
+    // shape itself, so the anchor cell projected from the unit may move too.
+    std::printf("[service: pending re-request after drift keeps the search]\n");
+    for (int shape = 0; shape < 3; ++shape) for (int drift : {2, 9}) {
+        PathService svc;
+        svc.setBudget(40);
+        int finishes = 0;
+        svc.setGradeHost({{}, {}, [&](int) { ++finishes; }});
+        auto score = [](int, int x, int z) { return x<0 || z<0 || x>=48 || z>=24 ? 0 : int(kCellGround); };
+        const RetailRectGoal rect{40, 44, 8, 12};
+        const RetailRingGoal ring{42, 10, 2, 40, retailCircleRadiusSquared(40)};
+        auto ask = [&](int x, PathCell goal) {
+            svc.request(1, {x, 10}, goal, 48, 24, Fixed::fromInt(goal.x*16), Fixed::fromInt(goal.z*16),
+                        0, false, 0, 0, {}, {}, 4, 77, 0,
+                        shape==1 ? std::optional{rect} : std::nullopt,
+                        shape==2 ? std::optional{ring} : std::nullopt);
+        };
+        ask(2, {40, 10});
+        bool done = false;
+        auto delivered = [&](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool, bool, bool) { done = true; };
+        for (int t = 0; t < 3; ++t) svc.tick(score, delivered);
+        const bool running = svc.requests() == 1 && !done && svc.pending(1);
+        // The anchor is a projection only for the shaped controllers.
+        ask(2 + drift, shape ? PathCell{40, 10 + drift % 3} : PathCell{40, 10});
+        const bool kept = svc.requests() == 1 && finishes == 0 && svc.pending(1);
+        for (int t = 0; t < 4000 && !done; ++t) svc.tick(score, delivered);
+        check(running && kept && done && svc.requests() == 1,
+              std::string(shape==0 ? "circle" : shape==1 ? "rectangle" : "ring") +
+                  " search survives a re-request after " + std::to_string(drift) + "-cell drift",
+              "running=" + std::to_string(running) + " kept=" + std::to_string(kept) +
+                  " admissions=" + std::to_string(svc.requests()) + " finishes=" + std::to_string(finishes));
+        // A different destination, by contrast, is a different question.
+        if (shape == 0) {
+            ask(2, {40, 10});
+            svc.tick(score, delivered);
+            const auto before = svc.requests();
+            ask(4, {40, 14});
+            for (int t = 0; t < 20 && svc.requests() == before; ++t) svc.tick(score, delivered);
+            check(svc.requests() == before + 1, "a changed destination restarts the pending search");
+        }
+    }
+
     // ...but a re-request must still adopt the new EXACT destination. The search works
     // in cells, so two different points inside one 16px cell are the same search -- yet
     // goalX/goalZ ride along to the callback, which installs them as the order's point.

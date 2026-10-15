@@ -339,6 +339,55 @@ struct RetailReplayProbe {
         if (world.paths_.pending(id)) throw std::runtime_error("search fixture did not finish");
         std::cout<<"END\n";
     }
+    // The production retry ladder re-asks for a unit that is still pending.
+    // Native 4e5268 calls 4e4f50(1), which returns at 4e4f68 once the
+    // navigator's pending bit (+0x114 & 2) is set: the worker keeps its
+    // search however far the unit has moved, and 416430 re-reads the start
+    // only when it admits a request. A changed destination still restarts.
+    // Native: 4e4f50 emulated after 0/2/9-cell drift, worker before == after.
+    // Returns admissions by delivery, or -1 if the fixture went wrong.
+    static int pendingRetryAfterDrift(int drift,bool retarget) {
+        World world;world.setPathService(true);world.setPathBudget(300);
+        world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);
+        world.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
+        UnitType type;type.maxVel=Fixed::fromInt(1);type.footX=type.footZ=2;
+        const int id=world.spawn(&type,6*16+16,20*16+16);auto& u=*world.unit(id);
+        Order goal;goal.goal=goal.groundMission=true;goal.controller=9;
+        goal.x=Fixed::fromInt(56*16+16);goal.z=Fixed::fromInt(20*16+16);
+        goal.missionTarget=std::pair{goal.x,goal.z};
+        goal.hasSegment=true;goal.segmentX=u.x;goal.segmentZ=u.z;u.orders={goal};
+        if (!world.requestPath(u,goal.x.toFloat(),goal.z.toFloat())) return -1;
+        bool delivered=false;
+        auto tick=[&] {
+            ++world.tickCounter_;
+            world.paths_.tick([](int,int,int){return 0;},[&](int who,const std::vector<PathCell>& route,
+                    Fixed x,Fixed z,bool failed,bool crowded,bool traffic,bool detour) {
+                delivered=true;world.deliverSearchRoute(who,route,x,z,failed,crowded,traffic,detour);
+            },[&](int who,PathCell& start,int& heading,RetailCostSearch::Costs& costs) {
+                world.refreshSearchRequest(who,start,heading,costs);
+            },world.tickCounter_,[&](int who,uint32_t now) { return world.admitSearchRequest(who,now); });
+        };
+        // Past every crowded-retry draw (at most 38 x halfCellTicks).
+        world.tickCounter_=20000;
+        for (int n=0;n<4 && world.paths_.requests()==0;++n) tick();
+        const auto active=world.paths_.scheduler_.active;
+        if (world.paths_.requests()!=1 || delivered || !world.paths_.pending(id) ||
+            world.paths_.activeId_!=id) return -1;
+        // Drift east, then fire the crowded branch of the retry ladder.
+        u.x+=Fixed::fromInt(16*drift);u.orders.front().segmentX=u.x;
+        u.routeCrowded=true;u.routeStamp=0;u.bodyBlockStreak=0;
+        if (retarget) {
+            // The controller's point is the destination World submits.
+            u.orders.front().missionTarget=std::pair{goal.x,goal.z+Fixed::fromInt(64)};
+            world.requestPath(u,goal.x.toFloat(),goal.z.toFloat()+64);
+        }
+        else world.tickNavigationMovement(u,Fixed());
+        if (!world.paths_.pending(id)) return -1;
+        if (!retarget && (world.paths_.requests()!=1 || world.paths_.activeId_!=id ||
+                          !(world.paths_.scheduler_.active==active))) return -1;
+        for (int n=0;n<2000 && !delivered;++n) tick();
+        return delivered ? int(world.paths_.requests()) : -1;
+    }
     // Whether a ground request from `player` joins retail's 5x budget class.
     static bool budgetClass(PathfindingMode mode,bool narrowed,int player) {
         World world;world.setPathService(true);world.setPlayerCount(4);
@@ -530,6 +579,11 @@ static int selfTest() {
     check(RetailReplayProbe::gateOwnerGrade(1,1,0,false,0,false,false,0,0)==3,"manual gate capability does not bypass passage");
     check(RetailReplayProbe::completedPointDetaches(false),"arrival detaches controller but advances stored points without re-requesting");
     check(RetailReplayProbe::completedPointDetaches(true),"arrival preserves a very recent admission timestamp");
+    for (int drift : {0,1,2,9})
+        check(RetailReplayProbe::pendingRetryAfterDrift(drift,false)==1,
+              ("retry ladder leaves a pending search alone after "+std::to_string(drift)+"-cell drift").c_str());
+    check(RetailReplayProbe::pendingRetryAfterDrift(2,true)==2,
+          "a changed destination still restarts the pending search");
     for (bool reachable : {false,true})
         check(RetailReplayProbe::rectangleRetryAndFailure(reachable),
               "partial build route retries its perimeter and failure respects builder reach");
