@@ -155,6 +155,8 @@ def cmd_run(a):
                     "--json"]
             if a.data:
                 argv += ["--data", a.data]
+            if a.no_vertex_probe:
+                argv += ["--no-vertex-probe"]   # as the game (stage 2): the Stats-only vertex probe off
             p = subprocess.Popen(argv, stdout=open(base + ".jsonl", "w"), stderr=open(base + ".err", "w"), env=env)
             procs[p] = (n, m, s, time.time())
             print(f"{int(time.time() - t0):6d}s start {n} {m} cores {slots[s][0]}-{slots[s][-1]}", flush=True)
@@ -300,6 +302,8 @@ def main():
     r.add_argument("--data")
     r.add_argument("--timeout", type=int, default=5400)
     r.add_argument("--no-phase", action="store_true")
+    r.add_argument("--no-vertex-probe", action="store_true",
+                   help="pass --no-vertex-probe (a binary from stage 2 on): the W8 vertex probe off, as in the game")
     p = sub.add_parser("report")
     p.add_argument("--results", required=True)
     p.add_argument("--markdown", action="store_true")

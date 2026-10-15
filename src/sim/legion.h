@@ -371,6 +371,12 @@ public:
     // Test hook (process-wide; the awareness fixtures' OFF arm): awareScan does
     // nothing while set. Changes behaviour and hashes when set; default off.
     static void setAwareOffForTest(bool off);
+    // Instrument probes (process-wide; default off): the W8 step 1 vertex
+    // probe behind Stats' vertex_* counters, which no decision reads. The
+    // tools that report those counters (legion_scenario, legion_world_test)
+    // turn it on; the game leaves it off and skips the probe's descents and
+    // sweeps. Never changes behaviour or hashes, only those counters.
+    static void setInstrumentProbes(bool on);
     // Debug builds (NDEBUG undefined): check derived indexes and the Stats
     // after every tick() (aborts on a mismatch). A no-op in release. A debug
     // build starts with it on when TAK_LEGION_VERIFY is set (the only

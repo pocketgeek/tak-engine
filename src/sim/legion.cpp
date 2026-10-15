@@ -56,6 +56,7 @@ constexpr uint32_t kRestStride=2;
 // the world tests only set the variable). Observation only, never hashed.
 uint32_t gRestStride=kRestStride;
 bool gAwareOff=false;
+bool gInstrumentProbes=false;   // LegionNavigator::setInstrumentProbes: the vertex probe (Stats only)
 #ifndef NDEBUG
 bool gVerify=std::getenv("TAK_LEGION_VERIFY")!=nullptr;
 // W9 step 0: the members whose decisions are traced to stderr (LegionNavigator::setTrace, or TAK_LEGION_TRACE=ID[,ID...]
@@ -6351,7 +6352,7 @@ struct LegionNavigator::Impl {
             int cell=aimCell(u,m,p,*f,ox,oz);
             if(cell<0) {hold(u,m);return;}
             m.site=LegionNavigator::SiteField;
-            if(f->done&&m.slot>=0&&m.pt&&m.vertexCell!=here&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
+            if(gInstrumentProbes&&f->done&&m.slot>=0&&m.pt&&m.vertexCell!=here&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
                 m.vertexCell=here;vertexInstrument(u,m,g,p,*f,ox,oz);
             }
             const bool lanes=f->done&&m.slot>=0&&m.pt&&partRefs(m)>=kPivotMembers&&formationMember(m);
@@ -6652,7 +6653,9 @@ struct LegionNavigator::Impl {
     }
     // The W8 step 1 probe: the vertex search run where the pinwheel would
     // run, counted in Stats and used by nothing. Its sweeps are kept out of
-    // the line-sweep and trace counters (they are not steering work).
+    // the line-sweep and trace counters (they are not steering work). Run
+    // only while the instrument probes are on (setInstrumentProbes): in the
+    // game it was 4-7% of a 10,000-body tick for counters nobody reads.
     void vertexInstrument(const Unit& u,const Member& m,const Group& g,const Plane& p,const Field& f,int ox,int oz) {
         const int fx=u.type->footX,fz=u.type->footZ;
         const uint64_t sweeps=stats.lineSweeps,cells=stats.traceCells;
@@ -8670,6 +8673,7 @@ LegionNavigator::SlotShape LegionNavigator::slotShape(int id) const {
 LegionNavigator::SlotShape LegionNavigator::lastSlotShape() const {return impl_->lastShape;}
 void LegionNavigator::setRestStrideForTest(int stride) {gRestStride=uint32_t(std::max(stride,1));}
 void LegionNavigator::setAwareOffForTest(bool off) {gAwareOff=off;}
+void LegionNavigator::setInstrumentProbes(bool on) {gInstrumentProbes=on;}
 void LegionNavigator::setVerify(bool on) {gVerify=on;}
 bool LegionNavigator::verifying() {return gVerify;}
 void LegionNavigator::setProbe(uint32_t ticks) {gProbe=ticks;}

@@ -3861,6 +3861,7 @@ void entryplanes() {
 }
 
 int main(int argc,char** argv) {
+    LegionNavigator::setInstrumentProbes(true);   // lanegeom reads the vertex probe's counters
     const std::map<std::string_view,std::function<void()>> cases{
         {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},{"longroute",longroute},
         {"crowdhold",crowdhold},{"replace",replace},{"unreachable",unreachable},{"quota",quota},{"pens",pens},

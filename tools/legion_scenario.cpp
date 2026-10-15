@@ -5,6 +5,8 @@
 //       [--offsets 0,1,-1] [--workers|--serial|--both-exec] [--window R]
 //       [--data <install>] [--json] [--ticks N] [--no-observer] [--neutral]
 //       [--wanderers on|off]   (fbi types keep / lose Standby_wander; default: the file's)
+//       [--no-vertex-probe]    (as the game: the W8 vertex probe off, its lanes.vertex_* keys 0;
+//                               LegionNavigator::setInstrumentProbes, on by default here)
 //       [--check <baseline.json> [--step ID] [--cumulative] [--ratchet "reason"]]
 //       [--baseline <baseline.json> --reason "text" [--since ID]]
 //       [--exit-table <old.json|run.jsonl>] [--anchor <anchor.json>]
@@ -150,6 +152,7 @@ struct Options {
     int wanderers = -1;     // --wanderers on|off overrides the file's; -1: the file's
     bool w9 = false;        // --w9: report the W9 instruments for any file (as `probe w9`)
     bool scale = false;     // --scale: report the scale.* keys for any file (as `probe scale`)
+    bool vertexProbe = true;   // --no-vertex-probe: the W8 vertex probe off, as in the game (setInstrumentProbes)
     std::vector<int> trace; // --trace IDS: decision trace lines on stderr for these members (debug build)
     std::vector<std::string> traceGroups;   // ... and whole groups, by name (a token that is not a number)
     // Gate modes: the JSON lines go to tools/legion_check.py instead of stdout.
@@ -169,7 +172,7 @@ void emit(const std::string& line) {
     std::fprintf(stderr, "legion_scenario: %s\n"
         "usage: legion_scenario <file.scn|builtin:NAME> [--mode legion|retail|both] [--offsets 0,1,-1|gate]\n"
         "       [--workers|--serial|--both-exec] [--window R] [--data <install>] [--json] [--ticks N]\n"
-        "       [--no-observer] [--neutral] [--wanderers on|off] [--w9] [--scale] [--trace ID[,ID...]]\n"
+        "       [--no-observer] [--neutral] [--wanderers on|off] [--w9] [--scale] [--trace ID[,ID...]] [--no-vertex-probe]\n"
         "       [--check B.json [--step ID] [--cumulative] [--ratchet REASON]] [--baseline B.json --reason TEXT\n"
         "       [--since ID]] [--exit-table OLD] [--anchor A.json]   (gate modes: tools/legion_check.py)\n", why);
     std::exit(2);
@@ -1128,6 +1131,7 @@ int main(int argc, char** argv) {
         } else if (a == "--data") { static std::string d; d = value(); opt.data = d.c_str(); }
         else if (a == "--json") opt.json = true;
         else if (a == "--scale") opt.scale = true;
+        else if (a == "--no-vertex-probe") opt.vertexProbe = false;
         else if (a == "--ticks") {
             const long v = std::atol(value().c_str());
             if (v < 1 || v > 10'000'000) usage("--ticks N takes 1..10000000");
@@ -1172,6 +1176,7 @@ int main(int argc, char** argv) {
     const bool gate = !opt.gate.empty();
     if (opt.files.size() > 1 && !opt.neutral && !gate) usage("one scenario file (several only with --neutral or a gate mode)");
     if (!opt.trace.empty() && opt.traceGroups.empty()) tak::sim::LegionNavigator::setTrace(opt.trace);   // debug builds; a no-op in release
+    tak::sim::LegionNavigator::setInstrumentProbes(opt.vertexProbe);   // the lanes.vertex_* keys (Stats only)
     if (gate && opt.neutral) usage("--neutral and a gate mode do not combine");
     for (size_t i = 0; i + 1 < opt.gateArgs.size(); ++i)
         if (opt.gateArgs[i] == "--ratchet" && opt.gate != "check") usage("--ratchet goes with --check");
