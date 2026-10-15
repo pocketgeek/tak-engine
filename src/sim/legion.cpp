@@ -143,7 +143,9 @@ constexpr int kFormationLineCells=640;         // ... for a member with a format
 constexpr int kPivotMembers=16;
 constexpr int kUplinkPart=64;                  // orders the server applies per client per tick (net kCmdCapPerTick)
 constexpr size_t kSlotsPerTick=32;             // formation slots a point hands out per tick (A2)
-constexpr uint64_t kHandOutCells=131072;       // ... and the ring cells their searches may walk in that tick
+// The ring cells formationCell may walk in one tick, over every point (see serveHandOut): one budget a
+// tick shared by the hand-out, a formation's first burst and the searches of members without a slot.
+constexpr uint64_t kHandOutCells=131072;
 // The entrance of a formation's area (see entrance, enterArea): the descent cells walked from the members'
 // centre toward it, the chain cells either side of the area's edge probed for a narrowing, how far before
 // the entrance (cells of potential) a member counts as through it, and the depth (px) one px across costs.
@@ -1656,10 +1658,9 @@ struct LegionNavigator::Impl {
         // for a point of several parts (see pivotAim). Derived, never hashed.
         std::map<uint32_t,std::array<int64_t,3>> partLive;uint32_t partTick=~0u;
         // Deferred slot assignment (A2): members still waiting for a slot,
-        // front first, handed out kSlotsPerTick a tick (hashed while not
-        // empty); handTick is the tick of the last hand-out (a per-tick
-        // guard, never hashed).
-        std::vector<int> queue;uint32_t handTick=~0u;
+        // front first, handed out at most kSlotsPerTick a tick (see
+        // serveHandOut; hashed while not empty).
+        std::vector<int> queue;
         // The cell where the way into the area enters it past a narrowing (see entrance; -1: none). Its
         // members exchange slots there (enterArea). Hashed while set.
         int entry=-1;
@@ -1689,8 +1690,16 @@ struct LegionNavigator::Impl {
     // consumed by meetScan in the same tick.
     std::set<std::tuple<int,uint32_t,int32_t,int32_t>> pendingMeets,meetIds;
     std::vector<std::pair<uint64_t,std::tuple<int,uint32_t,int32_t,int32_t>>> awareHeadOn;
+    // The formation slot hand-out (2026-10-14 Legion review, item 5; see serveHandOut). handIds: the points
+    // whose queue is not empty, ascending (a function of the points, TAK_LEGION_VERIFY checks it; never
+    // hashed). handNext: the point the next tick's round starts at, kept while two or more points wait
+    // (hashed while handRotate). handTick: the tick of the last hand-out, handRing0: ringCells at its start
+    // (the tick's budget is ringCells - handRing0; derived, never hashed).
+    std::set<std::tuple<int,uint32_t,int32_t,int32_t>> handIds;
+    std::tuple<int,uint32_t,int32_t,int32_t> handNext{};bool handRotate=false;
+    uint32_t handTick=kNoTick;uint64_t handRing0=0;
     void erasePoint(std::map<std::tuple<int,uint32_t,int32_t,int32_t>,Point>::iterator it) {
-        pendingMeets.erase(it->first);meetIds.erase(it->first);points.erase(it);
+        pendingMeets.erase(it->first);meetIds.erase(it->first);handIds.erase(it->first);points.erase(it);
     }
     void slotCells(const Member& m,int fx,int fz,bool claim) {
         auto& cells=(m.pt?*m.pt:points[m.point]).cells;
@@ -3706,6 +3715,12 @@ struct LegionNavigator::Impl {
             if(latched!=meetIds)fail("meetIds differs from the points with a latched meet");
         }
         {
+            // Item 5: handIds against a scan of the points.
+            std::set<std::tuple<int,uint32_t,int32_t,int32_t>> waiting;
+            for(const auto& [key,pt]:points)if(!pt.queue.empty())waiting.insert(key);
+            if(waiting!=handIds)fail("handIds differs from the points with a queue");
+        }
+        {
             // Each group's member ids (the paused build's cover test).
             std::map<int,std::vector<int>> ids;
             for(const auto& [id,m]:members)if(groups.count(m.group))ids[m.group].push_back(id);
@@ -4939,8 +4954,15 @@ struct LegionNavigator::Impl {
         };
         int best=-1;int64_t bestD=0;
         uint64_t cells=0;
+        // A cell r rings out has its centre at least (r-1)*16 px from the
+        // target (the early stop below reads the same bound), so at least
+        // (r-1)*16 - |target - point| px from the point: past `reach` no ring
+        // holds a cell inside the area, and the search ends there instead of
+        // at ring 48 (a member that finds no cell walked all 9,409).
+        const int64_t reach=pt.limit+int64_t(isqrtFloor(uint64_t((tx-px)*(tx-px)+(tz-pz)*(tz-pz))))+1;
         for(int r=0;r<=48;++r) {
             if(best>=0&&int64_t(r-1)*16*int64_t(r-1)*16>bestD)break;
+            if(int64_t(r-1)*16>reach)break;
             // The ring at Chebyshev distance r alone, in the (dz,dx) order of
             // a walk of the whole square: the top row, each middle row's two
             // ends, the bottom row.
@@ -4985,6 +5007,7 @@ struct LegionNavigator::Impl {
             mm->entryState=0;
         }
         pt.queue.clear();pt.cells.clear();pt.assigned=false;pt.tried=false;pt.entry=-1;
+        handIds.erase(key);
     }
     void takeFormation(Member& m,const Unit& u,int cell) {
         m.goal=cell;m.slot=0;m.lineCell=-1;markPass(u,m);
@@ -5001,11 +5024,13 @@ struct LegionNavigator::Impl {
     }
     // Every member sent to one point in one command gets its slot by
     // formation, once its convoy has closed (or at once for a first part
-    // under one uplink tick, see formationSlot), kSlotsPerTick a tick: its
+    // under one uplink tick, see formationSlot): its
     // offset from the members' centroid, scaled so the formation's spread matches the packed disc that many bodies occupy,
     // placed around the point. Members are served front first (farthest
     // along the centroid->point direction), so the front of the crowd takes
     // the far side of the area and nobody has to cross a settled body.
+    // The first slot is taken at once; more, up to kSlotsPerTick, only while
+    // the tick's hand-out budget lasts (handBudget); the rest queue.
     void assignFormation(Point& pt,const std::tuple<int,uint32_t,int32_t,int32_t>& key) {
         const int64_t px=int64_t(std::get<2>(key))>>16,pz=int64_t(std::get<3>(key))>>16;
         std::vector<std::pair<int,Member*>> list;
@@ -5055,13 +5080,15 @@ struct LegionNavigator::Impl {
         }
         std::sort(order.begin(),order.end(),[](const auto& a,const auto& b) {
             return std::get<0>(a)!=std::get<0>(b)?std::get<0>(a)<std::get<0>(b):std::get<1>(a)<std::get<1>(b);});
-        // At most kSlotsPerTick slots now, front first; the rest queue in
-        // that order (slot -3) and are handed out on the next ticks (see
-        // handOut), steering by the shared field meanwhile.
-        pt.handTick=w.tickCounter_;
+        // The first slot now, then front first while the tick's budget lasts
+        // (at most kSlotsPerTick); the rest queue in that order (slot -3) and
+        // are handed out on the next ticks (see serveHandOut), steering by
+        // the shared field meanwhile. Before the budget was shared (the
+        // 2026-10-14 review, item 5) a formation took its first 32 slots in
+        // one tick, unbudgeted: 32 searches of up to 9,409 ring cells each.
         size_t given=0;
         for(const auto& [key2,id,mm]:order) {
-            if(given>=kSlotsPerTick) {mm->slot=-3;pt.queue.push_back(id);continue;}
+            if(given>=kSlotsPerTick||(given&&!handBudget())) {mm->slot=-3;pt.queue.push_back(id);continue;}
             ++given;
             const Unit* v=w.unit(id);
             const Group& gg=groups.find(mm->group)->second;
@@ -5070,6 +5097,7 @@ struct LegionNavigator::Impl {
             const int cell=formationCell(*v,pp,groupComp(gg,pp),pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
             if(cell>=0)takeFormation(*mm,*v,cell);
         }
+        if(!pt.queue.empty())handIds.insert(key);
         pt.entry=entrance(pt,list,px,pz);
         slotShape(pt,list,ax,az,px,pz);
     }
@@ -5219,31 +5247,77 @@ struct LegionNavigator::Impl {
         m.lineCell=-1;other->lineCell=-1;
         markPass(u,m);markPass(otherId);
     }
-    // The next kSlotsPerTick queued members of an assigned point take their
-    // formation slots (their current offset, mapped as a later joiner's),
-    // once per tick. A member that left, re-registered or died is dropped.
-    // A large formation's later joiners search far through claimed cells
-    // (a 120-body dead-end room: 8000 ring cells a member, 268k a tick at
-    // 32 slots), so the hand-out also stops, after its first slot, once
-    // the tick's searches have walked kHandOutCells ring cells; the rest
+    // The formation slot hand-out (2026-10-14 Legion review, item 5). One budget a tick, kHandOutCells
+    // ring cells of formationCell, over every point: the queued members (serveHandOut), a formation's first
+    // burst (assignFormation) and a member without a slot (formationSlot) all draw on it. Before, the
+    // budget was per point and only the queue's: a 120-body dead-end click (deadend-w2-n120-closed) walked
+    // 411,965 ring cells in the tick it took its formation (32 first slots; the 21 of them that found no
+    // free cell searched again in their own update), a 40-body one 527,351 (its 39 other members registered
+    // again right after its provisional formation, each searching anew), and four 120-body clicks in one
+    // tick (deadend-multi-4x120.scn) 602,176 (the 64 bodies of one click's second uplink part searching
+    // the provisional formation its first 8 had taken) and up to 402,881 a tick after, every point's queue
+    // walking its own 131,072.
+    bool handBudget() const {return ringCells-handRing0<kHandOutCells;}
+    // The queued members of every point take their formation slots (their current offset, mapped as a
+    // later joiner's), once a tick, at the tick's first formation claim (formationSlot), before any other
+    // slot search of that tick. Round robin over the points in key order, one member each a round,
+    // starting at handNext (the point after the last one served the tick before); a point takes at most
+    // kSlotsPerTick a tick, and a search starts only while the budget lasts (the first of the tick always:
+    // nothing has spent it yet). A member that left, re-registered or died is dropped from the queue
+    // without a search. A large formation's later joiners search far through claimed cells (a 120-body
+    // dead-end room: 8000 ring cells a member, 268k a tick at 32 slots), so the members past the budget
     // wait a tick, steering by the shared field as before.
-    void handOut(Point& pt,const std::tuple<int,uint32_t,int32_t,int32_t>& key) {
-        pt.handTick=w.tickCounter_;
+    void serveHandOut() {
+        handTick=w.tickCounter_;handRing0=ringCells;
+        if(handIds.empty()) {handRotate=false;return;}
+        struct Turn {Point* pt;const std::tuple<int,uint32_t,int32_t,int32_t>* key;size_t at=0,given=0;};
+        std::vector<Turn> turns;
+        auto add=[&](const std::tuple<int,uint32_t,int32_t,int32_t>& key) {
+            const auto it=points.find(key);
+            turns.push_back({&it->second,&it->first});
+        };
+        const auto start=handRotate?handIds.lower_bound(handNext):handIds.begin();
+        for(auto it=start;it!=handIds.end();++it)add(*it);
+        for(auto it=handIds.begin();it!=start;++it)add(*it);
+        size_t last=turns.size();
+        for(bool more=true;more;) {
+            more=false;
+            for(size_t i=0;i<turns.size();++i) {
+                Turn& t=turns[i];
+                if(t.given>=kSlotsPerTick||t.at>=t.pt->queue.size())continue;
+                if(!handBudget()) {more=false;break;}
+                if(handOne(*t.pt,*t.key,t.at)) {++t.given;last=i;}
+                more|=t.given<kSlotsPerTick&&t.at<t.pt->queue.size();
+            }
+        }
+        for(const Turn& t:turns) {
+            t.pt->queue.erase(t.pt->queue.begin(),t.pt->queue.begin()+std::ptrdiff_t(t.at));
+            if(t.pt->queue.empty())handIds.erase(*t.key);
+        }
+        // The next round starts after the last point served; with one point or none left waiting there is
+        // no order to keep.
+        if(handIds.size()<2) {handRotate=false;return;}
+        if(last<turns.size()) {
+            const auto next=handIds.upper_bound(*turns[last].key);
+            handNext=next==handIds.end()?*handIds.begin():*next;handRotate=true;
+        } else if(!handRotate) {handNext=*handIds.begin();handRotate=true;}
+    }
+    // The next member of a point's queue (from `at`) takes its slot: false when the queue runs out first.
+    bool handOne(Point& pt,const std::tuple<int,uint32_t,int32_t,int32_t>& key,size_t& at) {
         const int64_t px=int64_t(std::get<2>(key))>>16,pz=int64_t(std::get<3>(key))>>16;
-        size_t at=0,given=0;
-        const uint64_t ring0=ringCells;
-        for(;at<pt.queue.size()&&given<kSlotsPerTick&&(!given||ringCells-ring0<kHandOutCells);++at) {
-            Member* mm=member(pt.queue[at]);const Unit* v=w.unit(pt.queue[at]);
+        while(at<pt.queue.size()) {
+            const int id=pt.queue[at++];
+            Member* mm=member(id);const Unit* v=w.unit(id);
             if(!mm||mm->point!=key||mm->slot!=-3)continue;
             const auto group=groups.find(mm->group);
             if(!v||!v->type||group==groups.end()) {mm->slot=-1;continue;}
-            ++given;
             const Plane& pp=plane(group->second.plane);
             const int64_t ox=(v->x.v>>16)-pt.centreX,oz=(v->z.v>>16)-pt.centreZ;
             const int cell=formationCell(*v,pp,groupComp(group->second,pp),pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
             if(cell>=0)takeFormation(*mm,*v,cell);else mm->slot=-2;
+            return true;
         }
-        pt.queue.erase(pt.queue.begin(),pt.queue.begin()+std::ptrdiff_t(at));
+        return false;
     }
     // Can the point's command still grow? A click's orders arrive over
     // several ticks (the 64-per-tick uplink); its convoy stays joinable for
@@ -5313,13 +5387,15 @@ struct LegionNavigator::Impl {
             pt.provisional=false;
             if(pt.partRefs.size()>1)releaseFormation(pt,m.point);
         }
+        // The tick's hand-out runs at its first formation claim, before this
+        // claim's own searches (see serveHandOut).
+        if(handTick!=w.tickCounter_)serveHandOut();
         const bool early=!pt.assigned&&pt.partRefs.size()<=1&&pt.refs<kUplinkPart&&commandOpen(m.point);
         if(!pt.assigned&&(!pt.tried||w.tickCounter_%16==0)&&(early||!commandOpen(m.point))) {
             pt.tried=true;assignFormation(pt,m.point);
             pt.provisional=early&&pt.assigned;
         }
         if(!pt.assigned||pt.limit<=0)return true;
-        if(!pt.queue.empty()&&pt.handTick!=w.tickCounter_)handOut(pt,m.point);
         if(m.slot==-3)return true;   // queued for its slot: steers by the shared field
         const int64_t px=int64_t(std::get<2>(m.point))>>16,pz=int64_t(std::get<3>(m.point))>>16;
         const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
@@ -5336,6 +5412,11 @@ struct LegionNavigator::Impl {
         if(m.slot>=0&&laneDue(m))m.lineCell=-1;
         if(pt.entry>=0&&m.slot>=0)enterArea(u,m,g,pt);
         if(m.slot>=0||m.slot==-2)return true;
+        // A member without a slot (it joined or registered again after the
+        // formation was taken, or its search in the first burst found no
+        // cell) searches while the tick's budget lasts, and queues behind the
+        // others when it is spent.
+        if(!handBudget()) {m.slot=-3;pt.queue.push_back(u.id);handIds.insert(m.point);return true;}
         const int64_t ox=ux-pt.centreX,oz=uz-pt.centreZ;
         const int cell=formationCell(u,p,groupComp(g,p),pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
         if(cell>=0)takeFormation(m,u,cell);else m.slot=-2;
@@ -8172,6 +8253,11 @@ struct LegionNavigator::Impl {
                 h=mix(h,0x637565ull);h=mix(h,point.cueTick);
                 h=mix(h,uint64_t(uint32_t(std::get<0>(point.cueOther)))<<32|std::get<1>(point.cueOther));h=mix(h,uint64_t(uint32_t(std::get<2>(point.cueOther)))<<32|uint32_t(std::get<3>(point.cueOther)));
             }
+        }
+        // The hand-out's round robin (item 5), while two or more points wait.
+        if(handRotate) {
+            h=mix(h,0x68616e646f7574ull);h=mix(h,uint64_t(uint32_t(std::get<0>(handNext)))<<32|std::get<1>(handNext));
+            h=mix(h,uint64_t(uint32_t(std::get<2>(handNext)))<<32|uint32_t(std::get<3>(handNext)));
         }
         for(const auto& [id,a]:anchors) {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(a.goal));h=mix(h,a.yields);

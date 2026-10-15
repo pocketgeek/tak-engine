@@ -95,6 +95,7 @@ creon_death_sound_peers 9
 legion_motion_open 8
 legion_situation_r9-36060_legion 8
 legion_scenario_goalblock-fight-200 8
+legion_handout 8
 ai_behavior_data 7
 crusades_matchmaking_network 7
 crusades_protocol_network 7

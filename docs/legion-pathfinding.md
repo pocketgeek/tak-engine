@@ -1363,6 +1363,77 @@ alone, now completes at all 11 where it missed 3); `strait-3x48:g.B.done`
 `ctest:legion_passagelanes` runs `gap14` over the core five: 17 to 47 swaps on
 the parent (median 27), none here.
 
+### Slot hand-out budget (2026-10-14 review, item 5)
+
+A member's formation slot search (`formationCell`) walks Chebyshev rings round
+its target, out to 48 cells: 9,409 cells when nothing in the area is free near
+it. The budget of 131,072 ring cells a tick (`kHandOutCells`) bounded only the
+hand-out of a point's queue, and only per point. A formation's first 32 slots
+and the search of a member without a slot had none, and both run in bursts. A
+trace of the parent (a debug probe, not kept): `deadend-w2-n120-closed-plain`
+walked 411,965 ring cells in the tick its formation was taken (32 first slots,
+then the 21 of them that found no free cell searched again in their own
+update); `deadend-w2-n40-closed-plain` 527,351 (its 39 other members registered
+again right after its provisional formation, each searching anew); and
+`deadend-multi-4x120.scn`, four 120-body clicks to four dead ends in one tick
+(the W3 probes `deadend-w2-n120-closed`, `-w4-n120-closed`, `-w4-n120-room` and
+`-w6-n120-room` stacked on one map), 602,176: the 64 bodies of one click's second
+uplink part searching, and failing, against the provisional formation its first
+8 bodies had taken; then up to 402,881 a tick while three points handed out side
+by side, each within its own 131,072.
+
+Now one budget a tick covers every slot search. The tick's hand-out runs at its
+first formation claim, before any other slot search of that tick
+(`serveHandOut`): the queues of every waiting point, round robin in key order,
+one member each a round, starting after the point served last the tick before
+(`handNext`, hashed while two or more points wait). A point still takes at most
+`kSlotsPerTick` (32) a tick, and a search starts only while the budget lasts. A
+formation's first burst (`assignFormation`) takes its first slot at once and more
+only while the budget lasts; a member without a slot searches while it lasts and
+otherwise queues behind the others. The ring search also stops at the ring past
+which no cell can lie inside the area: a cell r rings out has its centre at least
+(r-1)*16 px from the target, so at least that less the target's distance from
+the point, and the area is the point's limit. Its result is the same (the
+`TAK_LEGION_VERIFY` square walk agrees), and a search that finds nothing stops
+there instead of at ring 48: over the fixtures the formation searches walk 8%
+fewer cells (129.1 million to 118.4 million), on the closed dead ends 67% to 86%
+fewer.
+
+`deadend-multi-4x120.scn` keeps its hashes at all eleven gate offsets: the
+same moves, with its per-tick formation search falling from 602,176 ring cells
+to 134,237, its total Legion work per tick (`work.legion_total.max`) from
+694,537 to 322,489 and its Legion work over the run by 24% (the formation
+search by 74%). Over the 134 other fixtures (Legion, every gate offset, serial
+equal to workers; Retail untouched) 128 keep their hashes; 6 change:
+`battle-assault`, `battle-field-2x250` and `-2x500` (two armies' formations now
+share the budget), `corner-8x56`, `gen1-route-45941` and `gen1-route-54772`.
+Summed: arrivals +9, complete orders +12, left behind -2, never -2, lane swaps
+-1 (per file unchanged), stopped and held permille -7 and -6, Legion work
+-0.7%; `walk_net` +34, from `corner-8x56`'s core-five median (0 to 34; its runs
+over the nine offsets fall from 1,545 ticks to 156). The largest per-tick
+formation search over the fixtures falls from 527,351 ring cells to 139,991,
+and `work.legion_total.max` on `deadend-w2-n40-closed-plain` from 601,062 to
+149,758, `corner-8x56` 535,568 to 246,728, `densehead` 450,864 to 218,183 and
+`deadend-w2-n120-closed-plain` 415,300 to 135,139; the most over every fixture
+from 601,062 to 436,109, a battle tick that the field quota sets. In wall time
+(`World::tick`, offset 0, the least of five interleaved runs on a shared core)
+the slowest tick of `deadend-w2-n40-closed-plain` falls from 2.11 to 1.15 ms,
+`deadend-w2-n120-closed-plain` 1.28 to 1.03 ms (its slowest is now the first
+field build, not the formation's) and `deadend-multi-4x120.scn` 6.70 to 5.93
+ms, the 99th percentiles within 4%; the battle fixtures stay within 4%
+(`battle-field-2x60`, hash-identical, moves as much), and crowdbench `jagged`
+2000x1, whose orders form no formation, keeps its hash. Search moved to later
+ticks shows in the p99s: `battle-field-2x500`'s slot search 112,908 to 122,317,
+`densehead`'s total Legion work 23,132 to 23,191.
+
+The steering probes and detour searches stay unbudgeted: with the hand-out
+bounded, the slowest ticks are the field quota's (`work.legion_all.max`
+387,844 to 451,616 on the battles and the long routes); awareness and lane
+work add at most 15,507 cells to a tick's peak, line sweeps (`trace_cells`) at
+most 64,395 a tick, detours 3,880 and pass scans 12,108.
+`ctest:legion_handout` runs `deadend-multi-4x120.scn` at offset 0: 602,176 ring
+cells in one tick on the parent, at most 150,000 here (134,621).
+
 ### Head-on meets (W9 C1, protocol 248)
 
 Two large columns walking at each other used to meet face to face and shoulder
@@ -1517,7 +1588,8 @@ Legion keys on the convoy (A2): the shared point (formation, area, settling),
 the group issue and the soft-obstacle command key use `convoyTick`, so a
 selection over 64 units is one point, one formation and one settle chain.
 Formation slots wait until the convoy can no longer be joined, then are handed
-out `kSlotsPerTick` (32) a tick, front first; the rest steer by the shared field
+out front first, at most `kSlotsPerTick` (32) a tick and within the tick's slot
+search budget (see "Slot hand-out budget"); the rest steer by the shared field
 meanwhile. A first part under one uplink tick (64 orders) is the whole click as
 far as the server can tell, so it takes its formation at once, provisionally;
 if another part joins the point before the convoy closes, every slot is given
@@ -2024,10 +2096,11 @@ Rules that came out of using them:
     legality. This is safe, because the mover re-proves every step, but it
     can misdirect until the clean rebuild. Not measured by a scenario of its
     own; `refreshchurn:spins` shows no spin while it happens.
-  * `assignFormation` is still a one-tick burst per point (up to 97x97 rings
-    per member for a large shared click), and the 640-cell sweep and the
-    49x49 re-choice BFS are bounded per member, not globally
-    (`split-450-open:work.formation_ring_cells.max`).
+  * The 640-cell sweep and the 49x49 re-choice BFS are bounded per member,
+    not globally (`split-450-open:work.trace_cells.max`,
+    `split-450-open:work.rechoice_bfs_cells.max`). The formation slot searches,
+    `assignFormation`'s first burst among them, share one budget a tick since
+    the 2026-10-14 review (item 5, `ctest:legion_handout`).
   * A member queued behind its own crowd settles where it stands, out to twice
     the crowd's reach, so it can stand outside the benchmark's authored radius:
     its order completes, but it does not count as arrived_settled

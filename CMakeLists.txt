@@ -600,6 +600,16 @@ add_test(NAME legion_passagelanes
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/gap14.scn --mode legion --offsets 0,1,-1,2,-2 --json)
 set_tests_properties(legion_passagelanes PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.A\\.done\":[0-9]+,.*\"gate\\.top\\.crossings\":0,")
+# One slot hand-out budget a tick (2026-10-14 Legion review, item 5): four 120-body clicks to four dead ends in one tick.
+# The formation slot searches had a budget per point, and none for a formation's first 32 slots or for a member
+# without a slot: on the parent they walk 602,176 ring cells in one tick (B's second part searching against the
+# formation its first 8 bodies took), every point's queue its own 131,072 on the ticks after. Passes when the
+# per-tick peak stays under 150,000 (kHandOutCells, 131,072, plus the searches that start before it is spent),
+# serial equal to workers.
+add_test(NAME legion_handout
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/deadend-multi-4x120.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_handout PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"work\\.formation_ring_cells\\.max\":([0-9]?[0-9]?[0-9]?[0-9]?[0-9]|1[0-4][0-9][0-9][0-9][0-9]),")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
