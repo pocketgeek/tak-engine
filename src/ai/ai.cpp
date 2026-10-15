@@ -246,12 +246,18 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
             case BuildCat::Defense:  ++n.defenses; break;
         }
     }
-    // One factory per ~40 income so production can actually spend what we earn; a couple
-    // of mobile builders is plenty (more just spiral the economy). Hard/Absurd run hotter.
+    // One factory per ~40 income so production can actually spend what we earn.
+    // Builders count the Monarch. Normal grows to the Monarch plus four as income
+    // allows: retail's ai/default.txt limits each builder type, not the total --
+    // arabuild, arafly and arapries 4 each, cremech and crechie 4, tarpries,
+    // verlihr and verliege 3 -- and has no difficulty levels, so four is the most
+    // any one type may field. Those per-type limits still apply in weightedPick.
+    // Easy and Defensive keep the Monarch plus one; Hard/Absurd run hotter.
     n.desiredFactories = std::clamp(int(n.income / 40.0f) + 1, 1, 8);
     n.desiredArmy = std::clamp(12 + int(n.income * 1.5f), 12, 180);
     const bool aggressive = diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd;
-    n.builderCap = aggressive ? std::clamp(4 + int(n.income / 60), 4, 12) : 2;
+    n.builderCap = aggressive ? std::clamp(4 + int(n.income / 60), 4, 12)
+                 : diff_ == Difficulty::Normal ? std::clamp(2 + int(n.income / 50), 2, 5) : 2;
     n.desiredDefenses = std::clamp(1 + int(n.income / 50), 1, 6);
     if (aggressive || diff_ == Difficulty::Passive) {
         // Income limits production speed, not the eventual size of the force.

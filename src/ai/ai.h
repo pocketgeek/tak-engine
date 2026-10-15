@@ -105,7 +105,7 @@ struct Needs {
     int   desiredArmy = 0;
     int   desiredDefenses = 1;
     int   army = 0;            // count: mobile combatants
-    int   builderCap = 2;      // stop making builders past this (a handful, not a horde)
+    int   builderCap = 2;      // stop making builders past this, the Monarch included
     int   desiredFactories = 1;// how many factories the current income wants to feed
 };
 

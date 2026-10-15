@@ -128,6 +128,48 @@ static void monarchFightsBack(const sim::TypeRegistry& registry,const ai::Profil
     }
 }
 
+// Retail limits each builder type, not the total (ai/default.txt: arabuild,
+// arafly and arapries 4 each), and has no difficulty levels. Normal grows from the
+// Monarch plus one to the Monarch plus four as income allows; Easy and Defensive
+// stay at the Monarch plus one.
+static void builderCaps() {
+    auto files=std::make_shared<hpi::Vfs::Files>();
+    auto file=[&](const std::string& path,const std::string& text) {
+        std::string lines;
+        for (char ch : text) { lines += ch; if (ch == ';' || ch == '{' || ch == '}') lines += '\n'; }
+        (*files)[path]={lines.begin(),lines.end()};
+    };
+    auto type=[&](const char* id,const char* fields) {
+        file(std::string("units/")+id+".fbi",std::string("[UNITINFO]{unitname=")+id+
+            ";objectname="+id+";maxdamage=100;footprintx=2;footprintz=2;buildtime=30;buildcost=10;"+fields+"}");
+    };
+    type("keep","builder=1;workertime=30;");
+    type("king","builder=1;commander=1;workertime=30;canmove=1;maxvelocity=1;");
+    type("mason","builder=1;workertime=30;canmove=1;maxvelocity=1;");
+    file("canbuild/keep/mason.tdf","[CANBUILD]{sortbias=0;}");
+    hpi::Vfs vfs;vfs.setMapFiles(files);
+    sim::TypeRegistry reg;reg.loadDir(vfs,"units");reg.loadBuildTree(vfs,"canbuild");
+    auto trainsMason=[&](ai::Difficulty difficulty,float income,int masons) {
+        sim::World w;terrain(w);w.buildNavClasses(reg);
+        w.player(0).mana=10000;w.player(0).income=income;
+        w.spawn(reg.find("keep"),400,800,0,0);
+        w.spawn(reg.find("king"),800,800,0,0);
+        for (int i=0;i<masons;++i) w.spawn(reg.find("mason"),800+float(i)*40,1200,0,0);
+        ai::Profile p;p.weight["mason"]=100;p.limit["mason"]=4;
+        ai::Controller controller(0,reg,p,1,difficulty);
+        const auto cs=think(controller,w,difficulty==ai::Difficulty::Easy ? 90 : 0);
+        return std::any_of(cs.begin(),cs.end(),[](const auto& c) {
+            return c.kind==net::Cmd::Train && std::string(c.type)=="mason";
+        });
+    };
+    check(!trainsMason(ai::Difficulty::Normal,20,1),"Normal opens with the Monarch and one builder");
+    check(trainsMason(ai::Difficulty::Normal,100,1),"Normal adds builders as its income grows");
+    check(trainsMason(ai::Difficulty::Normal,150,3),"Normal grows to the Monarch and four builders");
+    check(!trainsMason(ai::Difficulty::Normal,1000,4),"Normal stops at the Monarch and four builders");
+    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Easy})
+        check(!trainsMason(difficulty,150,1),"Easy and Defensive keep the Monarch and one builder");
+}
+
 static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profile& profile,
                                const sim::UnitType& soldier) {
     auto base=soldier;base.id="base";base.maxVel={};base.sight=750;
@@ -262,6 +304,7 @@ int main(int argc,char** argv) {
                   "Passive AI orders defensive rather than hold-fire stances");
         }
     }
+    builderCaps();
     defensiveResponses(empty,profile,soldier);
     defensiveShooters(empty,profile,soldier);
     monarchFightsBack(empty,profile,soldier);
