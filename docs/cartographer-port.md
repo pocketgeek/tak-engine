@@ -391,6 +391,18 @@ registry key the retail installer wrote.
   `TAK_CARTO_SHOT_DIR=<dir>` writes the dialog's states as screenshots. Each
   check was shown to fail against a deliberately broken build.
 
+## BLOCKED tool (2026-10-14, not retail)
+
+A non-retail addition: retail Cartographer has no blocker tool (no such string or
+command in the binary; blockers came only with stamped sections). The fifth tool
+paints and erases the TNT plane's 0xFFFC hard blocker (`src/cartographer/blockers.h`):
+paint only on 0xFFFF, erase only 0xFFFC, every other value untouched; 1-16 cell
+square brushes, 4-connected strokes, Shift+drag rectangles, a red/blue (blocker /
+road) overlay with the tool or View > Show blocked cells (B, `blocked` in
+`preferences.txt`), live symmetry and Symmetrize. No tile changes, so `edited` stays
+clear and the minimaps are kept. The engine already honours 0xFFFC (`pathblock`
+test, Retail and Legion).
+
 ## RE status
 - Resource map + command handlers + tool behaviours + trigger opcode tables +
   TNT/OTA write formats + coordinate model + world types: **DONE**.

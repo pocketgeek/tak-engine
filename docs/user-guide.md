@@ -1499,10 +1499,11 @@ either program changes it for both.
   folder, where the game finds it the next time it starts; **Ctrl+Shift+S** is
   Save As. Saving keeps the previous version as a `.bak` file, and unsaved work
   gets recovery copies every minute.
-- The four tools, **Terrain**, **Features**, **Units** and **Starts**, each have a
-  searchable browser on the left. The modes **Place**, **Select**, **Erase** and
-  **Pan** decide what a left click does. Right-drag pans, the mouse wheel zooms,
-  and the minimap at the top right moves the view.
+- The five tools, **Terrain**, **Features**, **Units**, **Starts** and
+  **Blocked** (impassable ground), each have a searchable browser on the left.
+  The modes **Place**, **Select**, **Erase** and **Pan** decide what a left
+  click does. Right-drag pans, the mouse wheel zooms, and the minimap at the
+  top right moves the view.
 - Terrain is built from the original game's sections, which bring their own
   heights. The terrain browser groups them by kind and by their original
   folders; numbered variants of a piece share one thumbnail, and clicking the

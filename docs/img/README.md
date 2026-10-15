@@ -159,8 +159,11 @@ composed, so no browser cell or tree is a placeholder.
   `symmetry-stamp.jpg`, `terrain-clipboard.jpg` and `features-select.jpg` put two
   crops side by side under text labels, and `menus.jpg` puts six crops of the
   opened menus together (each with only its own menu title).
-- **Encoding.** JPEG, full chroma resolution, quality 86, not scaled. The 26
-  files total about 2.7 MB.
+- **Encoding.** JPEG, full chroma resolution, quality 86, not scaled. The 27
+  files total about 2.9 MB.
+- **Toolbar.** Every whole-window picture except `blocked.jpg` predates the
+  BLOCKED tool, so its toolbar shows four tool buttons where the editor now has
+  five.
 
 | Image | Scene |
 | --- | --- |
@@ -190,6 +193,7 @@ composed, so no browser cell or tree is a placeholder.
 | `test-map.jpg` | King of the Hill after F5: the TEST MAP message, with TEST RUNNING on the toolbar, whole window |
 | `test-lobby.jpg` | The game's private lobby for that King of the Hill snapshot: seats 2 to 4 open and tagged NEEDED BY SCENARIO, START greyed, and the MAP SCENARIO: ON (TEST MAP) lines under the match options; 1024 × 768 cropped to the lobby panel |
 | `menus.jpg` | Composite: the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each opened over Ulasem Arena or King of the Hill and cropped to the menu |
+| `blocked.jpg` | Added with the BLOCKED tool, not by the capture driver: the editor's own `--shot` output (`cartographer "Ladron's Tarn" --shot … --shot-tool blocked`, SDL `offscreen`, fresh scratch profile), whole 921 × 691 window at 30%. The shipped map's blocked cells along its castle walls are tinted red and its road cells blue; the browser lists the five brush sizes |
 
 The native dialogs (the first-start folder picker, *Not a game folder*,
 *Recover map* and *Restart failed*) belong to the operating system and are not

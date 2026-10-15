@@ -23,7 +23,9 @@ what each control does, from a first map to sharing a finished one.
 >   game folder** message and the new folder-picker title);
 > - opening a map file named on the command line;
 > - undefined features drawn as red dots;
-> - the limit of eight start positions (*START POSITIONS FULL*).
+> - the limit of eight start positions (*START POSITIONS FULL*);
+> - the **BLOCKED** tool and **View → Show blocked cells** (**B**), for painting
+>   and seeing [blocked cells](#blocked-cells).
 >
 > Apart from these and bug fixes, the guide matches 0.8.2.
 
@@ -42,19 +44,20 @@ and the first one has numbered markers added. The maps shown are shipped maps
 6. [Tools, modes and layers](#tools-modes-and-layers)
 7. [Terrain](#terrain)
 8. [Features: trees, rocks, mana and ruins](#features-trees-rocks-mana-and-ruins)
-9. [Units](#units)
-10. [Start positions](#start-positions)
-11. [Selecting, copying and undo](#selecting-copying-and-undo)
-12. [Symmetry](#symmetry)
-13. [Generating a random map](#generating-a-random-map)
-14. [Scenario maps](#scenario-maps)
-15. [Checking your map](#checking-your-map)
-16. [Testing a map in the game](#testing-a-map-in-the-game)
-17. [Saving, opening and sharing](#saving-opening-and-sharing)
-18. [Preferences](#preferences)
-19. [Keyboard and mouse reference](#keyboard-and-mouse-reference)
-20. [Troubleshooting and FAQ](#troubleshooting-and-faq)
-21. [Known limits](#known-limits)
+9. [Blocked cells](#blocked-cells)
+10. [Units](#units)
+11. [Start positions](#start-positions)
+12. [Selecting, copying and undo](#selecting-copying-and-undo)
+13. [Symmetry](#symmetry)
+14. [Generating a random map](#generating-a-random-map)
+15. [Scenario maps](#scenario-maps)
+16. [Checking your map](#checking-your-map)
+17. [Testing a map in the game](#testing-a-map-in-the-game)
+18. [Saving, opening and sharing](#saving-opening-and-sharing)
+19. [Preferences](#preferences)
+20. [Keyboard and mouse reference](#keyboard-and-mouse-reference)
+21. [Troubleshooting and FAQ](#troubleshooting-and-faq)
+22. [Known limits](#known-limits)
 
 ---
 
@@ -242,8 +245,9 @@ links to the section that explains it in full.
 1. **Menu bar**: FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP. Click a title to
    open its menu; click it again, click elsewhere or press **Esc** to close it.
    Checkbox items show `[X]` or `[ ]`, and choices show `(*)` or `( )`.
-2. **Tool buttons**: **TERRAIN**, **FEATURES**, **UNITS** and **STARTS** choose
-   what you are editing. The active tool is gold. **Tab** steps through them.
+2. **Tool buttons**: **TERRAIN**, **FEATURES**, **UNITS**, **STARTS** and
+   **BLOCKED** choose what you are editing. The active tool is gold. **Tab**
+   steps through them. (The picture predates the BLOCKED button.)
 3. **Mode buttons**: **PLACE**, **SELECT**, **ERASE** and **PAN** choose what
    the left mouse button does. The active mode is green.
 4. **REGIONS**: switches to editing named trigger areas. See
@@ -256,7 +260,8 @@ links to the section that explains it in full.
 7. **Group or category button**: with the Terrain tool it picks a group of
    sections; with Features and Units it cycles through categories.
 8. **Counter line**: how many items the browser shows. The Units tool shows a
-   faction button here instead.
+   faction button here instead, and the Blocked tool the number of blocked
+   cells.
 9. **Variant badge**: this terrain piece has variants; the badge shows which one
    is chosen and how many there are (here 1 of 3).
 10. **Scrollbar**: appears when the browser list is longer than the window. Drag
@@ -285,6 +290,7 @@ The status bar along the bottom shows, from left to right:
 | `TOOL:` and `ZOOM:` | The current tool and zoom. |
 | `BRUSH:` | Terrain tool only: **TERRAIN + OBJECTS** or **OBJECTS PROTECTED** (see [What a stamp replaces](#what-a-stamp-replaces)). |
 | `PLAYER:`, `UNITS:`, `SELECTED:` | Units tool only: the owner for new units, the number of placed units and how many are selected. |
+| `BRUSH:`, `BLOCKED CELLS:` | Blocked tool only: the brush size, the number of blocked cells on the map, and a reminder of Shift+drag and the overlay colours (see [Blocked cells](#blocked-cells)). |
 | `STARTS:` | Other tools: the number of start positions. |
 | `SAVED` / `UNSAVED` | Whether the map has changes since it was last saved. |
 | `USEONLY:` | Shown when a [Use Only list](#use-only-units) is set. |
@@ -312,7 +318,7 @@ controls** shows a summary of the controls.
 | --- | --- |
 | **FILE** | New map (Ctrl+N), Open map (Ctrl+O), Save (Ctrl+S), Save As (Ctrl+Shift+S), Export loose files, Test Map (F5), Exit |
 | **EDIT** | Undo (Ctrl+Z), Redo (Ctrl+Y), Clear area (K), Brush: protect objects (checkbox), Copy terrain selection (Ctrl+C), Paste terrain clipboard (Ctrl+V) |
-| **VIEW** | Fit map, 100% terrain zoom, Toggle grid (G), Toggle regions, Frame selection, Store view bookmark, Restore view bookmark, Overlay: movement / buildability / water depth / slopes, Hide terrain overlay, Smaller UI, Larger UI, Show features, Show units, Show starts, Unit model preview (F6), Preferences (F11 fullscreen) |
+| **VIEW** | Fit map, 100% terrain zoom, Toggle grid (G), Toggle regions, Frame selection, Store view bookmark, Restore view bookmark, Overlay: movement / buildability / water depth / slopes, Hide terrain overlay, Smaller UI, Larger UI, Show features, Show units, Show starts, Unit model preview (F6), Preferences (F11 fullscreen), Show blocked cells (B) |
 | **SCENARIO** | Properties (P), Resize (R), Use Only units (U), Check map (C), Scripting (T), Next issue, Regions, Validation results, Regenerate from recipe, Log Test Map triggers (checkbox), Placed units |
 | **SYMMETRY** | Live symmetry (M), Symmetrize map (Shift+M), seven mirror choices, Locate unmirrored terrain |
 | **HELP** | Editor controls, About |
@@ -350,7 +356,7 @@ fullscreen).
 
 ## Tools, modes and layers
 
-Cartographer has four **tools**, one for each kind of thing on the map, and four
+Cartographer has five **tools**, one for each kind of thing on the map, and four
 **modes** that decide what a left click does with that tool.
 
 | | **PLACE** | **SELECT** | **ERASE** | **PAN** |
@@ -359,19 +365,23 @@ Cartographer has four **tools**, one for each kind of thing on the map, and four
 | **FEATURES** | Place the chosen feature; drag to paint | Select, box-select and move | Click or drag to remove | Drag to pan |
 | **UNITS** | Place a unit, or drag an existing one | Select, box-select and move | Click a unit to remove it | Drag to pan |
 | **STARTS** | Add a start, or drag an existing one | Drag a start to move it | Click a start to remove it | Drag to pan |
+| **BLOCKED** | Block cells under the brush; drag to paint; Shift+drag fills a rectangle | (nothing) | Clear blocked cells; drag or Shift+drag as for Place | Drag to pan |
 
-The **REGIONS** button works like a fifth tool for trigger areas; see
+The **REGIONS** button works like a sixth tool for trigger areas; see
 [Regions](#regions).
 
 In **PLACE** mode a preview follows the pointer and shows where a click will put
 things. Terrain sections and features show a see-through image with a yellow
-outline; units show the outline of their footprint.
+outline; units show the outline of their footprint; the BLOCKED tool shows its
+brush (red in Place mode, white in Erase mode).
 
 ### Layers
 
 **View → Show features**, **Show units** and **Show starts** hide or show those
 layers, and **View → Toggle regions** and **Toggle grid** (**G**) do the same
-for region outlines and the grid. Cartographer remembers these choices.
+for region outlines and the grid. **View → Show blocked cells** (**B**) tints
+[blocked cells](#blocked-cells) with every tool. Cartographer remembers these
+choices.
 
 You cannot edit a hidden layer: the status bar reads *LAYER HIDDEN*. Choosing the
 layer's tool (or an item in its browser) shows the layer again.
@@ -455,6 +465,10 @@ section adds none of its own, and only the road and blocker markers on empty
 cells follow the new terrain. This setting is not remembered after you close
 Cartographer.
 
+Either way, a stamp replaces the [blocked cells](#blocked-cells) you painted in
+its area with the section's own markers, so paint blockers after the terrain is
+finished.
+
 ### Copying and pasting terrain
 
 You can copy any rectangle of the map, terrain and objects together, and stamp
@@ -495,9 +509,9 @@ the terrain.
 2. Drag a box on the map. It is drawn in red.
 3. Confirm: *Remove all units and features in this area? (N unit(s), M cells)*.
 
-It also removes the invisible road and blocker markers in the box. Start
-positions and regions stay. Press **K** again to cancel before dragging. Clear
-Area is one undo step.
+It also removes the invisible road and blocker markers in the box, including
+[blocked cells](#blocked-cells) you painted. Start positions and regions stay.
+Press **K** again to cancel before dragging. Clear Area is one undo step.
 
 To change the terrain itself, stamp other sections over it.
 
@@ -521,7 +535,7 @@ The **View** menu can colour the map to show how the game sees it:
 
 | Overlay | What it shows |
 | --- | --- |
-| **Overlay: movement** | Where the unit type chosen in the Units browser can go: green allowed, red blocked, judged from terrain and features. Flying units show where they can fly, not where they can land. |
+| **Overlay: movement** | Where the unit type chosen in the Units browser can go: green allowed, red blocked, judged from terrain, features and [blocked cells](#blocked-cells). Flying units show where they can fly, not where they can land. |
 | **Overlay: buildability** | Where that unit type can be placed or built: green allowed, red blocked, counting terrain, features and units already placed. |
 | **Overlay: water depth** | Brighter blue is deeper water. |
 | **Overlay: slopes** | Darker green is flat ground; brighter orange is steeper. |
@@ -567,7 +581,7 @@ a time.
 Each cell holds one feature. Placing on a cell that already has one replaces it
 without asking. A cell holding one of the invisible road or blocker markers
 that terrain sections bring (see [What a stamp replaces](#what-a-stamp-replaces))
-loses the marker too.
+or that you painted (see [Blocked cells](#blocked-cells)) loses the marker too.
 
 ### Selecting and moving features
 
@@ -596,11 +610,85 @@ In **SELECT** mode:
 In **ERASE** mode, click or drag over features to remove them, one cell at a
 time. Erasing clears the whole cell, so it also removes any invisible road or
 blocker marker there. For a large area use [Clear Area](#clearing-an-area)
-(**K**).
+(**K**). To clear only blocked cells, use the
+[BLOCKED tool](#erasing-blocked-cells) in Erase mode.
 
 A feature that the map's world does not define (for example one pasted from a
 map of another world) is drawn as a small **red dot**. You can select and erase
 it; Check Map reports it as an error.
+
+---
+
+## Blocked cells
+
+Some ground has to stay closed even though nothing stands on it: castle walls
+and gates that are part of the terrain art, cliff faces, a mountain crest. The
+game marks such cells with an invisible **blocker**. No unit can walk, sail or
+hover into a blocked cell, in Retail and Legion pathfinding alike, and nothing
+can be built on one. Flying units pass over them. Terrain sections bring their
+own blockers (see [What a stamp replaces](#what-a-stamp-replaces)); the
+**BLOCKED** tool paints and erases them by hand. The original editor had no
+such tool.
+
+![The BLOCKED tool on Ladron's Tarn at 30%: red cells line the faces of the castle walls, a cobbled road is tinted blue, the browser lists brush sizes from 1 x 1 to 16 x 16 cells under BLOCKED CELLS: 5073, and the status bar reads TOOL: BLOCKED, BRUSH: 1 X 1, BLOCKED CELLS: 5073, SHIFT+DRAG: RECTANGLE, RED=BLOCKED BLUE=ROAD](img/cartographer/blocked.jpg)
+
+*Ladron's Tarn with the BLOCKED tool. The red cells along the castle walls are the shipped map's own blockers; the road is blue.*
+
+### Painting blocked cells
+
+1. Choose the **BLOCKED** tool (the fifth toolbar button, or **Tab**).
+2. Choose a brush in the browser: **1 × 1**, **2 × 2**, **4 × 4**, **8 × 8** or
+   **16 × 16** cells. **[** and **]** step through the sizes while the tool is
+   chosen. The size is not remembered after you close Cartographer.
+3. In **PLACE** mode, click to block the cells under the brush, or drag to paint
+   a stroke. A red outline under the pointer shows the brush. However fast you
+   drag, the stroke has no gaps, and even a 1 × 1 stroke is a wall without
+   diagonal openings.
+
+Painting blocks only **empty** cells. A feature, a road marker or a cell that is
+already blocked stays as it is.
+
+### Filling a rectangle
+
+Hold **Shift** and drag, in Place or Erase mode, to draw a yellow rectangle.
+When you let go, every cell in it is blocked (or, in Erase mode, cleared). The
+brush size does not matter for rectangles. **Esc** drops the rectangle before
+you let go.
+
+### Erasing blocked cells
+
+In **ERASE** mode the brush outline is white. Click, drag or Shift+drag to clear
+blocked cells, including the ones terrain sections brought. Erasing changes
+nothing else: features and roads stay.
+
+### Seeing blocked cells
+
+While the BLOCKED tool is chosen, blocked cells are tinted **red** and road
+cells **blue**, so you can see why painting skipped a cell. Press **B** (or
+**View → Show blocked cells**) to keep the tint with every tool; Cartographer
+remembers this. The movement overlay (**View → Overlay: movement**) shows
+blocked cells as blocked too.
+
+The browser's counter line and the status bar show how many blocked cells the
+map has, and the status bar shows the brush size.
+
+### What else changes blocked cells
+
+- **Terrain stamps** replace the blocked cells in their area with the section's
+  own markers, with or without **Brush: protect objects**. Paint blockers after
+  the terrain is finished.
+- **Placing a feature** on a blocked cell replaces the blocker, and erasing with
+  the **Features** tool clears the whole cell, blocker included.
+- **Clear Area** (**K**) removes the blocked cells in its box.
+- **Live symmetry** (**M**) blocks and clears the mirror cells too. A mirror
+  cell that holds a feature or a road is skipped, and the status bar says so.
+- **Symmetrize** (**Shift+M**) copies the source side's blocked cells onto empty
+  cells on the other side, with either **TERRAIN** choice. It does not clear
+  blocked cells on the other side; only mirrored terrain replaces them.
+- **Undo**: each click, stroke or rectangle is one undo step.
+
+Blocked cells are saved in the map itself, so the game blocks them in every
+match on the map, Test Map included. They do not change the minimap.
 
 ---
 
@@ -806,9 +894,9 @@ Features and units have their own selections and their own clipboards.
 ### Undo and redo
 
 **Ctrl+Z** undoes, **Ctrl+Y** (or **Ctrl+Shift+Z**) redoes. Undo covers every
-change to the map: terrain, features, units, starts, regions, rules, scenario
-properties, the Use Only list and the map name. It does not cover the view,
-the clipboards or preferences.
+change to the map: terrain, features, blocked cells, units, starts, regions,
+rules, scenario properties, the Use Only list and the map name. It does not
+cover the view, the clipboards or preferences.
 
 - Each mouse gesture is one step, from pressing the button to letting go: a whole
   painted stroke or a whole group move undoes at once. Each dialog change or key
@@ -825,7 +913,7 @@ the clipboards or preferences.
 
 **Esc** first cancels whatever is open or in progress, in this order: an open
 menu or list, the browser search box, a dialog, the terrain clipboard brush, a
-terrain selection, region editing.
+terrain selection, a blocked-cell rectangle still being dragged, region editing.
 
 > **Careful: when there is nothing left to cancel, Esc closes Cartographer.** If
 > the map has unsaved changes you are asked first (**SAVE**, **DISCARD** or
@@ -868,8 +956,8 @@ centre), and the status bar shows the mirror in use.
 
 While it is on:
 
-- **Units, features and start positions** that you place, move, erase, paste,
-  duplicate or delete are mirrored at once. The status bar reports
+- **Units, features, start positions and blocked cells** that you place, move,
+  erase, paste, duplicate or delete are mirrored at once. The status bar reports
   *MIRRORED n change(s)*, or how many mirrored changes were skipped because they
   would fall off the map, overlap something or need a start number when all
   eight are used. Mirrored starts take the next free number.
@@ -913,6 +1001,9 @@ would be copied and replaced, then asks you to confirm. The whole change is
   units go to the player whose start position mirrors the original owner's.
 - With **CURRENT SELECTION**, only the selected objects are copied (and terrain
   only for a terrain rectangle). Start positions and regions are not copied.
+- [Blocked cells](#blocked-cells) on the source side (or in a selected terrain
+  rectangle) block their mirror cells too, where those are empty, with either
+  TERRAIN choice. Blocked cells on the other side are not cleared.
 - Copied regions get the original name with *mirror* added (for example
   *Player 1 mirror*). Rules do not use them until you rename them or point
   rules at them. Copied units lose their display names.
@@ -1592,9 +1683,9 @@ and so on), except where a Ctrl combination is listed below.
 | **Ctrl+Z** | Undo |
 | **Ctrl+Y** or **Ctrl+Shift+Z** | Redo |
 | **Ctrl+F** | Search the browser |
-| **Tab** | Next tool: Terrain, Features, Units, Starts (also leaves region mode) |
+| **Tab** | Next tool: Terrain, Features, Units, Starts, Blocked (also leaves region mode) |
 | **Ctrl+L** | Switch between the Terrain and Features tools |
-| **[** and **]** | Previous / next owner for new units (0 to 7) |
+| **[** and **]** | Previous / next owner for new units (0 to 7); with the Blocked tool, smaller / larger brush |
 | **P** | Scenario properties |
 | **R** | Resize the map |
 | **U** | Use Only units |
@@ -1602,6 +1693,7 @@ and so on), except where a Ctrl combination is listed below.
 | **T** | Scenario scripting |
 | **K** | Clear Area on / off |
 | **G** | Grid on / off |
+| **B** | Show blocked cells with every tool on / off |
 | **M** | Live symmetry on / off |
 | **Shift+M** | Symmetrize |
 | **1**, **2**, **3**, **4**, **5** | Zoom to 100%, 75%, 50%, 25%, 12.5% |
@@ -1623,6 +1715,9 @@ and so on), except where a Ctrl combination is listed below.
 | | **Ctrl+V**, **Ctrl+D** | Paste, duplicate at the pointer |
 | | **Delete** | Delete the selection |
 | | **Enter** | Features: list the selection. Units: Unit Properties |
+| Blocked | **[**, **]** | Smaller, larger brush |
+| | **Shift** + drag | Fill a rectangle (Place: block; Erase: clear) |
+| | **Esc** | Drop the rectangle being dragged |
 | Region mode | **Enter** | Region properties |
 | | **Delete** | Delete the selected region |
 | | **Esc** | Cancel a drag, or leave region mode |
@@ -1657,7 +1752,7 @@ selected empties that clipboard.
 | Wheel over the map | Zoom around the pointer |
 | Wheel over the browser or a list | Scroll |
 | Double-click | Properties of a unit, a region, or a condition or action |
-| Shift+click, Shift+drag | Add to (or toggle) the selection |
+| Shift+click, Shift+drag | Add to (or toggle) the selection; with the Blocked tool, Shift+drag fills a rectangle |
 | Click or drag in the minimap | Move the view |
 
 ---
