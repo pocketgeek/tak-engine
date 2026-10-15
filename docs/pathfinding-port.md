@@ -7,6 +7,109 @@
 > [Legion](legion-pathfinding.md) remain. Mentions of the removed modes in the
 > Retail port log and Retail audit sections below are history.
 
+## Retail audit: production entity pools for path admission (2026-10-15)
+
+`416430` admits path searches by walking each player's allocated entity
+slots, holes included, at 7 work a slot; the slot cursor wraps at the pool's
+last slot and stamps the wrap tick, which weights the next initialization
+(`retailInitialPathWeight`). World addresses units by global IDs that are
+never reused, and `PathService` used to stand in a pool per player that grew
+from ID 0 through the highest ID that player had requested with. Every other
+player's units were holes in it, the capacity drifted with the match, and
+the scan order was ID order. Only the comparison fixtures set real pools
+(`setEntityPool`), so they hid it: without the override in
+`retail_replay_probe.cpp`'s World crowd start, the three-Hunter
+`check_crowd_arrival.py --world-tick` run diverged at tick 15.
+
+What retail does (static reading, then emulation of the routines alone):
+
+- **`511570`, pools at game start.** Capacity is maxunits
+  (`[[0x62d558]+8]+0xc`, stored at `+0x14e7c`); there are `10 x capacity + 1`
+  records of `0x138` bytes, record 0 a sentinel, and record `i` has ID `i`.
+  The ten player records are sorted (`5118c0`: by `+4` in game mode 3, else
+  by address) and the `r`th gets records `r x capacity + 1 ..
+  (r + 1) x capacity` at `+0x74/+0x78`. Emulated for maxunits 20, 250 and 500
+  in modes 1 and 3: player `p` gets `p x cap + 1 .. (p + 1) x cap` in mode 1,
+  the reverse order under the mode-3 sort; a slot's offset within its own
+  pool is all `416430` uses.
+- **`499590`, setting maxunits,** clamps to 20..500 (`0x5f0400/0x5f0404`;
+  emulated 0, 10, 20, 250, 500, 1000, 2000 -> 20, 20, 20, 250, 500, 500,
+  500). The options file default is 250 (`4c7c7a push 0xfa`).
+- **`5121d8`, placing a new unit,** takes the CRT-ranked free slot of its
+  owner's pool, one `rand()`, none when the pool is full (already ported as
+  `retailAllocateSlot`; `check_entity_slots.py`, 160 fixtures).
+- **`512ae0`, retirement,** frees the record: `512e23` clears `+0x130` bit 24
+  and `512e52` drops the allocated count, right after `512ee0` places the
+  corpse feature. A dying unit holds its slot through its death animation,
+  not through the corpse's life, which is a map feature.
+
+What World does now:
+
+- `World` owns an `EntitySlotTable` (slot -> unit per player, unit -> slot)
+  and binds it to `PathService`. `spawn` places every unit with
+  `retailAllocateSlot` from the match CRT stream (`crtRand`, origin
+  `0x5121dd`). Capacity is the unit cap, the engine's maxunits; an uncapped
+  World (tests, tools) starts at retail's default 250.
+- A record is held while the unit is alive or `deadFor <
+  corpseAnimationTicks()` (and below `kRetiredTicks`): where World places the
+  corpse, which is where retail retires. Freed slots are reclaimed when the
+  pool is next searched, so a retired slot is reused at the next allocation.
+- An ownership change (`giveUnit`, `scenarioTransfer`, `captureUnit`, the
+  mission `capture` verb and `s` command) cancels the unit's request and
+  gives it a new record in the new owner's pool, as retail's transfer
+  allocates a new object. `requestPath` repairs a unit whose owner a tool
+  edited directly.
+- `PathService` maps `(player, slot)` through the table: scheduler capacity is
+  the pool size, a hole is a slot with no request. Fixed fixture pools
+  (`setEntityPool`, restored captures) still take precedence; a standalone
+  service with neither keeps the old ID-as-slot pool.
+- `stateHash` folds the CRT stream, the pool sizes and every unit's slot.
+- `retail_replay_probe --crowd-world` no longer overrides the pool. It takes
+  the native CRT seed, spawns through production, and reports the capacity
+  and each Hunter's slot. `check_crowd_arrival.py --world-tick` builds the
+  native pool at that capacity (`--capacity`, default 2000, the match
+  default unit cap) and places each Hunter by running `512162..512255`
+  (`5121d8`) itself, then requires World's slots to match before ticking.
+
+Deliberate differences: retail refuses a creation when the pool is full;
+World's cap counts live units, so a pool full of dying records, or an
+uncapped World past 250, grows by one slot instead (no draw). Unit caps of
+1,000 and 2,000 are not retail settings (maxunits clamps to 500); the pool
+follows the engine's cap. Unit IDs stay global, so per-unit processing order
+is still `units_` order, not retail's record order.
+
+Regression (`retail_trace --selftest`, no fixture pools): per-owner ranked
+slots, the shared CRT stream and capture reallocation; retirement frees a
+record for reuse while a dying unit keeps its own, and a full pool grows
+without a draw; seed 2631 places units 1, 2, 3 in slots 65, 60, 248, so at
+budget 300 (43 scans a tick) unit 2 is admitted first, on tick 2, and the
+three deliver in slot order; a cursor restored to slot 249 wraps on its first
+scan and stamps that tick. Against the parent the admission case fails
+(units admitted in ID order on tick 1) and the wrap case throws (no slot 249
+in an ID-addressed pool). The retry-ladder fixture now allows up to eight
+ticks to admit, since its unit can sit anywhere in 250 slots.
+
+Validation (all targets rebuilt in Debug, Release and -O2 Debug):
+`check_crowd_arrival.py --world-tick` on production pools, three Hunters for
+300 ticks (native CRT seed `0xbf28309a` puts them in slots 21, 686, 194 of
+2,000) and 450 Hunters for 1,800 ticks, all fields match; the composed 450 x
+1,800 run (fixture pool) matches. `check_entity_slots.py` (160),
+`emuscheduler.py`, `check_scheduler.py` (4,072 gates, 106 fixtures),
+`fuzz_world_search.py --cases 500 --seed 12`, `check_ground_owner.py` (3,651
+checks), `check_mobile_placement.py` (6,000), `check_navigation_retry.py`
+(8,192), `check_search_movement.py` (unit 625 alone, and with 590, 592, 627),
+and `check_gate_search_movement.py --missions` for the four gates, `--pair`,
+`--pair --pair-close` and `--return-trip --rounds 2400` all match.
+(`--return-trip` at the default 1,200 rounds stops short of arrival on the
+parent too.) `ctest -L quick` on -O2 Debug passes after two intended
+retakes: `tools/navigation_checkpoints.json` (both modes, identical in Debug,
+Release and -O2 Debug, serial and workers) and battle-field-2x60's mopup
+`trace_cells` ratchet (183,665; that window's Legion total falls 823,839 ->
+208,921). `--mpai` Inner Circle seed 1, Retail: 60 s `42a9fc16c5df77b8` (twice),
+300 s `9b48eb78e62650cb`; was `8db23af1b0260ba1` / `bf6f1ac3081f9ee6`.
+`check-determinism.sh` golden `dcef618cd2e4d558` unchanged. Protocol not
+bumped here.
+
 ## Retail audit: who holds an overlapped ground cell (2026-10-15)
 
 World used to derive the ground word from positions. Where footprints
