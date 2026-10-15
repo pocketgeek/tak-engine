@@ -155,9 +155,24 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
 }
 
 int main(int argc, char** argv) try {
-    if((argc==4 || argc==5) && std::string(argv[1])=="--export-package") {
+    if(argc>=4 && argc<=6 && std::string(argv[1])=="--export-package") {
         auto data=hpi::mountRetailRoot(argv[2],hpi::OverridePolicy::None);
-        write(argv[3],net::maps::build(data,argc==5 ? argv[4] : "Ulasem Arena")->bytes);return 0;
+        const auto package=net::maps::build(data,argc>=5 ? argv[4] : "Ulasem Arena");
+        if(argc==6) {
+            // A crafted host's package: the same map with one companion (argv[5] is its
+            // suffix, e.g. ".tdf") left out. decode accepts it -- companions are optional --
+            // which is what server_map_scenario_test needs the server to catch at START.
+            const auto stem=package->mapPath.substr(0,package->mapPath.size()-4);
+            std::vector<std::pair<std::string,const std::vector<uint8_t>*>> kept;
+            for(const auto& [name,bytes]:*package->files) if(name!=stem+argv[5]) kept.push_back({name,&bytes});
+            check(kept.size()+1==package->files->size(),"--export-package: the map has no such companion to leave out");
+            net::Writer w;w.u32(2);w.str(package->mapPath);w.u32(uint32_t(kept.size()));
+            for(const auto& [name,bytes]:kept){w.str(name);w.u32(uint32_t(bytes->size()));w.b.insert(w.b.end(),bytes->begin(),bytes->end());}
+            const auto digest=crypto::toHex(crypto::sha256(w.b.data(),w.b.size()));
+            check(bool(net::maps::decode(w.b,digest)),"--export-package: the crafted package does not decode");
+            write(argv[3],w.b);return 0;
+        }
+        write(argv[3],package->bytes);return 0;
     }
     if(argc==5 && std::string(argv[1])=="--solo-network")return soloNetwork(uint16_t(std::stoi(argv[2])),argv[3],argv[4]);
     if (argc >= 5 && std::string(argv[1]) == "--network") {
@@ -533,6 +548,8 @@ int main(int argc, char** argv) try {
             const auto koth=info("King of the Hill");
             check(koth.status==S::Ok && koth.requiredSeats()==0x0F && koth.useOnlyTypes==6 && koth.outcomes,
                   "King of the Hill: offered, seats 1-4, six Use Only types, victory rules");
+            check(!koth.useOnlyMissing && (koth.armySeats&0x0F)==0x0F,
+                  "King of the Hill: its package carries the Use Only list, and every seat gets an army");
             const auto strength=info("Increasing Strength");
             check(strength.status==S::Ok && strength.placed==0 && strength.requiredSeats()==0x0F,
                   "Increasing Strength: offered, rules only, seats 1-4");

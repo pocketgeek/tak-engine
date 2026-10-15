@@ -9,9 +9,13 @@ of the checks shows exactly which it lacks:
   seats       ON for King of the Hill: the room forces fixed starts; START is refused
               until every seat the scenario's placements and rules belong to is played
               (setupMatch's own message), then the game starts with the option on
+  incomplete  ON for King of the Hill with a package that leaves out its Use Only .tdf:
+              START is refused, since setupMatch would read each machine's own copy,
+              which the package digest does not cover
   locked      the option is creation-only: SetGameOptions cannot turn it on or off
   sanitised   the server clears it where a map scenario cannot exist: a generated map,
-              a stress test, a benchmark and a campaign mission
+              a stress test, a benchmark and a campaign mission, including a room the
+              host switches to a stress test after creating it
   off         OFF on King of the Hill is an ordinary skirmish: two players to start
 
 The rooms run on an authenticated server, i.e. a public one, so the option is proved
@@ -176,6 +180,22 @@ def scenario_seats(port, h, packages, root):
         assert opts[SCENARIO] == 1 and opts[RANDOM] == 0, 'the game did not start with the scenario rules'
 
 
+def scenario_incomplete(port, h, packages, root):
+    # Its own account: the server's per-account lobby budget (CreateGame, MapOffer and
+    # StartGame cost 16 each) would otherwise run dry over the scenarios' rapid STARTs.
+    with contextlib.closing(login(port, h, 'Bob')) as host:
+        state = create(host, 'King of the Hill', 1)
+        upload(host, state[0], 'King of the Hill', packages['King of the Hill without its .tdf'])
+        ready_host(host, state)
+        for slot in (1, 2, 3):
+            seat_ai(host, slot)
+        latest(host)
+        outcome, why = start(host)
+        assert outcome == 'refused', ('a package without its Use Only list started its scenario', outcome)
+        assert why == b'the map package leaves out its Use Only list', why
+        assert log_says(root, 'start refused -- the map package leaves out'), 'the refusal was not logged'
+
+
 def scenario_locked(port, h, packages, root):
     for created in (1, 0):
         with contextlib.closing(login(port, h, 'Alice')) as host:
@@ -204,6 +224,15 @@ def local_sanitised(binary, data, root):
                 peer.receive('Welcome')
                 state = create(peer, 'King of the Hill', 1, **kwargs)
                 assert state[2][SCENARIO] == 0, ('MAP SCENARIO kept for', kwargs)
+        with contextlib.closing(Peer(port)) as peer:
+            peer.send('Hello', struct.pack('<I', auth.VERSION) + auth.field('map-scenario-test') +
+                      struct.pack('<Q', h) + auth.field('Local'))
+            peer.receive('Welcome')
+            state = create(peer, 'King of the Hill', 1)
+            assert state[2][SCENARIO] == 1, 'the local room did not adopt MAP SCENARIO'
+            peer.send('SetGameOptions', options(stress=2, scenario=1))
+            after = latest(peer)
+            assert after[2][SCENARIO] == 0, 'MAP SCENARIO kept after the host switched the room to a stress test'
         assert process.poll() is None, 'local server exited'
 
 
@@ -222,7 +251,7 @@ def scenario_off(port, h, packages, root):
         assert opts[SCENARIO] == 0
 
 
-SCENARIOS = [scenario_refused, scenario_seats, scenario_locked, scenario_sanitised, scenario_off]
+SCENARIOS = [scenario_refused, scenario_seats, scenario_incomplete, scenario_locked, scenario_sanitised, scenario_off]
 
 
 def main():
@@ -240,6 +269,10 @@ def main():
             subprocess.run([str(a.map_tool.resolve()), '--export-package', str(a.data.resolve()), str(out), name],
                            check=True)
             packages[name] = out.read_bytes()
+        out = root / 'King-of-the-Hill-no-tdf.takmap'
+        subprocess.run([str(a.map_tool.resolve()), '--export-package', str(a.data.resolve()), str(out),
+                        'King of the Hill', '.tdf'], check=True)
+        packages['King of the Hill without its .tdf'] = out.read_bytes()
         public = root / 'public'
         public.mkdir()
         with server(a.server.resolve(), a.data.resolve(), public) as (port, h, process):
@@ -265,7 +298,8 @@ def main():
     if failed:
         raise SystemExit('FAIL: ' + ', '.join(failed))
     print('PASS: MAP SCENARIO -- refused without a scenario (logged), fixed starts and required seats before '
-          'START, creation-only, cleared for generated/stress/benchmark/mission rooms, off is a skirmish')
+          'START, refused for a package missing a scenario file, creation-only, cleared for '
+          'generated/stress/benchmark/mission rooms, off is a skirmish')
 
 
 if __name__ == '__main__':

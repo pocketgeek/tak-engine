@@ -1595,11 +1595,14 @@ private:
     void syncCreateScenario();
     bool createScenarioOn() const;            // the create choice plays the map's scenario
     // Whether the create screen offers a map's scenario. With the FULL override tier a
-    // unit type this install lacks may come from an override pack the host selects in
-    // the room, so MissingType is offered there (with a warning); the server's START
-    // refuses it if no selected pack supplies the type.
-    static bool scenarioOffered(const tak::sim::ScenarioInfo& s, uint8_t overrideTier) {
-        return s.offerable() || (overrideTier == 2 && !s.marker && s.status == tak::sim::ScenarioStatus::MissingType);
+    // placed or custom unit type this install lacks may come from an override pack the
+    // host selects in the room, so MissingType is offered there (with a warning) when
+    // this install has a pack to select; the server's START refuses it if no selected
+    // pack supplies the type. (A Use Only entry never needs a pack: a MAP SCENARIO game
+    // leaves out the names no unit answers to.) Call after scanOverridePacks().
+    bool scenarioOffered(const tak::sim::ScenarioInfo& s, uint8_t overrideTier) const {
+        return s.offerable() || (overrideTier == 2 && !s.marker && s.status == tak::sim::ScenarioStatus::MissingType &&
+                                 s.seatOneArmy() && !availableOverridePacks_.empty());
     }
     // One selectable map plus the attributes the picker can sort by, read once from
     // the map's .ota GlobalHeader (a tiny text file -- no need to decompress the TNT).
@@ -1641,6 +1644,7 @@ private:
     std::map<std::string, std::vector<uint8_t>> kingdomPals_;  // kingdom -> RGBA palette (256*4)
     std::vector<std::string> availableOverridePacks_;
     bool overridePacksScanned_=false;
+    void scanOverridePacks();   // fills availableOverridePacks_ once
     size_t overridePage_=0;
     uint8_t createOverride_ = 1;   // create-dialog override tier (default cosmetic)
     std::string mpMapId_;   // set from the launched map basename

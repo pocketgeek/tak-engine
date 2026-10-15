@@ -530,7 +530,14 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                     const auto whitelist = tdf::parseText(std::string(data.begin(),data.end()),path);
                     std::vector<std::string> allowed;
                     for (const auto& name : whitelist.childOrder) {
-                        if (!reg.find(name)) throw std::runtime_error("Unknown authored Use Only unit: " + name);
+                        if (!reg.find(name)) {
+                            // MAP SCENARIO plays maps made for the original game, whose lists
+                            // can name units no install has (NeverGlory: 44 of its 242). A name
+                            // no unit answers to permits nothing, so it is left out. A Test Map
+                            // copy still refuses it: there it is the author's own typo.
+                            if (!authoredPlaytest) continue;
+                            throw std::runtime_error("Unknown authored Use Only unit: " + name);
+                        }
                         allowed.push_back(name);
                     }
                     world.setBuildRestrictions(std::move(allowed));

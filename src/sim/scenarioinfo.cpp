@@ -37,7 +37,8 @@ ScenarioInfo inspectScenario(const hpi::Vfs& vfs, const std::string& mapPath, co
         info.hasScenario = gh && gh->numberOr("hasscenario", 0) != 0;
 
         // The Use Only list, by setupMatch's rules: a plain file name, the map's own
-        // <map>.tdf beside the .ota, present, every entry (by section name) a known type.
+        // <map>.tdf beside the .ota, present. A Test Map copy's entries (by section name)
+        // must all be known types; a MAP SCENARIO game leaves out a name no unit answers to.
         const std::string restriction = gh ? gh->valueOr("useonlyunits", "") : std::string();
         bool useOnlyBroken = false;
         std::string missingType;
@@ -45,17 +46,20 @@ ScenarioInfo inspectScenario(const hpi::Vfs& vfs, const std::string& mapPath, co
             const auto slash = otaPath.find_last_of('/');
             const auto path = (slash == std::string::npos ? std::string{} : otaPath.substr(0, slash + 1)) + restriction;
             if (tak::vpath::filename(restriction) != restriction || restriction == "." || restriction == ".." ||
-                hpi::MountSet::key(path) != hpi::MountSet::key(tak::vpath::replaceExtension(otaPath, ".tdf")) ||
-                !vfs.has(path)) {
+                hpi::MountSet::key(path) != hpi::MountSet::key(tak::vpath::replaceExtension(otaPath, ".tdf"))) {
                 useOnlyBroken = true;
+            } else if (!vfs.has(path)) {
+                useOnlyBroken = info.useOnlyMissing = true;
             } else {
                 try {
                     const auto data = vfs.read(path);
                     const auto whitelist = tdf::parseText(std::string(data.begin(), data.end()), path);
-                    info.useOnlyTypes = int(whitelist.childOrder.size());
-                    if (reg)
-                        for (const auto& name : whitelist.childOrder)
-                            if (!reg->find(name)) { missingType = name; break; }
+                    int known = 0;
+                    for (const auto& name : whitelist.childOrder) {
+                        if (!reg || reg->find(name)) { ++known; continue; }
+                        if (info.marker && missingType.empty()) missingType = name;
+                    }
+                    info.useOnlyTypes = info.marker ? int(whitelist.childOrder.size()) : known;
                 } catch (const std::exception&) { useOnlyBroken = true; }
             }
             if (useOnlyBroken) info.useOnlyTypes = -1;
@@ -85,17 +89,45 @@ ScenarioInfo inspectScenario(const hpi::Vfs& vfs, const std::string& mapPath, co
                     for (const auto& action : group.actions)
                         if (crt::isOutcomeAction(action.opcode)) info.outcomes = true;
             }
+            auto lower = [](std::string s) {
+                for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
+                return s;
+            };
             // setupMatch's order: Use Only entries, then custom types, then placements.
             if (reg && missingType.empty()) {
-                auto lower = [](std::string s) {
-                    for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
-                    return s;
-                };
                 for (const auto& type : scenario.customTypes)
                     if (!reg->find(lower(type.name))) { missingType = type.name; break; }
                 if (missingType.empty())
                     for (const auto& unit : scenario.units)
                         if (!reg->find(lower(unit.objectName))) { missingType = unit.objectName; break; }
+            }
+            // Who has something to command once the placements replace the Monarchs. A
+            // Create action (7) makes units for its bank's owner, or for every player
+            // from All Players (bank 0).
+            if (reg) {
+                info.armySeats = 0;
+                auto creates = [&](size_t bank) {
+                    if (bank >= scenario.players.size()) return false;
+                    for (const auto& group : scenario.players[bank])
+                        for (const auto& action : group.actions)
+                            if (action.opcode == 7) return true;
+                    return false;
+                };
+                const bool everyone = creates(0);
+                for (int p = 0; p < kMaxPlayers; ++p)
+                    if (everyone || creates(size_t(p) + 1)) info.armySeats |= uint8_t(1u << p);
+                for (const auto& unit : scenario.units) {
+                    if (unit.player < 0 || unit.player >= kMaxPlayers) continue;
+                    // A type this install lacks may come from an override pack (MissingType
+                    // already refuses or warns): it is not held against the seat.
+                    const auto* type = reg->find(lower(unit.objectName));
+                    if (!type) { info.armySeats |= uint8_t(1u << unit.player); continue; }
+                    const auto side = lower(type->side);
+                    if (side == "lif" || side == "npc" || side == "mon") continue;
+                    bool armed = false;
+                    for (const auto& weapon : type->weapons) armed = armed || weapon.damage > 0;
+                    if (armed || type->isBuilder || !type->isStructure()) info.armySeats |= uint8_t(1u << unit.player);
+                }
             }
         }
 
@@ -134,7 +166,9 @@ std::string seatList(uint8_t seats) {
 std::vector<std::string> scenarioReason(const ScenarioInfo& info) {
     using S = ScenarioStatus;
     switch (info.status) {
-        case S::Ok: return {};
+        case S::Ok:
+            if (info.seatOneArmy()) return {};
+            return {"PLAYER 1 GETS NO ARMY", info.placedSeats & 1 ? "(NO FIGHTER OR BUILDER)" : "(NO UNITS PLACED FOR IT)"};
         case S::NoScenario: return {"THIS MAP HAS NO SCENARIO"};
         case S::Leftover: return {"THIS MAP HAS NO SCENARIO", "(UNUSED LEFTOVER RULES)"};
         case S::CrtMissing: return {"SCENARIO FILE IS MISSING"};
@@ -163,17 +197,19 @@ std::vector<ScenarioLine> scenarioSummary(const ScenarioInfo& info, bool compact
     }
     const uint8_t seats = info.requiredSeats();
     lines.push_back({seats ? "NEEDS SEATS " + seatList(seats) : std::string("NEEDS NO SEATS")});
-    if (info.useOnlyTypes > 0) {
-        const std::string types = std::to_string(info.useOnlyTypes) + (info.useOnlyTypes == 1 ? " UNIT TYPE" : " UNIT TYPES");
-        lines.push_back({compact ? "BUILDS " + types : "ONLY " + types + " CAN BE BUILT"});
-    }
-    else if (info.useOnlyTypes == 0)
-        lines.push_back({compact ? "NOTHING CAN BE BUILT" : "NO UNIT TYPE CAN BE BUILT"});
-    else if (!compact)
-        lines.push_back({"ALL UNIT TYPES CAN BE BUILT"});
+    if (auto useOnly = scenarioUseOnlyLine(info, compact); !useOnly.empty()) lines.push_back({std::move(useOnly)});
     if (info.outcomes) lines.push_back({compact ? "ENDS BY SCENARIO RULES" : "ENDS ONLY BY THE SCENARIO'S RULES"});
     else lines.push_back({compact ? "NO VICTORY RULES: ENDLESS" : "NO VICTORY RULES: IT NEVER ENDS BY ITSELF", true});
     return lines;
+}
+
+std::string scenarioUseOnlyLine(const ScenarioInfo& info, bool compact) {
+    if (info.useOnlyTypes > 0) {
+        const std::string types = std::to_string(info.useOnlyTypes) + (info.useOnlyTypes == 1 ? " UNIT TYPE" : " UNIT TYPES");
+        return compact ? "BUILDS " + types : "ONLY " + types + " CAN BE BUILT";
+    }
+    if (info.useOnlyTypes == 0) return compact ? "NOTHING CAN BE BUILT" : "NO UNIT TYPE CAN BE BUILT";
+    return compact ? std::string() : std::string("ALL UNIT TYPES CAN BE BUILT");
 }
 
 }  // namespace tak::sim

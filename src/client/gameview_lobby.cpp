@@ -412,6 +412,10 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             createScenario_ = mapScenarioInfo(mapPath_);
     }
 
+    void GameView::scanOverridePacks() {
+        if(!overridePacksScanned_){availableOverridePacks_=tak::hpi::overridePacks(std::filesystem::u8path(installRoot_));overridePacksScanned_=true;}
+    }
+
     bool GameView::createScenarioOn() const {
         if (createScenarioFor_ != mapPath_ || tak::mapgen::isGeneratedMapId(mpMapId_)) return false;
         // An offerable map plays its scenario when chosen; a Test Map copy always does.
@@ -444,6 +448,7 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             }
             createPrefApplied_ = true;
         }
+        scanOverridePacks();   // scenarioOffered: may a pack supply a missing unit type?
         syncCreateScenario();
         // While the map's scenario is on, it owns how the game ends and where each seat's
         // forces start: those two rows read SCENARIO / FIXED and are not clickable (retail
@@ -786,6 +791,10 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         if (!gen && !mapPath_.empty()) {
             const float y0 = pvy + pvH + 68;
             const bool testCopy = createScenario_.marker && createScenario_.runnable();
+            // A Test Map copy of a map whose only scenario content is a Use Only list
+            // (hasscenario stays 0) plays no scenario, but its opt-in still applies the list.
+            const bool testUseOnly = createScenario_.marker && !createScenario_.hasScenario &&
+                                     createScenario_.useOnlyTypes >= 0;
             const bool offered = scenarioOffered(createScenario_, createOverride_);
             lbCycle(pvx, y0, pvW, 26, (createMapScenario_ && offered) || testCopy ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF",
                     offered, [this](int) { createMapScenario_ = !createMapScenario_; });
@@ -796,11 +805,18 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
                 lines.push_back({"TEST COPY: ALWAYS ON", grey});
                 for (const auto& l : tak::sim::scenarioSummary(createScenario_, true))
                     lines.push_back({l.text, l.warning ? amber : normal});
+            } else if (testUseOnly) {
+                lines.push_back({"TEST COPY: USE ONLY LIST", grey});
+                lines.push_back({tak::sim::scenarioUseOnlyLine(createScenario_, true), normal});
             } else if (!offered) {
                 for (const auto& l : tak::sim::scenarioReason(createScenario_)) lines.push_back({l, grey});
             } else {
                 // Offered only because an override pack may supply a missing unit type.
-                if (!createScenario_.offerable()) lines.push_back({"NEEDS AN OVERRIDE PACK", amber});
+                if (!createScenario_.offerable()) {
+                    std::string pack = "PACK NEEDED: " + createScenario_.detail;
+                    for (char& ch : pack) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+                    lines.push_back({pack.substr(0, 26), amber});
+                }
                 for (const auto& l : tak::sim::scenarioSummary(createScenario_, true))
                     lines.push_back({l.text, !createMapScenario_ ? dim : l.warning ? amber : normal});
             }
@@ -825,15 +841,20 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         // The seats that scenario needs are tagged below and must be played to START.
         if (scenarioLobbyPackage_.lock() != mp_->mapPackage()) {
             scenarioLobbyPackage_ = mp_->mapPackage();
-            scenarioLobby_ = mp_->mapPackage() ? tak::net::maps::scenarioInfo(*mp_->mapPackage()) : tak::sim::ScenarioInfo{};
+            // With this client's registry, so the Use Only count leaves out the names no
+            // unit answers to, as setupMatch does (the create screen counts the same way).
+            scenarioLobby_ = mp_->mapPackage() ? tak::net::maps::scenarioInfo(*mp_->mapPackage(), &registry_) : tak::sim::ScenarioInfo{};
         }
         const bool fileMap = room.mission.empty() && !tak::mapgen::isGeneratedMapId(room.mapId);
         const bool scenarioOn = fileMap && !room.opts.stressTest && !room.opts.benchmark && mp_->mapPackage() &&
                                 scenarioLobby_.active(room.opts.mapScenario != 0);
         const uint8_t needSeats = scenarioOn ? scenarioLobby_.requiredSeats() : 0;
+        // The room's own MAP SCENARIO line reads ON from the option alone (a joiner sees it
+        // before the package is verified); the rule cells that follow it agree with it.
+        const bool scenarioShown = fileMap && !campaign && (room.opts.mapScenario != 0 || scenarioOn);
         float overrideBottom=112;
         if(!campaign && room.mission.empty()) {
-            if(!overridePacksScanned_){availableOverridePacks_=tak::hpi::overridePacks(std::filesystem::u8path(installRoot_));overridePacksScanned_=true;}
+            scanOverridePacks();
             static const char* tiers[]={"OFF","COSMETIC","FULL"};
             const auto tier=std::min<uint8_t>(room.opts.overridePolicy,2);
             blockText(std::string("OVERRIDES: ")+tiers[tier],
@@ -1017,7 +1038,7 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         info(0,0,std::string("CRUSADES: ")+onOff(room.opts.crusades));
         info(0,1,std::string("DOUBLE SIGHT/RADAR: ")+onOff(room.opts.doubleSight));
         info(1,0,"UNIT CAP: "+std::to_string(room.opts.unitCap));
-        info(1,1,scenarioOn ? std::string("MONARCH EXPENDABLE: SCENARIO")
+        info(1,1,scenarioShown ? std::string("MONARCH EXPENDABLE: SCENARIO")
                             : std::string("MONARCH EXPENDABLE: ")+onOff(room.opts.monarchExpendable));
         info(2,0,std::string("ALLOW SPEED CHANGE: ")+onOff(room.opts.speedUnlock));
         static const char* fogNames[]={"NOT EXPLORED","EXPLORED","FULL VISION"};
@@ -1046,16 +1067,23 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
                 info(3,1,std::string("PASSWORD: ")+((game!=games.end()?game->passworded:!createPass_.empty())?"SET":"NONE"));
         }
         // MAP SCENARIO, under the grid for a file map (the rows a generated map's recipe
-        // uses): the rule, and when on, what it changes and the seats it needs.
-        if(fileMap) {
+        // uses): the rule, and when on, what it changes and the seats it needs. Not in a
+        // Crusades battle room, which never plays one (the server keeps it 0 there).
+        if(fileMap && !campaign) {
             const SDL_Color amber{235,205,120,255};
             const bool testCopy=mp_->mapPackage() && scenarioLobby_.marker && scenarioLobby_.runnable();
             const bool wanted=room.opts.mapScenario!=0 || testCopy;
+            // A Test Map copy whose only scenario content is a Use Only list: no scenario,
+            // but the copy's opt-in applies the list (not in a stress or benchmark room).
+            const bool testUseOnly=mp_->mapPackage() && scenarioLobby_.marker && !scenarioLobby_.hasScenario &&
+                                   scenarioLobby_.useOnlyTypes>=0 && !room.opts.stressTest && !room.opts.benchmark;
+            // Three rows between the grid's last row (it ends near y+91) and the canvas edge.
             auto rule=[&](int row,int column,const std::string& text,bool warning=false) {
-                blockText(text,x+column*300.0f,y+98+row*14.0f,1.1f,warning ? amber : infoColor);
+                blockText(text,x+column*300.0f,y+96+row*12.5f,1.2f,warning ? amber : infoColor);
             };
             rule(0,0,testCopy ? "MAP SCENARIO: ON (TEST MAP)" : wanted ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF");
-            if(wanted && !mp_->mapPackage()) rule(0,1,"CHECKING SCENARIO...");
+            if(testUseOnly && !wanted) rule(0,1,"TEST MAP: "+tak::sim::scenarioUseOnlyLine(scenarioLobby_,false));
+            else if(wanted && !mp_->mapPackage()) rule(0,1,"CHECKING SCENARIO...");
             else if(wanted && !scenarioOn && !room.opts.stressTest && !room.opts.benchmark) {
                 const auto why=tak::sim::scenarioReason(scenarioLobby_);
                 rule(0,1,why.empty() ? std::string("NO SCENARIO TO PLAY") : why.front(),true);

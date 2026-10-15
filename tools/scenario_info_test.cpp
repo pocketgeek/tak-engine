@@ -85,13 +85,20 @@ int main() {
             ";\nname=Display " + name + ";\nmaxdamage=100;\nfootprintx=1;\nfootprintz=1;\ncanmove=1;\nmaxvelocity=1;\n}";
         (*base)[std::string("units/") + name + ".fbi"] = bytes(text);
     }
+    // What a seat cannot command: wildlife (side LIF, mobile) and an unarmed kingdom
+    // building that builds nothing (a lodestone).
+    (*base)["units/cow.fbi"] = bytes("[UNITINFO]{\nunitname=cow;\nobjectname=cow;\nside=LIF;\nmaxdamage=50;\n"
+                                     "footprintx=1;\nfootprintz=1;\ncanmove=1;\nmaxvelocity=1;\n}");
+    (*base)["units/lodestone.fbi"] = bytes("[UNITINFO]{\nunitname=lodestone;\nobjectname=lodestone;\nside=ARA;\n"
+                                           "maxdamage=500;\nfootprintx=2;\nfootprintz=2;\nmaxvelocity=0;\n}");
     tnt::Map map; map.width = map.height = 64; map.blocksX = map.blocksY = 32;
     map.heights.assign(4096, 40); map.features.assign(4096, 0xffff);
     map.tileKeys.assign(1024, 0); map.tileCols.assign(1024, 0); map.tileRows.assign(1024, 0);
     (*base)[kMap] = map.save();
     sim::TypeRegistry registry;
     { hpi::Vfs units; units.setMapFiles(base); registry.loadDir(units, "units"); }
-    check(registry.find("soldier") && registry.find("araking"), "synthetic unit types load");
+    check(registry.find("soldier") && registry.find("araking") && registry.find("cow") && registry.find("lodestone") &&
+          registry.find("lodestone")->isStructure() && registry.find("cow")->side == "LIF", "synthetic unit types load");
 
     auto filesOf = [&](const Case& c) {
         auto files = std::make_shared<Files>(*base);
@@ -189,6 +196,43 @@ int main() {
         c.scenario.units = {unit("soldier", 8)};
         auto info = expect(c, ScenarioStatus::Ok);
         check(info.content() && info.requiredSeats() == 0 && info.placedSeats == 0, "the neutral owner needs no seat");
+        check(info.armySeats == 0 && !info.offerable(), "neutral placements leave every seat without an army");
+    }
+
+    std::printf("player 1's army:\n");
+    {
+        // Placements replace every Monarch, so player 1 -- the room's creator -- must get
+        // something to command. 39 downloaded maps place only wildlife or decoration for it.
+        Case c = good; c.name = "wildlife for player 1"; c.scenario = emptyScenario();
+        c.scenario.units = {unit("cow", 0), unit("soldier", 1, 30, 30)};
+        auto info = expect(c, ScenarioStatus::Ok);
+        check(info.armySeats == 0b10 && !info.seatOneArmy() && !info.offerable() && info.requiredSeats() == 0b11,
+              "wildlife is not an army", std::to_string(info.armySeats));
+        std::string why;
+        for (const auto& line : sim::scenarioReason(info)) why += (why.empty() ? "" : "|") + line;
+        check(why == "PLAYER 1 GETS NO ARMY|(NO FIGHTER OR BUILDER)", "no-army reason", why);
+        check(inspect(c, false).offerable() && inspect(c, false).armySeats == 0xFF, "the army is a registry check");
+        c.name = "a lodestone for player 1"; c.scenario.units[0] = unit("lodestone", 0);
+        check(!expect(c, ScenarioStatus::Ok).offerable(), "an unarmed building that builds nothing is not an army");
+        c.name = "nothing for player 1"; c.scenario.units = {unit("soldier", 1, 30, 30)};
+        info = expect(c, ScenarioStatus::Ok);
+        why.clear();
+        for (const auto& line : sim::scenarioReason(info)) why += (why.empty() ? "" : "|") + line;
+        check(!info.offerable() && why == "PLAYER 1 GETS NO ARMY|(NO UNITS PLACED FOR IT)", "player 1 with no placement", why);
+        c.name = "player 1's rules create its army";
+        c.scenario.players[1].push_back(group({{0, {}}}, {{7, {"soldier", "Hill"}}}));
+        info = expect(c, ScenarioStatus::Ok);
+        check(info.armySeats == 0b11 && info.offerable(), "a Create rule in player 1's bank is an army");
+        c.name = "All Players' rules create armies"; c.scenario.players[1].clear();
+        c.scenario.players[0].push_back(group({{0, {}}}, {{7, {"soldier", "Hill"}}}));
+        info = expect(c, ScenarioStatus::Ok);
+        check(info.armySeats == 0xFF && info.offerable(), "an All Players Create rule arms every seat");
+        c = good; c.name = "rules only"; c.scenario.units.clear();
+        info = expect(c, ScenarioStatus::Ok);
+        check(info.seatOneArmy() && info.offerable(), "a rules-only map keeps its Monarchs");
+        c = good; c.name = "player 1's army is a type this install lacks"; c.scenario.units[0].objectName = "npckrell";
+        info = expect(c, ScenarioStatus::MissingType);
+        check(info.seatOneArmy(), "an unknown type may come from an override pack");
     }
 
     std::printf("outcomes:\n");
@@ -207,23 +251,49 @@ int main() {
         Case c = good; c.name = "Use Only names another file"; c.ota.useOnlyUnits = "other.tdf";
         c.extra["kmap/other.tdf"] = "[SOLDIER]{}\n";
         auto info = expect(c, ScenarioStatus::UseOnlyBroken);
-        check(info.detail == "other.tdf" && info.useOnlyTypes == -1, "broken Use Only detail");
+        check(info.detail == "other.tdf" && info.useOnlyTypes == -1 && !info.useOnlyMissing,
+              "broken Use Only detail (misnamed, so setupMatch names it: not missing)");
         c.name = "Use Only outside the map folder"; c.ota.useOnlyUnits = "../case.tdf"; c.extra = {{kTdf, "[SOLDIER]{}\n"}};
         expect(c, ScenarioStatus::UseOnlyBroken);
         c.name = "Use Only file missing"; c.ota.useOnlyUnits = "case.tdf"; c.extra.clear();
-        expect(c, ScenarioStatus::UseOnlyBroken);
+        info = expect(c, ScenarioStatus::UseOnlyBroken);
+        check(info.useOnlyMissing, "a missing Use Only file is flagged");
         c.name = "Use Only file does not parse"; c.extra = {{kTdf, "[SOLDIER]{\n"}};
         expect(c, ScenarioStatus::UseOnlyBroken);
+        // MAP SCENARIO leaves out a name no unit answers to (NeverGlory names 44 such);
+        // a Test Map copy refuses it as the author's typo.
         c.name = "Use Only names an unknown unit"; c.extra = {{kTdf, "[SOLDIER]{}\n[NPCKRELL]{}\n"}};
-        info = expect(c, ScenarioStatus::MissingType);
-        check(info.detail == "npckrell" && info.useOnlyTypes == 2, "unknown Use Only unit detail");
+        info = expect(c, ScenarioStatus::Ok);
+        check(info.useOnlyTypes == 1 && info.offerable(), "an unknown Use Only name is left out of the count",
+              std::to_string(info.useOnlyTypes));
         info = inspect(c, false);
-        check(info.status == ScenarioStatus::Ok, "without a registry the unknown unit is not checked");
+        check(info.status == ScenarioStatus::Ok && info.useOnlyTypes == 2, "without a registry every entry counts");
+        c.name = "Test Map copy's Use Only names an unknown unit"; c.marker = true;
+        info = expect(c, ScenarioStatus::MissingType);
+        check(info.detail == "npckrell" && info.useOnlyTypes == 2, "unknown Use Only unit detail (Test Map copy)");
+        c.marker = false;
         c.name = "empty Use Only file"; c.extra = {{kTdf, ""}};
         info = expect(c, ScenarioStatus::Ok);
         check(info.useOnlyTypes == 0, "an empty Use Only list allows nothing");
         c.name = "Use Only of two"; c.extra = {{kTdf, "[SOLDIER]{}\n[builder]{}\n"}};
-        check(expect(c, ScenarioStatus::Ok).useOnlyTypes == 2, "Use Only entry count");
+        info = expect(c, ScenarioStatus::Ok);
+        check(info.useOnlyTypes == 2 && !info.useOnlyMissing, "Use Only entry count");
+    }
+    {
+        // useOnlyMissing is set whatever the status: the server refuses a package that
+        // leaves the list out whenever setupMatch would read it (a Test Map copy's list
+        // applies without a declared scenario), since each machine would read its own.
+        Case c; c.name = "Test Map copy, Use Only only, file missing"; c.marker = true; c.ota.useOnlyUnits = "case.tdf";
+        auto info = inspect(c);
+        check(info.status == ScenarioStatus::NoScenario && info.useOnlyMissing && info.marker, "flag behind NoScenario");
+        c.name = "Test Map copy, Use Only only"; c.extra = {{kTdf, "[SOLDIER]{}\n[builder]{}\n"}};
+        info = inspect(c);
+        check(info.marker && !info.hasScenario && !info.useOnlyMissing && info.useOnlyTypes == 2,
+              "a Test Map copy's list is described without a scenario");
+        c = good; c.name = "leftover, Use Only file missing"; c.ota.hasScenario = false; c.ota.useOnlyUnits = "case.tdf";
+        info = inspect(c);
+        check(info.status == ScenarioStatus::Leftover && info.useOnlyMissing, "flag behind Leftover");
+        check(!inspect(good).useOnlyMissing, "no list, no flag");
     }
     {
         Case c = good; c.name = "placed unit type unknown"; c.scenario.units[1].objectName = "npckrell";
@@ -290,6 +360,17 @@ int main() {
         const auto why = joined(sim::scenarioReason(inspect(c)));
         check(why == "NEEDS A UNIT NOT INSTALLED|AVERYVERYVERYLONGUNITNAMET", "missing type reason (uppercased, 26 chars)", why);
         check(sim::scenarioReason(inspect(good)).empty(), "an offerable map has no reason");
+        sim::ScenarioInfo uo; uo.useOnlyTypes = 6;
+        check(sim::scenarioUseOnlyLine(uo, true) == "BUILDS 6 UNIT TYPES" &&
+              sim::scenarioUseOnlyLine(uo, false) == "ONLY 6 UNIT TYPES CAN BE BUILT", "Use Only line");
+        uo.useOnlyTypes = 1;
+        check(sim::scenarioUseOnlyLine(uo, true) == "BUILDS 1 UNIT TYPE", "Use Only line, one type");
+        uo.useOnlyTypes = 0;
+        check(sim::scenarioUseOnlyLine(uo, true) == "NOTHING CAN BE BUILT" &&
+              sim::scenarioUseOnlyLine(uo, false) == "NO UNIT TYPE CAN BE BUILT", "Use Only line, nothing");
+        uo.useOnlyTypes = -1;
+        check(sim::scenarioUseOnlyLine(uo, true).empty() &&
+              sim::scenarioUseOnlyLine(uo, false) == "ALL UNIT TYPES CAN BE BUILT", "Use Only line, unrestricted");
     }
     {
         // King of the Hill: four seats with placed armies, a Use Only list of six, outcomes.

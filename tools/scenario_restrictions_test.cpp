@@ -53,6 +53,13 @@ int main() try {
         sim::World world;sim::setupMatch(world,registry,on);
         check(world.scenario() && world.buildAllowed(allowed) && !world.buildAllowed(denied),
               "MAP SCENARIO did not install the declared scenario's Use Only list");
+        // A map made for the original game may list units no install has (NeverGlory
+        // names 44): MAP SCENARIO leaves those names out, where a Test Map copy refuses.
+        textFile("kmap/restricted.tdf","[SOLDIER]{}\n[NPCKRELL]{}\n");
+        sim::World unknown;sim::setupMatch(unknown,registry,on);
+        check(unknown.scenario() && unknown.buildAllowed(allowed) && !unknown.buildAllowed(denied),
+              "MAP SCENARIO refused (or widened) a Use Only list naming an unknown unit");
+        textFile("kmap/restricted.tdf","[SOLDIER]{}\n");
         files->erase("kmap/restricted.crt");
         textFile("kmap/restricted.ota",ota);
     }

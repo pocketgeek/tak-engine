@@ -44,20 +44,42 @@ struct ScenarioInfo {
     uint8_t ruleSeats = 0;      // bit p: rule bank p+1 (Player p+1) has a group with rules
     bool sharedRules = false;   // bank 0 (All Players) has a group with rules
     bool outcomes = false;      // some group has a Victory/Defeat action
-    int useOnlyTypes = -1;      // -1 = unrestricted, else the Use Only entry count (0 = nothing buildable)
+    // -1 = unrestricted, else how many types the Use Only list allows (0 = nothing
+    // buildable). With a registry a MAP SCENARIO list counts only the types this install
+    // has: setupMatch leaves out a name no unit answers to (a Test Map copy refuses it).
+    int useOnlyTypes = -1;
+    // The map names its own <map>.tdf as its Use Only list, but this view has no such
+    // file. Set whatever the status (a Test Map copy's list applies even without a
+    // declared scenario), so the server can refuse a package that leaves the list out:
+    // setupMatch would then read each machine's own copy, which no package digest covers.
+    bool useOnlyMissing = false;
+    // (registry check) bit p: owner p starts with something to command -- a placed unit
+    // of a kingdom (not wildlife, villagers or monsters: sides LIF/NPC/MON) that can
+    // fight, build or move -- or its rule bank or All Players' creates units. Placements
+    // replace every Monarch, so a seat outside this mask starts with nothing to play.
+    // Every seat without a registry.
+    uint8_t armySeats = 0xFF;
     std::string detail;         // MissingType: the type; UseOnlyBroken: the file name
     bool runnable() const { return hasScenario && crtValid; }
     bool content() const { return placed > 0 || ruleSeats != 0 || sharedRules; }
     uint8_t requiredSeats() const { return placedSeats | ruleSeats; }   // == setupMatch's seat rule
-    bool offerable() const { return status == ScenarioStatus::Ok && !marker; }
+    // Player 1 -- the room's creator, and in single player the human -- has an army
+    // once the scenario's placements replace the Monarchs (rules-only maps keep them).
+    bool seatOneArmy() const { return placed == 0 || (armySeats & 1) != 0; }
+    // The create screens offer it. Player 1's army is not a status: setupMatch starts a
+    // map that gives player 1 nothing to command, it is just not a game anyone can play.
+    // (40 of 186 downloaded scenario maps checked place only wildlife, villagers, scenery
+    // or lodestones for player 1; their authors used the scenario editor to decorate.)
+    bool offerable() const { return status == ScenarioStatus::Ok && !marker && seatOneArmy(); }
     // Whether a room plays the scenario. Callers also exclude missions, generated maps,
     // stress tests and benchmarks.
     bool active(bool option) const { return runnable() && (marker || (option && content())); }
 };
 
 // Reads <map>.ota, <map>.crt and the named Use Only .tdf through `vfs` (a package view
-// or the local install). Never throws. With `reg`, also checks every placed, custom and
-// Use Only type (setupMatch's refusals, except placement bounds -- setupMatch keeps that
+// or the local install). Never throws. With `reg`, also checks every placed and custom
+// type, and a Test Map copy's Use Only entries (setupMatch's refusals), and fills
+// armySeats. Placement bounds are the one refusal left out (setupMatch keeps that
 // check and its message, which the room shows as the server's start refusal; checking it
 // here would mean decompressing every scenario map's TNT while the map list is built).
 // The counts and masks are filled whenever the files parse, whatever the status, so the
@@ -68,11 +90,15 @@ ScenarioInfo inspectScenario(const hpi::Vfs& vfs, const std::string& mapPath, co
 std::string seatList(uint8_t seats);
 
 struct ScenarioLine { std::string text; bool warning = false; };
-// Why the create screen greys the button (uppercase, <= 26 characters a line). Empty for
-// an offerable map. A Test Map copy is the caller's case (TEST COPY: ALWAYS ON).
+// Why the create screen greys the button (uppercase, <= 26 characters a line): the
+// status, or for an Ok map, that player 1 gets no army. Empty for an offerable map. A
+// Test Map copy is the caller's case (TEST COPY: ALWAYS ON).
 std::vector<std::string> scenarioReason(const ScenarioInfo&);
 // What turning the scenario on changes: compact for the create screens (<= 26 characters
 // a line), full for the room's rule lines (<= 44).
 std::vector<ScenarioLine> scenarioSummary(const ScenarioInfo&, bool compact);
+// The summary's Use Only line on its own ("BUILDS 6 UNIT TYPES" / "ONLY 6 UNIT TYPES
+// CAN BE BUILT"); "" for an unrestricted map in the compact form.
+std::string scenarioUseOnlyLine(const ScenarioInfo&, bool compact);
 
 }  // namespace tak::sim

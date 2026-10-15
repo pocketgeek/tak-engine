@@ -2256,6 +2256,18 @@ void Server::tryStart(Client& c) {
         refuseStart(c, *r, "this map has no scenario to play -- create the game with MAP SCENARIO off");
         return;
     }
+    // setupMatch's own gate, read from the package: every scenario file it will read must
+    // be IN the verified package. A file the package leaves out would come from each
+    // machine's own install (an override pack can supply a map's .tdf), which the package
+    // digest does not cover -- so the referee and the peers could play different rules.
+    // (A damaged or misnamed file in the package is setupMatch's to refuse, by name.)
+    const bool setupReads = r->mission.empty() && !r->opts.stressTest && !r->opts.benchmark && r->mapPackage &&
+                            (scenario.marker || (r->opts.mapScenario && scenario.hasScenario));
+    if (setupReads && (scenario.status == tak::sim::ScenarioStatus::CrtMissing || scenario.useOnlyMissing)) {
+        refuseStart(c, *r, std::string("the map package leaves out its ") +
+                    (scenario.useOnlyMissing ? "Use Only list" : "scenario file (.crt)"));
+        return;
+    }
     const bool scenarioOn = r->mission.empty() && !r->opts.stressTest && !r->opts.benchmark &&
                             r->mapPackage && scenario.active(r->opts.mapScenario != 0);
     if (r->mission.empty() && r->usedSlots() < (scenarioOn ? 1 : 2)) return;
@@ -2547,6 +2559,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             // MAP SCENARIO is creation-only too: players chose seats, sides and READY for the
             // game it makes, and the room's open seats were sized for it at CreateGame.
             o.mapScenario = r->opts.mapScenario;
+            if (o.stressTest || o.benchmark) o.mapScenario = 0;   // as CreateGame clears it
             if (o.mapScenario) o.randomStarts = 0;
             if (!r->mission.empty()) o.doubleSight = 0;
             if (!rd.ok || rd.p!=rd.end) return;

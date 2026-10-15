@@ -1089,10 +1089,13 @@ void MpClient::mapFrame(const Frame& f) {
         } else if (f.kind == Msg::MapError) {
             auto id = r.u32(); auto why = r.str();
             if (r.ok && id == room_.id) {
-                mapStatus_ = "MAP ERROR: " + why; err_ = mapStatus_;
-                // The answer to our START: the room shows it (its map status line is hidden
-                // once every map is verified, which is exactly when a START is answered).
+                // The answer to our START: the room shows it under its buttons (its map status
+                // line is hidden once every map is verified, which is exactly when a START is
+                // answered). It is not a map or connection error, so neither is left behind:
+                // a stale "MAP ERROR" would come back whenever a joiner's map check hides the
+                // room's readiness, and a later disconnect would report it as its reason.
                 if (startSent_) { startError_ = why; startSent_ = false; }
+                else { mapStatus_ = "MAP ERROR: " + why; err_ = mapStatus_; }
             }
         }
     } catch (const std::exception& e) {
