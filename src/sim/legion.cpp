@@ -719,7 +719,23 @@ struct LegionNavigator::Impl {
         // plane: derived, never hashed.
         struct MeetLine {int from=-1,to=-1;uint64_t epoch=~0ull;const UnitType* type=nullptr;bool ok=false;} meetLine;
         uint32_t routeTicks=0,nextDetour=8,detourCount=0;
-        int64_t detourBest=-1;            // progress when the last local detour was planned
+        // The detour rules' record (see move): the least distance still to go
+        // this body has read since its order began or it was re-seated, in
+        // whichever measure it read (squared cells or potential x64), never
+        // re-based. The detour back-off restarts on a new record, and the
+        // yield-first rule (drive) wants none since the last detour
+        // (detourBest: the record then). It is what `progress` was until
+        // 2026-10-14, mix included: a body that registered before its field
+        // arrived reads squared cells, then potential x64, and sets no record
+        // until it is near its goal. Restarted on every gain of `progress`
+        // instead (the stall clock), battle-assault's melee planned 11% more
+        // detours (+5% reversals) for 2.3% less standing, which the gate
+        // reads as a mixed trade: the rules keep the record they were tuned
+        // on until they are retuned on the stall clock. Not hashed, like
+        // headBest: a function of the member updates, whose inputs (and
+        // detourCount, detourBest) are hashed.
+        uint32_t nearest=0xffffffffu;
+        int64_t detourBest=-1;            // `nearest` when the last local detour was planned
         // "Close enough": the start of the current no-progress window and the
         // pixel distance to the requested point then (see settleWindow), and
         // the start of the run of still windows that ends there (kNoTick:
@@ -5534,7 +5550,7 @@ struct LegionNavigator::Impl {
             else {ringRelease(g,u.id,m);m.slot=-1;m.goal=m.requested;}
         } else {m.slot=-1;m.goal=m.requested;}
         m.lineCell=-1;m.line=false;m.route.clear();m.routeTicks=0;
-        m.progress=0xffffffffu;m.rechoices=0;m.pivotCell=-1;m.pivotAim=-1;m.gateCell=-1;
+        m.progress=m.nearest=0xffffffffu;m.rechoices=0;m.pivotCell=-1;m.pivotAim=-1;m.gateCell=-1;
         markPass(u,m);
     }
     // An illegal goal (AR-07): a slot member gives its slot back and claims
@@ -5554,7 +5570,7 @@ struct LegionNavigator::Impl {
         }
         const int near=nearestLegal(p,m.goal%W,m.goal/W,region);
         if(near<0||compAt(p,near)!=region)return false;
-        m.goal=near;m.lineCell=-1;m.line=false;m.route.clear();m.progress=0xffffffffu;
+        m.goal=near;m.lineCell=-1;m.line=false;m.route.clear();m.progress=m.nearest=0xffffffffu;
         markPass(u,m);
         return true;
     }
@@ -5851,20 +5867,20 @@ struct LegionNavigator::Impl {
         // outside of a bounded field, a seed). Only a gain in the same
         // measure, on the same field, is progress. A new measure (the field
         // reached the body, a refresh swapped in, it left a seed) re-baselines
-        // `progress` without counting a gain: the stall clock runs on and the
-        // detour back-off stays (so a body blocked with no field still makes
-        // B1's re-request below), and "no gain since the last detour"
-        // (detourBest, the yield-first rule in drive) carries over to the new
-        // measure. A first step onto one of the field's seeds is a gain on the
-        // field all the same (potential 0, below its best so far there,
-        // headBest) and counts, as it does on the headway clock: re-based, a
-        // body arriving at its destination read stalled, which moved settles
-        // and re-requests at corner-8x56 and corner-4x50 for nothing. Compared
+        // `progress` without counting a gain: the stall clock runs on (so a
+        // body blocked with no field still makes B1's re-request below). A
+        // first step onto one of the field's seeds is a gain on the field all
+        // the same (potential 0, below its best so far there, headBest) and
+        // counts, as it does on the headway clock: re-based, a body arriving
+        // at its destination read stalled, which moved settles and
+        // re-requests at corner-8x56 and corner-4x50 for nothing. Compared
         // across the two measures, a body 200 cells out that registered before
         // its field arrived read 40,000 squared cells, then 64,000 on the
         // field, and made no progress until it was within 125 cells: its stall
         // clock aged through most of a free walk (battle-field-2x60's
-        // stall_stale_ticks, about 9,400 member updates at an offset).
+        // stall_stale_ticks, about 9,400 member updates at an offset). The
+        // detour rules keep the record they were tuned on (Member::nearest,
+        // across both measures): its new lows restart the detour back-off.
         {
             const uint32_t at=f?f->at(size_t(here)):kUnreached;
             const bool onField=at!=kUnreached&&at>0;
@@ -5874,13 +5890,9 @@ struct LegionNavigator::Impl {
             const uint64_t serial=onField?f->serial:0;
             const bool fresh=m.progress!=0xffffffffu&&(kind!=m.progressKind||serial!=m.progressSerial);
             const bool ontoSeed=fresh&&at==0&&m.headSerial==f->serial&&m.headBest>0;
-            if(fresh&&!ontoSeed) {
-                m.detourBest=m.detourBest==int64_t(m.progress)?int64_t(left):-1;
-                m.progress=left;m.progressKind=kind;m.progressSerial=serial;
-            } else if(ontoSeed||left<m.progress) {
-                if(ontoSeed)m.detourBest=-1;   // a gain since the last detour, on a new scale
-                m.progress=left;m.progressKind=kind;m.progressSerial=serial;m.stallTick=w.tickCounter_;m.detourCount=0;
-            }
+            if(fresh&&!ontoSeed) {m.progress=left;m.progressKind=kind;m.progressSerial=serial;}
+            else if(ontoSeed||left<m.progress) {m.progress=left;m.progressKind=kind;m.progressSerial=serial;m.stallTick=w.tickCounter_;}
+            if(left<m.nearest) {m.nearest=left;m.detourCount=0;}
             if(f) {
                 if(f->serial!=m.headSerial) {m.headSerial=f->serial;m.headBest=at;}
                 else if(at<m.headBest) {m.headBest=at;m.headTick=w.tickCounter_;}
@@ -7094,17 +7106,18 @@ struct LegionNavigator::Impl {
                 // them; moving traffic is waited for, not planned around.
                 // A formation member held a long time is in a standing jam of
                 // crossing lanes (nobody ahead will move first): it plans too.
-                // Blocked by settled bodies again with no progress since the
-                // last detour: ask them to yield FIRST. A detour away from
-                // them is dropped when blocked and the body shuffles back,
-                // every ~250-400 ticks, never holding long enough to ask (a
-                // livelock).
+                // Blocked by settled bodies again with no new record
+                // (Member::nearest) since the last detour: ask them to yield
+                // FIRST. A detour away from them is dropped when blocked and
+                // the body shuffles back, every ~250-400 ticks, never holding
+                // long enough to ask (a livelock).
                 const bool settled=f&&m.detour<0&&m.route.empty()&&blockedBySettled(u,m,nx,nz);
-                if(settled&&int64_t(m.progress)==m.detourBest&&m.holdUpdates>=6&&yieldLane(u,m,p,nx,nz)) {hold(u,m);restartHold(m);return;}
+                if(settled&&int64_t(m.nearest)==m.detourBest&&m.holdUpdates>=6&&yieldLane(u,m,p,nx,nz)) {hold(u,m);restartHold(m);return;}
                 if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=m.nextDetour&&
                    (settled||(m.holdUpdates>=60&&formationMember(m)))) {
                     // Back off geometrically after each attempt: a crowd that
-                    // stays jammed stops re-planning instead of shuffling.
+                    // stays jammed stops re-planning instead of shuffling
+                    // (the count restarts on a new record, Member::nearest).
                     const uint32_t wait=std::min<uint32_t>(30u<<std::min<uint32_t>(m.detourCount,4u),480u);
                     ++m.detourCount;
                     if(localDetour(u,m,p,f,towardGoal)) {m.nextDetour=wait;u.speed=Fixed();return;}
@@ -7223,7 +7236,7 @@ struct LegionNavigator::Impl {
         std::vector<int> path;
         for(int c=best;c!=start;c=parent[size_t(c)])path.push_back((oz+c/S-R)*W+ox+c%S-R);
         std::reverse(path.begin(),path.end());
-        m.route=std::move(path);m.routeTicks=0;++stats.detours;m.detourBest=int64_t(m.progress);
+        m.route=std::move(path);m.routeTicks=0;++stats.detours;m.detourBest=int64_t(m.nearest);
         m.state=Holding;restartHold(m);  // stopped this update; the route starts next
         return true;
     }

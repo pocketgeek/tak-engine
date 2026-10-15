@@ -231,28 +231,39 @@ field potential (x64) where the group's field reaches the body's cell above
 its seeds, else squared cells to its own goal (the field does not reach the
 cell yet, a bounded field's outside, a seed). Only a gain in the same measure,
 on the same field, is progress: it restarts the stall clock that the arrival
-on contact, the settle rule, B1's blocked re-request and the detour back-off
-read. A new measure (the field reaches the body, a refresh swaps in, the body
-leaves a seed) re-baselines progress without counting a gain: the stall clock
-runs on, so a body blocked with no field still makes B1's re-request, and "no
-gain since the last detour" (the yield-first rule) carries over. A first step
-onto one of the field's seeds is a gain on the field (potential 0, below the
-field's best so far) and counts, as it does on the headway clock. Until
-2026-10-14 the two measures were compared as one number: a body 200 cells out
-that registered before its field arrived read 40,000 squared cells, then
-64,000 on the field, and made no progress until it was within 125 cells, so
-its stall clock aged through most of a free walk while its headway clock
-advanced (the observer's `stall_stale_ticks`: 9,401 member updates on
-`battle-field-2x60` at offset 0; now 0 on every fixture at every gate offset;
-`legion_progressclock`). A shadow of the old clock, run on the twelve
-fixtures whose results moved, found the arrival on contact deciding the same
-every time and the settle rule's stall gate differing on a few dozen updates;
-the detour back-off now resets on the gains it missed, so `battle-assault`
-plans 11% more detours (reversals +5%, standing samples -2.3%) and makes half
-the blocked re-requests. Over the scenario set (133 fixtures, Legion, every
-gate offset) the judge families move within noise: arrivals 120,807 to
-120,795, left behind 56,351 to 56,333, lane crossings 7,117 to 7,108, Legion
-work +0.1%.
+on contact, the settle rule and B1's blocked re-request read (and the wake of
+a rested held body, heldRest). A new measure (the field reaches the body, a
+refresh swaps in, the body leaves a seed) re-baselines progress without
+counting a gain: the stall clock runs on, so a body blocked with no field
+still makes B1's re-request. A first step onto one of the field's seeds is a
+gain on the field (potential 0, below the field's best so far) and counts, as
+it does on the headway clock. Until 2026-10-14 the two measures were compared
+as one number: a body 200 cells out that registered before its field arrived
+read 40,000 squared cells, then 64,000 on the field, and made no progress
+until it was within 125 cells, so its stall clock aged through most of a free
+walk while its headway clock advanced (the observer's `stall_stale_ticks`:
+9,401 member updates on `battle-field-2x60` at offset 0; now 0 on every
+fixture at every gate offset; `legion_progressclock`).
+
+The detour rules keep the record they were tuned on (`Member::nearest`): the
+least distance still to go the body has read since its order began or it was
+re-seated, in whichever measure it read, never re-based -- what `progress`
+was until then, mix included. A new record restarts the detour back-off, and
+the yield-first rule wants none since the last detour. Restarted on every
+gain of the stall clock instead, `battle-assault`'s melee planned 11% more
+detours (reversals +5%, Legion work +0.5%) for 2.3% fewer standing samples:
+its Fight members register before their field, so their record stood still
+through the melee and the back-off reached its 480-update wait, while the
+stall clock restarts it with every creep. That trade is a retune of its own
+(Known weaknesses). With one reader at a time on the new clock and the rest
+on a shadow of the old one (the fixtures that move at all, every gate
+offset), the arrival on contact decides the same everywhere, B1's re-request
+fires less (battle-assault 103 to 57 over the offsets, its only move), the
+held-body wake moves work accounting only, and the settle rule's stall gate
+moves twelve fixtures at a few offsets each, both ways. Summed over the scenario set (133 fixtures, Legion, every gate
+offset): arrivals 120,807 to 120,809, complete 132,107 to 132,118, left
+behind 56,351 to 56,349, never 3,706 to 3,707, lane crossings 7,117 to 7,108,
+stopped permille 288,524 to 288,538, Legion work flat.
 
 * **Terrain-trapped**: the unit's origin has no finite potential once its
   group's field is complete, or its goal could not be resolved. No legal
@@ -330,7 +341,8 @@ work +0.1%.
   Legion mover), or when a formation member has been held for 60 updates in
   a standing jam of crossing lanes; never for a queue of members waiting on
   each other. Attempts back off geometrically (30, 60, ... 480 updates) while
-  no progress is made.
+  the body sets no new record of its distance to go (the detour rules'
+  record, above).
 * **Settled arrivals yield**: when a unit completes, Legion records an anchor
   (the origin it completed on). A member held for 12 or more updates, with no
   detour or route, whose wanted cell is held only by settled, idle,
@@ -1785,6 +1797,19 @@ Rules that came out of using them:
 
 ## Known weaknesses
 
+* **The detour rules read a record across two measures.** The detour
+  back-off restarts, and the yield-first rule looks for a gain since the last
+  detour, on `Member::nearest`: the least distance still to go since the order
+  began, in squared cells or potential x64, whichever the body read -- the
+  scale mix the stall clock dropped on 2026-10-14 (section 4). A body that
+  registered before its field sets no record until it is near its goal, so in
+  a melee or a long jam its back-off grows to the 480-update wait. Restarting
+  it on the stall clock, after a gain of 2 or 4 cells, or halving the count on
+  a gain all trade detours and reversals against standing samples in
+  `battle-assault` (11 offsets: detours +11% / +3% / -3% / +8%, standing
+  -2.3% / -0.7% / +0.9% / -2.2%), so none was taken without a retune judged on
+  its own. Measured by `battle-assault:work.detours.total` and
+  `battle-assault:stopped_permille`.
 * **Packed distinct goals: the crowdheld acceptance check is a ratchet, not a
   pass-all.** `legion_acceptance_crowdheld_legion` reaches 62 of 64 in
   goal and passes at 61 or more with 1 unit ever terrain-stuck (spin passes at 0; 59 and 1 before
