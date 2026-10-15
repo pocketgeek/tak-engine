@@ -7,6 +7,129 @@
 > [Legion](legion-pathfinding.md) remain. Mentions of the removed modes in the
 > Retail port log and Retail audit sections below are history.
 
+## Retail audit: who holds an overlapped ground cell (2026-10-15)
+
+World used to derive the ground word from positions. Where footprints
+overlapped, `searchBodyRect` (and the full search-plane build) handed the cell
+to the last eligible unit in vector order. Retail keeps the word by events,
+and the first body to stamp a cell keeps it. With two identical bodies
+stamped 1 then 2, native `507d10` lets body 1 step east and refuses body 2;
+World made the opposite decisions.
+
+What the routines do (static reading, all owner kinds checked by emulation):
+
+- **`5066f0`, placing a body.** It relinks the body into its 8-cell sector
+  list if the sector changed (`506650`). Off the map (any footprint edge
+  reaching `W`/`H`) it only links it to the off-map sector. Then, for every
+  footprint cell (a structure: yard cells under its open/closed mask; a
+  mobile: only in mode 1), it looks at the holder. If the holder is a live
+  pool entity and its player is active with kind 3 (remote), the newcomer
+  overwrites it. Otherwise a live holder keeps the cell, the holder gains
+  `+0x130` bit `0x400000` and the newcomer `0x800000` (`506863..5068b8`,
+  `5069de..506a33`). A free, dead or out-of-pool cell goes to the newcomer.
+- **`506aa0`, a body leaving its cells.** It clears only the cells it holds,
+  then its `0x800000`. If it had `0x400000`, it calls `5065b0` over its old
+  rectangle. That is `5097f0`, which walks sectors column by column from one
+  before the rectangle to one after (each list newest link first: `506630`
+  pushes at the head), and calls `5062d0` on every body whose rectangle
+  overlaps. `5062d0` acts only on a body with `0x800000`: it clears the bit
+  and claims every cell that has come free, by the same rule. A cell it
+  already holds counts as a live holder, so it marks itself both ways.
+- **`5066a0`, removal** (`512ae0`): `506aa0`, then unlink from the sector.
+- **`51b3b0`, a cell or mode change** (takeoff, landing, cargo): `506aa0`,
+  then `5066f0`. The ground step (`4dafd2`/`4db001`) does the same.
+- **`507c70`, a yard state change:** set `0x800000` and call `5062d0`, which
+  claims the cells the new state stamps and frees the ones it no longer
+  stamps.
+- The yard mask: open stamps bit 2, closed bit 4. The `4c0f59` decode gives
+  `o S w f` both, `c C` closed only, `O` open only, and `. y Y` neither. The
+  shipped yardmaps use only `. c C o S w`, which World's existing rule
+  covers.
+- The flags `0x400000`/`0x800000` are read nowhere else in the binary.
+
+Owner kinds 1 and 2 are this machine's human and AI. Kind 3, a remote player,
+is overwritten. In a World match every seat is simulated locally, so no seat
+is kind 3, and that branch is not ported.
+
+The port (`World::groundOwner_`, `Unit::ground`) does exactly the above.
+`groundStamp` is `5066f0`, `groundUnstamp` is `506aa0`, `groundRemove` is
+`5066a0`, `groundRestamp` is `5062d0` and `groundRestampRect` is `5097f0`.
+The sector of a body is its position `>> 23`, as retail's. The events are:
+
+- creation (`spawn`, and a production site after its exact placement);
+- the accepted ground step (`commitGroundStep`);
+- landing and taking off;
+- boarding (removal: World keeps cargo off the word) and unloading;
+- death and every retirement;
+- the yard state change (COB SET 18);
+- a new terrain (all bodies stamped again in unit order).
+
+`searchBodyRect` gives a cell to the ground word's holder when that holder
+covers it, and otherwise to the last covering unit in vector order. When every
+event is stamped the holder always covers, so the fallback serves only bodies
+moved outside the events (test fixtures that set positions directly) and
+bodies retail keeps off the word at the map's last row and column, which World
+still counts as occupants. The search plane's full build keeps the same body
+on every cell, so placement (`mobilePlacement`, `507d10`), landing
+(`509400`), live grades (`cellScore`) and search grades read one holder.
+
+Validation:
+
+- `tools/re/check_ground_owner.py` runs the unmodified `5066f0`, `506aa0` and
+  `5066a0`, with real sector lists, through 400 random event sequences on a
+  24x24 map: placements, one-cell moves, lifts and deaths of up to 11 bodies
+  crowded round one spot, owner kinds 1 and 2. After each of 14,403 events it
+  compares every cell's native holder with World's (`retail_replay_probe
+  --ground-owner`, the same events through World's handlers). 0 mismatches,
+  over 23,249 overlapped cell samples. The old vector-order rule disagrees
+  after 4,962 events. A stateless rule (the covering body placed first wins)
+  disagrees after 631, so the sector-ordered restamp is needed. A control
+  with owner kind 3 disagrees after 1,374 of 3,651 events, which confirms
+  the harness sees the kind.
+- The audit's isolated `5066f0` + `507d10` case gives, for kinds 1 and 2,
+  holder 1 and step-east `[1, 0]` when 1 is stamped first, and holder 2 and
+  `[0, 1]` when 2 is first. Kind 3 gives the reverse.
+- CTest `pathblock` has four new checks: the first body stamped keeps an
+  overlapped cell; a leaving holder's cells go to the newest-linked refused
+  body; refused bodies are restamped in sector order; search grades take the
+  holder. Against the old rule three of them fail. The newest-link case agrees
+  with the old rule and refutes the stateless one.
+- `retail_trace --selftest`'s gate-policy fixture spawned a closed gate and
+  then a body inside its passage. A closed gate now holds that cell, so the
+  body was invisible to the policy. In retail the body can only be there if
+  it arrived while the passage was open (`507ae0` refuses to close a gate on
+  a held cell), so it holds the cell. The fixture now places the body first.
+- Rerun and matching: `check_mobile_placement.py` (6,000),
+  `check_landing_overlap.py` (61,082 `509400` calls),
+  `fuzz_world_search.py --cases 500 --seed 12`, `check_world_grade.py` raw and `--live` (6,000 each, a fresh
+  probe-37 fixture of capture `5cea791f1448cd7a`), `check_ground_commit.py`
+  (12,000), `check_search_movement.py` (unit 625 alone, then 3, 3 and 4
+  concurrent requesters, 600 rounds), `check_gate_search_movement.py
+  --missions` for all four gates plain, `--pair`, `--pair --pair-close` and
+  `--return-trip` (20 runs), and `check_crowd_arrival.py` (3 Hunters for 300
+  World ticks, 450 Hunters for 1,800 rounds). These start without overlapping
+  footprints, so they check that nothing else moved.
+- Debug, Release and -O2 Debug rebuilt in full; `ctest -L quick` 369/369 on
+  -O2 Debug. The `--mpai` Inner Circle seed 1 hash is the same before and
+  after (60 s `8db23af1b0260ba1`, 300 s `76f7e976cd6a00c9`): no footprints
+  overlap there. Games where bodies overlap (spawns, unloads, landings on
+  unexplored sites) can change, so the change is not lockstep-compatible
+  with older builds.
+
+Not ported, or unchanged:
+
+- Owner kind 3 (overwrite), as above.
+- Retail leaves a body whose footprint reaches the last map row or column
+  off the word; World still counts it as an occupant through the fallback.
+- `5139f6 -> 507cd0` (a structure's yard restamp at an unidentified
+  initialisation) is not ported.
+- Cargo: World keeps it off the word (boarding removes it); `4dadd2` commits
+  it through `51b3b0`, whose stamp in attached state is unverified (see the
+  transport audit).
+- Death: World removes a body at death; retail keeps a dying body stamped
+  (as a dead id, which reads as free) until `512ae0`, and only then hands its
+  cells to the bodies it refused.
+
 ## Retail audit: a pending request survives displacement (2026-10-15)
 
 `PathService::request` kept a queued or running search for a re-request of
@@ -52,7 +175,7 @@ the same with and without the change (60 s and 300 s).
 
 > **Follow-up (flyer-landing2, 2026-10-06).** Flyers do land on each other in
 > retail, and the port matches it. Landed flyers are in ground word `+0`:
-> mode 1 stamps them at `50697f..506a3d`, re-stamped by `51b370`/`4dafd2`
+> mode 1 stamps them at `50697f..506a3d`, re-stamped by `51b3b0`/`4dafd2`
 > when the mode changes, as `searchBodyRect` does. A descending flyer stays in
 > mode 2 until `4da750`, so the only place it appears is word `+2`. There a
 > shared cell's owner is redrawn every tick (`506c40`), and eight or more
@@ -104,7 +227,8 @@ at `41708e` (the current position) and at `41721f` (each candidate). It is now
   counts as a repeated blocking character.
 - **Ground word `+0`.** A live entity other than the lander fails. `5066f0`
   stamps mobile units in mode 1 and the yard cells of structures (open gate
-  cells excepted). World's equivalent is `searchBodyRect`.
+  cells excepted). World keeps the word (`groundOwner_`), and
+  `searchBodyRect` reports its holder.
 - **Airborne word `+2`.** A live entity other than the lander fails; `0`,
   `0xffff` and stale dead owners pass. This is the persistent grid described
   below. **Any airborne flyer overhead blocks**, not only one that is
@@ -215,9 +339,11 @@ Residual approximations:
   later (see the native death lifecycle audit).
 - World ids are never reused, so a stale id can never resolve to a new unit
   that occupies the same pool slot.
-- Retail's ground word is last-stamp-wins at map-placement events. World uses
-  the last unit in vector order, which is the established `searchBodyRect`
-  model.
+- (Corrected 2026-10-15.) This said retail's ground word is last-stamp-wins.
+  It is not: a body stamped over a live holder leaves it the cell (`5066f0`,
+  owner kinds 1 and 2), and only a remote player's (kind 3) holder is
+  overwritten. World now keeps the word itself; see "Retail audit: who holds
+  an overlapped ground cell" at the top of this file.
 
 ## Retail audit: search, scheduler and budget classes (2026-10-06)
 
