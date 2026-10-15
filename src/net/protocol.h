@@ -19,7 +19,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 265;      // 265: retail path-search fidelity (all modes, hashed): production entity pools per player, scanned
+constexpr uint32_t kNetVersion = 266;      // 266: entity pools grow as needed (all modes, hashed pool sizes): each starts at retail's maxunits for
+                                           //      the unit cap (499590 clamps to 20..500; uncapped 250) and gains a slot only when full. 265 replays refused
+                                           // 265: retail path-search fidelity (all modes, hashed): production entity pools per player, scanned
                                            //      slot by slot with holes (511570/5121d8, 416430; hashed CRT stream, pool sizes, unit slots); the
                                            //      ground word keeps its live holder where footprints overlap (5066f0); a pending path request survives
                                            //      displacement (4e4f50(1)). 264 replays refused

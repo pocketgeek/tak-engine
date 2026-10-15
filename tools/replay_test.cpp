@@ -153,8 +153,10 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 265, "replay format 11 is kept under protocol 265");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 265");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 266, "replay format 11 is kept under protocol 266");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 266");
+    // 266 sizes entity pools from retail's maxunits and grows them as needed (path admission scan costs).
+    check(!supportedReplayProtocol(13, 265), "previous entity-pool protocol is refused");
     // 265 changes path search (production entity pools, ground-word ownership, pending re-requests).
     check(!supportedReplayProtocol(13, 264), "previous path-search protocol is refused");
     // 264 changes Legion movement (the 2026-10-14 review: stall clock, slots by arrival, passage lanes, slot budget).
