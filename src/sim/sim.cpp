@@ -6,6 +6,7 @@
 #include "sim/retailstorm.h"
 #include "sim/retailguided.h"
 #include "sim/retailinstantcorpse.h"
+#include "sim/retailsplash.h"
 
 #include <type_traits>
 
@@ -4619,7 +4620,8 @@ float Weapon::damageVs(const UnitType* t) const {
 }
 
 void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId,
-                     Unit* primary, std::optional<std::array<int32_t,3>> position) {
+                     Unit* primary, std::optional<std::array<int32_t,3>> position,
+                     std::optional<std::array<int32_t,3>> impact) {
 
     const size_t hitIndex = hits_.size();
     // Record the impact for the viewer (hit sound / effect).
@@ -4745,7 +4747,12 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             }
         }
     };
-    if (primary) hurt(*primary, 1.0f);
+    // Retail 529c10: a shot that struck a unit with a weapon of areaofeffect
+    // <= 16 is the direct hit 52a460 alone, full damage to that unit and no
+    // splash or scenery. Every other impact is the area pass 529dc0 below,
+    // where the struck unit takes the same falloff as any other.
+    const uint16_t aoe = uint16_t(w.aoe);
+    if (primary && retailDirectHitOnly(aoe, true)) { hurt(*primary, 1.0f); return; }
     // Features under fire (retail icd 0x529dc0 -> DamageFeature 0x4961a0):
     // every feature head cell within aoe/2 of the impact -- the impact cell
     // (resolved to its head for footprint tails) exempt from the radius check,
@@ -4754,8 +4761,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     // IGNITES it instead of damaging it that hit; everything else accumulates
     // weapon damage, and at the def's `damage` value the feature is destroyed
     // -- swapped to its `featuredead` stage (npcwreck chains) or removed.
-    // Deterministic in every peer's sim (state + RNG hashed). Must run BEFORE
-    // the aoe<=0 early-out below.
+    // Deterministic in every peer's sim (state + RNG hashed).
     // unitsonly=1: the effect touches UNITS only, never the scenery. Retail sets it
     // on the big area spells (Earthen/Wind Wave, Death Aura, Energy Blast, both
     // Mind Controls) precisely so a 500px nuke doesn't also level every forest and
@@ -4832,34 +4838,59 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             }
     }
 
-    if (w.aoe <= 0) return;
-    // Splash the surrounding enemies, scaled from full at the centre to `edge`
-    // at the rim (so an area weapon actually hits a crowd, per its FBI aoe).
-    // Retail's splash radius is areaofeffect/2, and the falloff is QUADRATIC:
-    //   frac = (1 - d/r)^2 * (1 - edge) + edge
-    // We used the full aoe as the radius with a linear ramp, which made every
-    // splash weapon in the game twice as wide as retail and far too strong at the
-    // rim -- and it disagreed with our own FEATURE pass below, which already halved
-    // it. Both halves of applyHit now use the same radius.
-    const float r = w.aoe * 0.5f;
-    int splashed = 0;
-    forEachNear(hx, hz, r, [&](int idx) {
-        Unit& e = units_[size_t(idx)];
-        if (!e.alive() || e.embarked() || !e.type ||
-            (w.mindControl && allied(e.player, fromPlayer))) return;
-        if (&e == primary) return;   // already took the direct hit
-        float dx = e.x.toFloat() - hx, dz = e.z.toFloat() - hz;
-        float d = std::sqrt(dx * dx + dz * dz);
-        if (d >= r) return;
-        float t = 1.0f - d / r;
-        float scale = t * t * (1.0f - w.edge) + w.edge;
-        hurt(e, scale);
-        ++splashed;
-    });
+    // The unit side of 529dc0 (retailSplashUnits). Each cell of the window
+    // gives its ground occupant (the body plane the projectile collision
+    // reads), then its airborne one (the persistent air grid). The shot's
+    // owner is never hit; its own side is. Damage falls from full to `edge`
+    // with the square of the distance from the 3D impact to each unit's
+    // bounding box (+-footX*8, +-footZ*8, 0..modelTop around its position)
+    // over aoe/2. World measured flat distance to the unit's centre, so a
+    // shell bursting on the ground hurt a flyer cruising overhead.
+    std::array<int32_t,3> point{Fixed::fromFloat(hx).v, 0, Fixed::fromFloat(hz).v};
+    if (impact) point = *impact;
+    else if (position) point = *position;
+    else if (primary && primary->type)
+        point[1] = (primary->type->canFly ? primary->flightY : primary->groundY).v;
+    else if (!heights_.empty())
+        point[1] = Fixed::fromInt(retailTerrainHeight(point[0], point[2], terW_, terH_,
+            [&](int x, int z) { return heights_[size_t(z) * size_t(terW_) + size_t(x)]; })).v;
+    const auto window = retailSplashWindow(point[0], point[2], aoe, hW_, hH_);
+    if (window.x0 >= window.x1 || window.z0 >= window.z1) return;
+    const SearchBodyRect bodies = searchBodyRect(window.x0, window.z0,
+        window.x1 - window.x0, window.z1 - window.z0);
+    const auto air = airOccupancy_.cells();
+    struct Host {
+        const World& world; const SearchBodyRect& bodies; std::span<const int> air;
+        int groundAt(int x, int z) const {
+            const Unit* u = bodies.cells[size_t(z - bodies.z) * size_t(bodies.width) + size_t(x - bodies.x)];
+            return u ? u->id : 0;
+        }
+        int airAt(int x, int z) const {
+            const size_t cell = size_t(z) * size_t(world.hW_) + size_t(x);
+            return cell < air.size() ? air[cell] : 0;
+        }
+        bool live(int id) const {
+            const Unit* u = world.unit(id);
+            return u && u->type && u->alive() && !u->embarked();
+        }
+        RetailSplashBody body(int id) const {
+            const Unit& u = *world.unit(id);
+            const int32_t x = int32_t(uint32_t(u.type->footX) << 19), z = int32_t(uint32_t(u.type->footZ) << 19);
+            return {{u.x.v, (u.type->canFly ? u.flightY : u.groundY).v, u.z.v},
+                    {-x, 0, -z}, {x, u.type->modelTop, z}};
+        }
+    } host{*this, bodies, air};
+    // Collect first: damage never moves a unit or changes the planes, and the
+    // body plane holds pointers that must not outlive a units_ reallocation.
+    std::vector<std::pair<int, float>> recipients;
+    retailSplashUnits(point, aoe, w.edge, fromId, hW_, hH_, host,
+        [&](int id, float fraction) { recipients.emplace_back(id, fraction); });
+    for (const auto& [id, fraction] : recipients)
+        if (Unit* e = unit(id)) hurt(*e, fraction);
     static const bool kLog = std::getenv("TAK_SPLASHLOG") != nullptr;
-    if (splashed && kLog)
-        std::fprintf(stderr, "splash %s aoe=%.0f hit %d extra\n",
-                     w.name.c_str(), r, splashed);
+    if (!recipients.empty() && kLog)
+        std::fprintf(stderr, "splash %s aoe=%d hit %zu\n",
+                     w.name.c_str(), int(aoe), recipients.size());
 }
 
 // Retail leads a MOVING unit target: the aim point is the target's centre plus its
@@ -4908,6 +4939,7 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         PendingEffect e;
         e.w = &w;
         e.x = target.x; e.z = target.z;
+        e.y = target.type && target.type->canFly ? target.flightY : target.groundY;
         e.player = u.player; e.fromId = u.id;
         // shotart: this spell is DELIVERED. A visible shot flies to the aim point
         // first and the channel only starts when it lands, so the Acolyte lobs its
@@ -5099,7 +5131,10 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         const auto muzzle=captured ? u.weaponMuzzlePoints[size_t(slot)] : std::array<int32_t,3>{};
         const auto aimPoint=captured ? u.weaponAimPoints[size_t(slot)] : std::array<int32_t,3>{};
         const size_t event=hits_.size();
-        applyHit(w, target.x.toFloat(), target.z.toFloat(), u.player, u.id, &target);
+        // A melee shot sits on the target's origin (52bac0 copies +68..+70).
+        applyHit(w, target.x.toFloat(), target.z.toFloat(), u.player, u.id, &target, {},
+                 std::array<int32_t,3>{target.x.v,
+                     (target.type && target.type->canFly ? target.flightY : target.groundY).v, target.z.v});
         if (captured) {
             hits_[event].fromPosition=muzzle;
             hits_[event].position=aimPoint;
@@ -12341,7 +12376,8 @@ void World::tick(float dt) {
                 // is also how retail does it -- it loads the def's damage field at the
                 // point of use in 76 places and snapshots it onto nothing. The
                 // Projectile::damage this branch used was a dead copy of w.damage.
-                applyHit(*p.wsrc, t->x.toFloat(), t->z.toFloat(), p.fromPlayer, p.fromId, t);
+                applyHit(*p.wsrc, t->x.toFloat(), t->z.toFloat(), p.fromPlayer, p.fromId, t, {},
+                         std::array<int32_t,3>{t->x.v, (t->type && t->type->canFly ? t->flightY : t->groundY).v, t->z.v});
                 p.life = -1;
                 p.spent = true;   // connected: don't also crater at expiry
             }
@@ -12385,7 +12421,11 @@ void World::tick(float dt) {
                 if (d < bestD) { bestD = d; under = &e; }
             });
         }
-        applyHit(*bp.wsrc, bp.x.toFloat(), bp.z.toFloat(), bp.fromPlayer, bp.fromId, under);
+        // Either way it bursts on the ground where it came down.
+        const int ground = heights_.empty() ? 0 : retailTerrainHeight(bp.x.v, bp.z.v, terW_, terH_,
+            [&](int x, int z) { return heights_[size_t(z) * size_t(terW_) + size_t(x)]; });
+        applyHit(*bp.wsrc, bp.x.toFloat(), bp.z.toFloat(), bp.fromPlayer, bp.fromId, under,
+                 {}, std::array<int32_t,3>{bp.x.v, Fixed::fromInt(ground).v, bp.z.v});
     }
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
 
@@ -12746,7 +12786,8 @@ void World::tick(float dt) {
                 : (u.type->hasExplodeAs ? &u.type->explodeAs : nullptr);
             if (deathWeapon && u.deathType!=0 &&
                 (u.deathType<6 || u.deathType>11) && u.deathType<14)
-                deathBlasts_.push_back({deathWeapon, u.x.toFloat(), u.z.toFloat(), u.player, u.id});
+                deathBlasts_.push_back({deathWeapon, {u.x.v, (u.type->canFly ? u.flightY : u.groundY).v, u.z.v},
+                                        u.player, u.id});
             // Killed decides corpse admission; Dying controls when the original
             // body retires. Only then does decomposition or water sinking begin.
             {
@@ -13378,7 +13419,8 @@ void World::tick(float dt) {
         const PendingEffect cur = e;   // applyHit walks/kills units_; copy first
         if (done) pendingEffects_.erase(pendingEffects_.begin() + std::ptrdiff_t(i));
         else ++i;
-        if (pulse && cur.w) applyHit(*cur.w, cur.x.toFloat(), cur.z.toFloat(), cur.player, cur.fromId, nullptr);
+        if (pulse && cur.w) applyHit(*cur.w, cur.x.toFloat(), cur.z.toFloat(), cur.player, cur.fromId, nullptr,
+                                     {}, std::array<int32_t,3>{cur.x.v, cur.y.v, cur.z.v});
     }
     // Wandering storms: drift along the launch heading, weave, and grind whatever
     // they touch. The FBI `damage` is a PER-TICK rate, not a per-hit figure -- the
@@ -13432,7 +13474,8 @@ void World::tick(float dt) {
         if(!ending) {
             if(s.nextVary<=tickCounter_) { vary();s.nextVary+=uint32_t(s.w->variationTicks); }
             const Storm hit=s;
-            applyHit(*hit.w,hit.x.toFloat(),hit.z.toFloat(),hit.player,hit.fromId,nullptr);
+            applyHit(*hit.w,hit.x.toFloat(),hit.z.toFloat(),hit.player,hit.fromId,nullptr,
+                {},std::array<int32_t,3>{hit.x.v,hit.y.v,hit.z.v});
             if(s.end<=tickCounter_) {
                 if(s.w->wanderEndTicks.empty()) {
                     storms_.erase(storms_.begin()+std::ptrdiff_t(i));continue;
@@ -13449,7 +13492,8 @@ void World::tick(float dt) {
     // pathological chain can't spin forever. Fully deterministic (id-ordered).
     for (size_t i = 0; i < deathBlasts_.size() && i < 4096; ++i) {
         const DeathBlast b = deathBlasts_[i];
-        if (b.w) applyHit(*b.w, b.x, b.z, b.player, b.fromId, nullptr);
+        if (b.w) applyHit(*b.w, Fixed::raw(b.position[0]).toFloat(), Fixed::raw(b.position[2]).toFloat(),
+                          b.player, b.fromId, nullptr, {}, b.position);
     }
     deathBlasts_.clear();
 
@@ -14220,6 +14264,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(uint32_t(e.player)));
         mix(uint64_t(uint32_t(e.x.v))); mix(uint64_t(uint32_t(e.z.v)));
         mix(uint64_t(uint32_t(e.at)));   // ticks
+        mix(uint64_t(uint32_t(e.y.v)));  // the 3D area pass reads it
     }
     mix(uint64_t(uint32_t(stormSeq_)));
     mix(uint64_t(storms_.size()));

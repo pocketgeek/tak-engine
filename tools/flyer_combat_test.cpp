@@ -11,6 +11,11 @@ namespace tak::sim { struct RetailReplayProbe {
         const auto* source=w.unit(from);auto* victim=w.unit(target);
         w.applyHit(weapon,victim->x.toFloat(),victim->z.toFloat(),source->player,from,victim);
     }
+    // An impact at a 16.16 point, as a projectile's collision reports it.
+    static void blast(World& w,const Weapon& weapon,std::array<int32_t,3> point,int player,int struck=0) {
+        w.applyHit(weapon,Fixed::raw(point[0]).toFloat(),Fixed::raw(point[2]).toFloat(),player,0,
+                   struck ? w.unit(struck) : nullptr,point);
+    }
     static uint32_t moveRate(World& w,int id) {
         const auto* script=w.unitScript(id);
         return script ? script->movementRate : ~0u;
@@ -391,6 +396,83 @@ int main(int argc,char** argv) {
             }
             // A working builder pivots toward its job, so MoveRate may be 1.
             reportHold(w,flyer,holds[hold],held,true);
+        }
+        // Retail's impact dispatch (529c10): a weapon with areaofeffect <= 16
+        // that struck a unit hits it alone (52a460); every other impact damages
+        // units by the distance from the 3D impact to their bounding boxes
+        // (529dc0). World measured flat distance to unit centres, so a shell
+        // bursting on the ground hurt a Gryphon cruising over it.
+        {
+            auto weaponNamed=[&](const char* unit,const char* name) -> const tak::sim::Weapon* {
+                for (const auto& weapon:registry.find(unit)->weapons) if (weapon.name==name) return &weapon;
+                return nullptr;
+            };
+            const auto* shell=weaponNamed("arapult","Cannonball");   // the Catapult's
+            const auto* swirl=weaponNamed("tarmage","Fire Swirl");   // the Fire Mage's
+            check(shell && shell->aoe>16 && swirl && swirl->aoe>0 && swirl->aoe<=16,
+                  "splash fixtures: a blast and a small-area weapon");
+            if (shell && swirl) {
+                using tak::sim::Fixed;
+                auto dummy=*registry.find("tarzom");dummy.maxHp=30000;dummy.healTime=0;
+                dummy.maxVel={};dummy.weapon.damage=0;dummy.weapons.clear();
+                auto gryphon=*registry.find("zongryp");gryphon.maxHp=30000;gryphon.healTime=0;
+                tak::sim::World w;w.setVisPlayer(-1);w.setPlayerCount(2);
+                w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+                w.buildNavClasses(registry);
+                tak::sim::FeatType tree;tree.name="tree";tree.hp=100000;w.setFeatureTypes({tree});
+                const int32_t ground=100*65536;
+                auto loss=[&](int id,Fixed before) { return (before-w.unit(id)->hp).floorInt(); };
+                // retail's fraction for a unit `gap` px from the blast
+                auto fraction=[](const tak::sim::Weapon& weapon,int gap) {
+                    const double t=double(gap)/double(weapon.aoe/2)-1.0;
+                    return gap ? float(t*t*(1.0-double(weapon.edge))+double(weapon.edge)) : 1.0f;
+                };
+                auto spread=[](int dealt,float scaled) {
+                    return dealt>=int(scaled*0.85f)-1 && dealt<=int(scaled*1.15f)+1;
+                };
+                const int flyer=w.spawn(&gryphon,1000,1000,0,1);
+                w.order(flyer,3000,1000,false);
+                for (int tick=0;tick<150;++tick) w.tick(1.f/30.f);
+                const auto* f=w.unit(flyer);
+                const int altitude=(f->flightY.v-ground)>>16;
+                check(f->flightGroundMode==2 && altitude>shell->aoe/2,"fixture flyer cruises above the blast radius");
+                Fixed hp=f->hp;
+                tak::sim::RetailReplayProbe::blast(w,*shell,{f->x.v,ground,f->z.v},0);
+                const int under=loss(flyer,hp);
+                hp=w.unit(flyer)->hp;
+                tak::sim::RetailReplayProbe::blast(w,*shell,{f->x.v,f->flightY.v,f->z.v},0);
+                const int burst=loss(flyer,hp);
+                const int centre=w.spawn(&dummy,1500,1500,0,1),side=w.spawn(&dummy,1530,1500,0,1);
+                w.tick(1.f/30.f);   // World's old splash read the grid of the last tick
+                const Fixed full=w.unit(centre)->hp;
+                tak::sim::RetailReplayProbe::blast(w,*shell,{1500*65536,ground,1500*65536},0);
+                const int centreLoss=loss(centre,full),sideLoss=loss(side,full);
+                const int gap=30-8*dummy.footX;
+                const float base=shell->damageVs(&dummy);
+                // Fire Swirl strikes the centre dummy with another standing in its radius.
+                const int close=w.spawn(&dummy,1503,1500,0,1),edgeUnit=w.spawn(&dummy,1620+8*dummy.footX,1500,0,1);
+                w.addFeature(93*256+93,1500,1500,0,1,1,1,false,0);
+                w.tick(1.f/30.f);
+                Fixed centreHp=w.unit(centre)->hp;
+                tak::sim::RetailReplayProbe::blast(w,*swirl,{1500*65536,ground,1500*65536},0,centre);
+                const int struck=loss(centre,centreHp),bystander=loss(close,full);
+                const int scenery=w.feature(93*256+93) ? w.feature(93*256+93)->dmg : -1;
+                // ...and the ground 4 px from a unit's box, with nobody struck.
+                tak::sim::RetailReplayProbe::blast(w,*swirl,{1616*65536,ground,1500*65536},0);
+                const int grazed=loss(edgeUnit,full);
+                std::printf("splash balance=%s gryphon altitude=%d under=%d burst=%d dummy centre=%d side=%d"
+                    " (%d px from its box, fraction %.4f of %.0f) swirl struck=%d bystander=%d scenery=%d grazed=%d\n",
+                    crusades?"Crusades":"standard",altitude,under,burst,centreLoss,sideLoss,gap,
+                    fraction(*shell,gap),base,struck,bystander,scenery,grazed);
+                check(under==0,"a ground blast misses a flyer cruising over it");
+                check(burst>0 && spread(burst,shell->damageVs(&gryphon)),"a blast at the flyer's height hits it in full");
+                check(spread(centreLoss,base),"a blast on a ground unit still hits it in full");
+                check(spread(sideLoss,base*fraction(*shell,gap)),"splash falls off with the distance to the unit's box");
+                check(struck>0,"a small-area weapon hits the unit it struck");
+                check(bystander==0 && scenery==0,"...and nothing else: no splash and no scenery");
+                check(spread(grazed,swirl->damageVs(&dummy)*fraction(*swirl,4)),
+                      "a small-area weapon striking the ground hurts a unit within its radius");
+            }
         }
         // Preserve the intentional off switch for units that actually support it.
         auto turret=*registry.find("zondrake");turret.onOffable=true;

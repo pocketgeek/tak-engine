@@ -15,6 +15,7 @@
 #include "client/retailglow.h"
 #include "client/retailblood.h"
 #include "sim/retailprojectile.h"
+#include "sim/retailsplash.h"
 #include "sim/retailairgrid.h"
 #include "sim/retailguided.h"
 #include "sim/retailballistic.h"
@@ -778,6 +779,43 @@ int main(int argc,char** argv) {
             std::printf("%zu",particles.size());
             for(const auto& particle:particles)for(auto value:particle.position)std::printf(" %d",value);
             for(auto pixel:pixels)std::printf(" %u",unsigned(pixel));
+            std::puts("");
+        }
+        return 0;
+    }
+    if(argc==2 && std::strcmp(argv[1],"--splash-units")==0) {
+        // 529dc0's unit pass over a fixture map: the window, owner, the
+        // 20-unit memory, box distance and falloff, in meeting order.
+        int width,height,owner,units,cells;unsigned aoe,edge;std::array<int32_t,3> impact;
+        while(std::scanf("%d %d %u %u %d %d %d %d %d %d",&width,&height,&aoe,&edge,&owner,
+                &impact[0],&impact[1],&impact[2],&units,&cells)==10) {
+            struct Body { int live=0; tak::sim::RetailSplashBody body; };
+            std::map<int,Body> bodies;
+            for(int i=0;i<units;++i) {
+                int id;Body b;
+                if(std::scanf("%d %d",&id,&b.live)!=2)return 2;
+                for(auto* values:{&b.body.origin,&b.body.low,&b.body.high})
+                    for(auto& value:*values)if(std::scanf("%d",&value)!=1)return 2;
+                bodies[id]=b;
+            }
+            std::vector<std::array<int,2>> words(size_t(width)*height);
+            for(int i=0;i<cells;++i) {
+                int x,z,ground,air;
+                if(std::scanf("%d %d %d %d",&x,&z,&ground,&air)!=4)return 2;
+                words[size_t(z)*width+x]={ground,air};
+            }
+            struct Host {
+                const std::map<int,Body>& bodies;const std::vector<std::array<int,2>>& words;int width;
+                int groundAt(int x,int z) const { return words[size_t(z)*width+x][0]; }
+                int airAt(int x,int z) const { return words[size_t(z)*width+x][1]; }
+                bool live(int id) const { const auto it=bodies.find(id);return it!=bodies.end() && it->second.live; }
+                tak::sim::RetailSplashBody body(int id) const { return bodies.at(id).body; }
+            } host{bodies,words,width};
+            std::vector<std::pair<int,float>> hits;
+            tak::sim::retailSplashUnits(impact,uint16_t(aoe),std::bit_cast<float>(uint32_t(edge)),owner,
+                width,height,host,[&](int id,float fraction){hits.emplace_back(id,fraction);});
+            std::printf("%zu",hits.size());
+            for(const auto& [id,fraction]:hits)std::printf(" %d:%08x",id,std::bit_cast<uint32_t>(fraction));
             std::puts("");
         }
         return 0;

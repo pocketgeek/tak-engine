@@ -229,10 +229,9 @@ Still deviating (not ported):
   Wraths and Dirigibles fly runs too. World holds them still, and against a
   moving ground target a held flyer now alternates hold and move every 1-2
   ticks.
-- **Splash.** Retail deals only the direct hit at `areaofeffect` <= 16
-  (`529c10`/`52a460`); above it `529dc0` uses 3D distance to each unit's box.
-  World uses flat 2D distance to the unit centre, so a ground blast also hurts a
-  flyer overhead.
+
+Splash, the third item this section listed, is ported: see "Impact damage"
+below (protocol 263).
 
 ### World's other flyer holds (protocol 262)
 
@@ -271,6 +270,87 @@ flyer) instead of over the site. Porting that means running the flight body on
 the retained navigation during these holds, as `tickRetainedFlightMovement`
 does for an empty list (and `pathblock_test`'s flying-builder case expects the
 flyer to stay where it arrived).
+
+### Impact damage: the direct hit or the 3D area pass (protocol 263)
+
+Every weapon class ends in impact dispatch `529c10`: Melee, Ballistic and
+DroppedBallistic, Line of Sight and its subtypes, Guided (through `52c6d0`),
+Remote Effect, Earthquake, Hailstorm, both area spells and Wandering. A death
+weapon goes through it too: `52ac00`, from retirement `512ae0`, builds a shot at
+the dying unit's position (+0x68..+0x70, so a flyer's blast is at its altitude)
+with no owner and no unit struck. A feature's explosion (`52aca0`) calls the
+area pass directly. `529c10` applies only the direct hit `52a460` (`52a330` at
+fraction 1.0) when the shot struck a unit and the weapon's `areaofeffect`
+(WeaponType +0x8a, u16) is at most 16. Of the shipped unit files' 138
+`areaofeffect` entries (133 in Crusades) only the Fire Mage's Fire Swirl, 10,
+is that small; weapons without one are 0. Every other impact, a bigger
+blast or one with no unit struck, runs the area pass `529dc0`. The struck unit
+gets no separate hit there and takes the same falloff as anyone else.
+
+`529dc0`'s unit half: radius r = aoe >> 1, impact cell = whole pixels divided
+by 16 toward zero, window r/16+1 cells either side clamped to the map with an
+exclusive far edge. It walks rows, then columns. Each cell gives its ground
+occupant (map word +0) and then its airborne one (word +2; 0 and 0xffff
+skipped), so a flyer that owns no cell of the window, such as one of a stack
+whose cells were drawn for its neighbours, is not hit. Its checks:
+
+- **Liveness:** the unit's +0x130 bit 0x1000000 must be set.
+- **Owner:** the shot's owner (+0x7c) is skipped. Its own side is not, so a
+  catapult shell hurts the catapult's allies.
+- **Repeats:** the first 20 units met are remembered and skipped if met again.
+  Past 20, a unit filling several cells is met once per cell.
+- **Distance:** from the 3D impact to the unit's box, per axis zero inside the
+  box. The box is type +0x13a..+0x14e, set by `4c1410` to +-footprintx*8 and
+  +-footprintz*8 around the position, from the position's height (+0x13e is
+  0) up to the model top (+0x14a). The 16.16 deltas are summed as
+  dz*dz + dy*dy, then dx*dx, on the x87 at double precision. The square root
+  is truncated (`_ftol`) and the whole-pixel word kept.
+- **Falloff:** a unit is hit if d < r, with fraction (d/r - 1)^2 * (1 - edge)
+  + edge (`52a073..52a0a9`, double precision, stored as a float), or exactly 1
+  when d is 0.
+
+`tools/re/check_splash_units.py` runs native `529dc0` on 4000 random layouts:
+units in both words, owners, more than 20 units, arbitrary boxes, impacts off
+the map, any aoe and edge. It matches `retailSplashUnits`
+(`src/sim/retailsplash.h`, which `World::applyHit` runs) on every recipient,
+in order, and every fraction's bits (4245 recipients, 3287 below full damage).
+Copies of the port each broken one way fail it: 2D distance, an inclusive
+window edge, no owner skip, no repeats past 20, a float falloff, a floored
+impact cell.
+
+World measured flat distance to the unit's centre over its spatial grid. It
+damaged the struck unit in full and then the others, and ran the scenery pass
+even with a unit struck. A ground blast therefore hit a flyer overhead.
+`flyer_combat_test` (both balances) shows the differences:
+
+- A Catapult shell bursting on the ground under a Gryphon cruising 150 px up:
+  1063 before, now 0. A burst at its height still hits it in full.
+- A dummy at the burst point still takes the full blast. One 30 px away, whose
+  box edge is 14 px from the burst, took a 0.244 share (flat centre distance)
+  and now takes retail's 0.5666.
+- Fire Swirl striking a unit no longer splashes a unit 3 px away (766 before)
+  or the tree under it (800).
+- Fire Swirl on open ground now hurts a unit whose box is 4 px away (it
+  missed before).
+
+41 of the 48 shipped melee weapons have an areaofeffect of 20-200 (the rest
+have none), so most melee hits are area passes too. Retail's melee shot sits on the target's origin (`52bac0`
+copies +0x68..+0x70). Neighbours whose boxes come within aoe/2 of that point,
+allies included, are hit as well. The attacker, as owner, is not.
+
+Still deviating:
+- `52a330` multiplies base x fraction x attack x (1/armour) at double precision
+  and stores a float. World's `hurt` computes base x attack / armour x fraction
+  in float, so the result can differ by one HP at a rounding edge.
+- `529c10` also skips damage for a shot with no player (+0x92 == 10) or whose
+  player record's +0xea is 3. On a `waterdoesdamage` map (rules +0xd3d) it drops
+  an impact in water that struck no unit. None of these is ported.
+- The feature half keeps World's radius floor of 8 px and runs before the units
+  rather than cell by cell.
+- World detonates death weapons after the whole unit pass; retail does so
+  inside it, as each dying unit retires, before later units have moved. A
+  Remote Effect lands on its target's position at fire time; retail uses the
+  slot's aim point (+8), lead included.
 
 ## Ship / no-walk mover animation (icd + COB, 2026-09-10)
 

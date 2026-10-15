@@ -660,6 +660,9 @@ int main(int argc,char** argv) {
             World stormWorld;stormWorld.setVisPlayer(-1);
             stormWorld.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=stormWorld.spawn(&type,200,200,0,0),target=stormWorld.spawn(&victim,234,200,0,1);
+            // A model-less mover has no support quad to stand on the terrain,
+            // and the storm drifts at terrain height: 529dc0 measures in 3D.
+            stormWorld.unit(target)->groundY=Fixed::fromInt(100);
             stormWorld.setStance(from,2);stormWorld.setStance(target,2);
             RetailReplayProbe::shoot(stormWorld,from,target);
             const auto origin=stormWorld.storms().front().x;

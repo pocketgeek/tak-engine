@@ -2436,11 +2436,14 @@ private:
     void clearScriptWeaponTarget(Unit& u,bool fromCommand=false);
     // Convert a unit to another player (contact charm + mind-control weapons).
     void captureUnit(Unit& t, int newPlayer);
-    // Apply a weapon's damage at (hx,hz): the direct hit on `primary` plus, if
-    // the weapon has areaofeffect, splash on other enemies of `fromPlayer` scaled
-    // from full at the centre to `edge` at the rim. Per-category damage per victim.
+    // Apply a weapon's damage at (hx,hz), as retail's impact dispatch 529c10
+    // does: a weapon with areaofeffect <= 16 that struck `primary` hits it
+    // alone; any other impact damages every unit near the 3D `impact` point
+    // (default `position`, else hx/hz at the primary's or the ground's height)
+    // by its distance to their bounding boxes. `position` is display geometry.
     void applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId, Unit* primary,
-                  std::optional<std::array<int32_t,3>> position = {});
+                  std::optional<std::array<int32_t,3>> position = {},
+                  std::optional<std::array<int32_t,3>> impact = {});
 
     void tickProduction(Unit& u, float dt);
     void initializeRetailSite(Unit& site, int builderId);
@@ -3055,7 +3058,8 @@ private:
     // [EXPLODEAS] blasts queued during the death sweep and applied just after it
     // (applyHit mutates units_, which the sweep is walking). Transient within one
     // tick -- always empty at tick end, so it needs no hashing.
-    struct DeathBlast { const Weapon* w; float x, z; int player, fromId; };
+    // 52ac00 detonates at the dying unit's 3D position: a flyer's blast is in the air.
+    struct DeathBlast { const Weapon* w; std::array<int32_t,3> position; int player, fromId; };
     std::vector<DeathBlast> deathBlasts_;
     // Remote Effect (FBI type=Remote Effect): the effect materialises at the AIMED
     // GROUND POINT after `builduptime`, then applies its damage/status/conversion
@@ -3064,6 +3068,7 @@ private:
     struct PendingEffect {
         const Weapon* w = nullptr;
         Fixed x = Fixed(), z = Fixed();   // 16.16, the same world units as a unit
+        Fixed y = Fixed();                // the aimed point's height: the area pass is 3D
         int player = 0, fromId = 0;
         // TICKS, like every other retail timer (tools/re/emufields.py).
         int32_t at = 0;      // ticks until the next pulse
