@@ -957,7 +957,9 @@ if(TAK_TEST_DATA)
     add_test(NAME movement_orders_maze COMMAND movement_orders_test "${TAK_TEST_DATA}")
     set_tests_properties(movement_orders_maze PROPERTIES TIMEOUT 300)
     add_test(NAME movement_orders_trolls COMMAND movement_orders_test --trolls "${TAK_TEST_DATA}")
-    set_tests_properties(movement_orders_trolls PROPERTIES TIMEOUT 300)
+    # 600 s, like legion_movement_orders_maze: unoptimized it takes 238 s alone (Clang Debug,
+    # 2026-10-15) but timed out at 300 s under a parallel -O0 suite; at -O2 it takes ~40 s.
+    set_tests_properties(movement_orders_trolls PROPERTIES TIMEOUT 600)
     add_test(NAME legion_movement_orders_maze COMMAND movement_orders_test --legion "${TAK_TEST_DATA}")
     set_tests_properties(legion_movement_orders_maze PROPERTIES TIMEOUT 600)
     # Open-ground cohorts, and (separately, serial == workers) the 100-Troll
