@@ -719,6 +719,8 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   placements keep a separate owner, and custom armor/weapon percentages affect
   combat. Victory/Defeat rules determine authored scenario outcomes; no such rule
   means the scenario can remain a sandbox. See [scenario details and limits](docs/crt-triggers.md).
+  Saved scenario maps, and the shipped scripted maps, can also be played from the
+  game's skirmish and multiplayer create screens with **MAP SCENARIO** (protocol 259).
   Close the test game to return to editing. Verified snapshots remain in the map
   cache, like other downloaded maps; the temporary source is removed after exit.
   Hover over toolbar controls, filters or the minimap for action help and

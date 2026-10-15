@@ -234,7 +234,9 @@ Public games cannot enable benchmark/stress workloads or launch local campaign
 missions. Private `--local --no-auth` games retain those features. Debug builds
 have an explicit `--allow-benchmarks` override for isolated performance harnesses;
 Release builds do not accept it. This does not disable authenticated Darien
-Crusades battles or verified authored map scenarios.
+Crusades battles or map scenarios (rooms created with MAP SCENARIO on, and Test
+Map copies), which the server checks against the verified map package at START
+(`server_map_scenario_test.py`).
 
 A game that exhausts its replay-memory budget is stopped and its clients are
 disconnected with a resource-limit error. History is not silently truncated,

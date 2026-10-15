@@ -12,8 +12,9 @@ Current checkout builds use protocol **196** and preserve the selected map's
 same-stem OTA (starts, wind, gravity, scenario settings), CRT (placements and
 rules), TDF (Use Only restrictions), TXT description, editor rule names, and
 recipe companions, when present. Empty companions are retained. These files
-participate in the fingerprint and survive cache/archive reuse. This preserves
-authored content; it does not yet enable CRT rules in ordinary skirmish setup.
+participate in the fingerprint and survive cache/archive reuse. With MAP
+SCENARIO on (protocol 259), every peer and the server run the map's scenario
+from these verified files.
 
 Packages also contain the TNT, referenced terrain JPGs, and map feature definitions
 with their burn/death chains, sprites, and palettes. Unit definitions, build lists,

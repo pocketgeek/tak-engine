@@ -50,8 +50,12 @@ the flag value and suffix in action 25 messages.
 ## Current engine integration and limits
 
 `src/sim/scenario.cpp` implements the CRT runner. Shared match setup attaches it
-to `World` when the map OTA declares `hasscenario=1` and explicitly opts in with
-`[TAKPlaytest] { authoredscenario=1; }`; the world ticks it and hashes its rule state.
+to `World` when the map OTA declares `hasscenario=1` and either the room's MAP
+SCENARIO option is on (protocol 259, `MatchConfig::mapScenario`) or the map
+carries the Test Map opt-in `[TAKPlaytest] { authoredscenario=1; }`; the world
+ticks it and hashes its rule state. `src/sim/scenarioinfo.cpp` reads the same
+files without building a world, for the create screens, the room and the
+server's START checks.
 Messages are filtered for the local viewer without changing that state.
 Released **0.7.13 uses protocol 198**. The implementation described below is the
 **0.7.14, protocol 200**; update every client and server together.
@@ -98,8 +102,9 @@ Cartographer's **Test Map (F5)** saves a temporary KMP and launches
 `takclient --data <install> --play-map <snapshot.kmp>`. This documented production
 handoff validates the snapshot through the normal map-package whitelist, caches
 its verified revision with that opt-in section, and opens a private local-server lobby.
-Ordinary retail maps and normal exports keep their existing skirmish setup even
-when they contain CRT companions; cached Test Map snapshots retain the opt-in. It does not enable
+Ordinary retail maps and normal exports play their scenario only in a room
+created with MAP SCENARIO on; otherwise they keep their skirmish setup even when
+they contain CRT companions. Cached Test Map snapshots retain the opt-in. It does not enable
 any standalone/debug simulation. The editing session stays open. Temporary source
 files are removed when the editor observes game exit; closing the editor first
 leaves the running game and its temporary source undisturbed. Verified MapCache

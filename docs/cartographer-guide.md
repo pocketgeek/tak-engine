@@ -74,15 +74,16 @@ Cartographer saves a map as one **`.kmp`** file in your game's `Maps` folder.
 The game finds it there and lists it with the other maps for skirmish and
 multiplayer games.
 
-> **Scenario content plays only in a test game.** Placed units, trigger rules
-> and the Use Only unit list run when you open the map with **Test Map (F5)**,
-> or with the game's `--play-map` option. When your saved `.kmp` is chosen from
-> the game's ordinary skirmish or multiplayer map list, it plays as a normal
-> skirmish map: its terrain, features and start positions are used, every
-> player starts with the usual Monarch, and the scenario content is ignored.
-> The one exception is the test copy that Test Map and `--play-map` leave in
-> the game's map list (with a fingerprint in brackets after its name): it keeps
-> its scenario. See [When scenarios run](#when-scenarios-run).
+> **Scenario content plays when a game asks for it.** Placed units, trigger
+> rules and the Use Only unit list run when you open the map with **Test Map
+> (F5)** or the game's `--play-map` option, and in any skirmish or multiplayer
+> game created with **MAP SCENARIO** turned on. That option appears under the
+> map preview when the map's scenario has placed units or rules, and it starts
+> off: chosen with it off, your `.kmp` plays as a normal skirmish map (its
+> terrain, features and start positions, a Monarch for every player). The test
+> copy that Test Map and `--play-map` leave in the map list (with a fingerprint
+> in brackets after its name) always plays its scenario. See
+> [When scenarios run](#when-scenarios-run).
 
 ---
 
@@ -980,28 +981,43 @@ such as "hold the hill for five minutes to win".
 ### When scenarios run
 
 > Scenario content (placed units, regions and rules, and the Use Only list)
-> runs only when the map is opened as a **test game**: with **Test Map (F5)** in
-> Cartographer, or with the game's `--play-map` option (see
-> [Sharing a scenario](#sharing-a-scenario)). A map chosen from the game's
-> ordinary skirmish or multiplayer map list plays as a plain skirmish map, even
-> if it contains a scenario. This also applies to the shipped scripted maps such
-> as *King of the Hill*: Cartographer shows their rules, but the skirmish game
-> does not run them.
+> runs in a **scenario game**:
 >
-> The exception is the test copy that each Test Map or `--play-map` run leaves
-> in the game's `MapCache` folder. It appears in the map list with a
-> fingerprint in brackets after its name (see
-> [Testing a map in the game](#testing-a-map-in-the-game)), and choosing it
-> plays the scenario, just as the test did.
+> - a test game, opened with **Test Map (F5)** in Cartographer or with the
+>   game's `--play-map` option (see [Sharing a scenario](#sharing-a-scenario));
+> - a skirmish or multiplayer game created with **MAP SCENARIO: ON**. The button
+>   sits under the map preview on the game's create screens. It is offered for
+>   every map whose scenario has placed units or rules, the shipped scripted maps
+>   such as *King of the Hill* included, and the lines under it say what the
+>   scenario changes. It starts off and turns off again whenever another map is
+>   picked, so a map chosen with it off plays as a plain skirmish map. It is
+>   greyed, with the reason, for a map without a playable scenario: one with no
+>   scenario, an empty one, or one that needs a unit type this install lacks.
+>   Maps with a playable scenario carry a gold **S** in the map list.
+>
+> The test copy that each Test Map or `--play-map` run leaves in the game's
+> `MapCache` folder appears in the map list with a fingerprint in brackets after
+> its name (see [Testing a map in the game](#testing-a-map-in-the-game)).
+> Choosing it always plays the scenario, just as the test did: its MAP SCENARIO
+> button reads ON and cannot be changed.
+>
+> A map whose only scenario content is a Use Only list has no scenario (the
+> original Cartographer did not mark one either), so MAP SCENARIO is not
+> offered for it; its list applies only in a test game.
 
-In a test game:
+In a scenario game:
 
 - If the map has **placed units**, they replace the usual starting Monarchs, and
   each player's view starts at the middle of their units. A map with rules or
   regions but no placed units keeps the normal Monarch starts.
 - Every player who owns placed units or has rules of their own must have a seat
-  in the lobby, or the game will not start (*Seat player N in the lobby to play
-  this scenario*). Neutral units need no seat.
+  in the lobby. The lobby lists those seats (*NEEDS SEATS 1-4*), tags each empty
+  one *NEEDED BY SCENARIO*, and keeps **START** greyed until they are filled; a
+  start that still fails says why under the buttons (*Seat player N in the
+  lobby to play this scenario*). Neutral units need no seat, and neither does a
+  player whose rules are all empty.
+- **Start Locations** are always fixed, and **Monarch Expendable** reads
+  *SCENARIO*: the scenario decides how the game ends.
 - A map with scenario content can be started with only one player; other maps
   need two, as in any skirmish.
 - The usual endings are switched off: losing your Monarch, or every unit, does
@@ -1205,7 +1221,7 @@ type ID (for example *ARAARCH*). Click a row to tick or untick it. The header
 reads *ALL UNITS ALLOWED* while nothing is ticked, or *N ALLOWED*. **UNRESTRICT**
 clears the list; **DONE**, **Enter** or **Esc** closes it.
 
-In a test game, players can then build and train only the ticked types; the
+When the scenario runs, players can build and train only the ticked types; the
 computer players keep to the list too. Placed units of other types stay on the
 map, and rules can still create them. The status bar shows `USEONLY: n` while a
 list is set.
@@ -1289,13 +1305,14 @@ changes**, and starts the game with it.
 
 The game opens a **private lobby** for the map, as for a single-player game:
 
-![The game's lobby, TA:KINGDOMS MULTIPLAYER, for map TEST followed by a number and a fingerprint, SINGLE PLAYER: seat 1 HUMAN PLAYER, seats 2 to 4 OPEN, seats 5 to 8 CLOSED, with READY, START and LEAVE buttons and the match options below](img/cartographer/test-lobby.jpg)
+![The game's lobby, TA:KINGDOMS MULTIPLAYER, for map TEST followed by a number and a fingerprint, SINGLE PLAYER: seat 1 HUMAN PLAYER, seats 2 to 4 OPEN and tagged NEEDED BY SCENARIO, seats 5 to 8 CLOSED, START greyed, and under the match options MAP SCENARIO: ON (TEST MAP), NEEDS SEATS 1-4, ENDS ONLY BY THE SCENARIO'S RULES, PLACED UNITS REPLACE MONARCHS and ONLY 6 UNIT TYPES CAN BE BUILT](img/cartographer/test-lobby.jpg)
 
-*The game's lobby for a Test Map of King of the Hill (four start positions, so four seats are open).*
+*The game's lobby for a Test Map of King of the Hill. Its scenario needs four players, so seats 2 to 4 are tagged and START waits for them.*
 
 1. Fill the seats your map needs, as in any lobby: set the other open seats to
-   computer players (or close the ones you do not need). For a scenario, seat
-   every player who owns placed units or has rules.
+   computer players (or close the ones you do not need). For a scenario, the
+   lobby tags every seat that owns placed units or has rules *NEEDED BY
+   SCENARIO*, and **START** stays greyed until each of them is filled.
 2. Click **READY**, then **START**.
 3. Play. Close the game window when you are done; Cartographer is still open
    with your map, unchanged and with the same save folder.
@@ -1306,10 +1323,10 @@ Notes:
 - Only one test can run at a time. Pressing F5 again says *A test is already
   running*.
 - If the game cannot load the test copy, it shows **Cannot test map** with the
-  reason. Problems with a scenario, such as an unseated player or a placed unit
-  type this install does not have, are reported when you start the game from
-  the lobby. If the game stops with an error, Cartographer shows **TEST MAP
-  ENDED** with the error code.
+  reason. Problems with a scenario, such as a placed unit type this install does
+  not have, are reported when you start the game from the lobby, in red under
+  the buttons (*CANNOT START: ...*). If the game stops with an error,
+  Cartographer shows **TEST MAP ENDED** with the error code.
 - Each test leaves a verified copy of the map in the game's `MapCache` folder.
   These copies appear in the game's and Cartographer's map lists as
   *Test* followed by a number and a fingerprint, for example
@@ -1444,10 +1461,16 @@ A `.kmp` file is a single archive holding these files:
 
 #### Sharing a scenario
 
-A scenario's placed units and rules do not run from your saved `.kmp` in the
-ordinary map list (see [When scenarios run](#when-scenarios-run)). To play a
-scenario `.kmp`, open it in the game's test lobby directly, from a command
-prompt or terminal, giving the full path of the file, for example:
+To play your scenario, players put the `.kmp` in their game's `Maps` folder,
+pick it on the skirmish or multiplayer create screen and turn **MAP SCENARIO**
+on (see [When scenarios run](#when-scenarios-run)). In multiplayer only the host
+needs it: the host's copy, scenario files included, is sent to everyone and
+checked before the game starts, so every player plays exactly the same
+scenario.
+
+To test a scenario `.kmp` the way Cartographer does, open it in the game's test
+lobby directly, from a command prompt or terminal, giving the full path of the
+file, for example:
 
 ```sh
 takclient --play-map "/home/player/Games/TA Kingdoms/Maps/Twin Rivers.kmp"
@@ -1634,13 +1657,15 @@ Open your copy with **File → Open** (it is in the Recent list), then **Save As
 under a new name.
 
 **My placed units, rules or Use Only list do nothing in a skirmish.**
-That is expected: scenario content runs only in a test game, or from the test
-copy that a test leaves in the map list. See
-[When scenarios run](#when-scenarios-run).
+Turn on **MAP SCENARIO** under the map preview when you create the game: a map
+chosen with it off plays as a plain skirmish map. If the button is greyed, the
+reason is written under it (a map whose only content is a Use Only list has no
+scenario). See [When scenarios run](#when-scenarios-run).
 
 **The game says "Seat player N in the lobby to play this scenario".**
 Player N owns placed units or has rules. Seat a human or computer player in seat
-N. Remember that owner 0 in the editor is Player 1.
+N. Remember that owner 0 in the editor is Player 1. The lobby already tags such
+seats *NEEDED BY SCENARIO* and keeps **START** greyed until they are filled.
 
 **Test Map says "Cannot find takclient beside Cartographer".**
 Cartographer starts the game from its own folder. Install the game and
@@ -1696,10 +1721,10 @@ Start Cartographer from its shortcut and choose **Recover**. See
 
 ## Known limits
 
-- **Scenarios run only in test games.** A map from the ordinary map list plays
-  as a skirmish map; the shipped scripted maps behave the same way. Only the
-  test copies that Test Map and `--play-map` leave in the list keep their
-  scenario.
+- **Maps with rules but no placed units keep the Monarchs.** Every player
+  starts with the usual Monarch, which the original game did not give them: its
+  scenario games started with only the placed units, and such maps create their
+  armies with rules.
 - **Test Map on macOS.** Started from **TAK Cartographer.app**, Test Map looks
   for the game in the wrong place and reports *Cannot find takclient beside
   Cartographer*, even with both apps in the same folder. Save the map and open

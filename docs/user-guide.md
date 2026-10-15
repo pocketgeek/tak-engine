@@ -228,9 +228,9 @@ In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
    the slot. **Easy** is a good first opponent.
 6. Click **Start**.
 
-![The game setup screen with the map list, a map preview and the match options](img/lobby.jpg)
+![The game setup screen with the map list, a map preview and the match options; King of the Hill is selected with MAP SCENARIO: ON, and the lines under it read UNITS PLACED FOR 1-4, NEEDS SEATS 1-4, BUILDS 6 UNIT TYPES and ENDS BY SCENARIO RULES](img/lobby.jpg)
 
-*The game setup screen: pick a map, check its preview and player count, and set the match rules.*
+*The game setup screen: pick a map, check its preview and player count, and set the match rules. Here King of the Hill's own scenario is turned on with **Map scenario**.*
 
 The game opens centred on your **Monarch**. Your first steps:
 
@@ -261,8 +261,10 @@ change in the room, until the game starts.
 | **Overrides** | Off, Cosmetic or Full. See [Overrides](#overrides). |
 | **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. The host can change it in the room by clicking it, until the game starts; then it is fixed. See [Spectating](#spectating). |
 | **Spectate (Watch AIs)** | Single-player only: fill every slot with AIs and watch. |
+| **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
 
-Your choices are remembered for next time, except passwords and Spectate.
+Your choices are remembered for next time, except passwords, Spectate and Map
+scenario.
 
 ### AI difficulty
 
@@ -333,6 +335,17 @@ In a normal skirmish, each player starts with **only their Monarch**. You build
 an economy and an army from nothing. A player is out when they lose their Monarch
 (unless **Monarch Expendable** is on) or when they have no units left. The last
 team standing wins.
+
+#### Scenario games
+
+A game created with **Map scenario** on plays the map's own scenario instead.
+The map's placed units replace the starting Monarchs (a scenario with rules but
+no placed units keeps them), and only the unit types on its Use Only list, if it
+has one, can be built. The scenario's own Victory and Defeat rules decide who
+wins: losing your Monarch or every unit does not knock you out. A scenario
+without such rules never ends by itself; the create screen warns *NO VICTORY
+RULES: ENDLESS*, and the game ends when the players leave. Every seat the
+scenario gives units or rules to must be filled before the game can start.
 
 ### Mana: the only resource
 
@@ -1256,6 +1269,12 @@ click in the room's rules to turn on or off until the game starts. It lights up
 under the host's pointer; for everyone else it is read-only. See
 [Match options](#match-options).
 
+Under the rules, the room says whether the game plays the map's scenario
+(**MAP SCENARIO: ON**) and, if so, what it changes and which seats it needs.
+Each empty seat it needs is tagged **NEEDED BY SCENARIO**, and **Start** stays
+greyed until they are all filled. If the server still refuses to start the
+game, the reason appears in red under the buttons.
+
 ### Maps and content
 
 If you do not have the selected map, it is **downloaded automatically** before
@@ -1495,9 +1514,10 @@ objects and **Ctrl+V** turns it into a brush. See
 
 Cartographer can add placed units, named **regions**, trigger **rules**
 (**T**, with ready-made objective templates) and a **Use Only** unit list to a
-map. **Scenario content runs only in a test game** (Test Map, or the game's
-`--play-map` option, or the test copy that a test leaves in the map list);
-from the ordinary map list your saved map plays as a normal skirmish map.
+map. **Scenario content runs in a test game** (Test Map, the game's
+`--play-map` option, or the test copy that a test leaves in the map list) **and
+in any game created with [Map scenario](#match-options) on**; with that option
+off your saved map plays as a normal skirmish map.
 **Scenario → Check map** (**C**) lists problems such as cut-off
 starts, missing mana and wrong rule values. See
 [Scenario maps](cartographer-guide.md#scenario-maps) and the
