@@ -116,16 +116,17 @@ bool cart::Editor::handleBlockedInput(SDL_Event& e) {
     };
     if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && onCanvas(e.button.x,e.button.y)) {
         int cx,cz;blockedStroke=blockedRect=false;blockedLastX=-1;
-        if(!mouseCell(e.button.x,e.button.y,cx,cz))return true;
-        if(SDL_GetModState()&KMOD_SHIFT) {blockedRect=true;blockedRectX0=blockedRectX1=cx;blockedRectZ0=blockedRectZ1=cz;}
+        const bool shift=SDL_GetModState()&KMOD_SHIFT;
+        if(!mouseCell(e.button.x,e.button.y,cx,cz)) {blockedStroke=!shift;return true;}   // past the map edge: the stroke starts once the pointer reaches the map
+        if(shift) {blockedRect=true;blockedRectX0=blockedRectX1=cx;blockedRectZ0=blockedRectZ1=cz;}
         else {blockedStroke=true;stroke(cx,cz);}
         return true;
     }
     if(e.type==SDL_MOUSEMOTION && (e.motion.state&SDL_BUTTON_LMASK) && (blockedStroke || blockedRect)) {
         int cx,cz;
         if(blockedRect)corner(e.motion.x,e.motion.y);
-        else if(onCanvas(e.motion.x,e.motion.y) && mouseCell(e.motion.x,e.motion.y,cx,cz))stroke(cx,cz);
-        else blockedLastX=-1;   // off the canvas: the stroke resumes where the pointer comes back, without a line
+        else if(!onCanvas(e.motion.x,e.motion.y))blockedLastX=-1;   // off the canvas: the stroke resumes where the pointer comes back, without a line
+        else if(mouseCell(e.motion.x,e.motion.y,cx,cz))stroke(cx,cz);   // past the map edge the last cell is kept, so a wall along the edge rejoins without a hole
         return true;
     }
     if(e.type==SDL_MOUSEBUTTONUP && e.button.button==SDL_BUTTON_LEFT && (blockedStroke || blockedRect)) {

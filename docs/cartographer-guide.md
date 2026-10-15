@@ -639,11 +639,14 @@ such tool.
 1. Choose the **BLOCKED** tool (the fifth toolbar button, or **Tab**).
 2. Choose a brush in the browser: **1 × 1**, **2 × 2**, **4 × 4**, **8 × 8** or
    **16 × 16** cells. **[** and **]** step through the sizes while the tool is
-   chosen. The size is not remembered after you close Cartographer.
+   chosen. The size is not remembered after you close Cartographer. The brush
+   list ignores the browser's search box.
 3. In **PLACE** mode, click to block the cells under the brush, or drag to paint
    a stroke. A red outline under the pointer shows the brush. However fast you
    drag, the stroke has no gaps, and even a 1 × 1 stroke is a wall without
    diagonal openings.
+   A stroke can start past the edge of the map, and one that slips past the
+   edge picks up again where the pointer comes back, joined by a line.
 
 Painting blocks only **empty** cells. A feature, a road marker or a cell that is
 already blocked stays as it is.

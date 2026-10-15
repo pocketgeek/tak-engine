@@ -1571,7 +1571,7 @@ int blockedWorkflow(const std::string& data) {
         if(!expect(clicked>0,"the features browser lists '"+featureName+"'"))return true;
         const auto p=overview(e,1,20,20);mode(in,Editor::MODE_PLACE);in.click(p.x,p.y);
         featureCell=cellOf(e.mapView.map(),20,20);
-        in.key(SDLK_f,KMOD_CTRL);in.key(SDLK_BACKSPACE);in.key(SDLK_ESCAPE);   // the search would filter every browser
+        // The feature search stays set: BLOCKED's brush list must ignore it (checked below).
         return true;
     });
     s.then([&](Editor& e,const Input& in) {   // save before painting: its minimaps are the reference

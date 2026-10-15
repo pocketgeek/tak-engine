@@ -99,7 +99,9 @@ void cart::Editor::refreshPalette() {
     for(int i=0;i<count;++i) {
         if(categoryIndex && category(i)!=paletteCategories[size_t(categoryIndex)])continue;
         if(tool==UNITS && factionIndex && !lowerText(unitTypes[size_t(i)]).starts_with(sides[factionIndex]))continue;
-        if(!query.empty() && lowerText(paletteLabel(i)+" "+category(i)).find(query)==std::string::npos)continue;
+        // BLOCKED's five fixed brushes ignore the shared search: a word left from another
+        // browser would otherwise empty the list with nothing on screen saying why.
+        if(tool!=BLOCKED && !query.empty() && lowerText(paletteLabel(i)+" "+category(i)).find(query)==std::string::npos)continue;
         paletteItems.push_back(i);
     }
 }
