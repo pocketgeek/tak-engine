@@ -613,7 +613,9 @@ the drop point instead of flying on along the unload's step-out course; 0.8.0
 and 0.8.1 ship protocol 256. Protocol 257 ends Legion's walk-in-place livelock
 (Legion only): the pinwheel no longer takes a lone tree or rock for a wall end,
 a blocked side-step does not step straight back, and a body without net
-headway stands in its scripts and is held; 0.8.2 ships protocol 257. Game options
+headway stands in its scripts and is held; 0.8.2 ships protocol 257. Protocol
+264 carries the 2026-10-14 Legion review (Legion only; see the replay notes
+below). Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
 host sends later option updates. Both clients and the referee apply that choice
@@ -715,6 +717,18 @@ Its `--mpai` Inner Circle seed 1 hashes: Retail 300 s `bf6f1ac3081f9ee6`, 60 s
 Normal's larger builder total (up to the Monarch and four, see
 `ai-expansion-2026-09-29.md`) moves the 300 s ones, protocol unchanged: Retail
 `76f7e976cd6a00c9`, Legion `99e2f137cde8d769`; the 60 s ones stand.
+Protocol 264 changes Legion movement and only Legion (every Retail record of the
+scenario set is unchanged), and protocol 263 recordings no longer play: field
+potentials are 32-bit, so a long connected route is walked instead of standing
+trapped; a body's progress is measured in one measure at a time, so its stall
+clock runs with its walk; the settle rule reads a body of another footprint
+where it stands; a formation takes the slots past a narrow entrance in the order
+its bodies come through it; a formation member keeps its lateral place through a
+short passage; and one formation slot-search budget a tick is shared by every
+point, round robin (see the 2026-10-14 review in `legion-pathfinding.md`). The
+`--mpai` Inner Circle seed 1 hashes stay as above in both modes: Retail 300 s
+`76f7e976cd6a00c9`, 60 s `8db23af1b0260ba1`; Legion 300 s `99e2f137cde8d769`,
+60 s `5bc7e8001c06611f`.
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when

@@ -153,8 +153,10 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 263, "replay format 11 is kept under protocol 263");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 263");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 264, "replay format 11 is kept under protocol 264");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 264");
+    // 264 changes Legion movement (the 2026-10-14 review: stall clock, slots by arrival, passage lanes, slot budget).
+    check(!supportedReplayProtocol(13, 263), "previous Legion-review protocol is refused");
     // 263 changes air combat (hashed flyer holds, 3D area damage, led facing, attack runs).
     check(!supportedReplayProtocol(13, 262), "previous air-combat protocol is refused");
     // 262 stops a held flyer's velocity (hashed).

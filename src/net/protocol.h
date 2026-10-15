@@ -19,7 +19,12 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 263;      // 263: air combat, all hashed: every World flyer hold (wait, ambush, emptied order list,
+constexpr uint32_t kNetVersion = 264;      // 264: the 2026-10-14 Legion review (Legion only; Retail bit-identical): 32-bit field potentials; the
+                                           //      stall clock measures progress in one measure at a time (hashed progress/stallTick re-baselined);
+                                           //      the settle rule reads a body of another footprint where it stands; slots by arrival at a narrow
+                                           //      entrance (hashed Point::entry, Member::entryState); passage lanes; one slot-search budget a tick
+                                           //      over every point, round robin (hashed handNext). 263 replays refused
+                                           // 263: air combat, all hashed: every World flyer hold (wait, ambush, emptied order list,
                                            //      guard within 70px, builder at its point, FlyingBuild's retry) stops flightVelocity and speed; retail
                                            //      impact dispatch (529c10: an aoe<=16 weapon that struck a unit hits it alone, every other impact
                                            //      damages units by 3D distance to their boxes, 529dc0; PendingEffect::y); a slot's facing request points
