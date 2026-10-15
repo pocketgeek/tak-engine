@@ -89,8 +89,8 @@ MAX_BAND = 1.20
 TIME_SUFFIXES = (".t50", ".t90", ".done", ".orders_done")
 COMBAT_SCENARIOS = ("battle-field*", "battle-assault*")
 COMBAT_KEYS = ("work.legion_total.total", "work.legion_total.max", "work.legion_total.p99")
-# Work sums reported, never gated (tools/legion_observe.h): legion_all is legion_total plus the aware and
-# lane steering work the instruments report (2026-10-14 review, item 5). It needs no baseline entry, a
+# Work sums reported, never gated (tools/legion_observe.h): legion_all is legion_total plus the aware, lane and
+# pinwheel steering work the instruments report (2026-10-14 review, item 5). It needs no baseline entry, a
 # retake (write_base) never takes one in, and check() skips one a baseline still carries.
 REPORT_WORK = ("work.legion_all.",)
 SKIP_KEYS = ("members", "samples", "commands", "last_command_tick", "decision_samples",

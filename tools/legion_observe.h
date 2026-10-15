@@ -1233,13 +1233,15 @@ private:
 // outside Stats and are fed and summed here too.
 //
 // work.legion_all (2026-10-14 Legion review, item 5) is legion_total plus the
-// two steering searches it leaves out because they are reported as
+// three steering searches it leaves out because they are reported as
 // instruments: aware_work (awareScan's chains, members and samples; its pair
-// count aware_pairs is already a class of the total) and lane_work (the
-// passage gate's search and aim, a formation's entrance search, the passage
-// lanes). Neither counts cells another class counts. pivot_work stays out: one
-// unit of it per line sweep is a sweep trace_cells already counts. Report-only:
-// legion_check and legion_cost gate legion_total and the classes, not this sum.
+// count aware_pairs is already a class of the total), lane_work (the passage
+// gate's search and aim, a formation's entrance search, the passage lanes) and
+// pivot_work less pivot_sweeps (the pinwheel's descent chain, wall scan,
+// narrowing tests and free-width probes; the one unit it adds per line sweep is
+// a sweep trace_cells already counts). None counts cells another class counts.
+// Report-only: legion_check and legion_cost gate legion_total and the classes,
+// not this sum.
 class NavWork {
 public:
     static bool totalClass(std::string_view n) {
@@ -1254,7 +1256,7 @@ public:
     void sample(Observer& obs,const sim::World& w) {
         if(!const_cast<sim::World&>(w).legionNavigator())return;   // a plain accessor
         const auto s=w.legionStats();
-        size_t i=0;uint64_t total=0,awareTickWork=0,steering=0;
+        size_t i=0;uint64_t total=0,awareTickWork=0,steering=0,pivotWork=0,pivotSweeps=0;
         sim::LegionNavigator::forEachStat(s,[&](const char* name,uint64_t v) {
             const std::string_view n(name);
             if(i>=last_.size())last_.push_back(0);
@@ -1267,6 +1269,8 @@ public:
             if(isW8Instrument(n)) {   // W8 step 0: the lane counters, reported by w8() and never summed as work
                 w8_[std::string(n)]=v;
                 if(n=="lane_work")steering+=d;   // ... except into legion_all
+                if(n=="pivot_work")pivotWork+=d;
+                if(n=="pivot_sweeps")pivotSweeps+=d;
                 return;
             }
             if(isW9Instrument(n)) {   // W9 step 0: the mechanism counters, reported by w9() and never summed as work
@@ -1289,6 +1293,7 @@ public:
         if(d)obs.work("convoy_tests",d);
         total+=d;
         obs.work("legion_total",total);
+        steering+=pivotWork-std::min(pivotWork,pivotSweeps);   // each sweep added one unit of pivot_work
         obs.work("legion_all",total+steering);
         // Churn bins (W4 step 0): total Legion work per kChurnBin ticks of the run.
         const size_t bin=ticks_++/kChurnBin;

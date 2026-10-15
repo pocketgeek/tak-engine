@@ -1443,10 +1443,11 @@ ticks shows in the p99s: `battle-field-2x500`'s slot search 112,908 to 122,317,
 `densehead`'s total Legion work 23,132 to 23,191.
 
 The steering probes and detour searches stay unbudgeted: with the hand-out
-bounded, the slowest ticks are the field quota's (`work.legion_all.max`
-387,844 to 451,616 on the battles and the long routes); awareness and lane
-work add at most 15,507 cells to a tick's peak, line sweeps (`trace_cells`) at
-most 64,395 a tick, detours 3,880 and pass scans 12,108.
+bounded, the slowest ticks are the field quota's (`work.legion_all.max`, the
+core-five median, 385,965 to 472,988 on the battles and the long routes);
+awareness, lane and pinwheel work add at most 36,879 cells to a tick's peak
+(`battle-assault`), line sweeps (`trace_cells`) at most 64,395 a tick, detours
+3,880 and pass scans 12,108.
 `ctest:legion_handout` runs `deadend-multi-4x120.scn` at offset 0: 602,176 ring
 cells in one tick on the parent, at most 150,000 here (134,621).
 
@@ -2024,8 +2025,8 @@ passage's order and a shared lane record (item 3: the census found pairs whose
 slots lay in the gap's order swapping as often as the rest), and an exchange
 of slots at the passage exit (better tails, 12 more swaps); a budget for the
 steering probes and detour searches (item 5: with the hand-out bounded, the
-slowest ticks are the field quota's; awareness and lane work add at most
-15,507 cells to a tick's peak, detours 3,880); a saturation flag instead of
+slowest ticks are the field quota's; awareness, lane and pinwheel work add at
+most 36,879 cells to a tick's peak, detours 3,880); a saturation flag instead of
 32-bit potentials (item 6: the widening's whole cost is 4 bytes a field cell,
 39 MB of peak heap on the 8-AI Ulasem replay).
 
@@ -2054,7 +2055,7 @@ went wrong.
 | `legion_acceptance_test` | single unit, group, jagged, trapped, crowd-held, in all five-era modes | anything outside its seven fixtures |
 | crowdbench (`crowdbench`, `crowdbench_matrix`, the nightly screen) | 18 scenarios x two modes x several populations, deterministic keys only, Retail on the same binary | formation play: its orders are per-unit goals, which form no formation |
 | `.scn` scenarios and `legion_scenario` (`tools/scenarios/`) | the client's real order path (`issueSelection`: 64 commands per tick, the per-axis offsets for non-shared units, SetSquad), serial and `--workers`, three start offsets, the observer's keys; on stderr, per run, the wall time of the whole run and of `World::tick` per tick (`tick_max_ms=M@T`, the slowest tick and which it was, and `tick_p99_ms`; the observer's sampling is outside them, and none of it reaches the JSON) | the AI, fog and economy; production; anything not in the file |
-| `tools/legion_observe.h` | progress, held-by-design vs no-progress age classes, the stall clock against the headway clock (`stall_stale_ticks`, Legion only), lane crossings and files, contact and clearance, flyer metrics, per-tick work counters (`work.legion_total`, and `work.legion_all`, which adds the awareness and lane work the W7 and W8 instruments report, `aware_work` and `lane_work`; report-only); a command is one convoy (W3 exit, lead ruling W3 round 4 (1)): `legion_scenario` runs the file's clicks through a `ConvoyTable` of its own, so selections clicked to one point a few ticks apart are one command for `contact_settled` and share one arrival disc sized for all of their bodies, in both modes | wall time (never read); it is const and adds nothing to hashed state (`observer_neutral`) |
+| `tools/legion_observe.h` | progress, held-by-design vs no-progress age classes, the stall clock against the headway clock (`stall_stale_ticks`, Legion only), lane crossings and files, contact and clearance, flyer metrics, per-tick work counters (`work.legion_total`, and `work.legion_all`, which adds the awareness, lane and pinwheel work the W7 and W8 instruments report, `aware_work`, `lane_work` and `pivot_work` less its one unit per line sweep; report-only); a command is one convoy (W3 exit, lead ruling W3 round 4 (1)): `legion_scenario` runs the file's clicks through a `ConvoyTable` of its own, so selections clicked to one point a few ticks apart are one command for `contact_settled` and share one arrival disc sized for all of their bodies, in both modes | wall time (never read); it is const and adds nothing to hashed state (`observer_neutral`) |
 | `tools/scenarios/baseline.json`, `--check` | the committed base: exact keys, one-sided bands, work counters, the Retail floor, exceptions with their clusters | nothing it was not asked to key; a new key needs a new base |
 | `legion_cost` | work per member-tick W(4N)/W(N) and slot-assignment work per slot | wall time |
 | situations (`tools/scenarios/situations/`, `scn_truth`) | a moment cut out of one of the user's recordings: exact bodies, the orders in flight, the next 600 ticks of commands, and the recording's own positions 300 ticks in | what is not in the snapshot: economy, scripts, AI, production, units in transports; the first 100 ticks follow the recording (two of six moments clear 90% of bodies within 2 cells) but by 300 none does (best 85%), because the Legion group and mission state of bodies already in flight is not in the file; so they gate nothing (README in that directory) |
