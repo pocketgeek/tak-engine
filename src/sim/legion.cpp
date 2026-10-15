@@ -5201,7 +5201,9 @@ struct LegionNavigator::Impl {
     // kEntryCells cells of the entrance's (outside: above that). Deepest: farthest from the entrance; a slot
     // across the entrance -> point axis from the body costs kEntryAcross px of depth for each px across, and
     // the exchange is taken only when it is deeper and scores above the body's own slot. Members of one
-    // footprint exchange; a body already through when it got its slot keeps it.
+    // footprint and one movement plane exchange (a slot is legal and reachable on the plane and component
+    // formationCell found it on: a ground body and a hovercraft of one footprint share the point, not their
+    // slots); a body already through when it got its slot keeps it.
     void enterArea(const Unit& u,Member& m,const Group& g,Point& pt) {
         if(m.entryState==2||!g.field||!g.field->done)return;
         const Field& f=*g.field;
@@ -5231,13 +5233,20 @@ struct LegionNavigator::Impl {
         int64_t best=score(m.goal);
         Member* other=nullptr;int otherId=0;
         uint64_t work=0;
+        auto samePlane=[&](const Member& o) {
+            if(o.group==m.group)return true;
+            const auto og=groups.find(o.group);
+            if(og==groups.end()||og->second.plane!=g.plane)return false;
+            const Plane& p=plane(g.plane);
+            return groupComp(og->second,p)==groupComp(g,p);
+        };
         for(const int id:pt.ids) {
             ++work;
             if(id==u.id)continue;
             Member* o=member(id);
             const Unit* v=w.unit(id);
             if(!o||o->point!=m.point||o->slot<0||o->goal<0||o->entryState==2||!v||!v->type||
-               v->type->footX!=fx||v->type->footZ!=fz||!outside(*v)||depth(o->goal)<=mine)continue;
+               v->type->footX!=fx||v->type->footZ!=fz||!samePlane(*o)||!outside(*v)||depth(o->goal)<=mine)continue;
             const int64_t c=score(o->goal);
             if(c>best||(c==best&&other&&o->goal<other->goal)) {best=c;other=o;otherId=id;}
         }

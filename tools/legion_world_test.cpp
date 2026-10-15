@@ -3814,6 +3814,50 @@ void mixedsettle() {
     check(open.empty(),"mixedsettle: an order beside settled bodies of another footprint never ended:"+open);
 }
 
+// Slots by arrival exchange within one movement plane (2026-10-14 Legion review, after the commit review of
+// 1861aff9). farroom's room (tools/scenarios/farroom.scn: the door on its far side), its west part a pond behind an
+// 8-a-cell beach, deep enough to stop a ground unit (maxWaterDepth 4) and not a hovercraft; farroom's block of 60,
+// 2x2 ground units and 2x2 hovercraft alternating, clicked to the room's middle: one point, one group per movement
+// class, every slot legal for the plane it was found on. A member that comes through the door takes the deepest
+// slot a member still outside holds, here a hovercraft's in the pond. The exchange checked the footprint only, so a
+// ground body took a slot in the water and gave it back on its next update (regoal), losing its own. Every member's
+// goal must be legal for its own type on every tick.
+void entryplanes() {
+    constexpr int W=240,H=110;
+    std::vector<uint8_t> heights(size_t(W)*H,100);
+    for(int z=35;z<65;++z)for(int x=150;x<170;++x)heights[size_t(z)*W+x]=uint8_t(std::min(100,30+std::max(0,x-160)*8));
+    Fixture f(W,H,true,heights);
+    f.rect(148,33,34,2);f.rect(148,65,34,2);f.rect(148,35,2,30);f.rect(180,35,2,12);f.rect(180,53,2,12);
+    f.publish();
+    auto dry=mover(2);dry.id=dry.name="legion-foot-2-dry";dry.maxWaterDepth=4;
+    const auto skim=hover(2);
+    std::vector<int> ids;
+    for(int i=0;i<60;++i)ids.push_back(f.spawn(i%2?skim:dry,14+(i%10)*3,36+(i/10)*4));
+    f.start();
+    auto* legion=f.world.legionNavigator();
+    for(int id:ids)f.world.order(id,float(165*16),float(50*16),false);
+    int illegal=0,first=-1,firstId=0,done=0,last=-1;
+    for(int t=0;t<9000&&done<int(ids.size());++t) {
+        f.world.tick(1.f/30);
+        int d=0;
+        for(int id:ids) {
+            const auto& u=*f.world.unit(id);
+            d+=u.orders.empty();
+            int32_t gx=0,gz=0;
+            if(!legion->goalPoint(id,gx,gz))continue;
+            if(!legion->staticLegal(u,footprintOrigin(Fixed::raw(gx),2),footprintOrigin(Fixed::raw(gz),2))) {
+                ++illegal;
+                if(first<0) {first=t;firstId=id;}
+            }
+        }
+        if(d>done)last=t;
+        done=d;
+    }
+    std::printf("entryplanes illegal_goal_member_ticks=%d first=%d@%d done=%d/%zu last_done=%d hash=%016llx\n",illegal,firstId,
+                first,done,ids.size(),last,(unsigned long long)f.world.stateHash());
+    check(illegal==0,"entryplanes: a member held a goal its own type cannot stand on (a slot exchanged across movement planes)");
+}
+
 }
 
 int main(int argc,char** argv) {
@@ -3828,7 +3872,7 @@ int main(int argc,char** argv) {
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
-        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle}};
+        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"entryplanes",entryplanes}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

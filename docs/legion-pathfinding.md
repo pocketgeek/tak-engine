@@ -416,8 +416,15 @@ footprint class (mixed footprints form one group per class but share one
   member still outside holds -- farthest from the entrance, with 2 px of depth
   charged for each px the slot lies across the entrance-to-point axis from the
   body -- when that is deeper and scores above its own slot; the two exchange
-  slots (one footprint only; a body already through when it got its slot keeps
-  it). The slots fill from the far side in the order the bodies really arrive.
+  slots (one footprint and one movement plane only: a ground body and a
+  hovercraft of one footprint share the point, not their slots, which are
+  legal on the plane they were found on; a body already through when it got
+  its slot keeps it). The slots fill from the far side in the order the bodies
+  really arrive. Until the exchange checked the plane, a ground body coming
+  through farroom's door with hovercraft in its formation took a hovercraft's
+  slot in a pond inside the room, illegal for it, and gave it back on its next
+  update (`ctest:legion_entryplanes`: 6 member-ticks on an illegal goal before,
+  none now, the last body done at tick 3,409 instead of 3,966).
   The entrance is one footprint's: an origin of the member it was found for,
   on that member's group field. A member of another footprint reads the same
   cell on its own field, an origin whose centre lies (its foot less the
