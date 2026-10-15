@@ -18849,6 +18849,139 @@
    "mode": "legion",
    "reason": "protocol 264 (the 2026-10-14 Legion review: item 5, one slot-search budget a tick over every point, round robin: formations that share a tick take their slots on later ticks): work.slot_search_cells.max 132580 -> 137384 (median of the core offsets), past the entry's 32975 x1.10 and its licence x4.03; the base head's own per-offset range is 132580..132604, the new value beyond it; by item: base 132580, item 5 137384. Licensed at this value (docs/legion-pathfinding.md, Slot hand-out budget)",
    "scenario": "tail-corner380"
+  },
+  {
+   "key": "g.B.done",
+   "max": 8958,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 1, progress in one measure at a time: the stall clock runs with the walk and the detour rules keep their own record, so the settle, contact-arrival and blocked re-request decisions that read the stall clock take another course): g.B.done 8328 -> 8958 (median of the core offsets), past the entry's never (reference 8058) x1.10; the base head's own per-offset range is 6933..never, the new value inside it; by item: base 8328, item 1 8958. Licensed at this value (docs/legion-pathfinding.md, section 4)",
+   "scenario": "corner-1x448"
+  },
+  {
+   "key": "g.A.complete_dist_max",
+   "max": 34,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 5, one slot-search budget a tick over every point, round robin: formations that share a tick take their slots on later ticks): g.A.complete_dist_max 31 -> 34 (median of the core offsets), past the entry's 44 (reference 28) x1.20; the base head's own per-offset range is 28..38, the new value inside it; by item: base 31, item 5 34. Licensed at this value (docs/legion-pathfinding.md, Slot hand-out budget)",
+   "scenario": "corner-8x56"
+  },
+  {
+   "key": "g.A.complete_dist_median",
+   "max": 9,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 4, slots by arrival: a member that comes through a narrow entrance takes the deepest slot a member still outside holds): g.A.complete_dist_median 8 -> 9 (median of the core offsets), past the entry's 3 x1.10 and its licence x2.67; the base head's own per-offset range is 7..9, the new value inside it; by item: base 8, item 4 9. Licensed at this value (docs/legion-pathfinding.md, section 5, Slots by arrival)",
+   "scenario": "deadend-w2-n120-room-plain"
+  },
+  {
+   "key": "reversals",
+   "max": 2,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 4, slots by arrival: a member that comes through a narrow entrance takes the deepest slot a member still outside holds): reversals 1 -> 2 (median of the core offsets), past the entry's 1 x1.10; the base head's own per-offset range is 1..1, the new value beyond it; by item: base 1, item 4 2. Licensed at this value (docs/legion-pathfinding.md, section 5, Slots by arrival)",
+   "scenario": "deadend-w2-n40-room-squad"
+  },
+  {
+   "key": "wall_touch_permille",
+   "max": 290,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 4, slots by arrival: a member that comes through a narrow entrance takes the deepest slot a member still outside holds): wall_touch_permille 264 -> 290 (median of the gate offsets), past the entry's 229 (reference 229) x1.10 and its licence x1.16; the base head's own per-offset range is 213..291, the new value inside it; by item: base 264, item 4 290. Licensed at this value (docs/legion-pathfinding.md, section 5, Slots by arrival)",
+   "scenario": "deadend-w4-n120-room-plain"
+  },
+  {
+   "key": "reversals",
+   "max": 1,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 4, slots by arrival: a member that comes through a narrow entrance takes the deepest slot a member still outside holds): reversals 0 -> 1 (median of the core offsets), past the entry's 0 x1.10; the base head's own per-offset range is 0..1, the new value inside it; by item: base 0, item 4 1. Licensed at this value (docs/legion-pathfinding.md, section 5, Slots by arrival)",
+   "scenario": "deadend-w4-n40-room-plain"
+  },
+  {
+   "key": "reversals",
+   "max": 2,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 4, slots by arrival: a member that comes through a narrow entrance takes the deepest slot a member still outside holds): reversals 1 -> 2 (median of the core offsets), past the entry's 1 x1.10; the base head's own per-offset range is 0..2, the new value inside it; by item: base 1, item 4 2. Licensed at this value (docs/legion-pathfinding.md, section 5, Slots by arrival)",
+   "scenario": "deadend-w4-n40-room-squad"
+  },
+  {
+   "key": "reversals",
+   "max": 16,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 4, slots by arrival: a member that comes through a narrow entrance takes the deepest slot a member still outside holds): reversals 14 -> 16 (median of the core offsets), past the entry's 9 x1.10 and its licence x1.56; the base head's own per-offset range is 9..24, the new value inside it; by item: base 14, item 4 16. Licensed at this value (docs/legion-pathfinding.md, section 5, Slots by arrival)",
+   "scenario": "deadend-w6-n120-room-squad"
+  },
+  {
+   "key": "gate.door.files_x100",
+   "max": 322,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 4, slots by arrival: a member that comes through a narrow entrance takes the deepest slot a member still outside holds; item 3, passage lanes: a formation member keeps its lateral place through a short passage): gate.door.files_x100 317 -> 322 (median of the core offsets), past the entry's 262 x1.10 and its licence max 317; the base head's own per-offset range is 278..350, the new value inside it; by item: base 317, item 4 337, item 3 322. Licensed at this value (docs/legion-pathfinding.md, section 5, Slots by arrival, Passage lanes)",
+   "scenario": "doorplug-124"
+  },
+  {
+   "key": "aim_reversals",
+   "max": 101,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 3, passage lanes: a formation member keeps its lateral place through a short passage): aim_reversals 86 -> 101 (median of the core offsets), past the entry's 74 x1.10 and its licence max 86; the base head's own per-offset range is 55..101, the new value inside it; by item: base 86, item 3 101. Licensed at this value (docs/legion-pathfinding.md, Passage lanes)",
+   "scenario": "gap14"
+  },
+  {
+   "key": "engagement_on_flowing",
+   "max": 48,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 3, passage lanes: a formation member keeps its lateral place through a short passage): engagement_on_flowing 43 -> 48 (median of the core offsets), past the entry's 43 x1.10; the base head's own per-offset range is 39..51, the new value inside it; by item: base 43, item 3 48. Licensed at this value (docs/legion-pathfinding.md, Passage lanes)",
+   "scenario": "gap14"
+  },
+  {
+   "key": "g.A.complete_dist_median",
+   "max": 6,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 3, passage lanes: a formation member keeps its lateral place through a short passage): g.A.complete_dist_median 5 -> 6 (median of the core offsets), past the entry's 5 x1.10; the base head's own per-offset range is 5..7, the new value inside it; by item: base 5, item 3 6. Licensed at this value (docs/legion-pathfinding.md, Passage lanes)",
+   "scenario": "gap14"
+  },
+  {
+   "key": "back",
+   "max": 81,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 3, passage lanes: a formation member keeps its lateral place through a short passage): back 54 -> 81 (median of the core offsets), past the entry's 54 x1.10; the base head's own per-offset range is 49..69, the new value beyond it; by item: base 54, item 3 81. Licensed at this value (docs/legion-pathfinding.md, Passage lanes)",
+   "scenario": "gap8"
+  },
+  {
+   "key": "reversals",
+   "max": 11,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 3, passage lanes: a formation member keeps its lateral place through a short passage): reversals 6 -> 11 (median of the core offsets), past the entry's 6 x1.10; the base head's own per-offset range is 4..8, the new value beyond it; by item: base 6, item 3 11. Licensed at this value (docs/legion-pathfinding.md, Passage lanes)",
+   "scenario": "gap8"
+  },
+  {
+   "key": "g.G8.complete_dist_max",
+   "max": 15,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 3, passage lanes: a formation member keeps its lateral place through a short passage): g.G8.complete_dist_max 13 -> 15 (median of the core offsets), past the entry's 13 x1.10; the base head's own per-offset range is 12..14, the new value beyond it; by item: base 13, item 3 15. Licensed at this value (docs/legion-pathfinding.md, Passage lanes)",
+   "scenario": "gapsweep"
+  },
+  {
+   "key": "g.G8.complete_outside_radius",
+   "max": 1,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 3, passage lanes: a formation member keeps its lateral place through a short passage): g.G8.complete_outside_radius 0 -> 1 (median of the core offsets), past the entry's 0 x1.10; the base head's own per-offset range is 0..0, the new value beyond it; by item: base 0, item 3 1. Licensed at this value (docs/legion-pathfinding.md, Passage lanes)",
+   "scenario": "gapsweep"
+  },
+  {
+   "key": "g.G8.done",
+   "max": -1,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 3, passage lanes: a formation member keeps its lateral place through a short passage): g.G8.done 2884 -> never (median of the core offsets), past the entry's 3785 (reference 2884) x1.20; the base head's own per-offset range is 2569..3154, the new value beyond it; by item: base 2884, item 3 never. Licensed at this value (docs/legion-pathfinding.md, Passage lanes)",
+   "scenario": "gapsweep"
+  },
+  {
+   "key": "g.G8.left_behind",
+   "max": 1,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 3, passage lanes: a formation member keeps its lateral place through a short passage): g.G8.left_behind 0 -> 1 (median of the core offsets), past the entry's 0 x1.10; the base head's own per-offset range is 0..0, the new value beyond it; by item: base 0, item 3 1. Licensed at this value (docs/legion-pathfinding.md, Passage lanes)",
+   "scenario": "gapsweep"
+  },
+  {
+   "key": "g.A.complete_dist_max",
+   "max": 72,
+   "mode": "legion",
+   "reason": "protocol 264 (the 2026-10-14 Legion review: item 1, progress in one measure at a time: the stall clock runs with the walk and the detour rules keep their own record, so the settle, contact-arrival and blocked re-request decisions that read the stall clock take another course): g.A.complete_dist_max 71 -> 72 (median of the core offsets), past the entry's 60 x1.10 and its licences x1.15, max 71; the base head's own per-offset range is 63..74, the new value inside it; by item: base 71, item 1 72. Licensed at this value (docs/legion-pathfinding.md, section 4)",
+   "scenario": "pocket-615-wall"
   }
  ],
  "entries": {
@@ -298117,6 +298250,54 @@
    "mode": "legion",
    "reason": "offset spread 3253..never exceeds the band at protocol 264 (the 2026-10-14 Legion review: item 4, slots by arrival: a member that comes through a narrow entrance takes the deepest slot a member still outside holds; item 3, passage lanes: a formation member keeps its lateral place through a short passage); gated on median-of-5 offsets (docs/legion-pathfinding.md, section 5, Slots by arrival, Passage lanes)",
    "scenario": "strait-3x80"
+  },
+  {
+   "cluster": "AR-02",
+   "key": "g.B.arrived",
+   "reason": "fails legion <= retail x1.1 at the first baseline of deadend-multi-4x120, a fixture the review added (protocol 264 (the 2026-10-14 Legion review)): legion 13 vs retail 21; its B group is the deadend-w4-n120-closed probe, whose own g.A.arrived is the AR-02 exception (legion 16 vs retail 23). A new fixture's floor failure, listed for the lead's ruling",
+   "scenario": "deadend-multi-4x120"
+  },
+  {
+   "cluster": "MV-02",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "reason": "fails legion <= retail x1.1 at the first baseline of farroom, a fixture the review added (protocol 264 (the 2026-10-14 Legion review)): legion 466 vs retail 170; the wall-touch class of the dead-end rooms and corridors (MV-02, W3). A new fixture's floor failure, listed for the lead's ruling",
+   "scenario": "farroom"
+  },
+  {
+   "cluster": "MV-02",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "reason": "fails legion <= retail x1.1 at the first baseline of farroom, a fixture the review added (protocol 264 (the 2026-10-14 Legion review)): legion 208 vs retail 84; the wall-touch class of the dead-end rooms and corridors (MV-02, W3). A new fixture's floor failure, listed for the lead's ruling",
+   "scenario": "farroom"
+  },
+  {
+   "cluster": "MV-02",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "reason": "fails legion <= retail x1.1 at the first baseline of serplong, a fixture the review added (protocol 264 (the 2026-10-14 Legion review)): legion 939 vs retail 488; the wall-touch class of the dead-end rooms and corridors (MV-02, W3). A new fixture's floor failure, listed for the lead's ruling",
+   "scenario": "serplong"
+  },
+  {
+   "cluster": "MV-02",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "reason": "fails legion <= retail x1.1 at the first baseline of serplong, a fixture the review added (protocol 264 (the 2026-10-14 Legion review)): legion 939 vs retail 488; the wall-touch class of the dead-end rooms and corridors (MV-02, W3). A new fixture's floor failure, listed for the lead's ruling",
+   "scenario": "serplong"
+  },
+  {
+   "cluster": "MV-02",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "reason": "fails legion <= retail x1.1 at the first baseline of serplong-control, a fixture the review added (protocol 264 (the 2026-10-14 Legion review)): legion 916 vs retail 479; the wall-touch class of the dead-end rooms and corridors (MV-02, W3). A new fixture's floor failure, listed for the lead's ruling",
+   "scenario": "serplong-control"
+  },
+  {
+   "cluster": "MV-02",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "reason": "fails legion <= retail x1.1 at the first baseline of serplong-control, a fixture the review added (protocol 264 (the 2026-10-14 Legion review)): legion 916 vs retail 479; the wall-touch class of the dead-end rooms and corridors (MV-02, W3). A new fixture's floor failure, listed for the lead's ruling",
+   "scenario": "serplong-control"
   }
  ],
  "history": [
@@ -322768,6 +322949,12 @@
    "cleared_exceptions": [],
    "ratchets": [],
    "reason": "protocol 264 (the 2026-10-14 Legion review): Legion hash@ entries retaken from a full --offsets gate --data run of every scenario, both modes (build-o2, protocol 264); every Retail record passes main's baseline unchanged. The four fixtures the review added (deadend-multi-4x120, farroom, serplong, serplong-control) first baselined. The work and gate-instrument keys the review moved past their gates are licensed and its new offset spreads excepted (cluster LR-264), each with its numbers; failures already present on main's sim (a few battle-field and mixed2 keys) are left as they were.",
+   "when": "2026-10-15T14:17:34Z"
+  },
+  {
+   "cleared_exceptions": [],
+   "ratchets": [],
+   "reason": "protocol 264 (the 2026-10-14 Legion review): the behaviour keys the review moved past their gates, licensed at the head's values with their numbers and items, and the Retail-floor failures of the fixtures it added, excepted (clusters MV-02, AR-02): the trades the lead rules on (docs/legion-exit-tables.md, 2026-10-14 review)",
    "when": "2026-10-15T14:17:34Z"
   }
  ],
