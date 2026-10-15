@@ -575,6 +575,13 @@ inline constexpr int kMinGameSpeed = 1, kMaxGameSpeed = 20, kMaxDevGameSpeed = 8
 
 // Per-game settings chosen by the host.
 constexpr uint8_t kStressImmediate = 1, kStressStaged = 2;
+// Start Locations, GameOptions::randomStarts (see there). Every build before BY SLOT
+// read any nonzero value as RANDOM, and normalizeStartMode keeps that for values
+// other than these three.
+constexpr uint8_t kStartsFixed = 0, kStartsRandom = 1, kStartsBySlot = 2;
+constexpr uint8_t normalizeStartMode(uint8_t v) {
+    return v == kStartsBySlot ? kStartsBySlot : v ? kStartsRandom : kStartsFixed;
+}
 
 struct GameOptions {
     uint8_t crusades = 0;
@@ -606,11 +613,15 @@ struct GameOptions {
     // 1 = EXPLORED (terrain starts mapped). Both retain seen terrain under fog;
     // 2 = FULL VISION (no fog at all: the whole map and every unit are visible).
     // Host-set in the room.
-    // Random Start Locations: 0 = fixed (the SEATED slots take the map's starts in
-    // slot order and an empty seat takes none, as retail does -- a human in slot 1
-    // and an AI in slot 8 start at StartPos1 and StartPos2; see setupMatch),
-    // 1 = the starts are shuffled for the match.
-    // Deterministic -- derived from the match seed, so every peer agrees.
+    // Start Locations (the name is from when it was a RANDOM toggle; the byte keeps its
+    // place): kStartsFixed (0) = the SEATED slots take the map's starts in slot order
+    // and an empty seat takes none, as retail does -- a human in slot 1 and an AI in
+    // slot 8 start at StartPos1 and StartPos2; kStartsRandom (1) = the starts are
+    // shuffled for the match; kStartsBySlot (2, not retail) = slot N takes StartPos N
+    // whichever seats are empty, and a slot past the map's last start takes the lowest
+    // start no seated slot claims (sim::startSpotsFor). Other values read as RANDOM
+    // (normalizeStartMode). Deterministic -- derived from the match seed and the slot
+    // table, so every peer agrees.
     uint8_t randomStarts = 0;
     uint8_t fogExplored = 1;
     sim::PathfindingMode pathfindingMode = sim::PathfindingMode::Retail;

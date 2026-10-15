@@ -2050,3 +2050,9 @@ skirmish, multiplayer and replays alike (`start_positions_test`). One difference
 is left as it is. Our Random shuffles all of the map's starts, so two players on
 an eight-start map may land on any two of them. Retail's only permutes StartPos1
 and 2.
+
+Start locations **By slot** (`GameOptions.randomStarts` 2) is an engine extension
+with no retail counterpart: slot N takes StartPos N whichever rows are empty, and
+a slot past the map's last start takes the lowest start no seated slot claims by
+number, then a ring spot (`sim::startSpotsFor`). Fixed stays the retail rule
+above and remains the default.

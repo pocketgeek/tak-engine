@@ -905,7 +905,7 @@ int main(int argc, char** argv) {
             sim::MatchConfig cfg;
             cfg.vfs = &vfs;
             cfg.mapPath = kMap;
-            cfg.randomStarts = rnd;
+            cfg.startMode = rnd ? sim::StartMode::Random : sim::StartMode::Fixed;
             cfg.startSeed = seed;
             cfg.slots.resize(4);
             for (int i = 0; i < 4; ++i) { cfg.slots[size_t(i)].used = true;

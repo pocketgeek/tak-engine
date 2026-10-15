@@ -102,11 +102,15 @@ struct Settings {
     bool streamRememberKey = false;
     struct GameCreate {
         bool crusades = false, doubleSight = false, speedUnlock = false;
-        bool monarchExpendable = false, randomStarts = false;
+        bool monarchExpendable = false;
         bool allowSpectators = true;   // multiplayer ALLOW SPECTATORS (on, as every room was before it)
         bool generated = false;
         sim::PathfindingMode pathfindingMode = sim::PathfindingMode::Retail;
         int unitCap = 2000, fog = 1, overrides = 1;
+        // START LOCATIONS, net::GameOptions::randomStarts: 0 FIXED, 1 RANDOM, 2 BY SLOT.
+        // Saved under the same key it had as a RANDOM on/off toggle, so 0 and 1 keep
+        // their meaning.
+        int randomStarts = 0;
         int mapSort = 0, mapSortDir = 1;
         std::string name = "game", generator;
         friend bool operator==(const GameCreate&, const GameCreate&) = default;

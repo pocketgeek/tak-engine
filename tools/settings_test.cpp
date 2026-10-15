@@ -89,7 +89,8 @@ int main() {
     flips("gameCreate.doubleSight", [](Settings& s) { s.gameCreate.doubleSight = !s.gameCreate.doubleSight; });
     flips("gameCreate.speedUnlock", [](Settings& s) { s.gameCreate.speedUnlock = !s.gameCreate.speedUnlock; });
     flips("gameCreate.monarchExpendable", [](Settings& s) { s.gameCreate.monarchExpendable = !s.gameCreate.monarchExpendable; });
-    flips("gameCreate.randomStarts", [](Settings& s) { s.gameCreate.randomStarts = !s.gameCreate.randomStarts; });
+    flips("gameCreate.randomStarts", [](Settings& s) { s.gameCreate.randomStarts = (s.gameCreate.randomStarts + 1) % 3; });
+    flips("gameCreate.randomStarts 2", [](Settings& s) { s.gameCreate.randomStarts = 2; });
     flips("gameCreate.allowSpectators", [](Settings& s) { s.gameCreate.allowSpectators = !s.gameCreate.allowSpectators; });
     flips("gameCreate.generated", [](Settings& s) { s.gameCreate.generated = !s.gameCreate.generated; });
     flips("gameCreate.unitCap", [](Settings& s) { ++s.gameCreate.unitCap; });

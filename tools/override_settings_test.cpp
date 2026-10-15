@@ -71,6 +71,22 @@ int main() {
         }
         if(!tak::saveSettings(modeChanged) || tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)
             throw std::runtime_error("Retail create preference did not persist");
+        // START LOCATIONS was a RANDOM on/off toggle under the same key: 0 and 1 keep their
+        // meaning (a hand-written true/on is RANDOM too), 2 is BY SLOT, and absent is FIXED.
+        struct StartsCase { const char* text; int expected; };
+        for(const StartsCase& c:std::initializer_list<StartsCase>{
+                {"gameCreate.randomStarts = 0\n",0},{"gameCreate.randomStarts = 1\n",1},
+                {"gameCreate.randomStarts = true\n",1},{"gameCreate.randomStarts = on\n",1},
+                {"gameCreate.randomStarts = 2\n",2},{"gameCreate.crusades = 1\n",0}}) {
+            std::ofstream(path)<<c.text;
+            if(tak::loadSettings().gameCreate.randomStarts!=c.expected)
+                throw std::runtime_error(std::string("start locations preference not read: ")+c.text);
+        }
+        for(int mode:{2,1,0}) {
+            auto starts=s;starts.gameCreate.randomStarts=mode;
+            if(!tak::saveSettings(starts) || tak::loadSettings().gameCreate.randomStarts!=mode)
+                throw std::runtime_error("start locations preference did not persist: "+std::to_string(mode));
+        }
         auto changed=s;changed.scorecardScale=1.0f;
         if(changed==s)throw std::runtime_error("scorecard scale changes not detected");
         // Texture Filtering persists all three levels under its own key (the legacy

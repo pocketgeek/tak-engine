@@ -14,7 +14,7 @@ sim::MatchConfig matchConfigFor(const GameOptions& o, const SlotInfo* slots, uin
     cfg.stressTest = o.stressTest != 0;
     cfg.stressImmediate = o.stressTest == kStressImmediate;   // recorded before staging
     cfg.benchmark = o.benchmark;
-    cfg.randomStarts = o.randomStarts != 0;
+    cfg.startMode = sim::StartMode(normalizeStartMode(o.randomStarts));
     cfg.mapScenario = !mission && o.mapScenario != 0;   // 259: the map's own scenario
     cfg.startSeed = seed;   // the seed sent in GameStarting
     int maxSlot = 0;

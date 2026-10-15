@@ -75,7 +75,7 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
         check(client.mapPackage() && net::maps::authoredScenario(*client.mapPackage()),"verified authored package missing");
         hpi::Vfs view(&base);view.setMapFiles(client.mapPackage()->files);
         sim::MatchConfig cfg;cfg.vfs=&view;cfg.mapPath=client.mapPackage()->mapPath;
-        cfg.startSeed=client.startSeed();cfg.randomStarts=client.startRoom().opts.randomStarts;
+        cfg.startSeed=client.startSeed();cfg.startMode=sim::StartMode(net::normalizeStartMode(client.startRoom().opts.randomStarts));
         cfg.unitCap=client.startRoom().opts.unitCap;cfg.slots={{true,0,0,1,false,false}};
         sim::setupMatch(world,registry,cfg);
         check(world.numPlayers()==1 && world.units().size()==3,"scripted reinforcement missing or neutral became a lobby player");
@@ -251,7 +251,7 @@ int main(int argc, char** argv) try {
             if (client.mapPackage()) view.setMapFiles(client.mapPackage()->files);
             sim::MatchConfig cfg; cfg.vfs = &view;
             cfg.mapPath = client.mapPackage() ? client.mapPackage()->mapPath : hpi::findMap(view, room.mapId);
-            cfg.startSeed = client.startSeed(); cfg.randomStarts = room.opts.randomStarts;
+            cfg.startSeed = client.startSeed(); cfg.startMode = sim::StartMode(net::normalizeStartMode(room.opts.randomStarts));
             cfg.unitCap = room.opts.unitCap;
             cfg.slots.resize(diplomacy ? 3 : 2); cfg.slots[0] = {true,0,0,1,false,false};
             cfg.slots[1] = {true,1,diplomacy ? 0 : 1,1,false,false};

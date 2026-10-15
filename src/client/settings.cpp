@@ -140,7 +140,8 @@ Settings loadSettings() {
         else if (key == "gameCreate.doubleSight") s.gameCreate.doubleSight = asBool();
         else if (key == "gameCreate.speedUnlock") s.gameCreate.speedUnlock = asBool();
         else if (key == "gameCreate.monarchExpendable") s.gameCreate.monarchExpendable = asBool();
-        else if (key == "gameCreate.randomStarts") s.gameCreate.randomStarts = asBool();
+        else if (key == "gameCreate.randomStarts")   // was a bool: "true"/"on" meant RANDOM
+            s.gameCreate.randomStarts = val == "true" || val == "on" ? 1 : asInt(0, 2);
         else if (key == "gameCreate.allowSpectators") s.gameCreate.allowSpectators = asBool();
         else if (key == "gameCreate.generated") s.gameCreate.generated = asBool();
         else if (key == "gameCreate.unitCap") s.gameCreate.unitCap = asInt(250, 2000);

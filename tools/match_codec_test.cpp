@@ -75,7 +75,7 @@ static std::string dumpCfg(const tak::sim::MatchConfig& c) {
     std::string s; char t[256];
     std::snprintf(t, sizeof t, "cap=%d mx=%d ds=%d pm=%d st=%d si=%d bm=%d rs=%d seed=%u crt=%d ms=%d mana=%a pr=%d svp=%d n=%zu;",
         c.unitCap, c.monarchExpendable, c.doubleSight, int(c.pathfindingMode), c.stressTest, c.stressImmediate,
-        c.benchmark, c.randomStarts, c.startSeed, c.loadCrt, c.mapScenario, double(c.startMana), c.patrolRepairs, c.scenarioViewPlayer, c.slots.size());
+        c.benchmark, int(c.startMode), c.startSeed, c.loadCrt, c.mapScenario, double(c.startMana), c.patrolRepairs, c.scenarioViewPlayer, c.slots.size());
     s += t;
     for (const auto& m : c.slots) {
         uint32_t bits; std::memcpy(&bits, &m.manaMult, 4);

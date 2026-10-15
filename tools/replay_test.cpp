@@ -42,7 +42,7 @@ static ReplayHeader sample() {
     h.unitCap = 1234;
     h.monarchExpendable = 1;
     h.stressTest = 1;
-    h.randomStarts = 1;
+    h.randomStarts = 2;   // BY SLOT, the newest value (a u8 since format 6)
     h.doubleSight = 1;
     h.benchmark = 4;
     h.seed = 0xabcdef01u;
@@ -79,7 +79,7 @@ int main() {
         check(out.mission == in.mission, "mission (a campaign replay is not a skirmish)");
         check(out.engineVersion == in.engineVersion, "engine version");
         check(out.seed == in.seed, "seed (was recorded, then discarded by the loader)");
-        check(out.randomStarts == in.randomStarts, "randomStarts (shuffled start positions)");
+        check(out.randomStarts == in.randomStarts, "randomStarts (start locations, BY SLOT included)");
         check(out.doubleSight == in.doubleSight, "double sight survives recording");
         check(out.benchmark == in.benchmark, "benchmark intensity (the staged spawns)");
         check(out.dataHash == in.dataHash, "gameplay data hash");

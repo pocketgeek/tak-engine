@@ -1584,7 +1584,7 @@ private:
     // the room is set up -- the host could previously only change it after the
     // game already existed. Default matches GameOptions::fogExplored.
     uint8_t createFog_ = 1;
-    bool createRandomStarts_ = false;   // create dialog: Random Start Locations (default OFF = fixed)
+    uint8_t createStartMode_ = tak::net::kStartsFixed;   // create dialog: START LOCATIONS (default FIXED, retail)
     bool createMonarchExp_ = false;   // create dialog: Monarch Expendable (default OFF = monarch matters)
     bool createAllowSpectators_ = true;   // create dialog (MP): ALLOW SPECTATORS (default ON, as before the option)
     // Create dialog: MAP SCENARIO (protocol 259). Per map and never saved: it starts OFF
@@ -2751,6 +2751,16 @@ private:
         return used >= (solo ? 1 : 2);
     }
     const tak::net::RoomView& mpRoom() const { return mp_->room(); }
+
+    // START LOCATIONS: BY SLOT in the room: the room map's facts the slot table needs to
+    // tag a seat that has no start of its own, read once per verified package.
+    struct RoomStarts {
+        int count = -1;          // start positions; -1 until the map is known
+        bool placed = false;     // a Test Map scenario that places units: they decide
+    };
+    RoomStarts roomStarts();
+    std::weak_ptr<const tak::net::maps::Package> roomStartsPackage_;
+    RoomStarts roomStarts_;
 
     // A panel-local logical point, undoing the lobby's fit-scale + centre offset.
     void lobbyMouse(float& mx, float& my) const;

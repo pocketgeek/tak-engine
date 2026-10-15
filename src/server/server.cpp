@@ -1768,7 +1768,9 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             // EXPLORED, so the room's fog button cycled through a setting the
             // server threw away -- it looked like the button did nothing.
             o.fogExplored = std::min<uint8_t>(o.fogExplored, 2);
-            o.randomStarts = o.randomStarts ? 1 : 0;
+            // Start Locations is three-state as well (FIXED, RANDOM, BY SLOT); anything
+            // else reads as RANDOM, which is what a nonzero byte meant before BY SLOT.
+            o.randomStarts = normalizeStartMode(o.randomStarts);
             o.doubleSight = o.doubleSight ? 1 : 0;
             o.allowSpectators = o.allowSpectators ? 1 : 0;
             if (!mission.empty()) { o.pathfindingMode = tak::sim::PathfindingMode::Retail; o.doubleSight = 0; }
@@ -2401,7 +2403,9 @@ void Server::tryStart(Client& c) {
                 refuseStart(c, *r, e.what());
                 return;
             }
-            // setupMatch returns start positions in USED-slot order; remap to slot index.
+            // setupMatch returns start positions in USED-slot order, each the position that
+            // slot opened at under the room's Start Locations (FIXED, RANDOM or BY SLOT);
+            // remap to slot index.
             std::vector<std::pair<float, float>> slotPos(size_t(maxSlot + 1), {0.f, 0.f});
             for (int i = 0, k = 0; i <= maxSlot; ++i)
                 if (r->slots[i].type == 1 || r->slots[i].type == 2) {
@@ -2546,7 +2550,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             o.unitCap = clampUnitCap(o.unitCap); o.monarchExpendable = o.monarchExpendable ? 1 : 0;
             o.stressTest = std::min<uint8_t>(o.stressTest, kStressStaged);
             o.fogExplored = std::min<uint8_t>(o.fogExplored, 2);   // 0/1/2, see CreateGame
-            o.randomStarts = o.randomStarts ? 1 : 0;
+            o.randomStarts = normalizeStartMode(o.randomStarts);   // as CreateGame
             o.doubleSight = o.doubleSight ? 1 : 0;
             // ALLOW SPECTATORS is adopted here in the lobby only: the running branch
             // below takes nothing but speed, so it is fixed once the game starts and a

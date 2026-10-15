@@ -761,8 +761,13 @@ When the game's **Start locations** option is **Fixed**, the players take the
 starts in number order, top slot first, and empty slots are skipped, as in the
 original game. A two-player game on an eight-start map uses starts 1 and 2,
 whichever slots the players sit in, so put starts 1 and 2 where a one-on-one
-should begin. **Random** shuffles them. Keep the numbers 1, 2, 3 … without gaps
-so that Fixed works predictably (Check Map warns about gaps).
+should begin. **Random** shuffles them. **By slot**, which the original game does
+not have, puts the player in slot N on start N, so a player in slot 8 always
+begins at start 8. It counts the starts in number order as well, so gaps matter
+even more there: on a map numbered 1, 2, 4, slot 3 begins at start 4. Keep the
+numbers 1, 2, 3 … without gaps so that Fixed and By slot work predictably (Check
+Map warns about gaps). When a scenario places units, they replace the Monarchs
+and decide where the players begin, whatever the option says.
 
 ---
 

@@ -942,7 +942,10 @@ void GameView::autoplayStep() {
             // desync has already hidden once: summoning used to run only on the client,
             // so the referee's world ran a unit short from the first god onward. A
             // desync hunt that cannot turn gods on cannot find that class of bug.
-                o.randomStarts = tak::devFlag("TAK_RANDOM_STARTS") ? 1 : 0;
+            // TAK_RANDOM_STARTS=2 picks BY SLOT; any other set value but 0 RANDOM.
+            const char* starts = tak::devEnv("TAK_RANDOM_STARTS");
+            o.randomStarts = starts && std::atoi(starts) == tak::net::kStartsBySlot ? tak::net::kStartsBySlot
+                           : tak::devFlag("TAK_RANDOM_STARTS") ? tak::net::kStartsRandom : tak::net::kStartsFixed;
             o.monarchExpendable = tak::devFlag("TAK_MONARCH_EXPENDABLE") ? 1 : 0;
             o.forfeitSelfDestruct = tak::devFlag("TAK_FORFEIT_SELFDESTRUCT") ? 1 : 0;
             o.doubleSight = tak::devFlag("TAK_DOUBLE_SIGHT") ? 1 : 0;

@@ -1,6 +1,7 @@
 #include "util/virtualpath.h"
 #include "client/gameview.h"
 #include "client/crusadesscreen.h"
+#include "net/matchconfig.h"
 #include <cctype>
 
 // Out-of-line GameView method definitions (lobby concern), split from the
@@ -35,6 +36,14 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
     std::string name=tak::sim::pathfindingModeName(mode);
     for(char& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
     return "PATHFINDING: "+name;
+}
+// START LOCATIONS as the create screen and the room show it (GameOptions::randomStarts).
+std::string startLocationsLabel(uint8_t mode) {
+    switch (tak::net::normalizeStartMode(mode)) {
+    case tak::net::kStartsRandom: return "START LOCATIONS: RANDOM";
+    case tak::net::kStartsBySlot: return "START LOCATIONS: BY SLOT";
+    default: return "START LOCATIONS: FIXED";
+    }
 }
 }  // namespace
 
@@ -387,7 +396,7 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         pref.pathfindingMode = createPathfindingMode_;
         pref.speedUnlock = createSpeedUnlock_;
         pref.monarchExpendable = createMonarchExp_;
-        pref.randomStarts = createRandomStarts_;
+        pref.randomStarts = createStartMode_;
         pref.allowSpectators = createAllowSpectators_;
         pref.unitCap = createUnitCap_;
         pref.fog = createFog_;
@@ -431,7 +440,7 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             createPathfindingMode_ = pref.pathfindingMode;
             createSpeedUnlock_ = pref.speedUnlock;
             createMonarchExp_ = pref.monarchExpendable;
-            createRandomStarts_ = pref.randomStarts;
+            createStartMode_ = uint8_t(std::clamp(pref.randomStarts, 0, 2));
             createAllowSpectators_ = pref.allowSpectators;
             spSpectate_ = false;  // Opt in for each skirmish; never restore from settings.
             createUnitCap_ = pref.unitCap == 250 || pref.unitCap == 500 || pref.unitCap == 1000 || pref.unitCap == 2000
@@ -510,12 +519,13 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
                   [this](int direction) { createFog_ = uint8_t((createFog_ + direction + 3) % 3); });
             y += kRow;
         }
-        // Random Start Locations: also a room rule, picked here like fog so it is set
-        // before the room exists. FIXED = slot N always takes the map's Nth start
-        // (spawns are memorisable); RANDOM = the starts are shuffled for the match.
-        lbCycle(x, y, 240, 26, std::string("START LOCATIONS: ") +
-              (createRandomStarts_ && !scenarioOn ? "RANDOM" : "FIXED"), !scenarioOn,
-              [this](int) { createRandomStarts_ = !createRandomStarts_; }); y += kRow;
+        // Start Locations: also a room rule, picked here like fog so it is set before
+        // the room exists. FIXED = the seated slots take the map's starts in order and
+        // empty slots are skipped, as in retail; RANDOM = the starts are shuffled for
+        // the match; BY SLOT (not retail) = slot N always takes the map's Nth start.
+        // A MAP SCENARIO plays on fixed starts.
+        lbCycle(x, y, 240, 26, startLocationsLabel(scenarioOn ? tak::net::kStartsFixed : createStartMode_), !scenarioOn,
+              [this](int direction) { createStartMode_ = uint8_t((createStartMode_ + direction + 3) % 3); }); y += kRow;
         static const char* kTier[] = {"OFF", "COSMETIC", "FULL"};
         lbCycle(x, y, 240, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
               [this](int direction) { createOverride_ = uint8_t((createOverride_ + direction + 3) % 3); }); y += 44;
@@ -538,7 +548,7 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             // verified package either way). Seats and rule regions follow fixed starts.
             o.mapScenario = !tak::mapgen::isGeneratedMapId(mpMapId_) && createScenarioFor_ == mapPath_ &&
                 scenarioOffered(createScenario_, createOverride_) && createMapScenario_ ? 1 : 0;
-            o.randomStarts = createRandomStarts_ && !createScenarioOn() ? 1 : 0;
+            o.randomStarts = createScenarioOn() ? tak::net::kStartsFixed : createStartMode_;
             // A private single-player room is never listed, so the rule means nothing
             // there; leave it at the default rather than a remembered MP choice.
             o.allowSpectators = singlePlayer_ || createAllowSpectators_ ? 1 : 0;
@@ -899,6 +909,22 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
                     mp_->setSlot(i, 2, uint8_t(rng() % 5), uint8_t(i), uint8_t(i), 1, aiLevelEnv());
             specAutoSeated_ = true;
         }
+        // START LOCATIONS: BY SLOT gives slot N the map's StartPos N. A seat past the map's
+        // last start opens at a fallback, worked out by the sim's own rule and tagged under
+        // its name. Seats are normally capped at the start count, so this shows only on a
+        // map with fewer than two starts or a scenario map with more seats than starts. A
+        // Test Map scenario that places units opens its seats at them, so it gets no tags.
+        std::vector<int> bySlotSpot;
+        int startCount = -1;
+        if (tak::net::normalizeStartMode(room.opts.randomStarts) == tak::net::kStartsBySlot &&
+            room.mission.empty() && !room.opts.benchmark) {
+            const RoomStarts starts = roomStarts();
+            if (starts.count >= 0 && (!starts.placed || room.opts.stressTest)) {
+                startCount = starts.count;
+                bySlotSpot = tak::sim::startSpotsFor(tak::net::matchConfigFor(room.opts, room.slots, 0).slots,
+                                                     size_t(startCount), tak::sim::StartMode::BySlot);
+            }
+        }
         // slot table
         const char* typeName[4] = {"OPEN", "HUMAN", "AI", "CLOSED"};
         for (int i = 0; i < tak::net::kMaxSlots; ++i) {
@@ -945,6 +971,12 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
                     lobbyHots_.push_back({db, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
                         mp_->setSlot(i, s2.type, s2.faction, s2.color, s2.team, s2.ready,
                                      uint8_t((s2.aiLevel + direction + 5) % 5)); }}); }
+            }
+            if (i >= startCount && size_t(i) < bySlotSpot.size() && bySlotSpot[size_t(i)] >= 0) {
+                const int spot = bySlotSpot[size_t(i)];
+                blockText("NO START " + std::to_string(i + 1) + ": " +
+                          (spot < startCount ? "USES START " + std::to_string(spot + 1) : std::string("NEAR MAP CENTRE")),
+                          x + 100, y + 21.5f, 1.1f, {235, 205, 120, 255});
             }
             // faction / color / team edit: your own row, or (host) any AI row.
             bool canEdit = !campaign && (mine || (host && s.type == 2));
@@ -1043,7 +1075,7 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         info(2,0,std::string("ALLOW SPEED CHANGE: ")+onOff(room.opts.speedUnlock));
         static const char* fogNames[]={"NOT EXPLORED","EXPLORED","FULL VISION"};
         info(2,1,std::string("FOG OF WAR: ")+fogNames[std::min<int>(room.opts.fogExplored,2)]);
-        info(3,0,std::string("START LOCATIONS: ")+(room.opts.randomStarts?"RANDOM":"FIXED"));
+        info(3,0,startLocationsLabel(room.opts.randomStarts));
         info(4,0,pathfindingLabel(room.opts.pathfindingMode));
         // ALLOW SPECTATORS is the one room rule the host may still flip here: it only
         // decides who may WATCH once the game runs, so no player has planned around it.
@@ -1139,6 +1171,30 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             lbBtn(chx + chw - 62, winH - 52.0f, 56, 24, "SEND", !chatDraft_.empty(), [this] {
                 mp_->chat(chatDraft_); chatDraft_.clear(); });
         }
+    }
+
+    GameView::RoomStarts GameView::roomStarts() {
+        const auto& room = mp_->room();
+        // A generated map has a start for each player its recipe (the map id) names.
+        if (tak::mapgen::isGeneratedMapId(room.mapId)) {
+            try { return {int(tak::mapgen::decodeMapId(room.mapId).players), false}; }
+            catch (const std::exception&) { return {}; }   // invalid ids cannot start
+        }
+        // A file map: read its verified package (the host's own until then) once.
+        const auto& package = mp_->mapPackage();
+        if (!package || !package->files) return {};
+        if (roomStartsPackage_.lock() != package) {
+            roomStartsPackage_ = package;
+            roomStarts_ = {};
+            try {
+                tak::hpi::Vfs view; view.setMapFiles(package->files);
+                roomStarts_.count = int(tak::sim::parseStartPositions(view, package->mapPath).size());
+                if (tak::net::maps::authoredScenario(*package))
+                    if (const auto crt = view.tryRead(tak::vpath::replaceExtension(package->mapPath, ".crt")))
+                        roomStarts_.placed = !tak::crt::parse(*crt).units.empty();
+            } catch (const std::exception&) {}
+        }
+        return roomStarts_;
     }
 
     void GameView::lobbyMouse(float& mx, float& my) const {

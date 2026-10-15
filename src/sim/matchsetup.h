@@ -36,6 +36,12 @@ struct MatchSlot {
     bool defensiveAi = false; // Defensive AI uses a non-pursuing default stance from birth
 };
 
+// Start Locations (net::GameOptions::randomStarts, read through normalizeStartMode).
+// Fixed is retail: the k-th seated slot takes the map's k-th start, so an empty seat
+// takes none. Random shuffles the starts first. BySlot is not retail: slot N takes
+// the map's N-th start whichever seats are empty (startSpotsFor).
+enum class StartMode : uint8_t { Fixed = 0, Random = 1, BySlot = 2 };
+
 struct MatchConfig {
     const hpi::Vfs* vfs = nullptr;  // the retail-root read-path (shared by peers)
     std::string mapPath;            // VFS path to the map .tnt (.ota sibling = start pos)
@@ -66,10 +72,10 @@ struct MatchConfig {
     // retail-gap checks) set this to spawn it immediately instead, and so do games whose
     // room option is net::kStressImmediate (stress replays recorded before staging).
     bool stressImmediate = false;
-    // Random Start Locations: shuffle which start position each slot takes, so a
-    // map's spawns can't be memorised. Deterministic (seeded below), so every peer
-    // and the referee produce the same assignment.
-    bool randomStarts = false;
+    // Start Locations: which start each seated slot takes (StartMode). Random shuffles
+    // the map's spawns so they can't be memorised. Deterministic (seeded below), so
+    // every peer and the referee produce the same assignment.
+    StartMode startMode = StartMode::Fixed;
     uint32_t startSeed = 0;   // match seed the shuffle draws from
     int benchmark = 0;              // benchmark INTENSITY: 0=off, 1=Low..5=Absurd. Builds a
                                     // deterministic ramp (1 unit/faction every 1/spawnsPerSec
@@ -107,6 +113,16 @@ void setupRegistry(TypeRegistry& reg, const hpi::Vfs& vfs, bool crusades);
 // Start positions from the map's .ota (world pixels), ordered by StartPos index.
 std::vector<std::pair<float, float>> parseStartPositions(const hpi::Vfs& vfs,
                                                          const std::string& mapPath);
+
+// The entry of setupMatch's spot list each slot opens at (index = slot, -1 = not
+// seated). The list is the map's `authored` starts in StartPos order (shuffled for
+// Random), extended with extra spots when more slots are seated than there are
+// starts. Fixed and Random: the k-th seated slot takes entry k. BySlot: seated slot
+// N takes entry N when the map has it; the others, in slot order, take the lowest
+// entry no seated slot claims by its own number, so a start before an extra spot.
+// Every entry is below max(authored, seated slots). The room screen shows BySlot's
+// fallbacks with this same function.
+std::vector<int> startSpotsFor(const std::vector<MatchSlot>& slots, size_t authored, StartMode mode);
 
 // Build the world for a match. Idempotent w.r.t. terrain (setTerrain rebuilds the
 // nav grid), so it may run after a client has already loaded the map for render.

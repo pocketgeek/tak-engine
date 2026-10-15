@@ -226,6 +226,33 @@ std::vector<std::pair<float, float>> parseStartPositions(const hpi::Vfs& vfs,
     return out;
 }
 
+std::vector<int> startSpotsFor(const std::vector<MatchSlot>& slots, size_t authored, StartMode mode) {
+    std::vector<int> spot(slots.size(), -1);
+    size_t used = 0;
+    for (size_t i = 0; i < slots.size(); ++i)
+        if (slots[i].used) {
+            // Fixed and Random: seated order (Random has shuffled the list itself).
+            if (mode != StartMode::BySlot) spot[i] = int(used);
+            ++used;
+        }
+    if (mode != StartMode::BySlot) return spot;
+    // BySlot: every seat the map has a start for claims its own first, so a later
+    // fallback never takes a start that belongs to a seated slot's number.
+    std::vector<uint8_t> claimed(std::max(authored, used), 0);
+    for (size_t i = 0; i < slots.size() && i < authored; ++i)
+        if (slots[i].used) { spot[i] = int(i); claimed[i] = 1; }
+    // The rest in slot order, lowest free entry first. There are at least as many
+    // entries as seats, so the scan never runs past the end.
+    size_t next = 0;
+    for (size_t i = 0; i < slots.size(); ++i)
+        if (slots[i].used && spot[i] < 0) {
+            while (claimed[next]) ++next;
+            spot[i] = int(next);
+            claimed[next] = 1;
+        }
+    return spot;
+}
+
 namespace {
 // Feature definition fields the sim cares about: is it a mana deposit, and its
 // footprint (for nav blocking). Loaded from the feature TDFs.
@@ -709,6 +736,11 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                     ++counts[size_t(placed.player)];
                 }
             }
+            // Each seat's position (the opening camera and the AI's first targets): the
+            // centre of its placed units, else its own slot's start (slot N at StartPos N,
+            // as BY SLOT does), else the map centre. START LOCATIONS does not apply here
+            // in any mode: CRT owners are slot numbers and no Monarch is spawned. A
+            // scenario of rules alone falls through to the assignment below, which does.
             std::vector<std::pair<float,float>> assigned;
             const auto starts = parseStartPositions(vfs, cfg.mapPath);
             for (size_t p = 0; p < cfg.slots.size(); ++p) if (cfg.slots[p].used) {
@@ -732,19 +764,23 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     }
 
     // Assign the used slots to start positions (ring fallback if the map has too few).
-    // The k-th USED slot takes spot k, so an empty seat takes no start: a human in
-    // slot 1 and an AI in slot 8 open at StartPos1 and StartPos2. That is retail's
+    // FIXED: the k-th USED slot takes spot k, so an empty seat takes no start: a human
+    // in slot 1 and an AI in slot 8 open at StartPos1 and StartPos2. That is retail's
     // rule, not an accident -- the skirmish spawn (0x4d2e70) and the multiplayer
     // host's start table (0x4ea950) both hand the k-th occupied battle-room row the
     // k-th start (docs/retail-engine.md, "Start positions"; start_positions_test).
+    // BY SLOT, which is not retail, gives slot N spot N instead (startSpotsFor).
     int used = 0;
     for (auto& s : cfg.slots) if (s.used) ++used;
     auto starts = generated ? genStarts : parseStartPositions(vfs, cfg.mapPath);
     float cx = map.blocksX * 16.0f, cz = map.blocksY * 16.0f;
     std::vector<std::pair<float, float>> spots = starts;
+    StartMode startMode = cfg.startMode;
     // Benchmark: ignore the map's (few) start positions and spread all factions evenly
     // on a big ring around the map centre, so their large armies don't pile onto each
     // other. Radius is kept well inside the map edge (each army block is ~2840px wide).
+    // The ring has a spot per seated player, not per slot, so it is always filled in
+    // seated order.
     if (cfg.benchmark) {
         spots.clear();
         float radius = std::min(cx, cz) * 0.62f;
@@ -752,11 +788,12 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
             float a = float(k) / float(std::max(used, 1)) * 6.2831853f;
             spots.push_back({cx + detmath::cos(a) * radius, cz + detmath::sin(a) * radius});
         }
+        if (startMode == StartMode::BySlot) startMode = StartMode::Fixed;
     }
     // Random Start Locations: shuffle the spot list before slots are assigned to it.
     // A Fisher-Yates on a small seeded LCG -- integer-only and order-stable, so every
     // peer and the referee land on the same arrangement.
-    if (cfg.randomStarts && spots.size() > 1) {
+    if (startMode == StartMode::Random && spots.size() > 1) {
         uint32_t rs = cfg.startSeed ? cfg.startSeed : 0x54414B53u;
         for (size_t i = spots.size() - 1; i > 0; --i) {
             rs = rs * 1103515245u + 12345u;
@@ -768,8 +805,11 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         float a = float(spots.size()) / float(std::max(used, 1)) * 6.2831853f;
         spots.push_back({cx + detmath::cos(a) * 300, cz + detmath::sin(a) * 300});
     }
+    // Which spot each slot opens at. Every index is below max(starts, used), which
+    // the ring above has filled. Fixed and Random index in seated order, exactly as
+    // the running counter here did before BY SLOT.
+    const std::vector<int> slotSpot = startSpotsFor(cfg.slots, starts.size(), startMode);
     std::vector<std::pair<float, float>> assigned;
-    int spot = 0;
     // Benchmark: a gradual ramp -- each faction spawns 1 unit every 1/spawnsPerSec seconds
     // for 60s (=1800 ticks). Intensity level (cfg.benchmark 1..5) sets the count; stage k
     // fires at tick (k+1)*1800/N via integer math so every peer agrees. Units filled below.
@@ -961,9 +1001,8 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // Reserve every monarch before an earlier player's stress army can consume
     // the remaining ground cells on a cramped map.
     std::vector<std::pair<float,float>> monarchPositions(cfg.slots.size());
-    int monarchSpot=spot;
     for (size_t i=0;i<cfg.slots.size();++i) if (cfg.slots[i].used) {
-        auto [x,z]=spots[size_t(monarchSpot++)];
+        auto [x,z]=spots[size_t(slotSpot[i])];
         placeMonarch(reg.find(kMonarchs[cfg.slots[i].faction % 5]),x,z);
         monarchPositions[i]={x,z};
     }
@@ -991,7 +1030,6 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         if (!cfg.slots[i].used) continue;
         const UnitType* monarch = reg.find(kMonarchs[cfg.slots[i].faction % 5]);
         auto [mx,mz]=monarchPositions[size_t(i)];
-        ++spot;
         // AFTER the snap, not before: this list is what the caller opens the camera on
         // (and what the server records as the slot's position), so recording the raw
         // spot would point the opening view at the lake the Monarch was just moved out
