@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <random>
@@ -390,9 +391,45 @@ public:
 
   public:
 
+#ifndef NDEBUG
+    // Dev harness probe: every playAt request and what became of it.
+    struct RequestTrace {
+        std::string name;
+        bool positional=false;
+        float x=0,z=0,gain=0,peak=0;
+        int priority=0,slot=-1;
+        bool indexed=false,loaded=false;
+    };
+    std::function<void(const RequestTrace&)> requestHook;
+    // A harness compressing minutes of game time into seconds ends every voice
+    // itself, as real-time playback would have.
+    void debugSilence() {
+        if (dev_) SDL_LockAudioDevice(dev_);
+        for (auto& channel:channels_) channel=Channel{};
+        if (dev_) SDL_UnlockAudioDevice(dev_);
+    }
+#endif
+
     void playAt(const std::string& name, float pan, float depth,
                 bool positional = false, float wx = 0, float wz = 0,
                 float gain = 1.0f, float rate = 1.0f, int priority = 3, bool looping = false) {
+#ifndef NDEBUG
+        // Reported on every exit, with the voice slot the mixer granted (-1 none).
+        struct Report {
+            SoundBank& bank;RequestTrace trace;
+            ~Report() { if (bank.requestHook) bank.requestHook(trace); }
+        } report{*this,{}};
+        if (requestHook) {
+            auto& r=report.trace;
+            r.name=name;r.positional=positional;r.x=wx;r.z=wz;r.priority=priority;
+            r.gain=positional ? worldSoundGain(wx,wz) : 1.f;
+            std::string key=name;
+            std::transform(key.begin(),key.end(),key.begin(),::tolower);
+            r.indexed=index_.count(key)!=0;
+            r.peak=r.indexed ? peakOf(key) : 0.f;
+            r.loaded=r.indexed && cache_.count(key) && !cache_.at(key).empty();
+        }
+#endif
         // Inaudible one-shots must not consume/evict an audible voice or load
         // their sample. Loops retain their clock so camera movement can reveal them.
         if (positional && !looping && worldSoundGain(wx,wz) <= 0) return;
@@ -422,6 +459,9 @@ public:
             c.distanceGain=positional ? worldSoundGain(wx,wz) : 1.f;
             c.fpos=0;c.step=uint32_t(std::clamp(rate,0.25f,4.f)*65536.f);
             c.priority=priority;c.started=++soundSequence_;c.looping=looping;
+#ifndef NDEBUG
+            report.trace.slot=slot;
+#endif
         }
         SDL_UnlockAudioDevice(dev_);
     }

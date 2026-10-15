@@ -57,6 +57,10 @@ public:
     // Unit display animations use the retail integer scheduler and piece controller.
     // Mission scripting retains the general-purpose interpreter and its map hooks.
     void enableRetailAnimation();
+    // Reseed RAND (after enableRetailAnimation). Retail draws every unit script's
+    // RAND from one shared game stream, so no two bodies replay the same rolls; a
+    // display VM that is never hashed only needs a distinct stream per unit.
+    void seedRandom(uint32_t seed);
 
     // Start a script by name with integer args; returns false if unknown.
     bool start(const std::string& script, const std::vector<int32_t>& args = {});

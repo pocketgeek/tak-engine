@@ -977,6 +977,15 @@ if(TAK_TEST_DATA)
             --shot "${CMAKE_CURRENT_BINARY_DIR}/script-transient-263-test.png")
         set_tests_properties(script_transient_263 PROPERTIES ENVIRONMENT
             "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_SCRIPT_263_TEST=1")
+        # Killed/Dying sounds through the client death branch, display VM and
+        # sound drain: authored cry rates and variants for every Creon caller.
+        add_test(NAME creon_death_sound COMMAND takclient game "Ulasem Arena"
+            --data "${TAK_TEST_DATA}" --firetest --time 0.1
+            --shot "${CMAKE_CURRENT_BINARY_DIR}/creon-death-sound-test.png")
+        set_tests_properties(creon_death_sound PROPERTIES
+            ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_CREON_DEATH_SOUND_TEST=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/creon-death-sound-profile;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/creon-death-sound-profile;TAK_SETTINGS_FILE=${CMAKE_CURRENT_BINARY_DIR}/creon-death-sound-profile/settings.ini"
+            PASS_REGULAR_EXPRESSION "PASS: Creon death sounds play at their authored rates"
+            TIMEOUT 120)
         add_test(NAME weapon_impact_effect_route COMMAND takclient game "Lake Lokken"
             --data "${TAK_TEST_DATA}" --firetest --nofog --time 0.1
             --shot "${CMAKE_CURRENT_BINARY_DIR}/weapon-impact-effect-test.png")

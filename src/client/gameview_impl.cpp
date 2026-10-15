@@ -2181,6 +2181,16 @@
             a.active = type && type->gate ? false : (type ? type->activateWhenBuilt : true);
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             a.vm->enableRetailAnimation();
+            {
+                // Every display VM used to start from the same RAND seed, so a
+                // body whose first roll is its death cry always rolled alike:
+                // RAND(1,4)==1 cries (creshoc, araarch, tararch) never sounded
+                // and three-way cries always chose one wav. This VM is never
+                // hashed; a per-unit stream restores the authored odds.
+                uint64_t h=uint64_t(uint32_t(id))+0x9e3779b97f4a7c15ull;
+                h=(h^(h>>30))*0xbf58476d1ce4e5b9ull;h=(h^(h>>27))*0x94d049bb133111ebull;
+                a.vm->seedRandom(uint32_t(h^(h>>31)));
+            }
             a.explosionReachability=ci->second.explosionReachability;
             a.vm->setGaitCode(ci->second.gaitCode);
             configureExplosionHierarchy(a,visuals_.at(typeId).model.root);

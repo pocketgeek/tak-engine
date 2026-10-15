@@ -124,6 +124,12 @@ void Vm::enableRetailAnimation() {
     native_=std::make_unique<Native>(*file_);
     exportNativePieces();
 }
+void Vm::seedRandom(uint32_t seed) {
+    // The retail generator's domain is 1..2^31-2 (0 and 2^31-1 are fixed points).
+    seed=1+seed%0x7ffffffeu;
+    if(native_) native_->seed=seed;
+    rng_=seed;
+}
 void Vm::setGaitCode(std::span<const uint8_t> code) {
     if(native_) native_->gait=code;
 }

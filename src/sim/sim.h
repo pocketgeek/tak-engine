@@ -1638,6 +1638,14 @@ public:
     bool scenarioTransfer(int unitId, int newPlayer);
     int scenarioCreate(const UnitType* type,int player,int lx,int lz,int hx,int hz);
     void scenarioDestroy(int unitId,uint8_t deathType=0);
+#ifndef NDEBUG
+    // Dev harness: hit `targetId` with `w` through the combat damage path
+    // (applyHit), so the death edge sees authored overkill and damage type.
+    void debugApplyHit(const Weapon& w,int targetId,int fromPlayer) {
+        if (auto* target=unit(targetId))
+            applyHit(w,target->x.toFloat(),target->z.toFloat(),fromPlayer,0,target);
+    }
+#endif
     void scenarioAdjustHealth(int unitId,uint16_t amount,bool heal);
     // Benchmark: install the staged spawn plan (see BenchStage). endTick marks when the
     // benchmark run finishes; benchmarkMode() is true while a plan is installed.

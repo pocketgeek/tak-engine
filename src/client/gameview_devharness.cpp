@@ -1205,6 +1205,152 @@
             return;
         }
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
+        if (tak::devFlag("TAK_CREON_DEATH_SOUND_TEST")) {
+            // Every Creon unit whose Killed/Dying authors PLAY_SOUND, plus two
+            // non-Creon archers as controls, killed through the combat damage
+            // path and played through the real client pipeline: the cosmetic
+            // death branch (Killed + Dying), the display VM tick and the
+            // pendingSnd drain into sounds_. Rates are what the shipped scripts
+            // author (0x10057000 is the LOGICAL and, so "deathType!=3 && RAND(1,4)"
+            // is always true for a non-explosion death).
+            // rate: chance of any death sound; cries: distinct authored *DIE* variants;
+            // extra: other death-callback sounds per death (crefire's Killed CANNON8
+            // -- its 2nd/3rd follow sleeps, after Dying's stop value 26 halts the
+            // owner VM, natively as in the sim; crebomb's 13-sound fuse).
+            struct Expect { const char* type; double normal, explosion; int cries, criesExplosion, extra; };
+            const Expect roster[]={
+                {"creauto",1,0,3,0,0},{"crebeas",1,0,3,0,0},{"crechie",1,0,3,0,0},
+                {"cremech",1,0,3,0,0},{"cretort",1,0,3,0,0},{"crefire",1,1,2,0,1},
+                {"cregod",1,1,3,3,0},{"cregatl",.25,.25,1,1,0},{"creshoc",.25,0,1,0,0},
+                {"crebomb",1,1,0,0,13},{"araarch",.25,0,1,0,0},{"tararch",.25,0,1,0,0}};
+            const auto* normalWeapon=static_cast<const tak::sim::Weapon*>(nullptr);
+            const auto* blastWeapon=normalWeapon;
+            std::string normalFrom,blastFrom;
+            for (const auto& [id,type]:registry_.types()) for (const auto& weapon:type.weapons) {
+                if (weapon.status!=tak::sim::Weapon::Status::None || weapon.mindControl || weapon.damage<=0) continue;
+                if (!normalWeapon && weapon.dmgType==1) {normalWeapon=&weapon;normalFrom=id+":"+weapon.name;}
+                if (!blastWeapon && weapon.dmgType==3) {blastWeapon=&weapon;blastFrom=id+":"+weapon.name;}
+            }
+            if (!normalWeapon || !blastWeapon) throw std::runtime_error("no shipped dmgType 1/3 weapon");
+            std::fprintf(stderr,"CREON_DEATH weapons normal=%s explosion=%s noFog=%d players=%d\n",
+                normalFrom.c_str(),blastFrom.c_str(),int(noFog_),world_.numPlayers());
+            std::vector<SoundBank::RequestTrace> requests;
+            sounds_.requestHook=[&](const SoundBank::RequestTrace& r){requests.push_back(r);};
+            const int enemy=localPlayer_==0 ? 1 : 0;
+            const auto frame=[&] {
+                simStep(1.0f/30.0f);
+                beginFrame();cosmeticStep(1.0f/30.0f);animFrame(1.0f/30.0f);endFrame();
+            };
+            lookAt(cx,cz);
+            sounds_.setListener(cx,cz,640,400);
+            // A local observer keeps enemy victims inside the local player's sight
+            // after the local victims of the same batch die.
+            const int observer=spawn("cresage",cx,cz+190,0,localPlayer_);
+            if (observer<0) throw std::runtime_error("observer did not spawn");
+            writableWorld().setStance(observer,2);
+            for (int t=0;t<15;++t) frame();
+            int failures=0;
+            std::map<std::string,std::pair<bool,float>> files;
+            std::fprintf(stderr,"CREON_DEATH %-8s %-9s %6s %8s %8s %8s %6s  %s\n","unit","death","deaths",
+                "cried","rate","expect","played","sounds observed (count)");
+            for (const auto& expect:roster) {
+                const auto* type=registry_.find(expect.type);
+                if (!type || !type->script()) {++failures;std::fprintf(stderr,"FAIL %s missing\n",expect.type);continue;}
+                const auto& names=type->script()->names;
+                for (int death:{1,3}) {
+                    const int deaths=48;
+                    int cried=0,played=0,requested=0,extras=0;
+                    std::map<std::string,int> seen,other;
+                    for (int batch=0;batch*16<deaths;++batch) {
+                        std::vector<int> victims;
+                        for (int i=0;i<16 && batch*16+i<deaths;++i) {
+                            const float x=cx-144+float(i%4)*96,z=cz-144+float(i/4)*96;
+                            // Alternate owners per batch so victims never fight each other.
+                            const int owner=(batch&1) ? enemy : localPlayer_;
+                            const int id=spawn(expect.type,x,z,0,owner);
+                            if (id<0) throw std::runtime_error(std::string("spawn failed: ")+expect.type);
+                            writableWorld().setStance(id,2);
+                            victims.push_back(id);
+                        }
+                        for (int t=0;t<20;++t) frame();
+                        requests.clear();sounds_.debugSilence();
+                        std::map<int,std::pair<float,float>> where;
+                        for (int id:victims) {
+                            const auto* u=world_.unit(id);
+                            if (!u || !u->alive()) throw std::runtime_error("victim died before the hit");
+                            where[id]={u->x.toFloat(),u->z.toFloat()};
+                            tak::sim::Weapon w=death==3 ? *blastWeapon : *normalWeapon;
+                            w.aoe=0;w.dmgVs.clear();w.dmgVsIds.clear();
+                            w.damage=std::min(30000,int32_t(float(u->maximumHp())*(1.25f+float(id%3)))); // HP is 16.16
+                            // Armour and veterancy scale damage; strike until the hit is lethal.
+                            for (int hit=0;hit<8 && world_.unit(id)->hp>tak::sim::Fixed();++hit)
+                                writableWorld().debugApplyHit(w,id,u->player==localPlayer_ ? enemy : localPlayer_);
+                        }
+                        for (int t=0;t<240;++t) frame();
+                        for (int id:victims) {
+                            const auto* u=world_.unit(id);
+                            if (u && u->alive()) throw std::runtime_error("victim survived the hit");
+                            if (u && u->deathType!=death) throw std::runtime_error("victim deathType differs from weapon");
+                            const auto [x,z]=where[id];
+                            int mine=0;
+                            for (const auto& r:requests) {
+                                if (!r.positional && r.priority!=7) continue;
+                                if (r.positional && (std::abs(r.x-x)>1 || std::abs(r.z-z)>1)) continue;
+                                std::string lower;
+                                bool scripted=false;
+                                for (const auto& name:names) {
+                                    lower=name;std::transform(lower.begin(),lower.end(),lower.begin(),::tolower);
+                                    std::string req=r.name;std::transform(req.begin(),req.end(),req.begin(),::tolower);
+                                    if (lower==req) {scripted=true;break;}
+                                }
+                                if (!scripted) continue;
+                                std::string req=r.name;std::transform(req.begin(),req.end(),req.begin(),::tolower);
+                                if (req.find("die")==std::string::npos && req!="cannon8" && req.rfind("cremiscbhit",0)!=0) {
+                                    ++other[r.name];continue;
+                                }
+                                ++mine;++requested;++seen[r.name];played+=r.slot>=0;
+                                extras+=req.find("die")==std::string::npos;
+                                files[r.name]={r.indexed && r.loaded,r.peak};
+                            }
+                            cried+=mine>0;
+                        }
+                    }
+                    const double expected=death==3 ? expect.explosion : expect.normal;
+                    const double rate=double(cried)/deaths;
+                    std::string list;
+                    for (const auto& [name,count]:seen) list+=name+"("+std::to_string(count)+") ";
+                    for (const auto& [name,count]:other) list+="[non-death "+name+"("+std::to_string(count)+")] ";
+                    std::fprintf(stderr,"CREON_DEATH %-8s %-9s %6d %8d %8.2f %8.2f %6d  %s\n",expect.type,
+                        death==3 ? "explosion" : "normal",deaths,cried,rate,expected,played,list.c_str());
+                    const double sigma=std::sqrt(std::max(expected*(1-expected),.01)/deaths);
+                    if (std::abs(rate-expected)>3.5*sigma) {
+                        ++failures;std::fprintf(stderr,"FAIL %s %s: cry rate %.2f, script authors %.2f\n",
+                            expect.type,death==3?"explosion":"normal",rate,expected);
+                    }
+                    int variants=0,cries=0;
+                    for (const auto& [name,count]:seen) {
+                        std::string req=name;std::transform(req.begin(),req.end(),req.begin(),::tolower);
+                        if (req.find("die")!=std::string::npos) {++variants;cries+=count;}
+                    }
+                    const int authored=death==3 ? expect.criesExplosion : expect.cries;
+                    // Each of `authored` uniform variants should appear in 48 cries.
+                    if (authored>1 && cries>=24 && variants<authored) {
+                        ++failures;std::fprintf(stderr,"FAIL %s %s: %d of %d authored cry variants chosen in %d cries\n",
+                            expect.type,death==3?"explosion":"normal",variants,authored,cries);
+                    }
+                    if (extras!=expect.extra*deaths) {
+                        ++failures;std::fprintf(stderr,"FAIL %s %s: %d other death sounds, script authors %d\n",
+                            expect.type,death==3?"explosion":"normal",extras,expect.extra*deaths);
+                    }
+                }
+            }
+            for (const auto& [name,state]:files)
+                std::fprintf(stderr,"CREON_DEATH file %-14s loaded=%d peak=%.3f\n",name.c_str(),int(state.first),state.second);
+            sounds_.requestHook=nullptr;
+            if (failures) throw std::runtime_error("Creon death sounds: "+std::to_string(failures)+" failures");
+            std::fprintf(stderr,"PASS: Creon death sounds play at their authored rates through the client pipeline\n");
+            return;
+        }
         if (tak::devEnv("TAK_WEAPON_IMPACT_EFFECT_TEST")) {
             // Every shipped travelling projectile has authoritative XYZ. Only
             // deliberately incomplete synthetic Weapon fixtures use the old 2D path.
