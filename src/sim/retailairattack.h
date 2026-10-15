@@ -11,8 +11,9 @@ namespace tak::sim {
 
 // AirToGround (mission registry row 5ebd9b, handler 41bf80): the attack
 // mission 4de530 picks for a flyer without hoverattack whose target cannot
-// fly. A flying target gets AirToAir (41ca50), a hoverattack flyer
-// AirToGroundHover (41d820), and a selected weapon with `dropped` AirStrike
+// fly. A flying target gets AirToAir (41ca50), hoverattack or not; a
+// hoverattack flyer whose target cannot fly gets AirToGroundHover (41d820);
+// and a selected weapon with `dropped` AirStrike
 // (41b5e0); no shipped weapon sets `dropped`. The flyer does not stop to
 // shoot: it flies attack runs over the target and its weapons fire whenever
 // the weapon update (52ae90) finds the target in range.

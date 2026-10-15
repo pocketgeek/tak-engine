@@ -6004,8 +6004,9 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     const bool hovering = u.type->canFly && (u.type->hoverAttack || (sel && sel->hoverAttack));
     // 4de530 gives a flyer without hoverattack AirToGround (41bf80) against a
     // target that cannot fly: it flies attack runs (tickAirToGround). A flying
-    // target would get AirToAir (41ca50), which is not ported: World still
-    // holds the flyer in range below.
+    // target gets AirToAir (41ca50) for any non-dropped weapon, hoverattack or
+    // not (4de981..4de9b8). That mission is not ported: World still holds or
+    // hovers the flyer in range below.
     const bool airRun = u.type->canFly && !hovering && !u.type->isStructure() &&
                         !(target->type && target->type->canFly);
     if (u.scriptAimTarget!=target->id) {
@@ -12914,8 +12915,9 @@ void World::tick(float dt) {
             if (mission_ || scenario_) justDied_.push_back(u.id);
             // [EXPLODEAS]: the unit detonates its own death weapon where it stands
             // (Kamikaze Rat, Grenadier, Fire Demon, Balloon...). Credit the blast to
-            // the dying unit's OWNER so it can't hurt its own side (applyHit skips
-            // allies) and so kills count for the player who built it. Deferred to a
+            // the dying unit's OWNER so kills count for the player who built it. Like
+            // retail's area pass (529dc0) it hurts allies too; only the source unit
+            // is skipped. Deferred to a
             // queue: applyHit walks units_ and can kill others, and we are mid-sweep
             // over units_ -- draining after the loop keeps that safe and keeps the
             // order deterministic (sweep order, which is id order).
