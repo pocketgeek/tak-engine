@@ -1216,7 +1216,12 @@ public:
                 so.z = cz / float(n);
                 so.targetId = first;
             }
-            link_.issue(hudCommands(world, sel, so, world.unit(sel[0])->player));
+            const auto cmds = hudCommands(world, sel, so, world.unit(sel[0])->player);
+            for (const auto& c : cmds) {
+                if (c.unitId >= 0 && size_t(c.unitId) >= issued_.size()) issued_.resize(size_t(c.unitId) + 1, 0);
+                if (c.unitId >= 0) ++issued_[size_t(c.unitId)];
+            }
+            link_.issue(cmds);
         }
         return link_.land(tick);
     }
@@ -1230,6 +1235,8 @@ public:
     }
     // The commands the last apply() landed, in application order.
     const std::vector<tak::net::Command>& landed() const { return landed_; }
+    // Commands issued so far for unit `id` (the uplink is one FIFO, so a unit's commands land in this order).
+    uint32_t issued(int id) const { return id >= 0 && size_t(id) < issued_.size() ? issued_[size_t(id)] : 0; }
     bool done() const { return next_ >= pending_.size() && link_.idle(); }
 
     // The `churn` events due at `tick`: a blocking feature of the spec's size placed in the static map (an odd
@@ -1255,6 +1262,7 @@ private:
     std::vector<OrderSpec> pending_;
     size_t next_ = 0;
     std::vector<tak::net::Command> landed_;
+    std::vector<uint32_t> issued_;   // per unit id
 };
 
 // ---- situations: the recording's own positions ------------------------------

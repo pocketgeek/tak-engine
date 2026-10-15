@@ -451,10 +451,11 @@ add_test(NAME legion_scale_neutral
                  ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/churn-1000.scn --neutral --mode both --offsets 0)
 add_test(NAME legion_scale_one100
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/one-100.scn --mode legion --offsets 0
-                 --both-exec --json)
+                 --serial --json)
 set_tests_properties(legion_scale_neutral legion_scale_one100 PROPERTIES LABELS legion TIMEOUT 600)
 set_tests_properties(legion_scale_one100 PROPERTIES
-                     PASS_REGULAR_EXPRESSION "\"scale\\.arrive\\.n\":100,.*\"scale\\.stuck_end\":0,")
+                     PASS_REGULAR_EXPRESSION "\"scale\\.arrive\\.n\":100,.*\"scale\\.stuck_end\":0,"
+                     FAIL_REGULAR_EXPRESSION "MISMATCH|serial != workers|legion_scenario:")
 # Asset-free scenario set, part A (tools/scenarios/*.scn): both modes, serial and
 # workers (the runner fails on a state or key mismatch), three start offsets.
 # No bounds yet: a later task adds `--check` against baseline.json. The long

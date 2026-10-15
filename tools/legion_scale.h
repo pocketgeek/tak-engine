@@ -16,8 +16,10 @@
 //             bodies of every click one convoy merged): PHYSICAL arrival, orders or not
 //   complete  the first tick its orders were empty after its command landed (ORDER completion)
 // Keys (prefix scale.; times in ticks, -1 "never" or fewer bodies than the quantile needs):
-//   n, point_n, cancelled_n, dead_n            bodies clicked; those with a point (move/fight/patrol:
-//                                               the arrival set); Stop after the click; dead at the end
+//   n, point_n, cancelled_n, dead_n            bodies clicked; the live, uncancelled ones with a point
+//                                               (move/fight/patrol: the arrival set); Stop after the
+//                                               click; dead at the end. start/arrive/complete quantiles
+//                                               are over the live, uncancelled bodies
 //   idle_n                                     the file's bodies never clicked (idle obstacles)
 //   deliver.p50/.p99/.max, deliver.missing     command latency; clicked bodies whose command never landed
 //   start.t50/.t90/.t99/.last, start.never     first useful movement ("last" = the last member to start)
@@ -114,15 +116,24 @@ public:
         fresh.travelledAtClick = b->travelled;
         fresh.px = b->px; fresh.pz = b->pz; fresh.seen = b->seen;
         fresh.ring = b->ring; fresh.ringN = b->ringN;
+        fresh.landedN = b->landedN;
+        fresh.expect = ~0u;   // set by expect() once the click's commands are issued
         *b = fresh;
     }
     void cancel(int id) {
         if (Body* b = body(id); b && b->clicked) b->cancelled = true;
     }
+    // The click just made for `id` is delivered once `n` commands for it have landed in all (its own last
+    // command's position in the unit's command stream; call after the click's commands were issued).
+    void expect(int id, uint32_t n) {
+        if (Body* b = body(id); b && b->clicked) b->expect = n;
+    }
     // A command for `id` landed in the sim on `tick` (call before World::tick of that tick).
     void landed(const tak::sim::World& w, int id, int tick) {
         Body* b = body(id);
-        if (!b || !b->clicked || b->land >= 0) return;
+        if (!b) return;
+        ++b->landedN;
+        if (!b->clicked || b->land >= 0 || b->landedN < b->expect) return;
         b->land = tick;
         if (const auto* u = w.unit(id)) { b->lx = u->x.v >> 16; b->lz = u->z.v >> 16; }
     }
@@ -177,7 +188,7 @@ public:
 
     void report(obs::Keys& k, const tak::sim::World& w, bool legion) const {
         const std::string p = "scale.";
-        int64_t n = 0, pointN = 0, cancelled = 0, dead = 0, idle = 0, missing = 0, never = 0;
+        int64_t n = 0, liveN = 0, pointN = 0, cancelled = 0, dead = 0, idle = 0, missing = 0, never = 0;
         int64_t outside = 0, openInside = 0, stuck = 0, livelock = 0;
         std::vector<int64_t> deliver, start, arrive, complete, path, wait, arriveAt;
         for (size_t i = 0; i < b_.size(); ++i) {
@@ -187,8 +198,10 @@ public:
             if (b.dead) ++dead;
             if (b.cancelled) { ++cancelled; continue; }
             if (b.land >= 0) deliver.push_back(b.land - b.click); else ++missing;
-            if (b.start >= 0) start.push_back(b.start - b.click); else if (!b.dead) ++never;
             if (legion) wait.push_back(b.waitMax);
+            if (b.dead) continue;   // the quantiles below are over the bodies alive at the end
+            ++liveN;
+            if (b.start >= 0) start.push_back(b.start - b.click); else ++never;
             if (!b.point) continue;
             ++pointN;
             if (b.arrive >= 0) {
@@ -203,7 +216,6 @@ public:
                 complete.push_back(b.complete - b.click);
                 outside += b.completeOutside;
             }
-            if (b.dead) continue;
             const auto* u = w.unit(ids_[i]);
             if (!u) continue;
             const int64_t ux = u->x.v >> 16, uz = u->z.v >> 16;
@@ -226,7 +238,7 @@ public:
         k.emplace_back(p + "idle_n", idle);
         quantiles(k, p + "deliver", deliver, {{"p50", 50}, {"p99", 99}}, int64_t(deliver.size()), true);
         k.emplace_back(p + "deliver.missing", missing);
-        milestones(k, p + "start", start, n - cancelled - dead);
+        milestones(k, p + "start", start, liveN);
         k.emplace_back(p + "start.never", never);
         k.emplace_back(p + "arrive.n", int64_t(arrive.size()));
         milestones(k, p + "arrive", arrive, pointN);
@@ -271,6 +283,7 @@ private:
         int64_t px = 0, pz = 0;                  // last sampled position (raw Fixed)
         int64_t travelled = 0, travelledAtClick = 0, travelledAtArrive = 0;   // 1/16 px
         int waitRun = 0, waitMax = 0;
+        uint32_t landedN = 0, expect = ~0u;      // commands landed for the body in all; the count delivering the click
         std::array<Snap, kRing> ring{};
         int64_t ringN = 0;
     };

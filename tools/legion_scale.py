@@ -20,7 +20,8 @@ on the same machine (CLAUDE.md: timing on cores 0-3 via the user's timing tool w
 
 report: one table row per job (the acceptance keys).
 check: the frozen targets (targets.json) against a run; with --base, every deterministic key that moved
-against an older run is listed too. Exit 0 every target met, 1 a target missed, 2 tooling.
+against an older run is listed too. Exit 0 every target met, 1 a target missed or its scenario/mode not in
+the run, 2 tooling.
 """
 import argparse
 import fnmatch
@@ -130,6 +131,8 @@ def cmd_run(a):
     json.dump(machine(a.bin), open(os.path.join(a.out, "machine.json"), "w"), indent=1)
     cl = cores(a.cores)
     slots = [cl[i:i + a.per_job] for i in range(0, len(cl) - a.per_job + 1, a.per_job)]
+    if not slots:
+        raise ValueError(f"--cores {a.cores} has fewer than --per-job {a.per_job} cores: no job slot")
     env = dict(os.environ)
     for k in list(env):
         if k.startswith("TAK_") and k not in ("TAK_SETTINGS_FILE",):
@@ -143,6 +146,9 @@ def cmd_run(a):
             f, n, m = jobs.pop(0)
             s = free.pop(0)
             base = os.path.join(a.out, "runs", f"{n}.{m}")
+            for stale in (".timeout", ".rc"):
+                if os.path.exists(base + stale):
+                    os.remove(base + stale)
             argv = ["taskset", "-c", ",".join(map(str, slots[s])), a.bin, f, "--mode", m, "--workers", "--offsets", "0",
                     "--json"]
             if a.data:
@@ -264,7 +270,7 @@ def cmd_check(a):
             moved = [(k, b["keys"].get(k), v) for k, v in (r.get("keys") or {}).items() if b["keys"].get(k) != v]
             if moved or r.get("hash") != b.get("hash"):
                 print(f"  MOVED {key[0]} {key[1]}: hash {b.get('hash')} -> {r.get('hash')}; {len(moved)} keys")
-    return 1 if fails else 0
+    return 1 if fails or missing else 0
 
 
 def main():
