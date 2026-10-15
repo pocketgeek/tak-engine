@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include "sim/retailweapon.h"
+#include "sim/retailmotion.h"
 #include "sim/detmath.h"
 
 namespace tak {
@@ -51,5 +52,31 @@ inline uint16_t retailBallisticPitch(float dx,float dy,float dz,float speed,
     const double angle=(highArc ? std::max(first,second):std::min(first,second))*10430.378350470464;
     if(!std::isfinite(angle))return 0;
     return uint16_t(int32_t(angle));
+}
+}
+
+namespace tak::sim {
+// 52fe30's facing request (51b340 -> 4dc0b0) as a native heading: 53612a of
+// the unit's origin minus the point its slot aims at, wrapping. The handler's
+// vtable +0x14 picks the point. Only MeleeWeapon's (531f00) answers true and
+// faces the target's origin; every other class -- Line of Sight and its
+// subclasses, Ballistic, Dropped, Guided, Remote Effect and its subclasses,
+// Wandering -- answers false (42a6b0) and faces 51aa50's led SweetSpot
+// (52ff67).
+inline uint16_t retailSlotFacing(const std::array<int32_t,3>& origin,
+        const std::array<int32_t,3>& targetOrigin,const std::array<int32_t,3>& led,bool melee) {
+    const auto& point=melee ? targetOrigin : led;
+    return uint16_t(retailDirection(Fixed::raw(std::bit_cast<int32_t>(uint32_t(origin[0])-uint32_t(point[0]))),
+                                    Fixed::raw(std::bit_cast<int32_t>(uint32_t(origin[2])-uint32_t(point[2])))).v);
+}
+
+// 52feaa..52fef5: only a ground mover that can pivot (turninplacerate, type
+// +0x190) or a HOVERATTACK flyer posts the request; 52fff0 checks the same
+// units and holds fire until the body is within max(aimtolerance, 512) of it.
+inline bool retailPostsFacing(bool mover,bool canFly,bool hoverAttack,uint16_t turnInPlaceRate) {
+    return canFly ? hoverAttack : mover && turnInPlaceRate>0;
+}
+inline bool retailFacingAligned(uint16_t heading,uint16_t request,uint16_t tolerance) {
+    return std::abs(int(std::bit_cast<int16_t>(uint16_t(heading-request))))<=std::max(int(tolerance),512);
 }
 }

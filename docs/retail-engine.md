@@ -217,11 +217,6 @@ flyers at similar rates is an inference from the parts, not an emulated whole
 engagement.
 
 Still deviating (not ported):
-- **Facing.** Retail turns the body toward the LED SweetSpot every tick
-  (`52fe30`: the Line of Sight handler's +0x14 is `42a6b0`, which returns 0, so
-  `52ff67` -> `51aa50`, then `51b340` -> `4dc0b0`) and gates on that. World
-  faces the target centre. Facing the led point raised Fire Ball hits on moving
-  flyers from 328/1147 to 373/1154; it affects 105 of 203 unit types.
 - **Attack runs.** `VTOL_SeekAttack` (`0x41b6e8..`) flies non-hover attackers
   on runs, reading `attackrunlength` (type +0x234; `4c082e`) at
   `41bc3b..41c6ea`. Both branches at `41c56c` make a run waypoint (length + 128
@@ -230,8 +225,8 @@ Still deviating (not ported):
   moving ground target a held flyer now alternates hold and move every 1-2
   ticks.
 
-Splash, the third item this section listed, is ported: see "Impact damage"
-below (protocol 263).
+Splash and facing, the other items this section listed, are ported: see
+"Impact damage" (protocol 263) and "The facing request" (protocol 264) below.
 
 ### World's other flyer holds (protocol 262)
 
@@ -351,6 +346,92 @@ Still deviating:
   inside it, as each dying unit retires, before later units have moved. A
   Remote Effect lands on its target's position at fire time; retail uses the
   slot's aim point (+8), lead included.
+
+### The facing request: the led SweetSpot (protocol 264)
+
+Aim start `52fe30` (called for every slot by the weapon update `52ae90`, which
+runs before the unit's missions and mover) posts a facing request on the mover
+before it aims. With a unit target that passes the minimum-range (`5306a0`)
+and range (vtable +0xc) tests, the handler's vtable +0x14 picks the point:
+true answers the target's origin (+0x68), false answers `51aa50`, the target's
+SweetSpot plus 80% of its mover's lead for this weapon (`52ff67`). The RTTI
+vtables give the split. Only `MeleeWeapon` (`5f3af8`, +0x14 = `531f00`, `mov
+al,1`) answers true. All sixteen other classes answer false (`42a6b0`, `xor
+al,al`): `WeaponType`, `BallisticWeapon`, `DroppedBallisticWeapon`,
+`GuidedWeapon`, `LineOfSightWeapon` and its Lightning, Fire, TurnToStone,
+TurnToFrozen and MindControl subclasses, `RemoteEffectWeapon`, `HailstormWeapon`,
+`EarthquakeWeapon`, both area spells and `WanderingWeapon`. `52fd80` makes the
+same split for the aim point itself. `51b340` turns the point into a heading
+(`53612a` of the unit's origin minus the point) and `4dc0b0` stores it at mover
++0x34 with +0x36 bit 0x10, telling the navigator (vtable +0x38) only when the
+request is new or changed. Only a ground mover with a `turninplacerate` (type
++0x190) or a `hoverattack` flyer posts one. The readiness gate `52fff0` checks
+the same units and holds fire until `|heading - request|` is at most
+max(`aimtolerance`, 512).
+
+Who turns to it differs. The ground kernel `4d9ad0` turns the body to the
+request at the pivot rate while its navigator is idle and its speed is zero
+(`4d9b6a`). `VTOLNavigator`'s +0x38 is a bare `ret` (`42c280`), and the VTOL
+kernel `4da7d0` turns the body toward the navigator's heading (`524ab0`), so a
+hover attacker's request only gates. Its heading comes from the hover mission's
+controller. `41d820` stage 3 (`41de3f`) draws the ring around `51aa50` for the
+selected slot, refreshed at every wake (15 + rand(15) ticks), and installs a
+`NavGoalVTOL` target controller (`4e4140`, flags 0xa3, radius 4, the attack
+altitude). That controller's heading (`4e4330`, flags 0x84 and 2) is the
+direction from the flyer to the target's SweetSpot (`4dd4f0`), unled, taken
+whenever the navigator asks (`524af0`, within 320 px). So the body heads at the
+SweetSpot and fires once the led SweetSpot is within tolerance.
+
+World faced the target's centre in all three places. Since protocol 264,
+`queryWeaponAim` returns the request (`retailSlotFacing`), the gate checks it,
+an auto slot posts it as `faceRequest`, and an attacking pivoting ground unit
+brakes and turns to the request of its last aiming slot. `tickHoverAttack` rings
+the selected weapon's led SweetSpot (`retailLeadPoint`) and heads at the
+target's SweetSpot. Of the 202 unit types, 60 post requests and carry a weapon
+that is not melee, in both balances.
+
+Checked:
+- `tools/re/check_animation_readiness.py` runs 52fe30's unit-target branch and
+  then 52fff0 natively, 8192 times across all 17 handler vtables (named by
+  their own RTTI) and every unit kind, with the led SweetSpot and range tests
+  controlled. 4dc0b0 runs natively and its argument is observed. The port's
+  `--aim-facing` matches each request, mover flag word, gate result and aim
+  flag word (4590 requests). Copies of the port that face the centre for every
+  class, face the led point for melee too, or take the point minus the origin
+  each fail it.
+- `flyer_combat_test`, both balances. A Lokken attacking a Gryphon crossing its
+  front: 0 of 572 aiming ticks on the led SweetSpot before (571 on the centre),
+  571 of 572 after. A Wisp hover-attacking an Aramon Barracks, whose SweetSpot
+  is 22.9 px off its centre along the approach: its controller headed at the
+  SweetSpot on 2 of 1200 ticks before and 1200 after. Its ring point sat within
+  16 px of the hover distance from the SweetSpot (a structure: no lead) on 30
+  of 55 wakes before and 55 of 55 after. 6 failures before, none after. The
+  rest of the output only changes the hashes of fights that involve units that
+  face.
+- Lokken Fire Ball (WEAPON1) against ten flyers, three modes, 3600 ticks each,
+  Crusades: against flyers crossing and orbiting it, 153 of 770 shots hit before
+  and 198 of 779 after. The total across all three modes rose from 388/1103 to
+  432/1108. The moving-flyer counts match the earlier trial exactly, flyer by
+  flyer.
+
+Still deviating:
+- World's attack controller turns the body before the weapon gate runs, and
+  the request it turns to is solved from the positions before the brake step.
+  Retail gates first and turns after.
+- A request stays posted in retail until something clears it (`4dc0e0`), so a
+  pivoting unit whose slots stop aiming keeps turning to the last point. World
+  turns it to the target's centre.
+- Retail's hover-attack target controller holds its ring point fixed between
+  wakes: flag 0x80 makes `4e41d0` return the stored point. World moves the
+  point with the target. It also accepts at radius 4 where World's persistent
+  controller never accepts.
+- A held non-hover flyer turns to the target's centre. Retail posts no request
+  for it and would be flying an attack run.
+- World releases a Dropped bomb without `52fff0` (no SET 22 acknowledgement and
+  no facing test). `52ae90` runs aim start and the gate for every class, and
+  `DroppedBallisticWeapon`'s angle virtual (+0x28, `4d4450`) is a bare `ret
+  0xc`, so its angle test always passes, but a Tarbeak's Egg Bomb would still
+  wait on its facing request (static reading).
 
 ## Ship / no-walk mover animation (icd + COB, 2026-09-10)
 

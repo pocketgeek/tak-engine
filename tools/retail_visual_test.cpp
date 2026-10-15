@@ -1042,6 +1042,27 @@ int main(int argc,char** argv) {
         }
         return 0;
     }
+    if(argc==2 && std::strcmp(argv[1],"--aim-facing")==0) {
+        // 52fe30's unit-target branch, then 52fff0: the facing request a slot
+        // posts (old request kept when it posts none), and the gate against it.
+        std::array<int32_t,3> origin{},targetOrigin{},led{};
+        int melee,mover,canFly,hover,pivot,heading,request,moverFlags,tolerance,flags,angleHeading,anglePitch;
+        while(std::scanf("%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",&origin[0],&origin[2],
+                &targetOrigin[0],&targetOrigin[2],&led[0],&led[2],&melee,&mover,&canFly,&hover,&pivot,
+                &request,&moverFlags,&heading,&tolerance,&flags,&angleHeading,&anglePitch)==18) {
+            const bool posted=tak::sim::retailPostsFacing(mover!=0,canFly!=0,hover!=0,uint16_t(pivot));
+            if(posted) {
+                request=tak::sim::retailSlotFacing(origin,targetOrigin,led,melee!=0);
+                moverFlags|=0x10;
+            }
+            tak::RetailAimState state{uint16_t(angleHeading),uint16_t(anglePitch),uint16_t(flags)};
+            state.start(uint16_t(angleHeading),uint16_t(anglePitch));
+            const bool aligned=!posted || tak::sim::retailFacingAligned(uint16_t(heading),uint16_t(request),uint16_t(tolerance));
+            const bool ready=state.ready(uint16_t(angleHeading),uint16_t(anglePitch),uint16_t(tolerance),true,aligned);
+            std::printf("%d %d %d %d %u\n",int(posted),request,moverFlags,int(ready),unsigned(state.flags));
+        }
+        return 0;
+    }
     if(argc==2 && std::strcmp(argv[1],"--aim-lead")==0) {
         std::array<int32_t,3> source{},target{},velocity{};int32_t speed;int noLead;
         while(std::scanf("%d %d %d %d %d %d %d %d %d %d %d",&source[0],&source[1],&source[2],

@@ -5451,9 +5451,9 @@ bool World::acquireTarget(Unit& u,bool missionPoll) {
 // or any unit on a plain move, shoots what it passes.
 
 // The units whose aim start (52fe30) posts a facing request and whose
-// readiness (52fff0) then waits for the body to face the target.
+// readiness (52fff0) then waits for the body to face the slot's point.
 static bool slotNeedsFacing(const UnitType& t) {
-    return t.canFly ? t.hoverAttack : (!t.isStructure() && t.turnInPlaceRate>0);
+    return retailPostsFacing(!t.isStructure(),t.canFly,t.hoverAttack,uint16_t(t.turnInPlaceRate));
 }
 
 namespace {
@@ -5738,10 +5738,13 @@ void World::tickSlotWeapons(Unit& u) {
         // is kept either way.
         if (slotInsideMinRange(u,*t,s) || !slotInRange(u,*t,s) || !slotClearShot(u,*t,s)) continue;
         aiming=true;
-        const Bam desired=retailDirection(t->x-u.x,t->z-u.z);
+        // The request points where the slot aims: the led SweetSpot, or a
+        // melee target's origin (retailSlotFacing).
+        const auto solution=queryWeaponAim(u.id,t->id,s);
+        const Bam desired=solution ? retailHeadingToPort(solution->facing) : retailDirection(t->x-u.x,t->z-u.z);
         const bool facing=slotNeedsFacing(*u.type);
         if (facing) u.faceRequest=desired.v&0xffff;
-        if (tickScriptWeapon(u,*t,s,true)) continue;
+        if (tickScriptWeapon(u,*t,s,true,solution ? &*solution : nullptr)) continue;
         const Weapon& w=u.type->weapons[size_t(s)];
         if (u.reloads[size_t(s)]>0) continue;
         if (facing && std::abs(bamDiff(desired,u.heading))>std::max(512,int(uint16_t(w.aimTol)))) continue;
@@ -6082,9 +6085,37 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         // The shared route service and retry cadence handle chases too.
         return;   // movement handled by the normal move logic
     }
+    // Fire a weapon when the target is in ITS [minrange, range] band, within its
+    // aimtolerance, with a clear shot, and (unless noairweapon) legal against air.
+    // Each weapon is gated on its own terms, because a non-switching unit runs all
+    // of them at once and they rarely share a range band.
+    auto slotAims = [&](int sl) {
+        const Weapon& sw = u.type->weapons[size_t(sl)];
+        if ((sw.mindControl || u.type->canCapture) && !canCaptureTarget(u.player,*target)) return false;
+        if (sw.noAir && target->type && target->type->canFly) return false;
+        if (!(sw.melee || los)) return false;
+        if (sw.melee ? !adj : dist > sw.range + pad) return false;
+        return dist >= sw.minRange;
+    };
+    auto forEachSlot = [&](auto&& f) {
+        if (u.type->weapons.empty()) return;
+        if (allWeapons)
+            for (int sl = 0; sl < int(u.type->weapons.size()); ++sl) f(sl);
+        else if (sel)
+            f(slot);
+    };
     // The attack controller stops navigation and supplies a facing target.
     // Ground movement brakes and commits once; pivoting starts only at rest.
-    const Bam want = u.type->canFly ? fxAtan2(Fixed::fromFloat(dx),Fixed::fromFloat(dz))
+    // A pivoting ground unit turns toward the request its aiming slots post in
+    // 52fe30 -- the led SweetSpot, or a melee target's origin -- and the last
+    // slot to post wins (52ae90 walks them in order).
+    std::optional<Bam> request;
+    if (!u.type->canFly && slotNeedsFacing(*u.type))
+        forEachSlot([&](int sl) {
+            if (!slotAims(sl)) return;
+            if (const auto aim=queryWeaponAim(u.id,target->id,sl)) request=retailHeadingToPort(aim->facing);
+        });
+    const Bam want = request ? *request : u.type->canFly ? fxAtan2(Fixed::fromFloat(dx),Fixed::fromFloat(dz))
         : retailDirection(target->x-u.x,target->z-u.z);
     const int32_t diff = bamDiff(want, u.heading);
     if (!u.type->canFly && !u.type->isStructure()) {
@@ -6110,17 +6141,9 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
             u.turnReqBam=diff;
         }
     }
-    // Fire a weapon when the target is in ITS [minrange, range] band, within its
-    // aimtolerance, with a clear shot, and (unless noairweapon) legal against air.
-    // Each weapon is gated on its own terms, because a non-switching unit runs all
-    // of them at once and they rarely share a range band.
     auto tryFire = [&](int sl) {
+        if (!slotAims(sl)) return;
         const Weapon& sw = u.type->weapons[size_t(sl)];
-        if ((sw.mindControl || u.type->canCapture) && !canCaptureTarget(u.player,*target)) return;
-        if (sw.noAir && target->type && target->type->canFly) return;
-        if (!(sw.melee || los)) return;
-        if (sw.melee ? !adj : dist > sw.range + pad) return;
-        if (dist < sw.minRange) return;
         if(tickScriptWeapon(u,*target,sl))return;
         if(u.reloads[size_t(sl)]>0)return;
         // A bomb is let go, not aimed -- retail's Dropped weapon overrides its aim
@@ -6130,12 +6153,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
             std::abs(diff) >= std::max(sw.aimTol, int32_t(0.03f / kCobAngle))) return;
         fire(u, *target, sl);
     };
-    if (!u.type->weapons.empty()) {
-        if (allWeapons)
-            for (int sl = 0; sl < int(u.type->weapons.size()); ++sl) tryFire(sl);
-        else if (sel)
-            tryFire(slot);
-    }
+    forEachSlot(tryFire);
     // cancapture: a charmer converts the target after sustained contact (~3s) or
     // once it is worn down, rather than killing it.
     if (u.type->canCapture && canCaptureTarget(u.player,*target)) {
@@ -8995,8 +9013,11 @@ void World::tickHoverAttack(Unit& u,const Unit& target,const Weapon* weapon) {
     const int distance=weapon && weapon->hoverAttackDistance ? weapon->hoverAttackDistance : u.type->hoverAttackDistance;
     const int altitude=weapon && weapon->hoverAttackAltitude ? weapon->hoverAttackAltitude : u.type->hoverAttackAltitude;
     if (!order.flightGoal || !order.hoverAttackRefresh || tickCounter_>=order.hoverAttackRefresh) {
+        // 41de3f: the ring is drawn around the selected weapon's led SweetSpot
+        // (51aa50), taken afresh at every mission wake.
+        const auto centre=retailLeadPoint(u,target,weapon);
         order.flightGoal=retailHoverAttackGoal({u.x.v,u.flightY.v,u.z.v},
-            {target.x.v,0,target.z.v},distance,[&](int n) {return pathRand(uint32_t(n));});
+            {centre[0],centre[1],centre[2]},distance,[&](int n) {return pathRand(uint32_t(n));});
         order.hoverAttackRefresh=tickCounter_+15+pathRand(15);
     } else {
         // The retail target controller follows its entity between mission wakes.
@@ -9009,7 +9030,12 @@ void World::tickHoverAttack(Unit& u,const Unit& target,const Weapon* weapon) {
     if (!heights_.empty()) ground=std::max(ground,retailTerrainHeight(goal.point.x,goal.point.z,
         terW_,terH_,[&](int x,int z) {return heights_[size_t(z)*terW_+x];}));
     goal.point.y=Fixed::fromInt(std::min(511,ground+altitude)).v;
-    goal.heading=uint16_t(retailDirection(u.x-target.x,u.z-target.z).v);
+    // The target controller (4e4140, flags 0xa3) heads the flyer at the
+    // target's SweetSpot, unled (4e4330 -> 4dd4f0, 51b340), while 52fff0
+    // holds fire until the body is within tolerance of the led one.
+    const auto sweetSpot=queryUnitScriptPoint(target.id,true);
+    goal.heading=uint16_t(retailDirection(Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.x.v)-uint32_t(sweetSpot[0]))),
+                                          Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.z.v)-uint32_t(sweetSpot[2])))).v);
     order.x=Fixed::raw(goal.point.x);order.z=Fixed::raw(goal.point.z);
     tickFlightMovement(u,true);
     notifyFlightOccupancy(u);
@@ -10742,6 +10768,21 @@ std::array<int32_t,3> World::queryUnitScriptPoint(int unitId,bool sweetSpot,int 
     return point;
 }
 
+// 51aa50 for a unit target: its SweetSpot (4dd4f0) plus 80% of its mover's
+// motion over the shot's flight time from the shooter's origin; no lead for
+// dontleadtargets, a zero speed, a target without a mover or no weapon.
+std::array<int32_t,3> World::retailLeadPoint(const Unit& u,const Unit& target,const Weapon* weapon) {
+    const std::array<int32_t,3> origin{u.x.v,(u.type->canFly ? u.flightY : u.groundY).v,u.z.v};
+    const auto sweetSpot=queryUnitScriptPoint(target.id,true);
+    if(!weapon)return sweetSpot;
+    const auto step=retailGroundStep(target.heading,target.speed);
+    const std::array<int32_t,3> velocity=target.type->canFly ?
+        std::array<int32_t,3>{target.flightVelocity.x,target.flightVelocity.y,target.flightVelocity.z} :
+        std::array<int32_t,3>{step.s.v,0,step.c.v};
+    return tak::retailAimLead(origin,sweetSpot,velocity,tak::retailAimSpeed(weapon->projVel),
+        weapon->noLead || target.type->isStructure());
+}
+
 std::optional<World::WeaponAimSolution> World::queryWeaponAim(int unitId,int targetId,int slot) {
     auto* u=unit(unitId);auto* target=unit(targetId);
     if(!u || !target || !u->type || !target->type || slot<0 || size_t(slot)>=u->type->weapons.size())return {};
@@ -10753,16 +10794,16 @@ std::optional<World::WeaponAimSolution> World::queryWeaponAim(int unitId,int tar
     result.target={target->x.v,(target->type->canFly ? target->flightY : target->groundY).v,target->z.v};
     const auto heading=portHeadingToRetail(u->heading);
     result.heading=uint16_t(retailDirection(target->x-u->x,target->z-u->z).v-heading);
-    if(weapon.ballistic || weapon.beam || weapon.kind==Weapon::Kind::Guided) {
-        const auto source=queryUnitScriptPoint(unitId,false,slot);
-        result.source=source;
-        const auto sweetSpot=queryUnitScriptPoint(targetId,true);
-        const auto step=retailGroundStep(target->heading,target->speed);
-        const std::array<int32_t,3> velocity=target->type->canFly ?
-            std::array<int32_t,3>{target->flightVelocity.x,target->flightVelocity.y,target->flightVelocity.z} :
-            std::array<int32_t,3>{step.s.v,0,step.c.v};
+    const bool aimed=weapon.ballistic || weapon.beam || weapon.kind==Weapon::Kind::Guided;
+    if(aimed)result.source=queryUnitScriptPoint(unitId,false,slot);
+    // 52fe30 turns the body toward the point the slot aims at: a melee
+    // target's origin, every other class's led SweetSpot (51aa50).
+    const auto led=weapon.melee ? result.target : retailLeadPoint(*u,*target,&weapon);
+    result.facing=retailSlotFacing(origin,result.target,led,weapon.melee);
+    if(aimed) {
+        const auto source=result.source;
         const int32_t speed=tak::retailAimSpeed(weapon.projVel);
-        result.target=tak::retailAimLead(origin,sweetSpot,velocity,speed,weapon.noLead || target->type->isStructure());
+        result.target=led;
         std::array<int32_t,3> delta;
         for(size_t axis=0;axis<3;++axis)
             delta[axis]=std::bit_cast<int32_t>(uint32_t(result.target[axis])-uint32_t(source[axis]));
@@ -10800,14 +10841,16 @@ void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
     u.scriptAimTarget=0;
 }
 
-bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept) {
+bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept,const WeaponAimSolution* given) {
     const auto it=unitScript(u.id);
     if(!it || slot<0 || slot>=3)return false;
     const auto& file=*u.type->script();
     const int aimScript=file.scriptIndex("AimWeapon"),fireScript=file.scriptIndex("FireWeapon");
     // Native callback lookup may fail, but it never substitutes an immediate
     // shot: readiness/release still require the script's SET 22 / SET 23.
-    const auto solution=queryWeaponAim(u.id,target.id,slot);
+    // A caller that already solved this slot this tick (for the body's
+    // facing request) hands its solution in.
+    const auto solution=given ? std::optional<WeaponAimSolution>(*given) : queryWeaponAim(u.id,target.id,slot);
     if(!solution)return true;
     // A swept (auto-slot) target lives in the slot record, not in the
     // order-driven scriptAimTarget, which tickCombat retires with its order.
@@ -10824,14 +10867,14 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept) {
     }
     const bool available=u.reloads[slot]==0 &&
         (u.type->maxMana<=0 || u.mana>=weapon.manaCost);
-    // Native readiness (52fff0) compares body heading with the mover's requested
-    // heading, not the weapon's offset SweetSpot or lead point -- and only for
-    // the units 52fe30 posts a facing request for: a ground mover with a
-    // turninplacerate, or a HOVERATTACK flyer. Every other flyer, a ground unit
-    // that cannot pivot and a structure fire on COB readiness alone.
-    const auto desired=retailDirection(target.x-u.x,target.z-u.z);
+    // Native readiness (52fff0) compares the body heading with the mover's
+    // requested heading, which 52fe30 has just posted toward the slot's point:
+    // the led SweetSpot, or a melee target's origin. Only the units 52fe30
+    // posts a request for wait on it: a ground mover with a turninplacerate,
+    // or a HOVERATTACK flyer. Every other flyer, a ground unit that cannot
+    // pivot and a structure fire on COB readiness alone.
     const bool aligned=!slotNeedsFacing(*u.type) ||
-        std::abs(bamDiff(desired,u.heading))<=std::max(512,int(uint16_t(weapon.aimTol)));
+        retailFacingAligned(portHeadingToRetail(u.heading),solution->facing,uint16_t(weapon.aimTol));
     if(dropped ? available : aim.ready(solution->heading,solution->pitch,uint16_t(weapon.aimTol),available,aligned)) {
         const uint16_t nominal=uint16_t(int32_t(weapon.reload*kTick+0.5f));
         u.reloads[slot]=retailWeaponReload(nominal,uint16_t(crtRand(0x530167)));

@@ -2143,8 +2143,12 @@ public:
     struct WeaponAimSolution {
         uint16_t heading=0,pitch=0;
         std::array<int32_t,3> target{}, source{};
+        // 52fe30's facing request, a native heading (retailSlotFacing).
+        uint16_t facing=0;
     };
     std::optional<WeaponAimSolution> queryWeaponAim(int unitId,int targetId,int slot);
+    // 51aa50 for a unit target: its SweetSpot plus the weapon's lead.
+    std::array<int32_t,3> retailLeadPoint(const Unit& u,const Unit& target,const Weapon* weapon);
     std::array<int32_t,3> queryUnitScriptPoint(int unitId,bool sweetSpot,int slot=0);
     bool projectilePointInUnit(int unitId,const std::array<int32_t,3>& point) const;
     // Native collision result: 0 clear/bounce, 1 outside map, 2 environmental hit.
@@ -2432,7 +2436,7 @@ private:
                         int ignoreId=0,bool ignoreMobile=false) const;
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
     void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
-    bool tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept=false);
+    bool tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept=false,const WeaponAimSolution* given=nullptr);
     void clearScriptWeaponTarget(Unit& u,bool fromCommand=false);
     // Convert a unit to another player (contact charm + mind-control weapons).
     void captureUnit(Unit& t, int newPlayer);

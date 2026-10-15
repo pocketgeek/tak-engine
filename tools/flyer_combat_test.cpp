@@ -2,7 +2,9 @@
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include "sim/retailhweffectdata.h"
+#include "sim/retailaim.h"
 #include <cstdio>
+#include <cmath>
 #include <algorithm>
 
 namespace tak::sim { struct RetailReplayProbe {
@@ -314,6 +316,94 @@ int main(int argc,char** argv) {
             std::printf("held flyer balance=%s unit=%s velocity=(%d,%d,%d) lokken shots=%d hits=%d\n",
                 crusades?"Crusades":"standard",name.c_str(),v.x,v.y,v.z,shots,hits);
             check(shots>=5 && hits*4>=shots*3,"a Lokken's Fire Ball connects with a flyer holding still to attack");
+        }
+        // Retail turns the body toward the point a slot aims at (52fe30): the
+        // led SweetSpot (51aa50) for every class but melee. A pivoting ground
+        // unit's mover turns to that request at rest, and 52fff0 gates on it;
+        // World faced the target's centre. The Lokken (turninplacerate 2600)
+        // reaches its request every tick, and it moves first in each tick, so
+        // its heading after a tick is the request made from the positions and
+        // velocity read before it.
+        auto nativeFrom=[](const std::array<int32_t,3>& origin,const std::array<int32_t,3>& point) {
+            using tak::sim::Fixed;
+            return uint16_t(tak::sim::retailDirection(
+                Fixed::raw(std::bit_cast<int32_t>(uint32_t(origin[0])-uint32_t(point[0]))),
+                Fixed::raw(std::bit_cast<int32_t>(uint32_t(origin[2])-uint32_t(point[2])))).v);
+        };
+        {
+            auto gryphon=*registry.find("zongryp");gryphon.maxHp=30000;gryphon.healTime=0;
+            gryphon.weapons.clear();gryphon.weapon={};
+            const auto& lokken=*registry.find("tarnecro");
+            const auto& fireBall=lokken.weapons.front();
+            tak::sim::World w;w.setVisPlayer(-1);
+            w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            w.buildNavClasses(registry);
+            const int shooter=w.spawn(&lokken,2000,2000,0,0),flyer=w.spawn(&gryphon,2300,1500,0,1);
+            w.patrol(flyer,2300,2500);   // crossing the Lokken's front at 300 px
+            for (int tick=0;tick<240;++tick) w.tick(1.f/30.f);
+            w.attack(shooter,flyer,false);
+            int aiming=0,led=0,centre=0;
+            for (int tick=0;tick<900;++tick) {
+                const auto* s=w.unit(shooter);const auto* f=w.unit(flyer);
+                const std::array<int32_t,3> origin{s->x.v,s->groundY.v,s->z.v},middle{f->x.v,f->flightY.v,f->z.v};
+                const auto lead=tak::retailAimLead(origin,w.queryUnitScriptPoint(flyer,true),
+                    {f->flightVelocity.x,f->flightVelocity.y,f->flightVelocity.z},
+                    tak::retailAimSpeed(fireBall.projVel),fireBall.noLead);
+                const uint16_t toLead=nativeFrom(origin,lead),toCentre=nativeFrom(origin,middle);
+                const bool rest=s->speed==tak::sim::Fixed();
+                w.tick(1.f/30.f);
+                s=w.unit(shooter);
+                if (!rest || s->speed!=tak::sim::Fixed() ||
+                    tak::sim::fxLen(f->x-s->x,f->z-s->z).toFloat()>fireBall.range) continue;
+                ++aiming;
+                const uint16_t heading=tak::sim::portHeadingToRetail(s->heading);
+                led+=heading==toLead;centre+=heading==toCentre;
+            }
+            std::printf("facing balance=%s lokken vs crossing gryphon aiming=%d facing led=%d centre=%d\n",
+                crusades?"Crusades":"standard",aiming,led,centre);
+            check(aiming>100 && led>=aiming-2,"a pivoting shooter faces the led SweetSpot of a moving flyer");
+        }
+        // A HOVERATTACK flyer's target controller (4e4140, flags 0xa3) heads it
+        // at the target's SweetSpot, unled (4e4330), and every mission wake
+        // draws the ring around the selected weapon's led SweetSpot (41de3f ->
+        // 51aa50). The Aramon Barracks' SweetSpot sits 23 px off its centre,
+        // along the Wisp's approach, so the two rings are told apart by radius.
+        {
+            auto wisp=*registry.find("zonflies");wisp.maxHp=30000;wisp.healTime=0;
+            for (auto& weapon:wisp.weapons) { weapon.damage=1;weapon.dmgVs.clear();weapon.dmgVsIds.clear();weapon.aoe=0; }
+            wisp.weapon=wisp.weapons.front();
+            auto barracks=*registry.find("arakeep");barracks.maxHp=30000;barracks.healTime=0;
+            barracks.weapons.clear();barracks.weapon={};
+            tak::sim::World w;w.setVisPlayer(-1);
+            w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            w.buildNavClasses(registry);
+            const int target=w.spawn(&barracks,2000,2000,0,0),flyer=w.spawn(&wisp,2000,2600,0,1);
+            w.attack(flyer,target,false);
+            const auto* b=w.unit(target);
+            const std::array<int32_t,3> middle{b->x.v,b->groundY.v,b->z.v};
+            const auto sweetSpot=w.queryUnitScriptPoint(target,true);
+            int ticks=0,headed=0,refreshes=0,ringed=0;
+            uint32_t refresh=0;
+            for (int tick=0;tick<1200;++tick) {
+                const auto* f=w.unit(flyer);
+                const std::array<int32_t,3> from{f->x.v,f->flightY.v,f->z.v};
+                w.tick(1.f/30.f);
+                f=w.unit(flyer);
+                if (f->orders.empty() || !f->orders.front().flightGoal) continue;
+                const auto& order=f->orders.front();
+                ++ticks;
+                headed+=order.flightGoal->heading==nativeFrom(from,sweetSpot);
+                if (order.hoverAttackRefresh==refresh) continue;
+                refresh=order.hoverAttackRefresh;++refreshes;
+                const auto& point=order.flightGoal->point;
+                const float radius=std::hypot(float(point.x-sweetSpot[0])/65536.f,float(point.z-sweetSpot[2])/65536.f);
+                ringed+=std::abs(radius-float(wisp.hoverAttackDistance))<=16.f;
+            }
+            const float offset=std::hypot(float(sweetSpot[0]-middle[0])/65536.f,float(sweetSpot[2]-middle[2])/65536.f);
+            std::printf("hover controller balance=%s wisp vs barracks (SweetSpot %.1f px off) ticks=%d headed=%d"
+                " refreshes=%d ringed=%d\n",crusades?"Crusades":"standard",offset,ticks,headed,refreshes,ringed);
+            check(offset>16 && ticks>1000 && headed==ticks,"a hover attacker heads at its target's SweetSpot");
+            check(refreshes>20 && ringed==refreshes,"a hover attacker rings the led SweetSpot at its hover distance");
         }
         // World's other flyer holds skip the flight body the same way, and none
         // stopped both. SetMission's wait ("w N") and ambush ("wa"), a guard
