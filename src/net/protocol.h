@@ -606,8 +606,10 @@ struct GameOptions {
     // 1 = EXPLORED (terrain starts mapped). Both retain seen terrain under fog;
     // 2 = FULL VISION (no fog at all: the whole map and every unit are visible).
     // Host-set in the room.
-    // Random Start Locations: 0 = fixed (slot N always takes the map's Nth start,
-    // so players memorise spawns), 1 = the starts are shuffled for the match.
+    // Random Start Locations: 0 = fixed (the SEATED slots take the map's starts in
+    // slot order and an empty seat takes none, as retail does -- a human in slot 1
+    // and an AI in slot 8 start at StartPos1 and StartPos2; see setupMatch),
+    // 1 = the starts are shuffled for the match.
     // Deterministic -- derived from the match seed, so every peer agrees.
     uint8_t randomStarts = 0;
     uint8_t fogExplored = 1;

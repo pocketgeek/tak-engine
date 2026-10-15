@@ -254,7 +254,7 @@ change in the room, until the game starts.
 | **Double Sight/Radar** | Doubles every unit's sight and radar range. Weapon range is unchanged. |
 | **Monarch Expendable** | **Off** (the original rule): losing your Monarch loses the game. **On**: the Monarch is an ordinary unit and you lose only when everything is gone. |
 | **Fog of war** | **Not Explored**: the map starts hidden. **Explored**: the map starts revealed but enemies are hidden outside your sight. **Full Vision**: no fog. Terrain you have seen stays visible after your units leave. |
-| **Start locations** | **Fixed** uses the map's start positions in order. **Random** shuffles them. |
+| **Start locations** | **Fixed** gives the occupied slots the map's start positions in order, top slot first. Empty slots are skipped, as in the original game: a player in slot 1 and an AI in slot 8 start at positions 1 and 2. **Random** shuffles them. |
 | **Unit cap** | The most units each player may have alive: 250, 500, 1,000 or 2,000 (the default). Production pauses at the cap. |
 | **Allow speed change** | Lets the host change game speed during the match, from −9 (0.1×) to +10 (2×). |
 | **Pathfinding** | **Retail** (the default) or **Legion**. See [Pathfinding](#pathfinding-retail-and-legion). |

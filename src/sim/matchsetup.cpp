@@ -732,6 +732,11 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     }
 
     // Assign the used slots to start positions (ring fallback if the map has too few).
+    // The k-th USED slot takes spot k, so an empty seat takes no start: a human in
+    // slot 1 and an AI in slot 8 open at StartPos1 and StartPos2. That is retail's
+    // rule, not an accident -- the skirmish spawn (0x4d2e70) and the multiplayer
+    // host's start table (0x4ea950) both hand the k-th occupied battle-room row the
+    // k-th start (docs/retail-engine.md, "Start positions"; start_positions_test).
     int used = 0;
     for (auto& s : cfg.slots) if (s.used) ++used;
     auto starts = generated ? genStarts : parseStartPositions(vfs, cfg.mapPath);

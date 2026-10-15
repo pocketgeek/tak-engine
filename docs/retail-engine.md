@@ -2013,3 +2013,40 @@ A multi-selection's front portrait is one of the type strip, the same size as
 the rest in every layout state (full, shrunk, folded, "+K"), anchored at the
 single-unit portrait's right edge (`client/selportraits.h`). A single selection
 draws exactly as before. The fallback stone bar follows the same strip rule.
+
+## Start positions: the k-th occupied row takes the k-th start (icd, 2026-10-14)
+
+Asked because a player put an AI in slot 8 with slots 2-7 empty, expected it at
+StartPos8, and got StartPos2. Retail does the same.
+
+- **Rows are player records.** The battle room's eight rows are the first eight
+  of ten player records (`gs+0x2404`, stride `0x110`). The PlayerName click
+  (`0x49f2b2`) reads `record[row]` kind `+0xea` through `0x49d890` and edits it
+  with `0x49ce50` (set kind) or `0x49d0a0` (clear). Clearing a row zeroes its
+  active dword and moves no other row, so empty rows between seats exist in
+  retail too. Kinds 1 and 2 are this machine's human and AI, 3 a remote player.
+- **Skirmish** (`0x4d2e70`, vtable slot `0x5f26dc`, map mode 2). Fixed starts walk
+  the ten records and call `0x4d3200(player, k++)` for each one that is active,
+  of kind 1, 2 or 3, with a player number (`+0xeb`) other than 10. `0x4d3200`
+  looks up the OTA special numbered k and stores k at `+0xec`. The `.ota` parse
+  (`0x4c8fc0`..`0x4c903a`) stores `StartPosN` as N-1, so the k-th occupied row
+  gets StartPos(k+1). Random builds the list `0..n-1` over the same rows and
+  `std::random_shuffle`s it (`0x4d44a0`; with n <= 2 a coin flip decides whether
+  to shuffle at all), so a random game also uses only StartPos1..n.
+- **Multiplayer** (map mode 3). The host fills a per-row table at `gs+0x3030` in
+  `0x4ea950`: fixed gives the k-th occupied row k, other rows 0xff; random uses
+  the same shuffle of `0..n-1`. It sends the table out, and each machine spawns
+  its own players at `+0xec` in `0x4d2e70`'s mode-3 branch. Rows flagged
+  `+0x50 -> +0x9b & 1` take no start.
+- **Emulated** (`tools/re/check_start_positions.py`: `0x4d2e70` with `0x4d3200`
+  hooked, and `0x4ea950` with the network sends stubbed) over synthetic
+  records. Human row 1 + AI row 8 gives StartPos1 and StartPos2 on both paths,
+  and all 255 skirmish seatings of the eight rows and all 128 multiplayer ones
+  (host in row 1) follow the rule. The host's table for rows 1 and 8 is
+  `1:1 2:- ... 7:- 8:2 9:- 10:-`.
+
+Ours: `setupMatch` hands the k-th used slot the k-th start, the same rule, for
+skirmish, multiplayer and replays alike (`start_positions_test`). One difference
+is left as it is. Our Random shuffles all of the map's starts, so two players on
+an eight-start map may land on any two of them. Retail's only permutes StartPos1
+and 2.

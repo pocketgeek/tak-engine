@@ -757,9 +757,12 @@ Starts are drawn as gold diamonds with their number, and as small squares on
 the minimap. You cannot type a new number for a start. To renumber, remove
 starts and add them again: each new one takes the lowest free number.
 
-When the game's **Start locations** option is **Fixed**, players take the starts
-in number order; **Random** shuffles them. Keep the numbers 1, 2, 3 … without
-gaps so that Fixed works predictably (Check Map warns about gaps).
+When the game's **Start locations** option is **Fixed**, the players take the
+starts in number order, top slot first, and empty slots are skipped, as in the
+original game. A two-player game on an eight-start map uses starts 1 and 2,
+whichever slots the players sit in, so put starts 1 and 2 where a one-on-one
+should begin. **Random** shuffles them. Keep the numbers 1, 2, 3 … without gaps
+so that Fixed works predictably (Check Map warns about gaps).
 
 ---
 
