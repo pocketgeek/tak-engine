@@ -1158,6 +1158,15 @@ struct alignas(64) Unit {
 
     // Retail scenario rename: cosmetic label, independent of FBI type identity.
     std::string scenarioName;
+    // The body's place in retail's ground word +0 (World::groundOwner_): the
+    // origin and size it was last stamped with (+0x74/+0x78), its sector list
+    // (+0xa4) and when it joined it, and the two overlap bits of +0x130.
+    struct GroundStamp {
+        enum : uint8_t { kLinked=1, kOffMap=2, kRefusing=4 /* 0x400000 */, kRefused=8 /* 0x800000 */ };
+        int16_t x=0,z=0,sectorX=0,sectorZ=0;
+        uint8_t fx=0,fz=0,flags=0;
+        uint32_t link=0;   // sector lists are newest first (506630 pushes at the head)
+    } ground;
     const std::string& displayName() const { return scenarioName.empty() ? type->name : scenarioName; }
     bool alive() const { return deadFor < 0; }
     int32_t maximumHp() const { return retailSite ? int32_t(retailSite->type.maxHp) : type->maxHp; }
@@ -1990,6 +1999,7 @@ public:
         paths_.clear();legion_.reset();convoys_.clear();
         searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();unitSlotById_.clear();retiredOwners_.clear();retiredHash_=0;
+        groundOwner_.clear();groundLinkSerial_=0;
         projectiles_.clear();flames_.clear();
         hits_.clear();
         pendingSounds_.clear();soundReq_={};
@@ -2747,6 +2757,24 @@ private:
     void rebuildBodyIndex() const;
     void updateBodyIndex(const Unit&) const;
     SearchBodyRect searchBodyRect(int,int,int,int,int ignoreId=0) const;
+    // Retail's ground word +0, kept by events as retail keeps it: the id of
+    // the body that holds each cell (0 = none). A body placed over a live
+    // holder leaves it the cell (5066f0), and a cell is handed on only when
+    // its holder leaves (506aa0 restamps the bodies it refused). Consumers
+    // take the holder among the bodies that cover a cell (searchBodyRect).
+    std::vector<int32_t> groundOwner_;
+    uint32_t groundLinkSerial_=0;
+    bool groundHolderLive(int id) const;
+    bool groundStampsCell(const Unit&,int dx,int dz) const;
+    bool groundClaimCell(Unit&,size_t cell);
+    void groundStamp(Unit&);                 // 5066f0
+    void groundUnstamp(Unit&);               // 506aa0
+    void groundRemove(Unit&);                // 5066a0
+    void groundRestamp(Unit&);               // 5062d0
+    void groundRestampRect(int,int,int,int); // 5065b0 -> 5097f0
+    // 51b3b0's cell or mode change: unstamp, then stamp at the current spot.
+    void groundMove(Unit& u) { groundUnstamp(u); groundStamp(u); }
+    void groundRebuild();
     int cellScoreWithBodies(const UnitType*,int,int,int,const SearchBodyRect*) const;
     bool gatePassageAt(int,int,const std::vector<int>* gates=nullptr) const;
     bool gateWantsOpen(const Unit&,const std::vector<int>& gates) const;

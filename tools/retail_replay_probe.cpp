@@ -488,6 +488,77 @@ struct RetailReplayProbe {
             world.searchGrades_.push_back(std::move(plane));
         }
     }
+    // tools/re/check_ground_owner.py: replay its native ground-word events
+    // through World's own event handlers and compare every cell's owner as
+    // searchBodyRect reports it. Native ids are mapped to World's on first
+    // placement; a lifted body is held off the map as cargo is.
+    static int groundOwner(const char* path) {
+        std::ifstream input(path);
+        std::string word;
+        std::optional<World> world;
+        std::map<std::pair<int,int>,UnitType> types;
+        std::map<int,int> ids;
+        int width=0,height=0,scenario=0,checks=0,bad=0,overlapped=0,legacyBad=0;
+        auto type=[&](int fx,int fz)->const UnitType* {
+            auto [it,fresh]=types.try_emplace({fx,fz});
+            if (fresh) {
+                auto& t=it->second;t.id="ground"+std::to_string(fx)+"x"+std::to_string(fz);
+                t.footX=fx;t.footZ=fz;t.maxVel=Fixed::fromInt(1);t.maxHp=100;t.maxSlope=t.maxWaterSlope=255;
+            }
+            return &it->second;
+        };
+        auto at=[](int origin,int foot){return float(origin*16+foot*8);};
+        while (input>>word) {
+            if (word=="scenario") {
+                input>>width>>height;++scenario;
+                world.emplace();world->setTerrain(std::vector<uint8_t>(size_t(width)*height,0),width,height,0);
+                ids.clear();
+            } else if (word=="place") {
+                int i,fx,fz,x,z;input>>i>>fx>>fz>>x>>z;
+                if (auto it=ids.find(i);it!=ids.end()) {
+                    auto& u=*world->unit(it->second);
+                    u.x=Fixed::fromFloat(at(x,fx));u.z=Fixed::fromFloat(at(z,fz));u.inTransport=0;
+                    world->groundStamp(u);
+                } else ids[i]=world->spawn(type(fx,fz),at(x,fx),at(z,fz),0.0f,0);
+            } else if (word=="move") {
+                int i,x,z;input>>i>>x>>z;
+                auto& u=*world->unit(ids.at(i));
+                world->groundUnstamp(u);
+                u.x=Fixed::fromFloat(at(x,u.type->footX));u.z=Fixed::fromFloat(at(z,u.type->footZ));
+                world->groundStamp(u);
+            } else if (word=="lift" || word=="die") {
+                int i;input>>i;
+                auto& u=*world->unit(ids.at(i));
+                world->groundRemove(u);
+                if (word=="die") u.deadFor=0; else u.inTransport=-1;
+            } else if (word=="check") {
+                std::vector<int> native(size_t(width)*height);
+                for (auto& id:native) input>>id;
+                const auto bodies=world->searchBodyRect(0,0,width,height);
+                bool same=true,legacy=true;
+                for (size_t c=0;c<native.size();++c) {
+                    const int expected=native[c] ? ids.at(native[c]) : 0;
+                    const Unit* body=bodies.cells[c];
+                    // The rule before the ground word: the last covering
+                    // unit in vector order.
+                    int covering=0,last=0;
+                    for (const auto& u:world->units_) if (u.alive() && !u.embarked()) {
+                        const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
+                        const int cx=int(c%size_t(width)),cz=int(c/size_t(width));
+                        if (cx>=ux && cx<ux+u.type->footX && cz>=uz && cz<uz+u.type->footZ) { ++covering;last=u.id; }
+                    }
+                    overlapped+=covering>1;
+                    if ((body ? body->id : 0)!=expected) same=false;
+                    if (last!=expected) legacy=false;
+                }
+                ++checks;legacyBad+=!legacy;
+                if (!same && bad++<5) std::printf("mismatch: scenario %d check %d\n",scenario,checks);
+            }
+        }
+        std::printf("World ground owners: %d checks over %d scenarios, %d overlapped cell samples, %d mismatches "
+                    "(last-in-vector-order rule: %d)\n",checks,scenario,overlapped,bad,legacyBad);
+        return bad || !legacyBad ? 1 : 0;
+    }
 };
 }
 
@@ -610,6 +681,7 @@ void frame(FILE* output, const tak::sim::World& world) {
 int main(int argc, char** argv) {
     using namespace tak;
     using namespace tak::sim;
+    if (argc==3 && std::string(argv[1])=="--ground-owner") return RetailReplayProbe::groundOwner(argv[2]);
     if (argc==7 && std::string(argv[2])=="--crowd-movement") {
         auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
         TypeRegistry registry;setupRegistry(registry,vfs,std::stoi(argv[4])!=0);

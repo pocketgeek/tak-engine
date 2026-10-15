@@ -93,8 +93,11 @@ struct RetailReplayProbe {
         UnitType gate;gate.maxVel=Fixed();gate.gate=true;gate.onOffable=true;
         gate.footX=gate.footZ=2;gate.yardMap="cccc";
         UnitType body;body.maxVel=hasMover ? Fixed::fromInt(1) : Fixed();body.footX=body.footZ=size;
-        const int id=world.spawn(&gate,104,104);
+        // The body came while the passage was open and a gate cannot close
+        // on a held cell (507ae0), so the body holds the ground word where
+        // they overlap (5066f0): place it first.
         const int other=world.spawn(&body,float((6+dx)*16+(size-1)*8),float((6+dz)*16+(size-1)*8),{},sameOwner?0:1);
+        const int id=world.spawn(&gate,104,104);
         world.unit(other)->speed=Fixed::raw(moving?1:0);
         if (!allocated) world.unit(other)->deadFor=0;
         world.unit(id)->active=active;

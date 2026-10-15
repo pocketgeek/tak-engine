@@ -224,6 +224,59 @@ int main() {
         check(w.cellScore(&mover,10,10,self)==(structureFirst ? 0 : 2),
               "mixed blockers retain ascending-ID precedence over cell order");
     }
+    // Retail's ground word +0 (tools/re/check_ground_owner.py replays random
+    // event sequences against the original routines). A body placed over a
+    // live holder leaves it the cell (5066f0): of two identical bodies stamped
+    // 1 then 2, retail's 507d10 lets 1 step east and refuses 2.
+    {
+        auto flat=[](World& w) {
+            w.setVisPlayer(-1);
+            w.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
+            w.setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
+        };
+        UnitType body=soldier();
+        {
+            World w;flat(w);
+            const int a=w.spawn(&body,96,96),b=w.spawn(&body,96,96);
+            check(w.mobilePlacement(*w.unit(a),6,5,false) && !w.mobilePlacement(*w.unit(b),6,5,false),
+                  "the first body stamped keeps an overlapped cell (5066f0/507d10)");
+        }
+        // A holder that leaves hands its cells to the bodies it refused
+        // (506aa0 -> 5097f0 -> 5062d0): within one sector the newest link
+        // first, here the later of two bodies stacked on it.
+        {
+            World w;flat(w);
+            const int holder=w.spawn(&body,176,176),first=w.spawn(&body,176,176),second=w.spawn(&body,176,176);
+            w.commitGroundStep(*w.unit(holder),Fixed::fromInt(32),Fixed());
+            check(footprintOrigin(w.unit(holder)->x,2)==12 && w.mobilePlacement(*w.unit(second),10,10,false) &&
+                  !w.mobilePlacement(*w.unit(first),10,10,false),
+                  "a leaving holder's cell goes to the newest-linked refused body");
+        }
+        // Across sectors 5097f0 walks column by column: the body in sector
+        // (0,1) claims the shared cell before the later-spawned one in (1,0).
+        {
+            World w;flat(w);
+            const int holder=w.spawn(&body,128,128);   // cells 7-8 x 7-8
+            const int west=w.spawn(&body,112,128);     // 6-7 x 7-8, sector (0,1)
+            const int north=w.spawn(&body,128,112);    // 7-8 x 6-7, sector (1,0)
+            w.commitGroundStep(*w.unit(holder),Fixed::fromInt(32),Fixed());
+            check(footprintOrigin(w.unit(holder)->x,2)==9 && w.mobilePlacement(*w.unit(west),6,7,false) &&
+                  !w.mobilePlacement(*w.unit(north),7,6,false),
+                  "refused bodies are restamped in sector order");
+        }
+        // Search grades read the same holder: a parked mobile body stamped
+        // before a structure over it grades the cell as the mobile (2).
+        {
+            World w;flat(w);
+            UnitType mover=soldier(),mobile=soldier(),structure=soldier();
+            mobile.footX=mobile.footZ=structure.footX=structure.footZ=1;
+            structure.maxVel=Fixed();
+            w.spawn(&mobile,168,168);
+            w.spawn(&structure,168,168);
+            const int self=w.spawn(&mover,64,64);
+            check(w.cellScore(&mover,10,10,self)==2,"search grades take the ground word's holder");
+        }
+    }
     // A plane's first build takes box minima instead of rating every cell's
     // footprint and ring one by one. It must give the per-cell reference's
     // cells and checksum exactly: slopes, water, features, edges, structures,
@@ -253,7 +306,7 @@ int main() {
         w.spawn(&house,520.f,520.f,0,0);
         w.spawn(&gate,328.f,600.f,0,0);
         // A yard with open cells, and bodies stacked on structures in both
-        // orders: the cell keeps the later unit, whatever its grade.
+        // orders: the cell keeps the body stamped first, whatever its grade.
         UnitType yard=house;yard.yardMap="o..o";
         w.spawn(&yard,712.f,520.f,0,0);
         w.spawn(&body,712.f,520.f,0,0);

@@ -955,6 +955,7 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
         it->second.state().startArguments(*type->script(),type->script()->scriptIndex("SetMaxReloadTime"),
                                        {uint32_t(type->maxWeaponReloadMs),0,0,0},1);
     }
+    groundStamp(*unit(u.id));   // 5122d9: creation places the body
     return u.id;
 }
 
@@ -1152,7 +1153,10 @@ void World::commitGroundStep(Unit& u,Fixed dx,Fixed dz,bool strictDiagonal) {
             for (int z=nz;z<nz+fz;++z) for (int x=nx;x<nx+fx;++x)
                 if (x>=0 && z>=0 && x<occW_ && z<occH_) setOccupant(size_t(z)*occW_+x,u.id);
         }
+        // 4dafd2..4db001: unstamp, commit the new cell, stamp.
+        groundUnstamp(u);
         u.x=px;u.z=pz;
+        groundStamp(u);
     } else {
         u.bodyBlockStreak=std::min(u.bodyBlockStreak+1,2);
         const bool repeated=u.bodyBlockStreak>=2;
@@ -1253,6 +1257,7 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
     heights_ = heights;   // keep raw heights for fog line-of-sight
     hW_ = w; hH_ = h;
     airOccupancy_.reset(w,h);
+    groundRebuild();
     for (auto& u:units_) u.airOccupant={};
     explorationHeights_=retailExplorationHeights(w,h,uint8_t(seaLevel),
         [&](int x,int z){return heights_[size_t(z)*w+x];});
@@ -2092,7 +2097,7 @@ void World::tickFlightMovement(Unit& u, bool persistent) {
         const auto* target=unit(order.targetId);
         if (target && fxLen(target->x-u.x,target->z-u.z)<=Fixed::fromInt(70)) { holdFlight(u); return; }
     }
-    u.flightGroundMode=2;
+    if (u.flightGroundMode!=2) { u.flightGroundMode=2;groundMove(u); }   // 51b3b0: taking off unstamps
     const int cruise=flightGround(u)+u.type->cruiseAlt;
     if (!order.flightGoal) {
         RetailFlightGoal goal;
@@ -2165,7 +2170,7 @@ void World::tickFlightMovement(Unit& u, bool persistent) {
 void World::tickRetainedFlightMovement(Unit& u) {
     if (!u.retainedFlightGoal) return;
     auto& goal=*u.retainedFlightGoal;
-    u.flightGroundMode=2;
+    if (u.flightGroundMode!=2) { u.flightGroundMode=2;groundMove(u); }   // 51b3b0: taking off unstamps
     const int cruise=flightGround(u)+u.type->cruiseAlt;
     const RetailFlightVector position{u.x.v,u.flightY.v,u.z.v};
     const bool arrived=u.retainedFlightControllerActive && goal.accepts(position);
@@ -2439,7 +2444,7 @@ bool World::tickLegionLift(Unit& u) {
         }
         notifyUnitScript(u,"BeginFlight");
         u.standbyActive=false;
-        u.flightGroundMode=2;
+        if (u.flightGroundMode!=2) { u.flightGroundMode=2;groundMove(u); }   // 51b3b0: taking off unstamps
     }
     const int cruise=flightGround(u)+u.type->cruiseAlt;
     const RetailFlightGoal goal{{u.legionLiftX.v,Fixed::fromInt(std::min(cruise,511)).v,u.legionLiftZ.v}};
@@ -3282,7 +3287,11 @@ void World::tickGroundMission(Unit& u) {
                     u.type->bankScale.v,u.type->pitchScale.v,8155);
                 u.groundRoll=attitude[0];u.groundPitch=attitude[1];
             }
-            u.flightGroundMode=1;u.flightVelocity={};u.speed=Fixed();
+            if(u.flightGroundMode!=1) {
+                u.flightGroundMode=1;
+                w.groundMove(u);   // 51b3b0's mode change stamps the landed body
+            }
+            u.flightVelocity={};u.speed=Fixed();
         }
         void install(RetailFlightGoal goal) {
             std::erase_if(u.orders,[](const Order& o){return o.landing;});
@@ -3973,6 +3982,7 @@ bool World::tickTransport(Unit& u, float dt) {
             // Pickup bypasses tickCombat, so its usual target-clear path has
             // not run. Publish the same callback to the display as well.
             if(passenger->scriptAimTarget)clearScriptWeaponTarget(*passenger);
+            groundRemove(*passenger);   // World keeps cargo off the ground word
             passenger->inTransport=u.id;
             u.cargo.push_back(passenger->id);
             passenger->orders.clear();passenger->speed=Fixed();
@@ -4230,6 +4240,7 @@ bool World::tickTransport(Unit& u, float dt) {
     c->x=o.transportX;c->z=o.transportZ;c->inTransport=0;
     c->groundY=surfaceHeight(*c,tickCounter_,&c->groundPitch,&c->groundRoll);
     updateBodyIndex(*c);refreshMovingSearchBody(*c);
+    groundStamp(*c);
     rebuildOccupancy();
     std::erase(u.cargo,id);
     {
@@ -6612,7 +6623,8 @@ void World::updateBodyIndex(const Unit& u) const {
     if (bounds==bodyTileBounds_[index]) return;
     bodyTileBounds_[index]=bounds;
     // Leave old memberships until the next tick. They are harmless false
-    // positives; stamping retains the last eligible unit in vector order.
+    // positives; a cell keeps its ground-word holder, else the last eligible
+    // unit in vector order.
     for (int tz=bounds[1];tz<bounds[3];++tz)
         for (int tx=bounds[0];tx<bounds[2];++tx) {
             const size_t tile=size_t(tz)*bodyTilesW_+tx;
@@ -6620,6 +6632,145 @@ void World::updateBodyIndex(const Unit& u) const {
             if(bucket.empty())bodyUsedTiles_.push_back(tile);
             bucket.push_back(int(index));
         }
+}
+
+// ---- Retail's ground word +0 (5066f0 / 506aa0 / 5062d0) -------------------
+// A placement event stamps a body's footprint into the cells it may hold
+// (5066f0, after 506aa0 for a move). A cell whose holder is live stays with
+// the holder: the holder gains +0x130 bit 0x400000 (it refused someone) and
+// the newcomer 0x800000 (it was refused). That is retail's rule for owner
+// kinds 1 and 2, this machine's human and AI. A remote player's body (kind 3)
+// is overwritten instead; World simulates every seat locally, so no seat is
+// kind 3 and that branch is not ported. A body that leaves (506aa0) clears
+// only the cells it holds, and if it refused anyone, every refused body over
+// its old rectangle is restamped (5065b0 -> 5097f0 -> 5062d0), in sector-list
+// order, before the leaver stamps its new cells.
+bool World::groundHolderLive(int id) const {
+    const Unit* u=id>0 ? unit(id) : nullptr;
+    return u && u->alive() && !u->embarked();
+}
+
+// The structure branch's yard mask (5066f0's bit 2 open / bit 4 closed). The
+// shipped yard characters . c C o S w decode as: '.' never; c and C only while
+// the yard is closed; o, S, w always. An unparsed yardmap blocks everywhere.
+bool World::groundStampsCell(const Unit& u,int dx,int dz) const {
+    const auto& type=*u.type;
+    if (!type.isStructure() || type.yardMap.empty()) return true;
+    const char yard=type.yardMap.at(size_t(dz)*type.footX+dx);
+    if (yard=='.') return false;
+    if (yard!='c' && yard!='C') return true;
+    return !(size_t(u.id)<scriptYardById_.size() && scriptYardById_[size_t(u.id)]);
+}
+
+// One cell of 5066f0/5062d0: a live holder keeps it, else the body takes it.
+bool World::groundClaimCell(Unit& u,size_t cell) {
+    int32_t& holder=groundOwner_[cell];
+    if (holder && groundHolderLive(holder)) {
+        unit(holder)->ground.flags|=Unit::GroundStamp::kRefusing;
+        u.ground.flags|=Unit::GroundStamp::kRefused;
+        return false;
+    }
+    holder=u.id;
+    return true;
+}
+
+void World::groundStamp(Unit& u) {
+    if (groundOwner_.empty() || !u.type || !u.alive() || u.embarked()) return;
+    auto& g=u.ground;
+    const int fx=u.type->footX,fz=u.type->footZ;
+    const int x0=footprintOrigin(u.x,fx),z0=footprintOrigin(u.z,fz);
+    g.x=int16_t(x0);g.z=int16_t(z0);g.fx=uint8_t(fx);g.fz=uint8_t(fz);
+    // 506650 relinks the body when its sector changes: off the map (any edge
+    // the footprint reaches, 506725..506760) or position >> 23 on each axis.
+    if (x0<0 || z0<0 || x0+fx>=hW_ || z0+fz>=hH_) {
+        if (!(g.flags&Unit::GroundStamp::kOffMap) || !(g.flags&Unit::GroundStamp::kLinked)) g.link=++groundLinkSerial_;
+        g.flags|=Unit::GroundStamp::kLinked|Unit::GroundStamp::kOffMap;
+        return;
+    }
+    const int sx=u.x.v>>23,sz=u.z.v>>23;
+    if (!(g.flags&Unit::GroundStamp::kLinked) || (g.flags&Unit::GroundStamp::kOffMap) || sx!=g.sectorX || sz!=g.sectorZ) {
+        g.sectorX=int16_t(sx);g.sectorZ=int16_t(sz);g.link=++groundLinkSerial_;
+    }
+    g.flags=uint8_t((g.flags|Unit::GroundStamp::kLinked)&~Unit::GroundStamp::kOffMap);
+    const bool structure=u.type->isStructure();
+    // A mobile body is stamped only while landed (+0x130 & 3 == 1).
+    if (!structure && u.type->canFly && u.flightGroundMode!=1) return;
+    for (int dz=0;dz<fz;++dz) for (int dx=0;dx<fx;++dx)
+        if (!structure || groundStampsCell(u,dx,dz)) groundClaimCell(u,size_t(z0+dz)*hW_+x0+dx);
+}
+
+void World::groundUnstamp(Unit& u) {
+    if (groundOwner_.empty()) return;
+    auto& g=u.ground;
+    if ((g.flags&Unit::GroundStamp::kLinked) && !(g.flags&Unit::GroundStamp::kOffMap))
+        for (int z=g.z;z<g.z+g.fz;++z) for (int x=g.x;x<g.x+g.fx;++x) {
+            if (x<0 || z<0 || x>=hW_ || z>=hH_) continue;
+            auto& holder=groundOwner_[size_t(z)*hW_+x];
+            if (holder==u.id) holder=0;
+        }
+    g.flags&=uint8_t(~Unit::GroundStamp::kRefused);
+    if (g.flags&Unit::GroundStamp::kRefusing) {
+        g.flags&=uint8_t(~Unit::GroundStamp::kRefusing);
+        groundRestampRect(g.x,g.z,g.fx,g.fz);
+    }
+}
+
+void World::groundRemove(Unit& u) {
+    groundUnstamp(u);
+    u.ground.flags&=uint8_t(~(Unit::GroundStamp::kLinked|Unit::GroundStamp::kOffMap));
+}
+
+// 5062d0: a refused body claims what has come free, and a structure lets go
+// of the yard cells its yard state no longer stamps. A cell the body already
+// holds counts as a live holder, so it marks itself both ways (5063b2).
+void World::groundRestamp(Unit& u) {
+    auto& g=u.ground;
+    if (!(g.flags&Unit::GroundStamp::kRefused)) return;
+    g.flags&=uint8_t(~Unit::GroundStamp::kRefused);
+    const bool structure=u.type->isStructure();
+    if (!structure && u.type->canFly && u.flightGroundMode!=1) return;
+    for (int dz=0;dz<g.fz;++dz) for (int dx=0;dx<g.fx;++dx) {
+        const int x=g.x+dx,z=g.z+dz;
+        if (x<0 || z<0 || x>=hW_ || z>=hH_) continue;
+        const size_t cell=size_t(z)*hW_+x;
+        if (!structure || groundStampsCell(u,dx,dz)) groundClaimCell(u,cell);
+        else if (groundOwner_[cell]==u.id) groundOwner_[cell]=0;
+    }
+}
+
+// 5097f0 with the 5062d0 visitor: sectors column by column from one before
+// the rectangle's to one after, each list newest link first, every body whose
+// stamped rectangle overlaps. Only refused bodies act, and a restamp can mark
+// no other body refused, so the refused set is fixed up front.
+void World::groundRestampRect(int x,int z,int w,int h) {
+    const int sx0=(int16_t(x)>>3)-1,sx1=((int16_t(x)+int16_t(w))>>3)+1;
+    const int sz0=(int16_t(z)>>3)-1,sz1=((int16_t(z)+int16_t(h))>>3)+1;
+    const int sectorsW=(hW_+7)/8,sectorsH=(hH_+7)/8;
+    std::vector<Unit*> refused;
+    for (auto& u:units_) {
+        const auto& g=u.ground;
+        if (!(g.flags&Unit::GroundStamp::kRefused) || !(g.flags&Unit::GroundStamp::kLinked) ||
+            (g.flags&Unit::GroundStamp::kOffMap)) continue;
+        if (g.sectorX<sx0 || g.sectorX>sx1 || g.sectorZ<sz0 || g.sectorZ>sz1 ||
+            unsigned(g.sectorX)>=unsigned(sectorsW) || unsigned(g.sectorZ)>=unsigned(sectorsH)) continue;
+        if (!(x<g.x+g.fx && x+w>g.x && z<g.z+g.fz && z+h>g.z)) continue;
+        refused.push_back(&u);
+    }
+    std::sort(refused.begin(),refused.end(),[](const Unit* a,const Unit* b) {
+        const auto& p=a->ground; const auto& q=b->ground;
+        if (p.sectorX!=q.sectorX) return p.sectorX<q.sectorX;
+        if (p.sectorZ!=q.sectorZ) return p.sectorZ<q.sectorZ;
+        return p.link>q.link;
+    });
+    for (Unit* u:refused) groundRestamp(*u);
+}
+
+// A fresh grid (new terrain): every placed body stamped again in unit order.
+void World::groundRebuild() {
+    groundOwner_.assign(hW_>0 && hH_>0 ? size_t(hW_)*hH_ : 0,0);
+    groundLinkSerial_=0;
+    for (auto& u:units_) u.ground={};
+    for (auto& u:units_) groundStamp(u);
 }
 
 World::SearchBodyRect World::searchBodyRect(int x,int z,int w,int h,int ignoreId) const {
@@ -6640,10 +6791,14 @@ World::SearchBodyRect World::searchBodyRect(int x,int z,int w,int h,int ignoreId
                     if (script!=unitScripts_.end() && script->second.yardOpen) continue;
                 }
             }
-            // Bucket visits need not follow unit order. Retain the last unit
-            // in the original vector, exactly as the full scan does.
+            // The ground word's holder, when it covers the cell. Otherwise
+            // (no event stamped it: a body moved outside the events, or one
+            // retail keeps off the word at the map edge) the last covering
+            // unit in vector order, whatever order the buckets are visited in.
             auto& occupant=result.cells[size_t(cz-z)*w+cx-x];
-            if (!occupant || occupant<&u) occupant=&u;
+            const int holder=groundOwner_.empty() || cx<0 || cz<0 || cx>=hW_ || cz>=hH_ ? 0
+                : groundOwner_[size_t(cz)*hW_+cx];
+            if (!occupant || u.id==holder || (occupant->id!=holder && occupant<&u)) occupant=&u;
         }
     };
     if (bodyIndexEnabled_ && hW_>0 && hH_>0 && x>=0 && z>=0 && x+w<=hW_ && z+h<=hH_) {
@@ -6965,9 +7120,10 @@ void World::buildSearchPlane(SearchGradePlane& plane) {
     std::vector<uint8_t> cell(size_t(width)*height);
     for (int cz=0;cz<height;++cz) for (int cx=0;cx<width;++cx)
         cell[size_t(cz)*width+cx]=uint8_t(searchCellGrade(nav,cx,cz,hasMapCells));
-    // searchBodyRect keeps the last eligible unit in vector order on a cell,
-    // so stamping in that order and overwriting leaves the same body's grade.
-    std::vector<uint8_t> body(cell.size(),0xff);
+    // searchBodyRect keeps the ground word's holder on a cell, else the last
+    // eligible unit in vector order: stamping in that order, overwriting all
+    // but a holder's value, leaves the same body's grade.
+    std::vector<uint8_t> body(cell.size(),0xff),held(groundOwner_.empty() ? 0 : cell.size(),0);
     bool anyBody=false;
     TAK_PASS();
     for (const auto& u:units_) {
@@ -6995,7 +7151,12 @@ void World::buildSearchPlane(SearchGradePlane& plane) {
                 // specially before the ordinary stationary-body rejection.
                 if (gate && (yard=='c' || yard=='C')) value=3;
             }
-            body[size_t(cz)*width+cx]=value;
+            const size_t index=size_t(cz)*width+cx;
+            if (!held.empty()) {
+                if (held[index]) continue;
+                held[index]=groundOwner_[index]==u.id;
+            }
+            body[index]=value;
             anyBody=true;
         }
     }
@@ -7784,6 +7945,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
         replacement=Unit::LodestoneReplacement{replacing->type,replacing->x,replacing->z,replacing->heading};
         Unit* old=unit(replacing->id);
         blockFoot(*old->type,old->x.toFloat(),old->z.toFloat(),false);
+        groundRemove(*old);
         old->deadFor=kRetiredTicks; // consumed, not killed: no wreck, death sound or kill credit
         old->orders.clear();
         --players_[size_t(old->player)].unitCount;
@@ -8026,7 +8188,7 @@ bool World::prepareBuildApproach(Unit& u) {
                 script->second.activated=true;notifyUnitScript(u,"Activate");
             }
             notifyUnitScript(u,"BeginFlight");
-            u.flightGroundMode=2;
+            if (u.flightGroundMode!=2) { u.flightGroundMode=2;groundMove(u); }   // 51b3b0: taking off unstamps
             goal.x=goal.buildX;goal.z=goal.buildZ;
             goal.flightGoal=RetailFlightGoal{{goal.x.v,0,goal.z.v},0x30,0,
                 int16_t(uint16_t(u.type->buildDist)*2)};
@@ -8099,6 +8261,7 @@ void World::cancelBuilds(int builderId) {
                 blockFoot(*site->type, site->x.toFloat(), site->z.toFloat(), false);
             }
             site->underConstruction = false;
+            groundRemove(*site);
             site->deadFor = kRetiredTicks;   // fully gone (painter skips the corpse window)
         }
         b->buildSiteId = 0;
@@ -9124,7 +9287,7 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (u.orders.empty() || u.orders.front().targetId!=target.id) { tickFlightBody(u); notifyFlightOccupancy(u); return; }
     auto& order=u.orders.front();
-    u.flightGroundMode=2;
+    if (u.flightGroundMode!=2) { u.flightGroundMode=2;groundMove(u); }   // 51b3b0: taking off unstamps
     // The mission's controllers are the navigator's destination now; a move's
     // coast (retainedFlightGoal) must not resume once the attack ends.
     u.retainedFlightGoal.reset();u.retainedFlightControllerActive=false;
@@ -9211,6 +9374,7 @@ void World::tickConstruction(Unit& b, float dt) {
                     blockFoot(*site->type, site->x.toFloat(), site->z.toFloat(), false);
                 }
                 site->underConstruction = false;
+                groundRemove(*site);
                 site->deadFor = kRetiredTicks;
             }
             b.buildSiteId = 0;
@@ -9282,6 +9446,7 @@ void World::decayConstruction(Unit& u, float dt) {
         blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
     }
     u.underConstruction = false;
+    groundRemove(u);
     u.deadFor = kRetiredTicks;   // fully gone, no death anim
 }
 
@@ -10572,6 +10737,10 @@ struct World::ScriptHost {
             if (!occupied) {
                 factory.yardOpen=(value&1)!=0;
                 world.scriptYardById_[size_t(unit.id)]=factory.yardOpen;
+                // 507c70: mark the structure refused and restamp it, which
+                // claims the newly stamped yard cells and frees the others.
+                unit.ground.flags|=Unit::GroundStamp::kRefused;
+                world.groundRestamp(unit);
                 // 507c70 restamps the yard, then 4e1e20 refreshes every
                 // movement-class cache, including its clearance border.
                 for (auto& plane:world.searchGrades_)
@@ -11406,6 +11575,7 @@ void World::tickProduction(Unit& u, float dt) {
         const int siteId=spawn(t,spawnX.toFloat(),spawnZ.toFloat(),std::nullopt,player);
         site=unit(siteId);
         site->x=site->homeX=spawnX; site->z=site->homeZ=spawnZ; site->flightY=spawnY; updateBodyIndex(*site);
+        groundMove(*site);
         site->flightSectorX=spawnX.v>>23;site->flightSectorZ=spawnZ.v>>23;
         site->underConstruction=site->buildBegun=true;
         site->hp=Fixed::fromFloat(t->maxHp*0.05f);
@@ -12967,6 +13137,8 @@ void World::tick(float dt) {
             // dead unit's entries can never match anything again -- they would simply
             // accumulate for the rest of the match.
             retireAirOccupant(u);
+            // 5066a0 (World retires a body from the ground word at death).
+            groundRemove(u);
             u.deadFor = 0; u.orders.clear(); u.speed = Fixed();
             noteOrders(u.id);
             // Refresh the old body before a corpse offset moves the record.
