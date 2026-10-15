@@ -698,6 +698,16 @@
                 transportEffectQueue_.push_back(event);
             }
         }
+        if (!world_.scriptSounds().empty()) {
+            std::lock_guard<std::mutex> lock(hitQueueMutex_);
+            for (const auto& sound:world_.scriptSounds()) {
+                const auto* script=sound.type ? sound.type->script() : nullptr;
+                if (!script) continue;
+                if (unitSoundQueue_.size() >= kMaxPendingHits) unitSoundQueue_.pop_front();
+                unitSoundQueue_.push_back({sound.tick,sound.unitId,sound.player,sound.x.toFloat(),
+                    sound.z.toFloat(),sound.flags,script->name(uint32_t(sound.name))});
+            }
+        }
     }
 
     // One unit's render record (WE S5b: runs on capturePool_, so it may touch only its own
@@ -1071,6 +1081,27 @@
             // low-three-bit priority. SoundBank enforces the 0/1 free-voice gate.
             if(!name.empty())sounds_.play(name,1.f,1.f,tak::retailSoundPriority(request.flags),false);
         }
+        // Death sounds as the simulation's dying VMs played them (World::ScriptSound),
+        // so every peer, replay and spectator hears the cry the shared game stream chose.
+        // The native unit sound host 50def0 gates each one at its own position.
+        std::vector<QueuedUnitSound> unitSounds;
+        {
+            std::lock_guard<std::mutex> lock(hitQueueMutex_);
+            while(!unitSoundQueue_.empty() &&
+                  int32_t(front().gameTick-unitSoundQueue_.front().tick)>=0) {
+                unitSounds.push_back(std::move(unitSoundQueue_.front()));
+                unitSoundQueue_.pop_front();
+            }
+        }
+        for(const auto& sound:unitSounds) {
+            if(sound.name.empty() || !tak::unitSoundCurrent(front().gameTick,sound.tick)) continue;
+            const bool visible=noFog_ || cellVisibleR(sound.x,sound.z);
+            const bool selected=std::find(selection_.begin(),selection_.end(),sound.unitId)!=selection_.end();
+            if(!tak::retailUnitSoundAudible(sound.flags,visible,selected)) continue;
+            const int priority=tak::retailSoundPriority(sound.flags);
+            if(priority==7) sounds_.play(sound.name,1.f,1.f,priority,(sound.flags&32)!=0);
+            else sounds_.playWorld(sound.name,sound.x,sound.z,priority);
+        }
         // Drained, not gated on newTick_: the whole point is to pick up impacts
         // from ticks whose snapshots the render never saw.
         // Released by the displayed tick, like the other tick-stamped queues below.
@@ -1399,7 +1430,10 @@
                         if (!a.vm->start("Dying", {dtype})) a.ownerVmStopRequested=true;
                     }
                     // Death audio belongs to Killed/Dying, including deliberately
-                    // silent branches. Do not invent a cry from a filename.
+                    // silent branches. Do not invent a cry from a filename. The
+                    // simulation runs these callbacks too, drawing RAND from the
+                    // shared game stream: unitSoundQueue_ plays its sounds, and
+                    // onPlaySound drops this VM's from here on.
                     // Killed/Dying own death pieces and emitted effects. Units
                     // with EXPLODEAS also produce their authored weapon impact
                     // through the simulation. Do not add a generic body blast.
@@ -2182,11 +2216,11 @@
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             a.vm->enableRetailAnimation();
             {
-                // Every display VM used to start from the same RAND seed, so a
-                // body whose first roll is its death cry always rolled alike:
-                // RAND(1,4)==1 cries (creshoc, araarch, tararch) never sounded
-                // and three-way cries always chose one wav. This VM is never
-                // hashed; a per-unit stream restores the authored odds.
+                // Every display VM used to start from the same RAND seed, so
+                // bodies of a type rolled one display-only sequence (idle loops,
+                // smoke). Death sounds are the simulation's now
+                // (unitSoundQueue_); this VM is never hashed, and a per-unit
+                // stream keeps its remaining rolls apart.
                 uint64_t h=uint64_t(uint32_t(id))+0x9e3779b97f4a7c15ull;
                 h=(h^(h>>30))*0xbf58476d1ce4e5b9ull;h=(h^(h>>27))*0x94d049bb133111ebull;
                 a.vm->seedRandom(uint32_t(h^(h>>31)));
@@ -2274,8 +2308,11 @@
                 }
                 buf->push_back({piece, sfx});
             };
-            st.vm->onPlaySound = [buf = &st.pendingSnd](int32_t idx,int32_t flags) {
-                buf->emplace_back(idx,flags);
+            st.vm->onPlaySound = [state = &st](int32_t idx,int32_t flags) {
+                // Once dying (Killed, Dying and every thread still running), the
+                // sounds are the simulation's: its VM rolled them from the shared
+                // game stream (unitSoundQueue_). This VM's local RAND would differ.
+                if (!state->dying) state->pendingSnd.emplace_back(idx,flags);
             };
             st.vm->onSetUnitValue = [state=&st](int32_t valueId,int32_t) {
                 if(tak::retailOwnerVmStopsOnSetUnitValue(valueId)) {

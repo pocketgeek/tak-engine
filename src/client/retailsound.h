@@ -33,4 +33,11 @@ constexpr bool retailUnitSoundAudible(int32_t flags,bool visible,bool selected) 
     const int priority=retailSoundPriority(flags);
     return priority==7 || (visible && (priority>1 || selected));
 }
+// Not a retail rule: a simulation unit sound released this far behind its own
+// tick belongs to a backlog the presentation skipped (a rejoin or spectator
+// catch-up, fast replay playback). Drop it rather than play the backlog at once.
+constexpr uint32_t kUnitSoundStaleTicks=15;
+constexpr bool unitSoundCurrent(uint32_t displayedTick,uint32_t soundTick) {
+    return displayedTick-soundTick<=kUnitSoundStaleTicks;
+}
 } // namespace tak

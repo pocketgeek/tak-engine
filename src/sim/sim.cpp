@@ -10457,7 +10457,13 @@ struct World::ScriptHost {
             unit.groundPitch,unit.groundRoll);
         world.scriptEmissions_.push_back({world.tickCounter_,unit.id,unit.player,piece,code,position});
     }
-    uint32_t sound(int,int32_t) { return 0; } // audio remains client-owned
+    uint32_t sound(int name,int32_t flags) {
+        // Audio remains client-owned; a dying VM's sounds are presentation
+        // events (ScriptSound), in script order.
+        if(factory.dying)
+            world.scriptSounds_.push_back({world.tickCounter_,unit.id,unit.player,unit.x,unit.z,unit.type,name,flags});
+        return 0; // native unit sound host 50def0 always returns zero
+    }
 };
 
 void World::tickStraightProjectiles(std::span<const int> airGrid) {
@@ -11994,6 +12000,7 @@ void World::tick(float dt) {
     if (mission_ || scenario_) justDied_.clear();   // deaths this tick, fed to mission/scenario below
     transportEffects_.clear();
     scriptEmissions_.clear();
+    scriptSounds_.clear();
     hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
     // Economy: recompute income/storage, apply income.
     for (auto& tm : players_) { tm.income = 0; tm.storage = 0; }

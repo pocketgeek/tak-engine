@@ -159,3 +159,46 @@ Nonpositional UI/global sounds and background music retain their existing gain.
 `death_sound_test` checks actual PCM output at the boundary, successive offscreen
 distances, all four edges and a corner, camera movement, zoom, inaudible voice
 admission, a silent loop becoming audible, and nonpositional sound immunity.
+
+## The simulation's death cry — 2026-10-14
+
+Retail draws unit-script RAND from the one shared game stream, so the cry a dying
+unit's `Killed`/`Dying` picks is part of the game every peer runs. The client
+used to roll its own on the display VM, first from one seed shared by every VM,
+then from a per-unit seed. Either way two peers, a replay and a spectator could
+each hear a different cry, none of them necessarily the simulation's.
+
+The simulation now keeps every PLAY_SOUND made by a dying unit's VM (`Killed`,
+`Dying` and any thread still running in it) as `World::ScriptSound`: tick, unit,
+owner, position, name index and flags. Like the script emissions it is
+presentation only: not hashed, no RNG, cleared every tick, and the host still
+returns zero. The client captures the records after each tick, resolves the
+name, and plays each one when the displayed tick reaches it, through the same
+`50def0` gate as before: class 7 is global, classes 2-6 need the death position
+in the local player's sight, 0/1 also need the unit selected. Once a display VM's
+unit is dying it drops its own sounds, so nothing plays twice; its other sounds,
+death animation and effects are unchanged, and the per-unit seed stays for
+display-only rolls (idle loops, smoke). Frozen/petrified deaths, destroyed cargo
+and consumed lodestones run no death script in the simulation either, and stay
+silent. A cry released more than 15 ticks after its own tick (a rejoin or
+spectator catch-up, fast replay playback) is dropped instead of joining a burst.
+
+`creon_death_sound` kills 1,152 bodies (every Creon `Killed`/`Dying` caller plus
+two archers, normal and explosion deaths, own and enemy) through the combat
+damage path. Every death must request exactly the simulation's sounds in order,
+never two cries, at the authored rates and variants; enemy deaths out of sight
+are silent, and the queued cry replayed with every class shows only class 7
+carrying out of sight. A death the presentation reaches 10 ticks late still
+cries; 45 ticks late it does not. Petrified and frozen victims stand as statues
+in silence. `creon_death_sound_peers` (about 9 s) runs the game twice, the
+second time presenting every batch late as after a rejoin, and requires the same
+world hash and the same sounds for all 1,152 deaths. Before this change, with the
+same instruments: 340 deaths sounded something other than the simulation's
+choice, 207 deaths differed between the two peers (`crebeas`, `cretort`,
+`crefire`, `cregatl` and `cregod`: the units whose idle loops roll RAND on the
+display VM before the hit), and the 45-tick backlog cried 16 of 16.
+Leaving the display VM's sounds on as well doubled 541 deaths.
+
+No hashed state changed and no protocol bump: --mpai Inner Circle seed 1 Retail
+300 s `95b05c8290b55317`, 60 s `84fdef37bbb3606e`, Legion 60 s
+`55b0eec316e45071`; detmath golden `dcef618cd2e4d558`.

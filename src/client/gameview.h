@@ -576,6 +576,16 @@ public:
     uint8_t pendingMonarchAlerts_ = 0; // guarded by hitQueueMutex_; survives queue overflow
     tak::MonarchAlert monarchAlert_;
     std::deque<tak::sim::World::SoundReq> missionSoundQueue_;
+    // Death sounds the simulation's dying unit VMs played (World::ScriptSound), the name
+    // resolved at capture. Tick-stamped and released with the displayed tick, like hits.
+    struct QueuedUnitSound {
+        uint32_t tick = 0;
+        int unitId = 0, player = 0;
+        float x = 0, z = 0;
+        int32_t flags = 0;
+        std::string name;
+    };
+    std::deque<QueuedUnitSound> unitSoundQueue_; // guarded by hitQueueMutex_
     int frameWinningTeam() const { return front().winningTeam; }
     bool frameDiscoActive(int p) const { return p>=0 && p<8 && emoteTiming_[p].active(emoteNowMs_) && framePlayer(p).emoteDisco; }
     bool frameHeadbangActive(int p) const { return p>=0 && p<8 && emoteTiming_[p].active(emoteNowMs_) && !framePlayer(p).emoteDisco; }

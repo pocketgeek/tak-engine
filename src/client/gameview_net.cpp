@@ -76,6 +76,7 @@
         {
             std::lock_guard<std::mutex> lock(hitQueueMutex_);
             missionSoundQueue_.clear();
+            unitSoundQueue_.clear();
         }
         chatRecipients_=0xff;requestedManaSharing_.reset();
         giveUnitsMenu_=false;giveUnitsHots_.clear();

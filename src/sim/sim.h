@@ -1984,6 +1984,7 @@ public:
         pendingSounds_.clear();soundReq_={};
         transportEffects_.clear();
         scriptEmissions_.clear();
+        scriptSounds_.clear();
         features_.clear();
         burnSequence_ = 0;
         mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
@@ -2381,6 +2382,19 @@ public:
         uint16_t heading=0,pitch=0,roll=0;
     };
     const std::vector<ScriptEmission>& scriptEmissions() const { return scriptEmissions_; }
+    // PLAY_SOUND from a dying unit's VM: Killed, Dying and any thread still
+    // running in it. Its RAND draws the shared game stream, so this is the cry
+    // every peer, replay and spectator hears; the client plays these instead of
+    // its display VM's own death sounds. Presentation only, like the emissions:
+    // not hashed, no RNG, cleared every tick. `name` indexes type->script()->names.
+    struct ScriptSound {
+        uint32_t tick=0;
+        int unitId=0,player=0;
+        Fixed x,z;
+        const UnitType* type=nullptr;
+        int32_t name=0,flags=0;
+    };
+    const std::vector<ScriptSound>& scriptSounds() const { return scriptSounds_; }
 
 
     // A mission script asking for a camera shake (the ScreenShake map command).
@@ -3027,6 +3041,7 @@ private:
     std::vector<HitFx> hits_;
     std::vector<TransportFx> transportEffects_;
     std::vector<ScriptEmission> scriptEmissions_;
+    std::vector<ScriptSound> scriptSounds_;
     ShakeReq shakeReq_;
     bool noSeaLevelTrigger_ = false; // OTA: projectile/effect sea-surface bypass.
     int32_t ballisticGravityRaw_ = 8155; // retail default OTA gravity 112, in native 16.16/tick².
