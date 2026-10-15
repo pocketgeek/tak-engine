@@ -397,7 +397,7 @@ int cart::Editor::run() {
         drawHints();
 
         if(hooks.frameState)hooks.frameState({mapView.offX(),mapView.offY(),mapView.zoom(),int(tool),paletteScroll,paletteScrollBar().maxScroll(),
-            tool==UNITS?selectedType:tool==FEATURES?selectedFeat:tool==TERRAIN?selected:-1,int(modal)});
+            tool==UNITS?selectedType:tool==FEATURES?selectedFeat:tool==TERRAIN?selected:tool==BLOCKED?blockedBrush:-1,int(modal)});
         if(frameHook)frameHook(win,ren,frameNumber++);
         SDL_RenderPresent(ren);
         captureShot();

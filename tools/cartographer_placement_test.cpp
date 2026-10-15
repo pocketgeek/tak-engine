@@ -21,6 +21,10 @@
 //                         Area, terrain clipboard, resize crop/grow, overlays, Check
 //                         Map, Test Map's snapshot, cross-world paste, a generated
 //                         map's scatter and a dense field of 10k-58k features
+//   ... blocked           the BLOCKED tool on a New Map: overlay, click, brush sizes,
+//                         gap-free strokes past a feature, Shift+drag rectangle,
+//                         Erase, undo/redo, live symmetry, [ ] and B, save/reopen
+//                         with the minimaps unchanged
 //   ... smoke [world...]  every tool x mode, browser tab, category, terrain group,
 //                         faction, menu row (but Test Map) and shortcut, the
 //                         scripting buttons, regions list, Use Only, then Exit
@@ -113,8 +117,9 @@ void capture(const Input& in,const std::string& name) {
 }
 
 // Toolbar and canvas geometry, from the editor's own layout constants.
-void tool(const Input& in,Editor::Tool t) {in.click(96+int(t)*72+30,32);}
-void mode(const Input& in,Editor::EditMode m) {in.click(400+int(m)*64+30,32);}
+void tool(const Input& in,Editor::Tool t) {in.click(Editor::kToolX+int(t)*Editor::kToolW+30,32);}
+void mode(const Input& in,Editor::EditMode m) {in.click(Editor::kModeX+int(m)*Editor::kModeW+30,32);}
+void regions(const Input& in) {in.click(Editor::kRegionsX+Editor::kRegionsW/2,32);}
 SDL_Point cellScreen(const Editor& e,float wx,float wz) {   // floor: at 1/16 a cell is one pixel
     return {Editor::kPaletteW+int(std::floor((wx-e.mapView.offX())*e.mapView.zoom())),Editor::kMenuH+int(std::floor((wz-e.mapView.offY())*e.mapView.zoom()))};
 }
@@ -133,15 +138,15 @@ std::optional<SDL_Point> paletteRow(const Editor& e,int row) {
 // The browser must only ever list items of the current tool's source list.
 std::string browserProblem(const Editor& e) {
     const size_t count=e.tool==Editor::UNITS?e.unitTypes.size():e.tool==Editor::FEATURES?e.features.list().size():
-        e.tool==Editor::STARTS?e.scenario.starts.size():e.sections.list().size();
-    static const char* names[]={"TERRAIN","FEATURES","UNITS","STARTS"};
+        e.tool==Editor::STARTS?e.scenario.starts.size():e.tool==Editor::BLOCKED?cart::kBlockedBrushSizes.size():e.sections.list().size();
     for(const int i:e.paletteItems)if(i<0 || size_t(i)>=count)
-        return std::string(names[int(e.tool)])+" browser lists item "+std::to_string(i)+" of "+std::to_string(count);
+        return std::string(Editor::kToolNames[int(e.tool)])+" browser lists item "+std::to_string(i)+" of "+std::to_string(count);
     if(e.tool==Editor::TERRAIN)for(const auto& variants:e.paletteVariants)for(const int i:variants)if(i<0 || size_t(i)>=e.sections.list().size())   // only the terrain browser reads them
         return "terrain browser variant "+std::to_string(i)+" of "+std::to_string(e.sections.list().size());
     if(e.selected>=int(e.sections.list().size()))return "selected section out of range";
     if(e.selectedFeat>=int(e.features.list().size()))return "selected feature out of range";
     if(e.selectedType>=int(e.unitTypes.size()))return "selected unit type out of range";
+    if(e.blockedBrush<0 || e.blockedBrush>=int(cart::kBlockedBrushSizes.size()))return "blocked brush out of range";
     return {};
 }
 
@@ -226,7 +231,7 @@ bool startsCase(const std::string& data,const std::string& label,std::vector<std
             expect(e.tool==Editor::STARTS,"STARTS tool chosen");
             capture(in,"starts "+label);
             for(const auto from:{Editor::TERRAIN,Editor::FEATURES,Editor::UNITS}) {tool(in,from);tool(in,Editor::STARTS);}
-            for(int i=0;i<4;++i)in.key(SDLK_TAB);   // Tab cycles back round to STARTS
+            for(int i=0;i<Editor::kToolCount;++i)in.key(SDLK_TAB);   // Tab cycles back round to STARTS
             in.key(SDLK_l,KMOD_CTRL);in.key(SDLK_l,KMOD_CTRL);tool(in,Editor::STARTS);
             return true;
         case 3: {   // place a new start on an empty cell away from the others
@@ -808,7 +813,7 @@ bool slotSession(const std::string& data,const std::string& world,Tally& tally) 
             if(!check(matches() && e.modal==Editor::M_MESSAGE,label+": a ninth start is refused with a message (have "+std::to_string(starts.size())+")"))return false;
             ++tally.refused;in.key(SDLK_RETURN);
             // A region: the REGIONS canvas, Place mode, drag a box.
-            in.click(700,32);mode(in,Editor::MODE_PLACE);
+            regions(in);mode(in,Editor::MODE_PLACE);
             e.mapView.setZoom(0.5f);e.mapView.setOffset(0,0);
             region={"Region 1",30,40,49,52};
             const auto a=regionPoint(30,40),b=regionPoint(49,52);in.drag(a.x,a.y,b.x,b.y);phase=REGION;return true;
@@ -1514,6 +1519,178 @@ int featureOpsWorkflow(const std::string& data,std::vector<std::string> worlds) 
     return 0;
 }
 
+// ---- blocked cells: the BLOCKED tool -----------------------------------------
+
+// The terrain file inside a saved .kmp.
+std::optional<tak::tnt::Map> savedTerrain(const fs::path& kmp) {
+    try {
+        tak::hpi::Archive archive(kmp);
+        for(const auto& entry:archive.entries())
+            if(!entry.isDirectory && lowerText(entry.path).ends_with(".tnt"))return tak::tnt::Map::load(archive.read(entry),entry.path);
+    } catch(const std::exception&) {}
+    return std::nullopt;
+}
+
+// A flat Aramon map from the New Map dialog with one feature, then the BLOCKED
+// tool through the real input path: the overlay, a Place click, a 4x4 brush from
+// its browser row dragged across the feature in two motion events, a Shift+drag
+// rectangle, an Erase stroke, undo and redo of each, save/reopen (minimaps kept),
+// live symmetry, [ and ], and B / View > Show blocked cells.
+int blockedWorkflow(const std::string& data) {
+    const auto root=tempRoot("blocked");isolateProfile(root);
+    const std::string label="blocked cells";
+    Script s;BrowserPick pick;
+    tak::tnt::Map expected,beforePaint,reopenedMap;   // the expectation; the save made before painting; the reopened document
+    std::vector<std::vector<uint16_t>> states;        // the plane before painting and after each painting step
+    size_t featureCell=0;std::string featureName;int player=0;
+    auto expect=[&](bool ok,const std::string& what) {return check(ok,label+": "+what);};
+    auto same=[&](const Editor& e,const std::string& what) {
+        const auto d=planeDifference(e.mapView.map(),expected);
+        return expect(d.empty(),what+(d.empty()?"":": "+d));
+    };
+    auto kmp=[&](const Editor& e) {return fs::path(root)/(e.mapName+".kmp");};
+    const int brushes=int(cart::kBlockedBrushSizes.size());
+    s.then([&](Editor& e,const Input& in) {   // New Map: CREATE a flat Aramon map
+        if(!expect(e.modal==Editor::M_NEW,"New Map dialog opens"))return true;
+        const auto& worlds=e.kWorldOpts;
+        const int from=int(std::find(worlds.begin(),worlds.end(),e.mf[3])-worlds.begin());
+        const int to=int(std::find(worlds.begin(),worlds.end(),std::string("aramon"))-worlds.begin());
+        for(int i=0;i<3;++i)in.key(SDLK_TAB);
+        for(int i=0;i<(to-from+int(worlds.size()))%int(worlds.size());++i)in.key(SDLK_RIGHT);
+        in.key(SDLK_RETURN);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {   // one feature, by a browser pick and a click
+        if(!expect(e.modal==Editor::M_NONE && e.world=="aramon" && !e.features.list().empty(),"a new flat Aramon map with features"))return true;
+        const auto& plane=e.mapView.map().features;
+        expect(std::all_of(plane.begin(),plane.end(),[](uint16_t v){return v==0xFFFF;}),"a new flat map has no blocked cells");
+        featureName=e.features.list().front().name;tool(in,Editor::FEATURES);pick.search(in,0,featureName);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        const int clicked=pick.click(e,in);
+        if(!clicked)return false;
+        if(!expect(clicked>0,"the features browser lists '"+featureName+"'"))return true;
+        const auto p=overview(e,1,20,20);mode(in,Editor::MODE_PLACE);in.click(p.x,p.y);
+        featureCell=cellOf(e.mapView.map(),20,20);
+        in.key(SDLK_f,KMOD_CTRL);in.key(SDLK_BACKSPACE);in.key(SDLK_ESCAPE);   // the search would filter every browser
+        return true;
+    });
+    s.then([&](Editor& e,const Input& in) {   // save before painting: its minimaps are the reference
+        expect(nameAt(e.mapView.map(),featureCell)==featureName,"the feature is placed");
+        in.key(SDLK_s,KMOD_CTRL);in.key(SDLK_RETURN);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        const auto saved=savedTerrain(kmp(e));
+        if(!expect(saved && !saved->minimap.empty() && !saved->overview.empty(),"the map saves before painting"))return true;
+        beforePaint=*saved;expected=e.mapView.map();states={expected.features};
+        tool(in,Editor::BLOCKED);mode(in,Editor::MODE_PLACE);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {   // the overlay is on with the tool; a Place click
+        expect(e.tool==Editor::BLOCKED && e.editMode==Editor::MODE_PLACE,"the BLOCKED tool in Place mode");
+        expect(!e.preferences.showBlocked && e.blockedShown() && e.blockedTexture!=nullptr,"the blocked-cell overlay is on while the tool is chosen");
+        expect(int(e.paletteItems.size())==brushes && e.blockedBrush==0,"the browser lists the brush sizes, 1 x 1 chosen");
+        const auto p=overview(e,1,5,15);in.click(p.x,p.y);cart::applyBlockers(expected,5,15,5,15,cart::BlockOp::Paint);
+        return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        same(e,"a Place click blocks the cell under the pointer");states.push_back(expected.features);
+        expect(e.mapView.map().features[cellOf(e.mapView.map(),5,15)]==0xFFFC && e.blockedCount==1,"the cell holds the blocker marker, and is counted");
+        const auto row=paletteRow(e,2);
+        if(!expect(row.has_value(),"the 4 x 4 brush row is listed"))return true;
+        in.click(row->x,row->y);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {   // twenty cells in two motion events, across the feature
+        expect(e.blockedBrush==2,"a browser row chooses the 4 x 4 brush");
+        const auto a=overview(e,1,10,20),b=overview(e,1,30,20);in.drag(a.x,a.y,b.x,b.y);
+        cart::applyBlockerLine(expected,10,20,30,20,4,cart::BlockOp::Paint);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        same(e,"a 4 x 4 drag paints a gap-free band");states.push_back(expected.features);
+        expect(nameAt(e.mapView.map(),featureCell)==featureName,"painting leaves the feature in its cell");
+        const auto a=overview(e,1,5,26),b=overview(e,1,15,30);holdShift(true);in.drag(a.x,a.y,b.x,b.y);
+        cart::applyBlockers(expected,5,26,15,30,cart::BlockOp::Paint);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        holdShift(false);same(e,"Shift+drag fills the rectangle");states.push_back(expected.features);
+        const auto a=overview(e,1,12,20),b=overview(e,1,24,20);mode(in,Editor::MODE_ERASE);in.drag(a.x,a.y,b.x,b.y);
+        cart::applyBlockerLine(expected,12,20,24,20,4,cart::BlockOp::Erase);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        same(e,"an Erase drag clears blocked cells only");states.push_back(expected.features);
+        expect(nameAt(e.mapView.map(),featureCell)==featureName,"erasing leaves the feature in its cell");
+        in.key(SDLK_z,KMOD_CTRL);return true;
+    });
+    for(int step=3;step>=0;--step)s.then([&,step](Editor& e,const Input& in) {   // back through states 3..0, then forward again
+        expect(e.mapView.map().features==states[size_t(step)],"undo restores the blocked cells before step "+std::to_string(step+1));
+        if(step)in.key(SDLK_z,KMOD_CTRL);else in.key(SDLK_y,KMOD_CTRL);
+        return true;
+    });
+    for(int step=1;step<=4;++step)s.then([&,step](Editor& e,const Input& in) {
+        expect(e.mapView.map().features==states[size_t(step)],"redo repeats painting step "+std::to_string(step));
+        if(step<4)in.key(SDLK_y,KMOD_CTRL);else saveAndReopen(e,in,label,root);
+        return true;
+    });
+    s.then([&](Editor& e,const Input& in) {   // the round trip keeps the plane; blocked cells leave the minimaps alone
+        if(!reopened(e,label))return true;
+        same(e,"saved and reopened blocked cells");
+        const auto& map=e.mapView.map();
+        expect(map.minimap==beforePaint.minimap && map.overview==beforePaint.overview,"the saved minimaps match the save made before painting");
+        expect(!e.edited && e.tool==Editor::BLOCKED,"a reopened map is unedited");
+        reopenedMap=map;player=e.currentPlayer;
+        for(int i=0;i<brushes+1;++i)in.key(SDLK_RIGHTBRACKET);
+        return true;
+    });
+    s.then([&](Editor& e,const Input& in) {   // [ and ]: brush sizes, clamped, not the placement player
+        expect(e.blockedBrush==brushes-1 && e.currentPlayer==player,"] steps up to the largest brush and leaves the player");
+        for(int i=0;i<brushes+1;++i)in.key(SDLK_LEFTBRACKET);
+        return true;
+    });
+    s.then([&](Editor& e,const Input& in) {   // live symmetry: a click blocks the mirror cell too
+        expect(e.blockedBrush==0 && e.currentPlayer==player,"[ steps down to 1 x 1 and leaves the player");
+        in.key(SDLK_m);mode(in,Editor::MODE_PLACE);
+        const auto p=overview(e,1,3,33);in.click(p.x,p.y);in.key(SDLK_m);
+        const int width=e.mapView.map().width;
+        cart::applyBlockers(expected,3,33,3,33,cart::BlockOp::Paint);cart::applyBlockers(expected,width-1-3,33,width-1-3,33,cart::BlockOp::Paint);
+        return true;
+    });
+    s.then([&](Editor& e,const Input& in) {   // a blocked edit changes no tiles: the next save keeps the loaded minimaps
+        same(e,"live symmetry blocks the mirror cell");
+        expect(!e.liveSymmetry && !e.edited,"blocked cells do not mark the terrain edited");
+        in.key(SDLK_s,KMOD_CTRL);in.key(SDLK_RETURN);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        const auto saved=savedTerrain(kmp(e));
+        if(expect(saved.has_value(),"the painted map saves")) {
+            expect(saved->features==e.mapView.map().features,"the saved plane holds the new blocked cells");
+            expect(saved->minimap==reopenedMap.minimap && saved->overview==reopenedMap.overview,"the minimaps are saved unchanged");
+        }
+        in.key(SDLK_b);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {   // B: blocked cells with every tool, remembered
+        expect(e.preferences.showBlocked,"B shows blocked cells with every tool");
+        tool(in,Editor::TERRAIN);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        expect(e.tool==Editor::TERRAIN && e.blockedShown(),"the overlay stays with the Terrain tool");
+        std::ifstream file(fs::path(root)/"TAKengine"/"Cartographer"/"preferences.txt");const std::string text{std::istreambuf_iterator<char>(file),{}};
+        expect(text.find("blocked 1")!=std::string::npos,"the setting is saved with the editor preferences");
+        in.key(SDLK_b);return true;
+    });
+    s.then([&](Editor& e,const Input& in) {
+        expect(!e.preferences.showBlocked && !e.blockedShown(),"B again hides it outside the BLOCKED tool");
+        menu(in,2,19);return true;
+    });
+    s.then([&](Editor& e,const Input&) {
+        expect(e.preferences.showBlocked && e.blockedShown(),"View > Show blocked cells shows it");
+        return true;
+    });
+    const bool ran=drive({"cartographer","--data",data,"--out",root},[&](Editor& e,const Input& in){return s.frame(e,in);},300,label);
+    if(s.at<s.steps.size())check(false,label+": script stopped at step "+std::to_string(s.at)+" of "+std::to_string(s.steps.size()));
+    std::error_code ec;fs::remove_all(root,ec);
+    if(!ran || !failures.empty())return 1;
+    std::cout<<"PASS: the BLOCKED tool paints, erases, fills rectangles, undoes, mirrors and survives save/reopen with the minimaps unchanged\n";
+    return 0;
+}
+
 // ---- smoke: every browser tab, tool, mode, menu row and shortcut ---------------
 
 // Waits for background jobs, then closes whatever a step left open (a message
@@ -1543,7 +1720,7 @@ bool smokeSession(const std::string& data,const std::string& label,std::vector<s
     s.then(settle);
     s.then([&,canvas,rect,action](Editor& e,const Input&) {   // built here: menu rows and group counts come from the editor
         // Every tool with every mode: click, drag, right-drag pan, wheel zoom, undo.
-        for(int t=0;t<4;++t)for(int m=0;m<4;++m)action([=](Editor& e,const Input& in) {
+        for(int t=0;t<Editor::kToolCount;++t)for(int m=0;m<4;++m)action([=](Editor& e,const Input& in) {
             tool(in,Editor::Tool(t));mode(in,Editor::EditMode(m));
             const auto p=canvas(e);in.click(p.x,p.y);in.drag(p.x,p.y,p.x+40,p.y+24);
             in.button(SDL_MOUSEBUTTONDOWN,p.x,p.y,SDL_BUTTON_RIGHT,1);in.motion(p.x-30,p.y-20,SDL_BUTTON_RMASK);in.button(SDL_MOUSEBUTTONUP,p.x-30,p.y-20,SDL_BUTTON_RIGHT,1);
@@ -1551,11 +1728,11 @@ bool smokeSession(const std::string& data,const std::string& label,std::vector<s
             in.key(SDLK_z,KMOD_CTRL);
         });
         action([=](Editor& e,const Input& in) {   // the REGIONS canvas: draw, select, move
-            in.click(700,32);mode(in,Editor::MODE_PLACE);const auto p=canvas(e);in.drag(p.x,p.y,p.x+50,p.y+30);
+            regions(in);mode(in,Editor::MODE_PLACE);const auto p=canvas(e);in.drag(p.x,p.y,p.x+50,p.y+30);
             mode(in,Editor::MODE_SELECT);in.drag(p.x+20,p.y+10,p.x+60,p.y+40);
         });
         // Every browser: search, each category (or terrain group) and faction, scroll, rows.
-        for(int t=0;t<4;++t) {
+        for(int t=0;t<Editor::kToolCount;++t) {
             action([=](Editor&,const Input& in) {tool(in,Editor::Tool(t));in.click(60,Editor::kMenuH+12);in.text("a");in.key(SDLK_BACKSPACE);in.key(SDLK_ESCAPE);});
             if(t==Editor::TERRAIN)for(int g=0;g<int(e.sectionCatalog.groups().size()) || (g==0 && e.sectionCatalog.groups().empty());++g) {
                 s.then([](Editor&,const Input& in) {tool(in,Editor::TERRAIN);in.click(60,Editor::kMenuH+40);return true;});
@@ -1675,6 +1852,7 @@ int main(int argc,char** argv) {
     if(mode=="slots")return slotsWorkflow(data,rest);
     if(mode=="rescan")return rescanWorkflow(data);
     if(mode=="feature-ops")return featureOpsWorkflow(data,rest);
+    if(mode=="blocked")return blockedWorkflow(data);
     if(mode=="smoke")return smokeWorkflow(data,rest);
     return 2;
 }

@@ -122,6 +122,7 @@ struct SymmetryRequest {
 };
 struct SymmetryReport {
     int units=0,features=0,starts=0,regions=0,blocks=0;
+    int blocked=0;                    // blocked cells copied onto empty image cells
     int removedUnits=0,removedFeatures=0,removedStarts=0,removedRegions=0,keptRegions=0;
     int skippedUnits=0,skippedFeatures=0,skippedStarts=0,skippedRegions=0;
     int unmirroredBlocks=0;
@@ -143,6 +144,11 @@ LiveMirrorResult mirrorFeatureEdits(const std::vector<uint16_t>& beforeFeatures,
                                     tak::tnt::Map& map,Mirror,const FootprintLookup&);
 LiveMirrorResult mirrorStartEdits(const std::vector<tak::tnt::StartPos>& before,std::vector<tak::tnt::StartPos>& starts,
                                   Mirror,int width,int height);
+// Blocked cells painted (empty -> 0xFFFC) or erased (0xFFFC -> empty) since
+// `before` are painted or erased at each image under the BLOCKED tool's rules:
+// paint only on empty cells, erase only blockers. An image holding a feature or
+// a road is skipped.
+LiveMirrorResult mirrorBlockerEdits(const std::vector<uint16_t>& before,tak::tnt::Map& map,Mirror);
 
 // Terrain clipboard: a block rectangle with its tiles, heights, feature plane
 // (named features remapped by name) and the units whose centres lie inside.

@@ -11,6 +11,7 @@ struct EditorPreferences {
     bool tracePlaytest=false;
     bool edgeScroll=false;    // hover at the canvas edge pans (retail only auto-scrolled drags past the view)
     bool fullscreen=false;    // borderless desktop fullscreen; width/height stay the windowed size
+    bool showBlocked=false;   // the blocked-cell overlay with every tool (the BLOCKED tool always shows it)
     std::vector<std::string> recent;
     std::map<std::string,std::string> sectionGroups;   // world -> terrain browser group id
     void remember(const std::string& request);

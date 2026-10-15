@@ -92,6 +92,7 @@ void cart::Editor::menuAction(int menu,int row) {
         int w,h;SDL_GetRendererOutputSize(ren,&w,&h);w=int(w/kUIScale)-kPaletteW;h=int(h/kUIScale)-kMenuH-kStatusH;
         if(row==17)previewModel();
         if(row==18)openModal(M_PREFERENCES);
+        if(row==19) {preferences.showBlocked=!preferences.showBlocked;persistPreferences();}
         if(row==0) {mapView.setZoom(std::min(float(w)/(mapView.map().width*16),float(h)/(mapView.map().height*16)));mapView.setOffset(0,0);}
         if(row==1)mapView.setZoom(1);
         if(row==2) {showGrid=!showGrid;persistPreferences();}
@@ -140,6 +141,8 @@ void cart::Editor::menuAction(int menu,int row) {
         "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move selected units or features. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute. "
         "Symmetry: M mirrors placements, moves and erasures live across the chosen axis; Shift+M (Symmetrize) copies one half or quadrant onto the rest, using mirror-twin terrain sections. "
         "Terrain tool + Select: drag a block rectangle, Ctrl+C copies it, Ctrl+V makes it a click-to-paste brush (Esc returns to sections). "
+        "BLOCKED tool: Place paints impassable, unbuildable cells on empty ground only; Erase clears blocked cells; features and roads are never touched. "
+        "Shift+drag fills a rectangle, [ and ] change the brush size, and B shows blocked cells with every tool. "
         "View > Preferences sets borderless fullscreen (F11), edge scrolling and the UI scale.");
 }
 
@@ -147,7 +150,7 @@ bool cart::Editor::handleMenuInput(SDL_Event& e) {
     if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE && menuOpen>=0) {menuOpen=-1;return true;}
     if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
         const int mx=e.button.x,my=e.button.y;
-        if(my>=25 && my<41 && mx>=756 && mx<872) {testMap();return true;}
+        if(my>=25 && my<41 && mx>=kTestX && mx<kTestX+kTestW) {testMap();return true;}
         if(my<22 && mx>=96 && mx<96+int(menuNames.size())*72) {const int item=(mx-96)/72;menuOpen=menuOpen==item?-1:item;return true;}
         if(menuOpen>=0) {
             const int column=menuOpen;menuOpen=-1;
@@ -162,10 +165,10 @@ bool cart::Editor::handleMenuInput(SDL_Event& e) {
 
 // Place / Select / Erase / Pan mode buttons and the REGIONS toggle.
 bool cart::Editor::handleToolbarModes(SDL_Event& e) {
-    if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && e.button.y>=22 && e.button.y<kMenuH && e.button.x>=400 && e.button.x<656) {
-        editMode=EditMode((e.button.x-400)/64);return true;
+    if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && e.button.y>=22 && e.button.y<kMenuH && e.button.x>=kModeX && e.button.x<kModeX+4*kModeW) {
+        editMode=EditMode((e.button.x-kModeX)/kModeW);return true;
     }
-    if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && e.button.y>=25 && e.button.y<41 && e.button.x>=668 && e.button.x<748) {
+    if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && e.button.y>=25 && e.button.y<41 && e.button.x>=kRegionsX && e.button.x<kRegionsX+kRegionsW) {
         regionCanvas=!regionCanvas;if(regionCanvas) {showRegions=true;editMode=MODE_PLACE;clearArm=false;}return true;
     }
     return false;
@@ -200,6 +203,9 @@ bool cart::Editor::handleShortcuts(SDL_Event& e) {
         if (ok) dirty = false;
         openMessage("SAVE BUNDLE", ok ? ("Saved " + mapName + ".kmp")
                                       : saveError);
+    } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_b) {
+        preferences.showBlocked = !preferences.showBlocked;persistPreferences();   // View -> Show blocked cells
+        setSymmetryStatus(preferences.showBlocked ? "BLOCKED CELLS SHOWN WITH EVERY TOOL (B)" : "BLOCKED CELLS SHOWN ONLY WITH THE BLOCKED TOOL (B)");
     } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI)) &&
                e.key.keysym.sym == SDLK_l) {
         // Land Lasso: toggle between land (terrain-stamp) and object mode.
@@ -238,7 +244,7 @@ bool cart::Editor::handleShortcuts(SDL_Event& e) {
         showGrid = !showGrid;persistPreferences();   // View -> Grid
     } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_TAB) {
         regionCanvas=false;
-        tool = Tool((int(tool) + 1) % 4);revealTool();   // cycle TERRAIN->FEATURES->UNITS->STARTS
+        tool = Tool((int(tool) + 1) % kToolCount);revealTool();   // cycle TERRAIN->FEATURES->UNITS->STARTS->BLOCKED
     } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym >= SDLK_1 &&
                e.key.keysym.sym <= SDLK_5) {
         // Zoom levels 1..5 = 100/75/50/25/12.5% (retail's five steps).
@@ -250,9 +256,9 @@ bool cart::Editor::handleShortcuts(SDL_Event& e) {
 bool cart::Editor::handleToolbarTools(SDL_Event& e) {
     if(!(e.type == SDL_MOUSEBUTTONDOWN &&
          e.button.button == SDL_BUTTON_LEFT && e.button.y >=22 && e.button.y < kMenuH))return false;
-    // Toolbar buttons: TERRAIN | FEATURES | STARTS (each 72px).
-    int bi = (e.button.x - 96) / 72;
-    if (bi >= 0 && bi < 4) {tool=Tool(bi);regionCanvas=false;revealTool();}
+    // Toolbar buttons: TERRAIN | FEATURES | UNITS | STARTS | BLOCKED.
+    const int bi = (e.button.x - kToolX) / kToolW;
+    if (e.button.x >= kToolX && bi < kToolCount) {tool=Tool(bi);regionCanvas=false;revealTool();}
     return true;
 }
 
@@ -266,20 +272,20 @@ void cart::Editor::drawChrome() {
 
     // Menu strip: title + tool buttons (active one highlighted).
     cart::drawText(ren, "CARTOGRAPHER", 6, 7, 1, 200, 200, 210);
-    const char* names[4] = {"TERRAIN", "FEATURES", "UNITS", "STARTS"};
-    for (int t = 0; t < 4; ++t) {
-        int bx = 96 + t * 72;
+    const auto* names = kToolNames;
+    for (int t = 0; t < kToolCount; ++t) {
+        int bx = kToolX + t * kToolW;
         bool active = !regionCanvas && int(tool) == t;
-        fillRect(ren, bx, 25, 68, 16, active ? 90 : 60, active ? 80 : 62,
+        fillRect(ren, bx, 25, kToolW - 4, 16, active ? 90 : 60, active ? 80 : 62,
                  active ? 40 : 74);
-        cart::drawText(ren, names[t], bx + 8, 29, 1, active ? 255 : 190,
+        cart::drawText(ren, names[t], bx + 6, 29, 1, active ? 255 : 190,
                        active ? 220 : 190, active ? 120 : 200);
     }
 
     static const char* modes[]={"PLACE","SELECT","ERASE","PAN"};
-    for(int i=0;i<4;++i)cart::drawButton(ren,400+i*64,25,60,16,modes[i],int(editMode)==i);
-    cart::drawButton(ren,668,25,80,16,"REGIONS",regionCanvas);
-    cart::drawButton(ren,756,25,116,16,playtest.running()?"TEST RUNNING":"TEST MAP (F5)",false);
+    for(int i=0;i<4;++i)cart::drawButton(ren,kModeX+i*kModeW,25,kModeW-4,16,modes[i],int(editMode)==i);
+    cart::drawButton(ren,kRegionsX,25,kRegionsW,16,"REGIONS",regionCanvas);
+    cart::drawButton(ren,kTestX,25,kTestW,16,playtest.running()?"TEST RUNNING":"TEST MAP (F5)",false);
 
     for(size_t i=0;i<menuNames.size();++i) {
         const int x=96+int(i)*72;
@@ -294,8 +300,8 @@ void cart::Editor::drawChrome() {
             if(menuOpen==1 && i==3)label=std::string(stampLayers.objects?"[ ] ":"[X] ")+"Brush: protect objects";
             if(menuOpen==3 && i==9)label=std::string(preferences.tracePlaytest?"[X] ":"[ ] ")+"Log Test Map triggers";
             if(menuOpen==4)label=symmetryMenuLabel(i);
-            if(menuOpen==2 && (i==2 || i==3 || (i>=14 && i<=16))) {
-                const bool shown=i==2?showGrid:i==3?showRegions:i==14?showFeatures:i==15?showUnits:showStarts;
+            if(menuOpen==2 && (i==2 || i==3 || (i>=14 && i<=16) || i==19)) {
+                const bool shown=i==2?showGrid:i==3?showRegions:i==14?showFeatures:i==15?showUnits:i==16?showStarts:preferences.showBlocked;
                 label=std::string(shown?"[X] ":"[ ] ")+label;
             }
             cart::drawText(ren,label,x+8,28+int(i)*20,1,235,235,240);
@@ -314,7 +320,11 @@ void cart::Editor::drawChrome() {
     if (tool == UNITS)
         status += "   PLAYER: " + std::to_string(currentPlayer) +
                   "   UNITS: " + std::to_string(units.size())+"   SELECTED: "+std::to_string(tool==FEATURES?selectedFeatures.cells.size():selectedUnits.indices.size());
-    else
+    else if (tool == BLOCKED) {
+        const auto size = std::to_string(cart::kBlockedBrushSizes[size_t(blockedBrush)]);
+        status += "   BRUSH: " + size + " X " + size + "   BLOCKED CELLS: " + std::to_string(blockedCount) +
+                  "   SHIFT+DRAG: RECTANGLE   RED=BLOCKED BLUE=ROAD";
+    } else
         status += "   STARTS: " + std::to_string(scenario.starts.size());
     status += dirty?"   UNSAVED":"   SAVED";
     if (!useOnly.empty()) status += "   USEONLY: " + std::to_string(useOnly.size());
@@ -386,22 +396,24 @@ void cart::Editor::drawHints() {
     int hx,hy;const auto mouseButtons=SDL_GetMouseState(&hx,&hy);hx=int(hx/kUIScale);hy=int(hy/kUIScale);
     if(modal==M_NONE && menuOpen<0 && !scriptOpen && !regionsOpen && !useOnlyOpen && !mouseButtons) {
         if(hy>=25 && hy<41) {
-            if(hx>=96 && hx<384) {
+            if(hx>=kToolX && hx<kToolX+kToolCount*kToolW) {
                 const char* hints[]={
                     "Terrain: place authored sections. Tab cycles tools. Right-drag pans; mouse wheel zooms around the pointer.",
                     "Features: place trees, rocks and other map objects. Tab cycles tools. Select mode supports box selection and group editing.",
                     "Units: place units for the current owner. Enter edits a selected unit. Ctrl+C/V copies/pastes; Delete removes selected units.",
-                    "Starts: place or move player start positions. Check Map (C) reports numbering, overlap and placement issues."};
-                hint=hints[(hx-96)/72];
-            } else if(hx>=400 && hx<656) {
+                    "Starts: place or move player start positions. Check Map (C) reports numbering, overlap and placement issues.",
+                    "Blocked: paint impassable cells that nothing can be built on (the game's blocker marker; flyers pass over). Place paints empty ground, Erase clears; "
+                    "Shift+drag fills a rectangle; [ and ] change the brush size; B shows blocked cells with every tool."};
+                hint=hints[(hx-kToolX)/kToolW];
+            } else if(hx>=kModeX && hx<kModeX+4*kModeW) {
                 const char* hints[]={
                     "Place: click the map to place the selected brush or object. Terrain brushes can protect objects through the Edit menu.",
                     "Select: click or drag a box to select units/features; drag selected objects to move them. Shift extends selection. Enter opens properties. With Terrain, drag a block rectangle; Ctrl+C copies it and Ctrl+V pastes it as a brush.",
                     "Erase: remove objects under the pointer. Terrain removal uses Clear Area (K). Changes can be undone with Ctrl+Z.",
                     "Pan: drag to move the view. Right-drag pans in any mode. Mouse wheel zooms around the pointer."};
-                hint=hints[(hx-400)/64];
-            } else if(hx>=756 && hx<872)hint="Test Map (F5): open a temporary snapshot in the game's private lobby without saving or closing this document.";
-            else if(hx>=668 && hx<748)hint="Regions: draw trigger areas in Place mode; select, move or resize them in Select mode. Enter edits the selected region.";
+                hint=hints[(hx-kModeX)/kModeW];
+            } else if(hx>=kTestX && hx<kTestX+kTestW)hint="Test Map (F5): open a temporary snapshot in the game's private lobby without saving or closing this document.";
+            else if(hx>=kRegionsX && hx<kRegionsX+kRegionsW)hint="Regions: draw trigger areas in Place mode; select, move or resize them in Select mode. Enter edits the selected region.";
         } else if(hy<22 && hx>=96+4*72 && hx<96+5*72)
             hint="Symmetry: M mirrors placements, moves and erasures of units, features and starts as you edit, and stamps mirror-twin terrain sections. "
                  "Shift+M copies a chosen half or quadrant onto the rest in one undo step. Terrain is never flipped: blocks without a twin section are reported.";

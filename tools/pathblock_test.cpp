@@ -19,6 +19,8 @@
 // travelling 1262-1329 against a 1100 straight line.
 
 #include "sim/sim.h"
+#include "cartographer/blockers.h"
+#include "tnt/tnt.h"
 
 #include <algorithm>
 #include <cmath>
@@ -75,6 +77,40 @@ static float runWall(int thick) {
 }
 
 
+
+// A wall of the game's hard-blocker marker (0xFFFC) painted with Cartographer's
+// BLOCKED brush across a flat 96x64-cell map, through a TNT save and load:
+// columns 40-41, every row, or rows 0-47 with a gap below. A 2x2 soldier is
+// ordered from (320,160) to (960,160). `touched` reports a footprint on a wall
+// cell (outside the gap); `travelled` is the distance to the goal, or -1.
+struct BlockerRun {float travelled=-1;bool touched=false;};
+static BlockerRun runBlockerWall(bool legion,bool gap) {
+    const int W=96,H=64;
+    tak::tnt::Map map;map.width=W;map.height=H;map.blocksX=W/2;map.blocksY=H/2;map.seaLevel=20;
+    map.heights.assign(size_t(W)*H,100);map.features.assign(map.heights.size(),cart::kCellEmpty);
+    map.tileKeys.assign(size_t(map.blocksX)*map.blocksY,0);map.tileCols.assign(map.tileKeys.size(),0);map.tileRows.assign(map.tileKeys.size(),0);
+    cart::applyBlockers(map,40,0,41,gap?47:H-1,cart::BlockOp::Paint);
+    const auto saved=tak::tnt::Map::load(map.save(),"blocker wall");
+    World w;
+    w.setVisPlayer(-1);
+    w.setTerrain(saved.heights,saved.width,saved.height,saved.seaLevel,&saved.features);
+    w.setPathService(true);
+    if (legion) w.setPathfindingMode(PathfindingMode::Legion);
+    UnitType s=soldier();
+    const int id=w.spawn(&s,320,160,0,0);
+    w.order(id,960,160,false);
+    BlockerRun r;float px=320,pz=160,travelled=0;
+    for (int t=0;t<3000;++t) {
+        w.tick(1.0f/30.0f);
+        const Unit* u=w.unit(id);
+        const float x=u->x.toFloat(),z=u->z.toFloat();
+        travelled+=std::sqrt((x-px)*(x-px)+(z-pz)*(z-pz));px=x;pz=z;
+        const int ox=footprintOrigin(u->x,2),oz=footprintOrigin(u->z,2);
+        if (ox<=41 && ox+1>=40 && (!gap || oz<=47)) r.touched=true;
+        if (std::sqrt((x-960)*(x-960)+(z-160)*(z-160))<60) {r.travelled=travelled;break;}
+    }
+    return r;
+}
 
 // A builder whose approach and site are blocked by another player's unit that
 // never moves. Retail's mover bumps it, its step is refused, the navigator
@@ -796,6 +832,20 @@ int main() {
         check(rock.dropped>=0 && rock.maxFailures==0 && rock.built<0,
               "Flyer: a non-reclaimable feature on the site: drop at once",
               "dropped "+std::to_string(rock.dropped)+", failures "+std::to_string(rock.maxFailures));
+    }
+
+    // What Cartographer's BLOCKED brush paints is what the game blocks: no unit
+    // enters a painted wall in either pathfinding mode, and with a gap left in it
+    // they go round through the gap. The straight line is 640px; through the gap
+    // it is about 1400px.
+    std::printf("a wall painted with Cartographer's BLOCKED brush:\n");
+    for (bool legion:{false,true}) {
+        const std::string mode=legion?"Legion: ":"Retail: ";
+        const auto closed=runBlockerWall(legion,false);
+        check(!closed.touched && closed.travelled<0,mode+"no unit enters a closed blocker wall");
+        const auto open=runBlockerWall(legion,true);
+        check(open.travelled>1200 && !open.touched,mode+"a blocker wall with a gap is passed through the gap",
+              open.travelled>0 ? std::to_string(int(open.travelled))+"px travelled"+(open.touched?", crossed the wall":"") : "never arrived");
     }
 
     std::printf(g_fail ? "pathblock_test: %d FAILURE(S)\n" : "pathblock_test: all passed\n",

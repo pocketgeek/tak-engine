@@ -63,7 +63,7 @@ int cart::Editor::unitAt(int mx, int my) {
     return -1;
 }
 
-bool cart::Editor::toolVisible() {return tool==TERRAIN || (tool==FEATURES?showFeatures:tool==UNITS?showUnits:showStarts);}
+bool cart::Editor::toolVisible() {return tool==TERRAIN || tool==BLOCKED || (tool==FEATURES?showFeatures:tool==UNITS?showUnits:showStarts);}
 
 void cart::Editor::revealTool() {
     bool* visible=tool==FEATURES?&showFeatures:tool==UNITS?&showUnits:tool==STARTS?&showStarts:nullptr;
@@ -94,6 +94,49 @@ bool cart::Editor::mouseCell(int mx, int my, int& cx, int& cz) {
     float wz = mapView.offY() + float(my - kMenuH) / mapView.zoom();
     cx = int(wx / 16.0f); cz = int(wz / 16.0f);
     return cx >= 0 && cz >= 0 && cx < mapView.map().width && cz < mapView.map().height;
+}
+
+// The BLOCKED tool in Place (paint) or Erase mode: a drag strokes the brush along
+// the pointer, Shift+drag fills a rectangle on release. Only empty cells take a
+// blocker and only blockers are erased (blockers.h). No tile changes, so the
+// minimap and the saved minimaps stay as they are: `edited` is not set.
+bool cart::Editor::handleBlockedInput(SDL_Event& e) {
+    if(tool!=BLOCKED || regionCanvas || clearArm || (editMode!=MODE_PLACE && editMode!=MODE_ERASE)) {blockedStroke=blockedRect=false;return false;}
+    const auto op=editMode==MODE_PLACE?cart::BlockOp::Paint:cart::BlockOp::Erase;
+    const int size=cart::kBlockedBrushSizes[size_t(std::clamp(blockedBrush,0,int(cart::kBlockedBrushSizes.size())-1))];
+    const auto& map=mapView.map();
+    auto onCanvas=[&](int x,int y) {return x>=kPaletteW && y>=kMenuH && y<h-kStatusH;};
+    auto corner=[&](int x,int y) {   // a rectangle's far corner follows the pointer anywhere, kept on the map
+        blockedRectX1=std::clamp(int(std::floor((mapView.offX()+(x-kPaletteW)/mapView.zoom())/16)),0,map.width-1);
+        blockedRectZ1=std::clamp(int(std::floor((mapView.offY()+(y-kMenuH)/mapView.zoom())/16)),0,map.height-1);
+    };
+    auto stroke=[&](int x,int z) {
+        if(cart::applyBlockerLine(mapView.editMap(),blockedLastX<0?x:blockedLastX,blockedLastX<0?z:blockedLastZ,x,z,size,op))dirty=historyPending=true;
+        blockedLastX=x;blockedLastZ=z;
+    };
+    if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && onCanvas(e.button.x,e.button.y)) {
+        int cx,cz;blockedStroke=blockedRect=false;blockedLastX=-1;
+        if(!mouseCell(e.button.x,e.button.y,cx,cz))return true;
+        if(SDL_GetModState()&KMOD_SHIFT) {blockedRect=true;blockedRectX0=blockedRectX1=cx;blockedRectZ0=blockedRectZ1=cz;}
+        else {blockedStroke=true;stroke(cx,cz);}
+        return true;
+    }
+    if(e.type==SDL_MOUSEMOTION && (e.motion.state&SDL_BUTTON_LMASK) && (blockedStroke || blockedRect)) {
+        int cx,cz;
+        if(blockedRect)corner(e.motion.x,e.motion.y);
+        else if(onCanvas(e.motion.x,e.motion.y) && mouseCell(e.motion.x,e.motion.y,cx,cz))stroke(cx,cz);
+        else blockedLastX=-1;   // off the canvas: the stroke resumes where the pointer comes back, without a line
+        return true;
+    }
+    if(e.type==SDL_MOUSEBUTTONUP && e.button.button==SDL_BUTTON_LEFT && (blockedStroke || blockedRect)) {
+        if(blockedRect) {
+            corner(e.button.x,e.button.y);
+            if(cart::applyBlockers(mapView.editMap(),blockedRectX0,blockedRectZ0,blockedRectX1,blockedRectZ1,op))dirty=historyPending=true;
+        }
+        blockedStroke=blockedRect=false;blockedLastX=-1;
+        return true;
+    }
+    return false;
 }
 
 int cart::Editor::startAt(int mx, int my) {
@@ -137,6 +180,15 @@ bool cart::Editor::handleRegionDrag(SDL_Event& e) {
 bool cart::Editor::handleCanvasKeys(SDL_Event& e) {
     const LiveEdit live(*this,e,true);
     if(handleTerrainKeys(e))return true;
+    // BLOCKED: [ and ] step the brush size (for the other tools they pick the
+    // placement player); Esc drops a rectangle still being dragged.
+    if(e.type==SDL_KEYDOWN && tool==BLOCKED && !(e.key.keysym.mod&(KMOD_CTRL|KMOD_GUI))) {
+        const auto key=e.key.keysym.sym;
+        if(key==SDLK_LEFTBRACKET || key==SDLK_RIGHTBRACKET) {
+            blockedBrush=std::clamp(blockedBrush+(key==SDLK_RIGHTBRACKET?1:-1),0,int(cart::kBlockedBrushSizes.size())-1);return true;
+        }
+        if(key==SDLK_ESCAPE && blockedRect) {blockedRect=false;return true;}
+    }
     if(regionCanvas && e.type==SDL_KEYDOWN) {
         if(e.key.keysym.sym==SDLK_ESCAPE) {regionCanvas=false;return true;}
         if(e.key.keysym.sym==SDLK_RETURN && regionSelected>=0 && regionSelected<int(scen.regions.size())) {openModal(M_REGION,regionSelected);return true;}
@@ -191,7 +243,7 @@ bool cart::Editor::handleCanvasKeys(SDL_Event& e) {
 // Canvas zoom, clicks, drags and right-drag panning; other events reach MapView.
 void cart::Editor::handleCanvasInput(SDL_Event& e,float pointerDX,float pointerDZ) {
     const LiveEdit live(*this,e,false);
-    if(handleTerrainSelection(e))return;
+    if(handleTerrainSelection(e) || handleBlockedInput(e))return;
     if (e.type == SDL_MOUSEWHEEL) {
         int mxp, myp; SDL_GetMouseState(&mxp, &myp); mxp /= kUIScale; myp /= kUIScale;
         const float before=mapView.zoom();
@@ -271,7 +323,7 @@ void cart::Editor::handleCanvasInput(SDL_Event& e,float pointerDX,float pointerD
                 draggingUnit = int(units.size()) - 1;selectedUnits.indices={draggingUnit};
                 unitsEdited = true; dirty = true; historyPending=true;
             }
-        } else {   // STARTS: grab an existing marker, else place a new one
+        } else if (tool == STARTS) {   // grab an existing marker, else place a new one
             int hit = startAt(e.button.x, e.button.y);
             int cx, cz;
             if (hit >= 0) draggingStart = hit;
@@ -387,6 +439,7 @@ void cart::Editor::drawCanvas() {
         fillRect(ren,4,4,std::min(canvasW-8,cart::textWidth(overlayLegend,1)+8),17,15,20,30);
         cart::drawText(ren,overlayLegend,8,9,1,240,240,210);
     }
+    drawBlocked();
     // Grid overlay: section (512px) lines bright, block (32px) lines faint.
     if (showGrid) {
         float zm = mapView.zoom();
@@ -516,7 +569,7 @@ void cart::Editor::drawCanvas() {
     }
     // Preview the actual snapped stamp / feature / footprint before committing.
     int previewX,previewZ;SDL_GetMouseState(&previewX,&previewZ);previewX=int(previewX/kUIScale);previewZ=int(previewZ/kUIScale);
-    if(toolVisible() && editMode==MODE_PLACE && !regionCanvas && modal==M_NONE && !scriptOpen && !useOnlyOpen && !regionsOpen && menuOpen<0 &&
+    if(toolVisible() && tool!=BLOCKED && editMode==MODE_PLACE && !regionCanvas && modal==M_NONE && !scriptOpen && !useOnlyOpen && !regionsOpen && menuOpen<0 &&
        previewX>=kPaletteW && previewZ>=kMenuH && previewZ<h-kStatusH && !cart::pointIn(previewX,previewZ,miniRect)) {
         const float wx=mapView.offX()+(previewX-kPaletteW)/mapView.zoom(),wz=mapView.offY()+(previewZ-kMenuH)/mapView.zoom();
         SDL_FRect box{};SDL_Texture* ghost=nullptr;
@@ -545,8 +598,74 @@ void cart::Editor::drawCanvas() {
         if(ghost) {Uint8 alpha=255;SDL_BlendMode blend;SDL_GetTextureAlphaMod(ghost,&alpha);SDL_GetTextureBlendMode(ghost,&blend);SDL_SetTextureAlphaMod(ghost,120);SDL_SetTextureBlendMode(ghost,SDL_BLENDMODE_BLEND);SDL_RenderCopyF(ren,ghost,nullptr,&box);SDL_SetTextureAlphaMod(ghost,alpha);SDL_SetTextureBlendMode(ghost,blend);}
         SDL_SetRenderDrawColor(ren,255,220,90,220);SDL_RenderDrawRectF(ren,&box);
     }
+    // BLOCKED: the brush under the pointer (red paints, white erases), or the
+    // rectangle a Shift+drag will fill.
+    if(tool==BLOCKED && (editMode==MODE_PLACE || editMode==MODE_ERASE) && !regionCanvas && !clearArm && modal==M_NONE && !scriptOpen && !useOnlyOpen && !regionsOpen && menuOpen<0) {
+        const float zoom=mapView.zoom();
+        auto cells=[&](int x0,int z0,int x1,int z1) {
+            return SDL_FRect{(std::min(x0,x1)*16-mapView.offX())*zoom,(std::min(z0,z1)*16-mapView.offY())*zoom,(std::abs(x1-x0)+1)*16*zoom,(std::abs(z1-z0)+1)*16*zoom};
+        };
+        SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+        int cx,cz;
+        if(blockedRect) {
+            const auto box=cells(blockedRectX0,blockedRectZ0,blockedRectX1,blockedRectZ1);
+            SDL_SetRenderDrawColor(ren,255,220,90,45);SDL_RenderFillRectF(ren,&box);
+            SDL_SetRenderDrawColor(ren,255,220,90,235);SDL_RenderDrawRectF(ren,&box);
+        } else if(previewX>=kPaletteW && previewZ>=kMenuH && previewZ<h-kStatusH && !cart::pointIn(previewX,previewZ,miniRect) && mouseCell(previewX,previewZ,cx,cz)) {
+            const auto b=cart::brushCells(cx,cz,cart::kBlockedBrushSizes[size_t(std::clamp(blockedBrush,0,int(cart::kBlockedBrushSizes.size())-1))]);
+            const auto box=cells(b.x0,b.z0,b.x1,b.z1);
+            if(editMode==MODE_PLACE)SDL_SetRenderDrawColor(ren,255,90,80,235);else SDL_SetRenderDrawColor(ren,245,245,250,235);
+            SDL_RenderDrawRectF(ren,&box);
+        }
+    }
     drawSymmetryOverlay();
     SDL_RenderSetViewport(ren, nullptr);
+}
+
+// The blocked-cell overlay follows the plane: compared only after an edit, an
+// undo or a new document, and only the changed rows and columns are uploaded.
+void cart::Editor::refreshBlockedOverlay() {
+    const auto& map=mapView.map();
+    if(map.width<=0 || map.height<=0 || map.features.size()!=size_t(map.width)*size_t(map.height))return;
+    const bool resized=!blockedTexture || map.width!=blockedW || map.height!=blockedH;
+    if(!resized && !historyPending && !resetHistory && history.revision()==blockedRevision)return;
+    blockedRevision=history.revision();
+    int x0=0,z0=0,x1=map.width-1,z1=map.height-1;
+    if(resized) {
+        blockedTexture.reset(SDL_CreateTexture(ren,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STREAMING,map.width,map.height));
+        if(!blockedTexture)return;
+        SDL_SetTextureBlendMode(blockedTexture.get(),SDL_BLENDMODE_BLEND);SDL_SetTextureScaleMode(blockedTexture.get(),SDL_ScaleModeNearest);
+        blockedW=map.width;blockedH=map.height;blockedPlane=map.features;
+    } else {
+        x0=map.width;z0=map.height;x1=z1=-1;
+        for(int z=0;z<map.height;++z) {
+            const uint16_t* row=map.features.data()+size_t(z)*map.width;uint16_t* shown=blockedPlane.data()+size_t(z)*map.width;
+            if(std::equal(row,row+map.width,shown))continue;
+            for(int x=0;x<map.width;++x)if(row[x]!=shown[x]) {x0=std::min(x0,x);x1=std::max(x1,x);shown[x]=row[x];}
+            z0=std::min(z0,z);z1=z;
+        }
+        if(x1<0)return;
+    }
+    blockedCount=cart::countBlocked(map);
+    const int w=x1-x0+1,rows=z1-z0+1;
+    std::vector<uint8_t> rgba(size_t(w)*rows*4,0);
+    for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x) {
+        const uint16_t v=map.features[size_t(z)*map.width+x];uint8_t* p=&rgba[(size_t(z-z0)*w+(x-x0))*4];
+        if(v==cart::kCellBlocked) {p[0]=230;p[1]=50;p[2]=50;p[3]=140;}
+        else if(v==cart::kCellRoad) {p[0]=80;p[1]=150;p[2]=240;p[3]=90;}   // why paint skipped a cell
+    }
+    const SDL_Rect area{x0,z0,w,rows};
+    SDL_UpdateTexture(blockedTexture.get(),&area,rgba.data(),w*4);
+}
+
+// Blocked cells red and roads blue, under the features (View > Show blocked cells, B).
+void cart::Editor::drawBlocked() {
+    if(!blockedShown())return;
+    refreshBlockedOverlay();
+    if(!blockedTexture)return;
+    const float zoom=mapView.zoom();
+    const SDL_FRect destination{-mapView.offX()*zoom,-mapView.offY()*zoom,blockedW*16*zoom,blockedH*16*zoom};
+    SDL_RenderCopyF(ren,blockedTexture.get(),nullptr,&destination);
 }
 
 void cart::Editor::drawClearArea() {

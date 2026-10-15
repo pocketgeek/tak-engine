@@ -1,4 +1,5 @@
 #include "cartographer/recovery.h"
+#include "cartographer/blockers.h"
 #include "cartographer/scenarioinfo.h"
 #include "cartographer/document.h"
 #include "cartographer/history.h"
@@ -229,6 +230,98 @@ static void symmetryTests() {
     check(!cart::mirrorClip(unknown,Xf::FlipX,matcher,{},why) && why.find("not a known section")!=std::string::npos,"clipboard with an unknown block is not mirrored");
     std::cout<<"PASS: symmetry angles, regions, footprints, twins, Symmetrize, live mirroring and terrain clipboard\n";
 }
+
+// The BLOCKED brush on the feature plane: paint only empty cells, erase only
+// blockers; features, roads and other markers are never touched. Clipping,
+// gap-free strokes, the save / recovery round trip, undo, live symmetry and
+// Symmetrize.
+static void blockerTests(const std::filesystem::path& root) {
+    auto map=blankMap(4,4);   // 8x8 cells
+    map.featureNames={"Tree"};
+    map.features[9]=0;        // (1,1) a named feature
+    map.features[10]=0xFFFB;  // (2,1) a road
+    map.features[11]=0xFFFC;  // (3,1) a section's blocker
+    map.features[12]=0xFFFE;  // (4,1) a value only the game makes; kept as it is
+    const auto original=map.features;
+    check(cart::applyBlockers(map,0,0,7,7,cart::BlockOp::Paint)==60,"paint fills every empty cell");
+    bool kept=true;
+    for(size_t i=0;i<map.features.size();++i)kept&=i>=9 && i<=12?map.features[i]==original[i]:map.features[i]==0xFFFC;
+    check(kept,"paint never touches a feature, a road, a blocker or another marker");
+    check(cart::countBlocked(map)==61,"blocked cells are counted");
+    check(cart::applyBlockers(map,7,7,0,0,cart::BlockOp::Erase)==61,"erase clears every blocker, painted or from a section");
+    kept=true;
+    for(size_t i=0;i<map.features.size();++i)kept&=map.features[i]==(i==9 || i==10 || i==12?original[i]:0xFFFF);
+    check(kept,"erase never touches a feature, a road or another marker");
+    check(cart::applyBlockers(map,-5,-3,1,0,cart::BlockOp::Paint)==2 && map.features[0]==0xFFFC && map.features[1]==0xFFFC,"a box past the map edge is clipped");
+    check(cart::applyBlockers(map,8,8,20,20,cart::BlockOp::Paint)==0,"a box off the map changes nothing");
+    const auto brush=cart::brushCells(5,5,4);
+    check(brush.x0==4 && brush.x1==7 && brush.z0==4 && brush.z1==7 && cart::brushCells(5,5,1).x0==5 && cart::brushCells(5,5,1).x1==5,"brush cells centre on the pointer cell");
+    // Strokes: every cell from one pointer position to the next, 4-connected.
+    auto stroke=blankMap(8,4);   // 16x8 cells
+    check(cart::applyBlockerLine(stroke,0,0,15,6,1,cart::BlockOp::Paint)==15+6+1 && stroke.features[0]==0xFFFC && stroke.features[size_t(6)*16+15]==0xFFFC,
+          "a 1-cell stroke is a 4-connected wall between the two pointer cells");
+    auto band=blankMap(8,4);
+    cart::applyBlockerLine(band,2,2,14,2,4,cart::BlockOp::Paint);
+    bool solid=true;for(int z=0;z<8;++z)for(int x=0;x<16;++x)solid&=(band.features[size_t(z)*16+x]==0xFFFC)==(x>=1 && x<=15 && z>=1 && z<=4);
+    check(solid,"a 4x4 stroke paints a solid band, clipped at the map edge");
+    // Save and recovery keep the plane exactly, roads and other markers included.
+    map=blankMap(4,4);map.featureNames={"Tree"};map.features[9]=0;map.features[10]=0xFFFB;map.features[12]=0xFFFE;
+    cart::applyBlockers(map,0,2,7,3,cart::BlockOp::Paint);
+    tak::tnt::Scenario meta;tak::crt::Scenario scenario;
+    const auto files=cart::documentFiles(map,meta,scenario,{},{},"Blocked");
+    const auto tnt=std::find_if(files.begin(),files.end(),[](const auto& f){return f.path.ends_with(".tnt");});
+    check(tnt!=files.end() && tak::tnt::Map::load(tnt->data).features==map.features,"blocked cells survive save and load");
+    {
+        auto recovery=cart::RecoveryFile::create(root);std::string error;
+        check(cart::writeDocumentBundle(recovery->path(),files,error),error.c_str());
+        const auto snapshot=cart::readRecoverySnapshot(recovery->path());
+        check(tak::tnt::Map::load(snapshot.files->at(snapshot.mapPath)).features==map.features,"blocked cells survive a recovery snapshot");
+        check(recovery->discard(error),error.c_str());
+    }
+    // One stroke is one undo step.
+    cart::History history;history.reset(cart::historyState(map,meta,scenario,{},{},"Blocked"),true);
+    const auto before=map.features;
+    cart::applyBlockerLine(map,0,0,7,0,2,cart::BlockOp::Paint);
+    check(history.commit(cart::historyState(map,meta,scenario,{},{},"Blocked")),"a stroke commits to the history");
+    const auto* undone=history.undo();
+    check(undone && tak::tnt::Map::load(undone->terrain).features==before,"undo restores the blocked cells");
+    const auto* redone=history.redo();
+    check(redone && tak::tnt::Map::load(redone->terrain).features==map.features,"redo paints them again");
+    // Live symmetry: painted and erased cells mirror; a feature keeps its cell.
+    auto mirror=blankMap(8,4);mirror.featureNames={"Rock"};mirror.features[size_t(2)*16+12]=0;   // on the image of (3,2)
+    auto liveBefore=mirror.features;
+    cart::applyBlockers(mirror,1,1,3,2,cart::BlockOp::Paint);
+    const auto painted=cart::mirrorBlockerEdits(liveBefore,mirror,cart::Mirror::Vertical);
+    check(painted.copies==5 && painted.skipped==1 && mirror.features[size_t(1)*16+14]==0xFFFC && mirror.features[size_t(2)*16+13]==0xFFFC &&
+          mirror.features[size_t(2)*16+12]==0,"live symmetry paints the mirror cells and skips one holding a feature");
+    liveBefore=mirror.features;
+    cart::applyBlockers(mirror,1,1,3,2,cart::BlockOp::Erase);
+    const auto erased=cart::mirrorBlockerEdits(liveBefore,mirror,cart::Mirror::Vertical);
+    check(erased.copies==5 && cart::countBlocked(mirror)==0 && mirror.features[size_t(2)*16+12]==0,"erasing blocked cells erases their mirrors");
+    auto quad=blankMap(8,4);liveBefore=quad.features;quad.features[size_t(1)*16+2]=0xFFFC;
+    check(cart::mirrorBlockerEdits(liveBefore,quad,cart::Mirror::Quad).copies==3 && quad.features[size_t(1)*16+13]==0xFFFC &&
+          quad.features[size_t(6)*16+2]==0xFFFC && quad.features[size_t(6)*16+13]==0xFFFC,"4-way symmetry paints three mirror cells");
+    // Symmetrize: mirrored twin sections bring only their own markers, so the
+    // source side's blocked cells are copied onto empty image cells.
+    const auto ne=prefab(100,10),nw=prefab(200,40);
+    std::vector<cart::SectionRef> refs{{"Cliffs","ne01","a"},{"Cliffs","nw01","b"}};
+    const tak::tnt::Map* prefabs[]={&ne,&nw};
+    cart::SectionMatcher matcher;matcher.build(refs,[&](size_t i){return prefabs[i];});matcher.setKey("blocked");
+    auto sym=blankMap(8,4);cart::stampSection(sym,ne,0,0);
+    sym.features[size_t(2)*16+1]=0xFFFC;   // painted inside the section
+    sym.features[2]=0xFFFC;                 // its image (13,0) gets the twin's road
+    std::vector<tak::tnt::StartPos> noStarts;std::vector<cart::PlacedUnit> noUnits;tak::crt::Scenario noScenario;
+    cart::SymmetryRequest request;request.kind=cart::Mirror::Vertical;request.source=0;
+    const auto report=cart::symmetrize(sym,noStarts,noScenario,noUnits,request,{},&matcher);
+    check(report.blocks>0 && sym.tileKeys[7]==200 && sym.features[size_t(2)*16+14]==0xFFFC && report.blocked==1,"Symmetrize copies a painted blocker onto its twin terrain");
+    check(sym.features[13]==0xFFFB && sym.features[2]==0xFFFC,"a twin's road keeps its cell");
+    check(report.summary().find("1 blocked cell")!=std::string::npos,"the Symmetrize summary counts blocked cells");
+    auto leave=blankMap(8,4);cart::applyBlockers(leave,2,3,4,3,cart::BlockOp::Paint);
+    request.terrain=false;
+    const auto objects=cart::symmetrize(leave,noStarts,noScenario,noUnits,request,{},nullptr);
+    check(objects.blocked==3 && leave.features[size_t(3)*16+11]==0xFFFC && leave.features[size_t(3)*16+13]==0xFFFC,"Symmetrize without terrain copies blocked cells too");
+    std::cout<<"PASS: BLOCKED brush paint/erase rules, clipping, strokes, save, recovery, undo, live symmetry and Symmetrize\n";
+}
 int main() {
     namespace fs=std::filesystem;
     auto root=fs::temp_directory_path()/("tak-cartographer-test-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -251,14 +344,14 @@ int main() {
         const auto decoded=cart::readRecoveryInfo(info.data);
         check(decoded && decoded->name=="Recovered map" && fs::u8path(decoded->directory)==destination,"recovery destination UTF-8 roundtrip");
         check(!cart::readRecoveryInfo({1,2,3}),"bad recovery metadata rejected");
-        cart::EditorPreferences preferences;preferences.guideSeen=true;preferences.tracePlaytest=true;preferences.width=1440;preferences.height=900;preferences.scalePercent=125;preferences.showFeatures=false;preferences.showUnits=false;preferences.showStarts=false;preferences.showRegions=false;preferences.showGrid=true;
+        cart::EditorPreferences preferences;preferences.guideSeen=true;preferences.tracePlaytest=true;preferences.width=1440;preferences.height=900;preferences.scalePercent=125;preferences.showFeatures=false;preferences.showUnits=false;preferences.showStarts=false;preferences.showRegions=false;preferences.showGrid=true;preferences.showBlocked=true;
         for(int i=0;i<20;++i)preferences.remember("Map "+std::to_string(i));
         preferences.remember("Carte été \"quote\".kmp");preferences.remember("Map 19");
         check(preferences.recent.size()==12 && preferences.recent[0]=="Map 19","recent maps bounded and deduplicated");
         std::string prefsError;check(cart::saveEditorPreferences(root,preferences,prefsError),prefsError.c_str());
         const auto loadedPreferences=cart::loadEditorPreferences(root);
         check(loadedPreferences.tracePlaytest && loadedPreferences.guideSeen && loadedPreferences.width==1440 && loadedPreferences.height==900 && loadedPreferences.scalePercent==125 && loadedPreferences.recent==preferences.recent,"window, scale and Unicode recent paths roundtrip");
-        check(!loadedPreferences.showFeatures && !loadedPreferences.showUnits && !loadedPreferences.showStarts && !loadedPreferences.showRegions && loadedPreferences.showGrid,"layer preferences roundtrip");
+        check(!loadedPreferences.showFeatures && !loadedPreferences.showUnits && !loadedPreferences.showStarts && !loadedPreferences.showRegions && loadedPreferences.showGrid && loadedPreferences.showBlocked,"layer preferences roundtrip");
         check(!loadedPreferences.edgeScroll && !loadedPreferences.fullscreen,"edge scrolling and fullscreen default off");
         {
             auto display=preferences;display.edgeScroll=display.fullscreen=true;
@@ -268,6 +361,7 @@ int main() {
             std::ofstream(root/"preferences.txt")<<"edgescroll 2\nfullscreen yes\n";
             const auto rejected=cart::loadEditorPreferences(root);
             check(!rejected.edgeScroll && !rejected.fullscreen,"malformed display preferences keep the defaults");
+            check(!rejected.showBlocked,"blocked cells are hidden by default");
         }
         {
             auto groups=preferences;groups.sectionGroups={{"Zhon","folder:coast cliffs sandy"},{"Aramon","kind:Water & coast"}};
@@ -463,6 +557,7 @@ int main() {
         for(int i=0;i<20;++i) {auto state=initial;state.name=std::to_string(i);bounded.commit(state);}
         check(bounded.retainedBytes()<2500,"history respects memory budget");
         symmetryTests();
+        blockerTests(root);
         scrollingTests();
         // Section browser naming: retail names decompose into kind/direction/corner
         // and numbered or lettered variants collapse into one piece.

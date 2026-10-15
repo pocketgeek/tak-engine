@@ -14,6 +14,7 @@
 // Declaration order is the old local order, so destruction order is unchanged.
 
 #include "cartographer/editor.h"
+#include "cartographer/blockers.h"
 #include "cartographer/editorfont.h"
 #include "cartographer/featureselection.h"
 #include "cartographer/features.h"
@@ -94,7 +95,7 @@ struct Session {
     Session(int argc,char** argv,const FrameHook& frameHook,const EditorHooks& hooks);
 
     // Command line (headless.cpp).
-    std::string dataRoot, mapName, outDir = ".", exportPath, bundlePath, stampName, newWorld = "aramon", shotPath, shotTool;   // --shot / --shot-tool terrain|features|units|starts
+    std::string dataRoot, mapName, outDir = ".", exportPath, bundlePath, stampName, newWorld = "aramon", shotPath, shotTool;   // --shot / --shot-tool terrain|features|units|starts|blocked
     int stampBX = 0, stampBY = 0, newW = 0, newH = 0;
     bool explicitOutput=false;
     bool randomTerrain = false;   // --random: generate procedural terrain for --new
@@ -192,6 +193,11 @@ struct Editor : Session {
     static constexpr int kCellH=106;
     static constexpr int kThumb = 88;       // section thumbnail cell (px)
     static constexpr int cols = std::max(1, (kPaletteW - 8) / (kThumb + 4));
+    // Toolbar row (y 25..41, under the menu strip): tool buttons, mode buttons,
+    // REGIONS and TEST MAP. It fits the narrowest logical window (900 px).
+    static constexpr int kToolX=96,kToolW=64;      // five tool buttons, 60 px wide
+    static constexpr int kModeX=424,kModeW=64;     // PLACE / SELECT / ERASE / PAN
+    static constexpr int kRegionsX=692,kRegionsW=80,kTestX=780,kTestW=116;
     MapView& mapView=*mapViewPtr;
 
     // Frame layout, recomputed at the top of every frame (logical pixels).
@@ -220,7 +226,9 @@ struct Editor : Session {
     // --- Canvas tools (canvas.cpp) --------------------------------------------
     int lastStampX=-1,lastStampY=-1;
     void stampAtMouse(int mx, int my, int w, int h);
-    enum Tool { TERRAIN, FEATURES, UNITS, STARTS };
+    enum Tool { TERRAIN, FEATURES, UNITS, STARTS, BLOCKED };
+    static constexpr int kToolCount=5;
+    static constexpr const char* kToolNames[kToolCount]={"TERRAIN","FEATURES","UNITS","STARTS","BLOCKED"};
     int selectedType = unitTypes.empty() ? -1 : 0;   // unit-type index (UNITS palette)
     int currentPlayer = 0;                            // player id new units get
     int draggingUnit = -1;                            // index into units while dragging
@@ -284,6 +292,21 @@ struct Editor : Session {
     void handleCanvasInput(SDL_Event& e,float pointerDX,float pointerDZ);
     void drawCanvas();
     void drawClearArea();
+
+    // --- Blocked cells: the BLOCKED tool and its overlay (canvas.cpp) ----------
+    int blockedBrush=0;                            // index into cart::kBlockedBrushSizes (not saved)
+    bool blockedStroke=false,blockedRect=false;    // a Place/Erase drag, or a Shift+drag rectangle
+    int blockedLastX=-1,blockedLastZ=-1;           // the stroke's previous cell (-1: none yet)
+    int blockedRectX0=0,blockedRectZ0=0,blockedRectX1=0,blockedRectZ1=0;
+    bool handleBlockedInput(SDL_Event& e);
+    bool blockedShown() const {return preferences.showBlocked || tool==BLOCKED;}
+    // One texel per cell (blocked red, roads blue), updated where the plane changed.
+    std::unique_ptr<SDL_Texture,decltype(&SDL_DestroyTexture)> blockedTexture{nullptr,SDL_DestroyTexture};
+    std::vector<uint16_t> blockedPlane;            // the plane the texture shows
+    int blockedW=0,blockedH=0,blockedCount=0;
+    uint64_t blockedRevision=~uint64_t(0);
+    void refreshBlockedOverlay();
+    void drawBlocked();
 
     // --- Minimap (chrome.cpp) -------------------------------------------------
     std::unique_ptr<SDL_Texture,decltype(&SDL_DestroyTexture)> minimapTexture{nullptr,SDL_DestroyTexture};
@@ -470,7 +493,8 @@ struct Editor : Session {
     const std::vector<std::vector<std::string>> menuRows={
         {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Test Map (F5)","Exit"},
         {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)","Terrain brush: protect objects","Copy terrain selection (Ctrl+C)","Paste terrain clipboard (Ctrl+V)"},
-        {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selection","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay","Smaller UI","Larger UI","Show features","Show units","Show starts","Unit model preview (F6)","Preferences (F11 fullscreen)"},
+        {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selection","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay","Smaller UI","Larger UI","Show features","Show units","Show starts","Unit model preview (F6)","Preferences (F11 fullscreen)",
+         "Show blocked cells (B)"},
         {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions","Validation results","Regenerate from recipe","Log Test Map triggers","Placed units"},
         {"Live symmetry (M)","Symmetrize map (Shift+M)","Axis: vertical (left | right)","Axis: horizontal (top / bottom)","Axis: diagonal \\ (square maps)",
          "Axis: diagonal / (square maps)","Rotate 2-way (180)","Rotate 4-way (90, square maps)","Mirror 4-way (both axes)","Locate unmirrored terrain"},

@@ -126,7 +126,7 @@ void cart::Editor::applySymmetrize() {
     auto result=std::make_shared<Result>(Result{mapView.map(),scenario.starts,scen,units,{}});
     result->report=cart::symmetrize(result->map,result->starts,result->scenario,result->units,request,featureFootprint(),request.terrain?&symmetrySections():nullptr);
     const auto& r=result->report;
-    if(!(r.units+r.features+r.starts+r.regions+r.blocks+r.removedUnits+r.removedFeatures+r.removedStarts+r.removedRegions)) {
+    if(!(r.units+r.features+r.starts+r.regions+r.blocks+r.blocked+r.removedUnits+r.removedFeatures+r.removedStarts+r.removedRegions)) {
         openMessage("SYMMETRIZE","Nothing to mirror from the "+lowerText(mf[1])+". "+r.summary());return;
     }
     const std::string source=request.source<0?"current selection":lowerText(mf[1]);
@@ -139,7 +139,8 @@ void cart::Editor::applySymmetrize() {
         edited=unitsEdited=dirty=historyPending=true;commitHistory();   // one undo step
         const auto& report=result->report;
         symmetryIssues=report.terrainIssues;
-        setSymmetryStatus("SYMMETRIZED: "+std::to_string(report.units+report.features+report.starts+report.regions)+" object copies, "+std::to_string(report.blocks)+" terrain blocks");
+        setSymmetryStatus("SYMMETRIZED: "+std::to_string(report.units+report.features+report.starts+report.regions)+" object copies, "+std::to_string(report.blocks)+" terrain blocks, "+
+                          std::to_string(report.blocked)+" blocked cells");
         if(report.unmirroredBlocks) {
             mapIssues=symmetryIssues;mapIssueRevision=history.revision();issueIndex=0;issueScroll=0;
             openMessage("SYMMETRIZED",report.summary()+" Symmetry > Locate unmirrored terrain (or Scenario > Next issue) visits each area; Validation results lists them all.");
@@ -167,11 +168,15 @@ cart::Editor::LiveEdit::~LiveEdit() {
     } else if(e.tool==STARTS) {
         result=cart::mirrorStartEdits(starts,e.scenario.starts,e.symmetryKind,map.width,map.height);
         if(result.copies)e.dirty=e.historyPending=true;
+    } else if(e.tool==BLOCKED) {   // blocked cells change no tiles: the minimaps stay
+        result=cart::mirrorBlockerEdits(features,e.mapView.editMap(),e.symmetryKind);
+        if(result.copies)e.dirty=e.historyPending=true;
     } else {
         result=cart::mirrorFeatureEdits(features,featureNames,e.mapView.editMap(),e.symmetryKind,e.featureFootprint());
         if(result.copies)e.edited=e.dirty=e.historyPending=true;
     }
-    if(result.skipped)e.setSymmetryStatus(std::to_string(result.skipped)+" mirrored change(s) skipped: off the map, overlapping, or no free start number");
+    if(result.skipped && e.tool==BLOCKED)e.setSymmetryStatus(std::to_string(result.skipped)+" mirrored blocked cell(s) skipped: a feature or road holds the mirror cell");
+    else if(result.skipped)e.setSymmetryStatus(std::to_string(result.skipped)+" mirrored change(s) skipped: off the map, overlapping, or no free start number");
     else if(result.copies)e.setSymmetryStatus("MIRRORED "+std::to_string(result.copies)+" change(s)");
 }
 

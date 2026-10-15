@@ -1,4 +1,5 @@
 #include "cartographer/symmetry.h"
+#include "cartographer/blockers.h"
 #include "cartographer/regions.h"
 
 #include <algorithm>
@@ -437,7 +438,7 @@ TerrainMirror mirrorTerrain(const SectionMatcher& matcher,const tak::tnt::Map& s
 
 std::string SymmetryReport::summary() const {
     auto count=[](int n,const char* what){return std::to_string(n)+" "+what+(n==1?"":"s");};
-    std::string text="Copies: "+count(units,"unit")+", "+count(features,"feature")+", "+count(starts,"start")+", "+count(regions,"region")+", "+count(blocks,"terrain block")+".";
+    std::string text="Copies: "+count(units,"unit")+", "+count(features,"feature")+", "+count(starts,"start")+", "+count(regions,"region")+", "+count(blocks,"terrain block")+", "+count(blocked,"blocked cell")+".";
     text+=" Replaced: "+count(removedUnits,"unit")+", "+count(removedFeatures,"feature")+", "+count(removedStarts,"start")+", "+count(removedRegions,"region")+".";
     if(keptRegions)text+=" Kept "+count(keptRegions,"region")+" used by rules.";
     if(const int skipped=skippedUnits+skippedFeatures+skippedStarts+skippedRegions)
@@ -598,6 +599,23 @@ SymmetryReport symmetrize(tak::tnt::Map& map,std::vector<tak::tnt::StartPos>& st
             map.features[cell]=value;++report.features;
         }
     }
+    // Blocked cells on the source side block their images too, on empty cells and
+    // whichever TERRAIN choice: twin sections bring only their own markers, so
+    // cells painted with the BLOCKED tool would stay on one side. A selection's
+    // source is its terrain rectangle. No blocker on the other side is removed.
+    if(!selection || request.blocks) {
+        const Box cells=selection?Box{request.blocks->x0*2,request.blocks->z0*2,request.blocks->x1*2,request.blocks->z1*2}:Box{0,0,width,height};
+        auto inCells=[&](int x,int z) {return x>=cells.x0 && x<cells.x1 && z>=cells.z0 && z<cells.z1;};
+        std::vector<std::pair<int,int>> blocked;
+        for(int z=0;z<height;++z)for(int x=0;x<width;++x)
+            if(map.features[size_t(z)*width+x]==kCellBlocked && (selection?inCells(x,z):source({x+.5,z+.5})))blocked.push_back({x,z});
+        for(const auto& [x,z]:blocked)for(Xf xf:images) {
+            const auto image=mirrorFeature(x,z,1,1,xf,width,height);
+            if(!image || *image==std::pair{x,z} || (selection && inCells(image->first,image->second)))continue;
+            uint16_t& v=map.features[size_t(image->second)*width+image->first];
+            if(v==kCellEmpty) {v=kCellBlocked;++report.blocked;}
+        }
+    }
     return report;
 }
 
@@ -696,6 +714,37 @@ LiveMirrorResult mirrorFeatureEdits(const std::vector<uint16_t>& beforeFeatures,
         if(value==0xFFFF) {++result.skipped;return;}
         map.features[cell]=value;++result.copies;
     });
+    return result;
+}
+
+LiveMirrorResult mirrorBlockerEdits(const std::vector<uint16_t>& before,tak::tnt::Map& map,Mirror kind) {
+    LiveMirrorResult result;const auto images=mirrorImages(kind);
+    if(before.size()!=map.features.size())return result;
+    std::vector<std::pair<size_t,bool>> changes;   // cell, painted (else erased); ascending
+    for(size_t i=0;i<map.features.size();++i) {
+        const uint16_t was=before[i],now=map.features[i];
+        if((was==kCellEmpty && now==kCellBlocked) || (was==kCellBlocked && now==kCellEmpty))changes.push_back({i,now==kCellBlocked});
+    }
+    auto edited=[&](size_t cell) {
+        const auto at=std::lower_bound(changes.begin(),changes.end(),cell,[](const auto& change,size_t c){return change.first<c;});
+        return at!=changes.end() && at->first==cell;
+    };
+    for(const auto& [i,paint]:changes) {
+        const int x=int(i%size_t(map.width)),z=int(i/size_t(map.width));
+        std::vector<std::pair<int,int>> seen{{x,z}};
+        for(Xf xf:images) {
+            const auto image=mirrorFeature(x,z,1,1,xf,map.width,map.height);
+            if(!image) {++result.skipped;continue;}
+            if(std::find(seen.begin(),seen.end(),*image)!=seen.end())continue;
+            seen.push_back(*image);
+            const size_t cell=size_t(image->second)*map.width+image->first;
+            if(edited(cell))continue;
+            uint16_t& v=map.features[cell];
+            if(paint && v==kCellEmpty) {v=kCellBlocked;++result.copies;}
+            else if(paint && v!=kCellBlocked)++result.skipped;   // a feature or road holds the image
+            else if(!paint && v==kCellBlocked) {v=kCellEmpty;++result.copies;}
+        }
+    }
     return result;
 }
 

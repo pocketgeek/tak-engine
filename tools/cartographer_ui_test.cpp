@@ -29,6 +29,9 @@
 #include <stdexcept>
 #include <vector>
 
+// Toolbar button centres (editorstate.h layout).
+static int toolX(int tool) {return cart::Editor::kToolX+tool*cart::Editor::kToolW+30;}
+static int modeX(int mode) {return cart::Editor::kModeX+mode*cart::Editor::kModeW+30;}
 static void key(SDL_Keycode k,Uint16 mod=0) {
     SDL_Event e{};e.type=SDL_KEYDOWN;e.key.keysym.sym=k;e.key.keysym.mod=mod;SDL_PushEvent(&e);
 }
@@ -488,7 +491,7 @@ static int regionWorkflow(const char* data) {
         auto drag=[&](int x,int y,int toX,int toY) {mouse(SDL_MOUSEBUTTONDOWN,x,y);mouse(SDL_MOUSEMOTION,toX,toY);mouse(SDL_MOUSEBUTTONUP,toX,toY);};
         const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
         switch(frame) {
-        case 0: key(SDLK_1);click(700,32);break;
+        case 0: key(SDLK_1);click(cart::Editor::kRegionsX+cart::Editor::kRegionsW/2,32);break;
         case 1: drag(361,205,521,365);break; // cells 10,10 through 20,20
         case 2: failed|=!dirty;drag(441,285,473,317);break; // move two cells
         case 3: drag(569,413,601,429);break; // resize right/bottom by two/one cells
@@ -760,11 +763,11 @@ static int featureWorkflow(const char* data) {
         switch(frame) {
         case 0:key(SDLK_o,KMOD_CTRL);break;
         case 1:text((root/"Features.kmp").string());key(SDLK_RETURN);break;
-        case 2:key(SDLK_1);click(180,32);click(480,32);break;
+        case 2:key(SDLK_1);click(toolX(cart::Editor::FEATURES),32);click(modeX(cart::Editor::MODE_SELECT),32);break;
         case 3:drag(345,189,425,237);break; // select both features
         case 4:click(250,10);click(250,312);break; // hide selected features
         case 5:failed|=dirty;key(SDLK_DELETE);key(SDLK_x,KMOD_CTRL);break; // hidden selection cannot be deleted/cut
-        case 6:failed|=dirty;click(180,32);break; // selecting the feature tool reveals it again
+        case 6:failed|=dirty;click(toolX(cart::Editor::FEATURES),32);break; // selecting the feature tool reveals it again
         case 7:drag(361,205,393,253);break; // move two columns, three rows
         case 8:failed|=!dirty;key(SDLK_z,KMOD_CTRL);break;
         case 9:failed|=dirty;key(SDLK_y,KMOD_CTRL);break;
@@ -1183,7 +1186,7 @@ static int terrainClipboardWorkflow(const char* data) {
         switch(frame) {
         case 0:key(SDLK_o,KMOD_CTRL);break;
         case 1:text((root/"Clip.kmp").string());key(SDLK_RETURN);break;
-        case 2:key(SDLK_1);click(470,32);break;          // 100% zoom, Select mode (Terrain tool)
+        case 2:key(SDLK_1);click(modeX(cart::Editor::MODE_SELECT),32);break;          // 100% zoom, Select mode (Terrain tool)
         case 3:mouse(SDL_MOUSEBUTTONDOWN,200+32+5,44+32+5);mouse(SDL_MOUSEMOTION,200+96+5,44+64+5);mouse(SDL_MOUSEBUTTONUP,200+96+5,44+64+5);break;   // blocks 1..3 x 1..2
         case 4:if(dirty)fail("selecting terrain edited the map");key(SDLK_c,KMOD_CTRL);key(SDLK_v,KMOD_CTRL);break;
         case 5:if(dirty || title.find("[Checking map]")!=std::string::npos)fail("copy edited the map or ran Check Map");click(200+10*32+16,44+5*32+16);break;   // paste centred on block (10,5)
@@ -1262,7 +1265,7 @@ static int paletteScrollWorkflow(const char* data) {
         }
         if(step>0 && step<11)check(!dirty,std::string("browser scrolling edited the map in ")+toolNames[tool]);
         switch(step) {
-        case 0:pointer.click(96+tool*72+20,32);pointer.warp(100,lh/2);break;
+        case 0:pointer.click(toolX(tool),32);pointer.warp(100,lh/2);break;
         case 1:
             check(state.tool==tool && state.paletteScroll==0,"a new tool's list starts at the top");
             check(state.paletteMaxScroll>0,std::string("the ")+toolNames[tool]+" list overflows the browser");

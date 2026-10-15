@@ -64,8 +64,9 @@ void cart::Editor::prepareShot() {
         if (shotTool == "features") tool = FEATURES;
         else if (shotTool == "units") tool = UNITS;
         else if (shotTool == "starts") tool = STARTS;
+        else if (shotTool == "blocked") tool = BLOCKED;
         else if (!shotTool.empty() && shotTool != "terrain")
-            std::fprintf(stderr, "shot: unknown --shot-tool '%s' (terrain|features|units|starts); using terrain\n", shotTool.c_str());
+            std::fprintf(stderr, "shot: unknown --shot-tool '%s' (terrain|features|units|starts|blocked); using terrain\n", shotTool.c_str());
     }
 }
 

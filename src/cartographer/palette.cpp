@@ -44,6 +44,10 @@ std::string cart::Editor::paletteLabel(int index) {
     if(tool==UNITS) {const auto* info=unitInfo(index);return info?info->name+" ("+unitTypes[size_t(index)]+")":unitTypes[size_t(index)];}
     if(tool==FEATURES)return features.list()[size_t(index)].name;
     if(tool==STARTS)return "PLAYER "+std::to_string(scenario.starts[size_t(index)].number);
+    if(tool==BLOCKED) {
+        const auto size=std::to_string(cart::kBlockedBrushSizes[size_t(index)]);
+        return "BRUSH "+size+" X "+size+(index?" CELLS":" CELL");
+    }
     const auto& section=sections.list()[size_t(index)];
     if(catalogWorld!=world || sectionCatalog.pieceOf(index)<0)return section.name;
     return sectionCatalog.label(index)+"   "+section.name+" ("+section.category+")";
@@ -83,8 +87,10 @@ void cart::Editor::refreshPalette() {
         }
         return;
     }
-    const int count=tool==UNITS?int(unitTypes.size()):tool==FEATURES?int(features.list().size()):tool==STARTS?int(scenario.starts.size()):int(sections.list().size());
-    auto category=[&](int i) {return tool==UNITS?unitCategory(i):tool==FEATURES?features.list()[size_t(i)].category:tool==STARTS?std::string("STARTS"):sections.list()[size_t(i)].category;};
+    const int count=tool==UNITS?int(unitTypes.size()):tool==FEATURES?int(features.list().size()):tool==STARTS?int(scenario.starts.size()):
+        tool==BLOCKED?int(cart::kBlockedBrushSizes.size()):int(sections.list().size());
+    auto category=[&](int i) {return tool==UNITS?unitCategory(i):tool==FEATURES?features.list()[size_t(i)].category:tool==STARTS?std::string("STARTS"):
+        tool==BLOCKED?std::string("BRUSH"):sections.list()[size_t(i)].category;};
     std::set<std::string> categories;for(int i=0;i<count;++i)categories.insert(category(i));
     paletteCategories={"ALL"};paletteCategories.insert(paletteCategories.end(),categories.begin(),categories.end());
     if(toolChanged || categoryIndex>=int(paletteCategories.size()))categoryIndex=0;
@@ -100,7 +106,7 @@ void cart::Editor::refreshPalette() {
 
 int cart::Editor::paletteContentHeight() const {
     const int count=int(paletteItems.size());
-    if(tool==UNITS || tool==STARTS)return count*26;
+    if(tool==UNITS || tool==STARTS || tool==BLOCKED)return count*26;
     return count?(count+cols-1)/cols*kCellH+4:0;   // grid cells start 4px below the list top
 }
 
@@ -113,7 +119,7 @@ cart::ScrollBar cart::Editor::paletteScrollBar() const {
 int cart::Editor::paletteRowAt(int x,int y) const {
     if(sectionMenuOpen && sectionMenuRowAt(x,y)>=0)return -1;
     if(paletteScrollBar().inTrack(x,y))return -1;
-    if(tool==UNITS || tool==STARTS)return (y-kPaletteTop+paletteScroll)/26;
+    if(tool==UNITS || tool==STARTS || tool==BLOCKED)return (y-kPaletteTop+paletteScroll)/26;
     const int column=(x-4)/(kThumb+4);   // the right margin is no cell (it read as the next row)
     return column<cols?((y-kPaletteTop-4+paletteScroll)/kCellH)*cols+column:-1;   // cells are drawn 4px down
 }
@@ -124,6 +130,7 @@ std::string cart::Editor::paletteHint(int y) const {
         "Numbered variants of a piece share one thumbnail: click the selected piece again to step through them. Hover shows the internal name.";
     if(y<kMenuH+53)return "Click to cycle browser categories or unit roles. Search and filters work together.";
     if(tool==UNITS)return "Click to cycle faction filters. Internal unit identifiers remain available in the browser details.";
+    if(tool==BLOCKED)return "Blocked cells on this map. The rows below are brush sizes for painting or erasing them; [ and ] change it too.";
     return {};
 }
 
@@ -166,6 +173,7 @@ bool cart::Editor::handlePaletteClick(SDL_Event& e) {
         revealTool();const int index=paletteItems[size_t(row)];
         if(tool==UNITS)selectedType=index;
         else if(tool==FEATURES)selectedFeat=index;
+        else if(tool==BLOCKED)blockedBrush=index;
         else if(tool==STARTS)mapView.setOffset(scenario.starts[size_t(index)].xpos*16-canvasW/(2*mapView.zoom()),scenario.starts[size_t(index)].zpos*16-canvasH/(2*mapView.zoom()));
         else if(index==selected && row<int(paletteVariants.size()) && paletteVariants[size_t(row)].size()>1) {
             // Clicking the selected piece again steps to its next variant.
@@ -213,11 +221,17 @@ void cart::Editor::drawPalette() {
     paletteScroll=bar.clamp(paletteScroll);   // the list shrank or the window got taller
     SDL_Rect palClip{0,kPaletteTop,bar.active()?bar.x-2:kPaletteW,h-kStatusH-kPaletteTop};
     SDL_RenderSetClipRect(ren,&palClip);
-    if(tool==UNITS || tool==STARTS) {
+    if(tool==UNITS || tool==STARTS || tool==BLOCKED) {
         for(int row=0;row<int(paletteItems.size());++row) {
             const int i=paletteItems[size_t(row)],y=kPaletteTop+row*26-paletteScroll;
             if(y+24<kPaletteTop || y>h-kStatusH)continue;
-            if(tool==UNITS && i==selectedType)fillRect(ren,0,y,kPaletteW,25,70,66,40);
+            if((tool==UNITS && i==selectedType) || (tool==BLOCKED && i==blockedBrush))fillRect(ren,0,y,kPaletteW,25,70,66,40);
+            if(tool==BLOCKED) {   // a red square sized like the brush, then its label
+                const int side=std::min(22,6+cart::kBlockedBrushSizes[size_t(i)]);
+                fillRect(ren,4+(32-side)/2,y+1+(24-side)/2,side,side,230,50,50);
+                cart::drawText(ren,paletteLabel(i),42,y+9,1,235,230,200);
+                continue;
+            }
             if(tool==UNITS) {
                 const auto* info=unitInfo(i);
                 const auto portraitPath="anims/buildpic/"+lowerText(unitTypes[size_t(i)])+".jpg";
@@ -285,7 +299,8 @@ void cart::Editor::drawPalette() {
     } else if(tool==UNITS) {
         static const char* factionNames[]={"ALL FACTIONS","ARAMON","TAROS","VERUNA","ZHON","CREON"};
         cart::drawButton(ren,4,kMenuH+54,kPaletteW-8,18,factionNames[factionIndex],false);
-    } else cart::drawText(ren,std::to_string(paletteItems.size())+" MATCHES",6,kMenuH+59,1,180,190,200);
+    } else if(tool==BLOCKED)cart::drawText(ren,"BLOCKED CELLS: "+std::to_string(blockedCount),6,kMenuH+59,1,180,190,200);
+    else cart::drawText(ren,std::to_string(paletteItems.size())+" MATCHES",6,kMenuH+59,1,180,190,200);
 }
 
 // The group list drops down from the category button over the browser and canvas
