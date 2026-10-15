@@ -70,12 +70,12 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
   before the client:
   `./build-dbg/takserver --port 7677 --data <install> --no-auth --seed 1 &` then
   `XDG_DATA_HOME=$(mktemp -d) TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy ./build-dbg/takclient game "<map>" --data <install> --server 127.0.0.1 --serverport 7677 --mpai --time 60` —
-  (The scratch `XDG_DATA_HOME` keeps a debug `--data` run from saving that folder as
-  the player's data folder and dropping replays into the real profile.)
   prints a state `hash=`. **`--seed` is required for a repeatable hash**: a game is
   otherwise seeded randomly (so Random Start Locations differ game to game), and the
   harness exists to produce the same hash twice. (Debug and release sims are
-  bit-identical, so the hash matches a release run.)
+  bit-identical, so the hash matches a release run.) The scratch `XDG_DATA_HOME` keeps a debug `--data` run
+  from saving that folder as the player's data folder and dropping replays into
+  the real profile.
 - Asset-inspection CLIs (in `tools/`, built into `build/`): `cobtool`,
   `modeltool`, `gaftool`, `tnttool`, `tdftool`, `hpitool`. Handy for verifying
   claims about the shipped data instead of guessing.
