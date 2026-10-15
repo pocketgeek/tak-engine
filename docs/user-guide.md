@@ -287,6 +287,14 @@ of mana (less than 30% of their storage left while spending faster than they
 earn), one at a time, on a free deposit near their own base, as the original
 game's AI does.
 
+On a team, an AI leaves the free mana deposits around an ally's start to that
+ally until they have gone unclaimed for two minutes. After that, of the other
+allies, only the one whose start is nearest may build there, so no AI crosses
+the map into an ally's base; if that nearest ally never expands, the deposits
+stay free. An AI also stops treating a deposit as taken once the builder headed
+for it, its own or an ally's, has got no nearer for a minute, and sends its own
+stuck builders to other work.
+
 The AI runs on the game server, never in your client. In single-player, the game
 starts a private server on your own computer for you.
 

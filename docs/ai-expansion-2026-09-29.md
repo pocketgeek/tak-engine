@@ -192,3 +192,80 @@ priests -- and so expand more often.
 searching the ladder's radius for the trigger, had moved Legion 300 s to
 `cc1c4b26954597df`. "4x4 team" is as in the table above: every deposit there
 lies within the trigger's radius.
+
+## Update 2026-10-15: the nearest ally, and stalled builders
+
+Two changes to the rule above. Every difficulty runs the same code, so both
+apply wherever an AI's builders reach an ally's base.
+
+**The nearest ally takes an open home deposit.** Once the ally whose home a
+deposit is in no longer holds it -- it has sat unclaimed for two minutes, or no
+builder of that ally's can reach it -- the deposit goes to whichever other
+living ally's start is nearest it, not to every ally. The ally whose home it is
+may still build there. Under the old rule a far ally's builder could take such a
+deposit and, once bound for it, hold it for its whole walk across the map while
+the nearer allies, the owner included, could not race it: in the no-attack runs
+the Aramon AI reserved Zhon's deposits from 6,000-11,500 map units away and
+Zhon's builders went to the enemy's base instead. A defeated ally's home is open
+to all, as before.
+
+The cost of this: a deposit whose nearest other ally never builds there stays
+empty, though a farther AI would take it. That ally may be a human who does not
+expand, a Defensive AI (600 map units from home), or a Normal or Easy AI, whose
+builders search 1,600 from home: on "4x4 team" a team's starts stand 2,200 to
+6,300 apart, so the open deposits of an Absurd AI that does not expand would
+wait for a Normal neighbour that never comes. Two human allies side by side keep
+each other's open deposits from the AIs on their team.
+
+**A stalled builder holds nothing.** A reservation now lasts only while its
+builder is getting somewhere. Each think the AI follows every allied builder
+whose orders hold a deposit on the task it is on now -- the lodestone itself for
+an AI's builder, but a human's may wait behind a move, a repair or another
+building: the nearest it has come to that task's site or goal, and the last
+tick it came 64 map units nearer, was at work (building, or repairing or
+reclaiming within reach), or started a new task. One that has not for a minute
+of game time (1,800 ticks) is stalled. Its deposits are no longer reserved, nor
+claimed for an ally; the claim ends when it last gained, so the deposit's owner
+keeps it two minutes from then. The AI that owns the builder stops it, which
+leaves it free for other work, and never sends it back to those deposits. A
+builder walking across the map gains every few seconds and keeps its claim
+however long it walks; one that arrives to find units on its site already gives
+up within the sim's 31 retries (310 ticks). In the run that showed it (Absurd,
+human, Absurd, human against Hard, Normal, Hard, Normal) a Zhon Beast Handler
+sent to a deposit 3,300 map units away in a human ally's base moved 109 px in
+440 s, and its reservation kept every ally off that deposit until the game
+ended at 900 s.
+
+Stalls are common on "4x4 team": 1,034 stops in the 13 games below. 666 of
+those builders had moved less than 300 map units since their order (wedged in
+their own base or in a crowd); most of the others stopped at the front on their
+way to an enemy base. Only 22 had walked 300 or more while gaining less than
+half of it, the signature of a long detour. A stopped builder
+sent on to another deposit beyond the same jam may stall again; each time it
+holds that deposit for a minute at most.
+
+Over the same games, reservations held 180 s or more on deposits in an ally's
+home (sampled every 30 s): 101 before, 2 after, both the nearest ally's builders
+walking 3,000-3,900 map units at normal speed. Reservations held that long by a
+builder that moved less than 300 map units: 22 before, none after. Team income
+(`teamsim`, "4x4 team", Crusades, 900 s, Monarch Expendable), mean of each
+team's income over the window, averaged over seeds, against main before both
+changes:
+
+| Teams (seeds) | 300-600 s | 600-900 s |
+| --- | ---: | ---: |
+| Absurd+Normal vs Defensive, no attacks (8) | +4% / -0% | +11% / -1% |
+| Absurd+Normal vs Absurd+Normal (4) | +3% / +3% | +5% / +11% |
+| Absurd, human, Absurd, human vs Hard+Normal (1) | +5% / -0% | -1% / -5% |
+
+In the no-attack games Zhon now ends with 15-18 lodestones (7-11 before) and
+Aramon with 18-19 (23-27). In the human-ally game the second human's home is
+full at 900 s (3 of its 10 deposits free before). The first human is defeated
+near the end in both runs and its base is fought over: the Aramon AI's
+lodestones in allies' bases fall from 10 to none between 600 and 900 s (11 to 6
+before).
+
+`--mpai` (Inner Circle, seed 1; Normal AIs with no allies) is unchanged: Retail
+300 s `bf6f1ac3081f9ee6`, Legion 300 s `7def7a0fa5dedfc6` (protocol 263). Its
+60 s run ends before any builder could have stalled for a minute. The AI runs
+on the server only, so the protocol is unchanged.
