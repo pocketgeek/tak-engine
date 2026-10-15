@@ -33,11 +33,12 @@ constexpr bool retailUnitSoundAudible(int32_t flags,bool visible,bool selected) 
     const int priority=retailSoundPriority(flags);
     return priority==7 || (visible && (priority>1 || selected));
 }
-// Not a retail rule: a simulation unit sound released this far behind its own
-// tick belongs to a backlog the presentation skipped (a rejoin or spectator
-// catch-up, fast replay playback). Drop it rather than play the backlog at once.
-constexpr uint32_t kUnitSoundStaleTicks=15;
-constexpr bool unitSoundCurrent(uint32_t displayedTick,uint32_t soundTick) {
-    return displayedTick-soundTick<=kUnitSoundStaleTicks;
+// Not a retail rule: a rejoining client or a spectator replays the game's
+// history (ticks before the server-declared end, GameView::cmdReplayEnd_) as fast
+// as it can. That history's death cries are dropped rather than played at
+// fast-forward rate. Live play keeps every cry however late its frame comes,
+// like the impact sounds.
+constexpr bool unitSoundLive(uint32_t soundTick,uint32_t historyEnd) {
+    return soundTick>=historyEnd;
 }
 } // namespace tak

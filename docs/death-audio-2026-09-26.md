@@ -180,23 +180,27 @@ unit is dying it drops its own sounds, so nothing plays twice; its other sounds,
 death animation and effects are unchanged, and the per-unit seed stays for
 display-only rolls (idle loops, smoke). Frozen/petrified deaths, destroyed cargo
 and consumed lodestones run no death script in the simulation either, and stay
-silent. A cry released more than 15 ticks after its own tick (a rejoin or
-spectator catch-up, fast replay playback) is dropped instead of joining a burst.
+silent. A rejoining client or a spectator drops the cries of the history it
+replays (ticks before the server-declared end of that history) instead of
+playing them at fast-forward rate. Live play keeps every cry however late its
+frame comes, as it keeps the impact sounds: an earlier 15-tick cutoff silenced
+cries after an ordinary render hitch while their hits still played, and let a
+catch-up whose frames kept coming play most of its history.
 
 `creon_death_sound` kills 1,152 bodies (every Creon `Killed`/`Dying` caller plus
 two archers, normal and explosion deaths, own and enemy) through the combat
 damage path. Every death must request exactly the simulation's sounds in order,
 never two cries, at the authored rates and variants; enemy deaths out of sight
 are silent, and the queued cry replayed with every class shows only class 7
-carrying out of sight. A death the presentation reaches 10 ticks late still
-cries; 45 ticks late it does not. Petrified and frozen victims stand as statues
+carrying out of sight. A death the presentation reaches 45 ticks late still
+cries in live play, and does not inside replayed history. Petrified and frozen victims stand as statues
 in silence. `creon_death_sound_peers` (about 9 s) runs the game twice, the
 second time presenting every batch late as after a rejoin, and requires the same
 world hash and the same sounds for all 1,152 deaths. Before this change, with the
 same instruments: 340 deaths sounded something other than the simulation's
 choice, 207 deaths differed between the two peers (`crebeas`, `cretort`,
 `crefire`, `cregatl` and `cregod`: the units whose idle loops roll RAND on the
-display VM before the hit), and the 45-tick backlog cried 16 of 16.
+display VM before the hit), and the 45-tick history backlog cried 16 of 16.
 Leaving the display VM's sounds on as well doubled 541 deaths.
 
 No hashed state changed and no protocol bump: --mpai Inner Circle seed 1 Retail

@@ -1006,6 +1006,13 @@
         return (p >= 0 && p < int(f.players.size())) ? f.players[size_t(p)] : kEmpty;
     }
 
+    void GameView::playUnitSound(const std::string& name, int32_t flags, float x, float z, bool visible, bool selected) {
+        if (!tak::retailUnitSoundAudible(flags,visible,selected)) return;
+        const int priority=tak::retailSoundPriority(flags);
+        if (priority==7) sounds_.play(name,1.f,1.f,priority,(flags&32)!=0);
+        else sounds_.playWorld(name,x,z,priority);
+    }
+
     bool GameView::cellVisibleR(float x, float z) const {
         // No fog (spectator, replay, FULL VISION, a lineofsight=0 mission) sees every
         // cell. The world's fog buffer is not empty then: setTerrain pre-fills it and
@@ -1094,13 +1101,10 @@
             }
         }
         for(const auto& sound:unitSounds) {
-            if(sound.name.empty() || !tak::unitSoundCurrent(front().gameTick,sound.tick)) continue;
+            if(sound.name.empty() || !tak::unitSoundLive(sound.tick,cmdReplayEnd_)) continue;
             const bool visible=noFog_ || cellVisibleR(sound.x,sound.z);
             const bool selected=std::find(selection_.begin(),selection_.end(),sound.unitId)!=selection_.end();
-            if(!tak::retailUnitSoundAudible(sound.flags,visible,selected)) continue;
-            const int priority=tak::retailSoundPriority(sound.flags);
-            if(priority==7) sounds_.play(sound.name,1.f,1.f,priority,(sound.flags&32)!=0);
-            else sounds_.playWorld(sound.name,sound.x,sound.z,priority);
+            playUnitSound(sound.name,sound.flags,sound.x,sound.z,visible,selected);
         }
         // Drained, not gated on newTick_: the whole point is to pick up impacts
         // from ticks whose snapshots the render never saw.
@@ -1695,13 +1699,8 @@
             if (u && u->type && !a.pendingSnd.empty()) {
                 const bool visible=noFog_ || cellVisibleR(u->x,u->z);
                 const bool selected=std::find(selection_.begin(),selection_.end(),id)!=selection_.end();
-                for (const auto& [index,flags]:a.pendingSnd) {
-                    if (!tak::retailUnitSoundAudible(flags,visible,selected)) continue;
-                    const auto& name=a.vm->file().name(uint32_t(index));
-                    const int priority=tak::retailSoundPriority(flags);
-                    if (priority==7) sounds_.play(name,1.f,1.f,priority,(flags&32)!=0);
-                    else sounds_.playWorld(name,u->x,u->z,priority);
-                }
+                for (const auto& [index,flags]:a.pendingSnd)
+                    playUnitSound(a.vm->file().name(uint32_t(index)),flags,u->x,u->z,visible,selected);
             }
             a.pendingPoints.clear();
             a.pendingSfx.clear();

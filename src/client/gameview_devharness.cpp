@@ -1231,8 +1231,9 @@
             //  (e) the authored rates and variants (0x10057000 is the LOGICAL
             //      and, so "deathType!=3 && RAND(1,4)" is always true for a
             //      non-explosion death);
-            //  (f) a presentation backlog (catch-up, fast replay) drops cries
-            //      older than kUnitSoundStaleTicks instead of playing them at once;
+            //  (f) a presentation backlog keeps its cries in live play (a hitch,
+            //      like the impact sounds), but a rejoin's or spectator's replayed
+            //      history (before cmdReplayEnd_) stays silent;
             //  (g) petrified and frozen deaths (statues, severity 0) stay silent.
             // rate: chance of any death sound; cries: distinct authored *DIE* variants;
             // extra: other death-callback sounds per death (crefire's Killed CANNON8
@@ -1530,14 +1531,16 @@
                         "in sight %s, selected %s\n",row[0].c_str(),row[1].c_str(),row[2].c_str());
                 }
             }
-            // (f) A backlog: deaths the presentation skipped over (a rejoin or
-            // spectator catch-up, fast replay playback) stay silent once it
-            // resumes, rather than all crying at once; a short hitch keeps them.
+            // (f) A backlog: deaths the presentation skipped over. In live play
+            // (a render hitch) they still cry when it resumes, with their impact
+            // sounds; deaths inside a rejoin's or spectator's replayed history
+            // (ticks before cmdReplayEnd_) stay silent rather than cry at once.
             {
                 const auto* type=registry_.find("creauto");
                 if (!type || !type->script()) throw std::runtime_error("creauto missing");
                 const auto& names=type->script()->names;
-                for (const int skipped:{int(tak::kUnitSoundStaleTicks)-5,int(tak::kUnitSoundStaleTicks)+30}) {
+                constexpr int kSkipped=45;
+                for (const bool history:{false,true}) {
                     std::vector<int> victims;
                     std::map<int,std::pair<float,float>> where;
                     for (int i=0;i<16;++i) {
@@ -1555,20 +1558,23 @@
                         where[id]={u->x.toFloat(),u->z.toFloat()};
                         lethal(id,1);
                     }
-                    // They die on the next tick; the presentation resumes `skipped` ticks later.
-                    for (int t=0;t<skipped;++t) simulate();
+                    // They die on the next tick; the presentation resumes kSkipped ticks
+                    // later, at the end of the replayed history when `history` is set.
+                    if (history) cmdReplayEnd_=world_.tickCount()+kSkipped;
+                    for (int t=0;t<kSkipped;++t) simulate();
                     for (int t=0;t<240;++t) frame();
+                    cmdReplayEnd_=0;
                     int chosenCries=0,heardCries=0;
                     for (int id:victims) {
                         chosenCries+=!chosen[id].empty();
                         heardCries+=!heardAt(where[id].first,where[id].second,names).empty();
                     }
-                    const bool stale=skipped>int(tak::kUnitSoundStaleTicks);
-                    std::fprintf(stderr,"CREON_DEATH backlog: presentation resumed %d ticks after 16 deaths, "
-                        "simulation cried %d, client heard %d\n",skipped,chosenCries,heardCries);
-                    if (chosenCries!=16 || heardCries!=(stale ? 0 : 16)) {
-                        ++failures;std::fprintf(stderr,"FAIL (f) %d of 16 cries heard %d ticks late, want %d\n",
-                            heardCries,skipped,stale ? 0 : 16);
+                    std::fprintf(stderr,"CREON_DEATH backlog: presentation resumed %d ticks after 16 deaths (%s), "
+                        "simulation cried %d, client heard %d\n",kSkipped,history ? "replayed history" : "live",
+                        chosenCries,heardCries);
+                    if (chosenCries!=16 || heardCries!=(history ? 0 : 16)) {
+                        ++failures;std::fprintf(stderr,"FAIL (f) %d of 16 cries heard %d ticks late in %s, want %d\n",
+                            heardCries,kSkipped,history ? "replayed history" : "live play",history ? 0 : 16);
                     }
                 }
             }

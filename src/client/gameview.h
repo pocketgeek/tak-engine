@@ -823,6 +823,8 @@ private:
     // Refresh a cosmetic flame/smoke effect attached to its animated COB piece.
     // Effect classes and lifetimes still need a full native particle comparison.
     void emitSfx(const UnitR& u, Anim& a, int piece, int32_t sfx);
+    // A unit script's PLAY_SOUND through the native unit sound host 50def0's gate.
+    void playUnitSound(const std::string& name, int32_t flags, float x, float z, bool visible, bool selected);
     void emitPoint(const tak::sim::World::ScriptEmission& event);
     // COB EXPLODE: the piece flies off as a debris chunk (retail icd 0x50dd20)
     // plus the TA-flag extras (SMOKE/FIRE bits, BITMAPn explosion classes).
