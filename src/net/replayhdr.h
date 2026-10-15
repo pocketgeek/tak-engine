@@ -41,8 +41,10 @@ inline bool supportedReplayProtocol(uint32_t format, uint32_t protocol) {
     // 258 changed only the lobby wire (ALLOW SPECTATORS) and 259 added MAP SCENARIO, which
     // is off in every older recording (a Test Map copy still opts in through its cached
     // map's [TAKPlaytest] section): with it off 259 simulates as 257/258 did, so 0.8.2's
-    // recordings and main's protocol-258 recordings still play exactly.
-    return protocol == kNetVersion || (kNetVersion == 259 && (protocol == 257 || protocol == 258));
+    // recordings and main's protocol-258 recordings still play exactly. 260 added START
+    // LOCATIONS: BY SLOT (randomStarts 2), which no older recording holds; FIXED and RANDOM
+    // set up as in 259, so 257-259 recordings still play.
+    return protocol == kNetVersion || (kNetVersion == 260 && protocol >= 257 && protocol <= 259);
 }
 
 struct ReplayHeader {

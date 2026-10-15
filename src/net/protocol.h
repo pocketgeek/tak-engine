@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 259;      // 259: MAP SCENARIO room option -- GameOptions.mapScenario (u8, appended after allowSpectators:
+constexpr uint32_t kNetVersion = 260;      // 260: START LOCATIONS: BY SLOT -- GameOptions.randomStarts gains 2 (net::kStartsBySlot: slot N
+                                           //      takes StartPos N whichever seats are empty; sim::startSpotsFor). Layout unchanged; a 259 peer
+                                           //      would read 2 as RANDOM, hence the bump. FIXED/RANDOM setup is unchanged, so 257-259 replays
+                                           //      still play (replay format unchanged: the header's randomStarts u8 just carries 2 too)
+                                           // 259: MAP SCENARIO room option -- GameOptions.mapScenario (u8, appended after allowSpectators:
                                            //      CreateGame/SetGameOptions/LobbyState/GameStarting). Creation-only; the server accepts it only
                                            //      for a verified map whose .ota declares hasscenario and whose v1 .crt has placements or rules,
                                            //      forces randomStarts off with it, and refuses START while a seat the scenario needs is empty.

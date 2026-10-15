@@ -153,12 +153,14 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 259, "replay format 11 is kept under protocol 259");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 260, "replay format 11 is kept under protocol 260");
     // 258 changed only the lobby wire (ALLOW SPECTATORS) and 259 added MAP SCENARIO, off in
     // every older recording: 0.8.2's protocol-257 and main's 258 recordings run the same
     // simulation and stay playable; 256's do not.
     check(supportedReplayProtocol(12, 257) && supportedReplayProtocol(11, 257), "sim-identical protocol 257 replays are kept");
     check(supportedReplayProtocol(12, 258) && supportedReplayProtocol(13, 259), "protocol 258 replays and format 13 are kept");
+    // 260 added START LOCATIONS: BY SLOT (randomStarts 2); FIXED/RANDOM set up as in 259.
+    check(supportedReplayProtocol(13, 259) && supportedReplayProtocol(13, 260), "protocol 259 replays are kept under 260");
     check(!supportedReplayProtocol(12, 256), "previous air-transport protocol is refused");
     check(!supportedReplayProtocol(11, 250), "previous blocked-build-site protocol is refused");
     check(!supportedReplayProtocol(11, 247), "previous Legion W8 passage-gate protocol is refused");

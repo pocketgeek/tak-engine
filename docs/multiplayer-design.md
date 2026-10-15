@@ -683,9 +683,20 @@ package lacks: the `.crt` of a declared scenario, or the named Use Only list
 inside the package is setupMatch's to refuse, with its own message. With that,
 every peer and the referee play the same scenario files.
 
+Protocol 260 adds START LOCATIONS: BY SLOT. `GameOptions.randomStarts` keeps its
+byte and place and gains the value 2 (`net::kStartsBySlot`): slot N takes the
+map's Nth start whichever seats are empty, and a seated slot past the map's last
+start takes the lowest start no seated slot claims by its own number, then a
+spot near the map centre (`sim::startSpotsFor`). Any other nonzero value still
+reads as RANDOM (`normalizeStartMode`), which is why 259 needed the bump: a 259
+peer would read 2 as RANDOM and desync. FIXED and RANDOM set up exactly as in
+259, and the replay header's `randomStarts` byte simply carries 2 as well, so
+the replay format is unchanged and protocol 257-259 recordings still play. A
+MAP SCENARIO room is still forced to FIXED.
+
 Replay format 11 records the pathfinder. Playback requires a protocol that
-`supportedReplayProtocol` accepts: the current one, plus 257 and 258 while 259
-is current (their simulation is unchanged). Older recordings require their
+`supportedReplayProtocol` accepts: the current one, plus 257-259 while 260 is
+current (their simulation is unchanged). Older recordings require their
 original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
