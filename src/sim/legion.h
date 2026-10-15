@@ -340,9 +340,10 @@ public:
     void noteFlyerEvent(FlyerEvent);
     // W9 step 0 (observation only, read-only, never hashed): which steering source moved the unit on
     // its last move() update: 0 none (held, waiting, detour, no update yet), 1 the field descent
-    // (aimCell), 2 the passage gate (gateAim), 3 the pinwheel (pivotAim), 4 a lane-discipline pass
-    // (passAhead stepped), 5 drive's blocked branch (a side-step or yield round a body), 6 a straight
-    // walk to the goal (the member's own line, or the heading it takes while its field is built).
+    // (aimCell), 2 the passage gate (gateAim, or its lane through the strip, passageLane), 3 the
+    // pinwheel (pivotAim), 4 a lane-discipline pass (passAhead stepped), 5 drive's blocked branch (a
+    // side-step or yield round a body), 6 a straight walk to the goal (the member's own line, or the
+    // heading it takes while its field is built).
     // -1 if the unit is not a Legion member. The observer attributes a lane crossing to the site that
     // moved the pair laterally.
     enum Site : uint8_t {SiteNone=0,SiteField=1,SiteGate=2,SitePivot=3,SitePass=4,SiteBlocked=5,SiteDirect=6};

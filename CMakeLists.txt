@@ -592,6 +592,14 @@ add_test(NAME legion_farroom
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/farroom.scn --mode legion --offsets 0,1,-1,2,-2 --json)
 set_tests_properties(legion_farroom PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.A\\.done\":[0-9]+,\"g\\.A\\.stops\":[0-9]+,\"g\\.A\\.left_behind\":0,")
+# Passage lanes (2026-10-14 Legion review, item 3): 48 bodies take a 14-cell gap in a wall several abreast. On the
+# parent the bodies that came through after the crowd had thinned walked straight for their slots, diagonally across
+# the gap, through the lanes the earlier ones had held: 17 to 47 lane swaps in the gap strip over the core five
+# (median 27). Passes when the median run swaps none there and the group is done, serial equal to workers.
+add_test(NAME legion_passagelanes
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/gap14.scn --mode legion --offsets 0,1,-1,2,-2 --json)
+set_tests_properties(legion_passagelanes PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.A\\.done\":[0-9]+,.*\"gate\\.top\\.crossings\":0,")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is

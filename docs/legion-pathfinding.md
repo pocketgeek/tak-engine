@@ -1308,6 +1308,61 @@ tried at W8 and dropped by their stop rules; the lane-crossing exceptions on the
 corner and head-on fixtures, `attackring-wall-64`, `ringcross` and the jagged
 arrivals moved to W9 (user decision W8-2; `docs/legion-exit-tables.md`, "W8 exit").
 
+### Passage lanes (2026-10-14 review, item 3)
+
+A formation took a short passage several abreast (through the passage gate
+above, or because the gap was wide), and the bodies that came through after
+the crowd had thinned walked straight for their slots, diagonally across the
+strip, through the lanes the earlier bodies had held straight in the press.
+That was most of the gap fixtures' lane swaps (`gap8:gate.top.crossings` 74
+over the gate offsets, 65 of them at the straight-walk site; `gap14` 181, 150).
+A census of the swapped pairs (a debug instrument, not kept): in 84% (`gap8`)
+and 86% (`gap14`) of them the later body made the move, 5.1 and 6.2 cells
+across inside the gate's 6-cell window, the other 0.9 and 1.6. Slots in the
+gap's order would not have kept the lanes: pairs whose slots lay in that order
+swapped as often as the rest in `gap8` (1.7% of them against 1.9%), and in
+`gap14` 1.7% against 4.4%. So the slot assignment is unchanged, and no lane
+record is shared: each body keeps the place it has.
+
+A formation member (a point part of 16 or more, the pinwheel's eligibility;
+not on a fight, attack, guard or patrol leg) inside a short passage keeps its
+lateral place until its footprint is clear of the far end (`passageLane`): it
+aims at the first origin past that end at its own lateral origin, over its
+straight walk, the field and the pinwheel, and a blocked step flows round
+toward that cell as round an arc point. A gate-committed member aims at its
+gate point until it crosses the gate line, then keeps its lane through the
+rest of the strip. The strip is read from the passage gate's static
+cross-sections at the body's origin: narrower than the formation's band and
+than 16 origins (`kPassageSpan`), two bodies abreast or more, open along the
+other axis, and cut in a wall (the obstacle on either side runs on for the
+strip's width, across the axis or along it: not the room between two rocks, as
+on `gen1-route-54772`'s way); a run of 2 to 24 such origins along the axis at
+the body's lateral place, with legal origins at both ends; the field's descent
+there steps along the axis toward the end of lower potential, past which the
+axis goes on for a footprint (not a pocket against a wall face, like the stray
+rocks along the corner fixtures' wall); and not within 32 cells of the
+destination. Nothing new is stored or hashed; the checks past the first
+cross-section count in `lane_work`.
+
+Over the 134 fixtures (Legion, every gate offset, serial equal to workers;
+Retail untouched) 15 change: `gap6`, `gap8`, `gap10`, `gap14`, `gapsweep`, the
+six straits, `mixed2`, `doorform`, `doorplug-124` and `mazeform`. Summed: lane
+swaps 566 to 433, the gap fixtures' per-file swaps (x100) 2,723 to 596
+(`gap6`, `gap8`, `gap10` and `gap14` none: the W8-1 floor is met), arrivals
++4, left behind -4, never and complete orders unchanged, stopped and held
+permille -60 and -88, Legion work +0.005%.
+`strait-2x150:gate.strait.crossings` 16 to 3 (Retail 8),
+`mixed2:gate.mid.crossings` 46 to 8. On `gap14` t90 2,162 to 2,072 ticks, done
+3,062 to 2,299, rounded90 1,333 to 1,128. Losses: `gap8:reversals` 6 to 11 and
+`gap8:back` 54 to 81, at the destination, and its t90 2,316 to 2,387;
+`gap14:aim_reversals` 86 to 101; `gapsweep:g.G8.done` never at 6 of the 11
+offsets (one to four bodies settle outside the disc; `gap8`, the same corridor
+alone, now completes at all 11 where it missed 3); `strait-3x48:g.B.done`
+3,377 to 4,277. A 20-cell gap is wider than a 48-body formation's band:
+`gap20:gate.top.crossings` keeps its 1.73 swaps per file.
+`ctest:legion_passagelanes` runs `gap14` over the core five: 17 to 47 swaps on
+the parent (median 27), none here.
+
 ### Head-on meets (W9 C1, protocol 248)
 
 Two large columns walking at each other used to meet face to face and shoulder
@@ -1894,9 +1949,12 @@ Rules that came out of using them:
   W9 cleared the head-on jam; eleven harder gates resisted every local fix
   (each attempt broke more scenarios than it fixed, so the stop rule reverted
   it) and are accepted as known limitations, re-openable later. Lane order:
-  corners still swap 3-4 bodies across the top gate (Retail 0-2), a long
-  strait 22 (Retail 8), and wider gaps 2-5 swaps per file (Retail 0) because
-  Legion takes gaps several abreast. Walls: an attack ring against a wall and
+  corners still swap 3-4 bodies across the top gate (Retail 0-2). A long
+  strait swapped 22 (Retail 8) and wider gaps 2-5 per file (Retail 0), because
+  Legion takes gaps several abreast; since the 2026-10-14 review the passage
+  lanes (above) bring the strait to 3 and gaps up to 14 cells to none, while
+  a 20-cell gap, wider than a 48-body formation's band, still swaps 1.73 per
+  file (`gap20:gate.top.crossings`). Walls: an attack ring against a wall and
   the bodies queued in doorplug-112 touch the wall about twice as often as
   Retail. Tails: a Move group crossing its own firing ring arrives about 11%
   later than Retail; one doorplug-124 body and one motion-cross body never

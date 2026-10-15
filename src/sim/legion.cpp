@@ -181,6 +181,7 @@ constexpr int kLaneS0=1;                       // free cells between the inner l
 constexpr int kGateCommit=12;                  // chain cells ahead within which a member commits to a gate
 constexpr int kGateQueue=6;                    // cells round a gate point counted as its queue
 constexpr int kGateRun=24;                     // strip cells searched for a gate's narrowest cell
+constexpr int kPassageSpan=16;                 // a passage lane's strip: fewer legal origins across than this
 constexpr int kSpanCap=96;                     // origins a cross-section scan walks each way
 constexpr int kGoalSearchCells=24;             // blocked click -> nearest legal
 constexpr int kApproachRegion=256;             // origins a region needs before an unreachable goal is approached
@@ -6146,6 +6147,19 @@ struct LegionNavigator::Impl {
             }
             aimX=centre(cell%W,fx);aimZ=centre(cell/W,fz);
         } else m.site=LegionNavigator::SiteDirect;
+        // Passage lanes (see passageLane): inside a short passage a formation member keeps its lateral
+        // place until it is clear of the far end, over its straight walk, the field and the pinwheel (a
+        // gate-committed member aims at its gate point until it crosses the gate line). A blocked step
+        // flows round toward the lane's cell, as round an arc point.
+        if(here!=m.goal&&f&&f->done&&m.slot>=0&&m.pt&&!engagesEnemies(m.kind)&&
+           (m.site==LegionNavigator::SiteDirect||m.site==LegionNavigator::SiteField||m.site==LegionNavigator::SitePivot)&&
+           partRefs(m)>=kPivotMembers&&formationMember(m)) {
+            int lane=-1;
+            if(passageLane(u,m,p,*f,ox,oz,lane)) {
+                aimX=centre(lane%W,fx);aimZ=centre(lane/W,fz);
+                pivoting=&m;pivotTarget=lane;direct=false;m.site=LegionNavigator::SiteGate;
+            }
+        }
         // C1: a member of a Point latched in a head-on meet narrows before it (see meetAim).
         if(m.pt&&m.pt->meet.tick!=kNoTick&&here!=m.goal&&pivoting!=&m&&partRefs(m)>=kPivotMembers&&formationMember(m)&&
            meetAim(u,m,p,f,ox,oz,aimX,aimZ)&&f)direct=false;
@@ -6670,6 +6684,104 @@ struct LegionNavigator::Impl {
         ++stats.laneWork;
         if(!sweep(p,u,u.x,u.z,centre(m.gateCell%W,fx),centre(m.gateCell/W,fz)))return false;
         cell=m.gateCell;
+        return true;
+    }
+    // Passage lanes (2026-10-14 Legion review, item 3). A formation took a short passage several abreast and
+    // the bodies that came through after the crowd had thinned walked straight for their slots, diagonally
+    // across the strip, through the lanes the earlier bodies had held straight in the press: the gap fixtures'
+    // lane swaps (gap8 74, gap14 181 over the gate offsets, 65 and 150 of them at the straight-walk site). In
+    // 84% (gap8) and 86% (gap14) of the swapped pairs the later body made the move, 5.1 and 6.2 cells across
+    // within the gate's 6-cell window, the other 0.9 and 1.6. Slots in the gap's order would not have kept the
+    // lanes: pairs whose slots lay in that order swapped as often as the rest in gap8 (1.7% of them against
+    // 1.9%), and in gap14 1.7% against 4.4%. So a member inside the strip keeps its lateral place until its
+    // footprint is clear of the far end: the lane cell is the first origin past that end at its own lateral
+    // origin, in a straight legal line (false: none).
+    // The strip: the cross-section at the body's origin (gateSpan's static runs) narrower than its formation's
+    // band (laneBand) and than kPassageSpan origins, at least two bodies abreast, and open along the other
+    // axis; a hole in a wall, not the room between two blocks: the obstacle on either side runs on for at
+    // least the strip's width, across the axis or along it (without that, two rocks on gen1-route-54772's way
+    // and a 2-cell block by a cliff on gen1-route-45941's made strips); the run of such origins along the
+    // axis, at the body's lateral place, two to kGateRun long and ending in legal origins at both ends (a wall
+    // in the run: no lane). The way must go through it: the field's descent here steps along the axis toward
+    // the end of lower potential, past which the axis goes on for a footprint of legal origins (not a pocket
+    // against a face: the stray rocks along the corner fixtures' wall). Not within kLaneNear of the
+    // destination, where the area's own rules place the bodies. Static reads, the field and the member's goal
+    // only: no state. The checks past the first cross-section count with the gate's lane_work.
+    bool passageLane(const Unit& u,const Member& m,const Plane& p,const Field& f,int ox,int oz,int& cell) {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const uint32_t here=f.at(size_t(oz*W+ox));
+        if(here==kUnreached||here<uint32_t(kLaneNear*kOrthogonal))return false;
+        const int band=laneBand(m,std::max(fx,fz));
+        // Legal origins beside (x,z) across axis 1 (z: a passage along x) or 0 (x: along z).
+        auto beside=[&](int x,int z,int axis) {
+            const uint32_t e=spanAt(p,x,z);
+            return axis==1?int(e>>16&0xff)+int(e>>24):int(e&0xff)+int(e>>8&0xff);
+        };
+        auto narrow=[&](int x,int z,int axis) {
+            const int n=beside(x,z,axis);
+            return n+1<kPassageSpan&&n+(axis==1?fz:fx)<band;
+        };
+        const bool acrossZ=narrow(ox,oz,1),acrossX=narrow(ox,oz,0);
+        if(acrossZ==acrossX)return false;   // open both ways, or narrow both ways (a pocket, a bend)
+        const int axis=acrossZ?1:0,foot=axis==1?fz:fx;
+        if(beside(ox,oz,axis)<foot)return false;   // one body abreast: no order to keep
+        uint64_t work=1;
+        struct Flush {uint64_t& to;uint64_t& n;~Flush() {to+=n;}} flush{stats.laneWork,work};
+        {   // A hole in a wall, not the room between two blocks: the obstacle on either side runs on for at
+            // least the strip's width, across the axis (a wall the gap is cut in) or along it (a side wall,
+            // as a baffle's end leaves a gap to a corridor's wall); a crowd walks round a lone block.
+            const uint32_t e=spanAt(p,ox,oz);
+            const int lo=axis==1?int(e>>16&0xff):int(e&0xff),hi=axis==1?int(e>>24):int(e>>8&0xff);
+            const int width=std::min(lo+hi+foot,kPassageSpan);
+            auto blocked=[&](int across,int along) {   // offsets from the body's origin
+                ++work;
+                return !legal(p,axis==1?ox+along:ox+across,axis==1?oz+across:oz+along);
+            };
+            auto wall=[&](int from,int dir) {
+                int n=0;
+                while(n<width&&blocked(from+dir*n,0))++n;
+                if(n>=width)return true;
+                n=1;   // along the axis, on the obstacle's first line, both ways
+                for(int k=1;n<width&&blocked(from,k);++k)++n;
+                for(int k=1;n<width&&blocked(from,-k);++k)++n;
+                return n>=width;
+            };
+            if(!wall(-lo-1,-1)||!wall(hi+1,1))return false;
+        }
+        const int next=descend(p,f,ox,oz,m.goal,fx,fz);
+        const int way=next<0?0:axis==1?next%W-ox:next/W-oz;
+        if(!way)return false;   // the way does not run along the strip here
+        auto at=[&](int k) {return axis==1?std::pair{ox+k,oz}:std::pair{ox,oz+k};};
+        int run[2]={0,0};   // steps to the first open origin: [0] ahead along +axis, [1] along -axis
+        for(int side=0;side<2;++side) {
+            const int sign=side?-1:1;
+            int k=1;
+            for(;k<=kGateRun;++k) {
+                ++work;
+                const auto [x,z]=at(sign*k);
+                if(!legal(p,x,z))return false;
+                if(!narrow(x,z,axis))break;
+            }
+            if(k>kGateRun)return false;
+            run[side]=k;
+        }
+        const int length=run[0]+run[1]-1;
+        if(length<2||length>kGateRun)return false;
+        const auto [ax,az]=at(run[0]);
+        const auto [bx,bz]=at(-run[1]);
+        const uint32_t pa=f.at(size_t(az*W+ax)),pb=f.at(size_t(bz*W+bx));
+        if(pa==pb||std::min(pa,pb)==kUnreached)return false;
+        const int sign=pa<pb?1:-1,reach=pa<pb?run[0]:run[1];
+        if(way!=sign)return false;
+        for(int k=1;k<=(axis==1?fx:fz);++k) {
+            ++work;
+            const auto [x,z]=at(sign*(reach+k));
+            if(!legal(p,x,z))return false;
+        }
+        const auto [tx,tz]=at(sign*reach);
+        ++work;
+        if(!sweep(p,u,u.x,u.z,centre(tx,fx),centre(tz,fz)))return false;
+        cell=tz*W+tx;
         return true;
     }
     // Pinwheel walls. A blocked 1x1 cell is a lone tree or rock (user
