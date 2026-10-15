@@ -27,7 +27,11 @@
 // The median of 3 is the middle value; time keys (t50, t90, done,
 // orders_done) read -1 ("never") as the worst value. A work.* key missing
 // from an offset counts 0 there. No wall time is printed to stdout, so two
-// runs print identical JSON.
+// runs print identical JSON. Wall time goes to stderr, one line per run:
+//   NAME MODE offset=O serial|workers MS ms tick_max_ms=M@T tick_p99_ms=P
+// (MS the whole run; M the slowest World::tick and T the tick it was, P the
+// nearest-rank 99th percentile of the tick times; the observer's own sampling
+// is outside them).
 //
 // Keys beside the observer's:
 //   commands             commands landed in the sim
@@ -690,7 +694,18 @@ struct Run {
     uint64_t hash = 0, digest = 0;
     obs::Keys keys;
     double ms = 0;
+    // Wall time of World::tick alone (the observer's sampling left out), per tick: the slowest tick, the
+    // tick it was, and the nearest-rank 99th percentile. stderr only, like `ms`: never in the JSON.
+    double tickMaxMs = 0, tickP99Ms = 0;
+    uint32_t tickMaxAt = 0;
 };
+
+// The tick-time line printed after each run's whole-run time (stderr): tick_max_ms=M@T tick_p99_ms=P.
+std::string tickTimes(const Run& r) {
+    char b[96];
+    std::snprintf(b, sizeof b, "tick_max_ms=%.3f@%u tick_p99_ms=%.3f", r.tickMaxMs, r.tickMaxAt, r.tickP99Ms);
+    return b;
+}
 
 Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool serial, bool observe,
             const Options& opt) {
@@ -818,6 +833,8 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     std::vector<std::pair<uint32_t, scn::TruthReport>> truthNow;   // (tick, report) per `truth` line the run reaches
     // TAK_ORDER_STATS=N: log the movers' order-queue shape every N ticks (src/client/ordershape.h; compare a harvested situation with its recording).
     const uint32_t orderStatsEvery = std::getenv("TAK_ORDER_STATS") ? uint32_t(std::strtoul(std::getenv("TAK_ORDER_STATS"), nullptr, 10)) : 0;
+    std::vector<double> tickMs;
+    tickMs.reserve(s.ticks);
     const auto start = std::chrono::steady_clock::now();
     for (uint32_t t = 0; t < s.ticks; ++t) {
         // contact_settled's command identity (W3-1, ruling W3 round 4 (1)): one convoy is one command,
@@ -833,7 +850,9 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             if (t == 0) w.setPathBudget(1 << 28);
             else if (t == opt.catchup) w.setPathBudget(tak::sim::kPathBudgetDefault);
         }
+        const auto tickStart = std::chrono::steady_clock::now();
         w.tick(1.f / 30);
+        tickMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tickStart).count());
         nav = w.legionNavigator();
         if (o) {
             navWork.sample(*o, w);
@@ -858,6 +877,14 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         if ((t + 1) % 100 == 0) r.digest = mix(r.digest, w.stateHash());
     }
     r.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    if (!tickMs.empty()) {
+        const auto top = std::max_element(tickMs.begin(), tickMs.end());
+        r.tickMaxMs = *top;
+        r.tickMaxAt = uint32_t(top - tickMs.begin());
+        const size_t at = (tickMs.size() * 99 + 99) / 100 - 1;   // nearest rank, as the observer's work p99
+        std::nth_element(tickMs.begin(), tickMs.begin() + ptrdiff_t(at), tickMs.end());
+        r.tickP99Ms = tickMs[at];
+    }
     r.hash = w.stateHash();
     r.digest = mix(r.digest, r.hash);
     if (o) {
@@ -1162,12 +1189,12 @@ int runFile(const std::string& file, Options opt) {
             bool eq = true;
             for (int off : opt.offsets) {
                 Run main = runOnce(s, mode, off, opt.exec != Options::Workers, opt.observer, opt);
-                std::fprintf(stderr, "%s %s offset=%d %s %.0f ms\n", name.c_str(), modeName(mode), off,
-                             opt.exec == Options::Workers ? "workers" : "serial", main.ms);
+                std::fprintf(stderr, "%s %s offset=%d %s %.0f ms %s\n", name.c_str(), modeName(mode), off,
+                             opt.exec == Options::Workers ? "workers" : "serial", main.ms, tickTimes(main).c_str());
                 if (opt.exec == Options::Both) {
                     const Run other = runOnce(s, mode, off, false, opt.observer, opt);
-                    std::fprintf(stderr, "%s %s offset=%d workers %.0f ms\n", name.c_str(), modeName(mode), off,
-                                 other.ms);
+                    std::fprintf(stderr, "%s %s offset=%d workers %.0f ms %s\n", name.c_str(), modeName(mode), off,
+                                 other.ms, tickTimes(other).c_str());
                     if (other.hash != main.hash || other.digest != main.digest || other.keys != main.keys) {
                         std::fprintf(stderr, "%s %s offset=%d: serial != workers (hash %s vs %s, digest %s vs %s, keys %s)\n",
                                      name.c_str(), modeName(mode), off, hex(main.hash).c_str(),

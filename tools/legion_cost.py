@@ -71,6 +71,9 @@ OUTCOME_PREFIX = ("arrivals", "contact_arrivals", "mission_arrivals_", "completi
 EQ_PREFIX = ("mission_legs_", "fields_started_by_kind_", "registrations")
 BATTLE_COUNTERS = ("legion_total", "field_work", "slot_search_cells", "trace_cells", "pass_scan_cells",
                    "group_loop_iters", "aware_pairs", "fields_built")
+# Sums the runner reports and this gate does not (tools/legion_observe.h): legion_all is legion_total
+# plus the aware and lane steering work (2026-10-14 review, item 5); legion_total and its classes are gated.
+REPORT_SUMS = ("legion_all",)
 
 
 class Fail(Exception):
@@ -209,7 +212,7 @@ def counters_of(keys, prefix):
         if not m:
             continue
         name = m.group(1)
-        if any(name.startswith(p) for p in OUTCOME_PREFIX):
+        if any(name.startswith(p) for p in OUTCOME_PREFIX) or name in REPORT_SUMS:
             continue
         out["%s/work.%s.total" % (prefix, name)] = int(v)
     for s in ("max", "p99"):

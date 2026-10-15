@@ -945,8 +945,8 @@ inline int run(const Options& o) {
         std::printf("\"route_request_to_delivery_wall_ms_received_only_p50\":%.6f,\"route_request_to_delivery_wall_ms_received_only_p95\":%.6f,\"route_request_to_delivery_wall_ms_received_only_p99\":%.6f,",
             percentile(latency.deliveryWallMs,.5),percentile(latency.deliveryWallMs,.95),percentile(latency.deliveryWallMs,.99));
     }
-    std::printf("\"tick_ms_mean\":%.6f,\"tick_ms_p50\":%.6f,\"tick_ms_p95\":%.6f,\"tick_ms_p99\":%.6f,\"setup_ms\":%.3f,\"event_ms\":%.3f,",
-        sum/times.size(),percentile(times,.5),percentile(times,.95),percentile(times,.99),setupMs,eventMs);
+    std::printf("\"tick_ms_mean\":%.6f,\"tick_ms_p50\":%.6f,\"tick_ms_p95\":%.6f,\"tick_ms_p99\":%.6f,\"tick_ms_max\":%.6f,\"setup_ms\":%.3f,\"event_ms\":%.3f,",
+        sum/times.size(),percentile(times,.5),percentile(times,.95),percentile(times,.99),percentile(times,1),setupMs,eventMs);
     std::printf("\"alive\":%d,\"physical_in_goal\":%d,\"orders_complete\":%d,\"arrived_settled\":%d,\"arrival_rest_ticks\":%d,\"all_arrived_tick\":%d,\"arrival_tick_p50\":%d,\"arrival_tick_p95\":%d,\"max_goal_distance_px\":%.4f,",
         alive,physical,retired,arrived,restTicks,allAt,milestone(arrivalTimes,totalMoving,.5),milestone(arrivalTimes,totalMoving,.95),maxDistance);
     // AR-11 (unreachable only, so no other row gains a key): when each unit reached its approach point

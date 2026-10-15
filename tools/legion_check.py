@@ -89,6 +89,10 @@ MAX_BAND = 1.20
 TIME_SUFFIXES = (".t50", ".t90", ".done", ".orders_done")
 COMBAT_SCENARIOS = ("battle-field*", "battle-assault*")
 COMBAT_KEYS = ("work.legion_total.total", "work.legion_total.max", "work.legion_total.p99")
+# Work sums reported, never gated (tools/legion_observe.h): legion_all is legion_total plus the aware and
+# lane steering work the instruments report (2026-10-14 review, item 5). It needs no baseline entry; a
+# retake that takes it in gates it like any work key.
+REPORT_WORK = ("work.legion_all.",)
 SKIP_KEYS = ("members", "samples", "commands", "last_command_tick", "decision_samples",
              # W5 step 0: the claims audit's report-only classes (claims.bad_max, their sum, is the safety key)
              "claims.audits", "claims.overlaps_max", "claims.missing_max", "claims.dangling_max",
@@ -704,7 +708,7 @@ def check(doc, recs, skipped=(), step=None, cumulative=False, require_all=False)
                                  "cumulative combat cost: %s above the W0 base %s (x1.00, PLAN 3.0)" % (cur, w0))
             # a work counter that moved with no entry has no base to compare with
             for key, v in sorted(rec.get("keys", {}).items()):
-                if key.startswith("work.") and v and key not in keys:
+                if key.startswith("work.") and v and key not in keys and not key.startswith(REPORT_WORK):
                     rpt.fail("%s/%s/%s" % (scn, mode, key),
                              "unbaselined work counter %s: a step that adds a class declares its per-unit bound" % v)
     for scn, mode in sorted(recs):
