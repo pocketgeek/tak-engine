@@ -195,8 +195,9 @@ is about 29 ticks old. `52a4d0` hits a flyer only when the shot passes through
 its cell between its altitude (type +0x13e is zeroed at `4c1419`) and its model
 top (+0x14a, `546f40`); a shot that runs out of range vanishes without splash.
 
-World holds a non-`hoverattack` flyer still once its attack target is in range
-(retail flies it on attack runs instead, below). That hold skipped the flight
+World held a non-`hoverattack` flyer still once its attack target was in range
+(retail flies it on attack runs instead; World does too since protocol 265, see
+"Attack runs" below, except against a flying target). That hold skipped the flight
 body but kept `flightVelocity`, so every leading shooter aimed ahead of a flyer
 hanging still: a Lokken's Fire Ball missed a held Gryphon, Fallen Angel or Wrath
 of Tammuz every time (0/47, 0/50, 0/50). Since protocol 262 the hold zeroes the
@@ -216,17 +217,11 @@ gate, launch, shot update, hit test) matches native, so retail missing moving
 flyers at similar rates is an inference from the parts, not an emulated whole
 engagement.
 
-Still deviating (not ported):
-- **Attack runs.** `VTOL_SeekAttack` (`0x41b6e8..`) flies non-hover attackers
-  on runs, reading `attackrunlength` (type +0x234; `4c082e`) at
-  `41bc3b..41c6ea`. Both branches at `41c56c` make a run waypoint (length + 128
-  + rand(128), or 3x another quantity when the length is 0), so Gryphons,
-  Wraths and Dirigibles fly runs too. World holds them still, and against a
-  moving ground target a held flyer now alternates hold and move every 1-2
-  ticks.
-
-Splash and facing, the other items this section listed, are ported: see
-"Impact damage" (protocol 263) and "The facing request" (protocol 264) below.
+Splash, facing and attack runs, the items this section listed as not ported,
+are ported: see "Impact damage" (protocol 263), "The facing request" (protocol
+264) and "Attack runs" (protocol 265) below. The run mission is AirToGround
+(`41bf80`), not `VTOL_SeekAttack`: `41b6e8` is a `VTOL_SEEKATTACK` push inside
+AirStrike, and the `41bc3b` read belongs to AirStrike too.
 
 ### World's other flyer holds (protocol 262)
 
@@ -425,13 +420,143 @@ Still deviating:
   wakes: flag 0x80 makes `4e41d0` return the stored point. World moves the
   point with the target. It also accepts at radius 4 where World's persistent
   controller never accepts.
-- A held non-hover flyer turns to the target's centre. Retail posts no request
-  for it and would be flying an attack run.
+- A non-hover flyer held in range of a flying target turns to its centre.
+  Retail posts no request for it and would be flying AirToAir (`41ca50`, not
+  ported). Against a target that cannot fly it flies attack runs (protocol 265).
 - World releases a Dropped bomb without `52fff0` (no SET 22 acknowledgement and
   no facing test). `52ae90` runs aim start and the gate for every class, and
   `DroppedBallisticWeapon`'s angle virtual (+0x28, `4d4450`) is a bare `ret
   0xc`, so its angle test always passes, but a Tarbeak's Egg Bomb would still
   wait on its facing request (static reading).
+
+### Attack runs (protocol 265)
+
+The attack order's mission comes from `4de530` (action 3). A flyer gets
+AIRSTRIKE (`41b5e0`) when its selected weapon is `dropped` (WeaponType +0xc8
+bit 0x20), AIRTOAIR (`41ca50`) against a flying target, AIRTOGROUNDHOVER
+(`41d820`) when its type has `hoverattack` (+0x260 bit 0x8000000), and
+AIRTOGROUND (`41bf80`) otherwise (registry rows `5ebd69`..`5ebdb4`). No shipped
+weapon sets `dropped`. A Dirigible's or a Juggernaut's dropped-subtype cannonball
+does not count, so every non-hover armed flyer (Gryphon, Wrath of Tammuz,
+Dirigible, Fallen Angel, Aerial Juggernaut) attacks ground targets with
+AirToGround. It never stops to shoot:
+
+- **Stage 0** (`416c50`) Activate, BeginFlight, take-off.
+- **Stage 1** `519b10(3)`: every slot automatic.
+- **Stage 2** `519b70`/`51a700`: the selected slot (`519ac0`: a switcher's choice,
+  else the first slot) manual, aimed at the target.
+- **Stage 3** a point controller (`4e40e0`, flags 0x20) at the target, radius
+  (`4e4540`, flag 0x10) `attackrunlength`/2 (UnitType +0x234, a word read at
+  `4c082e`), or half the selected weapon's range (+0x90) when that is 0. Wait
+  mask 0x76a, sleep 15.
+- **Stage 4** a controller event (0x700) moves on; otherwise, a tick later,
+  stage 3 re-aims the approach at the target's new position. So the approach is
+  refreshed every 16 ticks.
+- **Stage 5**, on arrival: the run. `53612a` gives the heading of the flyer as
+  seen from the target; the run point is the target minus that direction times
+  `attackrunlength` + 128 + rand(128) px, or 3 x range when the length is 0.
+  That is past the target, on the flyer's line through it. Radius 128 +
+  rand(128), drawn first. Until the flyer has once been within range/2 of the
+  target (mission +0x4e; x87 at double precision, `_ftol`), it sleeps 15 and
+  re-aims the run from wherever it is.
+- **Stage 6**, on arrival: the turn. rand(2) picks 90 degrees left or right of
+  the body's heading (+0x7e); the point is rand(128) + `attackrunlength`/2 px
+  out (the range when the length is 0), radius 64 + rand(128).
+- **Stage 7**, on arrival: back to stage 2 and the approach. A flyer off the map
+  (+0xa4 is the off-map cell `50e740` makes at game +0x19f30; `5066f0` links it
+  when the footprint does not fit the cell grid) adds one to +0x4e instead,
+  which a run within range/2 set to 1 and a wake on the map resets to 1. When
+  it reaches 3, the flyer first flies 800 px toward the point 192 px inside the
+  playable edge: game +0x19e90/+0x19e94, the map's pixels less 32 and 128
+  (`50ef03`). The radius is 128.
+
+Every draw is `535cc0`, the shared game random number generator (World's
+`gameRand`). The controller is the ordinary non-persistent point controller.
+Its target getter (`4e41d0`) answers the flyer's cruise height when it has no
+altitude, so runs are flown at cruise height. It accepts (`4e43d0`) when the 2D
+distance is under the radius; `524c10` then posts 0x100 to the mission
+(`4e2470`, mission +0x6a) and the navigator lets it go, posting 0x400 (`4e4de0`).
+The next install (`4d4d40`) clears the mission's pending 0x3700. The weapons are
+not the mission's: the weapon update (`52ae90`) fires the selected slot whenever
+it has the target in range.
+
+World runs it as `retailAirToGround` (`src/sim/retailairattack.h`).
+`tickAirToGround` dispatches it on the attack order's own mission state, after
+the order's weapons have fired, then flies the order's controller. A move's
+coast (`retainedFlightGoal`) is dropped, and the unit-level controller events
+that coast posts are cleared at stage 0, because retail posts controller events
+to the controller's mission and never to the unit. World held these flyers
+still in range (and faced the target) instead.
+
+Checked:
+- `tools/re/check_air_attack_run.py` runs native `41bf80` 6000 times over every
+  stage. Positions are on and off the map, every run length and range is
+  covered, and the stage-5 range boundary is hit exactly. Native `535cc0`,
+  `4d6a10`, `519ac0`, `53612a`, `5360bf`/`5360f3` and `_ftol` are used, and the
+  controller calls are recorded. The port (`retail_motion_test --air-run`)
+  matches every return, stage, wait mask, deadline, pending word, flag word,
+  counter, controller point and radius, slot call, draw count and final
+  generator state (about 1960 controllers). Ten copies of the port fail it:
+  the run's two draws swapped, the turn's side swapped, the approach at the
+  full run length, the map edge off by 0x40, `count>=0`, `reach>=` at the
+  boundary, a fourth off-map wake, a 16-tick approach sleep, the turn at the
+  full run length, and the run measured from the flyer.
+- `flyer_combat_test`, both balances, each of the five flyers attacking a dummy
+  for 1800 ticks: it never holds still in flight, comes within half its range
+  of the target, every run point lies past the target on its line through it
+  at the retail distance, and it fires. 30 failures before (held 363-1763
+  ticks, never within range/2, no runs), none after.
+- A two-AI Zhon game (`aitool`, Inner Circle, hard, 900 s): the AI built up to
+  eight Gryphons. All 36 samples of a Gryphon on an attack order were flying
+  (1.2-4.1 px/tick), and the game ran to the end.
+
+Measured in the standard balance (Crusades within 6% unless noted), 3600 ticks
+against an immobile dummy with real weapons (shots / damage, the dummy topped
+up every tick):
+
+| flyer | held (before) | attack runs |
+| --- | --- | --- |
+| Gryphon | 36 / 11405 | 12 / 998 |
+| Wrath of Tammuz | 82 / 0 | 31 / 8.5 M (Crusades 120 / 0, now 55 / 650 k) |
+| Dirigible | 35 / 5612 | 53 / 28733 |
+| Fallen Angel | 30 / 260802 | 11 / 8286 (Crusades: 0 damage both ways) |
+| Aerial Juggernaut | 66 / 133898 | 121 / 160486 |
+
+The runs bring the short-range Dirigible, Juggernaut and Wrath over the target.
+The Gryphon and the Fallen Angel lose most of their damage because their shots
+from a run land along their path: a Gryphon spear thrown 497 px out came down
+180 px from the dummy, past it, and the Fallen Angel's Death Sword, released
+about 31 px out, lands 15-25 px past. The angles freeze at the gate and the
+shot leaves from the moved muzzle at the release frame. Whether retail's shots
+from a moving flyer fall the same way is not established by emulation.
+
+Shooting at a Gryphon on its runs (3 trials x 1800 ticks, the shooter starting
+150 px beside the target, free to chase), hits / shots:
+Gatling Crossbow 16/19 (Crusades 20/21), Beast Rider 15/15 (12/19), Mirazi
+Heket 20/37, Dirigible arrows 18/21, Beast Lord 6/35 (27/27), Mage Archer
+Paralyze Arrow 38/41 but Standard Arrow 0/20, Stronghold 0/4, Mage Tower
+lightning 0/13 (0/48 against a held Gryphon too). A Lokken's Fire Ball against
+flyers on their runs: Gryphon 3/21, Wrath 3/18 (Crusades 22/65), Dirigible
+43/52, Fallen Angel 17/52 (5/50), Juggernaut 45/64. Against the held flyers it
+hit 72-75 of 72-75.
+
+Still deviating:
+- AirToAir (`41ca50`) is not ported. A flyer attacking a flyer is still held in
+  range, facing its centre.
+- AirStrike (`41b5e0`) is not ported; no shipped weapon reaches it.
+- When the target is lost, AirToGround pushes `VTOL_SEEKATTACK` (`4192f0`), which
+  circles the target's last point at range + 160 px, scanning for targets.
+  World drops the order instead.
+- The group check (`51d1e0`, VTOL_Move_Formation) is not ported. Neither is
+  stage 4's air-traffic step-out: unit +0x12a, a counter `51dc4b..` keeps
+  from the overlap list, pushes `VTOL_StepOut` at 5 or more, and World keeps no
+  such counter.
+- Retail makes the other slots automatic and only the selected one manual.
+  A multi-weapon non-switcher's other weapons (Dirigible, Juggernaut) pick
+  their own targets. World fires them all at the order's target.
+- Off the map, World flies at the clamped sector's cruise height (retail: the
+  off-map cell's height 0 plus cruisealt), and its velocity kernel keeps the
+  vertical control that `4dab71` skips for an off-map unit.
 
 ## Ship / no-walk mover animation (icd + COB, 2026-09-10)
 

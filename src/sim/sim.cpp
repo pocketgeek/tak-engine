@@ -7,6 +7,7 @@
 #include "sim/retailguided.h"
 #include "sim/retailinstantcorpse.h"
 #include "sim/retailsplash.h"
+#include "sim/retailairattack.h"
 
 #include <type_traits>
 
@@ -421,6 +422,8 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.hoverAttack = info->numberOr("hoverattack", 0) != 0;
             t.hoverAttackDistance = int(info->numberOr("hoverattackdistance", 0));
             t.hoverAttackAltitude = int(info->numberOr("hoverattackaltitude", t.cruiseAlt));
+            // 4c082e..4c0837: read as an integer, stored as a word.
+            t.attackRunLength = uint16_t(int32_t(info->numberOr("attackrunlength", 0)));
             t.bankScale = Fixed::fromRetailNumber(info->numberOr("bankscale", 0.5));
             t.canSetStance = int(info->numberOr("unitstandorders", 1)) != 0;
             {
@@ -5995,16 +5998,25 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         u.routeStamp = -1;
         return;
     }
+    int slot = u.type->weapons.empty()
+                   ? 0 : std::clamp(u.weaponSlot, 0, int(u.type->weapons.size()) - 1);
+    const Weapon* sel = slot < int(u.type->weapons.size()) ? &u.type->weapons[slot] : nullptr;
+    const bool hovering = u.type->canFly && (u.type->hoverAttack || (sel && sel->hoverAttack));
+    // 4de530 gives a flyer without hoverattack AirToGround (41bf80) against a
+    // target that cannot fly: it flies attack runs (tickAirToGround). A flying
+    // target would get AirToAir (41ca50), which is not ported: World still
+    // holds the flyer in range below.
+    const bool airRun = u.type->canFly && !hovering && !u.type->isStructure() &&
+                        !(target->type && target->type->canFly);
     if (u.scriptAimTarget!=target->id) {
         u.scriptAimTarget=target->id;
         // An attack must wake the airborne script pose too. Movement alone
         // cannot do this when a landed flyer acquires a target already in range.
-        if (u.type->canFly) notifyUnitScript(u,"BeginFlight");
+        // AirToGround's first stage does it (416c50).
+        if (u.type->canFly && !airRun) notifyUnitScript(u,"BeginFlight");
     }
     float dx = (target->x - u.x).toFloat(), dz = (target->z - u.z).toFloat();
     float dist = std::sqrt(dx * dx + dz * dz);
-    int slot = u.type->weapons.empty()
-                   ? 0 : std::clamp(u.weaponSlot, 0, int(u.type->weapons.size()) - 1);
     // Which weapon(s) this unit fights with. Retail splits multi-weapon units in
     // two, on the FBI `weaponswitching` flag (unitdef+0x264 bit 26):
     //   weaponswitching=1 (24 units, incl. every Monarch and dragon) -- ONE active
@@ -6021,7 +6033,6 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     bool allWeapons = !u.type->weaponSwitching && u.type->weapons.size() > 1;
     // Approach on the reach this unit actually fights at: the selected weapon for a
     // switcher, the longest of them when they all fire.
-    const Weapon* sel = slot < int(u.type->weapons.size()) ? &u.type->weapons[slot] : nullptr;
     float best = allWeapons ? u.type->maxRange() : (sel ? sel->range : u.type->maxRange());
     // Range is to the target's footprint EDGE, not its centre. A building's centre is
     // deep inside a blocked footprint, so a centre-distance check leaves a short-range
@@ -6066,15 +6077,16 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         u.routeStamp = -1;
         return;
     }
-    const bool hovering = u.type->canFly && (u.type->hoverAttack || (sel && sel->hoverAttack));
     if (hovering) {
         tickHoverAttack(u,*target,sel);
         groundMovementHandled=true; // the flight controller already committed movement
         dx=(target->x-u.x).toFloat(); dz=(target->z-u.z).toFloat();
         dist=std::sqrt(dx*dx+dz*dz);
     }
-    if ((sel && sel->melee) ? !adj
-                            : (dist > reach || (!los && mayChase))) {
+    // An attack run flies in and out of range: its weapons fire (below) when
+    // a slot has the target in range, and the mission flies on regardless.
+    if (!airRun && ((sel && sel->melee) ? !adj
+                            : (dist > reach || (!los && mayChase)))) {
         if (hovering) return;
         // Advance toward the target, steering around impassable terrain.
         if (u.repathLeft > 0) --u.repathLeft;
@@ -6131,7 +6143,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
             }
         } else brakeGround(u,want);
         groundMovementHandled=true;
-    } else if (!hovering && !u.type->isStructure()) {
+    } else if (!hovering && !airRun && !u.type->isStructure()) {
         u.speed=fxMax(Fixed(),u.speed-u.type->brake);
         if (u.speed==Fixed()) {
             // Flyers use their flight turn rate while aiming too. Many have no
@@ -6153,10 +6165,11 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
             std::abs(diff) >= std::max(sw.aimTol, int32_t(0.03f / kCobAngle))) return;
         fire(u, *target, sl);
     };
+    // 52ae90 runs the weapons before the missions and the mover.
     forEachSlot(tryFire);
     // cancapture: a charmer converts the target after sustained contact (~3s) or
     // once it is worn down, rather than killing it.
-    if (u.type->canCapture && canCaptureTarget(u.player,*target)) {
+    if (u.type->canCapture && canCaptureTarget(u.player,*target) && (!airRun || dist <= reach)) {
         ++u.captureProg;
         if (u.captureProg > 3 * int32_t(kTick) ||
             target->hp < Fixed::fromFloat(target->type->maxHp * 0.25f)) {
@@ -6166,6 +6179,10 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
             cancelPath(u);
             u.routeStamp = -1;
         }
+    }
+    if (airRun && !u.orders.empty() && u.orders.front().targetId==target->id) {
+        tickAirToGround(u,*target,sel);
+        groundMovementHandled=true;
     }
 }
 
@@ -9038,6 +9055,90 @@ void World::tickHoverAttack(Unit& u,const Unit& target,const Weapon* weapon) {
                                           Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.z.v)-uint32_t(sweetSpot[2])))).v);
     order.x=Fixed::raw(goal.point.x);order.z=Fixed::raw(goal.point.z);
     tickFlightMovement(u,true);
+    notifyFlightOccupancy(u);
+}
+
+// AirToGround (41bf80, retailAirToGround): the mission of a flyer without
+// hoverattack attacking a target that cannot fly. It runs on the attack
+// order's own state, then the mover: a point controller is let go on arrival
+// (524c10 posts 0x100, the navigator's release 0x400), and the body flies on
+// to the destination it left until the mission installs the next one.
+void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
+    // 519ac0: a switcher's selected slot, otherwise the first slot.
+    const Weapon* weapon=u.type->weaponSwitching ? selected
+                       : u.type->weapons.empty() ? nullptr : &u.type->weapons.front();
+    struct Host {
+        World& w; Unit& u; const Unit& target; const Weapon* weapon;
+        bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
+        RetailMissionState* head() {
+            return !u.orders.empty() && u.orders.front().targetId==target.id ? &u.orders.front().mission : nullptr;
+        }
+        bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
+        void idle() {}
+        uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+        void remove(RetailMissionState&) {
+            if(u.scriptAimTarget)w.clearScriptWeaponTarget(u);
+            w.dropLeg(u);w.cancelPath(u);u.routeStamp=-1;
+        }
+        void rotate(RetailMissionState&) {}
+        void clear() { w.cancelPath(u);u.orders.clear();u.routeStamp=-1; }
+        void beginFlight() {
+            // 416c50: Activate, BeginFlight, and take-off (the mover below).
+            // Its 519b70(3), like stage 1's 519b10(3) and stage 2's 519b70 on
+            // the selected slot, is World's slot mode (syncSlotMode): the
+            // attack order makes every slot manual and fires them at the target.
+            if (auto script=w.unitScripts_.find(u.id);script!=w.unitScripts_.end() && !script->second.activated) {
+                script->second.activated=true;w.notifyUnitScript(u,"Activate");
+            }
+            w.notifyUnitScript(u,"BeginFlight");
+            // Retail posts controller events to the controller's mission
+            // (4e2470), so a new mission starts with none. World's coast after
+            // a move posts them to the unit (tickRetainedFlightMovement); they
+            // must not wake this mission's first controller.
+            u.missionEvents&=~0x3700u;
+        }
+        void slotsAuto() {}
+        void aimSlot() {}
+        void install(const RetailFlightGoal& goal) {
+            // 4d4d40 also clears the mission's pending controller events.
+            auto& order=u.orders.front();
+            order.flightGoal=goal;order.mission.pending&=~0x3700u;
+        }
+        int handle(RetailMissionState& m,uint32_t events) {
+            auto& order=u.orders.front();
+            RetailAirRun run;
+            run.position={u.x.v,u.flightY.v,u.z.v};
+            run.target={target.x.v,target.flightGroundMode==2 ? target.flightY.v : target.groundY.v,target.z.v};
+            run.heading=portHeadingToRetail(u.heading);
+            run.range=weapon ? std::max(2,int32_t(weapon->range)) : 2;
+            run.runLength=u.type->attackRunLength;
+            // 5066f0: off the map when the footprint does not fit the cell grid.
+            const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
+            run.onMap=ox>=0 && oz>=0 && ox+u.type->footX<w.hW_ && oz+u.type->footZ<w.hH_;
+            // 50ef03: the playable map is 32 px narrower and 128 px shorter.
+            run.width=w.hW_*16-32;run.height=w.hH_*16-128;
+            return retailAirToGround(m,order.airRunCount,w.tickCounter_,events,run,*this);
+        }
+    } host{*this,u,target,weapon};
+    retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    if (u.orders.empty() || u.orders.front().targetId!=target.id) { tickFlightBody(u); notifyFlightOccupancy(u); return; }
+    auto& order=u.orders.front();
+    u.flightGroundMode=2;
+    // The mission's controllers are the navigator's destination now; a move's
+    // coast (retainedFlightGoal) must not resume once the attack ends.
+    u.retainedFlightGoal.reset();u.retainedFlightControllerActive=false;
+    const int cruise=flightGround(u)+u.type->cruiseAlt;
+    const RetailFlightVector position{u.x.v,u.flightY.v,u.z.v};
+    if (order.flightGoal) {
+        const auto& goal=*order.flightGoal;
+        // 4e41d0: a point controller without an altitude answers the
+        // flyer's cruise height over the ground under it.
+        auto destination=goal.point;destination.y=Fixed::fromInt(std::min(cruise,511)).v;
+        u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,destination,
+            u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
+        if (goal.accepts(position)) { order.mission.pending|=0x500; order.flightGoal.reset(); }
+    }
+    tickFlightBody(u);
     notifyFlightOccupancy(u);
 }
 
@@ -14090,6 +14191,12 @@ uint64_t World::stateHash() const {
                     const auto& g=*order.flightGoal;
                     mix(uint32_t(g.point.x)); mix(uint32_t(g.point.y)); mix(uint32_t(g.point.z));
                     mix(g.flags); mix(g.heading); mix(uint16_t(g.radius));
+                }
+                // AirToGround (tickAirToGround) runs on an attack order's mission.
+                if (order.targetId && (order.mission.stage || order.mission.waitMask || order.airRunCount)) {
+                    mix(0x41495252554eull);
+                    mix(order.mission.stage); mix(order.mission.waitMask); mix(order.mission.deadline);
+                    mix(order.mission.pending); mix(order.mission.flags); mix(uint32_t(order.airRunCount));
                 }
             }
             if (order.buildRectangle) {

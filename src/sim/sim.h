@@ -330,6 +330,9 @@ struct UnitType {
     int32_t cruiseAlt = 0;    // world units above ground when flying (readInt)
     bool hoverAttack = false;
     int32_t hoverAttackDistance = 0, hoverAttackAltitude = 0;
+    // attackrunlength (UnitType +0x234, a word, 4c082e): how far past its
+    // target a flyer without hoverattack carries an attack run (AirToGround).
+    uint16_t attackRunLength = 0;
     enum class Domain { Ground, Water, Hover };
     Domain domain = Domain::Ground;   // from FBI movementclass prefix
     bool canTransport = false;
@@ -727,6 +730,10 @@ struct alignas(64) Order {
     Fixed buildX, buildZ;
     uint32_t hoverAttackRefresh = 0;
     Fixed hoverAttackTargetX, hoverAttackTargetZ;
+    // AirToGround's mission +0x4e (retailAirToGround, which runs on
+    // `mission`): 1 once a run has brought the flyer within half its range
+    // of the target; stage 7 counts wakes off the map on it.
+    int32_t airRunCount = 0;
     int32_t stationRefX = 0, stationRefZ = 0;
     uint32_t stationRefTick = 0;
     // MobileBuild placement at the site (405824..405911): failures while only
@@ -2782,6 +2789,7 @@ private:
     void tickRetainedFlightMovement(Unit& u);
     void tickFlightBody(Unit& u);
     void tickHoverAttack(Unit& u, const Unit& target, const Weapon* weapon);
+    void tickAirToGround(Unit& u, const Unit& target, const Weapon* weapon);
     void tickFlightPatrol(Unit& u);
     int flightGround(const Unit& u) const;
     bool flightLandingFree(const Unit& u, Fixed x, Fixed z) const;

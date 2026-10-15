@@ -1,5 +1,7 @@
 #include "sim/sim.h"
 #include "sim/retailflight.h"
+#include "sim/retailairattack.h"
+#include "sim/retailrng.h"
 #include "sim/retailheight.h"
 #include "sim/retailexploration.h"
 #include "tdo/tdo.h"
@@ -10,6 +12,32 @@
 using namespace tak::sim;
 
 int main(int argc, char** argv) {
+    // tools/re/check_air_attack_run.py: one AirToGround (41bf80) handler call
+    // per line, after the head's checks.
+    if (argc==2 && std::strcmp(argv[1],"--air-run")==0) {
+        unsigned stage,events,tick,deadline,pending,flags,heading,runLength,onMap,seed;int count,range,width,height;
+        RetailAirRun run;
+        while (std::scanf("%u %u %u %u %u %u %d %d %d %d %d %d %d %u %d %u %u %d %d %u",&stage,&events,&tick,&deadline,&pending,
+                          &flags,&count,&run.position.x,&run.position.y,&run.position.z,&run.target.x,&run.target.y,
+                          &run.target.z,&heading,&range,&runLength,&onMap,&width,&height,&seed)==20) {
+            run.heading=uint16_t(heading);run.range=range;run.runLength=uint16_t(runLength);run.onMap=onMap!=0;
+            run.width=width;run.height=height;
+            RetailMissionState m;m.stage=uint8_t(stage);m.waitMask=0;m.deadline=deadline;m.pending=pending;m.flags=flags;
+            struct Host {
+                uint32_t& seed;unsigned calls=0,begin=0,autoSlots=0,aim=0,installs=0;RetailMissionState& m;RetailFlightGoal goal;
+                uint32_t random(int n) { ++calls;return retailRandom(seed,n); }
+                void beginFlight() { ++begin; }
+                void slotsAuto() { ++autoSlots; }
+                void aimSlot() { ++aim; }
+                void install(const RetailFlightGoal& g) { ++installs;goal=g;m.pending&=~0x3700u; }
+            } host{seed,0,0,0,0,0,m,{}};
+            const int result=retailAirToGround(m,count,tick,events,run,host);
+            std::printf("%d %u %u %u %u %u %d %u %d %d %d %d %u %u %u %u %u\n",result,unsigned(m.stage),m.waitMask,m.deadline,
+                        m.pending,m.flags,count,host.installs,host.goal.point.x,host.goal.point.y,host.goal.point.z,
+                        int(host.goal.radius),host.begin,host.autoSlots,host.aim,seed,host.calls);
+        }
+        return 0;
+    }
     if (argc==2 && std::strcmp(argv[1],"--hover-attack")==0) {
         using namespace tak::sim;
         RetailFlightVector p,t;int distance;unsigned seed;

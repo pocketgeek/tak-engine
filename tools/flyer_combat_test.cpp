@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cmath>
 #include <algorithm>
+#include <optional>
 
 namespace tak::sim { struct RetailReplayProbe {
     static void capture(World& w,int id,int owner) {w.captureUnit(*w.unit(id),owner);}
@@ -271,12 +272,13 @@ int main(int argc,char** argv) {
                       "hover flyer follows a moving target");
             }
         }
-        // A flyer without hover attack stops dead where its target comes into
-        // range: World's combat hold skips its flight body. Shooters lead a
-        // target by its mover velocity (retail 51aa50), so the hold has to stop
-        // the velocity too. A stale one put the Lokken's Fire Balls ahead of an
-        // attacking Gryphon, Fallen Angel, Wrath of Tammuz or Dirigible, and most
-        // or all of them missed.
+        // A flyer without hover attack does not stop to shoot a target that
+        // cannot fly: its mission, AirToGround (41bf80), flies attack runs. It
+        // closes to attackrunlength/2 of the target (half its range without
+        // one), then flies on past it, along its own line through the target,
+        // attackrunlength + 128..255 px (3 x its range without one), turns 90
+        // degrees and comes round again. World held it still in range. A
+        // Lokken beside the target shoots at it as it crosses (reported).
         for (const auto& name:flyers) {
             auto type=*registry.find(name);
             if (type.hoverAttack || type.weapon.hoverAttack) continue;
@@ -290,32 +292,48 @@ int main(int argc,char** argv) {
             w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
             w.buildNavClasses(registry);
             const int ground=w.spawn(&dummy,2300,2000,0,0),flyer=w.spawn(&type,2300,2600,0,1);
+            const int lokken=w.spawn(&shooter,2150,2000,0,0);
             w.attack(flyer,ground,false);
-            bool held=false;
-            for (int tick=0;tick<600 && !held;++tick) {
+            const float range=type.weapons.front().range;
+            const auto* g=w.unit(ground);
+            int held=0,runs=0,onLine=0,shots=0,hits=0;bool near=false,fired=false;
+            std::optional<tak::sim::RetailFlightGoal> last;
+            for (int tick=0;tick<1800;++tick) {
+                if (tick==120) w.attack(lokken,flyer,false);   // WEAPON1, the unguided Fire Ball
                 const auto* before=w.unit(flyer);
                 const int32_t x=before->x.v,y=before->flightY.v,z=before->z.v;
                 w.tick(1.f/30.f);
                 const auto* u=w.unit(flyer);
-                held=u->flightGroundMode==2 && u->x.v==x && u->flightY.v==y && u->z.v==z;
-            }
-            check(held,"a non-hover flyer holds still once its target is in range");
-            const auto v=w.unit(flyer)->flightVelocity;
-            check(v.x==0 && v.y==0 && v.z==0 && w.unit(flyer)->speed==tak::sim::Fixed(),
-                  "a flyer held in attack range reports no velocity or speed");
-            const float fx=w.unit(flyer)->x.toFloat(),fz=w.unit(flyer)->z.toFloat();
-            const int lokken=w.spawn(&shooter,fx-300,fz,0,0);
-            w.attack(lokken,flyer,false);   // WEAPON1, the unguided Fire Ball
-            int shots=0,hits=0;
-            for (int tick=0;tick<900;++tick) {
-                w.tick(1.f/30.f);
+                if (u->orders.empty() || u->orders.front().targetId!=ground) break;
+                if (u->flightGroundMode==2 && u->x.v==x && u->flightY.v==y && u->z.v==z) ++held;
+                near=near || tak::sim::fxLen(u->x-g->x,u->z-g->z).toFloat()<=range/2;
+                fired=fired || u->firedWeapons;
                 if (w.unit(lokken)->firedWeapons&1) ++shots;
                 for (const auto& hit:w.hits())
                     if (hit.weapon==&shooter.weapons.front() && hit.victimId==flyer) ++hits;
+                const auto& order=u->orders.front();
+                const auto& goal=order.flightGoal;
+                const bool installed=goal && (!last || last->point.x!=goal->point.x || last->point.z!=goal->point.z);
+                if (installed && (order.mission.stage==5 || order.mission.stage==6) && goal->radius>=128) {
+                    // A run point: from where the flyer stood, through the target.
+                    ++runs;
+                    const double gx=(goal->point.x-g->x.v)/65536.0,gz=(goal->point.z-g->z.v)/65536.0;
+                    const double fx=(g->x.v-x)/65536.0,fz=(g->z.v-z)/65536.0;
+                    const double past=std::hypot(gx,gz);
+                    const double lo=type.attackRunLength ? type.attackRunLength+128 : 3*range;
+                    const double hi=type.attackRunLength ? type.attackRunLength+255 : 3*range;
+                    const double turn=std::abs(std::atan2(gx*fz-gz*fx,gx*fx+gz*fz));
+                    onLine+=past>=lo-3 && past<=hi+3 && turn<0.035 && goal->radius<=255;
+                }
+                if (goal) last=*goal; else last.reset();
             }
-            std::printf("held flyer balance=%s unit=%s velocity=(%d,%d,%d) lokken shots=%d hits=%d\n",
-                crusades?"Crusades":"standard",name.c_str(),v.x,v.y,v.z,shots,hits);
-            check(shots>=5 && hits*4>=shots*3,"a Lokken's Fire Ball connects with a flyer holding still to attack");
+            std::printf("attack runs balance=%s unit=%s runlength=%d range=%.0f held=%d near=%d runs=%d on line=%d fired=%d"
+                " lokken shots=%d hits=%d\n",crusades?"Crusades":"standard",name.c_str(),int(type.attackRunLength),range,
+                held,int(near),runs,onLine,int(fired),shots,hits);
+            check(held==0,"a flyer attacking a ground target never holds still");
+            check(near,"its runs carry it within half its range of the target");
+            check(runs>0 && onLine==runs,"every run point lies past the target on the flyer's line through it");
+            check(fired,"it fires during its runs");
         }
         // Retail turns the body toward the point a slot aims at (52fe30): the
         // led SweetSpot (51aa50) for every class but melee. A pivoting ground
