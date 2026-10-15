@@ -91,7 +91,9 @@ struct Needs {
     // Own live units per type, filled in the same assessNeeds pass -- weightedPick's
     // limit checks read this instead of re-scanning all units per menu entry.
     std::unordered_map<const tak::sim::UnitType*, int> counts;
+    std::unordered_map<const tak::sim::UnitType*, int> unfinished; // of counts, still under construction
     int   economyProjects = 0; // producers committed to income/storage construction
+    int   lodestoneProjects = 0; // builders whose job is a lodestone (onMana), placed or queued
     int   population = 0;      // includes construction and this think's planned units
     int   economy = 0;         // count: income/storage structures
     int   factories = 0;       // count: static or mobile production units
@@ -145,11 +147,14 @@ private:
     bool navalLaunchClear(const tak::sim::World&,const tak::sim::UnitType* factory,
                           const tak::sim::UnitType* ship,float x,float z,float dx,float dz) const;
     int   desire(BuildCat, const Needs&) const;
+    // Retail's lodestone trigger: short of mana, with no lodestone under way.
+    bool  manaShort(const tak::sim::World&, const Needs&) const;
     // `excludeCats` is a bitmask of 1<<int(BuildCat): categories already tried and
     // found unproducible this think, so the pick falls through to the next best.
+    // `lodestoneOnly` limits the pick to the lodestone manaShort() asks for.
     const tak::sim::UnitType* weightedPick(const tak::sim::World&,
                                            const tak::sim::Unit& producer, const Needs&,
-                                           int excludeCats = 0);
+                                           int excludeCats = 0, bool lodestoneOnly = false);
     // True if an order was actually emitted. False means the pick could not be
     // acted on (no build site, nowhere to conjure) -- the caller then retries in
     // another category rather than burning the producer's turn on it.

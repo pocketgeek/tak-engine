@@ -219,16 +219,20 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
             const auto* site = u.buildSiteId ? world.unit(u.buildSiteId) : nullptr;
             bool economyProject = site && site->underConstruction && site->type &&
                                   categoryOf(site->type) == BuildCat::Economy;
+            bool lodestoneProject = site && site->underConstruction && site->type && site->type->onMana;
             // Approach waypoints precede the actual build order. Count the queued
             // destination too, so distant expansions do not enlist every producer.
             for (const auto& order : u.orders)
-                if (order.buildType && categoryOf(order.buildType) == BuildCat::Economy) {
-                    economyProject = true; break;
+                if (order.buildType) {
+                    economyProject = economyProject || categoryOf(order.buildType) == BuildCat::Economy;
+                    lodestoneProject = lodestoneProject || order.buildType->onMana;
                 }
             if (economyProject) ++n.economyProjects;
+            if (lodestoneProject) ++n.lodestoneProjects;
         }
         ++n.population;
         ++n.counts[u.type];
+        if (u.underConstruction) ++n.unfinished[u.type];
         if (navalFactory(u.type)) ++n.navalFactories;
         if (navalProducer(u.type)) ++n.navalProducers;
         if (!u.type->isStructure() && !u.type->canFly && !u.type->isBuilder &&
@@ -293,13 +297,32 @@ int Controller::desire(BuildCat c, const Needs& n) const {
     return 0;
 }
 
+// Retail builds a lodestone when it runs short of mana (icd 0x410810, ported as
+// sim::retailBuildPriority): the store under 30% full, spending outpacing income
+// over the last second, and none of that lodestone unfinished. Its constructor
+// planner then draws among the menu's lodestones separately (0x412d00) and builds
+// that instead of the ordinary pick wherever 0x412f80 finds a free deposit in the
+// base radius -- unless a builder of the base is already on one (0x40c830). Normal
+// and the tiers sharing its economy add that trigger to their own ladder, whose
+// income target alone held them to one lodestone where a deposit pays 100 a second
+// and the store ran dry; Hard and Absurd keep their own expansion ladder.
+bool Controller::manaShort(const tak::sim::World& world, const Needs& needs) const {
+    if (diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd || !world.hasManaSpots() ||
+        needs.lodestoneProjects > 0) return false;
+    const auto& me = world.player(player_);
+    const float capacity = me.manaCapacity();
+    return (capacity > 0.01f ? float(me.mana) / capacity : 0.0f) < 0.3f &&
+        me.displayResources.shortfall(float(me.mana));
+}
+
 // Pick what a producer should build: the most-needed category its menu can supply
 // (desire()), then a weighted-random draw WITHIN that category (profile weights, for
 // variety + retail flavour). A candidate must be affordable to finish and under its
 // difficulty-scaled limit. Returns nullptr if nothing worth building is affordable now.
 const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
                                                    const tak::sim::Unit& producer,
-                                                   const Needs& needs, int excludeCats) {
+                                                   const Needs& needs, int excludeCats,
+                                                   bool lodestoneOnly) {
     const auto& menu = registry_.buildable(producer.type->id);
     const auto& me = world.player(player_);
     float income = me.income;   // include the Absurd income bonus
@@ -327,7 +350,10 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
         }
         return false;
     };
+    const bool lodestoneTrigger = manaShort(world, needs);
     auto priority = [&](const tak::sim::UnitType* type) {
+        if (lodestoneTrigger && type->onMana && type->isStructure() && !needs.unfinished.count(type)) return 96;
+        if (lodestoneOnly) return 0;
         const auto cat = categoryOf(type);
         int value = desire(cat, needs);
         const bool navalBudget=needs.income>0 || me.mana>=type->buildCost;
@@ -1247,7 +1273,9 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     // start ANOTHER build. Concurrent builds share the one mana pool, so piling on more
     // while the treasury is empty starves them all and leaves half-built units that
     // never finish -- the "produces units then gets stuck" failure. Let the in-flight
-    // ones finish (income flows into them) before starting the next.
+    // ones finish (income flows into them) before starting the next. Retail's planner
+    // likewise skips its ordinary pick below 70% allocation (0x40c890) but still
+    // builds the lodestone it draws separately, so the starved AI may start that.
     bool throttle = false;
     if (world.player(player_).mana < 50.0f)
         for (const auto& u : world.units())
@@ -1301,7 +1329,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         }
         break;
     }
-    if (!throttle)
+    if (!throttle || manaShort(world, needs))
         for (int pid : producers) {
             if (acted >= dp_.producersPerThink) break;
             const auto* p = world.unit(pid);
@@ -1316,7 +1344,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
             // is one pass over the five.
             int exclude = 0;
             for (int attempt = 0; attempt < 5; ++attempt) {
-                const auto* pick = weightedPick(world, *p, needs, exclude);
+                const auto* pick = weightedPick(world, *p, needs, exclude, throttle);
                 if (!pick) break;
                 if (produce(world, *p, pick, sink)) {
                     if (p->type && p->type->commander) commanderActed = true;
@@ -1326,6 +1354,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                     ++needs.counts[pick];
                     if (navalFactory(pick)) ++needs.navalFactories;
                     if (navalProducer(pick)) ++needs.navalProducers;
+                    if (pick->onMana && pick->isStructure()) ++needs.lodestoneProjects;
                     if (!pick->isStructure() && !pick->canFly && !pick->isBuilder &&
                         pick->domain==tak::sim::UnitType::Domain::Water) ++needs.navalArmy;
                     switch (categoryOf(pick)) {

@@ -1517,7 +1517,8 @@ private:
 void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool blocked);
 
 struct Player {
-    // HUD-only accounting: never used by gameplay decisions or stateHash().
+    // Accounting for the HUD and the server-side skirmish AI's mana-pressure test
+    // (src/ai): never read by the simulation itself or folded into stateHash().
     RetailResourceHistory displayResources;
     bool automaticGates=false; // normal AI capability; human gates remain manually controlled
     bool defensiveAi = false; // Passive AI defends in place from the moment units spawn

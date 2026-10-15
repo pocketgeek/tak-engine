@@ -582,6 +582,58 @@ int main(int argc,char** argv) {
             check(claims!=reaches,reaches ? "an ally builder that can reach its home deposit holds it"
                                           : "an ally builder that cannot reach its home deposit does not hold it");
         }
+        // Retail builds a lodestone whenever it runs short of mana -- store under
+        // 30% full, spending outpacing income -- with none unfinished and no
+        // builder already on one; that lodestone then replaces the planner's
+        // ordinary pick (icd 0x410810, 0x40c890, 0x40c830). Normal's income target
+        // alone held it to one lodestone for a whole game on "4x4 team", where a
+        // deposit pays 100 a second, however short of mana it ran.
+        enum class Store { Short, Starved, Full, Covered, Walking };
+        for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Easy,ai::Difficulty::Normal})
+            for (auto store : {Store::Short,Store::Starved,Store::Full,Store::Covered,Store::Walking}) {
+                sim::World w;terrain(w);w.buildNavClasses(reg);
+                w.setManaSpots({{1200,800},{1200,1200},{1600,800}});
+                w.spawn(reg.find("factory"),800,800,0,0);
+                w.spawn(reg.find("lode"),1200,800,0,0);   // the first lodestone, already paying
+                const int worker=w.spawn(reg.find("worker"),1000,1000,0,0);
+                auto& me=w.player(0);
+                me.income=110;me.storage=6000;   // income far past 25 + 20 per factory
+                me.mana=store==Store::Full ? 3000 : store==Store::Starved ? 10 : 100;
+                if (store==Store::Starved)   // broke with construction under way: no ordinary build
+                    w.unit(w.spawn(reg.find("soldier"),800,1200,0,0))->underConstruction=true;
+                for (auto& sample:me.displayResources.samples)   // per tick: earned, spent
+                    sample={110.f/30,store==Store::Covered ? 110.f/30 : 10.f};
+                if (store==Store::Walking) {
+                    const int other=w.spawn(reg.find("worker"),1400,800,0,0);
+                    net::Command order;order.kind=net::Cmd::Build;order.player=0;order.unitId=other;
+                    order.x=1600;order.z=800;std::snprintf(order.type,sizeof order.type,"lode");
+                    sim::applyCommand(w,reg,order);
+                }
+                ai::Profile p;p.weight["lode"]=100;
+                ai::Controller controller(0,reg,p,1,difficulty);
+                // Easy acts with one producer a think, in turn; tick 90 is the worker's.
+                const auto cs=think(controller,w,difficulty==ai::Difficulty::Easy ? 90 : 0);
+                const bool builds=std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+                    return c.unitId==worker && c.kind==net::Cmd::Build && std::string(c.type)=="lode";
+                });
+                switch (store) {
+                    case Store::Short:
+                        check(builds,"Normal, Easy and Defensive build a lodestone when short of mana, whatever their income");
+                        break;
+                    case Store::Starved:
+                        check(builds,"a starved AI still starts that lodestone, though nothing else");
+                        break;
+                    case Store::Full:
+                        check(!builds,"no lodestone while the store is 30% full or more");
+                        break;
+                    case Store::Covered:
+                        check(!builds,"no lodestone while income covers spending");
+                        break;
+                    case Store::Walking:
+                        check(!builds,"no second lodestone while a builder is on its way to one");
+                        break;
+                }
+            }
     }
     if (argc>1) {
         auto vfs=hpi::mountRetailRoot(argv[1]);
