@@ -168,7 +168,8 @@ public:
         uint64_t vertexCalls=0,vertexFound=0,vertexVisible=0,vertexNear=0,vertexBlocked=0,vertexWork=0;
         // W8 step 2 (the passage gate): members that committed to a gate point, and releases
         // (crossed the gate line, came within 2 cells of the point, or the point turned illegal).
-        // The gate's search and aim work is counted in laneWork.
+        // The gate's search and aim work is counted in laneWork, and so is a formation's entrance search
+        // (the descent to its area and the cross-sections read near it; 2026-10-14 review, item 4).
         uint64_t gateCommits=0,gateReleases=0;
         // W8 step 5 (S4 pass release, dropped; the counter stays): hold updates in which the pass filter
         // kept a body from stepping back across the lane it left and nothing else moved it.

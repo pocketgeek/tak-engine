@@ -144,6 +144,13 @@ constexpr int kPivotMembers=16;
 constexpr int kUplinkPart=64;                  // orders the server applies per client per tick (net kCmdCapPerTick)
 constexpr size_t kSlotsPerTick=32;             // formation slots a point hands out per tick (A2)
 constexpr uint64_t kHandOutCells=131072;       // ... and the ring cells their searches may walk in that tick
+// The entrance of a formation's area (see entrance, enterArea): the descent cells walked from the members'
+// centre toward it, the chain cells either side of the area's edge probed for a narrowing, how far before
+// the entrance (cells of potential) a member counts as through it, and the depth (px) one px across costs.
+constexpr int kEntryChain=4096;
+constexpr int kEntryNear=24;
+constexpr int kEntryCells=12;
+constexpr int64_t kEntryAcross=2;
 constexpr int kPivotChain=48;
 constexpr int kPivotMaxCells=32;
 constexpr int kPivotMinBodies=2;
@@ -623,6 +630,9 @@ struct LegionNavigator::Impl {
     struct Member {
         uint64_t controller=0;
         int group=0,goal=-1;              // goal origin cell index
+        // Its point's entrance (enterArea): 0 not yet seen outside it, 1 seen outside, 2 passed (or
+        // inside when first seen). Hashed while set.
+        uint8_t entryState=0;
         int lineCell=-1;                  // origin cell the line probe ran from
         bool line=false;
         State state=None;
@@ -1649,6 +1659,9 @@ struct LegionNavigator::Impl {
         // empty); handTick is the tick of the last hand-out (a per-tick
         // guard, never hashed).
         std::vector<int> queue;uint32_t handTick=~0u;
+        // The cell where the way into the area enters it past a narrowing (see entrance; -1: none). Its
+        // members exchange slots there (enterArea). Hashed while set.
+        int entry=-1;
         // C1 (W9 lane C, see meetScan): a head-on meet latched for this Point. tick: the latch (kNoTick:
         // none); contact: the last tick a member found the other command oncoming or awareness kept its
         // head-on entry; ax,az,L: the travel axis (px, the live centroid to the requested point when it
@@ -4968,8 +4981,9 @@ struct LegionNavigator::Impl {
                 mm->goal=mm->requested;mm->lineCell=-1;markPass(*v,*mm);
             }
             if(mm->slot>=0||mm->slot==-2||mm->slot==-3)mm->slot=-1;
+            mm->entryState=0;
         }
-        pt.queue.clear();pt.cells.clear();pt.assigned=false;pt.tried=false;
+        pt.queue.clear();pt.cells.clear();pt.assigned=false;pt.tried=false;pt.entry=-1;
     }
     void takeFormation(Member& m,const Unit& u,int cell) {
         m.goal=cell;m.slot=0;m.lineCell=-1;markPass(u,m);
@@ -5055,7 +5069,154 @@ struct LegionNavigator::Impl {
             const int cell=formationCell(*v,pp,groupComp(gg,pp),pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
             if(cell>=0)takeFormation(*mm,*v,cell);
         }
+        pt.entry=entrance(pt,list,px,pz);
         slotShape(pt,list,ax,az,px,pz);
+    }
+    // The entrance of a formation's area (2026-10-14 Legion review, item 4): where the way in passes a
+    // narrowing (a door, a strait, a room's mouth) just before the area. Open ground is told first, without
+    // a search: eight field reads round the point, kEntryNear cells beyond the area's radius, each within a
+    // quarter of its octile distance from the point (none walled off, none unreached) mean no wall stands
+    // near the area, and there is no entrance (-1). Otherwise the descent from the member nearest the
+    // members' centroid is walked (at most kEntryChain cells) to its first cell inside the area (centre
+    // within limit px of the point), and the passage gate's cross-section of the chain (gateSpan) is read at
+    // the kEntryNear chain cells before that cell, at it and at up to kEntryNear after it. The narrowest must
+    // be under the area's radius; the narrowing is the run round it under twice that width, and it must open
+    // out again within the probes (a corridor that runs on into the area, a closed dead end, is none), and
+    // the area may not reach back past it into open ground (a door the crowd's own area spills through).
+    // Then that first cell inside is the entrance. A function of the finished field and the static plane;
+    // the search is a passage search and counts with the passage gate's (laneWork).
+    int entrance(const Point& pt,const std::vector<std::pair<int,Member*>>& list,int64_t px,int64_t pz) {
+        const int W=width();
+        size_t pick=list.size();int64_t nearest=0;
+        for(size_t i=0;i<list.size();++i) {
+            const Unit* v=w.unit(list[i].first);
+            const int64_t dx=(v->x.v>>16)-pt.centreX,dz=(v->z.v>>16)-pt.centreZ,d=dx*dx+dz*dz;
+            if(pick==list.size()||d<nearest) {pick=i;nearest=d;}
+        }
+        if(pick==list.size())return -1;
+        const Unit& u=*w.unit(list[pick].first);
+        const Member& m=*list[pick].second;
+        const auto group=groups.find(m.group);
+        if(group==groups.end()||!group->second.field||!group->second.field->done)return -1;
+        const Plane& p=plane(group->second.plane);
+        const Field& f=*group->second.field;
+        const int fx=u.type->footX,fz=u.type->footZ;
+        const int64_t radius=pt.limit/16;
+        {   // Open ground: no search.
+            const int sx=footprintOrigin(Fixed::fromInt(int32_t(px)),fx),sz=footprintOrigin(Fixed::fromInt(int32_t(pz)),fz);
+            const int R=int(radius)+kEntryNear,D=R*7/10;
+            static constexpr int kDir[8][2]={{1,0},{-1,0},{0,1},{0,-1},{1,1},{-1,1},{1,-1},{-1,-1}};
+            bool open=true;
+            for(const auto& d:kDir) {
+                const int step=d[0]&&d[1]?D:R,x=sx+d[0]*step,z=sz+d[1]*step;
+                const uint32_t v=x>=0&&z>=0&&x<W&&z<height()?f.at(x,z):kUnreached;
+                const int64_t ax=std::abs(int64_t(x-sx)),az=std::abs(int64_t(z-sz));
+                const int64_t octile=kOrthogonal*std::max(ax,az)+(kDiagonal-kOrthogonal)*std::min(ax,az);
+                if(v==kUnreached||int64_t(v)>octile+octile/4) {open=false;break;}
+            }
+            if(open)return -1;
+        }
+        int cell=footprintOrigin(u.z,fz)*W+footprintOrigin(u.x,fx);
+        if(!legal(p,cell%W,cell/W)||f.at(size_t(cell))==kUnreached)return -1;
+        auto inside=[&](int c) {
+            const int64_t cx=int64_t(c%W)*16+fx*8-px,cz=int64_t(c/W)*16+fz*8-pz;
+            return cx*cx+cz*cz<=pt.limit*pt.limit;
+        };
+        std::vector<int> chain;
+        int at=-1;
+        uint64_t work=0;
+        for(int n=0;n<kEntryChain;++n) {
+            chain.push_back(cell);
+            if(at<0&&inside(cell))at=int(chain.size())-1;
+            if(at>=0&&int(chain.size())-1-at>=kEntryNear)break;
+            const int next=descend(p,f,cell%W,cell/W,m.requested,fx,fz);
+            ++work;
+            if(next<0)break;
+            cell=next;
+        }
+        int e=-1;
+        if(at>=0&&chain.size()>1) {
+            // The passage gate's cross-sections (gateSpan: static, memoised), at the probed chain cells.
+            const int n=int(chain.size()),lo=std::max(0,at-kEntryNear),hi=std::min(n-1,at+kEntryNear);
+            std::vector<int> span(size_t(hi-lo+1));
+            int narrowest=INT_MAX,at0=-1;
+            for(int i=lo;i<=hi;++i) {
+                ++work;
+                span[size_t(i-lo)]=gateSpan(p,chain.data(),n,i,fx,fz).free;
+                if(span[size_t(i-lo)]<narrowest) {narrowest=span[size_t(i-lo)];at0=i;}
+            }
+            if(narrowest<radius) {
+                // The narrowing: the run round its narrowest cross-section under twice that width.
+                int first=at0,last=at0;
+                while(first>lo&&span[size_t(first-1-lo)]<2*narrowest)--first;
+                while(last<hi&&span[size_t(last+1-lo)]<2*narrowest)++last;
+                const bool opens=last<hi;
+                const bool spills=first>at&&span[size_t(at-lo)]>=2*narrowest;
+                if(opens&&!spills)e=chain[size_t(at)];
+            }
+        }
+        stats.laneWork+=work;
+        return e;
+    }
+    // Slots by arrival (2026-10-14 Legion review, item 4): a formation member that comes through its
+    // point's entrance takes the deepest slot a member still outside holds, on its own side, and that
+    // member takes its slot in exchange. The formation ranks its members by the straight line to the point,
+    // but a narrowing on the way reorders them (off-axis bodies come through last; into a room entered from
+    // its far side the whole order turns over), and a body that takes a slot short of the ones still owed
+    // to the bodies behind it settles in their way. Through: its potential on its group's field within
+    // kEntryCells cells of the entrance's (outside: above that). Deepest: farthest from the entrance; a slot
+    // across the entrance -> point axis from the body costs kEntryAcross px of depth for each px across, and
+    // the exchange is taken only when it is deeper and scores above the body's own slot. Members of one
+    // footprint exchange; a body already through when it got its slot keeps it.
+    void enterArea(const Unit& u,Member& m,const Group& g,Point& pt) {
+        if(m.entryState==2||!g.field||!g.field->done)return;
+        const Field& f=*g.field;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const uint32_t pe=f.at(size_t(pt.entry));
+        if(pe==kUnreached)return;
+        const uint64_t edge=uint64_t(pe)+uint64_t(kEntryCells*kOrthogonal);
+        auto outside=[&](const Unit& v) {
+            const uint32_t q=f.at(footprintOrigin(v.x,v.type->footX),footprintOrigin(v.z,v.type->footZ));
+            return q!=kUnreached&&uint64_t(q)>edge;
+        };
+        if(outside(u)) {m.entryState=1;return;}
+        const bool crossed=m.entryState==1;
+        m.entryState=2;
+        if(!crossed)return;
+        const int64_t ex=int64_t(pt.entry%W)*16+fx*8,ez=int64_t(pt.entry/W)*16+fz*8;
+        const int64_t ax=(int64_t(std::get<2>(m.point))>>16)-ex,az=(int64_t(std::get<3>(m.point))>>16)-ez;
+        const int64_t len=std::max<int64_t>(1,isqrtFloor(uint64_t(ax*ax+az*az)));
+        auto depth=[&](int c) {
+            const int64_t dx=int64_t(c%W)*16+fx*8-ex,dz=int64_t(c/W)*16+fz*8-ez;
+            return isqrtFloor(uint64_t(dx*dx+dz*dz));
+        };
+        auto across=[&](int64_t x,int64_t z) {return ((x-ex)*az-(z-ez)*ax)/len;};
+        const int64_t side=across(u.x.v>>16,u.z.v>>16);
+        auto score=[&](int c) {return depth(c)-kEntryAcross*std::abs(across(int64_t(c%W)*16+fx*8,int64_t(c/W)*16+fz*8)-side);};
+        const int64_t mine=depth(m.goal);
+        int64_t best=score(m.goal);
+        Member* other=nullptr;int otherId=0;
+        uint64_t work=0;
+        for(const int id:pt.ids) {
+            ++work;
+            if(id==u.id)continue;
+            Member* o=member(id);
+            const Unit* v=w.unit(id);
+            if(!o||o->point!=m.point||o->slot<0||o->goal<0||o->entryState==2||!v||!v->type||
+               v->type->footX!=fx||v->type->footZ!=fz||!outside(*v)||depth(o->goal)<=mine)continue;
+            const int64_t c=score(o->goal);
+            if(c>best||(c==best&&other&&o->goal<other->goal)) {best=c;other=o;otherId=id;}
+        }
+        stats.slotSearchCells+=work;
+        if(!other)return;
+#ifndef NDEBUG
+        if(traced(u.id)||traced(otherId))
+            std::fprintf(stderr,"TRACE t=%u u=%d entry-exchange with=%d goal=(%d,%d) -> (%d,%d)\n",w.tickCounter_,u.id,otherId,
+                         m.goal%W,m.goal/W,other->goal%W,other->goal/W);
+#endif
+        std::swap(m.goal,other->goal);
+        m.lineCell=-1;other->lineCell=-1;
+        markPass(u,m);markPass(otherId);
     }
     // The next kSlotsPerTick queued members of an assigned point take their
     // formation slots (their current offset, mapped as a later joiner's),
@@ -5172,6 +5333,7 @@ struct LegionNavigator::Impl {
         // bodies in front of it (battle-field 2x500: 454 of A's 500 died
         // instead of 376, and Legion work rose 15%).
         if(m.slot>=0&&laneDue(m))m.lineCell=-1;
+        if(pt.entry>=0&&m.slot>=0)enterArea(u,m,g,pt);
         if(m.slot>=0||m.slot==-2)return true;
         const int64_t ox=ux-pt.centreX,oz=uz-pt.centreZ;
         const int cell=formationCell(u,p,groupComp(g,p),pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
@@ -7887,6 +8049,7 @@ struct LegionNavigator::Impl {
             for(int c:point.cells)h=mix(h,uint64_t(c));
             if(point.awareSeen) {h=mix(h,uint64_t(point.awareX));h=mix(h,uint64_t(point.awareZ));}
             if(!point.queue.empty()) {h=mix(h,0x71756575ull);for(const int id:point.queue)h=mix(h,uint64_t(id));}
+            if(point.entry>=0) {h=mix(h,0x656e747279ull);h=mix(h,uint64_t(uint32_t(point.entry)));}
             if(const auto& mt=point.meet;mt.tick!=kNoTick) {
                 h=mix(h,0x6d656574ull);h=mix(h,uint64_t(mt.tick)<<32|mt.contact);h=mix(h,uint64_t(mt.ax));h=mix(h,uint64_t(mt.az));h=mix(h,uint64_t(mt.L));
                 h=mix(h,uint64_t(mt.seen));h=mix(h,uint64_t(mt.left0));h=mix(h,uint64_t(mt.width0));h=mix(h,uint64_t(mt.lo));h=mix(h,uint64_t(mt.hi));
@@ -7918,6 +8081,7 @@ struct LegionNavigator::Impl {
         }
         for(const auto& [id,m]:members) {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
+            if(m.entryState) {h=mix(h,0x656e746572ull);h=mix(h,m.entryState);}
             h=mix(h,uint64_t(m.lineCell));h=mix(h,m.line);h=mix(h,m.state);h=mix(h,m.best);
             h=mix(h,m.heldSince);h=mix(h,m.stallTick);h=mix(h,m.holdUpdates);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
             h=mix(h,m.rest);if(m.rest) {h=mix(h,uint32_t(m.restX));h=mix(h,uint32_t(m.restZ));h=mix(h,uint32_t(m.restHp));h=mix(h,m.restEpoch);h=mix(h,m.restRing);}

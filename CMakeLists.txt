@@ -583,6 +583,15 @@ add_test(NAME legion_progressclock
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/battle-field-2x60.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_progressclock PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"stall_stale_ticks\":[0-9][0-9]?[,}]")
+# Slots by arrival (2026-10-14 Legion review, item 4): 60 bodies sent into a room whose one door is on its far side.
+# The formation ranks its members by the straight line to the click, which the way round the room turns over: on
+# the parent the first bodies through the door kept the slots beside it and 22 to 37 settled outside, never done
+# at any gate offset. Passes when, over the core five, the median run has every body in and the group done,
+# serial equal to workers.
+add_test(NAME legion_farroom
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/farroom.scn --mode legion --offsets 0,1,-1,2,-2 --json)
+set_tests_properties(legion_farroom PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.A\\.done\":[0-9]+,\"g\\.A\\.stops\":[0-9]+,\"g\\.A\\.left_behind\":0,")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is

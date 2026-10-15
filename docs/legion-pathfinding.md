@@ -389,6 +389,44 @@ footprint class (mixed footprints form one group per class but share one
   settle rule's re-choice. If fewer than two members can take part at the first attempt, the
   point retries every 16 ticks. Approach members take no slot and do not size
   the area.
+* **Slots by arrival** (`entrance`, `enterArea`; 2026-10-14 review, item 4):
+  the front-first order is the straight line's, not the way's. A narrowing on
+  the way reorders the crowd (the bodies off the door's axis come through it
+  last), and a room whose door is on its far side turns the order over: the
+  first bodies through the door are the ones the formation gave the slots
+  beside it, so they settle in the doorway and the rest of the order settles
+  outside (`farroom.scn`: 22 to 37 of 60 outside at every gate offset). The
+  order is not even front-first in practice for a click the server applies in
+  one tick: the move mission's reset re-registers every member on its first
+  update, just after the formation is taken, and each re-claims its own
+  offset in update order. So a formation takes an *entrance* when its way in
+  narrows just before the area. Open ground is told without a search: eight
+  field reads round the point, `kEntryNear` (24) cells beyond the area's
+  radius, each within a quarter of its octile distance, mean no wall near the
+  area. Otherwise the descent from the member nearest the centroid is walked
+  to its first cell inside the area, and the passage gate's cross-section
+  (`gateSpan`) is read 24 chain cells either side of it: the narrowest must be
+  under the area's radius, the run round it under twice that width must open
+  out again within the probes (a closed dead-end corridor never does), and
+  the area may not reach back past it into open ground (`doorplug-112`, whose
+  area spills through the door, takes none). That first cell inside is the
+  entrance; the search counts with the passage gate's (`lane_work`). A member
+  that then comes through (its potential within `kEntryCells`, 12 cells, of
+  the entrance's, after it was seen outside) takes the deepest slot that a
+  member still outside holds -- farthest from the entrance, with 2 px of depth
+  charged for each px the slot lies across the entrance-to-point axis from the
+  body -- when that is deeper and scores above its own slot; the two exchange
+  slots (one footprint only; a body already through when it got its slot keeps
+  it). The slots fill from the far side in the order the bodies really arrive.
+  `farroom` completes at 9 of the 11 gate offsets (60 of 60 in at 9), where it
+  never completed; over the existing fixtures it changes the 19 that take an
+  entrance (the twelve dead-end rooms, `doorplug-124`, the six straits) and no
+  other: 127 more bodies arrive, 7 fewer keys read never, stopped and held
+  permille fall by 299 and 275 and crossings by 4, and Legion work rises by
+  346,018 (0.02%: the bodies walk in to their slots instead of settling in
+  the doorway). `doorplug-124` A completes at all eleven offsets (never at two
+  before), and `strait-3x80`'s median arrivals rise from 48 to 80 (all 80
+  through at offsets 0 and +-1).
 * **Straight lanes**: a member with a formation slot probes the direct line
   out to 640 cells instead of 160, so the crowd does not funnel into a file
   by descending the shared field.

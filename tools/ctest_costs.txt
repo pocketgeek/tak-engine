@@ -118,6 +118,7 @@ legion_naval_combat 6
 legion_scenario_corner-1x48 6
 legion_scenario_sbend 6
 legion_squadformation 6
+legion_farroom 6
 legion_movement_orders_trolls 5
 legion_scenario_opentangent 5
 legion_scenario_refreshchurn-control 5
