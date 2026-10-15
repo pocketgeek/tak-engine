@@ -22,7 +22,7 @@ report: one table row per job (the acceptance keys).
 check: the frozen targets (targets.json: per scenario/mode/key a min and/or max; key "hash" with "eq" for an
 exact state hash; "wall.FIELD" or "report_only" targets print but never fail) against a run; with --base,
 every deterministic key that moved
-against an older run is listed too. Exit 0 every target met, 1 a target missed or its scenario/mode not in
+against an older run (among the keys both carry) is listed too. Exit 0 every target met, 1 a target missed or its scenario/mode not in
 the run, 2 tooling.
 """
 import argparse
@@ -278,7 +278,8 @@ def cmd_check(a):
             b = base.get(key)
             if not b:
                 continue
-            moved = [(k, b["keys"].get(k), v) for k, v in (r.get("keys") or {}).items() if b["keys"].get(k) != v]
+            # Only keys both runs carry: a trimmed base (baseline-*.jsonl) keeps a subset of the keys.
+            moved = [(k, b["keys"][k], v) for k, v in (r.get("keys") or {}).items() if k in b["keys"] and b["keys"][k] != v]
             if moved or r.get("hash") != b.get("hash"):
                 print(f"  MOVED {key[0]} {key[1]}: hash {b.get('hash')} -> {r.get('hash')}; {len(moved)} keys")
     return 1 if fails or missing else 0

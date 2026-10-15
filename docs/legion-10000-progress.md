@@ -426,20 +426,23 @@ What the baseline says:
 
 ### Frozen acceptance targets
 
-`tools/scenarios/scale/targets.json` (215 targets, frozen 2026-10-15 from this baseline; change only with a
-recorded reason). Checked with `legion_scale.py check`:
+`tools/scenarios/scale/targets.json` (212 targets, frozen 2026-10-15 from this baseline; change only with a
+recorded reason; the one change so far, before any stage was evaluated, came from the review of a8cfc974:
+unreachable orders get an allowance in the outside-completion cap, and `attack-*`'s point bodies, the fleeing
+enemies, carry no arrival targets because their arrival is their survival). Checked with `legion_scale.py check`:
 
 * Retail: every Retail row's state hash equal to the starting revision's.
 * Legion, every file of 1,000+ bodies: a whole click delivered within 30 ticks; its last member moving within
   90 ticks; no body waiting more than 60 ticks for navigation; no livelock at the end.
 * Legion physical arrival of at least 99% of the reachable bodies (one, swap, idle) or 97% (many, bridges,
-  maze, mixed, churn), no reachable body stuck at the end, at most 2% of orders completing outside their disc;
+  maze, mixed, churn), no reachable body stuck at the end, at most 2% of the reachable orders completing
+  outside their disc (plus the unreachable ones, which retire outside it by design);
   `one-N` t99 within 1.5x the slowest body's straight run, `swap-N` within 2x; bridges using both alternative
   bridges; the attack ring at least as many shooters as at the start.
 * Small populations (100 and 1,000): arrival count and t90/t99 no worse than the starting revision (5%).
 * Report only: tick p99 within 33.3 ms and no tick over budget at 10,000 bodies on this machine.
 
-At the starting revision: **101 met, 111 missed, 3 report-only missed** (`check` exit 1, as expected: the
+At the starting revision: **99 met, 110 missed, 3 report-only missed** (`check` exit 1, as expected: the
 program's targets). Unmet targets after stage 9 are reported as such, not re-frozen.
 
 ### Open issues from stage 1

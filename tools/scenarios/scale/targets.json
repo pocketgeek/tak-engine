@@ -122,27 +122,6 @@
    "min": 6
   },
   {
-   "scenario": "attack-1000",
-   "mode": "legion",
-   "key": "scale.arrive.n",
-   "why": "no regression against c2c25707",
-   "min": 99
-  },
-  {
-   "scenario": "attack-1000",
-   "mode": "legion",
-   "key": "scale.arrive.t90",
-   "why": "no regression against c2c25707 (5%)",
-   "max": 4477
-  },
-  {
-   "scenario": "attack-1000",
-   "mode": "legion",
-   "key": "scale.arrive.t99",
-   "why": "no regression against c2c25707 (5%)",
-   "max": 6028
-  },
-  {
    "scenario": "attack-10000",
    "mode": "legion",
    "key": "scale.deliver.max",
@@ -237,7 +216,7 @@
    "scenario": "bridges-1000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 20
   },
   {
@@ -300,7 +279,7 @@
    "scenario": "bridges-10000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 200
   },
   {
@@ -377,8 +356,8 @@
    "scenario": "churn-1000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
-   "max": 20
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
+   "max": 118
   },
   {
    "scenario": "churn-10000",
@@ -426,8 +405,8 @@
    "scenario": "churn-10000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
-   "max": 200
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
+   "max": 1180
   },
   {
    "scenario": "churn-10000",
@@ -489,7 +468,7 @@
    "scenario": "idle-10000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 20
   },
   {
@@ -538,7 +517,7 @@
    "scenario": "many-100",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 2
   },
   {
@@ -594,7 +573,7 @@
    "scenario": "many-1000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 20
   },
   {
@@ -643,7 +622,7 @@
    "scenario": "many-10000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 200
   },
   {
@@ -706,7 +685,7 @@
    "scenario": "many-2500",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 50
   },
   {
@@ -755,7 +734,7 @@
    "scenario": "many-5000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 100
   },
   {
@@ -804,8 +783,8 @@
    "scenario": "maze-1000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
-   "max": 20
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
+   "max": 69
   },
   {
    "scenario": "maze-10000",
@@ -853,8 +832,8 @@
    "scenario": "maze-10000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
-   "max": 200
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
+   "max": 690
   },
   {
    "scenario": "maze-10000",
@@ -916,7 +895,7 @@
    "scenario": "mixed-1000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 20
   },
   {
@@ -965,7 +944,7 @@
    "scenario": "mixed-10000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 200
   },
   {
@@ -1014,7 +993,7 @@
    "scenario": "one-100",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 2
   },
   {
@@ -1077,7 +1056,7 @@
    "scenario": "one-1000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 20
   },
   {
@@ -1133,7 +1112,7 @@
    "scenario": "one-10000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 200
   },
   {
@@ -1203,7 +1182,7 @@
    "scenario": "one-2500",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 50
   },
   {
@@ -1259,7 +1238,7 @@
    "scenario": "one-5000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 100
   },
   {
@@ -1315,7 +1294,7 @@
    "scenario": "swap-1000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 20
   },
   {
@@ -1371,7 +1350,7 @@
    "scenario": "swap-10000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 200
   },
   {
@@ -1441,7 +1420,7 @@
    "scenario": "swap-2500",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 50
   },
   {
@@ -1497,7 +1476,7 @@
    "scenario": "swap-5000",
    "mode": "legion",
    "key": "scale.complete_outside_n",
-   "why": "at most 2% of orders complete outside the arrival disc",
+   "why": "at most 2% of the reachable orders complete outside the arrival disc (unreachable orders retire outside it by design)",
    "max": 100
   },
   {
