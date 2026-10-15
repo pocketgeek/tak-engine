@@ -503,10 +503,15 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
             // disabled and enforce actual gameplay limits, but let these modes
             // grow ordinary troops, defenses and expanding income beyond them.
             // A builder type never passes its own retail limit (ai/default.txt
-            // has no difficulty levels): Hard's 150% made four arabuilds six,
-            // and its factory target took Zhon's handlers far past three.
-            if (mobileBuilder(ut)) limit = std::min(limit, lim);
-            else {
+            // has no difficulty levels): Hard's 150% made four arabuilds six.
+            // Zhon's producers are the exception: with no factory buildings they
+            // take the factory raise, and only its whole allowance bounds them
+            // (mobileBuilderCap, the factories plus the builder cap).
+            if (mobileBuilder(ut)) {
+                limit = std::min(limit, lim);
+                if (sustained && cat == BuildCat::Factory && mobileProduction(ut->side))
+                    limit = std::max(limit, needs.desiredFactories);
+            } else {
                 if (sustained && cat == BuildCat::Army) limit = std::max(limit, needs.desiredArmy);
                 if (sustained && cat == BuildCat::Factory) limit = std::max(limit, needs.desiredFactories);
                 if (sustained && cat == BuildCat::Defense) limit = std::max(limit, needs.desiredDefenses);

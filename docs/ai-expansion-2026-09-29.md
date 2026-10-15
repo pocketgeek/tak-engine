@@ -404,7 +404,13 @@ limits passed at every difficulty but Easy (Normal `arabuild` 5 of 4, Hard
   same think, of either category.
 * Hard's 150% limit scale and the sustained modes' factory/builder targets
   raised builder types past their limits. A builder type is now held to its
-  shipped limit at every difficulty (Easy's 50% still lowers it).
+  shipped limit at every difficulty (Easy's 50% still lowers it). Zhon's
+  producers are the exception: Zhon has no factory buildings, so in the
+  sustained modes (Hard, Absurd, Defensive) they take the same raise factory
+  buildings get, and only Zhon's whole allowance (factory target plus builder
+  cap, up to 44) bounds them. Holding them at 3 each had capped Zhon at 13
+  builders while Aramon fielded 12 constructors plus up to 32 keeps, and
+  Zhon's army fell by about half there.
 
 | 900 s | AIs over the cap, before / after | An AI's own types over their limit |
 | --- | ---: | ---: |
@@ -413,7 +419,7 @@ limits passed at every difficulty but Easy (Normal `arabuild` 5 of 4, Hard
 | Defensive | 26 / 0 | 17 / 0 |
 | Hard, Absurd | 76 / 0 | 107 / 0 |
 
-Zhon's own builders never pass 13 (the Monarch and 3 of each type); its sampled
+On Normal Zhon's own builders never pass 13 (the Monarch and 3 of each type); its sampled
 totals reach 18 only with captured Aramon and Creon builders, which the AI
 counts but did not build. Expansion held: Normal lodestones per AI at 900 s,
 before / after, Aramon 9.42 / 8.50, Taros 7.89 / 7.22, Veruna 7.67 / 7.56,
@@ -425,3 +431,11 @@ its constructors; Defensive Aramon and Taros, who had 15 priests on a cap of
 `--mpai` (Inner Circle, seed 1) is unchanged: Retail 300 s `76f7e976cd6a00c9`,
 60 s `8db23af1b0260ba1`; Legion 300 s `99e2f137cde8d769`, 60 s
 `5bc7e8001c06611f`.
+
+With Zhon's producers given the factory raise in the sustained modes (seed 1,
+900 s, army per Zhon AI, main / producers held at 3 each / raised): Defensive
+252.7 / 112.7 / 227.3, Hard 161.7 / 127.3 / 254.3, Absurd 165.3 / 84.7 /
+247.3; Normal is untouched. Its own builders stay inside its allowance (44 at
+most). Hard and Absurd Veruna's armies stay lower than main's (Hard 382 / 295)
+because `verliege` is now held to its shipped 3; that limit is retail.
+`--mpai` 300 s hashes are unchanged again.

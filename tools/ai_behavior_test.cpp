@@ -448,8 +448,11 @@ static void builderTotals() {
     check(zhon(ai::Difficulty::Normal,100,5,0)==1,"Zhon's producers grow to its own allowance");
     check(zhon(ai::Difficulty::Normal,100,5,1)==0,
           "a handler ordered but not yet conjured counts against Zhon's allowance");
-    check(zhon(ai::Difficulty::Hard,100000,3,0)==0,
-          "Hard Zhon holds each producer type to its ai/default.txt limit");
+    // Hard at income 100000: 32 factories and a cap of 12, so 44 with the Monarch.
+    check(zhon(ai::Difficulty::Hard,100000,3,0)==1,
+          "Hard Zhon's producers take the factory raise past their ai/default.txt limit");
+    check(zhon(ai::Difficulty::Hard,100000,43,0)==0,
+          "Hard Zhon's producers stop at its factories plus its builder cap");
 }
 
 // The income target met, an idle builder still builds income while the store
