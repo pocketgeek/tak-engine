@@ -3928,6 +3928,46 @@ struct LegionNavigator::Impl {
         }
         const int W=width();
         uint64_t pairs=0;
+        // Broad phase (Legion 10,000 stage 2; exact): a mover not yet in a
+        // group's plan enters it only through a conflict sample, where the
+        // group's way point P (on its descent chain, so inside the chain's
+        // box of cell centres) and the mover's box centre Q (its centroid
+        // moved t/kAwareScan of its displacement, t <= kAwareHorizon, so
+        // inside its swept box) satisfy |s| <= B, |q| <= A with A =
+        // half+rG+32, B = max(tail,head)+rG+32. s and q are the offset P-Q
+        // dotted with (dx,dz) and divided by L <= |(dx,dz)| (truncated), so
+        // the offset's components along and across the heading are under B+1
+        // and A+1, and each coordinate of P-Q under A+B+2 = (half+
+        // max(tail,head)+66) + 2rG. Each mover is listed in the grid cells its
+        // swept box, grown by its own part, covers; a group reads the cells
+        // its chain box, grown by 2rG, covers (both clamped to the grid, which
+        // keeps every overlap). Every mover the scan could newly plan round is
+        // a candidate; movers already in the plan (avoidCmd) are candidates
+        // whatever their place, since a crossing stays planned off its box.
+        // Candidates are visited in the movers' order, so every decision and
+        // the plan's order are those of the walk over all movers
+        // (TAK_LEGION_VERIFY runs the conflict samples of every other mover
+        // and fails on a hit).
+        constexpr int64_t kAwareCell=1024;   // px, 64 cells
+        const int64_t gridW=(int64_t(W)*16+kAwareCell-1)/kAwareCell,gridH=(int64_t(height())*16+kAwareCell-1)/kAwareCell;
+        auto gridCol=[&](int64_t x) {return std::clamp<int64_t>(x>=0?x/kAwareCell:-1,0,gridW-1);};
+        auto gridRow=[&](int64_t z) {return std::clamp<int64_t>(z>=0?z/kAwareCell:-1,0,gridH-1);};
+        std::vector<std::vector<uint32_t>> grid;
+        std::vector<std::pair<uint64_t,uint32_t>> byCommand;   // (command, mover index), ascending
+        if(!movers.empty()) {
+            grid.resize(size_t(gridW*gridH));
+            for(size_t i=0;i<movers.size();++i) {
+                const auto& mv=movers[i];
+                const int64_t grow=mv.half+std::max(mv.tail,mv.head)+66;
+                const int64_t ex=mv.cx+mv.dx*int64_t(kAwareHorizon/kAwareScan),ez=mv.cz+mv.dz*int64_t(kAwareHorizon/kAwareScan);
+                const int64_t c0=gridCol(std::min(mv.cx,ex)-grow),c1=gridCol(std::max(mv.cx,ex)+grow);
+                const int64_t r0=gridRow(std::min(mv.cz,ez)-grow),r1=gridRow(std::max(mv.cz,ez)+grow);
+                for(int64_t r=r0;r<=r1;++r)for(int64_t c=c0;c<=c1;++c)grid[size_t(r*gridW+c)].push_back(uint32_t(i));
+                byCommand.push_back({mv.command,uint32_t(i)});
+            }
+            std::sort(byCommand.begin(),byCommand.end());
+        }
+        std::vector<uint32_t> cand;
         stats.groupLoopIters+=groups.size();
         for(auto& [id,g]:groups) {
             const auto a=acc.find(id);
@@ -3960,8 +4000,49 @@ struct LegionNavigator::Impl {
                         x=x0+(x1-x0)*(s-arc[k])/span;z=z0+(z1-z0)*(s-arc[k])/span;
                     };
                     const bool engages=g.kind==Kind::Fight||g.kind==Kind::Attack||g.kind==Kind::Guard||g.kind==Kind::Patrol;
-                    pairs+=movers.size();
-                    for(const auto& mv:movers) {
+                    // The first conflict sample (see below); `count` adds one per sample.
+                    auto firstHit=[&](const Mover& mv,uint64_t* count) {
+                        int64_t hit=-1;
+                        for(int64_t t=0;t<=kAwareHorizon&&hit<0;t+=kAwareSample) {
+                            int64_t x=0,z=0;at(t,x,z);if(count)++*count;
+                            const int64_t rx=x-(mv.cx+mv.dx*t/int64_t(kAwareScan)),rz=z-(mv.cz+mv.dz*t/int64_t(kAwareScan));
+                            const int64_t s=(rx*mv.dx+rz*mv.dz)/mv.L,q=(rx*mv.dz-rz*mv.dx)/mv.L;
+                            if(std::abs(q)<=mv.half+rG+32&&s>=-(mv.tail+rG+32)&&s<=mv.head+rG+32)hit=t;
+                        }
+                        return hit;
+                    };
+                    // The candidates (broad phase above), in the movers' order.
+                    cand.clear();
+                    {
+                        int64_t bx0=INT64_MAX,bz0=INT64_MAX,bx1=INT64_MIN,bz1=INT64_MIN;
+                        for(const int k:chain) {
+                            const int64_t px=int64_t(k%W)*16+8,pz=int64_t(k/W)*16+8;
+                            bx0=std::min(bx0,px);bx1=std::max(bx1,px);bz0=std::min(bz0,pz);bz1=std::max(bz1,pz);
+                        }
+                        const int64_t c0=gridCol(bx0-2*rG),c1=gridCol(bx1+2*rG),r0=gridRow(bz0-2*rG),r1=gridRow(bz1+2*rG);
+                        for(int64_t r=r0;r<=r1;++r)for(int64_t c=c0;c<=c1;++c) {
+                            const auto& cell=grid[size_t(r*gridW+c)];
+                            cand.insert(cand.end(),cell.begin(),cell.end());
+                        }
+                        for(const uint64_t known:g.avoidCmd)
+                            for(auto e=std::lower_bound(byCommand.begin(),byCommand.end(),std::pair<uint64_t,uint32_t>{known,0});
+                                e!=byCommand.end()&&e->first==known;++e)cand.push_back(e->second);
+                        std::sort(cand.begin(),cand.end());
+                        cand.erase(std::unique(cand.begin(),cand.end()),cand.end());
+                    }
+#ifndef NDEBUG
+                    if(gVerify)
+                        for(size_t i=0,j=0;i<movers.size();++i) {
+                            while(j<cand.size()&&cand[j]<i)++j;
+                            if(j<cand.size()&&cand[j]==i)continue;
+                            if(std::find(g.avoidCmd.begin(),g.avoidCmd.end(),movers[i].command)!=g.avoidCmd.end())
+                                verifyFail("awareScan's broad phase dropped a planned mover");
+                            if(firstHit(movers[i],nullptr)>=0)verifyFail("awareScan's broad phase dropped a mover with a conflict");
+                        }
+#endif
+                    pairs+=cand.size();
+                    for(const uint32_t ci:cand) {
+                        const Mover& mv=movers[ci];
                         if(mv.command==g.command)continue;
                         // One selection sent as several groups (one player,
                         // within kConvoyTicks, to points within kConvoyCells)
@@ -4011,13 +4092,7 @@ struct LegionNavigator::Impl {
                         }
                         // The conflict: the first sample where the group's disc
                         // meets the mover's box, both moved on t ticks.
-                        int64_t hit=-1;
-                        for(int64_t t=0;t<=kAwareHorizon&&hit<0;t+=kAwareSample) {
-                            int64_t x=0,z=0;at(t,x,z);++work;
-                            const int64_t rx=x-(mv.cx+mv.dx*t/int64_t(kAwareScan)),rz=z-(mv.cz+mv.dz*t/int64_t(kAwareScan));
-                            const int64_t s=(rx*mv.dx+rz*mv.dz)/mv.L,q=(rx*mv.dz-rz*mv.dx)/mv.L;
-                            if(std::abs(q)<=mv.half+rG+32&&s>=-(mv.tail+rG+32)&&s<=mv.head+rG+32)hit=t;
-                        }
+                        const int64_t hit=firstHit(mv,&work);
                         if(hit<0)continue;
                         // Already in among each other: too late to plan round
                         // (a late swerve only reverses bodies).
