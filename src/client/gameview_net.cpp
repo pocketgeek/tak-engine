@@ -418,6 +418,20 @@
                 if (int ms = mp_->room().mySlot; ms >= 0) {
                     for (const auto& c : bd.cmds)
                         if (int(c.player) == ms && cmdInFlight_ > 0) --cmdInFlight_;
+#ifndef NDEBUG
+                    // TAK_AUTOPLAY_FORMATION delivery probe: own commands applied this tick (stderr only).
+                    if (formPending_ > 0) {
+                        int own = 0;
+                        for (const auto& c : bd.cmds) own += int(c.player) == ms;
+                        if (own && !formLanded_) formFirstTick_ = netTick_;
+                        formLanded_ += own;
+                        if (formLanded_ >= formPending_) {
+                            std::fprintf(stderr, "FORMATION_DELIVERY issue=%u n=%d landed=%d first=%u last=%u\n",
+                                         formIssueTick_, formPending_, formLanded_, formFirstTick_, netTick_);
+                            formPending_ = 0;
+                        }
+                    }
+#endif
                 }
             if (useSimThread_) {
                 // Hand this tick's bundle to the sim worker (FIFO == lockstep tick order).
@@ -859,6 +873,15 @@ void GameView::autoplayStep() {
             c.queue = 0;
             issue(c);
         }
+        // Delivery probe: the issue tick and the commands to watch for (an unfinished earlier order's
+        // count is reported as it stood).
+        if (formPending_ > 0)
+            std::fprintf(stderr, "FORMATION_DELIVERY issue=%u n=%d landed=%d first=%u last=-1 (superseded)\n",
+                         formIssueTick_, formPending_, formLanded_, formFirstTick_);
+        formIssueTick_ = netTick_;
+        formPending_ = int(mine.size()) * 2;
+        formLanded_ = 0;
+        formFirstTick_ = 0;
         return;
     }
 

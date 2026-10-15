@@ -53,6 +53,14 @@ never names a pathfinding mode: the runner builds it once per mode.
                                 WOULD fire, definitions in legion.cpp's struct Census). `legion_scenario --w9`
                                 turns it on for any file; `--trace ID[,ID...]` prints one stderr line per
                                 decision of those members (debug build).
+  probe scale                   the runner also reports the scale.* keys (tools/legion_scale.h; the
+                                Legion 10,000 scale suite in tools/scenarios/scale/): per body, from its
+                                last click, command delivery, first movement, physical arrival in the
+                                click's packed disc vs order completion (t50/t90/t99/last), path length,
+                                stuck/livelocked bodies at the end, and (Legion) the longest wait for a
+                                field and the navigator's live containers. `legion_scenario --scale` turns
+                                it on for any file; the wall line SCALE_WALL (stderr) adds tick mean/p50/
+                                p99/max, ticks over 33.3 ms, peak RSS and malloc heap.
   probe claims                  Legion only: every 10 ticks the navigator audits
                                 its arrival-slot claims (the claims invariant);
                                 keys claims.bad_max (overlapping + lost +

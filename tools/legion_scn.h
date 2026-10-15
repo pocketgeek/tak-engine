@@ -149,6 +149,7 @@ struct Scenario {
     bool probeApproach = false;       // `probe approach`: the runner reports per-unit approach arrival and order completion
     bool probeLanes = false;          // `probe lanes`: the runner reports the lanes.* counters (W8 step 0)
     bool probeW9 = false;             // `probe w9`: the runner reports the w9.* counters and the debug-build census.* keys (W9 step 0)
+    bool probeScale = false;          // `probe scale`: the runner reports the scale.* keys (tools/legion_scale.h; Legion 10,000 phase 0)
     bool probeAware = false;          // `probe aware`: the runner reports the aware.* counters (W7 step 0)
     bool probeClaims = false;         // `probe claims`: the runner audits the arrival-slot claims every 10 ticks (W5 step 0)
     std::vector<int> gateOffsets;     // `gateoffsets O,O,..`: legion_scenario's gate offsets where 0,+-1..+-5 leave the map
@@ -364,10 +365,11 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             }
         } else if (k == "probe") {
             need(2, 2);
-            if (w[1] != "approach" && w[1] != "claims" && w[1] != "aware" && w[1] != "lanes" && w[1] != "w9")
-                c.fail("probe approach|claims|aware|lanes|w9");
+            if (w[1] != "approach" && w[1] != "claims" && w[1] != "aware" && w[1] != "lanes" && w[1] != "w9" &&
+                w[1] != "scale")
+                c.fail("probe approach|claims|aware|lanes|w9|scale");
             (w[1] == "approach" ? s.probeApproach : w[1] == "aware" ? s.probeAware : w[1] == "lanes" ? s.probeLanes
-             : w[1] == "w9" ? s.probeW9 : s.probeClaims) = true;
+             : w[1] == "w9" ? s.probeW9 : w[1] == "scale" ? s.probeScale : s.probeClaims) = true;
         } else if (k == "uplink") { need(2, 2); s.roundTrip = int(c.integer(w[1], 1, 600)); }
         else if (k == "gateoffsets") {
             need(2, 2);
@@ -739,6 +741,7 @@ inline std::string format(const Scenario& s) {
     if (s.probeAware) o << "probe aware\n";
     if (s.probeLanes) o << "probe lanes\n";
     if (s.probeW9) o << "probe w9\n";
+    if (s.probeScale) o << "probe scale\n";
     if (!s.gateOffsets.empty()) {
         o << "gateoffsets ";
         for (size_t i = 0; i < s.gateOffsets.size(); ++i) o << (i ? "," : "") << s.gateOffsets[i];
@@ -1221,10 +1224,12 @@ public:
     // Apply tick `tick`'s commands; call before World::tick with tick == tickCount().
     size_t apply(uint32_t tick) {
         applyChurn(tick);
-        const auto cmds = commandsFor(tick);
-        for (const auto& c : cmds) tak::sim::applyCommand(*b_.world, b_.registry, c);
-        return cmds.size();
+        landed_ = commandsFor(tick);
+        for (const auto& c : landed_) tak::sim::applyCommand(*b_.world, b_.registry, c);
+        return landed_.size();
     }
+    // The commands the last apply() landed, in application order.
+    const std::vector<tak::net::Command>& landed() const { return landed_; }
     bool done() const { return next_ >= pending_.size() && link_.idle(); }
 
     // The `churn` events due at `tick`: a blocking feature of the spec's size placed in the static map (an odd
@@ -1249,6 +1254,7 @@ private:
     Uplink link_;
     std::vector<OrderSpec> pending_;
     size_t next_ = 0;
+    std::vector<tak::net::Command> landed_;
 };
 
 // ---- situations: the recording's own positions ------------------------------

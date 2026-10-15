@@ -8,6 +8,7 @@ mapgen_naval 72
 legion_scenario_corner-1x448 67
 crusades_history_ui_network 66
 legion_scenario_corner-8x56 66
+legion_scale_neutral 66
 legion_gen1_route_65845_o1 61
 legion_gen1_route_65845_om1 56
 legion_situation_r10-104540_retail 50

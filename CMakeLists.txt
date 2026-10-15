@@ -442,6 +442,19 @@ add_test(NAME observer_neutral
                  --neutral --mode both --offsets 0)
 set_tests_properties(legion_scenario_smoke observer_neutral
                      PROPERTIES SKIP_RETURN_CODE 77 LABELS legion)
+# The Legion 10,000 scale probe (tools/legion_scale.h, `probe scale`): it changes no hash with the observer on
+# or off, serial or workers (legion_scale_neutral), and the smallest scale file still delivers every body
+# (legion_scale_one100: all 100 arrive, none stuck). The suite itself (tools/scenarios/scale/, 100 to 10,000
+# bodies) is run by tools/legion_scale.py at stage ends, not by ctest (docs/legion-10000-progress.md).
+add_test(NAME legion_scale_neutral
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/one-100.scn
+                 ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/churn-1000.scn --neutral --mode both --offsets 0)
+add_test(NAME legion_scale_one100
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/one-100.scn --mode legion --offsets 0
+                 --both-exec --json)
+set_tests_properties(legion_scale_neutral legion_scale_one100 PROPERTIES LABELS legion TIMEOUT 600)
+set_tests_properties(legion_scale_one100 PROPERTIES
+                     PASS_REGULAR_EXPRESSION "\"scale\\.arrive\\.n\":100,.*\"scale\\.stuck_end\":0,")
 # Asset-free scenario set, part A (tools/scenarios/*.scn): both modes, serial and
 # workers (the runner fails on a state or key mismatch), three start offsets.
 # No bounds yet: a later task adds `--check` against baseline.json. The long

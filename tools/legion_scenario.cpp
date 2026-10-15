@@ -81,6 +81,7 @@
 // Exit: 0 ok, 1 a mismatch (serial != workers, or --neutral), 2 usage or a
 // bad file, 77 the file needs --data (ctest SKIP).
 #include "legion_observe.h"
+#include "legion_scale.h"
 #include "legion_scn.h"
 #include "client/ordershape.h"
 #include "sim/convoy.h"
@@ -148,6 +149,7 @@ struct Options {
                             // in-flight order at tick 0; the retail request queue would drain that backlog over ~2000 ticks)
     int wanderers = -1;     // --wanderers on|off overrides the file's; -1: the file's
     bool w9 = false;        // --w9: report the W9 instruments for any file (as `probe w9`)
+    bool scale = false;     // --scale: report the scale.* keys for any file (as `probe scale`)
     std::vector<int> trace; // --trace IDS: decision trace lines on stderr for these members (debug build)
     std::vector<std::string> traceGroups;   // ... and whole groups, by name (a token that is not a number)
     // Gate modes: the JSON lines go to tools/legion_check.py instead of stdout.
@@ -167,7 +169,7 @@ void emit(const std::string& line) {
     std::fprintf(stderr, "legion_scenario: %s\n"
         "usage: legion_scenario <file.scn|builtin:NAME> [--mode legion|retail|both] [--offsets 0,1,-1|gate]\n"
         "       [--workers|--serial|--both-exec] [--window R] [--data <install>] [--json] [--ticks N]\n"
-        "       [--no-observer] [--neutral] [--wanderers on|off] [--w9] [--trace ID[,ID...]]\n"
+        "       [--no-observer] [--neutral] [--wanderers on|off] [--w9] [--scale] [--trace ID[,ID...]]\n"
         "       [--check B.json [--step ID] [--cumulative] [--ratchet REASON]] [--baseline B.json --reason TEXT\n"
         "       [--since ID]] [--exit-table OLD] [--anchor A.json]   (gate modes: tools/legion_check.py)\n", why);
     std::exit(2);
@@ -740,6 +742,25 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     const tak::sim::LegionNavigator* nav = nullptr;
     std::optional<ApproachProbe> approach;
     if (observe && s.probeApproach) approach.emplace(all);
+    // `probe scale` / --scale (tools/legion_scale.h): each order's packed disc (the observer's, sized for every
+    // body of the convoy the click joined, at the selection's largest footprint) and the bodies it selects.
+    std::optional<tak::legion_scale::ScaleProbe> scale;
+    std::vector<int64_t> scaleR2(s.orders.size(), 0);
+    if (observe && (s.probeScale || opt.scale)) {
+        scale.emplace(all);
+        std::map<uint32_t, int64_t> convoyN;
+        std::vector<int> foot(s.orders.size(), 1), count(s.orders.size(), 0);
+        for (size_t i = 0; i < s.orders.size(); ++i) {
+            for (int id : feed.selection(s.orders[i]))
+                if (const auto* u = w.unit(id); u && u->type) {
+                    foot[i] = std::max({foot[i], u->type->footX, u->type->footZ});
+                    ++count[i];
+                }
+            if (convoys[i]) convoyN[convoys[i]] += count[i];
+        }
+        for (size_t i = 0; i < s.orders.size(); ++i)
+            scaleR2[i] = obs::detail::discRadius2(foot[i], int(std::max<int64_t>(1, convoys[i] ? convoyN[convoys[i]] : count[i])));
+    }
     std::vector<CreepProbe> creeps;
     if (observe)
         for (const auto& sh : s.shapes) {
@@ -844,8 +865,30 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             for (const auto& od : s.orders)
                 if (od.tick == t && !od.queue && !od.append)
                     o->noteSelection(feed.selection(od), convoys[size_t(&od - s.orders.data())]);
+        if (scale)
+            for (const auto& od : s.orders) {
+                if (od.tick != t || od.queue || od.append) continue;
+                if (od.verb == scn::Verb::Stop) {
+                    for (int id : feed.selection(od)) scale->cancel(id);
+                    continue;
+                }
+                const bool pointVerb = od.verb == scn::Verb::Move || od.verb == scn::Verb::Fight || od.verb == scn::Verb::Patrol;
+                if (!pointVerb && od.verb != scn::Verb::Attack && od.verb != scn::Verb::Guard) continue;
+                int64_t px = int64_t(std::lround(double(od.x) * 16)), pz = int64_t(std::lround(double(od.z) * 16));
+                bool point = pointVerb && od.point;
+                if (pointVerb && !od.point && !od.target.empty()) {   // @GROUP: its centroid now, as the feed clicks it
+                    int64_t sx = 0, sz = 0, n = 0;
+                    for (int id : b->groups.at(od.target))
+                        if (const auto* u = w.unit(id); u && u->alive()) { sx += u->x.v >> 16; sz += u->z.v >> 16; ++n; }
+                    if (n) { px = sx / n; pz = sz / n; point = true; }
+                }
+                const int64_t r2 = scaleR2[size_t(&od - s.orders.data())];
+                for (int id : feed.selection(od)) scale->click(w, id, int(t), point, px, pz, r2);
+            }
         const size_t landed = feed.apply(t);
         if (landed) { commands += int64_t(landed); lastCommand = t; }
+        if (scale)
+            for (const auto& c : feed.landed()) scale->landed(w, c.unitId, int(t));
         if (opt.catchup) {
             if (t == 0) w.setPathBudget(1 << 28);
             else if (t == opt.catchup) w.setPathBudget(tak::sim::kPathBudgetDefault);
@@ -858,6 +901,7 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             navWork.sample(*o, w);
             o->sample(w, t);
             if (approach) approach->sample(w, nav, int(t));
+            if (scale) scale->sample(w, nav, int(t));
             for (auto& rp : reach) rp.sample(w, nav, int(t));
             for (auto& cp : creeps) cp.sample(w);
             for (auto& bp : behinds) bp.sample(w);
@@ -884,12 +928,26 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         const size_t at = (tickMs.size() * 99 + 99) / 100 - 1;   // nearest rank, as the observer's work p99
         std::nth_element(tickMs.begin(), tickMs.begin() + ptrdiff_t(at), tickMs.end());
         r.tickP99Ms = tickMs[at];
+        if (scale) {   // the scale suite's wall line (stderr only, never in the JSON; tools/legion_scale.py reads it)
+            double sum = 0;
+            int over = 0;
+            for (double v : tickMs) { sum += v; over += v > 1000.0 / 30; }
+            const size_t mid = (tickMs.size() + 1) / 2 - 1;
+            std::nth_element(tickMs.begin(), tickMs.begin() + ptrdiff_t(mid), tickMs.end());
+            std::fprintf(stderr, "SCALE_WALL %s %s offset=%d %s ticks=%zu tick_mean_ms=%.3f tick_p50_ms=%.3f "
+                         "tick_p99_ms=%.3f tick_max_ms=%.3f@%u over_budget=%d rss_peak_kb=%lld heap_kb=%lld\n",
+                         s.name.c_str(), mode == PathfindingMode::Legion ? "legion" : "retail", offset,
+                         serial ? "serial" : "workers", tickMs.size(), sum / double(tickMs.size()), tickMs[mid],
+                         r.tickP99Ms, r.tickMaxMs, r.tickMaxAt, over, tak::legion_scale::peakRssKb(),
+                         tak::legion_scale::heapKb());
+        }
     }
     r.hash = w.stateHash();
     r.digest = mix(r.digest, r.hash);
     if (o) {
         r.keys = o->report();
         if (approach) approach->report(r.keys, mode == PathfindingMode::Legion);
+        if (scale) scale->report(r.keys, w, mode == PathfindingMode::Legion);
         for (const auto& rp : reach) rp.report(r.keys, w);
         for (const auto& cp : creeps) cp.report(r.keys);
         for (const auto& bp : behinds) bp.report(r.keys);
@@ -1065,6 +1123,7 @@ int main(int argc, char** argv) {
             if (opt.window < 1 || opt.window > 600) usage("--window R takes 1..600 ticks");
         } else if (a == "--data") { static std::string d; d = value(); opt.data = d.c_str(); }
         else if (a == "--json") opt.json = true;
+        else if (a == "--scale") opt.scale = true;
         else if (a == "--ticks") {
             const long v = std::atol(value().c_str());
             if (v < 1 || v > 10'000'000) usage("--ticks N takes 1..10000000");
