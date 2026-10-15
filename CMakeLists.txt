@@ -456,6 +456,16 @@ set_tests_properties(legion_scale_neutral legion_scale_one100 PROPERTIES LABELS 
 set_tests_properties(legion_scale_one100 PROPERTIES
                      PASS_REGULAR_EXPRESSION "\"scale\\.arrive\\.n\":100,.*\"scale\\.stuck_end\":0,"
                      FAIL_REGULAR_EXPRESSION "MISMATCH|serial != workers|legion_scenario:")
+# Legion 10,000 stage 2 (exact optimisations): the brute-force references under TAK_LEGION_VERIFY (debug builds;
+# compiled out of Release, where these only run the file). Each file is one a deliberate mutation trips:
+# battle-assault the join index (registerMove picks the first joinable group of all), crosslong awareScan's
+# broad phase (a dropped mover with a conflict), gap8 gateCommit's static-decline memo (docs/legion-10000-progress.md).
+foreach(legion_scn battle-assault crosslong gap8)
+  add_test(NAME legion_verify_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode legion --offsets 0 --workers)
+  set_tests_properties(legion_verify_${legion_scn} PROPERTIES LABELS legion TIMEOUT 600
+                       ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
+endforeach()
 # Asset-free scenario set, part A (tools/scenarios/*.scn): both modes, serial and
 # workers (the runner fails on a state or key mismatch), three start offsets.
 # No bounds yet: a later task adds `--check` against baseline.json. The long
