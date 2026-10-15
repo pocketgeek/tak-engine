@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 264;      // 264: the 2026-10-14 Legion review (Legion only; Retail bit-identical): 32-bit field potentials; the
+constexpr uint32_t kNetVersion = 265;      // 265: retail path-search fidelity (all modes, hashed): production entity pools per player, scanned
+                                           //      slot by slot with holes (511570/5121d8, 416430; hashed CRT stream, pool sizes, unit slots); the
+                                           //      ground word keeps its live holder where footprints overlap (5066f0); a pending path request survives
+                                           //      displacement (4e4f50(1)). 264 replays refused
+                                           // 264: the 2026-10-14 Legion review (Legion only; Retail bit-identical): 32-bit field potentials; the
                                            //      stall clock measures progress in one measure at a time (hashed progress/stallTick re-baselined);
                                            //      the settle rule reads a body of another footprint where it stands; slots by arrival at a narrow
                                            //      entrance (hashed Point::entry, Member::entryState); passage lanes; one slot-search budget a tick

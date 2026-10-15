@@ -107,8 +107,11 @@ Release and -O2 Debug, serial and workers) and battle-field-2x60's mopup
 `trace_cells` ratchet (183,665; that window's Legion total falls 823,839 ->
 208,921). `--mpai` Inner Circle seed 1, Retail: 60 s `42a9fc16c5df77b8` (twice),
 300 s `9b48eb78e62650cb`; was `8db23af1b0260ba1` / `bf6f1ac3081f9ee6`.
-`check-determinism.sh` golden `dcef618cd2e4d558` unchanged. Protocol not
-bumped here.
+`check-determinism.sh` golden `dcef618cd2e4d558` unchanged. Protocol 265
+carries all three 2026-10-15 fixes (pending re-requests, the ground word,
+production pools); after rebasing onto protocol 264 the Retail hashes above
+stand and Legion's become 60 s `24b3ccbd8e6bb61e`, 300 s `96fa40176b9881d5`
+(see `multiplayer-design.md`).
 
 ## Retail audit: who holds an overlapped ground cell (2026-10-15)
 

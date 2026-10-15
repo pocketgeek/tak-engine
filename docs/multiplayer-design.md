@@ -615,7 +615,7 @@ and 0.8.1 ship protocol 256. Protocol 257 ends Legion's walk-in-place livelock
 a blocked side-step does not step straight back, and a body without net
 headway stands in its scripts and is held; 0.8.2 ships protocol 257. Protocol
 264 carries the 2026-10-14 Legion review (Legion only; see the replay notes
-below). Game options
+below), and 265 the 2026-10-15 retail path-search fidelity fixes (all modes). Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
 host sends later option updates. Both clients and the referee apply that choice
@@ -729,6 +729,16 @@ point, round robin (see the 2026-10-14 review in `legion-pathfinding.md`). The
 `--mpai` Inner Circle seed 1 hashes stay as above in both modes: Retail 300 s
 `76f7e976cd6a00c9`, 60 s `8db23af1b0260ba1`; Legion 300 s `99e2f137cde8d769`,
 60 s `5bc7e8001c06611f`.
+Protocol 265 changes path search in every mode, and protocol 264 recordings no
+longer play: each player's path requests are admitted from a production entity
+pool, scanned slot by slot with its holes as retail's scheduler does (the CRT
+stream, each pool's size and every unit's slot are hashed); where ground
+footprints overlap, the cell keeps its live holder instead of going to the last
+unit in vector order; and re-requesting a pending path for the same controller
+and goal leaves it alone however far the unit has moved (see the 2026-10-15
+audits in `pathfinding-port.md`). The `--mpai` Inner Circle seed 1 hashes:
+Retail 300 s `9b48eb78e62650cb`, 60 s `42a9fc16c5df77b8`; Legion 300 s
+`96fa40176b9881d5`, 60 s `24b3ccbd8e6bb61e`.
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
