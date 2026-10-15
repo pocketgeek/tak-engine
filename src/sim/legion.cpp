@@ -812,6 +812,32 @@ struct LegionNavigator::Impl {
     // so a walk of that entry in id order finds the same first field as a
     // walk of every group. Maintained by listGroup; never hashed.
     std::map<std::pair<int,uint64_t>,std::set<int>> routeIndex;
+    // Join index for registerMove (Legion 10,000 stage 2): the groups by the
+    // equality part of the join predicate, all fixed when a group is made --
+    // (player, plane, kind, approach, and for a reach kind its target id and
+    // ring bucket, else its issue key) -> ascending ids.
+    // A group outside a member's entry fails one of those equalities, so the
+    // first group of the entry, in id order, to pass the whole predicate is
+    // the first of every group to pass it. Maintained where groups are made
+    // and erased; never hashed (TAK_LEGION_VERIFY: against a scan of the
+    // groups, and each join against the brute-force walk).
+    using JoinKey=std::tuple<int,int,int,bool,int64_t,int>;
+    std::map<JoinKey,std::vector<int>> joinIndex;
+    static JoinKey joinKey(const Group& g) {
+        const bool ring=g.kind==LegionMission::Attack||g.kind==LegionMission::Guard;
+        return {g.player,g.plane,int(g.kind),g.approach,ring?int64_t(g.reachTarget):int64_t(g.issuedTick),ring?g.reachBucket:0};
+    }
+    void joinList(const Group& g) {
+        auto& ids=joinIndex[joinKey(g)];
+        ids.insert(std::upper_bound(ids.begin(),ids.end(),g.id),g.id);
+    }
+    void joinUnlist(const Group& g) {
+        const auto at=joinIndex.find(joinKey(g));
+        if(at==joinIndex.end())return;
+        auto& ids=at->second;
+        if(const auto i=std::lower_bound(ids.begin(),ids.end(),g.id);i!=ids.end()&&*i==g.id)ids.erase(i);
+        if(ids.empty())joinIndex.erase(at);
+    }
     // LPROBE only (never hashed, never read by the sim): the four work
     // lists' sizes and the live groups, summed over the ticks.
     uint64_t probeListSum=0,probeGroupSum=0;
@@ -2544,7 +2570,7 @@ struct LegionNavigator::Impl {
                 if(const auto at=std::lower_bound(ids.begin(),ids.end(),id);at!=ids.end()&&*at==id)ids.erase(at);
             auto& gids=group->second.ids;
             if(const auto at=std::lower_bound(gids.begin(),gids.end(),id);at!=gids.end()&&*at==id)gids.erase(at);
-            if(--group->second.members<=0) {unlistGroup(group->second);groups.erase(group);}
+            if(--group->second.members<=0) {unlistGroup(group->second);joinUnlist(group->second);groups.erase(group);}
         }
         members.erase(found);
     }
@@ -2654,32 +2680,50 @@ struct LegionNavigator::Impl {
         const int ringBucket=ringKind?reachPx(u,w.unit(ringTarget),kind==Kind::Guard).first/kRingBucket:-1;
         Group* joined=nullptr;
         uint64_t joins=0;
-        for(auto& [id,g]:groups) {
-            if(rule.solo)break;
-            ++joins;
-            if(g.player!=u.player||g.plane!=planeIndex||g.kind!=kind)continue;
-            if(ringKind?g.reachTarget!=ringTarget||g.reachBucket!=ringBucket:g.issuedTick!=issue)continue;
+        // The join predicate, whole (the index below only narrows the walk).
+        auto joinable=[&](const Group& g) {
+            if(g.player!=u.player||g.plane!=planeIndex||g.kind!=kind)return false;
+            if(ringKind?g.reachTarget!=ringTarget||g.reachBucket!=ringBucket:g.issuedTick!=issue)return false;
             // Seeds in different static components never share a field: a
             // member whose goal it cannot reach would descend to a
             // teammate's seed and hold there forever instead of retiring.
-            if(groupComp(g,p)!=goalComp)continue;
+            if(groupComp(g,p)!=goalComp)return false;
             // Approach points never share a field with real goals: a member
             // would descend to a stand-in point beside an obstacle instead
             // of its own goal behind it.
-            if(g.approach!=m.approach)continue;
-            if(x<g.minX-kClusterCells||x>g.maxX+kClusterCells||z<g.minZ-kClusterCells||z>g.maxZ+kClusterCells)continue;
+            if(g.approach!=m.approach)return false;
+            if(x<g.minX-kClusterCells||x>g.maxX+kClusterCells||z<g.minZ-kClusterCells||z>g.maxZ+kClusterCells)return false;
             // (A reach group's seeds are its ring once built: it serves the
             // target's origin it was seeded at.)
             const bool seeded=ringKind?g.reachCentre==m.goal:std::binary_search(g.seeds.begin(),g.seeds.end(),m.goal);
             // A field in progress or complete is never re-seeded.
-            if(g.field&&!seeded)continue;
+            if(g.field&&!seeded)return false;
             // A field is "distance to the nearest seed of anyone": over a
             // whole army's goal lattice it pulls every body to the lattice's
             // near edge, where they jam and then thread between settled goals.
             // Groups of at most kGroupSeeds goals keep each field aimed at its
             // own block of the destination.
-            if(!seeded&&g.seeds.size()>=kGroupSeeds)continue;
-            joined=&g;break;
+            if(!seeded&&g.seeds.size()>=kGroupSeeds)return false;
+            return true;
+        };
+        if(!rule.solo) {
+            // The first joinable group in id order, from the member's join
+            // index entry (see joinIndex).
+            const JoinKey key{u.player,planeIndex,int(kind),m.approach,ringKind?int64_t(ringTarget):int64_t(issue),ringKind?ringBucket:0};
+            if(const auto entry=joinIndex.find(key);entry!=joinIndex.end())
+                for(const int id:entry->second) {
+                    ++joins;
+                    Group* g=groups.get(id);
+                    if(joinable(*g)) {joined=g;break;}
+                }
+#ifndef NDEBUG
+            // The brute-force reference: the first joinable group of all.
+            if(gVerify) {
+                Group* first=nullptr;
+                for(auto& [id,g]:groups)if(joinable(g)) {first=&g;break;}
+                if(first!=joined)verifyFail("the join index chose another group than the walk of every group");
+            }
+#endif
         }
         stats.joinIterations+=joins;stats.groupLoopIters+=joins;
         if(!joined) {
@@ -2688,7 +2732,7 @@ struct LegionNavigator::Impl {
             g.minX=g.maxX=x;g.minZ=g.maxZ=z;
             if(ringKind) {g.reachTarget=ringTarget;g.reachBucket=ringBucket;g.reachCentre=m.goal;}
             joined=&groups.emplace(g.id,std::move(g)).first->second;
-            listGroup(*joined);
+            listGroup(*joined);joinList(*joined);
             ++stats.groups;
         }
         auto& g=*joined;
@@ -3754,6 +3798,10 @@ struct LegionNavigator::Impl {
                 routes[{g.plane,f->seedKey}].insert(id);
             }
             if(routes!=routeIndex)fail("routeIndex differs from the groups' fields");
+            // joinIndex against the groups (registerMove's join walk).
+            std::map<JoinKey,std::vector<int>> joins;
+            for(const auto& [id,g]:groups)joins[joinKey(g)].push_back(id);
+            if(joins!=joinIndex)fail("joinIndex differs from the groups");
         }
         // The flyer and structure lists against a walk of every unit (A5),
         // and the dense yard lookup against the script map.
