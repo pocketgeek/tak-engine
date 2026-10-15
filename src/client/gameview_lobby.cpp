@@ -789,25 +789,26 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             const bool offered = scenarioOffered(createScenario_, createOverride_);
             lbCycle(pvx, y0, pvW, 26, (createMapScenario_ && offered) || testCopy ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF",
                     offered, [this](int) { createMapScenario_ = !createMapScenario_; });
-            float ly = y0 + 32;
-            auto line = [&](const std::string& text, SDL_Color color) {
-                if (ly > y0 + 32 + 3 * 16) return;   // four lines fit above the footer
-                blockText(text, pvx, ly, 1.2f, color);
-                ly += 16;
-            };
+            std::vector<std::pair<std::string, SDL_Color>> lines;
             const SDL_Color grey{150, 155, 165, 255}, dim{130, 135, 150, 255}, normal{205, 210, 225, 255},
                             amber{235, 205, 120, 255};
             if (testCopy) {
-                line("TEST COPY: ALWAYS ON", grey);
-                for (const auto& l : tak::sim::scenarioSummary(createScenario_, true)) line(l.text, l.warning ? amber : normal);
+                lines.push_back({"TEST COPY: ALWAYS ON", grey});
+                for (const auto& l : tak::sim::scenarioSummary(createScenario_, true))
+                    lines.push_back({l.text, l.warning ? amber : normal});
             } else if (!offered) {
-                for (const auto& l : tak::sim::scenarioReason(createScenario_)) line(l, grey);
+                for (const auto& l : tak::sim::scenarioReason(createScenario_)) lines.push_back({l, grey});
             } else {
                 // Offered only because an override pack may supply a missing unit type.
-                if (!createScenario_.offerable()) line("NEEDS AN OVERRIDE PACK", amber);
+                if (!createScenario_.offerable()) lines.push_back({"NEEDS AN OVERRIDE PACK", amber});
                 for (const auto& l : tak::sim::scenarioSummary(createScenario_, true))
-                    line(l.text, !createMapScenario_ ? dim : l.warning ? amber : normal);
+                    lines.push_back({l.text, !createMapScenario_ ? dim : l.warning ? amber : normal});
             }
+            // Four lines at a 16 pitch, or a fifth (a test copy's or the pack warning on
+            // top of a full summary) at 14, all clear of the CREATE footer at 500.
+            const float pitch = lines.size() > 4 ? 14.0f : 16.0f;
+            for (size_t i = 0; i < lines.size() && i < 5; ++i)
+                blockText(lines[i].first, pvx, y0 + 32 + float(i) * pitch, 1.2f, lines[i].second);
         }
     }
 
