@@ -709,6 +709,9 @@ by 3D distance to the blast; each weapon slot's facing request points at its led
 SweetSpot; and a flyer without hoverattack flies attack runs at a target that
 cannot fly instead of holding still in range (see "World's other flyer holds",
 "Impact damage", "The facing request" and "Attack runs" in `retail-engine.md`).
+Its `--mpai` Inner Circle seed 1 hashes: Retail 300 s `bf6f1ac3081f9ee6`, 60 s
+`8db23af1b0260ba1`; Legion 300 s `7def7a0fa5dedfc6`, 60 s `5bc7e8001c06611f`
+(the 60 s ones are 262's: no flyer fights in the first minute).
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
