@@ -12819,6 +12819,19 @@ void World::tick(float dt) {
             u.hp -= Fixed::fromFloat(waterDamage_ * dt);
             if (u.hp <= Fixed()) { u.overkill = fxMax(u.overkill, -u.hp); u.deathType = 1; }
         }
+        // Self-repair (KINGDOMS.icd 0x51e152..0x51e1bc). healtime is the unit's own
+        // WORKER TIME, not seconds per hit point: every eighth tick a finished unit
+        // below full health puts healtime * 8/30 build-seconds into itself through
+        // the shared repair routine, so it regains maxdamage * healtime / buildtime
+        // hit points a second (retailSelfRepairPoints). The data is authored that
+        // way: healtime is exactly buildtime/240 on most troops (full health in
+        // four minutes) and buildtime/480 on many buildings (eight). Read as
+        // seconds per point it gave the Crusades Aramon Keep 0.32 HP/s instead of
+        // 49.1, and the Crusades monarchs (216.67 against buildtime 100000) a
+        // point every 3.6 minutes. An unfinished unit does not repair itself
+        // (retail requires +0x108 == 0); hit points stay whole in retail, so a
+        // fraction ours picked up elsewhere rides along unchanged.
+        //
         // `u.hp > Fixed()` matters because of WHERE hp gets zeroed, not by how much.
         // Every other death path puts hp <= 0 outside this loop body, so the sweep
         // at the top (3912) catches it and `continue`s -- never reaching this line.
@@ -12829,9 +12842,15 @@ void World::tick(float dt) {
         // which is nearly every unit: of the 202 types this registry loads from a
         // retail install, 200 have healtime > 0 (only aranull and npcwagon do not).
         // That is why Ctrl+Shift+D self-destruct appeared to do nothing.
-        if (u.type->healTime > 0 && u.hp > Fixed() && u.hp < Fixed::fromFloat(u.maximumHp()))
-            u.hp = fxMin(Fixed::fromFloat(u.maximumHp()),
-                         u.hp + Fixed::fromFloat(dt / u.type->healTime));
+        if (u.type->healTime != 0 && (tickCounter_ & 7) == 0 && !u.underConstruction &&
+            u.hp > Fixed() && u.hp < Fixed::fromInt(u.maximumHp())) {
+            const uint32_t maxHp = uint32_t(u.maximumHp());
+            const uint16_t whole = uint16_t(u.hp.floorInt());
+            const uint16_t healed = retailAddHitPoints(whole,
+                retailSelfRepairPoints(u.healCarry, u.type->healTime,
+                                       retailInverseBuildTime(u.type->buildTime), maxHp), maxHp);
+            u.hp = fxMin(Fixed::fromInt(int32_t(maxHp)), u.hp + Fixed::fromInt(int32_t(healed) - whole));
+        }
         if (u.type->maxMana > 0 && u.mana < u.type->maxMana)
             u.mana = std::min(double(u.type->maxMana), u.mana + double(u.type->manaRegen) * double(dt));
         // A WANDERER keeps its spawn point as home -- that anchor is what stops its
@@ -13855,6 +13874,7 @@ uint64_t World::stateHash() const {
         mix(u.groundPitch); mix(u.groundRoll); mix(u.groundSpeedMode);
         mix(uint64_t(uint32_t(u.z.v)));
         mix(uint64_t(uint32_t(u.hp.v)));       // hp is fixed-point now
+        if (u.healCarry) { mix(0x4845414cu); mix(u.healCarry); }   // self-repair remainder
         mix(uint64_t(uint32_t(u.heading.v)));
         if (u.animationTurnBam) mix(uint16_t(u.animationTurnBam));
         mix(u.variationPhase);

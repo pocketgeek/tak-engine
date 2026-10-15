@@ -373,7 +373,7 @@ struct UnitType {
                               // floaters use the waterline without a terrain clamp.
     std::string veteranModel; // veteranmodel: 3DO the unit swaps to at max veterancy
     // --- extended FBI stats -------------------------------------------------
-    float healTime = 0;       // healtime: seconds per HP regenerated (0 = no regen)
+    float healTime = 0;       // healtime: worker time the unit repairs ITSELF with (0 = none)
     int32_t leash = 0;        // maneuverleashlength (readInt): max auto-chase distance (0 = unlimited)
     // Per-type standing orders, derived exactly as retail's [UNITINFO] parser does
     // (icd 0x4c005d). standingunitorder is a COMPOSITE front-end: 2 -> move 1 /
@@ -1062,6 +1062,9 @@ struct alignas(64) Unit {
     int32_t reviveLeft = 0;  // ticks of channel remaining
     int32_t reviveTotal = 1; // full channel length in ticks (mana drains proportionally)
     bool corpseBlocks = false;   // installed corpse feature blocks its own footprint
+    // Retail unit+0x10e: the 1/256-HP remainder self-repair carries between calls
+    // (retailSelfRepairPoints). Zero at creation, like retail's (0x511ae2).
+    uint8_t healCarry = 0;
     RetailAirOccupant airOccupant; // secondary occupancy list/origin (+0x117..+0x128)
     RetailFlightVector flightVelocity;
     std::array<int32_t,3> flightAcceleration{}; // retained native banking input

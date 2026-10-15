@@ -2056,3 +2056,50 @@ with no retail counterpart: slot N takes StartPos N whichever rows are empty, an
 a slot past the map's last start takes the lowest start no seated slot claims by
 number, then a ring spot (`sim::startSpotsFor`). Fixed stays the retail rule
 above and remains the default.
+
+## healtime is a worker time: self-repair (icd, 2026-10-14)
+
+`healtime` is not seconds per hit point. Retail reads it as a float into
+`UnitType+0x21e` (`0x4bff94`), next to `buildtime` at `+0x212` (a nonpositive
+value reads as 100) and that value's reciprocal at `+0x216`. Its one consumer is
+the per-unit update at `0x51e152..0x51e1bc`: when healtime is nonzero, the unit
+is alive and not dying, its construction is finished (`+0x108 == 0`) and it is
+below maxdamage, then on every eighth tick (`tick & 7 == 0`) it calls the shared
+repair routine `0x429d90` on itself, UNPAID, with `healtime * 0.26666664`
+(eight thirtieths of a second of work). `0x429d90` multiplies that by
+1/buildtime, makes it hit points as a 16.16 product of maxdamage, adds the
+unit's carried remainder (byte `+0x10e`: bits 8..15 of the last sum; bits 0..7
+are dropped on every call) and hands the whole points to `0x51a140` as damage
+type 12, which `0x51a240` adds to the 16-bit hit points, clamping at maxdamage.
+
+So a unit repairs itself as if it were its own builder with worker time =
+healtime: it regains `maxdamage * healtime / buildtime` hit points a second.
+The data is authored on exactly that reading: in the standard data 117 of
+the 153 mobile units are exactly healtime = buildtime/240 (full health in four
+minutes: araarch 0.52083/125, arasword 0.4125/99) and 28 of the 51 buildings
+exactly buildtime/480 (eight minutes: the Keep 3.17083/1522, Barracks
+1.25/600, both towers, the gate); Crusades, 86 of 147 and 22 of 50. The
+monarchs explain the oddest numbers in the Crusades balance: araking is
+buildtime 10 / healtime 0.0417 in the standard data and 100000 / 216.67 in
+Crusades, i.e. 1/240 and 1/461.5 of its health a second. Read as seconds per
+point, the same fields gave the Crusades Keep 0.32 HP/s instead of 49.1 and the
+Crusades monarch one point every 3.6 minutes. Ported as
+`retailSelfRepairPoints`/`retailAddHitPoints` (`sim/retailconstruction.h`) and
+checked bit-exact against the emulated call path, carry included, by
+`tools/re/check_self_repair.py`; `duration_test` holds the rates.
+
+**What actually makes Aramon buildings hard to kill is the priest, and that is
+retail.** `arapries`/`araprie2` carry `[AdjustJoy]` adjustment 250, radius 200,
+edgeeffectiveness 0.6. The parser stores Adjustment raw (`0x5182b0`; AdjustJoy
+passes flag 0 at `0x4c1552`, so it is additive). `0x51d3e0` runs the Joy list
+only when `tick % 30 == 0`, counting every eligible unit in range and then
+calling `0x51f7b0`, which repairs each through the same `0x429d90`, PAID, with
+`250 * falloff / N`. A damaged building therefore regains
+`maxdamage * 250 * falloff / (N * buildtime)` a second while the owner can pay:
+the Crusades Arrow Tower up to 4333 HP/s, the Keep 3871, the Barracks 7151. In
+the reported game (Zhon against an Aramon AI, Crusades, Legion) the AI's
+buildings took 548,000 damage and were healed 341,500 by priests against 1,500
+by their own healtime. One Divine Lodestone spent 75 one-second windows above
+16000 of its 17092 HP while taking more than 300 damage a second (up to 1800),
+because a priest returned 1066 a second. Our `tickHealAuras` matches that
+formula, so nothing there changed.

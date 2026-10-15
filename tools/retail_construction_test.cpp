@@ -113,6 +113,40 @@ int main(int argc,char** argv) {
         }
         return 0;
     }
+    // tools/re/check_self_repair.py: "hp carry healtime-bits inverse-bits maxdamage calls"
+    // per unit; prints hp and carry after each call, gated as 429d90's entry is.
+    if (argc==2 && std::strcmp(argv[1],"--self-repair")==0) {
+        unsigned hp,carry,healBits,inverseBits,maxHp,calls;
+        while (std::scanf("%u %u %u %u %u %u",&hp,&carry,&healBits,&inverseBits,&maxHp,&calls)==6) {
+            uint16_t h=uint16_t(hp);uint8_t c=uint8_t(carry);
+            for (unsigned i=0;i<calls;++i) {
+                if (uint32_t(int32_t(int16_t(h)))<maxHp)
+                    h=retailAddHitPoints(h,retailSelfRepairPoints(c,std::bit_cast<float>(healBits),
+                        std::bit_cast<float>(inverseBits),maxHp),maxHp);
+                std::printf(i ? " %u %u" : "%u %u",unsigned(h),unsigned(c));
+            }
+            std::putchar('\n');
+        }
+        return 0;
+    }
+    // Sixty seconds (225 calls) of self-repair from half health, as the emulated retail
+    // path computes them: the Crusades Aramon Keep, an Aramon archer, and the Crusades
+    // monarch whose healtime of 216.67 only makes sense against its buildtime of 100000.
+    {
+        struct Case { uint32_t maxHp; float buildTime,healTime; uint16_t from,to; };
+        const Case cases[]={{25116,1622,3.17083f,12558,15503},{1100,125,0.520833333f,550,824},
+                            {16000,100000,216.67f,8000,10079}};
+        for (const Case& k:cases) {
+            uint16_t h=k.from;uint8_t c=0;
+            for (int i=0;i<225;++i)
+                h=retailAddHitPoints(h,retailSelfRepairPoints(c,k.healTime,
+                    retailInverseBuildTime(k.buildTime),k.maxHp),k.maxHp);
+            if (h!=k.to) { std::printf("FAIL: self-repair %u -> %u, retail %u\n",k.from,h,k.to);return 1; }
+        }
+        if (retailInverseBuildTime(0)!=0.01f || retailInverseBuildTime(-5)!=0.01f) return 1;
+        uint8_t c=0;
+        if (retailAddHitPoints(100,retailSelfRepairPoints(c,600,0.01f,1000),1000)!=1000) return 1;
+    }
     RetailConstructionProgress site;
     RetailConstructionResources resources;resources.stored=1;
     RetailConstructionType type{0.01f,100,1000};

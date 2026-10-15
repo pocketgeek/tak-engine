@@ -180,4 +180,42 @@ inline RetailConstructionResult retailConstructionWork(
     return RetailConstructionResult::Idle;
 }
 
+// 4bff28..4bff79: the parser reads a nonpositive buildtime as 100 and keeps its
+// reciprocal at UnitType+0x216, which every build and repair multiplies by.
+inline float retailInverseBuildTime(float buildTime) {
+    return float(1.0/double(buildTime>0 ? buildTime : 100.0f));
+}
+
+// 5d3d54 (_ftol): truncate through a 64-bit fistp and keep the low word. Out of
+// range stores the integer indefinite, whose low word is zero.
+inline uint32_t retailFtol(double x) {
+    if (!(x>-9223372036854775808.0 && x<9223372036854775808.0)) return 0;
+    return uint32_t(uint64_t(int64_t(x)));
+}
+
+// SELF-REPAIR, 51e1a8 -> 429d90 (unpaid). healtime is the unit's own worker time,
+// not seconds per hit point: every eighth tick (the caller's cadence and gates: a
+// finished, living unit below full health whose healtime is nonzero) it puts
+// healtime * 0.26666664 -- eight thirtieths of a second of that work -- into itself
+// as a fraction of its type's build, so it regains maxdamage * healtime / buildtime
+// hit points a second. 429d90 turns the fraction into hit points as a 16.16 product
+// of maxdamage, adds the unit's carried remainder (+0x10e: bits 8..15 of the last
+// sum; bits 0..7 are dropped every call) and returns the whole points it hands to
+// 51a140 as damage type 12.
+inline uint16_t retailSelfRepairPoints(uint8_t& carry,float healTime,float inverseTime,
+                                       uint32_t maxHp) {
+    const float work=float(double(healTime)*0.26666664);
+    const double progress=double(work)*double(inverseTime);
+    const uint32_t sum=(uint32_t(carry)<<8)+retailFtol(double(maxHp)*progress*65536.0);
+    carry=uint8_t(sum>>8);
+    return uint16_t(sum>>16);
+}
+
+// 51a2f8..51a319, damage type 12: the points are added to the signed 16-bit hit
+// points as an unsigned word, and anything at or past maxdamage becomes maxdamage.
+inline uint16_t retailAddHitPoints(uint16_t hp,uint16_t points,uint32_t maxHp) {
+    const uint32_t sum=uint32_t(points)+uint32_t(int32_t(int16_t(hp)));
+    return uint16_t(sum>=maxHp ? maxHp : sum);
+}
+
 } // namespace tak::sim

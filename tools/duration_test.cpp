@@ -89,6 +89,24 @@ static int ticksToBuildOne(float workerTime, float buildTime, float buildCost,
     return -1;
 }
 
+// A finished unit at half health with the given FBI numbers: the hit points it regains
+// per second over `seconds` of simulation.
+static double selfRepairPerSecond(bool structure, int maxHp, float buildTime, float healTime,
+                                  int seconds) {
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
+    UnitType t = structure ? factoryType(0) : soldierType(buildTime, 0);
+    t.isBuilder = false;
+    t.maxHp = maxHp;
+    t.buildTime = buildTime;
+    t.healTime = healTime;
+    const int id = w.spawn(&t, 1000, 1000, 0, 0);
+    w.unit(id)->hp = Fixed::fromInt(maxHp / 2);
+    const Fixed start = w.unit(id)->hp;
+    for (int i = 0; i < 30 * seconds; ++i) w.tick(1.0f / 30.0f);
+    return double((w.unit(id)->hp - start).toFloat()) / seconds;
+}
+
 // NOT COVERED HERE, and worth saying so rather than leaving a gap unmarked: the
 // projectile-lifetime fix (rounding flight time UP so the final segment is still
 // collision-tested) has no test. An attempt at one is in the history of this file
@@ -156,6 +174,41 @@ int main() {
         const bool goneAt3s = !w.unit(id) || !w.unit(id)->alive();
         check(aliveAt1s, "a 2-second self-destruct has not fired after 1s");
         check(goneAt3s, "...and has fired by 3s");
+    }
+
+    // SELF-REPAIR REGAINS maxdamage * healtime / buildtime HIT POINTS A SECOND.
+    // healtime is the unit's own worker time: every eighth tick retail puts
+    // healtime * 8/30 build-seconds of work into a finished unit below full health
+    // (KINGDOMS.icd 0x51e1a8 -> 0x429d90). The data is authored that way -- most troops
+    // at exactly healtime = buildtime/240 (full health in four minutes), many buildings
+    // at buildtime/480 (eight). We read it as seconds per hit point: the Crusades Aramon
+    // Keep (25116 HP, buildtime 1622, healtime 3.17083) regained 0.32 HP/s instead of
+    // 49.1. The rates below are retail's, emulated: tools/re/check_self_repair.py.
+    {
+        struct Case { const char* what; bool structure; int maxHp; float buildTime, healTime; double want; };
+        const Case cases[] = {
+            {"Crusades Aramon Keep", true, 25116, 1622, 3.17083f, 49.083},
+            {"Crusades Aramon Barracks", true, 17162, 600, 1.25f, 35.733},
+            {"Aramon Lodestone", true, 5680, 92, 0.283333333f, 17.483},
+            {"Aramon archer", false, 1100, 125, 0.520833333f, 4.567},
+        };
+        for (const Case& c : cases) {
+            const double got = selfRepairPerSecond(c.structure, c.maxHp, c.buildTime, c.healTime, 60);
+            char d[96];
+            std::snprintf(d, sizeof d, "%.3f HP/s, retail %.3f", got, c.want);
+            check(std::abs(got - c.want) <= 0.02, std::string(c.what) + " self-repairs at retail's rate", d);
+        }
+        // healtime 0 is no repair at all (the Crusades wall), and repair stops at full.
+        check(selfRepairPerSecond(true, 3000, 40, 0, 10) == 0.0, "healtime 0 does not self-repair");
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        UnitType keep = factoryType(0);
+        keep.isBuilder = false; keep.maxHp = 25116; keep.buildTime = 1622; keep.healTime = 3.17083f;
+        const int id = w.spawn(&keep, 1000, 1000, 0, 0);
+        w.unit(id)->hp = Fixed::fromInt(25116 - 30);
+        for (int i = 0; i < 30 * 5; ++i) w.tick(1.0f / 30.0f);
+        check(w.unit(id)->hp == Fixed::fromInt(25116), "self-repair stops exactly at full health",
+              std::to_string(w.unit(id)->hp.toFloat()));
     }
 
     std::printf(g_fail ? "duration_test: %d FAILURE(S)\n" : "duration_test: all passed\n", g_fail);
