@@ -295,6 +295,8 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
     // Monarch, so Zhon is not held to the producers of a side that has both.
     // Normal's most is 8 + 4 = 12, the four types' retail limits together.
     if (mobileProduction(side)) n.desiredFactories += n.builderCap - 1;
+    const float capacity = me.manaCapacity();
+    n.storeFull = capacity > 0.01f && float(me.mana) >= capacity * 0.9f;
     return n;
 }
 
@@ -309,7 +311,14 @@ int Controller::desire(BuildCat c, const Needs& n) const {
             if (n.income < 20.0f) return 95;
             if (diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd)
                 return n.income < 25.0f + 20.0f * n.factories ? 80 : 60;
-            return n.income < 25.0f + 20.0f * n.factories ? 60 : 0;
+            if (n.income < 25.0f + 20.0f * n.factories) return 60;
+            // A full store means the income target is not what holds production
+            // back. Retail's builders draw from their whole menu, the lodestone
+            // among it (weight 10, limit 7 in ai/default.txt); ours stood idle
+            // instead: a Taros AI on "4x4 team" kept its Dark Masons idle
+            // beside a full store on one lodestone for ten minutes. Below the
+            // army, so a producer that can train one still does. Easy stays lean.
+            return n.storeFull && diff_ != Difficulty::Easy ? 45 : 0;
         case BuildCat::Factory:
             if (n.factories == 0) return 90;                        // then: some production
             return n.factories < n.desiredFactories ? 70 : 0;       // scale with income

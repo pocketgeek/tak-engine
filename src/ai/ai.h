@@ -108,6 +108,7 @@ struct Needs {
     int   builderCap = 2;      // stop making builders past this, the Monarch included
     int   desiredFactories = 1;// how many factories the current income wants to feed;
                                // a side with no factory buildings adds its builder allowance
+    bool  storeFull = false;   // mana at 90% of capacity or more: income goes unspent
 };
 
 // Sink for the commands a Controller decides to issue this tick. Offline this

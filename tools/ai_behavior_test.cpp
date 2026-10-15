@@ -355,6 +355,44 @@ static void mobileProducers() {
           "Easy Zhon stops at two factories and one builder");
 }
 
+// The income target met, an idle builder still builds income while the store
+// is full (retail's builders draw from the whole menu, the lodestone among it).
+static void fullStore() {
+    auto files=std::make_shared<hpi::Vfs::Files>();
+    auto file=[&](const std::string& path,const std::string& text) {
+        std::string lines;
+        for (char ch : text) { lines += ch; if (ch == ';' || ch == '{' || ch == '}') lines += '\n'; }
+        (*files)[path]={lines.begin(),lines.end()};
+    };
+    auto type=[&](const char* id,const char* fields) {
+        file(std::string("units/")+id+".fbi",std::string("[UNITINFO]{unitname=")+id+
+            ";objectname="+id+";maxdamage=100;footprintx=2;footprintz=2;buildtime=30;buildcost=10;"+fields+"}");
+    };
+    type("keep","builder=1;workertime=30;");
+    type("mason","builder=1;workertime=30;canmove=1;maxvelocity=1;");
+    type("mine","mogriumincome=10;");
+    file("canbuild/keep/mason.tdf","[CANBUILD]{sortbias=0;}");
+    file("canbuild/mason/mine.tdf","[CANBUILD]{sortbias=0;}");
+    hpi::Vfs vfs;vfs.setMapFiles(files);
+    sim::TypeRegistry reg;reg.loadDir(vfs,"units");reg.loadBuildTree(vfs,"canbuild");
+    auto buildsMine=[&](ai::Difficulty difficulty,float mana) {
+        sim::World w;terrain(w);w.buildNavClasses(reg);
+        w.player(0).storage=5000;w.player(0).mana=mana;w.player(0).income=100;
+        w.spawn(reg.find("keep"),400,800,0,0);
+        for (int i=0;i<3;++i) w.spawn(reg.find("mason"),800+float(i)*60,1200,0,0);
+        ai::Profile p;p.weight["mason"]=10;p.limit["mason"]=3;p.weight["mine"]=10;
+        ai::Controller controller(0,reg,p,1,difficulty);
+        const auto cs=think(controller,w,difficulty==ai::Difficulty::Easy ? 90 : 0);
+        return std::any_of(cs.begin(),cs.end(),[](const auto& c) {
+            return c.kind==net::Cmd::Build && std::string(c.type)=="mine";
+        });
+    };
+    check(!buildsMine(ai::Difficulty::Normal,3000),"Normal's builders rest once income meets its target");
+    check(buildsMine(ai::Difficulty::Normal,4800),"Normal's idle builders build income while the store is full");
+    check(buildsMine(ai::Difficulty::Passive,4800),"Defensive's idle builders build income while the store is full");
+    check(!buildsMine(ai::Difficulty::Easy,4800),"Easy's builders rest beside a full store");
+}
+
 int main(int argc,char** argv) {
     sim::TypeRegistry empty;ai::Profile profile;auto soldier=fighter();
     for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
@@ -370,6 +408,7 @@ int main(int argc,char** argv) {
     }
     builderCaps();
     mobileProducers();
+    fullStore();
     defensiveResponses(empty,profile,soldier);
     defensiveShooters(empty,profile,soldier);
     monarchFightsBack(empty,profile,soldier);
