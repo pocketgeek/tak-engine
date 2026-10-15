@@ -2,6 +2,7 @@
 #include "ai/ai.h"
 #include "sim/matchsetup.h"
 #include "hpi/hpi.h"
+#include <cmath>
 #include <cstdio>
 #include <algorithm>
 namespace tak::ai {
@@ -458,6 +459,44 @@ int main(int argc,char** argv) {
             check(std::any_of(cs.begin(),cs.end(),[&](const auto& c){return c.unitId==handler && c.kind==net::Cmd::Build && std::string(c.type)=="soldier";}),
                   "economy construction behind approach waypoints leaves mobile production making troops");
         }
+        // A deposit that a builder is walking to is reserved by the order's SITE.
+        // A real MobileBuild order keeps its approach point beside the site in x/z
+        // (World::makeBuildOrder); the reservation compared that point, 45 px from
+        // the deposit here, against a 32 px match and so never held. In a replayed
+        // 4v4 Absurd game two allies sent a twelfth builder to a deposit eleven of
+        // theirs were already walking to, and raced each other for home deposits.
+        enum class Owner { Self, Ally, Enemy };
+        for (auto owner : {Owner::Self,Owner::Ally,Owner::Enemy})
+            for (auto difficulty : {ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
+                sim::World w;terrain(w);w.buildNavClasses(reg);
+                w.setManaSpots({{2000,800},{2000,1600}});
+                const int player=owner==Owner::Self ? 0 : 1;
+                const int walker=w.spawn(reg.find("worker"),1200,400,0,player);
+                const int idle=w.spawn(reg.find("worker"),1800,800,0,0);   // nearer the walker's deposit
+                if (player==1) w.setTeam(1,owner==Owner::Ally ? 0 : 1);
+                w.player(0).mana=10000;
+                net::Command order;order.kind=net::Cmd::Build;order.player=uint8_t(player);order.unitId=walker;
+                order.x=2000;order.z=800;std::snprintf(order.type,sizeof order.type,"lode");
+                sim::applyCommand(w,reg,order);
+                const auto& queued=w.unit(walker)->orders;
+                const bool real=!queued.empty() && queued.back().buildType==reg.find("lode") &&
+                    std::hypot(queued.back().x.toFloat()-2000,queued.back().z.toFloat()-800)>=32;
+                check(real,"a queued lodestone's order point is its approach, away from the deposit");
+                ai::Profile p;p.weight["lode"]=100;
+                ai::Controller controller(0,reg,p,1,difficulty);
+                const auto cs=think(controller,w);
+                auto builds=[&](float z) {
+                    return std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+                        return c.unitId==idle && c.kind==net::Cmd::Build && c.x==2000 && c.z==z;
+                    });
+                };
+                if (owner==Owner::Enemy)
+                    check(builds(800),"an enemy builder's destination does not reserve a deposit");
+                else
+                    check(builds(1600) && !builds(800),owner==Owner::Self
+                          ? "expansion leaves a deposit its own walking builder will take"
+                          : "expansion leaves a deposit an ally's walking builder will take");
+            }
     }
     if (argc>1) {
         auto vfs=hpi::mountRetailRoot(argv[1]);
@@ -528,7 +567,7 @@ int main(int argc,char** argv) {
                 w.setManaSpots({{2800,800},{2800,1200}});
                 auto builder=*reg.find("araking");builder.commander=false;
                 const int first=w.spawn(&builder,400,800,0,0);
-                w.spawn(&builder,400,1200,0,0);
+                const int second=w.spawn(&builder,400,1200,0,0);
                 ai::Profile p;p.weight["aralode"]=100;
                 ai::Controller controller(0,reg,p,1,difficulty);
                 const auto cs=think(controller,w);
@@ -536,10 +575,16 @@ int main(int argc,char** argv) {
                 for(const auto& c:cs)if(c.kind==net::Cmd::Build)sites.push_back(c);
                 check(sites.size()==2 && (sites[0].x!=sites[1].x || sites[0].z!=sites[1].z),
                       "expansion builders reserve different mana spots before lockstep applies orders");
-                sim::Order approach;approach.x=sim::Fixed::fromInt(1600);approach.z=sim::Fixed::fromInt(800);
-                sim::Order build;build.buildType=reg.find("aralode");
-                build.x=sim::Fixed::fromInt(2800);build.z=sim::Fixed::fromInt(800);
-                w.unit(first)->orders={approach,build};
+                // The real order list: a move, then the build queued behind it.
+                net::Command move;move.kind=net::Cmd::Move;move.player=0;move.unitId=first;move.x=1600;move.z=800;
+                sim::applyCommand(w,reg,move);
+                net::Command build=move;build.kind=net::Cmd::Build;build.x=2800;build.queue=1;
+                std::snprintf(build.type,sizeof build.type,"aralode");
+                sim::applyCommand(w,reg,build);
+                check(w.unit(first)->orders.size()==2 && w.unit(first)->orders.back().buildType==reg.find("aralode"),
+                      "the expansion route holds the build behind its move");
+                // Idle beside the reserved deposit, which is nearer than the free one.
+                w.unit(second)->x=sim::Fixed::fromInt(2400);w.unit(second)->z=sim::Fixed::fromInt(800);
                 const auto later=think(controller,w,uint32_t(ai::paramsFor(difficulty).thinkPeriod));
                 check(std::any_of(later.begin(),later.end(),[](const auto& c){return c.kind==net::Cmd::Build && c.z==1200;}),
                       "expansion respects a mana site reserved behind movement waypoints");

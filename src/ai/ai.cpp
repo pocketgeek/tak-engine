@@ -748,11 +748,16 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             reservedSites=plannedManaSites_;
             // Walking builders do not occupy their deposits yet. Gather queued
             // destinations once, rather than scan every unit for every deposit.
+            // Reserve the SITE (buildX/buildZ): a MobileBuild order's x/z is the
+            // builder's approach point beside it (World::makeBuildOrder), 32-70 px
+            // from the deposit for a lodestone, so it never matched -- own and
+            // allied builders kept walking to a deposit already being claimed.
+            // A flyer's conjure orbit carries no site; its building already stands.
             for (const auto& u:world.units()) {
                 if(!u.alive() || u.id==builder.id || !world.allied(player_,u.player))continue;
                 for(const auto& order:u.orders)
-                    if(order.buildType && order.buildType->onMana)
-                        reservedSites.emplace_back(order.x.toFloat(),order.z.toFloat());
+                    if(order.buildType && order.buildType->onMana && (order.buildX.v || order.buildZ.v))
+                        reservedSites.emplace_back(order.buildX.toFloat(),order.buildZ.toFloat());
             }
         }
         for (const auto& deposit : world.manaSpots()) {
