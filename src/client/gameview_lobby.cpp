@@ -182,12 +182,17 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
                 try {
                     auto b = vfs_.read(otaPath);
                     auto root = tak::tdf::parseText(std::string(b.begin(), b.end()), otaPath);
-                    if (const auto* gh = root.child("globalheader")) {
+                    const auto* gh = root.child("globalheader");
+                    if (gh) {
                         mi.players = int(gh->numberOr("numplayers", 0));
                         std::string sz = gh->valueOr("size", "");   // e.g. "16 x 16"
                         int a = 0, c = 0;
                         if (std::sscanf(sz.c_str(), "%d x %d", &a, &c) == 2) { mi.sizeW = a; mi.sizeH = c; }
                     }
+                    // MAP SCENARIO: only a map that declares a scenario (or a Test Map copy)
+                    // can have one, so the CRT of every other map is never read here.
+                    if ((gh && gh->numberOr("hasscenario", 0) != 0) || root.child("takplaytest"))
+                        mi.scenario = mapScenarioInfo(path);
                 } catch (const std::exception&) {}
             }
             if (mi.players == 0)   // .ota had no numplayers: count the start positions
@@ -396,6 +401,23 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         saveSettings(*settings_);
     }
 
+    void GameView::syncCreateScenario() {
+        // MAP SCENARIO belongs to one map: every way the selection changes (a list click,
+        // the remembered map, the generator, setMpMapId) lands here and starts it OFF.
+        if (createScenarioFor_ == mapPath_) return;
+        createScenarioFor_ = mapPath_;
+        createMapScenario_ = false;
+        createScenario_ = {};
+        if (!mapPath_.empty() && !tak::mapgen::isGeneratedMapId(mapPath_))
+            createScenario_ = mapScenarioInfo(mapPath_);
+    }
+
+    bool GameView::createScenarioOn() const {
+        if (createScenarioFor_ != mapPath_ || tak::mapgen::isGeneratedMapId(mpMapId_)) return false;
+        // An offerable map plays its scenario when chosen; a Test Map copy always does.
+        return createScenario_.active(createMapScenario_ && createScenario_.offerable());
+    }
+
     void GameView::drawCreate(int winW, int winH) {
         (void)winW; (void)winH;
         if (!createPrefApplied_ && settings_) {
@@ -422,6 +444,11 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             }
             createPrefApplied_ = true;
         }
+        syncCreateScenario();
+        // While the map's scenario is on, it owns how the game ends and where each seat's
+        // forces start: those two rows read SCENARIO / FIXED and are not clickable (retail
+        // greyed the same boxes while Use Map Script was ticked). The saved choices stay.
+        const bool scenarioOn = createScenarioOn();
         float x = 80, y = 70;
         blockText(singlePlayer_ ? "SINGLE PLAYER VS AI" : "CREATE GAME", x, y, 2.2f,
                   {200, 205, 220, 255}); y += 34;
@@ -448,8 +475,9 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         }); y+=kRow;
         // When OFF, losing your Monarch loses the game (retail commander rule); ON
         // makes the Monarch just another unit.
-        lbCycle(x, y, 240, 26, createMonarchExp_ ? "MONARCH EXPENDABLE: ON"
-                                               : "MONARCH EXPENDABLE: OFF", true,
+        lbCycle(x, y, 240, 26, scenarioOn ? "MONARCH EXPENDABLE: SCENARIO"
+                             : createMonarchExp_ ? "MONARCH EXPENDABLE: ON"
+                                                 : "MONARCH EXPENDABLE: OFF", !scenarioOn,
               [this](int) { createMonarchExp_ = !createMonarchExp_; }); y += kRow;
         lbCycle(x, y, 240, 26, createSpeedUnlock_ ? "ALLOW SPEED CHANGE: ON"
                                               : "ALLOW SPEED CHANGE: OFF", true,
@@ -481,7 +509,7 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         // before the room exists. FIXED = slot N always takes the map's Nth start
         // (spawns are memorisable); RANDOM = the starts are shuffled for the match.
         lbCycle(x, y, 240, 26, std::string("START LOCATIONS: ") +
-              (createRandomStarts_ ? "RANDOM" : "FIXED"), true,
+              (createRandomStarts_ && !scenarioOn ? "RANDOM" : "FIXED"), !scenarioOn,
               [this](int) { createRandomStarts_ = !createRandomStarts_; }); y += kRow;
         static const char* kTier[] = {"OFF", "COSMETIC", "FULL"};
         lbCycle(x, y, 240, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
@@ -500,7 +528,12 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             o.unitCap = createUnitCap_;
             o.monarchExpendable = createMonarchExp_ ? 1 : 0;
             o.fogExplored = std::min<uint8_t>(createFog_, 2);
-            o.randomStarts = createRandomStarts_ ? 1 : 0;
+            // MAP SCENARIO: an offerable map's own scenario, when chosen. A Test Map copy
+            // plays its scenario through its opt-in and sends 0 (the server checks the
+            // verified package either way). Seats and rule regions follow fixed starts.
+            o.mapScenario = !tak::mapgen::isGeneratedMapId(mpMapId_) && createScenarioFor_ == mapPath_ &&
+                createScenario_.offerable() && createMapScenario_ ? 1 : 0;
+            o.randomStarts = createRandomStarts_ && !createScenarioOn() ? 1 : 0;
             // A private single-player room is never listed, so the rule means nothing
             // there; leave it at the default rather than a remembered MP choice.
             o.allowSpectators = singlePlayer_ || createAllowSpectators_ ? 1 : 0;
@@ -530,6 +563,7 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
                     break;
                 }
             mapPrefApplied_ = true;
+            syncCreateScenario();
         }
         float lx = 400, hy = 90;
         blockText("SELECT MAP", lx, hy, 1.8f, {200, 205, 220, 255});
@@ -581,7 +615,7 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255); SDL_RenderFillRectF(ren_, &box);
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &box);
         const float rowW = boxW - sbW - 4;
-        const float infoW = 96;                     // right-side "2P 8x8" column
+        const float infoW = 108;                    // right-side "S 2P 8x8" column
         const int maxCh = int((rowW - infoW - 12) / 12);   // name chars that fit at px 2.0
         for (int r = 0; r < mapVisRows_; ++r) {
             int i = mapScroll_ + r;
@@ -610,8 +644,12 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             char info[24];
             if (m.sizeW > 0) std::snprintf(info, sizeof info, "%dP %dx%d", m.players, m.sizeW, m.sizeH);
             else std::snprintf(info, sizeof info, "%dP", m.players);
-            blockText(info, boxX + rowW - blockWidth(info, 1.5f) - 6, row.y + (rowH - 11) / 2, 1.5f,
+            const float infoX = boxX + rowW - blockWidth(info, 1.5f) - 6;
+            blockText(info, infoX, row.y + (rowH - 11) / 2, 1.5f,
                       sel ? SDL_Color{170, 210, 170, 255} : SDL_Color{150, 160, 178, 255});
+            // MAP SCENARIO: a gold S marks a map with a playable scenario (or a Test Map copy).
+            if (m.scenario.offerable() || (m.scenario.marker && m.scenario.runnable()))
+                blockText("S", infoX - 14, row.y + (rowH - 11) / 2, 1.5f, {230, 200, 120, 255});
             lobbyHots_.push_back({row, [this, nm, pth] {
                 mpMapId_ = nm; mapPath_ = pth;
                 if (settings_) { settings_->lastMap = nm; saveSettings(*settings_); }  // remember it
@@ -741,6 +779,33 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
                   if (gen) { mpMapId_.clear(); mapPath_.clear(); }  // drop back to the list
                   else applyGenParams();                           // encode the current gen params
               });
+        // MAP SCENARIO (protocol 259): play the map's own scenario -- its placed armies,
+        // trigger rules and Use Only list -- instead of a skirmish. Off for every map until
+        // chosen; greyed, with the reason, when the map has no playable scenario. The lines
+        // under it say what turning it on changes (dim while it is off).
+        if (!gen && !mapPath_.empty()) {
+            const float y0 = pvy + pvH + 68;
+            const bool testCopy = createScenario_.marker && createScenario_.runnable();
+            lbCycle(pvx, y0, pvW, 26, createMapScenario_ || testCopy ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF",
+                    createScenario_.offerable(), [this](int) { createMapScenario_ = !createMapScenario_; });
+            float ly = y0 + 32;
+            auto line = [&](const std::string& text, SDL_Color color) {
+                if (ly > y0 + 32 + 3 * 16) return;   // four lines fit above the footer
+                blockText(text, pvx, ly, 1.2f, color);
+                ly += 16;
+            };
+            const SDL_Color grey{150, 155, 165, 255}, dim{130, 135, 150, 255}, normal{205, 210, 225, 255},
+                            amber{235, 205, 120, 255};
+            if (testCopy) {
+                line("TEST COPY: ALWAYS ON", grey);
+                for (const auto& l : tak::sim::scenarioSummary(createScenario_, true)) line(l.text, l.warning ? amber : normal);
+            } else if (!createScenario_.offerable()) {
+                for (const auto& l : tak::sim::scenarioReason(createScenario_)) line(l, grey);
+            } else {
+                for (const auto& l : tak::sim::scenarioSummary(createScenario_, true))
+                    line(l.text, !createMapScenario_ ? dim : l.warning ? amber : normal);
+            }
+        }
     }
 
     void GameView::drawRoom(int winW, int winH) {
@@ -751,6 +816,17 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         blockText(std::string("MAP  ") + mapDisplayName(room.mapId), x, y - 24, 1.8f, {180, 185, 195, 255});
         y += 34;
         bool host = (room.hostId == mp_->myClientId());
+        // MAP SCENARIO (259): the room plays its map's scenario when the option is on, or
+        // for a Test Map copy, read from the verified package (the host's own until then).
+        // The seats that scenario needs are tagged below and must be played to START.
+        if (scenarioLobbyPackage_.lock() != mp_->mapPackage()) {
+            scenarioLobbyPackage_ = mp_->mapPackage();
+            scenarioLobby_ = mp_->mapPackage() ? tak::net::maps::scenarioInfo(*mp_->mapPackage()) : tak::sim::ScenarioInfo{};
+        }
+        const bool fileMap = room.mission.empty() && !tak::mapgen::isGeneratedMapId(room.mapId);
+        const bool scenarioOn = fileMap && !room.opts.stressTest && !room.opts.benchmark && mp_->mapPackage() &&
+                                scenarioLobby_.active(room.opts.mapScenario != 0);
+        const uint8_t needSeats = scenarioOn ? scenarioLobby_.requiredSeats() : 0;
         float overrideBottom=112;
         if(!campaign && room.mission.empty()) {
             if(!overridePacksScanned_){availableOverridePacks_=tak::hpi::overridePacks(std::filesystem::u8path(installRoot_));overridePacksScanned_=true;}
@@ -825,6 +901,8 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
                     mp_->setSlot(i, nt, s2.faction, s2.color, s2.team, 0, s2.aiLevel); }});
             }
             if (s.type == 1) blockText(s.name, x + 100, y + 8, 1.8f, {225, 228, 236, 255});
+            else if ((s.type == 0 || s.type == 3) && (needSeats >> i & 1))
+                blockText("NEEDED BY SCENARIO", x + 100, y + 9, 1.4f, {235, 205, 120, 255});
             else if (s.type == 2) {
                 blockText(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f,
                           {210, 200, 150, 255});
@@ -896,13 +974,9 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
                 mp_->setSlot(mpRoom().mySlot, 1, s.faction, s.color, s.team, iAmReady ? 0 : 1, s.aiLevel); });
             bx = x + 142;
         }
-        // Verified authored scenarios may start solo; ordinary skirmishes need two.
-        if (authoredLobbyPackage_.lock()!=mp_->mapPackage()) {
-            authoredLobbyPackage_=mp_->mapPackage();
-            authoredLobby_=mp_->mapPackage() && tak::net::maps::authoredScenario(*mp_->mapPackage());
-        }
-        const bool authored=!room.opts.stressTest && !room.opts.benchmark && mp_->mapPackage() && authoredLobby_;
-        bool canStart = host && startValid(room,authored) && room.mapsReady && !mp_->overridePending() &&
+        // A room playing its map's scenario may start solo, once every seat the scenario
+        // needs is played; ordinary skirmishes need two.
+        bool canStart = host && startValid(room, scenarioOn, needSeats) && room.mapsReady && !mp_->overridePending() &&
             (room.opts.overridePolicy!=2 || bool(mp_->overridePackage()));
         lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); },
               {70, 110, 70, 255});
@@ -921,6 +995,13 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             mapStatus != "MAP READY" && mapStatus != "MAP VERIFIED")
             blockText(mapStatus.empty() ? "WAITING FOR MAP VERIFICATION" : mapStatus,
                 bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
+        // Why the server refused the last START (a needed seat, setupMatch's refusal...).
+        if (!mp_->startError().empty()) {
+            std::string why = "CANNOT START: " + mp_->startError();
+            for (char& ch : why) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+            if (why.size() > 84) why = why.substr(0, 81) + "...";
+            blockText(why, x, y + 33, 1.1f, {255, 130, 110, 255});
+        }
         // Creation settings are read-only here and come from the room, not
         // this client's saved preferences. Keep every rule visible with 8 slots.
         y += 44;
@@ -932,7 +1013,8 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
         info(0,0,std::string("CRUSADES: ")+onOff(room.opts.crusades));
         info(0,1,std::string("DOUBLE SIGHT/RADAR: ")+onOff(room.opts.doubleSight));
         info(1,0,"UNIT CAP: "+std::to_string(room.opts.unitCap));
-        info(1,1,std::string("MONARCH EXPENDABLE: ")+onOff(room.opts.monarchExpendable));
+        info(1,1,scenarioOn ? std::string("MONARCH EXPENDABLE: SCENARIO")
+                            : std::string("MONARCH EXPENDABLE: ")+onOff(room.opts.monarchExpendable));
         info(2,0,std::string("ALLOW SPEED CHANGE: ")+onOff(room.opts.speedUnlock));
         static const char* fogNames[]={"NOT EXPLORED","EXPLORED","FULL VISION"};
         info(2,1,std::string("FOG OF WAR: ")+fogNames[std::min<int>(room.opts.fogExplored,2)]);
@@ -958,6 +1040,37 @@ std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
             // Show whether access is protected, never the password itself.
             if(game!=games.end() || host)
                 info(3,1,std::string("PASSWORD: ")+((game!=games.end()?game->passworded:!createPass_.empty())?"SET":"NONE"));
+        }
+        // MAP SCENARIO, under the grid for a file map (the rows a generated map's recipe
+        // uses): the rule, and when on, what it changes and the seats it needs.
+        if(fileMap) {
+            const SDL_Color amber{235,205,120,255};
+            const bool testCopy=mp_->mapPackage() && scenarioLobby_.marker && scenarioLobby_.runnable();
+            const bool wanted=room.opts.mapScenario!=0 || testCopy;
+            auto rule=[&](int row,int column,const std::string& text,bool warning=false) {
+                blockText(text,x+column*300.0f,y+98+row*14.0f,1.1f,warning ? amber : infoColor);
+            };
+            rule(0,0,testCopy ? "MAP SCENARIO: ON (TEST MAP)" : wanted ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF");
+            if(wanted && !mp_->mapPackage()) rule(0,1,"CHECKING SCENARIO...");
+            else if(wanted && !scenarioOn && !room.opts.stressTest && !room.opts.benchmark) {
+                const auto why=tak::sim::scenarioReason(scenarioLobby_);
+                rule(0,1,why.empty() ? std::string("NO SCENARIO TO PLAY") : why.front(),true);
+            } else if(scenarioOn) {
+                const auto lines=tak::sim::scenarioSummary(scenarioLobby_,false);   // placed, seats, use only, endings
+                bool missing=false;
+                for(int i=0;i<tak::net::kMaxSlots;++i)
+                    if((needSeats>>i & 1) && room.slots[i].type!=1 && room.slots[i].type!=2) missing=true;
+                if(lines.size()>0) rule(0,1,lines[0].text);
+                if(lines.size()>1) rule(1,0,lines[1].text,missing);
+                if(lines.size()>2) rule(1,1,lines[2].text);
+                if(lines.size()>3) rule(2,0,lines[3].text,lines[3].warning);
+                // Placements replace Monarchs, so a seated player the scenario gives no
+                // units starts with nothing.
+                uint8_t empty=0;
+                for(int i=0;i<tak::net::kMaxSlots;++i)
+                    if((room.slots[i].type==1 || room.slots[i].type==2) && !(scenarioLobby_.placedSeats>>i & 1)) empty|=uint8_t(1u<<i);
+                if(scenarioLobby_.placed>0 && empty) rule(2,1,"NO PLACED UNITS: PLAYER "+tak::sim::seatList(empty),true);
+            }
         }
         if(tak::mapgen::isGeneratedMapId(room.mapId)) {
             try {

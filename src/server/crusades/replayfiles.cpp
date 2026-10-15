@@ -94,7 +94,7 @@ std::optional<wire::ReplayMetadata> metadata(File& file,const IssuedBattle& batt
     net::Reader reader(bytes.data()+4,count-4);net::ReplayHeader header;uint32_t format=0,protocol=0;
     if(!net::readReplayHeader(reader,header,format,protocol) || (format<10 || format>net::kReplayFormat) ||
         !net::supportedReplayProtocol(format,protocol) || header.crusades!=1 || header.pathfindingMode!=sim::PathfindingMode::Retail || header.overridePolicy!=0 || !header.overrideDigest.empty() ||
-        !header.mission.empty() || header.mapId!=battle.context.mapIdentifier ||
+        !header.mission.empty() || header.mapScenario!=0 || header.mapId!=battle.context.mapIdentifier ||
         header.mapDigest!=battle.context.mapDigest || header.dataHash!=result.gameplayFingerprint)return {};
     return wire::ReplayMetadata{result.replayDigest,file.size(),format,protocol,header.mapDigest,header.dataHash};
 }

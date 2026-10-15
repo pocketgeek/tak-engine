@@ -77,7 +77,7 @@ void identityAndHeader(const fs::path& root){
     wrong.id.clear();check(!files.inspect(wrong,sample.result),"empty battle identity accepted");
     check(!c::ReplayFiles({}).inspect(sample.battle,sample.result),"empty artifact root accepted");
     fs::remove(path);
-    for(int kind=0;kind<16;++kind){
+    for(int kind=0;kind<17;++kind){
         Sample altered;auto header=altered.header;
         if(kind==0)header.mapId="other.ota";
         if(kind==1)header.mapDigest=std::string(64,'b');
@@ -88,6 +88,7 @@ void identityAndHeader(const fs::path& root){
         // 1-3: the removed Flowfield, Cooperative and Retail+ identities.
         if(kind>=12&&kind<=14)header.pathfindingMode=tak::sim::PathfindingMode(kind-11);
         if(kind==15)header.pathfindingMode=tak::sim::PathfindingMode::Legion;
+        if(kind==16)header.mapScenario=1; // a Crusades battle never plays a map scenario
         if(kind==9)header.mapId=std::string(9000,'m');
         auto data=recording(header,kind==6?n::kNetVersion+1:kind==10?210u:kind==11?211u:n::kNetVersion);
         if(kind==7)data[4]=8;

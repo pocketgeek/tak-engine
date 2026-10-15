@@ -138,6 +138,7 @@ add_library(tak-formats
   src/sim/matchsetup.cpp
   src/sim/mission.cpp
   src/sim/scenario.cpp
+  src/sim/scenarioinfo.cpp
   src/campaign/campaign.cpp
   src/crt/crt.cpp
   src/gui/gui.cpp
@@ -719,6 +720,10 @@ add_test(NAME scenario COMMAND scenario_test)
 add_executable(scenario_restrictions_test tools/scenario_restrictions_test.cpp)
 target_link_libraries(scenario_restrictions_test PRIVATE tak-formats)
 add_test(NAME scenario_restrictions COMMAND scenario_restrictions_test)
+# MAP SCENARIO (protocol 259): the map scenario inspector, and its agreement with setupMatch.
+add_executable(scenario_info_test tools/scenario_info_test.cpp)
+target_link_libraries(scenario_info_test PRIVATE tak-formats)
+add_test(NAME scenario_info COMMAND scenario_info_test)
 add_executable(scenario_outcome_test tools/scenario_outcome_test.cpp)
 target_link_libraries(scenario_outcome_test PRIVATE tak-formats)
 add_test(NAME scenario_outcome COMMAND scenario_outcome_test)
@@ -1864,6 +1869,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_spectators_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_spectators PROPERTIES TIMEOUT 120)
+    add_test(NAME server_map_scenario COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_map_scenario_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --map-tool "$<TARGET_FILE:map_transfer_test>")
+    set_tests_properties(server_map_scenario PROPERTIES TIMEOUT 180)
     add_test(NAME server_status COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_status_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>")

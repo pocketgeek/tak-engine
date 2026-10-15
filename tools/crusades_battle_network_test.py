@@ -51,7 +51,7 @@ def issue(peer, opponent='Bob', territory=1, status=0):
     return result(peer, status)
 
 
-OPTIONS_BYTES = 17  # GameOptions on the wire; protocol 258 appended allowSpectators
+OPTIONS_BYTES = 18  # GameOptions on the wire; protocol 258 appended allowSpectators, 259 mapScenario
 
 
 def lobby(r):
@@ -116,6 +116,8 @@ def run(binary, data):
             alice.receive('JoinResult')
             baseline = lobby(alice.receive('LobbyState'))
             assert baseline[0] == room and baseline[2][0] == 1
+            # A campaign battle is always a plain skirmish: MAP SCENARIO (the last byte) is off.
+            assert baseline[2][OPTIONS_BYTES - 1] == 0, 'campaign room carries MAP SCENARIO'
             join(other, room, False)
             join(bob, room, True)
             # Host-supplied changes cannot replace issued rules/map/participants.
@@ -164,7 +166,7 @@ def run(binary, data):
             bob.send('LeaveGame')
             auth.request(bob)
             # Ordinary room creation cannot manufacture an issued battle binding.
-            ordinary_options = bytes([0, 0, 0, 10, 0]) + struct.pack('<I', 2000) + bytes([0, 0, 1, 0, 0, 0, 0, 1])
+            ordinary_options = bytes([0, 0, 0, 10, 0]) + struct.pack('<I', 2000) + bytes([0, 0, 1, 0, 0, 0, 0, 1, 0])
             other.send('CreateGame', auth.field('ordinary') + auth.field('') + auth.field('Frey River Plain') + auth.field('') + ordinary_options + bytes([2, 0, 0]))
             assert other.receive('JoinResult').num('<B') == 1
             other.send('LeaveGame')

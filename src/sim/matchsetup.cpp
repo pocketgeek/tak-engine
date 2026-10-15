@@ -495,7 +495,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     const bool generated = tak::mapgen::isGeneratedMapId(cfg.mapPath);
     int windMin = 100, windMax = 2000;
     double mapGravity = 112.0;
-    bool noSeaLevelTrigger = false, authoredPlaytest = false;
+    bool noSeaLevelTrigger = false, authoredPlaytest = false, scenarioOn = false;
     world.setBuildRestrictions({},false);
     if (!generated) {
         auto ota = tak::vpath::replaceExtension(cfg.mapPath,".ota");
@@ -503,13 +503,19 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
             const auto bytes = vfs.read(ota);
             const auto root = tdf::parseText(std::string(bytes.begin(), bytes.end()), ota);
             if(const auto* test=root.child("takplaytest"))authoredPlaytest=test->numberOr("authoredscenario",0)!=0;
-            if (const auto* gh = root.child("globalheader")) {
+            const auto* gh = root.child("globalheader");
+            const bool declared = gh && gh->numberOr("hasscenario", 0) != 0;
+            // Scenario content runs for a Test Map copy (its opt-in, as since protocol 197) or
+            // when the room turned MAP SCENARIO on for a map that declares a scenario (259).
+            scenarioOn = cfg.loadCrt && !cfg.stressTest && !cfg.benchmark &&
+                         (authoredPlaytest || (cfg.mapScenario && declared));
+            if (gh) {
                 windMin = int(gh->numberOr("minwindspeed", 100));
                 windMax = int(gh->numberOr("maxwindspeed", 2000));
                 mapGravity = gh->numberOr("gravity", 112.0);
                 noSeaLevelTrigger = gh->numberOr("nosealeveltrigger", 0) != 0;
                 const auto restriction = gh->valueOr("useonlyunits", "");
-                if (authoredPlaytest && cfg.loadCrt && !cfg.stressTest && !cfg.benchmark && !restriction.empty()) {
+                if (scenarioOn && !restriction.empty()) {
                     // Map companion names are virtual archive paths, never native paths.
                     // Authored packages carry their restriction file beside the OTA.
                     if (tak::vpath::filename(restriction) != restriction ||
@@ -628,7 +634,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
 
     // Cartographer scenarios use authored placements instead of skirmish monarchs.
     // Read the same map-local CRT on every peer, before any default units spawn.
-    if (cfg.loadCrt && authoredPlaytest && !generated && !cfg.stressTest && !cfg.benchmark) {
+    if (scenarioOn && !generated) {
         const auto otaPath = tak::vpath::replaceExtension(cfg.mapPath, ".ota");
         const auto otaBytes = vfs.tryRead(otaPath);
         if (otaBytes && tak::tnt::Scenario::parse(std::string(otaBytes->begin(), otaBytes->end())).hasScenario) {
@@ -650,8 +656,14 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 world.setScenarioTypeStats(name, std::clamp(type.stat[1],0,1000),
                     std::clamp(type.stat[2],0,1000), std::clamp(type.stat[3],0,10));
             }
+            // Banks 1..8 belong to owners 0..7. A bank whose groups are all empty does
+            // nothing, so it needs no seat (259; it used to demand one). A bank past the
+            // ninth is not Cartographer output and keeps the old rule (the neutral owner,
+            // or a refusal), so no file sets up differently except by starting at all.
             for (size_t p = 1; p < scenario.players.size(); ++p)
-                if (!scenario.players[p].empty()) requirePlayer(int(p)-1);
+                if (p > size_t(kMaxPlayers) ? !scenario.players[p].empty()
+                                            : std::any_of(scenario.players[p].begin(), scenario.players[p].end(), tak::crt::hasRules))
+                    requirePlayer(int(p)-1);
             for (const auto& placed : scenario.units) {
                 requirePlayer(placed.player);
                 auto name = placed.objectName;

@@ -15,6 +15,7 @@ sim::MatchConfig matchConfigFor(const GameOptions& o, const SlotInfo* slots, uin
     cfg.stressImmediate = o.stressTest == kStressImmediate;   // recorded before staging
     cfg.benchmark = o.benchmark;
     cfg.randomStarts = o.randomStarts != 0;
+    cfg.mapScenario = !mission && o.mapScenario != 0;   // 259: the map's own scenario
     cfg.startSeed = seed;   // the seed sent in GameStarting
     int maxSlot = 0;
     for (int i = 0; i < kMaxSlots; ++i)
@@ -45,6 +46,7 @@ ReplayHeader replayHeaderFor(const GameOptions& o, const std::string& mapId, con
     h.stressTest = o.stressTest;
     h.randomStarts = o.randomStarts;
     h.benchmark = o.benchmark;
+    h.mapScenario = o.mapScenario;
     h.seed = seed;
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = startSlots[i];   // start config, not the forfeited end state
@@ -69,6 +71,7 @@ void matchInputsFrom(const ReplayHeader& h, GameOptions& o, SlotInfo* slots) {
     o.stressTest = h.stressTest;
     o.randomStarts = h.randomStarts;
     o.benchmark = h.benchmark;
+    o.mapScenario = h.mapScenario;
     for (int i = 0; i < kMaxSlots; ++i) {
         // Every field explicitly: a header without AI levels (format < 6) reads 0,
         // as the loader always did, not SlotInfo's default of 2.

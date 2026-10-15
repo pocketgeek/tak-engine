@@ -47,6 +47,7 @@ static ReplayHeader sample() {
     h.benchmark = 4;
     h.seed = 0xabcdef01u;
     h.dataHash = 0x0123456789abcdefull;
+    h.mapScenario = 1;
     for (int i = 0; i < kMaxSlots; ++i) {
         h.slotType[i] = uint8_t(i % 3);
         h.slotFaction[i] = uint8_t(i % 5);
@@ -86,6 +87,7 @@ int main() {
         check(out.monarchExpendable == in.monarchExpendable, "monarchExpendable");
         check(out.stressTest == in.stressTest, "stressTest");
         check(out.overridePolicy == in.overridePolicy, "overridePolicy");
+        check(out.mapScenario == in.mapScenario, "MAP SCENARIO (format 13)");
         bool slotsOk = true;
         for (int i = 0; i < kMaxSlots; ++i)
             slotsOk &= out.slotType[i] == in.slotType[i] &&
@@ -101,11 +103,25 @@ int main() {
               std::to_string(out.slotAiLevel[4]));
     }
 
+    std::printf("format 12 (before MAP SCENARIO):\n");
+    {
+        // A format-12 file is a format-13 header without its trailing option byte.
+        Writer w;
+        writeReplayHeader(w, sample());   // mapScenario = 1
+        w.b.pop_back();
+        w.b[4] = 12;
+        Reader r(w.b.data() + 4, w.b.size() - 4);
+        ReplayHeader out; out.mapScenario = 7;
+        uint32_t fmt = 0, proto = 0;
+        check(readReplayHeader(r, out, fmt, proto) && fmt == 12 && out.mapScenario == 0 && r.p == r.end,
+              "a format-12 header reads exactly, with MAP SCENARIO off");
+    }
+
     std::printf("pathfinding mode and incompatible recordings:\n");
     for (auto mode : {tak::sim::PathfindingMode::Retail, tak::sim::PathfindingMode::Legion}) {
         auto in = sample(); in.mission.clear(); in.pathfindingMode = mode;
         Writer w; writeReplayHeader(w, in);
-        const size_t modeAt = w.b.size() - size_t(kMaxSlots) * 5 - 2;
+        const size_t modeAt = w.b.size() - size_t(kMaxSlots) * 5 - 3;   // ... mode, count, slots, mapScenario
         ReplayHeader out; uint32_t fmt=0, proto=0;
         Reader r(w.b.data()+4,w.b.size()-4);
         check(readReplayHeader(r,out,fmt,proto) && out.pathfindingMode==mode,
@@ -137,10 +153,12 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 258, "replay format 11 is kept under protocol 258");
-    // 258 changed only the lobby wire (ALLOW SPECTATORS): 0.8.2's protocol-257 recordings
-    // run the same simulation and stay playable; 256's do not.
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 259, "replay format 11 is kept under protocol 259");
+    // 258 changed only the lobby wire (ALLOW SPECTATORS) and 259 added MAP SCENARIO, off in
+    // every older recording: 0.8.2's protocol-257 and main's 258 recordings run the same
+    // simulation and stay playable; 256's do not.
     check(supportedReplayProtocol(12, 257) && supportedReplayProtocol(11, 257), "sim-identical protocol 257 replays are kept");
+    check(supportedReplayProtocol(12, 258) && supportedReplayProtocol(13, 259), "protocol 258 replays and format 13 are kept");
     check(!supportedReplayProtocol(12, 256), "previous air-transport protocol is refused");
     check(!supportedReplayProtocol(11, 250), "previous blocked-build-site protocol is refused");
     check(!supportedReplayProtocol(11, 247), "previous Legion W8 passage-gate protocol is refused");
@@ -199,7 +217,7 @@ int main() {
         Writer probe;
         ReplayHeader h = sample();
         writeReplayHeader(probe, h);
-        size_t countAt = probe.b.size() - size_t(kMaxSlots) * 5 - 1;
+        size_t countAt = probe.b.size() - size_t(kMaxSlots) * 5 - 2;   // ... count, slots, mapScenario
         w.b[countAt] = uint8_t(kMaxSlots + 9);
         Reader r(w.b.data() + 4, w.b.size() - 4);
         ReplayHeader out;

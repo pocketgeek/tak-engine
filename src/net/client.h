@@ -167,6 +167,9 @@ public:
     // "spectators are not allowed in this game", ...); empty once a later request is
     // sent or one succeeds. The connection stays in the lobby, so the browser shows it.
     const std::string& joinError() const { return joinError_; }
+    // Why the server refused this client's last START (MAP SCENARIO's missing seat, a map
+    // without a scenario, setupMatch's refusal, maps not verified). Cleared by startGame().
+    const std::string& startError() const { return startError_; }
     // Ticks of HISTORY the server is replaying to us after a rejoin or spectate.
     // The authoritative end of the replay: local buffer depth cannot tell history
     // from a gap between chunks.
@@ -317,6 +320,8 @@ private:
     std::vector<GameInfo> games_;
     RoomView room_;
     std::string joinError_;   // the last JoinResult refusal (see joinError())
+    std::string startError_;  // the last START refusal (see startError())
+    bool startSent_ = false;  // a StartGame went out and its answer is still to come
     uint8_t gameSpeed_ = 10;   // live game speed (from opts + in-game SpeedUpdate)
     int missionOutcome_ = 0;   // campaign mission result (0 running / +1 win / -1 loss)
     std::vector<std::pair<std::string, std::string>> chat_;

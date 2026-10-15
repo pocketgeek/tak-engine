@@ -17,22 +17,31 @@
         if (tak::mapgen::isGeneratedMapId(gid))
             return uint8_t(std::clamp<int>(tak::mapgen::decodeMapId(gid).players, 2, tak::net::kMaxSlots));
         int n = int(parseStartPositions().size());
-        // Capacity is available seats, not a minimum player count. The verified
-        // lobby can start a solo authored scenario without filling these seats.
+        // Capacity is available seats, not a minimum player count. A room that plays
+        // its map's scenario opens every seat that scenario needs (its placement owners
+        // and the rule banks that do something), which can lie past the start positions;
+        // the verified lobby may still start a solo scenario without filling the rest.
         auto path=mapPath_;
         tak::hpi::Vfs scenarioData(&vfs_);
         if(const auto cached=vfs_.cachedMap(path)) {
             path=cached->first;scenarioData.setMapFiles(cached->second);
         }
-        if(tak::net::maps::authoredScenario(scenarioData,path)) {
-            const auto scenario=tak::crt::parse(scenarioData.read(tak::vpath::replaceExtension(path,".crt")));
-            for(const auto& unit:scenario.units)
-                if(unit.player>=0 && unit.player<tak::net::kMaxSlots)n=std::max(n,unit.player+1);
-            // Bank zero is All Players; banks 1..8 belong to owners 0..7.
-            for(size_t p=1;p<scenario.players.size() && p<=tak::net::kMaxSlots;++p)
-                if(!scenario.players[p].empty())n=std::max(n,int(p));
-        }
+        const auto scenario=tak::sim::inspectScenario(scenarioData,path);
+        if(scenario.active(createMapScenario_))
+            for(int i=0;i<tak::net::kMaxSlots;++i)
+                if(scenario.requiredSeats()>>i & 1)n=std::max(n,i+1);
         return uint8_t(std::clamp(n < 2 ? 2 : n, 2, tak::net::kMaxSlots));
+    }
+
+    tak::sim::ScenarioInfo GameView::mapScenarioInfo(const std::string& path) const {
+        try {
+            auto mapPath=path;
+            tak::hpi::Vfs view(&vfs_);
+            if(const auto cached=vfs_.cachedMap(path)) {
+                mapPath=cached->first;view.setMapFiles(cached->second);
+            }
+            return tak::sim::inspectScenario(view,mapPath,&registry_);
+        } catch(const std::exception&) {return {};}   // an unreadable MapCache archive
     }
 
     void GameView::setMpClient(tak::net::MpClient* mp) {
@@ -210,6 +219,8 @@
                                                    : ("Player " + std::to_string(i + 1));
         }
         auto spots = tak::sim::setupMatch(writableWorld(), registry_, cfg);
+        if (world_.hasScenarioOutcomes())   // the map's own scenario (MAP SCENARIO or a Test Map copy)
+            std::fprintf(stderr, "map scenario: %zu units at the start\n", world_.units().size());
         // Rebuild the rendered feature sprites (features_) from the map we actually
         // loaded -- they were built once in the ctor from the launch map, so on a
         // different chosen map the trees/houses you SEE would be the launch map's,
@@ -905,6 +916,11 @@ void GameView::autoplayStep() {
         if (!mp_->poll()) { netError_ = mp_->error(); return false; }
         S st = mp_->state();
         if (st == S::Done) { if (netError_.empty()) netError_ = mp_->error(); return false; }
+        // A START the server refused ends a harness run, with the reason as its error. Only
+        // the auto-start paths set mpStarted_; a player in the room reads the refusal there.
+        if (st == S::InRoom && mpStarted_ && !mp_->startError().empty()) {
+            netError_ = "start refused: " + mp_->startError(); return false;
+        }
         if (st == S::Lobby && (autoMode == 1 || autoMode == 4 || autoMode == 7 || autoMode == 8)) {
             tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
             o.overridePolicy = uint8_t(policy_);   // room tier = this host's launch tier
@@ -953,6 +969,10 @@ void GameView::autoplayStep() {
             // built from the mission bundle (server + every peer run setupMission).
             bool priv = autoMode == 7 || autoMode == 8 || benchmarkMode_;
             std::string mission = autoMode == 8 ? missionStem_ : std::string();
+            // TAK_MAP_SCENARIO=1: create the room with MAP SCENARIO on (the server refuses START when
+            // the map has no scenario or a needed seat is empty -- a harness can test both).
+            createMapScenario_ = autoMode != 8 && tak::devFlag("TAK_MAP_SCENARIO");
+            o.mapScenario = createMapScenario_ ? 1 : 0;
             uint8_t cap = (autoMode == 8 || benchmarkMode_) ? tak::net::kMaxSlots : mpCapacity();
             // Exact stem match (findMap): the map file is "ulasem arena.tnt".
             std::string createMap = benchmarkMode_ ? std::string("Ulasem Arena") : mapId;
@@ -978,6 +998,8 @@ void GameView::autoplayStep() {
             else if (autoMode == 3 && mpListMs_ && SDL_GetTicks64() - mpFirstListMs_ > 800) {
                 tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
             o.overridePolicy = uint8_t(policy_);   // room tier = this host's launch tier
+                createMapScenario_ = tak::devFlag("TAK_MAP_SCENARIO");   // as for modes 1/4/7
+                o.mapScenario = createMapScenario_ ? 1 : 0;
                 mp_->createGame(mapId, "", mapId, o, mpCapacity());
             }
             if (!mpFirstListMs_) mpFirstListMs_ = SDL_GetTicks64();

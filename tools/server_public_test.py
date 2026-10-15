@@ -41,9 +41,9 @@ def login(port, fingerprint, name, context=None):
     if context:p.socket=context.wrap_socket(p.socket,server_hostname="localhost")
     p.hello(fingerprint);p.login(name,[]);return p
 
-def options(stress=0,benchmark=0,spectators=1):
-    # GameOptions wire bytes: ... pathMode, then allowSpectators (protocol 258)
-    return bytes([0,1,0,10,0])+struct.pack('<I',2000)+bytes([0,stress,0,benchmark,0,0,0,spectators])
+def options(stress=0,benchmark=0,spectators=1,scenario=0,random_starts=0):
+    # GameOptions wire bytes: ... pathMode, then allowSpectators (protocol 258), mapScenario (259)
+    return bytes([0,1,0,10,0])+struct.pack('<I',2000)+bytes([0,stress,0,benchmark,random_starts,0,0,spectators,scenario])
 
 def create(p,stress=0,benchmark=0,mission='',map_id='missing-test-map'):
     p.send('CreateGame',auth.field('test')+auth.field('')+auth.field(map_id)+

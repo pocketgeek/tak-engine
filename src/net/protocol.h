@@ -19,7 +19,15 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 258;      // 258: ALLOW SPECTATORS room option -- GameOptions.allowSpectators (u8, appended after the pathfinder
+constexpr uint32_t kNetVersion = 259;      // 259: MAP SCENARIO room option -- GameOptions.mapScenario (u8, appended after allowSpectators:
+                                           //      CreateGame/SetGameOptions/LobbyState/GameStarting). Creation-only; the server accepts it only
+                                           //      for a verified map whose .ota declares hasscenario and whose v1 .crt has placements or rules,
+                                           //      forces randomStarts off with it, and refuses START while a seat the scenario needs is empty.
+                                           //      On, setupMatch runs the map's CRT + Use Only list as for a Test Map copy (MatchConfig::mapScenario,
+                                           //      replay format 13). Off, the sim is 258's (empty CRT rule groups no longer demand a seat -- that
+                                           //      only lets a refused setup start), so 257/258 replays still play; the Crusades rules digest
+                                           //      keeps its 257 bytes and Crusades rooms carry 0
+                                           // 258: ALLOW SPECTATORS room option -- GameOptions.allowSpectators (u8, appended after the pathfinder
                                            //      byte: CreateGame/SetGameOptions/LobbyState/GameStarting) and a trailing GameInfo u8 in GameList.
                                            //      The server refuses Spectate when it is off. Lobby wire only: the sim is 257's, so 257 replays
                                            //      still play (supportedReplayProtocol) and the Crusades rules digest keeps its 257 bytes
@@ -616,6 +624,16 @@ struct GameOptions {
     // (in-game SetGameOptions changes only speed). An admission rule, never part of the
     // sim or the Crusades rules digest; campaign battle rooms are always 0.
     uint8_t allowSpectators = 1;
+    // MAP SCENARIO (259): 1 = play the map's own scenario (.crt placements and rules, the
+    // Use Only .tdf) instead of a skirmish. Chosen when the room is created and never
+    // changed after (SetGameOptions keeps the created value: seats and READY were set
+    // for it). The server clears it for missions, generated maps, stress and benchmark
+    // rooms, forces randomStarts off with it, and refuses START when the verified map
+    // has no scenario content or a seat the scenario needs is empty. Sim-affecting
+    // (MatchConfig::mapScenario, replay format 13); outside the Crusades rules digest;
+    // campaign battle rooms are always 0. A Test Map copy's [TAKPlaytest] opt-in plays
+    // its scenario even with this 0.
+    uint8_t mapScenario = 0;
 };
 
 // A sim-affecting server decision, sequenced inside a TickBundle so every peer

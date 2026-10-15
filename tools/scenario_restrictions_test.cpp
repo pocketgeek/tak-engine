@@ -41,6 +41,21 @@ int main() try {
     check(ordinary.stateHash()!=ordinaryHash,"restriction absent from lockstep hash");
     ordinary.setBuildRestrictions({},false);
     check(ordinary.stateHash()==ordinaryHash,"clearing restriction changed unrestricted world hash");
+    {
+        // MAP SCENARIO (protocol 259): a map that declares a scenario gets its Use Only
+        // list from the room's option, with no Test Map opt-in.
+        auto declared=metadata;declared.hasScenario=true;
+        textFile("kmap/restricted.ota",declared.write());
+        crt::Scenario rules;rules.players.resize(9);
+        rules.players[1].push_back({{{0,{}}},{{2,{"begun","1"}}}});
+        (*files)["kmap/restricted.crt"]=crt::write(rules);
+        auto on=config;on.mapScenario=true;
+        sim::World world;sim::setupMatch(world,registry,on);
+        check(world.scenario() && world.buildAllowed(allowed) && !world.buildAllowed(denied),
+              "MAP SCENARIO did not install the declared scenario's Use Only list");
+        files->erase("kmap/restricted.crt");
+        textFile("kmap/restricted.ota",ota);
+    }
     textFile("kmap/restricted.ota",ota+"\n[TAKPlaytest]{\nauthoredscenario=1;\n}\n");
     sim::World client,referee;
     config.scenarioViewPlayer=0;sim::setupMatch(client,registry,config);

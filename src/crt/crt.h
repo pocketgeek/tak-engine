@@ -61,6 +61,13 @@ struct RuleGroup {
     std::string editorName; // Cartographer sidecar only; never part of retail CRT bytes.
 };
 
+// A rule group that does something. An empty group (no condition, no action) never
+// does: it is not scenario content and does not need a lobby seat.
+inline bool hasRules(const RuleGroup& g) { return !g.conditions.empty() || !g.actions.empty(); }
+// Victory/defeat ACTION opcodes (5, 6, 21-24; sim/scenario.cpp). Condition opcodes are a
+// separate space: condition 21/22 ("opponents left") is not an outcome.
+inline bool isOutcomeAction(int32_t opcode) { return opcode == 5 || opcode == 6 || (opcode >= 21 && opcode <= 24); }
+
 struct Region {
     std::string name;            // @0x000, char[64]
     int32_t x1 = 0, z1 = 0, x2 = 0, z2 = 0;   // 16px cells (@0x100)

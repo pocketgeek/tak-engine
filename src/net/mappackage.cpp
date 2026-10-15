@@ -193,6 +193,12 @@ bool authoredScenario(const Package& package) {
     return authoredScenario(view,package.mapPath);
 }
 
+sim::ScenarioInfo scenarioInfo(const Package& package, const sim::TypeRegistry* reg) {
+    if (!package.files) return {};
+    hpi::Vfs view; view.setMapFiles(package.files);
+    return sim::inspectScenario(view, package.mapPath, reg);
+}
+
 std::shared_ptr<Package> build(const hpi::Vfs& vfs, const std::string& mapId) {
     std::string path = hpi::findMap(vfs, mapId);
     if (path.empty() || mapgen::isGeneratedMapId(path)) throw std::runtime_error("map not installed: " + mapId);

@@ -2,6 +2,7 @@
 
 #include "hpi/hpi.h"
 #include "net/conn.h"
+#include "sim/scenarioinfo.h"
 #include "net/crypto.h"
 #include <memory>
 #include "util/stoptoken.h"
@@ -25,6 +26,9 @@ std::shared_ptr<Package> importSnapshot(const hpi::Vfs& base, const std::filesys
 // Network callers pass the verified package, never the host's map-name claim.
 bool authoredScenario(const Package& package);
 bool authoredScenario(const hpi::Vfs& vfs, const std::string& mapPath);
+// MAP SCENARIO (259): the verified package's own scenario facts (sim::inspectScenario
+// over the package's files) -- what the server checks at START and the room describes.
+sim::ScenarioInfo scenarioInfo(const Package& package, const sim::TypeRegistry* reg = nullptr);
 bool validDigest(const std::string& digest);
 Writer offer(uint32_t room, const std::string& mapId, const Package& package);
 struct Receiver {

@@ -68,7 +68,7 @@ def verify_replay(root, identity, digest, fingerprint):
     replay = auth.Reader(files[0].read_bytes())
     assert replay.data[:4] == b'TAKR'
     replay.pos = 4
-    assert replay.num('<I') == 12  # format 12: every checkpoint also carries the position digest
+    assert replay.num('<I') == 13  # format 13: records MAP SCENARIO; checkpoints carry the position digest (12)
     assert replay.num('<I') == auth.VERSION
     replay.field()  # map
     assert replay.num('<B') == 1  # Crusades Balance
@@ -80,6 +80,7 @@ def verify_replay(root, identity, digest, fingerprint):
     assert replay.num('<B') == 0  # campaign pathfinding is always Retail
     slot_count = replay.num('<B')
     replay.pos += 5 * slot_count
+    assert replay.num('<B') == 0  # format 13: a campaign battle never plays a map scenario
     count = replay.num('<I')
     assert count == final_tick
     for tick in range(count):

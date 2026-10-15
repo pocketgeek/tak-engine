@@ -4,6 +4,7 @@
 #include "client/postrail.h"
 #include "legion_scn.h"
 #include "net/crypto.h"
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -14,11 +15,13 @@ namespace {
 int checks=0;
 void check(bool ok,const char* message){++checks;if(!ok)throw std::runtime_error(message);}
 Writer recording(uint32_t protocol=kNetVersion,const Command& command=Command{},uint8_t event=0,bool innerTrailing=false,
-                 tak::sim::PathfindingMode mode=tak::sim::PathfindingMode::Retail,const char* mission=""){
+                 tak::sim::PathfindingMode mode=tak::sim::PathfindingMode::Retail,const char* mission="",uint32_t format=kReplayFormat){
  Writer file;ReplayHeader header;header.mapId="Synthetic map";header.unitCap=2000;
  header.pathfindingMode=mode;header.mission=mission;
  header.slotType[0]=header.slotType[1]=1;header.slotFaction[1]=1;header.slotTeam[1]=1;
  writeReplayHeader(file,header);for(int i=0;i<4;++i)file.b[8+i]=uint8_t(protocol>>(8*i));
+ // Formats before 13 end the header at the slot table (no MAP SCENARIO byte).
+ if(format<13 || protocol==219){file.b.pop_back();file.b[4]=uint8_t(std::min<uint32_t>(format,12));}
  if(protocol==219){file.b.erase(file.b.end()-kMaxSlots*5-2);file.b[4]=10;}
  Writer bundle;bundle.u32(0);bundle.u32(1);bundle.cmd(command);bundle.u32(event?1:0);
  if(event){bundle.u8(event);bundle.u8(0);}if(innerTrailing)bundle.u8(99);
@@ -64,12 +67,15 @@ void run(){
  check(!load(recording(kNetVersion,Command{},255)),"unknown event accepted");
  check(load(recording(kNetVersion,Command{},uint8_t(Event::Kind::CampaignForfeit))),"real campaign forfeit event refused");
  // Format 12: the checkpoint carries posDigest. A format-11 file (12-byte records) still loads, digest absent.
- check(load(recording(),&decoded)&&decoded.formatVersion==12&&decoded.checks.size()==1&&decoded.checks[0].hash==1234&&
+ // Format 13 adds the room's MAP SCENARIO byte; a format-12 file reads it as off.
+ check(load(recording(),&decoded)&&decoded.formatVersion==13&&decoded.checks.size()==1&&decoded.checks[0].hash==1234&&
        decoded.checks[0].posDigest==5678,"format 12 checkpoint lost its position digest");
- {auto old=recording();old.b[4]=11;old.b.resize(old.b.size()-8);
+ check(load(recording(kNetVersion,Command{},0,false,tak::sim::PathfindingMode::Retail,"",12),&decoded)&&decoded.formatVersion==12&&
+       !decoded.cfg.mapScenario&&decoded.checks.size()==1&&decoded.checks[0].posDigest==5678,"format 12 recording refused or misread");
+ {auto old=recording(kNetVersion,Command{},0,false,tak::sim::PathfindingMode::Retail,"",11);old.b.resize(old.b.size()-8);
   check(load(old,&decoded)&&decoded.formatVersion==11&&decoded.checks.size()==1&&decoded.checks[0].hash==1234&&
         decoded.checks[0].posDigest==0,"format 11 recording refused or misread");
-  auto stale=recording();stale.b[4]=11;
+  auto stale=recording(kNetVersion,Command{},0,false,tak::sim::PathfindingMode::Retail,"",11);
   check(!load(stale),"format 11 file with format 12 records accepted");}
  // The tracker separates a hash-layout change from changed play.
  {using C=ReplayCheck;

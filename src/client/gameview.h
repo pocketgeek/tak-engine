@@ -41,6 +41,7 @@
 #include "ai/ai.h"          // Difficulty <-> aiLevel + incomeMultFor (header-only helpers)
 #include "sim/matchsetup.h"
 #include "sim/scenario.h"
+#include "sim/scenarioinfo.h"
 #include "sim/sim.h"
 #include "tdf/tdf.h"
 #include "tdo/tdo.h"
@@ -227,7 +228,12 @@ public:
     bool readResume(uint32_t& gid, uint64_t& tok) const;
     // The map's player capacity = its start-position count (2..8). The server has
     // no map data, so a creating client tells it how many slots the map supports.
+    // A room that plays its map's scenario (MAP SCENARIO on, or a Test Map copy) also
+    // opens every seat the scenario needs.
     uint8_t mpCapacity() const;
+    // MAP SCENARIO facts of an installed map (sim::inspectScenario with this client's
+    // registry). A MapCache entry's companions live in its archive, not the plain VFS.
+    tak::sim::ScenarioInfo mapScenarioInfo(const std::string& path) const;
 
     void input(const SDL_Event& e, int winW, int winH);
 
@@ -1581,12 +1587,20 @@ private:
     bool createRandomStarts_ = false;   // create dialog: Random Start Locations (default OFF = fixed)
     bool createMonarchExp_ = false;   // create dialog: Monarch Expendable (default OFF = monarch matters)
     bool createAllowSpectators_ = true;   // create dialog (MP): ALLOW SPECTATORS (default ON, as before the option)
+    // Create dialog: MAP SCENARIO (protocol 259). Per map and never saved: it starts OFF
+    // and goes back OFF whenever the selected map changes (syncCreateScenario).
+    bool createMapScenario_ = false;
+    std::string createScenarioFor_;           // mapPath_ the two fields here belong to
+    tak::sim::ScenarioInfo createScenario_;   // the selected map's scenario facts (with registry check)
+    void syncCreateScenario();
+    bool createScenarioOn() const;            // the create choice plays the map's scenario
     // One selectable map plus the attributes the picker can sort by, read once from
     // the map's .ota GlobalHeader (a tiny text file -- no need to decompress the TNT).
     struct MapInfo {
         std::string name, path;
         int players = 0;            // numplayers (else the StartPos count)
         int sizeW = 0, sizeH = 0;   // "size = W x H" (0 if the .ota omits it)
+        tak::sim::ScenarioInfo scenario;   // read only when the .ota declares one (or is a Test Map copy)
         int area() const { return sizeW * sizeH; }
     };
     std::vector<MapInfo> mapList_;      // cached, sorted per mapSort_
@@ -2709,18 +2723,21 @@ private:
 
     void drawRoom(int winW, int winH);
 
-    std::weak_ptr<const tak::net::maps::Package> authoredLobbyPackage_;
-    bool authoredLobby_ = false;
-    static bool startValid(const tak::net::RoomView& room, bool authoredScenario = false) {
+    // The room's map scenario facts, read once per verified package (MAP SCENARIO, 259).
+    std::weak_ptr<const tak::net::maps::Package> scenarioLobbyPackage_;
+    tak::sim::ScenarioInfo scenarioLobby_;
+    // `solo`: the room plays its map's scenario, which may be a one-player objective.
+    // `needSeats`: the seats that scenario needs, each of which must be played.
+    static bool startValid(const tak::net::RoomView& room, bool solo = false, uint8_t needSeats = 0) {
         int used = 0; bool color[10] = {};
         for (int i = 0; i < tak::net::kMaxSlots; ++i) {
             const auto& s = room.slots[i];
-            if (s.type != 1 && s.type != 2) continue;
+            if (s.type != 1 && s.type != 2) { if (needSeats >> i & 1) return false; continue; }
             ++used;
             if (s.type == 1 && !s.ready) return false;
             if (s.color < 10) { if (color[s.color]) return false; color[s.color] = true; }
         }
-        return used >= (authoredScenario ? 1 : 2);
+        return used >= (solo ? 1 : 2);
     }
     const tak::net::RoomView& mpRoom() const { return mp_->room(); }
 

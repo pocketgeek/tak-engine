@@ -2030,14 +2030,17 @@ int main(int argc, char** argv) {
                     // TAK_SHOT_CLICKS="x,y;x,y" taps those points, one per armed pass,
                     // before the capture -- enough to walk a menu into the state worth
                     // photographing (the lobby's map picker needs two clicks). An "S"
-                    // prefix ("S120,700") holds Shift for that click.
+                    // prefix ("S120,700") holds Shift for that click. A "W<ms>" entry
+                    // waits that long before the next one (a room to fill, a map to verify).
                     static size_t clickIdx = 0;
                     static bool clickShift = false;
+                    static uint64_t clickWaitUntil = 0;
                     if (clickShift) { SDL_SetModState(KMOD_NONE); clickShift = false; }
                     bool clickSent = false;
                     if (const char* cl = tak::devEnv("TAK_SHOT_CLICKS")) {
                         std::vector<std::pair<int, int>> pts;
                         std::vector<bool> shifted;
+                        std::vector<int> waits;   // > 0: a "W<ms>" pause, not a click
                         std::string acc(cl);
                         size_t p0 = 0;
                         while (p0 <= acc.size()) {
@@ -2046,14 +2049,22 @@ int main(int argc, char** argv) {
                             const bool sh = !one.empty() && (one[0] == 'S' || one[0] == 's');
                             if (sh) one.erase(0, 1);
                             size_t c = one.find(',');
-                            if (c != std::string::npos) {
+                            if (!one.empty() && (one[0] == 'W' || one[0] == 'w')) {
+                                pts.push_back({0, 0}); shifted.push_back(false);
+                                waits.push_back(std::max(1, std::atoi(one.c_str() + 1)));
+                            } else if (c != std::string::npos) {
                                 pts.push_back({std::atoi(one.c_str()), std::atoi(one.c_str() + c + 1)});
-                                shifted.push_back(sh);
+                                shifted.push_back(sh); waits.push_back(0);
                             }
                             if (e == std::string::npos) break;
                             p0 = e + 1;
                         }
-                        if (clickIdx < pts.size()) {
+                        if (clickIdx < pts.size() && waits[clickIdx] > 0) {
+                            if (!clickWaitUntil) clickWaitUntil = SDL_GetTicks64() + uint64_t(waits[clickIdx]);
+                            if (SDL_GetTicks64() >= clickWaitUntil) { ++clickIdx; clickWaitUntil = 0; }
+                            clickSent = true;
+                            shotArmed = false;   // keep waiting, or take the next entry next pass
+                        } else if (clickIdx < pts.size()) {
                             if (shifted[clickIdx]) { SDL_SetModState(KMOD_LSHIFT); clickShift = true; }
                             SDL_Event ev{};
                             ev.type = SDL_MOUSEMOTION;

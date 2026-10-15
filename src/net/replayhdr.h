@@ -33,14 +33,16 @@
 namespace tak::net {
 
 // Bump when the layout changes, and handle the older values in readReplayHeader.
-inline constexpr uint32_t kReplayFormat = 12;   // 12: checkpoints carry posDigest; 11: independent pathfinding mode
+inline constexpr uint32_t kReplayFormat = 13;   // 13: records the room's MAP SCENARIO option; 12: checkpoints carry posDigest; 11: independent pathfinding mode
 
 // Simulation changes require the matching engine; do not emulate older rules.
 inline bool supportedReplayProtocol(uint32_t format, uint32_t protocol) {
     if (format < 1 || format > kReplayFormat) return false;
-    // 258 changed only the lobby wire (ALLOW SPECTATORS); 257's simulation is 258's,
-    // so a 0.8.2 recording still plays exactly.
-    return protocol == kNetVersion || (kNetVersion == 258 && protocol == 257);
+    // 258 changed only the lobby wire (ALLOW SPECTATORS) and 259 added MAP SCENARIO, which
+    // is off in every older recording (a Test Map copy still opts in through its cached
+    // map's [TAKPlaytest] section): with it off 259 simulates as 257/258 did, so 0.8.2's
+    // recordings and main's protocol-258 recordings still play exactly.
+    return protocol == kNetVersion || (kNetVersion == 259 && (protocol == 257 || protocol == 258));
 }
 
 struct ReplayHeader {
@@ -62,6 +64,7 @@ struct ReplayHeader {
     uint8_t slotColor[kMaxSlots] = {};
     uint8_t slotTeam[kMaxSlots] = {};
     uint8_t slotAiLevel[kMaxSlots] = {};
+    uint8_t mapScenario = 0;      // format 13: the room's MAP SCENARIO option (0 in older files)
 };
 
 // One recorded (tick, hash) pair from the ORIGINAL game.
@@ -109,6 +112,7 @@ inline void writeReplayHeader(Writer& w, const ReplayHeader& h) {
         w.u8(h.slotTeam[i]);
         w.u8(h.slotAiLevel[i]);   // format 6: was missing, so Absurd AI lost its income
     }
+    w.u8(h.mapScenario);   // format 13
 }
 
 // Reads the header. `fmt` and `proto` come back so the caller can refuse a file it
@@ -150,6 +154,7 @@ inline bool readReplayHeader(Reader& r, ReplayHeader& h, uint32_t& fmt, uint32_t
         h.slotTeam[i] = r.u8();
         if (fmt >= 6) h.slotAiLevel[i] = r.u8();
     }
+    h.mapScenario = fmt >= 13 ? r.u8() : 0;
     return r.ok;
 }
 

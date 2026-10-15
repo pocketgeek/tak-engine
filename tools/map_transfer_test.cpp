@@ -5,6 +5,7 @@
 #include "tnt/tnt.h"
 #include "tnt/ota.h"
 #include "sim/scenario.h"
+#include "sim/scenarioinfo.h"
 #include "crt/crt.h"
 #include <chrono>
 #include <cstring>
@@ -154,9 +155,9 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
 }
 
 int main(int argc, char** argv) try {
-    if(argc==4 && std::string(argv[1])=="--export-package") {
+    if((argc==4 || argc==5) && std::string(argv[1])=="--export-package") {
         auto data=hpi::mountRetailRoot(argv[2],hpi::OverridePolicy::None);
-        write(argv[3],net::maps::build(data,"Ulasem Arena")->bytes);return 0;
+        write(argv[3],net::maps::build(data,argc==5 ? argv[4] : "Ulasem Arena")->bytes);return 0;
     }
     if(argc==5 && std::string(argv[1])=="--solo-network")return soloNetwork(uint16_t(std::stoi(argv[2])),argv[3],argv[4]);
     if (argc >= 5 && std::string(argv[1]) == "--network") {
@@ -394,6 +395,9 @@ int main(int argc, char** argv) try {
     }
 
     check(!net::maps::authoredScenario(*p),"ordinary CRT map became a solo scenario");
+    // MAP SCENARIO (259): rules the .ota does not declare are leftovers, never offered.
+    check(net::maps::scenarioInfo(*p).status==sim::ScenarioStatus::Leftover && !net::maps::scenarioInfo(*p).runnable(),
+          "undeclared CRT data became a playable map scenario");
     {
         auto authoredFiles=std::make_shared<hpi::Vfs::Files>(*p->files);
         auto authored=*p;authored.files=authoredFiles;
@@ -403,10 +407,22 @@ int main(int argc, char** argv) try {
         };
         setMetadata(metadata.write());
         check(!net::maps::authoredScenario(authored),"hasScenario alone enabled solo skirmish");
+        // ... but it is what MAP SCENARIO offers: the Test Map opt-in keeps its own meaning.
+        check(net::maps::scenarioInfo(authored).offerable(),"a declared package scenario is not offered");
         setMetadata(metadata.write()+"\n[TAKPlaytest]{\nauthoredscenario=1;\n}\n");
         check(net::maps::authoredScenario(authored),"explicit valid authored scenario cannot start solo");
         hpi::Vfs view;view.setMapFiles(authoredFiles);
         check(net::maps::authoredScenario(view,"kmap/test.tnt"),"local and packaged scenario detection differ");
+        {
+            const auto packaged=net::maps::scenarioInfo(authored);
+            const auto local=sim::inspectScenario(view,"kmap/test.tnt");
+            check(packaged.status==local.status && packaged.requiredSeats()==local.requiredSeats() &&
+                  packaged.outcomes==local.outcomes && packaged.useOnlyTypes==local.useOnlyTypes,
+                  "local and packaged scenario facts differ");
+            check(packaged.status==sim::ScenarioStatus::Ok && packaged.marker && !packaged.offerable() &&
+                  packaged.active(false) && packaged.requiredSeats()==0b1 && !packaged.outcomes,
+                  "packaged Test Map scenario facts");
+        }
         const auto crt=authoredFiles->at("kmap/test.crt");
         authoredFiles->erase("kmap/test.crt");
         check(!net::maps::authoredScenario(authored),"missing CRT enabled solo exception");
@@ -508,6 +524,29 @@ int main(int argc, char** argv) try {
     check(net::maps::build(legacy,"test")->files->size()==2,"map without companions rejected");
     if (argc == 2) {
         auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
+        {
+            // MAP SCENARIO (259) on the shipped maps, read from the very packages a room
+            // verifies: what the create screens offer and the seats the room requires.
+            using S=sim::ScenarioStatus;
+            sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,false);
+            auto info=[&](const char* name){return net::maps::scenarioInfo(*net::maps::build(vfs,name),&registry);};
+            const auto koth=info("King of the Hill");
+            check(koth.status==S::Ok && koth.requiredSeats()==0x0F && koth.useOnlyTypes==6 && koth.outcomes,
+                  "King of the Hill: offered, seats 1-4, six Use Only types, victory rules");
+            const auto strength=info("Increasing Strength");
+            check(strength.status==S::Ok && strength.placed==0 && strength.requiredSeats()==0x0F,
+                  "Increasing Strength: offered, rules only, seats 1-4");
+            const auto savannah=info("Savannah Hunt");
+            check(savannah.status==S::Ok && savannah.requiredSeats()==0xFF,"Savannah Hunt: offered, all eight seats");
+            check(info("Iapur Narrows").status==S::Leftover,"Iapur Narrows: retail's unused rules are a leftover");
+            check(info("Angvir's Maze").status==S::Leftover,"Angvir's Maze: retail's unused rules are a leftover");
+            check(info("Crab Cove").status==S::Empty,"Crab Cove: an empty scenario");
+            check(info("Inner Circle").status==S::NoScenario,"Inner Circle: no scenario");
+            for (const char* name:{"Cairbray Coast Landing","Frey River Plain","Ground War","Increasing Strength",
+                                   "King of the Hill","Riparian Conflict","Savannah Hunt","Temple of Blood",
+                                   "threesacharm","Ulin's Folly","Varro Passage"})
+                check(info(name).offerable(),(std::string(name)+": shipped scenario not offered").c_str());
+        }
         mapgen::Params params; params.waterDensity=0; params.name="My Lake";
         auto recipe=mapgen::encodeMapId(params);
         auto output=net::maps::saveGenerated(root,vfs,recipe);

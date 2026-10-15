@@ -43,6 +43,11 @@ struct MatchConfig {
     // No `gods` flag: retail decides with a 10% roll off Gods.tdf, not an option
     // (see the port of 0x519420 in setupMatch). startSeed drives the draw.
     bool loadCrt = true;             // opt-in Test Map placements/rules; campaign OTA setup opts out
+    // The room's MAP SCENARIO option (GameOptions::mapScenario): run the map's own .crt
+    // placements/rules and Use Only list when its .ota declares hasscenario. A Test Map
+    // copy's [TAKPlaytest] opt-in runs them regardless (unchanged). Off by default, so
+    // fixtures and every pre-259 game keep plain skirmish setup.
+    bool mapScenario = false;
     ScenarioScript::TraceSink scenarioTrace; // local diagnostics only, installed before initial rules
     int scenarioViewPlayer = -1;     // cosmetic message filtering only; never hashed
     float startMana = 2800;

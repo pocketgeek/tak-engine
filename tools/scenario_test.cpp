@@ -4,6 +4,7 @@
 #include "tnt/ota.h"
 #include "hpi/hpi.h"
 #include "util/scenariotrace.h"
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -137,6 +138,43 @@ int main() try {
             check(!ordinary.scenario() && ordinary.units().size()==2 && ordinary.units()[0].type==registry.find("araking"),
                   "ordinary retail CRT map changed its skirmish setup");
         }
+        auto hasMonarch=[&](const sim::World& w) {
+            return std::any_of(w.units().begin(),w.units().end(),[&](const sim::Unit& u) {
+                return u.type==registry.find("araking") || u.type==registry.find("tarnecro"); });
+        };
+        {
+            // MAP SCENARIO (protocol 259) plays the declared scenario of an UNMARKED map:
+            // the room's option, not a Test Map copy's opt-in, turns it on.
+            auto on=config;on.mapScenario=true;
+            sim::World client,server;sim::setupMatch(client,registry,on);
+            on.scenarioViewPlayer=-1;sim::setupMatch(server,registry,on);
+            check(client.scenario() && client.units().size()==2 && client.units()[0].type==soldier &&
+                  client.units()[1].type==builder && !hasMonarch(client),
+                  "MAP SCENARIO did not run the declared scenario of an unmarked map");
+            for(int tick=0;tick<60;++tick) {
+                client.tick(1.f/30);server.tick(1.f/30);
+                check(client.stateHash()==server.stateHash(),"MAP SCENARIO setup diverged between peers");
+            }
+            // Stress tests and benchmarks are their own setups: never a map scenario.
+            for(int mode=0;mode<2;++mode) {
+                auto load=config;load.mapScenario=true;load.stressTest=mode==0;load.benchmark=mode;
+                sim::World w;sim::setupMatch(w,registry,load);
+                check(!w.scenario() && hasMonarch(w),"a stress or benchmark room ran the map scenario");
+            }
+        }
+        {
+            // Data the .ota does not declare (hasscenario=0) is a leftover retail never ran:
+            // the option leaves it alone -- Monarchs, no runner, no Use Only list.
+            tnt::Scenario undeclared;undeclared.useOnlyUnits="authored.tdf";
+            const auto text=undeclared.write();(*files)["kmap/authored.ota"]={text.begin(),text.end()};
+            const std::string list="[SOLDIER]{}\n";(*files)["kmap/authored.tdf"]={list.begin(),list.end()};
+            auto on=config;on.mapScenario=true;
+            sim::World w;sim::setupMatch(w,registry,on);
+            check(!w.scenario() && w.units().size()==2 && hasMonarch(w) && w.buildAllowed(builder),
+                  "MAP SCENARIO ran a scenario the map does not declare");
+            files->erase("kmap/authored.tdf");
+            (*files)["kmap/authored.ota"]={ota.begin(),ota.end()};
+        }
         const std::string optIn=ota+"\n[TAKPlaytest]{\nauthoredscenario=1;\n}\n";
         (*files)["kmap/authored.ota"]={optIn.begin(),optIn.end()};
         sim::World client,server;
@@ -155,6 +193,16 @@ int main() try {
             sim::World w;sim::setupMatch(w,registry,config);
             check(w.scenario() && w.units().size()==2 && w.units()[0].type==registry.find("araking"),
                   "rules-only map lost its default monarchs");
+        }
+        {
+            // An empty rule group does nothing, so its bank needs no seat (it used to
+            // demand one: "Seat player 8" on a two-seat game).
+            auto emptyBank=scene;emptyBank.players[8].push_back({});
+            (*files)["kmap/authored.crt"]=crt::write(emptyBank);
+            sim::World w;std::string refused;
+            try {sim::setupMatch(w,registry,config);}catch(const std::exception& e) {refused=e.what();}
+            check(refused.empty() && w.scenario() && w.units().size()==2,
+                  ("an empty rule bank demanded a seat: "+refused).c_str());
         }
         auto refuses=[&](const crt::Scenario& invalid,const char* message) {
             (*files)["kmap/authored.crt"]=crt::write(invalid);sim::World w;bool rejected=false;

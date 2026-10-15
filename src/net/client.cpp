@@ -102,7 +102,7 @@ bool MpClient::poll() {
     mapSend_.pump(conn_);
     if (startRequested_ && !overridePendingAt_ && state_ == State::InRoom && room_.mapsReady &&
         (room_.opts.overridePolicy!=2 || (overridePackage_ && overrideReadyRoom_==room_.id))) {
-        send(Msg::StartGame); startRequested_ = false;
+        send(Msg::StartGame); startRequested_ = false; startSent_ = true;
     }
     pumpDerive();          // the login's PBKDF2 finished on its worker: send the proof
     uint64_t now = nowMs();
@@ -840,6 +840,7 @@ void MpClient::onFrame(const Frame& f) {
             readSlots(r, incoming);
             if (!r.ok) break;
             room_ = std::move(incoming);
+            startSent_ = false;   // the START was answered: the game is starting
             gameSpeed_ = room_.opts.speed;
             if (room_.mission.empty() && mapgen::isGeneratedMapId(room_.mapId)) {
                 try {
@@ -985,7 +986,7 @@ void MpClient::chat(const std::string& text, uint8_t recipients) {
     Writer w; w.str(text); w.u8(recipients); send(Msg::Chat, w);
 }
 
-void MpClient::startGame() { startRequested_ = true; }
+void MpClient::startGame() { startRequested_ = true; startError_.clear(); }
 
 // ---- game play ------------------------------------------------------------
 
@@ -1087,7 +1088,12 @@ void MpClient::mapFrame(const Frame& f) {
             } else mapStatus_ = "DOWNLOADING MAP " + std::to_string(100 * mapReceive_.bytes.size() / mapReceive_.size) + "%";
         } else if (f.kind == Msg::MapError) {
             auto id = r.u32(); auto why = r.str();
-            if (r.ok && id == room_.id) { mapStatus_ = "MAP ERROR: " + why; err_ = mapStatus_; }
+            if (r.ok && id == room_.id) {
+                mapStatus_ = "MAP ERROR: " + why; err_ = mapStatus_;
+                // The answer to our START: the room shows it (its map status line is hidden
+                // once every map is verified, which is exactly when a START is answered).
+                if (startSent_) { startError_ = why; startSent_ = false; }
+            }
         }
     } catch (const std::exception& e) {
         mapStatus_ = std::string("MAP ERROR: ") + e.what(); mapReadyRoom_ = 0;
@@ -1104,6 +1110,7 @@ void MpClient::resetOverrideTransfer() {
 void MpClient::resetMapTransfer() {
     mapPackage_.reset(); mapReceive_ = {}; mapSend_ = {};
     mapReadyRoom_ = mapOfferedRoom_ = 0; startRequested_ = false; pendingMapStart_.reset(); mapStatus_.clear();
+    startSent_ = false; startError_.clear();
 }
 void MpClient::setHostOverridePacks(std::vector<std::string> names) {
     std::sort(names.begin(),names.end());if(names==hostOverridePacks_)return;

@@ -630,6 +630,9 @@ private:
     void dropPendingCommands(Client& c, Room& r);   // both disconnect paths
     void leaveRoom(Client& c, const char* reason);
     void tryStart(Client& c);
+    // A START the server will not run: the host is told why (Msg::MapError, which the
+    // room shows under its buttons) and the log says so.
+    void refuseStart(Client& c, const Room& r, const std::string& why);
     void overrideMsg(Client& c,const Frame& f);
     DataSet& roomData(Room& r) {return r.overrideData ? *r.overrideData : retail_;}
     void closeTick(Room& r, bool multipleGames);
@@ -1588,6 +1591,7 @@ bool Server::createCampaignBattle(Client& c,const std::string& campaign,uint32_t
         room.mapVfs->setMapFiles(room.mapPackage->files);room.cap=2;room.createdMs=nowMs();
         room.seed=fixedSeedSet_?fixedSeed_:uint32_t(randToken());room.opts.crusades=1;room.opts.overridePolicy=0;
         room.opts.fogExplored=0;room.opts.forfeitSelfDestruct=1;room.opts.allowSpectators=0; // never watched (Spectate refuses)
+        room.opts.mapScenario=0; // a campaign battle is a plain skirmish (outside the rules digest)
         room.campaignId=campaign;room.campaignTerritory=territory;room.campaignAccounts[0]=caller;room.campaignAccounts[1]=opponent;
         room.campaignRoomToken=campaignSession_+":"+std::to_string(room.id);
         room.campaignExpires=campaignNow()+600;
@@ -1768,6 +1772,11 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             o.doubleSight = o.doubleSight ? 1 : 0;
             o.allowSpectators = o.allowSpectators ? 1 : 0;
             if (!mission.empty()) { o.pathfindingMode = tak::sim::PathfindingMode::Retail; o.doubleSight = 0; }
+            // MAP SCENARIO: only an ordinary file-map room can play a map's scenario. The map
+            // itself is checked at START -- its package has not arrived yet.
+            o.mapScenario = (o.mapScenario && mission.empty() && !tak::mapgen::isGeneratedMapId(mapId) &&
+                             !o.stressTest && !o.benchmark) ? 1 : 0;
+            if (o.mapScenario) o.randomStarts = 0;   // ownership and rule regions follow fixed seats
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
             uint8_t priv = r.u8();       // private (single-player): hidden from the list
@@ -2216,6 +2225,12 @@ void Server::mapMsg(Client& c, const Frame& f) {
     }
 }
 
+void Server::refuseStart(Client& c, const Room& r, const std::string& why) {
+    Writer w; w.u32(r.id); w.str(why);
+    c.conn.send(Msg::MapError, w);
+    std::fprintf(stderr, "game %u: start refused -- %s\n", r.id, why.c_str());
+}
+
 void Server::tryStart(Client& c) {
     Room* r = roomOf(c);
     if (!r || r->hostId != c.id || r->running) return;
@@ -2232,12 +2247,18 @@ void Server::tryStart(Client& c) {
         c.conn.send(Msg::MapError, w); return;
     }
     // Validate: >=2 used slots, every human ready, unique colors among used slots.
-    // Authored playtests may be solo objectives. The exception requires the verified
-    // package's explicit scenario marker and valid CRT, not a host-supplied claim.
-    // Campaign missions retain their separate minimum-player exemption.
-    const bool authored=!r->opts.stressTest && !r->opts.benchmark && r->mapPackage &&
-        tak::net::maps::authoredScenario(*r->mapPackage);
-    if (r->mission.empty() && r->usedSlots() < (authored ? 1 : 2)) return;
+    // A game that plays its map's scenario (MAP SCENARIO, or a Test Map copy's opt-in)
+    // may be a solo objective. Both are checked against the VERIFIED package, never the
+    // host's claim (scenarioInfo reads the package's own .ota/.crt). Campaign missions
+    // retain their separate minimum-player exemption.
+    const auto scenario = r->mapPackage ? tak::net::maps::scenarioInfo(*r->mapPackage) : tak::sim::ScenarioInfo{};
+    if (r->opts.mapScenario && !(scenario.runnable() && scenario.content())) {
+        refuseStart(c, *r, "this map has no scenario to play -- create the game with MAP SCENARIO off");
+        return;
+    }
+    const bool scenarioOn = r->mission.empty() && !r->opts.stressTest && !r->opts.benchmark &&
+                            r->mapPackage && scenario.active(r->opts.mapScenario != 0);
+    if (r->mission.empty() && r->usedSlots() < (scenarioOn ? 1 : 2)) return;
     bool usedColor[10] = {};
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = r->slots[i];
@@ -2245,6 +2266,14 @@ void Server::tryStart(Client& c) {
         if (s.type == 1 && !s.ready) return;             // a human isn't ready
         if (s.color < 10) { if (usedColor[s.color]) return; usedColor[s.color] = true; }
     }
+    // Every seat the scenario's placements and rules belong to must be played (the room
+    // tags them and holds START; setupMatch stays the final backstop, same message).
+    if (scenarioOn)
+        for (int i = 0; i < kMaxSlots; ++i)
+            if ((scenario.requiredSeats() >> i & 1) && r->slots[i].type != 1 && r->slots[i].type != 2) {
+                refuseStart(c, *r, "Seat player " + std::to_string(i + 1) + " in the lobby to play this scenario");
+                return;
+            }
     // The referee is MANDATORY, so resolve what it needs before committing to run.
     // Failing here used to leave r->ref null and the game carried on as a relay --
     // silently giving up the canonical hash and, for a mission, the strategic AI.
@@ -2357,8 +2386,7 @@ void Server::tryStart(Client& c) {
             try { spots = tak::sim::setupMatch(*r->ref, *r->reg, cfg); }
             catch (const std::exception& e) {
                 r->ref.reset(); r->running = false; r->ai.clear();
-                Writer error; error.u32(r->id); error.str(e.what());
-                c.conn.send(Msg::MapError, error);
+                refuseStart(c, *r, e.what());
                 return;
             }
             // setupMatch returns start positions in USED-slot order; remap to slot index.
@@ -2383,6 +2411,9 @@ void Server::tryStart(Client& c) {
                     r->ai.emplace_back(i, *r->reg, aiProfile_, r->seed,
                                        diff, std::move(enemyStarts));
                 }
+            if (r->ref->hasScenarioOutcomes())
+                std::fprintf(stderr, "game %u: plays its map scenario (%s) -- %zu units at the start\n", r->id,
+                             r->opts.mapScenario ? "MAP SCENARIO" : "Test Map copy", r->ref->units().size());
         }
     }
     if(!r->campaignBattleId.empty()) {
@@ -2513,6 +2544,10 @@ void Server::gameMsg(Client& c, const Frame& f) {
             o.allowSpectators = o.allowSpectators ? 1 : 0;
             // Creation-only: lobby updates cannot change the selected pathfinder.
             o.pathfindingMode = r->opts.pathfindingMode;
+            // MAP SCENARIO is creation-only too: players chose seats, sides and READY for the
+            // game it makes, and the room's open seats were sized for it at CreateGame.
+            o.mapScenario = r->opts.mapScenario;
+            if (o.mapScenario) o.randomStarts = 0;
             if (!r->mission.empty()) o.doubleSight = 0;
             if (!rd.ok || rd.p!=rd.end) return;
             if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark)) {sendReject(c,"public benchmark/stress requests disabled");return;}
