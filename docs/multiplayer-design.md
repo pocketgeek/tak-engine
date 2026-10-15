@@ -634,8 +634,8 @@ admitted watcher is never stranded. The only lobby spectator is a host who
 created the room to watch it. The rule governs who else may watch, so that host
 is never removed. Crusades battle rooms carry 0. The Crusades rules digest still
 hashes 257's option bytes (`putRules`), so battles issued before the upgrade
-still verify. Because the simulation is unchanged, protocol-257 replays still
-play (`supportedReplayProtocol`). The client keeps a refusal's reason for the
+still verify. Because the simulation was unchanged, protocol-257 replays played
+under 258 (`supportedReplayProtocol`; 261 ended that). The client keeps a refusal's reason for the
 browser (`MpClient::joinError`). It also clears the pending spectate on any
 refusal; before this, a refused watch turned the next ordinary join's start into
 a spectator start.
@@ -669,7 +669,7 @@ because the room shows its map status only while maps are being verified. The
 seats a scenario needs are its placement owners 0-7 and every Player N rule bank
 with a group that has a condition or an action; a bank holding only empty groups
 no longer demands a seat. That fix only lets a refused setup start, so with the
-option off the simulation is 258's and protocol-257 and 258 replays still play.
+option off the simulation is 258's and protocol-257 and 258 replays played under 259.
 The option is sim-affecting and is recorded in replay format 13. It is outside
 the Crusades rules digest (`putRules` keeps 257's bytes); Crusades battle rooms
 carry 0, and the Crusades replay archive refuses a recording that has it on. The
@@ -691,13 +691,14 @@ spot near the map centre (`sim::startSpotsFor`). Any other nonzero value still
 reads as RANDOM (`normalizeStartMode`), which is why 259 needed the bump: a 259
 peer would read 2 as RANDOM and desync. FIXED and RANDOM set up exactly as in
 259, and the replay header's `randomStarts` byte simply carries 2 as well, so
-the replay format is unchanged and protocol 257-259 recordings still play. A
+the replay format is unchanged and protocol 257-259 recordings played under 260. A
 MAP SCENARIO room is still forced to FIXED.
 
 Replay format 11 records the pathfinder. Playback requires a protocol that
-`supportedReplayProtocol` accepts: the current one, plus 257-259 while 260 is
-current (their simulation is unchanged). Older recordings require their
-original engine.
+`supportedReplayProtocol` accepts. While 258-260 were current that included
+257 onward (their simulation is the same); protocol 261 (retail healtime
+self-repair) changed the simulation, so playback again requires the current
+protocol. Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
 reading an older file). Saved

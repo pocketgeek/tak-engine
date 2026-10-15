@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 260;      // 260: START LOCATIONS: BY SLOT -- GameOptions.randomStarts gains 2 (net::kStartsBySlot: slot N
+constexpr uint32_t kNetVersion = 261;      // 261: healtime self-repair is retail's (icd 51e152): every 8th tick a finished, living unit
+                                           //      below full health repairs itself with healtime*8/30 of worker time through the shared repair routine,
+                                           //      maxdamage*healtime/buildtime HP/s, with a 1/256-HP remainder (hashed Unit::healCarry); was dt/healtime
+                                           //      HP a tick, and unfinished units no longer self-repair. The sim changed, so 257-260 replays no longer play
+                                           // 260: START LOCATIONS: BY SLOT -- GameOptions.randomStarts gains 2 (net::kStartsBySlot: slot N
                                            //      takes StartPos N whichever seats are empty; sim::startSpotsFor). Layout unchanged; a 259 peer
                                            //      would read 2 as RANDOM, hence the bump. FIXED/RANDOM setup is unchanged, so 257-259 replays
                                            //      still play (replay format unchanged: the header's randomStarts u8 just carries 2 too)
