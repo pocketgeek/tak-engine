@@ -46,3 +46,77 @@ all factions' stance defaults, naval feasibility, and Passive's no-attack rule.
 
 Local logs: `/tmp/tak-ai-expansion-logs-before`,
 `/tmp/tak-ai-expansion-logs-after`, and `/tmp/tak-ai-expansion-standard-after`.
+
+## Update 2026-10-14: reservations, and allies' home deposits
+
+The reservation of deposits that builders are already walking to never held
+for a real order. It compared `Order::x/z`, which for a MobileBuild order is
+the builder's approach point beside the site (32-70 px from a lodestone's
+deposit), against a 32 px match; the regression test above built its order by
+hand with the site in `x/z`. The planner now reserves `buildX/buildZ`, so a
+Hard or Absurd AI never sends a builder to a deposit that one of its own or an
+ally's builders is already bound for.
+
+With builders no longer piling onto one deposit, the faster factions moved on
+to the next free one, which on a team map is usually inside an ally's base.
+Retail's AI never builds there (its lodestone search, icd `0x411510`, takes the
+nearest free sacred site within its own base radius), but simply forbidding it
+left the deposits of an ally that does not expand -- a Normal or Defensive AI,
+or a human -- empty for the whole game. Hard and Absurd now leave a free deposit
+within 900 map units of a living ally's start, and nearer that start than their
+own, to that ally only while the ally is claiming it:
+
+- a builder is bound for it (never raced, whoever's it is), or
+- the ally has a builder that can reach it (finished, not carried or disabled,
+  with a lodestone in its menu), and the deposit has not sat unclaimed for two
+  minutes of game time (3,600 ticks).
+
+Unclaimed means no lodestone on the deposit and no builder bound for it,
+counted from the start of the game or from the end of its last claim, so a
+lodestone lost in a raid gives the ally the same two minutes to rebuild. A
+defeated ally, or one left with no builder that can reach the deposit (its
+Monarch lost under Monarch Expendable), holds nothing. Enemy deposits, and the
+Normal, Easy and Defensive AIs, are unchanged.
+
+Both 4v4 Absurd replays behind this were re-run through the server's AI
+controllers. With the old code the harness reproduces each recording command
+for command (same final hash). Counted at the end of each game: lodestones
+standing inside another ally's home area, and lodestone orders sent while
+another builder of the same AI, or of an ally, was already bound for that
+deposit:
+
+| Game | Recorded | Strict rule | This rule |
+| --- | ---: | ---: | ---: |
+| Ally-held home lodestones, newest game | 3 | 0 | 9 |
+| Ally-held home lodestones, earlier game | 9 | 0 | 23 |
+| Duplicate / ally-raced orders, newest game | 71 / 41 | 3 / 0 | 1 / 0 |
+| Duplicate / ally-raced orders, earlier game | 98 / 64 | 0 / 0 | 0 / 0 |
+
+The remaining duplicate in the newest game is a Defensive AI's, which keeps no
+reservations. Team income, `teamsim` on "4x4 team" (Crusades, 900 s), mean of
+each team's income over the window, averaged over seeds, against the code
+before these changes:
+
+| Teams (seeds) | Window | Strict rule | This rule |
+| --- | --- | ---: | ---: |
+| Absurd+Defensive vs Hard+Normal (6) | 300-600 s | -32% / -20% | -3% / +10% |
+| | 600-900 s | -29% / -31% | +6% / +2% |
+| Absurd+Normal vs Absurd+Normal (4) | 300-600 s | -34% / -21% | -1% / +8% |
+| | 600-900 s | -33% / -28% | -21% / +4% |
+| Absurd+Normal vs Defensive, no attacks (8) | 300-600 s | -32% | -1% |
+| | 600-900 s | -35% | -11% |
+| 8 Absurd, 4v4 (4) | 600-900 s | +6% / -2% | +12% / -5% |
+
+The cost of the two minutes falls on a slow AI ally. Zhon and Taros first
+expand past their opening lodestone four to five minutes in, so their unclaimed
+home deposits go to faster allies: with 8 Absurd AIs Zhon ends with 1-5
+lodestones (5-8 before, 9-10 under the strict rule), and in the earlier replay
+Taros ends with 2 (8 recorded) while Aramon and Zhon hold 8 of its home
+deposits. And a far ally's builder, once bound for a slow ally's deposit, holds
+it for its whole walk: in the no-attack runs the Aramon AI reserved Zhon's and
+its Normal neighbour's deposits from 6,000-11,500 map units away, Zhon's own
+builders went to the enemy's base instead, and team income fell 11% late in
+the game.
+
+No AI ever built on a deposit an ally's lodestone occupied; placement refuses
+that for every player. `--mpai` hashes are unchanged (its AI plays Normal).
