@@ -888,11 +888,9 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         const size_t landed = feed.apply(t);
         if (landed) { commands += int64_t(landed); lastCommand = t; }
         if (scale) {
-            // A click is delivered when its unit's LAST command issued this tick lands (the uplink is one FIFO:
-            // an earlier order or a squad press still draining lands before it).
-            for (const auto& od : s.orders)
-                if (od.tick == t && !od.queue && !od.append && od.verb != scn::Verb::Stop && od.verb != scn::Verb::Squad)
-                    for (int id : feed.selection(od)) scale->expect(id, feed.issued(id));
+            // A click is delivered when its own command lands (the uplink is one FIFO: an earlier order or a
+            // squad press still draining lands before it, a queued leg of the same tick after it).
+            for (const auto& [id, n] : feed.clicks()) scale->expect(id, n);
             for (const auto& c : feed.landed()) scale->landed(w, c.unitId, int(t));
         }
         if (opt.catchup) {

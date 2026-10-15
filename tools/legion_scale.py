@@ -19,7 +19,9 @@ compiler, build type) goes in DIR/machine.json. Wall time is never a gate: it is
 on the same machine (CLAUDE.md: timing on cores 0-3 via the user's timing tool when it matters).
 
 report: one table row per job (the acceptance keys).
-check: the frozen targets (targets.json) against a run; with --base, every deterministic key that moved
+check: the frozen targets (targets.json: per scenario/mode/key a min and/or max; key "hash" with "eq" for an
+exact state hash; "wall.FIELD" or "report_only" targets print but never fail) against a run; with --base,
+every deterministic key that moved
 against an older run is listed too. Exit 0 every target met, 1 a target missed or its scenario/mode not in
 the run, 2 tooling.
 """
@@ -235,30 +237,39 @@ def cmd_report(a):
 def cmd_check(a):
     rows = {(r["scenario"], r["mode"]): r for r in load(a.results)}
     targets = json.load(open(a.targets))
-    fails, met, missing = [], 0, []
+    fails, met, missing, reported = [], 0, [], []
     for t in targets["targets"]:
         r = rows.get((t["scenario"], t["mode"]))
         if r is None:
             missing.append(f'{t["scenario"]} {t["mode"]}')
             continue
         k = r.get("keys") or {}
-        v = k.get(t["key"])
-        if v is None:
-            fails.append(f'{t["scenario"]} {t["mode"]} {t["key"]}: missing')
-            continue
-        ok = True
-        if "max" in t:
-            ok &= v != -1 and v <= t["max"]
-        if "min" in t:
-            ok &= v >= t["min"]
+        if t["key"] == "hash":   # exact: the state hash at offset 0 (Retail must not move)
+            v = (r.get("hash") or {}).get("0")
+            ok = v == t["eq"]
+        elif t["key"].startswith("wall."):   # wall time: SCALE_WALL fields, always report-only
+            v = (r.get("wall") or {}).get(t["key"][5:])
+            ok = v is not None and ("max" not in t or v <= t["max"]) and ("min" not in t or v >= t["min"])
+        else:
+            v = k.get(t["key"])
+            ok = v is not None
+            if ok and "max" in t:
+                ok &= v != -1 and v <= t["max"]
+            if ok and "min" in t:
+                ok &= v >= t["min"]
+        bound = " ".join(f"{b}={t[b]}" for b in ("min", "max", "eq") if b in t)
+        line = f'{t["scenario"]} {t["mode"]} {t["key"]} = {v} (target {bound}; {t.get("why", "")})'
         if ok:
             met += 1
+        elif t.get("report_only") or t["key"].startswith("wall."):
+            reported.append(line)
         else:
-            bound = " ".join(f"{b}={t[b]}" for b in ("min", "max") if b in t)
-            fails.append(f'{t["scenario"]} {t["mode"]} {t["key"]} = {v} (target {bound}; {t.get("why", "")})')
-    print(f"targets met {met}, missed {len(fails)}, not run {len(missing)}")
+            fails.append(line)
+    print(f"targets met {met}, missed {len(fails)}, report-only missed {len(reported)}, not run {len(missing)}")
     for f in fails:
         print("  MISS", f)
+    for f in reported:
+        print("  MISS (report only)", f)
     for m in missing:
         print("  NOT RUN", m)
     if a.base:

@@ -1217,9 +1217,12 @@ public:
                 so.targetId = first;
             }
             const auto cmds = hudCommands(world, sel, so, world.unit(sel[0])->player);
+            const bool click = !o.queue && !o.append && o.verb != Verb::Stop && o.verb != Verb::Squad;
             for (const auto& c : cmds) {
                 if (c.unitId >= 0 && size_t(c.unitId) >= issued_.size()) issued_.resize(size_t(c.unitId) + 1, 0);
-                if (c.unitId >= 0) ++issued_[size_t(c.unitId)];
+                if (c.unitId < 0) continue;
+                ++issued_[size_t(c.unitId)];
+                if (click) clicks_.push_back({c.unitId, issued_[size_t(c.unitId)]});
             }
             link_.issue(cmds);
         }
@@ -1229,14 +1232,17 @@ public:
     // Apply tick `tick`'s commands; call before World::tick with tick == tickCount().
     size_t apply(uint32_t tick) {
         applyChurn(tick);
+        clicks_.clear();
         landed_ = commandsFor(tick);
         for (const auto& c : landed_) tak::sim::applyCommand(*b_.world, b_.registry, c);
         return landed_.size();
     }
     // The commands the last apply() landed, in application order.
     const std::vector<tak::net::Command>& landed() const { return landed_; }
-    // Commands issued so far for unit `id` (the uplink is one FIFO, so a unit's commands land in this order).
-    uint32_t issued(int id) const { return id >= 0 && size_t(id) < issued_.size() ? issued_[size_t(id)] : 0; }
+    // The non-queued clicks the last apply() issued: (unit id, that click's command's position in the unit's
+    // command stream). The uplink is one FIFO, so the click is delivered when that many of the unit's commands
+    // have landed; a later order of the same tick (a queued leg) comes after it.
+    const std::vector<std::pair<int, uint32_t>>& clicks() const { return clicks_; }
     bool done() const { return next_ >= pending_.size() && link_.idle(); }
 
     // The `churn` events due at `tick`: a blocking feature of the spec's size placed in the static map (an odd
@@ -1263,6 +1269,7 @@ private:
     size_t next_ = 0;
     std::vector<tak::net::Command> landed_;
     std::vector<uint32_t> issued_;   // per unit id
+    std::vector<std::pair<int, uint32_t>> clicks_;
 };
 
 // ---- situations: the recording's own positions ------------------------------
