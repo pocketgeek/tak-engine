@@ -2027,6 +2027,11 @@ function(tak_isolate_test_profiles)
       if(tak_python_userbase)
         list(APPEND tak_defaults "PYTHONUSERBASE=${tak_python_userbase}")
       endif()
+      # The scratch HOME also hides the global git config, where CI records the checkout as a
+      # safe.directory; without it git refuses the source tree as "dubious ownership" and
+      # legion_doc_links cannot tell that CI's clone is shallow.
+      list(APPEND tak_defaults "GIT_CONFIG_COUNT=1" "GIT_CONFIG_KEY_0=safe.directory"
+                               "GIT_CONFIG_VALUE_0=${CMAKE_SOURCE_DIR}")
     endif()
     # Plain ENVIRONMENT (not ENVIRONMENT_MODIFICATION), so runners that read only that,
     # like the Windows host's runctest.py, isolate tests too.
