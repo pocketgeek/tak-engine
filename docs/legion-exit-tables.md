@@ -12,6 +12,73 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## 2026-10-14 review (protocol 264): six Legion items, landed together
+
+Head: `task-legion-review` on `origin/main` 34425983 (protocol 263): item 6 (`f7d1b40c`, 32-bit potentials), item 1
+(`f5bdcab5` instrument, `b2ecc86e`, `a8ed05b3`), item 2 (`c3dcb932`), item 4 (`1861aff9`), item 3 (`9987e4fd`), item 5
+(`14d6e89d` instruments, `e5df18b7`), the review fixes (`73e7c7c4` legion_check, `0d2d9dd0` entrance note, `3e61205b`
+item 5's count), protocol 264 with the Legion navigation golden (`cecdd0e1`), and two baseline commits: the hash and
+work retake (`44c77cbd`) and the behaviour trades and new-fixture floor failures (`44263867`) the lead rules on.
+Each item, its proof and its judge-together row: `legion-pathfinding.md`, "The 2026-10-14 review (protocol 264)".
+
+### Gates on the final head
+
+| Gate | Result |
+|---|---|
+| Scenario set (`legion_check check --cumulative`, all 135 files, both modes, gate offsets, `--data`; build-o2) | 270 records, serial == workers on all. Every Retail record equals the 04f142b3 base's; every Legion record equals the pre-rebase review head's (main's commits since moved no scenario). Against main's baseline: 533 failed keys (the base head: 23). After `44c77cbd`: 42. After `44263867`: **16, every one failing on main's sim already** (battle-field-2x250 `reversals` and five work keys, -2x500 four work keys, -2x60 `work.line_sweeps.p99`, mixed2 `reversals` and four work keys; seven of the base head's 23 cleared). 16 Retail-floor exceptions pass again (CLEARED; removed at the next ratchet) |
+| Retail identity | every Retail record of the scenario set equal; Retail navigation golden 24 of 24 unchanged; `--mpai` Retail unchanged |
+| Navigation goldens | Legion regenerated (24 checkpoints, serial == workers; tick 300 `302f2986afd66a4c` -> `465af65dbcbc562f`) |
+| `check-determinism.sh` | OK, golden `dcef618cd2e4d558` (g++ and clang++ at -O0/-O2/-O3; aarch64 skipped: no target libc) |
+| `--mpai` Inner Circle seed 1 (`takserver --local --no-auth --seed 1`, scratch XDG, build-o2, once each) | unchanged in both modes: Retail 300 s `76f7e976cd6a00c9`, 60 s `8db23af1b0260ba1`; Legion 300 s `99e2f137cde8d769`, 60 s `5bc7e8001c06611f` |
+| ctest | `ctest -L quick` on build-o2 (scratch per-user profile): 297 of 297 pass, `navigation_determinism`, `legion_baseline_reasons`, `legion_doc_links` and `replay` among them |
+
+### W9 hard gates (W9-1 known limits) on the final head
+
+Met by the review: gate 2 (`strait-2x150` `gate.strait.crossings` 17 -> 3, needs <= 8.8), gate 5 for `gap6`, `gap8`,
+`gap10`, `gap14` and `gapsweep` g6..g14 (per file x100 106 / 205 / 213 / 274 and 106..496 -> 0; `gap20` and g20 stay at
+173 and 423 against Retail 0) and gate 9 (`doorplug-124` `g.A.done` never at 2 of 11 offsets -> 0). Gate 4 (`corner-8x56`
+top gate 2 -> 1, Retail 2) was already within its bound on the base head. Unchanged: gates 3 (`corner-1x448` top gate 8
+-> 7, Retail 0), 6, 7, 10, 12 (`motion-cross`), 13, 14, 15.
+
+### Baseline update
+
+- `44c77cbd`: 252 Legion `hash@` values retaken (existing entries; 582 unchanged); deadend-multi-4x120, farroom,
+  serplong and serplong-control first baselined (1,145 entries, 102 offset-spread exceptions for their Legion keys);
+  `stall_stale_ticks` eq 0 on all 135 Legion records; 224 licences of work and gate-instrument keys by item (slots
+  by arrival 97, passage lanes 54, both 23, the slot budget 22, the stall clock 20, slots by arrival + budget 5,
+  settle rule + budget 3); 15 offset-spread exceptions the review opened (cluster `LR-264`).
+- `44263867`: 19 behaviour licences and 7 Retail-floor exceptions (below). No ratchet applied (ruling (q)).
+
+### What the lead has to decide
+
+The review's behaviour losses, licensed in `44263867` (drop the commit to keep them failing). Base head -> head,
+core-five medians:
+
+| Item | Key | Change | Note |
+|---|---|---|---|
+| 3 passage lanes | `gapsweep` `g.G8.done` | 2,884 -> never | never at 6 of 11 offsets against 1; with it `g.G8.left_behind` 0 -> 1, `complete_outside_radius` 0 -> 1, `complete_dist_max` 13 -> 15; gap8 alone completes at all 11 (3 misses before) |
+| 3 | `gap8` `back`, `reversals` | 54 -> 81, 6 -> 11 | at the destination, not the gap |
+| 3 | `gap14` `aim_reversals`, `engagement_on_flowing`, `g.A.complete_dist_median` | 86 -> 101, 43 -> 48, 5 -> 6 | its t90 2,162 -> 2,072 and swaps 2.74 per file -> 0 |
+| 1 stall clock | `corner-1x448` `g.B.done` | 8,328 -> 8,958 | offset -1 leaves one body of B short (never), +1 finishes 630 ticks later |
+| 1 | `pocket-615-wall` `g.A.complete_dist_max` | 71 -> 72 | |
+| 4 slots by arrival | `reversals` in four dead-end rooms | 1 -> 2, 0 -> 1, 1 -> 2, 14 -> 16 | `deadend-w2-n40-room-squad`, `-w4-n40-room-plain`, `-w4-n40-room-squad`, `-w6-n120-room-squad` (arrivals 31 -> 53) |
+| 4 | `deadend-w4-n120-room-plain` `wall_touch_permille` | 264 -> 290 | 17 more arrivals |
+| 4 | `deadend-w2-n120-room-plain` `g.A.complete_dist_median` | 8 -> 9 | |
+| 4 (+3) | `doorplug-124` `gate.door.files_x100` | 317 -> 322 | 337 after item 4; A done at all 11 offsets |
+| 5 slot budget | `corner-8x56` `g.A.complete_dist_max` | 31 -> 34 | A done 7,116 -> 8,057 and never at +2 and +3 (passes its band); B and C never -> 8,508 / 8,194; walk_net 0 -> 34 (summed over the offsets 1,545 -> 156) |
+
+Not gated but part of the same trades: `battle-field-2x500` left behind 2 -> 7 and stopped 175 -> 177 permille for one
+more arrival (its fight reshuffles per offset); `deadend-w4-n120-room-squad` stopped +9 and transit held +8 permille
+for 9 more arrivals; `mixed2` `reversals` 176 -> 203 (a failure main already has; its F group, never before, now
+completes and its lane swaps fall 46 -> 8).
+
+The new fixtures' Retail-floor failures, excepted in `44263867`: `deadend-multi-4x120` `g.B.arrived` 13 vs Retail 21
+(AR-02: the deadend-w4-n120-closed probe, whose own `g.A.arrived` is the AR-02 exception, 16 vs 23); `farroom`
+wall touch / near 208 / 466 vs 84 / 170, `serplong` 939 / 939 vs 488 / 488, `serplong-control` 916 / 916 vs 479 / 479
+(MV-02, the dead-end wall-touch class).
+
+The 16 failures main's sim already has are left as they were (open since before the review).
+
 ## W9 exit (2026-10-10): head-on meets narrow before contact (C1) -- the other lanes kept nothing (protocol 248)
 
 Head: `task-w9-exit` = `task-w9-s0` (`e4bf114d`, W8 sim + W9 instruments) + lane A (`6f5e22fe`, doc only: every step stopped by its rule, no sim change) + lane C (`6ab134ad`, C1)

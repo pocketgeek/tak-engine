@@ -1947,6 +1947,94 @@ The observer gains `walk_net` / `walk_net_runs` (the replay's rule, exact GET
 29) and its `walk_in_place` now waits two headway windows (16 ticks) before it
 counts.
 
+### The 2026-10-14 review (protocol 264)
+
+Six items of a review of Legion's movement code, implemented one after the
+other on one branch, each proved by a test that fails on its parent, and
+landed together as protocol 264. Legion only: every Retail record of the
+scenario set, the Retail navigation golden and the `--mpai` hashes of both
+modes are unchanged.
+
+| Item | Change | Proof (fails on the parent, passes here) | Legion fixtures moved |
+|---|---|---|---|
+| 6 | 32-bit field potentials (section 2) | `serplong.scn`, `legion_longroute`: two bodies at potential 87,356 stood terrain-trapped; they arrive | none of the 131 existing |
+| 1 | progress in one measure at a time; the detour rules keep their own record (section 4) | `legion_progressclock`: `battle-field-2x60` `stall_stale_ticks` 9,401 -> 0 (0 on every fixture at every gate offset, now a baseline key) | 21 |
+| 2 | the settle rule reads a body of another footprint where it stands (section 5, Settling) | `legion_mixedsettle`: one 2x2 among 4x4s and one among 3x3s never completed; all do | 4 |
+| 4 | slots by arrival at a narrow entrance (section 5, Slots by arrival) | `farroom.scn`, `legion_farroom`: never done at any gate offset; done at 9 of 11 | 19 |
+| 3 | passage lanes ("Passage lanes" above) | `legion_passagelanes`: `gap14` swapped 17 to 47 bodies across the gate (median 27); none | 15 |
+| 5 | one formation slot-search budget a tick over every point, round robin ("Slot hand-out budget" above) | `legion_handout`: `deadend-multi-4x120.scn` walked 602,176 ring cells in one tick; 134,621 | 4 |
+
+Judged together (Legion, the gate offsets as `legion_check` reads them; each
+item against its parent over the fixtures both share, the whole review over
+the 131 fixtures of the base):
+
+| | arrivals | complete orders | left behind | never | lane swaps | per file x100 (gaps) | stopped permille | transit held permille | walk_net | Legion work |
+|---|---|---|---|---|---|---|---|---|---|---|
+| item 1 | +13 | +10 | -13 | 0 | -1 | 0 | +1 | 0 | 0 | -46,271 |
+| item 2 | +1 | +1 | -1 | -1 | 0 | 0 | 0 | 0 | 0 | -1,029 |
+| item 4 | +127 | 0 | -127 | -7 | -4 | 0 | -299 | -275 | 0 | +346,018 |
+| item 3 | +4 | 0 | -4 | 0 | -133 | -2,127 | -60 | -88 | 0 | +78,806 |
+| item 5 | +8 | +11 | -1 | -2 | -1 | 0 | -7 | -6 | +34 | -11,031,813 |
+| review | 11,151 -> 11,304 | 12,176 -> 12,198 | 5,117 -> 4,971 | 336 -> 326 | 571 -> 432 | 2,723 -> 596 | 25,394 -> 25,029 | 20,023 -> 19,654 | 369 -> 403 | -0.68% |
+
+Walk-in-place stays 0 on every fixture. Three of the W9 hard gates the user
+accepted as known limits (W9-1) are now met: `strait-2x150`'s lane swaps (3,
+Retail 8; gate 2), the per-file swaps of `gap6`, `gap8`, `gap10`, `gap14` and
+`gapsweep`'s g6 to g14 (none; gate 5, which `gap20` and g20 still miss at 1.73
+and 4.23 per file) and `doorplug-124` A at every gate offset (gate 9); 16
+Retail-floor exceptions pass again. The losses inside the totals, which the
+scenario baseline licenses at the head's values with their numbers and items
+for the lead's ruling (`docs/legion-exit-tables.md`, "2026-10-14 review"): from
+passage lanes, `gapsweep`'s G8 group done at 2,884 ticks before and never now
+(it misses at 6 of the 11 offsets against 1, one to four bodies settling
+outside the disc), `gap8` back steps 54 -> 81 and reversals 6 -> 11 at the
+destination, `gap14` aim reversals 86 -> 101; from the stall clock,
+`corner-1x448` B done 8,328 -> 8,958 ticks (offset -1 now leaves one body of B
+short) and `pocket-615-wall` A's farthest completion 71 -> 72 cells; from slots
+by arrival, a reversal more in three dead-end rooms and 14 -> 16 in
+`deadend-w6-n120-room-squad`, `deadend-w4-n120-room-plain` wall touch 264 ->
+290 permille, `deadend-w2-n120-room-plain` median completion distance 8 -> 9
+cells and `doorplug-124` door files 3.17 -> 3.22 abreast; from the slot budget,
+`corner-8x56` A's farthest completion 31 -> 34 cells and A done 7,116 -> 8,057
+ticks (A no longer completes at offsets +2 and +3, while B and C, never on the
+core five before, now complete there; walk_net 0 -> 34), and
+`battle-field-2x500`'s fight, which reshuffles per offset (left behind 2 -> 7
+for one more arrival; it passes its gates). The fixtures the review added fail
+the Retail floor on wall touch (`farroom`, `serplong`, `serplong-control`: the
+dead-end class MV-02) and `deadend-multi-4x120` on its B group's arrivals (13
+against 21: the `deadend-w4-n120-closed` probe, whose own arrivals are the
+AR-02 exception); they are excepted with the trades.
+
+Not taken, with the evidence (each in its item's commit and above):
+restarting the detour back-off on the stall clock, after a gain of 2 or 4
+cells, or halving or stepping down its count on a gain (item 1: every variant
+trades detours against standing samples in `battle-assault`; Known
+weaknesses); reading a body of another footprint at every origin that overlaps
+it (item 2: frees the same orders but settles more bodies short of the click,
+`mixedfootprints` 500x4 67 outside the radius against 55), or at its potential
+with a pixel tie-break (frees 1 of 15); a slot assignment fitted to the
+passage's order and a shared lane record (item 3: the census found pairs whose
+slots lay in the gap's order swapping as often as the rest), and an exchange
+of slots at the passage exit (better tails, 12 more swaps); a budget for the
+steering probes and detour searches (item 5: with the hand-out bounded, the
+slowest ticks are the field quota's; awareness and lane work add at most
+15,507 cells to a tick's peak, detours 3,880); a saturation flag instead of
+32-bit potentials (item 6: the widening's whole cost is 4 bytes a field cell,
+39 MB of peak heap on the 8-AI Ulasem replay).
+
+Review findings fixed before landing: `legion_check` kept `work.legion_all`
+report-only in `check` but would have taken it into the baseline at a retake
+(it now never does, `legion_baseline_reasons`); an entrance is one footprint's
+(section 5, Slots by arrival: documented, as no fixture takes one with mixed
+footprints); the slot budget's first count of moved fixtures came from a stale
+parent sweep (4, not 6). Baselines: the scenario baseline's Legion hashes
+retaken from a full gate-offset run of both modes, the four new fixtures first
+baselined, `stall_stale_ticks` gated at 0 on every Legion record, the moved
+work and gate-instrument keys licensed and the offset spreads the review
+opened excepted (cluster `LR-264`); the behaviour losses and the new fixtures'
+floor failures in a commit of their own; the Legion navigation golden
+regenerated (Retail's unchanged).
+
 ## Instruments
 
 What each tool sees, and what it cannot. A number is only as good as the
@@ -2030,7 +2118,9 @@ Rules that came out of using them:
   W9 cleared the head-on jam; eleven harder gates resisted every local fix
   (each attempt broke more scenarios than it fixed, so the stop rule reverted
   it) and are accepted as known limitations, re-openable later. Lane order:
-  corners still swap 3-4 bodies across the top gate (Retail 0-2). A long
+  `corner-1x448` still swaps 7 bodies across the top gate (Retail 0; median of
+  the gate offsets), while `corner-8x56`'s 1 is within Retail's 2 since the
+  2026-10-14 review. A long
   strait swapped 22 (Retail 8) and wider gaps 2-5 per file (Retail 0), because
   Legion takes gaps several abreast; since the 2026-10-14 review the passage
   lanes (above) bring the strait to 3 and gaps up to 14 cells to none, while
@@ -2038,8 +2128,10 @@ Rules that came out of using them:
   file (`gap20:gate.top.crossings`). Walls: an attack ring against a wall and
   the bodies queued in doorplug-112 touch the wall about twice as often as
   Retail. Tails: a Move group crossing its own firing ring arrives about 11%
-  later than Retail; one doorplug-124 body and one motion-cross body never
-  finish from some start offsets; a lifted flyer detours 5 cells against 2.
+  later than Retail; one motion-cross body never finishes from some start
+  offsets (a doorplug-124 body did too, until the review's slots by arrival:
+  its group A now completes at all eleven gate offsets); a lifted flyer
+  detours 5 cells against 2.
   The attempts are parked on branches task-w9-a-A1..A4 and
   task-w9-b-b1..b6-reverted with their numbers; an unplanned probe that removes
   the corner hug behind a turn guard brought both corner fixtures within
