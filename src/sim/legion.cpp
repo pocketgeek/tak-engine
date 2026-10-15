@@ -776,6 +776,15 @@ struct LegionNavigator::Impl {
             int32_t x=0,z=0;int goal=-1;const UnitType* type=nullptr;
             uint64_t field=0,epoch=~0ull,work=0;int cell=-1;   // work: the field's relaxations (a paused build resumes)
         } aim;
+        // Memo of gateCommit's static verdict (Legion 10,000 stage 2): the
+        // inputs of its last call when that call declined before reading
+        // any soft body -- origin, goal, footprint, the finished field, the
+        // static plane and the lane band -- so the same call declines again
+        // without walking the chain. Derived: never hashed.
+        struct GateMemo {
+            int ox=-1,oz=-1,goal=-1,band=-1;const UnitType* type=nullptr;
+            uint64_t field=0,epoch=~0ull,planeEpoch=~0ull;bool valid=false;
+        } gateMemo;
     };
 
     World& w;
@@ -6745,6 +6754,20 @@ struct LegionNavigator::Impl {
     bool gateCommit(const Unit& u,Member& m,const Group& g,const Plane& p,const Field& f,int ox,int oz) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
         const int band=laneBand(m,foot);
+        // Every check before the soft bodies reads only the static plane, the
+        // finished field (gateAim asks with a done field), the member's goal,
+        // origin, footprint and band: the same inputs give the same static
+        // decline (see Member::gateMemo). TAK_LEGION_VERIFY recomputes a hit.
+        auto& gm=m.gateMemo;
+        const bool memo=f.done&&f.serial!=0;
+        const bool memoHit=memo&&gm.valid&&gm.ox==ox&&gm.oz==oz&&gm.goal==m.goal&&gm.band==band&&gm.type==u.type&&
+            gm.field==f.serial&&gm.epoch==epoch&&gm.planeEpoch==p.epoch;
+#ifndef NDEBUG
+        if(memoHit&&!gVerify)return false;
+#else
+        if(memoHit)return false;
+#endif
+        gm.valid=false;
         std::array<int,kVertexChain+1> chain{};int n=0;chain[size_t(n++)]=oz*W+ox;
         uint64_t work=0;
         auto extend=[&](int upto) {
@@ -6768,14 +6791,18 @@ struct LegionNavigator::Impl {
 #else
         auto declined=[&](const char*) {return false;};
 #endif
-        if(gateStrip(gateSpan(p,chain.data(),n,0,fx,fz),band))return declined("inside a strip");
+        auto staticDecline=[&](const char* why) {
+            if(memo)gm={ox,oz,m.goal,band,u.type,f.serial,epoch,p.epoch,true};
+            return declined(why);
+        };
+        if(gateStrip(gateSpan(p,chain.data(),n,0,fx,fz),band))return staticDecline("inside a strip");
         int best=-1;Span bs;
         for(int j=1;j<n&&j<=kGateCommit;++j) {
             ++work;
             const Span sp=gateSpan(p,chain.data(),n,j,fx,fz);
             if(gateStrip(sp,band)) {best=j;bs=sp;break;}
         }
-        if(best<0)return declined("no strip within kGateCommit cells");
+        if(best<0)return staticDecline("no strip within kGateCommit cells");
         // G: the narrowest cell of the strip's first kGateRun cells (the
         // first of equals).
         // A gate is a short passage: at least two chain cells (one narrow
@@ -6793,11 +6820,14 @@ struct LegionNavigator::Impl {
             if(sp.free<bs.free) {best=j;bs=sp;}
         }
         const int G=chain[size_t(best)],gx=G%W,gz=G/W;
-        if(!exits)return declined("strip does not end within kGateRun (a corridor)");
-        if(length<2||!bs.sign)return declined("strip shorter than two cells");
-        if(f.at(size_t(G))<kLaneNear*kOrthogonal)return declined("gate within kLaneNear of the destination");
+        if(!exits)return staticDecline("strip does not end within kGateRun (a corridor)");
+        if(length<2||!bs.sign)return staticDecline("strip shorter than two cells");
+        if(f.at(size_t(G))<kLaneNear*kOrthogonal)return staticDecline("gate within kLaneNear of the destination");
         // Not when the member is already at or past the gate line.
-        if(((bs.axis==0?oz-gz:ox-gx)*bs.sign)>=0)return declined("already at or past the gate line");
+        if(((bs.axis==0?oz-gz:ox-gx)*bs.sign)>=0)return staticDecline("already at or past the gate line");
+#ifndef NDEBUG
+        if(memoHit)verifyFail("gateCommit's memo declined a member that passes the static checks");
+#endif
         const uint64_t command=g.soft?g.command:kNoSoft;
         const int counts=!softCellCount?-1:softCountsFor(fx,fz);
         auto soft=[&](int k) {++work;return bs.axis==0?softAt(gx+k,gz,fx,fz,command,counts):softAt(gx,gz+k,fx,fz,command,counts);};
