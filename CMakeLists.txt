@@ -699,15 +699,15 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-mix.scn)
   # legion_sched_pin: many-1000 under a two-map allowance, where fields shared by groups that never finish
   # once pinned the room a reservation waited for (admissions froze for the rest of the run): admission
-  # liveness. legion_sched_inflight: battle-assault, where builds admitted as first routes and served as
-  # Waiting jobs used to pile up past the windows (40 first builds in flight): the per-kind cap.
+  # liveness. legion_sched_inflight: many-2500, where refreshes promoted out of their class used to pile up
+  # past the windows while memory was short (78 in flight): the per-kind cap.
   add_test(NAME legion_sched_pin
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/many-1000.scn
                    --field-bytes 778752 --ticks 3000)
   add_test(NAME legion_sched_inflight
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
-                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/battle-assault.scn)
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/many-2500.scn)
   set_tests_properties(legion_sched_load legion_sched_load_div legion_sched_mix legion_sched_pin legion_sched_inflight
                        PROPERTIES LABELS legion TIMEOUT 900)
   set_tests_properties(legion_sched_load_div PROPERTIES ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")

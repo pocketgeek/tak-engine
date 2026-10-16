@@ -91,9 +91,10 @@ struct NavAccounting {
     // sharing a field that already exists, which takes no room; and every start request admitted (a new
     // build or a share: the admission rate the queue drains at).
     uint64_t requestPromotions = 0, requestsMax = 0, stoppedShares = 0, admissions = 0;
-    // Evictions of a shared field (dropped from every holder at once), and the most field builds in flight
-    // and asking for work at the end of a tick's admissions, first builds and refreshes (each at most its
-    // window: an admitted build is always served).
+    // Evictions of a shared field (dropped from every holder at once), and the most builds of its kind in
+    // flight (asking for work) just after a new build was admitted while more than half the byte allowance
+    // was in use -- first builds and refreshes; the per-kind cap (kFirstInflight / kRefreshInflight) keeps
+    // them within it.
     uint64_t sharedEvictions = 0, firstInflightMax = 0, refreshInflightMax = 0;
     // The most field cells the start requests listed in one tick would need together (their windows): the
     // queue, in memory, a request's wait is measured against (tools/legion_sched_load_test.py).
@@ -125,10 +126,11 @@ struct NavBudget {
     // slice each; the refresh classes as many as the refresh allowance does).
     static constexpr int64_t kSlice = 32768;
     static constexpr size_t kWindow = 12, kRefreshWindow = 3;
-    // New builds in flight (asking for work), by kind over every class, besides each class's own window: a
-    // first build sits in the Waiting or the FirstRoute window, a refresh in the AwareRepair or the
-    // StaleRefresh one, so each kind may fill the two windows it can be served in -- and no more, whichever
-    // class its jobs move to (at most one window's worth of them then waits unserved, holding memory).
+    // New builds in flight (asking for work), by kind over every class, besides each class's own window,
+    // while more than half the field byte allowance is in use: a first build sits in the Waiting or the
+    // FirstRoute window, a refresh in the AwareRepair or the StaleRefresh one, so each kind may fill the two
+    // windows it can be served in -- and no more, whichever class its jobs move to (at most one window's
+    // worth of them then waits unserved, holding memory others need).
     static constexpr size_t kFirstInflight = 2 * kWindow, kRefreshInflight = 2 * kRefreshWindow;
     // Age promotion: a job (or start request) that has gone this many ticks without service moves up
     // one class, so no class starves another for longer than (classes - 1) x kAgeStep.

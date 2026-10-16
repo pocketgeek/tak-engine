@@ -4,9 +4,10 @@
     legion_sched_load_test.py LEGION_SCENARIO SCN [--budget-div N] [--field-bytes N] [--ticks N]
 
 Runs SCN in Legion, serial and workers, and checks SERVICE, not throughput. In every run: serial == workers,
-and the builds in flight never exceed the windows they can be served in (scale.sched.inflight_max.first <=
-kFirstInflight, .refresh <= kRefreshInflight; e.g. battle-assault.scn, where a per-class count let 40 first
-builds into flight). The rest depends on the file:
+and while memory is short (more than half the field allowance in use) no new build takes its kind past the
+windows it can be served in (scale.sched.inflight_max.first <= kFirstInflight, .refresh <= kRefreshInflight,
+measured at each such admission; many-2500.scn, where the per-class count alone let 78 refreshes into flight:
+ctest legion_sched_inflight). The rest depends on the file:
 
 tools/scenarios/scale/sched-load.scn (48 squads re-clicked to far tiles every 160 ticks and a rock walking
 across the map, so field requests arrive faster than the quota serves them for the whole run):

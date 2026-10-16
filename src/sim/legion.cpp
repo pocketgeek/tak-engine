@@ -4175,12 +4175,15 @@ struct LegionNavigator::Impl {
             if(ci>0)admit.nextClass();
             // A new build is admitted only while the class's window has a free slot: a build past the
             // window would hold its whole potential array unserved -- and an unfinished field is never an
-            // eviction victim -- so beyond it a request may only take a field another group has. And only
-            // while its kind has room over every class (NavBudget::kFirstInflight, kRefreshInflight: the
-            // two windows a kind can be served in): a first build admitted as a first route is a Waiting
-            // job the next tick (its members stand still for it), so the per-class count alone let the
-            // first-route class admit a window's worth every tick while the Waiting window served only its
-            // oldest (fix round: 151 unserved builds held many-5000's whole allowance).
+            // eviction victim -- so beyond it a request may only take a field another group has. While
+            // more than half the byte allowance is in use, also only while its kind has room over every
+            // class (NavBudget::kFirstInflight, kRefreshInflight: the two windows a kind can be served in):
+            // a first build admitted as a first route is a Waiting job the next tick (its members stand
+            // still for it), and a refresh promoted out of its class leaves its slot, so the per-class count
+            // alone let builds pile up unserved past the windows (fix round: 151 held many-5000's whole
+            // allowance, 78 refreshes in many-2500). With memory to spare such a build costs nobody room,
+            // and capping it there was measured to cost outcomes (sched-load stuck 101 -> 162, many-1000
+            // arrivals -9%), so the cap applies only when memory is short.
             const size_t window=refreshClass(cls)?NavBudget::kRefreshWindow:NavBudget::kWindow;
             size_t inflight=0,firstInflight=0,refreshInflight=0;
             for(const auto& [serial,j]:jobs)if(j.f&&!j.f->done&&!jobIdle(j)) {
@@ -4215,7 +4218,8 @@ struct LegionNavigator::Impl {
                 if(budget==0)break;
                 // With the refresh allowance spent, a stale group in a refresh class only takes a field
                 // another group already has (see sharedField).
-                const bool full=inflight>=window||(refreshing?refreshInflight>=NavBudget::kRefreshInflight:firstInflight>=NavBudget::kFirstInflight);
+                const bool tight=fieldBytes()*2>fieldAllowance();   // memory short: the per-kind cap applies
+                const bool full=inflight>=window||(tight&&(refreshing?refreshInflight>=NavBudget::kRefreshInflight:firstInflight>=NavBudget::kFirstInflight));
                 const bool chargeRefresh=refreshing&&refreshClass(cls);   // an unpromoted refresh: inside the refresh allowance
                 const bool shareOnly=(chargeRefresh&&refresh==0)||full||stopped;
                 uint64_t initRoom=budget+charged==kFieldQuota?~0ull:budget;
@@ -4251,11 +4255,14 @@ struct LegionNavigator::Impl {
                     Field* f=sp.get();
                     const bool fresh=!jobs.count(f->serial);
                     subscribe(g,sp,cls);
-                    if(fresh) {jobs[f->serial].cls=cls;++inflight;++(refreshing?refreshInflight:firstInflight);}   // a new build serves in the class that admitted it
+                    if(fresh) {
+                        jobs[f->serial].cls=cls;++inflight;++(refreshing?refreshInflight:firstInflight);   // a new build serves in the class that admitted it
+                        if(tight)(refreshing?acct.refreshInflightMax:acct.firstInflightMax)=
+                            std::max<uint64_t>(refreshing?acct.refreshInflightMax:acct.firstInflightMax,refreshing?refreshInflight:firstInflight);
+                    }
                 }
             }
-            acct.firstInflightMax=std::max<uint64_t>(acct.firstInflightMax,firstInflight);
-            acct.refreshInflightMax=std::max<uint64_t>(acct.refreshInflightMax,refreshInflight);
+
             // This class's jobs, by deficit round robin.
             struct Ref {uint64_t key;int64_t* deficit;FieldJob* job;};
             std::vector<Ref> ring;
