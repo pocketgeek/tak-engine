@@ -89,7 +89,9 @@ def main():
     check(abs(d["relative"] - (8.1 - 10.2) / 10.2) < 1e-9 and d["significant"], "A/B delta")
     noisy = rb.aggregate([result("A", 10.0), result("B", 9.9), result("B", 9.95), result("A", 10.3)])
     check(not noisy[0]["delta"]["frame_ms.total.mean"]["significant"], "delta inside A/A noise")
-    check("| s | normal | A | 2 | 5 |" in rb.markdown(report), "markdown row")
+    check("| s | normal | A | 2 (0) | 5 |" in rb.markdown(report), "markdown row")
+    busy = result("A", 50.0); busy["load"]["pinned_cpu_busy_fraction"] = 0.9
+    check(rb.aggregate([result("A", 10.0), busy], exclude_contended=True)[0]["labels"]["A"]["runs"] == 1, "contended run excluded")
     for name, scene in rb.SCENES.items():
         env = rb.scene_env(name, "normal")
         check(env["TAK_SHADOW_BENCH"] == str(scene["count"]) and scene.get("notes"), f"scene {name}")

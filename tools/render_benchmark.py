@@ -232,6 +232,21 @@ SETTINGS = {
 }
 
 
+def wait_quiet(args, cpus):
+    """Wait (up to --wait-quiet seconds) until the pinned CPUs are mostly idle,
+    sampling 3 s at a time. Returns (seconds waited, last busy fraction)."""
+    if not args.wait_quiet or not cpus:
+        return 0.0, None
+    start, busy = time.monotonic(), None
+    while True:
+        a = cpu_busy(cpus)
+        time.sleep(3)
+        b = cpu_busy(cpus)
+        busy = (b[0] - a[0]) / max(1, b[1] - a[1]) if a and b else 0.0
+        if busy <= args.quiet_busy or time.monotonic() - start >= args.wait_quiet:
+            return time.monotonic() - start, busy
+
+
 def run_one(args, client, label, scene, size_key, leg, capture=False):
     w, h = SIZES[size_key]
     name = f"{scene}-{size_key}-{leg:02d}-{label}" + ("-capture" if capture else "")
@@ -262,7 +277,8 @@ def run_one(args, client, label, scene, size_key, leg, capture=False):
     if args.cpus:
         command = ["taskset", "-c", args.cpus] + command
     cpus = parse_cpus(args.cpus) if args.cpus else set()
-    load = {"loadavg_before": loadavg(), "legion_scenario_before": count_processes("legion_scenario"),
+    waited, idle_busy = wait_quiet(args, cpus) if not capture else (0.0, None)
+    load = {"waited_quiet_s": waited, "busy_before": idle_busy, "loadavg_before": loadavg(), "legion_scenario_before": count_processes("legion_scenario"),
             "pinned_cpus": args.cpus}
     busy0 = cpu_busy(cpus) if cpus else None
     log, err = root / "stdout.log", root / "stderr.log"
@@ -423,10 +439,20 @@ def metric(result, path):
     return node
 
 
-def aggregate(results):
+# The pinned CPUs' busy fraction includes the client itself (about 0.2 of
+# eight CPUs for these scenes). Above this, another process was competing for
+# the pinned cores and the run's timing is not comparable.
+CONTENDED_BUSY = 0.5
+
+
+def contended(result):
+    return (result["load"].get("pinned_cpu_busy_fraction") or 0) > CONTENDED_BUSY
+
+
+def aggregate(results, exclude_contended=False):
     groups = {}
     for r in results:
-        if r["capture"]:
+        if r["capture"] or (exclude_contended and contended(r)):
             continue
         groups.setdefault((r["scene"], r["size"]), {}).setdefault(r["label"], []).append(r)
     report = []
@@ -448,6 +474,7 @@ def aggregate(results):
                 entry["painter_items"] = st[0].get("painter_items", {}).get("mean")
             entry["loadavg"] = [r["load"]["loadavg_before"] for r in runs]
             entry["legion_scenario"] = [r["load"]["legion_scenario_before"] for r in runs]
+            entry["contended_runs"] = sum(contended(r) for r in runs)
             row["labels"][label] = entry
         if len(by_label) == 2 and "A" in by_label and "B" in by_label:
             row["delta"] = {}
@@ -464,18 +491,29 @@ def aggregate(results):
 
 
 def markdown(report):
-    lines = ["| scene | size | label | runs | visible | total mean | p95 | p99 | draw | present | gpu timeline | A/A spread (total mean) |",
-             "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    lines = ["| scene | size | label | runs (contended) | visible | total mean | p95 | p99 | draw | present | gpu timeline | A/A spread (total mean) | A/A spread (draw mean) |",
+             "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     fmt = lambda e, k: f"{e[k]['mean']:.3f}" if k in e else "-"
     for row in report:
         for label, e in sorted(row["labels"].items()):
             spread = e.get("frame_ms.total.mean", {}).get("aa_rel_spread")
-            lines.append(f"| {row['scene']} | {row['size']} | {label} | {e['runs']} | "
-                         f"{e.get('visible_units') or '-'} | {fmt(e, 'frame_ms.total.mean')} | "
+            dspread = e.get("frame_ms.draw.mean", {}).get("aa_rel_spread")
+            visible = e.get("visible_units")
+            lines.append(f"| {row['scene']} | {row['size']} | {label} | {e['runs']} ({e.get('contended_runs', 0)}) | "
+                         f"{'-' if visible is None else f'{visible:.0f}'} | {fmt(e, 'frame_ms.total.mean')} | "
                          f"{fmt(e, 'frame_ms.total.p95')} | {fmt(e, 'frame_ms.total.p99')} | "
                          f"{fmt(e, 'frame_ms.draw.mean')} | {fmt(e, 'frame_ms.present.mean')} | "
                          f"{fmt(e, 'drawphase.gpu.mean')} | "
-                         f"{'-' if spread is None else f'{spread * 100:.1f}%'} |")
+                         f"{'-' if spread is None else f'{spread * 100:.1f}%'} | "
+                         f"{'-' if dspread is None else f'{dspread * 100:.1f}%'} |")
+    deltas = [row for row in report if row.get("delta")]
+    if deltas:
+        lines += ["", "| scene | size | metric | B vs A | noise (max A/A spread) | material |",
+                  "|---|---|---|---:|---:|---|"]
+        for row in deltas:
+            for k, d in row["delta"].items():
+                lines.append(f"| {row['scene']} | {row['size']} | {k} | {d['relative'] * 100:+.1f}% | "
+                             f"{d['noise'] * 100:.1f}% | {'yes' if d['significant'] else 'no'} |")
     return "\n".join(lines) + "\n"
 
 
@@ -492,6 +530,9 @@ def main(argv=None):
     p.add_argument("--warmup", type=int, default=300)
     p.add_argument("--timeout", type=float, default=600)
     p.add_argument("--cpus", default="16-23", help="taskset CPU list for the client ('' = unpinned)")
+    p.add_argument("--wait-quiet", type=float, default=0,
+                   help="before each run, wait up to this many seconds for the pinned CPUs to go idle")
+    p.add_argument("--quiet-busy", type=float, default=0.15, help="idle threshold for --wait-quiet")
     p.add_argument("--video-driver", default="offscreen")
     p.add_argument("--render-driver", default="opengl")
     p.add_argument("--pipelined", action="store_true", help="no glFinish before present")
@@ -500,6 +541,10 @@ def main(argv=None):
     p.add_argument("--env", action="append", default=[], help="extra KEY=VALUE for every run")
     p.add_argument("--allow-unverified-env", action="store_true")
     p.add_argument("--list", action="store_true", help="print the scene matrix and exit")
+    p.add_argument("--reaggregate", action="store_true",
+                   help="rebuild report.json/report.md from --output/results.json without running")
+    p.add_argument("--exclude-contended", action="store_true",
+                   help=f"leave runs whose pinned CPUs were over {int(CONTENDED_BUSY * 100)}%% busy out of the report")
     args = p.parse_args(argv)
     if args.list:
         for name, s in SCENES.items():
@@ -512,6 +557,12 @@ def main(argv=None):
     if not 0 <= args.warmup < args.frames <= 10000:
         p.error("require 0 <= warmup < frames <= 10000")
     args.output = args.output.resolve()
+    if args.reaggregate:
+        report = aggregate(json.loads((args.output / "results.json").read_text()), args.exclude_contended)
+        (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+        (args.output / "report.md").write_text(markdown(report))
+        print(markdown(report))
+        return 0
     args.output.mkdir(parents=True, exist_ok=True)
     clients = {"A": args.a.resolve()}
     if args.b:
@@ -562,7 +613,7 @@ def main(argv=None):
             if len(hashes) > 1:
                 raise RuntimeError(f"{scene}/{size}: world hashes differ between runs: {hashes}")
             resultfile.write_text(json.dumps(results, indent=2) + "\n")
-    report = aggregate(results)
+    report = aggregate(results, args.exclude_contended)
     (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     (args.output / "report.md").write_text(markdown(report))
     print(markdown(report))
