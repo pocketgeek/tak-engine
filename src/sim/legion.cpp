@@ -710,7 +710,11 @@ struct LegionNavigator::Impl {
         bool approach=false;uint32_t approachSince=0;uint64_t approachEpoch=0;
         // Approach members only (0 otherwise): the least distance still to
         // go to the approach point so far, and the tick it last improved.
-        uint32_t gainBest=0,gainTick=0;
+        // Stage 5: gainSerial is the route (metric) gainBest is measured on
+        // (a new one re-baselines it without counting a gain; derived, like
+        // progressSerial), and gainSeen the last update that read a value
+        // (the clock stops while the route gives none). Hashed with them.
+        uint32_t gainBest=0,gainTick=0,gainSeen=0;uint64_t gainSerial=0;
         int real=-1;                      // the unreachable goal origin an approach member stands in for
         int requested=-1;                 // the goal origin the order named
         int slot=-1;                      // claimed slot index (shared goals)
@@ -785,6 +789,10 @@ struct LegionNavigator::Impl {
         // detourCount, detourBest) are hashed.
         uint32_t nearest=0xffffffffu;
         int64_t detourBest=-1;            // `nearest` when the last local detour was planned
+        // Stage 5: the metric `nearest` is in (as progressKind and
+        // progressSerial for `progress`): a new one re-baselines it without
+        // counting a record. Derived, not hashed, like progressKind.
+        uint8_t nearestKind=0;uint64_t nearestSerial=0;
         // "Close enough": the start of the current no-progress window and the
         // pixel distance to the requested point then (see settleWindow), and
         // the start of the run of still windows that ends there (kNoTick:
@@ -3054,7 +3062,7 @@ struct LegionNavigator::Impl {
             if(near>=0) {
                 m.real=m.goal;m.goal=near;m.approach=true;m.approachEpoch=epoch;
                 m.approachSince=priorReal==m.real&&priorController==m.controller?priorSince:w.tickCounter_;
-                m.gainBest=0xffffffffu;m.gainTick=w.tickCounter_;
+                m.gainBest=0xffffffffu;m.gainTick=w.tickCounter_;m.gainSeen=w.tickCounter_;m.gainSerial=0;
             }
         }
         m.requested=m.goal;
@@ -7169,16 +7177,24 @@ struct LegionNavigator::Impl {
         // maze can gain nothing for a long stretch) never does. The look is
         // staggered by unit id over kApproachLook ticks (the ring walk is
         // the cost; a held crowd would otherwise pay it every tick).
-        // Gain is one measure, the field potential: where the field does not
-        // give one (not built yet, or this cell outside it) the window starts
-        // over, so switching between two scales can neither fake a gain nor
-        // hide one (it mixed potential x64 with squared cells).
+        // Gain is one measure, the field potential, on one route
+        // (RouteView::progress: its metric is the route's serial). Stage 5:
+        // a new route re-baselines the best without counting a gain (a
+        // refresh with other charges read lower or higher, and counted); and
+        // where the route gives no value (not built yet, unsettled, this cell
+        // outside it) the window's clock stops -- missing data neither
+        // retires the order nor restarts a genuine stall (until stage 5 it
+        // restarted the window, so a group whose field kept going missing
+        // never settled).
         if(m.approach) {
-            const uint32_t left=f?f.estimate(size_t(here)):kUnreached;
-            if(left==kUnreached) {m.gainBest=0xffffffffu;m.gainTick=w.tickCounter_;}
-            else if(left<m.gainBest) {m.gainBest=left;m.gainTick=w.tickCounter_;}
-            else if(w.tickCounter_-m.gainTick>=kApproachSettle&&(m.state==Holding||!m.route.empty()||m.detour>=0)&&
-                    (uint32_t(u.id)+w.tickCounter_)%kApproachLook==0&&approachSettled(u,m)) {complete(u,m,true);return;}
+            const uint32_t now=w.tickCounter_;
+            if(const auto pr=f?f.progress(size_t(here)):std::nullopt) {
+                if(pr->metric!=m.gainSerial) {m.gainBest=pr->value;m.gainSerial=pr->metric;}
+                else if(pr->value<m.gainBest) {m.gainBest=pr->value;m.gainTick=now;}
+                m.gainSeen=now;
+                if(pr->value>=m.gainBest&&now-m.gainTick>=kApproachSettle&&(m.state==Holding||!m.route.empty()||m.detour>=0)&&
+                   (uint32_t(u.id)+now)%kApproachLook==0&&approachSettled(u,m)) {complete(u,m,true);return;}
+            } else {m.gainTick+=now-m.gainSeen;m.gainSeen=now;}
         }
         // Close enough: a body that gained less than half a body on its
         // point over the last window, queued back to the settled crowd
@@ -7257,8 +7273,8 @@ struct LegionNavigator::Impl {
         // field, and made no progress until it was within 125 cells: its stall
         // clock aged through most of a free walk (battle-field-2x60's
         // stall_stale_ticks, about 9,400 member updates at an offset). The
-        // detour rules keep the record they were tuned on (Member::nearest,
-        // across both measures): its new lows restart the detour back-off.
+        // detour rules' record (Member::nearest) restarts the detour back-off
+        // on its new lows, in one measure since stage 5 (below).
         {
             const uint32_t at=f?f.estimate(size_t(here)):kUnreached;
             const bool onField=at!=kUnreached&&at>0;
@@ -7270,7 +7286,17 @@ struct LegionNavigator::Impl {
             const bool ontoSeed=fresh&&at==0&&m.headSerial==f.metric()&&m.headBest>0;
             if(fresh&&!ontoSeed) {m.progress=left;m.progressKind=kind;m.progressSerial=serial;}
             else if(ontoSeed||left<m.progress) {m.progress=left;m.progressKind=kind;m.progressSerial=serial;m.stallTick=w.tickCounter_;}
-            if(left<m.nearest) {m.nearest=left;m.detourCount=0;}
+            // The detour record compares within one metric too (stage 5): a new
+            // metric re-baselines it without a record (until stage 5 a body
+            // whose field went missing read squared cells, far below its
+            // potential x64, as a record and restarted its detour back-off),
+            // and "no record since the last detour" (detourBest) carries over.
+            if(m.nearest!=0xffffffffu&&(kind!=m.nearestKind||serial!=m.nearestSerial)) {
+                const bool none=int64_t(m.nearest)==m.detourBest;
+                m.nearest=left;
+                if(none)m.detourBest=int64_t(left);
+            } else if(left<m.nearest) {m.nearest=left;m.detourCount=0;}
+            m.nearestKind=kind;m.nearestSerial=serial;
             if(f) {
                 if(f.metric()!=m.headSerial) {m.headSerial=f.metric();m.headBest=at;}
                 else if(at<m.headBest) {m.headBest=at;m.headTick=w.tickCounter_;}
@@ -7343,7 +7369,10 @@ struct LegionNavigator::Impl {
             if(!laneRoute&&laneTrigger(u,m,p,f,ox,oz))need(g,here,kLaneCover,RouteNeed::Lanes);
         }
         if(!direct) {
-            if(!f||(f.estimate(size_t(here))==kUnreached&&f.bounded())) {
+            // No route reaches this body yet -- none, a bounded window that
+            // does not, or (stage 5, RouteView::reach) a complete route built
+            // on older geometry, whose "unreached" proves nothing now.
+            if(!f||(f.estimate(size_t(here))==kUnreached&&f.reach(size_t(here),epoch)!=Reach::Unreachable)) {
                 setWaited(g);
                 // No field reaches this body yet: head toward the goal along
                 // a short proven straight segment (kHeadingCells) instead of
@@ -9584,7 +9613,7 @@ struct LegionNavigator::Impl {
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillSince);
             if(m.settleP||m.queued||m.rechoices) {h=mix(h,0x736574746c65ull);h=mix(h,m.settleP);h=mix(h,uint64_t(m.queued)|uint64_t(m.rechoices)<<8);}
             h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);h=mix(h,uint64_t(m.real));
-            if(m.gainTick) {h=mix(h,0x6761696eull);h=mix(h,m.gainTick);h=mix(h,m.gainBest);}
+            if(m.gainTick) {h=mix(h,0x6761696eull);h=mix(h,m.gainTick);h=mix(h,m.gainBest);h=mix(h,m.gainSeen);}
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
             if(std::get<0>(m.point)>=0&&m.part!=std::get<1>(m.point)) {h=mix(h,0x70617274ull);h=mix(h,m.part);}
