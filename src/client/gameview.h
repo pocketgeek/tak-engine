@@ -939,18 +939,23 @@ private:
     // pan re-places retained local geometry instead of rebuilding it.
     // Fields are grouped by the passes that read them: the per-frame key check
     // and the draw passes first, the retained local output after.
-    struct UnitGeom {
-        // ---- key check (every visible unit, every frame) ----
-        tak::render::PlacementKey placementKey{};
+    struct alignas(64) UnitGeom {
+        // ---- line 0: written or read for every visible unit every frame ----
         bool reused=false;           // no stage redone this frame
         bool animatedTexture=false;
         bool canFly=false;
         uint8_t stages=0;            // tak::render::StageBit set redone this frame
         int owner=-1;
-        tak::render::MaterialKey materialKey{};
-        std::vector<uint64_t> localKey;          // exact inputs, never a probabilistic hash
-        tak::render::LocalKeyLayout localLayout{};
-        // ---- draw passes (distant images, shadow atlas, composite, body assembly) ----
+        // Telemetry only (worker-written, render-thread tallied; zero while off):
+        // why the last build missed (tak::render::MissCause), every input category
+        // that changed (bit per MissCause), whether the entry changed owner, vector
+        // capacity growths, and worker CPU time for the key check and the rebuild.
+        uint8_t missCause=0;
+        bool ownerChanged=false;
+        uint8_t reallocs=0;
+        uint32_t missMask=0;
+        uint32_t keyNs=0, buildNs=0;
+        tak::render::PlacementKey placementKey{};
         // `revision` = the screen output: bumped whenever any stage is redone (what
         // shadow tile stamps and distant images compare). The stage revisions are
         // bumped only when that stage is redone. All values come from one
@@ -960,6 +965,11 @@ private:
         // the identity downstream caches key on instead of the unit id.
         tak::render::RenderHandle handle{};
         uint64_t handleKey() const { return (uint64_t(handle.generation)<<32)|handle.index; }
+        // ---- line 1-2: the rest of the key check ----
+        tak::render::MaterialKey materialKey{};
+        std::vector<uint64_t> localKey;          // exact inputs, never a probabilistic hash
+        tak::render::LocalKeyLayout localLayout{};
+        // ---- draw passes (distant images, shadow atlas, composite, body assembly) ----
         float ax = 0, ay = 0, occY = 0, alt = 0;
         std::vector<SDL_Vertex> verts;                  // transformed, coloured
         std::vector<std::pair<SDL_Texture*, int>> runs; // (texture, vertex count)
@@ -992,15 +1002,6 @@ private:
 #ifndef NDEBUG
         uint32_t verifiedTick=~0u;
 #endif
-        // Telemetry only (worker-written, render-thread tallied; zero while off):
-        // why the last build missed (tak::render::MissCause), every input category
-        // that changed (bit per MissCause), whether the entry changed owner, vector
-        // capacity growths, and worker CPU time for the key check and the rebuild.
-        uint8_t missCause=0;
-        bool ownerChanged=false;
-        uint8_t reallocs=0;
-        uint32_t missMask=0;
-        uint32_t keyNs=0, buildNs=0;
         // geomEntries_ payload contract (client/geometryowners.h). Cold = no key,
         // so the next build cannot reuse anything; capacity stays for reuse.
         // Revisions are kept: they come from one GameView-wide counter, so a value
