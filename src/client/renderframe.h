@@ -282,6 +282,10 @@ struct Frame {
     float tickDurMs = 1000.0f / 30.0f;
     uint64_t pubCounter = 0;             // performance counter at publish (presentation clock gaps)
     uint32_t gen = 0;                    // capture generation (UnitR.gen == this => live this tick)
+    // World lifetime the units belong to (GameView::worldEpoch_): unit ids restart
+    // at 1 after a replay/rejoin reset, so render caches key identity on (epoch, id).
+    // Presentation only; never hashed.
+    uint32_t worldEpoch = 0;
     // Shake state is snapshotted; mission audio uses an ordered event queue
     // captured under the worker's lock so skipped snapshots cannot drop lines.
     tak::sim::World::ShakeReq shakeReq;

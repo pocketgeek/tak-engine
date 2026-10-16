@@ -258,16 +258,11 @@
         // and building its vertex buffer); the render thread then only submits the
         // finished geometry, one texture-batched draw call per unit. Without this
         // the whole frame is single-threaded and pegs one core at large unit counts.
-        visUnits_.clear();
-        geomIndex_.assign(front().units.size(), -1); // compact frame slot -> visible geometry
-        for (const auto& it : items) if(it.u) {
-            const int slot=front().slot(it.u->id);
-            if(slot>=0) {
-                geomIndex_[size_t(slot)]=int(visUnits_.size());
-                visUnits_.push_back(it.u);
-            }
-        }
-        if (geomPool_.size() < visUnits_.size()) geomPool_.resize(visUnits_.size());
+        // Each visible unit first resolves the geometry entry IT owns.
+        claimGeometryEntries();
+#ifndef NDEBUG
+        if(tak::devFlag("TAK_GEOMETRY_OWNERSHIP_VERIFY"))verifyGeometryOwnership();
+#endif
         // Fraction through the current sim-tick interval, for motion interpolation this
         // frame (clamped: a late tick just holds at the newest pose until it arrives).
         // The presentation clock (presentFrame) has already set it from the display time.
@@ -321,7 +316,7 @@
         pool_.parallelFor(visUnits_.size(), [this](size_t b, size_t e) {
             thread_local std::vector<Tri> scratch;
             for (size_t i = b; i < e; ++i)
-                buildUnitGeom(*visUnits_[i], geomPool_[i], scratch);
+                buildUnitGeom(*visUnits_[i], *visGeom_[i], scratch);
         });
         double _ptFreq = double(SDL_GetPerformanceFrequency()) / 1000.0;
         profProjMs_ += (double(SDL_GetPerformanceCounter()) - _pt0) / _ptFreq;
@@ -351,9 +346,9 @@
         selSet_.clear();
         selSet_.insert(selection_.begin(),selection_.end());
         for(size_t i=0;i<visUnits_.size();++i) {
-            const auto& u=*visUnits_[i];const auto& g=geomPool_[i];
+            const auto& u=*visUnits_[i];const auto& g=visGeom(i);
             auto& item=distantModelItems_[i];
-            item.id=u.id;item.revision=g.revision;item.x=g.ax;item.y=g.ay;
+            item.id=g.handleKey();item.revision=g.revision;item.x=g.ax;item.y=g.ay;
             item.textureTick=g.animatedTexture?front().gameTick:0;
             item.zoom=zm0;item.source=g.verts;item.runs=g.runs;item.texture=nullptr;
             item.eligible=!tak::devFlag("TAK_DISTANT_MODELS_OFF") && !special(u,g) &&
@@ -381,7 +376,7 @@
             distantLogAt=SDL_GetTicks64();
             size_t reused=0,buildings=0,vertices=0,runs=0,moving=0,walking=0;
             for(size_t i=0;i<visUnits_.size();++i) {
-                const auto& g=geomPool_[i];reused+=g.reused;buildings+=isStructure(visUnits_[i]->type);
+                const auto& g=visGeom(i);reused+=g.reused;buildings+=isStructure(visUnits_[i]->type);
                 vertices+=g.verts.size();runs+=g.runs.size();
                 moving+=visUnits_[i]->moving();walking+=visUnits_[i]->walking();
             }
@@ -433,7 +428,7 @@
                 if (!item.u) continue;
                 const int slot=geomSlot(item.u->id);
                 if (slot<0) continue;
-                UnitGeom& g=geomPool_[size_t(slot)];
+                UnitGeom& g=visGeom(size_t(slot));
                 g.shadowAtlasPage=nullptr;
                 if (g.shadowVerts.empty() && g.maskedShadowVerts.empty()) continue;
                 // Every masked run needs the paired black/original-alpha texture.
@@ -767,7 +762,7 @@
         }
         if(tak::devFlag("TAK_CACHE_STATS") && ++geometryFrame_%120==0) {
             size_t reused=0;
-            for(size_t i=0;i<visUnits_.size();++i)reused+=geomPool_[i].reused;
+            for(size_t i=0;i<visUnits_.size();++i)reused+=visGeom(i).reused;
             std::fprintf(stderr,"CACHE geometry=%zu/%zu shadow_tiles=%zu/%zu\n",reused,
                 visUnits_.size(),shadowAtlasReusedUnits,shadowAtlasPackedUnits);
         }
@@ -786,7 +781,7 @@
                 if (!it.u) continue;
                 const int gs = geomSlot(it.u->id);
                 if (gs < 0) continue;
-                const UnitGeom& gsh = geomPool_[size_t(gs)];
+                const UnitGeom& gsh = visGeom(size_t(gs));
                 if (gsh.shadowVerts.empty() && gsh.maskedShadowVerts.empty()) continue;
                 // An AIRBORNE flyer's shadow falls on whatever is beneath it, so drawing
                 // it here -- before any body -- lets every ground unit and feature paint
@@ -865,7 +860,7 @@
                 const auto& u = *it.u;
                 int gslot = geomSlot(u.id);
                 if (gslot < 0) continue;
-                const UnitGeom& g = geomPool_[size_t(gslot)];
+                const UnitGeom& g = visGeom(size_t(gslot));
                 if (special(u, g)) {
                     closeSeg();
                     drawOps_.push_back({&u, nullptr, nullptr, 0, 0});
@@ -895,7 +890,7 @@
                 const auto& distant=distantModelItems_[size_t(t.geom)];
                 if(distant.texture)std::copy(distant.quad.begin(),distant.quad.end(),bodyVerts_.begin()+t.dst);
                 else {
-                    const auto& gv = geomPool_[size_t(t.geom)].verts;
+                    const auto& gv = visGeom(size_t(t.geom)).verts;
                     std::copy(gv.begin() + t.src, gv.begin() + t.src + t.count,
                               bodyVerts_.begin() + t.dst);
                 }
@@ -2214,7 +2209,88 @@
         if (hotkeysScreen_) hotkeysScreen_->render(winW, winH);   // above Options
     }
 
-    // Render thread, after the parallel geometry pass: fold the workers' per-slot
+    // Render thread, before the parallel geometry pass: every visible unit, in
+    // painter order, resolves the geometry entry it owns (client/geometryowners.h),
+    // then entries of destroyed / long-absent units are reclaimed. Depth order only
+    // decides the order of visGeom_; it never moves a unit to another entry.
+    void GameView::claimGeometryEntries() {
+#ifndef NDEBUG
+        // Debug: shorter retention / trim windows, so a short verification run
+        // recycles, expires and trims entries (render_geometry_ownership).
+        static const bool configured = [this] {
+            auto config = geomEntries_.config();
+            if (const char* v = tak::devEnv("TAK_GEOMETRY_RETAIN_MS")) config.retainMs = uint64_t(std::max(0, std::atoi(v)));
+            if (const char* v = tak::devEnv("TAK_GEOMETRY_TRIM_MS")) config.freeTrimMs = uint64_t(std::max(0, std::atoi(v)));
+            if (tak::devEnv("TAK_GEOMETRY_RETAIN_MS")) config.retainMinFrames = 2;
+            geomEntries_.setConfig(config);
+            return true;
+        }();
+        (void)configured;
+#endif
+        // Presentation clock: the study's fixed animation clock, wall time otherwise
+        // (the same choice as the distant-image refresh).
+        geomEntries_.beginFrame(tak::devFlag("TAK_RENDER_STUDY") ? uint64_t(animClock_*1000) : SDL_GetTicks64());
+        const Frame& frame = front();
+        visUnits_.clear();
+        visGeom_.clear();
+        geomIndex_.assign(frame.units.size(), -1);   // compact frame slot -> visible index
+        for (const auto& it : paintItems_) if (it.u) {
+            const int slot = frame.slot(it.u->id);
+            if (slot < 0) continue;
+            tak::render::RenderHandle handle;
+            UnitGeom* g = geomEntries_.claim({it.u->id, frame.worldEpoch, it.u->type, it.u->replacementModel}, &handle);
+            if (!g) continue;   // duplicate owner in one frame (never expected)
+            g->handle = handle;
+            geomIndex_[size_t(slot)] = int(visUnits_.size());
+            visUnits_.push_back(it.u);
+            visGeom_.push_back(g);
+        }
+        // Alive = still in this snapshot under the same identity. Corpses keep their
+        // unit; a unit that switched model or type is a new identity.
+        geomEntries_.reclaim([&](const tak::render::UnitOwner& o) {
+            if (o.epoch != frame.worldEpoch) return false;
+            const UnitR* u = frame.unit(o.id);
+            return u && u->type == o.type && u->replacementModel == o.model;
+        });
+    }
+
+#ifndef NDEBUG
+    // TAK_GEOMETRY_OWNERSHIP_VERIFY: every visible unit holds a distinct entry
+    // owned by exactly its identity, and no entry carries another unit's build.
+    void GameView::verifyGeometryOwnership() {
+        const Frame& frame = front();
+        const auto fail = [](const char* what) { throw std::runtime_error(std::string("geometry ownership: ") + what); };
+        if (visGeom_.size() != visUnits_.size()) fail("painter references out of step");
+        std::vector<const UnitGeom*> entries(visGeom_.begin(), visGeom_.end());
+        std::sort(entries.begin(), entries.end());
+        if (std::adjacent_find(entries.begin(), entries.end()) != entries.end()) fail("two units share an entry");
+        for (size_t i = 0; i < visUnits_.size(); ++i) {
+            const UnitR& u = *visUnits_[i];
+            const UnitGeom& g = visGeom(i);
+            const auto* owner = geomEntries_.ownerOf(&g);
+            if (!owner) fail("visible unit holds a released entry");
+            if (owner->id != u.id || owner->epoch != frame.worldEpoch || owner->type != u.type ||
+                owner->model != u.replacementModel) fail("entry owned by another identity");
+            if (!geomEntries_.valid(g.handle) || geomEntries_.handleOf(u.id) != g.handle) fail("stale entry handle");
+            // Content from a previous build must be this unit's (or none: cold).
+            if (g.owner >= 0 && g.owner != u.id) fail("entry carries another unit's geometry");
+            if (!g.geometryKey.empty() && g.geometryKey[0] != uint64_t(u.id)) fail("entry key names another unit");
+            const int slot = frame.slot(u.id);
+            if (slot < 0 || geomIndex_[size_t(slot)] != int(i)) fail("slot index out of step");
+        }
+        const auto& s = geomEntries_.stats();
+        auto& t = ownershipTotals_;
+        t.acquired += s.acquired; t.replaced += s.replaced; t.duplicates += s.duplicates;
+        t.releasedDestroyed += s.releasedDestroyed; t.releasedExpired += s.releasedExpired;
+        t.releasedBudget += s.releasedBudget; t.trimmed += s.trimmed; t.chunksFreed += s.chunksFreed;
+        t.refused += s.refused;
+        t.visible = std::max(t.visible, s.visible); t.retained = std::max(t.retained, s.retained);
+        t.allocated = std::max(t.allocated, s.allocated);
+        ++ownershipChecks_;
+    }
+#endif
+
+    // Render thread, after the parallel geometry pass: fold the workers' per-entry
     // results into this frame's stats, and account the retained geometry pool.
     void GameView::tallyRenderStats() {
         using RS = tak::render::Counter;
@@ -2223,7 +2299,7 @@
         renderStats_.add(RS::VisibleUnits, visUnits_.size());
         uint64_t keyNs = 0, buildNs = 0;
         for (size_t i = 0; i < visUnits_.size(); ++i) {
-            const UnitGeom& g = geomPool_[i];
+            const UnitGeom& g = visGeom(i);
             keyNs += g.keyNs;
             if (g.reused) { renderStats_.add(RS::GeometryHits); continue; }
             if (g.geometryKey.empty()) continue;   // nothing drawable (no model / unbegun site)
@@ -2249,13 +2325,28 @@
             used += v.size() * sizeof(v[0]);
             capacity += v.capacity() * sizeof(v[0]);
         };
-        for (const UnitGeom& g : geomPool_) {
+        geomEntries_.forEachPayload([&](const UnitGeom& g) {
             account(g.geometryKey); account(g.verts); account(g.runs);
             account(g.shadowVerts); account(g.maskedShadowVerts); account(g.maskedShadowRuns);
-        }
-        renderStats_.set(RS::GeomPoolEntries, geomPool_.size());
+            capacity += sizeof(UnitGeom);   // the entry itself (pool storage)
+        });
+        const auto& pool = geomEntries_.stats();
+        capacity += pool.indexBytes + pool.metaBytes;
+        renderStats_.set(RS::GeomPoolEntries, geomEntries_.live());
         renderStats_.set(RS::GeomPoolUsedBytes, used);
         renderStats_.set(RS::GeomPoolCapacityBytes, capacity);
+        renderStats_.add(RS::GeomEntryAcquired, pool.acquired);
+        renderStats_.add(RS::GeomEntryReplaced, pool.replaced);
+        renderStats_.add(RS::GeomEntryReleasedDestroyed, pool.releasedDestroyed);
+        renderStats_.add(RS::GeomEntryReleasedExpired, pool.releasedExpired);
+        renderStats_.add(RS::GeomEntryReleasedBudget, pool.releasedBudget);
+        renderStats_.add(RS::GeomEntryTrimmed, pool.trimmed);
+        renderStats_.add(RS::GeomEntryRefused, pool.duplicates + pool.refused);
+        renderStats_.set(RS::GeomEntriesRetained, pool.retained);
+        renderStats_.set(RS::GeomEntriesWarmFree, pool.warmFree);
+        renderStats_.set(RS::GeomEntriesAllocated, pool.allocated);
+        renderStats_.set(RS::GeomRetainedBytes, pool.retainedBytes);
+        renderStats_.set(RS::GeomWarmFreeBytes, pool.warmFreeBytes);
     }
 
     // The per-frame buffers whose capacity is retained across frames. One list,
@@ -2562,7 +2653,7 @@
         fogSubmit_.clear();fogUpload_.clear();fogTexGen_=~0u;
         fogMeshValid_ = false;
         distantModelCache_.clear();
-        for(auto& geometry:geomPool_)geometry.geometryKey.clear();
+        geomEntries_.makeAllCold();   // owners stay; every entry rebuilds against the new targets
         for (SDL_Texture* t : atlasTex_) if (t) gpuvram::destroy(t);
         atlasTex_.clear();
         for (auto& page:shadowSilhouettePages_) gpuvram::destroy(page.texture);
@@ -3070,7 +3161,8 @@
         const size_t capacityBefore[6]={g.geometryKey.capacity(),g.verts.capacity(),g.runs.capacity(),
             g.shadowVerts.capacity(),g.maskedShadowVerts.capacity(),g.maskedShadowRuns.capacity()};
         g.geometryKey=key;g.owner=u.id;g.keyLayout=keyLayout;
-        if(!cacheHit)++g.revision;
+        // A revision value is never repeated, by this entry or any other (one counter).
+        if(!cacheHit)g.revision=geometryRevision_.fetch_add(1,std::memory_order_relaxed)+1;
         g.verts.clear();g.runs.clear();g.shadowVerts.clear();
         g.maskedShadowVerts.clear();g.maskedShadowRuns.clear();
         g.canFly=u.type && u.type->canFly;
@@ -3376,7 +3468,7 @@
         // here we just look up the result and submit its draw calls.
         int gslot = geomSlot(u.id);
         if (gslot < 0) return;
-        UnitGeom& g = geomPool_[size_t(gslot)];
+        UnitGeom& g = visGeom(size_t(gslot));
         float zm = mapView_.zoom();
         float ax = g.ax, ay = g.ay;
         // Terrain occlusion: if a wall between the unit and the camera projects its

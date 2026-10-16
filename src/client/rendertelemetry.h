@@ -221,7 +221,7 @@ enum class Counter : uint8_t {
     AtlasRegionsPainted, // animated-texture atlas regions repainted
     AtlasPixelsPainted,
     TargetSwitches,      // render-target changes the renderer made (where counted)
-    GeomPoolEntries,     // retained per-unit geometry entries
+    GeomPoolEntries,     // live per-unit geometry entries (visible + retained; workstream C)
     GeomPoolUsedBytes,   // bytes in use across retained geometry vectors
     GeomPoolCapacityBytes, // bytes retained (capacity) across those vectors
     BodyBufferCapacityBytes,
@@ -232,7 +232,7 @@ enum class Counter : uint8_t {
     TerrainSectionBytes,
     GpuTrackedBytes,     // gpuvram tracked textures + buffers (excl. driver internals)
     // ---- added by workstream A (counts per frame unless noted) ----
-    GeometryOwnerReassign, // a slot rebuilt for a different unit than its last owner
+    GeometryOwnerReassign, // an entry rebuilt for a different unit than its last owner (0 since workstream C)
     InvalPose,           // misses whose key changed in pose inputs (pieces, heading, pitch/roll, altitude, corpse)
     InvalMaterial,       // ... body appearance (palette, tint, opacity, veterancy, emotes, construction, texture frame)
     InvalPlacement,      // ... screen anchor / clip (interpolated position, lift, sink, occlusion)
@@ -290,6 +290,19 @@ enum class Counter : uint8_t {
     PoolDispatches,      // parallel passes that woke the worker pool
     PoolSerialRuns,      // passes run serially (below the parallel threshold)
     PoolItems,           // items handed to either kind of pass
+    // ---- added by workstream C (stable geometry entries, client/geometryowners.h) ----
+    GeomEntryAcquired,   // fresh (cold) entries handed to a unit this frame
+    GeomEntryReplaced,   // ... of which the id had an entry under another identity (epoch/type/model)
+    GeomEntryReleasedDestroyed, // entries of units no longer in the snapshot (or changed identity)
+    GeomEntryReleasedExpired,   // absent longer than the retention window
+    GeomEntryReleasedBudget,    // absent entries released by the retained byte/count budget
+    GeomEntryTrimmed,    // released entries whose memory was returned
+    GeomEntryRefused,    // claims refused (duplicate owner in a frame, index bound)
+    GeomEntriesRetained, // gauge: live entries not in view this frame
+    GeomEntriesWarmFree, // gauge: released entries still holding capacity
+    GeomEntriesAllocated,// gauge: entry index space (live + free)
+    GeomRetainedBytes,   // gauge: bytes held by retained (absent) entries
+    GeomWarmFreeBytes,   // gauge: bytes held by released entries awaiting reuse/trim
     Count
 };
 
@@ -338,7 +351,11 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "terrain_section_decodes", "terrain_mip_cpu_bytes", "terrain_section_cpu_bytes",
     "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes", "frame_lists_used_bytes",
     "frame_lists_capacity_bytes", "body_used_bytes", "gpu_texture_creates",
-    "gpu_texture_destroys", "pool_dispatches", "pool_serial_runs", "pool_items"};
+    "gpu_texture_destroys", "pool_dispatches", "pool_serial_runs", "pool_items",
+    "geom_entry_acquired", "geom_entry_replaced", "geom_entry_released_destroyed",
+    "geom_entry_released_expired", "geom_entry_released_budget", "geom_entry_trimmed",
+    "geom_entry_refused", "geom_entries_retained", "geom_entries_warm_free",
+    "geom_entries_allocated", "geom_retained_bytes", "geom_warm_free_bytes"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

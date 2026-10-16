@@ -12,7 +12,11 @@ namespace tak {
 class DistantModels {
 public:
     struct Item {
-        int id=-1;
+        // Stable cache identity. GameView passes the unit's geometry-entry handle
+        // (index + generation, client/geometryowners.h), never the bare unit id:
+        // ids restart after a world reset and a held image must never pass to
+        // another unit.
+        uint64_t id=~uint64_t(0);
         uint64_t revision=0;
         uint32_t textureTick=0; // preserve animated-image refresh cadence independently of geometry reuse
         float x=0,y=0,zoom=1;
@@ -43,7 +47,7 @@ private:
         int pixelsW=0,pixelsH=0;
         bool valid=false;
     };
-    std::unordered_map<int,Entry> entries_;
+    std::unordered_map<uint64_t,Entry> entries_;
     std::vector<SDL_Texture*> pages_;
     std::vector<int> free_;
     std::vector<SDL_Vertex> scratch_;

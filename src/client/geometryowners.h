@@ -183,13 +183,14 @@ public:
     // identity changed. Stable address while the unit keeps it. nullptr for a
     // second claim of the same owner in one frame (two workers must never share
     // an entry) or when maxEntries is reached with nothing evictable.
-    Payload* claim(const UnitOwner& owner) {
+    Payload* claim(const UnitOwner& owner, RenderHandle* handle = nullptr) {
         uint32_t index = index_.find(owner.id);
         if (index != OwnerIndex::kNone) {
             Meta& m = meta_[index];
             if (m.owner == owner) {
                 if (m.seenFrame == frame_) { ++stats_.duplicates; return nullptr; }
                 m.seenFrame = frame_; m.seenMs = nowMs_;
+                if (handle) *handle = m.handle;
                 return &payload(index);
             }
             // Already handed out this frame under the other identity: releasing it
@@ -209,6 +210,7 @@ public:
         p.makeCold();
         index_.insert(owner.id, h.index);
         ++stats_.acquired;
+        if (handle) *handle = h;
         return &p;
     }
 

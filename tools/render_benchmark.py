@@ -512,11 +512,17 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "flushes", "target_switches", "distant_images", "distant_hits", "distant_bakes",
                     "terrain_jobs_queued", "terrain_jobs_used", "terrain_jobs_discarded",
                     "terrain_jobs_cancelled", "geom_reallocs", "frame_reallocs", "pool_dispatches",
-                    "pool_serial_runs"]
+                    "pool_serial_runs",
+                    # workstream C: stable geometry entries
+                    "geom_entries", "geom_entry_acquired", "geom_entry_replaced",
+                    "geom_entry_released_destroyed", "geom_entry_released_expired",
+                    "geom_entry_released_budget", "geom_entry_trimmed", "geom_entry_refused",
+                    "geom_entries_retained", "geom_entries_warm_free", "geom_entries_allocated"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",
-                   "terrain_section_cpu_bytes", "gpu_tracked_bytes"]
+                   "terrain_section_cpu_bytes", "gpu_tracked_bytes", "geom_retained_bytes",
+                   "geom_warm_free_bytes"]
 
 
 def metric(result, path):

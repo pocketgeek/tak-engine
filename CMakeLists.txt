@@ -1381,6 +1381,27 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1024 768 --novsync)
       set_tests_properties(render_atlas_verify PROPERTIES TIMEOUT 120
           PASS_REGULAR_EXPRESSION "ATLAS_VERIFY checks=[1-9]")
+      # Stable per-unit geometry entries in a real scene (workstream C): a moving,
+      # panning army reorders in depth every frame, 5% dies and respawns every 30
+      # frames, render targets reset every 70 and the world epoch advances every 110
+      # (the id reuse of a rejoin); retention is shortened to 100 ms and released
+      # memory is trimmed at once (debug knobs), so entries of units that left the
+      # pan expire, are recycled and trimmed within the run. Every frame each visible
+      # unit must hold a distinct entry owned by its own identity with no other
+      # unit's content (TAK_GEOMETRY_OWNERSHIP_VERIFY), and every cache hit must
+      # equal a rebuild (TAK_GEOMETRY_VERIFY); both throw at the first violation.
+      add_test(NAME render_geometry_ownership COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+          TAK_SHADOW_BENCH=200 TAK_PROFILE_ZOOM=0.75 TAK_RENDER_MOTION=1 TAK_RENDER_CAMERA=1
+          TAK_RENDER_CHURN=30 TAK_RENDER_RESET=70 TAK_RENDER_EPOCH=110
+          TAK_GEOMETRY_RETAIN_MS=100 TAK_GEOMETRY_TRIM_MS=0
+          TAK_RENDER_STUDY=1 TAK_RENDER_FRAMES=230 TAK_GEOMETRY_VERIFY=1 TAK_GEOMETRY_OWNERSHIP_VERIFY=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/geometry-ownership-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/geometry-ownership-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1024 768 --novsync)
+      set_tests_properties(render_geometry_ownership PROPERTIES TIMEOUT 120
+          PASS_REGULAR_EXPRESSION "OWNERSHIP_VERIFY checks=[1-9][0-9]* acquired=[1-9][0-9]* replaced=[1-9][0-9]* destroyed=[0-9]+ expired=[1-9][0-9]* budget=[0-9]+ trimmed=[1-9]")
       add_test(NAME tactical_dots COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_TACTICAL_DOTS_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/tactical-dots-profile
@@ -1447,7 +1468,8 @@ if(TAK_BUILD_CLIENT)
           PASS_REGULAR_EXPRESSION "menu: launch failed -> notice: could not (run|start) the local server")
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
-      set_tests_properties(build_controls render_texture_reuse render_atlas_verify tactical_dots spectator_health_bars
+      set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
+          tactical_dots spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()

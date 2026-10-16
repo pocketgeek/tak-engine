@@ -65,6 +65,16 @@ int main() try {
         item.source=relocated;
         cache.prepare(renderer,{&item,1},380);
         check(item.texture && cache.refreshed==1,"geometry slot changes invalidate equal revision numbers");
+        // A new identity (GameView: a new geometry-entry handle -- reused unit id,
+        // replacement, recycled entry) never shows the previous one's image, even
+        // inside the refresh interval where the same identity would be held.
+        item.id=2;item.revision=3;
+        cache.prepare(renderer,{&item,1},390);
+        check(item.texture && cache.refreshed==1 && cache.missNew==1 && cache.held==0,
+              "a new identity bakes its own image instead of holding another's");
+        item.id=1;item.revision=4;
+        cache.prepare(renderer,{&item,1},395);
+        check(item.texture && cache.refreshed==0 && cache.held==1,"the same identity is held inside the interval");
         SDL_RenderSetScale(renderer,2,2);
         cache.prepare(renderer,{&item,1},400);
         float sx=0,sy=0;SDL_RenderGetScale(renderer,&sx,&sy);

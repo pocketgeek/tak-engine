@@ -1091,6 +1091,9 @@ void GameView::autoplayStep() {
             // after the GameStarting; mpStep drains it, fast-forwarding to now.
             bool spec = mp_->isSpectator();
             mp_->clearRejoin();
+            // Unit ids restart at 1: snapshots from here on carry a new world epoch,
+            // so render caches never take a new unit for the old one with its id.
+            worldEpoch_.fetch_add(1, std::memory_order_release);
             writableWorld().resetForReplay();
             netTick_ = 0; outcome_ = 0; resultStartedMs_ = 0; netError_.clear();
             // Replaying history from tick 0: hold our own orders and stop counting

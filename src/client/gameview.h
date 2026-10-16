@@ -66,6 +66,7 @@
 #include "client/rendertelemetry.h" // per-frame render stats + generation vocabulary
 #include "client/animatedatlas.h"   // per-atlas animated-region tracking
 #include "client/geometrykeycause.h"  // telemetry: which stage a geometry miss came from
+#include "client/geometryowners.h"    // stable per-unit geometry entries (workstream C)
 #include "client/ordertrail.h"
 #include "client/retailaim.h"
 #include "client/retailflightanimation.h"
@@ -636,6 +637,10 @@ public:
 #ifndef NDEBUG
     uint64_t geometryChecks() const { return geometryChecks_.load(); }
     uint64_t animatedTextureChecks() const { return animatedTextureChecks_.load(); }
+    uint64_t ownershipChecks() const { return ownershipChecks_; }
+    const tak::render::EntryPoolStats& ownershipTotals() const { return ownershipTotals_; }
+    // Debug harness: the world-reset epoch bump of a rejoin, without the reset.
+    void renderStudyBumpWorldEpoch() { worldEpoch_.fetch_add(1, std::memory_order_release); }
     void renderStudyMotion(unsigned frame) {
         if(!frame || frame%240)return;
         const float direction=(frame/240)%2 ? -1.f : 1.f;
@@ -942,6 +947,10 @@ private:
         uint8_t reallocs=0;
         uint32_t keyNs=0, buildNs=0;
         tak::render::GeometryKeyLayout keyLayout{};
+        // This entry's current generational handle (render thread, set at claim):
+        // the identity downstream caches key on instead of the unit id.
+        tak::render::RenderHandle handle{};
+        uint64_t handleKey() const { return (uint64_t(handle.generation)<<32)|handle.index; }
         std::vector<SDL_Vertex> verts;                  // transformed, coloured
         std::vector<std::pair<SDL_Texture*, int>> runs; // (texture, vertex count)
         float ax = 0, ay = 0, occY = 0, alt = 0;
@@ -963,6 +972,27 @@ private:
         SDL_Texture* shadowAtlasPage = nullptr;
         SDL_Rect shadowAtlasSrc{};
         SDL_FRect shadowAtlasDst{};
+        // geomEntries_ payload contract (client/geometryowners.h). Cold = no key,
+        // so the next build cannot reuse anything; capacity stays for reuse.
+        // `revision` is kept: it comes from one GameView-wide counter, so a value
+        // is never repeated by another occupant of this entry.
+        void makeCold() {
+            geometryKey.clear();keyLayout={};owner=-1;reused=false;
+            verts.clear();runs.clear();shadowVerts.clear();
+            maskedShadowVerts.clear();maskedShadowRuns.clear();shadowAtlasPage=nullptr;
+        }
+        size_t retainedBytes() const {
+            return sizeof(*this)+geometryKey.capacity()*sizeof(uint64_t)+verts.capacity()*sizeof(SDL_Vertex)+
+                runs.capacity()*sizeof(runs[0])+shadowVerts.capacity()*sizeof(SDL_FPoint)+
+                maskedShadowVerts.capacity()*sizeof(SDL_Vertex)+maskedShadowRuns.capacity()*sizeof(maskedShadowRuns[0]);
+        }
+        void releaseMemory() {
+            makeCold();
+            std::vector<uint64_t>().swap(geometryKey);std::vector<SDL_Vertex>().swap(verts);
+            std::vector<std::pair<SDL_Texture*,int>>().swap(runs);std::vector<SDL_FPoint>().swap(shadowVerts);
+            std::vector<SDL_Vertex>().swap(maskedShadowVerts);
+            std::vector<std::pair<SDL_Texture*,int>>().swap(maskedShadowRuns);
+        }
     };
     tak::OpaqueShadowSubmit shadowOpaqueSubmit_;
     tak::GeometrySubmit bodySubmit_;
@@ -1467,10 +1497,32 @@ private:
     std::vector<Tri> tris_;
     std::vector<SDL_Vertex> triBatch_;   // reused per-unit vertex batch
     uint64_t geometryFrame_=0;
-    std::vector<UnitGeom> geomPool_;              // reused across frames (keeps capacity)
-    // unit id -> slot in geomPool_, rebuilt each frame. A flat vector (ids are dense:
-    // id == index+1) instead of an unordered_map, so no per-visible-unit node alloc
-    // and the three later passes index in O(1) instead of hashing. -1 = not in view.
+    // Per-unit geometry entries, owned by the UNIT (workstream C): a unit keeps
+    // its entry across painter-order changes and short absences; destroyed units,
+    // reused ids (world epoch), replacement models and type changes get a fresh
+    // cold entry. Bounded retention, released memory trimmed. Render thread only;
+    // workers write the entries visGeom_ hands them.
+    tak::render::StableEntryPool<UnitGeom> geomEntries_;
+    // visUnits_[i]'s entry, in painter order: the ordered references the painter
+    // passes use. Sorting reorders these pointers, never the ownership.
+    std::vector<UnitGeom*> visGeom_;
+    UnitGeom& visGeom(size_t i) { return *visGeom_[i]; }
+    const UnitGeom& visGeom(size_t i) const { return *visGeom_[i]; }
+    // Geometry revisions from one counter: a rebuilt entry's revision is never
+    // seen before, by any entry (downstream caches compare revision + source).
+    std::atomic<uint64_t> geometryRevision_{0};
+    // World lifetime for unit identities: bumped before the world is reset for a
+    // replay/rejoin (unit ids restart at 1); captureFrame stamps it on each Frame.
+    std::atomic<uint32_t> worldEpoch_{1};
+    void claimGeometryEntries();
+#ifndef NDEBUG
+    uint64_t ownershipChecks_=0;   // TAK_GEOMETRY_OWNERSHIP_VERIFY frames checked
+    tak::render::EntryPoolStats ownershipTotals_{};   // events summed over the run
+    void verifyGeometryOwnership();
+#endif
+    // Frame slot -> index into visUnits_/visGeom_, rebuilt each frame. A flat
+    // vector over the compact snapshot, so the later passes index in O(1) instead
+    // of hashing. -1 = not in view.
     std::vector<int> geomIndex_;
     int geomSlot(int id) const;
     std::vector<int> selection_;

@@ -862,6 +862,7 @@
         Frame& fb = frameBuf_[w];                // write buffer
         const Frame& pf = frameBuf_[published_]; // previously-published frame (last tick's poses)
         fb.gen = ++captureCounter_;     // records written this pass get gen==fb.gen (=> live this tick)
+        fb.worldEpoch = worldEpoch_.load(std::memory_order_acquire);
         fb.live.clear();
         const size_t count=world_.units().size();
         fb.units.resize(count);

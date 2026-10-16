@@ -1559,6 +1559,7 @@ int main(int argc, char** argv) {
     const unsigned studyJump=studyPeriod("TAK_RENDER_JUMP");
     const unsigned studyReset=studyPeriod("TAK_RENDER_RESET");
     const unsigned studyChurn=studyPeriod("TAK_RENDER_CHURN");
+    const unsigned studyEpoch=studyPeriod("TAK_RENDER_EPOCH");   // world-epoch bump (rejoin id reuse)
     const unsigned studySparseAfter=studyPeriod("TAK_RENDER_SPARSE_AFTER");
     float studySparseX=200,studySparseZ=200;
     if(const char* at=tak::devEnv("TAK_RENDER_SPARSE_OFFSET"))std::sscanf(at,"%f,%f",&studySparseX,&studySparseZ);
@@ -1797,6 +1798,8 @@ int main(int argc, char** argv) {
                     gameView->lookAt(p[0],p[1]);
                 }
                 if(renderStudy && studyChurn)gameView->renderStudyChurn(studyFrame,studyChurn);
+                if(renderStudy && studyEpoch && studyFrame && studyFrame%studyEpoch==0)
+                    gameView->renderStudyBumpWorldEpoch();
                 if(renderStudy && studySparseAfter && studyFrame>=studySparseAfter)
                     gameView->renderStudyOffset(studySparseX,studySparseZ);
                 if(renderStudy && studyReset && studyFrame && studyFrame%studyReset==0) {
@@ -1927,6 +1930,17 @@ int main(int argc, char** argv) {
                     static_cast<unsigned long long>(gameView->animatedTextureChecks()));
                 if(!gameView->animatedTextureChecks())
                     throw std::runtime_error("texture reuse test had no unchanged animated frames across ticks");
+            }
+            if(tak::devFlag("TAK_GEOMETRY_OWNERSHIP_VERIFY")) {
+                // Every frame passed, or verifyGeometryOwnership() threw at the first violation.
+                const auto& t=gameView->ownershipTotals();
+                std::printf("OWNERSHIP_VERIFY checks=%llu acquired=%u replaced=%u destroyed=%u expired=%u "
+                            "budget=%u trimmed=%u chunks_freed=%u refused=%u peak_visible=%u peak_retained=%u "
+                            "peak_allocated=%u\n",
+                    static_cast<unsigned long long>(gameView->ownershipChecks()),t.acquired,t.replaced,
+                    t.releasedDestroyed,t.releasedExpired,t.releasedBudget,t.trimmed,t.chunksFreed,
+                    t.duplicates+t.refused,t.visible,t.retained,t.allocated);
+                if(!gameView->ownershipChecks())throw std::runtime_error("ownership verify ran no checks");
             }
             if(tak::devFlag("TAK_ATLAS_VERIFY")) {
                 // Every check passed, or verifyAtlases() threw at the first mismatch.
