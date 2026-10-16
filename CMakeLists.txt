@@ -1420,6 +1420,27 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 800 600 --novsync)
       set_tests_properties(render_geometry_stages PROPERTIES TIMEOUT 180
           PASS_REGULAR_EXPRESSION "GEOMETRY_STAGES hits=[0-9]+ placement=[1-9][0-9]* material=[1-9][0-9]* single_pass=[1-9]")
+      # Shadow silhouette tile reuse in a real scene (workstream E), on SDL's software
+      # renderer (TAK_SHADOW_ATLAS_SOFTWARE runs the atlas there): a stationary mixed
+      # roster with construction, ghosts, flyers and corpses, animated textures with
+      # and without shadow masks (aralode; tarnecro/tarwitch), a veterancy cycle
+      # (material-only), a whole-pixel pan that pauses (translation and body-only
+      # reuse) and render-target resets. Every frame each kept tile must equal a
+      # complete re-bake pixel for pixel and every tile the pre-E key kept must be
+      # kept (TAK_SHADOW_CACHE_VERIFY); every skipped silhouette must equal a fresh
+      # collection and every reuse a complete rebuild (TAK_GEOMETRY_VERIFY).
+      add_test(NAME render_shadow_cache COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software
+          TAK_SHADOW_ATLAS_SOFTWARE=1 TAK_SHADOW_BENCH=80 TAK_PROFILE_ZOOM=1
+          TAK_RENDER_ROSTER=araarch,zonter,versword,tarnecro,tarwitch,aralode TAK_RENDER_EXTRAS=1
+          TAK_RENDER_CAMERA_SNAP=20 TAK_RENDER_VETERAN=25 TAK_RENDER_RESET=70
+          TAK_RENDER_STUDY=1 TAK_RENDER_FRAMES=140 TAK_SHADOW_CACHE_VERIFY=1 TAK_GEOMETRY_VERIFY=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/shadow-cache-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/shadow-cache-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1024 768 --novsync)
+      set_tests_properties(render_shadow_cache PROPERTIES TIMEOUT 300
+          PASS_REGULAR_EXPRESSION "shadow_skipped=[1-9][0-9]*\nSHADOW_CACHE_VERIFY frames=[1-9][0-9]* tiles=[0-9]+ reused=[0-9]+ body=[1-9][0-9]* translated=[1-9]")
       add_test(NAME tactical_dots COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_TACTICAL_DOTS_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/tactical-dots-profile
@@ -1487,7 +1508,7 @@ if(TAK_BUILD_CLIENT)
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
-          render_geometry_stages tactical_dots spectator_health_bars
+          render_geometry_stages render_shadow_cache tactical_dots spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()

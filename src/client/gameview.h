@@ -661,10 +661,27 @@ public:
                 writableWorld().order(unit.id,unit.x.toFloat()+direction*320,unit.z.toFloat()+direction*160,false);
     }
     void renderStudyZoom(float zoom) { mapView_.setZoom(zoom); }
+    // Workstream E: the sinusoidal pan rounded to whole world units around the
+    // setup view, so at zoom 1 every camera step is a whole-pixel translation
+    // (exact shadow-tile translation reuse); `hold` > 1 alternates `hold` moving
+    // and `hold` still frames, and every other such cycle runs 0.375 px off the
+    // whole-pixel grid (one sub-pixel jump in and out: tiles must be redrawn).
+    // And a periodic veterancy cycle on every fifth unit (a material-only change:
+    // gold tint, no model swap).
+    void renderStudyPanSnap(unsigned frame, unsigned hold) {
+        if(!panSnapBase_)panSnapBase_={mapView_.offX(),mapView_.offY()};
+        const unsigned moved=hold>1 ? frame/(2*hold)*hold+std::min(frame%(2*hold),hold) : frame;
+        const float phase=float(moved)*.012f;
+        const float fraction=hold>1 && (frame/(2*hold))%2 ? 0.375f : 0.0f;
+        mapView_.setOffset(panSnapBase_->first+std::round(240*std::sin(phase))+fraction,
+                           panSnapBase_->second+std::round(160*std::cos(phase))+fraction);
+    }
+    void renderStudyVeteran(unsigned frame, unsigned period);
     // Render-optimization harness (docs/render-optimization-progress.md). Each
     // is presentation-side or local-harness only and runs in the standalone
     // render study, never in a networked game.
     void renderStudyChurn(unsigned frame, unsigned period);
+    std::optional<std::pair<float,float>> panSnapBase_;
     void renderStudyOffset(float x, float z) { mapView_.setOffset(x, z); }
     // The world view at this output size (left of the command panel, above the
     // bottom bar): the region a render capture comparison should cover.

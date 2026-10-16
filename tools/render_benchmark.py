@@ -99,6 +99,13 @@ SCENES = {
                         settings={"gpuMemoryLimit": "512"},
                         notes="the zoom scene under a 128 MiB tracked-GPU cap (debug override below "
                               "the 512 MiB Options minimum, which no matrix scene reaches)"),
+    # Workstream E: reuse that needs a still or whole-pixel camera.
+    "pan-snap": dict(count=2000, zoom=1.0, env={"TAK_RENDER_CAMERA_SNAP": "1"},
+                     notes="sinusoidal pan rounded to whole world units at zoom 1: every camera "
+                           "step is a whole-pixel translation (exact shadow-tile translation reuse)"),
+    "veteran": dict(count=2000, zoom=0.5, env={"TAK_RENDER_VETERAN": "30"},
+                    notes="dense stationary mixed army; every 30 frames every fifth unit changes "
+                          "veteran level (material-only body change, shadow unchanged)"),
 }
 QUICK = ["small-battle", "stationary-mixed", "moving", "pan"]
 SIZES = {"normal": (1280, 960), "uhd": (7680, 2160)}

@@ -962,6 +962,7 @@
         //   TAK_RENDER_EXTRAS=1     add construction sites, ghosts, flyers, corpses
         //   TAK_RENDER_NAVAL=N      N floating units on the water nearest the centre
         //   TAK_RENDER_FOREST=1     centre army + camera on the densest scenery region
+        //   TAK_RENDER_ROSTER=a,b   unit types replacing the 6-type roster
         // All of them only shape the local harness scene; none run in a real game.
         if (const char* countText=tak::devEnv("TAK_SHADOW_BENCH")) {
             const int count=std::clamp(std::atoi(countText),1,16000);
@@ -979,7 +980,18 @@
                 }
             }
             const char* only=tak::devEnv("TAK_SHADOW_BENCH_TYPE");
-            const char* roster[]={"zonter","araarch","aralode","tarlode","zonroc","versword"};
+            std::vector<std::string> roster={"zonter","araarch","aralode","tarlode","zonroc","versword"};
+            if(const char* custom=tak::devEnv("TAK_RENDER_ROSTER")) {
+                // Comma-separated unit types replacing the 6-type roster.
+                roster.clear();
+                std::string list=custom;
+                for(size_t at=0;at<=list.size();) {
+                    const size_t comma=std::min(list.find(',',at),list.size());
+                    if(comma>at)roster.push_back(list.substr(at,comma-at));
+                    at=comma+1;
+                }
+                if(roster.empty())roster.push_back("araarch");
+            }
             const int columns=std::max(1,int(std::ceil(std::sqrt(float(count)*1.6f))));
             const char* spacingText=tak::devEnv("TAK_RENDER_SPACING");
             const float spacing=spacingText?std::clamp(float(std::atof(spacingText)),16.f,256.f):40.f;
@@ -987,7 +999,7 @@
             int spawned=0;
             std::vector<int> spawnedIds;
             for(int i=0;i<count;++i) {
-                const char* name=only ? only : roster[i%6];
+                const char* name=only ? only : roster[size_t(i)%roster.size()].c_str();
                 const auto* type=registry_.find(name);
                 if(!type || world_.atUnitCap(localPlayer_) || world_.atTypeCap(localPlayer_,type)) continue;
                 const float x=centerX+(float(i%columns)-float(columns-1)*0.5f)*spacing;
@@ -2694,6 +2706,18 @@
             writableWorld().destroy(mobile[k]);
             const float dx=float(int((frame/period+k)%9)-4)*24;
             spawn(roster[(frame/period+k)%4],x+dx,z+48,float(k%8)*0.785398163f,localPlayer_);
+        }
+    }
+
+    // Material-only invalidation for the render matrix (workstream E): every
+    // `period` frames every fifth living mobile unit moves to the next veteran
+    // level in 4..9 (gold body tint; level 10 would swap the model).
+    void GameView::renderStudyVeteran(unsigned frame, unsigned period) {
+        if(!period || !frame || frame%period)return;
+        size_t k=0;
+        for(const auto& unit:world_.units()) {
+            if(!unit.alive() || !unit.type || !unit.type->canMove || k++%5)continue;
+            if(auto* u=writableWorld().unit(unit.id))u->veteran=4+int((frame/period+k)%6);
         }
     }
 

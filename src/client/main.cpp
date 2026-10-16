@@ -1560,6 +1560,8 @@ int main(int argc, char** argv) {
     const unsigned studyReset=studyPeriod("TAK_RENDER_RESET");
     const unsigned studyChurn=studyPeriod("TAK_RENDER_CHURN");
     const unsigned studyEpoch=studyPeriod("TAK_RENDER_EPOCH");   // world-epoch bump (rejoin id reuse)
+    const unsigned studyVeteran=studyPeriod("TAK_RENDER_VETERAN");   // veterancy cycle (material-only)
+    const unsigned studyPanSnap=studyPeriod("TAK_RENDER_CAMERA_SNAP");  // whole-pixel pan (1, or N moving/N still)
     const unsigned studySparseAfter=studyPeriod("TAK_RENDER_SPARSE_AFTER");
     float studySparseX=200,studySparseZ=200;
     if(const char* at=tak::devEnv("TAK_RENDER_SPARSE_OFFSET"))std::sscanf(at,"%f,%f",&studySparseX,&studySparseZ);
@@ -1784,10 +1786,12 @@ int main(int argc, char** argv) {
             if (!benchFrozen) {
                 gameView->benchmarkCamera(dt, w, h);   // benchmark flythrough (no-op otherwise)
 #ifndef NDEBUG
-                if(renderStudy && tak::devFlag("TAK_RENDER_CAMERA")) {
+                if(renderStudy && studyPanSnap)gameView->renderStudyPanSnap(studyFrame,studyPanSnap);
+                else if(renderStudy && tak::devFlag("TAK_RENDER_CAMERA")) {
                     const float phase=float(studyFrame)*.012f;
                     gameView->lookAt(5000+240*std::sin(phase),5000+160*std::cos(phase));
                 }
+                if(renderStudy && studyVeteran)gameView->renderStudyVeteran(studyFrame,studyVeteran);
                 if(renderStudy && tak::devFlag("TAK_RENDER_ZOOM"))
                     gameView->renderStudyZoom(.25f+.75f*(.5f+.5f*std::sin(float(studyFrame)*.008f)));
                 if(renderStudy && tak::devFlag("TAK_RENDER_MOTION"))gameView->renderStudyMotion(studyFrame);
