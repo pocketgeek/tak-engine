@@ -517,7 +517,10 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "geom_entries", "geom_entry_acquired", "geom_entry_replaced",
                     "geom_entry_released_destroyed", "geom_entry_released_expired",
                     "geom_entry_released_budget", "geom_entry_trimmed", "geom_entry_refused",
-                    "geom_entries_retained", "geom_entries_warm_free", "geom_entries_allocated"]
+                    "geom_entries_retained", "geom_entries_warm_free", "geom_entries_allocated",
+                    # workstream E: body/shadow invalidation split
+                    "geom_shadow_kept", "geom_shadow_skipped", "shadow_reused_body",
+                    "shadow_reused_translated"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",

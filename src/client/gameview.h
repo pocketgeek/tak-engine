@@ -67,6 +67,7 @@
 #include "client/animatedatlas.h"   // per-atlas animated-region tracking
 #include "client/geometrystages.h"    // staged unit geometry: local / placement / material (workstream D)
 #include "client/geometryowners.h"    // stable per-unit geometry entries (workstream C)
+#include "client/shadowtiles.h"       // shadow silhouette tile keys and reuse (workstream E)
 #include "client/ordertrail.h"
 #include "client/retailaim.h"
 #include "client/retailflightanimation.h"
@@ -643,6 +644,11 @@ public:
     uint64_t placementChecks() const { return placementChecks_.load(); }
     uint64_t materialChecks() const { return materialChecks_.load(); }
     uint64_t monolithicChecks() const { return monolithicChecks_.load(); }
+    uint64_t shadowSkipChecks() const { return shadowSkipChecks_.load(); }
+    struct ShadowCacheVerifyTotals {
+        uint64_t frames=0, tiles=0, reused=0, body=0, translated=0, original=0;
+    };
+    const ShadowCacheVerifyTotals& shadowVerifyTotals() const { return shadowVerify_; }
     uint64_t ownershipChecks() const { return ownershipChecks_; }
     const tak::render::EntryPoolStats& ownershipTotals() const { return ownershipTotals_; }
     // Debug harness: the world-reset epoch bump of a rejoin, without the reset.
@@ -729,6 +735,10 @@ private:
     struct PieceMeta {
         bool animated = false;              // any animated texture in this subtree
         std::vector<const size_t*> animationFrames; // stable texture-animation records
+        // Parallel to animationFrames: 1 when a primitive textured by that animation
+        // has shadow masks, so its frame selects the shadow cutout. 0 = the frame
+        // only recolours the body (tak::render::shadowInputsEqual).
+        std::vector<uint8_t> animationFrameMasks;
         bool skip = false;                  // ground plate / *off duplicate: draws nothing
         std::vector<std::string> primTex;   // lowercased per primitive ("" = untextured)
         std::vector<const SDL_Rect*> primAtlas; // immutable atlas layout; shared by all colour slots
@@ -988,6 +998,13 @@ private:
         std::vector<SDL_Vertex> maskedShadowVerts; // only cutout faces need UVs/textures
         std::vector<std::pair<SDL_Texture*,int>> maskedShadowRuns; // adjacent masks, original order
         std::array<float,4> shadowBounds{}; // min x/y, max x/y of the placed shadow
+        // The placement the shadow points above were placed with (set by every
+        // placement stage). With shadowRevision it is the exact key of a shadow
+        // silhouette tile (client/shadowtiles.h).
+        tak::render::ShadowPlacement shadowPlacement{};
+        // Telemetry: the last local rebuild left the shadow inputs unchanged, so the
+        // silhouette was not collected again (body-only local change).
+        bool shadowSkipped=false;
         SDL_Texture* shadowAtlasPage = nullptr;
         SDL_Rect shadowAtlasSrc{};
         SDL_FRect shadowAtlasDst{};
@@ -1002,7 +1019,7 @@ private:
         // shadowRevision = the local shadow coverage (shadowLocal, maskedShadowLocal,
         // masked UVs and runs): advanced by a local rebuild only when that output
         // actually differs, so a body-only local change (texture frame, palette)
-        // leaves it alone. With placementKey it is what coverage reuse needs.
+        // leaves it alone. With shadowPlacement it keys the silhouette tile (E).
         uint64_t localRevision=0, placementRevision=0, materialRevision=0, shadowRevision=0;
 #ifndef NDEBUG
         uint32_t verifiedTick=~0u;
@@ -1138,6 +1155,12 @@ private:
     std::atomic<uint64_t> geometryChecks_{0};
     std::atomic<uint64_t> animatedTextureChecks_{0};
     std::atomic<uint64_t> placementChecks_{0}, materialChecks_{0}, monolithicChecks_{0};
+    // Workstream E (debug): skipped silhouettes proven equal to a fresh collection
+    // (TAK_GEOMETRY_VERIFY), and TAK_SHADOW_CACHE_VERIFY totals: frames whose kept
+    // tiles all equalled a complete re-bake, tiles compared, tiles kept (of which
+    // body-only and translated), and tiles the pre-E key would have kept.
+    std::atomic<uint64_t> shadowSkipChecks_{0};
+    ShadowCacheVerifyTotals shadowVerify_;
 #endif
     uint64_t profShadowVerts_ = 0;  // shadow vertices copied + submitted, likewise
     // takeProf's own previous values, so it can report per-interval deltas.
@@ -1379,6 +1402,10 @@ private:
         SDL_Texture* atlas=nullptr;
         float facing=0;
         bool reuse=true;   // false under TAK_GEOMETRY_REFERENCE: no prepared pieces
+        // Workstream E: the local stage is redone for a body-only input (colour atlas,
+        // a frame of an unmasked animated texture) and every shadow input is unchanged,
+        // so the retained silhouette is kept instead of collected again.
+        bool shadowValid=false;
         tak::render::BodyPlacement body;
         tak::render::ShadowPlacement shadow;
         tak::render::BodyMaterial material;
@@ -1543,13 +1570,9 @@ private:
     std::unordered_map<SDL_Texture*,SDL_Texture*> shadowCoverageTextures_;
     // Bounded per-unit silhouette targets. Their 2048-square pages are
     // reused each frame and discarded with other render targets on device loss.
-    struct ShadowTileStamp {
-        const UnitGeom* source; // the unit's stable entry (revisions are globally unique)
-        int owner,pixelX,pixelY,slotX,slotY,width,height;
-        uint64_t revision;
-        float scaleX,scaleY;
-        bool operator==(const ShadowTileStamp&) const = default;
-    };
+    // Tile stamps (client/shadowtiles.h): the unit's stable entry, its shadow
+    // coverage revision and exact shadow placement, slot, size and output scale.
+    using ShadowTileStamp = tak::render::ShadowTileStamp;
     struct ShadowSilhouettePage {
         SDL_Texture* texture=nullptr; int x=0,y=0,rowHeight=0;
         std::vector<ShadowTileStamp> stamps;

@@ -310,6 +310,10 @@ enum class Counter : uint8_t {
     VertsPlaced,         // body + shadow vertices re-placed without a local rebuild
     VertsRecoloured,     // body vertices re-coloured without a local rebuild
     GeomShadowKept,      // local rebuilds whose shadow coverage came out identical (shadowRevision kept)
+    // Workstream E (split body and shadow invalidation):
+    GeomShadowSkipped,   // local rebuilds whose shadow inputs were unchanged: silhouette not collected
+    ShadowReusedBody,    // tiles kept although the body changed (the pre-E key redrew them)
+    ShadowReusedTranslated,  // tiles kept after a placement change: every tile point bit-identical
     Count
 };
 
@@ -364,7 +368,8 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "geom_entry_refused", "geom_entries_retained", "geom_entries_warm_free",
     "geom_entries_allocated", "geom_retained_bytes", "geom_warm_free_bytes",
     "geom_local_builds", "geom_placement_only", "geom_material_only", "verts_placed",
-    "verts_recoloured", "geom_shadow_kept"};
+    "verts_recoloured", "geom_shadow_kept", "geom_shadow_skipped", "shadow_reused_body",
+    "shadow_reused_translated"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

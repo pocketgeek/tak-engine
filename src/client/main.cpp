@@ -1934,11 +1934,23 @@ int main(int argc, char** argv) {
             if(tak::devFlag("TAK_GEOMETRY_VERIFY")) {
                 // Staged geometry (workstream D): every reuse compared with a complete
                 // rebuild (or verifyMonolithicBody/buildUnitGeom threw at the first mismatch).
-                std::printf("GEOMETRY_STAGES hits=%llu placement=%llu material=%llu single_pass=%llu\n",
+                std::printf("GEOMETRY_STAGES hits=%llu placement=%llu material=%llu single_pass=%llu shadow_skipped=%llu\n",
                     static_cast<unsigned long long>(gameView->geometryChecks()),
                     static_cast<unsigned long long>(gameView->placementChecks()),
                     static_cast<unsigned long long>(gameView->materialChecks()),
-                    static_cast<unsigned long long>(gameView->monolithicChecks()));
+                    static_cast<unsigned long long>(gameView->monolithicChecks()),
+                    static_cast<unsigned long long>(gameView->shadowSkipChecks()));
+            }
+            if(tak::devFlag("TAK_SHADOW_CACHE_VERIFY")) {
+                // Shadow tile reuse (workstream E): every kept tile equalled a complete
+                // re-bake of the frame, or draw() threw at the first differing pixel.
+                const auto& t=gameView->shadowVerifyTotals();
+                std::printf("SHADOW_CACHE_VERIFY frames=%llu tiles=%llu reused=%llu body=%llu translated=%llu "
+                            "original_reused=%llu\n",
+                    static_cast<unsigned long long>(t.frames),static_cast<unsigned long long>(t.tiles),
+                    static_cast<unsigned long long>(t.reused),static_cast<unsigned long long>(t.body),
+                    static_cast<unsigned long long>(t.translated),static_cast<unsigned long long>(t.original));
+                if(!t.frames)throw std::runtime_error("shadow cache verify ran no checks");
             }
             if(tak::devFlag("TAK_GEOMETRY_OWNERSHIP_VERIFY")) {
                 // Every frame passed, or verifyGeometryOwnership() threw at the first violation.

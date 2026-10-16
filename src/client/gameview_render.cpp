@@ -395,6 +395,9 @@
         shadowSilhouetteAtlasActive_ = false;
         size_t shadowAtlasPackedUnits=0,shadowAtlasPackedPages=0,shadowAtlasReusedUnits=0;
         const char* shadowAtlasFallback="not requested";
+#ifndef NDEBUG
+        const bool verifyShadowCache=tak::devFlag("TAK_SHADOW_CACHE_VERIFY");
+#endif
         const auto buildShadowSilhouetteAtlas = [&](bool force=false) -> bool {
             const auto fail=[&](const char* why) { shadowAtlasFallback=why; return false; };
             // Telemetry: allocation/packing runs until the first page is drawn;
@@ -403,8 +406,10 @@
             std::optional<tak::render::ScopedPhase> allocPhase;
             if (!force) allocPhase.emplace(renderStats_, RP::ShadowAlloc);
             SDL_RendererInfo info{};
+            // Debug: TAK_SHADOW_ATLAS_SOFTWARE also runs the atlas on SDL's software
+            // renderer, so tile reuse can be verified without a GPU (ctest).
             if (SDL_GetRendererInfo(ren_, &info) != 0 ||
-                !(info.flags & SDL_RENDERER_ACCELERATED) ||
+                !((info.flags & SDL_RENDERER_ACCELERATED) || tak::devFlag("TAK_SHADOW_ATLAS_SOFTWARE")) ||
                 !SDL_RenderTargetSupported(ren_)) return fail("renderer has no accelerated targets");
             float scaleX=1.0f, scaleY=1.0f;
             SDL_RenderGetScale(ren_, &scaleX, &scaleY);
@@ -553,22 +558,59 @@
                 auto& stamps=shadowSilhouettePages_[p].stamps;
                 size_t tile=0;
                 std::vector<SDL_Rect> dirtyRects;
+                const bool noCache=tak::devFlag("TAK_SHADOW_NOCACHE");
                 for(Work& w:work) if(w.page==p) {
-                    const ShadowTileStamp stamp{w.geom,w.geom->owner,w.pixelX,w.pixelY,w.slotX,w.slotY,
-                        w.width,w.height,w.geom->revision,scaleX,scaleY};
-                    const bool noCache=tak::devFlag("TAK_SHADOW_NOCACHE");
-                    w.dirty=force || noCache || tile>=stamps.size() || stamps[tile]!=stamp;
-                    if(w.dirty && !force && renderStats_.enabled()) {
-                        // First differing field, most fundamental first.
-                        const ShadowTileStamp* old=tile<stamps.size() ? &stamps[tile] : nullptr;
-                        renderStats_.add(noCache ? RS::ShadowDirtyForced : !old ? RS::ShadowDirtyNew :
-                            old->source!=stamp.source || old->owner!=stamp.owner ? RS::ShadowDirtyOwner :
-                            old->revision!=stamp.revision ? RS::ShadowDirtyContent :
-                            old->slotX!=stamp.slotX || old->slotY!=stamp.slotY ? RS::ShadowDirtyRelocated :
-                            old->width!=stamp.width || old->height!=stamp.height ||
-                            old->scaleX!=stamp.scaleX || old->scaleY!=stamp.scaleY ? RS::ShadowDirtyResized :
-                            RS::ShadowDirtyMoved);
+                    // Workstream E: a tile is keyed on its unit's shadow coverage and
+                    // exact shadow placement, not on the body's geometry revision or
+                    // screen position (client/shadowtiles.h).
+                    const UnitGeom& g=*w.geom;
+                    ShadowTileStamp stamp;
+                    stamp.source=w.geom;stamp.owner=g.owner;stamp.coverage=g.shadowRevision;
+                    stamp.revision=g.revision;stamp.placement=g.shadowPlacement;
+                    stamp.pixelX=w.pixelX;stamp.pixelY=w.pixelY;stamp.slotX=w.slotX;stamp.slotY=w.slotY;
+                    stamp.width=w.width;stamp.height=w.height;stamp.scaleX=scaleX;stamp.scaleY=scaleY;
+                    const ShadowTileStamp* old=tile<stamps.size() ? &stamps[tile] : nullptr;
+                    using tak::render::TileVerdict;
+                    TileVerdict verdict=TileVerdict::New;
+                    if(!force && !noCache)verdict=tak::render::classifyShadowTile(old,stamp,[&] {
+                        // Same coverage => same local points; the old tile points are
+                        // recomputed from them with the old placement.
+                        return g.shadowVerts.size()==g.shadowLocal.size() &&
+                            g.maskedShadowVerts.size()==g.maskedShadowLocal.size() &&
+                            tak::render::sameTilePoints(g.shadowLocal,
+                                [&](size_t i){return g.shadowVerts[i];},*old,stamp) &&
+                            tak::render::sameTilePoints(g.maskedShadowLocal,
+                                [&](size_t i){return g.maskedShadowVerts[i].position;},*old,stamp);
+                    });
+                    w.dirty=force || noCache || !tak::render::reuses(verdict);
+                    if(!force && renderStats_.enabled()) {
+                        if(noCache)renderStats_.add(RS::ShadowDirtyForced);
+                        else switch(verdict) {
+                            case TileVerdict::ReuseBody: renderStats_.add(RS::ShadowReusedBody); break;
+                            case TileVerdict::ReuseTranslated: renderStats_.add(RS::ShadowReusedTranslated); break;
+                            case TileVerdict::New: renderStats_.add(RS::ShadowDirtyNew); break;
+                            case TileVerdict::Owner: renderStats_.add(RS::ShadowDirtyOwner); break;
+                            case TileVerdict::Content: renderStats_.add(RS::ShadowDirtyContent); break;
+                            case TileVerdict::Relocated: renderStats_.add(RS::ShadowDirtyRelocated); break;
+                            case TileVerdict::Resized: renderStats_.add(RS::ShadowDirtyResized); break;
+                            case TileVerdict::Moved: renderStats_.add(RS::ShadowDirtyMoved); break;
+                            case TileVerdict::Reuse: break;
+                        }
                     }
+#ifndef NDEBUG
+                    if(!force && !noCache && verifyShadowCache) {
+                        // Differential check against the pre-E key: E keeps every tile
+                        // the old key kept (and more); the pixel comparison after the
+                        // frame proves each kept tile equal to a complete re-bake.
+                        const bool original=tak::render::originalRuleReuses(old,stamp);
+                        if(original && !tak::render::reuses(verdict))
+                            throw std::runtime_error("shadow tile redrawn although the pre-E key kept it");
+                        ++shadowVerify_.tiles;shadowVerify_.original+=original;
+                        shadowVerify_.reused+=tak::render::reuses(verdict);
+                        shadowVerify_.body+=verdict==TileVerdict::ReuseBody;
+                        shadowVerify_.translated+=verdict==TileVerdict::ReuseTranslated;
+                    }
+#endif
                     if(tile<stamps.size())stamps[tile]=stamp;else stamps.push_back(stamp);
                     ++tile;
                     if(!w.dirty)++shadowAtlasReusedUnits;
@@ -638,17 +680,17 @@
                         const SDL_FPoint* __restrict src=w.geom->shadowVerts.data();
                         const size_t count=w.geom->shadowVerts.size();
                         SDL_FPoint* __restrict dst=count ? opaque.data()+w.opaqueOffset : nullptr;
-                        for (size_t i=0;i<count;++i) {
-                            dst[i]={src[i].x*scaleX-float(w.pixelX)+float(w.slotX)+1.0f,
-                                    src[i].y*scaleY-float(w.pixelY)+float(w.slotY)+1.0f};
-                        }
+                        // The tile transform (tak::render::tilePoint) is also what the
+                        // reuse check recomputes.
+                        for (size_t i=0;i<count;++i)
+                            dst[i]=tak::render::tilePoint(src[i],scaleX,scaleY,w.pixelX,w.pixelY,w.slotX,w.slotY);
                         for(size_t mi=w.maskBegin;mi<w.maskEnd;++mi) {
                             const auto& task=masks[mi];
                             SDL_Vertex* __restrict vertices=task.batch->data()+task.offset;
                             for(size_t i=0;i<task.count;++i) {
                                 SDL_Vertex v=task.source[i];
-                                v.position.x=v.position.x*scaleX-float(w.pixelX)+float(w.slotX)+1.0f;
-                                v.position.y=v.position.y*scaleY-float(w.pixelY)+float(w.slotY)+1.0f;
+                                v.position=tak::render::tilePoint(v.position,scaleX,scaleY,w.pixelX,w.pixelY,
+                                                                  w.slotX,w.slotY);
                                 vertices[i]=v;
                             }
                         }
@@ -748,6 +790,9 @@
                                 throw std::runtime_error("retained shadow tile pixel mismatch");
                             }
                         }
+#ifndef NDEBUG
+                ++shadowVerify_.frames;
+#endif
             }
             shadowAtlasFallback=shadowSilhouetteAtlasActive_ ? "active" : shadowAtlasFallback;
             static int lastState=-1;
@@ -2324,6 +2369,7 @@
             if (g.stages & tak::render::kStageLocal) {
                 renderStats_.add(RS::GeomLocalBuilds);
                 renderStats_.add(RS::GeomShadowKept, g.shadowKept);
+                renderStats_.add(RS::GeomShadowSkipped, g.shadowSkipped);
                 renderStats_.add(RS::VertsGenerated, g.verts.size());
                 renderStats_.add(RS::ShadowVertsGenerated, shadowVerts);
             } else {
@@ -3014,7 +3060,7 @@
                 std::chrono::steady_clock::now().time_since_epoch()).count();
         };
         const int64_t keyStart=timed ? clockNs() : 0;
-        g.missMask=0;g.ownerChanged=false;g.reallocs=0;g.shadowKept=false;g.keyNs=g.buildNs=0;
+        g.missMask=0;g.ownerChanged=false;g.reallocs=0;g.shadowKept=false;g.shadowSkipped=false;g.keyNs=g.buildNs=0;
         const auto clear=[&] {
             g.canFly=u.type && u.type->canFly;
             g.localKey.clear();g.verts.clear();g.runs.clear();
@@ -3179,6 +3225,9 @@
         // FBI ghost: a spectral body is see-through. Retail switches the renderer
         // to its translucent blend mode for these; we scale vertex alpha instead.
         in.material.spectral=ghost && !conjuring;
+        // Body-only local change: the silhouette's own inputs are all unchanged.
+        in.shadowValid=!localValid && !reference && !g.localKey.empty() &&
+            shadowInputsEqual(g.localKey,g.localLayout,key,layout,vt->second.meta.animationFrameMasks);
 
         using MC=MissCause;
         if(!cacheHit) {
@@ -3222,6 +3271,7 @@
         }
         const bool shadowChanged=runUnitGeomStages(u,g,stages,in,scratch);
         g.shadowKept=(stages & kStageLocal) && !shadowChanged && !cold;
+        g.shadowSkipped=(stages & kStageLocal) && in.shadowValid;
         if((stages & kStageLocal) && !g.shadowKept)g.shadowRevision=g.localRevision;
         if(checkShadowChange) {
             // Masked positions are rewritten by placement; compare their UVs/colours.
@@ -3251,7 +3301,9 @@
             // same inputs, byte for byte.
             thread_local UnitGeom referenceGeom;
             referenceGeom.makeCold();
-            runUnitGeomStages(u,referenceGeom,kStageLocal|kStagePlacement|kStageMaterial,in,scratch);
+            UnitGeomInputs complete=in;
+            complete.shadowValid=false;   // the reference collects everything
+            runUnitGeomStages(u,referenceGeom,kStageLocal|kStagePlacement|kStageMaterial,complete,scratch);
             const auto bytes=[](const auto& a,const auto& b) {
                 return a.size()==b.size() && (a.empty() ||
                     std::memcmp(a.data(),b.data(),a.size()*sizeof(a[0]))==0);
@@ -3260,6 +3312,7 @@
                !bytes(g.maskedShadowVerts,referenceGeom.maskedShadowVerts) ||
                g.runs!=referenceGeom.runs || g.maskedShadowRuns!=referenceGeom.maskedShadowRuns ||
                std::memcmp(g.shadowBounds.data(),referenceGeom.shadowBounds.data(),sizeof g.shadowBounds) ||
+               !samePlacement(g.shadowPlacement,referenceGeom.shadowPlacement) ||
                !bytes(g.localPos,referenceGeom.localPos) || !bytes(g.baseColor,referenceGeom.baseColor) ||
                !bytes(g.shadowLocal,referenceGeom.shadowLocal) ||
                !bytes(g.maskedShadowLocal,referenceGeom.maskedShadowLocal))
@@ -3349,7 +3402,22 @@
             // Skip the BUILD too when shadows are off, not just the draw -- otherwise the
             // toggle saves the 3.2ms submit but still pays to walk the model and emit ~700k
             // vertices nobody looks at, which is most of the point of switching it off.
-            if (shadowsOnFrame_)
+            if (in.shadowValid) {
+                // Body-only local change (workstream E): the retained silhouette is
+                // exactly what collecting it again would produce. Debug: prove it.
+                if (verify) {
+                    thread_local UnitGeom collected;
+                    collected.shadowLocal=g.shadowLocal;collected.maskedShadowLocal=g.maskedShadowLocal;
+                    collected.maskedShadowVerts=g.maskedShadowVerts;collected.maskedShadowRuns=g.maskedShadowRuns;
+                    if ((shadowsOnFrame_ ? buildUnitShadow(u,collected,visual.model.root,visual.meta,in.anim,in.facing,
+                                                           scratch,in.reuse ? &prepared : nullptr)
+                                         : !g.shadowLocal.empty() || !g.maskedShadowLocal.empty()))
+                        throw std::runtime_error("a body-only local change altered the shadow silhouette");
+#ifndef NDEBUG
+                    ++shadowSkipChecks_;
+#endif
+                }
+            } else if (shadowsOnFrame_)
                 shadowChanged=buildUnitShadow(u, g, visual.model.root, visual.meta, in.anim, in.facing,
                                               scratch,in.reuse ? &prepared : nullptr);
             else {
@@ -3359,6 +3427,7 @@
             }
         }
         if(stages & kStagePlacement) {
+            g.shadowPlacement=in.shadow;
             ShadowBoundsAccumulator bounds;
             g.shadowVerts.resize(g.shadowLocal.size());
             for (size_t i=0;i<g.shadowLocal.size();++i) {

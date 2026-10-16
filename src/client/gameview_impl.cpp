@@ -2484,7 +2484,8 @@
                                                       int width,int height) {
         SDL_RendererInfo info{};SDL_GetRendererInfo(ren_,&info);
         const auto makeCoverage=[&](int w,int h) -> SDL_Texture* {
-            if(!(info.flags&SDL_RENDERER_ACCELERATED) || !SDL_RenderTargetSupported(ren_))return nullptr;
+            if(!((info.flags&SDL_RENDERER_ACCELERATED) || tak::devFlag("TAK_SHADOW_ATLAS_SOFTWARE")) ||
+               !SDL_RenderTargetSupported(ren_))return nullptr;
             constexpr size_t limit=16u*1024u*1024u;
             size_t used=0;
             for(const auto& page:shadowMaskPages_)
@@ -3667,6 +3668,15 @@
     }
 
     void GameView::buildPieceMeta(const tak::tdo::Object& o, PieceMeta& m, bool isRoot) {
+        // One record per texture animation (first use decides the order, which is the
+        // order of the frame words in the local geometry key); a frame feeds the shadow
+        // if any primitive using it has shadow masks.
+        const auto addAnimationFrame=[](PieceMeta& meta,const size_t* frame,bool masked) {
+            const auto at=std::find(meta.animationFrames.begin(),meta.animationFrames.end(),frame);
+            if(at==meta.animationFrames.end()) {
+                meta.animationFrames.push_back(frame);meta.animationFrameMasks.push_back(masked);
+            } else meta.animationFrameMasks[size_t(at-meta.animationFrames.begin())]|=uint8_t(masked);
+        };
         pieceMetaFor(o, isRoot, m);
         m.primAtlas.reserve(m.primTex.size());
         for (const auto& name : m.primTex) {
@@ -3676,19 +3686,15 @@
             m.primShadowMasks.push_back(mask==shadowMasks_.end() ? nullptr : &mask->second);
             m.primAnimated.push_back(animatedTex_.count(name)!=0);
             m.animated |= m.primAnimated.back();
-            if(m.primAnimated.back()) {
-                const auto* frame=&modelTextureAnimations_.at(name).frame;
-                if(std::find(m.animationFrames.begin(),m.animationFrames.end(),frame)==m.animationFrames.end())
-                    m.animationFrames.push_back(frame);
-            }
+            if(m.primAnimated.back())
+                addAnimationFrame(m,&modelTextureAnimations_.at(name).frame,m.primShadowMasks.back()!=nullptr);
         }
         m.children.resize(o.children.size());
         for (size_t i = 0; i < o.children.size(); ++i) {
             buildPieceMeta(o.children[i], m.children[i], false);
             m.animated |= m.children[i].animated;
-            for(const auto* frame:m.children[i].animationFrames)
-                if(std::find(m.animationFrames.begin(),m.animationFrames.end(),frame)==m.animationFrames.end())
-                    m.animationFrames.push_back(frame);
+            for(size_t f=0;f<m.children[i].animationFrames.size();++f)
+                addAnimationFrame(m,m.children[i].animationFrames[f],m.children[i].animationFrameMasks[f]!=0);
         }
     }
 
