@@ -4,9 +4,9 @@
 //
 // Movement consumers -- steering and its descent, the pinwheel and the passage gate, group awareness, destination
 // packing (formation and packed slots, the area bounds), attack rings, the settle rule, the lift walk -- read a route
-// through RouteView only. RouteGrid is today's storage behind it: one integer window per field, owned and written by
-// the field builder (legion.cpp: startField, advance, serve). Stage 6 replaces the storage (sparse tiles) behind the
-// same queries; nothing outside the builder and this header reads RouteGrid's cells.
+// through RouteView only. RouteGrid is the storage behind it: one integer window per route, owned and written by the
+// route builder (legion.cpp: startField, advance, serve), stored in sparse tiles since stage 6 (legion_hier.h's
+// sectors); nothing outside the builder and this header reads RouteGrid's cells.
 //
 // What a query can answer is kept apart:
 //  * an estimate (direction guidance): exact where settled; on a build still running, where the frontier reached a
@@ -26,7 +26,9 @@
 //    the above.
 #include <cstddef>
 #include <cstdint>
+#include <algorithm>
 #include <map>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -55,12 +57,21 @@ struct Progress {
     bool operator==(const Progress&) const = default;
 };
 
-// Today's route storage: an integer distance window over the map, built from the route's goals (seeds) by A* toward
+// The route storage: an integer distance window over the map, built from the route's goals (seeds) by A* toward
 // the group's bodies (aimed: target tx,tz) with a consistent octile heuristic, run to exhaustion (done) or paused once
 // it covers its subscribers (covered). Written only by the builder.
+//
+// Sparse since stage 6: the window is covered by K x K tiles (K = 1 << shift) aligned to the map's sector grid
+// (legion_hier.h), and a tile is allocated the first time the builder writes a cell in it; a tile never written
+// reads kNone everywhere. So a build that paused, or that the frontier never carried across most of its window, holds
+// only the tiles it reached, and a route's storage no longer has to be one rectangle (stage 6's corridors and tile
+// chains: a tile may also be another route's, read with a per-tile offset).
 struct RouteGrid {
     int W = 0, x0 = 0, z0 = 0, fw = 0, fh = 0;   // map width; window origin and size (cells)
-    std::vector<uint32_t> potential;              // fw*fh, row-major within the window
+    int shift = 5, sx0 = 0, sz0 = 0, sw = 0, sh = 0;   // tile size 1 << shift; the window's tile box (sector coords)
+    std::vector<const uint32_t*> tiles;          // sw*sh: each tile's K*K potentials (row-major), nullptr: none yet
+    std::vector<std::unique_ptr<uint32_t[]>> own;   // sw*sh: the tiles this route allocated
+    size_t ownTiles = 0;                         // tiles allocated so far
     uint32_t current = 0;                         // the build's current key (every key below it is settled)
     int tx = 0, tz = 0;                           // heuristic target
     bool aimed = false;
@@ -81,9 +92,43 @@ struct RouteGrid {
     bool touched = false;
     uint64_t work = 0;                            // relaxations so far: changes whenever an estimate may change
 
+    // Size the window and its (empty) tile table. Every cell reads kNone until written.
+    void initTiles(int mapW, int wx0, int wz0, int wfw, int wfh, int tileShift) {
+        W = mapW; x0 = wx0; z0 = wz0; fw = wfw; fh = wfh; shift = tileShift;
+        sx0 = x0 >> shift; sz0 = z0 >> shift;
+        sw = fw > 0 ? ((x0 + fw - 1) >> shift) - sx0 + 1 : 0;
+        sh = fh > 0 ? ((z0 + fh - 1) >> shift) - sz0 + 1 : 0;
+        tiles.assign(size_t(sw) * size_t(sh), nullptr);
+        own.clear();
+        own.resize(size_t(sw) * size_t(sh));
+        ownTiles = 0;
+    }
+    size_t cells() const { return size_t(fw) * size_t(fh); }   // the window's cells
+    size_t tileCells() const { return size_t(1) << (2 * shift); }
     bool inside(int x, int z) const { return x >= x0 && z >= z0 && x < x0 + fw && z < z0 + fh; }
-    size_t local(int x, int z) const { return size_t(z - z0) * size_t(fw) + size_t(x - x0); }
-    uint32_t cellAt(int x, int z) const { return inside(x, z) ? potential[local(x, z)] : route::kNone; }
+    size_t tileOf(int x, int z) const { return size_t(((z >> shift) - sz0) * sw + ((x >> shift) - sx0)); }
+    size_t inTile(int x, int z) const {
+        const int m = (1 << shift) - 1;
+        return size_t(((z & m) << shift) | (x & m));
+    }
+    uint32_t cellAt(int x, int z) const {
+        if (!inside(x, z)) return route::kNone;
+        const uint32_t* t = tiles[tileOf(x, z)];
+        return t ? t[inTile(x, z)] : route::kNone;
+    }
+    // The builder's write: the cell's slot, its tile allocated (all kNone) on first use. (x, z) inside the window.
+    uint32_t& slot(int x, int z) {
+        const size_t t = tileOf(x, z);
+        if (!own[t]) {
+            own[t].reset(new uint32_t[tileCells()]);
+            std::fill(own[t].get(), own[t].get() + tileCells(), route::kNone);
+            tiles[t] = own[t].get();
+            ++ownTiles;
+        }
+        return own[t][inTile(x, z)];
+    }
+    // Release the storage (a finished build's tiles stay; this is for tests and resets).
+    void clearTiles() { tiles.assign(tiles.size(), nullptr); own.clear(); own.resize(tiles.size()); ownTiles = 0; }
     uint32_t heuristic(int x, int z) const {
         if (!aimed) return 0;
         const int dx = x > tx ? x - tx : tx - x, dz = z > tz ? z - tz : tz - z;

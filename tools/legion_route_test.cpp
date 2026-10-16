@@ -21,10 +21,9 @@ int failures = 0;
 // x then z (a stand-in: the view does not care how they were made). The heuristic aims at (7,7).
 RouteGrid grid() {
     RouteGrid g;
-    g.W = 10; g.x0 = 2; g.z0 = 2; g.fw = 6; g.fh = 6;
-    g.potential.assign(36, route::kNone);
+    g.initTiles(10, 2, 2, 6, 6, 2);   // 4 x 4 tiles: the window spans parts of four
     for (int z = 0; z < 6; ++z)
-        for (int x = 0; x < 6; ++x) g.potential[size_t(z * 6 + x)] = uint32_t(5 * (x + z));
+        for (int x = 0; x < 6; ++x) g.slot(2 + x, 2 + z) = uint32_t(5 * (x + z));
     g.aimed = true; g.tx = 7; g.tz = 7;
     g.serial = 41; g.epoch = 9; g.work = 100;
     return g;
@@ -36,7 +35,7 @@ int main() {
     {   // A complete, unbounded route on the current geometry.
         RouteGrid g = grid();
         g.done = true;
-        g.potential[size_t(3 * 6 + 3)] = route::kNone;   // (5,5): not reached
+        g.slot(5, 5) = route::kNone;   // (5,5): not reached
         const RouteView v(g);
         CHECK(v.complete() && v.usable() && !v.paused());
         CHECK(v.estimate(cell(4, 4)) == 20 && v.known(cell(4, 4)) == 20 && v.settled(cell(4, 4)));
@@ -59,7 +58,7 @@ int main() {
     {   // A complete but bounded route: an unreached cell is unknown (the window may cut the way).
         RouteGrid g = grid();
         g.done = true; g.bounded = true;
-        g.potential[size_t(3 * 6 + 3)] = route::kNone;
+        g.slot(5, 5) = route::kNone;
         const RouteView v(g);
         CHECK(v.reach(cell(5, 5)) == Reach::Unknown);
         CHECK(v.reach(cell(0, 0)) == Reach::Unknown);
@@ -78,7 +77,7 @@ int main() {
         // (2,2) has 5 of key to spare.
         CHECK(v.covered(cell(2, 2), 5) && !v.covered(cell(2, 2), 6));
         // Unreached in a building route: unknown, whatever the window.
-        g.potential[size_t(3 * 6 + 3)] = route::kNone;
+        g.slot(5, 5) = route::kNone;
         CHECK(RouteView(g).reach(cell(5, 5)) == Reach::Unknown);
     }
     {   // Paused: usable, still not complete; nothing unsettled becomes known.
@@ -87,12 +86,25 @@ int main() {
         const RouteView v(g);
         CHECK(v.usable() && v.paused() && !v.complete());
         CHECK(v.known(cell(4, 4)) == route::kNone);
-        g.potential[size_t(3 * 6 + 3)] = route::kNone;
+        g.slot(5, 5) = route::kNone;
         CHECK(RouteView(g).reach(cell(5, 5)) == Reach::Unknown);
     }
     {   // An empty view: no state queries crash, nothing is usable.
         const RouteView v;
         CHECK(!v && !v.complete() && !v.usable() && !v.paused());
+    }
+    {   // Sparse storage (stage 6): only the tiles written are allocated; an unwritten tile reads kNone.
+        RouteGrid g;
+        g.initTiles(100, 10, 10, 80, 80, 4);   // 16 x 16 tiles: the window spans sectors 0..5 each way
+        CHECK(g.sw == 6 && g.sh == 6 && g.ownTiles == 0 && g.cells() == 6400);
+        CHECK(g.cellAt(50, 50) == route::kNone);
+        g.slot(50, 50) = 7;
+        CHECK(g.ownTiles == 1 && g.cellAt(50, 50) == 7 && g.cellAt(51, 50) == route::kNone && g.cellAt(70, 70) == route::kNone);
+        g.slot(89, 89) = 3;
+        CHECK(g.ownTiles == 2 && g.cellAt(89, 89) == 3);
+        CHECK(g.cellAt(90, 90) == route::kNone && g.cellAt(9, 50) == route::kNone);   // outside the window
+        const RouteView v(g);
+        CHECK(v.estimate(size_t(50 * 100 + 50)) == 7 && v.estimate(size_t(60 * 100 + 60)) == route::kNone);
     }
     {   // Demand: one entry per cell, the widest margin, arrival order, no cap.
         RouteDemand d;

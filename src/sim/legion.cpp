@@ -349,8 +349,9 @@ struct LegionNavigator::Impl {
         Field& operator=(const Field&)=delete;
         ~Field() {detach();}
         // Leave the field totals (the field is about to be freed; see Impl::orphan).
-        void detach() {if(totals) {--totals->fields;totals->cells-=potential.size();totals->inflight-=inflightBytes;totals=nullptr;}}
-        FieldTotals* totals=nullptr;      // set once potential is sized (startField)
+        void detach() {if(totals) {--totals->fields;totals->cells-=counted;totals->inflight-=inflightBytes;totals=nullptr;}}
+        FieldTotals* totals=nullptr;      // set once the window is sized (startField)
+        size_t counted=0;                 // its cells in FieldTotals::cells (the window's)
         // The scheduler's job state (Legion 10,000 stage 4; a field is one job however many groups
         // share it): its deficit round robin credit and the last tick it was given work (its start
         // tick until then). Hashed with the field. inflightBytes: its frontier's share of
@@ -1920,7 +1921,7 @@ struct LegionNavigator::Impl {
         for(const auto& [id,g]:groups) {
             for(const Field* f:{g.field.get(),g.next.get()}) {
                 if(!f||!seen.insert(f).second)continue;
-                b.fields+=S::kField+f->potential.size()*S::kCell32+f->seeds.size()*S::kCell32+f->avoid.size()*S::kCorridor;
+                b.fields+=S::kField+f->counted*S::kCell32+f->seeds.size()*S::kCell32+f->avoid.size()*S::kCorridor;
                 if(f->done)continue;
                 for(const auto& q:f->buckets)b.inflight+=q.size()*S::kCell32;
                 b.inflight+=f->seedKeys.size()*S::kKeyed+f->demand.size()*(S::kKeyed+S::kNode+16);   // RouteDemand: entry + index node
@@ -3385,8 +3386,8 @@ struct LegionNavigator::Impl {
         ++stats.fieldsStartedByKind[size_t(g.kind)&15];
         f->liftAllied=std::any_of(liftSoftPlayers.begin(),liftSoftPlayers.end(),
             [&](int owner) {return w.allied(owner,int(uint32_t(f->command>>32)));});
-        f->W=width();f->x0=box[0];f->z0=box[1];f->fw=box[2]-box[0]+1;f->fh=box[3]-box[1]+1;
-        f->potential.assign(cells,kUnreached);
+        f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,gSectorShift);
+        f->counted=cells;
         navc.initCells+=cells;acct.initMax=std::max<uint64_t>(acct.initMax,cells);
         startCharge+=cells/NavBudget::kInitDiv;
         f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;
@@ -3395,7 +3396,7 @@ struct LegionNavigator::Impl {
         if(g.bodyMaxX>=g.bodyMinX) {f->aimed=true;f->tx=(g.bodyMinX+g.bodyMaxX)/2;f->tz=(g.bodyMinZ+g.bodyMaxZ)/2;}
         for(int s:g.seeds) {
             if(!f->inside(s%f->W,s/f->W))continue;
-            f->potential[f->local(s%f->W,s/f->W)]=0;f->seedKeys.push_back({f->heuristic(s%f->W,s/f->W),s});
+            f->slot(s%f->W,s/f->W)=0;f->seedKeys.push_back({f->heuristic(s%f->W,s/f->W),s});
         }
         std::sort(f->seedKeys.begin(),f->seedKeys.end());
         f->current=f->seedKeys.empty()?0:f->seedKeys.front().first;
@@ -3432,7 +3433,7 @@ struct LegionNavigator::Impl {
                 // Outside the window only after a static change mid-build
                 // (the field is then stale and rebuilt on the new plane).
                 if(!f.inside(x+d[0],z+d[1]))continue;
-                auto& slot=f.potential[f.local(x+d[0],z+d[1])];
+                const uint32_t slot=f.cellAt(x+d[0],z+d[1]);
                 if(g+base>=slot)continue;   // no charge can improve it
 #ifndef NDEBUG
                 // C1's soundness: a settled potential is final (a paused
@@ -3447,7 +3448,7 @@ struct LegionNavigator::Impl {
                     (f.avoid.empty()?0:f.corridorCharge(x+d[0],z+d[1],p.footX,p.footZ,base));
                 if(next>=kUnreached)continue;   // out of range (never: over 40M cells even at the highest charge)
                 if(next<slot) {
-                    slot=next;
+                    f.slot(x+d[0],z+d[1])=next;
                     f.buckets[(next+f.heuristic(x+d[0],z+d[1]))&127].push_back((z+d[1])*W+x+d[0]);++f.queued;
                 }
             }
@@ -9699,7 +9700,7 @@ LegionNavigator::Stats LegionNavigator::stats() const {
     for(const auto& [id,g]:impl_->groups) {
         s.bytes+=g.seeds.capacity()*sizeof(int);
         if(g.field) {
-            s.bytes+=g.field->potential.capacity()*sizeof(uint32_t);
+            s.bytes+=g.field->counted*sizeof(uint32_t);
             for(const auto& b:g.field->buckets)s.bytes+=b.capacity()*sizeof(int);
         }
     }
