@@ -1765,8 +1765,9 @@ struct LegionNavigator::Impl {
         // The cell where the way into the area enters it past a narrowing (see entrance; -1: none): an
         // origin of the footprint of the member it was found for. Its members exchange slots there
         // (enterArea). Hashed while set. kEntryPending (stage 5): its region is not settled yet on a
-        // paused route; formationSlot computes it once it is.
-        int entry=-1;
+        // paused route; formationSlot computes it once it is, trying at most once a tick (entryTick: the
+        // tick of the last try, only ever compared with the current tick, so not hashed, like movedTick).
+        int entry=-1;uint32_t entryTick=kNoTick;
         // C1 (W9 lane C, see meetScan): a head-on meet latched for this Point. tick: the latch (kNoTick:
         // none); contact: the last tick a member found the other command oncoming or awareness kept its
         // head-on entry; ax,az,L: the travel axis (px, the live centroid to the requested point when it
@@ -6517,7 +6518,8 @@ struct LegionNavigator::Impl {
         if(m.slot>=0&&laneDue(m))m.lineCell=-1;
         // An entrance pending on a paused route (stage 5): computed once its
         // region is settled (entrance asks for it), over the point's members.
-        if(pt.entry==kEntryPending) {
+        if(pt.entry==kEntryPending&&pt.entryTick!=w.tickCounter_) {
+            pt.entryTick=w.tickCounter_;
             std::vector<std::pair<int,Member*>> list;
             for(const int id:pt.ids) {
                 Member* mm=member(id);const Unit* v=w.unit(id);
