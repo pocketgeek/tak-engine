@@ -2194,7 +2194,8 @@ instead of group id order. The record, with the measurements, is docs/legion-100
   clear (they wait for the budget now, so nothing bypasses them). Neither a building plane nor one a waiting
   registration needs is evicted (`queuedNeeds`; with more classes than `kMaxPlanes` two queued classes used to
   evict each other's plane: `legion_planepin`). A destination area stays open while members of it wait to
-  register (`commandOpen`, `regAreas`), so its formation is not sized without them.
+  register (`commandOpen`, `regAreas`), so its formation is not sized without them; a waiting unit asked to
+  register again keeps its place, and the area it holds open follows its current leg.
 * **Awareness** (`awareScan`). The snapshot (movers, groups' accumulators, broad-phase grid) is taken on the scan
   tick as before; the groups are then judged in id order against it, `kAwareBudget` units a tick and at least one
   group, resuming on the next tick when a scan needs more. Under the budget (every measured workload) a scan ends
@@ -2217,14 +2218,33 @@ instead of group id order. The record, with the measurements, is docs/legion-100
   so no class starves another for more than three steps. (Round robin over every job at once was built first
   and rejected: every in-flight awareness refresh progressed slowly, outlived the 30-tick awareness cadence and
   was discarded by the next re-plan -- many-1000 discards 41 -> 1,960, arrivals -5%.) Start requests are admitted at the head
-  of their class, oldest first, and a new build only while the class's window has a free slot (beyond it a request
-  may only take a field another group already has: a build past the window would hold its potential array
-  unserved, and an unfinished field is never an eviction victim). One refused for want of room is stepped over --
+  of their class, oldest first, and a new build only while the class's window has a free slot -- and, while more
+  than half the byte allowance is in use, only while its kind has room over every class (`kFirstInflight` = 2
+  `kWindow` first builds, `kRefreshInflight` = 2 `kRefreshWindow` refreshes: the two windows each kind can be
+  served in). Beyond that a request may only take a field another group already has: a build past the windows
+  would hold its potential array unserved, and an unfinished field is never an eviction victim. (The per-kind cap
+  came in the fix round: a first build admitted as a first route is a Waiting job the next tick, its members
+  standing for it, and a refresh promoted out of its class leaves its slot, so the per-class count alone let
+  builds pile up past the windows -- 151 unserved first builds holding many-5000's whole allowance, 78 refreshes
+  in many-2500. With memory to spare such builds cost nobody room, and capping them there cost outcomes --
+  sched-load stuck 101 -> 162, many-1000 arrivals -9% -- so the cap applies only when memory is short; no gate
+  fixture reaches it.) One refused for want of room is stepped over --
   at most `kWaitFitScan` (256) times a tick in the Waiting class, whose members stand still, `kFitScan` (8) in the
   others, so a large request no longer blocks every admission behind it -- and after `kReserveAge` ticks of
-  refusals it reserves (also when its class's window is full): nothing after it starts, in its class or a later one, so the room that frees next is its
-  (`NavAdmit`; letting smaller waiting requests start round it was measured and rejected: a large waiting request
-  could be overtaken without end).
+  refusals it reserves (also when its class's window is full): nothing after it takes new room, in its class or a
+  later one, so the room that frees next is its (`NavAdmit`; letting smaller waiting requests start round it was
+  measured and rejected: a large waiting request could be overtaken without end). Behind a stopped scan -- a
+  reservation or the scan bound -- the remaining requests are still tried, but only for a share of a field that
+  already exists: a share takes no room (and lands within `kStillScan` of the field's start, so it delays that
+  field's eviction by no more), so the reserved request loses nothing it waits for (fix round; before, a
+  reservation stopped every admission, shares included, in 84-92% of the overloaded rows' ticks).
+* **Eviction** (`startField`, `evictionHolders`). A request that does not fit evicts finished fields past their
+  tenure, oldest first: a group's own field as before, and (fix round) a shared one once every holder is past its
+  tenure, dropped from all of them. Shared fields used never to be victims, so a few fields shared by groups that
+  never finish could pin the room a reservation waited for: many-1000 under a two-map allowance stopped admitting
+  at tick ~1,600 for the rest of the run. A share lands only within `kStillScan` of a field's start, so sharing
+  extends no field's tenure by more; every finished field is therefore a victim `kFieldTenure + kStillScan` after
+  it starts, which bounds how long a reservation waits (`legion_sched_pin`, `legion_sched_mix`).
 * **Memory** (`NavBytes`, `fieldAllowance`). Deterministic bytes (element counts times fixed sizes) for every
   container, by category; the field cap is a fixed byte allowance (`kFieldBytes`, 128 MiB, never below two
   whole-map fields) over the potentials and the unfinished builds' frontiers, no longer 48 whole maps of cells.
@@ -2238,10 +2258,17 @@ instead of group id order. The record, with the measurements, is docs/legion-100
   stable counting sort (the cells are collected in ascending order): a 10,000-body area was a 20 ms sort.
 
 Tests: `navbudget_test` (the policy alone under continuous synthetic overload: fairness, service gaps, age
-promotion, a shared job, the fit scan and reservation; each mutated policy fails it), `legion_sched_load` and
-`legion_sched_load_div` (the scheduler under continuous load in the sim; budgets divided by 64 under
-`TAK_LEGION_VERIFY`; the accounting counts the waits still open at the end of every tick, so ongoing starvation
-is measured, not only the waits that ended), `legion_planepin`, `replay_test` (267 refused).
+promotion, a shared job, the fit scan and reservation, shares behind a reservation; each mutated policy fails it),
+`legion_sched_load` and `legion_sched_load_div` (the scheduler under continuous quota load in the sim; budgets
+divided by 512 under `TAK_LEGION_VERIFY`, so registrations really defer and wait for plane builds; the accounting
+counts the waits still open at the end of every tick, so ongoing starvation is measured, not only the waits that
+ended), `legion_sched_mix` (memory pressure, `navbytes`: the fit scan, reservations, request promotion and shares
+behind a stopped scan run in the sim, and every request's wait stays within a bound derived from the allowance,
+the tenure and the measured queue -- removing the reservation or serving by id instead of age fails it),
+`legion_sched_pin` (admission liveness under a two-map allowance: fails if shared fields are never victims),
+`legion_sched_inflight` (many-2500: while memory is short no admission takes a kind past its windows; 78
+refreshes in flight without the per-kind cap),
+`legion_planepin`, `replay_test` (267 refused).
 
 ## Instruments
 

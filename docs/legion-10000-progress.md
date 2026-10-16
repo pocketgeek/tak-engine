@@ -1040,7 +1040,8 @@ rare, and `accounting()` counts the whole-plane ones (`syncPlaneCalls`, `syncPla
 | 136ab4a1 | review fixes: jobs hold their fields through `serveFields`; planes queued registrations need are never evicted; plane-ready refreshes the FIFO's marks; areas stay open while members wait to register; pause and window count over every subscriber; aged reservation when the window is full; refresh initialisation charged to the refresh allowance; open waits counted; awareness snapshot timing; sort buffers in NavBytes | behaviour (the refresh charge only: 4 fixtures) |
 | e3e85716 | a field dropped mid-call leaves the totals at once and its job is retired (follow-up to 136ab4a1); chase-50's two work licences | behaviour-neutral against 136ab4a1 (gate identical); baselines |
 | bc5b23c2 | `legion_planepin` (fails on 2ca032e9: 36 plane builds for 25 classes; 25 now) | tests |
-| (this record) | | docs |
+| bfa36fd9 | this record (first version) | docs |
+| 1117fa31, d31ee31a, ba919843, ad1db07e, f932937f | fix round 2 (verifier rejection): shares behind a stopped scan, shared fields as victims, the per-kind in-flight cap while memory is short, the queued area recheck; sched-mix and legion_sched_mix / _pin / _inflight; see "7.4 fix round 2" | behaviour under memory pressure only (gate identical to e3e85716) |
 
 **Measured costs per unit** (this machine, build-o2, single runs; reported, never read by the sim): one plane-build
 window (1 Mi units) about 5.8 ms; one registration window (4,096 plain registrations) about 2 ms (0.48 ms per 1,000
@@ -1092,7 +1093,9 @@ Fix: the Waiting class scans up to `kWaitFitScan` (256) refusals, the others `kF
 new build is admitted only while its class's window has a free slot (beyond it a request may only take a field
 another group already has). Results, offset 0 against 80599fdc: many-1000 arrivals 766 -> 830, stuck 80 -> 39;
 many-2500 1,184 -> 1,288, stuck 871 -> 785, evictions 629 -> 0; many-5000 1,575 -> 1,605; many-10000 1,024 ->
-1,194.
+1,194. **The request ages were not fixed by this** (the paragraph above reports only arrivals and stuck counts): at
+e3e85716 the longest start-request wait was still 5,641 ticks in many-10000 (first route 5,569) and 1,183 in
+many-5000. Fix round 2 (below) says what those numbers are and gives the final values.
 
 **The longest field wait in the overloaded rows is a lottery, also for the old scheduler.** At offsets 0, 1, -1, 2
 the stage-3 scheduler's many-5000 `wait.max` is 2 / 449 / 41 / 5 and many-10000's 25 / 10 / 114 / 265: its pass of
@@ -1146,8 +1149,8 @@ f5f7ea3b, `c9/` = e3e85716, the final code).**
 | Check | Command | Result |
 |---|---|---|
 | Unit test of the policy | `build-o2/navbudget_test` | all 7 sections pass (fair share within one slice over 1,000 ticks; oldest first across windows; bursty load: longest gap 218 <= 456; waiting flood: the stale job served at 450 ticks; shared job; fit scan: 8 refusals a tick at most, no later request past a reservation). Mutations (cursor ignored, promotion off, reservation off; `stage4/mut/`) each fail it |
-| Continuous load in the sim | `ctest -R legion_sched_load` (`tools/legion_sched_load_test.py`) | pass (c7): quota saturated 3,918 consecutive ticks; longest service gaps waiting 1 / first route 138 / refreshes 0 (bound 539); request ages waiting 104 / first route 150 (bound 900: requests now wait for a window slot, bounded by promotion); field wait 0; serial == workers |
-| Over-budget paths under the verifier | `ctest -R legion_sched_load_div` (budgets / 64, `TAK_LEGION_VERIFY=1`), and many-1000 at `--budget-div 64` and `4096` | pass; serial == workers |
+| Continuous load in the sim | `ctest -R legion_sched_load` (`tools/legion_sched_load_test.py`) | pass (c7): quota saturated 3,918 consecutive ticks; longest service gaps waiting 1 / first route 138 / refreshes 0 (bound 539); request ages waiting 104 / first route 150 (bound 900: requests now wait for a window slot, bounded by promotion); field wait 0; serial == workers. (Fix round 2: this file never runs short of memory, so promotion, the fit scan and the reservation never ran in it; legion_sched_mix now covers them) |
+| Over-budget paths under the verifier | `ctest -R legion_sched_load_div` (budgets / 64, `TAK_LEGION_VERIFY=1`), and many-1000 at `--budget-div 64` and `4096` | pass; serial == workers. (Fix round 2: at / 64 no registration was deferred; the ctest now divides by 512 and asserts deferrals) |
 | Exactness of the exact commits | gates at d487d65d, b052597e, a77536e8 (`sweep_legion.py <bin> gate-cN 4-19 ../fix3/gate3`) | d487d65d: 135/135 Legion fixtures hash- and key-identical to feef1b09; a77536e8 = b052597e on all 135; d190169c: one-10000, many-1000, swap-1000, maze-1000 identical |
 | Legion scenario gate | `sweep_legion.py c6f/ls_gate gate-c6f 4-19 ../fix3/gate3`; `license.py ... --apply`; `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results gate-c6f/scenarios.jsonl`; `validate`; again for c7 (`gate-c7`), c8 (136ab4a1) and c9 (`gate-c9`) | PASS at c9: 31,772 keys, 0 failed, 2,273 ratchets, 3,410 licensed, 218 floor exceptions; validate 0 problems |
 | AddressSanitizer | `build-asan` (Debug, -O1 -fsanitize=address); `stage4/asan/sweep.py` over all 135 fixtures at `--budget-div` 1 and 64 with the pre-fix binary; ten workloads (refreshchurn, sched-load at 1 and 64, battle-assault, battle-field-2x250, many-1000, many-2500, churn-1000, staticblock-own, aware-cross) with c9 | all clean |
@@ -1268,12 +1271,201 @@ more than 10%, direction from legion_check, `stage3/outcome_ab.py --all`).
 
 Every failing key was judged against the stage-3 base's own core-offset spread (`stage4/judge.py`) before its
 licence; `stage4/license.py` wrote 854 `hash@` retakes, 638 band licences, 7 offset-spread exceptions (S4-268), 2
-bounds moved inside the base's spread and 4 new work entries, each with the reason of its cause(s), in 44d08559.
+bounds moved inside the base's spread (aware-seen `contact_other_permille` 622 -> 632, split-450-pocket
+`g.A.arrived` 27 -> 26; both looser, both with the reason) and 4 new work entries, each with the reason of its
+cause(s), in 44d08559.
+
+### 7.4 fix round 2: verifier rejection (2026-10-16)
+
+The verifier reproduced most of the stage at bfa36fd9 (tests, the legion_planepin failure before its fix, the
+`--mpai` hashes, the gate, the 10,000-body runs with serial == workers) and rejected it on three findings. Each is
+answered below; writing the memory-pressure test the second finding asked for exposed two further scheduler
+defects, fixed in the same round. Scratch: `~/tak-tmp/scratch/legion-10000/stage4/r2/` (binaries `f0`..`f11`; `f11`
+/ `c11` = the final code; mutants of it `m6_*`, `m5_nocap`; earlier variants and toggles `f*`, `m2_*`..`m4_*`,
+`n_*`).
+
+**Finding 1 -- a reservation blocked requests that need no new room. Real; fixed (1117fa31).** Once a request
+reserved, `serveFields` left the admission loop (`if(budget==0||admit.stopped())break;`) and `nextClass()` stopped
+every later class, so nothing could start for the rest of the tick -- not a share of an existing field
+(`Start::Shared` allocates nothing) and not a refresh that could share. Now, once the room scan has stopped (a
+reservation or the class's fit-scan bound), the remaining requests are still tried, but share-only: a share takes
+no room, so the reserved request loses nothing it waits for (a share lands within kStillScan of a field's start,
+so it can delay that field's eviction by at most kStillScan; a refresh that shares even drops its stale field). A refresh that
+needs a new build still waits: it needs room. `NavAdmit::stopped()` now means "the room scan ended", with
+`reserve()`; the window-full reservation no longer breaks out of the class either. Counted as
+`scale.sched.stopped_shares`. The verifier's measurement stands for the old code: the reservation was active in
+13,240 of many-10000's 14,400 ticks and 9,533 of many-5000's 11,300, and in those ticks no admission of any kind
+could happen; the fix-round values are in the scale table below.
+
+**Finding 2 -- the longest request wait under load was misreported and the load ctests did not exercise the
+anti-starvation mechanisms. Real; answered with a new fixture, three ctests and two fixes.**
+
+* *Misreporting.* 7.4 cited "start requests waiting up to 1,206 ticks (many-10000: 5,613)" at 80599fdc and its
+  "Fix:" paragraph reported only arrivals and stuck counts, so a reader took the request age as fixed. It was not:
+  at e3e85716 `scale.sched.age_max.waiting` was 5,641 in many-10000 (first route 5,569) and 1,183 in many-5000;
+  neither 7.4, section 8 nor the stage report gave them. A note now says so at that paragraph; the final values and
+  what they mean are below and in section 8.
+* *Coverage.* `legion_sched_load` and `_div` ran with promotions 0, fit_skips 0, reservations 0 and (in _div)
+  reg_deferred 0: sched-load never runs short of memory, so the fit scan and the reservation never ran in the sim,
+  and the 900-tick bound it asserted would fail in many-5000/10000. New: `tools/scenarios/scale/sched-mix.scn`
+  (gen_scale.py) -- 42 short-hop squads re-clicked every 120 ticks round 6 squads crossing the map, one footprint,
+  under a field allowance of two whole-map fields (the new scn directive `navbytes`, or `legion_scenario
+  --field-bytes`), so large requests compete with a stream of small ones for memory. `legion_sched_mix` checks:
+  serial == workers; the mechanisms ran (fit skips 27,648, reservations 5,686 ticks, request promotions 47,375
+  request-ticks, shares behind a stopped scan 12); builds in flight within their windows (13 / 1); admission liveness
+  (200 <= 563 ticks, below); and every class's longest request wait within a bound DERIVED FROM CAPACITY:
+  `steps(class) x kAgeStep + kReserveAge + rounds x (kFieldTenure + kStillScan)`, `rounds = ceil(4 x
+  request_cells_max / (A - 4WH))`. Why: requests are served oldest first (a lower class rises one class per
+  kAgeStep); one refused for room reserves after kReserveAge and nothing takes new room before it; every finished
+  field is a victim kFieldTenure after it starts (a share lands within kStillScan of a field's start, so sharing
+  extends that by no more), so in one round of kFieldTenure + kStillScan ticks all the memory held at its start can
+  be freed, which admits at least A - 4WH (one largest request short of the allowance) of the queue's cells. The
+  queue is measured (`request_cells_max`: the most cells the requests listed in one tick need together); the test
+  also checks from the file that every build finishes within its tenure (kFirstInflight whole-map builds at half
+  the quota: 233 <= 300 ticks). Values: waiting 889 <= 2,790, first route 983 <= 2,940, aware repair 289 <= 3,090,
+  stale refresh 0 (queue peak 7.92 whole-map fields, 8 rounds).
+* *The test can fail* (mutants of the final code, `r2/mut6/`): the reservation removed -- first route 4,497 >
+  3,930 (and reservations 0, shares 0); requests by id instead of age -- waiting 4,604 > 2,790; request promotion
+  removed -- fails only its counter (the ages stay inside the bound: promotion is not what bounds them in this
+  file; navbudget_test's promotion section fails); head-of-line blocking (scan bound 1) -- passes (navbudget_test
+  section 6 catches it); shares behind a stopped scan removed -- shares 0. The two defects below each have their own
+  test that fails without the fix.
+* *Defect A, found by the new fixture: shared fields were never eviction victims* (fixed in 1117fa31). A victim had
+  to be a group's exclusive field (`ownRefs==1`: "dropping a shared one frees nothing"). Fields shared by groups
+  that never finish therefore pinned memory for good, and a reservation waiting for that memory stopped every
+  admission: many-1000 under a two-map allowance (`--field-bytes 778752`) made 15 admissions in 6,300 ticks, none
+  after tick ~1,600 (two shared fields held 617 KB of 779 KB; the reserved request needed ~300 KB). Now a shared
+  field is a victim once every holder (the groups under its route key whose field is it) is past its tenure, and it
+  is dropped from all of them (`evictionHolders`; `TAK_LEGION_VERIFY` compares the holders with a walk of every
+  group). `legion_sched_pin` (many-1000, two-map allowance, 3,000 ticks) checks admission liveness -- no run of
+  ticks with a refusal for room and no new build longer than kFieldTenure + kStillScan + the longest build (429):
+  299 with the fix, 1,797 without (fails).
+* *Defect B: builds piled up past the windows* (1117fa31, refined in f932937f). f5f7ea3b admitted a new build only
+  while "its class's window has a free slot", counted per class. A first build admitted as a first route is a
+  Waiting job the next tick (its members stand still for it), and a refresh promoted out of its class leaves its
+  slot, so the windows looked free again and admitted more every tick while each served only its oldest: 151
+  unfinished, unserved builds held many-5000's whole 128 MiB at tick 525 (memory dump, `r2/exp/dbg-many5000.err`),
+  so its reservations waited for builds nobody was serving; many-2500 had 78 refreshes in flight, battle-assault
+  40 first builds. Fix: a new build is also admitted only while its kind has room over every class --
+  kFirstInflight = 2 kWindow first builds, kRefreshInflight = 2 kRefreshWindow refreshes, the two windows each kind
+  can be served in -- but only while more than half the byte allowance is in use. The unconditional cap (1117fa31)
+  was measured first and cost outcomes where memory is plentiful: sched-load stuck 101 -> 162 (consistently, 9
+  offsets), many-1000 arrivals -9% (5 offsets, the refresh cap) -- an early-admitted build costs nobody room
+  there, and refreshes promoted out of their class are served from the main quota; capping first builds only kept
+  the sched-load cost. Gated on memory (f932937f) it changes no gate fixture (battle-assault never reaches it) and
+  many-1000 and sched-load equal the head, while many-2500's refreshes in flight at such admissions fall 78 -> 6
+  and its arrivals rise 1,278 -> 1,456 (offset 0; offsets 1 / -1: 1,250 / 1,355 against 1,259 / 1,234, stuck 911
+  / 699 against 824 / 823: better at two of three). `legion_sched_inflight` (many-2500) checks that no build
+  admitted while memory is short takes its kind past the cap: 6 with the fix, 78 without (fails).
+* *Deferred registration* (also finding 3): `legion_sched_load_div` now divides the budgets by 512 (64 never
+  deferred a registration in sched-load: its 480 bodies arrive as small clicks) and asserts it: reg_deferred 6,986,
+  plane waits 580, longest registration wait 135 ticks, under `TAK_LEGION_VERIFY`, serial == workers.
+
+**Finding 3 -- smaller record items.**
+
+* The two `bound` rules moved inside the stage-3 base's own core-offset spread are now named in 7.4's licence
+  paragraph: aware-seen `contact_other_permille` 622 -> 632, split-450-pocket `g.A.arrived` 27 -> 26.
+* A queued unit asked to register again kept its first `RegEntry` area: real (deterministic, minor); fixed in
+  1117fa31 -- `requestRegister` rechecks the area against the current leg (`legArea`) and moves the `regAreas`
+  count when it changed. No gate fixture reaches it (no gate fixture defers a registration).
+* The _div ctest now reaches deferred registration (above). The verifier's own run, many-1000 at `--budget-div
+  4096` under `TAK_LEGION_VERIFY`, at the final code: 1,815 deferred registrations (as the verifier measured at
+  bfa36fd9), serial == workers.
+
+**Classification and attribution.** All four fixes are behaviour changes, but only where memory runs short or a
+registration is deferred; the accounting added with them is observation only (never read by the sim). Protocol
+stays 268: the branch is unreleased and the stage-3 fix round set the precedent of staying inside the stage's
+protocol; replay_test still refuses 267. The 135-fixture Legion gate at the final code equals the stage-4 head's on
+every fixture, hashes AND keys (`r2/gate-f11` against `stage4/gate-c9`): no gate fixture runs short of memory or
+defers a registration. (The unconditional cap of 1117fa31 moved battle-assault -- five work counters licensed in
+ba919843 -- and those licences were reverted in ad1db07e once the cap was gated; `baseline.json` equals
+bfa36fd9's.) The four `--mpai` hashes are unchanged, so no new baselines. Where the fixes act (memory pressure,
+the overloaded rows), each was toggled alone on the affected fixtures: shares behind a stopped scan (`m6_noshare`:
+sched-mix shares 0), shared victims (`m6_noshareevict`: pin liveness 1,797), the gated cap (`m5_nocap`: many-2500
+refreshes 78). Retail is untouched: every sim change is in `LegionNavigator` (the rest is test tooling); every
+Retail state hash in the scale suite and both Retail `--mpai` hashes are unchanged.
+
+**Commits.** 1117fa31 (the four fixes, accounting, `--field-bytes`, `navbytes`), d31ee31a (sched-mix,
+legion_sched_mix / _pin / _inflight, _div at 512, navbudget_test section 6), ba919843 (battle-assault licences for
+the unconditional cap) and ad1db07e (their revert), f932937f (the cap gated on memory; legion_sched_inflight on
+many-2500), the record commit at the branch head (this section, section 8, docs/legion-pathfinding.md).
+
+**Checks (final code = f932937f; binaries `r2/c11`, `r2/f11`).**
+
+| Check | Command | Result |
+|---|---|---|
+| Policy unit test | `build-o2/navbudget_test` | all pass, incl. "shares behind the reservation still start, at once" |
+| Scheduler ctests | `ctest -R 'legion_sched\|navbudget'` | legion_sched_load, _div (budgets / 512, VERIFY), _mix, _pin, _inflight, navbudget_test: pass |
+| Mutation proofs | `tools/legion_sched_load_test.py r2/<mutant>/legion_scenario <file> [args]` (`r2/mut6/`) | each fix's test fails without it: no reservation (mix: 4,497 > 3,930), by id (mix: 4,604 > 2,790), no promotion (mix: counter 0), no shares behind a stop (mix: 0), no shared victims (pin: 1,797 > 429), no cap (inflight: 78 > 6); head-of-line (scan bound 1) passes the sim tests, navbudget_test catches it |
+| Verifier mode | `TAK_LEGION_VERIFY=1 TAK_SIM_WORKERS=3 legion_scenario <file> --both-exec --scale` (`r2/verify2/`): many-1000 `--field-bytes 778752 --ticks 3000`, sched-mix, many-2500, many-1000 `--budget-div 4096` | no verify failure, serial == workers in all four (hashes 2213ac5991c7b9d6, 5b9b80cddfd9f177, 9653bb97b4493ceb, f092e707fd6dffe6); shared evictions 2 / 1; deferred registrations 1,815 in the div-4096 run |
+| Legion gate | `sweep_legion.py r2/f11/legion_scenario r2/gate-f11 4-19 ../gate-c9`; `legion_check.py check --cumulative`; `validate` | every Legion fixture's hashes and keys equal gate-c9's; PASS: 31,772 keys, 0 failed, 2,273 ratchets, 3,410 licensed; validate 0 problems |
+| `--mpai` Inner Circle seed 1 | `CORES=20-23 mpai.sh r2/c11 OUT 60` and `300` | 60 s Legion **f75b2a11410f43b4**, Retail **2c39430636a3dbda**; 300 s Legion **b25e18fe6f015862**, Retail **7535cb08ee787b75**: all four unchanged (no new baselines) |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j12 --timeout 900` (scratch XDG, no `TAK_SETTINGS_FILE`) | **383/383** (381 + legion_planepin + legion_sched_pin) |
+| Legion ctests | `ctest -R 'legion_sched\|^legion_cost$\|^legion_scenario_battle-\|legion_baseline_reasons\|legion_check\|legion_planepin\|replay_test\|navbudget\|legion_doc_links\|legion_quota\|navigation_determinism'` | **86/86** (every per-fixture gate check, cost, battle windows, replay_test 268 kept / 267 refused) |
+| AddressSanitizer | `build-asan` legion_scenario `--workers`: sched-mix, many-1000 `--field-bytes 778752 --ticks 3000`, many-2500, battle-assault, sched-load, sched-load `--budget-div 512` (`r2/asan/`) | no report; hashes equal the -O2 build's |
+| Release build | `cmake --build build` (all targets) | builds (all targets, f932937f) |
+| Scale suite | `legion_scale.py run --bin r2/c11/legion_scenario --out r2/scale5 --cores 4-23 --per-job 4`; `legion_scale.py check --results r2/scale5/results.jsonl --targets tools/scenarios/scale/targets.json`; `stage4/scale_ab4.py stage4/scale3/results.jsonl r2/scale5/results.jsonl` | 39/39 jobs exit 0; Retail hashes equal; targets 120 met / 90 missed / 2 report-only (below) |
+
+**Scale suite (final code, offset 0, `r2/scale5`).** 39/39 jobs exit 0; every Retail state hash equals the stage-4
+head's; every Legion row except the three overloaded many-squad rows is identical to the head's (all keys). Targets
+**120 met, 90 missed, 2 report-only missed** (stage-4 head: 117 / 87 / 8). Newly met: six report-only wall targets
+(the head run's wall columns were contaminated, 7.4); no target the head met is lost except three new misses:
+many-10000 and many-5000 `wait.max` and many-2500 `complete_outside_n` (below). The changed rows (head -> final):
+
+| file | wait.max | arrived | completed | outside | stuck | livelock | fields peak | request age waiting / first route / aware repair | reservations (ticks) | fit skips | quota spent on relaxations |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| many-2500 | 2 | 1,278 -> 1,456 | 1,266 -> 1,459 | 49 -> 61 | 703 -> 589 | 86 -> 57 | 274 -> 205 | 2 / 2 / 154 -> 2 / 1 / 957 | 0 | 0 | 33% -> 37% |
+| many-5000 | 5 -> 1,234 | 1,523 -> 1,639 | 1,258 -> 1,615 | 44 -> 86 | 2,675 -> 2,572 | 107 -> 89 | 172 -> 186 | 1,183 / 1,173 / 1,149 -> 1,578 / 1,576 / 630 | 9,533 -> 0 | 325,043 -> 0 | 99% |
+| many-10000 | 10 -> 5,203 | 944 -> 1,226 | 645 -> 985 | 40 -> 73 | 7,300 -> 6,859 | 89 -> 69 | 100 -> 119 | 5,641 / 5,569 / 5,542 -> 5,895 / 5,894 / 632 | 13,240 -> 0 | 266,551 -> 0 | 99% |
+
+* Memory is no longer the limit in these rows: with no unserved builds holding the allowance, no start is refused for
+  room (reservations and fit skips 0); what remains is the quota, saturated 99% of the run in many-5000 and
+  many-10000. Arrivals and completions rise (many-10000 completions +53%, many-5000 +28%, many-2500 +15%), stuck
+  and livelocked bodies fall.
+* Aware repairs wait far less where the quota is saturated (5,542 -> 632 in many-10000): their refresh builds are
+  no longer queued behind piles of unserved first builds. In many-2500, where memory is short but the quota is not,
+  they wait longer (154 -> 957): the per-kind cap keeps refreshes to 6 in flight, and an aware repair's stale field
+  steers meanwhile; arrivals there still rise 14%.
+* First routes' request ages rise in the saturated rows (many-5000 1,173 -> 1,576, many-10000 5,569 -> 5,894). Part
+  of that is measurement: the age runs from the request to the build's admission, and at the head most builds were
+  admitted at once and then waited unserved past the windows, so the head's ages stopped counting long before
+  service began; now admission is close to service. What the age is, is below.
+* `wait.max` (the longest run of ticks a body stood in the navigator's Waiting state -- no field reaches it and the
+  straight heading is blocked) is a new miss at offset 0 in many-5000 and many-10000. A group whose request waits
+  in the drain queue heads straight for its goal while it can; a body blocked meanwhile waits as long as its
+  group's request. At the head the same rows already reached 949-991 (many-5000) and 4,156 (many-10000) at other
+  offsets (7.4); at the final code, offsets 1 / -1 / 2: many-5000 1,193 / 1,189 / 1,173 and many-10000 5,169 / 5,233 / 5,314 (`r2/offs/`) -- no longer a lottery: within
+  5% of the offset-0 value at every offset, as is the request age (many-5000 1,578-1,603, many-10000 5,822-5,895);
+  arrivals many-5000 1,533 / 1,638 / 1,686, many-10000 1,117 / 1,290 / 1,209 (head medians ~1,531 and ~1,051, 7.4).
+  It is the drain time below seen by the
+  unluckiest body, not a scheduling stall: the fix that removes it is less work per request (stage 6's tiles and
+  shared routes), not a different order.
+* many-2500 `complete_outside_n` 61 (max 50): more completions (1,459 vs 1,266) at about the same share outside the
+  disc (4.2% vs 3.9%); recorded, not licensed (the churn rows' item of 7.4 is the same pattern).
+
+**Request ages under continuous load: what the overloaded rows' numbers mean.** Measured at the final code (offset 0):
+
+* many-10000: the queue at its peak held 761 start requests needing 283M field cells -- 408 whole-map fields of
+  692k cells. At the run's measured 6.92 relaxations per initialised cell that is 5,098 ticks of the whole quota
+  (kFieldQuota 384,000), and the quota was spent on relaxations in 14,264 of the run's 14,400 ticks. The oldest
+  request waited 5,895 ticks: the drain time of the peak queue plus the requests that arrived while it drained (aware
+  re-plans, groups whose field was evicted). Service inside the scheduler stayed fair meanwhile: no job that asked
+  for work waited more than 148 ticks for a slice in its class (`gap_max`), requests are admitted oldest first, and
+  nothing was refused for room. In a work-conserving FIFO the last of N equal requests on a saturated server waits
+  N x (work per request) / capacity whatever the order; that is what 5,895 is -- about 400 whole-map fields of about
+  14 quota-ticks each, as the verifier estimated -- not starvation.
+* many-5000: 366 requests, 196 whole-map fields, 1,439 quota-ticks at 7.04 relaxations a cell; quota saturated 99%;
+  oldest request 1,578 ticks; longest slice gap 159.
+* The service-age bound that holds there is the drain bound, `(work queued ahead) / kFieldQuota` plus promotion,
+  which grows with the army and the map, not a constant. sched-load's 900-tick constant holds only because its queue
+  is small (47 requests, 87 quota-ticks); legion_sched_mix checks the capacity-derived bound where memory is the
+  limit, and section 8 carries the overloaded rows as stage-6 work (less work per request).
 
 ## 8. Next step
 
-Resume from branch `task-legion-10000` (pushed; stages 1-4 done). Build `build-o2` in the worktree, read sections 3
-(3.2 as amended, 3.3), 7.4 and the stage-4 section of docs/legion-pathfinding.md. Stage 5 (brief phase 4): the
+Resume from branch `task-legion-10000` (pushed; stages 1-4 done, stage 4 including its fix round 2 at f932937f).
+Build `build-o2` in the worktree, read sections 3 (3.2 as amended, 3.3), 7.4 (and its fix round 2) and the stage-4
+section of docs/legion-pathfinding.md. Stage 5 (brief phase 4): the
 route-query interface (`RouteView`, section 3.3), consumers migrated one at a time, exact first. Stage 4 leaves it:
 
 * **Demand is still the fixed 32-cell list** (`Field::demand`, `demand()`): stage 5's per-subscriber demand (3.3)
@@ -1282,9 +1474,10 @@ route-query interface (`RouteView`, section 3.3), consumers migrated one at a ti
 * **Jobs are fields, keyed by serial**, their scheduler state (`deficit`, `lastServed`) in the Field. Stage 6's tiles
   must become jobs of the same `serveFields` loop (a job kind with its own `NavVisit serve(allowance)`), not a
   second scheduler; `NavBytes::tiles` / `portals` are waiting for them.
-* **Memory, not the schedule, now limits the many-squad workloads**: many-2500 holds ~180 bounded fields of up to a
-  whole map and refuses starts at the 128 MiB allowance (fit skips ~17k); the scheduler makes that wait fair and
-  bounded, and stage 6's sparse tiles and shared intermediate routes are the fix.
+* **The quota, not memory, now limits the many-squad workloads** (fix round 2): with unserved builds no longer
+  holding the allowance, nothing is refused for room in many-2500/5000/10000; many-5000 and many-10000 spend 99% of
+  the quota on relaxations and their requests wait the queue's drain time (must-fix list below). Stage 6's sparse
+  tiles and shared intermediate routes -- less work per request -- are the fix.
 * The slot hand-out keeps its per-point rate (`kSlotsPerTick` 32 a tick, after the area closes; the cell budget
   `kHandOutCells` is per tick and round robin): a 10,000-body area hands out its last slot ~300 ticks after
   activation. Unchanged by stage 4 on purpose (it is the formation's progressive assignment, stage 8's to replace).
@@ -1293,19 +1486,41 @@ route-query interface (`RouteView`, section 3.3), consumers migrated one at a ti
   that doubles the registration windows a big order needs; skipping the first would move every fixture by a tick,
   so it is left, recorded here for stage 9's report.
 
-**Must-fix inputs for stages 7-8 (frozen targets that still miss; numbers from the stage-4 scale run, 7.4).**
+**Must-fix inputs for stages 6-8 (frozen targets that still miss; numbers from the final stage-4 scale run, 7.4 fix
+round 2, `r2/scale5`).**
 * `start.last` within 90 ticks for big single clicks: attack-10000 131, one-10000 92, one-5000 106, swap-10000
-  164, churn-1000 93 (and churn-10000 795, many-10000 248, misses since stage 1). Cause above: simultaneous starts
+  164, churn-1000 93 (and churn-10000 795, many-10000 248, misses since stage 1). Cause (7.4): simultaneous starts
   of a big order crowd each other; stage 7-8's subgroups and admission into the moving crowd.
-* `complete_outside_n` in churn-1000 (168, max 118) and churn-10000 (1,327, max 1,180): more completions at the
-  same share outside the disc; stage 8 (arrival areas under churn).
+* `complete_outside_n` in churn-1000 (168, max 118), churn-10000 (1,327, max 1,180) and many-2500 (61, max 50):
+  more completions at about the same share outside the disc; stage 8 (arrival areas).
+* **Request age and `wait.max` in the quota-saturated rows** -- many-5000: request age 1,578-1,603, `wait.max`
+  1,173-1,234; many-10000: request age 5,822-5,895, `wait.max` 5,169-5,314 (offsets 0, 1, -1, 2; frozen `wait.max`
+  max 60). Not starvation: the quota is spent on relaxations 99% of these runs and the age is the drain time of the
+  queue ahead (many-10000: 408 whole-map fields, ~5,100 quota-ticks at the peak), with service inside each class
+  fair (longest slice gap 148-159 ticks). The fix is less work per request -- stage 6's sparse tiles and shared
+  intermediate routes -- not another order; the scheduler keeps it a FIFO drain (legion_sched_mix proves the bound
+  where memory is the limit).
 * `stuck_end` and `livelock_end` in every 1,000-plus row, `arrive.n` in 21 rows, `arrive.t99` in the one-* and
   swap-* rows, the bridges rows' gate samples (0): inherited from stage 1 (frozen targets that never passed);
   stages 6-8.
-* The many-squad rows' `wait.max` tail is a lottery at some offsets (many-5000 5 / 5 / 991 / 949 at offsets 0, 1,
-  -1, 2): memory, not the schedule, bounds them (stage 6's tiles), and the strict reservation keeps it finite.
-* Wall time: many-10000 is 3-9% slower per tick on the same cores (more fields served); mixed-10000 stays far over
-  budget (tick mean ~60 ms, inherited).
+* Wall time: mixed-10000 stays far over budget (tick mean ~60 ms, inherited). The fix round's wall columns are
+  single runs on a shared machine (report only).
+
+**Open items the fix round leaves (recorded, not hidden).**
+* The per-kind in-flight cap applies only while more than half the field allowance is in use; with memory to spare
+  builds may still pile up past the windows (sched-load 90 first builds in flight, many-1000 ~20 refreshes) because
+  capping them there cost outcomes (sched-load stuck 101 -> 162, many-1000 arrivals -9%: early-admitted refreshes
+  are promoted out of their class and served from the main quota). The half threshold is a judgement, not a tuned
+  value; stage 6's tile jobs should revisit it (a build past its window holding a whole potential array is the
+  thing tiles remove).
+* Under that cap many-2500's aware repairs wait up to 957 ticks (head 154) while its arrivals rise 14%: the stale
+  field steers meanwhile. A per-class refresh window for aware repairs separate from stale refreshes would shorten
+  it; not done here.
+* The queued-area recheck (finding 3) has no in-sim test: no gate or scale fixture defers a registration whose leg
+  then changes without a cancel. It is covered by review and by the verifier-mode runs (`--budget-div 4096`).
+* Head-of-line blocking (fit-scan bound 1) is caught by navbudget_test only; the sim fixtures pass with it.
+* Request promotion is not what bounds the ages in sched-mix (its mutant fails only the promotion counter there);
+  navbudget_test section 4 is the test that fails without it.
 
 **Coverage.** The gcc-vs-clang check of explicit orders and the scheduler under load is now done (7.4); a
 Windows/macOS run of the scale files has not been made (remote hosts: memory note `remote-test-hosts`).
