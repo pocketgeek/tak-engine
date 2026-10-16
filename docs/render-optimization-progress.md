@@ -36,15 +36,27 @@ replays must not move; nothing in this program may feed the simulation.
   contains no telemetry strings. `--mpai` not run: only `src/client` and
   `tools/` changed, and every benchmark run checks the world hash (identical
   between p0base and the candidate in every scene run).
-- Workstreams B–N: not started.
-- **Next concrete step:** workstream B (animated-atlas dirty regions),
-  measured against the pinned phase-0 baseline (`~/tak-tmp/wt/render-opt-p0base`,
-  commit `7c5d9cb8`) or against the A build (`~/tak-tmp/render-opt/takclient-A-candidate`,
-  commit `9569bdbc` code) with `tools/render_benchmark.py --a <base> --b <candidate>`;
-  B's own counters already exist (`atlas_repaint_passes`, `atlas_regions`,
-  `atlas_pixels`, `atlas_copies`, `atlas_flushes`, `atlas_created`). Prefer
-  `--pipelined` matched runs for CPU-phase claims as well as the forced-
-  completion matrix (Experiment 3 shows the two modes differ ~2x in draw time).
+- **Workstream B (animated-atlas dirty regions) is implemented and verified**
+  (commits `bae9afd8` painter/tracker/test, `095e1fba` GameView integration +
+  `TAK_ATLAS_VERIFY`, `42c1c4a6` cached region list + early return — fixes a
+  measured regression of the first version, `ea2db865` copy-started colour
+  atlases + `colour-reset` scene, then the docs commit). Tests: `ctest -L quick`
+  377/377 on build-o2; `animated_atlas`, `render_atlas_verify`,
+  `render_texture_reuse`, `render_benchmark_tool`, `distant_models`, `shadow`,
+  `geometrysubmit` pass; the Release `takclient` builds without the verify
+  strings. Measurements: Experiment 4. `--mpai` not run: only `src/client` and
+  `tools/` changed, and every benchmark run checks the world hash (identical
+  between the pre-B build and B in every scene).
+- Workstreams C–N: not started.
+- **Next concrete step:** workstream C (stable geometry ownership), measured
+  with `tools/render_benchmark.py --a <base> --b <candidate>` against the B
+  build (`~/tak-tmp/render-opt/takclient-B3-candidate`, code of `ea2db865`);
+  the A build (`takclient-A-candidate`) and the pinned phase-0 baseline
+  (`~/tak-tmp/wt/render-opt-p0base`, `7c5d9cb8`) remain available. Report
+  pipelined and forced-completion runs separately (Experiment 3), and expect
+  contention from the Legion program: use `--wait-quiet` and the
+  `--exclude-contended` re-aggregation. Workstream B has no outstanding tests
+  or failing cases.
 
 ## Status checklist (A–N)
 
@@ -55,7 +67,7 @@ evidence; nothing below is already fully satisfied.
 | | Workstream | Status | Present in current code (evidence) |
 |---|---|---|---|
 | A | Renderer telemetry | **verified** | Phase 0: `FrameStats`, first phases/counters. Workstream A (`37f73c48`…`9569bdbc`): every category the brief lists — candidate/painter, geometry-key evaluation (`w_geometry_key`), geometry prep, shadow alloc/prep/raster/composite, body assembly/submit, atlas, terrain (`t_terrain`, `t_terrain_upload`, worker compose/decode time, job queued/completed/cancelled/discarded/used), worker pool dispatch/wait/busy/wake — and counters for miss causes per stage, owner reassignment, pose/material/placement/zoom/resource/settings invalidation, vertices generated/copied/submitted and bytes uploaded, shadow dirty tiles/area/causes, distant-image hits/held/bakes/refusals, reallocations, logical/native/SDL draws, flushes, target switches, CPU used vs retained bytes, GPU texture creates. Compiled out under `NDEBUG`; off in debug unless asked. GPU draw timeline read from a non-blocking query ring and labelled as timeline (busy time unmeasured); pipelined and forced-completion runs recorded and aggregated separately. Wired into `render_benchmark.py` reports. Cost: no material difference in matched runs (Experiment 3). Limits: draw/flush counts cover the shared world-pass paths only (HUD/effects direct SDL calls uncounted); SDL-internal flushes and driver draws invisible. |
-| B | Animated atlas dirty regions | not started | `animateGlowTextures()` (`gameview_render.cpp:2309`) computes every sequence's frame, and if ANY changed repaints EVERY animated region in EVERY colour atlas. `paintAtlasRect()` (`:2486`) issues the body copy, eight gutter copies and an `SDL_RenderFlush` per region (the flush protects the scale-mode change of the source texture). New atlases paint the current frame (`atlasFor`, `:2529`) and set `glowDirty_`, which forces a full repaint of all atlases. |
+| B | Animated atlas dirty regions | **verified** | Workstream B (`bae9afd8` painter + tracker + test, `095e1fba` GameView, `42c1c4a6` cached region list + early return, `ea2db865` copy-started colour atlases). `AnimatedAtlasTracker` (`client/animatedatlas.h`) records per colour atlas the frame each animated region holds under `rendererGeneration_` and the new `assetGeneration_`; `animateGlowTextures()` returns at once when no sequence changed, otherwise visits only atlases holding a stale frame and repaints only changed regions (content + gutter, or the transparent clear of an expired sequence). New/reset atlases are painted completely and recorded (`glowDirty_`, which forced a repaint of every atlas, is gone); a second colour starts as a 1:1 copy of a complete atlas and repaints only per-colour, animated and untracked regions. `AtlasPainter` removed the flush per region (blend is recorded per queued copy; one flush only protects a source not already NEAREST — none in shipped data). Cadence unchanged. Tests: `animated_atlas` (synthetic, three-way comparison + CPU oracle, mutation-checked), `render_atlas_verify` (in-game `TAK_ATLAS_VERIFY`, two colours, resets). Captures identical. Shipped data: all 44 animated regions advance on the same ticks, so the region count per repaint is unchanged; the measured savings are the flushes, the repaint-frame cost and multi-colour atlas creation (Experiment 4). |
 | C | Stable geometry ownership | not started | `geomPool_` is indexed by position in the depth-sorted visible list (`:246`, `:306`): slot i belongs to whichever unit sorts i-th. The exact key's first word is `u.id`, so a unit that moves one place in depth order misses (counted as `miss_owner`). Pool never shrinks. Unit ids are monotonic within one world lifetime (`World::nextId_`), but a world reset (rejoin fast-forward, replay restart) starts them again at 1, and replacement models/corpses keep the id — so ids alone are not a safe cache identity. |
 | D | Separate preparation from placement | not started | One exact key (`:2707`–`:2737`) covers identity, pose, appearance AND `zm, ax, ay` (screen anchor). Any camera pan or interpolation step rebuilds the piece transforms, collection, triangle sort and screen transform. `preparePiece` already shares the transformed tree between body and shadow inside one build. |
 | E | Split body/shadow invalidation | not started | Body and shadow are rebuilt together on any key miss (`buildUnitGeom` → `buildUnitShadow`, `:2871`). The shadow tile stamp compares the geometry revision AND the screen pixel position, so body-only changes and every pan re-rasterize coverage. |
@@ -167,8 +179,8 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 | Shadow silhouette pages | GameView | per-tile stamp (geometry slot ptr, owner, screen pixel pos, slot pos, size, revision, scale) compared by tile index | ≤4 GPU target pages up to 2048² (≤64 MiB), grown, retained | destroyed on reset/teardown |
 | Shadow scratch (`shadowAtlasOpaqueScratch_`, mask scratch, `shadowCompositeBatch_`) | GameView | per frame | capacity retained | cleared on reset |
 | Distant images | `DistantModels` | unit id → entry (revision, texture tick, source ptr, zoom, scale), 67 ms refresh | ≤4 × 2048² pages (64 MiB), 1024 64-px tiles/page, ≤128 bakes/frame | entries expire after 120 unseen prepares; pages freed only when all expire; cleared on reset |
-| Colour atlases `atlasTex_` | GameView | per player-colour slot; layout fixed at first model load | GPU target ≈ 2048×atlasH ×4 (≈11 MiB) per slot, ≤10; essential (bypasses cap) | destroyed on reset; repainted lazily |
-| Animated texture state | `modelTextureAnimations_`, `animatedTex_` | frame from game tick | CPU | `glowDirty_` on atlas creation/reset |
+| Colour atlases `atlasTex_` | GameView | per player-colour slot; layout fixed at first model load; `atlasTracker_` slot record = (renderer generation, asset generation, painted frame per animated region) | GPU target ≈ 2048×atlasH ×4 (≈11 MiB) per slot, ≤10; essential (bypasses cap) | destroyed on reset (tracker cleared); painted completely on creation |
+| Animated texture state | `modelTextureAnimations_`, `animatedTex_`, `animatedRegions_` | frame from game tick, every draw; `animatedRegions_` (rect, frames, frame) rebuilt per update in registry order | CPU | `assetGeneration_` bumped on texture teardown and atlas layout; tracker records from another generation repaint every region |
 | Palette pages | `paletteTextureSheets_/Pages_` | per texture name, 20 shade bands | ≤16 × 2048² static pages (256 MiB) | destroyed in `destroyGpuTextures` (not on target reset) |
 | Model source textures `textures_` | GameView | per texture name, per colour/frame | GPU static | teardown |
 | Shadow mask/coverage pages | `shadowMaskPages_`, `shadowCoverageTextures_` | per texture/frame | GPU | teardown |
@@ -252,6 +264,20 @@ Added by workstream A (same header unless noted):
   after the lobby/loading early returns) and turns cumulative sources
   (terrain workers, section decode, gpuvram creates) into per-frame deltas.
 
+Added by workstream B:
+
+- `assetGeneration_` (`GameView`, a `GenerationCounter`) now exists: bumped
+  when model textures load, when GPU textures are torn down and when the atlas
+  layout is built. Anything caching a model-texture/atlas-layout derived value
+  stores it with this generation.
+- `client/animatedatlas.h`: `AtlasPainter` (queued atlas copies with the
+  scale-mode protection, `clear`, `copy`, `duplicate`, `finish`),
+  `AnimatedRegion`, `paintAnimatedRegion`, `AnimatedAtlasTracker` (per-slot
+  painted frames under renderer + asset generations; `created`, `update`,
+  `current`, `known`, `forget`, `clear`).
+- `TAK_ATLAS_VERIFY` (debug): every atlas is compared after each update with a
+  complete repaint; the render study prints `ATLAS_VERIFY checks=N regions=M`.
+
 ### Telemetry reference (RENDERSTATS keys)
 
 `t_*` = render-thread wall ms (nested: `terrain_upload` in `terrain`;
@@ -324,6 +350,7 @@ Scenes (`--scenes all`; `quick` = small-battle, stationary-mixed, moving, pan):
 | effects | Ulasem Arena | 600-unit battle + construction sites, ghosts, flyers, corpses, projectiles |
 | naval | Athri Cay | 150 floating hulls on the nearest water |
 | churn | Ulasem Arena | moving army + pan, 5% die/respawn every 60 frames, target reset every 300 |
+| colour-reset | Ulasem Arena | small-battle (two player colours) with a render-target reset every 120 frames, so both colour atlases are recreated (added by workstream B) |
 | battle-sparse | Ulasem Arena | 2000-unit battle, empty view from frame 450 (segments reported separately) |
 | constrained | Ulasem Arena | pan + zoom scene under a 128 MiB tracked-GPU cap (debug `TAK_GPU_CAP_MIB`) |
 
@@ -692,6 +719,95 @@ Readings for later workstreams (measured, not yet acted on):
   mostly batches below the 512-vertex native threshold, plus distant-image
   bakes and SDL-only paths); the counter does not yet split those reasons.
 
+### Experiment 4 — workstream B animated atlas (2026-10-16)
+
+Clients: **A** = pre-B build (`~/tak-tmp/render-opt/takclient-A-candidate`,
+code of `9569bdbc` = workstream A), **B** = final B build
+(`~/tak-tmp/render-opt/takclient-B3-candidate`, code of `ea2db865`); the
+steady-state update path is identical in the second candidate
+(`takclient-B-candidate`, code of `42c1c4a6`), which differs only in atlas
+creation. Build-o2 (`-O2` Debug), offscreen EGL, SDL `opengl` on the RTX 5070
+Laptop GPU — `RENDER_ENV` confirmed the renderer and output (1280×960, world
+1075×888; 7680×2160, world 7475×2088) for every run. 900 frames, 300 warmup,
+client pinned to CPUs 16–23, ABBA × 2 (four runs per label), `--wait-quiet 300`.
+Legion `ls_gate`/`legion_scenario` jobs and builds shared the machine for much
+of the session (load average 3–30); per-run load is in each `result.json`, and
+runs whose pinned CPUs were > 50% busy are flagged contended and excluded in
+the `*-uncontended` re-aggregations named below. Output (not in Git):
+`~/tak-tmp/render-opt/runs/b*`. Scripts: `~/tak-tmp/render-opt/run-b3.sh`
+(final) and `run-b.sh` (second candidate). Commands:
+
+```sh
+T="python3 tools/render_benchmark.py --a $A --b $B --data ~/tak_data --cpus 16-23"
+$T --output runs/b3c-captures-normal --scenes all --capture-only
+$T --output runs/b3c-captures-uhd --sizes uhd --scenes small-battle colour-reset churn --capture-only
+$T --output runs/b3-normal --scenes small-battle stationary-mixed effects churn colour-reset --repeats 2 --wait-quiet 300
+$T --output runs/b3-pipelined --pipelined --scenes small-battle effects colour-reset --repeats 2 --wait-quiet 300
+$T --output runs/b3-uhd --sizes uhd --scenes small-battle colour-reset --repeats 2 --wait-quiet 300
+python3 tools/render_benchmark.py --a x --data ~/tak_data --output <copy of a run dir> --reaggregate --exclude-contended
+python3 tools/render_atlas_frames.py runs/b3-normal     # t_atlas split: repaint frames vs the rest
+```
+
+**Correctness.** Captures A vs B: 0 differing pixels in the world view AND the
+full frame in all 360 comparisons at 1280×960 (15 scenes incl. colour-reset,
+whose frames 360/480/720 are reset frames that recreate both atlases, the
+second by the copy path) and all 72 at 7680×2160 (small-battle, colour-reset,
+churn); the second candidate was also identical in 14 scenes at 1280×960 and
+4 at 7680×2160 (small-battle, effects, churn, total10k-visible). World hashes
+identical A vs B in every scene. In-game `TAK_ATLAS_VERIFY` (every atlas vs a
+complete repaint after every update): 798 checks on GL (effects scene, two
+colours, reset every 100 frames, 400 frames) and 258 on the software renderer
+(ctest `render_atlas_verify`), all equal. `animated_atlas`: passes on software
+(static SDL2, sdl2-compat) and GL, and under ASan/UBSan; mutations (expired
+region not cleared, gutters dropped, tracker never repainting, missing blend
+override, copied atlas without the per-colour clear) each fail it. Dropping
+the NEAREST protection for the copy fails only the flush-count check: a 1:1
+LINEAR copy at texel centres is exact on both renderers.
+
+**Counters (exact, every run).** All 44 animated regions advance together every
+10 ticks, so a repaint frame repaints 44 regions per colour atlas in A and B
+(88 with two colours): per repaint frame **flushes 44–88 → 0**, copies and
+target switches unchanged. Atlas creation: A paints every texture into every
+colour (33,012 copies, 3,668 flushes per atlas); B paints the first atlas
+completely without flushes and the second as a copy plus 1,396 copies.
+colour-reset copies per repaint frame (including creation): 6,294 → 3,659;
+flushes per run 41,960 → 0.
+
+**Atlas maintenance time (`t_atlas`, ms per frame; spread = max−min over runs).**
+
+| Scene, mode (runs) | A all frames | B all frames | Δ | Material | A repaint frames | B repaint frames | A other frames | B other frames |
+|---|---:|---:|---:|---|---:|---:|---:|---:|
+| small-battle 1280, forced (b2-normal, 4+4) | 0.0541 | 0.0454 | −16.1% | yes (noise 1.3%) | 0.516 | 0.429 | 0.0028 | 0.0028 |
+| stationary-mixed 1280, forced (b2-normal) | 0.0580 | 0.0512 | −11.7% | yes (4.3%) | 0.344 | 0.276 | 0.0263 | 0.0262 |
+| effects 1280, forced (b2-normal) | 0.0617 | 0.0530 | −14.1% | yes (3.2%) | 0.524 | 0.440 | 0.0103 | 0.0101 |
+| churn 1280, forced (b2-normal, 1 contended B run excluded) | 0.110 | 0.104 | −9.5% | no (10.1%) | 0.818 | 0.740 | 0.031 | 0.033 |
+| colour-reset 1280, forced (b3-normal) | 0.294 | 0.175 | **−40.4%** | yes (10.4%) | 2.908 | 1.721 | 0.0033 | 0.0032 |
+| small-battle 1280, pipelined (b3-pipelined) | 0.0540 | 0.0454 | −15.8% | yes (5.3%) | 0.514 | 0.429 | 0.0028 | 0.0028 |
+| colour-reset 1280, pipelined | 0.260 | 0.162 | −37.6% | yes (2.6%) | 2.573 | 1.596 | 0.0030 | 0.0030 |
+| small-battle 7680×2160, forced (b3-uhd) | 0.0544 | 0.0466 | −14.3% | yes (5.8%) | 0.517 | 0.436 | 0.0030 | 0.0034 |
+| colour-reset 7680×2160, forced (1 contended B run excluded) | 0.296 | 0.175 | −40.9% | yes (9.9%) | 2.926 | 1.713 | 0.0039 | 0.0040 |
+
+**Reset frames (colour-reset, both atlases recreated, 5 per run):** `t_atlas`
+28.6–29.1 ms (A, four runs) → 14.6–16.8 ms (B, four runs) at 1280×960 forced;
+28.7–29.2 → 14.5–16.6 ms at 7680×2160 (one contended B run at 42.7 ms
+excluded). A single-colour reset (churn) is unchanged at ~12.5 ms: the first
+atlas is still painted completely (see Known limitations).
+
+**Frame times.** Draw mean, B vs A: colour-reset −11.7% forced (material,
+noise 5.7%) and −10.5% pipelined (material, 3.9%), −8.8% at 7680×2160 (not
+material, threshold 11.8%); colour-reset pipelined draw p99 5.17 → 4.01 ms.
+small-battle −1.7% pipelined, +0.5% forced, +2.1% at 7680×2160; stationary-mixed
++1.6% / +0.1%; churn −4.5% / −7.9% — none material (atlas maintenance is
+0.05 ms of a 1–12 ms draw outside resets). effects: inside its 13–65% noise in
+every session (the 1280×960 b3-normal effects runs were all contended).
+
+**Memory.** No new GPU resources: atlases keep their size and count; the copy
+path reads an existing atlas. CPU: the tracker holds one `size_t` per animated
+region per colour atlas (44 × ≤10) plus the 44-entry region list — under
+10 KiB. `TAK_ATLAS_VERIFY` allocates a scratch atlas per check (debug only).
+
+**Earlier candidate (rejected, see Rejected experiments):** `runs/b1-normal`.
+
 ## Known limitations and unsupported paths
 
 - Only Linux / NVIDIA / SDL `opengl` (offscreen EGL) is measured. Direct3D,
@@ -713,6 +829,29 @@ Readings for later workstreams (measured, not yet acted on):
 - The benchmark pins the client to 8 CPUs while the worker pool sizes itself
   from all 24 logical CPUs; pool dispatch/wake telemetry under the benchmark
   overstates what unpinned play sees.
+- Workstream B was exercised on SDL `opengl` (offscreen EGL, RTX 5070) and
+  the SDL software renderer (static SDL2 2.32 and Fedora's sdl2-compat, in
+  `animated_atlas` and `render_atlas_verify`). Direct3D/Metal/GLES are
+  unvalidated; the code relies only on SDL's documented queue behaviour
+  (blend recorded per queued copy, scale mode read at execution — checked in
+  the SDL 2.32 sources for every backend) and keeps a flush wherever a scale
+  mode changes.
+- Workstream B late-atlas transient (deliberate, explained): the previous code
+  painted a new atlas's animated regions with the source blend mode and
+  repainted them with blend NONE at the next update; an atlas created after
+  that frame's update (projectiles/debris of a colour with no unit in view)
+  showed the source-blend version for one frame. B paints them with blend NONE
+  at creation. The two differ only in transparent/partial-alpha texels
+  (`animated_atlas` prints that the old creation frame differed for its
+  synthetic textures); no captured frame in the matrix contains such a frame,
+  and all captures are identical.
+- In shipped data every animated model texture (44 regions in the atlas)
+  advances on the same game ticks, so per-region dirtiness repaints the same
+  number of regions per repaint as before; the per-region record still matters
+  for expiry, atlas creation and for data whose sequences differ.
+- Creating the FIRST colour atlas still paints every model texture (~33,000
+  queued copies, ~12.5 ms at 1280×960 on this machine, per reset or at game
+  start). Only further colours are cheaper. See "Rejected / not pursued".
 - Telemetry draw/flush/target-switch counts are lower bounds (HUD, effects and
   per-piece calls inside `drawUnit` call SDL directly; SDL-internal flushes and
   driver-level draws are invisible). GPU busy time is not measured.
@@ -728,3 +867,22 @@ Readings for later workstreams (measured, not yet acted on):
 - Phase 0 added no experiments.
 - Workstream A added no experiments: it changes no draw, cache or scheduling
   decision (captures identical, world hashes identical).
+- **B, first version (`095e1fba`) — measured regression, fixed in `42c1c4a6`.**
+  It rebuilt the animated-region list (~130 string-keyed map lookups) every
+  draw and lost the old early return: ABBA × 2 (`runs/b1-normal`) showed
+  `t_atlas` on frames without a repaint rising from 0.003–0.03 ms to
+  0.02–0.09 ms, so mean `t_atlas` rose +9% to +69% (material in effects and
+  stationary-mixed) although repaint frames got 9–17% cheaper. The list is now
+  built once per asset generation and the update returns before touching it
+  when nothing changed; Experiment 4 measures the fixed version.
+- **B, not pursued: copying changed animated regions from the first atlas to
+  the others** (one copy per region instead of clear + 9) — the per-pass cost
+  is ~0.4 ms every 10 frames for two colours, the copy would need a
+  scale-mode switch of a LINEAR atlas (flush) when Bilinear Filtering is on,
+  and per-colour regions would still need their own paint. Left for a later
+  measurement with 8 colours.
+- **B, not pursued: building the first atlas on the CPU and uploading it once.**
+  It would replace ~33,000 queued copies, but the source-blend paint of
+  partial-alpha texels is GPU arithmetic that a CPU composite does not
+  reproduce bit-exactly, and it would keep (or rebuild) every frame's RGBA in
+  CPU memory. Not attempted; recorded as an option for workstream M/J.
