@@ -1478,7 +1478,7 @@ private:
     // Bounded per-unit silhouette targets. Their 2048-square pages are
     // reused each frame and discarded with other render targets on device loss.
     struct ShadowTileStamp {
-        const UnitGeom* source; // revisions are local to a geometry slot
+        const UnitGeom* source; // the unit's stable entry (revisions are globally unique)
         int owner,pixelX,pixelY,slotX,slotY,width,height;
         uint64_t revision;
         float scaleX,scaleY;

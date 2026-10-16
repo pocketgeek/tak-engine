@@ -112,22 +112,26 @@ public:
         if (keys_.size() > 64 && size_ * 8 < keys_.size())
             rehash(std::max<size_t>(64, std::bit_ceil(size_ * 4)));
     }
-    void clear() { keys_.clear(); values_.clear(); keys_.shrink_to_fit(); values_.shrink_to_fit(); size_ = 0; mask_ = 0; }
+    void clear() { keys_.clear(); values_.clear(); keys_.shrink_to_fit(); values_.shrink_to_fit(); size_ = 0; mask_ = 0; shift_ = 63; }
     size_t size() const { return size_; }
     size_t bytes() const { return keys_.capacity() * sizeof(int) + values_.capacity() * sizeof(uint32_t); }
 private:
-    size_t bucket(int id) const { return (uint32_t(id) * 0x9E3779B1u) & mask_; }
+    // Fibonacci hashing: the HIGH bits of the product, so ids that differ only
+    // above the table's bit width (strides) still spread over the buckets.
+    size_t bucket(int id) const { return size_t((uint64_t(uint32_t(id)) * 0x9E3779B97F4A7C15ull) >> shift_); }
     void rehash(size_t buckets) {
         std::vector<int> keys(buckets, 0);
         std::vector<uint32_t> values(buckets, kNone);
         keys.swap(keys_); values.swap(values_);
         mask_ = buckets - 1; size_ = 0;
+        shift_ = 64 - unsigned(std::countr_zero(buckets));
         for (size_t i = 0; i < keys.size(); ++i)
             if (values[i] != kNone) insert(keys[i], values[i]);
     }
     std::vector<int> keys_;
     std::vector<uint32_t> values_;
     size_t size_ = 0, mask_ = 0;
+    unsigned shift_ = 63;
 };
 
 struct EntryPoolConfig {
