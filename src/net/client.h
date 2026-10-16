@@ -236,6 +236,8 @@ public:
     bool takeBundle(uint32_t tick, Bundle& out);
     size_t bufferedBundles() const { return bundles_.size(); }   // backlog depth
     void sendCommands(const std::vector<Command>& cmds);
+    // An explicit selection order (Cmd::Order) as its uplink transaction.
+    void sendOrder(const SelectionOrder& o);
     // posDigest rides only into the recorded replay trail (format 12), never onto the wire.
     void sendHash(uint32_t tick, uint64_t hash, uint64_t posDigest = 0);
     // Flow-control progress (WE S3): the last tick processed and the smoothed RTT.

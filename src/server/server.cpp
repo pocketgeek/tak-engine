@@ -15,6 +15,7 @@
 #include "net/mappackage.h"
 #include "net/overridepackage.h"
 #include "server/commands.h"
+#include "server/orders.h"
 #include "server/acme.h"
 #include "server/roomworker.h"
 #include "server/tickpacer.h"
@@ -138,6 +139,12 @@ public:
         }
         return found->second.take(now,limit,cost);
     }
+    // Would take() succeed? (Nothing is charged.)
+    bool available(const std::string& key,uint64_t now,unsigned limit,unsigned cost=1) const {
+        const auto found=keys_.find(key);
+        if(found==keys_.end())return keys_.size()<4096 && cost<=limit;
+        return found->second.available(now,limit,cost);
+    }
 private:
     std::map<std::string,WorkBudget> keys_;
     uint64_t lastSweep_ = 0;
@@ -242,6 +249,13 @@ struct Client {
     // ignored TAK_SRV_DELAY so deferred commands outran delayed ones.
     std::deque<Command> cmdQueue;
     uint64_t cmdDropped = 0;     // past the queue cap; logged, not silent
+    // Selection-order transactions (protocol 267; server/orders.h): the open one
+    // and the committed orders this client has queued. A committed order joins
+    // cmdQueue as ONE Cmd::Order item, so it keeps its place among this client's
+    // commands.
+    tak::srv::OrderInbox orders;
+    uint64_t ordersLogAt = 0;
+    void clearCommands() { cmdQueue.clear(); orders.clear(); }
     // Catch-up streaming. A resuming or spectating client needs every bundle
     // logged so far, which for a long game is far more than belongs in one
     // socket buffer -- pushing it all at once put the entire replay in memory
@@ -310,6 +324,12 @@ struct Room {
     // running state
     uint32_t tick = 0;                          // next tick to close
     std::vector<Command> pending;               // commands for the next tick
+    // Explicit orders: the highest serial each slot has had put into a tick
+    // bundle (a reconnecting client continues above it; serials of orders that
+    // never activated may be reused), and the slot that drains first next tick
+    // (the per-tick order budget goes round the room, so no client starves).
+    uint32_t orderSerialFloor[kMaxSlots] = {};
+    int orderRotor = 0;
     std::map<uint32_t, std::vector<Command>> pendingAt;  // server input-delay: cmds bucketed by future tick
     std::vector<Event> pendingEvents;           // sequenced events for the next tick
     // Tick pacing (server wall clock only; never sim state): see server/tickpacer.h.
@@ -628,6 +648,14 @@ private:
     void broadcastRoom(Room& r, Msg kind, const Writer& w, uint32_t exceptClient = 0);
     Room* roomOf(Client& c) { auto it = rooms_.find(c.roomId); return it == rooms_.end() ? nullptr : &it->second; }
     void dropPendingCommands(Client& c, Room& r);   // both disconnect paths
+    // One OrderBegin/OrderMembers/OrderCommit/OrderAbort frame (server/orders.h);
+    // false: malformed, the caller fails the connection.
+    bool handleOrderFrame(Client& c, Room& r, const Frame& f);
+    // The player-input budgets, all or nothing: `bytes` of frames against the
+    // client's, its account's (or address's) and the server's byte budgets, and
+    // `count` commands (an order's members count as commands) against the three
+    // command budgets. Nothing is charged unless every budget has room.
+    bool takeInputBudget(Client& c, uint64_t now, unsigned bytes, unsigned count);
     void leaveRoom(Client& c, const char* reason);
     void tryStart(Client& c);
     // A START the server will not run: the host is told why (Msg::MapError, which the
@@ -1604,7 +1632,7 @@ bool Server::createCampaignBattle(Client& c,const std::string& campaign,uint32_t
         issued=battle.id;room.campaignBattleId=battle.id;room.campaignLaunchToken=battle.launchToken;
         room.slotClient[0]=int(c.id);
         rooms_.emplace(room.id,std::move(room));
-        c.cmdQueue.clear();c.state=Client::InGame;c.roomId=roomId;c.slot=0;c.loaded=false;
+        c.clearCommands();c.state=Client::InGame;c.roomId=roomId;c.slot=0;c.loaded=false;
         const auto& stored=rooms_.at(roomId);
         const auto reply=battleReply(0,campaign,issued,roomId,*map,stored.campaignExpires);
         c.conn.send(Msg::CrusadesBattleResult,reply);invited->conn.send(Msg::CrusadesBattleResult,reply);
@@ -1815,7 +1843,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
                 // with AIs). The host still owns the room (add AIs, start). ALLOW
                 // SPECTATORS does not apply: it governs who ELSE may watch.
                 room.spectators.push_back(c.id);
-                c.cmdQueue.clear();   // never inherit a previous room's queue
+                c.clearCommands();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = room.id; c.slot = -1;
                 Writer jr; jr.u8(1); jr.u8(0xFF); jr.str("");   // ok, spectator
                 c.conn.send(Msg::JoinResult, jr);
@@ -1824,7 +1852,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
                 room.slots[0].type = 1; room.slots[0].faction = 0; room.slots[0].color = 0;
                 room.slots[0].team = 0; room.slots[0].name = c.name;
                 room.slotClient[0] = int(c.id);
-                c.cmdQueue.clear();   // never inherit a previous room's queue
+                c.clearCommands();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = room.id; c.slot = 0;
                 Writer jr; jr.u8(1); jr.u8(0); jr.str("");   // ok, slot 0
                 c.conn.send(Msg::JoinResult, jr);
@@ -1861,7 +1889,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             room.slots[freeSlot].type = 1;
             room.slots[freeSlot].name = c.name;
             room.slotClient[freeSlot] = int(c.id);
-            c.cmdQueue.clear();   // never inherit a previous room's queue
+            c.clearCommands();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = room.id; c.slot = freeSlot;
             Writer jr; jr.u8(1); jr.u8(uint8_t(freeSlot)); jr.str("");
             c.conn.send(Msg::JoinResult, jr);
@@ -1899,7 +1927,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if(!room.campaignBattleId.empty() && slot<2)room.campaignDisconnected[slot]=false;
             room.slotToken[slot] = randToken();
             room.desyncFlagged.clear();   // fresh sim; old desync flags are stale
-            c.cmdQueue.clear();   // never inherit a previous room's queue
+            c.clearCommands();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = gid; c.slot = slot; c.loaded = true;
             // GameStarting rebuilds the client's world; then the whole bundle log
             // replays it up to now, after which it receives live bundles. Because that
@@ -1945,7 +1973,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             // and holds nothing on disconnect. It just receives the stream.
             if (std::find(room.spectators.begin(), room.spectators.end(), c.id) == room.spectators.end())
                 room.spectators.push_back(c.id);
-            c.cmdQueue.clear();   // never inherit a previous room's queue
+            c.clearCommands();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = gid; c.slot = -1; c.loaded = true;
             // GameStarting (slot 0xFF = spectator) rebuilds the world; the whole
             // bundle log replays it to now, then live bundles stream via broadcast.
@@ -1978,10 +2006,52 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
 // seated player disconnecting from a running game never reaches -- that takes the
 // slot-preserving branch of dropClient, which is exactly the rejoin path this is
 // meant to protect. The fix ran everywhere except where it was needed.
+bool Server::takeInputBudget(Client& c, uint64_t now, unsigned bytes, unsigned count) {
+    const auto key = c.account.empty() ? "ip:" + c.peer : "user:" + tak::auth::foldUsername(c.account);
+    if (!(c.commandBytes.available(now, 4u << 20, bytes) && commandByteKeys_.available(key, now, 4u << 20, bytes) &&
+          commandBytes_.available(now, 32u << 20, bytes) &&
+          (!count || (c.commandCount.available(now, 65536, count) && commandCountKeys_.available(key, now, 65536, count) &&
+                      commandCount_.available(now, 524288, count)))))
+        return false;
+    if (bytes) {
+        c.commandBytes.take(now, 4u << 20, bytes); commandByteKeys_.take(key, now, 4u << 20, bytes);
+        commandBytes_.take(now, 32u << 20, bytes);
+    }
+    if (count) {
+        c.commandCount.take(now, 65536, count); commandCountKeys_.take(key, now, 65536, count);
+        commandCount_.take(now, 524288, count);
+    }
+    return true;
+}
+
+bool Server::handleOrderFrame(Client& c, Room& r, const Frame& f) {
+    const auto now = nowMs();
+    // A frame's bytes at receipt; the order's members are charged as commands when
+    // closeTick drains it (a 10,000-unit order costs what its 10,000 commands did).
+    auto admit = [&](size_t bytes) { return takeInputBudget(c, now, unsigned(bytes), 0); };
+    std::shared_ptr<const tak::net::SelectionOrder> order;
+    using R = tak::srv::OrderInbox::Result;
+    const R result = c.orders.frame(f.kind, f.payload, r.orderSerialFloor[size_t(c.slot)], admit, order);
+    if (result == R::Malformed) return false;
+    if (result == R::Committed) {
+        Command cmd;
+        cmd.kind = tak::net::Cmd::Order;
+        cmd.player = uint8_t(c.slot);
+        c.orders.queued(tak::net::orderRecordBytes(*order));
+        cmd.order = std::move(order);
+        c.cmdQueue.push_back(std::move(cmd));
+    } else if (result == R::Dropped && now - c.ordersLogAt >= 5000 && commandLogs_.take(now, 4)) {
+        c.ordersLogAt = now;
+        std::fprintf(stderr, "client %u: order budget/queue exceeded; dropped %llu orders total\n", c.id,
+                     (unsigned long long)c.orders.dropped());
+    }
+    return true;
+}
+
 void Server::dropPendingCommands(Client& c, Room& r) {
     c.overrideSend={};c.overrideReceive={};c.overrideReady.clear();c.overrideOffered.clear();
     c.mapSend = {}; c.mapReceive = {}; c.mapReadyRoom = c.mapOfferedRoom = 0;
-    c.cmdQueue.clear();
+    c.clearCommands();
     c.cmdDropped = 0;
     if (c.slot < 0) return;
     const int slot = c.slot;
@@ -2327,6 +2397,8 @@ void Server::tryStart(Client& c) {
     }
     r->running = true;
     r->tick = 0;
+    std::fill(std::begin(r->orderSerialFloor), std::end(r->orderSerialFloor), 0u);
+    r->orderRotor = 0;
     r->rebasePace(nowUs());
     for (int i = 0; i < kMaxSlots; ++i) r->startSlots[i] = r->slots[i];   // for the replay
     // Build the referee sim (and AI controllers) if we have game data. The world
@@ -2663,15 +2735,10 @@ void Server::gameMsg(Client& c, const Frame& f) {
             const auto count=header.u32();
             if(!header.ok || count>f.payload.size()/35) {c.conn.fail("invalid player command count");return;}
             const auto now=nowMs();
-            const auto key=c.account.empty()?"ip:"+c.peer:"user:"+tak::auth::foldUsername(c.account);
-            const bool allowed=header.ok &&
-                c.commandBytes.take(now,4u<<20,unsigned(f.payload.size())) &&
-                commandByteKeys_.take(key,now,4u<<20,unsigned(f.payload.size())) &&
-                commandBytes_.take(now,32u<<20,unsigned(f.payload.size())) &&
-                c.commandCount.take(now,65536,count) &&
-                commandCountKeys_.take(key,now,65536,count) &&
-                commandCount_.take(now,524288,count);
-            if(!allowed || count>kCmdQueueMax-c.cmdQueue.size()) {
+            const bool allowed=header.ok && takeInputBudget(c,now,unsigned(f.payload.size()),count);
+            // Queued orders (Cmd::Order items, server/orders.h) have limits of their own.
+            const size_t ordinary=c.cmdQueue.size()-std::min(c.cmdQueue.size(),size_t(c.orders.queuedOrders()));
+            if(!allowed || ordinary>kCmdQueueMax || count>kCmdQueueMax-ordinary) {
                 if(!allowed) {c.commandBytes.window=now;c.commandBytes.used=4u<<20;}
                 c.cmdDropped+=count;
                 if(now-c.commandLogAt>=5000 && commandLogs_.take(now,4)) {
@@ -2690,6 +2757,26 @@ void Server::gameMsg(Client& c, const Frame& f) {
             for(auto& cmd:parsed) {
                 cmd.player=uint8_t(c.slot);
                 c.cmdQueue.push_back(cmd);
+            }
+            break;
+        }
+        case Msg::OrderBegin:
+        case Msg::OrderMembers:
+        case Msg::OrderCommit:
+        case Msg::OrderAbort: {
+            if (!r->running) return;
+            if (c.slot < 0) { c.conn.fail("spectators cannot issue orders"); return; }
+            // Legion clients send their selections as orders; a Retail game keeps the
+            // per-unit commands and their 64-a-tick drain (Retail stays as it was).
+            if (r->opts.pathfindingMode != tak::sim::PathfindingMode::Legion) {
+                c.conn.fail("explicit orders are for Legion games"); return;
+            }
+            if (!r->campaignBattleId.empty() && (r->campaignResult || r->campaignFault)) return;
+            if (!handleOrderFrame(c, *r, f)) {
+                if (!r->campaignBattleId.empty())
+                    r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;
+                c.conn.fail("invalid order transaction");
+                return;
             }
             break;
         }
@@ -2865,17 +2952,43 @@ void Server::closeTick(Room& r, bool multipleGames) {
     static const int srvDelay = [] {
         const char* e = std::getenv("TAK_SRV_DELAY"); return e ? std::max(0, std::atoi(e)) : 0;
     }();
-    for (int i = 0; i < kMaxSlots; ++i) {
+    //
+    // An explicit order (Cmd::Order) is ONE item of its client's FIFO: it is taken
+    // whole when the tick's order budget (kTickOrderBytes, shared by the room) still
+    // holds it, and that tick is its activation tick. Neither budget is jumped: a
+    // client's drain stops at its first item that does not fit, so nothing it sent
+    // later overtakes it (a Stop behind a big Move stays behind it). The client that
+    // drains first goes round the room tick by tick (orderRotor), so any order, at
+    // most kOrderMaxBytes = kTickOrderBytes, is taken within kMaxSlots ticks.
+    size_t orderBytes = 0;
+    for (int k = 0; k < kMaxSlots; ++k) {
+        const int i = (r.orderRotor + k) % kMaxSlots;
         if (r.slotClient[i] < 0) continue;
         auto ci = clients_.find(uint32_t(r.slotClient[i]));
         if (ci == clients_.end()) continue;
         Client& c = *ci->second;
-        for (int taken = 0; taken < kCmdCapPerTick && !c.cmdQueue.empty(); ++taken) {
+        int taken = 0;
+        while (!c.cmdQueue.empty()) {
+            const Command& head = c.cmdQueue.front();
+            if (head.kind == tak::net::Cmd::Order) {
+                const size_t bytes = head.order ? tak::net::orderRecordBytes(*head.order) : 0;
+                if (orderBytes + bytes > tak::net::kTickOrderBytes) break;
+                // The members are commands to the per-second command budget: over it the
+                // order WAITS here (and what this client sent after it waits too) until
+                // the budget's second turns over; it is never dropped, so an honest
+                // client's order window cannot leak.
+                if (head.order && !takeInputBudget(c, nowMs(), 0, unsigned(head.order->members.size()))) break;
+                orderBytes += bytes;
+                c.orders.drained(bytes);
+                if (head.order) r.orderSerialFloor[i] = std::max(r.orderSerialFloor[i], head.order->serial);
+            } else if (taken < kCmdCapPerTick) ++taken;
+            else break;
             if (srvDelay > 0) r.pendingAt[r.tick + uint32_t(srvDelay)].push_back(c.cmdQueue.front());
             else r.pending.push_back(c.cmdQueue.front());
             c.cmdQueue.pop_front();
         }
     }
+    r.orderRotor = (r.orderRotor + 1) % kMaxSlots;
     tak::srv::TickInput input;
     input.tick=r.tick;input.roomId=r.id;input.multipleGames=multipleGames;
     input.commands=std::exchange(r.pending,{});input.events=std::exchange(r.pendingEvents,{});

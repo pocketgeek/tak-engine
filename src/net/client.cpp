@@ -1025,6 +1025,26 @@ void MpClient::sendCommands(const std::vector<Command>& cmds) {
     send(Msg::PlayerCommands, w);
 }
 
+// One explicit selection order as its transaction (protocol 267, net/protocol.h):
+// Begin, the members in chunks of at most kOrderChunkMembers, Commit. The frames
+// go out back to back on this connection, so nothing the client sends later can
+// come between them.
+void MpClient::sendOrder(const SelectionOrder& o) {
+    {
+        Writer w; w.u32(o.serial); w.cmd(o.tmpl); w.u8(uint8_t(o.shape)); w.u32(uint32_t(o.members.size()));
+        send(Msg::OrderBegin, w);
+    }
+    int32_t prev = -1;
+    for (size_t at = 0; at < o.members.size(); at += kOrderChunkMembers) {
+        const size_t n = std::min(o.members.size() - at, size_t(kOrderChunkMembers));
+        Writer w; w.u32(o.serial);
+        putMembers(w, o.members.data() + at, n, prev);
+        send(Msg::OrderMembers, w);
+    }
+    Writer w; w.u32(o.serial); w.u32(uint32_t(o.members.size())); w.u64(orderDigest(o.members));
+    send(Msg::OrderCommit, w);
+}
+
 void MpClient::sendHash(uint32_t tick, uint64_t hash, uint64_t posDigest) {
     // Keep our own trail while recording, so the replay carries what this client
     // actually computed at each checkpoint. A spectator's StateHash is only a

@@ -730,6 +730,10 @@ add_test(NAME local_server COMMAND local_server_test)
 set_tests_properties(local_server PROPERTIES TIMEOUT 30)
 target_link_libraries(server_commands_test PRIVATE tak-formats)
 add_test(NAME server_commands COMMAND server_commands_test)
+# Selection-order transactions at the server (server/orders.h, protocol 267).
+add_executable(server_orders_test tools/server_orders_test.cpp)
+target_link_libraries(server_orders_test PRIVATE tak-formats)
+add_test(NAME server_orders COMMAND server_orders_test)
 add_executable(override_transfer_test tools/override_transfer_test.cpp)
 target_link_libraries(override_transfer_test PRIVATE tak-formats)
 add_executable(override_packs_test tools/override_packs_test.cpp)
@@ -1929,6 +1933,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_command_flood_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_command_flood PROPERTIES TIMEOUT 60)
+    add_test(NAME server_orders_network COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_orders_network_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(server_orders_network PROPERTIES TIMEOUT 120)
     add_test(NAME server_seed COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_seed_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")

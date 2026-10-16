@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace tak::net {
 
@@ -36,7 +38,15 @@ enum class Cmd : uint8_t {
     GiveUnit,      // unitId = owned eligible unit, targetId = allied recipient player
     ShareMana,     // targetId = allied recipient, queue = enabled; no unit required
     BuildManaArea, // mobile builder: lodestones in x/z through x2/z2, exploring as needed
+    // An explicit selection order (protocol 267, Legion 10,000 stage 3): one
+    // player intent over a whole selection, `order` holds it. Never sent in a
+    // PlayerCommands message: the uplink carries it as an OrderBegin /
+    // OrderMembers / OrderCommit transaction (net/protocol.h) and the server
+    // puts the committed order into ONE tick bundle, its activation tick.
+    Order,
 };
+
+struct SelectionOrder;
 
 struct Command {
     Cmd kind = Cmd::Move;
@@ -47,6 +57,35 @@ struct Command {
     uint8_t queue = 0;
     char type[16] = {};   // unit type id for Train/Build
     float x2 = 0, z2 = 0; // ReclaimArea upper rectangle endpoint
+    // Cmd::Order only: the order (immutable once built; shared by the copies a
+    // command makes between the wire, the server's queue and the sim).
+    std::shared_ptr<const SelectionOrder> order;
+};
+
+// How an order's members get their goal (Move only uses Offsets):
+//   Shared   every member is given the template's command as it stands;
+//   Offsets  the right-click move rule (client/gameview_hud.cpp): a member
+//            Legion plans on a shared point (legionSharedClick, Legion mode
+//            only) takes the click itself, every other member the click plus
+//            its offset from the centroid of the order's live owned members,
+//            clamped to 60 px per axis. The sim computes the offsets at
+//            activation from hashed positions (integer Fixed arithmetic), so
+//            no per-member coordinates travel.
+enum class OrderShape : uint8_t { Shared = 0, Offsets = 1 };
+
+// One explicit selection order: the player's intent over a selection, applied
+// to every member in ONE tick (the activation tick the server gives it). The
+// identity is (the issuing player, serial): serials are client-assigned,
+// strictly increasing per player per game, 1..kOrderMaxSerial.
+struct SelectionOrder {
+    uint32_t serial = 0;
+    Command tmpl;                    // the verb and its arguments; unitId and player unused
+    OrderShape shape = OrderShape::Shared;
+    std::vector<int32_t> members;    // unit ids, strictly increasing (no duplicates by construction)
+    // The bundle record's size (orderRecordBytes), kept by whoever builds the
+    // order (packClick, the decoder, the server's commit) so the send window and
+    // the tick budget do not walk the members again; 0 = not known, computed.
+    uint32_t bytes = 0;
 };
 
 } // namespace tak::net

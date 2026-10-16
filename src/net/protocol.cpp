@@ -1,11 +1,26 @@
 #include "net/protocol.h"
 
+#include <climits>
 #include <cmath>
 
 namespace tak::net {
 
 // Base command layout is unchanged; area commands append their second endpoint.
+// An order (Cmd::Order, 267) is its own record: u8 kind, u8 player, u32 serial,
+// the template command, u8 shape, u32 count and the member deltas (putMembers).
 void Writer::cmd(const Command& c) {
+    if (c.kind == Cmd::Order) {
+        u8(uint8_t(c.kind));
+        u8(c.player);
+        static const SelectionOrder kEmpty{};
+        const SelectionOrder& o = c.order ? *c.order : kEmpty;
+        u32(o.serial);
+        cmd(o.tmpl);
+        u8(uint8_t(o.shape));
+        int32_t prev = -1;
+        putMembers(*this, o.members.data(), o.members.size(), prev);
+        return;
+    }
     u8(uint8_t(c.kind));
     u8(c.player);
     u32(uint32_t(c.unitId));
@@ -18,9 +33,26 @@ void Writer::cmd(const Command& c) {
 }
 
 Command Reader::cmd() {
+    const uint8_t* const at = p;
     Command c;
     c.kind = Cmd(u8());
     c.player = u8();
+    if (c.kind == Cmd::Order) {
+        auto o = std::make_shared<SelectionOrder>();
+        o->serial = u32();
+        if (!ok || !avail(1) || Cmd(*p) == Cmd::Order) { ok = false; return c; }   // no nested order
+        o->tmpl = cmd();
+        o->shape = OrderShape(u8());
+        const uint32_t n = u32();
+        // Every delta is at least one byte: a corrupt count cannot reserve gigabytes.
+        if (!ok || n > kOrderMaxMembers || !avail(n)) { ok = false; return c; }
+        int32_t prev = -1;
+        o->members.reserve(n);
+        if (!getMembers(*this, n, prev, o->members)) { ok = false; return c; }
+        o->bytes = uint32_t(p - at);   // the record as read
+        c.order = std::move(o);
+        return c;
+    }
     c.unitId = int32_t(u32());
     c.targetId = int32_t(u32());
     c.x = f32();
@@ -31,6 +63,70 @@ Command Reader::cmd() {
     c.type[15] = 0;
     if (c.kind == Cmd::ReclaimArea || c.kind == Cmd::BuildManaArea) { c.x2 = f32(); c.z2 = f32(); }
     return c;
+}
+
+bool orderVerb(Cmd c) {
+    switch (c) {
+    case Cmd::Move: case Cmd::Attack: case Cmd::AttackMove: case Cmd::Patrol: case Cmd::Stop:
+    case Cmd::Load: case Cmd::Unload: case Cmd::Guard: case Cmd::SetWeapon: case Cmd::Destroy:
+    case Cmd::Assist: case Cmd::Repair: case Cmd::Stance: case Cmd::Cloak: case Cmd::SetActive:
+    case Cmd::SetSquad: case Cmd::GiveUnit:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void putMembers(Writer& w, const int32_t* ids, size_t n, int32_t& prev) {
+    w.u32(uint32_t(n));
+    for (size_t i = 0; i < n; ++i) {
+        w.varint(uint32_t(int64_t(ids[i]) - prev));
+        prev = ids[i];
+    }
+}
+
+bool getMembers(Reader& r, uint32_t count, int32_t& prev, std::vector<int32_t>& out) {
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t d = r.varint();
+        const int64_t id = int64_t(prev) + d;
+        if (!r.ok || d == 0 || id > INT32_MAX) { r.ok = false; return false; }
+        prev = int32_t(id);
+        out.push_back(prev);
+    }
+    return true;
+}
+
+uint64_t orderDigest(const std::vector<int32_t>& members) {
+    uint64_t h = 1469598103934665603ULL;
+    for (const int32_t id : members)
+        for (int i = 0; i < 4; ++i) { h ^= (uint32_t(id) >> (8 * i)) & 0xff; h *= 1099511628211ULL; }
+    return h;
+}
+
+bool validOrderTemplate(const Command& t, OrderShape shape) {
+    return orderVerb(t.kind) && t.unitId == 0 && !t.order &&
+           (shape == OrderShape::Shared || (shape == OrderShape::Offsets && t.kind == Cmd::Move)) &&
+           commandCoordinate(t.x) && commandCoordinate(t.z) && commandCoordinate(t.x2) && commandCoordinate(t.z2);
+}
+
+size_t orderRecordBytes(const SelectionOrder& o) {
+    if (o.bytes) return o.bytes;
+    size_t n = 2 + 4 + 35 + 1 + 4;   // kind, player, serial, template, shape, count (orderVerb never appends x2/z2)
+    int64_t prev = -1;
+    for (const int32_t id : o.members) {
+        uint32_t d = uint32_t(int64_t(id) - prev);
+        prev = id;
+        do { ++n; d >>= 7; } while (d);
+    }
+    return n;
+}
+
+bool validOrder(const SelectionOrder& o) {
+    if (o.serial == 0 || o.serial > kOrderMaxSerial || !validOrderTemplate(o.tmpl, o.shape) ||
+        o.members.empty() || o.members.size() > kOrderMaxMembers || o.members.front() < 0) return false;
+    for (size_t i = 1; i < o.members.size(); ++i)
+        if (o.members[i] <= o.members[i - 1]) return false;
+    return orderRecordBytes(o) <= kOrderMaxBytes;
 }
 
 // The options as 257 wrote them -- frozen, because the Crusades rules digest hashes
@@ -97,12 +193,13 @@ bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict, uint32_t pro
     // at least 35 bytes and an event 2, so a corrupt count cannot ask for gigabytes.
     const uint32_t nc = r.u32();
     if (uint64_t(nc) * 35 > uint64_t(r.end - r.p)) return false;
-    const auto maxKind = proto >= 221 ? Cmd::BuildManaArea : Cmd::ShareMana;
+    const auto maxKind = proto >= 267 ? Cmd::Order : proto >= 221 ? Cmd::BuildManaArea : Cmd::ShareMana;
     for (uint32_t i = 0; i < nc && r.ok; ++i) {
-        const auto c = r.cmd();
+        auto c = r.cmd();
         if (strict && (uint8_t(c.kind) > uint8_t(maxKind) || c.player >= kMaxSlots ||
-            !std::isfinite(c.x) || !std::isfinite(c.z) || !std::isfinite(c.x2) || !std::isfinite(c.z2))) return false;
-        out.cmds.push_back(c);
+            !std::isfinite(c.x) || !std::isfinite(c.z) || !std::isfinite(c.x2) || !std::isfinite(c.z2) ||
+            (c.kind == Cmd::Order && (!c.order || !validOrder(*c.order))))) return false;
+        out.cmds.push_back(std::move(c));
     }
     const uint32_t ne = r.u32();
     if (!r.ok || uint64_t(ne) * 2 > uint64_t(r.end - r.p)) return false;

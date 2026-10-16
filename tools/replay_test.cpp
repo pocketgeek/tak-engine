@@ -153,8 +153,10 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 266, "replay format 11 is kept under protocol 266");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 266");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 267, "replay format 11 is kept under protocol 267");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 267");
+    // 267 adds explicit selection orders (Cmd::Order in tick bundles; Legion clicks apply whole in one tick).
+    check(!supportedReplayProtocol(13, 266), "previous per-unit-click protocol is refused");
     // 266 sizes entity pools from retail's maxunits and grows them as needed (path admission scan costs).
     check(!supportedReplayProtocol(13, 265), "previous entity-pool protocol is refused");
     // 265 changes path search (production entity pools, ground-word ownership, pending re-requests).

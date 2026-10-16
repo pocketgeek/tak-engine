@@ -19,7 +19,12 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 266;      // 266: entity pools grow as needed (all modes, hashed pool sizes): each starts at retail's maxunits for
+constexpr uint32_t kNetVersion = 267;      // 267: explicit selection orders (Legion 10,000 stage 3): Cmd::Order carries one player intent over a
+                                           //      selection; the uplink sends it as an OrderBegin/OrderMembers/OrderCommit transaction, the server
+                                           //      puts it whole into one tick bundle (its activation tick) and the sim applies every member there.
+                                           //      Legion clients send their selection orders this way (Retail clients keep per-unit commands, so
+                                           //      Retail is bit-identical); hashed Order::orderSerial, the convoy table's area key. 266 replays refused
+                                           // 266: entity pools grow as needed (all modes, hashed pool sizes): each starts at retail's maxunits for
                                            //      the unit cap (499590 clamps to 20..500; uncapped 250) and gains a slot only when full. 265 replays refused
                                            // 265: retail path-search fidelity (all modes, hashed): production entity pools per player, scanned
                                            //      slot by slot with holes (511570/5121d8, 416430; hashed CRT stream, pool sizes, unit slots); the
@@ -434,6 +439,49 @@ inline int cmdSendWindow(int credit, int inFlight) {
     return n > 0 ? n : 0;
 }
 
+// Explicit selection orders (Cmd::Order, protocol 267). One click of the player's
+// over a selection travels as ONE order whatever its size, instead of one command
+// per unit through the 64-a-tick drain above: a 10,000-unit Move used to need 157
+// ticks of drain at best (308 with the uplink window), so its members started out
+// over several seconds and became several crowds.
+//
+// Uplink: a transaction, in one client's FIFO stream --
+//   OrderBegin   u32 serial, template command (Writer::cmd), u8 shape, u32 members
+//   OrderMembers u32 serial, u32 count, count member ids (putMembers: varint deltas,
+//                continuing from the previous chunk's last id) -- at most
+//                kOrderChunkMembers per message, so a frame stays far under kMaxFrame
+//   OrderCommit  u32 serial, u32 members, u64 orderDigest(members)
+//   OrderAbort   u32 serial
+// The server checks the framing (one open transaction per client, serials strictly
+// increasing per player per game, counts, digest, the template) and the limits
+// below; a committed order joins that client's FIFO behind the commands sent before
+// it and is drained whole into one tick, which is its ACTIVATION tick, by a byte
+// budget per tick (kTickOrderBytes) shared by the room's clients in rotation. The
+// sim checks ownership and existence per member at activation (applyCommand), where
+// that state is. Chunks never reach the sim, so no partial order is ever visible.
+//
+// Limits (an honest client keeps them through orderSendWindow, so the server never
+// has to drop one): members per order, orders and record bytes outstanding per
+// client (staged at the server, queued there, or sent and not yet seen back).
+constexpr uint32_t kOrderMaxSerial = 0x7ffffffeu;  // the top bit tags an explicit area key (sim/convoy.h); 0 = none
+constexpr uint32_t kOrderMaxMembers = 16384;
+constexpr uint32_t kOrderChunkMembers = 2048;
+constexpr size_t kOrderMaxBytes = 96 * 1024;       // one order's bundle record (16384 ids of 5 bytes fit)
+constexpr size_t kTickOrderBytes = kOrderMaxBytes; // order records in one tick bundle: any order fits an empty tick
+constexpr int kOrderWindow = 8;
+constexpr size_t kOrderWindowBytes = 4 * kOrderMaxBytes;
+// May another order of `bytes` record bytes go out with `inFlight` orders of
+// `inFlightBytes` outstanding?
+inline bool orderSendWindow(int inFlight, size_t inFlightBytes, size_t bytes) {
+    return inFlight < kOrderWindow && inFlightBytes + bytes <= kOrderWindowBytes;
+}
+// The verbs an order may carry: the per-unit commands the client gives a whole
+// selection. Each member gets exactly that command (Offsets: Move only).
+bool orderVerb(Cmd c);
+// A command coordinate the sim can take: finite and inside signed 16.16 (the
+// server's check for PlayerCommands and order templates alike).
+inline bool commandCoordinate(float v) { return v == v && v >= -32768.0f && v < 32768.0f; }
+
 // Flow control (WE S3). A client reports the tick it has PROCESSED every
 // kProgressPeriod ticks with Msg::Progress, and the server runs at most
 // flowLeadTicks() past that report instead of a flat kMaxLeadTicks past a hash
@@ -557,6 +605,11 @@ enum class Msg : uint8_t {
                         // moves the sender's ack tick and its lead (flowLeadTicks), is never
                         // hash-checked and never recorded. A tick the server has not closed is
                         // ignored, as for StateHash.
+    // Selection-order transaction (protocol 267; formats beside kOrderMaxMembers).
+    OrderBegin,         // C->S
+    OrderMembers,       // C->S
+    OrderCommit,        // C->S
+    OrderAbort,         // C->S
 
 
 };
@@ -695,6 +748,7 @@ struct Writer {
     void u32(uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(uint8_t(v >> (8 * i))); }
     void u64(uint64_t v) { for (int i = 0; i < 8; ++i) b.push_back(uint8_t(v >> (8 * i))); }
     void f32(float v) { uint32_t x; std::memcpy(&x, &v, 4); u32(x); }
+    void varint(uint32_t v) { while (v >= 0x80) { u8(uint8_t(v | 0x80)); v >>= 7; } u8(uint8_t(v)); }
     void str(const std::string& s) {              // u16 length + bytes (capped)
         uint32_t n = uint32_t(s.size() > 4096 ? 4096 : s.size());
         u8(uint8_t(n)); u8(uint8_t(n >> 8));
@@ -738,6 +792,18 @@ struct Reader {
         return v;
     }
     float f32() { uint32_t x = u32(); float v; std::memcpy(&v, &x, 4); return v; }
+    // LEB128, at most 5 bytes; an overlong or out-of-range encoding fails.
+    uint32_t varint() {
+        uint32_t v = 0;
+        for (int i = 0; i < 5; ++i) {
+            if (!avail(1)) { ok = false; return 0; }
+            const uint8_t b = *p++;
+            if (i == 4 && b > 0x0f) { ok = false; return 0; }
+            v |= uint32_t(b & 0x7f) << (7 * i);
+            if (!(b & 0x80)) return v;
+        }
+        ok = false; return 0;
+    }
     std::string str() {
         if (!avail(2)) { ok = false; return {}; }
         uint32_t n = uint32_t(p[0]) | (uint32_t(p[1]) << 8); p += 2;
@@ -782,6 +848,26 @@ void get(Reader& r, SlotInfo& s);
 // so this byte order is frozen (match_codec_test pins it).
 Writer crusadesRulesPreimage(uint32_t seed, const GameOptions& o, const SlotInfo* slots);
 
+// ------- selection orders (protocol 267) -------------------------------------
+//
+// Member ids travel as varint deltas: the first from `prev` (-1 for an order's
+// first member), every one at least 1, so the ids are strictly increasing and a
+// duplicate cannot be encoded. putMembers writes u32 count then the deltas;
+// getMembers appends `count` ids continuing from `prev` (updated), failing on a
+// zero delta, an id past INT32_MAX or a truncated stream.
+void putMembers(Writer& w, const int32_t* ids, size_t n, int32_t& prev);
+bool getMembers(Reader& r, uint32_t count, int32_t& prev, std::vector<int32_t>& out);
+// FNV-1a over the member ids (u32 LE): OrderCommit's integrity check.
+uint64_t orderDigest(const std::vector<int32_t>& members);
+// The template an order may carry: an order verb, unit id 0, finite in-range
+// coordinates, Offsets only on Move.
+bool validOrderTemplate(const Command& t, OrderShape shape);
+// A whole order is valid to activate: serial 1..kOrderMaxSerial, a valid template,
+// 1..kOrderMaxMembers strictly increasing non-negative ids, record within kOrderMaxBytes.
+bool validOrder(const SelectionOrder& o);
+// Bytes of the order's bundle record (Writer::cmd of its Cmd::Order command).
+size_t orderRecordBytes(const SelectionOrder& o);
+
 // The commands + sequenced events the server assigned to one tick.
 struct Bundle {
     std::vector<Command> cmds;
@@ -794,7 +880,7 @@ struct Bundle {
 // command kind or player out of range, a non-finite coordinate, an unknown event or a
 // trailing byte. The live stream is NOT strict: the referee has already applied that
 // bundle, so a client must too -- dropping it would stall the client at that tick.
-// `proto` is the protocol the bundle was recorded under (area commands are 221+).
+// `proto` is the protocol the bundle was recorded under (area commands are 221+, orders 267+; a strict read also validates every order whole).
 void putBundle(Writer& w, uint32_t tick, const std::vector<Command>& cmds, const std::vector<Event>& events);
 bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict, uint32_t proto = kNetVersion);
 
