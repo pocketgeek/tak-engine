@@ -398,6 +398,93 @@
 #ifndef NDEBUG
         const bool verifyShadowCache=tak::devFlag("TAK_SHADOW_CACHE_VERIFY");
 #endif
+        // Persistent tile cells (workstream F, client/shadowatlas.h). Policy, on the
+        // presentation clock: a cell whose unit is not in the atlas is retained for
+        // 2 s and 30 frames (and freed first under space pressure); a page that
+        // stays empty for 2 s / 60 frames is destroyed; when every cell would fit in
+        // half of the other pages for 2 s / 60 frames, up to 64 tiles per frame
+        // migrate off the last page; pages shrink after 5 s / 120 frames of demand
+        // that fits a page of half the size with the same headroom. A full repack
+        // (compaction) runs when a cell cannot be placed and the atlas is
+        // fragmented (demand <= 3/4 of capacity), at most once per 60 frames unless
+        // nothing else fits -- or for free, when >= 90% of the frame's tiles are
+        // redrawn anyway and the atlas is loose.
+        struct AtlasPolicyTimes {
+            uint64_t retainMs=2000, retainFrames=30, emptyMs=2000, emptyFrames=60;
+            uint64_t sparseMs=2000, sparseFrames=60, shrinkMs=5000, shrinkFrames=120, compactCooldown=60;
+            size_t migratePerFrame=64;
+            int pageMax=2048;
+            bool repack=false;
+        };
+        static const AtlasPolicyTimes atlasTimes=[] {
+            AtlasPolicyTimes t;
+#ifndef NDEBUG
+            // Debug: short windows and small pages, so a short verification run
+            // expires, evicts, compacts, migrates, releases and shrinks
+            // (render_shadow_atlas*); TAK_SHADOW_REPACK runs the former per-frame
+            // packer (a reference for capture comparisons, slot for slot).
+            if (const char* v=tak::devEnv("TAK_SHADOW_ATLAS_DELAY_MS")) {
+                const uint64_t ms=uint64_t(std::max(0,std::atoi(v)));
+                t.retainMs=t.emptyMs=t.sparseMs=ms; t.shrinkMs=2*ms;
+                t.retainFrames=t.emptyFrames=t.sparseFrames=4; t.shrinkFrames=8; t.compactCooldown=8;
+            }
+            if (const char* v=tak::devEnv("TAK_SHADOW_PAGE_MAX")) t.pageMax=std::max(64,std::atoi(v));
+            t.repack=tak::devFlag("TAK_SHADOW_REPACK");
+#endif
+            return t;
+        }();
+        const uint64_t atlasNowMs=tak::devFlag("TAK_RENDER_STUDY") ? uint64_t(animClock_*1000) : SDL_GetTicks64();
+        struct AtlasFrameCounts {
+            uint64_t allocs=0,kept=0,freed=0,expired=0,evicted=0,compactions=0,freeCompactions=0,migrated=0,
+                     releases=0,shrinks=0;
+        } atlasCounts;
+        auto& atlas=shadowAtlas_;
+        using tak::render::RenderHandle;
+        const auto fitCellStamps=[&] {
+            if (shadowCellStamps_.size()<atlas.indexBound()) {
+                shadowCellStamps_.resize(atlas.indexBound());
+                shadowCellStampValid_.resize(atlas.indexBound(),0);
+            }
+        };
+        const auto freeCell=[&](RenderHandle h) {
+            if (!atlas.release(h)) return false;
+            shadowCellStampValid_[h.index]=0;
+            ++atlasCounts.freed;
+            return true;
+        };
+        const auto destroyPage=[&](size_t p) {
+            gpuvram::destroy(shadowSilhouettePages_[p].texture);
+            shadowSilhouettePages_[p]={};
+            atlas.releasePage(p);
+            shadowSilhouettePages_.resize(atlas.pageSlots());
+        };
+        // Once per drawn frame, before this frame's tiles are placed: expire cells
+        // absent too long and destroy pages that stayed empty. With no page left,
+        // the next demand chooses the page size from scratch.
+        const auto maintainShadowAtlas=[&] {
+            auto& pol=shadowAtlasPolicy_;
+            ++pol.frame;
+            if (atlasTimes.repack) return;   // the former packer kept everything until reset
+            std::vector<RenderHandle> expired;
+            atlas.forEach([&](RenderHandle h,const tak::render::ShadowAllocation& a) {
+                if (pol.frame-a.lastFrame>atlasTimes.retainFrames && atlasNowMs-a.lastMs>atlasTimes.retainMs)
+                    expired.push_back(h);
+            });
+            for (RenderHandle h:expired) if (freeCell(h)) ++atlasCounts.expired;
+            for (size_t p=0;p<shadowSilhouettePages_.size();++p) {
+                auto& page=shadowSilhouettePages_[p];
+                if (!atlas.pageLive(p)) continue;
+                if (atlas.pageCells(p)) { page.emptySinceFrame=0; continue; }
+                if (!page.emptySinceFrame) { page.emptySinceFrame=pol.frame; page.emptySinceMs=atlasNowMs; continue; }
+                if (pol.frame-page.emptySinceFrame>=atlasTimes.emptyFrames &&
+                    atlasNowMs-page.emptySinceMs>=atlasTimes.emptyMs) {
+                    destroyPage(p);
+                    ++atlasCounts.releases;
+                }
+            }
+            if (!atlas.livePages() && shadowSilhouetteWidth_) resetShadowAtlas();
+            atlas.trimHandles();
+        };
         const auto buildShadowSilhouetteAtlas = [&](bool force=false) -> bool {
             const auto fail=[&](const char* why) { shadowAtlasFallback=why; return false; };
             // Telemetry: allocation/packing runs until the first page is drawn;
@@ -405,6 +492,7 @@
             // (raster). Reference bakes (force) are verification, not timed.
             std::optional<tak::render::ScopedPhase> allocPhase;
             if (!force) allocPhase.emplace(renderStats_, RP::ShadowAlloc);
+            if (!force) maintainShadowAtlas();
             SDL_RendererInfo info{};
             // Debug: TAK_SHADOW_ATLAS_SOFTWARE also runs the atlas on SDL's software
             // renderer, so tile reuse can be verified without a GPU (ctest).
@@ -415,10 +503,9 @@
             SDL_RenderGetScale(ren_, &scaleX, &scaleY);
             if (!(scaleX > 0.0f) || !(scaleY > 0.0f) ||
                 !std::isfinite(scaleX) || !std::isfinite(scaleY)) return fail("invalid output scale");
-            int pageW=info.max_texture_width>0 ? std::min(2048,info.max_texture_width) : 2048;
-            int pageH=info.max_texture_height>0 ? std::min(2048,info.max_texture_height) : 2048;
+            int pageW=info.max_texture_width>0 ? std::min(atlasTimes.pageMax,info.max_texture_width) : atlasTimes.pageMax;
+            int pageH=info.max_texture_height>0 ? std::min(atlasTimes.pageMax,info.max_texture_height) : atlasTimes.pageMax;
             if (pageW < 16 || pageH < 16) return fail("renderer target size too small");
-            for (auto& page:shadowSilhouettePages_) page.x=page.y=page.rowHeight=0;
             constexpr size_t kMaxPages=4;
             size_t pageBytes=size_t(pageW)*size_t(pageH)*4;
             if (!pageBytes || pageBytes > SIZE_MAX/kMaxPages) return fail("invalid page allocation size");
@@ -428,10 +515,12 @@
                 size_t page;
                 int slotX,slotY,pixelX,pixelY,width,height;
                 bool dirty=true;
+                bool fresh=false;     // placed in a new cell this frame
                 size_t opaqueOffset=0,maskBegin=0,maskEnd=0;
-                // Tile reuse (workstream E): index on the page and decision (the
-                // stamp lives in shadowTileStamps_, kept out of the sorted items).
-                uint32_t tile=0;
+                // The unit's persistent cell (workstream F) and the tile decision
+                // (the stamps live in shadowTileStamps_/shadowTileBefore_, kept out
+                // of the sorted items).
+                RenderHandle tile{};
                 tak::render::TileVerdict verdict=tak::render::TileVerdict::New;
                 bool checkPoints=false;
             };
@@ -470,99 +559,317 @@
                 work.push_back({&g,0,0,0,pixelX,pixelY,width,height});
             }
             if (work.empty()) return fail("no visible unit shadows");
-            // Small scenes should not clear a 16 MiB target for one monarch.
-            // Grow pages as needed, retaining their size until a renderer reset
-            // so camera movement across a threshold cannot churn allocations.
-            int wantedW=std::min(pageW,256),wantedH=std::min(pageH,256);
-            uint64_t area=0;
-            for (const Work& w:work) {
-                area+=uint64_t(w.width+2)*uint64_t(w.height+2);
-                while (wantedW<w.width+2) wantedW=std::min(pageW,wantedW*2);
-                while (wantedH<w.height+2) wantedH=std::min(pageH,wantedH*2);
-            }
-            while (area>uint64_t(wantedW)*wantedH*3/4 && (wantedW<pageW || wantedH<pageH)) {
-                wantedW=std::min(pageW,wantedW*2);wantedH=std::min(pageH,wantedH*2);
-            }
-            wantedW=std::max(wantedW,shadowSilhouetteWidth_);
-            wantedH=std::max(wantedH,shadowSilhouetteHeight_);
-            if (wantedW!=shadowSilhouetteWidth_ || wantedH!=shadowSilhouetteHeight_) {
-                for (auto& page:shadowSilhouettePages_) gpuvram::destroy(page.texture);
-                shadowSilhouettePages_.clear();
-                shadowSilhouetteWidth_=wantedW;shadowSilhouetteHeight_=wantedH;
-            }
-            pageW=wantedW;pageH=wantedH;
-            pageBytes=size_t(pageW)*size_t(pageH)*4;
-            // Height-ordered shelves avoid wasting a tall row on mostly short
-            // shadows. Tile order does not affect scene composition order.
-            std::stable_sort(work.begin(),work.end(),[](const Work& a,const Work& b) {
-                return a.height!=b.height ? a.height>b.height : a.width>b.width;
-            });
-            for (Work& w:work) {
-                size_t chosen=SIZE_MAX;
-                int slotX=0,slotY=0;
-                auto tryPage=[&](size_t p) {
-                    auto& page=shadowSilhouettePages_[p];
-                    int x=page.x,y=page.y,row=page.rowHeight;
-                    if (x+w.width+2>pageW) {x=0;y+=row;row=0;}
-                    if (y+w.height+2>pageH) return false;
-                    slotX=x;slotY=y;
-                    page.x=x+w.width+2;page.y=y;
-                    page.rowHeight=std::max(row,w.height+2);
-                    chosen=p;
-                    return true;
-                };
-                for (size_t p=0;p<shadowSilhouettePages_.size();++p)
-                    if (tryPage(p)) break;
-                if (chosen==SIZE_MAX) {
-                    if (shadowSilhouettePages_.size()>=kMaxPages) return fail("page limit reached");
-                    if (gpuAllocBlocked() || !gpuvram::wouldFit(pageBytes)) return fail("VRAM budget reached");
-                    SDL_Texture* texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
-                        SDL_TEXTUREACCESS_TARGET,pageW,pageH);
-                    if (!texture) { noteGpuAllocFail(); return fail("target page allocation failed"); }
-                    if (!force) renderStats_.add(RS::ShadowPageAllocs);
-                    SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
-                    SDL_SetTextureColorMod(texture,0,0,0);
-                    SDL_SetTextureAlphaMod(texture,255-kShadowLevel);
-                    SDL_SetTextureScaleMode(texture,unitScaleMode());
-                    shadowSilhouettePages_.push_back({texture,0,0,0});
-                    if (!tryPage(shadowSilhouettePages_.size()-1)) return fail("new page could not fit tile");
+            // Page size. Small scenes should not clear a 16 MiB target for one
+            // monarch: pages grow (at once) to hold the largest tile and until the
+            // frame's tiles take <= 3/4 of one page -- the former rule. Since F they
+            // also shrink, after sustained demand that pages of half the size hold
+            // with the same headroom. A size change recreates every page.
+            const auto pageDims=[&](uint64_t areaScale) {
+                int wW=std::min(pageW,256),wH=std::min(pageH,256);
+                uint64_t area=0;
+                for (const Work& w:work) {
+                    area+=uint64_t(w.width+2)*uint64_t(w.height+2);
+                    while (wW<w.width+2) wW=std::min(pageW,wW*2);
+                    while (wH<w.height+2) wH=std::min(pageH,wH*2);
                 }
-                w.page=chosen;w.slotX=slotX;w.slotY=slotY;
+                area*=areaScale;
+                while (area>uint64_t(wW)*wH*3/4 && (wW<pageW || wH<pageH)) {
+                    wW=std::min(pageW,wW*2);wH=std::min(pageH,wH*2);
+                }
+                return std::pair<int,int>{wW,wH};
+            };
+            auto& pol=shadowAtlasPolicy_;
+            if (!force) {
+                const auto [wantW,wantH]=pageDims(1);
+                if (wantW>shadowSilhouetteWidth_ || wantH>shadowSilhouetteHeight_) {
+                    const int newW=std::max(wantW,shadowSilhouetteWidth_),newH=std::max(wantH,shadowSilhouetteHeight_);
+                    resetShadowAtlas();
+                    shadowSilhouetteWidth_=newW;shadowSilhouetteHeight_=newH;
+                    atlas.reset(newW,newH);
+                } else if (!atlasTimes.repack) {
+                    const auto [smallW,smallH]=pageDims(2);
+                    if (smallW<shadowSilhouetteWidth_ || smallH<shadowSilhouetteHeight_) {
+                        if (!pol.shrinkSinceFrame) { pol.shrinkSinceFrame=pol.frame; pol.shrinkSinceMs=atlasNowMs; }
+                        else if (pol.frame-pol.shrinkSinceFrame>=atlasTimes.shrinkFrames &&
+                                 atlasNowMs-pol.shrinkSinceMs>=atlasTimes.shrinkMs) {
+                            const int newW=std::min(smallW,shadowSilhouetteWidth_),newH=std::min(smallH,shadowSilhouetteHeight_);
+                            resetShadowAtlas();
+                            shadowSilhouetteWidth_=newW;shadowSilhouetteHeight_=newH;
+                            atlas.reset(newW,newH);
+                            ++atlasCounts.shrinks;
+                        }
+                    } else pol.shrinkSinceFrame=0;
+                }
+            }
+            pageW=shadowSilhouetteWidth_;pageH=shadowSilhouetteHeight_;
+            pageBytes=size_t(pageW)*size_t(pageH)*4;
+            const uint64_t pageArea=uint64_t(pageW)*uint64_t(pageH);
+
+            // Cells. Each unit keeps the cell it had while its tile still fits (and
+            // the cell is at most 1.5x the area a fresh one would take). Otherwise
+            // its old cell is freed and it gets a new one -- exact width, shelf
+            // height of its class, best fit -- after the frame's other new tiles,
+            // sorted by height. A unit leaving, entering or resizing moves nobody
+            // else. The stamp of the unit's previous cell is carried to the new one,
+            // so the decision below reads Relocated and never inherits a stranger's
+            // pixels.
+            const auto cellW=[&](const Work& w){return w.width+2;};
+            const auto cellH=[&](const Work& w){return tak::render::shadowCellHeight(w.height+2,pageH);};
+            auto& before=shadowTileBefore_;
+            auto& hasBefore=shadowTileHasBefore_;
+            if (!force) {
+                before.resize(work.size());
+                hasBefore.assign(work.size(),0);
+            }
+            const auto carry=[&](size_t wi,RenderHandle h) {
+                if (!hasBefore[wi] && atlas.valid(h) && shadowCellStampValid_[h.index]) {
+                    before[wi]=shadowCellStamps_[h.index];hasBefore[wi]=1;
+                }
+            };
+            const uint64_t frame=pol.frame;
+            const auto bind=[&](size_t wi,RenderHandle h) {
+                Work& w=work[wi];
+                tak::render::ShadowAllocation* a=atlas.get(h);
+                a->ownerKey=w.geom->handleKey();a->entry=w.geom;a->lastFrame=frame;a->lastMs=atlasNowMs;
+                w.geom->shadowTile=h;w.tile=h;w.fresh=true;
+                fitCellStamps();
+                shadowCellStampValid_[h.index]=0;
+            };
+            bool budgetRefused=false;
+            const auto createPage=[&]() -> bool {
+                if (atlas.livePages()>=kMaxPages) return false;
+                if (gpuAllocBlocked() || !gpuvram::wouldFit(pageBytes)) { budgetRefused=true; return false; }
+                SDL_Texture* texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
+                    SDL_TEXTUREACCESS_TARGET,pageW,pageH);
+                if (!texture) { noteGpuAllocFail(); budgetRefused=true; return false; }
+                renderStats_.add(RS::ShadowPageAllocs);
+                SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+                SDL_SetTextureColorMod(texture,0,0,0);
+                SDL_SetTextureAlphaMod(texture,255-kShadowLevel);
+                SDL_SetTextureScaleMode(texture,unitScaleMode());
+                const size_t p=size_t(atlas.addPage());
+                if (p>=shadowSilhouettePages_.size()) shadowSilhouettePages_.resize(p+1);
+                shadowSilhouettePages_[p]={texture,0,0};
+                return true;
+            };
+            if (force) {
+                // The verification re-bake redraws this frame's tiles in the cells
+                // the normal pass gave them; it changes no allocation.
+                for (Work& w:work) {
+                    const tak::render::ShadowAllocation* a=atlas.get(w.geom->shadowTile);
+                    if (!a || a->ownerKey!=w.geom->handleKey() || a->lastFrame!=frame)
+                        throw std::logic_error("shadow re-bake: tile without this frame's cell");
+                    w.tile=w.geom->shadowTile;
+                }
+            } else {
+                auto& needs=shadowTileNeeds_;
+                needs.clear();
+                // Tiles that are redrawn this frame wherever they sit: new, other
+                // coverage, other size or output scale, other zoom. When nearly all
+                // are, moving them costs nothing, and a loose atlas is repacked.
+                size_t dirtyAnyway=0;
+                uint64_t tilePx=0;
+                for (size_t wi=0;wi<work.size();++wi) {
+                    Work& w=work[wi];
+                    UnitGeom& g=*w.geom;
+                    tilePx+=uint64_t(w.width+2)*uint64_t(w.height+2);
+                    tak::render::ShadowAllocation* a=atlas.get(g.shadowTile);
+                    if (a && (a->ownerKey!=g.handleKey() || a->entry!=&g)) {
+                        // The cell of this entry's previous occupant (generations are
+                        // unique, so nobody else can reach it).
+                        freeCell(g.shadowTile);a=nullptr;
+                    }
+                    if (a) carry(wi,g.shadowTile);
+                    {
+                        using tak::render::sameBits;
+                        const ShadowTileStamp& b=before[wi];
+                        dirtyAnyway+=!hasBefore[wi] || b.source!=w.geom || b.owner!=g.owner ||
+                            b.coverage!=g.shadowRevision || b.width!=w.width || b.height!=w.height ||
+                            !sameBits(b.placement.zoom,g.shadowPlacement.zoom) ||
+                            !sameBits(b.scaleX,scaleX) || !sameBits(b.scaleY,scaleY);
+                    }
+                    if (a && !atlasTimes.repack &&
+                        tak::render::shadowCellKeeps(a->cell.w,a->cell.h,w.width+2,w.height+2,pageH)) {
+                        w.tile=g.shadowTile;a->lastFrame=frame;a->lastMs=atlasNowMs;
+                    } else {
+                        if (a) freeCell(g.shadowTile);
+                        g.shadowTile={};
+                        needs.push_back(wi);
+                    }
+                }
+                bool compact=atlasTimes.repack, freeRepack=false;
+                if (!compact && work.size()>=16 && dirtyAnyway*10>=work.size()*9) {
+                    // Loose: tiles spread over more pages than a tight pack needs
+                    // (former packer ~80% full), or a quarter of the shelf area free.
+                    size_t pagesWithCells=0;
+                    for (size_t p=0;p<atlas.pageSlots();++p) pagesWithCells+=atlas.pageCells(p)>0;
+                    const uint64_t tightPages=(tilePx*5/4+pageArea-1)/pageArea;
+                    const auto st=atlas.stats();
+                    if (pagesWithCells>tightPages || st.shelfFreePx*4>st.shelfPx) compact=freeRepack=true;
+                }
+                if (!compact && !needs.empty()) {
+                    std::stable_sort(needs.begin(),needs.end(),[&](size_t a,size_t b) {
+                        const int ha=cellH(work[a]),hb=cellH(work[b]);
+                        return ha!=hb ? ha>hb : cellW(work[a])>cellW(work[b]);
+                    });
+                    uint64_t demandPx=0;
+                    for (const Work& w:work) demandPx+=uint64_t(cellW(w))*uint64_t(cellH(w));
+                    bool evicted=false;
+                    for (size_t wi:needs) {
+                        const Work& w=work[wi];
+                        RenderHandle h=atlas.allocate(cellW(w),cellH(w),false);
+                        if (!h.valid() && !evicted) {
+                            // Space pressure: cells of units not in this frame's atlas go first.
+                            evicted=true;
+                            std::vector<RenderHandle> absent;
+                            atlas.forEach([&](RenderHandle c,const tak::render::ShadowAllocation& a) {
+                                if (a.lastFrame!=frame) absent.push_back(c);
+                            });
+                            for (RenderHandle c:absent) if (freeCell(c)) ++atlasCounts.evicted;
+                            h=atlas.allocate(cellW(w),cellH(w),false);
+                        }
+                        if (!h.valid()) {
+                            // Fragmented (the frame's cells need <= 3/4 of the pages):
+                            // repack rather than grow, at most once per cooldown.
+                            const bool fragmented=demandPx*4<=uint64_t(atlas.livePages())*pageArea*3;
+                            if (fragmented && frame-pol.lastCompactFrame>=atlasTimes.compactCooldown) { compact=true; break; }
+                            if (createPage()) h=atlas.allocate(cellW(w),cellH(w),false);
+                        }
+                        if (!h.valid()) { compact=true; break; }
+                        bind(wi,h);
+                    }
+                }
+                if (!compact && !atlasTimes.repack) {
+                    // Page reclamation: when every cell would fit in half of the other
+                    // pages for a while, move a bounded number of tiles per frame off
+                    // the last page (into pages below it only); its absent cells go at
+                    // once. The emptied page is destroyed by the empty-page rule.
+                    size_t last=SIZE_MAX;
+                    for (size_t p=0;p<atlas.pageSlots();++p) if (atlas.pageLive(p)) last=p;
+                    const size_t live=atlas.livePages();
+                    uint64_t cellPx=0;
+                    for (size_t p=0;p<atlas.pageSlots();++p) cellPx+=atlas.pageCellPx(p);
+                    if (live>=2 && atlas.pageCells(last) && cellPx*2<=uint64_t(live-1)*pageArea) {
+                        if (!pol.sparseSinceFrame) { pol.sparseSinceFrame=frame; pol.sparseSinceMs=atlasNowMs; }
+                        else if (pol.migratePage<0 && frame-pol.sparseSinceFrame>=atlasTimes.sparseFrames &&
+                                 atlasNowMs-pol.sparseSinceMs>=atlasTimes.sparseMs) pol.migratePage=int(last);
+                    } else { pol.sparseSinceFrame=0; pol.migratePage=-1; }
+                    if (pol.migratePage>=0 && size_t(pol.migratePage)!=last) pol.migratePage=-1;
+                    if (pol.migratePage>=0) {
+                        const size_t p=size_t(pol.migratePage);
+                        std::vector<RenderHandle> absent;
+                        atlas.forEach([&](RenderHandle c,const tak::render::ShadowAllocation& a) {
+                            if (a.lastFrame!=frame && size_t(a.cell.page)==p) absent.push_back(c);
+                        });
+                        for (RenderHandle c:absent) if (freeCell(c)) ++atlasCounts.evicted;
+                        size_t moved=0;
+                        for (size_t wi=0;wi<work.size() && moved<atlasTimes.migratePerFrame;++wi) {
+                            Work& w=work[wi];
+                            const tak::render::ShadowAllocation* a=atlas.get(w.tile);
+                            if (!a || size_t(a->cell.page)!=p) continue;
+                            const RenderHandle h=atlas.allocate(cellW(w),cellH(w),false,p);
+                            if (!h.valid()) { pol.migratePage=-1; pol.sparseSinceFrame=0; break; }
+                            carry(wi,w.tile);
+                            freeCell(w.tile);
+                            bind(wi,h);
+                            ++moved;
+                        }
+                        atlasCounts.migrated+=moved;
+                        if (!atlas.pageCells(p)) pol.migratePage=-1;
+                    }
+                }
+                if (compact) {
+                    // Full repack: the former packer (tiles sorted by height, a cursor
+                    // per page), first with class-height cells, then with exact sizes --
+                    // which places every tile exactly where the former code did, so the
+                    // atlas never falls back where it did not. Every tile moves (redrawn;
+                    // on a free repack nearly all were redrawn anyway).
+                    atlas.forEach([&](RenderHandle c,const tak::render::ShadowAllocation& a) {
+                        if (a.lastFrame!=frame) ++atlasCounts.evicted;
+                        (void)c;
+                    });
+                    for (size_t wi=0;wi<work.size();++wi) if (work[wi].tile.valid()) carry(wi,work[wi].tile);
+                    atlasCounts.freed+=atlas.liveCells();
+                    if (freeRepack) ++atlasCounts.freeCompactions;
+                    else if (!atlasTimes.repack) { pol.lastCompactFrame=frame; ++atlasCounts.compactions; }
+                    std::vector<size_t> order(work.size());
+                    for (size_t i=0;i<order.size();++i) order[i]=i;
+                    std::stable_sort(order.begin(),order.end(),[&](size_t a,size_t b) {
+                        return work[a].height!=work[b].height ? work[a].height>work[b].height : work[a].width>work[b].width;
+                    });
+                    const auto pass=[&](bool padded) -> bool {
+                        atlas.releaseAll();
+                        std::fill(shadowCellStampValid_.begin(),shadowCellStampValid_.end(),uint8_t(0));
+                        for (Work& w:work) { w.tile={}; w.fresh=false; w.geom->shadowTile={}; }
+                        for (size_t wi:order) {
+                            const Work& w=work[wi];
+                            const int cw=padded ? cellW(w) : w.width+2,ch=padded ? cellH(w) : w.height+2;
+                            RenderHandle h=atlas.allocate(cw,ch,true);
+                            if (!h.valid() && createPage()) h=atlas.allocate(cw,ch,true);
+                            if (!h.valid()) return false;
+                            bind(wi,h);
+                        }
+                        return true;
+                    };
+                    if (!(!atlasTimes.repack && pass(true)) && !pass(false)) {
+                        atlas.releaseAll();
+                        std::fill(shadowCellStampValid_.begin(),shadowCellStampValid_.end(),uint8_t(0));
+                        for (Work& w:work) w.geom->shadowTile={};
+                        return fail(budgetRefused ? "VRAM budget reached" : "page limit reached");
+                    }
+                }
+                for (const Work& w:work) {
+                    if (w.fresh) ++atlasCounts.allocs; else ++atlasCounts.kept;
+                }
+            }
+            std::vector<uint8_t> pageUsed(shadowSilhouettePages_.size(),0);
+            for (Work& w:work) {
+                const tak::render::ShadowCell& c=atlas.get(w.tile)->cell;
+                w.page=size_t(c.page);w.slotX=c.x;w.slotY=c.y;
+                pageUsed[w.page]=1;
                 ++shadowAtlasPackedUnits;
             }
-
             size_t usedPages=0;
-            for (const Work& w:work) usedPages=std::max(usedPages,w.page+1);
+            for (uint8_t u:pageUsed) usedPages+=u;
             shadowAtlasPackedPages=usedPages;
+#ifndef NDEBUG
+            if (!force && verifyShadowCache) {
+                std::string why;
+                if (!atlas.validate(&why)) throw std::logic_error("shadow atlas inconsistent: "+why);
+                for (const Work& w:work) {
+                    const tak::render::ShadowCell& c=atlas.get(w.tile)->cell;
+                    if (w.width+2>c.w || w.height+2>c.h) throw std::logic_error("shadow tile exceeds its cell");
+                }
+                ++shadowVerify_.validated;
+            }
+#endif
 
             // Tile decisions (workstream E, client/shadowtiles.h), before any page is
             // touched: each tile is keyed on its unit's shadow coverage and exact
-            // shadow placement, not on the body's geometry revision or screen pixel.
-            // A placement change is kept only if every tile point recomputes
-            // bit-identical; those point checks are independent and read only
-            // finished geometry, so many of them run on the pool. Decisions do not
-            // depend on the order they are made in.
+            // shadow placement, not on the body's geometry revision or screen pixel,
+            // and compared with the stamp of the unit's own cell (F). A placement
+            // change is kept only if every tile point recomputes bit-identical;
+            // those point checks are independent and read only finished geometry, so
+            // many of them run on the pool. Decisions do not depend on the order
+            // they are made in.
             const bool noCache=tak::devFlag("TAK_SHADOW_NOCACHE");
             auto& workStamps=shadowTileStamps_;
             workStamps.resize(work.size());
             {
-                auto& pageTiles=shadowTilePageCounts_;
-                pageTiles.assign(shadowSilhouettePages_.size(),0);
                 auto& checks=shadowTileChecks_;
                 checks.clear();
                 size_t checkPoints=0;
                 for (size_t wi=0;wi<work.size();++wi) {
                     Work& w=work[wi];
                     const UnitGeom& g=*w.geom;
-                    w.tile=pageTiles[w.page]++;
                     auto& stamp=workStamps[wi];
                     stamp.source=w.geom;stamp.owner=g.owner;stamp.coverage=g.shadowRevision;
                     stamp.revision=g.revision;stamp.placement=g.shadowPlacement;
-                    stamp.pixelX=w.pixelX;stamp.pixelY=w.pixelY;stamp.slotX=w.slotX;stamp.slotY=w.slotY;
+                    stamp.pixelX=w.pixelX;stamp.pixelY=w.pixelY;stamp.page=int(w.page);
+                    stamp.slotX=w.slotX;stamp.slotY=w.slotY;
                     stamp.width=w.width;stamp.height=w.height;stamp.scaleX=scaleX;stamp.scaleY=scaleY;
                     if (force || noCache) continue;
-                    const auto& stamps=shadowSilhouettePages_[w.page].stamps;
-                    const ShadowTileStamp* old=w.tile<stamps.size() ? &stamps[w.tile] : nullptr;
+                    const ShadowTileStamp* old=hasBefore[wi] ? &before[wi] : nullptr;
                     w.verdict=tak::render::classifyShadowTile(old,stamp,[&] {w.checkPoints=true;return false;});
                     if (w.checkPoints) {
                         checks.push_back(wi);
@@ -574,7 +881,7 @@
                         Work& w=work[checks[c]];
                         const UnitGeom& g=*w.geom;
                         const ShadowTileStamp& now=workStamps[checks[c]];
-                        const ShadowTileStamp& old=shadowSilhouettePages_[w.page].stamps[w.tile];
+                        const ShadowTileStamp& old=before[checks[c]];
                         // Same coverage => same local points; the old tile points are
                         // recomputed from them with the old placement.
                         const bool same=g.shadowVerts.size()==g.shadowLocal.size() &&
@@ -613,17 +920,13 @@
 
             bool ok=true;
             auto& opaque=shadowAtlasOpaqueScratch_;
-            for (size_t p=0;p<usedPages && ok;++p) {
+            for (size_t p=0;p<pageUsed.size() && ok;++p) {
+                if (!pageUsed[p]) continue;
                 if(!force && !allocPhase)allocPhase.emplace(renderStats_, RP::ShadowAlloc);
-                auto& stamps=shadowSilhouettePages_[p].stamps;
-                size_t tile=0;
                 std::vector<SDL_Rect> dirtyRects;
                 for(Work& w:work) if(w.page==p) {
-                    const ShadowTileStamp& stamp=workStamps[size_t(&w-work.data())];
-#ifndef NDEBUG
-                    if(w.tile!=tile)throw std::logic_error("shadow tile decision made for another tile index");
-#endif
-                    const ShadowTileStamp* old=tile<stamps.size() ? &stamps[tile] : nullptr;
+                    const size_t wi=size_t(&w-work.data());
+                    const ShadowTileStamp& stamp=workStamps[wi];
                     using tak::render::TileVerdict;
                     const TileVerdict verdict=w.verdict;
                     w.dirty=force || noCache || !tak::render::reuses(verdict);
@@ -646,6 +949,7 @@
                         // Differential check against the pre-E key: E keeps every tile
                         // the old key kept (and more); the pixel comparison after the
                         // frame proves each kept tile equal to a complete re-bake.
+                        const ShadowTileStamp* old=hasBefore[wi] ? &before[wi] : nullptr;
                         const bool original=tak::render::originalRuleReuses(old,stamp);
                         if(original && !tak::render::reuses(verdict))
                             throw std::runtime_error("shadow tile redrawn although the pre-E key kept it");
@@ -653,10 +957,13 @@
                         shadowVerify_.reused+=tak::render::reuses(verdict);
                         shadowVerify_.body+=verdict==TileVerdict::ReuseBody;
                         shadowVerify_.translated+=verdict==TileVerdict::ReuseTranslated;
+                        shadowVerify_.kept+=tak::render::reuses(verdict) && !w.fresh;
                     }
 #endif
-                    if(tile<stamps.size())stamps[tile]=stamp;else stamps.push_back(stamp);
-                    ++tile;
+                    if(!force) {
+                        shadowCellStamps_[w.tile.index]=stamp;
+                        shadowCellStampValid_[w.tile.index]=1;
+                    }
                     if(!w.dirty)++shadowAtlasReusedUnits;
                     if(w.dirty)dirtyRects.push_back({w.slotX,w.slotY,w.width+2,w.height+2});
                     if(w.dirty && !force) {
@@ -664,7 +971,6 @@
                         renderStats_.add(RS::ShadowDirtyPixels,uint64_t(w.width+2)*uint64_t(w.height+2));
                     }
                 }
-                stamps.resize(tile);
                 if(dirtyRects.empty())continue;
                 allocPhase.reset();
                 std::optional<tak::render::ScopedPhase> rasterPhase;
@@ -676,9 +982,11 @@
                 SDL_RenderSetClipRect(ren_,nullptr);
                 SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_NONE);
                 SDL_SetRenderDrawColor(ren_,0,0,0,0);
-                // Clear the padding too: a moved/reassigned tile must not inherit
-                // coverage from its old occupant. Current tiles never overlap.
-                if ((dirtyRects.size()==tile ? SDL_RenderClear(ren_) :
+                // Clear each redrawn tile with its padding: a recycled cell must not
+                // keep coverage from its old occupant. Cells never overlap, so the
+                // whole page is cleared only when every cell on it is redrawn (a
+                // retained cell's pixels must survive).
+                if ((dirtyRects.size()==atlas.pageCells(p) ? SDL_RenderClear(ren_) :
                      SDL_RenderFillRects(ren_,dirtyRects.data(),int(dirtyRects.size())))!=0) {ok=false;break;}
                 // Tiles on a page never overlap. Batch opaque faces from every
                 // unit first, then group cutout faces by their coverage page. This
@@ -765,10 +1073,10 @@
             restoreRenderer();
             if(!force)renderStats_.add(RS::TargetSwitches);   // back to the previous target
             if (!ok) {
-                for(auto& page:shadowSilhouettePages_)page.stamps.clear();
+                // Pages are in an unknown state: nothing retained may be reused.
+                std::fill(shadowCellStampValid_.begin(),shadowCellStampValid_.end(),uint8_t(0));
                 return fail("target draw operation failed");
             }
-            shadowAtlasPackedPages=usedPages;
             for (const Work& w:work) {
                 UnitGeom& g=*w.geom;
                 g.shadowAtlasPage=shadowSilhouettePages_[w.page].texture;
@@ -796,6 +1104,38 @@
             renderStats_.add(RS::ShadowTilesReused, shadowAtlasReusedUnits);
             renderStats_.add(RS::ShadowPages, shadowAtlasPackedPages);
             renderStats_.add(RS::ShadowFallback, shadowSilhouetteAtlasActive_ ? 0 : 1);
+            if (renderStats_.enabled()) {
+                renderStats_.add(RS::ShadowCellAllocs, atlasCounts.allocs);
+                renderStats_.add(RS::ShadowCellKept, atlasCounts.kept);
+                renderStats_.add(RS::ShadowCellFreed, atlasCounts.freed);
+                renderStats_.add(RS::ShadowCellExpired, atlasCounts.expired);
+                renderStats_.add(RS::ShadowCellEvicted, atlasCounts.evicted);
+                renderStats_.add(RS::ShadowCompactions, atlasCounts.compactions);
+                renderStats_.add(RS::ShadowCompactionsFree, atlasCounts.freeCompactions);
+                renderStats_.add(RS::ShadowMigrated, atlasCounts.migrated);
+                renderStats_.add(RS::ShadowPageReleases, atlasCounts.releases);
+                renderStats_.add(RS::ShadowPageShrinks, atlasCounts.shrinks);
+                const auto st=atlas.stats();
+                uint64_t retained=0;
+                atlas.forEach([&](tak::render::RenderHandle,const tak::render::ShadowAllocation& a) {
+                    retained+=a.lastFrame!=shadowAtlasPolicy_.frame;
+                });
+                renderStats_.set(RS::ShadowCells, st.cells);
+                renderStats_.set(RS::ShadowCellsRetained, retained);
+                renderStats_.set(RS::ShadowAtlasCapacityPx, st.capacityPx);
+                renderStats_.set(RS::ShadowAtlasCellPx, st.cellPx);
+                uint64_t tilePx=0;
+                for (const auto& t:shadowTileStamps_) tilePx+=uint64_t(t.width+2)*uint64_t(t.height+2);
+                renderStats_.set(RS::ShadowAtlasTilePx, shadowSilhouetteAtlasActive_ ? tilePx : 0);
+                renderStats_.set(RS::ShadowAtlasShelfFreePx, st.shelfFreePx);
+                renderStats_.set(RS::ShadowAtlasGpuBytes, st.capacityPx*4);
+            }
+#ifndef NDEBUG
+            shadowVerify_.allocs+=atlasCounts.allocs;
+            shadowVerify_.compactions+=atlasCounts.compactions+atlasCounts.freeCompactions;
+            shadowVerify_.migrated+=atlasCounts.migrated;shadowVerify_.evicted+=atlasCounts.evicted;
+            shadowVerify_.pageReleases+=atlasCounts.releases;shadowVerify_.shrinks+=atlasCounts.shrinks;
+#endif
             if(shadowSilhouetteAtlasActive_ && tak::devFlag("TAK_SHADOW_CACHE_VERIFY")) {
                 const auto readPages=[&] {
                     auto* target=SDL_GetRenderTarget(ren_);
@@ -805,6 +1145,7 @@
                     SDL_RenderGetClipRect(ren_,&clip);
                     std::vector<std::vector<uint32_t>> pixels(shadowSilhouettePages_.size());
                     for(size_t i=0;i<pixels.size();++i) {
+                        if(!shadowSilhouettePages_[i].texture)continue;   // released page slot
                         pixels[i].resize(size_t(shadowSilhouetteWidth_)*shadowSilhouetteHeight_);
                         if(SDL_SetRenderTarget(ren_,shadowSilhouettePages_[i].texture)!=0 ||
                            SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,pixels[i].data(),
@@ -820,8 +1161,9 @@
                 if(!buildShadowSilhouetteAtlas(true))
                     throw std::runtime_error("shadow cache reference build failed");
                 const auto reference=readPages();
-                for(size_t p=0;p<shadowSilhouettePages_.size();++p)
-                    for(const auto& tile:shadowSilhouettePages_[p].stamps)
+                // This frame's tiles (their stamps carry the page since F).
+                for(const auto& tile:shadowTileStamps_) {
+                        const size_t p=size_t(tile.page);
                         for(int y=tile.slotY;y<tile.slotY+tile.height+2;++y) {
                             const size_t offset=size_t(y)*shadowSilhouetteWidth_+tile.slotX;
                             if(std::memcmp(cached[p].data()+offset,reference[p].data()+offset,
@@ -834,6 +1176,7 @@
                                 throw std::runtime_error("retained shadow tile pixel mismatch");
                             }
                         }
+                }
 #ifndef NDEBUG
                 ++shadowVerify_.frames;
 #endif
@@ -2550,7 +2893,10 @@
             scratchCapacity += v.capacity() * sizeof(v[0]);
         };
         scratch(shadowAtlasOpaqueScratch_); scratch(shadowCompositeBatch_);
-        scratch(shadowTileStamps_); scratch(shadowTilePageCounts_); scratch(shadowTileChecks_);
+        scratch(shadowTileStamps_); scratch(shadowTileBefore_); scratch(shadowTileHasBefore_);
+        scratch(shadowTileChecks_); scratch(shadowTileNeeds_);
+        scratch(shadowCellStamps_); scratch(shadowCellStampValid_);
+        scratchCapacity += shadowAtlas_.retainedBytes();   // cell records, shelves, free lists
         for (const auto& [texture, vertices] : shadowAtlasMaskScratch_) scratch(vertices);
         stats.set(RS::ShadowScratchUsedBytes, scratchUsed);
         stats.set(RS::ShadowScratchCapacityBytes, scratchCapacity);
@@ -2756,6 +3102,21 @@
 #endif
     }
 
+    // Every silhouette page and cell goes (renderer reset, page size change, last
+    // page released). Cell handles keep counting generations, so an entry's stale
+    // shadowTile never names a later cell; every stamp is dropped with its cell.
+    void GameView::resetShadowAtlas() {
+        for (auto& page:shadowSilhouettePages_) if (page.texture) gpuvram::destroy(page.texture);
+        shadowSilhouettePages_.clear();
+        shadowSilhouetteWidth_=shadowSilhouetteHeight_=0;
+        shadowAtlas_.reset(0,0);
+        shadowAtlas_.trimHandles();
+        shadowCellStamps_.clear();shadowCellStampValid_.clear();
+        const uint64_t frame=shadowAtlasPolicy_.frame;
+        shadowAtlasPolicy_={};
+        shadowAtlasPolicy_.frame=frame;
+    }
+
     void GameView::invalidateRenderTargets() {
         rendererGeneration_.bump();   // every cached target placement is now stale
         mapView_.invalidateRenderTargets();
@@ -2765,9 +3126,7 @@
         geomEntries_.makeAllCold();   // owners stay; every entry rebuilds against the new targets
         for (SDL_Texture* t : atlasTex_) if (t) gpuvram::destroy(t);
         atlasTex_.clear();
-        for (auto& page:shadowSilhouettePages_) gpuvram::destroy(page.texture);
-        shadowSilhouettePages_.clear();
-        shadowSilhouetteWidth_=shadowSilhouetteHeight_=0;
+        resetShadowAtlas();
         shadowAtlasOpaqueScratch_.clear();
         shadowAtlasMaskScratch_.clear();
         shadowTileStamps_.clear();shadowTileChecks_.clear();

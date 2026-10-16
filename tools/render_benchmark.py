@@ -527,12 +527,19 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "geom_entries_retained", "geom_entries_warm_free", "geom_entries_allocated",
                     # workstream E: body/shadow invalidation split
                     "geom_shadow_kept", "geom_shadow_skipped", "shadow_reused_body",
-                    "shadow_reused_translated"]
+                    "shadow_reused_translated",
+                    # workstream F: persistent shadow tile cells
+                    "shadow_cell_allocs", "shadow_cell_kept", "shadow_cell_freed",
+                    "shadow_cell_expired", "shadow_cell_evicted", "shadow_compactions", "shadow_compactions_free",
+                    "shadow_migrated", "shadow_page_releases", "shadow_page_shrinks",
+                    "shadow_cells", "shadow_cells_retained", "shadow_pages", "shadow_page_allocs",
+                    "shadow_atlas_capacity_px", "shadow_atlas_cell_px", "shadow_atlas_tile_px",
+                    "shadow_atlas_shelf_free_px"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",
                    "terrain_section_cpu_bytes", "gpu_tracked_bytes", "geom_retained_bytes",
-                   "geom_warm_free_bytes"]
+                   "geom_warm_free_bytes", "shadow_atlas_gpu_bytes"]
 
 
 def metric(result, path):

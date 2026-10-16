@@ -52,6 +52,7 @@ struct ShadowTileStamp {
     uint64_t revision = 0;           // UnitGeom::revision: diagnostics only (the pre-E key)
     ShadowPlacement placement{};     // what the points were placed with (bitwise)
     int pixelX = 0, pixelY = 0;      // screen pixel of the tile's top-left (output scale)
+    int page = 0;                    // silhouette page slot (workstream F: stamps follow a cell)
     int slotX = 0, slotY = 0, width = 0, height = 0;
     float scaleX = 1, scaleY = 1;    // renderer output scale
 };
@@ -107,14 +108,15 @@ enum class TileVerdict : uint8_t {
     New,              // no tile at this index before
     Owner,            // another entry / unit held the tile
     Content,          // coverage changed
-    Relocated,        // same unit, other slot
+    Relocated,        // same unit, other page or slot
     Resized,          // other tile size or output scale
     Moved,            // placement changed and the tile points differ (sub-pixel phase, zoom)
 };
 inline bool reuses(TileVerdict v) { return v <= TileVerdict::ReuseTranslated; }
 
-// The decision for one tile. `before` is the stamp retained at this tile index
-// (null: none). `samePoints()` runs the exact point comparison; it is called
+// The decision for one tile. `before` is the stamp retained for this tile (null:
+// none) -- since workstream F the stamp of the unit's persistent cell, carried
+// along when the cell is reallocated (so a move reads Relocated, not New). `samePoints()` runs the exact point comparison; it is called
 // only when coverage, slot, size and scale all match but the placement differs.
 template <class SamePoints>
 inline TileVerdict classifyShadowTile(const ShadowTileStamp* before, const ShadowTileStamp& now,
@@ -122,7 +124,8 @@ inline TileVerdict classifyShadowTile(const ShadowTileStamp* before, const Shado
     if (!before) return TileVerdict::New;
     if (before->source != now.source || before->owner != now.owner) return TileVerdict::Owner;
     if (before->coverage != now.coverage) return TileVerdict::Content;
-    if (before->slotX != now.slotX || before->slotY != now.slotY) return TileVerdict::Relocated;
+    if (before->page != now.page || before->slotX != now.slotX || before->slotY != now.slotY)
+        return TileVerdict::Relocated;
     if (before->width != now.width || before->height != now.height ||
         !sameBits(before->scaleX, now.scaleX) || !sameBits(before->scaleY, now.scaleY))
         return TileVerdict::Resized;
@@ -133,11 +136,13 @@ inline TileVerdict classifyShadowTile(const ShadowTileStamp* before, const Shado
 }
 
 // The pre-E rule, for the differential check: a tile was kept only when the
-// entry, owner, geometry revision, screen pixel, slot, size and scale all matched.
+// entry, owner, geometry revision, screen pixel, page, slot, size and scale all
+// matched (pre-F the page was implicit: stamps were stored per page).
 inline bool originalRuleReuses(const ShadowTileStamp* before, const ShadowTileStamp& now) {
     return before && before->source == now.source && before->owner == now.owner &&
            before->revision == now.revision && before->pixelX == now.pixelX && before->pixelY == now.pixelY &&
-           before->slotX == now.slotX && before->slotY == now.slotY && before->width == now.width &&
+           before->page == now.page && before->slotX == now.slotX && before->slotY == now.slotY &&
+           before->width == now.width &&
            before->height == now.height && sameBits(before->scaleX, now.scaleX) &&
            sameBits(before->scaleY, now.scaleY);
 }

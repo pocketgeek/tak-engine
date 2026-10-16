@@ -68,6 +68,7 @@
 #include "client/geometrystages.h"    // staged unit geometry: local / placement / material (workstream D)
 #include "client/geometryowners.h"    // stable per-unit geometry entries (workstream C)
 #include "client/shadowtiles.h"       // shadow silhouette tile keys and reuse (workstream E)
+#include "client/shadowatlas.h"       // persistent shadow tile cells (workstream F)
 #include "client/ordertrail.h"
 #include "client/retailaim.h"
 #include "client/retailflightanimation.h"
@@ -647,6 +648,11 @@ public:
     uint64_t shadowSkipChecks() const { return shadowSkipChecks_.load(); }
     struct ShadowCacheVerifyTotals {
         uint64_t frames=0, tiles=0, reused=0, body=0, translated=0, original=0;
+        // Workstream F: tiles reused in a cell kept from an earlier frame, cells
+        // allocated, full repacks, migrated tiles, cells freed under pressure, page
+        // releases and shrinks, allocator consistency checks.
+        uint64_t kept=0, allocs=0, compactions=0, migrated=0, evicted=0, pageReleases=0,
+                 shrinks=0, validated=0;
     };
     const ShadowCacheVerifyTotals& shadowVerifyTotals() const { return shadowVerify_; }
     uint64_t ownershipChecks() const { return ownershipChecks_; }
@@ -1039,6 +1045,11 @@ private:
         // Telemetry: the last local rebuild left the shadow inputs unchanged, so the
         // silhouette was not collected again (body-only local change).
         bool shadowSkipped=false;
+        // The silhouette cell this entry's shadow occupies (workstream F,
+        // client/shadowatlas.h). Render thread only. Validated against the
+        // allocation's recorded owner (handleKey), so an entry that changed owner,
+        // went cold or outlived a renderer reset never inherits a cell.
+        tak::render::RenderHandle shadowTile{};
 #ifndef NDEBUG
         uint32_t verifiedTick=~0u;
 #endif
@@ -1586,24 +1597,41 @@ private:
         SDL_Texture* coverage=nullptr; };
     std::vector<ShadowMaskPage> shadowMaskPages_;
     std::unordered_map<SDL_Texture*,SDL_Texture*> shadowCoverageTextures_;
-    // Bounded per-unit silhouette targets. Their 2048-square pages are
-    // reused each frame and discarded with other render targets on device loss.
+    // Bounded per-unit silhouette targets (<= 4 pages, <= 2048 square), discarded
+    // with other render targets on device loss. Since workstream F each unit's
+    // tile keeps a persistent cell (client/shadowatlas.h); page slots follow the
+    // allocator (a released page leaves a null texture until a new page reuses it).
     // Tile stamps (client/shadowtiles.h): the unit's stable entry, its shadow
-    // coverage revision and exact shadow placement, slot, size and output scale.
+    // coverage revision and exact shadow placement, page, slot, size and output
+    // scale -- kept per cell (indexed by the cell handle's index).
     using ShadowTileStamp = tak::render::ShadowTileStamp;
     struct ShadowSilhouettePage {
-        SDL_Texture* texture=nullptr; int x=0,y=0,rowHeight=0;
-        std::vector<ShadowTileStamp> stamps;
+        SDL_Texture* texture=nullptr;
+        uint64_t emptySinceFrame=0, emptySinceMs=0;   // 0 = holds cells
     };
     std::vector<ShadowSilhouettePage> shadowSilhouettePages_;
     int shadowSilhouetteWidth_=0,shadowSilhouetteHeight_=0;
     bool shadowSilhouetteAtlasActive_ = false;
     std::vector<SDL_FPoint> shadowAtlasOpaqueScratch_;
-    // Tile decision scratch (workstream E, render thread): this frame's stamp per
-    // packed unit, tiles per page, and the tiles that need the point check.
+    tak::render::ShadowAtlasAllocator shadowAtlas_;
+    std::vector<ShadowTileStamp> shadowCellStamps_;   // by cell handle index
+    std::vector<uint8_t> shadowCellStampValid_;
+    // Allocation policy state (presentation clock; see buildShadowSilhouetteAtlas).
+    struct ShadowAtlasPolicy {
+        uint64_t frame=0, lastCompactFrame=0;
+        uint64_t shrinkSinceFrame=0, shrinkSinceMs=0;    // demand fits smaller pages since
+        uint64_t sparseSinceFrame=0, sparseSinceMs=0;    // cells fit without the last page since
+        int migratePage=-1;                              // page being emptied (bounded migration)
+    } shadowAtlasPolicy_;
+    void resetShadowAtlas();
+    // Tile decision scratch (render thread): this frame's stamp per packed unit,
+    // the stamp it is compared with (carried across reallocation), the tiles
+    // that need the point check, and the tiles that need a cell.
     std::vector<ShadowTileStamp> shadowTileStamps_;
-    std::vector<uint32_t> shadowTilePageCounts_;
+    std::vector<ShadowTileStamp> shadowTileBefore_;
+    std::vector<uint8_t> shadowTileHasBefore_;
     std::vector<size_t> shadowTileChecks_;
+    std::vector<size_t> shadowTileNeeds_;
     std::unordered_map<SDL_Texture*,std::vector<SDL_Vertex>> shadowAtlasMaskScratch_;
     ShadowMaskFrame addShadowMask(std::span<const uint8_t> rgba,int width,int height);
     std::vector<Tri> tris_;

@@ -1949,11 +1949,15 @@ int main(int argc, char** argv) {
                 // Shadow tile reuse (workstream E): every kept tile equalled a complete
                 // re-bake of the frame, or draw() threw at the first differing pixel.
                 const auto& t=gameView->shadowVerifyTotals();
+                // Workstream F appends the cell counts (kept = reused in a cell kept from
+                // an earlier frame; validated = frames whose allocator passed validate()).
+                using ull=unsigned long long;
                 std::printf("SHADOW_CACHE_VERIFY frames=%llu tiles=%llu reused=%llu body=%llu translated=%llu "
-                            "original_reused=%llu\n",
-                    static_cast<unsigned long long>(t.frames),static_cast<unsigned long long>(t.tiles),
-                    static_cast<unsigned long long>(t.reused),static_cast<unsigned long long>(t.body),
-                    static_cast<unsigned long long>(t.translated),static_cast<unsigned long long>(t.original));
+                            "original_reused=%llu kept=%llu allocs=%llu compactions=%llu migrated=%llu "
+                            "evicted=%llu page_releases=%llu shrinks=%llu validated=%llu\n",
+                    ull(t.frames),ull(t.tiles),ull(t.reused),ull(t.body),ull(t.translated),ull(t.original),
+                    ull(t.kept),ull(t.allocs),ull(t.compactions),ull(t.migrated),ull(t.evicted),
+                    ull(t.pageReleases),ull(t.shrinks),ull(t.validated));
                 if(!t.frames)throw std::runtime_error("shadow cache verify ran no checks");
             }
             if(tak::devFlag("TAK_GEOMETRY_OWNERSHIP_VERIFY")) {

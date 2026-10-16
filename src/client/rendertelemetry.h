@@ -314,6 +314,24 @@ enum class Counter : uint8_t {
     GeomShadowSkipped,   // local rebuilds whose shadow inputs were unchanged: silhouette not collected
     ShadowReusedBody,    // tiles kept although the body changed (the pre-E key redrew them)
     ShadowReusedTranslated,  // tiles kept after a placement change: every tile point bit-identical
+    // Workstream F (persistent shadow tile cells, client/shadowatlas.h):
+    ShadowCellAllocs,    // cells allocated this frame (new tile, outgrown/oversized cell, compaction, migration)
+    ShadowCellKept,      // tiles drawn in the cell they held last frame (content may still be redrawn)
+    ShadowCellFreed,     // cells freed this frame (any reason)
+    ShadowCellExpired,   //   ... absent from the atlas longer than the retention window
+    ShadowCellEvicted,   //   ... absent cells freed under space pressure or by compaction
+    ShadowCompactions,   // full repacks forced by a failed allocation in a fragmented atlas
+    ShadowCompactionsFree, // full repacks of a loose atlas on a frame that redraws nearly every tile anyway
+    ShadowMigrated,      // tiles moved off a sparse last page (bounded reclamation)
+    ShadowPageReleases,  // silhouette pages destroyed after staying empty
+    ShadowPageShrinks,   // page-size reductions after sustained low demand
+    ShadowCells,         // gauge: live cells (this frame's tiles + retained)
+    ShadowCellsRetained, // gauge: cells of units not in this frame's atlas
+    ShadowAtlasCapacityPx, // gauge: live pages x page area
+    ShadowAtlasCellPx,   // gauge: allocated cell area
+    ShadowAtlasTilePx,   // gauge: this frame's tile area (incl. 1 px padding)
+    ShadowAtlasShelfFreePx, // gauge: free spans inside shelves (fragmentation)
+    ShadowAtlasGpuBytes, // gauge: silhouette page bytes (tracked GPU textures)
     Count
 };
 
@@ -369,7 +387,12 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "geom_entries_allocated", "geom_retained_bytes", "geom_warm_free_bytes",
     "geom_local_builds", "geom_placement_only", "geom_material_only", "verts_placed",
     "verts_recoloured", "geom_shadow_kept", "geom_shadow_skipped", "shadow_reused_body",
-    "shadow_reused_translated"};
+    "shadow_reused_translated",
+    "shadow_cell_allocs", "shadow_cell_kept", "shadow_cell_freed", "shadow_cell_expired",
+    "shadow_cell_evicted", "shadow_compactions", "shadow_compactions_free", "shadow_migrated", "shadow_page_releases",
+    "shadow_page_shrinks", "shadow_cells", "shadow_cells_retained", "shadow_atlas_capacity_px",
+    "shadow_atlas_cell_px", "shadow_atlas_tile_px", "shadow_atlas_shelf_free_px",
+    "shadow_atlas_gpu_bytes"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

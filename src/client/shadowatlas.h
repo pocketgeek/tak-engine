@@ -19,9 +19,13 @@
 //     list of row spans); a shelf holds cells side by side (its free space is a
 //     sorted list of x spans). Freeing a cell merges its span back; an empty
 //     shelf returns its rows to the page.
-//   * Size classes: an incremental request is rounded up (shadowCellPadded:
-//     >= 2 px slack, then <= 12.5% steps), so a one-pixel change of a unit's
-//     animated bounds stays in its cell and moves nothing else.
+//   * Shelf heights come in classes (shadowCellHeight: steps of 2 px up to 32,
+//     4 px up to 64, then 8 per octave), so tiles of similar height share a
+//     shelf and a freed cell fits the next tile of that class. Widths are exact.
+//     A unit whose tile outgrows its cell moves alone; nobody else moves. (Its
+//     tile is redrawn anyway: bounds change only with coverage or placement.
+//     Slack per cell was measured -- workstream F in the progress document --
+//     and only cost pages: it saved no redraw.)
 //   * Handles are generational (index + generation from ONE counter that is
 //     never reset, not even by reset()), so a stale handle never aliases a new
 //     cell, across compaction, page loss and renderer resets.
@@ -51,16 +55,21 @@
 
 namespace tak::render {
 
-// Round a tile dimension (pixels, padding included) up to its size class:
-// multiples of 4 up to 64, then 8 steps per octave (<= 12.5% waste).
+// Round a tile height (pixels, padding included) up to its shelf class:
+// multiples of 2 up to 32, of 4 up to 64, then 8 steps per octave (<= 12.5%).
 inline int shadowCellClass(int n) {
-    if (n <= 4) return 4;
+    if (n <= 2) return 2;
     const int b = std::bit_width(unsigned(n - 1));          // 2^(b-1) < n <= 2^b
-    const int step = std::max(4, 1 << std::max(0, b - 4));
+    const int step = std::max(2, 1 << std::max(0, b - 4));
     return (n + step - 1) / step * step;
 }
-// An incremental request: at least 2 px of slack per dimension, then the class.
-inline int shadowCellPadded(int n, int limit) { return std::min(limit, shadowCellClass(n + 2)); }
+inline int shadowCellHeight(int n, int limit) { return std::min(limit, shadowCellClass(n)); }
+// A unit keeps its cell while its tile fits and the cell is at most 1.5x the
+// area a fresh cell would take (a shrunken tile returns the space).
+inline bool shadowCellKeeps(int cellW, int cellH, int tileW, int tileH, int limitH) {
+    return tileW <= cellW && tileH <= cellH &&
+           2 * uint64_t(cellW) * uint64_t(cellH) <= 3 * uint64_t(tileW) * uint64_t(shadowCellHeight(tileH, limitH));
+}
 
 struct ShadowCell {
     int page = -1, x = 0, y = 0, w = 0, h = 0;
@@ -137,10 +146,10 @@ public:
         }
     }
 
-    // Places a w x h cell (padding included; the caller chooses padded or exact
-    // sizes) on a live page below pageLimit. Best fit (incremental): the
-    // lowest shelf no more than a quarter taller, first free span, else a new
-    // shelf in the first rows that fit. Sequential: the former packer's cursor.
+    // Places a w x h cell (padding included; the caller chooses classed or exact
+    // heights) on a live page below pageLimit. Best fit (incremental): the
+    // lowest shelf no more than an eighth taller (>= 2 px), first free span,
+    // else a new shelf in the first rows that fit. Sequential: the former packer's cursor.
     // Returns an invalid handle when nothing fits.
     RenderHandle allocate(int w, int h, bool sequential, size_t pageLimit = SIZE_MAX) {
         if (w <= 0 || h <= 0 || w > pageW_ || h > pageH_) return {};
@@ -338,7 +347,7 @@ private:
     }
 
     RenderHandle allocateBestFit(int w, int h, size_t end) {
-        const int tolerance = std::max(2, h / 4);
+        const int tolerance = std::max(2, h / 8);
         size_t bestPage = SIZE_MAX, bestShelf = 0, bestSpan = 0;
         int bestH = INT_MAX;
         for (size_t p = 0; p < end && bestH != h; ++p) {

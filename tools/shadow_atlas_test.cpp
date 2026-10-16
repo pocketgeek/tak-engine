@@ -1,7 +1,8 @@
 // Persistent shadow tile allocation (client/shadowatlas.h), workstream F.
 //
 // Properties checked:
-//   * size classes round up, never shrink a request, waste <= 12.5% above 64 px;
+//   * height classes round up, never shrink a request, waste <= 12.5% above 64 px;
+//     the keep rule holds a tile while it fits and returns oversized cells;
 //   * SEQUENTIAL mode after releaseAll() reproduces the former per-frame packer
 //     (GameView::buildShadowSilhouetteAtlas at cfb11f36, copied below verbatim)
 //     slot for slot, including where it opens pages and where it runs out;
@@ -92,16 +93,18 @@ void testClasses() {
         const int c = shadowCellClass(n);
         ok &= c >= n && c >= prev;
         if (n > 64) waste &= double(c - n) <= 0.125 * n + 1e-9;
-        else waste &= c - n < 4;
+        else waste &= c - n < (n > 32 ? 4 : 2);
         prev = c;
         ok &= shadowCellClass(c) == c;   // idempotent
     }
-    check(ok, "size class >= request, monotone, idempotent");
-    check(waste, "size class waste < 4 px up to 64, <= 12.5% above");
-    bool slack = true;
-    for (int n = 1; n <= 2000; ++n) slack &= shadowCellPadded(n, 4096) >= n + 2;
-    check(slack, "padded request leaves at least 2 px of slack");
-    check(shadowCellPadded(4000, 2048) == 2048, "padded request clamped to the page");
+    check(ok, "height class >= request, monotone, idempotent");
+    check(waste, "height class waste < 4 px up to 64, <= 12.5% above");
+    check(shadowCellHeight(4000, 2048) == 2048, "class clamped to the page");
+    check(shadowCellClass(17) == 18 && shadowCellClass(33) == 36 && shadowCellClass(65) == 72, "class steps 2 / 4 / 8");
+    check(shadowCellKeeps(40, 40, 40, 40, 2048), "a tile keeps an exact cell");
+    check(!shadowCellKeeps(40, 40, 41, 40, 2048) && !shadowCellKeeps(40, 40, 40, 41, 2048), "an outgrown cell is left");
+    check(shadowCellKeeps(40, 40, 36, 38, 2048), "a slightly smaller tile keeps its cell");
+    check(!shadowCellKeeps(40, 40, 20, 40, 2048), "a cell twice the tile is returned");
 }
 
 void testFormerEquivalence() {
@@ -160,7 +163,7 @@ void testRandomChurn() {
     for (int step = 0; step < 20000; ++step) {
         const unsigned op = rng() % 10;
         if (op < 5 || live.empty()) {
-            const int w = shadowCellPadded(1 + int(rng() % 60), 512), h = shadowCellPadded(1 + int(rng() % 60), 512);
+            const int w = 1 + int(rng() % 60), h = shadowCellHeight(1 + int(rng() % 60), 512);
             RenderHandle hd = a.allocate(w, h, false);
             if (!hd.valid() && a.livePages() < 4) { a.addPage(); hd = a.allocate(w, h, false); }
             if (!hd.valid()) { ++failed; continue; }
@@ -236,18 +239,19 @@ void testStableNeighbours() {
     std::vector<RenderHandle> hs;
     std::vector<ShadowCell> cells;
     for (int i = 0; i < 30; ++i) {
-        hs.push_back(a.allocate(shadowCellPadded(20 + i % 5, 256), shadowCellPadded(24, 256), false));
+        hs.push_back(a.allocate(20 + i % 5, shadowCellHeight(24, 256), false));
         cells.push_back(a.get(hs.back())->cell);
     }
-    // Tile 3 (23 x 24) grows by one pixel in each dimension: its cell holds it.
-    const ShadowCell c3 = a.get(hs[3])->cell;
-    check(c3.w >= 23 + 1 && c3.h >= 24 + 1, "one-pixel growth fits the padded cell");
+    // Tile 3 grows by one pixel: it alone moves to a new cell.
+    a.release(hs[3]);
+    hs[3] = a.allocate(24, shadowCellHeight(25, 256), false);
     a.release(hs[7]);
-    const RenderHandle fresh = a.allocate(shadowCellPadded(22, 256), shadowCellPadded(24, 256), false);
+    const RenderHandle fresh = a.allocate(22, shadowCellHeight(24, 256), false);
     bool unmoved = true;
-    for (int i = 0; i < 30; ++i) if (i != 7) unmoved &= a.get(hs[i])->cell == cells[i];
-    check(unmoved, "release + allocate leave every other cell in place");
-    check(a.get(fresh)->cell.x == cells[7].x && a.get(fresh)->cell.y == cells[7].y, "the freed cell is reused first");
+    for (int i = 0; i < 30; ++i) if (i != 7 && i != 3) unmoved &= a.get(hs[i])->cell == cells[i];
+    check(unmoved, "a growing tile and a replaced tile leave every other cell in place");
+    const ShadowCell f = a.get(fresh)->cell;
+    check((f.x == cells[7].x || f.x == cells[3].x) && f.y == cells[7].y, "a freed cell is reused first");
     std::string why;
     { const bool ok = a.validate(&why); check(ok, ("validate: " + why).c_str()); }
 }
@@ -259,7 +263,7 @@ void testPageLimitBestFit() {
     a.reset(64, 64);
     a.addPage();
     const RenderHandle t = a.allocate(16, 20, false);
-    const RenderHandle s = a.allocate(16, 18, false);   // 20 <= 18 + 4: same shelf
+    const RenderHandle s = a.allocate(16, 18, false);   // 20 <= 18 + 2: same shelf
     check(a.get(t)->cell.y == a.get(s)->cell.y, "shorter tile shares a shelf within the tolerance");
     check(a.get(s)->cell.h == 20, "cell takes the shelf height");
     const RenderHandle u = a.allocate(16, 8, false);    // 20 > 8 + 2: own shelf
