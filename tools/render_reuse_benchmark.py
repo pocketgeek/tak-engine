@@ -118,9 +118,11 @@ def run(args, scene, leg, mode):
     completion = re.search(r"RENDER_STUDY frames=(\d+) hash=([a-f0-9]+)", text)
     if not completion or int(completion[1]) != args.frames:
         raise RuntimeError(f"{name}: requires a Debug client with render-study support")
+    # The AA options were removed after 0.7.24 and current clients print no AA
+    # lines at all (AA is always off). A pre-removal client must confirm 0x.
     aa = re.findall(r"AA (terrain|models): requested (\d+)x, effective (\d+)x", text)
-    if {kind for kind, _, _ in aa} != {"terrain", "models"} or any(
-            request != "0" or effective != "0" for _, request, effective in aa):
+    if aa and ({kind for kind, _, _ in aa} != {"terrain", "models"} or any(
+            request != "0" or effective != "0" for _, request, effective in aa)):
         raise RuntimeError(f"{name}: AA-off baseline was not confirmed")
     frames = re.findall(
         r"^FRAME ms=([\d.]+) update=([\d.]+) anim=([\d.]+) draw=([\d.]+) "

@@ -956,8 +956,28 @@
         }
         // Repeatable rendering workload for the shadow performance regression.
         // This entry point is only reached by the local development harness.
+        // Render-optimization matrix knobs (tools/render_benchmark.py):
+        //   TAK_RENDER_CENTER=x,z   army centre (default 5000,5000)
+        //   TAK_RENDER_OFFSET=x,z   camera top-left world offset after setup
+        //   TAK_RENDER_EXTRAS=1     add construction sites, ghosts, flyers, corpses
+        //   TAK_RENDER_NAVAL=N      N floating units on the water nearest the centre
+        //   TAK_RENDER_FOREST=1     centre army + camera on the densest scenery region
+        // All of them only shape the local harness scene; none run in a real game.
         if (const char* countText=tak::devEnv("TAK_SHADOW_BENCH")) {
             const int count=std::clamp(std::atoi(countText),1,16000);
+            float centerX=5000,centerZ=5000;
+            if(const char* center=tak::devEnv("TAK_RENDER_CENTER"))
+                std::sscanf(center,"%f,%f",&centerX,&centerZ);
+            int forestTrees=0;
+            if(tak::devFlag("TAK_RENDER_FOREST")) {
+                // Centre on the 512px region holding the most scenery (trees count
+                // double, since they sway and carry shadows); first wins a tie.
+                std::map<std::pair<int,int>,int> trees;
+                for(const auto& f:features_)if(f.tex)trees[{int(f.x)/512,int(f.z)/512}]+=f.tree ? 2 : 1;
+                for(const auto& [cell,n]:trees)if(n>forestTrees) {
+                    forestTrees=n;centerX=float(cell.first)*512+256;centerZ=float(cell.second)*512+256;
+                }
+            }
             const char* only=tak::devEnv("TAK_SHADOW_BENCH_TYPE");
             const char* roster[]={"zonter","araarch","aralode","tarlode","zonroc","versword"};
             const int columns=std::max(1,int(std::ceil(std::sqrt(float(count)*1.6f))));
@@ -965,18 +985,69 @@
             const float spacing=spacingText?std::clamp(float(std::atof(spacingText)),16.f,256.f):40.f;
             const int rows=(count+columns-1)/columns;
             int spawned=0;
+            std::vector<int> spawnedIds;
             for(int i=0;i<count;++i) {
                 const char* name=only ? only : roster[i%6];
                 const auto* type=registry_.find(name);
                 if(!type || world_.atUnitCap(localPlayer_) || world_.atTypeCap(localPlayer_,type)) continue;
-                const float x=5000+(float(i%columns)-float(columns-1)*0.5f)*spacing;
-                const float z=5000+(float(i/columns)-float(rows-1)*0.5f)*spacing;
+                const float x=centerX+(float(i%columns)-float(columns-1)*0.5f)*spacing;
+                const float z=centerZ+(float(i/columns)-float(rows-1)*0.5f)*spacing;
                 const bool battle=tak::devFlag("TAK_RENDER_BATTLE");
                 const int owner=battle?i%2:localPlayer_;
                 if(const int id=spawn(name,x,z,float(i%8)*0.785398163f,owner)) {
-                    ++spawned;
+                    ++spawned;spawnedIds.push_back(id);
                     if(tak::devFlag("TAK_RENDER_MOTION"))writableWorld().order(id,x+320,z+160,false);
-                    if(battle)writableWorld().attackMove(id,5000,5000,false);
+                    if(battle)writableWorld().attackMove(id,centerX,centerZ,false);
+                }
+            }
+            int sites=0,ghosts=0,flyers=0,corpses=0,boats=0;
+            if(tak::devFlag("TAK_RENDER_EXTRAS")) {
+                // Construction: monarchs start real build sites south of the army.
+                const float siteZ=centerZ+float(rows)*spacing*0.5f+160;
+                for(int k=0;k<6;++k) {
+                    const float bx=centerX+float(k-3)*160,bz=siteZ;
+                    const int builder=spawn("araking",bx,bz+96,0,localPlayer_);
+                    if(builder<=0)continue;
+                    for(const auto& option:registry_.buildable("araking")) {
+                        const auto* site=registry_.find(option);
+                        if(!site || !isStructure(site) || site->footX>4 || site->footZ>4)continue;
+                        if(writableWorld().startBuild(builder,site,bx,bz)) {++sites;break;}
+                    }
+                }
+                // Translucent spectral bodies and airborne units north of the army.
+                const float northZ=centerZ-float(rows)*spacing*0.5f-160;
+                for(const auto& [id,type]:registry_.types()) {
+                    if(type.ghost && type.canMove && ghosts<8)
+                        for(int k=0;k<8 && ghosts<8;++k)
+                            ghosts+=spawn(id,centerX-480+float(k)*48,northZ,0,localPlayer_)>0;
+                    if(type.canFly && type.canMove && flyers<16 && id.rfind("zon",0)!=0)
+                        for(int k=0;k<4 && flyers<16;++k)
+                            flyers+=spawn(id,centerX+120+float(flyers)*56,northZ-48,0,localPlayer_)>0;
+                }
+                // Corpses: every 9th grid unit dies at once and leaves its body.
+                for(size_t k=0;k<spawnedIds.size();k+=9) {writableWorld().destroy(spawnedIds[k]);++corpses;}
+            }
+            if(const char* navalText=tak::devEnv("TAK_RENDER_NAVAL")) {
+                const int wanted=std::clamp(std::atoi(navalText),1,2000);
+                std::vector<const tak::sim::UnitType*> hulls;
+                for(const auto& [id,type]:registry_.types())
+                    if(type.floater && type.canMove && !type.canFly && !isStructure(&type))hulls.push_back(&type);
+                const auto& map=mapView_.map();
+                // Water cells nearest the centre, in a deterministic distance order.
+                std::vector<std::pair<float,std::pair<int,int>>> water;
+                for(int z=1;z+1<map.height;z+=3)for(int x=1;x+1<map.width;x+=3) {
+                    const float wx=(float(x)+0.5f)*16,wz=(float(z)+0.5f)*16;
+                    if(world_.isWater(wx,wz))
+                        water.push_back({(wx-centerX)*(wx-centerX)+(wz-centerZ)*(wz-centerZ),{x,z}});
+                }
+                std::sort(water.begin(),water.end());
+                for(size_t k=0;k<water.size() && boats<wanted && !hulls.empty();++k) {
+                    const auto [x,z]=water[k].second;
+                    boats+=spawn(hulls[size_t(boats)%hulls.size()]->id,(float(x)+0.5f)*16,(float(z)+0.5f)*16,
+                                 float(boats%8)*0.785398163f,localPlayer_)>0;
+                }
+                if(!water.empty()) {
+                    centerX=(float(water[0].second.first)+0.5f)*16;centerZ=(float(water[0].second.second)+0.5f)*16;
                 }
             }
             noFog_=!tak::devFlag("TAK_PROFILE_FOG");edgeScrollOn_=false;
@@ -984,9 +1055,15 @@
             if(const char* requested=tak::devEnv("TAK_PROFILE_ZOOM"))
                 zoom=std::clamp(float(std::atof(requested)),0.05f,4.0f);   // the game's zoom range
             mapView_.setZoom(zoom);
-            mapView_.setOffset(5000-760/zoom,5000-terrainLift(5000,5000)-420/zoom);
+            mapView_.setOffset(centerX-760/zoom,centerZ-terrainLift(centerX,centerZ)-420/zoom);
+            if(const char* offset=tak::devEnv("TAK_RENDER_OFFSET")) {
+                float ox=0,oz=0;
+                if(std::sscanf(offset,"%f,%f",&ox,&oz)==2)mapView_.setOffset(ox,oz);
+            }
             std::fprintf(stderr,"shadow benchmark: requested=%d spawned=%d columns=%d zoom=%.3f type=%s\n",
                 count,spawned,columns,zoom,only ? only : "mixed");
+            std::fprintf(stderr,"render scene: sites=%d ghosts=%d flyers=%d corpses=%d boats=%d scenery=%d center=%.0f,%.0f offset=%.0f,%.0f\n",
+                sites,ghosts,flyers,corpses,boats,forestTrees,centerX,centerZ,mapView_.offX(),mapView_.offY());
             return;
         }
         // Capture the reclaim particle fix through the existing local build harness.
@@ -2596,5 +2673,28 @@
         }
     }
 
+
+    // Long-running churn for the render matrix: every `period` frames the oldest
+    // twentieth of the living mobile army dies (leaving corpses) and as many new
+    // units spawn beside the army. Unit ids keep growing, so retained render
+    // entries see destruction, fresh ids and replacements. Deterministic: it
+    // runs from the frame counter of the fixed-step render study.
+    void GameView::renderStudyChurn(unsigned frame, unsigned period) {
+        if(!period || !frame || frame%period)return;
+        std::vector<int> mobile;
+        for(const auto& unit:world_.units())
+            if(unit.alive() && unit.type && unit.type->canMove && !unit.type->canFly)mobile.push_back(unit.id);
+        if(mobile.empty())return;
+        std::sort(mobile.begin(),mobile.end());
+        const size_t kill=std::max<size_t>(1,mobile.size()/20);
+        const char* roster[]={"zonter","araarch","versword","tararch"};
+        for(size_t k=0;k<kill;++k) {
+            const auto* old=world_.unit(mobile[k]);
+            const float x=old->x.toFloat(),z=old->z.toFloat();
+            writableWorld().destroy(mobile[k]);
+            const float dx=float(int((frame/period+k)%9)-4)*24;
+            spawn(roster[(frame/period+k)%4],x+dx,z+48,float(k%8)*0.785398163f,localPlayer_);
+        }
+    }
 
 #endif   // !NDEBUG

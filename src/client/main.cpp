@@ -1495,6 +1495,39 @@ int main(int argc, char** argv) {
         studyDeleteQuery=reinterpret_cast<decltype(studyDeleteQuery)>(SDL_GL_GetProcAddress("glDeleteQueries"));
         if(gen && studyBeginQuery && studyEndQuery && studyGetQuery && studyDeleteQuery)gen(1,&studyQuery);
     }
+    if(renderStudy) {
+        // Record what the run ACTUALLY got, so a benchmark can refuse a run whose
+        // backend or output size differs from what it asked for.
+        SDL_RendererInfo info{};
+        SDL_GetRendererInfo(ren,&info);
+        int outW=0,outH=0,winPtW=0,winPtH=0;
+        SDL_GetRendererOutputSize(ren,&outW,&outH);
+        SDL_GetWindowSize(win,&winPtW,&winPtH);
+        float scaleX=1,scaleY=1;SDL_RenderGetScale(ren,&scaleX,&scaleY);
+        const char* glVendor="-";const char* glRenderer="-";const char* glVersion="-";
+        if(info.name && std::strncmp(info.name,"opengl",6)==0) {
+            using GetString=const GLubyte*(APIENTRY*)(GLenum);
+            if(auto get=reinterpret_cast<GetString>(SDL_GL_GetProcAddress("glGetString"))) {
+                const auto str=[&](GLenum e){const auto* v=reinterpret_cast<const char*>(get(e));return v?v:"-";};
+                glVendor=str(GL_VENDOR);glRenderer=str(GL_RENDERER);glVersion=str(GL_VERSION);
+            }
+        }
+        const auto worldView=gameView->renderStudyWorldView(outW,outH);
+        std::printf("RENDER_ENV video=%s renderer=%s accelerated=%d vsync=%d target=%d output=%dx%d window=%dx%d world=%dx%d scale=%.3fx%.3f max_texture=%dx%d gl_vendor=\"%s\" gl_renderer=\"%s\" gl_version=\"%s\" timer_query=%d\n",
+            SDL_GetCurrentVideoDriver()?SDL_GetCurrentVideoDriver():"-",info.name?info.name:"-",
+            (info.flags&SDL_RENDERER_ACCELERATED)?1:0,(info.flags&SDL_RENDERER_PRESENTVSYNC)?1:0,
+            (info.flags&SDL_RENDERER_TARGETTEXTURE)?1:0,outW,outH,winPtW,winPtH,worldView.first,worldView.second,scaleX,scaleY,
+            info.max_texture_width,info.max_texture_height,glVendor,glRenderer,glVersion,studyQuery?1:0);
+    }
+    // Matrix knobs for the render study (tools/render_benchmark.py). Frame-indexed,
+    // so every run of a scene sees the identical camera and event schedule.
+    const auto studyPeriod=[](const char* name){const char* v=tak::devEnv(name);return v?unsigned(std::max(0,std::atoi(v))):0u;};
+    const unsigned studyJump=studyPeriod("TAK_RENDER_JUMP");
+    const unsigned studyReset=studyPeriod("TAK_RENDER_RESET");
+    const unsigned studyChurn=studyPeriod("TAK_RENDER_CHURN");
+    const unsigned studySparseAfter=studyPeriod("TAK_RENDER_SPARSE_AFTER");
+    float studySparseX=200,studySparseZ=200;
+    if(const char* at=tak::devEnv("TAK_RENDER_SPARSE_OFFSET"))std::sscanf(at,"%f,%f",&studySparseX,&studySparseZ);
 #endif
     auto windowTarget = [&] {
         SDL_SetRenderTarget(ren, nullptr);
@@ -1723,6 +1756,20 @@ int main(int argc, char** argv) {
                 if(renderStudy && tak::devFlag("TAK_RENDER_ZOOM"))
                     gameView->renderStudyZoom(.25f+.75f*(.5f+.5f*std::sin(float(studyFrame)*.008f)));
                 if(renderStudy && tak::devFlag("TAK_RENDER_MOTION"))gameView->renderStudyMotion(studyFrame);
+                if(renderStudy && studyJump && studyFrame%studyJump==0) {
+                    // Camera jumps between four distant points (no shared view).
+                    static const float jumpAt[4][2]={{3800,3800},{6200,3800},{6200,6200},{3800,6200}};
+                    const auto& p=jumpAt[(studyFrame/studyJump)%4];
+                    gameView->lookAt(p[0],p[1]);
+                }
+                if(renderStudy && studyChurn)gameView->renderStudyChurn(studyFrame,studyChurn);
+                if(renderStudy && studySparseAfter && studyFrame>=studySparseAfter)
+                    gameView->renderStudyOffset(studySparseX,studySparseZ);
+                if(renderStudy && studyReset && studyFrame && studyFrame%studyReset==0) {
+                    // The SDL_RENDER_TARGETS_RESET path, on a fixed schedule.
+                    windowTarget();
+                    gameView->invalidateRenderTargets();
+                }
 #endif
 #ifndef NDEBUG
                 if(tak::devFlag("TAK_PROFILE_PAN"))
@@ -1800,6 +1847,10 @@ int main(int argc, char** argv) {
                 studyFrame,pj-lastPj,sb-lastSb,sh-lastSh,at-lastAt,bd-lastBd,
                 studyQuery?double(gpuNs)/1e6:-1.,gpuvram::bytes(),vertices,calls,images,bakes,bakeVertices,bakeCalls,switches,imageBytes);
             lastPj=pj;lastSb=sb;lastSh=sh;lastAt=at;lastBd=bd;
+            static char statsLine[4096];
+            gameView->renderStats().format(statsLine,sizeof statsLine);
+            std::printf("RENDERSTATS frame=%u gpu_timeline_ms=%.4f%s\n",studyFrame,
+                studyQuery?double(gpuNs)/1e6:-1.,statsLine);
         }
         if(renderStudy && ++studyFrame==studyFrameLimit) {
             std::printf("RENDER_STUDY frames=%u hash=%016llx gpu_textures=%.2fMiB\n",studyFrame,

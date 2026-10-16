@@ -1443,6 +1443,9 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(shadow_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(shadow_test PRIVATE ${_tak_sdl2})
     add_test(NAME shadow COMMAND shadow_test)
+    add_executable(render_telemetry_test tools/render_telemetry_test.cpp)
+    target_include_directories(render_telemetry_test PRIVATE src)
+    add_test(NAME render_telemetry COMMAND render_telemetry_test)
     add_executable(geometrysubmit_test tools/geometrysubmit_test.cpp)
     target_include_directories(geometrysubmit_test PRIVATE src)
     target_compile_definitions(geometrysubmit_test PRIVATE SDL_MAIN_HANDLED)
@@ -1799,6 +1802,8 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
   add_test(NAME crowdbench_matrix COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tools/crowdbench_matrix_test.py")
+  add_test(NAME render_benchmark_tool COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tools/render_benchmark_test.py")
   # AR-11: crowdbench `unreachable` 200x1, per-unit approach arrival and order completion; every
   # order completes on arrival at its unit's nearest reachable spot, all by tick 3000 (W2 step 2).
   add_test(NAME legion_unreachable_orders COMMAND "${Python3_EXECUTABLE}"

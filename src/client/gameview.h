@@ -63,6 +63,7 @@
 #include "client/projectilemodelscale.h"
 #include "client/modelview.h"   // standalone 3DO model viewer (extracted leaf)
 #include "client/renderframe.h"   // UnitR/PlayerR/Frame render snapshot (extracted leaf)
+#include "client/rendertelemetry.h" // per-frame render stats + generation vocabulary
 #include "client/ordertrail.h"
 #include "client/retailaim.h"
 #include "client/retailflightanimation.h"
@@ -641,6 +642,14 @@ public:
                 writableWorld().order(unit.id,unit.x.toFloat()+direction*320,unit.z.toFloat()+direction*160,false);
     }
     void renderStudyZoom(float zoom) { mapView_.setZoom(zoom); }
+    // Render-optimization harness (docs/render-optimization-progress.md). Each
+    // is presentation-side or local-harness only and runs in the standalone
+    // render study, never in a networked game.
+    void renderStudyChurn(unsigned frame, unsigned period);
+    void renderStudyOffset(float x, float z) { mapView_.setOffset(x, z); }
+    // The world view at this output size (left of the command panel, above the
+    // bottom bar): the region a render capture comparison should cover.
+    std::pair<int,int> renderStudyWorldView(int w, int h) const { return {mapViewW(w), std::max(1, h - barH())}; }
     void renderWork(size_t& vertices,size_t& calls,size_t& images,size_t& bakes,size_t& bakeVertices,
                     size_t& bakeCalls,size_t& switches,size_t& imageBytes) const {
         vertices=bodyVerts_.size();calls=0;
@@ -916,6 +925,9 @@ private:
         uint32_t verifiedTick=~0u;
 #endif
         int owner=-1;
+        // Telemetry only: why the last build missed (tak::render::MissCause),
+        // written by the worker that built it, tallied by the render thread.
+        uint8_t missCause=0;
         std::vector<SDL_Vertex> verts;                  // transformed, coloured
         std::vector<std::pair<SDL_Texture*, int>> runs; // (texture, vertex count)
         float ax = 0, ay = 0, occY = 0, alt = 0;
@@ -1048,7 +1060,16 @@ private:
     // was no way to say WHICH of terrain / fog / effects / HUD it was.
     double profTerrainMs_ = 0, profFogMs_ = 0, profFxMs_ = 0, profHudMs_ = 0;
     double profAtlasMs_ = 0, profBodyMs_ = 0;
+    // Per-frame renderer telemetry (render thread only; see rendertelemetry.h).
+    // Recording is off unless a debug harness enables it, so in normal play each
+    // tally is a not-taken branch. rendererGeneration_ names the current render
+    // target lifetime; invalidateRenderTargets() bumps it.
+    tak::render::FrameStats renderStats_;
+    tak::render::GenerationCounter rendererGeneration_;
+    void tallyRenderStats();
   public:
+    const tak::render::FrameStats& renderStats() const { return renderStats_; }
+    tak::render::Generation rendererGeneration() const { return rendererGeneration_.current(); }
     void profOther(double& terrain, double& fog, double& fx, double& hud) const {
         terrain = profTerrainMs_; fog = profFogMs_; fx = profFxMs_; hud = profHudMs_;
     }

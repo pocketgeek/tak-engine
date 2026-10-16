@@ -27,6 +27,11 @@
         // values via input(), so this is a no-op there.
         winW_ = winW;
         winH_ = winH;
+        // Render telemetry: reset every frame; recording only for debug harnesses.
+        static const bool kRenderStats = tak::devFlag("TAK_RENDER_STATS") || tak::devFlag("TAK_RENDER_STUDY");
+        renderStats_.begin(kRenderStats);
+        using RS = tak::render::Counter;
+        using RP = tak::render::Phase;
         emoteNowMs_ = SDL_GetTicks64();
         for (int p=0;p<8;++p)
             if (emoteTiming_[p].observe(framePlayer(p).emoteSequence, emoteNowMs_)) {
@@ -144,6 +149,8 @@
         items.clear();
         const auto& vis = frameVisibility();
         int vw = frameVisW();
+        {
+        tak::render::ScopedPhase candidatePhase(renderStats_, RP::Candidates);
         if(featureIndexDirty_) {
             featureIndex_.rebuild(features_.size(),[&](size_t i) {
                 const auto& f=features_[i];
@@ -174,6 +181,9 @@
             float key = f.mana ? f.z - 24.0f : f.z;
             items.push_back({key, nullptr, &f, 0});
         }
+        renderStats_.add(RS::FeatureCandidates, candidates.size());
+        renderStats_.add(RS::FeaturesPainted, items.size());
+        if (!dotsFrame_) renderStats_.add(RS::UnitsScanned, front().live.size());
         for (const UnitR* _up : front().live) {
             // Tactical Dots replace every unit model (corpses and dying units
             // included, which the minimap does not show either), so no unit enters
@@ -216,10 +226,16 @@
             }
             items.push_back({r.z, &r, nullptr, layer});
         }
+        renderStats_.add(RS::UnitCandidates, items.size() - renderStats_.get(RS::FeaturesPainted));
+        }
+        {
+        tak::render::ScopedPhase sortPhase(renderStats_, RP::PainterSort);
         std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
             if (a.layer != b.layer) return a.layer < b.layer;   // ground, then air
             return a.z < b.z;
         });
+        }
+        renderStats_.add(RS::PainterItems, items.size());
 
         // Project every visible unit's model in parallel before drawing. This is
         // the heavy per-frame CPU work (matrix-transforming each unit's model tree
@@ -273,6 +289,9 @@
         animateGlowTextures();
         profAtlasMs_ += (double(SDL_GetPerformanceCounter()) - _atl0) /
                         (double(SDL_GetPerformanceFrequency()) / 1000.0);
+        if (renderStats_.on)
+            renderStats_.ms[size_t(RP::AtlasMaintain)] += (double(SDL_GetPerformanceCounter()) - _atl0) /
+                (double(SDL_GetPerformanceFrequency()) / 1000.0);
         profUnits_ += uint64_t(visUnits_.size());   // so PROF ms/frame can be read per unit
         // Sample the shadow toggle HERE, on the main thread, before the workers launch --
         // and BEFORE deriving the draw gate from it. Reading the gate first used last
@@ -291,6 +310,10 @@
         });
         double _ptFreq = double(SDL_GetPerformanceFrequency()) / 1000.0;
         profProjMs_ += (double(SDL_GetPerformanceCounter()) - _pt0) / _ptFreq;
+        if (renderStats_.on) {
+            renderStats_.ms[size_t(RP::GeometryPrep)] += (double(SDL_GetPerformanceCounter()) - _pt0) / _ptFreq;
+            tallyRenderStats();
+        }
         double _st0 = double(SDL_GetPerformanceCounter());
 
         // Is this unit drawn whole by drawUnit (needs clip rects / interleaved
@@ -322,8 +345,14 @@
                 !u.moving() && !u.walking() && !u.corpsePhase && !u.replacementModel && !(u.type && u.type->ghost) &&
                 !selSet_.contains(u.id);
         }
+        {
+        tak::render::ScopedPhase distantPhase(renderStats_, RP::DistantPrepare);
         distantModelCache_.prepare(ren_,distantModelItems_,tak::devFlag("TAK_RENDER_STUDY")
             ? uint64_t(animClock_*1000) : SDL_GetTicks64());
+        }
+        renderStats_.add(RS::DistantImages, distantModelCache_.used);
+        renderStats_.add(RS::DistantBakes, distantModelCache_.refreshed);
+        renderStats_.add(RS::TargetSwitches, distantModelCache_.targetSwitches);
         static uint64_t distantLogAt=0;
         if(tak::devFlag("TAK_DISTANT_STATS") && SDL_GetTicks64()-distantLogAt>=1000) {
             distantLogAt=SDL_GetTicks64();
@@ -504,9 +533,14 @@
                     ++tile;
                     if(!w.dirty)++shadowAtlasReusedUnits;
                     if(w.dirty)dirtyRects.push_back({w.slotX,w.slotY,w.width+2,w.height+2});
+                    if(w.dirty && !force) {
+                        renderStats_.add(RS::ShadowTilesDirty);
+                        renderStats_.add(RS::ShadowDirtyPixels,uint64_t(w.width+2)*uint64_t(w.height+2));
+                    }
                 }
                 stamps.resize(tile);
                 if(dirtyRects.empty())continue;
+                if(!force)renderStats_.add(RS::TargetSwitches);
                 if (SDL_SetRenderTarget(ren_,shadowSilhouettePages_[p].texture)!=0) {ok=false;break;}
                 SDL_RenderSetScale(ren_,1.0f,1.0f);
                 SDL_RenderSetViewport(ren_,nullptr);
@@ -617,7 +651,13 @@
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         const double _sh0 = double(SDL_GetPerformanceCounter());
         if (!kNoShadow && !tak::devEnv("TAK_SHADOW_DIRECT")) {
+            {
+            tak::render::ScopedPhase packPhase(renderStats_, RP::ShadowPack);
             shadowSilhouetteAtlasActive_=buildShadowSilhouetteAtlas();
+            }
+            renderStats_.add(RS::ShadowUnits, shadowAtlasPackedUnits);
+            renderStats_.add(RS::ShadowTilesReused, shadowAtlasReusedUnits);
+            renderStats_.add(RS::ShadowPages, shadowAtlasPackedPages);
             if(shadowSilhouetteAtlasActive_ && tak::devFlag("TAK_SHADOW_CACHE_VERIFY")) {
                 const auto readPages=[&] {
                     auto* target=SDL_GetRenderTarget(ren_);
@@ -684,6 +724,7 @@
         // full-scene copy. Ground and airborne layers retain their existing
         // placement relative to bodies and scenery.
         if (!kNoShadow) {
+            tak::render::ScopedPhase compositePhase(renderStats_, RP::ShadowComposite);
             std::vector<const UnitGeom*> groundShadows;
             groundShadows.reserve(items.size());
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_MOD);
@@ -737,6 +778,7 @@
         // copies across the worker pool, then replay the draws. This spreads the
         // ~1.5M-vertex body assembly that used to peg one core, while keeping the
         // exact painter order (segments broken by features / special units).
+        const double _asm0 = double(SDL_GetPerformanceCounter());
         copyTasks_.clear();
         drawOps_.clear();
         int destOff = 0;
@@ -773,6 +815,7 @@
                 if (special(u, g)) {
                     closeSeg();
                     drawOps_.push_back({&u, nullptr, nullptr, 0, 0});
+                    renderStats_.add(RS::SpecialUnits);
                     continue;
                 }
                 const auto& distant=distantModelItems_[size_t(gslot)];
@@ -804,6 +847,12 @@
                 }
             }
         });
+        renderStats_.add(RS::BodyVertsCopied, size_t(destOff));
+        renderStats_.add(RS::BodyBytesCopied, size_t(destOff) * sizeof(SDL_Vertex));
+        renderStats_.set(RS::BodyBufferCapacityBytes, bodyVerts_.capacity() * sizeof(SDL_Vertex));
+        if (renderStats_.on)
+            renderStats_.ms[size_t(RP::BodyAssembly)] += (double(SDL_GetPerformanceCounter()) - _asm0) / _ptFreq;
+        const double _bsub0 = double(SDL_GetPerformanceCounter());
         // The deferred air shadows run INSIDE the body window but belong to the shadow
         // phase. Time them separately and back them out below, or body and shadow both
         // report the same work.
@@ -984,6 +1033,7 @@
             } else if (op.u) {
                 drawUnit(*op.u);
             } else if (op.count > 0 && op.tex) {   // null atlas page: skip, no white
+                renderStats_.add(RS::BodySubmissions);
                 bodySubmit_.draw(ren_,op.tex,std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(op.count)),
                                  !tak::devFlag("TAK_BODY_SDL_SUBMIT"));
             }
@@ -996,6 +1046,17 @@
         // every air-shadow draw falls inside the same phase as the rest of them.
         drainAirShadows();
         profSubmitMs_ += (double(SDL_GetPerformanceCounter()) - _st0) / _ptFreq;
+        if (renderStats_.on) {
+            renderStats_.ms[size_t(RP::BodySubmit)] += -airShadowMs +
+                (double(SDL_GetPerformanceCounter()) - _bsub0) / _ptFreq;
+            renderStats_.ms[size_t(RP::ShadowComposite)] += airShadowMs;
+            renderStats_.set(RS::TerrainChunkBytes, mapView_.chunkStats().bytes);
+            renderStats_.set(RS::TerrainChunkImages, mapView_.chunkStats().images);
+            renderStats_.set(RS::TerrainChunkUploads, mapView_.chunkStats().uploads);
+            renderStats_.set(RS::TerrainChunkPending, mapView_.chunkStats().pending);
+            renderStats_.set(RS::TerrainSectionBytes, mapView_.sectionBytes());
+            renderStats_.set(RS::GpuTrackedBytes, gpuvram::bytes());
+        }
 
         // Air shadows ran inside this window but belong to the shadow phase; back them
         // out so body and shadow do not both report the same work.
@@ -2104,6 +2165,34 @@
         if (hotkeysScreen_) hotkeysScreen_->render(winW, winH);   // above Options
     }
 
+    // Render thread, after the parallel geometry pass: fold the workers' per-slot
+    // results into this frame's stats, and account the retained geometry pool.
+    void GameView::tallyRenderStats() {
+        using RS = tak::render::Counter;
+        renderStats_.add(RS::VisibleUnits, visUnits_.size());
+        for (size_t i = 0; i < visUnits_.size(); ++i) {
+            const UnitGeom& g = geomPool_[i];
+            if (g.reused) { renderStats_.add(RS::GeometryHits); continue; }
+            if (g.geometryKey.empty()) continue;   // nothing drawable (no model / unbegun site)
+            renderStats_.add(RS::GeometryMisses);
+            renderStats_.addMiss(tak::render::MissCause(g.missCause));
+            renderStats_.add(RS::VertsGenerated, g.verts.size());
+            renderStats_.add(RS::ShadowVertsGenerated, g.shadowVerts.size() + g.maskedShadowVerts.size());
+        }
+        size_t used = 0, capacity = 0;
+        const auto account = [&](const auto& v) {
+            used += v.size() * sizeof(v[0]);
+            capacity += v.capacity() * sizeof(v[0]);
+        };
+        for (const UnitGeom& g : geomPool_) {
+            account(g.geometryKey); account(g.verts); account(g.runs);
+            account(g.shadowVerts); account(g.maskedShadowVerts); account(g.maskedShadowRuns);
+        }
+        renderStats_.set(RS::GeomPoolEntries, geomPool_.size());
+        renderStats_.set(RS::GeomPoolUsedBytes, used);
+        renderStats_.set(RS::GeomPoolCapacityBytes, capacity);
+    }
+
     const tak::tdo::Model* GameView::ghostModel(const std::string& typeId) {
         // Through loadVisual, which builds the PieceMeta tree. This used to insert the
         // entry with meta{} and a comment saying collect() would compute the answers
@@ -2233,6 +2322,7 @@
         for (SDL_Texture* atlas : atlasTex_) {
             if (!atlas) continue;
             SDL_SetRenderTarget(ren_, atlas);
+            renderStats_.add(tak::render::Counter::TargetSwitches);
             onAny = true;
             for (const auto& name : animatedTex_) {
                 auto rit = atlasRect_.find(name);
@@ -2247,6 +2337,8 @@
                 SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
                 const SDL_Rect padded{r.x - 1, r.y - 1, r.w + 2, r.h + 2};
                 SDL_RenderFillRect(ren_, &padded);     // clear the region + gutter (transparent)
+                renderStats_.add(tak::render::Counter::AtlasRegionsPainted);
+                renderStats_.add(tak::render::Counter::AtlasPixelsPainted, uint64_t(padded.w) * uint64_t(padded.h));
                 if (!f) continue;  // expired non-looping sequence
                 SDL_BlendMode fb;
                 SDL_GetTextureBlendMode(f, &fb);
@@ -2259,6 +2351,7 @@
     }
 
     void GameView::invalidateRenderTargets() {
+        rendererGeneration_.bump();   // every cached target placement is now stale
         mapView_.invalidateRenderTargets();
         fogSubmit_.clear();fogUpload_.clear();fogTexGen_=~0u;
         fogMeshValid_ = false;
@@ -2660,6 +2753,9 @@
             ++geometryChecks_;
 #endif
         }
+        using MC=tak::render::MissCause;
+        if(!cacheHit)g.missCause=uint8_t(tak::devFlag("TAK_GEOMETRY_NOCACHE") || tak::devFlag("TAK_GEOMETRY_REFERENCE")
+            ? MC::Reference : g.geometryKey.empty() ? MC::Cold : g.owner!=u.id ? MC::Owner : MC::Changed);
         g.geometryKey=key;g.owner=u.id;
         if(!cacheHit)++g.revision;
         g.verts.clear();g.runs.clear();g.shadowVerts.clear();
