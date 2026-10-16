@@ -58,6 +58,8 @@
 //   sched.admit_gap_max,
 //   sched.reg_deferred, sched.reg_wait_max, sched.plane_waits, sched.sync_plane_calls, sched.sync_plane_max,
 //   sched.init_max                             the scheduler's service record (NavAccounting)
+//   route.demand_peak, route.demand_dropped    stage 5: the most demand entries one paused build held, and
+//                                              demands a full list could not represent (NavAccounting)
 // Everything is integer and in body order, so every compiler reports the same numbers.
 #include "legion_observe.h"
 #include "sim/legion.h"
@@ -325,6 +327,8 @@ public:
                 k.emplace_back(p + "sched.sync_plane_calls", int64_t(a.syncPlaneCalls));
                 k.emplace_back(p + "sched.sync_plane_max", int64_t(a.syncPlaneMax));
                 k.emplace_back(p + "sched.init_max", int64_t(a.initMax));
+                k.emplace_back(p + "route.demand_peak", int64_t(a.demandPeak));
+                k.emplace_back(p + "route.demand_dropped", int64_t(a.demandDropped));
             }
         }
     }

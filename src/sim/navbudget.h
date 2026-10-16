@@ -108,6 +108,9 @@ struct NavAccounting {
     // relabels/rebuilds done in one call, the largest such call (units), and the largest single
     // field initialisation (cells).
     uint64_t syncPlaneCalls = 0, syncPlaneMax = 0, initMax = 0;
+    // Route demand (stage 5): the most demand entries one paused build held at once, and the demands that
+    // could not be represented (dropped from a full list: a subscriber whose need the build then never saw).
+    uint64_t demandPeak = 0, demandDropped = 0;
 };
 
 // Per-tick budgets (constants: the same on every peer). Units and the reference cost per unit

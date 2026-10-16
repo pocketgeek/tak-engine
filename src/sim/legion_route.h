@@ -1,0 +1,147 @@
+#pragma once
+// legion_route.h -- the route-query interface of Legion's navigator (Legion 10,000 stage 5, brief phase 4;
+// docs/legion-10000-progress.md 3.3, docs/legion-pathfinding.md "Legion 10,000 stage 5").
+//
+// Movement consumers -- steering and its descent, the pinwheel and the passage gate, group awareness, destination
+// packing (formation and packed slots, the area bounds), attack rings, the settle rule, the lift walk -- read a route
+// through RouteView only. RouteGrid is today's storage behind it: one integer window per field, owned and written by
+// the field builder (legion.cpp: startField, advance, serve). Stage 6 replaces the storage (sparse tiles) behind the
+// same queries; nothing outside the builder and this header reads RouteGrid's cells.
+//
+// What a query can answer is kept apart:
+//  * an estimate (direction guidance): exact where settled; on a build still running, where the frontier reached a
+//    cell but has not settled it, the length of a real (not necessarily shortest) way; kNone where nothing is known.
+//    A descent on estimates strictly decreases and ends at a seed, so it steers soundly on a half-built route;
+//  * a known distance: exact, or kNone -- never a tentative value;
+//  * reachability: Reachable (some finite estimate: a real way exists), Unreachable (proven: a complete route that
+//    spans the cell's whole static component, built on the current geometry, does not reach it), Unknown (anything
+//    else: not computed yet, outside a bounded window, or built on older geometry). Unknown never retires an order;
+//  * coverage: a cell settled with a margin of key to spare, i.e. every cell whose key is within the margin of it
+//    is final (A* with a consistent heuristic settles keys in order). A consumer states the region it needs as
+//    (cell, margin); see RouteView::covered;
+//  * progress: a distance together with the metric it is measured in (the route's serial). Progress compares only
+//    within one metric; a new metric re-baselines and never counts as a gain;
+//  * freshness: the geometry epoch the route was built on, apart from all of the above.
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <vector>
+
+namespace tak::sim {
+
+namespace route {
+// Field potentials are 32-bit; kNone is "nothing known / no route". (At 16 bits they saturated at 65535, about 13,100
+// orthogonal steps: serplong.scn's 30-lane serpentine reads 87,356 at its head.)
+inline constexpr uint32_t kNone = 0xffffffff;
+// Step costs: 7/5 = 1.4 ~ sqrt(2). The heuristic is the octile distance in these units.
+inline constexpr uint16_t kOrthogonal = 5, kDiagonal = 7;
+}  // namespace route
+
+enum class Reach : uint8_t { Unknown, Reachable, Unreachable };
+
+// A distance still to go, in a stated metric. Compare values only when the metrics are equal.
+struct Progress {
+    uint32_t value = 0;
+    uint64_t metric = 0;
+    bool operator==(const Progress&) const = default;
+};
+
+// Today's route storage: an integer distance window over the map, built from the route's goals (seeds) by A* toward
+// the group's bodies (aimed: target tx,tz) with a consistent octile heuristic, run to exhaustion (done) or paused once
+// it covers its subscribers (covered). Written only by the builder.
+struct RouteGrid {
+    int W = 0, x0 = 0, z0 = 0, fw = 0, fh = 0;   // map width; window origin and size (cells)
+    std::vector<uint32_t> potential;              // fw*fh, row-major within the window
+    uint32_t current = 0;                         // the build's current key (every key below it is settled)
+    int tx = 0, tz = 0;                           // heuristic target
+    bool aimed = false;
+    bool done = false;                            // every reachable cell of the window settled
+    // Paused (T7 C1): a first build that stopped once its subscribers were covered; its frontier is kept and it
+    // resumes on demand. Never cleared: a resumed build only settles more cells.
+    bool covered = false;
+    // The window is a margin round the group's bodies and seeds, not its whole static component.
+    bool bounded = false;
+    bool softened = false;                        // some step's cost was raised by a soft obstacle
+    uint64_t serial = 0;                          // unique per route built (the metric of its Progress)
+    uint64_t epoch = 0;                           // the static geometry epoch it was built on
+    uint64_t work = 0;                            // relaxations so far: changes whenever an estimate may change
+
+    bool inside(int x, int z) const { return x >= x0 && z >= z0 && x < x0 + fw && z < z0 + fh; }
+    size_t local(int x, int z) const { return size_t(z - z0) * size_t(fw) + size_t(x - x0); }
+    uint32_t cellAt(int x, int z) const { return inside(x, z) ? potential[local(x, z)] : route::kNone; }
+    uint32_t heuristic(int x, int z) const {
+        if (!aimed) return 0;
+        const int dx = x > tx ? x - tx : tx - x, dz = z > tz ? z - tz : tz - z;
+        const int lo = dx < dz ? dx : dz, hi = dx < dz ? dz : dx;
+        return uint32_t(route::kOrthogonal * hi + (route::kDiagonal - route::kOrthogonal) * lo);
+    }
+    // Is estimate v of cell final? (A done build: every reached cell is.)
+    bool isFinal(size_t cell, uint32_t v) const {
+        if (done) return v != route::kNone;
+        return v != route::kNone && uint32_t(v) + heuristic(int(cell % size_t(W)), int(cell / size_t(W))) <= current;
+    }
+    // Settled with `margin` of key to spare (a done build: reached at all).
+    bool ahead(size_t cell, uint32_t margin) const {
+        const uint32_t v = cellAt(int(cell % size_t(W)), int(cell / size_t(W)));
+        if (done) return v != route::kNone;
+        return v != route::kNone &&
+               uint32_t(v) + heuristic(int(cell % size_t(W)), int(cell / size_t(W))) + margin <= current;
+    }
+};
+
+// A read-only view of one route. Cheap to copy (one pointer); every query is inline.
+class RouteView {
+public:
+    // Implicit from the storage: a function that takes a RouteView can be handed a route as it is held.
+    RouteView() = default;
+    RouteView(const RouteGrid* g) : g_(g) {}
+    RouteView(const RouteGrid& g) : g_(&g) {}
+    explicit operator bool() const { return g_ != nullptr; }
+    bool operator==(const RouteView& o) const { return g_ == o.g_; }
+
+    // ---- identity and freshness ----------------------------------------------------------------------------------
+    uint64_t metric() const { return g_->serial; }         // Progress::metric of this route
+    uint64_t geometryEpoch() const { return g_->epoch; }   // freshness: the static epoch it was built on
+    uint64_t version() const { return g_->work; }          // any estimate may differ when this differs
+    // ---- build state (false on an empty view) ---------------------------------------------------------------------
+    bool complete() const { return g_ && g_->done; }                      // every reachable cell settled
+    bool paused() const { return g_ && g_->covered && !g_->done; }        // a paused build (C1)
+    bool usable() const { return g_ && (g_->done || g_->covered); }       // complete, or paused, its subscribers covered
+    bool bounded() const { return g_->bounded; }    // the window does not span the static component
+    bool softened() const { return g_->softened; }  // some step's cost was raised by a soft obstacle
+    bool inside(int x, int z) const { return g_->inside(x, z); }
+
+    // ---- distance ------------------------------------------------------------------------------------------------
+    // Direction guidance: exact where settled, an upper bound (a real way's length) where reached but unsettled,
+    // route::kNone where nothing is known. Use known() where a value must be final.
+    uint32_t estimate(int x, int z) const { return g_->cellAt(x, z); }
+    uint32_t estimate(size_t cell) const { return g_->cellAt(int(cell % size_t(g_->W)), int(cell / size_t(g_->W))); }
+    bool settled(size_t cell) const { return g_->isFinal(cell, estimate(cell)); }
+    // The exact distance where settled, route::kNone elsewhere (never a tentative value).
+    uint32_t known(size_t cell) const {
+        const uint32_t v = estimate(cell);
+        return g_->isFinal(cell, v) ? v : route::kNone;
+    }
+    // Coverage of a required neighbourhood: the cell is settled with `margin` of key to spare. Every cell whose key
+    // (distance + heuristic) is at most the cell's key plus the margin is then final; for a cell c within path cost
+    // d of this one, key(c) <= key(this) + d + (h(c) - h(this)) <= key(this) + 2d, so margin 2d covers every cell
+    // within cost d. A complete route covers every reached cell.
+    bool covered(size_t cell, uint32_t margin) const { return g_->ahead(cell, margin); }
+    // Reachability knowledge (see the header comment). epochNow: the current static geometry epoch.
+    Reach reach(size_t cell, uint64_t epochNow) const {
+        if (estimate(cell) != route::kNone) return Reach::Reachable;
+        if (g_->done && !g_->bounded && g_->epoch == epochNow) return Reach::Unreachable;
+        return Reach::Unknown;
+    }
+    // Progress still to go from a settled cell, in this route's metric; nullopt where it is not settled.
+    std::optional<Progress> progress(size_t cell) const {
+        const uint32_t v = known(cell);
+        if (v == route::kNone) return std::nullopt;
+        return Progress{v, g_->serial};
+    }
+
+private:
+    const RouteGrid* g_ = nullptr;
+};
+
+}  // namespace tak::sim

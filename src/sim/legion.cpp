@@ -1,4 +1,5 @@
 #include "legion.h"
+#include "legion_route.h"
 #include "sim.h"
 #include "footprint.h"
 #include "idmap.h"
@@ -30,8 +31,8 @@ namespace {
 // saturated at 65535, about 13,100 orthogonal steps, so a body farther than
 // that along a connected route (serplong.scn's 30-lane serpentine, potential
 // 87,356 at its head) read as unreachable and stood trapped.
-constexpr uint32_t kUnreached=0xffffffff;
-constexpr uint16_t kOrthogonal=5,kDiagonal=7;   // 7/5 = 1.4 ~ sqrt(2)
+constexpr uint32_t kUnreached=route::kNone;
+constexpr uint16_t kOrthogonal=route::kOrthogonal,kDiagonal=route::kDiagonal;   // 7/5 = 1.4 ~ sqrt(2)
 // Relaxations per tick, all fields: about 1.5 ms (4.4 ns each, measured on
 // the jank replay), a third of a tick at 8x game speed (4.17 ms). A field
 // still steers the bodies its frontier has passed while it builds.
@@ -316,7 +317,10 @@ struct LegionNavigator::Impl {
     // A field covers only the bounding box of its seeds' static component
     // (every origin it can ever reach): a group penned in a small region
     // costs that region, not the whole map. Cells outside read kUnreached.
-    struct Field {
+    // Its cells, build state and identity are the RouteGrid (legion_route.h,
+    // stage 5): the builder below writes them; every movement consumer reads
+    // them through a RouteView (view()).
+    struct Field : RouteGrid {
         Field()=default;
         Field(const Field&)=delete;
         Field& operator=(const Field&)=delete;
@@ -340,14 +344,6 @@ struct LegionNavigator::Impl {
             inflightBytes=now;
         }
         int plane=-1;
-        uint64_t epoch=0;
-        uint64_t serial=0;                // unique per field built (identifies it to the aim memo)
-        int W=0,x0=0,z0=0,fw=0,fh=0;      // map width; window origin and size (cells)
-        std::vector<uint32_t> potential;  // fw*fh, row-major within the window
-        bool inside(int x,int z) const {return x>=x0&&z>=z0&&x<x0+fw&&z<z0+fh;}
-        size_t local(int x,int z) const {return size_t(z-z0)*size_t(fw)+size_t(x-x0);}
-        uint32_t at(int x,int z) const {return inside(x,z)?potential[local(x,z)]:kUnreached;}
-        uint32_t at(size_t cell) const {return at(int(cell%size_t(W)),int(cell/size_t(W)));}
         // Buckets keyed by potential + heuristic (see advance); the key of a
         // relaxed neighbour is at most (kSoftFactor+1)*kDiagonal above the
         // popped one, plus a mover corridor's charge (see Corridor).
@@ -414,21 +410,13 @@ struct LegionNavigator::Impl {
             }
             return (px-qx)*(px-qx)+(pz-qz)*(pz-qz);
         }
-        uint32_t current=0;
-        int tx=0,tz=0;bool aimed=false;    // heuristic target: the group's bodies
+        // The heuristic target (RouteGrid::tx, tz, aimed) is the group's
+        // bodies.
         std::vector<std::pair<uint32_t,int>> seedKeys;size_t seedNext=0;   // seeds by key, enqueued in order
-        uint32_t heuristic(int x,int z) const {
-            if(!aimed)return 0;
-            const int dx=std::abs(x-tx),dz=std::abs(z-tz);
-            return uint32_t(kOrthogonal*std::max(dx,dz)+(kDiagonal-kOrthogonal)*std::min(dx,dz));
-        }
         size_t queued=0;
-        bool done=false;
-        // The window is a margin around the group's bodies and seeds, not
-        // its whole static component: a body outside it (or cut off from
-        // the seeds inside it) widens the group's next field.
-        bool bounded=false;
-        uint64_t work=0;
+        // The window (RouteGrid::bounded) is a margin around the group's
+        // bodies and seeds, not its whole static component: a body outside it
+        // (or cut off from the seeds inside it) widens the group's next field.
         // The build is A* toward the group's bodies with a consistent
         // (octile) heuristic, run to exhaustion: the finished potentials are
         // the exact distances, the same as plain Dijkstra, but the frontier
@@ -441,40 +429,22 @@ struct LegionNavigator::Impl {
         uint64_t command=~0ull;int softCounts=-1;
         bool ownArrivals=true;   // a settled arrival of `command` stood soft when the build started
         bool liftAllied=true;    // a liftable flyer of an ally of `command` stood soft then
-        bool softened=false;   // some step was charged as a soft obstacle
         std::vector<int> seeds;   // the group's seeds when the build started
         uint64_t seedKey=0;       // seedsKey(seeds): its route-key index entry (see routeIndex)
         uint32_t started=0;       // tick the build started
-        bool settled(size_t cell,uint32_t v) const {
-            if(done)return v!=kUnreached;
-            return v!=kUnreached&&uint32_t(v)+heuristic(int(cell%size_t(W)),int(cell/size_t(W)))<=current;
-        }
-        // Paused (T7 C1): a first build that stopped once its members were
-        // planned; its frontier (buckets, seeds) is kept and it resumes on
-        // demand. Never cleared: a resumed build only settles more cells
-        // (A* with a consistent heuristic never changes a settled
+        // Paused (T7 C1, RouteGrid::covered): a first build that stopped once
+        // its members were planned; its frontier (buckets, seeds) is kept and
+        // it resumes on demand. Never cleared: a resumed build only settles
+        // more cells (A* with a consistent heuristic never changes a settled
         // potential), so what was usable stays usable.
-        bool covered=false;
         // Cells members reached unsettled (or under the cover margin): the
         // waited loop advances the build until each is settled with its
         // margin, then clears them. (cell, margin), in arrival order.
         std::vector<std::pair<int,uint32_t>> demand;
         bool usable() const {return done||covered;}
-        // Settled with `margin` of key to spare (the frontier is that far
-        // past it); a done field: reached at all.
-        bool ahead(size_t cell,uint32_t margin) const {
-            const uint32_t v=at(cell);
-            if(done)return v!=kUnreached;
-            return v!=kUnreached&&uint32_t(v)+heuristic(int(cell%size_t(W)),int(cell/size_t(W)))+margin<=current;
-        }
-        // A gate's read (the settle rule, the lift walk): the potential where
-        // it is settled, kUnreached elsewhere, so no gate ever reads an
-        // unsettled (tentative) potential of a paused build.
-        uint32_t known(size_t cell) const {
-            const uint32_t v=at(cell);
-            return settled(cell,v)?v:kUnreached;
-        }
+        RouteView view() const {return RouteView(this);}
     };
+    static RouteView view(const Field* f) {return f?f->view():RouteView();}
     struct Group {
         int id=0,player=0,plane=-1;
         uint32_t issuedTick=0;
@@ -506,6 +476,8 @@ struct LegionNavigator::Impl {
         // Fields are shared between groups with the same plane and seeds
         // (see sharedField). A field is never written once done.
         std::shared_ptr<Field> field;    // the field members steer by (done or building)
+        // The route its members read (stage 5): the field's view, empty without one.
+        RouteView route() const {return field?field->view():RouteView();}
         // After a static change the finished field keeps steering (the mover
         // re-proves every step) while its replacement builds in `next`.
         std::shared_ptr<Field> next;
@@ -1580,9 +1552,9 @@ struct LegionNavigator::Impl {
         const uint32_t now=w.tickCounter_;
         for(auto& [id,g]:groups) {
             ++stats.groupLoopIters;
-            if(!g.soft||!g.field||!g.field->done||g.next||g.seeds.empty()||g.scanCount==0||g.scanCycle!=now/kStillScan)continue;
+            if(!g.soft||!g.route().complete()||g.next||g.seeds.empty()||g.scanCount==0||g.scanCycle!=now/kStillScan)continue;
             if(g.softReplanTick!=kNoTick&&now-g.softReplanTick<kSoftReplanCooldown)continue;
-            const Field& f=*g.field;
+            const RouteView f=g.route();
             const Plane& p=plane(g.plane);
             const int fx=p.footX,fz=p.footZ,foot=std::max(fx,fz);
             const uint64_t command=g.command;
@@ -1595,7 +1567,7 @@ struct LegionNavigator::Impl {
                 if(start<0||hit)continue;
                 int cell=start;
                 for(int k=0;k<kSoftChain&&!hit;++k) {
-                    const uint32_t v=f.at(size_t(cell));
+                    const uint32_t v=f.estimate(size_t(cell));
                     if(v==kUnreached||v<nearSeed)break;
                     const int x=cell%Wp,z=cell/Wp;
                     for(const auto& [formed,b]:softBlockList)
@@ -3386,7 +3358,7 @@ struct LegionNavigator::Impl {
             if(bucket.empty()) {++f.current;continue;}
             const int cell=bucket.back();bucket.pop_back();--f.queued;
             const int x=cell%W,z=cell/W;
-            const uint32_t g=f.at(x,z);
+            const uint32_t g=f.cellAt(x,z);
             if(g+f.heuristic(x,z)!=f.current)continue;   // stale entry
             const uint32_t open=steps(p,x,z);
             for(size_t k=0;k<kDirections.size();++k) {
@@ -3526,8 +3498,9 @@ struct LegionNavigator::Impl {
         static constexpr size_t kDemandCells=32;
         setWaited(g);
         for(auto& d:f.demand)if(d.first==cell) {d.second=std::max(d.second,margin);return;}
-        if(f.demand.size()>=kDemandCells)f.demand.erase(f.demand.begin());
+        if(f.demand.size()>=kDemandCells) {f.demand.erase(f.demand.begin());++acct.demandDropped;}
         f.demand.push_back({cell,margin});
+        acct.demandPeak=std::max<uint64_t>(acct.demandPeak,f.demand.size());
     }
     // Structure footprints as last stamped into the planes (id order).
     struct Stamp {
@@ -3917,7 +3890,7 @@ struct LegionNavigator::Impl {
         // any grounded or lift-home cell, and asks nothing.
         auto walk=[&](Unit* u,const Member& m,const Group& g,bool dry) {
             const auto& p=planes[size_t(g.plane)];
-            const Field* f=g.field&&g.field->usable()?g.field.get():nullptr;
+            const RouteView f=g.route().usable()?g.route():RouteView();
             const int fx=u->type->footX,fz=u->type->footZ;
             int x=footprintOrigin(u->x,fx),z=footprintOrigin(u->z,fz);
             const int gx=m.goal%W,gz=m.goal/W;
@@ -3961,11 +3934,11 @@ struct LegionNavigator::Impl {
                 int nx=x,nz=z;
                 while(r<m.route.size()&&m.route[r]==z*W+x)++r;
                 if(r<m.route.size()) {nx=m.route[r]%W;nz=m.route[r]/W;++r;}
-                else if(f&&f->inside(x,z)&&f->known(size_t(z*W+x))!=kUnreached) {
-                    uint32_t best=f->known(size_t(z*W+x));
+                else if(f&&f.inside(x,z)&&f.known(size_t(z*W+x))!=kUnreached) {
+                    uint32_t best=f.known(size_t(z*W+x));
                     for(const auto& d:kDirections) {
-                        if(!step(p,x,z,d[0],d[1])||!f->inside(x+d[0],z+d[1]))continue;
-                        const uint32_t v=f->known(size_t((z+d[1])*W+x+d[0]));
+                        if(!step(p,x,z,d[0],d[1])||!f.inside(x+d[0],z+d[1]))continue;
+                        const uint32_t v=f.known(size_t((z+d[1])*W+x+d[0]));
                         if(v<best) {best=v;nx=x+d[0];nz=z+d[1];}
                     }
                 } else {
@@ -4704,15 +4677,15 @@ struct LegionNavigator::Impl {
             const auto a=acc.find(id);
             std::vector<uint64_t> want;std::vector<Field::Corridor> seg;std::vector<uint8_t> kind;
             std::vector<int8_t> side;std::vector<uint32_t> placed;std::vector<uint8_t> moved;
-            if(a!=acc.end()&&a->second.n>=kAwareMembers&&g.field&&g.field->done&&!movers.empty()) {
+            if(a!=acc.end()&&a->second.n>=kAwareMembers&&g.route().complete()&&!movers.empty()) {
                 const auto& p=planes[size_t(g.plane)];
                 const int64_t n=a->second.n,cx=a->second.sx/n,cz=a->second.sz/n;
                 const int64_t rG=isqrtFloor(uint64_t(std::max<int64_t>(0,a->second.sq/n-cx*cx-cz*cz)))*3/2+16;
                 const int64_t speed=a->second.slow>0?a->second.slow:65536;
                 int c=nearestLegal(p,int(cx/16),int(cz/16));
-                if(c>=0&&g.field->at(size_t(c))!=kUnreached) {
+                if(c>=0&&g.route().estimate(size_t(c))!=kUnreached) {
                     std::vector<int> chain{c};
-                    for(int k=0;k<kAwareChain;++k) {const int next=descend(p,*g.field,chain.back()%W,chain.back()/W,chain.back());if(next<0)break;chain.push_back(next);}
+                    for(int k=0;k<kAwareChain;++k) {const int next=descend(p,g.route(),chain.back()%W,chain.back()/W,chain.back());if(next<0)break;chain.push_back(next);}
                     work+=chain.size();
                     const int64_t tx=(chain.back()%W)*16-cx,tz=(chain.back()/W)*16-cz;
                     // The way as arc lengths (px): an orthogonal step 16, a diagonal 23.
@@ -4910,7 +4883,7 @@ struct LegionNavigator::Impl {
                     for(size_t j=0;j<want.size();++j)if(want[j]==cmd[i])keep[i]=seg[j];
             }
             g.avoidCmd.swap(cmd);g.avoidSeg.swap(keep);g.avoidOff.swap(off);g.avoidKind.swap(cls);g.avoidSide.swap(sides);g.avoidAt.swap(ats);
-            if(replan&&g.field&&g.field->done) {
+            if(replan&&g.route().complete()) {
                 ++stats.awareReplans;if(!g.awareAt)g.awareAt=w.tickCounter_;
                 if(g.next&&!g.next->done)++stats.refreshDiscards;
                 g.next.reset();g.stale=true;g.demand=true;g.awareDemand=true;   // not a static change: refresh even if idle (C6)
@@ -5077,7 +5050,7 @@ struct LegionNavigator::Impl {
     // line and (with a field) lower on it: forward only, no field charge, no re-plan. Not inside
     // kPivotNear of the member's goal (the area packs it, as for the pinwheel). False: no aim (the
     // member keeps its own).
-    bool meetAim(const Unit& u,Member& m,const Plane& p,const Field* f,int ox,int oz,Fixed& aimX,Fixed& aimZ) {
+    bool meetAim(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz,Fixed& aimX,Fixed& aimZ) {
         const auto& mt=m.pt->meet;
         const int W=width();
         if(!mt.active)return false;
@@ -5097,7 +5070,7 @@ struct LegionNavigator::Impl {
         const int cx=footprintOrigin(tx,fx),cz=footprintOrigin(tz,fz);
         if(cx<0||cz<0||cx>=W||cz>=height()||!legal(p,cx,cz))return false;
         if(f) {
-            const uint32_t here=f->at(size_t(oz*W+ox)),there=f->at(size_t(cz*W+cx));
+            const uint32_t here=f.estimate(size_t(oz*W+ox)),there=f.estimate(size_t(cz*W+cx));
             if(there==kUnreached||(here!=kUnreached&&there>=here))return false;
         }
         // The line from this origin's centre to the aim origin's centre (memoised per origin pair: the
@@ -5731,9 +5704,9 @@ struct LegionNavigator::Impl {
     // OWN goal, then direction order. Plain first-found tie breaking pulled
     // bodies toward other members' goals and folded formations into a file.
     // Potential strictly decreases, so no step can cycle.
-    int descend(const Plane& p,const Field& f,int x,int z,int goal,int fx=0,int fz=0) const {
+    int descend(const Plane& p,RouteView f,int x,int z,int goal,int fx=0,int fz=0) const {
         const int W=width(),gx=goal%W,gz=goal/W;
-        const uint32_t here=f.at(x,z);
+        const uint32_t here=f.estimate(x,z);
         int best=-1;int64_t bestSlope=0,bestD=0;
         std::array<std::pair<int,int64_t>,8> down{};int count=0;
         const uint32_t open=steps(p,x,z);
@@ -5741,7 +5714,7 @@ struct LegionNavigator::Impl {
             const auto& d=kDirections[k];
             if(!(open>>k&1))continue;
             const int cell=(z+d[1])*W+x+d[0];
-            const uint32_t v=f.at(x+d[0],z+d[1]);
+            const uint32_t v=f.estimate(x+d[0],z+d[1]);
             if(v>=here)continue;
             const int64_t slope=int64_t(here-v)*(d[0]&&d[1]?kOrthogonal:kDiagonal);
             const int64_t dx=gx-x-d[0],dz=gz-z-d[1],dd=dx*dx+dz*dz;
@@ -5771,7 +5744,7 @@ struct LegionNavigator::Impl {
         auto& s=g.slots[seed];
         if(s.built)return s;
         s.built=true;
-        const Field& f=*g.field;
+        const RouteView f=g.route();
         const int W=width(),H=height(),sx=seed%W,sz=seed/W;
         const int foot=std::max(fx,fz);
         for(int radius=int(isqrtFloor(uint64_t(count)))*foot+2*foot+4,attempt=0;attempt<4;++attempt,radius*=2) {
@@ -5781,8 +5754,8 @@ struct LegionNavigator::Impl {
             stats.slotSearchCells+=uint64_t(x1-x0+1)*uint64_t(z1-z0+1);
             for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x) {
                 const int cell=z*W+x;
-                if(legal(p,x,z)&&f.at(size_t(cell))!=kUnreached&&(!s.stale||slotFree(m,cell,fx,fz)))
-                    order.push_back({f.at(size_t(cell)),cell});
+                if(legal(p,x,z)&&f.estimate(size_t(cell))!=kUnreached&&(!s.stale||slotFree(m,cell,fx,fz)))
+                    order.push_back({f.estimate(size_t(cell)),cell});
             }
             sortByPotential(order);
             const int bw=x1-x0+1+fx,bh=z1-z0+1+fz;
@@ -6000,9 +5973,9 @@ struct LegionNavigator::Impl {
         const Unit& u=*w.unit(list[pick].first);
         const Member& m=*list[pick].second;
         const auto group=groups.find(m.group);
-        if(group==groups.end()||!group->second.field||!group->second.field->done)return -1;
+        if(group==groups.end()||!group->second.route().complete())return -1;
         const Plane& p=plane(group->second.plane);
-        const Field& f=*group->second.field;
+        const RouteView f=group->second.route();
         const int fx=u.type->footX,fz=u.type->footZ;
         const int64_t radius=pt.limit/16;
         {   // Open ground: no search.
@@ -6012,7 +5985,7 @@ struct LegionNavigator::Impl {
             bool open=true;
             for(const auto& d:kDir) {
                 const int step=d[0]&&d[1]?D:R,x=sx+d[0]*step,z=sz+d[1]*step;
-                const uint32_t v=x>=0&&z>=0&&x<W&&z<height()?f.at(x,z):kUnreached;
+                const uint32_t v=x>=0&&z>=0&&x<W&&z<height()?f.estimate(x,z):kUnreached;
                 const int64_t ax=std::abs(int64_t(x-sx)),az=std::abs(int64_t(z-sz));
                 const int64_t octile=kOrthogonal*std::max(ax,az)+(kDiagonal-kOrthogonal)*std::min(ax,az);
                 if(v==kUnreached||int64_t(v)>octile+octile/4) {open=false;break;}
@@ -6020,7 +5993,7 @@ struct LegionNavigator::Impl {
             if(open)return -1;
         }
         int cell=footprintOrigin(u.z,fz)*W+footprintOrigin(u.x,fx);
-        if(!legal(p,cell%W,cell/W)||f.at(size_t(cell))==kUnreached)return -1;
+        if(!legal(p,cell%W,cell/W)||f.estimate(size_t(cell))==kUnreached)return -1;
         auto inside=[&](int c) {
             const int64_t cx=int64_t(c%W)*16+fx*8-px,cz=int64_t(c/W)*16+fz*8-pz;
             return cx*cx+cz*cz<=pt.limit*pt.limit;
@@ -6074,14 +6047,14 @@ struct LegionNavigator::Impl {
     // formationCell found it on: a ground body and a hovercraft of one footprint share the point, not their
     // slots); a body already through when it got its slot keeps it.
     void enterArea(const Unit& u,Member& m,const Group& g,Point& pt) {
-        if(m.entryState==2||!g.field||!g.field->done)return;
-        const Field& f=*g.field;
+        if(m.entryState==2||!g.route().complete())return;
+        const RouteView f=g.route();
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
-        const uint32_t pe=f.at(size_t(pt.entry));
+        const uint32_t pe=f.estimate(size_t(pt.entry));
         if(pe==kUnreached)return;
         const uint64_t edge=uint64_t(pe)+uint64_t(kEntryCells*kOrthogonal);
         auto outside=[&](const Unit& v) {
-            const uint32_t q=f.at(footprintOrigin(v.x,v.type->footX),footprintOrigin(v.z,v.type->footZ));
+            const uint32_t q=f.estimate(footprintOrigin(v.x,v.type->footX),footprintOrigin(v.z,v.type->footZ));
             return q!=kUnreached&&uint64_t(q)>edge;
         };
         if(outside(u)) {m.entryState=1;return;}
@@ -6449,7 +6422,7 @@ struct LegionNavigator::Impl {
     // engaged one that let its own spot go).
     bool ringFree(const Group& g,const Plane& p,int slot,int self=0) const {
         const int c=g.ring.cells[size_t(slot)],W=width();
-        if(g.ring.owner[size_t(slot)]||!legal(p,c%W,c/W)||!g.field||g.field->at(size_t(c))==kUnreached)return false;
+        if(g.ring.owner[size_t(slot)]||!legal(p,c%W,c/W)||!g.route()||g.route().estimate(size_t(c))==kUnreached)return false;
         return !self||!ringCovered(g,p,slot,self);
     }
     // The first claim hands every member a spot at once: the members nearest
@@ -6498,7 +6471,7 @@ struct LegionNavigator::Impl {
         // point seed: re-planning it to a ring then cost the battles a
         // refresh per target, measured +13-28% total Legion work.)
         if(g.ring.band0==0||m.slot>=0||m.state==Engaged)return;
-        if(!g.field||!g.field->done||g.field->seedKey!=seedsKey(g.seeds))return;
+        if(!g.route().complete()||g.field->seedKey!=seedsKey(g.seeds))return;
         if(!g.ring.assigned) {assignRing(g,p);return;}
         ringNearest(u,m,g,p,255);
     }
@@ -6559,7 +6532,7 @@ struct LegionNavigator::Impl {
         const auto sharing=g.sharing.find(m.requested);
         if(sharing==g.sharing.end()||sharing->second<2)return;
         auto& s=slotsFor(m,g,p,m.requested,sharing->second,u.type->footX,u.type->footZ);
-        const uint32_t potential=g.field->at(size_t(here));
+        const uint32_t potential=g.route().estimate(size_t(here));
         const int foot=std::max(u.type->footX,u.type->footZ);
         if(potential==kUnreached||potential>uint32_t(s.reach)+uint32_t(12*kOrthogonal*foot))return;
         const int W=width(),ux=here%W,uz=here/W;
@@ -6575,7 +6548,7 @@ struct LegionNavigator::Impl {
             // A slot a corpse, feature or structure now covers (or cut off)
             // is never claimed: claiming it would re-register this member
             // and claim it again, forever.
-            if(!legal(p,s.cells[i]%W,s.cells[i]/W)||g.field->at(size_t(s.cells[i]))==kUnreached)continue;
+            if(!legal(p,s.cells[i]%W,s.cells[i]/W)||g.route().estimate(size_t(s.cells[i]))==kUnreached)continue;
             const int64_t cx=s.cells[i]%W,cz=s.cells[i]/W;
             const int64_t score=(cx-seedX)*ax+(cz-seedZ)*az;
             const int64_t side=std::abs((cx-seedX)*az-(cz-seedZ)*ax);
@@ -6882,13 +6855,13 @@ struct LegionNavigator::Impl {
         // none is left in the region.
         if(!legal(p,m.goal%W,m.goal/W)&&!regoal(u,m,g,p,ox,oz)) {registerNow(u);w.brakeGround(u);return;}
         const int here=oz*W+ox;
-        const Field* f=g.field&&g.field->done?g.field.get():nullptr;
+        RouteView f=g.route().complete()?g.route():RouteView();
         if(f&&(m.state==Moving||m.state==Holding)) {
             // MV-05's probe of the group (see softBlocks).
             const uint32_t cycle=w.tickCounter_/kStillScan;
             if(g.scanCycle!=cycle) {g.scanCycle=cycle;g.scanSumX=g.scanSumZ=0;g.scanCount=0;g.scanTail=-1;g.scanTailPot=0;}
             g.scanSumX+=ox;g.scanSumZ+=oz;++g.scanCount;
-            if(const uint32_t v=f->at(size_t(here));v!=kUnreached&&(g.scanTail<0||v>g.scanTailPot)) {g.scanTail=here;g.scanTailPot=v;}
+            if(const uint32_t v=f.estimate(size_t(here));v!=kUnreached&&(g.scanTail<0||v>g.scanTailPot)) {g.scanTail=here;g.scanTailPot=v;}
         }
         if(f)claimSlot(u,m,g,p,here);
         // A first field still building already steers a body its frontier
@@ -6897,13 +6870,13 @@ struct LegionNavigator::Impl {
         else {
             // ... except on a paused first build (C1), where a member's slot
             // claim is its formation's hand-out only, which reads no potential.
-            if(g.field&&g.field->covered&&formationOnly(g,m))claimSlot(u,m,g,p,here);
-            if(g.field&&g.field->settled(size_t(here),g.field->at(size_t(here))))f=g.field.get();
+            if(g.route().paused()&&formationOnly(g,m))claimSlot(u,m,g,p,here);
+            if(g.route()&&g.route().settled(size_t(here)))f=g.route();
         }
         // A paused first build (see serve) resumes for a member whose cell
         // it has not settled with the cover margin: one that strayed off
         // the planned ground, joined late, or walks on toward the frontier.
-        if(g.field&&g.field->covered&&!g.field->done&&g.field->inside(ox,oz)) {
+        if(g.route().paused()&&g.route().inside(ox,oz)) {
             // A part that has grown strong enough to pinwheel (pivotAim
             // keeps `done`): the build runs on to done (see pausable).
             if(g.pausedSerial&&m.pt&&partRefs(m)>=kPivotMembers) {g.pausedSerial=0;listGroup(g);}
@@ -6918,7 +6891,7 @@ struct LegionNavigator::Impl {
         // steering this body by the old field, which cannot reach it. (A
         // refresh does finish under constant static churn, about every 85
         // ticks since the quarter-quota allowance, kRefreshQuota.)
-        if(g.field&&g.field->bounded&&!g.full&&(!g.field->inside(ox,oz)||(g.field->done&&g.field->at(size_t(here))==kUnreached))) {
+        if(const RouteView r=view(g.field.get());r&&r.bounded()&&!g.full&&(!r.inside(ox,oz)||(r.complete()&&r.estimate(size_t(here))==kUnreached))) {
             if(g.next&&!g.next->done)++stats.refreshDiscards;
             g.full=true;g.field.reset();g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);listGroup(g);
             m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
@@ -6937,7 +6910,7 @@ struct LegionNavigator::Impl {
         // over, so switching between two scales can neither fake a gain nor
         // hide one (it mixed potential x64 with squared cells).
         if(m.approach) {
-            const uint32_t left=f?f->at(size_t(here)):kUnreached;
+            const uint32_t left=f?f.estimate(size_t(here)):kUnreached;
             if(left==kUnreached) {m.gainBest=0xffffffffu;m.gainTick=w.tickCounter_;}
             else if(left<m.gainBest) {m.gainBest=left;m.gainTick=w.tickCounter_;}
             else if(w.tickCounter_-m.gainTick>=kApproachSettle&&(m.state==Holding||!m.route.empty()||m.detour>=0)&&
@@ -7023,19 +6996,19 @@ struct LegionNavigator::Impl {
         // detour rules keep the record they were tuned on (Member::nearest,
         // across both measures): its new lows restart the detour back-off.
         {
-            const uint32_t at=f?f->at(size_t(here)):kUnreached;
+            const uint32_t at=f?f.estimate(size_t(here)):kUnreached;
             const bool onField=at!=kUnreached&&at>0;
             const uint32_t left=uint32_t(std::min<int64_t>(0xfffffff,
                 onField?int64_t(at)*64:(int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz))));
             const uint8_t kind=onField?1:2;
-            const uint64_t serial=onField?f->serial:0;
+            const uint64_t serial=onField?f.metric():0;
             const bool fresh=m.progress!=0xffffffffu&&(kind!=m.progressKind||serial!=m.progressSerial);
-            const bool ontoSeed=fresh&&at==0&&m.headSerial==f->serial&&m.headBest>0;
+            const bool ontoSeed=fresh&&at==0&&m.headSerial==f.metric()&&m.headBest>0;
             if(fresh&&!ontoSeed) {m.progress=left;m.progressKind=kind;m.progressSerial=serial;}
             else if(ontoSeed||left<m.progress) {m.progress=left;m.progressKind=kind;m.progressSerial=serial;m.stallTick=w.tickCounter_;}
             if(left<m.nearest) {m.nearest=left;m.detourCount=0;}
             if(f) {
-                if(f->serial!=m.headSerial) {m.headSerial=f->serial;m.headBest=at;}
+                if(f.metric()!=m.headSerial) {m.headSerial=f.metric();m.headBest=at;}
                 else if(at<m.headBest) {m.headBest=at;m.headTick=w.tickCounter_;}
             }
             if(stalledFor(m)>=20&&contactArrival(u,m)) {complete(u,m,true);return;}
@@ -7051,8 +7024,8 @@ struct LegionNavigator::Impl {
             // refresh would give it the same way (guards queued at an idle
             // friend hold like this for good: staticidle).
             if(stalledFor(m)>=kBlockedRetry&&!giveWayHolder(m)&&
-               (!f||!f->usable()||f->known(size_t(here))==kUnreached||
-                (!freeDescent(u,g,p,*f,ox,oz)&&f->known(size_t(here))>areaBound(g,m,fx,fz,int64_t(std::max(fx,fz))*16)))) {
+               (!f||!f.usable()||f.known(size_t(here))==kUnreached||
+                (!freeDescent(u,g,p,f,ox,oz)&&f.known(size_t(here))>areaBound(g,m,fx,fz,int64_t(std::max(fx,fz))*16)))) {
                 if(w.tickCounter_-g.blockedTick>2)++stats.blockedRerequests;
                 g.blockedTick=w.tickCounter_;
             }
@@ -7086,12 +7059,12 @@ struct LegionNavigator::Impl {
         }
         // A ring member near its own spot walks to it: band 0 is all one
         // potential, and an outer spot lies up the field from band 0.
-        if(!direct&&f&&f->done&&ringMember(g,m)) {
-            const uint32_t ph=f->at(size_t(here)),pg=f->at(size_t(m.goal));
+        if(!direct&&f&&f.complete()&&ringMember(g,m)) {
+            const uint32_t ph=f.estimate(size_t(here)),pg=f.estimate(size_t(m.goal));
             if(ph!=kUnreached&&pg!=kUnreached&&uint32_t(ph)<=uint32_t(pg)+uint32_t(3*std::max(fx,fz)*kOrthogonal))direct=true;
         }
         if(!direct) {
-            if(!f||(f->at(size_t(here))==kUnreached&&f->bounded)) {
+            if(!f||(f.estimate(size_t(here))==kUnreached&&f.bounded())) {
                 setWaited(g);
                 // No field reaches this body yet: head toward the goal along
                 // a short proven straight segment (kHeadingCells) instead of
@@ -7106,21 +7079,21 @@ struct LegionNavigator::Impl {
                 }
                 m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
             }
-            const uint32_t potential=f->at(size_t(here));
+            const uint32_t potential=f.estimate(size_t(here));
             if(potential==kUnreached) {trapped(u,m);return;}
-            int cell=aimCell(u,m,p,*f,ox,oz);
+            int cell=aimCell(u,m,p,f,ox,oz);
             if(cell<0) {hold(u,m);return;}
             m.site=LegionNavigator::SiteField;
-            if(gInstrumentProbes&&f->done&&m.slot>=0&&m.pt&&m.vertexCell!=here&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
-                m.vertexCell=here;vertexInstrument(u,m,g,p,*f,ox,oz);
+            if(gInstrumentProbes&&f.complete()&&m.slot>=0&&m.pt&&m.vertexCell!=here&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
+                m.vertexCell=here;vertexInstrument(u,m,g,p,f,ox,oz);
             }
-            const bool lanes=f->done&&m.slot>=0&&m.pt&&partRefs(m)>=kPivotMembers&&formationMember(m);
+            const bool lanes=f.complete()&&m.slot>=0&&m.pt&&partRefs(m)>=kPivotMembers&&formationMember(m);
             if(!lanes)m.gateCell=-1;
-            else if(gateAim(u,m,g,p,*f,ox,oz,cell)) {pivoting=&m;pivotTarget=cell;m.site=LegionNavigator::SiteGate;}
+            else if(gateAim(u,m,g,p,f,ox,oz,cell)) {pivoting=&m;pivotTarget=cell;m.site=LegionNavigator::SiteGate;}
             // A livelocked body (Unit::legionShuffle, World::updateLegionStill)
             // walks down the field instead: its arc aim is what swapped.
             else if(m.pivotR>=0&&!livelock(u)) {
-                if(m.pivotCell!=here) {m.pivotCell=here;m.pivotAim=pivotAim(u,m,p,*f,ox,oz);}
+                if(m.pivotCell!=here) {m.pivotCell=here;m.pivotAim=pivotAim(u,m,p,f,ox,oz);}
                 if(m.pivotAim>=0) {cell=m.pivotAim;pivoting=&m;pivotTarget=cell;m.site=LegionNavigator::SitePivot;}
             }
             aimX=centre(cell%W,fx);aimZ=centre(cell/W,fz);
@@ -7129,11 +7102,11 @@ struct LegionNavigator::Impl {
         // place until it is clear of the far end, over its straight walk, the field and the pinwheel (a
         // gate-committed member aims at its gate point until it crosses the gate line). A blocked step
         // flows round toward the lane's cell, as round an arc point.
-        if(here!=m.goal&&f&&f->done&&m.slot>=0&&m.pt&&!engagesEnemies(m.kind)&&
+        if(here!=m.goal&&f&&f.complete()&&m.slot>=0&&m.pt&&!engagesEnemies(m.kind)&&
            (m.site==LegionNavigator::SiteDirect||m.site==LegionNavigator::SiteField||m.site==LegionNavigator::SitePivot)&&
            partRefs(m)>=kPivotMembers&&formationMember(m)) {
             int lane=-1;
-            if(passageLane(u,m,p,*f,ox,oz,lane)) {
+            if(passageLane(u,m,p,f,ox,oz,lane)) {
                 aimX=centre(lane%W,fx);aimZ=centre(lane/W,fz);
                 pivoting=&m;pivotTarget=lane;direct=false;m.site=LegionNavigator::SiteGate;
             }
@@ -7153,12 +7126,12 @@ struct LegionNavigator::Impl {
     // on one field and plane (the field is finished, the plane changes only
     // with the static epoch), so a held body reuses its last answer: the
     // descent and line sweeps were the largest share of a held update.
-    int aimCell(const Unit& u,Member& m,const Plane& p,const Field& f,int ox,int oz) {
+    int aimCell(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz) {
         auto& a=m.aim;
         // A paused build is fixed while its work count stands (a resumed
         // build lowers tentative potentials the descent may read).
-        const bool memo=f.usable()&&f.serial;
-        if(memo&&a.x==u.x.v&&a.z==u.z.v&&a.goal==m.goal&&a.type==u.type&&a.field==f.serial&&a.epoch==epoch&&a.work==f.work)
+        const bool memo=f.usable()&&f.metric();
+        if(memo&&a.x==u.x.v&&a.z==u.z.v&&a.goal==m.goal&&a.type==u.type&&a.field==f.metric()&&a.epoch==epoch&&a.work==f.version())
             return a.cell;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int goalX=m.goal%W,goalZ=m.goal/W;
@@ -7205,7 +7178,7 @@ struct LegionNavigator::Impl {
             }
 #endif
         }
-        if(memo)a={u.x.v,u.z.v,m.goal,u.type,f.serial,epoch,f.work,cell};
+        if(memo)a={u.x.v,u.z.v,m.goal,u.type,f.metric(),epoch,f.version(),cell};
         return cell;
     }
     // ---- W8 (PLAN 3.2 T2): obstacle clearance and the visible vertex ----
@@ -7284,8 +7257,8 @@ struct LegionNavigator::Impl {
         const int n=peak==g.peak.end()?1:peak->second;
         if(n<=1||m.requested<0) {out=uint32_t((body+4)*kOrthogonal/16);return true;}
         const auto it=g.areaBounds.find(m.requested);
-        if(it==g.areaBounds.end()||!g.field||!g.field->done)return false;
-        if(it->second.first!=g.field->serial||it->second.second.first!=n)return false;
+        if(it==g.areaBounds.end()||!g.route().complete())return false;
+        if(it->second.first!=g.route().metric()||it->second.second.first!=n)return false;
         out=it->second.second.second;return true;
     }
     // Is every soft body covering the footprint at origin (x,z) an Engaged (ring) body of `command`?
@@ -7377,7 +7350,7 @@ struct LegionNavigator::Impl {
     // past the body's own cell is visible (3).
     struct Vertex {int v=-1,at=-1,n=0,side=0;uint8_t code=0;};
     template<size_t N>
-    Vertex vertexProbe(const Unit& u,const Member& m,const Plane& p,const Field& f,int ox,int oz,uint64_t command,int counts,
+    Vertex vertexProbe(const Unit& u,const Member& m,const Plane& p,RouteView f,int ox,int oz,uint64_t command,int counts,
                        std::array<int,N>& chain,uint64_t& work) const {
         static_assert(N>=size_t(kVertexChain)+1);
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
@@ -7403,7 +7376,7 @@ struct LegionNavigator::Impl {
         }
         out.at=lo;out.v=chain[size_t(lo)];
         if(lo==0) {out.code=3;return out;}
-        if(f.at(size_t(out.v))<kLaneNear*kOrthogonal) {out.code=2;return out;}
+        if(f.estimate(size_t(out.v))<kLaneNear*kOrthogonal) {out.code=2;return out;}
         const int b=chain[size_t(std::min(lo+6,n-1))];
         const int64_t ax=out.v%W-ox,az=out.v/W-oz,bx=b%W-out.v%W,bz=b/W-out.v/W;
         const int64_t cross=ax*bz-az*bx;
@@ -7415,7 +7388,7 @@ struct LegionNavigator::Impl {
     // the line-sweep and trace counters (they are not steering work). Run
     // only while the instrument probes are on (setInstrumentProbes): in the
     // game it was 4-7% of a 10,000-body tick for counters nobody reads.
-    void vertexInstrument(const Unit& u,const Member& m,const Group& g,const Plane& p,const Field& f,int ox,int oz) {
+    void vertexInstrument(const Unit& u,const Member& m,const Group& g,const Plane& p,RouteView f,int ox,int oz) {
         const int fx=u.type->footX,fz=u.type->footZ;
         const uint64_t sweeps=stats.lineSweeps,cells=stats.traceCells;
         const uint64_t command=g.soft?g.command:kNoSoft;
@@ -7423,7 +7396,7 @@ struct LegionNavigator::Impl {
         uint64_t work=0;
         std::array<int,kVertexChain+1> chain{};
         // Only members far from the destination count (kLaneNear twice over).
-        if(f.at(size_t(oz*width()+ox))<2*kLaneNear*kOrthogonal)return;
+        if(f.estimate(size_t(oz*width()+ox))<2*kLaneNear*kOrthogonal)return;
         const Vertex v=vertexProbe(u,m,p,f,ox,oz,command,counts,chain,work);
         if(v.code==0) {
             // The clearance at the look-ahead cell past V (the "already clear"
@@ -7501,7 +7474,7 @@ struct LegionNavigator::Impl {
     // strips of one lane and gates within kLaneNear of the destination are
     // left to the field and its lane grid; the pinwheel's look-ahead still
     // ends at such a strip.
-    bool gateCommit(const Unit& u,Member& m,const Group& g,const Plane& p,const Field& f,int ox,int oz) {
+    bool gateCommit(const Unit& u,Member& m,const Group& g,const Plane& p,RouteView f,int ox,int oz) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
         const int band=laneBand(m,foot);
         // Every check before the soft bodies reads only the static plane, the
@@ -7509,9 +7482,9 @@ struct LegionNavigator::Impl {
         // origin, footprint and band: the same inputs give the same static
         // decline (see Member::gateMemo). TAK_LEGION_VERIFY recomputes a hit.
         auto& gm=m.gateMemo;
-        const bool memo=f.done&&f.serial!=0;
+        const bool memo=f.complete()&&f.metric()!=0;
         const bool memoHit=memo&&gm.valid&&gm.ox==ox&&gm.oz==oz&&gm.goal==m.goal&&gm.band==band&&gm.type==u.type&&
-            gm.field==f.serial&&gm.epoch==epoch&&gm.planeEpoch==p.epoch;
+            gm.field==f.metric()&&gm.epoch==epoch&&gm.planeEpoch==p.epoch;
 #ifndef NDEBUG
         if(memoHit&&!gVerify)return false;
 #else
@@ -7535,14 +7508,14 @@ struct LegionNavigator::Impl {
         auto declined=[&](const char* why) {
             if(!traced(u.id)||m.dbgGateWhy==why)return false;
             m.dbgGateWhy=why;
-            std::fprintf(stderr,"TRACE t=%u u=%d gate-declined: %s at=(%d,%d) potential=%u\n",w.tickCounter_,u.id,why,ox,oz,unsigned(f.at(size_t(oz*W+ox))));
+            std::fprintf(stderr,"TRACE t=%u u=%d gate-declined: %s at=(%d,%d) potential=%u\n",w.tickCounter_,u.id,why,ox,oz,unsigned(f.estimate(size_t(oz*W+ox))));
             return false;
         };
 #else
         auto declined=[&](const char*) {return false;};
 #endif
         auto staticDecline=[&](const char* why) {
-            if(memo)gm={ox,oz,m.goal,band,u.type,f.serial,epoch,p.epoch,true};
+            if(memo)gm={ox,oz,m.goal,band,u.type,f.metric(),epoch,p.epoch,true};
             return declined(why);
         };
         if(gateStrip(gateSpan(p,chain.data(),n,0,fx,fz),band))return staticDecline("inside a strip");
@@ -7572,7 +7545,7 @@ struct LegionNavigator::Impl {
         const int G=chain[size_t(best)],gx=G%W,gz=G/W;
         if(!exits)return staticDecline("strip does not end within kGateRun (a corridor)");
         if(length<2||!bs.sign)return staticDecline("strip shorter than two cells");
-        if(f.at(size_t(G))<kLaneNear*kOrthogonal)return staticDecline("gate within kLaneNear of the destination");
+        if(f.estimate(size_t(G))<kLaneNear*kOrthogonal)return staticDecline("gate within kLaneNear of the destination");
         // Not when the member is already at or past the gate line.
         if(((bs.axis==0?oz-gz:ox-gx)*bs.sign)>=0)return staticDecline("already at or past the gate line");
 #ifndef NDEBUG
@@ -7666,7 +7639,7 @@ struct LegionNavigator::Impl {
     // A committed member aims at its gate point while it is in a straight
     // legal line (otherwise the field and the pinwheel steer, the gate kept);
     // false when it has none.
-    bool gateAim(const Unit& u,Member& m,const Group& g,const Plane& p,const Field& f,int ox,int oz,int& cell) {
+    bool gateAim(const Unit& u,Member& m,const Group& g,const Plane& p,RouteView f,int ox,int oz,int& cell) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         if(m.gateCell>=0) {
             const int gx=m.gateCell%W,gz=m.gateCell/W;
@@ -7708,9 +7681,9 @@ struct LegionNavigator::Impl {
     // against a face: the stray rocks along the corner fixtures' wall). Not within kLaneNear of the
     // destination, where the area's own rules place the bodies. Static reads, the field and the member's goal
     // only: no state. The checks past the first cross-section count with the gate's lane_work.
-    bool passageLane(const Unit& u,const Member& m,const Plane& p,const Field& f,int ox,int oz,int& cell) {
+    bool passageLane(const Unit& u,const Member& m,const Plane& p,RouteView f,int ox,int oz,int& cell) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
-        const uint32_t here=f.at(size_t(oz*W+ox));
+        const uint32_t here=f.estimate(size_t(oz*W+ox));
         if(here==kUnreached||here<uint32_t(kLaneNear*kOrthogonal))return false;
         const int band=laneBand(m,std::max(fx,fz));
         // Legal origins beside (x,z) across axis 1 (z: a passage along x) or 0 (x: along z).
@@ -7770,7 +7743,7 @@ struct LegionNavigator::Impl {
         if(length<2||length>kGateRun)return false;
         const auto [ax,az]=at(run[0]);
         const auto [bx,bz]=at(-run[1]);
-        const uint32_t pa=f.at(size_t(az*W+ax)),pb=f.at(size_t(bz*W+bx));
+        const uint32_t pa=f.estimate(size_t(az*W+ax)),pb=f.estimate(size_t(bz*W+bx));
         if(pa==pb||std::min(pa,pb)==kUnreached)return false;
         const int sign=pa<pb?1:-1,reach=pa<pb?run[0]:run[1];
         if(way!=sign)return false;
@@ -7875,10 +7848,10 @@ struct LegionNavigator::Impl {
     // arc shrinks cell by cell to what is free, so a gap folds the outer
     // files inward, down to the field's own passage lanes and single file.
     // Bounded work; recomputed when the body changes origin.
-    int pivotAim(const Unit& u,Member& m,const Plane& p,const Field& f,int ox,int oz) {
+    int pivotAim(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
         const int here=oz*W+ox;
-        const uint32_t level=f.at(size_t(here));
+        const uint32_t level=f.estimate(size_t(here));
         if(level==kUnreached)return -1;
         std::array<int,kPivotChain+1> chain{};int n=0;chain[size_t(n++)]=here;
         while(n<=kPivotChain) {
@@ -7919,7 +7892,7 @@ struct LegionNavigator::Impl {
         int narrowTests=0;
         for(int i=touch;i<n;++i) {
             ++narrowTests;
-            if(narrow(i)||f.at(size_t(chain[size_t(i)]))<kPivotNear*kOrthogonal) {n=i;break;}
+            if(narrow(i)||f.estimate(size_t(chain[size_t(i)]))<kPivotNear*kOrthogonal) {n=i;break;}
         }
         stats.pivotWork+=uint64_t(narrowTests);   // W8 step 0
         if(touch>=n)return -1;
@@ -8024,7 +7997,7 @@ struct LegionNavigator::Impl {
             // nearest legal origin short of it.
             auto open=[&](int64_t k) {
                 const int x=cx+int(nx*k/len),z=cz+int(nz*k/len);
-                return legal(p,x,z)?f.at(size_t(z)*W+x)!=kUnreached:!wallOrigin(p,x,z);
+                return legal(p,x,z)?f.estimate(size_t(z)*W+x)!=kUnreached:!wallOrigin(p,x,z);
             };
             int64_t r=0;
             while(r<R&&open(r+1))++r;
@@ -8060,7 +8033,7 @@ struct LegionNavigator::Impl {
     // lanes instead of meeting nose to nose and holding. It repeats while
     // the lane ahead still holds oncoming bodies; same-direction bodies
     // ahead are followed, never passed. Returns whether a step was committed.
-    bool passAhead(Unit& u,Member& m,const Plane& p,const Field* f,Fixed maximum,int ox,int oz,Fixed aimX,Fixed aimZ,bool direct) {
+    bool passAhead(Unit& u,Member& m,const Plane& p,RouteView f,Fixed maximum,int ox,int oz,Fixed aimX,Fixed aimZ,bool direct) {
         const int64_t ax=int64_t(aimX.v)-u.x.v,az=int64_t(aimZ.v)-u.z.v;
         const int64_t aax=std::abs(ax),aaz=std::abs(az);
         if(!aax&&!aaz)return false;
@@ -8071,7 +8044,7 @@ struct LegionNavigator::Impl {
         // there only displaces them.
         if(std::max(std::abs(m.goal%W-ox),std::abs(m.goal/W-oz))<=2*kPassCells)return false;
         const int rx=-dz,rz=dx;
-        const uint32_t here=f?f->at(size_t(oz*W+ox)):kUnreached;
+        const uint32_t here=f?f.estimate(size_t(oz*W+ox)):kUnreached;
         const std::array<std::array<int,2>,2> options{{{std::clamp(dx+rx,-1,1),std::clamp(dz+rz,-1,1)},{rx,rz}}};
         // The lane scan only decides between the two outcomes below. When
         // neither can commit a step -- no pass cell is open (a body in a
@@ -8096,7 +8069,7 @@ struct LegionNavigator::Impl {
         auto passOpen=[&](const std::array<int,2>& d) {
             if(!d[0]&&!d[1])return false;
             const int cell=(oz+d[1])*W+ox+d[0];
-            if(f&&(f->at(size_t(cell))==kUnreached||(!direct&&f->at(size_t(cell))>uint64_t(here)+kDiagonal)))return false;
+            if(f&&(f.estimate(size_t(cell))==kUnreached||(!direct&&f.estimate(size_t(cell))>uint64_t(here)+kDiagonal)))return false;
             return mayStep(d[0],d[1]);
         };
         const bool laneHeld=direct&&m.passUntil>w.tickCounter_;
@@ -8185,7 +8158,7 @@ struct LegionNavigator::Impl {
             const int cell=(oz+d[1])*W+ox+d[0];
             // Never onto an unreachable cell; a field follower also may not
             // climb more than a diagonal step of potential.
-            if(f&&(f->at(size_t(cell))==kUnreached||(!direct&&f->at(size_t(cell))>uint64_t(here)+kDiagonal)))continue;
+            if(f&&(f.estimate(size_t(cell))==kUnreached||(!direct&&f.estimate(size_t(cell))>uint64_t(here)+kDiagonal)))continue;
             if(!stepFree(u,ox,oz,ox+d[0],oz+d[1]))continue;
             ++stats.slides;
             // A pass made with the lane ahead nearly clear is a committed
@@ -8212,7 +8185,7 @@ struct LegionNavigator::Impl {
     // A livelock (World::updateLegionStill): the body stands by its net
     // headway although it went on stepping or turning to and fro.
     static bool livelock(const Unit& u) {return u.legionShuffle;}
-    void drive(Unit& u,Member& m,const Plane& p,const Field* f,Fixed maximum,Fixed aimX,Fixed aimZ,bool final,
+    void drive(Unit& u,Member& m,const Plane& p,RouteView f,Fixed maximum,Fixed aimX,Fixed aimZ,bool final,
                bool towardGoal=false,bool face=true,bool pass=false) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
@@ -8332,14 +8305,14 @@ struct LegionNavigator::Impl {
                 auto metric=[&](int x,int z)->int64_t {
                     if(arc)return int64_t(arcX-x)*(arcX-x)+int64_t(arcZ-z)*(arcZ-z);
                     if(towardGoal)return int64_t(goalX-x)*(goalX-x)+int64_t(goalZ-z)*(goalZ-z);
-                    return f->at(size_t(z*W+x));
+                    return f.estimate(size_t(z*W+x));
                 };
                 const int64_t here=metric(ox,oz);
                 std::array<std::pair<int64_t,int>,8> options{};int count=0;
                 for(int k=0;k<8;++k) {
                     const auto& d=kDirections[size_t(k)];
                     if(!step(p,ox,oz,d[0],d[1]))continue;
-                    if(f->at(size_t((oz+d[1])*W+ox+d[0]))==kUnreached)continue;
+                    if(f.estimate(size_t((oz+d[1])*W+ox+d[0]))==kUnreached)continue;
                     // A body that just moved over for oncoming traffic does
                     // not edge back across the lane it left. (W8 step 5, S4,
                     // released this after 6 held updates when the lane's
@@ -8375,7 +8348,7 @@ struct LegionNavigator::Impl {
             if(!moved&&corner)moved=cornerStep();
             if(!moved) {
                 if(contactRefused!=&m&&contactArrival(u,m)) {complete(u,m,true);return;}
-                if(f&&m.detour<0)sidestep(u,m,p,*f,ox,oz,nx,nz);
+                if(f&&m.detour<0)sidestep(u,m,p,f,ox,oz,nx,nz);
                 // A body walled in by STILL bodies (settled arrivals, a held
                 // queue, idle units) plans a short committed detour around
                 // them; moving traffic is waited for, not planned around.
@@ -8451,14 +8424,14 @@ struct LegionNavigator::Impl {
     // statically legal origins whose footprint touches no STILL body. The
     // target is the own goal if inside, else the reachable cell that most
     // reduces the distance still to go. The route is committed.
-    bool localDetour(const Unit& u,Member& m,const Plane& p,const Field* f,bool towardGoal) {
+    bool localDetour(const Unit& u,Member& m,const Plane& p,RouteView f,bool towardGoal) {
         constexpr int R=kDetourCells,S=2*R+1;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
         const int goalX=m.goal%W,goalZ=m.goal/W;
         auto metric=[&](int x,int z)->int64_t {
             if(!towardGoal&&f) {
-                const uint32_t v=f->at(size_t(z*W+x));
+                const uint32_t v=f.estimate(size_t(z*W+x));
                 return v==kUnreached?INT64_MAX:int64_t(v)*64;
             }
             return int64_t(goalX-x)*(goalX-x)+int64_t(goalZ-z)*(goalZ-z);
@@ -8518,7 +8491,7 @@ struct LegionNavigator::Impl {
     // Opposing traffic: after a short hold, both bodies commit to a lateral
     // step to their own right (keep-right), so head-on pairs pass instead
     // of pushing. Same-direction queues only side-step after a long hold.
-    void sidestep(const Unit& u,Member& m,const Plane& p,const Field& f,int ox,int oz,int nx,int nz) {
+    void sidestep(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz,int nx,int nz) {
         if(m.holdUpdates<6)return;
         const int W=width();
         int blocker=0;
@@ -8555,13 +8528,13 @@ struct LegionNavigator::Impl {
         int dx=nx-ox,dz=nz-oz;
         if(!dx&&!dz)return;
         dx=std::clamp(dx,-1,1);dz=std::clamp(dz,-1,1);
-        const uint32_t here=f.at(size_t(oz*W+ox));
+        const uint32_t here=f.estimate(size_t(oz*W+ox));
         const std::array<std::array<int,2>,2> sides{{{-dz,dx},{dz,-dx}}};
         for(int k=0;k<1;++k) {
             const int sx=sides[size_t(k)][0],sz=sides[size_t(k)][1];
             if(!step(p,ox,oz,sx,sz))continue;
             const int cell=(oz+sz)*W+ox+sx;
-            if(f.at(size_t(cell))>uint64_t(here)+kDiagonal)continue;
+            if(f.estimate(size_t(cell))>uint64_t(here)+kDiagonal)continue;
             if(!stepFree(u,ox,oz,ox+sx,oz+sz))continue;
             m.detour=cell;m.detourTicks=0;m.detourFace=false;m.detourPass=false;return;
         }
@@ -8622,11 +8595,11 @@ struct LegionNavigator::Impl {
         // A paused first build serves too: every potential read here and in
         // pressed, areaBound and rechoose goes through known(), so an
         // unsettled cell reads as unreached.
-        const Field* f=g.field&&g.field->usable()?g.field.get():nullptr;
+        const RouteView f=g.route().usable()?g.route():RouteView();
         if(!f)return false;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
         const int64_t body=int64_t(foot)*16;
-        const uint32_t potential=f->known(size_t(oz*W+ox));
+        const uint32_t potential=f.known(size_t(oz*W+ox));
         if(potential==kUnreached)return false;
         const int64_t px=int64_t(std::get<2>(m.point)),pz=int64_t(std::get<3>(m.point));
         const bool area=policy(m.kind).area,waypoint=policy(m.kind).passThrough;
@@ -8658,7 +8631,7 @@ struct LegionNavigator::Impl {
             uint32_t lo=kUnreached,hi=0;
             for(int z=std::max(0,bz-fz/2);z<=std::min(height()-1,bz+bfz-(fz+1)/2);++z)
                 for(int x=std::max(0,bx-fx/2);x<=std::min(W-1,bx+bfx-(fx+1)/2);++x)
-                    if(const uint32_t v=f->known(size_t(z*W+x));v!=kUnreached) {lo=std::min(lo,v);hi=std::max(hi,v);}
+                    if(const uint32_t v=f.known(size_t(z*W+x));v!=kUnreached) {lo=std::min(lo,v);hi=std::max(hi,v);}
             const Spread s{other.id,lo,lo==kUnreached?kUnreached:uint32_t((uint64_t(lo)+hi)/2)};
             if(spreadN<spreads.size())spreads[spreadN++]=s;
             return s;
@@ -8673,7 +8646,7 @@ struct LegionNavigator::Impl {
             if(!sameFootprint(other)) {const uint32_t lo=spread(other).lo;return lo!=kUnreached&&lo<potential;}
             const int qx=footprintOrigin(other.x,fx),qz=footprintOrigin(other.z,fz);
             if(qx>=0&&qz>=0&&qx<W&&qz<height()) {
-                const uint32_t q=f->known(size_t(qz*W+qx));
+                const uint32_t q=f.known(size_t(qz*W+qx));
                 if(q!=kUnreached)return q<potential;
             }
             const int64_t dx=(int64_t(other.x.v)-px)>>16,dz=(int64_t(other.z.v)-pz)>>16;
@@ -8709,7 +8682,7 @@ struct LegionNavigator::Impl {
                     uint32_t q=kUnreached;
                     if(!sameFootprint(*other))q=spread(*other).mid;
                     else if(const int qx=footprintOrigin(other->x,fx),qz=footprintOrigin(other->z,fz);qx>=0&&qz>=0&&qx<W&&qz<height())
-                        q=f->known(size_t(qz*W+qx));
+                        q=f.known(size_t(qz*W+qx));
                     if(q!=kUnreached&&(front==kUnreached||q>front))front=q;
                 }
             } else if(other->orders.empty())foreign=true;
@@ -8730,7 +8703,7 @@ struct LegionNavigator::Impl {
         // point returns an empty route: 0x200, and the mission handler
         // decides (build within reach, or give up). That body counts as a
         // foreign crowd, so complete raises the same event.
-        if(stranger&&!foreign&&policy(m.kind).exact&&pressed(u,p,*f,ox,oz,potential))foreign=true;
+        if(stranger&&!foreign&&policy(m.kind).exact&&pressed(u,p,f,ox,oz,potential))foreign=true;
         // The chain's first link: a shared point's member standing inside
         // the destination area itself is at the crowd.
         if(area&&!queued&&!foreign&&shared(g,m)&&potential<=areaBound(g,m,fx,fz,body))queued=true;
@@ -8743,7 +8716,7 @@ struct LegionNavigator::Impl {
 #ifndef NDEBUG
         if(area&&(m.dbgRefusedWin&3)==3&&!shared(g,m)&&m.stillSince!=kNoTick&&w.tickCounter_-m.stillSince>=2*kCrowdWindow) {
             StatsFence fence(stats);
-            if(pressed(u,p,*f,ox,oz,potential))++census.a2Seal;
+            if(pressed(u,p,f,ox,oz,potential))++census.a2Seal;
         }
         if(traced(u.id)) {
             uint32_t ab=0;const bool have=peekAreaBound(g,m,body,ab);
@@ -8757,7 +8730,7 @@ struct LegionNavigator::Impl {
         if(!queued&&!foreign)return false;
         // Soft obstacles (an idle crowd standing there) charge kSoftFactor
         // per step in a softened field.
-        const int64_t factor=f->softened?kSoftFactor:1;
+        const int64_t factor=f.softened()?kSoftFactor:1;
         auto connected=[&](int64_t d) {return int64_t(potential)<=factor*((d*kDiagonal)/16+int64_t(3*foot*kOrthogonal));};
         const int64_t reach=settleReach(m,body);
         if(foreign&&dist<=reach&&connected(dist)&&!inExitLane(u,body))return true;
@@ -8768,7 +8741,7 @@ struct LegionNavigator::Impl {
         // steering, toward its slot, takes no step, or steps to and fro)
         // re-chooses its slot, and once its re-choices are spent it counts
         // as pressed.
-        const bool press=pressed(u,p,*f,ox,oz,potential);
+        const bool press=pressed(u,p,f,ox,oz,potential);
 #ifndef NDEBUG
         if(!press&&m.stillSince!=kNoTick&&w.tickCounter_-m.stillSince>=2*kCrowdWindow) {
             uint32_t ab=0;
@@ -8788,7 +8761,7 @@ struct LegionNavigator::Impl {
         // (liftflyers' open run: 8 cells sideways); it settles here instead.
         if(m.rechoices<kRechoices&&m.goal!=oz*W+ox) {
             ++m.rechoices;
-            if(rechoose(u,m,g,p,*f,potential)||!press)return false;
+            if(rechoose(u,m,g,p,f,potential)||!press)return false;
         }
         const uint32_t grow=uint32_t(kSettleGrow*foot*kOrthogonal),slack=uint32_t(kSettleSlack*foot*kOrthogonal);
         // C29, measured along the queue: no completion farther from the click
@@ -8843,7 +8816,7 @@ struct LegionNavigator::Impl {
     // the group's command, whoever moves through it now (see move's B1 test:
     // a body held only on such a way is held by bodies a re-plan does not
     // plan round -- its own, or movers -- and a refresh would not help it).
-    bool freeDescent(const Unit& u,const Group& g,const Plane& p,const Field& f,int ox,int oz) {
+    bool freeDescent(const Unit& u,const Group& g,const Plane& p,RouteView f,int ox,int oz) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const uint32_t potential=f.known(size_t(oz*W+ox));
         const uint64_t command=g.soft?g.command:kNoSoft;
@@ -8857,7 +8830,7 @@ struct LegionNavigator::Impl {
     }
     // Pressed: no neighbour origin nearer the point (lower potential) that
     // the body could step into now.
-    bool pressed(const Unit& u,const Plane& p,const Field& f,int ox,int oz,uint32_t potential) const {
+    bool pressed(const Unit& u,const Plane& p,RouteView f,int ox,int oz,uint32_t potential) const {
         const int W=width();
         for(const auto& d:kDirections) {
             if(!step(p,ox,oz,d[0],d[1]))continue;
@@ -8936,10 +8909,10 @@ struct LegionNavigator::Impl {
     // origin `seed` by field potential (packed as slotsFor packs slots), cached
     // in `cached` per field serial and n.
     uint32_t packedBound(Group& g,std::pair<uint64_t,std::pair<int,uint32_t>>& cached,int seed,int n,int fx,int fz) {
-        const Field& f=*g.field;
+        const RouteView f=g.route();
         // A paused build (C1) reads settled cells only and is not cached:
         // it settles more cells when it resumes.
-        if(f.done&&cached.first==f.serial&&cached.second.first==n)return cached.second.second;
+        if(f.complete()&&cached.first==f.metric()&&cached.second.first==n)return cached.second.second;
         const int count=(5*n+3)/4;
         const int W=width(),H=height(),sx=seed%W,sz=seed/W,foot=std::max(fx,fz);
         uint32_t bound=0;
@@ -8966,7 +8939,7 @@ struct LegionNavigator::Impl {
             }
             if(packed>=count)break;
         }
-        if(f.done)cached={f.serial,{n,bound}};
+        if(f.complete())cached={f.metric(),{n,bound}};
         return bound;
     }
     // Re-choice (C2, C28): the free slot of this member's destination it can
@@ -8976,7 +8949,7 @@ struct LegionNavigator::Impl {
     // lowest slot index. Formation points take any free cell of the area;
     // packed points their free packed slots. Returns whether it took one.
     std::vector<uint32_t> rcSeen;uint32_t rcGen=0;std::vector<int> rcQueue;   // rechoose's scratch (see there)
-    bool rechoose(const Unit& u,Member& m,Group& g,const Plane& p,const Field& f,uint32_t potential) {
+    bool rechoose(const Unit& u,Member& m,Group& g,const Plane& p,RouteView f,uint32_t potential) {
         if(m.requested<0||m.approach)return false;
         Point* pt=m.pt;
         if(!pt) {auto found=points.find(m.point);pt=found==points.end()?nullptr:&found->second;}
@@ -9417,11 +9390,11 @@ int LegionNavigator::laneGeometryCheck(const Unit& u,int queries,uint64_t seed,s
     for(const auto& [id,m]:I.members) {
         const Unit* v=I.w.unit(id);
         const auto group=I.groups.find(m.group);
-        if(!v||!v->type||group==I.groups.end()||!group->second.field||!group->second.field->done)continue;
-        const auto& g=group->second;const auto& f=*g.field;
+        if(!v||!v->type||group==I.groups.end()||!group->second.route().complete())continue;
+        const auto& g=group->second;const RouteView f=g.route();
         const auto& vp=I.plane(g.plane);
         const int vx=footprintOrigin(v->x,v->type->footX),vz=footprintOrigin(v->z,v->type->footZ);
-        if(f.at(size_t(vz)*W+vx)==kUnreached)continue;
+        if(f.estimate(size_t(vz)*W+vx)==kUnreached)continue;
         const uint64_t command=g.soft?g.command:Impl::kNoSoft;
         const int vc=!I.softCellCount?-1:I.softCountsFor(v->type->footX,v->type->footZ);
         std::array<int,kVertexChain+1> chain{};
@@ -9543,9 +9516,9 @@ int LegionNavigator::fieldPotential(int id,int x,int z) const {
     const auto found=impl_->members.find(id);
     if(found==impl_->members.end())return -1;
     const auto group=impl_->groups.find(found->second.group);
-    if(group==impl_->groups.end()||!group->second.field||!group->second.field->done)return -1;
+    if(group==impl_->groups.end()||!group->second.route().complete())return -1;
     if(x<0||z<0||x>=impl_->width()||z>=impl_->height())return -1;
-    const uint32_t v=group->second.field->at(size_t(z)*impl_->width()+x);
+    const uint32_t v=group->second.route().estimate(size_t(z)*impl_->width()+x);
     return v==kUnreached?INT_MAX:int(v);
 }
 LegionNavigator::SlotShape LegionNavigator::slotShape(int id) const {
