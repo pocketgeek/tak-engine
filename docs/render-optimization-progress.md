@@ -77,28 +77,46 @@ replays must not move; nothing in this program may feed the simulation.
   Measurements: Experiment 6. `--mpai` not run: only `src/client` changed
   (presentation), and every benchmark run checks the world hash (identical
   A vs B in every scene).
-- Workstreams E–N: not started (E has groundwork: `UnitGeom::shadowRevision`
-  is exact and maintained, but no downstream consumer uses it yet).
-- **Next concrete step:** workstream E (split body and shadow invalidation)
-  on top of D's stage revisions: change the shadow tile stamp
-  (`buildShadowSilhouetteAtlas`) from (`revision`, screen pixel position) to
-  (`shadowRevision`, `placementRevision`/placement key, size, scale), so a
-  body-only change (material or a local rebuild that kept coverage,
-  `geom_shadow_kept`) no longer re-rasterizes coverage; keep
-  `TAK_SHADOW_CACHE_VERIFY` and add a differential test across every
-  invalidation cause. Note the measured limit: in the matrix scenes local
-  rebuilds are pose-driven, so coverage almost always changes with them; E's
-  gain on its own is small until F stops relocating tiles. Measure against
-  D (`~/tak-tmp/render-opt/takclient-DF-candidate`, code of `aae1a9fa`).
-  Earlier builds remain: C2F (`takclient-C2F-candidate`, C2 + the MapView
-  clock fix, worktree `~/tak-tmp/wt/render-opt-c2fix`), C2
-  (`takclient-C2-candidate`, `50acac44`), B3 (`takclient-B3-candidate`,
-  `ea2db865`), A (`takclient-A-candidate`), p0base
-  (`~/tak-tmp/wt/render-opt-p0base`). **Compare `constrained` captures only
-  between builds that both carry `aae1a9fa`** (before it, section trimming
-  followed wall time). Cores 16–23 are reserved for this program since
-  2026-10-16 (Legion moved to 4–15); lean testing applies (affected scenes
-  only, ABBA × 2 per size, one `ctest -L quick` per workstream).
+- **Workstream E (split body and shadow invalidation) is implemented and
+  verified** (commits `0af89d63` tile keys + exact translation check +
+  `shadowInputsEqual` + `shadow_tiles` test, `1979d413` GameView integration
+  + telemetry + verifier extensions + software-atlas debug switch,
+  `71a71e9b` harness knobs (`TAK_RENDER_CAMERA_SNAP`, `TAK_RENDER_VETERAN`,
+  `TAK_RENDER_ROSTER`), `pan-snap`/`veteran` scenes and the
+  `render_shadow_cache` ctest, `15da2bff` decision pre-pass with pooled
+  block-wise checks (fixes the measured check cost of the first version),
+  then the docs commit). Tests: `shadow_tiles`, `render_shadow_cache`
+  (software renderer), GL verifier runs (`TAK_SHADOW_CACHE_VERIFY` +
+  `TAK_GEOMETRY_VERIFY`) on effects, stationary-mixed, churn, colour-reset,
+  pan-snap (both sizes) and two 80-unit cause scenes; `ctest -L quick`
+  381/381 on build-o2 at `71a71e9b` and again on the final code `15da2bff`
+  (381/381; `render_shadow_cache`, which is in `tools/ctest_costs.txt` and so
+  not `quick`, passes too). Captures identical in all 348 comparisons over the
+  three measured candidates. Measurements: Experiment 7. `--mpai` not run:
+  only `src/client` (presentation) and `tools/` changed, and every benchmark
+  run checks the world hash (identical A vs B in every scene). Baseline
+  for later comparisons: `~/tak-tmp/render-opt/takclient-E3-candidate`
+  (code of `15da2bff`); DFH (D + harness) in `~/tak-tmp/wt/render-opt-dfh`.
+- Workstreams F–N: not started.
+- **Next concrete step:** workstream F (persistent shadow allocation). E's
+  measurements show what blocks tile reuse now: in pan-snap 868 of 1105
+  dirty tiles per frame at 7680×2160 are `shadow_dirty_owner` (the
+  height-sorted repack gives the index to another unit) and in stationary
+  scenes `relocated` dominates (646 of 858 per frame in veteran 1280×960).
+  F should give each entry (handle) a persistent slot and compare the new
+  slot's retained stamp with `classifyShadowTile` (keep `ShadowTileStamp`,
+  `tilePoint`, `sameTilePoints`; drop only the "same tile index"
+  precondition), clear recycled tile interiors + padding, and keep the
+  pre-E/pre-F differential check (`originalRuleReuses`) under
+  `TAK_SHADOW_CACHE_VERIFY`. Also from E: the dense 7680×2160 scene's
+  all-or-nothing fallback beyond four pages (Experiment 2). Measure F
+  against E3 (`~/tak-tmp/render-opt/takclient-E3-candidate`); the harness
+  knobs and `pan-snap`/`veteran` scenes exist in every build from DFH on.
+  Cores 16–23 are reserved for this program (Legion on 4–15); lean testing
+  applies (affected scenes only, ABBA × 2 per size, one `ctest -L quick` per
+  workstream). Earlier builds remain: DF (`takclient-DF-candidate`,
+  `aae1a9fa`), C2F, C2, B3, A, p0base (see Experiment 6). **Compare
+  `constrained` captures only between builds that both carry `aae1a9fa`.**
 
 ## Status checklist (A–N)
 
@@ -112,7 +130,7 @@ evidence; nothing below is already fully satisfied.
 | B | Animated atlas dirty regions | **verified** | Workstream B (`bae9afd8` painter + tracker + test, `095e1fba` GameView, `42c1c4a6` cached region list + early return, `ea2db865` copy-started colour atlases). `AnimatedAtlasTracker` (`client/animatedatlas.h`) records per colour atlas the frame each animated region holds under `rendererGeneration_` and the new `assetGeneration_`; `animateGlowTextures()` returns at once when no sequence changed, otherwise visits only atlases holding a stale frame and repaints only changed regions (content + gutter, or the transparent clear of an expired sequence). New/reset atlases are painted completely and recorded (`glowDirty_`, which forced a repaint of every atlas, is gone); a second colour starts as a 1:1 copy of a complete atlas and repaints only per-colour, animated and untracked regions. `AtlasPainter` removed the flush per region (blend is recorded per queued copy; one flush only protects a source not already NEAREST — none in shipped data). Cadence unchanged. Tests: `animated_atlas` (synthetic, three-way comparison + CPU oracle, mutation-checked), `render_atlas_verify` (in-game `TAK_ATLAS_VERIFY`, two colours, resets). Captures identical. Shipped data: all 44 animated regions advance on the same ticks, so the region count per repaint is unchanged; the measured savings are the flushes, the repaint-frame cost and multi-colour atlas creation (Experiment 4). |
 | C | Stable geometry ownership | **verified** | Workstream C (`81a29b58` pool + test, `b180e477` GameView integration, `50acac44` index hash). Each drawn unit owns one entry in `geomEntries_` (`StableEntryPool<UnitGeom>`, `client/geometryowners.h`) keyed by `UnitOwner` = (id, world epoch, type, replacement model); the painter passes use `visGeom_`, ordered pointers to those entries, so depth order no longer decides ownership and a unit entering ahead evicts nobody. Destroyed units are released the frame they leave the snapshot; reused ids (rejoin: `Frame::worldEpoch`), replacement models and type changes get a fresh cold entry with a new generation (`HandleSlots`: one table-wide generation counter); renderer reset keeps owners and drops content. Absent units keep their entry ≤ 2 s / ≥ 30 frames within 32 MiB / 8192 entries; released capacity ≤ 8 MiB / 4 s, then freed with all-free tail chunks; id index sized from live entries. Chunks never move (worker-safe growth). Revisions are globally unique; distant images keyed by the entry handle. Tests: `geometry_owners` (unit: reorder, churn/expiry, budgets, destruction, epoch/type/model reuse, reset, growth, parallel writes, memory recovery, randomized; mutation-checked; ASan/UBSan/TSan clean), `render_geometry_ownership` (in game, two verifiers), `distant_models` (new identity never held). Captures identical (648 comparisons). Measured (Experiment 5): `miss_owner` → 0 in every scene; rebuild work −5 to −8% where units move; draw time unchanged within noise; a consistent ~1.5% (≈0.07 ms) residual on a dense stationary army, not material; battle-sparse retained geometry 72.2 → 0.09 MiB after the view empties. |
 | D | Separate preparation from placement | **verified** | Workstream D (`361484d2` vocabulary + test, `08d027d4` GameView stages, `32c5d71a` layout, `ed8e6e2a` shadow-coverage revision, `dc04c856` debug-only verifier, `aae1a9fa` harness clock fix). `buildUnitGeom` keeps three exact stage keys on the unit's stable entry (`client/geometrystages.h`): LOCAL (identity/resources, pose incl. heading/emote spin, pitch/roll, piece poses with hidden/shadow flags, corpse/statue, palette slot, texture frames, construction, shadow toggle) → piece transforms, collection, depth sort, UVs, shadow silhouette in model-projected coordinates; PLACEMENT (zoom, interpolated anchor with lift/sink/altitude, emote bob, flyer altitude, occlusion line) → screen positions; MATERIAL (veterancy, ghost, conjuring progress + clock, tint, opacity) → vertex colours. Only stages whose inputs changed are redone; placement and material use the former single pass's expressions in the same order (bit-identical). Per-stage revisions (`localRevision`, `placementRevision`, `materialRevision`, exact `shadowRevision`); `revision` (the screen output) still advances on any stage, so downstream consumers are unchanged. No hashes; no sim tick as a revision; resets make entries cold. Tests: `geometry_stages` (arithmetic vs the c2c25707 single pass, partial = complete, six header mutations fail it), `render_geometry_stages` (in game, both verifiers), `TAK_GEOMETRY_VERIFY` (every reuse vs a complete rebuild, every local build vs the former single-pass transform, shadow-kept detection vs a copy). Captures identical (168 comparisons). Measured (Experiment 6): in pan/zoom 95% of units are re-placed instead of rebuilt — vertices generated −98%, worker build time −76 to −77%, geometry phase wall −57 to −61%; draw time −17.7% / −16.1% in zoom (material at both sizes), −14 to −20% in pan (every ABBA group, inside pan's spread), −7 to −9% in churn (not material); moving and stationary unchanged within noise. Costs: a local rebuild +7–12% worker time, the key check +28–32% on a pan, geometry memory +18–22% capacity. |
-| E | Split body/shadow invalidation | not started (groundwork from D) | Body and shadow are rebuilt together on any local miss, and the shadow tile stamp still compares `revision` (any stage) AND the screen pixel position, so body-only changes and every pan re-rasterize coverage. Since D the entry carries an exact `shadowRevision` (advanced only when the local shadow output actually changed, `geom_shadow_kept` counts the rest) and `placementRevision` for E to key on. |
+| E | Split body/shadow invalidation | **verified** | Workstream E (`0af89d63` vocabulary + `shadow_tiles` test, `1979d413` GameView, `71a71e9b` harness + `render_shadow_cache` ctest, `15da2bff` decision pre-pass with pooled block-wise point checks). A silhouette tile is stamped with the unit's exact shadow coverage (`shadowRevision`) and the exact `ShadowPlacement` its points were placed with (`client/shadowtiles.h`), no longer with `revision` (any stage) and the screen pixel: material changes (veterancy, tint, ghost, conjuring fade), emote bob, occlusion line and body-only local rebuilds keep the tile; a placement change keeps it only when every tile point recomputes bit-identical (`sameTilePoints`: whole-pixel translations within a binade; sub-pixel phase, zoom and altitude-lean changes redraw). A local rebuild whose shadow inputs are unchanged (colour atlas, frames of animated textures WITHOUT shadow masks) keeps the silhouette without collecting it (`shadowInputsEqual`, `PieceMeta::animationFrameMasks`); animated masks, shadow flags, pose, corpse, construction and the shadow toggle still invalidate immediately. Tests: `shadow_tiles` (kept ⇔ raster inputs bit-identical under the pre-E expressions, randomized over every cause; ten mutations fail it), `render_shadow_cache` (software renderer, every kept tile = complete re-bake, pre-E kept ⊆ E kept, skipped silhouette = fresh collection; three in-game mutations fail it), GL verifier runs. Measured (Experiment 7, final code vs D + harness): pan-snap kept tiles 0–4% → 37–41%, dirty raster area −41/−43%, `t_shadow_pack` −20.0% / −9.6%, GPU timeline −11.5% (1280×960, material), draw −7.4% / −3.0% (consistent, inside threshold); point-check cost `t_shadow_alloc` +0.065 / +0.21 ms there, the stamp loop 5–14% cheaper elsewhere; veteran, pan, stationary-mixed draw unchanged; captures identical (108 comparisons in the final run). Limit: in most matrix scenes tiles go dirty because the per-frame repack moves them (`owner`/`relocated`, F), so E's reuse shows mainly where slots stay put (pan-snap, veteran). |
 | F | Persistent shadow allocation | not started | `buildShadowSilhouetteAtlas` (`:377`) repacks every visible shadow into height-sorted shelves each frame; tile stamps are compared by TILE INDEX, so one changed size or one unit entering view shifts and re-rasterizes every later tile on that page. Pages: ≤4, 2048² max, grown in powers of two, retained until reset. |
 | G | Distant image lookup before generation | not started | `DistantModels::prepare` (`distantmodels.cpp`) runs after `buildUnitGeom` and needs the generated vertices (bounds, source pointer, revision). Entry key: unit id (the geometry entry's generational handle since C), geometry revision, texture tick, source pointer, zoom/scale; 67 ms refresh, 128 bakes/frame, 64-px tiles, 4 × 2048² pages; pages released only when ALL entries expire. Revision changes on every pan (D), so panning re-bakes. |
 | H | Less full-scene vertex copying | not started (partly present) | `GeometrySubmit` (`geometrysubmit.h`) submits batches ≥512 vertices on the `opengl` backend through client arrays, skipping SDL's per-vertex conversion copy, with an optional retained VBO keyed by a caller revision (used by terrain tiles and fog, not bodies). Bodies are still copied every frame: per-unit `UnitGeom::verts` → `bodyVerts_` (`:782`–`:850`) → client-array upload. No ordered command representation. |
@@ -218,7 +236,7 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 |---|---|---|---|---|
 | Unit geometry (`geomEntries_`, `UnitGeom`; was `geomPool_` before C) | GameView | ownership: `UnitOwner` = (unit id, world epoch, type, replacement model), generational handle per acquisition; content validity (since D): three exact stage keys — local (id, type, visual, atlas ptr, player, slot, pitch/roll, construction, corpse phase, statue, shadows-on, facing, animated texture frames, piece-name table, piece poses), placement (zoom, anchor x/y, emote bob, altitude, occlusion line), material (veteran, ghost, conjuring, emote, tint colour/mix, opacity, anim clock while conjuring); `revision` and the per-stage revisions from one GameView-wide atomic counter | one 512-byte (64-byte aligned) entry per visible or recently visible unit in 256-entry chunks that never move, plus its vectors (screen output and, since D, retained local positions: 8 B per body and per shadow vertex, base colours only for untextured faces); absent units kept ≤ 2 s and ≥ 30 frames, within 32 MiB / 8192 entries (oldest first); released capacity kept ≤ 8 MiB / 4 s then freed; all-free tail chunks deallocated; id index sized from live entries | `invalidateRenderTargets` → `makeAllCold` (owners kept, content dropped); world reset → new epoch; destroyed units released the frame they leave the snapshot |
 | Body buffer `bodyVerts_`, `copyTasks_`, `drawOps_` | GameView | rebuilt each frame | peak capacity retained | session |
-| Shadow silhouette pages | GameView | per-tile stamp (geometry slot ptr, owner, screen pixel pos, slot pos, size, revision, scale) compared by tile index | ≤4 GPU target pages up to 2048² (≤64 MiB), grown, retained | destroyed on reset/teardown |
+| Shadow silhouette pages | GameView | per-tile stamp compared by tile index; since E (`client/shadowtiles.h`): entry ptr, owner, coverage = `shadowRevision`, exact `ShadowPlacement`, screen pixel, slot, size, scale (`revision` kept for diagnostics only); a placement change is reused only when every tile point recomputes bit-identical | ≤4 GPU target pages up to 2048² (≤64 MiB), grown, retained | destroyed on reset/teardown |
 | Shadow scratch (`shadowAtlasOpaqueScratch_`, mask scratch, `shadowCompositeBatch_`) | GameView | per frame | capacity retained | cleared on reset |
 | Distant images | `DistantModels` | geometry-entry handle (index + generation; unit id before C) → entry (revision, texture tick, source ptr, zoom, scale), 67 ms refresh | ≤4 × 2048² pages (64 MiB), 1024 64-px tiles/page, ≤128 bakes/frame | entries expire after 120 unseen prepares; pages freed only when all expire; cleared on reset |
 | Colour atlases `atlasTex_` | GameView | per player-colour slot; layout fixed at first model load; `atlasTracker_` slot record = (renderer generation, asset generation, painted frame per animated region) | GPU target ≈ 2048×atlasH ×4 (≈11 MiB) per slot, ≤10; essential (bypasses cap) | destroyed on reset (tracker cleared); painted completely on creation |
@@ -378,6 +396,30 @@ Added by workstream D:
 - `MapView::setClockMs` (`aae1a9fa`): the render study drives section idle
   trimming from its presentation clock (play keeps wall time).
 
+Added by workstream E:
+
+- `client/shadowtiles.h`: `ShadowTileStamp` (entry, owner, `coverage` =
+  `shadowRevision`, `revision` for diagnostics, `ShadowPlacement`, pixel,
+  slot, size, scale), `tilePoint` (THE atlas transform, used by the builder
+  and the check), `sameTilePoints`, `samePlacement`, `sameBits`,
+  `TileVerdict` + `reuses`, `classifyShadowTile`, `originalRuleReuses` (the
+  pre-E rule, for differential checks). F should keep these: its stable
+  slots replace the "same tile index" precondition, not the content key.
+- `geometrystages.h`: `kLocalKeyAtlasWord`, `shadowInputsEqual(before,
+  layout, after, layout, frameMasks)`.
+- `UnitGeom::shadowPlacement` (set by every placement stage; checked by
+  `TAK_GEOMETRY_VERIFY` on every reuse), `UnitGeom::shadowSkipped`
+  (telemetry), `UnitGeomInputs::shadowValid`, `PieceMeta::animationFrameMasks`
+  (parallel to `animationFrames`: 1 = that animation's texture has shadow
+  masks). Entry size unchanged (512 bytes; checked with gdb).
+- Debug: `TAK_SHADOW_CACHE_VERIFY` now also throws if a tile the pre-E key
+  kept is redrawn and prints `SHADOW_CACHE_VERIFY frames tiles reused body
+  translated original_reused`; `GEOMETRY_STAGES` gains `shadow_skipped`
+  (skipped silhouettes proven equal to a fresh collection);
+  `TAK_SHADOW_ATLAS_SOFTWARE` runs the atlas (and mask coverage textures) on
+  SDL's software renderer. Harness: `TAK_RENDER_CAMERA_SNAP`,
+  `TAK_RENDER_VETERAN`, `TAK_RENDER_ROSTER` (see Benchmark tooling).
+
 ### Cache ownership and invalidation (workstream C)
 
 Two questions are answered separately:
@@ -510,6 +552,67 @@ the narrower revisions are for E/F/G. Screen coordinates stay in the
 placement key because the cached output is still screen-space vertices (the
 brief's rule); D removes them from the LOCAL key only.
 
+### Split body and shadow invalidation (workstream E)
+
+D gave each entry an exact `shadowRevision` but every consumer still keyed
+on `revision`. E makes the shadow path depend only on what it reads, at
+both levels where shadow work happens:
+
+```
+                 body-only inputs                 shadow inputs
+LOCAL key   ─┬─ colour atlas (word 3)        ─┬─ everything else in the local key:
+             │  frames of animated textures   │  identity, pose, facing, pitch/roll,
+             │  WITHOUT shadow masks          │  corpse/statue, construction, shadows-on,
+             │                                │  player + colour slot (mask frame choice),
+             │                                │  frames of MASKED animated textures
+             ▼                                ▼
+   body rebuilt                     silhouette collected again only when one of
+   (piece transforms, sort, UVs)    these differs (shadowInputsEqual); otherwise
+                                    kept, shadowRevision kept
+PLACEMENT    zoom, anchor, bob, occlusion  →  shadow uses ShadowPlacement{zoom, sx, sy}
+                                              = anchor + altitude lean (not bob/occlusion)
+MATERIAL     veterancy, tint, ghost, conjuring  →  never a shadow input
+```
+
+Silhouette tile (`buildShadowSilhouetteAtlas`), per tile index:
+
+| Verdict | Condition | Tile |
+|---|---|---|
+| Owner / New | another entry or owner, or no tile there | redrawn |
+| Content | `shadowRevision` differs | redrawn |
+| Relocated / Resized | slot, size or output scale differs | redrawn |
+| Reuse | same coverage, same placement bits, same pixel, same `revision` | kept |
+| ReuseBody | as Reuse, but `revision` moved (a body-only change) | kept (pre-E: redrawn) |
+| ReuseTranslated | placement differs, every tile point recomputes bit-identical | kept (pre-E: redrawn) |
+| Moved | placement differs and some tile point differs | redrawn |
+
+Why it is exact: a tile's pixels are a function of its rectangle, its
+tile-relative points and the cutout runs (textures, UVs, colours). Same
+coverage ⇒ identical local points, UVs, colours and runs (`shadowRevision`
+moves whenever any of them differs, compared element by element by D).
+Same placement bits ⇒ the placement stage produced identical placed points
+(same function, same inputs, `-ffp-contract=off`). For a changed placement
+the old tile points are recomputed from the unchanged local points with the
+old placement through the same two functions (`placeShadowPoint`,
+`tilePoint`) and compared with this frame's tile points bit for bit; only
+identical inputs are kept, so no translation is assumed exact. In practice
+whole-pixel translations at zoom 1 keep every point whose coordinate stays
+in its floating-point binade; any sub-pixel phase change, zoom or altitude
+change redraws (first point differs, so the rejection costs one point). Not
+hashed; no sim tick; nothing reaches the simulation.
+
+| Event | Silhouette collected | `shadowRevision` | Tile |
+|---|---|---|---|
+| Veterancy / tint / ghost / opacity / conjuring fade | no | kept | kept (ReuseBody) |
+| Emote bob, occlusion line only | no | kept | kept (same shadow placement) |
+| Colour atlas change, frame of an unmasked animated texture | no (skipped, `geom_shadow_skipped`) | kept | kept |
+| Frame of a MASKED animated texture (alpha-mask animation) | yes | +1 if the cutout UV/run differs (always, frames have their own rects) | redrawn |
+| Pose / heading / pitch-roll / corpse / statue / construction / shadow toggle | yes | +1 if coverage differs | redrawn if +1 |
+| Whole-pixel camera pan (zoom 1), unit stationary | no | kept | kept if every point identical and slot unchanged |
+| Sub-pixel pan, zoom, flyer altitude | no | kept | redrawn (Moved/Resized) |
+| Entry cold / owner change / reset | yes | +1 (globally unique) | redrawn; reset drops pages |
+| Repack moves the tile (F) | — | — | redrawn (Owner/Relocated) |
+
 ### Telemetry reference (RENDERSTATS keys)
 
 `t_*` = render-thread wall ms (nested: `terrain_upload` in `terrain`;
@@ -538,6 +641,7 @@ sampled by the benchmark from `/proc`).
 | Shadow dirty tiles and area | `shadow_tiles_dirty`, `shadow_dirty_pixels` |
 | Allocation / reallocation | `geom_reallocs` (per-unit vector growth), `frame_reallocs` (painter list, draw ops, copy tasks, distant items, visible list, body buffer, shadow scratch), `gpu_texture_creates/destroys` |
 | Submissions, native draws, flushes, target switches | `logical_draws`, `native_draws`, `sdl_geometry_draws`, `retained_draws`, `flushes`, `target_switches` |
+| Body/shadow split (E) | `geom_shadow_skipped` (local rebuilds that kept the silhouette without collecting it), `shadow_reused_body` (tiles kept although the body changed), `shadow_reused_translated` (tiles kept after a placement change, points bit-identical); `shadow_dirty_content` now counts coverage changes only, `shadow_dirty_moved` placement changes whose points differ |
 | Staged geometry (D) | `geom_local_builds`, `geom_placement_only`, `geom_material_only`, `verts_placed`, `verts_recoloured`, `geom_shadow_kept`; `verts_generated` counts local rebuilds only since D |
 | Geometry entry ownership (C) | `geom_entries` (live), `geom_entry_acquired/replaced/released_destroyed/released_expired/released_budget/trimmed/refused` (per frame), `geom_entries_retained/warm_free/allocated`, `geom_retained_bytes`, `geom_warm_free_bytes` (gauges) |
 | Used vs retained CPU bytes | `geom_used/capacity_bytes`, `body_used/capacity_bytes`, `shadow_scratch_used/capacity_bytes`, `frame_lists_used/capacity_bytes`, `terrain_mip_cpu_bytes`, `terrain_section_cpu_bytes` |
@@ -587,12 +691,14 @@ Scenes (`--scenes all`; `quick` = small-battle, stationary-mixed, moving, pan):
 | colour-reset | Ulasem Arena | small-battle (two player colours) with a render-target reset every 120 frames, so both colour atlases are recreated (added by workstream B) |
 | battle-sparse | Ulasem Arena | 2000-unit battle, empty view from frame 450 (segments reported separately) |
 | constrained | Ulasem Arena | pan + zoom scene under a 128 MiB tracked-GPU cap (debug `TAK_GPU_CAP_MIB`) |
+| pan-snap | Ulasem Arena | 2000 units, zoom 1, the pan's path rounded to whole world units: every camera step is a whole-pixel translation (added by workstream E) |
+| veteran | Ulasem Arena | stationary-mixed with every fifth unit changing veteran level every 30 frames: material-only body changes (added by workstream E) |
 
 Harness knobs (debug-only, `gameview_devharness.cpp` / `main.cpp`):
 `TAK_RENDER_CENTER`, `TAK_RENDER_OFFSET`, `TAK_RENDER_EXTRAS`,
 `TAK_RENDER_NAVAL`, `TAK_RENDER_FOREST`, `TAK_RENDER_JUMP`,
 `TAK_RENDER_CHURN`, `TAK_RENDER_RESET`, `TAK_RENDER_SPARSE_AFTER`,
-`TAK_RENDER_SPARSE_OFFSET`, `TAK_GPU_CAP_MIB` (`runtimesettings.h`), plus the existing `TAK_SHADOW_BENCH[_TYPE]`,
+`TAK_RENDER_SPARSE_OFFSET`, `TAK_GPU_CAP_MIB` (`runtimesettings.h`), `TAK_RENDER_CAMERA_SNAP=1|N` (whole-pixel pan; N = N moving / N still frames with every other cycle 0.375 px off the grid), `TAK_RENDER_VETERAN=N`, `TAK_RENDER_ROSTER=a,b,…` (E), plus the existing `TAK_SHADOW_BENCH[_TYPE]`,
 `TAK_RENDER_SPACING/MOTION/BATTLE/CAMERA/ZOOM`, `TAK_PROFILE_ZOOM`.
 
 `tools/render_reuse_benchmark.py` (the 2026-10-04 study) still runs with
@@ -1316,6 +1422,136 @@ Readings:
   run-to-run noise (A/B ranges overlap; largest shift +13 MiB in moving
   1280). No new GPU resources.
 
+### Experiment 7 — workstream E split body/shadow invalidation (2026-10-16)
+
+Clients: **A** = DFH (`~/tak-tmp/render-opt/takclient-DFH-candidate`: code
+of `aae1a9fa` = workstream D plus only the harness commit — cherry-picked as
+`9b01c67f` in `~/tak-tmp/wt/render-opt-dfh` — so the new `pan-snap` and
+`veteran` scenes run identically in both builds), **B** = E3
+(`takclient-E3-candidate`, code of `15da2bff`, the final E code); the first
+measured candidate **E1** (`71a71e9b`, serial point checks) and **E2**
+(pre-pass, stamps inside the sorted work items) are reported for the record.
+Build-o2, offscreen EGL, SDL `opengl` on the RTX 5070 Laptop GPU;
+`RENDER_ENV` confirmed renderer and output (1280×960 → world 1075×888;
+7680×2160 → world 7475×2088) for every run. 900 frames, 300 warmup,
+forced-completion frames, client pinned to CPUs 16–23 (the Legion program on
+4–15: 0–15 `legion_scenario` processes, load average 2.3–18.8, recorded per
+run; pinned-CPU busy fraction 0.17–0.26, no run contended), ABBA × 2 per
+scene and size, `--wait-quiet 60`. Lean testing: timed only the scenes E
+changes — `pan-snap` (translation reuse), `veteran` (body-only reuse),
+`pan` (sub-pixel pan: any tile that keeps its slot runs the point check and
+is rejected — the cost guard) and `stationary-mixed` (dense army whose lodestones animate their
+masks: no gain expected, guard for the per-tile classification). Pipelined
+frames not measured. Output (not in Git): `~/tak-tmp/render-opt/runs/e-*`
+(E1), `e2-*`, `e3-*`; scripts `~/tak-tmp/render-opt/e/final{,2,3}.sh`,
+summary `e/etable.py`, stats helper `e/srun.py`. Commands:
+
+```sh
+T="python3 tools/render_benchmark.py --a $DFH --b $E3 --data ~/tak_data --cpus 16-23"
+$T --output runs/e3-captures-normal --scenes pan-snap veteran pan effects churn total10k-visible --capture-only
+$T --output runs/e3-captures-uhd --sizes uhd --scenes pan-snap veteran pan --capture-only
+$T --output runs/e3-normal --scenes pan-snap veteran pan stationary-mixed --repeats 2 --wait-quiet 60
+$T --output runs/e3-uhd --sizes uhd --scenes pan-snap veteran pan stationary-mixed --repeats 2 --wait-quiet 60
+python3 ~/tak-tmp/render-opt/e/etable.py runs/e3-normal/results.json runs/e3-uhd/results.json
+VCPUS=16-23 python3 ~/tak-tmp/render-opt/e/srun.py $E3 <scene> normal 300 WARM=0 TAK_SHADOW_CACHE_VERIFY=1 TAK_GEOMETRY_VERIFY=1
+```
+
+**Correctness.** Captures A vs B: 0 differing pixels in the world view AND
+the full frame in every comparison — E1: 96 at 1280×960 (pan-snap, veteran,
+pan, stationary-mixed, effects, churn, colour-reset, total10k-visible) + 48 at
+7680×2160 (pan-snap, veteran, pan, effects); E2: 72 + 24; E3 (final): 72
+(pan-snap, veteran, pan, effects, churn, total10k-visible) + 36 (pan-snap,
+veteran, pan). World hashes identical A vs B in every scene. GL verifier runs
+(`TAK_SHADOW_CACHE_VERIFY`: every kept tile compared with a complete re-bake
+of the frame, pixel for pixel, and every tile the pre-E key kept must be kept;
+`TAK_GEOMETRY_VERIFY`: every reuse vs a complete rebuild incl. the recorded
+shadow placement, every skipped silhouette vs a fresh collection) — all
+passed: effects (299 frames, 156,316 tiles), stationary-mixed (545,675),
+churn (499,342), colour-reset (59,800; 4 body-only), an 80-unit whole-pixel
+pan with veterancy (23,920 tiles, 20,446 translated, 928 skipped
+silhouettes), a static 80-unit scene with veterancy (1,131 body-only kept
+tiles the pre-E key redrew), pan-snap at 1280×960 (274,463 tiles, 119,125
+translated) and 7680×2160 (280,514; 118,689 translated; E3 code).
+`render_shadow_cache` (software renderer): 12,038 tiles, 88 body-only, 4,568
+translated, 296 skipped silhouettes. `shadow_tiles` passes; ten header
+mutations fail it; three in-game mutations fail `render_shadow_cache`.
+`ctest -L quick` 381/381 on build-o2 at `71a71e9b` and at `15da2bff`. Release `takclient` builds and contains none of
+the new debug/telemetry strings.
+
+**What changed in the counters (exact, mean per frame, frames 300–899).**
+
+| Scene, size | Visible | Tiles dirty A → B | Dirty pixels A → B | Kept: translated / body-only (B) | Dirty causes B: owner / relocated / content / moved |
+|---|---:|---:|---:|---:|---|
+| pan-snap 1280 | 1094 | 1094 → 695 (−36.5%) | 4.39 M → 2.60 M (−40.8%) | 399.7 / 0 | 403 / 188 / 30 / 60 |
+| pan-snap 7680×2160 | 1941 | 1873 → 1105 (−41.0%) | 7.51 M → 4.27 M (−43.1%) | 767.5 / 0 | 868 / 126 / 60 / 44 |
+| veteran 1280 | 1825 | 866 → 858 | 0.953 M → 0.946 M | 0 / 8.1 | 148 / 646 / 64 / 0 |
+| veteran 7680×2160 | 2000 | 923 → 914 | 2.127 M → 2.112 M | 0 / 8.9 | — |
+| pan, stationary-mixed (both sizes) | 1584–2000 | unchanged | unchanged | 0 / 0 | pan: the sub-pixel phase changes tile sizes, so the repack reassigns nearly every index (`owner`); only 3.7 (1280) / 31.6 (7680×2160) tiles per frame reach the point check, all rejected |
+
+Geometry counters (hits, stages, vertices) are identical A vs B: E changes
+no stage decision; `geom_shadow_skipped` is 0 in every timed scene (no
+roster unit has an unmasked animated texture) and `geom_shadow_kept` 0
+(lodestone mask animation, see Known limitations).
+
+**Timing (forced completion; spread = max−min over a label's four run
+means; material = beyond `max(2 × spread, 2%)`; groups = B−A per ABBA
+group).**
+
+| Scene, size | Draw mean ms A → B | Δ | Groups | Material | Draw p99 A → B | t_shadow_pack A → B | t_shadow_raster | t_shadow_alloc | t_shadow_prep | GPU timeline A → B |
+|---|---:|---:|---|---|---:|---:|---:|---:|---:|---:|
+| pan-snap 1280 | 5.394 → 4.993 | −7.4% | −7.0%, −7.9% | no (thr 16.9%) | 9.46 → 7.25 | 1.387 → 1.110 (−20.0%; −20.1/−19.9) | −30.2% | 0.223 → 0.288 (+29%, material) | −28.0% | 2.596 → 2.299 (**−11.5%, material**) |
+| pan-snap 7680×2160 | 11.137 → 10.808 | −3.0% | −3.5%, −2.5% | no (10.4%) | 16.53 → 17.56 | 3.292 → 2.977 (−9.6%) | −14.0% | 0.359 → 0.570 (+59%, material) | −28.4% (material) | 6.908 → 6.671 (−3.4%) |
+| veteran 1280 | 5.707 → 5.646 | −1.1% | −0.3%, −1.9% | no | 13.26 → 13.48 | −1.8% | +2.3% | −14.0% (material) | −4.4% | −6.4% |
+| veteran 7680×2160 | 7.962 → 7.942 | −0.2% | +1.3%, −1.8% | no | 15.51 → 15.29 | −4.8% | −1.4% | −9.1% (material) | −8.2% | +0.8% |
+| pan 1280 | 7.358 → 7.329 | −0.4% | −1.3%, +0.5% | no | 13.54 → 13.35 | +0.3% | +2.9% | −10.4% (material) | −1.2% | −1.4% |
+| pan 7680×2160 | 14.061 → 13.866 | −1.4% | −3.4%, +0.7% | no | 16.24 → 15.89 | −1.3% | +1.5% | −5.4% | −5.8% | −1.8% |
+| stationary-mixed 1280 | 5.294 → 5.287 | −0.1% | −0.5%, +0.3% | no | 13.00 → 12.95 | −1.2% | +2.2% | −12.5% (material) | −1.9% | +0.7% |
+| stationary-mixed 7680×2160 | 8.191 → 8.245 | +0.7% | −0.5%, +1.8% | no | 14.50 → 14.45 | +1.3% | +2.9% | −8.3% | +7.7% | +0.2% |
+
+Readings:
+
+- **Translation reuse works where the camera moves in whole pixels**: in
+  pan-snap 37–41% of all tiles are kept (A: 0–4%), dirty raster area falls
+  41–43%, shadow raster time 14–30%, shadow packing 10–20% (consistent in
+  both ABBA groups, inside the threshold), and the GPU draw timeline 11.5%
+  at 1280×960 (material). Draw time −7.4% / −3.0%, consistent per group,
+  not material by the fixed rule. More tiles would be kept if they stayed in
+  place: 868 of 1105 remaining dirty tiles at 7680×2160 are `owner`
+  (the repack gave the index to another unit) — that is F.
+- **The point check has a price**: `t_shadow_alloc` +0.065 ms (1280) and
+  +0.21 ms (7680×2160) in pan-snap, where ~460 / ~810 tiles are checked
+  in full; it is smaller than the raster time saved. In every other scene the
+  stamp loop is cheaper than before (−5 to −14%, material in five cases),
+  mostly because the old loop read `TAK_SHADOW_NOCACHE` from the environment
+  once per tile.
+- **Body-only reuse is real but small in the matrix**: veteran keeps 8–9
+  extra tiles per frame (the veterancy cycle touches ~13 units per frame,
+  most of whose tiles the repack moves anyway); draw unchanged.
+- **Sub-pixel pans and stationary armies are unchanged** (pan, stationary-
+  mixed: identical counters, draw within ±1.4%). The rejected check costs
+  one point per moved tile.
+- `t_shadow_composite`, which E does not touch, reads +3–4% (≈ 5 µs of
+  0.12–0.15 ms) at 1280×960 in veteran, pan and stationary-mixed (material
+  only in veteran, whose spread is 0.7–1.6%), and ±1% at 7680×2160. The
+  entry fields the composite reads keep their offsets in E3 (checked with
+  gdb); not explained, not material in draw time.
+- **Memory.** `UnitGeom` stays 512 bytes. New CPU scratch: one 80-byte stamp
+  per packed tile, tiles per page and the check list (counted in
+  `shadow_scratch_*`; pan-snap total shadow scratch capacity 4.8 / 7.9 MiB at
+  the last frame). `PieceMeta` gains one byte per animated texture record.
+  No GPU resources. Peak RSS within run-to-run noise in every scene.
+
+**E1 and E2 (superseded, measured).** E1 ran each translation check serially
+in the stamp loop: pan-snap `t_shadow_alloc` 0.191 → 0.607 ms (+217%) at
+1280×960 and 0.428 → 1.331 ms (+211%) at 7680×2160, both material, so
+shadow packing gained nothing (+5.7% / −4.7%) although raster time fell
+29.6% / 27.5%. E2 moved the decisions into a pre-pass with pooled, block-wise
+checks: `t_shadow_alloc` +0.24 ms at 7680×2160 (+61%), shadow packing
+−18.3%, draw −7.5% (1280×960 session too noisy to read, A/A spreads
+20–50%); in pan its pre-pass cost +5% `t_shadow_alloc` because the stamps
+lived in the height-sorted work items. E3 keeps stamps in a separate
+scratch vector and reuses the pre-pass buffers (the numbers above).
+
 ## Known limitations and unsupported paths
 
 - Only Linux / NVIDIA / SDL `opengl` (offscreen EGL) is measured. Direct3D,
@@ -1428,6 +1664,49 @@ Readings:
   comparisons (workstreams A, B, C) were identical, i.e. those builds freed
   the sections in the same frames.
 
+- **E's tile reuse needs the tile to stay at its index and slot.** Stamps are
+  still compared by tile index of the per-frame height-sorted repack, so a
+  tile whose content E proves unchanged is still redrawn when the repack
+  hands its index to another unit (`shadow_dirty_owner`) or moves it
+  (`shadow_dirty_relocated`). In the measured matrix scenes these dominate
+  (e.g. stationary-mixed 93 owner + 452 relocated of 616 dirty tiles per
+  frame; churn 1543 owner of 1664). E's own gains therefore show only where
+  slots stay put; F (stable tile ownership) is what turns them on broadly.
+  The E key and `classifyShadowTile` are written to carry over to F.
+- **Alpha-mask animation is a genuine shadow dependency and stays one.** The
+  lodestones (araplainlode, tarlode, …) animate textures with shadow masks:
+  each frame has its own mask rect, so the cutout UVs change and the tile is
+  redrawn — in stationary-mixed and total10k-visible every local rebuild is
+  of this kind (`geom_shadow_kept` 0). E saves nothing there by design.
+  Shipped data has 9 masked animated textures whose frames share an
+  identical alpha channel (e.g. zonmanalodestone, zhonlode, arastonesolo);
+  see "not pursued" below.
+- **Unmasked animated textures** (where E skips the silhouette collection)
+  are used only by tarnecro, tarwitch, tarhel, crepris and zonglyph (3DO
+  scan of data.hpi/IPData.hpi); none is in the timed matrix rosters, so
+  `geom_shadow_skipped` is 0 there. Exercised by `render_shadow_cache` and the
+  verifier runs.
+- **Translation reuse is limited to provably identical points.** Ordinary
+  camera motion (edge scroll speed × frame time, the zoom-0.75 pan scene,
+  any zoom other than 1 or powers of two) changes the sub-pixel phase, so
+  every tile is redrawn exactly as before; only whole-pixel steps at zoom 1
+  (drag and keyboard pans at zoom 1, the pan-snap scene) keep tiles. The
+  rejected check costs one recomputed point per moved tile; an accepted one
+  recomputes every point of the tile (on the pool once the checks hold
+  ≥ 32768 points). Measured cost: pan-snap `t_shadow_alloc` +0.065 ms
+  (1280×960) / +0.21 ms (7680×2160), less than the raster time it saves.
+- The pixel verifier (`TAK_SHADOW_CACHE_VERIFY`) can only see real pixel
+  differences: with whole-pixel steps only, a mutation that assumed every
+  translation exact passed it (the points it wrongly kept differed below
+  pixel resolution). The ctest scene therefore adds sub-pixel jumps; the
+  bit-level property is pinned by `shadow_tiles`.
+- `TAK_SHADOW_ATLAS_SOFTWARE` (debug) enables the atlas and mask coverage
+  textures on SDL's software renderer for tests only; release builds keep
+  the accelerated-only rule.
+- E has no backend-specific code. Exercised on SDL `opengl` (offscreen EGL,
+  RTX 5070) and the SDL software renderer (static SDL2 2.32,
+  `render_shadow_cache`); Direct3D/Metal/GLES not run.
+
 ## Rejected experiments
 
 - (Historical, 2026-10-04) Native-resolution 64/128/256-px building images:
@@ -1487,3 +1766,23 @@ Readings:
   `constrained` scene, frame 360) was investigated and traced to the
   harness's wall-clock section trimming, not to D (see Known limitations);
   it was fixed in the harness, not by relaxing the comparison.
+- **E, not pursued: sharing identical mask frames.** 9 masked animated
+  textures have the same alpha in every frame, so their coverage never
+  changes, but each frame occupies its own mask rect. Pointing every frame
+  at the first one would make their shadows invariant (and save mask page
+  space), but it changes the sampling location of every such cutout: UV
+  interpolation rounds relative to the texel offset, so NEAREST/LINEAR
+  results can differ at texel boundaries and captures would no longer be
+  pixel-identical by construction. Left for M (indexed palette path), which
+  rebuilds the mask/coverage representation anyway.
+- **E: the first in-game test scene could not catch an "every translation is
+  exact" mutation** (whole-pixel steps only; see Known limitations). Fixed
+  by adding sub-pixel jumps to `TAK_RENDER_CAMERA_SNAP=N`, after which the
+  mutation fails the ctest with a pixel mismatch.
+- **E, superseded: serial translation checks in the stamp loop** (`71a71e9b`,
+  measured as E1 in Experiment 7). Correct (captures identical, verifiers
+  clean) but the checks cost +0.42 ms (1280×960) / +0.9 ms (7680×2160) of
+  render-thread time in the whole-pixel pan, as much as the raster they
+  saved. Replaced in `15da2bff` by the pre-pass with pooled, block-wise
+  checks and stamps outside the sorted work items.
+
