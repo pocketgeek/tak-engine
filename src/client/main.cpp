@@ -1486,15 +1486,45 @@ int main(int argc, char** argv) {
     void (APIENTRY *studyEndQuery)(GLenum)=nullptr;
     void (APIENTRY *studyGetQuery)(GLuint,GLenum,uint64_t*)=nullptr;
     void (APIENTRY *studyDeleteQuery)(GLsizei,const GLuint*)=nullptr;
-    GLuint studyQuery=0;
+    // GPU draw-timeline queries (GL_TIME_ELAPSED). A ring, read only once the
+    // driver reports the result AVAILABLE, so a pipelined run is never forced to
+    // wait for the GPU just to be measured. A result arrives some frames later and
+    // is printed as "GPUTIMELINE frame=<the frame it measured>". With glFinish
+    // before present (TAK_PROF_FINISH, forced completion) the current frame's
+    // result is already available and also appears in DRAWPHASE/RENDERSTATS.
+    // The timeline includes GPU idle gaps waiting for submission: it is NOT busy time.
+    constexpr unsigned kStudyQueries=4;
+    GLuint studyQueries[kStudyQueries]={};
+    unsigned studyQueryFrame[kStudyQueries]={};
+    bool studyQueryPending[kStudyQueries]={};
+    bool studyQuery=false;
+    uint64_t studyQueryStalls=0;   // ring full: had to wait (pipelined runs only)
     if(renderStudy && SDL_GL_ExtensionSupported("GL_ARB_timer_query")) {
         auto gen=reinterpret_cast<void(APIENTRY*)(GLsizei,GLuint*)>(SDL_GL_GetProcAddress("glGenQueries"));
         studyBeginQuery=reinterpret_cast<decltype(studyBeginQuery)>(SDL_GL_GetProcAddress("glBeginQuery"));
         studyEndQuery=reinterpret_cast<decltype(studyEndQuery)>(SDL_GL_GetProcAddress("glEndQuery"));
         studyGetQuery=reinterpret_cast<decltype(studyGetQuery)>(SDL_GL_GetProcAddress("glGetQueryObjectui64v"));
         studyDeleteQuery=reinterpret_cast<decltype(studyDeleteQuery)>(SDL_GL_GetProcAddress("glDeleteQueries"));
-        if(gen && studyBeginQuery && studyEndQuery && studyGetQuery && studyDeleteQuery)gen(1,&studyQuery);
+        if(gen && studyBeginQuery && studyEndQuery && studyGetQuery && studyDeleteQuery) {
+            gen(GLsizei(kStudyQueries),studyQueries);
+            studyQuery=studyQueries[kStudyQueries-1]!=0;
+        }
     }
+    // Reads one ring slot: blocking only when asked (ring full, or the end of the run).
+    // Returns the elapsed ms, or a negative value when not available yet.
+    const auto studyReadQuery=[&](unsigned slot,bool wait)->double {
+        if(!studyQueryPending[slot])return -1;
+        uint64_t value=0;
+        if(!wait) {
+            studyGetQuery(studyQueries[slot],0x8867,&value);   // GL_QUERY_RESULT_AVAILABLE
+            if(!value)return -1;
+        }
+        studyGetQuery(studyQueries[slot],GL_QUERY_RESULT,&value);
+        studyQueryPending[slot]=false;
+        const double ms=double(value)/1e6;
+        std::printf("GPUTIMELINE frame=%u ms=%.4f\n",studyQueryFrame[slot],ms);
+        return ms;
+    };
     if(renderStudy) {
         // Record what the run ACTUALLY got, so a benchmark can refuse a run whose
         // backend or output size differs from what it asked for.
@@ -1518,6 +1548,10 @@ int main(int argc, char** argv) {
             (info.flags&SDL_RENDERER_ACCELERATED)?1:0,(info.flags&SDL_RENDERER_PRESENTVSYNC)?1:0,
             (info.flags&SDL_RENDERER_TARGETTEXTURE)?1:0,outW,outH,winPtW,winPtH,worldView.first,worldView.second,scaleX,scaleY,
             info.max_texture_width,info.max_texture_height,glVendor,glRenderer,glVersion,studyQuery?1:0);
+        std::printf("RENDER_TIMING frame_mode=%s gpu_timeline=%s gpu_busy=unmeasured telemetry=%s\n",
+            tak::devFlag("TAK_PROF_FINISH") ? "forced_completion" : "pipelined",
+            studyQuery ? "gl_time_elapsed_deferred" : "unavailable",
+            tak::devFlag("TAK_RENDER_STATS",true) ? "on" : "off");
     }
     // Matrix knobs for the render study (tools/render_benchmark.py). Frame-indexed,
     // so every run of a scene sees the identical camera and event schedule.
@@ -1782,7 +1816,12 @@ int main(int argc, char** argv) {
             }
             t2 = prof ? pnow() : 0;
 #ifndef NDEBUG
-            if(studyQuery)studyBeginQuery(0x88bf,studyQuery); // GL_TIME_ELAPSED
+            if(studyQuery) {
+                const unsigned slot=studyFrame%kStudyQueries;
+                if(studyQueryPending[slot]) {studyReadQuery(slot,true);++studyQueryStalls;}
+                studyBeginQuery(0x88bf,studyQueries[slot]); // GL_TIME_ELAPSED
+                studyQueryFrame[slot]=studyFrame;studyQueryPending[slot]=true;
+            }
 #endif
             gameView->draw(w, h);
 #ifndef NDEBUG
@@ -1836,8 +1875,15 @@ int main(int argc, char** argv) {
         SDL_RenderPresent(ren);
 #ifndef NDEBUG
         if(renderStudy && profFrames) {
-            uint64_t gpuNs=0;
-            if(studyQuery)studyGetQuery(studyQuery,GL_QUERY_RESULT,&gpuNs);
+            // Results that are ready, oldest first, without waiting for the GPU.
+            double gpuMs=-1;
+            if(studyQuery)
+                for(unsigned age=kStudyQueries;age-->0;) {
+                    const unsigned slot=(studyFrame+kStudyQueries-age)%kStudyQueries;
+                    const unsigned measured=studyQueryFrame[slot];
+                    const double ms=studyReadQuery(slot,false);
+                    if(ms>=0 && measured==studyFrame)gpuMs=ms;
+                }
             double pj=0,sb=0,sh=0,at=0,bd=0;
             gameView->profPeek(pj,sb,sh);gameView->profOther2(at,bd);
             static double lastPj=0,lastSb=0,lastSh=0,lastAt=0,lastBd=0;
@@ -1845,14 +1891,33 @@ int main(int argc, char** argv) {
             gameView->renderWork(vertices,calls,images,bakes,bakeVertices,bakeCalls,switches,imageBytes);
             std::printf("DRAWPHASE frame=%u proj=%.3f submit=%.3f shadow=%.3f atlas=%.3f body=%.3f gpu=%.3f vram=%zu body_vertices=%zu body_calls=%zu images=%zu image_bakes=%zu bake_vertices=%zu bake_calls=%zu cache_switches=%zu image_bytes=%zu\n",
                 studyFrame,pj-lastPj,sb-lastSb,sh-lastSh,at-lastAt,bd-lastBd,
-                studyQuery?double(gpuNs)/1e6:-1.,gpuvram::bytes(),vertices,calls,images,bakes,bakeVertices,bakeCalls,switches,imageBytes);
+                gpuMs,gpuvram::bytes(),vertices,calls,images,bakes,bakeVertices,bakeCalls,switches,imageBytes);
             lastPj=pj;lastSb=sb;lastSh=sh;lastAt=at;lastBd=bd;
-            static char statsLine[4096];
+            static char statsLine[16384];
             gameView->renderStats().format(statsLine,sizeof statsLine);
-            std::printf("RENDERSTATS frame=%u gpu_timeline_ms=%.4f zoom=%.4f gpu_cap_bytes=%zu%s\n",studyFrame,
-                studyQuery?double(gpuNs)/1e6:-1.,gameView->renderStudyZoomNow(),gpuvram::cap(),statsLine);
+            std::printf("RENDERSTATS frame=%u gpu_timeline_ms=%.4f zoom=%.4f gpu_cap_bytes=%zu gpu_query_stalls=%llu%s\n",studyFrame,
+                gpuMs,gameView->renderStudyZoomNow(),gpuvram::cap(),
+                static_cast<unsigned long long>(studyQueryStalls),statsLine);
+        } else if(gameView && !renderStudy) {
+            // Outside the study, TAK_RENDER_STATS=1 logs one frame's telemetry a second
+            // (no GPU timing: that needs the study's query ring).
+            static const bool statsLog=tak::devFlag("TAK_RENDER_STATS");
+            static uint64_t statsLogAt=0,statsFrame=0;
+            ++statsFrame;
+            if(statsLog && SDL_GetTicks64()-statsLogAt>=1000) {
+                statsLogAt=SDL_GetTicks64();
+                static char statsLine[16384];
+                gameView->renderStats().format(statsLine,sizeof statsLine);
+                std::printf("RENDERSTATS frame=%llu gpu_timeline_ms=-1%s\n",
+                    static_cast<unsigned long long>(statsFrame),statsLine);
+            }
         }
         if(renderStudy && ++studyFrame==studyFrameLimit) {
+            // Pipelined runs: collect the last frames' timelines (the run is over, so
+            // waiting here perturbs nothing that is measured).
+            if(studyQuery)
+                for(unsigned age=kStudyQueries;age-->0;)
+                    studyReadQuery((studyFrame+kStudyQueries-age)%kStudyQueries,true);
             std::printf("RENDER_STUDY frames=%u hash=%016llx gpu_textures=%.2fMiB\n",studyFrame,
                 static_cast<unsigned long long>(gameView->worldHashPublic()),
                 double(gpuvram::bytes())/(1<<20));
@@ -1864,7 +1929,7 @@ int main(int argc, char** argv) {
                     throw std::runtime_error("texture reuse test had no unchanged animated frames across ticks");
             }
             running=false;quitApp=true;
-            if(studyQuery){studyDeleteQuery(1,&studyQuery);studyQuery=0;}
+            if(studyQuery){studyDeleteQuery(GLsizei(kStudyQueries),studyQueries);studyQuery=false;}
         }
 #endif
         // With vsync on, bound presentation at the display's refresh: some renderers report
@@ -2236,7 +2301,7 @@ int main(int argc, char** argv) {
         }
     }
 #ifndef NDEBUG
-    if(studyQuery)studyDeleteQuery(1,&studyQuery);
+    if(studyQuery)studyDeleteQuery(GLsizei(kStudyQueries),studyQueries);
 #endif
     if (crusadesView) {
         if (gameView) gameView->setAudioTap(nullptr,nullptr);
