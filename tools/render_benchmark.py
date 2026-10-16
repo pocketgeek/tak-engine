@@ -82,8 +82,11 @@ SCENES = {
                                "TAK_RENDER_SPARSE_OFFSET": "8800,200"},
                           segments={"battle": (300, 450), "sparse": (450, None)},
                           notes="large battle, then from frame 450 a sustained empty view"),
-    "constrained": dict(count=2000, zoom=0.5, settings={"gpuMemoryLimit": "512"},
-                        notes="stationary-mixed under the 512 MiB GPU MEMORY LIMIT"),
+    "constrained": dict(count=2000, zoom=1.0, env={"TAK_RENDER_CAMERA": "1", "TAK_RENDER_ZOOM": "1",
+                                                   "TAK_GPU_CAP_MIB": "128"},
+                        settings={"gpuMemoryLimit": "512"},
+                        notes="the zoom scene under a 128 MiB tracked-GPU cap (debug override below "
+                              "the 512 MiB Options minimum, which no matrix scene reaches)"),
 }
 QUICK = ["small-battle", "stationary-mixed", "moving", "pan"]
 SIZES = {"normal": (1280, 960), "uhd": (7680, 2160)}
@@ -322,8 +325,16 @@ def run_one(args, client, label, scene, size_key, leg, capture=False):
             raise RuntimeError(f"{name}: asked for output {w}x{h}, got {renv.get('output')}")
     if len(parsed["frame"]) != args.frames or len(parsed["drawphase"]) != args.frames:
         raise RuntimeError(f"{name}: incomplete measurement records")
+    stats_last = result_zoom = None
+    if parsed["stats"]:
+        stats_last = parsed["stats"][-1]
+        result_zoom = stats_last.get("zoom")
+    if result_zoom is not None and abs(result_zoom - SCENES[scene]["zoom"]) > 1e-3 and not (
+            SCENES[scene].get("env", {}).get("TAK_RENDER_ZOOM")):
+        print(f"{name}: note: requested zoom {SCENES[scene]['zoom']} ran at {result_zoom:.4f} "
+              "(map-fills-window clamp)", flush=True)
     result = {
-        "name": name, "scene": scene, "size": size_key, "label": label, "leg": leg,
+        "name": name, "scene": scene, "actual_zoom_last": result_zoom, "size": size_key, "label": label, "leg": leg,
         "client": str(client), "capture": capture, "world_hash": parsed["world_hash"],
         "render_env": renv, "spawned": parsed["spawned"], "scene_line": parsed["scene_line"],
         "settings": settings, "scene_env": scene_env(scene, size_key),
@@ -425,7 +436,8 @@ def world_rect(render_env, w, h):
 # ---- Aggregation ----
 
 KEY_METRICS = [("frame_ms", "total", "mean"), ("frame_ms", "total", "p95"), ("frame_ms", "total", "p99"),
-               ("frame_ms", "draw", "mean"), ("frame_ms", "present", "mean"),
+               ("frame_ms", "draw", "mean"), ("frame_ms", "draw", "p95"), ("frame_ms", "draw", "p99"),
+               ("frame_ms", "present", "mean"),
                ("drawphase", "proj", "mean"), ("drawphase", "shadow", "mean"),
                ("drawphase", "body", "mean"), ("drawphase", "gpu", "mean")]
 

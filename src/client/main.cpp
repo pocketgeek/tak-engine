@@ -1849,8 +1849,8 @@ int main(int argc, char** argv) {
             lastPj=pj;lastSb=sb;lastSh=sh;lastAt=at;lastBd=bd;
             static char statsLine[4096];
             gameView->renderStats().format(statsLine,sizeof statsLine);
-            std::printf("RENDERSTATS frame=%u gpu_timeline_ms=%.4f%s\n",studyFrame,
-                studyQuery?double(gpuNs)/1e6:-1.,statsLine);
+            std::printf("RENDERSTATS frame=%u gpu_timeline_ms=%.4f zoom=%.4f gpu_cap_bytes=%zu%s\n",studyFrame,
+                studyQuery?double(gpuNs)/1e6:-1.,gameView->renderStudyZoomNow(),gpuvram::cap(),statsLine);
         }
         if(renderStudy && ++studyFrame==studyFrameLimit) {
             std::printf("RENDER_STUDY frames=%u hash=%016llx gpu_textures=%.2fMiB\n",studyFrame,

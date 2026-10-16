@@ -650,6 +650,8 @@ public:
     // The world view at this output size (left of the command panel, above the
     // bottom bar): the region a render capture comparison should cover.
     std::pair<int,int> renderStudyWorldView(int w, int h) const { return {mapViewW(w), std::max(1, h - barH())}; }
+    // The zoom actually in force (the map-fills-window clamp can raise a request).
+    float renderStudyZoomNow() const { return mapView_.zoom(); }
     void renderWork(size_t& vertices,size_t& calls,size_t& images,size_t& bakes,size_t& bakeVertices,
                     size_t& bakeCalls,size_t& switches,size_t& imageBytes) const {
         vertices=bodyVerts_.size();calls=0;

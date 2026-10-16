@@ -17,6 +17,7 @@
 #pragma once
 
 #include "client/artscale.h"
+#include "client/dev.h"
 #include "client/gpuvram.h"
 #include "client/settings.h"
 #include "client/videofilter.h"
@@ -39,6 +40,13 @@ inline void applyRuntimeSettings(const Settings& s) {
     // to a lowered one from the next frame (gpuvram.h). Unchanged = a no-op, so a
     // post-failure tightening survives the other options being tweaked.
     gpuvram::setLimit(gpuMemoryLimitBytes(s.gpuMemoryLimit));
+#ifndef NDEBUG
+    // Render benchmark only (tools/render_benchmark.py "constrained"): a cap that
+    // actually binds. The Options minimum (512 MiB) and the policy floor (384 MiB)
+    // sit above what most benchmark scenes hold, so neither constrains them.
+    if (const char* cap = devEnv("TAK_GPU_CAP_MIB"); cap && std::atoi(cap) > 0)
+        gpuvram::g_policy.limit = gpuvram::g_policy.cap = size_t(std::atoi(cap)) * gpuvram::kMiB;
+#endif
 }
 
 }  // namespace tak
