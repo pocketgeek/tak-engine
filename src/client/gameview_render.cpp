@@ -407,8 +407,8 @@
         // that fits a page of half the size with the same headroom. A full repack
         // (compaction) runs when a cell cannot be placed and the atlas is
         // fragmented (demand <= 3/4 of capacity), at most once per 60 frames unless
-        // nothing else fits -- or for free, when >= 90% of the frame's tiles are
-        // redrawn anyway and the atlas is loose.
+        // nothing else fits -- or for free, when every tile of the frame is
+        // redrawn anyway, or >= 90% are and the atlas is loose.
         struct AtlasPolicyTimes {
             uint64_t retainMs=2000, retainFrames=30, emptyMs=2000, emptyFrames=60;
             uint64_t sparseMs=2000, sparseFrames=60, shrinkMs=5000, shrinkFrames=120, compactCooldown=60;
@@ -707,7 +707,13 @@
                 // packer (its cost, not three attempts) until a frame fits again.
                 const bool failedLast=pol.failFrame && pol.failFrame+1==frame;
                 bool compact=atlasTimes.repack || failedLast, freeRepack=false;
-                if (!compact && work.size()>=16 && dirtyAnyway*10>=work.size()*9) {
+                if (!compact && work.size()>=16 && dirtyAnyway==work.size()) {
+                    // Every tile is redrawn wherever it sits (continuous zoom, a reset):
+                    // the former packer's cursor places them in O(1) each, cheaper than
+                    // best-fitting every outgrown tile, and the clears become one page
+                    // clear. Nothing kept is lost.
+                    compact=freeRepack=true;
+                } else if (!compact && work.size()>=16 && dirtyAnyway*10>=work.size()*9) {
                     // Loose: tiles spread over more pages than a tight pack needs
                     // (former packer ~80% full), or a quarter of the shelf area free.
                     size_t pagesWithCells=0;
