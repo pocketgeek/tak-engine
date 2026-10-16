@@ -36,6 +36,7 @@
 
 #include <SDL.h>
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -73,17 +74,28 @@ inline bool samePlacement(const ShadowPlacement& a, const ShadowPlacement& b) {
 // Every point of a tile, old placement vs new: `local[i]` are the unchanged
 // local points (same coverage), `placedNow(i)` the points as placed this frame
 // (what the builder would rasterize). The old points are recomputed from the
-// local points and the old placement with the stage's own function. Stops at
-// the first difference, so a sub-pixel shift is rejected after one point.
+// local points and the old placement with the stage's own function. The first
+// point is checked alone, so a sub-pixel shift is rejected after one point; the
+// rest are compared in blocks without a branch per point (vectorizable).
 template <class PlacedNow>
 inline bool sameTilePoints(std::span<const SDL_FPoint> local, PlacedNow&& placedNow,
                            const ShadowTileStamp& before, const ShadowTileStamp& now) {
-    for (size_t i = 0; i < local.size(); ++i) {
+    const auto differs = [&](size_t i) -> uint32_t {
         const SDL_FPoint was = tilePoint(placeShadowPoint(local[i], before.placement), before.scaleX,
                                          before.scaleY, before.pixelX, before.pixelY, before.slotX, before.slotY);
         const SDL_FPoint is = tilePoint(placedNow(i), now.scaleX, now.scaleY, now.pixelX, now.pixelY,
                                         now.slotX, now.slotY);
-        if (!sameBits(was.x, is.x) || !sameBits(was.y, is.y)) return false;
+        return (std::bit_cast<uint32_t>(was.x) ^ std::bit_cast<uint32_t>(is.x)) |
+               (std::bit_cast<uint32_t>(was.y) ^ std::bit_cast<uint32_t>(is.y));
+    };
+    if (local.empty()) return true;
+    if (differs(0)) return false;
+    constexpr size_t kBlock = 64;
+    for (size_t begin = 1; begin < local.size(); begin += kBlock) {
+        const size_t end = std::min(local.size(), begin + kBlock);
+        uint32_t diff = 0;
+        for (size_t i = begin; i < end; ++i) diff |= differs(i);
+        if (diff) return false;
     }
     return true;
 }

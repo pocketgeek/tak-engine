@@ -1015,13 +1015,6 @@ private:
         std::vector<SDL_Vertex> maskedShadowVerts; // only cutout faces need UVs/textures
         std::vector<std::pair<SDL_Texture*,int>> maskedShadowRuns; // adjacent masks, original order
         std::array<float,4> shadowBounds{}; // min x/y, max x/y of the placed shadow
-        // The placement the shadow points above were placed with (set by every
-        // placement stage). With shadowRevision it is the exact key of a shadow
-        // silhouette tile (client/shadowtiles.h).
-        tak::render::ShadowPlacement shadowPlacement{};
-        // Telemetry: the last local rebuild left the shadow inputs unchanged, so the
-        // silhouette was not collected again (body-only local change).
-        bool shadowSkipped=false;
         SDL_Texture* shadowAtlasPage = nullptr;
         SDL_Rect shadowAtlasSrc{};
         SDL_FRect shadowAtlasDst{};
@@ -1038,6 +1031,14 @@ private:
         // actually differs, so a body-only local change (texture frame, palette)
         // leaves it alone. With shadowPlacement it keys the silhouette tile (E).
         uint64_t localRevision=0, placementRevision=0, materialRevision=0, shadowRevision=0;
+        // The placement the shadow points were placed with (set by every placement
+        // stage). With shadowRevision it is the exact key of a shadow silhouette
+        // tile (client/shadowtiles.h). Kept at the end so the draw-pass fields keep
+        // their cache lines.
+        tak::render::ShadowPlacement shadowPlacement{};
+        // Telemetry: the last local rebuild left the shadow inputs unchanged, so the
+        // silhouette was not collected again (body-only local change).
+        bool shadowSkipped=false;
 #ifndef NDEBUG
         uint32_t verifiedTick=~0u;
 #endif
@@ -1598,6 +1599,11 @@ private:
     int shadowSilhouetteWidth_=0,shadowSilhouetteHeight_=0;
     bool shadowSilhouetteAtlasActive_ = false;
     std::vector<SDL_FPoint> shadowAtlasOpaqueScratch_;
+    // Tile decision scratch (workstream E, render thread): this frame's stamp per
+    // packed unit, tiles per page, and the tiles that need the point check.
+    std::vector<ShadowTileStamp> shadowTileStamps_;
+    std::vector<uint32_t> shadowTilePageCounts_;
+    std::vector<size_t> shadowTileChecks_;
     std::unordered_map<SDL_Texture*,std::vector<SDL_Vertex>> shadowAtlasMaskScratch_;
     ShadowMaskFrame addShadowMask(std::span<const uint8_t> rgba,int width,int height);
     std::vector<Tri> tris_;

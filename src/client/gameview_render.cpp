@@ -429,6 +429,11 @@
                 int slotX,slotY,pixelX,pixelY,width,height;
                 bool dirty=true;
                 size_t opaqueOffset=0,maskBegin=0,maskEnd=0;
+                // Tile reuse (workstream E): index on the page and decision (the
+                // stamp lives in shadowTileStamps_, kept out of the sorted items).
+                uint32_t tile=0;
+                tak::render::TileVerdict verdict=tak::render::TileVerdict::New;
+                bool checkPoints=false;
             };
             std::vector<Work> work;
             work.reserve(items.size());
@@ -530,6 +535,61 @@
             for (const Work& w:work) usedPages=std::max(usedPages,w.page+1);
             shadowAtlasPackedPages=usedPages;
 
+            // Tile decisions (workstream E, client/shadowtiles.h), before any page is
+            // touched: each tile is keyed on its unit's shadow coverage and exact
+            // shadow placement, not on the body's geometry revision or screen pixel.
+            // A placement change is kept only if every tile point recomputes
+            // bit-identical; those point checks are independent and read only
+            // finished geometry, so many of them run on the pool. Decisions do not
+            // depend on the order they are made in.
+            const bool noCache=tak::devFlag("TAK_SHADOW_NOCACHE");
+            auto& workStamps=shadowTileStamps_;
+            workStamps.resize(work.size());
+            {
+                auto& pageTiles=shadowTilePageCounts_;
+                pageTiles.assign(shadowSilhouettePages_.size(),0);
+                auto& checks=shadowTileChecks_;
+                checks.clear();
+                size_t checkPoints=0;
+                for (size_t wi=0;wi<work.size();++wi) {
+                    Work& w=work[wi];
+                    const UnitGeom& g=*w.geom;
+                    w.tile=pageTiles[w.page]++;
+                    auto& stamp=workStamps[wi];
+                    stamp.source=w.geom;stamp.owner=g.owner;stamp.coverage=g.shadowRevision;
+                    stamp.revision=g.revision;stamp.placement=g.shadowPlacement;
+                    stamp.pixelX=w.pixelX;stamp.pixelY=w.pixelY;stamp.slotX=w.slotX;stamp.slotY=w.slotY;
+                    stamp.width=w.width;stamp.height=w.height;stamp.scaleX=scaleX;stamp.scaleY=scaleY;
+                    if (force || noCache) continue;
+                    const auto& stamps=shadowSilhouettePages_[w.page].stamps;
+                    const ShadowTileStamp* old=w.tile<stamps.size() ? &stamps[w.tile] : nullptr;
+                    w.verdict=tak::render::classifyShadowTile(old,stamp,[&] {w.checkPoints=true;return false;});
+                    if (w.checkPoints) {
+                        checks.push_back(wi);
+                        checkPoints+=g.shadowLocal.size()+g.maskedShadowLocal.size();
+                    }
+                }
+                const auto check=[&](size_t begin,size_t end) {
+                    for (size_t c=begin;c<end;++c) {
+                        Work& w=work[checks[c]];
+                        const UnitGeom& g=*w.geom;
+                        const ShadowTileStamp& now=workStamps[checks[c]];
+                        const ShadowTileStamp& old=shadowSilhouettePages_[w.page].stamps[w.tile];
+                        // Same coverage => same local points; the old tile points are
+                        // recomputed from them with the old placement.
+                        const bool same=g.shadowVerts.size()==g.shadowLocal.size() &&
+                            g.maskedShadowVerts.size()==g.maskedShadowLocal.size() &&
+                            tak::render::sameTilePoints(g.shadowLocal,
+                                [&](size_t i){return g.shadowVerts[i];},old,now) &&
+                            tak::render::sameTilePoints(g.maskedShadowLocal,
+                                [&](size_t i){return g.maskedShadowVerts[i].position;},old,now);
+                        if (same) w.verdict=tak::render::TileVerdict::ReuseTranslated;
+                    }
+                };
+                if (checkPoints>=32768 && checks.size()>=16) pool_.parallelFor(checks.size(),check);
+                else check(0,checks.size());
+            }
+
             SDL_Texture* previousTarget=SDL_GetRenderTarget(ren_);
             SDL_Rect previousViewport{};
             SDL_Rect previousClip{};
@@ -558,30 +618,14 @@
                 auto& stamps=shadowSilhouettePages_[p].stamps;
                 size_t tile=0;
                 std::vector<SDL_Rect> dirtyRects;
-                const bool noCache=tak::devFlag("TAK_SHADOW_NOCACHE");
                 for(Work& w:work) if(w.page==p) {
-                    // Workstream E: a tile is keyed on its unit's shadow coverage and
-                    // exact shadow placement, not on the body's geometry revision or
-                    // screen position (client/shadowtiles.h).
-                    const UnitGeom& g=*w.geom;
-                    ShadowTileStamp stamp;
-                    stamp.source=w.geom;stamp.owner=g.owner;stamp.coverage=g.shadowRevision;
-                    stamp.revision=g.revision;stamp.placement=g.shadowPlacement;
-                    stamp.pixelX=w.pixelX;stamp.pixelY=w.pixelY;stamp.slotX=w.slotX;stamp.slotY=w.slotY;
-                    stamp.width=w.width;stamp.height=w.height;stamp.scaleX=scaleX;stamp.scaleY=scaleY;
+                    const ShadowTileStamp& stamp=workStamps[size_t(&w-work.data())];
+#ifndef NDEBUG
+                    if(w.tile!=tile)throw std::logic_error("shadow tile decision made for another tile index");
+#endif
                     const ShadowTileStamp* old=tile<stamps.size() ? &stamps[tile] : nullptr;
                     using tak::render::TileVerdict;
-                    TileVerdict verdict=TileVerdict::New;
-                    if(!force && !noCache)verdict=tak::render::classifyShadowTile(old,stamp,[&] {
-                        // Same coverage => same local points; the old tile points are
-                        // recomputed from them with the old placement.
-                        return g.shadowVerts.size()==g.shadowLocal.size() &&
-                            g.maskedShadowVerts.size()==g.maskedShadowLocal.size() &&
-                            tak::render::sameTilePoints(g.shadowLocal,
-                                [&](size_t i){return g.shadowVerts[i];},*old,stamp) &&
-                            tak::render::sameTilePoints(g.maskedShadowLocal,
-                                [&](size_t i){return g.maskedShadowVerts[i].position;},*old,stamp);
-                    });
+                    const TileVerdict verdict=w.verdict;
                     w.dirty=force || noCache || !tak::render::reuses(verdict);
                     if(!force && renderStats_.enabled()) {
                         if(noCache)renderStats_.add(RS::ShadowDirtyForced);
@@ -2506,6 +2550,7 @@
             scratchCapacity += v.capacity() * sizeof(v[0]);
         };
         scratch(shadowAtlasOpaqueScratch_); scratch(shadowCompositeBatch_);
+        scratch(shadowTileStamps_); scratch(shadowTilePageCounts_); scratch(shadowTileChecks_);
         for (const auto& [texture, vertices] : shadowAtlasMaskScratch_) scratch(vertices);
         stats.set(RS::ShadowScratchUsedBytes, scratchUsed);
         stats.set(RS::ShadowScratchCapacityBytes, scratchCapacity);
@@ -2725,6 +2770,7 @@
         shadowSilhouetteWidth_=shadowSilhouetteHeight_=0;
         shadowAtlasOpaqueScratch_.clear();
         shadowAtlasMaskScratch_.clear();
+        shadowTileStamps_.clear();shadowTileChecks_.clear();
         shadowSilhouetteAtlasActive_=false;
         atlasTracker_.clear();   // whatever was painted died with the atlases
     }
