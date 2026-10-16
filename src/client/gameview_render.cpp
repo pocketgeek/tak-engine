@@ -697,7 +697,16 @@
                         needs.push_back(wi);
                     }
                 }
-                bool compact=atlasTimes.repack, freeRepack=false;
+                // More tile area than four full pages: no packer fits it (the former
+                // one included), so fall back at once instead of trying; the cells
+                // left unused expire and their pages go (the former code kept them).
+                // (Pages are already at the largest size here: they grow first
+                // whenever the frame's tiles exceed 3/4 of one page.)
+                if (tilePx>uint64_t(kMaxPages)*pageArea) return fail("page limit reached");
+                // After a frame whose repack did not fit, go straight to the former
+                // packer (its cost, not three attempts) until a frame fits again.
+                const bool failedLast=pol.failFrame && pol.failFrame+1==frame;
+                bool compact=atlasTimes.repack || failedLast, freeRepack=false;
                 if (!compact && work.size()>=16 && dirtyAnyway*10>=work.size()*9) {
                     // Loose: tiles spread over more pages than a tight pack needs
                     // (former packer ~80% full), or a quarter of the shelf area free.
@@ -811,7 +820,8 @@
                         }
                         return true;
                     };
-                    if (!(!atlasTimes.repack && pass(true)) && !pass(false)) {
+                    if (!(!atlasTimes.repack && !failedLast && pass(true)) && !pass(false)) {
+                        pol.failFrame=frame;
                         atlas.releaseAll();
                         std::fill(shadowCellStampValid_.begin(),shadowCellStampValid_.end(),uint8_t(0));
                         for (Work& w:work) w.geom->shadowTile={};

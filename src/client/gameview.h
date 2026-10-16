@@ -1622,6 +1622,7 @@ private:
         uint64_t shrinkSinceFrame=0, shrinkSinceMs=0;    // demand fits smaller pages since
         uint64_t sparseSinceFrame=0, sparseSinceMs=0;    // cells fit without the last page since
         int migratePage=-1;                              // page being emptied (bounded migration)
+        uint64_t failFrame=0;                            // last frame whose full repack did not fit
     } shadowAtlasPolicy_;
     void resetShadowAtlas();
     // Tile decision scratch (render thread): this frame's stamp per packed unit,

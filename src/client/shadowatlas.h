@@ -147,9 +147,12 @@ public:
     }
 
     // Places a w x h cell (padding included; the caller chooses classed or exact
-    // heights) on a live page below pageLimit. Best fit (incremental): the
-    // lowest shelf no more than an eighth taller (>= 2 px), first free span,
-    // else a new shelf in the first rows that fit. Sequential: the former packer's cursor.
+    // heights) on a live page below pageLimit. Best fit (incremental), page by
+    // page from the first: on that page the lowest shelf no more than an eighth
+    // taller (>= 2 px) with a free span wide enough, else a new shelf in its
+    // first rows that fit; only then the next page. Filling low pages first
+    // keeps painter-order neighbours on one page (fewer composite batch breaks)
+    // and lets the last page empty. Sequential: the former packer's cursor.
     // Returns an invalid handle when nothing fits.
     RenderHandle allocate(int w, int h, bool sequential, size_t pageLimit = SIZE_MAX) {
         if (w <= 0 || h <= 0 || w > pageW_ || h > pageH_) return {};
@@ -348,30 +351,25 @@ private:
 
     RenderHandle allocateBestFit(int w, int h, size_t end) {
         const int tolerance = std::max(2, h / 8);
-        size_t bestPage = SIZE_MAX, bestShelf = 0, bestSpan = 0;
-        int bestH = INT_MAX;
-        for (size_t p = 0; p < end && bestH != h; ++p) {
+        for (size_t p = 0; p < end; ++p) {
             Page& page = pages_[p];
             if (!page.live) continue;
-            for (size_t s = 0; s < page.shelves.size(); ++s) {
+            size_t bestShelf = SIZE_MAX, bestSpan = 0;
+            int bestH = INT_MAX;
+            for (size_t s = 0; s < page.shelves.size() && bestH != h; ++s) {
                 const Shelf& shelf = page.shelves[s];
                 if (shelf.h < h || shelf.h > h + tolerance || shelf.h >= bestH) continue;
                 for (size_t f = 0; f < shelf.free.size(); ++f)
                     if (shelf.free[f].x1 - shelf.free[f].x0 >= w) {
-                        bestPage = p; bestShelf = s; bestSpan = f; bestH = shelf.h;
+                        bestShelf = s; bestSpan = f; bestH = shelf.h;
                         break;
                     }
-                if (bestH == h) break;
             }
-        }
-        if (bestPage != SIZE_MAX) {
-            Shelf& shelf = pages_[bestPage].shelves[bestShelf];
-            const int cellH = shelf.h;
-            return place(bestPage, shelf, bestSpan, w, cellH);
-        }
-        for (size_t p = 0; p < end; ++p) {
-            Page& page = pages_[p];
-            if (!page.live) continue;
+            if (bestShelf != SIZE_MAX) {
+                Shelf& shelf = page.shelves[bestShelf];
+                const int cellH = shelf.h;
+                return place(p, shelf, bestSpan, w, cellH);
+            }
             for (size_t r = 0; r < page.rows.size(); ++r)
                 if (page.rows[r].x1 - page.rows[r].x0 >= h) {
                     const size_t s = openShelf(page, r, h, pageW_);
