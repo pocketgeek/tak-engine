@@ -1445,6 +1445,7 @@ if(TAK_BUILD_CLIENT)
     add_test(NAME shadow COMMAND shadow_test)
     add_executable(render_telemetry_test tools/render_telemetry_test.cpp)
     target_include_directories(render_telemetry_test PRIVATE src)
+    target_link_libraries(render_telemetry_test PRIVATE Threads::Threads)   # ThreadPool telemetry checks
     add_test(NAME render_telemetry COMMAND render_telemetry_test)
     add_executable(geometrysubmit_test tools/geometrysubmit_test.cpp)
     target_include_directories(geometrysubmit_test PRIVATE src)

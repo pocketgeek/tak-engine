@@ -1,11 +1,18 @@
 // Shared renderer vocabulary (client/rendertelemetry.h): generational handles
 // must never alias a recycled slot, stats must stay inert when off, and the
 // RENDERSTATS line keeps the key names tools/render_benchmark.py parses.
+// Also: geometry-miss attribution (client/geometrykeycause.h) and the worker
+// pool's dispatch telemetry (client/threadpool.h), which must not change results.
+#include "client/geometrykeycause.h"
 #include "client/rendertelemetry.h"
+#include "client/threadpool.h"
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <string>
+#include <vector>
 
 namespace {
 int failures = 0;
@@ -44,28 +51,61 @@ int main() {
         const Generation before = g.current();
         check(g.bump() == before + 1 && g.current() == before + 1, "bump advances");
     }
+    {   // Name tables: complete, unique (the benchmark keys on them).
+        std::set<std::string> names;
+        size_t total = 0;
+        const auto add = [&](const char* prefix, const char* const* table, size_t count) {
+            for (size_t i = 0; i < count; ++i) {
+                check(table[i] && *table[i], "every enum value has a name");
+                if (table[i]) names.insert(std::string(prefix) + table[i]);
+                ++total;
+            }
+        };
+        add("t_", kPhaseNames, size_t(Phase::Count));
+        add("w_", kWorkNames, size_t(Work::Count));
+        add("", kCounterNames, size_t(Counter::Count));
+        add("miss_", kMissNames, size_t(MissCause::Count));
+        check(names.size() == total, "telemetry keys are unique");
+    }
     {   // Off: tallies and phase timers record nothing.
         FrameStats s;
         s.begin(false);
         s.add(Counter::VisibleUnits, 5);
         s.addMiss(MissCause::Cold);
         { ScopedPhase p(s, Phase::GeometryPrep); }
-        check(s.get(Counter::VisibleUnits) == 0 && s.miss[0] == 0 && s.ms[size_t(Phase::GeometryPrep)] == 0,
+        s.addWorkNs(Work::PoolBusy, 5000000);
+        s.addMs(Phase::Terrain, 2.0);
+        check(s.get(Counter::VisibleUnits) == 0 && s.miss[0] == 0 && s.ms[size_t(Phase::GeometryPrep)] == 0 &&
+              s.work[size_t(Work::PoolBusy)] == 0 && s.ms[size_t(Phase::Terrain)] == 0,
               "disabled stats stay zero");
-        // On: values recorded, begin() resets them.
+        // On: values recorded, begin() resets them. A release (NDEBUG) build
+        // compiles telemetry out, so enabling it there must still record nothing.
         s.begin(true);
+        check(s.enabled() == kTelemetryCompiled, "enabled only where compiled in");
+        if (!kTelemetryCompiled) {
+            s.add(Counter::VisibleUnits, 5);
+            check(s.get(Counter::VisibleUnits) == 0, "release build records nothing");
+            std::printf("note: render telemetry compiled out (NDEBUG); enabled-path checks skipped\n");
+        } else {
         s.add(Counter::VisibleUnits, 5);
         s.add(Counter::VisibleUnits);
         s.set(Counter::GpuTrackedBytes, 42);
         s.addMiss(MissCause::Owner, 3);
         { ScopedPhase p(s, Phase::BodySubmit); }
+        s.addWorkNs(Work::GeometryKey, 1500000);
+        s.add(Counter::PoolItems, 7);
         check(s.get(Counter::VisibleUnits) == 6 && s.get(Counter::GpuTrackedBytes) == 42, "enabled tallies");
+        check(s.work[size_t(Work::GeometryKey)] == 1.5, "worker nanoseconds folded as ms");
         check(s.ms[size_t(Phase::BodySubmit)] >= 0, "phase recorded");
-        char line[4096];
+        char line[16384];
         const int n = s.format(line, sizeof line);
         const std::string text(line, size_t(n));
         check(text.find(" visible_units=6") != std::string::npos, "counter key");
-        check(text.find(" gpu_tracked_bytes=42") != std::string::npos, "last counter key");
+        check(text.find(" gpu_tracked_bytes=42") != std::string::npos, "phase-0 counter key");
+        check(text.find(" pool_items=7") != std::string::npos, "last counter key");
+        check(text.find(" w_geometry_key=1.5000") != std::string::npos, "worker key");
+        check(text.find(" miss_zoom=0") != std::string::npos, "last miss key");
+        check(size_t(n) < 8192, "whole line well inside the client's buffer");
         check(text.find(" miss_owner=3") != std::string::npos, "miss key");
         check(text.find(" t_body_submit=") != std::string::npos && text.find(" t_candidates=") != std::string::npos,
               "phase keys");
@@ -74,8 +114,76 @@ int main() {
         char tiny[16];
         s.format(tiny, sizeof tiny);
         check(std::strlen(tiny) < sizeof tiny, "truncated format stays terminated");
+        }
+    }
+    {   // Geometry-miss attribution reads the exact key's layout.
+        // 26 fixed words, 2 texture-frame words, piece table + 2 pose words.
+        std::vector<uint64_t> base(kGeometryKeyFixedWords, 0);
+        base[0] = 7;                                  // unit id
+        base.insert(base.end(), {3, 4});              // texture frames
+        base.insert(base.end(), {0xabc, 10, 11});     // piece table, poses
+        const GeometryKeyLayout layout{uint32_t(kGeometryKeyFixedWords), uint32_t(kGeometryKeyFixedWords + 2)};
+        const auto changes = [&](std::vector<uint64_t> after, GeometryKeyLayout afterLayout) {
+            return geometryKeyChanges(base, layout, after, afterLayout);
+        };
+        const auto with = [&](size_t i, uint64_t v) { auto k = base; k[i] = v; return k; };
+        check(changes(with(0, 8), layout) == missBit(MissCause::Owner), "owner change reported alone");
+        check(changes(with(18, 1), layout) == missBit(MissCause::Placement), "anchor is placement");
+        check(changes(with(17, 1), layout) == missBit(MissCause::Zoom), "zoom");
+        check(changes(with(22, 1), layout) == missBit(MissCause::Pose), "facing is pose");
+        check(changes(with(4, 1), layout) == missBit(MissCause::Material), "player palette is material");
+        check(changes(with(2, 1), layout) == missBit(MissCause::Resource), "model is resource");
+        check(changes(with(13, 1), layout) == missBit(MissCause::Settings), "shadow toggle is settings");
+        check(changes(with(kGeometryKeyFixedWords + 1, 9), layout) == missBit(MissCause::Material),
+              "texture frame is material");
+        check(changes(with(kGeometryKeyFixedWords + 3, 99), layout) == missBit(MissCause::Pose), "piece pose");
+        check(changes(with(kGeometryKeyFixedWords + 2, 1), layout) == missBit(MissCause::Resource),
+              "piece table is resource");
+        auto moved = with(19, 5); moved[kGeometryKeyFixedWords + 4] = 1;
+        const uint32_t both = changes(moved, layout);
+        check(both == (missBit(MissCause::Placement) | missBit(MissCause::Pose)), "every changed stage counted");
+        check(primaryMissCause(both) == MissCause::Pose, "filed under the more fundamental stage");
+        // Conjuring adds the clock word: the conjuring flag itself is material.
+        std::vector<uint64_t> conjuring(base.begin(), base.begin() + kGeometryKeyFixedWords);
+        conjuring[kGeometryKeyConjuringWord] = 1;
+        conjuring.push_back(1234);
+        for (size_t i = kGeometryKeyFixedWords; i < base.size(); ++i) conjuring.push_back(base[i]);
+        const GeometryKeyLayout shifted{layout.textureBegin + 1, layout.poseBegin + 1};
+        check(changes(conjuring, shifted) == missBit(MissCause::Material), "conjuring start is material only");
+        auto later = conjuring; later[kGeometryKeyFixedWords] = 1235;
+        check(geometryKeyChanges(conjuring, shifted, later, shifted) == missBit(MissCause::Material),
+              "conjuring clock is material");
+        // Losing the VM pose (corpse / replacement model) removes the pose section.
+        auto noPose = base; noPose.resize(layout.poseBegin);
+        check(changes(noPose, layout) == missBit(MissCause::Resource), "pose table removed");
+        check(changes(base, layout) == missBit(MissCause::Changed), "identical keys claim nothing");
+        check(primaryMissCause(0) == MissCause::Changed, "empty mask files as changed");
+        check(geometryKeyChanges(std::vector<uint64_t>(3), {}, base, layout) == missBit(MissCause::Changed),
+              "malformed key is unclaimed");
+    }
+    {   // Worker-pool telemetry: counts and times, identical results either way.
+        ThreadPool pool(4);
+        ThreadPool::Stats stats;
+        const auto run = [&](size_t count, size_t minParallel) {
+            std::vector<int> out(count, 0);
+            pool.parallelFor(count, [&](size_t b, size_t e) { for (size_t i = b; i < e; ++i) out[i] = int(i * 3); },
+                             minParallel);
+            for (size_t i = 0; i < count; ++i)
+                if (out[i] != int(i * 3)) return false;
+            return true;
+        };
+        check(run(100, 32), "untimed parallel results");
+        pool.setStats(&stats);
+        check(run(100, 32) && run(10, 32) && run(200, 32), "timed results identical");
+        check(stats.dispatches == 2 && stats.serial == 1 && stats.items == 310, "dispatch / serial / item counts");
+        check(stats.wakes == 2 * (pool.threads() - 1), "every worker's wake recorded once per dispatch");
+        check(stats.busyNs > 0, "participant busy time recorded");
+        pool.setStats(nullptr);
+        const ThreadPool::Stats before = stats;
+        check(run(100, 32), "untimed again");
+        check(stats.dispatches == before.dispatches && stats.busyNs == before.busyNs, "detached stats untouched");
     }
     if (failures) return EXIT_FAILURE;
-    std::printf("PASS: render telemetry handles, generations and stats\n");
+    std::printf("PASS: render telemetry handles, generations, stats, miss attribution and pool telemetry\n");
     return EXIT_SUCCESS;
 }
