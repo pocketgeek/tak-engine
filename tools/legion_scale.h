@@ -46,6 +46,15 @@
 //                                              Legion only, sampled every 30 ticks: live navigator
 //                                              containers and Stats::bytes (the navigator's own capacity
 //                                              estimate: planes, seeds, potentials, buckets, members)
+//   navwork.<class>.total / .tick_max, navwork.tick_all_max
+//                                              Legion only (stage 4, LegionNavigator::accounting): work per
+//                                              NavWork class (sim/navbudget.h), cumulative and the most one
+//                                              navigator tick window spent; the most of all classes at once
+//   navbytes.peak, navbytes.<category>_at_peak  deterministic NavBytes: the largest total sampled (every
+//                                              30 ticks and at the end) and its categories then
+//   sched.gap_max.<class>, sched.age_max.<class>, sched.promotions, sched.fit_skips, sched.reservations,
+//   sched.reg_deferred, sched.reg_wait_max, sched.plane_waits, sched.sync_plane_calls, sched.sync_plane_max,
+//   sched.init_max                             the scheduler's service record (NavAccounting)
 // Everything is integer and in body order, so every compiler reports the same numbers.
 #include "legion_observe.h"
 #include "sim/legion.h"
@@ -183,8 +192,15 @@ public:
             fieldsPeak_ = std::max<int64_t>(fieldsPeak_, int64_t(s.liveFields));
             membersPeak_ = std::max<int64_t>(membersPeak_, int64_t(s.liveMembers));
             bytesPeak_ = std::max<int64_t>(bytesPeak_, int64_t(s.bytes));
+            account(*nav);
         }
         last_ = t;
+    }
+    // The navigator's accounting (stage 4): the latest record, and the NavBytes at the largest total.
+    void account(const tak::sim::LegionNavigator& nav) {
+        acct_ = nav.accounting();
+        hasAcct_ = true;
+        if (acct_.bytes.total() >= peakBytes_.total()) peakBytes_ = acct_.bytes;
     }
 
     void report(obs::Keys& k, const tak::sim::World& w, bool legion) const {
@@ -269,6 +285,34 @@ public:
             k.emplace_back(p + "nav.fields_peak", fieldsPeak_);
             k.emplace_back(p + "nav.members_peak", membersPeak_);
             k.emplace_back(p + "nav.bytes_peak", bytesPeak_);
+            if (hasAcct_) {
+                const auto& a = acct_;
+                for (size_t c = 0; c < size_t(tak::sim::NavWork::Count); ++c) {
+                    const std::string n = p + "navwork." + tak::sim::kNavWorkNames[c];
+                    k.emplace_back(n + ".total", int64_t(a.total[c]));
+                    k.emplace_back(n + ".tick_max", int64_t(a.tickMax[c]));
+                }
+                k.emplace_back(p + "navwork.tick_all_max", int64_t(a.tickAll));
+                const auto& b = peakBytes_;
+                k.emplace_back(p + "navbytes.peak", int64_t(b.total()));
+                const std::pair<const char*, uint64_t> cats[] = {
+                    {"planes", b.planes}, {"fields", b.fields}, {"tiles", b.tiles}, {"portals", b.portals},
+                    {"queues", b.queues}, {"scratch", b.scratch}, {"metadata", b.metadata}, {"inflight", b.inflight}};
+                for (const auto& [name, v] : cats) k.emplace_back(p + "navbytes." + name + "_at_peak", int64_t(v));
+                for (size_t c = 0; c < size_t(tak::sim::NavClass::Count); ++c) {
+                    k.emplace_back(p + "sched.gap_max." + tak::sim::kNavClassNames[c], int64_t(a.serviceGapMax[c]));
+                    k.emplace_back(p + "sched.age_max." + tak::sim::kNavClassNames[c], int64_t(a.requestAgeMax[c]));
+                }
+                k.emplace_back(p + "sched.promotions", int64_t(a.promotions));
+                k.emplace_back(p + "sched.fit_skips", int64_t(a.fitSkips));
+                k.emplace_back(p + "sched.reservations", int64_t(a.reservations));
+                k.emplace_back(p + "sched.reg_deferred", int64_t(a.regDeferred));
+                k.emplace_back(p + "sched.reg_wait_max", int64_t(a.regWaitMax));
+                k.emplace_back(p + "sched.plane_waits", int64_t(a.planeWaits));
+                k.emplace_back(p + "sched.sync_plane_calls", int64_t(a.syncPlaneCalls));
+                k.emplace_back(p + "sched.sync_plane_max", int64_t(a.syncPlaneMax));
+                k.emplace_back(p + "sched.init_max", int64_t(a.initMax));
+            }
         }
     }
 
@@ -320,6 +364,9 @@ private:
     std::vector<int> index_;
     int64_t movingPeak_ = 0, movingTicks_ = 0, waitTicks_ = 0;
     int64_t groupsPeak_ = 0, fieldsPeak_ = 0, membersPeak_ = 0, bytesPeak_ = 0;
+    tak::sim::NavAccounting acct_;
+    tak::sim::NavBytes peakBytes_;
+    bool hasAcct_ = false;
     int last_ = -1;
 };
 

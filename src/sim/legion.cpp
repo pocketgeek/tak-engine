@@ -1804,6 +1804,81 @@ struct LegionNavigator::Impl {
 #ifndef NDEBUG
     Stats verified;        // the Stats at the previous verifyIndexes
 #endif
+    // ---- navigation accounting (Legion 10,000 stage 4; observation only, never hashed) ----------
+    // Cumulative counts of the NavWork classes Stats does not carry; workTotals() adds the Stats
+    // ones. Every tick() closes the window the previous one opened (foldWindow): the work of the
+    // window -- the tick's own plus what ran between ticks (orders) -- goes into the per-class
+    // maxima. No decision reads any of it.
+    struct NavCounters {uint64_t initCells=0,resolveCells=0,planeBuild=0,planeRelabel=0,ringCells=0,connectivity=0;};
+    mutable NavCounters navc;
+    mutable NavAccounting acct;
+    std::array<uint64_t,size_t(NavWork::Count)> acctMark{};
+    std::array<uint64_t,size_t(NavWork::Count)> workTotals() const {
+        std::array<uint64_t,size_t(NavWork::Count)> t{};
+        t[size_t(NavWork::FieldRelax)]=stats.fieldWork;
+        t[size_t(NavWork::FieldInit)]=navc.initCells;
+        t[size_t(NavWork::PlaneBuild)]=navc.planeBuild;
+        t[size_t(NavWork::PlaneRelabel)]=navc.planeRelabel;
+        t[size_t(NavWork::Registration)]=stats.registrations*NavBudget::kRegBase+stats.joinIterations+navc.resolveCells;
+        t[size_t(NavWork::Awareness)]=stats.awarePairs+stats.awareWork;
+        t[size_t(NavWork::SlotSearch)]=stats.slotSearchCells-std::min(stats.slotSearchCells,navc.ringCells);
+        t[size_t(NavWork::RingBuild)]=navc.ringCells;
+        t[size_t(NavWork::Connectivity)]=navc.connectivity;
+        return t;
+    }
+    // The open window's work per class (peek: accounting() reads it without closing the window).
+    void windowMax(NavAccounting& a) const {
+        const auto t=workTotals();
+        uint64_t all=0;
+        for(size_t c=0;c<t.size();++c) {
+            const uint64_t d=t[c]-std::min(t[c],acctMark[c]);
+            a.tickMax[c]=std::max(a.tickMax[c],d);a.total[c]=t[c];all+=d;
+        }
+        a.tickAll=std::max(a.tickAll,all);
+    }
+    void foldWindow() {windowMax(acct);acctMark=workTotals();}
+    // NavBytes (navbudget.h): element counts x fixed sizes, every container the navigator keeps.
+    NavBytes navBytes() const {
+        using S=NavSize;
+        NavBytes b;
+        for(const auto& p:planes)
+            b.planes+=p.legal.size()*S::kCell8+p.comp.size()*S::kCell32+p.compSize.size()*S::kCell32+p.compBox.size()*S::kBox+
+                p.cell.size()*S::kCell8+p.queue.size()*S::kCell32+p.run.size()*S::kCell16+p.column.size()*S::kCell32+
+                p.pending.size()*S::kBox+p.nearMemo.size()*S::kMemo+p.nearGen.size()*S::kCell32+p.spanMemo.size()*S::kCell32+
+                p.spanGen.size()*S::kCell32+p.loneMemo.size()*S::kCell8+p.loneGen.size()*S::kCell32;
+        std::set<const Field*> seen;
+        for(const auto& [id,g]:groups) {
+            for(const Field* f:{g.field.get(),g.next.get()}) {
+                if(!f||!seen.insert(f).second)continue;
+                b.fields+=S::kField+f->potential.size()*S::kCell32+f->seeds.size()*S::kCell32+f->avoid.size()*S::kCorridor;
+                if(f->done)continue;
+                for(const auto& q:f->buckets)b.inflight+=q.size()*S::kCell32;
+                b.inflight+=f->seedKeys.size()*S::kKeyed+f->demand.size()*S::kKeyed;
+            }
+            b.metadata+=S::kGroup+g.seeds.size()*S::kCell32+(g.sharing.size()+g.peak.size())*(S::kNode+8)+g.ids.size()*S::kCell32+
+                g.reachIds.size()*S::kCell32+(g.areaBounds.size()+g.crowdBounds.size())*(S::kNode+24)+
+                g.avoidCmd.size()*(8+S::kCorridor+1+1+1+4)+g.ring.cells.size()*(S::kCell32+1+S::kCell32);
+            for(const auto& [seed,sl]:g.slots)b.metadata+=S::kNode+16+sl.cells.size()*S::kCell32+sl.taken.size();
+        }
+        const uint64_t setNode=S::kNode+8;
+        b.queues+=(buildingIds.size()+waitedIds.size()+needFieldIds.size()+staleDoneIds.size()+byBuilt.size())*setNode;
+        b.queues+=(handIds.size()+pendingMeets.size()+meetIds.size())*(S::kNode+16);
+        for(const auto& [k,ids]:routeIndex)b.queues+=S::kNode+16+ids.size()*setNode;
+        for(const auto& [k,ids]:joinIndex)b.queues+=S::kNode+32+ids.size()*S::kCell32;
+        for(const auto& [id,m]:members)b.metadata+=S::kMember+m.route.size()*S::kCell32;
+        for(const auto& [key,pt]:points) {
+            b.metadata+=S::kPoint+S::kNode+pt.cells.size()*(S::kNode+S::kCell32)+pt.ids.size()*S::kCell32+
+                (pt.partRefs.size()+pt.partLive.size())*(S::kNode+32);
+            b.queues+=pt.queue.size()*S::kCell32;
+        }
+        b.metadata+=(anchors.size()+yielding.size()+approachDone.size()+parts.size()+anchorsAt.size())*(S::kNode+32);
+        b.metadata+=resolved.size()*(S::kNode+24);
+        b.scratch+=soft.size()*S::kCell32+softKind.size()*S::kCell8+softOwner.size()*S::kMemo+softBodies.size()*32+
+            grounded.size()*S::kCell32+liftHome.size()*S::kCell32+passMask.size()*S::kCell16+liftBuckets.size()*S::kCell16+
+            watchMark.size()+anchorMark.size();
+        for(const auto& k:softCounts)b.scratch+=k.at.size()*S::kCell32;
+        return b;
+    }
     explicit Impl(World& world):w(world) {}
 
     int width() const {return w.hW_;}
@@ -2343,6 +2418,11 @@ struct LegionNavigator::Impl {
             // jagged 2000 about 30% of its arrivals (seeds 0/7/42).
             const bool first=p.epoch==~0ull;
             p.epoch=epoch;buildPlane(p);labelPlane(p);clearStage(p);
+            {   // a synchronous whole-plane stage (accounting: reported, never hidden)
+                uint64_t legalCells=0;for(const int n:p.compSize)legalCells+=uint64_t(std::max(n,0));
+                const uint64_t units=4*uint64_t(width())*height()+4*legalCells;
+                navc.planeBuild+=units;++acct.syncPlaneCalls;acct.syncPlaneMax=std::max(acct.syncPlaneMax,units);
+            }
             // The carried debt is clamped to half a tick's quota: under
             // constant churn (corpses, burning features) every epoch rebuilds
             // every plane in use, and an unbounded debt starved all field
@@ -2495,12 +2575,15 @@ struct LegionNavigator::Impl {
     // Nearest statically legal origin to a requested one. Past the near
     // search radius, like Retail, settle for the nearest origin the unit can
     // actually reach (its own static component); -1 only if there is none.
+    // Cells the goal searches below visited (scratch for registerMove's accounting; never hashed).
+    mutable uint64_t searchCells=0;
     int nearestLegal(const Plane& p,int x,int z,int reach=-1) const {
         if(legal(p,x,z))return z*width()+x;
         int best=-1;int64_t bestD=0;
         const int far=reach>=0?std::max(width(),height()):kGoalSearchCells;
         for(int r=1;r<=far&&best<0;++r)
             for(int dz=-r;dz<=r;++dz)for(int dx=-r;dx<=r;dx+=(dz==-r||dz==r||dx==r)?1:2*r) {
+                ++searchCells;
                 if(!legal(p,x+dx,z+dz))continue;
                 if(r>kGoalSearchCells&&compAt(p,(z+dz)*width()+x+dx)!=reach)continue;
                 const int64_t d=int64_t(dx)*dx+int64_t(dz)*dz;
@@ -2523,6 +2606,7 @@ struct LegionNavigator::Impl {
         for(int r=r0;r<=far;++r) {
             if(best>=0&&int64_t(r)*r>bestD)break;
             auto visit=[&](int cx,int cz) {
+                ++searchCells;
                 const int index=cz*W+cx;
                 if(p.comp[size_t(index)]!=comp)return;
                 const int64_t d=int64_t(cx-x)*(cx-x)+int64_t(cz-z)*(cz-z);
@@ -2565,6 +2649,7 @@ struct LegionNavigator::Impl {
         int best=-1;int64_t bestD=0;
         for(int cz=std::max<int64_t>(b[1],z-bound);cz<=std::min<int64_t>(b[3],z+bound);++cz)
             for(int cx=std::max<int64_t>(b[0],x-bound);cx<=std::min<int64_t>(b[2],x+bound);++cx) {
+                ++searchCells;
                 const int index=cz*W+cx;
                 if(p.comp[size_t(index)]!=comp)continue;
                 const int64_t d=int64_t(cx-x)*(cx-x)+int64_t(cz-z)*(cz-z);
@@ -2682,6 +2767,8 @@ struct LegionNavigator::Impl {
         if(resolvedEpoch!=epoch||resolved.size()>=4096) {resolved.clear();resolvedEpoch=epoch;}
         auto [cached,fresh]=resolved.try_emplace({planeIndex,gx,gz,reach},-1,-1);
         if(fresh) {
+            const uint64_t searched=searchCells;
+            struct Count {Impl& I;uint64_t from;~Count() {I.navc.resolveCells+=I.searchCells-from;}} count{*this,searched};
             cached->second.first=nearestLegal(p,gx,gz,reach);
             const int goal=cached->second.first;
             if(reach>=0&&goal>=0&&compAt(p,goal)!=reach&&p.compSize[size_t(reach)]>=kApproachRegion)
@@ -2946,6 +3033,7 @@ struct LegionNavigator::Impl {
             [&](int owner) {return w.allied(owner,int(uint32_t(f->command>>32)));});
         f->W=width();f->x0=box[0];f->z0=box[1];f->fw=box[2]-box[0]+1;f->fh=box[3]-box[1]+1;
         f->potential.assign(cells,kUnreached);
+        navc.initCells+=cells;acct.initMax=std::max<uint64_t>(acct.initMax,cells);
         f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;
         {const auto whole=fieldWindow(g,true);f->bounded=whole!=box;}
         if(g.bodyMaxX>=g.bodyMinX) {f->aimed=true;f->tx=(g.bodyMinX+g.bodyMaxX)/2;f->tz=(g.bodyMinZ+g.bodyMaxZ)/2;}
@@ -3227,6 +3315,12 @@ struct LegionNavigator::Impl {
                 for(const auto& r:refreshResults) {probeSync.planeMs=std::max(probeSync.planeMs,r.ms);probeSync.work+=r.work;}
                 probeSync.relabels=refreshScratch.relabels;
             }
+            {
+                uint64_t work=0;
+                for(const auto& r:refreshResults)work+=r.work;
+                const uint64_t relabel=refreshScratch.relabels*2*uint64_t(width())*height();
+                navc.planeRelabel+=relabel;navc.connectivity+=work-std::min(work,relabel);
+            }
             for(const auto& r:refreshResults) {
                 planeDebt=std::min(planeDebt+r.work,kFieldQuota/2);
                 if(r.any) {changed=true;++stats.planeRefreshes;}
@@ -3331,9 +3425,11 @@ struct LegionNavigator::Impl {
             if(!p)return;
             startBuild(*p);
         }
-        advanceBuild(*p,kPrebuildCells);
+        navc.planeBuild+=advanceBuild(*p,kPrebuildCells);
     }
-    void advanceBuild(Plane& p,uint64_t budget) {
+    // Returns the units spent (accounting).
+    uint64_t advanceBuild(Plane& p,uint64_t budget) {
+        const uint64_t given=budget;
         const int W=width(),H=height();
         while(budget>0&&p.stage>0) {
             if(p.stage==1) {   // cell layer, rows ascending
@@ -3380,7 +3476,9 @@ struct LegionNavigator::Impl {
                         clearStage(p);
                         bool changed=false;
                         if(!pending.empty()) {
-                            refreshPlane(p,pending,changed,refreshScratch);
+                            const uint64_t work=refreshPlane(p,pending,changed,refreshScratch);
+                            const uint64_t relabel=refreshScratch.relabels*2*uint64_t(W)*H;
+                            navc.planeRelabel+=relabel;navc.connectivity+=work-std::min(work,relabel);
                             stats.planeRelabels+=refreshScratch.relabels;refreshScratch.relabels=0;
                         }
                         break;
@@ -3403,6 +3501,7 @@ struct LegionNavigator::Impl {
                 }
             }
         }
+        return given-budget;
     }
     // Idle landed flyers make way (World::requestLegionLift): every
     // kLiftStride ticks (staggered by id) a ground member on its way looks
@@ -3580,6 +3679,7 @@ struct LegionNavigator::Impl {
         stats.liftMembersWalked+=walked;stats.liftMembersSkipped+=skipped;
     }
     void tick() {
+        foldWindow();
         if(gProbe) {
             using Clock=std::chrono::steady_clock;
             auto ms=[](Clock::time_point a,Clock::time_point b) {return std::chrono::duration<double,std::milli>(b-a).count();};
@@ -5720,7 +5820,7 @@ struct LegionNavigator::Impl {
             }
             if(b==0&&cells.empty())break;
         }
-        stats.slotSearchCells+=scanned;
+        stats.slotSearchCells+=scanned;navc.ringCells+=scanned;
         int band0=0;for(const uint8_t b:band)band0+=b==0;
         if(!band0)return false;
         r.R=R;r.band0=band0;r.tx=tx;r.tz=tz;r.ax=ax;r.az=az;
@@ -8609,6 +8709,14 @@ LegionNavigator::Stats LegionNavigator::stats() const {
     s.liveGroups=impl_->groups.size();s.liveMembers=impl_->members.size();
     s.livePoints=impl_->points.size();s.liveFields=impl_->liveFields();
     return s;
+}
+NavAccounting LegionNavigator::accounting() const {
+    NavAccounting a=impl_->acct;
+    impl_->windowMax(a);
+    a.bytes=impl_->navBytes();
+    impl_->acct.bytesPeak=std::max(impl_->acct.bytesPeak,a.bytes.total());
+    a.bytesPeak=impl_->acct.bytesPeak;
+    return a;
 }
 bool LegionNavigator::staticLegal(const Unit& u,int x,int z) {
     if(!u.type)return false;

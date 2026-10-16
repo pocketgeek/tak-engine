@@ -2,6 +2,7 @@
 // Legion: group-planned, clearance-exact ground navigation (PathfindingMode 4).
 // Design and guarantees: docs/legion-pathfinding.md.
 #include "sim/fixed.h"
+#include "sim/navbudget.h"
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -278,6 +279,10 @@ public:
     void move(Unit&,Fixed maximum);
     uint64_t checksum() const;
     Stats stats() const;
+    // Legion 10,000 stage 4 (observation only, never hashed): work per NavWork class (cumulative and
+    // the most of one navigator tick window), the deterministic NavBytes and the scheduler's service
+    // record. See sim/navbudget.h.
+    NavAccounting accounting() const;
     // Test hook: is a footprint origin legal on the static plane Legion plans
     // on (terrain, features, structures; mobile bodies excluded)?
     bool staticLegal(const Unit&,int originX,int originZ);

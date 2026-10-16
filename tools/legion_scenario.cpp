@@ -860,7 +860,7 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     std::vector<std::pair<uint32_t, scn::TruthReport>> truthNow;   // (tick, report) per `truth` line the run reaches
     // TAK_ORDER_STATS=N: log the movers' order-queue shape every N ticks (src/client/ordershape.h; compare a harvested situation with its recording).
     const uint32_t orderStatsEvery = std::getenv("TAK_ORDER_STATS") ? uint32_t(std::strtoul(std::getenv("TAK_ORDER_STATS"), nullptr, 10)) : 0;
-    std::vector<double> tickMs;
+    std::vector<double> tickMs, wholeMs;
     tickMs.reserve(s.ticks);
     const auto start = std::chrono::steady_clock::now();
     for (uint32_t t = 0; t < s.ticks; ++t) {
@@ -911,6 +911,7 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         const auto tickStart = std::chrono::steady_clock::now();
         w.tick(1.f / 30);
         tickMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tickStart).count());
+        wholeMs.push_back(tickMs.back() + feed.lastApplyMs());   // the whole sim tick: its commands applied, then World::tick
         nav = w.legionNavigator();
         if (o) {
             navWork.sample(*o, w);
@@ -949,13 +950,27 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             for (double v : tickMs) { sum += v; over += v > 1000.0 / 30; }
             const size_t mid = (tickMs.size() + 1) / 2 - 1;
             std::nth_element(tickMs.begin(), tickMs.begin() + ptrdiff_t(mid), tickMs.end());
+            // The whole sim tick (apply + World::tick): its p99, max and ticks over 33.3 ms. Legion's
+            // deterministic NavBytes and its capacity estimate (Stats::bytes) at the end, beside the
+            // process heap, so the allocator's overhead can be read off (stage 4).
+            const auto wtop = std::max_element(wholeMs.begin(), wholeMs.end());
+            const double wholeMax = *wtop;
+            const uint32_t wholeAt = uint32_t(wtop - wholeMs.begin());
+            int wholeOver = 0;
+            for (double v : wholeMs) wholeOver += v > 1000.0 / 30;
+            std::nth_element(wholeMs.begin(), wholeMs.begin() + ptrdiff_t(at), wholeMs.end());
+            const double wholeP99 = wholeMs[at];
+            long long navDet = -1, navCap = -1;
+            if (nav) { navDet = (long long)nav->accounting().bytes.total(); navCap = (long long)nav->stats().bytes; }
             std::fprintf(stderr, "SCALE_WALL %s %s offset=%d %s ticks=%zu tick_mean_ms=%.3f tick_p50_ms=%.3f "
                          "tick_p99_ms=%.3f tick_max_ms=%.3f@%u over_budget=%d rss_peak_kb=%lld heap_kb=%lld "
-                         "apply_max_ms=%.3f@%u\n",
+                         "apply_max_ms=%.3f@%u whole_p99_ms=%.3f whole_max_ms=%.3f@%u whole_over_budget=%d "
+                         "navbytes=%lld nav_capacity_bytes=%lld\n",
                          s.name.c_str(), mode == PathfindingMode::Legion ? "legion" : "retail", offset,
                          serial ? "serial" : "workers", tickMs.size(), sum / double(tickMs.size()), tickMs[mid],
                          r.tickP99Ms, r.tickMaxMs, r.tickMaxAt, over, tak::legion_scale::peakRssKb(),
-                         tak::legion_scale::heapKb(), applyMaxMs, applyMaxAt);
+                         tak::legion_scale::heapKb(), applyMaxMs, applyMaxAt, wholeP99, wholeMax, wholeAt, wholeOver,
+                         navDet, navCap);
         }
     }
     r.hash = w.stateHash();
@@ -963,6 +978,7 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     if (o) {
         r.keys = o->report();
         if (approach) approach->report(r.keys, mode == PathfindingMode::Legion);
+        if (scale && nav) scale->account(*nav);
         if (scale) scale->report(r.keys, w, mode == PathfindingMode::Legion);
         for (const auto& rp : reach) rp.report(r.keys, w);
         for (const auto& cp : creeps) cp.report(r.keys);
