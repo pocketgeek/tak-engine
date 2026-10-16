@@ -1,12 +1,18 @@
 #include "client/terrainchunks.h"
 #include "client/gpuvram.h"
+#include "client/rendertelemetry.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 
 namespace tak {
 namespace {
 constexpr size_t budget=size_t(256)<<20;
+uint64_t nowNs() {
+    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
 // What the cache may hold right now: its own budget, or less when the global GPU cap
 // (Options GPU MEMORY LIMIT, or a post-failure tightening) leaves less room beside
 // everything else that is resident.
@@ -23,6 +29,7 @@ TerrainChunks::~TerrainChunks() {
 }
 void TerrainChunks::clear() {
     for(const auto& [key,cancelled]:pending_)cancelled->store(true,std::memory_order_relaxed);
+    jobsCancelled_+=pending_.size();
     {std::lock_guard lock(mutex_);++epoch_;jobs_.clear();done_.clear();}
     cv_.notify_all();pending_.clear();visible_.clear();drawn_.clear();
     for(auto& [key,e]:cache_)gpuvram::destroy(e.texture);
@@ -37,7 +44,7 @@ void TerrainChunks::invalidate(int bx0,int by0,int bx1,int by1) {
     // Jobs own immutable tile snapshots. Cancel only edited chunks (including
     // gutters); continuous painting must not starve unrelated pending images.
     for(auto i=pending_.begin();i!=pending_.end();) {
-        if(affected(i->first)) {i->second->store(true,std::memory_order_relaxed);i=pending_.erase(i);}
+        if(affected(i->first)) {i->second->store(true,std::memory_order_relaxed);i=pending_.erase(i);++jobsCancelled_;}
         else ++i;
     }
     {
@@ -58,7 +65,7 @@ void TerrainChunks::resetSource() {
     clear();
     std::unique_lock lock(mutex_);
     cv_.wait(lock,[&]{return !busy_;});
-    mips_.clear();
+    mips_.clear();mipBytes_.store(0,std::memory_order_relaxed);
 }
 const jpeg::Image& TerrainChunks::mip(uint32_t key,int level,bool stockTerrain) {
     if(!level)return compositor_.sectionImage(key,stockTerrain);
@@ -73,6 +80,7 @@ const jpeg::Image& TerrainChunks::mip(uint32_t key,int level,bool stockTerrain) 
             sum+=src.rgba[(size_t(std::min(y*2+dy,src.height-1))*src.width+std::min(x*2+dx,src.width-1))*4+c];
         out.rgba[(size_t(y)*out.width+x)*4+c]=uint8_t((sum+2)/4);
     }
+    mipBytes_.fetch_add(out.rgba.size(),std::memory_order_relaxed);
     return mips_.emplace(id,std::move(out)).first->second;
 }
 void TerrainChunks::compose(Job& j) {
@@ -110,7 +118,10 @@ void TerrainChunks::work() {
         cv_.wait(lock,[&]{return stop_ || (!jobs_.empty() && done_.size()<8);});
         if(stop_)return;
         auto job=std::move(jobs_.front());jobs_.pop_front();busy_=true;lock.unlock();
+        const uint64_t started=nowNs();
         try {compose(job);}catch(...) {job.pixels.clear();}
+        composeNs_.fetch_add(nowNs()-started,std::memory_order_relaxed);
+        jobsCompleted_.fetch_add(1,std::memory_order_relaxed);
         lock.lock();if(job.epoch==epoch_ && !job.cancelled->load(std::memory_order_relaxed))done_.push_back(std::move(job));
         busy_=false;cv_.notify_all();
     }
@@ -149,6 +160,7 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
             job=std::move(done_.front());done_.pop_front();
         }
         cv_.notify_all();
+        ++jobsDiscarded_;   // until it is actually uploaded below
         if(job.cancelled->load(std::memory_order_relaxed))continue;
         pending_.erase(job.key);
         if(job.pixels.empty() || std::find(visible_.begin(),visible_.end(),job.key)==visible_.end())continue;
@@ -162,13 +174,17 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
             gpuvram::destroy(oldest->second.texture);cache_.erase(oldest);++revision_;
         }
         if(bytes_+size>budget || !gpuvram::wouldFit(size) || gpuvram::blocked())continue;
+        const uint64_t uploadStart=nowNs();
         auto* texture=gpuvram::create(renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,job.w+2,job.h+2);
         if(!texture){gpuvram::noteFail();continue;}
         if(SDL_UpdateTexture(texture,nullptr,job.pixels.data(),(job.w+2)*4)!=0){gpuvram::destroy(texture);continue;}
         SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(texture,linear?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
+        uploadNs_+=nowNs()-uploadStart;   // CPU submission only: no GPU synchronization
+        render::countTextureUpload(size);
         cache_.emplace(job.key,Entry{texture,job.w,job.h,frame_});
         bytes_+=size;uploaded+=size;++uploads_;++revision_;
+        --jobsDiscarded_;++jobsUsed_;uploadBytes_+=size;
     }
     for(const auto& key:visible_) {
         if(cache_.count(key) || pending_.count(key) || pending_.size()>=64 || gpuvram::blocked())continue;
@@ -190,7 +206,7 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
             job.tiles.push_back({map.tileKeys[at],map.tileCols[at],map.tileRows[at]});
         }
         job.cancelled=std::make_shared<std::atomic_bool>(false);
-        pending_.emplace(key,job.cancelled);
+        pending_.emplace(key,job.cancelled);++jobsQueued_;
         {std::lock_guard lock(mutex_);jobs_.push_back(std::move(job));}cv_.notify_all();
     }
 }
@@ -233,6 +249,7 @@ bool TerrainChunks::draw(SDL_Renderer* renderer,float x,float y,float zoom) {
         const float x0=std::round((cx*span-x)*zoom),y0=std::round((cy*span-y)*zoom);
         const float x1=std::round((cx*span+(e.w<<level)-x)*zoom),y1=std::round((cy*span+(e.h<<level)-y)*zoom);
         const SDL_Rect source{1,1,e.w,e.h};const SDL_FRect dest{x0,y0,x1-x0,y1-y0};
+        render::countLogicalDraw();
         if(SDL_RenderCopyF(renderer,e.texture,&source,&dest)!=0) {complete=false;continue;}
         drawn_.push_back({cx,cy});
     }

@@ -18,7 +18,15 @@ namespace tak {
 class TerrainChunks {
 public:
     static constexpr int span=1024;
-    struct Stats { size_t bytes=0,images=0,uploads=0,visible=0,ready=0;uint64_t revision=0;size_t pending=0; };
+    struct Stats {
+        size_t bytes=0,images=0,uploads=0,visible=0,ready=0;uint64_t revision=0;size_t pending=0;
+        // Render telemetry (cumulative since construction; the reader takes deltas).
+        // Jobs: queued -> completed by the worker -> used (uploaded) or discarded;
+        // cancelled = pending jobs cancelled by clear()/invalidate().
+        uint64_t jobsQueued=0,jobsCompleted=0,jobsCancelled=0,jobsDiscarded=0,jobsUsed=0;
+        uint64_t uploadBytes=0,uploadNs=0,composeNs=0;
+        size_t mipBytes=0;   // worker-owned mip images (CPU), current
+    };
     explicit TerrainChunks(terrain::Compositor& compositor);
     ~TerrainChunks();
     void clear();
@@ -35,7 +43,13 @@ public:
     size_t shed(size_t need);
     Stats stats() const {
         size_t ready=0;for(const auto& key:visible_)ready+=cache_.count(key);
-        return {bytes_,cache_.size(),uploads_,visible_.size(),ready,revision_,pending_.size()};
+        Stats s{bytes_,cache_.size(),uploads_,visible_.size(),ready,revision_,pending_.size()};
+        s.jobsQueued=jobsQueued_;s.jobsCancelled=jobsCancelled_;s.jobsDiscarded=jobsDiscarded_;
+        s.jobsUsed=jobsUsed_;s.uploadBytes=uploadBytes_;s.uploadNs=uploadNs_;
+        s.jobsCompleted=jobsCompleted_.load(std::memory_order_relaxed);
+        s.composeNs=composeNs_.load(std::memory_order_relaxed);
+        s.mipBytes=mipBytes_.load(std::memory_order_relaxed);
+        return s;
     }
 private:
     using Key=std::tuple<int,int,int>; // level, chunk x, chunk y
@@ -60,6 +74,10 @@ private:
     bool stop_=false,busy_=false;
     uint64_t epoch_=0,frame_=0,revision_=0;
     size_t bytes_=0,uploads_=0;
+    // Telemetry: render-thread counters, plus worker-written atomics.
+    uint64_t jobsQueued_=0,jobsCancelled_=0,jobsDiscarded_=0,jobsUsed_=0,uploadBytes_=0,uploadNs_=0;
+    std::atomic<uint64_t> jobsCompleted_{0},composeNs_{0};
+    std::atomic<size_t> mipBytes_{0};
     std::map<Key,std::shared_ptr<std::atomic_bool>> pending_;
     std::map<Key,Entry> cache_;
     std::vector<Key> visible_;

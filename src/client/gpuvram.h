@@ -60,6 +60,7 @@ namespace gpuvram {
 inline size_t g_bytes = 0;                                  // live texture + counted buffer bytes
 inline Policy g_policy;                                     // limit / cap / backoff (gpuvrampolicy.h)
 inline std::unordered_map<SDL_Texture*, size_t> g_size;     // per-texture byte size
+inline uint64_t g_creates = 0, g_destroys = 0;              // cumulative (render telemetry)
 
 inline uint64_t nowMs() { return SDL_GetTicks64(); }
 inline void relax() {
@@ -102,12 +103,12 @@ inline void noteFail() {
 // the total stays honest; a raw SDL_CreateTexture is invisible to it.
 inline SDL_Texture* create(SDL_Renderer* r, Uint32 fmt, int access, int w, int h) {
     SDL_Texture* t = SDL_CreateTexture(r, fmt, access, w, h);
-    if (t) { size_t b = size_t(w) * size_t(h) * 4; g_bytes += b; g_size[t] = b; }
+    if (t) { size_t b = size_t(w) * size_t(h) * 4; g_bytes += b; g_size[t] = b; ++g_creates; }
     return t;
 }
 inline void destroy(SDL_Texture* t) {
     if (!t) return;
-    if (auto it = g_size.find(t); it != g_size.end()) { g_bytes -= it->second; g_size.erase(it); }
+    if (auto it = g_size.find(t); it != g_size.end()) { g_bytes -= it->second; g_size.erase(it); ++g_destroys; }
     SDL_DestroyTexture(t);
 }
 // Non-texture GPU memory the client allocates itself (GL buffers, renderbuffers).

@@ -26,6 +26,11 @@ public:
     void clear(); // renderer must still be alive
     size_t used=0, refreshed=0;
     size_t bakeVertices=0,bakeDraws=0,targetSwitches=0;
+    // Telemetry, per prepare(): lookups that reused an image (hits; held = inputs
+    // changed but inside the refresh interval), bake causes, and refusals that
+    // left the body on live geometry.
+    size_t hits=0,held=0,missNew=0,missScale=0,missContent=0;
+    size_t rejectBudget=0,rejectShape=0,rejectPages=0;
     size_t bytes() const {return pages_.size()*size_t(pageSize)*pageSize*4;}
 private:
     static constexpr int tileSize=64,pageSize=2048,tilesPerPage=1024,maxPages=4;

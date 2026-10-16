@@ -1,15 +1,24 @@
 #include "client/mapview.h"
 
 #include "client/gpuvram.h"
+#include "client/rendertelemetry.h"
 #include "client/dev.h"
 #include "hpi/hpi.h"           // tak::hpi::Vfs::read (ctor / reload)
 #include "tnt/mapgen.h"        // "~gen1~" random-map ids -> procedural map
 
 #include <algorithm>
+#include <chrono>
 #include <climits>
 #include <cmath>
 #include <cstdio>
 #include <iterator>
+
+namespace {
+uint64_t steadyNs() {
+    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+}
 
 tak::tnt::Map MapView::genOrLoad(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
     if (tak::mapgen::isGeneratedMapId(mapPath))
@@ -51,6 +60,7 @@ void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
     sections_.clear();
     sectionBytes_ = 0;
     ready_.clear();   // comp_ was cleared: nothing is decoded any more
+    sectionStats_.decodedCpuBytes = 0;
     wanted_.clear();
     batchKeys_.clear();
     tileBatch_.clear();
@@ -296,6 +306,7 @@ void MapView::draw(int winW, int winH) {
         int ux0 = int(std::lround((0 - offX_) * zoom_)), uy0 = int(std::lround((0 - offY_) * zoom_));
         int ux1 = int(std::lround((mapW - offX_) * zoom_)), uy1 = int(std::lround((mapH - offY_) * zoom_));
         SDL_Rect udst{ux0, uy0, ux1 - ux0, uy1 - uy0};
+        tak::render::countLogicalDraw();
         SDL_RenderCopy(ren_, underlay_, nullptr, &udst);
     }
 
@@ -332,8 +343,10 @@ void MapView::draw(int winW, int winH) {
             tileSubmit_.draw(ren_, tex, verts, !tak::devFlag("TAK_TERRAIN_SDL_SUBMIT"));
     // Linear-only blends across unrelated tile boundaries, over every base tile.
     for (auto& [tex, verts] : apronBatch_)
-        if (tex && !verts.empty())
+        if (tex && !verts.empty()) {
+            tak::render::countSdlGeometry(verts.size(), verts.size() * sizeof(SDL_Vertex));
             SDL_RenderGeometry(ren_, tex, verts.data(), int(verts.size()), nullptr, 0);
+        }
     trimSections();
 }
 
@@ -358,11 +371,13 @@ void MapView::uploadReadySections() {
         ready.swap(decoded_);
     }
     for (uint32_t key : ready) {
-        try { comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) {
+        const tak::jpeg::Image* image = nullptr;
+        try { image = &comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) {
             if (!sections_.count(key)) sections_[key] = {};   // absent JPG: never retried
             continue;
         }
-        ready_.insert({key, map_.stockTerrain});
+        if (ready_.insert({key, map_.stockTerrain}).second)
+            sectionStats_.decodedCpuBytes += image->rgba.capacity();
     }
 }
 
@@ -392,12 +407,17 @@ bool MapView::uploadWantedSections() {
         }
         if (!gpuvram::wouldFit(size)) chunks_.shed(size);
         if (!gpuvram::wouldFit(size) || gpuvram::blocked()) continue;
+        const uint64_t uploadStart = steadyNs();
         SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                            SDL_TEXTUREACCESS_STATIC, img->width, img->height);
         if (!t) { gpuvram::noteFail(); continue; }
         SDL_UpdateTexture(t, nullptr, img->rgba.data(), img->width * 4);
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);   // opaque texels; the aprons fade by vertex alpha
         SDL_SetTextureScaleMode(t, bilinear_ ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+        sectionStats_.uploadNs += steadyNs() - uploadStart;   // CPU submission only
+        ++sectionStats_.uploads;
+        sectionStats_.uploadBytes += size;
+        tak::render::countTextureUpload(size);
         sections_[key] = {t, img->width, img->height, frame_, now};
         sectionBytes_ += size;
         ++n;
@@ -467,7 +487,10 @@ void MapView::sectionWorkerLoop() {
         secBusy_ = true;
         lk.unlock();
         // Decode into the Compositor cache (the heavy JPEG work, once per section).
+        const uint64_t decodeStart = steadyNs();
         try { comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) { /* absent */ }
+        sectionDecodeNs_.fetch_add(steadyNs() - decodeStart, std::memory_order_relaxed);
+        sectionDecodes_.fetch_add(1, std::memory_order_relaxed);
         lk.lock();
         secBusy_ = false;
         decoded_.push_back(key);

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <vector>
 #include "client/gpuvram.h"
+#include "client/rendertelemetry.h"
 
 namespace tak {
 // SDL's compatibility OpenGL backend copies/reformats every geometry vertex.
@@ -35,6 +36,7 @@ public:
                 for(auto& v:translated_){v.position.x+=offset.x;v.position.y+=offset.y;}
                 source=translated_;
             }
+            render::countSdlGeometry(source.size(),source.size_bytes());
             return SDL_RenderGeometry(renderer,texture,source.data(),int(source.size()),nullptr,0);
         };
         if(!direct || vertices.size()<512)return normal();
@@ -58,6 +60,7 @@ public:
         const SDL_Vertex prime[3]={{{0,0},{255,255,255,255},{0,0}},
                                   {{0,0},{255,255,255,255},{0,0}},
                                   {{0,0},{255,255,255,255},{0,0}}};
+        render::countFlush();
         if(SDL_RenderGeometry(renderer,texture,prime,3,nullptr,0)!=0 || SDL_RenderFlush(renderer)!=0)return -1;
         GLint buffer=0,mode=0;
         getInteger_(GL_ARRAY_BUFFER_BINDING,&buffer);getInteger_(GL_MATRIX_MODE,&mode);
@@ -76,6 +79,7 @@ public:
                 GLint allocated=0;getBufferParameter_(GL_ARRAY_BUFFER,GL_BUFFER_SIZE,&allocated);
                 if(size_t(allocated)==bytes) {
                     bufferBytes_=bytes;gpuvram::addBuffer(bytes);revision_=revision;++uploads_;
+                    render::countUploadBytes(bytes);
                 } else {clear();gpuvram::noteFail();}
             }
             retained=buffer_ && revision_==revision;
@@ -88,6 +92,7 @@ public:
         color_(4,GL_UNSIGNED_BYTE,sizeof(SDL_Vertex),retained?reinterpret_cast<const void*>(offsetof(SDL_Vertex,color)):&vertices[0].color);
         if(texture)texcoord_(2,GL_FLOAT,sizeof(SDL_Vertex),retained?reinterpret_cast<const void*>(offsetof(SDL_Vertex,tex_coord)):&vertices[0].tex_coord);
         draw_(GL_TRIANGLES,0,GLsizei(vertices.size()));
+        render::countNativeDraw(vertices.size(),bytes,retained);
         popMatrix_();matrixMode_(GLenum(mode));
         popClientAttrib_();bindBuffer_(GL_ARRAY_BUFFER,GLuint(buffer));popAttrib_();
         used_=true;

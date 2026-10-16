@@ -1,5 +1,6 @@
 #include "client/distantmodels.h"
 #include "client/gpuvram.h"
+#include "client/rendertelemetry.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -32,9 +33,11 @@ void DistantModels::clear() {
     for(auto* page:pages_)gpuvram::destroy(page);
     pages_.clear();entries_.clear();free_.clear();unsupported_=false;frame_=0;
     used=refreshed=bakeVertices=bakeDraws=targetSwitches=0;
+    hits=held=missNew=missScale=missContent=rejectBudget=rejectShape=rejectPages=0;
 }
 void DistantModels::prepare(SDL_Renderer* r,std::span<Item> items,uint64_t now) {
     used=refreshed=bakeVertices=bakeDraws=targetSwitches=0;++frame_;
+    hits=held=missNew=missScale=missContent=rejectBudget=rejectShape=rejectPages=0;
     for(auto& item:items)item.texture=nullptr;
     // Expire images while zoomed in or offscreen too, instead of keeping the
     // last distant view's pages resident until the session ends.
@@ -64,14 +67,15 @@ void DistantModels::prepare(SDL_Renderer* r,std::span<Item> items,uint64_t now) 
         Entry* entry=found==entries_.end() ? nullptr : &found->second;
         if(entry)entry->seen=frame_;
         const bool scaleChanged=entry && (entry->zoom!=item.zoom || entry->sx!=state.sx || entry->sy!=state.sy);
+        const bool contentChanged=entry && (entry->revision!=item.revision || entry->textureTick!=item.textureTick ||
+              entry->source!=reinterpret_cast<uintptr_t>(item.source.data()));
         const bool repaint=!entry || !entry->valid || scaleChanged ||
-            ((entry->revision!=item.revision || entry->textureTick!=item.textureTick ||
-              entry->source!=reinterpret_cast<uintptr_t>(item.source.data())) &&
-             now-entry->painted>=67);
+            (contentChanged && now-entry->painted>=67);
         if(repaint) {
+            if(!entry || !entry->valid)++missNew;else if(scaleChanged)++missScale;else ++missContent;
             // At most 128 model bakes per frame. If a crowd exceeds the budget,
             // retain the full model instead of freezing its pose indefinitely.
-            if(refreshed>=128)continue;
+            if(refreshed>=128) {++rejectBudget;continue;}
             float minX=std::numeric_limits<float>::max(),minY=minX,maxX=-minX,maxY=-minX;
             bool opaque=true;
             for(const auto& v:item.source) {
@@ -79,16 +83,16 @@ void DistantModels::prepare(SDL_Renderer* r,std::span<Item> items,uint64_t now) 
                 maxX=std::max(maxX,v.position.x);maxY=std::max(maxY,v.position.y);
                 opaque=opaque && v.color.a==255;
             }
-            if(!opaque || !std::isfinite(minX+minY+maxX+maxY) || maxX-minX>28 || maxY-minY>28)continue;
+            if(!opaque || !std::isfinite(minX+minY+maxX+maxY) || maxX-minX>28 || maxY-minY>28) {++rejectShape;continue;}
             const int pw=int(std::ceil((maxX-minX)*state.sx))+2;
             const int ph=int(std::ceil((maxY-minY)*state.sy))+2;
-            if(pw<=2 || ph<=2 || pw>tileSize-2 || ph>tileSize-2)continue;
+            if(pw<=2 || ph<=2 || pw>tileSize-2 || ph>tileSize-2) {++rejectShape;continue;}
             if(!entry) {
                 if(free_.empty()) {
                     if(pages_.size()>=maxPages || gpuvram::blocked() ||
-                       !gpuvram::wouldFit(size_t(pageSize)*pageSize*4))continue;
+                       !gpuvram::wouldFit(size_t(pageSize)*pageSize*4)) {++rejectPages;continue;}
                     auto* page=gpuvram::create(r,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,pageSize,pageSize);
-                    if(!page) {gpuvram::noteFail();continue;}
+                    if(!page) {gpuvram::noteFail();++rejectPages;continue;}
                     if(SDL_SetTextureBlendMode(page,composite)!=0) {
                         gpuvram::destroy(page);unsupported_=true;return;
                     }
@@ -117,8 +121,9 @@ void DistantModels::prepare(SDL_Renderer* r,std::span<Item> items,uint64_t now) 
             }
             int offset=0;bool ok=true;
             for(const auto& run:item.runs) {
-                if(run.second<0 || size_t(offset)+size_t(run.second)>scratch_.size() ||
-                   SDL_RenderGeometry(r,run.first,scratch_.data()+offset,run.second,nullptr,0)!=0) {ok=false;break;}
+                if(run.second<0 || size_t(offset)+size_t(run.second)>scratch_.size()) {ok=false;break;}
+                render::countSdlGeometry(size_t(run.second),size_t(run.second)*sizeof(SDL_Vertex));
+                if(SDL_RenderGeometry(r,run.first,scratch_.data()+offset,run.second,nullptr,0)!=0) {ok=false;break;}
                 offset+=run.second;++bakeDraws;
             }
             bakeVertices+=scratch_.size();++refreshed;
@@ -131,6 +136,7 @@ void DistantModels::prepare(SDL_Renderer* r,std::span<Item> items,uint64_t now) 
             entry->source=reinterpret_cast<uintptr_t>(item.source.data());entry->valid=true;
         }
         if(!entry || !entry->valid)continue;
+        if(!repaint) {if(contentChanged)++held;else ++hits;}
         const int local=entry->slot%tilesPerPage;
         const float u=float((local%32)*tileSize+1)/pageSize;
         const float v=float((local/32)*tileSize+1)/pageSize;

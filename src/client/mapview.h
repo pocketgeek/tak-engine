@@ -17,6 +17,7 @@
 #include "client/geometrysubmit.h"
 #include "client/terrainchunks.h"
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -102,6 +103,17 @@ public:
     void tilesEdited(int bx,int by,int width,int height);
     tak::TerrainChunks::Stats chunkStats() const { return chunks_.stats(); }
     size_t sectionBytes() const { return sectionBytes_; }   // resident section textures
+    // Render telemetry for the section fallback (cumulative; the reader takes deltas).
+    struct SectionStats {
+        uint64_t uploads = 0, uploadBytes = 0, uploadNs = 0, decodes = 0, decodeNs = 0;
+        size_t decodedCpuBytes = 0;   // decoded images the compositor holds (taken in so far)
+    };
+    SectionStats sectionStats() const {
+        SectionStats s = sectionStats_;
+        s.decodes = sectionDecodes_.load(std::memory_order_relaxed);
+        s.decodeNs = sectionDecodeNs_.load(std::memory_order_relaxed);
+        return s;
+    }
     // Every queued section JPG decoded and taken in (ensureChunks). Tests only.
     bool sectionsDecoded() {
         std::lock_guard<std::mutex> lk(secMu_);
@@ -170,6 +182,8 @@ private:
     std::vector<uint32_t> decoded_;      // keys decoded, awaiting ready_
     std::set<uint32_t> secPending_;      // queued / in flight / decoded (dedup)
     bool secStop_ = false, secBusy_ = false;
+    SectionStats sectionStats_;                       // main thread
+    std::atomic<uint64_t> sectionDecodes_{0}, sectionDecodeNs_{0};   // decode worker
 
     // Per-frame tile-quad batch, keyed by section texture; cached across frames
     // when the view is static (idle spectating rebuilds nothing).

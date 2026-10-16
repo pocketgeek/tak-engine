@@ -2,6 +2,7 @@
 
 #include <SDL.h>
 #include <SDL_opengl.h>
+#include "client/rendertelemetry.h"
 #include <cstdlib>
 #include <cstring>
 #include <span>
@@ -19,6 +20,7 @@ public:
         const SDL_Color black{0,0,0,255};
         static constexpr float uv[2]={0,0};
         const auto normal=[&] {
+            render::countSdlGeometry(points.size(),points.size_bytes());
             return SDL_RenderGeometryRaw(renderer,nullptr,&points[0].x,sizeof(SDL_FPoint),
                 &black,0,uv,0,int(points.size()),nullptr,0,0);
         };
@@ -34,6 +36,7 @@ public:
         // viewport, projection, clipping, blend and solid shader state. Flush is
         // required before mixing SDL rendering with native API calls.
         static constexpr SDL_FPoint prime[3]={{0,0},{0,0},{0,0}};
+        render::countFlush();
         if (SDL_RenderGeometryRaw(renderer,nullptr,&prime[0].x,sizeof(SDL_FPoint),
                 &black,0,uv,0,3,nullptr,0,0)!=0 || SDL_RenderFlush(renderer)!=0) return -1;
         const auto context=SDL_GL_GetCurrentContext();
@@ -52,6 +55,7 @@ public:
         color_(0,0,0,255);
         vertex_(2,GL_FLOAT,sizeof(SDL_FPoint),points.data());
         draw_(GL_TRIANGLES,0,GLsizei(points.size()));
+        render::countNativeDraw(points.size(),points.size_bytes(),false);
         popClientAttrib_();
         bindBuffer_(GL_ARRAY_BUFFER,GLuint(buffer));
         popAttrib_();
