@@ -386,6 +386,11 @@ public:
     // turn it on; the game leaves it off and skips the probe's descents and
     // sweeps. Never changes behaviour or hashes, only those counters.
     static void setInstrumentProbes(bool on);
+    // Test hook (process-wide; default 1): divide the per-tick registration,
+    // first-plane-build and awareness budgets (NavBudget) so that small
+    // fixtures exercise their resumable, over-budget paths. Changes behaviour
+    // and hashes when above 1.
+    static void setBudgetDivisorForTest(int div);
     // Debug builds (NDEBUG undefined): check derived indexes and the Stats
     // after every tick() (aborts on a mismatch). A no-op in release. A debug
     // build starts with it on when TAK_LEGION_VERIFY is set (the only

@@ -58,6 +58,9 @@ constexpr uint32_t kRestStride=2;
 uint32_t gRestStride=kRestStride;
 bool gAwareOff=false;
 bool gInstrumentProbes=false;   // LegionNavigator::setInstrumentProbes: the vertex probe (Stats only)
+uint64_t gBudgetDiv=1;          // LegionNavigator::setBudgetDivisorForTest (process-wide; 1 in the game)
+// A per-tick budget of the registration / plane-build / awareness work, divided by the test divisor.
+uint64_t budgetOf(uint64_t units) {return std::max<uint64_t>(1,units/gBudgetDiv);}
 #ifndef NDEBUG
 bool gVerify=std::getenv("TAK_LEGION_VERIFY")!=nullptr;
 // W9 step 0: the members whose decisions are traced to stderr (LegionNavigator::setTrace, or TAK_LEGION_TRACE=ID[,ID...]
@@ -1890,7 +1893,9 @@ struct LegionNavigator::Impl {
             structurePtrs.size()*S::kKeyed+touch.size()*S::kBox+refreshList.size()*S::kKeyed+refreshResults.size()*24+
             groundedCells.size()*S::kCell32+groundedIds.size()*S::kCell32+liftHomeCells.size()*S::kCell32+
             liftedIds.size()*S::kCell32+passMaskList.size()*S::kCell32+liftBucketList.size()*S::kCell32;
-        b.queues+=regQueue.size()*12+regSeq.size()*S::kCell32;
+        b.queues+=regQueue.size()*12+regSeq.size()*S::kCell32+regPlane.size()+planeWant.size()*S::kCell32;
+        b.scratch+=awMovers.size()*S::kMover+awAcc.size()*(S::kNode+48)+awByCommand.size()*16+awGrid.size()*24;
+        for(const auto& cell:awGrid)b.scratch+=cell.size()*S::kCell32;
         return b;
     }
     // ---- the registration budget (Legion 10,000 stage 4) -----------------------------------------
@@ -1953,7 +1958,7 @@ struct LegionNavigator::Impl {
     }
     // A supported leg asks for registration (World::requestPath, or move() itself).
     void requestRegister(Unit& u) {
-        if(!w.inTick_&&!regCommandWindow) {regBudget=NavBudget::kRegBudget;regCommandWindow=true;}
+        if(!w.inTick_&&!regCommandWindow) {regBudget=budgetOf(NavBudget::kRegBudget);regCommandWindow=true;}
         if(queued(u.id))return;
         const bool open=regLive==regBlocked&&regBudget>0;   // nothing waits that this could overtake
         const bool ready=planeReady(u);
@@ -1974,7 +1979,7 @@ struct LegionNavigator::Impl {
     // first build never holds up another); at most kRegScan of them are stepped over per pass.
     static constexpr size_t kRegScan=65536;
     void drainRegistrations(bool refill) {
-        if(refill) {regBudget=NavBudget::kRegBudget;regCommandWindow=false;}
+        if(refill) {regBudget=budgetOf(NavBudget::kRegBudget);regCommandWindow=false;}
         std::deque<RegEntry> kept;
         size_t skipped=0;
         while(regLive&&regBudget>0&&!regQueue.empty()&&skipped<kRegScan) {
@@ -1995,7 +2000,7 @@ struct LegionNavigator::Impl {
     // tick of the same resumable build the background prebuild runs (identical result to
     // buildPlane + labelPlane). A plane finished here takes its waiting registrations in this tick.
     void buildPlanes() {
-        uint64_t budget=NavBudget::kPlaneBuildBudget;
+        uint64_t budget=budgetOf(NavBudget::kPlaneBuildBudget);
         bool finished=false;
         for(const int index:planeWant) {
             if(budget==0)break;
@@ -4169,85 +4174,104 @@ struct LegionNavigator::Impl {
     static constexpr int kAwareSample=15,kAwareHorizon=450,kAwareLead=45;
     static constexpr uint32_t kBehindMove=90;
     enum : uint8_t {kAwareHeadOn=0,kAwareCross=1};
+    // A mover: its command, centroid (px), the corridor it sweeps over the
+    // next kAwareAhead scans, its spread radius, its displacement over the
+    // last scan (px per kAwareScan ticks) and its length L, and its
+    // members' extent behind and ahead of the centroid along that heading
+    // and across it (px).
+    struct AwareMover {uint64_t command;int player;uint32_t issue;int64_t px,pz,cx,cz,ax,az,r,dx,dz,L,tail,head,half;std::tuple<int,uint32_t,int32_t,int32_t> key;};
+    // Each group's centroid, spread, slowest base speed (raw Fixed, px
+    // per tick) and the sight of its members.
+    struct AwareAcc {int64_t sx=0,sz=0,sq=0,n=0,sight=0,slow=0;};
+    // A scan in progress (Legion 10,000 stage 4): its snapshot -- the movers, the groups' accumulators,
+    // the broad-phase grid -- taken on the scan tick, and the last group it judged (awCursor; -1: no
+    // scan in progress). The groups are judged in id order against that snapshot, at most
+    // NavBudget::kAwareBudget units (candidate pairs, conflict samples, descent cells) a tick and
+    // always at least one group; a scan that needs more resumes on the next tick, and the next scan
+    // starts on the first scan tick after it ends. Under the budget a scan ends in its own tick, as
+    // before. Hashed while in progress: the cursor, the scan tick and a digest of the snapshot.
+    std::vector<AwareMover> awMovers;
+    std::map<int,AwareAcc> awAcc;
+    std::vector<std::vector<uint32_t>> awGrid;
+    std::vector<std::pair<uint64_t,uint32_t>> awByCommand;   // (command, mover index), ascending
+    int64_t awGridW=0,awGridH=0;
+    int awCursor=-1;
+    uint32_t awStarted=0;
+    uint64_t awDigest=0;
     void awareScan() {
-        if(w.tickCounter_%kAwareScan!=kAwareScan/2||gAwareOff)return;
+        if(gAwareOff)return;
+        const bool start=awCursor<0&&w.tickCounter_%kAwareScan==kAwareScan/2;
+        if(!start&&awCursor<0)return;
         awareHeadOn.clear();
-        // A mover: its command, centroid (px), the corridor it sweeps over the
-        // next kAwareAhead scans, its spread radius, its displacement over the
-        // last scan (px per kAwareScan ticks) and its length L, and its
-        // members' extent behind and ahead of the centroid along that heading
-        // and across it (px).
-        struct Mover {uint64_t command;int player;uint32_t issue;int64_t px,pz,cx,cz,ax,az,r,dx,dz,L,tail,head,half;std::tuple<int,uint32_t,int32_t,int32_t> key;};
-        std::vector<Mover> movers;
+        using Mover=AwareMover;
+        auto& movers=awMovers;auto& acc=awAcc;auto& grid=awGrid;auto& byCommand=awByCommand;
         uint64_t work=0;
-        for(auto& [key,pt]:points) {
-            if(std::get<0>(key)<0)continue;
-            int64_t sx=0,sz=0,n=0;
-            for(const int id:pt.ids) {
-                const Member* mm=member(id);const Unit* v=w.unit(id);
-                if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
-                sx+=v->x.v>>16;sz+=v->z.v>>16;++n;
-            }
-            if(n<kAwareMembers) {pt.awareSeen=false;continue;}
-            const int64_t cx=sx/n,cz=sz/n;
-            const int64_t dx=pt.awareSeen?cx-pt.awareX:0,dz=pt.awareSeen?cz-pt.awareZ:0;
-            pt.awareX=cx;pt.awareZ=cz;pt.awareSeen=true;
-            if(dx*dx+dz*dz<16*16)continue;   // standing: the soft-obstacle scan sees still bodies
-            const int64_t L=std::max<int64_t>(1,isqrtFloor(uint64_t(dx*dx+dz*dz)));
-            int64_t ss=0,tail=0,head=0,half=0;
-            for(const int id:pt.ids) {
-                const Member* mm=member(id);const Unit* v=w.unit(id);
-                if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
-                const int64_t ox=(v->x.v>>16)-cx,oz=(v->z.v>>16)-cz;ss+=ox*ox+oz*oz;
-                const int64_t along=(ox*dx+oz*dz)/L,across=(ox*dz-oz*dx)/L;
-                tail=std::max(tail,-along);head=std::max(head,along);half=std::max(half,std::abs(across));
-            }
-            work+=uint64_t(n);
-            const int64_t r=isqrtFloor(uint64_t(ss/n))*3/2+16;
-            movers.push_back({commandKey(std::get<0>(key),std::get<1>(key)),std::get<0>(key),std::get<1>(key),int64_t(std::get<2>(key))>>16,int64_t(std::get<3>(key))>>16,
-                cx,cz,cx+dx*kAwareAhead,cz+dz*kAwareAhead,r,dx,dz,L,tail,head,half,key});
-        }
-        // Each group's centroid, spread, slowest base speed (raw Fixed, px
-        // per tick) and the sight of its members.
-        struct Acc {int64_t sx=0,sz=0,sq=0,n=0,sight=0,slow=0;};
-        std::map<int,Acc> acc;
-        for(const auto& [id,m]:members) {
-            if(m.state!=Moving&&m.state!=Holding)continue;
-            const Unit* v=w.unit(id);if(!v||!v->type)continue;
-            auto& a=acc[m.group];
-            const int64_t x=v->x.v>>16,z=v->z.v>>16;
-            a.sx+=x;a.sz+=z;a.sq+=x*x+z*z;++a.n;a.sight=std::max<int64_t>(a.sight,w.sightDistance(*v->type));
-            if(v->baseSpeed.v>0&&(a.slow==0||v->baseSpeed.v<a.slow))a.slow=v->baseSpeed.v;
-        }
         const int W=width();
         uint64_t pairs=0;
-        // Broad phase (Legion 10,000 stage 2; exact): a mover not yet in a
-        // group's plan enters it only through a conflict sample, where the
-        // group's way point P (on its descent chain, so inside the chain's
-        // box of cell centres) and the mover's box centre Q (its centroid
-        // moved t/kAwareScan of its displacement, t <= kAwareHorizon, so
-        // inside its swept box) satisfy |s| <= B, |q| <= A with A =
-        // half+rG+32, B = max(tail,head)+rG+32. s and q are the offset P-Q
-        // dotted with (dx,dz) and divided by L <= |(dx,dz)| (truncated), so
-        // the offset's components along and across the heading are under B+1
-        // and A+1, and each coordinate of P-Q under A+B+2 = (half+
-        // max(tail,head)+66) + 2rG. Each mover is listed in the grid cells its
-        // swept box, grown by its own part, covers; a group reads the cells
-        // its chain box, grown by 2rG, covers (both clamped to the grid, which
-        // keeps every overlap). Every mover the scan could newly plan round is
-        // a candidate; movers already in the plan (avoidCmd) are candidates
-        // whatever their place, since a crossing stays planned off its box.
-        // Candidates are visited in the movers' order, so every decision and
-        // the plan's order are those of the walk over all movers
-        // (TAK_LEGION_VERIFY runs the conflict samples of every other mover
-        // and fails on a hit).
         constexpr int64_t kAwareCell=1024;   // px, 64 cells
-        const int64_t gridW=(int64_t(W)*16+kAwareCell-1)/kAwareCell,gridH=(int64_t(height())*16+kAwareCell-1)/kAwareCell;
+        if(start) {
+            movers.clear();acc.clear();grid.clear();byCommand.clear();
+            for(auto& [key,pt]:points) {
+                if(std::get<0>(key)<0)continue;
+                int64_t sx=0,sz=0,n=0;
+                for(const int id:pt.ids) {
+                    const Member* mm=member(id);const Unit* v=w.unit(id);
+                    if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
+                    sx+=v->x.v>>16;sz+=v->z.v>>16;++n;
+                }
+                if(n<kAwareMembers) {pt.awareSeen=false;continue;}
+                const int64_t cx=sx/n,cz=sz/n;
+                const int64_t dx=pt.awareSeen?cx-pt.awareX:0,dz=pt.awareSeen?cz-pt.awareZ:0;
+                pt.awareX=cx;pt.awareZ=cz;pt.awareSeen=true;
+                if(dx*dx+dz*dz<16*16)continue;   // standing: the soft-obstacle scan sees still bodies
+                const int64_t L=std::max<int64_t>(1,isqrtFloor(uint64_t(dx*dx+dz*dz)));
+                int64_t ss=0,tail=0,head=0,half=0;
+                for(const int id:pt.ids) {
+                    const Member* mm=member(id);const Unit* v=w.unit(id);
+                    if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
+                    const int64_t ox=(v->x.v>>16)-cx,oz=(v->z.v>>16)-cz;ss+=ox*ox+oz*oz;
+                    const int64_t along=(ox*dx+oz*dz)/L,across=(ox*dz-oz*dx)/L;
+                    tail=std::max(tail,-along);head=std::max(head,along);half=std::max(half,std::abs(across));
+                }
+                work+=uint64_t(n);
+                const int64_t r=isqrtFloor(uint64_t(ss/n))*3/2+16;
+                movers.push_back({commandKey(std::get<0>(key),std::get<1>(key)),std::get<0>(key),std::get<1>(key),int64_t(std::get<2>(key))>>16,int64_t(std::get<3>(key))>>16,
+                    cx,cz,cx+dx*kAwareAhead,cz+dz*kAwareAhead,r,dx,dz,L,tail,head,half,key});
+            }
+            for(const auto& [id,m]:members) {
+                if(m.state!=Moving&&m.state!=Holding)continue;
+                const Unit* v=w.unit(id);if(!v||!v->type)continue;
+                auto& a=acc[m.group];
+                const int64_t x=v->x.v>>16,z=v->z.v>>16;
+                a.sx+=x;a.sz+=z;a.sq+=x*x+z*z;++a.n;a.sight=std::max<int64_t>(a.sight,w.sightDistance(*v->type));
+                if(v->baseSpeed.v>0&&(a.slow==0||v->baseSpeed.v<a.slow))a.slow=v->baseSpeed.v;
+            }
+            // Broad phase (Legion 10,000 stage 2; exact): a mover not yet in a
+            // group's plan enters it only through a conflict sample, where the
+            // group's way point P (on its descent chain, so inside the chain's
+            // box of cell centres) and the mover's box centre Q (its centroid
+            // moved t/kAwareScan of its displacement, t <= kAwareHorizon, so
+            // inside its swept box) satisfy |s| <= B, |q| <= A with A =
+            // half+rG+32, B = max(tail,head)+rG+32. s and q are the offset P-Q
+            // dotted with (dx,dz) and divided by L <= |(dx,dz)| (truncated), so
+            // the offset's components along and across the heading are under B+1
+            // and A+1, and each coordinate of P-Q under A+B+2 = (half+
+            // max(tail,head)+66) + 2rG. Each mover is listed in the grid cells its
+            // swept box, grown by its own part, covers; a group reads the cells
+            // its chain box, grown by 2rG, covers (both clamped to the grid, which
+            // keeps every overlap). Every mover the scan could newly plan round is
+            // a candidate; movers already in the plan (avoidCmd) are candidates
+            // whatever their place, since a crossing stays planned off its box.
+            // Candidates are visited in the movers' order, so every decision and
+            // the plan's order are those of the walk over all movers
+            // (TAK_LEGION_VERIFY runs the conflict samples of every other mover
+            // and fails on a hit).
+            awGridW=(int64_t(W)*16+kAwareCell-1)/kAwareCell;awGridH=(int64_t(height())*16+kAwareCell-1)/kAwareCell;
+        }
+        const int64_t gridW=awGridW,gridH=awGridH;
         auto gridCol=[&](int64_t x) {return std::clamp<int64_t>(x>=0?x/kAwareCell:-1,0,gridW-1);};
         auto gridRow=[&](int64_t z) {return std::clamp<int64_t>(z>=0?z/kAwareCell:-1,0,gridH-1);};
-        std::vector<std::vector<uint32_t>> grid;
-        std::vector<std::pair<uint64_t,uint32_t>> byCommand;   // (command, mover index), ascending
-        if(!movers.empty()) {
+        if(start&&!movers.empty()) {
             grid.resize(size_t(gridW*gridH));
             for(size_t i=0;i<movers.size();++i) {
                 const auto& mv=movers[i];
@@ -4260,9 +4284,23 @@ struct LegionNavigator::Impl {
             }
             std::sort(byCommand.begin(),byCommand.end());
         }
+        if(start) {
+            awCursor=0;awStarted=w.tickCounter_;
+            uint64_t d=mix(0x617761726573ull,movers.size());
+            for(const auto& mv:movers) {
+                d=mix(d,mv.command);d=mix(d,uint64_t(mv.cx)<<32^uint64_t(uint32_t(mv.cz)));d=mix(d,uint64_t(mv.dx)<<32^uint64_t(uint32_t(mv.dz)));
+                d=mix(d,uint64_t(mv.r)^uint64_t(mv.tail)<<20^uint64_t(mv.head)<<40);d=mix(d,uint64_t(mv.half));
+            }
+            for(const auto& [gid,a]:acc) {d=mix(d,uint64_t(uint32_t(gid)));d=mix(d,uint64_t(a.sx)^uint64_t(a.sz)<<32);d=mix(d,uint64_t(a.n)^uint64_t(a.slow)<<24);}
+            awDigest=d;
+            stats.groupLoopIters+=groups.size();
+        }
         std::vector<uint32_t> cand;
-        stats.groupLoopIters+=groups.size();
+        bool paused=false,first=true;
         for(auto& [id,g]:groups) {
+            if(id<=awCursor)continue;
+            if(!first&&pairs+work>=budgetOf(NavBudget::kAwareBudget)) {paused=true;break;}
+            first=false;awCursor=id;
             const auto a=acc.find(id);
             std::vector<uint64_t> want;std::vector<Field::Corridor> seg;std::vector<uint8_t> kind;
             std::vector<int8_t> side;std::vector<uint32_t> placed;std::vector<uint8_t> moved;
@@ -4480,6 +4518,9 @@ struct LegionNavigator::Impl {
             }
         }
         stats.awarePairs+=pairs;stats.awareWork+=work;
+        if(!paused) {   // the scan is over: drop its snapshot
+            awCursor=-1;movers.clear();acc.clear();grid.clear();byCommand.clear();
+        }
     }
     // C1 (W9 lane C, decision 7 / W9-U2): columns narrowing before they meet head on. A formation
     // Point of kPivotMembers or more latches a meet (Point::meet) when awareness plans a head-on entry
@@ -8743,6 +8784,8 @@ struct LegionNavigator::Impl {
             h=mix(h,0x7265677175657565ull);h=mix(h,uint64_t(regLive));
             for(const auto& e:regQueue)if(regSeq[size_t(e.id)]==e.seq)h=mix(h,uint64_t(uint32_t(e.id)));
         }
+        // An awareness scan in progress (stage 4).
+        if(awCursor>=0) {h=mix(h,0x6177617265736361ull);h=mix(h,uint64_t(uint32_t(awCursor))<<32|awStarted);h=mix(h,awDigest);}
         // First plane builds registrations wait for (stage 4), while any.
         for(const int index:planeWant) {
             const Plane& p=planes[size_t(index)];
@@ -9100,6 +9143,7 @@ LegionNavigator::SlotShape LegionNavigator::lastSlotShape() const {return impl_-
 void LegionNavigator::setRestStrideForTest(int stride) {gRestStride=uint32_t(std::max(stride,1));}
 void LegionNavigator::setAwareOffForTest(bool off) {gAwareOff=off;}
 void LegionNavigator::setInstrumentProbes(bool on) {gInstrumentProbes=on;}
+void LegionNavigator::setBudgetDivisorForTest(int div) {gBudgetDiv=uint64_t(std::max(div,1));}
 void LegionNavigator::setVerify(bool on) {gVerify=on;}
 bool LegionNavigator::verifying() {return gVerify;}
 void LegionNavigator::setProbe(uint32_t ticks) {gProbe=ticks;}
