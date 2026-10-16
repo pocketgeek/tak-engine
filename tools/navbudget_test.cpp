@@ -22,7 +22,8 @@
 //    by the field).
 // 6. The bounded fit scan: a request too large for the free room is stepped over (at most kFitScan
 //    refusals a tick) while smaller ones start, reserves after kReserveAge ticks, and from then on nothing
-//    that arrived after it starts before it does.
+//    that arrived after it takes room before it does -- but requests behind the stopped scan that only
+//    share an existing field (no room) still start (serveFields: shareOnly behind a stopped scan).
 // 7. The scan bounds (kWaitFitScan in the Waiting class, kFitScan below it), and a reservation stops its
 //    own class and every later one.
 #include "sim/navbudget.h"
@@ -215,24 +216,35 @@ void fitScan() {
     std::printf("6. the bounded fit scan and reservation\n");
     // Room for 20 units; live items hold their size and leave 25 ticks after they start. One small
     // request (size 1) arrives every tick, more than the room serves, so it stays full and the backlog
-    // grows; one large request (size 10) arrives at t = 40, when the room is full.
+    // grows; every fourth tick a request that can share an existing field (size 0) arrives too; one large
+    // request (size 10) arrives at t = 40, when the room is full.
     struct Live { int size; uint32_t until; };
     struct Req { uint32_t since; int id, size; uint32_t blocked = NavAdmit::kNever; };
     std::vector<Live> live;
     std::vector<Req> reqs;
     int used = 0, nextId = 1, bigId = -1;
     uint32_t bigStarted = 0, smallWhileBlocked = 0, maxRefusalsInTick = 0, reservedAt = 0, overtook = 0;
+    uint32_t sharesWhileReserved = 0, sharesWaited = 0;
     bool reservedSeen = false;
     for (uint32_t t = 1; t <= 600 && !bigStarted; ++t) {
         for (auto it = live.begin(); it != live.end();)
             if (it->until <= t) { used -= it->size; it = live.erase(it); } else ++it;
         reqs.push_back({t, nextId++, 1});
+        if (t % 4 == 0) reqs.push_back({t, nextId++, 0});
         if (t == 40) { reqs.push_back({t, nextId, 10}); bigId = nextId++; }
         std::sort(reqs.begin(), reqs.end(), [](const Req& a, const Req& b) { return a.since != b.since ? a.since < b.since : a.id < b.id; });
         NavAdmit admit;
         admit.waiting = false;   // a class below Waiting: the narrow scan, and a reservation stops it
         uint32_t refusals = 0;
-        for (auto it = reqs.begin(); it != reqs.end() && !admit.stopped();) {
+        for (auto it = reqs.begin(); it != reqs.end();) {
+            if (admit.stopped()) {   // behind the stopped scan only a share starts (it takes no room)
+                if (it->size == 0) {
+                    NavAdmit::admitted(it->blocked);
+                    if (reservedAt) { ++sharesWhileReserved; sharesWaited = std::max(sharesWaited, t - it->since); }
+                    it = reqs.erase(it);
+                } else ++it;
+                continue;
+            }
             if (used + it->size <= 20) {
                 NavAdmit::admitted(it->blocked);
                 used += it->size;
@@ -253,12 +265,14 @@ void fitScan() {
         maxRefusalsInTick = std::max(maxRefusalsInTick, refusals);
     }
     std::printf("     the large request started at tick %u (arrived 40, reserved at %u); small starts meanwhile %u, "
-                "later ones past the reservation %u; most refusals in one tick %u\n", bigStarted, reservedAt,
-                smallWhileBlocked, overtook, maxRefusalsInTick);
+                "later ones past the reservation %u; most refusals in one tick %u; shares while reserved %u "
+                "(longest wait %u)\n", bigStarted, reservedAt, smallWhileBlocked, overtook, maxRefusalsInTick,
+                sharesWhileReserved, sharesWaited);
     check(maxRefusalsInTick <= uint32_t(NavBudget::kFitScan), "at most kFitScan refusals a tick");
     check(smallWhileBlocked > 0, "smaller requests start while the large one waits (no head-of-line block)");
     check(reservedSeen && reservedAt == 40 + NavBudget::kReserveAge, "the large request reserved after kReserveAge ticks");
-    check(overtook == 0, "no request that came after it starts once it has reserved");
+    check(overtook == 0, "no request that came after it takes room once it has reserved");
+    check(sharesWhileReserved > 0 && sharesWaited <= 1, "shares behind the reservation still start, at once");
     check(bigStarted > 40, "the large request waited for room (the scenario saturates it)");
     check(bigStarted && bigStarted < 600, "... and it starts");
 }

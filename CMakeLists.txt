@@ -683,15 +683,33 @@ if(Python3_Interpreter_FOUND)
   # field requests faster than the quota serves them for the whole run). Service gaps and start-request ages
   # within the policy's bounds, no body waiting over 60 ticks for a field, serial == workers
   # (tools/legion_sched_load_test.py). The _div run divides the registration, plane-build and awareness
-  # budgets by 64 under TAK_LEGION_VERIFY: the registration FIFO, the incremental plane builds and the
-  # resumable awareness scan all run over budget, with every index checked.
+  # budgets by 512 under TAK_LEGION_VERIFY: the registration FIFO (deferred registrations), the incremental
+  # plane builds and the resumable awareness scan all run over budget, with every index checked.
+  # legion_sched_mix (sched-mix.scn, a two-map field allowance): memory pressure -- the fit scan, the
+  # reservation, request promotion and shares behind a stopped scan run in the sim, and every request's
+  # wait stays within a bound derived from the allowance, the tenure and the measured queue.
   add_test(NAME legion_sched_load
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-load.scn)
   add_test(NAME legion_sched_load_div
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
-                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-load.scn --budget-div 64)
-  set_tests_properties(legion_sched_load legion_sched_load_div PROPERTIES LABELS legion TIMEOUT 900)
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-load.scn --budget-div 512)
+  add_test(NAME legion_sched_mix
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-mix.scn)
+  # legion_sched_pin: many-1000 under a two-map allowance, where fields shared by groups that never finish
+  # once pinned the room a reservation waited for (admissions froze for the rest of the run): admission
+  # liveness. legion_sched_inflight: battle-assault, where builds admitted as first routes and served as
+  # Waiting jobs used to pile up past the windows (40 first builds in flight): the per-kind cap.
+  add_test(NAME legion_sched_pin
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/many-1000.scn
+                   --field-bytes 778752 --ticks 3000)
+  add_test(NAME legion_sched_inflight
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/battle-assault.scn)
+  set_tests_properties(legion_sched_load legion_sched_load_div legion_sched_mix legion_sched_pin legion_sched_inflight
+                       PROPERTIES LABELS legion TIMEOUT 900)
   set_tests_properties(legion_sched_load_div PROPERTIES ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).

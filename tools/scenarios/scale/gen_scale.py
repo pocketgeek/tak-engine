@@ -31,6 +31,10 @@ Families (N = bodies; see the progress record for what each one stands for):
              and a rock walking across the map every 10 ticks, so field requests (first routes and stale
              refreshes) arrive faster than the quota serves them for the whole run: service fairness and the
              longest request age under load, not throughput (ctest legion_sched_load)
+  sched-mix  memory pressure (stage 4 fix round): 42 short-hop squads re-clicked every 120 ticks round 6
+             squads crossing the map every 4800, under `navbytes` = two whole-map fields: the fit scan, the
+             reservation and request promotion in the sim, and a request-age bound derived from that
+             capacity (ctest legion_sched_mix)
 """
 import math
 import os
@@ -301,6 +305,49 @@ def sched_load(squads=48, squad=10, tile=64, every=160, ticks=4800):
           "walking across the map: continuous navigation load (field requests faster than the quota serves).")
 
 
+def sched_mix(squads=48, longs=6, squad=10, tile=64, hop=120, haul=4800, ticks=7200, maps=2, churn=False):
+    """Memory-pressure mix: short hops (small field windows, a new request every `hop` ticks) round long hauls
+    (whole-map windows) under a field allowance of two whole-map fields: the large requests wait for room the
+    small ones keep taking unless the fit scan's reservation holds it for them. One footprint (one mobility
+    plane), so a squad is one group with at most one request: tools/legion_sched_load_test.py derives the
+    longest a request may wait from this file's numbers (the allowance, the map, the squads)."""
+    g = int(math.ceil(math.sqrt(squads)))
+    w = h = g * tile + 32
+    L = header("sched-mix", ticks, w, h, players=2, teams=[(1, 0)])
+    L.insert(L.index("probe scale") + 1, f"navbytes {maps * w * h * 4}")
+    L.append("type m mover 2 2500 10 1.8")
+    # The long hauls start on the map's rim (the corners and the edge middles) and cross to the opposite
+    # rim tile, back and forth; every other tile holds a short-hop squad.
+    rim = [(0, 0), (g - 1, g - 1), (g - 1, 0), (0, g - 1), (g // 2, 0), (g // 2, g - 1), (0, g // 2), (g - 1, g // 2)]
+    tiles = rim[:longs] + [(i % g, i // g) for i in range(g * g) if (i % g, i // g) not in rim[:longs]]
+    orders = []
+    for i in range(squads):
+        gx, gz = tiles[i]
+        x0, z0 = 16 + gx * tile + 20, 16 + gz * tile + 20
+        L.append(f"group S{i} {i % 2} m {squad} rect {x0} {z0} {x0 + 16} {z0 + 16}")
+        home = (16 + gx * tile + tile // 2, 16 + gz * tile + tile // 2)
+        if i < longs:
+            away = (16 + (g - 1 - gx) * tile + tile // 2, 16 + (g - 1 - gz) * tile + tile // 2)
+            every = haul
+        else:
+            nx = gx + 1 if gx + 1 < g else gx - 1   # the next tile along its row
+            away = (16 + nx * tile + tile // 2, home[1])
+            every = hop
+        t, k = 2 + (i * every) // squads, 0
+        while t < ticks - 900:
+            dx, dz = away if k % 2 == 0 else home
+            orders.append((t, i, dx, dz))
+            t += every
+            k += 1
+    if churn:   # sched-load's walking rock: stale refreshes, so all four request classes compete
+        L.append(f"churn {w // 2} 16 4 4 every=10 walk=0,8,1 toggle from=100 until={ticks - 600}")
+    for t, i, dx, dz in sorted(orders):
+        L.append(f"at {t} move S{i} {dx} {dz}")
+    write("sched-mix", L, f"sched-mix: {squads - longs} squads of {squad} hopping one tile every {hop} ticks round {longs} crossing the\n"
+          f"map every {haul}, the field allowance {maps} whole-map fields: large requests among a stream of small ones\n"
+          "under memory pressure (fit scan, reservation, request promotion; ctest legion_sched_mix).")
+
+
 def box_lines(x0, z0, x1, z1):
     return [f"wall {x0} {z0} {x1 - x0} 2", f"wall {x0} {z1 - 2} {x1 - x0} 2",
             f"wall {x0} {z0} 2 {z1 - z0}", f"wall {x1 - 2} {z0} 2 {z1 - z0}"]
@@ -335,3 +382,4 @@ if __name__ == "__main__":
         churn(n)
     idle(10000)
     sched_load()
+    sched_mix()
