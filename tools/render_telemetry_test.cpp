@@ -1,9 +1,9 @@
 // Shared renderer vocabulary (client/rendertelemetry.h): generational handles
 // must never alias a recycled slot, stats must stay inert when off, and the
 // RENDERSTATS line keeps the key names tools/render_benchmark.py parses.
-// Also: geometry-miss attribution (client/geometrykeycause.h) and the worker
+// Also: geometry-miss attribution (client/geometrystages.h) and the worker
 // pool's dispatch telemetry (client/threadpool.h), which must not change results.
-#include "client/geometrykeycause.h"
+#include "client/geometrystages.h"
 #include "client/rendertelemetry.h"
 #include "client/threadpool.h"
 #include <atomic>
@@ -116,50 +116,62 @@ int main() {
         check(std::strlen(tiny) < sizeof tiny, "truncated format stays terminated");
         }
     }
-    {   // Geometry-miss attribution reads the exact key's layout.
-        // 26 fixed words, 2 texture-frame words, piece table + 2 pose words.
-        std::vector<uint64_t> base(kGeometryKeyFixedWords, 0);
+    {   // Geometry-miss attribution reads the exact stage keys (workstream D).
+        // Local key: 13 fixed words, 2 texture-frame words, piece table + 2 pose words.
+        std::vector<uint64_t> base(kLocalKeyFixedWords, 0);
         base[0] = 7;                                  // unit id
         base.insert(base.end(), {3, 4});              // texture frames
         base.insert(base.end(), {0xabc, 10, 11});     // piece table, poses
-        const GeometryKeyLayout layout{uint32_t(kGeometryKeyFixedWords), uint32_t(kGeometryKeyFixedWords + 2)};
-        const auto changes = [&](std::vector<uint64_t> after, GeometryKeyLayout afterLayout) {
-            return geometryKeyChanges(base, layout, after, afterLayout);
+        const LocalKeyLayout layout{uint32_t(kLocalKeyFixedWords + 2)};
+        const auto changes = [&](std::vector<uint64_t> after, LocalKeyLayout afterLayout) {
+            return localKeyChanges(base, layout, after, afterLayout);
         };
         const auto with = [&](size_t i, uint64_t v) { auto k = base; k[i] = v; return k; };
         check(changes(with(0, 8), layout) == missBit(MissCause::Owner), "owner change reported alone");
-        check(changes(with(18, 1), layout) == missBit(MissCause::Placement), "anchor is placement");
-        check(changes(with(17, 1), layout) == missBit(MissCause::Zoom), "zoom");
-        check(changes(with(22, 1), layout) == missBit(MissCause::Pose), "facing is pose");
+        check(changes(with(12, 1), layout) == missBit(MissCause::Pose), "facing is pose");
+        check(changes(with(6, 1), layout) == missBit(MissCause::Pose), "body pitch is pose");
+        check(changes(with(9, 1), layout) == missBit(MissCause::Pose), "corpse is pose");
         check(changes(with(4, 1), layout) == missBit(MissCause::Material), "player palette is material");
+        check(changes(with(8, 1), layout) == missBit(MissCause::Material), "construction is material");
         check(changes(with(2, 1), layout) == missBit(MissCause::Resource), "model is resource");
-        check(changes(with(13, 1), layout) == missBit(MissCause::Settings), "shadow toggle is settings");
-        check(changes(with(kGeometryKeyFixedWords + 1, 9), layout) == missBit(MissCause::Material),
+        check(changes(with(3, 1), layout) == missBit(MissCause::Resource), "atlas is resource");
+        check(changes(with(11, 1), layout) == missBit(MissCause::Settings), "shadow toggle is settings");
+        check(changes(with(kLocalKeyFixedWords + 1, 9), layout) == missBit(MissCause::Material),
               "texture frame is material");
-        check(changes(with(kGeometryKeyFixedWords + 3, 99), layout) == missBit(MissCause::Pose), "piece pose");
-        check(changes(with(kGeometryKeyFixedWords + 2, 1), layout) == missBit(MissCause::Resource),
+        check(changes(with(kLocalKeyFixedWords + 3, 99), layout) == missBit(MissCause::Pose), "piece pose");
+        check(changes(with(kLocalKeyFixedWords + 2, 1), layout) == missBit(MissCause::Resource),
               "piece table is resource");
-        auto moved = with(19, 5); moved[kGeometryKeyFixedWords + 4] = 1;
-        const uint32_t both = changes(moved, layout);
-        check(both == (missBit(MissCause::Placement) | missBit(MissCause::Pose)), "every changed stage counted");
-        check(primaryMissCause(both) == MissCause::Pose, "filed under the more fundamental stage");
-        // Conjuring adds the clock word: the conjuring flag itself is material.
-        std::vector<uint64_t> conjuring(base.begin(), base.begin() + kGeometryKeyFixedWords);
-        conjuring[kGeometryKeyConjuringWord] = 1;
-        conjuring.push_back(1234);
-        for (size_t i = kGeometryKeyFixedWords; i < base.size(); ++i) conjuring.push_back(base[i]);
-        const GeometryKeyLayout shifted{layout.textureBegin + 1, layout.poseBegin + 1};
-        check(changes(conjuring, shifted) == missBit(MissCause::Material), "conjuring start is material only");
-        auto later = conjuring; later[kGeometryKeyFixedWords] = 1235;
-        check(geometryKeyChanges(conjuring, shifted, later, shifted) == missBit(MissCause::Material),
-              "conjuring clock is material");
+        auto moved = with(12, 5); moved[kLocalKeyFixedWords + 4] = 1; moved[3] = 1;
+        const uint32_t several = changes(moved, layout);
+        check(several == (missBit(MissCause::Resource) | missBit(MissCause::Pose)), "every changed category counted");
+        check(primaryMissCause(several) == MissCause::Resource, "filed under the more fundamental stage");
+        // A frame list of another length moves the pose section.
+        std::vector<uint64_t> longer(base.begin(), base.begin() + kLocalKeyFixedWords);
+        longer.push_back(5);
+        longer.insert(longer.end(), base.begin() + kLocalKeyFixedWords, base.end());
+        check(changes(longer, {layout.poseBegin + 1}) == missBit(MissCause::Material), "frame list length is material");
         // Losing the VM pose (corpse / replacement model) removes the pose section.
         auto noPose = base; noPose.resize(layout.poseBegin);
         check(changes(noPose, layout) == missBit(MissCause::Resource), "pose table removed");
-        check(changes(base, layout) == missBit(MissCause::Changed), "identical keys claim nothing");
+        check(changes(base, layout) == 0, "identical local keys claim nothing");
         check(primaryMissCause(0) == MissCause::Changed, "empty mask files as changed");
-        check(geometryKeyChanges(std::vector<uint64_t>(3), {}, base, layout) == missBit(MissCause::Changed),
+        check(localKeyChanges(std::vector<uint64_t>(3), {}, base, layout) == missBit(MissCause::Changed),
               "malformed key is unclaimed");
+        check(changes(base, {uint32_t(base.size() + 1)}) == missBit(MissCause::Changed), "bad layout is unclaimed");
+        // Placement: zoom apart from the anchor, the clip line and the emote bob.
+        PlacementKey place{};
+        auto placeWith = [&](size_t i) { auto k = place; k[i] = 1; return k; };
+        check(placementKeyChanges(place, placeWith(kPlacementZoom)) == missBit(MissCause::Zoom), "zoom");
+        for (size_t i : {size_t(kPlacementAnchorX), size_t(kPlacementAnchorY), size_t(kPlacementBob),
+                         size_t(kPlacementAltitude), size_t(kPlacementOcclusion)})
+            check(placementKeyChanges(place, placeWith(i)) == missBit(MissCause::Placement), "anchor/clip is placement");
+        check(placementKeyChanges(place, place) == 0, "same placement");
+        MaterialKey material{};
+        auto later = material; later[kMaterialClock] = 1;
+        check(materialKeyChanges(material, later) == missBit(MissCause::Material), "conjuring clock is material");
+        check(materialKeyChanges(material, material) == 0, "same material");
+        check(primaryMissCause(missBit(MissCause::Material) | missBit(MissCause::Zoom) |
+                               missBit(MissCause::Placement)) == MissCause::Material, "material before placement");
     }
     {   // Worker-pool telemetry: counts and times, identical results either way.
         ThreadPool pool(4);

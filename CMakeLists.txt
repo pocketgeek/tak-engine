@@ -1480,13 +1480,22 @@ if(TAK_BUILD_CLIENT)
     add_test(NAME shadow COMMAND shadow_test)
     add_executable(render_telemetry_test tools/render_telemetry_test.cpp)
     target_include_directories(render_telemetry_test PRIVATE src)
-    target_link_libraries(render_telemetry_test PRIVATE Threads::Threads)   # ThreadPool telemetry checks
+    target_compile_definitions(render_telemetry_test PRIVATE SDL_MAIN_HANDLED)
+    # ThreadPool telemetry checks; SDL for the vertex types in client/geometrystages.h.
+    target_link_libraries(render_telemetry_test PRIVATE Threads::Threads ${_tak_sdl2})
     add_test(NAME render_telemetry COMMAND render_telemetry_test)
     # Stable generational ownership of per-unit geometry entries (workstream C).
     add_executable(geometry_owners_test tools/geometry_owners_test.cpp)
     target_include_directories(geometry_owners_test PRIVATE src)
     target_link_libraries(geometry_owners_test PRIVATE Threads::Threads)
     add_test(NAME geometry_owners COMMAND geometry_owners_test)
+    # Staged unit geometry (workstream D): placement/material arithmetic equals the
+    # former single pass; partial stage updates equal a complete rebuild.
+    add_executable(geometry_stages_test tools/geometry_stages_test.cpp)
+    target_include_directories(geometry_stages_test PRIVATE src)
+    target_compile_definitions(geometry_stages_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(geometry_stages_test PRIVATE ${_tak_sdl2})
+    add_test(NAME geometry_stages COMMAND geometry_stages_test)
     add_executable(geometrysubmit_test tools/geometrysubmit_test.cpp)
     target_include_directories(geometrysubmit_test PRIVATE src)
     target_compile_definitions(geometrysubmit_test PRIVATE SDL_MAIN_HANDLED)
