@@ -12,20 +12,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import render_benchmark as rb  # noqa: E402
 
 
-def log(frames, hash_="00ff00ff00ff00ff", stats=True):
+def log(frames, hash_="00ff00ff00ff00ff", stats=True, deferred_gpu=False):
     lines = ['RENDER_ENV video=offscreen renderer=opengl accelerated=1 vsync=0 target=1 '
              'output=1280x960 window=1280x960 world=1075x888 scale=1.000x1.000 max_texture=32768x32768 '
              'gl_vendor="NVIDIA Corporation" gl_renderer="Some GPU/PCIe" gl_version="4.6.0" timer_query=1',
              "render scene: sites=1 ghosts=0 flyers=0 corpses=0 boats=0 scenery=0 center=5000,5000 offset=1,2",
              "shadow benchmark: requested=10 spawned=9 columns=4 zoom=1.000 type=mixed"]
+    if deferred_gpu:
+        lines.append("RENDER_TIMING frame_mode=pipelined gpu_timeline=gl_time_elapsed_deferred "
+                     "gpu_busy=unmeasured telemetry=on")
     for f in range(frames):
-        lines.append(f"DRAWPHASE frame={f} proj=0.5 submit=1.0 shadow=0.25 atlas=0.0 body=0.5 gpu={f}.5 "
+        if deferred_gpu and f >= 2:   # results arrive two frames late
+            lines.append(f"GPUTIMELINE frame={f - 2} ms={f - 2}.25")
+        gpu = -1 if deferred_gpu else f"{f}.5"
+        lines.append(f"DRAWPHASE frame={f} proj=0.5 submit=1.0 shadow=0.25 atlas=0.0 body=0.5 gpu={gpu} "
                      "vram=100 body_vertices=10 body_calls=2 images=0 image_bakes=0 bake_vertices=0 "
                      "bake_calls=0 cache_switches=0 image_bytes=0")
         if stats:
-            lines.append(f"RENDERSTATS frame={f} gpu_timeline_ms=0.1 t_geometry=0.2 visible_units={f} "
-                         "geometry_hits=3 miss_cold=1")
+            lines.append(f"RENDERSTATS frame={f} gpu_timeline_ms={-1 if deferred_gpu else 0.1} t_geometry=0.2 "
+                         f"w_pool_busy=1.5 visible_units={f} geometry_hits=3 miss_cold=1 geom_used_bytes={f << 20}")
         lines.append(f"FRAME ms={f + 1}.0 update=0.1 anim=0.0 draw=0.5 present=0.25 tick={f} live=9 wall_ms=1")
+    if deferred_gpu:   # drained at the end of the run
+        lines += [f"GPUTIMELINE frame={f} ms={f}.25" for f in range(max(0, frames - 2), frames)]
     lines.append(f"RENDER_STUDY frames={frames} hash={hash_} gpu_textures=1.00MiB")
     return "\n".join(lines) + "\n"
 
@@ -53,6 +61,17 @@ def main():
     s = rb.summarize(parsed, 4, 10)
     check(s["frame_ms"]["total"]["n"] == 6 and s["frame_ms"]["total"]["mean"] == 7.5, "warmup window positional")
     check(s["drawphase"]["gpu"]["mean"] == 7.0, "drawphase window by frame index")
+    check(s["gpu"]["timeline"]["mean"] == 7.0, "in-line GPU timeline")
+    check(s["stats"]["w_pool_busy"]["mean"] == 1.5 and s["stats_last"]["geom_used_bytes"] == 9 << 20,
+          "worker times and byte gauges")
+    deferred = rb.parse_log(log(10, deferred_gpu=True), 4, 10)
+    check(deferred["timing"]["frame_mode"] == "pipelined", "RENDER_TIMING parsed")
+    check(sorted(deferred["gpu_timeline"]) == list(range(10)), "every deferred GPUTIMELINE frame collected")
+    ds = rb.summarize(deferred, 4, 10)
+    check(ds["gpu"]["timeline"]["mean"] == 6.75 and ds["gpu"]["timeline"]["n"] == 6,
+          "deferred GPU results attach to the frame they measured")
+    check(ds["stats"]["gpu_timeline_ms"]["mean"] == 6.75 and ds["drawphase"]["gpu"]["mean"] == 6.75,
+          "in-line -1 placeholders replaced, never averaged")
     check(s["stats"]["visible_units"]["p50"] == 6 and s["stats_last"]["visible_units"] == 9, "stats window")
     seg = rb.summarize(parsed, 2, 5)
     check(seg["frame_ms"]["total"]["n"] == 3 and seg["stats"]["visible_units"]["mean"] == 3, "segment window")
@@ -78,18 +97,28 @@ def main():
         same = rb.compare_png(f"{tmp}/a.png", f"{tmp}/a.png")
         check(same["differing"] == 0, "identical compare")
 
-    def result(label, total):
-        return {"capture": False, "scene": "s", "size": "normal", "label": label,
+    def result(label, total, mode="forced"):
+        return {"capture": False, "scene": "s", "size": "normal", "label": label, "frame_mode": mode,
                 "load": {"loadavg_before": 1.0, "legion_scenario_before": 0},
                 "measured": {"frame_ms": {"total": {"mean": total, "p95": total, "p99": total},
                                           "draw": {"mean": total}, "present": {"mean": 0.1}},
-                             "drawphase": {}, "stats": {"visible_units": {"mean": 5}}}}
+                             "drawphase": {}, "stats": {"visible_units": {"mean": 5},
+                                                        "t_geometry": {"mean": total / 10}},
+                             "stats_last": {"geom_capacity_bytes": 3 << 20}}}
     report = rb.aggregate([result("A", 10.0), result("B", 8.0), result("B", 8.2), result("A", 10.4)])
     d = report[0]["delta"]["frame_ms.total.mean"]
     check(abs(d["relative"] - (8.1 - 10.2) / 10.2) < 1e-9 and d["significant"], "A/B delta")
     noisy = rb.aggregate([result("A", 10.0), result("B", 9.9), result("B", 9.95), result("A", 10.3)])
     check(not noisy[0]["delta"]["frame_ms.total.mean"]["significant"], "delta inside A/A noise")
-    check("| s | normal | A | 2 (0) | 5 |" in rb.markdown(report), "markdown row")
+    md = rb.markdown(report)
+    check("| s | normal | forced | A | 2 (0) | 5 |" in md, "markdown row")
+    check(report[0]["labels"]["A"]["telemetry"]["t_geometry"]["mean"] == 1.02, "telemetry mean of run means")
+    check("telemetry.t_geometry" in report[0]["delta"], "telemetry phase delta")
+    check("geom_capacity_bytes" in md and "| 3.000 |" in md, "memory table in MiB")
+    mixed = rb.aggregate([result("A", 10.0), result("B", 8.0, "pipelined"), result("B", 8.2),
+                          result("A", 10.4, "pipelined")])
+    check(len(mixed) == 2 and {r["frame_mode"] for r in mixed} == {"forced", "pipelined"},
+          "pipelined and forced runs never share a group")
     busy = result("A", 50.0); busy["load"]["pinned_cpu_busy_fraction"] = 0.9
     check(rb.aggregate([result("A", 10.0), busy], exclude_contended=True)[0]["labels"]["A"]["runs"] == 1, "contended run excluded")
     for name, scene in rb.SCENES.items():

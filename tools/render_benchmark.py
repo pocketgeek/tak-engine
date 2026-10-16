@@ -15,11 +15,19 @@ differs from the other runs of that scene (a rendering change must not move the
 simulation).
 
 Timings: FRAME/DRAWPHASE lines (present in every client since 0.7.23) and the
-RENDERSTATS line (phase-0 telemetry; optional so older baselines still parse).
+RENDERSTATS line (phase-0 telemetry, extended by workstream A; optional so older
+baselines still parse). In RENDERSTATS, t_* are render-thread wall times (some
+nest inside others -- never add them up), w_* are CPU times summed over worker
+threads, the rest are per-frame counts or byte gauges.
 GPU time is the GL_TIME_ELAPSED draw TIMELINE, which includes idle gaps waiting
-for CPU submission; it is not device busy time. TAK_PROF_FINISH adds a glFinish
-before present so the frame includes completed GPU work (forced-completion
-diagnostic timing); pass --pipelined to measure normal pipelined frames instead.
+for CPU submission; it is not device busy time (nothing here measures busy
+time). Workstream-A clients read it from a query ring without waiting and print
+GPUTIMELINE lines, possibly frames later; older clients block on the result each
+frame (which makes their "pipelined" frames partly forced). TAK_PROF_FINISH adds
+a glFinish before present so the frame includes completed GPU work
+(forced-completion diagnostic timing); pass --pipelined to measure normal
+pipelined frames instead. The two modes are never aggregated or compared
+together.
 
 Captures (--capture) are separate runs: readback perturbs timing. Their PNGs are
 compared run-to-run over the world view and over the whole frame.
@@ -91,6 +99,7 @@ SCENES = {
 QUICK = ["small-battle", "stationary-mixed", "moving", "pan"]
 SIZES = {"normal": (1280, 960), "uhd": (7680, 2160)}
 
+GPU_RE = re.compile(r"^GPUTIMELINE frame=(\d+) ms=(-?[\d.]+)", re.M)
 FRAME_RE = re.compile(
     r"^FRAME ms=([\d.]+) update=([\d.]+) anim=([\d.]+) draw=([\d.]+) present=([\d.]+)"
     r".*tick=(\d+) live=(\d+)", re.M)
@@ -115,24 +124,41 @@ def parse_env(line):
     return {k: v.strip('"') for k, v in ENV_RE.findall(line[len("RENDER_ENV "):])}
 
 
+def merge_gpu(rows, key, timeline):
+    """Replace a row's in-line GPU value with the deferred GPUTIMELINE result for
+    its frame; drop negative (not yet available / unsupported) values."""
+    for r in rows:
+        frame = int(r.get("frame", -1))
+        if frame in timeline:
+            r[key] = timeline[frame]
+        elif key in r and r[key] < 0:
+            del r[key]
+
+
 def parse_log(text, warmup, frames):
     """Parse one run's stdout+stderr. Returns per-frame rows (after warmup)."""
     env_lines = [l for l in text.splitlines() if l.startswith("RENDER_ENV ")]
     done = re.search(r"RENDER_STUDY frames=(\d+) hash=([a-f0-9]+)", text)
     frame_rows = [[float(v) for v in m] for m in FRAME_RE.findall(text)]
-    phase_rows, stat_rows = [], []
+    phase_rows, stat_rows, timing = [], [], None
     for line in text.splitlines():
         if line.startswith("DRAWPHASE "):
             phase_rows.append(parse_kv(line))
         elif line.startswith("RENDERSTATS "):
             stat_rows.append(parse_kv(line))
+        elif line.startswith("RENDER_TIMING "):
+            timing = parse_env("RENDER_ENV " + line[len("RENDER_TIMING "):])
+    timeline = {int(f): float(ms) for f, ms in GPU_RE.findall(text) if float(ms) >= 0}
+    merge_gpu(phase_rows, "gpu", timeline)
+    merge_gpu(stat_rows, "gpu_timeline_ms", timeline)
     scene = re.search(r"render scene: (.*)", text)
     spawn = re.search(r"shadow benchmark: requested=(\d+) spawned=(\d+)", text)
     return {
         "env": parse_env(env_lines[0]) if env_lines else None,
         "frames_done": int(done[1]) if done else None,
         "world_hash": done[2] if done else None,
-        "frame": frame_rows, "drawphase": phase_rows, "stats": stat_rows,
+        "frame": frame_rows, "drawphase": phase_rows, "stats": stat_rows, "timing": timing,
+        "gpu_timeline": timeline,
         "scene_line": scene[1] if scene else None,
         "spawned": int(spawn[2]) if spawn else None,
         "warmup": warmup, "frames": frames,
@@ -146,18 +172,32 @@ def window(rows, begin, end, key="frame"):
     return [r for r in rows if r.get(key, -1) >= begin and (end is None or r[key] < end)]
 
 
+def columns(rows):
+    """Per-key distributions over rows that carry the key (a deferred GPU value
+    can be missing from some rows)."""
+    keys = []
+    for r in rows:
+        keys.extend(k for k in r if k != "frame" and k not in keys)
+    return {k: distribution([r[k] for r in rows if k in r]) for k in keys}
+
+
 def summarize(parsed, begin, end):
     frames = parsed["frame"][begin:end]
     out = {"frame_ms": {k: distribution([r[i] for r in frames]) for i, k in
                         enumerate(("total", "update", "anim", "draw", "present"))}}
     phases = window(parsed["drawphase"], begin, end)
     if phases:
-        out["drawphase"] = {k: distribution([r[k] for r in phases]) for k in phases[0] if k != "frame"}
+        out["drawphase"] = columns(phases)
     stats = window(parsed["stats"], begin, end)
     if stats:
-        out["stats"] = {k: distribution([r[k] for r in stats]) for k in stats[0] if k != "frame"}
+        out["stats"] = columns(stats)
         last = stats[-1]
         out["stats_last"] = {k: v for k, v in last.items() if k != "frame"}
+    gpu = [ms for f, ms in parsed.get("gpu_timeline", {}).items() if begin <= f < (end if end is not None else 1 << 30)]
+    if not gpu:
+        gpu = [r["gpu"] for r in phases if "gpu" in r]
+    if gpu:
+        out["gpu"] = {"timeline": distribution(gpu)}
     return out
 
 
@@ -269,7 +309,7 @@ def run_one(args, client, label, scene, size_key, leg, capture=False):
     if not args.pipelined:
         env["TAK_PROF_FINISH"] = "1"
     env.update(scene_env(scene, size_key))
-    for extra in args.env:
+    for extra in args.env + (args.a_env if label == "A" else args.b_env):
         k, _, v = extra.partition("=")
         env[k] = v
     if capture:
@@ -325,6 +365,10 @@ def run_one(args, client, label, scene, size_key, leg, capture=False):
             raise RuntimeError(f"{name}: asked for output {w}x{h}, got {renv.get('output')}")
     if len(parsed["frame"]) != args.frames or len(parsed["drawphase"]) != args.frames:
         raise RuntimeError(f"{name}: incomplete measurement records")
+    frame_mode = "pipelined" if args.pipelined else "forced"
+    timing = parsed["timing"]
+    if timing and timing.get("frame_mode") != ("pipelined" if args.pipelined else "forced_completion"):
+        raise RuntimeError(f"{name}: asked for {frame_mode} frames, client reports {timing.get('frame_mode')}")
     stats_last = result_zoom = None
     if parsed["stats"]:
         stats_last = parsed["stats"][-1]
@@ -335,6 +379,7 @@ def run_one(args, client, label, scene, size_key, leg, capture=False):
               "(map-fills-window clamp)", flush=True)
     result = {
         "name": name, "scene": scene, "actual_zoom_last": result_zoom, "size": size_key, "label": label, "leg": leg,
+        "frame_mode": frame_mode, "render_timing": timing,
         "client": str(client), "capture": capture, "world_hash": parsed["world_hash"],
         "render_env": renv, "spawned": parsed["spawned"], "scene_line": parsed["scene_line"],
         "settings": settings, "scene_env": scene_env(scene, size_key),
@@ -439,7 +484,35 @@ KEY_METRICS = [("frame_ms", "total", "mean"), ("frame_ms", "total", "p95"), ("fr
                ("frame_ms", "draw", "mean"), ("frame_ms", "draw", "p95"), ("frame_ms", "draw", "p99"),
                ("frame_ms", "present", "mean"),
                ("drawphase", "proj", "mean"), ("drawphase", "shadow", "mean"),
-               ("drawphase", "body", "mean"), ("drawphase", "gpu", "mean")]
+               ("drawphase", "body", "mean"), ("gpu", "timeline", "mean")]
+
+# Renderer telemetry carried into the report: mean of each run's per-frame mean
+# (gauges ending in _bytes use the run's LAST frame: retained memory at the end).
+# Phase/worker times also get an A/B delta with the A/A-noise rule.
+TELEMETRY_PHASES = ["t_candidates", "t_painter_sort", "t_atlas", "t_geometry", "t_distant",
+                    "t_shadow_pack", "t_shadow_alloc", "t_shadow_prep", "t_shadow_raster",
+                    "t_shadow_composite", "t_body_assembly", "t_body_submit", "t_terrain",
+                    "t_terrain_upload", "t_effects", "t_fog", "t_pool_dispatch", "t_pool_wait",
+                    "w_geometry_key", "w_geometry_build", "w_pool_busy", "w_pool_wake",
+                    "w_terrain_compose", "w_section_decode"]
+TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_cold", "miss_owner",
+                    "miss_resource", "miss_pose", "miss_material", "miss_zoom", "miss_placement",
+                    "miss_changed", "inval_pose", "inval_material", "inval_placement", "inval_zoom",
+                    "geometry_owner_reassign", "verts_generated", "body_verts_copied",
+                    "verts_submitted", "bytes_uploaded", "texture_upload_bytes", "shadow_units",
+                    "shadow_tiles_reused", "shadow_tiles_dirty", "shadow_dirty_pixels",
+                    "shadow_dirty_new", "shadow_dirty_owner", "shadow_dirty_content",
+                    "shadow_dirty_relocated", "shadow_dirty_resized", "shadow_dirty_moved",
+                    "shadow_fallback", "atlas_regions", "atlas_pixels", "atlas_flushes",
+                    "logical_draws", "native_draws", "sdl_geometry_draws", "retained_draws",
+                    "flushes", "target_switches", "distant_images", "distant_hits", "distant_bakes",
+                    "terrain_jobs_queued", "terrain_jobs_used", "terrain_jobs_discarded",
+                    "terrain_jobs_cancelled", "geom_reallocs", "frame_reallocs", "pool_dispatches",
+                    "pool_serial_runs"]
+TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
+                   "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
+                   "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",
+                   "terrain_section_cpu_bytes", "gpu_tracked_bytes"]
 
 
 def metric(result, path):
@@ -461,25 +534,55 @@ def contended(result):
     return (result["load"].get("pinned_cpu_busy_fraction") or 0) > CONTENDED_BUSY
 
 
+def spread_entry(vals):
+    mean = statistics.fmean(vals)
+    spread = (max(vals) - min(vals)) / mean if mean > 0 and len(vals) > 1 else None
+    return {"mean": mean, "min": min(vals), "max": max(vals), "aa_rel_spread": spread}
+
+
+def telemetry(runs):
+    out = {}
+    for k in TELEMETRY_PHASES + TELEMETRY_COUNTS:
+        vals = [r["measured"]["stats"][k]["mean"] for r in runs
+                if r["measured"].get("stats") and k in r["measured"]["stats"]]
+        if vals:
+            out[k] = spread_entry(vals)
+    for k in TELEMETRY_BYTES:
+        vals = [r["measured"]["stats_last"][k] for r in runs
+                if r["measured"].get("stats_last") and k in r["measured"]["stats_last"]]
+        if vals:
+            out[k] = spread_entry(vals)
+    return out
+
+
+def delta(a, b):
+    if not a or not b or a["mean"] <= 0:
+        return None
+    noise = max(a["aa_rel_spread"] or 0, b["aa_rel_spread"] or 0)
+    change = (b["mean"] - a["mean"]) / a["mean"]
+    return {"relative": change, "noise": noise, "significant": abs(change) > max(2 * noise, 0.02)}
+
+
 def aggregate(results, exclude_contended=False):
+    # Pipelined and forced-completion runs measure different things: separate
+    # groups, never compared with each other.
     groups = {}
     for r in results:
         if r["capture"] or (exclude_contended and contended(r)):
             continue
-        groups.setdefault((r["scene"], r["size"]), {}).setdefault(r["label"], []).append(r)
+        key = (r["scene"], r["size"], r.get("frame_mode", "forced"))
+        groups.setdefault(key, {}).setdefault(r["label"], []).append(r)
     report = []
-    for (scene, size), by_label in sorted(groups.items()):
-        row = {"scene": scene, "size": size, "labels": {}}
+    for (scene, size, mode), by_label in sorted(groups.items()):
+        row = {"scene": scene, "size": size, "frame_mode": mode, "labels": {}}
         for label, runs in by_label.items():
             entry = {"runs": len(runs)}
             for path in KEY_METRICS:
                 vals = [v for v in (metric(r, path) for r in runs) if v is not None]
                 if not vals:
                     continue
-                mean = statistics.fmean(vals)
-                spread = (max(vals) - min(vals)) / mean if mean > 0 and len(vals) > 1 else None
-                entry[".".join(path)] = {"mean": mean, "min": min(vals), "max": max(vals),
-                                         "aa_rel_spread": spread}
+                entry[".".join(path)] = spread_entry(vals)
+            entry["telemetry"] = telemetry(runs)
             st = [r["measured"].get("stats") for r in runs if r["measured"].get("stats")]
             if st:
                 entry["visible_units"] = st[0].get("visible_units", {}).get("mean")
@@ -492,39 +595,68 @@ def aggregate(results, exclude_contended=False):
             row["delta"] = {}
             for path in KEY_METRICS:
                 k = ".".join(path)
-                a, b = row["labels"]["A"].get(k), row["labels"]["B"].get(k)
-                if a and b and a["mean"] > 0:
-                    noise = max(a["aa_rel_spread"] or 0, b["aa_rel_spread"] or 0)
-                    change = (b["mean"] - a["mean"]) / a["mean"]
-                    row["delta"][k] = {"relative": change, "noise": noise,
-                                       "significant": abs(change) > max(2 * noise, 0.02)}
+                d = delta(row["labels"]["A"].get(k), row["labels"]["B"].get(k))
+                if d:
+                    row["delta"][k] = d
+            ta, tb = row["labels"]["A"]["telemetry"], row["labels"]["B"]["telemetry"]
+            for k in TELEMETRY_PHASES:
+                d = delta(ta.get(k), tb.get(k))
+                if d:
+                    row["delta"]["telemetry." + k] = d
         report.append(row)
     return report
 
 
+def telemetry_table(report, keys, title, scale=1.0, unit=""):
+    present = [k for k in keys if any(k in e.get("telemetry", {}) for row in report for e in row["labels"].values())]
+    if not present:
+        return []
+    lines = ["", f"{title}", "", "| scene | size | mode | label | " + " | ".join(present) + " |",
+             "|---|---|---|---|" + "---:|" * len(present)]
+    for row in report:
+        for label, e in sorted(row["labels"].items()):
+            t = e.get("telemetry", {})
+            cells = []
+            for k in present:
+                v = t.get(k, {}).get("mean")
+                cells.append("-" if v is None else f"{v / scale:.3f}{unit}" if scale != 1.0 or k.startswith(("t_", "w_"))
+                             else f"{v:.0f}" if v >= 100 else f"{v:.2f}")
+            lines.append(f"| {row['scene']} | {row['size']} | {row.get('frame_mode', 'forced')} | {label} | "
+                         + " | ".join(cells) + " |")
+    return lines
+
+
 def markdown(report):
-    lines = ["| scene | size | label | runs (contended) | visible | total mean | p95 | p99 | draw | present | gpu timeline | A/A spread (total mean) | A/A spread (draw mean) |",
-             "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    lines = ["| scene | size | mode | label | runs (contended) | visible | total mean | p95 | p99 | draw | present | gpu timeline | A/A spread (total mean) | A/A spread (draw mean) |",
+             "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     fmt = lambda e, k: f"{e[k]['mean']:.3f}" if k in e else "-"
     for row in report:
         for label, e in sorted(row["labels"].items()):
             spread = e.get("frame_ms.total.mean", {}).get("aa_rel_spread")
             dspread = e.get("frame_ms.draw.mean", {}).get("aa_rel_spread")
             visible = e.get("visible_units")
-            lines.append(f"| {row['scene']} | {row['size']} | {label} | {e['runs']} ({e.get('contended_runs', 0)}) | "
+            lines.append(f"| {row['scene']} | {row['size']} | {row.get('frame_mode', 'forced')} | {label} | "
+                         f"{e['runs']} ({e.get('contended_runs', 0)}) | "
                          f"{'-' if visible is None else f'{visible:.0f}'} | {fmt(e, 'frame_ms.total.mean')} | "
                          f"{fmt(e, 'frame_ms.total.p95')} | {fmt(e, 'frame_ms.total.p99')} | "
                          f"{fmt(e, 'frame_ms.draw.mean')} | {fmt(e, 'frame_ms.present.mean')} | "
-                         f"{fmt(e, 'drawphase.gpu.mean')} | "
+                         f"{fmt(e, 'gpu.timeline.mean')} | "
                          f"{'-' if spread is None else f'{spread * 100:.1f}%'} | "
                          f"{'-' if dspread is None else f'{dspread * 100:.1f}%'} |")
+    lines += ["", "GPU timeline = GL_TIME_ELAPSED draw timeline (includes CPU-submission gaps; not GPU busy time)."]
+    lines += telemetry_table(report, TELEMETRY_PHASES,
+                             "Renderer phases, ms per frame (t_ = render-thread wall, nested phases included in "
+                             "their parent; w_ = CPU summed over worker threads)")
+    lines += telemetry_table(report, TELEMETRY_COUNTS, "Renderer counters, mean per frame")
+    lines += telemetry_table(report, TELEMETRY_BYTES, "Retained memory at the last frame, MiB", scale=1 << 20)
     deltas = [row for row in report if row.get("delta")]
     if deltas:
-        lines += ["", "| scene | size | metric | B vs A | noise (max A/A spread) | material |",
-                  "|---|---|---|---:|---:|---|"]
+        lines += ["", "| scene | size | mode | metric | B vs A | noise (max A/A spread) | material |",
+                  "|---|---|---|---|---:|---:|---|"]
         for row in deltas:
             for k, d in row["delta"].items():
-                lines.append(f"| {row['scene']} | {row['size']} | {k} | {d['relative'] * 100:+.1f}% | "
+                lines.append(f"| {row['scene']} | {row['size']} | {row.get('frame_mode', 'forced')} | {k} | "
+                             f"{d['relative'] * 100:+.1f}% | "
                              f"{d['noise'] * 100:.1f}% | {'yes' if d['significant'] else 'no'} |")
     return "\n".join(lines) + "\n"
 
@@ -551,6 +683,9 @@ def main(argv=None):
     p.add_argument("--capture", action="store_true", help="also one capture run per label per scene and compare")
     p.add_argument("--capture-only", action="store_true")
     p.add_argument("--env", action="append", default=[], help="extra KEY=VALUE for every run")
+    p.add_argument("--a-env", action="append", default=[],
+                   help="extra KEY=VALUE for label A runs only (same-binary A/B, e.g. TAK_RENDER_STATS=0)")
+    p.add_argument("--b-env", action="append", default=[], help="extra KEY=VALUE for label B runs only")
     p.add_argument("--allow-unverified-env", action="store_true")
     p.add_argument("--list", action="store_true", help="print the scene matrix and exit")
     p.add_argument("--reaggregate", action="store_true",
@@ -584,7 +719,8 @@ def main(argv=None):
                     for k, v in clients.items()},
         "options": {k: str(v) for k, v in vars(args).items()}, "scenes": {s: SCENES[s] for s in scenes},
         "settings": SETTINGS, "logical_cpus": os.cpu_count(), "uname": " ".join(os.uname()),
-        "gpu_measurement": "GL_TIME_ELAPSED draw timeline; includes CPU-submission gaps; not busy time",
+        "gpu_measurement": "GL_TIME_ELAPSED draw timeline; includes CPU-submission gaps; not busy time "
+                           "(GPU busy time is not measured)",
         "frame_measurement": "pipelined" if args.pipelined else "forced completion (glFinish before present)",
     }
     (args.output / "metadata.json").write_text(json.dumps(metadata, indent=2, default=str) + "\n")
