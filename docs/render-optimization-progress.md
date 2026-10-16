@@ -23,13 +23,28 @@ replays must not move; nothing in this program may feed the simulation.
   was not run: no file outside `src/client` (debug harness + presentation
   telemetry) and `tools/` changed, and every benchmark run checks the local
   world hash.
-- Nothing from Phases 1–7 (workstreams A–N) is implemented yet. A has its
-  shared interface and a first set of counters; the remaining items are listed
-  under A below.
-- **Next concrete step:** workstream B (animated-atlas dirty regions) and the
-  rest of A, measured against the pinned phase-0 baseline
-  (`~/tak-tmp/wt/render-opt-p0base`, commit `7c5d9cb8`) with
-  `tools/render_benchmark.py --a <p0base> --b <candidate>`.
+- **Workstream A (telemetry) is implemented and verified** (commits
+  `37f73c48` vocabulary + pool stats + attribution, `50ac99e6` subsystem
+  counters, `97a5a1e8` GameView wiring, `f7f923c6` deferred GPU queries +
+  timing-mode record, `9569bdbc` benchmark tool, then the docs commit).
+  Every category and counter in the brief has a key (see "Telemetry
+  reference"); captures are pixel-identical to p0base in 11 scenes; matched
+  ABBA runs show no material cost (Experiment 3). Tests: `ctest -L quick`
+  376/376 on build-o2; render_telemetry (also built with `NDEBUG`),
+  render_benchmark_tool, render_texture_reuse, terrain_cache, shadow,
+  geometrysubmit, distant_models pass. A Release `takclient` builds and
+  contains no telemetry strings. `--mpai` not run: only `src/client` and
+  `tools/` changed, and every benchmark run checks the world hash (identical
+  between p0base and the candidate in every scene run).
+- Workstreams B–N: not started.
+- **Next concrete step:** workstream B (animated-atlas dirty regions),
+  measured against the pinned phase-0 baseline (`~/tak-tmp/wt/render-opt-p0base`,
+  commit `7c5d9cb8`) or against the A build (`~/tak-tmp/render-opt/takclient-A-candidate`,
+  commit `9569bdbc` code) with `tools/render_benchmark.py --a <base> --b <candidate>`;
+  B's own counters already exist (`atlas_repaint_passes`, `atlas_regions`,
+  `atlas_pixels`, `atlas_copies`, `atlas_flushes`, `atlas_created`). Prefer
+  `--pipelined` matched runs for CPU-phase claims as well as the forced-
+  completion matrix (Experiment 3 shows the two modes differ ~2x in draw time).
 
 ## Status checklist (A–N)
 
@@ -39,7 +54,7 @@ evidence; nothing below is already fully satisfied.
 
 | | Workstream | Status | Present in current code (evidence) |
 |---|---|---|---|
-| A | Renderer telemetry | in progress | Phase 0 added `client/rendertelemetry.h` (`FrameStats`, phases, counters, miss causes) and wired candidates, painter sort, atlas, geometry, distant, shadow pack/composite, body assembly/submit phases; visible/drawable/special counts, geometry hits/misses (cold/owner/changed), vertices generated/copied, body submissions, shadow tiles reused/dirty/dirty pixels, atlas regions/pixels repainted, retained geometry-pool and body-buffer bytes vs capacity, terrain chunk/section bytes, tracked GPU bytes. Printed per frame as `RENDERSTATS` in the render study. Missing: per-stage miss causes (need D/E), terrain jobs completed/cancelled/discarded/used, worker dispatch vs wait split, allocation/reallocation counts, native draws/flushes/target switches outside the distant and shadow caches, shadow allocation vs prep split. Pre-existing: `TAK_PROF`/`DRAWPHASE` monotonic phase accumulators (`gameview.h` `prof*Ms_`), `TAK_DISTANT_STATS`, `TAK_CACHE_STATS`, GL timer query in the study. |
+| A | Renderer telemetry | **verified** | Phase 0: `FrameStats`, first phases/counters. Workstream A (`37f73c48`…`9569bdbc`): every category the brief lists — candidate/painter, geometry-key evaluation (`w_geometry_key`), geometry prep, shadow alloc/prep/raster/composite, body assembly/submit, atlas, terrain (`t_terrain`, `t_terrain_upload`, worker compose/decode time, job queued/completed/cancelled/discarded/used), worker pool dispatch/wait/busy/wake — and counters for miss causes per stage, owner reassignment, pose/material/placement/zoom/resource/settings invalidation, vertices generated/copied/submitted and bytes uploaded, shadow dirty tiles/area/causes, distant-image hits/held/bakes/refusals, reallocations, logical/native/SDL draws, flushes, target switches, CPU used vs retained bytes, GPU texture creates. Compiled out under `NDEBUG`; off in debug unless asked. GPU draw timeline read from a non-blocking query ring and labelled as timeline (busy time unmeasured); pipelined and forced-completion runs recorded and aggregated separately. Wired into `render_benchmark.py` reports. Cost: no material difference in matched runs (Experiment 3). Limits: draw/flush counts cover the shared world-pass paths only (HUD/effects direct SDL calls uncounted); SDL-internal flushes and driver draws invisible. |
 | B | Animated atlas dirty regions | not started | `animateGlowTextures()` (`gameview_render.cpp:2309`) computes every sequence's frame, and if ANY changed repaints EVERY animated region in EVERY colour atlas. `paintAtlasRect()` (`:2486`) issues the body copy, eight gutter copies and an `SDL_RenderFlush` per region (the flush protects the scale-mode change of the source texture). New atlases paint the current frame (`atlasFor`, `:2529`) and set `glowDirty_`, which forces a full repaint of all atlases. |
 | C | Stable geometry ownership | not started | `geomPool_` is indexed by position in the depth-sorted visible list (`:246`, `:306`): slot i belongs to whichever unit sorts i-th. The exact key's first word is `u.id`, so a unit that moves one place in depth order misses (counted as `miss_owner`). Pool never shrinks. Unit ids are monotonic within one world lifetime (`World::nextId_`), but a world reset (rejoin fast-forward, replay restart) starts them again at 1, and replacement models/corpses keep the id — so ids alone are not a safe cache identity. |
 | D | Separate preparation from placement | not started | One exact key (`:2707`–`:2737`) covers identity, pose, appearance AND `zm, ax, ay` (screen anchor). Any camera pan or interpolation step rebuilds the piece transforms, collection, triangle sort and screen transform. `preparePiece` already shares the transformed tree between body and shadow inside one build. |
@@ -212,6 +227,72 @@ reset.
 `render_telemetry_test` covers handle aliasing, generation wrap, disabled
 stats and the line format.
 
+Added by workstream A (same header unless noted):
+
+- `kTelemetryCompiled` (false under `NDEBUG`): every `FrameStats` tally,
+  `ScopedPhase` and submit counter folds away in release builds. The release
+  `takclient` contains none of the telemetry key strings (checked with
+  `strings`). In debug builds recording is off unless `TAK_RENDER_STATS=1` or
+  the render study; `TAK_RENDER_STATS=0` switches it off inside the study.
+- `Work` (`w_` keys): CPU time summed over worker threads, never compared with
+  `t_` wall times. `FrameStats::addMs/addWorkNs/enabled`.
+- `SubmitCounters gSubmit` + `countLogicalDraw/countNativeDraw/countSdlGeometry/
+  countFlush/countTargetSwitch/countTextureUpload/countUploadBytes`: per-draw-
+  call integer adds on the shared submission paths, folded once per frame.
+- `client/geometrykeycause.h`: `geometryKeyChanges()` / `primaryMissCause()`
+  read the exact geometry key's layout (26 fixed words, optional conjuring
+  clock, texture frames, piece table + poses; `GeometryKeyLayout` per entry)
+  and name the stages whose inputs changed. Telemetry only — reuse is still
+  decided by the whole-key comparison. Workstream D must keep this table in
+  step with its new keys, or replace it with per-stage revisions.
+- `ThreadPool::Stats` (`client/threadpool.h`): optional, null by default;
+  dispatch, caller-wait, participant-busy and worker-wake times. Changes no
+  chunking or result (`render_telemetry_test` checks identical outputs).
+- `GameView::foldRenderStats()` runs once when `draw()` returns (RAII guard
+  after the lobby/loading early returns) and turns cumulative sources
+  (terrain workers, section decode, gpuvram creates) into per-frame deltas.
+
+### Telemetry reference (RENDERSTATS keys)
+
+`t_*` = render-thread wall ms (nested: `terrain_upload` in `terrain`;
+`shadow_alloc/prep/raster` in `shadow_pack`; `pool_dispatch/wait` in whichever
+phase ran the pass) — never sum them. `w_*` = CPU ms summed over threads.
+Other keys are per-frame counts; `*_bytes` keys are gauges (`gpu_tracked_bytes`
+is gpuvram's tracked textures + buffers, CPU byte gauges are separate and
+exclude allocator overhead, assets and the simulation; whole-process RSS is
+sampled by the benchmark from `/proc`).
+
+| Brief category | Keys |
+|---|---|
+| Candidate selection, painter list/sort | `t_candidates`, `t_painter_sort`, `units_scanned`, `unit_candidates`, `feature_candidates`, `features_painted`, `painter_items` |
+| Geometry key / revision evaluation | `w_geometry_key` (every visible unit, hits included) |
+| Geometry preparation | `t_geometry` (wall incl. wait), `w_geometry_build`, `verts_generated`, `shadow_verts_generated` |
+| Shadow allocation / packing / prep / submission | `t_shadow_alloc` (packing, page creation, dirty stamps), `t_shadow_prep` (tile transform, incl. pool wait), `t_shadow_raster` (clears + coverage submission), `t_shadow_composite`, `shadow_page_allocs`, `shadow_fallback`, `shadow_direct_units` |
+| Body assembly / copying | `t_body_assembly`, `body_verts_copied`, `body_bytes_copied` |
+| Body submission | `t_body_submit`, `body_submissions` |
+| Animated atlas | `t_atlas`, `atlas_repaint_passes`, `atlas_regions`, `atlas_pixels`, `atlas_copies`, `atlas_flushes`, `atlas_created` |
+| Terrain decode / composition / uploads | `t_terrain`, `t_terrain_upload` (CPU submission, no GPU sync), `w_terrain_compose`, `w_terrain_upload`, `w_section_decode`, `terrain_jobs_queued/completed/cancelled/discarded/used`, `terrain_section_uploads/decodes`, `texture_upload_bytes` |
+| Worker dispatch and wait | `t_pool_dispatch`, `t_pool_wait`, `w_pool_busy`, `w_pool_wake`, `pool_dispatches`, `pool_serial_runs`, `pool_items` |
+| Cache hits / misses by cause | `geometry_hits/misses`, `miss_{cold,owner,resource,settings,pose,material,zoom,placement,changed,reference}`; shadow tiles `shadow_tiles_reused/dirty`, `shadow_dirty_{new,owner,content,relocated,resized,moved,forced}`; distant images `distant_hits/held`, `distant_miss_{new,scale,content}`, `distant_reject_{budget,shape,pages}` |
+| Owner reassignment | `geometry_owner_reassign` |
+| Pose / material / placement / resource invalidation | `inval_pose`, `inval_material`, `inval_placement`, `inval_zoom`, `inval_resource`, `inval_settings` (a miss counts in every stage that changed) |
+| Vertices generated / copied / uploaded | `verts_generated`, `body_verts_copied`, `verts_submitted`, `bytes_uploaded` (vertex bytes handed to GL client arrays, retained-buffer uploads and SDL geometry; `retained_draws` upload nothing) |
+| Shadow dirty tiles and area | `shadow_tiles_dirty`, `shadow_dirty_pixels` |
+| Allocation / reallocation | `geom_reallocs` (per-unit vector growth), `frame_reallocs` (painter list, draw ops, copy tasks, distant items, visible list, body buffer, shadow scratch), `gpu_texture_creates/destroys` |
+| Submissions, native draws, flushes, target switches | `logical_draws`, `native_draws`, `sdl_geometry_draws`, `retained_draws`, `flushes`, `target_switches` |
+| Used vs retained CPU bytes | `geom_used/capacity_bytes`, `body_used/capacity_bytes`, `shadow_scratch_used/capacity_bytes`, `frame_lists_used/capacity_bytes`, `terrain_mip_cpu_bytes`, `terrain_section_cpu_bytes` |
+| GPU | render-study `gpu_timeline_ms` / `GPUTIMELINE` (draw timeline, not busy time), `gpu_tracked_bytes` |
+
+Coverage limits (deliberate): `logical_draws`/`flushes`/`target_switches`
+count the world pass's shared paths (GeometrySubmit, OpaqueShadowSubmit,
+terrain chunk copies, feature bodies, special units, atlas and shadow-page
+target changes, distant bakes); HUD, most effects and the per-piece calls
+inside `drawUnit` call SDL directly and are not counted, so these are lower
+bounds. SDL's own internal flushes and GL draws are invisible to the client.
+`terrain_section_decodes` counts decode attempts (a key already decoded is a
+cache hit inside the compositor). GPU busy time is not measured: there is no
+portable per-process counter, and `GL_TIME_ELAPSED` is a timeline.
+
 ## Benchmark tooling
 
 `tools/render_benchmark.py` (new; stdlib only):
@@ -271,6 +352,27 @@ simulation only.
 
 Offline test: `render_benchmark_tool` (ctest) checks parsing, warmup and
 segment windows, the PNG comparer and A/B aggregation without a client.
+
+Workstream A additions to the tool and the study:
+
+- **GPU timeline without forcing completion.** The study keeps a ring of four
+  `GL_TIME_ELAPSED` queries and reads a result only when the driver reports
+  it available; results print as `GPUTIMELINE frame=<measured frame> ms=…`,
+  possibly frames later (the last ones are drained after the final frame).
+  `gpu_query_stalls` in RENDERSTATS counts the times the ring was full and the
+  study had to wait (0 expected). The phase-0 client blocked on every frame's
+  result after present, which made its "pipelined" runs partly forced; matrix
+  runs used forced completion, where both behave alike.
+- **Frame mode recorded and separated.** `RENDER_TIMING frame_mode=…
+  gpu_timeline=… gpu_busy=unmeasured telemetry=on|off`; the tool refuses a run
+  whose mode differs from the request and aggregates/compares pipelined and
+  forced-completion runs in separate groups (`mode` column).
+- **Telemetry in the report.** `report.json` carries every `TELEMETRY_*` key
+  per label (mean of run means, spread); `report.md` adds phase, counter and
+  retained-memory (MiB at the last frame) tables and A/B deltas for the
+  phases under the same materiality rule.
+- **Same-binary A/B.** `--a-env/--b-env KEY=VALUE` apply to one label only,
+  e.g. `--a X --b X --a-env TAK_RENDER_STATS=0` measures the telemetry's cost.
 
 ## Measured results
 
@@ -482,6 +584,114 @@ Findings at 7680×2160 (measured, BEFORE):
 
 
 
+### Experiment 3 — workstream A telemetry (2026-10-16)
+
+Clients: A-candidate = commit `9569bdbc` code (`~/tak-tmp/render-opt/takclient-A-candidate`,
+build-o2), p0base = `7c5d9cb8`. 1280×960 unless noted, offscreen EGL, SDL
+`opengl` on the RTX 5070 Laptop GPU (confirmed by `RENDER_ENV` for every run),
+900 frames, 300 warmup, client pinned to CPUs 16–23, `--wait-quiet 120`.
+Load is recorded per run in each `results.json`; a Legion sweep (one or two
+multi-threaded `legion_scenario` processes on CPUs 18/23) shared the pinned
+cores for part of the session. Output: `~/tak-tmp/render-opt/runs/a{1..5}-*`,
+`a-captures-normal` (not in Git).
+
+**Captures (`a-captures-normal`, `--capture-only`, p0base vs candidate):**
+0 differing pixels in the world view AND the full frame over all 12 captured
+frames of small-battle, stationary-mixed, moving, pan, zoom, effects, churn,
+total10k-visible, battle-sparse, naval and forest. World hashes identical in
+every scene of every experiment below.
+
+**A1 — cost of recording, same binary** (`--a C --b C --a-env TAK_RENDER_STATS=0`,
+ABBA × 2: A = telemetry off, B = on; draw mean ms, B vs A, max A/A spread):
+
+| Scene | Off | On | Δ | Noise | Material |
+|---|---:|---:|---:|---:|---|
+| stationary-mixed | 4.930 | 4.933 | +0.1% | 2.5% | no |
+| moving | 10.081 | 10.004 | −0.8% | 17.8% | no |
+| pan | 8.647 | 8.919 | +3.1% | 8.4% | no |
+| total10k-visible | 39.289 (1 uncontended run) | 39.27 (3 uncontended runs: 39.283 / 39.527 / 39.009) | ≈0% | — | no |
+
+total10k-visible: three of the four "off" runs ran with the pinned CPUs
+63–97% busy (flagged contended) and are excluded (`report-uncontended.md`);
+the remaining matched pairs differ by < 1%.
+
+**A2 — candidate vs phase-0 build, both recording** (ABBA × 2, draw mean):
+
+| Scene | p0base | A | Δ | Noise | Material | t_geometry Δ | t_shadow_pack Δ | t_body_submit Δ |
+|---|---:|---:|---:|---:|---|---:|---:|---:|
+| stationary-mixed | 5.158 | 5.123 | −0.7% | 14.4%* | no | −0.4% | −0.2% | −0.9% |
+| moving | 12.121 | 12.403 | +2.3% | 10.4% (3 of 4 contended per label) | no | +0.4% | +4.0% (noise 9.0%) | +0.4% |
+| pan | 8.586 | 8.631 | +0.5% | 4.7% | no | +0.2% | +0.9% | +0.7% |
+| total10k-visible | 39.020 | 38.973 | −0.1% | 1.1% | no | +1.5% (3.6%) | −0.4% (1.4%) | −1.6% (2.1%) |
+
+\* stationary-mixed: the first ABBA group ran at 47% pinned-CPU busy, the
+second at 19%; within each group the B−A difference is −1.0% and −1.0%.
+
+**A4/A5 — 7680×2160** (world view 7475×2088 confirmed): total10k-visible
+ABBA × 1: draw 58.613 → 58.664 ms (+0.1%, noise 0.9%); stationary-mixed
+ABBA × 3 (A5, after an ABBA × 1 run flagged +2.5% t_shadow_pack and +4.0%
+t_shadow_composite on 2+2 runs with a 0.9% spread): draw 7.941 → 7.989 ms
+(+0.6%, noise 2.8%), t_shadow_pack −0.7% (7.8%), t_shadow_composite +2.4%
+(3.2%) — not reproduced, inside noise.
+
+Conclusion: the telemetry is inside A/A noise in every matched comparison;
+the dense 1280×960 scene, the lowest-noise case, bounds it at about 1% of
+draw time. Release builds compile it out (not timed: the render study is
+debug-only).
+
+**A3 — pipelined frames** (candidate, A/A × 1, `--pipelined`): moving draw
+5.127 ms / total 7.17 ms / GPU timeline 2.36 ms; total10k-visible draw
+23.11 / total 31.84 / timeline 12.46 ms; `gpu_query_stalls=0` in every frame,
+900 GPUTIMELINE results per run (all frames measured, none forced). The same
+scenes under forced completion measure draw ≈ 10.0 and ≈ 39.0 ms. **The CPU
+phases themselves run ~1.7–2× slower in forced-completion runs on this
+laptop** — not only the present. Unverified hypothesis: with a glFinish per
+frame the CPU idles for the GPU every frame and the laptop drops core clocks
+or C-states. Matched A/B comparisons remain valid within one mode, but
+absolute phase times differ between modes; later workstreams should report
+both (the tool keeps them apart).
+
+What the new telemetry already shows (A1 candidate runs, means per frame):
+
+| Key | stationary-mixed | moving | pan | total10k-visible |
+|---|---:|---:|---:|---:|
+| t_shadow_pack (alloc / prep / raster) | 1.50 (0.29 / 0.18 / 1.02) | 5.72 (0.17 / 0.34 / 5.19) | 2.23 (0.27 / 0.39 / 1.54) | 22.66 (1.88 / 1.15 / 19.55) |
+| shadow dirty tiles: owner / content / relocated | 148 / 64 / 646 | 1130 / 14 / 41 | 1428 / 155 / 0 | 1028 / 296 / 3045 |
+| geometry misses: owner / pose / material / placement | 0 / 22 / 61 / 0 | 195 / 628 / 0 / 12 | 126 / 17 / 48 / 1393 | 0 / 100 / 292 / 0 |
+| inval_placement (any miss whose anchor moved) | 0 | 624 | 1458 | 0 |
+| w_geometry_key / w_geometry_build (CPU ms, all threads) | 2.77 / 0.54 | 1.82 / 10.88 | 2.24 / 17.93 | 13.89 / 2.66 |
+| t_pool_dispatch / t_pool_wait (wall ms) | 0.19 / 0.15 | 1.62 / 0.17 | 1.32 / 0.17 | 2.69 / 0.20 |
+| w_pool_wake (summed over 23 workers) | 11.4 | 40.9 | 54.4 | 72.7 |
+| logical / native / SDL-fallback draws, flushes | 1114 / 70 / 856 / 70 | 230 / 42 / 1 / 42 | 1016 / 464 / 481 / 464 | 4435 / 781 / 2968 / 781 |
+| verts submitted / vertex bytes handed to GL+SDL | 0.51 M / 6.9 MB | 0.98 M / 12.6 MB | 1.09 M / 15.2 MB | 2.56 M / 34.5 MB |
+| distant hits / bakes | 913 / 0 | 0 / 0 | 0 / 0 | 3893 / 46 |
+| geometry pool used / retained MiB | 20.2 / 29.7 | 15.3 / 20.1 | 18.4 / 64.2 | 97.1 / 143.1 |
+| shadow scratch used / retained MiB | 7.3 / 8.8 | 4.8 / 5.1 | 5.9 / 8.4 | 35.3 / 39.2 |
+| decoded terrain sections / mips (CPU MiB) | 63.8 / 5.4 | 63.8 / 5.4 | 63.8 / 0 | 63.8 / 16.9 |
+
+Readings for later workstreams (measured, not yet acted on):
+
+- **F**: shadow packing cost is almost all *raster* (clears + coverage
+  submission), and stationary armies re-raster tiles mostly because the
+  packer **relocated** them (646 of 858; 3045 of 4369 at 10k), not because
+  their content changed. **C**: moving/pan tiles go dirty because the tile now
+  holds a different geometry slot (`shadow_dirty_owner`).
+- **D**: pan misses are 88% placement-only (1393 of 1584); moving misses are
+  pose-led but 624 of 835 also moved anchor.
+- **I**: dispatching the pool costs 1.3–2.7 ms of render-thread wall per frame
+  in the benchmark, and summed worker wake latency is 40–70 ms: the pool has
+  `hardware_concurrency()` = 24 threads but the benchmark pins the client to
+  8 CPUs, so 23 workers contend for 8 cores on every wake. Unpinned play does
+  not have this oversubscription; workstream I must measure both and must not
+  tune thresholds on a pinned-only result.
+- **J**: decoded terrain sections hold 63.8 MiB of CPU memory regardless of
+  view (Ulasem Arena; all referenced sections decoded at load); geometry pool
+  retains 3.5× its use after the pan scene.
+- **H**: the dense scene hands 34.5 MB of vertex data to GL/SDL per frame;
+  2968 of its 4435 counted draws take an SDL path (GeometrySubmit fallbacks,
+  mostly batches below the 512-vertex native threshold, plus distant-image
+  bakes and SDL-only paths); the counter does not yet split those reasons.
+
 ## Known limitations and unsupported paths
 
 - Only Linux / NVIDIA / SDL `opengl` (offscreen EGL) is measured. Direct3D,
@@ -494,6 +704,18 @@ Findings at 7680×2160 (measured, BEFORE):
   and the phase times for renderer work.
 - Concurrent Legion scenario sweeps and builds share the machine; every run
   records load. Results inside the A/A spread are not claimed as changes.
+- Workstream A telemetry was exercised only on Linux / SDL `opengl`. The CPU
+  counters are backend-independent code; the GPU timeline exists only where
+  `GL_ARB_timer_query` does (Direct3D/Metal/software runs report
+  `gpu_timeline=unavailable`). Not run on Windows or macOS.
+- Forced-completion and pipelined runs differ ~2× in CPU phase times on this
+  laptop (Experiment 3, A3); compare within one mode only.
+- The benchmark pins the client to 8 CPUs while the worker pool sizes itself
+  from all 24 logical CPUs; pool dispatch/wake telemetry under the benchmark
+  overstates what unpinned play sees.
+- Telemetry draw/flush/target-switch counts are lower bounds (HUD, effects and
+  per-piece calls inside `drawUnit` call SDL directly; SDL-internal flushes and
+  driver-level draws are invisible). GPU busy time is not measured.
 
 ## Rejected experiments
 
@@ -504,3 +726,5 @@ Findings at 7680×2160 (measured, BEFORE):
   Not reintroduced.
 - (Historical) AA settings: removed after 0.7.24; not reintroduced.
 - Phase 0 added no experiments.
+- Workstream A added no experiments: it changes no draw, cache or scheduling
+  decision (captures identical, world hashes identical).
