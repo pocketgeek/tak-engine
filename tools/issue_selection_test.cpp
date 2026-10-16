@@ -10,7 +10,10 @@
 // issueSelection (tools/legion_issue_selection.h) folds all of that into one
 // round trip R. Each case checks the two Cmd streams are equal, field for
 // field, tick for tick (shifted by the uplink delay), plus the expected shape
-// by hand: 64 per tick, consecutive ticks, the 512 window's gap.
+// by hand: in Retail 64 per tick, consecutive ticks, the 512 window's gap; in
+// Legion (protocol 267) one explicit order per click, landing whole in one tick,
+// the right-click move as OrderShape::Offsets -- and applied in the sim, every
+// member gets the goal the per-unit loop gives it.
 //
 // The second half parses a sample .scn of each map kind (ascii, flat, gen1,
 // snapshot), round-trips it through the canonical writer, and builds its
@@ -50,25 +53,40 @@ struct ClientRef {
     const World& world_;
     int localPlayer_ = 0;
     std::vector<int> selection_;
-    // gameview.h:2495-2496 and the send state mpStep keeps.
+    // gameview.h (cmdCredit_, cmdInFlight_, the order window) and the send state mpStep keeps.
     std::vector<Command> outbox_;
     size_t outboxHead_ = 0;
     int cmdCredit_ = tak::net::kCmdCapPerTick;
     int cmdInFlight_ = 0;
     uint32_t lastSendTick_ = 0;
+    uint32_t nextOrderSerial_ = 1;
+    int orderInFlight_ = 0;
+    size_t orderInFlightBytes_ = 0;
+    // The open click (GameView::ClickScope / flushClick).
+    std::vector<Command> click_;
+    tak::net::ClickShape shape_;
 
     explicit ClientRef(const World& w) : world_(w) {}
     const Unit* frameUnitP(int id) const {
         const Unit* u = world_.unit(id);
         return u && u->alive() ? u : nullptr;
     }
-    // gameview_impl.cpp:193-197 (mp_ set: the outbox).
+    // gameview_impl.cpp GameView::issue (mp_ set, a click open: held for the click).
     void issue(Command c) {
         c.player = uint8_t(localPlayer_);
-        outbox_.push_back(c);
+        click_.push_back(c);
     }
-    // gameview_hud.cpp:240-270: right-click on open ground.
+    // gameview_impl.cpp GameView::flushClick: a Legion game packs the click.
+    void flushClick() {
+        uint32_t provisional = nextOrderSerial_;   // the serial is given at send (mpStep)
+        if (!isLegionPathfinding(world_.pathfindingMode())) outbox_.insert(outbox_.end(), click_.begin(), click_.end());
+        else for (auto& c : tak::net::packClick(click_, shape_, provisional)) outbox_.push_back(std::move(c));
+        click_.clear();
+        shape_ = {};
+    }
+    // gameview_hud.cpp rightClickOrder: right-click on open ground (setClickMove first).
     void rightClickMove(float wx, float wz, bool queue) {
+        shape_.moveOffsets = true; shape_.x = wx; shape_.z = wz;
         const bool legion = isLegionPathfinding(world_.pathfindingMode());
         float cx = 0, cz = 0;
         int n = 0;
@@ -151,31 +169,51 @@ struct ClientRef {
         for (int id : selection_)
             if (const auto* u = frameUnitP(id); u && u->alive() && u->player == localPlayer_) issueSquad(id, want);
     }
-    // gameview_net.cpp:337-368: the send half of mpStep. netTick_ is the last
-    // bundle this client has simulated.
+    // gameview_net.cpp mpStep, the send half: one FIFO; command runs under the
+    // credit and window, an order whole (its transaction) under the order window.
+    // netTick_ is the last bundle this client has simulated.
     std::vector<Command> mpStepSend(uint32_t netTick_) {
         if (netTick_ != lastSendTick_) {
             cmdCredit_ = tak::net::cmdSendCredit(cmdCredit_, netTick_ - lastSendTick_);
             lastSendTick_ = netTick_;
         }
-        const int sendable = tak::net::cmdSendWindow(cmdCredit_, cmdInFlight_);
-        const size_t pending = outbox_.size() - outboxHead_;
         std::vector<Command> sent;
-        if (pending > 0 && sendable > 0) {
-            const size_t n = std::min(pending, size_t(sendable));
-            cmdCredit_ -= int(n);
-            cmdInFlight_ += int(n);
-            const auto first = outbox_.begin() + ptrdiff_t(outboxHead_);
-            sent.assign(first, first + ptrdiff_t(n));
-            outboxHead_ += n;
+        if (outboxHead_ < outbox_.size()) {
+            int sendable = tak::net::cmdSendWindow(cmdCredit_, cmdInFlight_);
+            size_t at = outboxHead_;
+            while (at < outbox_.size()) {
+                size_t end = at;
+                while (end < outbox_.size() && outbox_[end].kind != Cmd::Order && int(end - at) < sendable) ++end;
+                if (end > at) {
+                    const int n = int(end - at);
+                    cmdCredit_ -= n; cmdInFlight_ += n; sendable -= n;
+                    sent.insert(sent.end(), outbox_.begin() + ptrdiff_t(at), outbox_.begin() + ptrdiff_t(end));
+                    at = end;
+                    continue;
+                }
+                auto& item = outbox_[at];
+                if (item.kind != Cmd::Order || !item.order) break;
+                const size_t bytes = tak::net::orderRecordBytes(*item.order);
+                if (!tak::net::orderSendWindow(orderInFlight_, orderInFlightBytes_, bytes)) break;
+                std::const_pointer_cast<tak::net::SelectionOrder>(item.order)->serial = nextOrderSerial_++;
+                sent.push_back(item);
+                ++orderInFlight_; orderInFlightBytes_ += bytes;
+                ++at;
+            }
+            outboxHead_ = at;
             if (outboxHead_ == outbox_.size()) { outbox_.clear(); outboxHead_ = 0; }
         }
         return sent;
     }
-    // gameview_net.cpp:393-397: our own commands in a bundle retire in-flight credit.
+    // gameview_net.cpp simTick: our own commands and orders in a bundle retire their windows.
     void bundleArrived(const std::vector<Command>& cmds) {
-        for (const auto& c : cmds)
-            if (int(c.player) == localPlayer_ && cmdInFlight_ > 0) --cmdInFlight_;
+        for (const auto& c : cmds) {
+            if (int(c.player) != localPlayer_) continue;
+            if (c.kind == Cmd::Order) {
+                if (orderInFlight_ > 0) --orderInFlight_;
+                orderInFlightBytes_ -= std::min(orderInFlightBytes_, c.order ? tak::net::orderRecordBytes(*c.order) : 0);
+            } else if (cmdInFlight_ > 0) --cmdInFlight_;
+        }
     }
 };
 
@@ -203,9 +241,19 @@ struct Wire {
             cmdQueue.insert(cmdQueue.end(), it->second.begin(), it->second.end());
             toServer.erase(it);
         }
+        // server.cpp closeTick: kCmdCapPerTick commands, orders within kTickOrderBytes, FIFO.
         std::vector<Command> pending;
-        for (int taken = 0; taken < tak::net::kCmdCapPerTick && !cmdQueue.empty(); ++taken) {
-            pending.push_back(cmdQueue.front());
+        int taken = 0;
+        size_t orderBytes = 0;
+        while (!cmdQueue.empty()) {
+            const Command& head = cmdQueue.front();
+            if (head.kind == Cmd::Order) {
+                const size_t b = head.order ? tak::net::orderRecordBytes(*head.order) : 0;
+                if (orderBytes + b > tak::net::kTickOrderBytes) break;
+                orderBytes += b;
+            } else if (taken < tak::net::kCmdCapPerTick) ++taken;
+            else break;
+            pending.push_back(head);
             cmdQueue.pop_front();
         }
         bundles[t] = pending;
@@ -225,6 +273,7 @@ struct Wire {
 std::vector<CmdBatch> runWire(Wire& wire, uint32_t from, uint32_t issueTick, const std::function<void()>& click) {
     for (uint32_t t = 0; t < issueTick; ++t) wire.frame(t);   // an idle client before the click
     click();
+    wire.client.flushClick();
     std::vector<CmdBatch> out;
     uint32_t t = issueTick;
     for (; !wire.drained() || t <= issueTick; ++t) wire.frame(t);
@@ -234,9 +283,15 @@ std::vector<CmdBatch> runWire(Wire& wire, uint32_t from, uint32_t issueTick, con
 }
 
 bool sameCmd(const Command& a, const Command& b) {
-    return a.kind == b.kind && a.player == b.player && a.unitId == b.unitId && a.targetId == b.targetId &&
+    const bool fields = a.kind == b.kind && a.player == b.player && a.unitId == b.unitId && a.targetId == b.targetId &&
            std::memcmp(&a.x, &b.x, sizeof a.x) == 0 && std::memcmp(&a.z, &b.z, sizeof a.z) == 0 &&
            a.queue == b.queue && std::memcmp(a.type, b.type, sizeof a.type) == 0 && a.x2 == b.x2 && a.z2 == b.z2;
+    if (!fields || !a.order != !b.order) return false;
+    if (!a.order) return true;
+    const auto &p = *a.order, &q = *b.order;
+    Command pt = p.tmpl, qt = q.tmpl;
+    pt.order = qt.order = nullptr;
+    return p.serial == q.serial && p.shape == q.shape && p.members == q.members && sameCmd(pt, qt);
 }
 // The client's stream (shifted back by `shift` ticks of uplink delay) equals issueSelection's.
 bool sameStream(const std::vector<CmdBatch>& mine, const std::vector<CmdBatch>& client, int shift,
@@ -306,7 +361,7 @@ constexpr uint32_t kIssueTick = 100;   // an idle client: its credit has saturat
 void compare(const World& w, const std::vector<int>& sel, const SelectionOrder& o, int roundTrip,
              const std::function<void(ClientRef&)>& click, const std::string& what,
              std::vector<CmdBatch>* keep = nullptr) {
-    const auto mine = tak::scn::issueSelection(w, sel, o, kIssueTick, 0, roundTrip);
+    const auto mine = tak::scn::issueSelection(w, sel, o, kIssueTick, 0, roundTrip, 1);   // serials from 1, as ClientRef
     if (keep) *keep = mine;
     // No window (roundTrip < 0) is an uplink whose acks come back before the
     // window can fill: R = 1, the client one frame behind the server.
@@ -343,6 +398,26 @@ std::vector<int> unitsOf(const std::vector<CmdBatch>& b) {
     for (const auto& x : b) for (const auto& c : x.cmds) ids.push_back(c.unitId);
     return ids;
 }
+// Legion: the click landed as ONE explicit order in the click's tick, over exactly `ids`.
+const tak::net::SelectionOrder* oneOrder(const std::vector<CmdBatch>& b, std::vector<int> ids, Cmd verb,
+                                         const std::string& what) {
+    std::sort(ids.begin(), ids.end());
+    const bool ok = !b.empty() && b[0].tick == kIssueTick && b[0].cmds.size() == 1 &&
+                    b[0].cmds[0].kind == Cmd::Order && b[0].cmds[0].order &&
+                    b[0].cmds[0].order->tmpl.kind == verb &&
+                    std::vector<int>(b[0].cmds[0].order->members.begin(), b[0].cmds[0].order->members.end()) == ids &&
+                    std::all_of(b.begin() + 1, b.end(), [](const CmdBatch& x) { return x.cmds.empty(); });
+    check(ok, what + ": one explicit order over the selection, whole in the click's tick");
+    return ok ? b[0].cmds[0].order.get() : nullptr;
+}
+// Apply batches in a world from its current tick.
+void landAll(World& w, const std::vector<CmdBatch>& b) {
+    tak::sim::TypeRegistry reg;
+    for (const auto& x : b) {
+        while (w.tickCount() < x.tick) w.tick(1.f / 30);
+        for (const auto& c : x.cmds) applyCommand(w, reg, c);
+    }
+}
 
 void selections() {
     // 1, 64, 65, 200, 450 ground bodies, right-click move, both modes.
@@ -357,27 +432,33 @@ void selections() {
             const std::string what = std::string(m) + " move " + std::to_string(n);
             std::vector<CmdBatch> b;
             compare(f.world, ids, o, -1, [&](ClientRef& c) { c.rightClickMove(o.x, o.z, false); }, what, &b);
-            shape(b, split(n), what);
-            check(unitsOf(b) == ids, what + ": every unit once, in selection order");
-            bool shared = true, offset = true;
-            for (const auto& x : b)
-                for (const auto& c : x.cmds) {
-                    shared &= c.x == o.x && c.z == o.z;
-                    offset &= std::abs(c.x - o.x) <= 60 && std::abs(c.z - o.z) <= 60;
-                }
-            if (mode == PathfindingMode::Legion) check(shared, what + ": Legion ground shares the click");
-            else check(offset && (n == 1 || !shared), what + ": Retail keeps per-axis offsets within 60 px");
-            // Applied in the sim, every body takes the order.
+            if (mode == PathfindingMode::Legion) {
+                if (const auto* order = oneOrder(b, ids, Cmd::Move, what))
+                    check(order->shape == tak::net::OrderShape::Offsets && order->tmpl.x == o.x && order->tmpl.z == o.z,
+                          what + ": the right-click move carries the click, shape Offsets");
+            } else {
+                shape(b, split(n), what);
+                check(unitsOf(b) == ids, what + ": every unit once, in selection order");
+                bool shared = true, offset = true;
+                for (const auto& x : b)
+                    for (const auto& c : x.cmds) {
+                        shared &= c.x == o.x && c.z == o.z;
+                        offset &= std::abs(c.x - o.x) <= 60 && std::abs(c.z - o.z) <= 60;
+                    }
+                check(offset && (n == 1 || !shared), what + ": Retail keeps per-axis offsets within 60 px");
+            }
+            // Applied in the sim, every body takes the order (Legion: its goal is the click).
             if (n == 200) {
-                tak::sim::TypeRegistry reg;
-                uint32_t tick = 0;
-                for (const auto& x : b) {
-                    while (tick < x.tick) { f.world.tick(1.f / 30); ++tick; }
-                    for (const auto& c : x.cmds) applyCommand(f.world, reg, c);
+                landAll(f.world, b);
+                int ordered = 0, atClick = 0;
+                for (int id : ids) {
+                    const auto& orders = f.world.unit(id)->orders;
+                    ordered += !orders.empty();
+                    atClick += !orders.empty() && orders.back().x == Fixed::fromFloat(o.x) &&
+                               orders.back().z == Fixed::fromFloat(o.z);
                 }
-                int ordered = 0;
-                for (int id : ids) ordered += !f.world.unit(id)->orders.empty();
                 check(ordered == n, what + ": the sim accepts every command");
+                if (mode == PathfindingMode::Legion) check(atClick == n, what + ": Legion ground shares the click");
             }
         }
     }
@@ -398,14 +479,27 @@ void selections() {
         const std::string what = std::string(mode == PathfindingMode::Legion ? "legion" : "retail") + " mixed 132";
         std::vector<CmdBatch> b;
         compare(f.world, sel, o, -1, [&](ClientRef& c) { c.rightClickMove(o.x, o.z, false); }, what, &b);
-        shape(b, split(int(sel.size())), what);
+        // The goals, from the commands (Retail) or as the sim gave them (Legion: OrderShape::Offsets).
         bool clamped = true, sharedGround = true;
-        for (const auto& x : b)
-            for (const auto& c : x.cmds) {
-                const bool isAir = f.world.unit(c.unitId)->type->canFly;
-                if (isAir) clamped &= std::abs(c.x - o.x) == 60 && std::abs(c.z - o.z) == 60;
-                else sharedGround &= c.x == o.x && c.z == o.z;
+        if (mode == PathfindingMode::Legion) {
+            oneOrder(b, sel, Cmd::Move, what);
+            landAll(f.world, b);
+            for (int id : sel) {
+                const auto* u = f.world.unit(id);
+                if (u->orders.empty()) { clamped = sharedGround = false; continue; }
+                const float gx = u->orders.back().x.toFloat(), gz = u->orders.back().z.toFloat();
+                if (u->type->canFly) clamped &= std::abs(std::abs(gx - o.x) - 60) < 0.01f && std::abs(std::abs(gz - o.z) - 60) < 0.01f;
+                else sharedGround &= gx == o.x && gz == o.z;
             }
+        } else {
+            shape(b, split(int(sel.size())), what);
+            for (const auto& x : b)
+                for (const auto& c : x.cmds) {
+                    const bool isAir = f.world.unit(c.unitId)->type->canFly;
+                    if (isAir) clamped &= std::abs(c.x - o.x) == 60 && std::abs(c.z - o.z) == 60;
+                    else sharedGround &= c.x == o.x && c.z == o.z;
+                }
+        }
         check(clamped, what + ": far flyers keep a +-60 px offset on both axes");
         if (mode == PathfindingMode::Legion) check(sharedGround, what + ": Legion ground shares the click");
     }
@@ -419,7 +513,7 @@ void selections() {
         o.verb = Verb::Move; o.x = 200 * 16; o.z = 220 * 16;
         std::vector<CmdBatch> b;
         compare(f.world, ids, o, -1, [&](ClientRef& c) { c.rightClickMove(o.x, o.z, false); }, "air 100", &b);
-        shape(b, split(100), "air 100");
+        oneOrder(b, ids, Cmd::Move, "air 100");
     }
 
     // The other verbs on 65 bodies, queued and not.
@@ -475,17 +569,30 @@ void selections() {
             const std::string what = std::string("alt+3 200") + (append ? " shift" : "");
             std::vector<CmdBatch> b;
             compare(f.world, ids, sq, -1, [&](ClientRef& c) { c.assignSquad(3, -1, append); }, what, &b);
-            shape(b, split(210), what);
-            check(b[0].cmds[0].unitId == old[0] && b[0].cmds[0].targetId == (append ? -3 : 0),
-                  what + ": the old members are evicted (or retyped) first");
+            // Shift retypes the old members with the selection's own command: one run, so one order over all 210.
+            if (append) {
+                std::vector<int> all = old;
+                all.insert(all.end(), ids.begin(), ids.end());
+                oneOrder(b, all, Cmd::SetSquad, what);
+                continue;
+            }
+            // Two orders, in the client's order: the old members evicted, then the selection.
+            const bool two = !b.empty() && b[0].tick == kIssueTick && b[0].cmds.size() == 2 &&
+                b[0].cmds[0].order && b[0].cmds[1].order &&
+                std::vector<int>(b[0].cmds[0].order->members.begin(), b[0].cmds[0].order->members.end()) == old &&
+                b[0].cmds[0].order->tmpl.targetId == (append ? -3 : 0) &&
+                std::vector<int>(b[0].cmds[1].order->members.begin(), b[0].cmds[1].order->members.end()) == ids &&
+                b[0].cmds[1].order->tmpl.targetId == -3 && b[0].cmds[0].order->serial < b[0].cmds[1].order->serial;
+            check(two, what + ": the old members are evicted first, as an order of their own");
         }
-        // The press and the click together, as one outbox.
+        // The press and the click together, as one outbox: three orders in one tick.
         tak::scn::Uplink link;
         SelectionOrder sq, mv;
         sq.verb = Verb::Squad; sq.squad = -3;
         mv.verb = Verb::Move; mv.x = 300 * 16; mv.z = 300 * 16;
-        link.issue(tak::scn::hudCommands(f.world, ids, sq));
-        link.issue(tak::scn::hudCommands(f.world, ids, mv));
+        uint32_t serial = 1;
+        link.issue(tak::scn::hudItems(f.world, ids, sq, 0, serial));
+        link.issue(tak::scn::hudItems(f.world, ids, mv, 0, serial));
         std::vector<CmdBatch> mine;
         for (uint32_t t = kIssueTick; !link.idle(); ++t) mine.push_back({t, link.land(t)});
         ClientRef client(f.world);
@@ -493,10 +600,11 @@ void selections() {
         Wire wire{client, 0, 0};
         const auto theirs = runWire(wire, kIssueTick, kIssueTick, [&] {
             client.assignSquad(3, -1, false);
+            client.flushClick();   // two input events: two clicks
             client.rightClickMove(mv.x, mv.z, false);
         });
-        check(sameStream(mine, theirs, 0, "alt+3 then move"), "alt+3 then move: one stream, 410 over 7 ticks");
-        shape(mine, split(410), "alt+3 then move");
+        check(sameStream(mine, theirs, 0, "alt+3 then move"), "alt+3 then move: one stream");
+        check(mine.size() == 1 && mine[0].cmds.size() == 3, "alt+3 then move: three orders, whole in one tick");
     }
 
     // The command window: 974 bodies with a 12-tick round trip land as 512
@@ -509,18 +617,36 @@ void selections() {
         SelectionOrder o;
         o.verb = Verb::Move; o.x = 400 * 16; o.z = 400 * 16;
         std::vector<CmdBatch> b;
+        // Legion: the command window no longer applies to a click -- one order, whole, at any round trip.
         compare(f.world, ids, o, 12, [&](ClientRef& c) { c.rightClickMove(o.x, o.z, false); }, "window 974 R12", &b);
+        oneOrder(b, ids, Cmd::Move, "window 974 R12");
+        compare(f.world, ids, o, 8, [&](ClientRef& c) { c.rightClickMove(o.x, o.z, false); }, "window 974 R8", &b);
+        oneOrder(b, ids, Cmd::Move, "window 974 R8");
+        b = tak::scn::issueSelection(f.world, ids, o, kIssueTick);
+        oneOrder(b, ids, Cmd::Move, "974 no window");
+    }
+    // Retail keeps the per-unit stream: 974 bodies with a 12-tick round trip land as
+    // 512 over 8 ticks, a 4-tick gap, then the rest -- the same for every split of
+    // the round trip into uplink and downlink.
+    {
+        Field f(PathfindingMode::Retail);
+        static const auto idsType = ground(1);   // the World keeps a pointer to the type
+        const auto ids = f.block(idsType, 974, 10, 10, 60, 2);
+        SelectionOrder o;
+        o.verb = Verb::Move; o.x = 400 * 16; o.z = 400 * 16;
+        std::vector<CmdBatch> b;
+        compare(f.world, ids, o, 12, [&](ClientRef& c) { c.rightClickMove(o.x, o.z, false); }, "retail window 974 R12", &b);
         std::vector<int> want(8, 64);
         want.insert(want.end(), 4, 0);
         want.insert(want.end(), 7, 64);
         want.push_back(974 - 512 - 7 * 64);
-        shape(b, want, "window 974 R12");
+        shape(b, want, "retail window 974 R12");
         // An 8-tick round trip is exactly the window: no gap.
-        compare(f.world, ids, o, 8, [&](ClientRef& c) { c.rightClickMove(o.x, o.z, false); }, "window 974 R8", &b);
-        shape(b, split(974), "window 974 R8");
+        compare(f.world, ids, o, 8, [&](ClientRef& c) { c.rightClickMove(o.x, o.z, false); }, "retail window 974 R8", &b);
+        shape(b, split(974), "retail window 974 R8");
         // No window: the server's drain alone.
         b = tak::scn::issueSelection(f.world, ids, o, kIssueTick);
-        shape(b, split(974), "974 no window");
+        shape(b, split(974), "retail 974 no window");
     }
 }
 
@@ -729,15 +855,23 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
         check(b->world->unit(b->groups["E"][0])->type->weapons.size() == 1 &&
                   b->world->unit(b->groups["A"][0])->type->weapons.empty(),
               "ascii: weapons on/off per group");
-        // The F,A,B click at tick 30 lands 34 commands in one tick, flyers first.
+        // The F,A,B click at tick 30 lands as ONE explicit order (Legion) over its 34 bodies, flyers included.
         tak::scn::OrderFeed feed(ascii, *b);
         size_t at0 = 0, at30 = 0;
+        auto units = [](const std::vector<Command>& cmds) {
+            size_t n = 0;
+            for (const auto& c : cmds) n += c.kind == Cmd::Order && c.order ? c.order->members.size() : 1;
+            return n;
+        };
         for (uint32_t t = 0; t <= 30; ++t) {
             const auto cmds = feed.commandsFor(t);
-            if (t == 0) at0 = cmds.size();
+            if (t == 0) at0 = units(cmds);
             if (t == 30) {
-                at30 = cmds.size();
-                check(!cmds.empty() && b->world->unit(cmds[0].unitId)->type->canFly, "ascii: flyers first");
+                at30 = units(cmds);
+                const bool one = cmds.size() == 1 && cmds[0].kind == Cmd::Order && cmds[0].order;
+                check(one && std::any_of(cmds[0].order->members.begin(), cmds[0].order->members.end(),
+                                         [&](int id) { return b->world->unit(id)->type->canFly; }),
+                      "ascii: the click is one order, flyers in it");
             }
         }
         check(at0 == 24 && at30 == 34, "ascii: tick-0 Alt+1 (24) and the tick-30 click (34)");
@@ -761,9 +895,13 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
         auto b = tak::scn::build(flat, {});
         tak::scn::OrderFeed feed(flat, *b);
         std::vector<size_t> sizes;
-        for (uint32_t t = 0; t < 25; ++t) sizes.push_back(feed.commandsFor(t).size());
-        const std::vector<size_t> want{64, 64, 64, 64, 64, 64, 64, 64, 0, 0, 0, 0, 64, 64, 64, 64, 64, 64, 64, 14, 0, 0, 0, 0, 0};
-        check(sizes == want, "flat: a 974-body click at tick 0 lands through the 512 window with R=12");
+        for (uint32_t t = 0; t < 25; ++t) {
+            const auto cmds = feed.commandsFor(t);
+            sizes.push_back(cmds.size() == 1 && cmds[0].order ? cmds[0].order->members.size() : cmds.size());
+        }
+        std::vector<size_t> want(25, 0);
+        want[0] = 974;
+        check(sizes == want, "flat: a 974-body click at tick 0 lands as one order, whole, despite R=12 (Legion)");
         check(feed.done(), "flat: the feed drains");
     }
     determinism(flat, "flat", 60);
@@ -861,13 +999,22 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
               u0->baseSpeed.v == 70000 && u0->speed.v == 1000, "situation: position, heading, hp, speed and velocity are exact");
         check(u2 && u2->heading.v == 65535 && u2->hp.v == 6553600, "situation: the last body is exact too");
         check(b->world->tickCount() == 1234 && b->world->gameRngState() == 987654321u, "situation: the world resumes the recorded clocks");
-        // The click lists bodies 2, 0, 1: hudCommands walks the selection in that order, so the commands come in it.
+        // The click lists bodies 2, 0, 1: the selection (and hudCommands, which walks it) keeps that order;
+        // in Legion the click is then one explicit order over the three (members in id order).
         tak::scn::OrderFeed feed(sc, *b);
-        std::vector<int> order;
-        for (uint32_t t = 0; t < 8; ++t)
-            for (const auto& c : feed.commandsFor(t)) order.push_back(c.unitId);
-        check(order.size() == 3 && order[0] == ids[2] && order[1] == ids[0] && order[2] == ids[1],
+        const auto sel = feed.selection(sc.orders[0]);
+        check(sel.size() == 3 && sel[0] == ids[2] && sel[1] == ids[0] && sel[2] == ids[1],
               "situation: a %N selection keeps the recording's command order");
+        std::vector<int> members;
+        size_t items = 0;
+        for (uint32_t t = 0; t < 8; ++t)
+            for (const auto& c : feed.commandsFor(t)) {
+                ++items;
+                if (c.order) members.assign(c.order->members.begin(), c.order->members.end());
+            }
+        std::vector<int> sorted(ids.begin(), ids.begin() + 3);
+        std::sort(sorted.begin(), sorted.end());
+        check(items == 1 && members == sorted, "situation: the %N click is one explicit order over its three bodies");
         // The shifted start offset moves the truth the same way (whole cells on both axes).
         bool threw2 = false;
         try { tak::scn::parse("scn 1\nmap flat 64 64\ntype m mover 2 2500 10 1.8\ngroup a 0 m 1 rect 0 0 4 4\nat 0 move %5 1 1\n", "bad%.scn"); }

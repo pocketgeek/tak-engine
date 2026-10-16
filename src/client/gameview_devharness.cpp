@@ -2528,6 +2528,7 @@
     }
 
     void GameView::marchTo(float dx, float dz) {
+        ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         for (auto& u : world_.units())
             if (u.player == localPlayer_ && u.type && u.type->canMove) {

@@ -36,7 +36,8 @@
 // is outside them).
 //
 // Keys beside the observer's:
-//   commands             commands landed in the sim
+//   commands             unit commands landed in the sim (an explicit order counts each member)
+//   orders               explicit selection orders landed (protocol 267: Legion clicks; 0 in Retail)
 //   last_command_tick    tick the last of them landed
 //   legion_groups        Legion only: distinct LegionNavigator groups among
 //                        the scenario's units with orders, sampled after the
@@ -842,7 +843,9 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             };
             reach.emplace_back(sh.name, idsOf(sh.a), idsOf(sh.b), sh.range, sh.marks);
         }
-    int64_t commands = 0, lastCommand = -1, groupsAfter = -1, groupsPeak = 0;
+    int64_t commands = 0, orders = 0, lastCommand = -1, groupsAfter = -1, groupsPeak = 0;
+    double applyMaxMs = 0;   // the longest tick of applyCommand calls (membership application; stderr only)
+    uint32_t applyMaxAt = 0;
     std::vector<int> ids;
     auto legionGroups = [&]() -> int64_t {
         ids.clear();
@@ -889,12 +892,17 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
                 for (int id : feed.selection(od)) scale->click(w, id, int(t), point, px, pz, r2);
             }
         const size_t landed = feed.apply(t);
-        if (landed) { commands += int64_t(landed); lastCommand = t; }
+        if (feed.lastApplyMs() > applyMaxMs) { applyMaxMs = feed.lastApplyMs(); applyMaxAt = t; }
+        if (landed) {
+            commands += int64_t(feed.landedUnits().size());   // unit commands: an explicit order's members each
+            for (const auto& c : feed.landed()) orders += c.kind == tak::net::Cmd::Order;
+            lastCommand = t;
+        }
         if (scale) {
             // A click is delivered when its own command lands (the uplink is one FIFO: an earlier order or a
             // squad press still draining lands before it, a queued leg of the same tick after it).
             for (const auto& [id, n] : feed.clicks()) scale->expect(id, n);
-            for (const auto& c : feed.landed()) scale->landed(w, c.unitId, int(t));
+            for (const int id : feed.landedUnits()) scale->landed(w, id, int(t));
         }
         if (opt.catchup) {
             if (t == 0) w.setPathBudget(1 << 28);
@@ -942,11 +950,12 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             const size_t mid = (tickMs.size() + 1) / 2 - 1;
             std::nth_element(tickMs.begin(), tickMs.begin() + ptrdiff_t(mid), tickMs.end());
             std::fprintf(stderr, "SCALE_WALL %s %s offset=%d %s ticks=%zu tick_mean_ms=%.3f tick_p50_ms=%.3f "
-                         "tick_p99_ms=%.3f tick_max_ms=%.3f@%u over_budget=%d rss_peak_kb=%lld heap_kb=%lld\n",
+                         "tick_p99_ms=%.3f tick_max_ms=%.3f@%u over_budget=%d rss_peak_kb=%lld heap_kb=%lld "
+                         "apply_max_ms=%.3f@%u\n",
                          s.name.c_str(), mode == PathfindingMode::Legion ? "legion" : "retail", offset,
                          serial ? "serial" : "workers", tickMs.size(), sum / double(tickMs.size()), tickMs[mid],
                          r.tickP99Ms, r.tickMaxMs, r.tickMaxAt, over, tak::legion_scale::peakRssKb(),
-                         tak::legion_scale::heapKb());
+                         tak::legion_scale::heapKb(), applyMaxMs, applyMaxAt);
         }
     }
     r.hash = w.stateHash();
@@ -960,6 +969,7 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         for (const auto& bp : behinds) bp.report(r.keys);
         if (claims && mode == PathfindingMode::Legion) claims->report(r.keys);
         r.keys.emplace_back("commands", commands);
+        r.keys.emplace_back("orders", orders);
         r.keys.emplace_back("last_command_tick", lastCommand);
         // The convoy lookups' declared per-order bounds (PLAN 3.0: p99 <= 16,
         // max <= 64 tests per order), which per-tick work.convoy_tests cannot

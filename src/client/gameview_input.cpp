@@ -13,6 +13,7 @@
     }
 
     void GameView::input(const SDL_Event& e, int winW, int winH) {
+        ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         winW_ = winW;
         winH_ = winH;
         // Placement mode and the selected builder are separate. Only disarm an

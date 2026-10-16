@@ -21,6 +21,7 @@
 #include "tnt/mapgen.h"
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -1216,13 +1217,20 @@ public:
                 so.z = cz / float(n);
                 so.targetId = first;
             }
-            const auto cmds = hudCommands(world, sel, so, world.unit(sel[0])->player);
+            const int player = world.unit(sel[0])->player;
+            uint32_t& serial = serials_.try_emplace(player, 1u).first->second;
+            const auto cmds = hudItems(world, sel, so, player, serial);
             const bool click = !o.queue && !o.append && o.verb != Verb::Stop && o.verb != Verb::Squad;
+            // Per unit, the commands issued for it (an explicit order counts once for each member).
+            auto count = [&](int id) {
+                if (id < 0) return;
+                if (size_t(id) >= issued_.size()) issued_.resize(size_t(id) + 1, 0);
+                ++issued_[size_t(id)];
+                if (click) clicks_.push_back({id, issued_[size_t(id)]});
+            };
             for (const auto& c : cmds) {
-                if (c.unitId >= 0 && size_t(c.unitId) >= issued_.size()) issued_.resize(size_t(c.unitId) + 1, 0);
-                if (c.unitId < 0) continue;
-                ++issued_[size_t(c.unitId)];
-                if (click) clicks_.push_back({c.unitId, issued_[size_t(c.unitId)]});
+                if (c.kind == tak::net::Cmd::Order && c.order) for (const int id : c.order->members) count(id);
+                else count(c.unitId);
             }
             link_.issue(cmds);
         }
@@ -1234,11 +1242,23 @@ public:
         applyChurn(tick);
         clicks_.clear();
         landed_ = commandsFor(tick);
+        landedUnits_.clear();
+        const auto start = std::chrono::steady_clock::now();
         for (const auto& c : landed_) tak::sim::applyCommand(*b_.world, b_.registry, c);
+        applyMs_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        for (const auto& c : landed_) {
+            if (c.kind == tak::net::Cmd::Order && c.order)
+                landedUnits_.insert(landedUnits_.end(), c.order->members.begin(), c.order->members.end());
+            else landedUnits_.push_back(c.unitId);
+        }
         return landed_.size();
     }
-    // The commands the last apply() landed, in application order.
+    // Wall time of the last apply()'s applyCommand calls (ms; observation only, stderr reports).
+    double lastApplyMs() const { return applyMs_; }
+    // The commands (and explicit orders) the last apply() landed, in application order.
     const std::vector<tak::net::Command>& landed() const { return landed_; }
+    // The unit of every command the last apply() landed, an explicit order's members each once.
+    const std::vector<int>& landedUnits() const { return landedUnits_; }
     // The non-queued clicks the last apply() issued: (unit id, that click's command's position in the unit's
     // command stream). The uplink is one FIFO, so the click is delivered when that many of the unit's commands
     // have landed; a later order of the same tick (a queued leg) comes after it.
@@ -1268,7 +1288,10 @@ private:
     std::vector<OrderSpec> pending_;
     size_t next_ = 0;
     std::vector<tak::net::Command> landed_;
+    std::vector<int> landedUnits_;
+    double applyMs_ = 0;
     std::vector<uint32_t> issued_;   // per unit id
+    std::map<int, uint32_t> serials_;   // per player: the next explicit-order serial (from 1)
     std::vector<std::pair<int, uint32_t>> clicks_;
 };
 

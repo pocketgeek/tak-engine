@@ -358,28 +358,52 @@
         // much may be outstanding. Without the window the rate limiter alone let a
         // stalled uplink accumulate 1024 unacknowledged commands against a 512
         // queue, and the server dropped the difference when they all landed.
-        const int sendable = tak::net::cmdSendWindow(cmdCredit_, cmdInFlight_);
-        const size_t pending = outbox_.size() - outboxHead_;
-        if (pending > 0 && sendable > 0 && !cmdCatchUp_) {
-            const size_t n = std::min(pending, size_t(sendable));
-            cmdCredit_ -= int(n);
-            cmdInFlight_ += int(n);
-            const auto first = outbox_.begin() + ptrdiff_t(outboxHead_);
-            if (n == pending && outboxHead_ == 0) {
-                mp_->sendCommands(outbox_);          // whole buffer, no copy
+        //
+        // The outbox is ONE FIFO of commands and explicit orders (Cmd::Order, protocol
+        // 267). A run of commands goes out as one PlayerCommands message under the
+        // rate and window above; an order goes out whole as its transaction
+        // (MpClient::sendOrder) under its own window (orderSendWindow), never behind
+        // the command credit. Whatever cannot go yet waits, and so does everything
+        // behind it: a Stop issued after a big Move never overtakes it.
+        if (outboxHead_ < outbox_.size() && !cmdCatchUp_) {
+            int sendable = tak::net::cmdSendWindow(cmdCredit_, cmdInFlight_);
+            size_t at = outboxHead_;
+            while (at < outbox_.size()) {
+                size_t end = at;
+                while (end < outbox_.size() && outbox_[end].kind != tak::net::Cmd::Order &&
+                       int(end - at) < sendable) ++end;
+                if (end > at) {
+                    const int n = int(end - at);
+                    cmdCredit_ -= n;
+                    cmdInFlight_ += n;
+                    sendable -= n;
+                    mp_->sendCommands({outbox_.begin() + ptrdiff_t(at), outbox_.begin() + ptrdiff_t(end)});
+                    at = end;
+                    continue;
+                }
+                auto& item = outbox_[at];
+                if (item.kind != tak::net::Cmd::Order || !item.order) break;   // out of command credit
+                const size_t bytes = tak::net::orderRecordBytes(*item.order);
+                if (!tak::net::orderSendWindow(orderInFlight_, orderInFlightBytes_, bytes)) break;
+                // The serial is the one current when the order LEAVES, not when it was clicked: an
+                // order clicked during a rejoin's catch-up waits here, and nextOrderSerial_ only
+                // passes the orders that activated before the drop as that history is replayed.
+                // flushClick made this order (non-const) and nothing else holds it until it is
+                // sent, so the serial is set in place.
+                std::const_pointer_cast<tak::net::SelectionOrder>(item.order)->serial = nextOrderSerial_++;
+                mp_->sendOrder(*item.order);
+                ++orderInFlight_;
+                orderInFlightBytes_ += bytes;
+                ++at;
+            }
+            outboxHead_ = at;
+            if (outboxHead_ == outbox_.size()) {  // fully drained
                 outbox_.clear();
                 outboxHead_ = 0;
-            } else {
-                mp_->sendCommands({first, first + ptrdiff_t(n)});
-                outboxHead_ += n;
-                if (outboxHead_ == outbox_.size()) {  // fully drained
-                    outbox_.clear();
-                    outboxHead_ = 0;
-                } else if (outboxHead_ > outbox_.size() / 2 && outboxHead_ > 64) {
-                    // Amortised compaction: each command moves at most once.
-                    outbox_.erase(outbox_.begin(), outbox_.begin() + ptrdiff_t(outboxHead_));
-                    outboxHead_ = 0;
-                }
+            } else if (outboxHead_ > outbox_.size() / 2 && outboxHead_ > 64) {
+                // Amortised compaction: each command moves at most once.
+                outbox_.erase(outbox_.begin(), outbox_.begin() + ptrdiff_t(outboxHead_));
+                outboxHead_ = 0;
             }
         }
         // Decide once whether to run the sim on its own worker thread. On for interactive
@@ -414,15 +438,27 @@
             // sent, reopening the send window past what the server can hold. We send
             // nothing while catching up anyway (see cmdCatchUp_), so there is nothing
             // legitimate to retire here.
+            if (int ms = mp_->room().mySlot; ms >= 0)
+                for (const auto& c : bd.cmds)   // serials continue above every own order that activated
+                    if (int(c.player) == ms && c.kind == tak::net::Cmd::Order && c.order)
+                        nextOrderSerial_ = std::max(nextOrderSerial_, c.order->serial + 1);
             if (!cmdCatchUp_)
                 if (int ms = mp_->room().mySlot; ms >= 0) {
-                    for (const auto& c : bd.cmds)
-                        if (int(c.player) == ms && cmdInFlight_ > 0) --cmdInFlight_;
+                    for (const auto& c : bd.cmds) {
+                        if (int(c.player) != ms) continue;
+                        if (c.kind == tak::net::Cmd::Order) {
+                            if (orderInFlight_ > 0) --orderInFlight_;
+                            const size_t bytes = c.order ? tak::net::orderRecordBytes(*c.order) : 0;
+                            orderInFlightBytes_ -= std::min(orderInFlightBytes_, bytes);
+                        } else if (cmdInFlight_ > 0) --cmdInFlight_;
+                    }
 #ifndef NDEBUG
                     // TAK_AUTOPLAY_FORMATION delivery probe: own commands applied this tick (stderr only).
                     if (formPending_ > 0) {
-                        int own = 0;
-                        for (const auto& c : bd.cmds) own += int(c.player) == ms;
+                        int own = 0;   // unit commands: an explicit order counts each member
+                        for (const auto& c : bd.cmds)
+                            if (int(c.player) == ms)
+                                own += c.kind == tak::net::Cmd::Order && c.order ? int(c.order->members.size()) : 1;
                         if (own && !formLanded_) formFirstTick_ = netTick_;
                         formLanded_ += own;
                         if (formLanded_ >= formPending_) {
@@ -592,6 +628,8 @@
                 std::fprintf(stderr, "catch-up complete at tick %u\n", netTick_);
             cmdInFlight_ = 0;
             cmdCredit_ = tak::net::kCmdCapPerTick;
+            orderInFlight_ = 0;
+            orderInFlightBytes_ = 0;
         }
         // Send the worker's finished per-tick state hashes to the server (lockstep desync
         // check + flow-control ack). Drained here on the main thread -- mp_ has a single owner.
@@ -828,6 +866,7 @@ void GameView::speedProbe() {
 // so they travel the real path -- outbox -> sendCommands -> server -> bundle -> every
 // peer -- rather than being applied locally, which would desync by construction.
 void GameView::autoplayStep() {
+    ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
     static const int rate = [] {
         const char* e = tak::devEnv("TAK_AUTOPLAY");
         return e ? std::clamp(std::atoi(e), 0, 60) : 0;
@@ -1123,6 +1162,8 @@ void GameView::autoplayStep() {
             cmdReplayEnd_ = mp_->replayTicks();
             cmdCatchUp_ = cmdReplayEnd_ > 0;
             cmdInFlight_ = 0;
+            orderInFlight_ = 0;
+            orderInFlightBytes_ = 0;
             outbox_.clear();   // pre-disconnect orders are moot; the server dropped them
             outboxHead_ = 0;
             startMpGame(mp_->startRoom(), mp_->startSeed());

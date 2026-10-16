@@ -1676,6 +1676,11 @@ void Server::sendGameList(Client& c) {
 // malformed client); anything unexpected falls back to the 2000 default.
 static uint16_t clampUnitCap(uint16_t v) {
     for (uint16_t a : {250, 500, 1000, 2000}) if (v == a) return v;
+#ifndef NDEBUG
+    // Debug builds only: a harness cap past the menu's 2000 (TAK_UNITCAP), so the
+    // real client/server path can carry a 10,000-unit selection (Legion 10,000).
+    if (v > 2000 && v <= 16000) return v;
+#endif
     return 2000;
 }
 

@@ -79,6 +79,7 @@ namespace {
     }
 
     void GameView::rightClickOrder(float wx, float wz, bool queue) {
+        ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         if (selection_.empty()) return;
         const auto* first = frameUnitP(selection_.front());
         // Selected transport with cargo: right-click = sail + disembark.
@@ -220,6 +221,10 @@ namespace {
                 voice(selection_.front(), "attack");
             } else {
                 voice(selection_.front(), "move");
+                // In a Legion net game the selection goes as ONE explicit order,
+                // OrderShape::Offsets at the click: the sim gives the members the
+                // same goals as the loop below, from their positions at activation.
+                setClickMove(wx, wz);
                 // Legion packs one shared destination into arrival slots for the
                 // surface movers it plans (ground units, boats, hovercraft).
                 const bool legion=tak::sim::isLegionPathfinding(worldTables().pathfindingMode());
@@ -870,6 +875,7 @@ namespace {
     }
 
     void GameView::issueArmedOrder(char cmd, float wx, float wz, bool queue, bool precise) {
+        ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         if (selection_.empty()) return;
         if (cmd == 'c') {   // clear/reclaim: reclaim the feature under the cursor
             if (!haveReclaimer()) return;

@@ -3,7 +3,9 @@
 
 Parser, world builder and order feed: tools/legion_scn.h. Orders go through
 tools/legion_issue_selection.h, which mirrors the client's HUD commands and its
-64-per-tick uplink. Checked by the issue_selection_test ctest.
+uplink: in Legion each click is one explicit selection order (protocol 267),
+landing whole in its tick; in Retail one command per unit, 64 a tick. Checked by
+the issue_selection_test ctest.
 
 One directive per line. '#' starts a comment (not inside an ascii map block).
 Coordinates are map cells (16 px), x then z; points may be fractional. A file
@@ -26,7 +28,9 @@ never names a pathfinding mode: the runner builds it once per mode.
                                 (default off)
   uplink R                      command window: at most 512 commands
                                 outstanding, round trip R ticks (default: none,
-                                only the server's 64-per-tick drain)
+                                only the server's 64-per-tick drain); explicit
+                                orders (Legion clicks) have their own window of 8
+                                orders and do not wait for it
   gateoffsets O,O,...           the start offsets legion_scenario --check / --baseline
                                 run by default when the gate's eleven (0,+-1..+-5)
                                 put a spawn off the map; at least nine, the core

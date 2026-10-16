@@ -38,6 +38,7 @@
 #include <future>
 #include "util/procmetrics.h"   // benchmark: cross-platform CPU/RSS sampling
 #include "net/lockstep.h"
+#include "net/orderpack.h"
 #include "ai/ai.h"          // Difficulty <-> aiLevel + incomeMultFor (header-only helpers)
 #include "sim/matchsetup.h"
 #include "sim/scenario.h"
@@ -318,7 +319,33 @@ public:
 
     // Route a command: offline it applies immediately; in a net game it is queued
     // for the server, which stamps ownership and sequences it into a tick bundle.
+    // Inside a ClickScope it is held until the scope closes (see below).
     void issue(tak::net::Command c);
+    // One player click (protocol 267): the commands issued while a ClickScope is
+    // open are one click. When the outermost scope closes, a Legion net game packs
+    // them (net/orderpack.h) into explicit selection orders -- one order per
+    // selection verb, applied to every member in one tick -- and everything else
+    // (Retail, offline) gets them exactly as before, one command per unit. Scopes
+    // nest; only the outermost flushes. setClickMove declares the right-click move
+    // (its Move run is sent as OrderShape::Offsets at click (wx, wz)).
+    struct ClickBuffer {
+        std::vector<tak::net::Command> cmds;
+        tak::net::ClickShape shape;
+    };
+    class ClickScope {
+    public:
+        explicit ClickScope(GameView& v) : v_(v), owner_(!v.click_) { if (owner_) v_.click_.emplace(); }
+        ~ClickScope() { if (owner_) v_.flushClick(); }
+        ClickScope(const ClickScope&) = delete;
+        ClickScope& operator=(const ClickScope&) = delete;
+    private:
+        GameView& v_;
+        bool owner_;
+    };
+    void setClickMove(float wx, float wz) {
+        if (click_) { click_->shape.moveOffsets = true; click_->shape.x = wx; click_->shape.z = wz; }
+    }
+    void flushClick();
 
     // Set up the world for a multiplayer match from the server's final slot
     // table: one player per used slot (sim player index == slot), teams/colours
@@ -1457,7 +1484,14 @@ private:
     float fps_ = 0;             // smoothed render FPS, shown on the F4 overlay
     int winW_ = 0, winH_ = 0;   // last-known window size (for centering/culling)
     tak::net::MpClient* mp_ = nullptr;
-    std::vector<tak::net::Command> outbox_;   // local orders to send to the server
+    std::vector<tak::net::Command> outbox_;   // local orders to send to the server (commands and Cmd::Order items, FIFO)
+    std::optional<ClickBuffer> click_;        // the open click (ClickScope), if any
+    // Explicit orders (protocol 267): the next serial (continues above every own
+    // order seen in a bundle, so a rejoin never reuses one that activated), and the
+    // orders sent but not yet seen back with their record bytes (orderSendWindow).
+    uint32_t nextOrderSerial_ = 1;
+    int orderInFlight_ = 0;
+    size_t orderInFlightBytes_ = 0;
     // Index of the first UNSENT command in outbox_. The send path is rate- and
     // window-limited, so it usually ships a prefix and keeps the rest; erasing that
     // prefix shifted every survivor down, making a full drain O(B^2/b) for B queued

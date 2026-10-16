@@ -205,7 +205,7 @@ COLS = [("units", None), ("deliver.max", "scale.deliver.max"), ("start.last", "s
 def cmd_report(a):
     rows = load(a.results)
     head = ["scenario", "mode"] + [c for c, _ in COLS] + ["tick.mean", "tick.p99", "tick.max", "over33", "rssMB",
-                                                         "nav.p99", "move.p99"]
+                                                         "nav.p99", "move.p99", "apply.max"]
     out = []
     for r in rows:
         k = r.get("keys") or {}
@@ -221,7 +221,8 @@ def cmd_report(a):
         cells += [f"{w.get('tick_mean_ms', '')}", f"{w.get('tick_p99_ms', '')}", f"{w.get('tick_max_ms', '')}",
                   f"{w.get('over_budget', '')}",
                   f"{w['rss_peak_kb'] / 1024:.0f}" if isinstance(w.get("rss_peak_kb"), int) else "",
-                  f"{ph.get('nav', {}).get('p99_ms', '')}", f"{ph.get('movement', {}).get('p99_ms', '')}"]
+                  f"{ph.get('nav', {}).get('p99_ms', '')}", f"{ph.get('movement', {}).get('p99_ms', '')}",
+                  f"{w.get('apply_max_ms', '')}"]   # the longest tick of applyCommand (stage 3's membership application)
         out.append(cells)
     if a.markdown:
         print("| " + " | ".join(head) + " |")

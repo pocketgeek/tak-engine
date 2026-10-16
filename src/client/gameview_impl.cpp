@@ -316,8 +316,28 @@
     void GameView::issue(tak::net::Command c) {
         if (replayMode_ || spectating_) return;   // watch-only: can't order units
         c.player = uint8_t(localPlayer_);
+        if (click_) { click_->cmds.push_back(std::move(c)); return; }
         if (mp_) outbox_.push_back(c);
         else apply(c);
+    }
+
+    // The outermost ClickScope closed: a Legion net game sends the click as
+    // explicit orders, everything else command by command, as issued.
+    void GameView::flushClick() {
+        if (!click_) return;
+        ClickBuffer click = std::move(*click_);
+        click_.reset();
+        if (click.cmds.empty()) return;
+        if (!mp_) { for (const auto& c : click.cmds) apply(c); return; }
+        if (!tak::sim::isLegionPathfinding(worldTables().pathfindingMode())) {
+            outbox_.insert(outbox_.end(), click.cmds.begin(), click.cmds.end());
+            return;
+        }
+        // Serials are given when an order is sent (mpStep), so a click held through a
+        // rejoin's catch-up still gets one above every order that activated before.
+        uint32_t provisional = nextOrderSerial_;
+        for (auto& item : tak::net::packClick(click.cmds, click.shape, provisional))
+            outbox_.push_back(std::move(item));
     }
 
     void GameView::startReplay(tak::sim::MatchConfig cfg,
@@ -3142,6 +3162,7 @@
 
 
     void GameView::issuePerUnit(tak::net::Cmd kind, int value) {
+        ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         for (int id : selection_) {
             const auto* u = frameUnitP(id);
             if (!u || u->player != localPlayer_) continue;
@@ -3187,6 +3208,7 @@
     }
 
     bool GameView::handleKey(SDL_Keycode key, uint16_t mod) {
+        ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         bool ctrl = (mod & KMOD_CTRL) != 0;
         bool shift = (mod & KMOD_SHIFT) != 0;
         bool alt = (mod & KMOD_ALT) != 0;

@@ -7,8 +7,9 @@
 //
 // Per body, against the LAST order click that selected it (a non-queued move, fight, patrol, attack
 // or guard; a Stop cancels it), with every time a tick count FROM THAT CLICK:
-//   deliver   the tick its command landed in the sim (the uplink: 64 a tick per client, the
-//             512-command window over the file's round trip) less the click tick
+//   deliver   the tick its command landed in the sim less the click tick (the uplink: in Legion
+//             one explicit order per click, landing whole; in Retail 64 commands a tick per client
+//             and the 512-command window over the file's round trip)
 //   start     the first tick it stood 4 px or more from where it was when its command landed
 //             (first useful movement)
 //   arrive    the first tick its centre was inside the click's packed disc (the observer's
