@@ -1427,6 +1427,75 @@ void planepin() {
     check(f.world.legionStats().planeBuilds==ids.size(),"planepin: a plane was evicted before its waiting registrations used it");
 }
 
+// Legion 10,000 stage 6: small squads sent across a big map take tile chains (hierarchical routes over shared
+// tiles). A wall with three gaps crosses the map; eight squads of six cross it to eight different points. Checked:
+// chains are built, transit tiles are built and shared between squads with different destinations (tile hits),
+// every body arrives, the run is the same serial and with workers, and (TAK_LEGION_VERIFY) every finished chain's
+// estimate strictly falls along some legal step from every cell (no loop, no false minimum) and no chain reads a
+// tile of another mobility class.
+std::array<uint64_t,4> chainsRun(bool serial) {
+    Fixture f(512,320,serial);
+    for(int z=0;z<320;++z)
+        if(!(z>=40&&z<52)&&!(z>=150&&z<170)&&!(z>=262&&z<268)) {f.wall(250,z);f.wall(251,z);}
+    f.publish();
+    const auto type=mover(2);
+    std::vector<std::vector<int>> squads;
+    for(int s=0;s<8;++s) {
+        squads.emplace_back();
+        for(int i=0;i<6;++i)squads.back().push_back(f.spawn(type,10+(i%3)*3,16+s*36+(i/3)*3));
+    }
+    f.start();
+    for(int s=0;s<8;++s)
+        for(const int id:squads[size_t(s)])f.world.order(id,float((470-(s%3)*12)*16),float((24+((s*5)%8)*36)*16),false);
+    int t=0,done=0,all=0;
+    for(const auto& q:squads)all+=int(q.size());
+    for(;t<9000&&done<all;++t) {
+        f.world.tick(1.f/30);
+        done=0;for(const auto& q:squads)for(const int id:q)done+=f.world.unit(id)->orders.empty();
+    }
+    const auto a=f.world.legionNavigator()->accounting();
+    std::printf("chains %s ticks=%d arrived=%d/%d chains=%llu tiles=%llu hits=%llu repairs=%llu widens=%llu fallbacks=%llu\n",
+                serial?"serial":"workers",t,done,all,(unsigned long long)a.chains,(unsigned long long)a.tilesBuilt,
+                (unsigned long long)a.tileHits,(unsigned long long)a.chainRepairs,(unsigned long long)a.corridorWidens,
+                (unsigned long long)a.routeFallbacks);
+    check(a.chains>=4,"chains: the squads did not take tile chains");
+    check(a.tilesBuilt>0&&a.tileHits>0,"chains: no transit tile was shared between squads");
+    check(done==all,"chains: a body never arrived");
+    return {f.world.stateHash(),a.chains,a.tilesBuilt,a.tileHits};
+}
+void chains() {
+    check(chainsRun(true)==chainsRun(false),"chains: serial and workers differ");
+}
+// Stage 6: a plane slot reused for another mobility class gets a new generation, so its routes never read the old
+// class's cached tiles. 25 classes (maxSlope 10..34) take turns on a 512 x 512 map: each sends one body far (a
+// chain), runs until the chain is built, and stops it, so its plane becomes the least recently used one nobody
+// refers to; the 25th class takes slot 0 over. Under TAK_LEGION_VERIFY every attach checks the tile's class.
+void chainplane() {
+    Fixture f(512,512);
+    for(int z=100;z<400;++z)f.wall(256,z);
+    f.publish();
+    std::vector<UnitType> types;
+    for(int i=0;i<25;++i) {auto t=mover(1);t.id=t.name="legion-slope-"+std::to_string(i);t.maxSlope=10+i;types.push_back(t);}
+    std::vector<int> ids;
+    for(int i=0;i<25;++i)ids.push_back(f.spawn(types[size_t(i)],8+(i%5)*3,240+(i/5)*3));
+    f.start();
+    uint64_t chainsBefore=0;
+    for(size_t i=0;i<ids.size();++i) {
+        f.world.order(ids[i],float(480*16),float(250*16),false);
+        for(int t=0;t<240;++t)f.world.tick(1.f/30);
+        f.world.stop(ids[i]);
+        f.world.tick(1.f/30);
+        if(i==23)chainsBefore=f.world.legionNavigator()->accounting().chains;
+    }
+    const auto a=f.world.legionNavigator()->accounting();
+    std::printf("chainplane chains=%llu (after 24 classes %llu) tiles=%llu hits=%llu plane_builds=%llu\n",(unsigned long long)a.chains,
+                (unsigned long long)chainsBefore,(unsigned long long)a.tilesBuilt,(unsigned long long)a.tileHits,
+                (unsigned long long)f.world.legionStats().planeBuilds);
+    check(a.chains>=25,"chainplane: every class should have taken a chain");
+    check(a.chains>chainsBefore,"chainplane: the 25th class (the reused slot) took no chain");
+    check(f.world.legionStats().planeBuilds>=25,"chainplane: no plane slot was reused");
+}
+
 void b3events() {
     Fixture f(96,64);
     f.publish();
@@ -3937,7 +4006,7 @@ int main(int argc,char** argv) {
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
-        {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
+        {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
         {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"entryplanes",entryplanes}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
