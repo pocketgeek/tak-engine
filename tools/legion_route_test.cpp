@@ -40,10 +40,15 @@ int main() {
         const RouteView v(g);
         CHECK(v.complete() && v.usable() && !v.paused());
         CHECK(v.estimate(cell(4, 4)) == 20 && v.known(cell(4, 4)) == 20 && v.settled(cell(4, 4)));
-        CHECK(v.reach(cell(4, 4), 9) == Reach::Reachable);
-        CHECK(v.reach(cell(5, 5), 9) == Reach::Unreachable);   // proven: complete, spans the component, fresh
-        CHECK(v.reach(cell(0, 0), 9) == Reach::Unreachable);   // outside the component's window
-        CHECK(v.reach(cell(5, 5), 10) == Reach::Unknown);      // built on older geometry: unknown, not unreachable
+        CHECK(v.reach(cell(4, 4)) == Reach::Reachable);
+        CHECK(v.reach(cell(5, 5)) == Reach::Unreachable);   // proven: complete, spans the component, fresh
+        CHECK(v.reach(cell(0, 0)) == Reach::Unreachable);   // outside the component's window
+        g.epoch = 3;                                           // a later change elsewhere (another island or plane)
+        CHECK(v.reach(cell(5, 5)) == Reach::Unreachable);     // did not touch it: still proven
+        g.touched = true;                                      // a change reached the window
+        CHECK(v.reach(cell(5, 5)) == Reach::Unknown);          // unknown, not unreachable
+        CHECK(v.reach(cell(4, 4)) == Reach::Reachable);
+        g.epoch = 9; g.touched = false;
         CHECK(v.covered(cell(4, 4), 1000000));                 // a complete route covers every reached cell
         CHECK(!v.covered(cell(5, 5), 0));
         const auto pr = v.progress(cell(4, 4));
@@ -56,8 +61,8 @@ int main() {
         g.done = true; g.bounded = true;
         g.potential[size_t(3 * 6 + 3)] = route::kNone;
         const RouteView v(g);
-        CHECK(v.reach(cell(5, 5), 9) == Reach::Unknown);
-        CHECK(v.reach(cell(0, 0), 9) == Reach::Unknown);
+        CHECK(v.reach(cell(5, 5)) == Reach::Unknown);
+        CHECK(v.reach(cell(0, 0)) == Reach::Unknown);
     }
     {   // A build in progress: current key 40. key(x,z) = 5(x-2 + z-2) + h, h = octile to (7,7).
         RouteGrid g = grid();
@@ -68,13 +73,13 @@ int main() {
         CHECK(v.settled(cell(2, 2)) && v.known(cell(2, 2)) == 0);
         // (4,4): potential 20, h = 3*5 + 2*3 = 21 -> key 41 > 40: reached, not settled.
         CHECK(v.estimate(cell(4, 4)) == 20 && !v.settled(cell(4, 4)) && v.known(cell(4, 4)) == route::kNone);
-        CHECK(v.reach(cell(4, 4), 9) == Reach::Reachable);      // a finite estimate is a real way
+        CHECK(v.reach(cell(4, 4)) == Reach::Reachable);      // a finite estimate is a real way
         CHECK(!v.progress(cell(4, 4)));                          // progress only from settled cells
         // (2,2) has 5 of key to spare.
         CHECK(v.covered(cell(2, 2), 5) && !v.covered(cell(2, 2), 6));
         // Unreached in a building route: unknown, whatever the window.
         g.potential[size_t(3 * 6 + 3)] = route::kNone;
-        CHECK(RouteView(g).reach(cell(5, 5), 9) == Reach::Unknown);
+        CHECK(RouteView(g).reach(cell(5, 5)) == Reach::Unknown);
     }
     {   // Paused: usable, still not complete; nothing unsettled becomes known.
         RouteGrid g = grid();
@@ -83,7 +88,7 @@ int main() {
         CHECK(v.usable() && v.paused() && !v.complete());
         CHECK(v.known(cell(4, 4)) == route::kNone);
         g.potential[size_t(3 * 6 + 3)] = route::kNone;
-        CHECK(RouteView(g).reach(cell(5, 5), 9) == Reach::Unknown);
+        CHECK(RouteView(g).reach(cell(5, 5)) == Reach::Unknown);
     }
     {   // An empty view: no state queries crash, nothing is usable.
         const RouteView v;

@@ -318,6 +318,40 @@ void trapped() {
         const auto& u=*f.world.unit(inside);
         check(std::abs(u.x.toFloat()-800)<20&&std::abs(u.z.toFloat()-800)<20,"resumed unit did not reach its goal");
     }
+    // Legion 10,000 stage 5 (the trapped rule on RouteView::reach): static
+    // churn on another island after the route is complete must not hold the
+    // verdict off for ever. The churn bumps the shared static epoch without
+    // touching the route, so nothing refreshes the route; an epoch test
+    // ("built on older geometry: unknown") left the body Waiting for the
+    // whole run and its order never retired (the verifier's pocket.scn,
+    // 2026-10-16). The churn stops at tick 60: a trapped body re-registers
+    // on every static change anywhere (trappedEpoch), so under churn that
+    // never stops its grace restarts and no order retires -- inherited from
+    // the starting revision, docs/legion-10000-progress.md 7.5 fix round.
+    {
+        Fixture f(256,64);
+        f.rect(126,0,4,64);
+        f.rect(18,18,12,2);f.rect(18,28,12,2);f.rect(18,18,2,12);f.rect(28,18,2,12);
+        f.publish();
+        const auto type=mover(2);
+        std::vector<int> outside;
+        for(int i=0;i<10;++i)outside.push_back(f.spawn(type,40+3*i,40));
+        const int inside=f.spawn(type,23,23);
+        f.start();
+        for(const int id:outside)f.world.order(id,100*16,32*16,false);
+        f.world.order(inside,100*16,32*16,false);
+        int clearedAt=-1;
+        for(int t=0;t<9300&&clearedAt<0;++t) {
+            if(t>=20&&t<60&&t%10==0)   // a blocking feature placed and lifted on the far island (churn ... toggle)
+                f.world.addFeature(30*256+200,200*16+16.f,30*16+16.f,0,1,2,2,(t/10)%2==0,-1,true);
+            f.world.tick(1.f/30);
+            if(f.world.unit(inside)->orders.empty())clearedAt=t;
+        }
+        std::printf("trapped churn=island cleared_at=%d trapped=%llu\n",clearedAt,(unsigned long long)f.world.legionStats().trapped);
+        check(clearedAt>=0,"trapped order never retired after churn on another island");
+        check(f.world.legionStats().trapped>=1,"trapped classification not recorded after churn on another island");
+        for(const int id:outside)check(f.world.unit(id)->orders.empty(),"free unit did not arrive after churn on another island");
+    }
 }
 
 void longroute() {

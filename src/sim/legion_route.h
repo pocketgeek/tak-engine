@@ -14,14 +14,16 @@
 //    A descent on estimates strictly decreases and ends at a seed, so it steers soundly on a half-built route;
 //  * a known distance: exact, or kNone -- never a tentative value;
 //  * reachability: Reachable (some finite estimate: a real way exists), Unreachable (proven: a complete route that
-//    spans the cell's whole static component, built on the current geometry, does not reach it), Unknown (anything
-//    else: not computed yet, outside a bounded window, or built on older geometry). Unknown never retires an order;
+//    spans the cell's whole static component, and that no static change has reached since its build began, does not
+//    reach it), Unknown (anything else: not computed yet, outside a bounded window, or touched by a later change --
+//    whose group is then stale and refreshing). Unknown never retires an order;
 //  * coverage: a cell settled with a margin of key to spare, i.e. every cell whose key is within the margin of it
 //    is final (A* with a consistent heuristic settles keys in order). A consumer states the region it needs as
 //    (cell, margin); see RouteView::covered;
 //  * progress: a distance together with the metric it is measured in (the route's serial). Progress compares only
 //    within one metric; a new metric re-baselines and never counts as a gain;
-//  * freshness: the geometry epoch the route was built on, apart from all of the above.
+//  * freshness: the geometry epoch the route was built on, and whether a later change touched it, apart from all of
+//    the above.
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -71,6 +73,12 @@ struct RouteGrid {
     bool softened = false;                        // some step's cost was raised by a soft obstacle
     uint64_t serial = 0;                          // unique per route built (the metric of its Progress)
     uint64_t epoch = 0;                           // the static geometry epoch it was built on
+    // A static change reached this window after the build began (legion.cpp staticChanged: the changes that touch
+    // the window's box, or every change made without boxes). Not a comparison of epochs: a change on another island
+    // or another movement plane bumps the shared epoch without touching this window, and the route stays exact --
+    // nothing schedules its refresh, so an epoch test would leave "unreached" unproven forever. Never hashed: a
+    // function of the hashed epochs, windows and the world's static changes.
+    bool touched = false;
     uint64_t work = 0;                            // relaxations so far: changes whenever an estimate may change
 
     bool inside(int x, int z) const { return x >= x0 && z >= z0 && x < x0 + fw && z < z0 + fh; }
@@ -134,10 +142,11 @@ public:
     // d of this one, key(c) <= key(this) + d + (h(c) - h(this)) <= key(this) + 2d, so margin 2d covers every cell
     // within cost d. A complete route covers every reached cell.
     bool covered(size_t cell, uint32_t margin) const { return g_->ahead(cell, margin); }
-    // Reachability knowledge (see the header comment). epochNow: the current static geometry epoch.
-    Reach reach(size_t cell, uint64_t epochNow) const {
+    // Reachability knowledge (see the header comment). A touched route is built on older geometry around it; its
+    // group is stale and refreshes it (staticChanged), and the refresh, built on the newer geometry, decides.
+    Reach reach(size_t cell) const {
         if (estimate(cell) != route::kNone) return Reach::Reachable;
-        if (g_->done && !g_->bounded && g_->epoch == epochNow) return Reach::Unreachable;
+        if (g_->done && !g_->bounded && !g_->touched) return Reach::Unreachable;
         return Reach::Unknown;
     }
     // Progress still to go from a settled cell, in this route's metric; nullopt where it is not settled.

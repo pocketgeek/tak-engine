@@ -3734,6 +3734,8 @@ struct LegionNavigator::Impl {
             stats.groupLoopIters+=groups.size();
             for(auto& [id,g]:groups) {
                 if(changes&&(g.plane<0||size_t(g.plane)>=changes->size()||!fieldTouched(g,(*changes)[size_t(g.plane)])))continue;
+                // Its routes' "unreached" no longer proves anything (RouteView::reach) until the refresh lands.
+                for(Field* f:{g.field.get(),g.next.get()})if(f)f->touched=true;
                 g.stale=g.field!=nullptr;
                 listGroup(g);
                 restaleSlots(g);
@@ -7378,9 +7380,12 @@ struct LegionNavigator::Impl {
         }
         if(!direct) {
             // No route reaches this body yet -- none, a bounded window that
-            // does not, or (stage 5, RouteView::reach) a complete route built
-            // on older geometry, whose "unreached" proves nothing now.
-            if(!f||(f.estimate(size_t(here))==kUnreached&&f.reach(size_t(here),epoch)!=Reach::Unreachable)) {
+            // does not, or (stage 5, RouteView::reach) a complete route that a
+            // static change has touched since: its "unreached" proves nothing
+            // now, and its group is stale, so a refresh follows. (A change
+            // that does not touch the route -- another island or plane --
+            // leaves it proven: nothing would refresh it.)
+            if(!f||(f.estimate(size_t(here))==kUnreached&&f.reach(size_t(here))!=Reach::Unreachable)) {
                 setWaited(g);
                 // No field reaches this body yet: head toward the goal along
                 // a short proven straight segment (kHeadingCells) instead of
