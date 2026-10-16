@@ -1460,6 +1460,11 @@ if(TAK_BUILD_CLIENT)
     target_include_directories(render_telemetry_test PRIVATE src)
     target_link_libraries(render_telemetry_test PRIVATE Threads::Threads)   # ThreadPool telemetry checks
     add_test(NAME render_telemetry COMMAND render_telemetry_test)
+    # Stable generational ownership of per-unit geometry entries (workstream C).
+    add_executable(geometry_owners_test tools/geometry_owners_test.cpp)
+    target_include_directories(geometry_owners_test PRIVATE src)
+    target_link_libraries(geometry_owners_test PRIVATE Threads::Threads)
+    add_test(NAME geometry_owners COMMAND geometry_owners_test)
     add_executable(geometrysubmit_test tools/geometrysubmit_test.cpp)
     target_include_directories(geometrysubmit_test PRIVATE src)
     target_compile_definitions(geometrysubmit_test PRIVATE SDL_MAIN_HANDLED)

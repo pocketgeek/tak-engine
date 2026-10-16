@@ -52,6 +52,7 @@
 //     new occupant.
 
 #include <algorithm>
+#include <functional>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -83,25 +84,47 @@ struct RenderHandle {
 };
 
 // Bounded generational slot allocator. Owns only identities; the caller keeps
-// the payload in a parallel vector indexed by handle.index (which is stable:
-// indices are recycled, never compacted). Acquire fails (invalid handle) at the
-// capacity limit rather than growing without bound.
+// the payload in a parallel store indexed by handle.index (which is stable:
+// indices are recycled, never compacted while live). Acquire fails (invalid
+// handle) at the capacity limit rather than growing without bound.
+//
+// Generations come from ONE counter for the whole table, so a generation is
+// never handed out twice (until 2^32 acquisitions) -- not even for an index
+// that trimTrailing() dropped and a later acquire recreated. Free indices are
+// reused lowest first, which keeps live entries packed at the front so the
+// tail can be trimmed once demand falls.
 class HandleSlots {
 public:
     explicit HandleSlots(uint32_t capacity) : capacity_(capacity) {}
     RenderHandle acquire() {
         uint32_t index;
-        if (!free_.empty()) { index = free_.back(); free_.pop_back(); }
-        else if (generations_.size() < capacity_) {
+        if (!free_.empty()) {
+            std::pop_heap(free_.begin(), free_.end(), std::greater<>{});
+            index = free_.back(); free_.pop_back();
+        } else if (generations_.size() < capacity_) {
             index = uint32_t(generations_.size());
             generations_.push_back(0);
             live_.push_back(false);
         } else return {};
         // Skip generation 0 on wrap so a recycled slot never looks unallocated.
-        if (++generations_[index] == 0) ++generations_[index];
+        if (++nextGeneration_ == 0) ++nextGeneration_;
+        generations_[index] = nextGeneration_;
         live_[index] = true;
         ++liveCount_;
         return {index, generations_[index]};
+    }
+    // Drop free indices at the END of the table (render thread, between uses).
+    // Returns the new allocated() size; never drops a live index.
+    uint32_t trimTrailing(uint32_t keep = 0) {
+        size_t size = generations_.size();
+        while (size > keep && !live_[size - 1]) --size;
+        if (size == generations_.size()) return allocated();
+        generations_.resize(size);
+        live_.resize(size);
+        free_.erase(std::remove_if(free_.begin(), free_.end(),
+                                   [&](uint32_t i) { return i >= size; }), free_.end());
+        std::make_heap(free_.begin(), free_.end(), std::greater<>{});
+        return allocated();
     }
     bool valid(RenderHandle h) const {
         return h.valid() && h.index < generations_.size() && live_[h.index] &&
@@ -111,15 +134,18 @@ public:
         if (!valid(h)) return false;
         live_[h.index] = false;
         free_.push_back(h.index);
+        std::push_heap(free_.begin(), free_.end(), std::greater<>{});
         --liveCount_;
         return true;
     }
     uint32_t live() const { return liveCount_; }
     uint32_t allocated() const { return uint32_t(generations_.size()); }
     uint32_t capacity() const { return capacity_; }
+    void setCapacity(uint32_t capacity) { capacity_ = capacity; }   // affects later acquires only
 private:
     uint32_t capacity_;
     uint32_t liveCount_ = 0;
+    uint32_t nextGeneration_ = 0;
     std::vector<uint32_t> generations_;
     std::vector<bool> live_;
     std::vector<uint32_t> free_;
