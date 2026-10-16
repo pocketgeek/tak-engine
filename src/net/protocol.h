@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 269;      // 269: Legion route queries (Legion 10,000 stage 5; Retail bit-identical): the consumers that read a route
+constexpr uint32_t kNetVersion = 270;      // 270: Legion hierarchical routes (Legion 10,000 stage 6; Retail bit-identical): long routes planned over a
+                                           //      sector/region/portal hierarchy, built as corridors or (low demand) as tile chains over shared
+                                           //      tiles; new hashed state: route kinds and plans, corridor widenings, the demand rule's state, the
+                                           //      tile cache digest, chain progress and repairs. 269 replays refused
+                                           // 269: Legion route queries (Legion 10,000 stage 5; Retail bit-identical): the consumers that read a route
                                            //      past their own cell state the region they need on a paused build and read it through certainty
                                            //      checks (new hashed state: a route's run-on flag, a formation's pending entrance), demand on a paused
                                            //      build is never dropped, and the detour record and the approach gain compare within one route metric

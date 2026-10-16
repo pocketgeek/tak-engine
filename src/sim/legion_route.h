@@ -72,6 +72,14 @@ struct RouteGrid {
     std::vector<const uint32_t*> tiles;          // sw*sh: each tile's K*K potentials (row-major), nullptr: none yet
     std::vector<std::unique_ptr<uint32_t[]>> own;   // sw*sh: the tiles this route allocated
     size_t ownTiles = 0;                         // tiles allocated so far
+    // A corridor (stage 6): the tiles of the window the route may cover (1) or not (0); empty: every tile. A cell
+    // of a tile outside the corridor is outside the route (inside() false), so it is never written and reads kNone.
+    std::vector<uint8_t> allow;
+    // A tile chain (stage 6): a tile may be shared with other routes and read with this route's offset (the rest of
+    // the way from its exit, route-wide: Progress stays a distance to the goals), and a tile attached whole is final
+    // everywhere it reaches (fin), whatever the build's key. Empty: no offsets, no attached tiles.
+    std::vector<int64_t> offset;
+    std::vector<uint8_t> fin;
     uint32_t current = 0;                         // the build's current key (every key below it is settled)
     int tx = 0, tz = 0;                           // heuristic target
     bool aimed = false;
@@ -102,10 +110,15 @@ struct RouteGrid {
         own.clear();
         own.resize(size_t(sw) * size_t(sh));
         ownTiles = 0;
+        allow.clear();
+        offset.clear();
+        fin.clear();
     }
     size_t cells() const { return size_t(fw) * size_t(fh); }   // the window's cells
     size_t tileCells() const { return size_t(1) << (2 * shift); }
-    bool inside(int x, int z) const { return x >= x0 && z >= z0 && x < x0 + fw && z < z0 + fh; }
+    bool inside(int x, int z) const {
+        return x >= x0 && z >= z0 && x < x0 + fw && z < z0 + fh && (allow.empty() || allow[tileOf(x, z)]);
+    }
     size_t tileOf(int x, int z) const { return size_t(((z >> shift) - sz0) * sw + ((x >> shift) - sx0)); }
     size_t inTile(int x, int z) const {
         const int m = (1 << shift) - 1;
@@ -113,9 +126,15 @@ struct RouteGrid {
     }
     uint32_t cellAt(int x, int z) const {
         if (!inside(x, z)) return route::kNone;
-        const uint32_t* t = tiles[tileOf(x, z)];
-        return t ? t[inTile(x, z)] : route::kNone;
+        const size_t ti = tileOf(x, z);
+        const uint32_t* t = tiles[ti];
+        if (!t) return route::kNone;
+        const uint32_t v = t[inTile(x, z)];
+        if (offset.empty() || v == route::kNone) return v;
+        return uint32_t(int64_t(v) + offset[ti]);   // a chain keeps every sum below kNone (legion.cpp attachTile)
     }
+    // An attached tile: every value it holds is final.
+    bool finalTile(int x, int z) const { return !fin.empty() && inside(x, z) && fin[tileOf(x, z)]; }
     // The builder's write: the cell's slot, its tile allocated (all kNone) on first use. (x, z) inside the window.
     uint32_t& slot(int x, int z) {
         const size_t t = tileOf(x, z);
@@ -138,12 +157,14 @@ struct RouteGrid {
     // Is estimate v of cell final? (A done build: every reached cell is.)
     bool isFinal(size_t cell, uint32_t v) const {
         if (done) return v != route::kNone;
+        if (v != route::kNone && finalTile(int(cell % size_t(W)), int(cell / size_t(W)))) return true;
         return v != route::kNone && uint32_t(v) + heuristic(int(cell % size_t(W)), int(cell / size_t(W))) <= current;
     }
     // Settled with `margin` of key to spare (a done build: reached at all).
     bool ahead(size_t cell, uint32_t margin) const {
         const uint32_t v = cellAt(int(cell % size_t(W)), int(cell / size_t(W)));
         if (done) return v != route::kNone;
+        if (v != route::kNone && finalTile(int(cell % size_t(W)), int(cell / size_t(W)))) return true;
         return v != route::kNone &&
                uint32_t(v) + heuristic(int(cell % size_t(W)), int(cell / size_t(W))) + margin <= current;
     }

@@ -133,7 +133,8 @@ struct NavAccounting {
     // that fell back to the window because the search did not reach every member's region within its bound.
     uint64_t corridors = 0, corridorWidens = 0, routeFallbacks = 0;
     // Tile chains: chains built, shared tiles built and found in the cache, tiles evicted, the cache's largest size
-    // (bytes), transit regions a chain left off (nothing to lead into) and chains a relabel ended early.
+    // (bytes), chain regions left off (nothing to lead into, or a parent left off) and regions left off because
+    // their sector was relabelled since the plan.
     uint64_t chains = 0, tilesBuilt = 0, tileHits = 0, tileEvictions = 0, tileBytesPeak = 0, chainSkips = 0, chainAbandons = 0;
     uint64_t chainRepairs = 0;   // halo regions attached because a member stepped into one
 };

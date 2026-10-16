@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <functional>
 #include <map>
+#include <queue>
 #include <set>
 #include <tuple>
 #include <vector>
@@ -243,7 +244,7 @@ constexpr uint32_t kStillScan=30;
 constexpr uint16_t kStillScans=2;
 constexpr uint32_t kSoftFactor=4;
 constexpr uint32_t kSoftNear=3;                // ... within a cell of one
-constexpr uint32_t kBehindFactor=12;           // a pass-behind corridor (see Field::Corridor)
+constexpr uint32_t kBehindFactor=12;           // a pass-behind corridor (see Corridor)
 static_assert((kSoftFactor+kBehindFactor-1)*kDiagonal+kDiagonal<128,"Field buckets: one relaxation's key rise");
 // Group awareness (see awareScan): every kAwareScan ticks each moving
 // formation of at least kAwareMembers is a mover: its centroid, spread and
@@ -334,6 +335,93 @@ struct LegionNavigator::Impl {
     // with many groups waiting at the cap. Derived, never hashed.
     // inflight: the deterministic bytes of the unfinished builds' frontiers (queued bucket entries
     // and seeds not yet enqueued, Field::inflightBytes), part of the byte allowance (stage 4).
+    // A mover corridor a field plans round (see Field::avoid; stage 6 moved it out of Field so that a chain's tiles
+    // can carry the corridors that reach them).
+    struct Corridor {
+        int64_t x0=0,z0=0,x1=0,z1=0,r=0;bool behind=false;
+        int64_t ux=0,uz=0,L=1,len=0,speed=0,lead=0;
+        bool operator==(const Corridor&) const=default;
+        // 2 inside, 1 within 32 px of it, 0 clear.
+        int level(int64_t px,int64_t pz) const {
+            if(!behind) {
+                const int64_t d2=segDist2(px,pz,*this);
+                return d2<=r*r?2:d2<=(r+32)*(r+32)?1:0;
+            }
+            const int64_t ox=px-x0,oz=pz-z0,q=std::abs(ox*uz-oz*ux)/L;
+            if(q>r+32)return 0;
+            const int64_t s=(ox*ux+oz*uz)/L;
+            const int64_t ax=std::abs(px-x1),az=std::abs(pz-z1);
+            const int64_t t=std::max<int64_t>(0,std::max(ax,az)+std::min(ax,az)*2/5-lead)*65536/speed;
+            const int64_t st=L*t/int64_t(kAwareScan);
+            if(s<st-32||s>st+len+32)return 0;
+            return q<=r&&s>=st&&s<=st+len?2:1;
+        }
+    static int64_t segDist2(int64_t px,int64_t pz,const Corridor& c) {
+        const int64_t vx=c.x1-c.x0,vz=c.z1-c.z0,wx=px-c.x0,wz=pz-c.z0;
+        const int64_t len2=vx*vx+vz*vz;
+        int64_t qx=c.x0,qz=c.z0;
+        if(len2>0) {
+            const int64_t t=std::clamp<int64_t>(wx*vx+wz*vz,0,len2);
+            qx=c.x0+vx*t/len2;qz=c.z0+vz*t/len2;
+        }
+        return (px-qx)*(px-qx)+(pz-qz)*(pz-qz);
+    }
+    };
+    // The step charge of corridors `avoid` at origin (x, z) (Field::corridorCharge and a chain tile's build).
+    static uint32_t corridorChargeOf(const std::vector<Corridor>& avoid,int x,int z,int fx,int fz,uint32_t base) {
+        uint32_t extra=0;
+        const int64_t px=int64_t(x)*16+fx*8,pz=int64_t(z)*16+fz*8;
+        for(const auto& c:avoid) {
+            const int l=c.level(px,pz);
+            if(l==2)extra=std::max(extra,base*((c.behind?kBehindFactor:kSoftFactor)-1));
+            else if(l==1)extra=std::max(extra,base*(kSoftNear-1));
+        }
+        return extra;
+    }
+    // ---- stage 6: shared tiles of tile chains -------------------------------------------------------------------
+    // A TILE is the field of one hierarchy region (sim/legion_hier.h) toward the far side of one of its portals: the
+    // exact distance from every origin of the region, inside its sector, to those seed origins, each seed starting at
+    // its boundary cost. Built whole (Dijkstra over the region, the field's own step rule and soft charges), shared
+    // by every chain whose route leaves that region by that portal with the same boundary costs, and kept in a cache
+    // keyed by everything the values depend on, compared whole after a hash match: the plane's identity (slot and
+    // generation), the sector and region with the generations of both sectors of the portal, the portal run, the
+    // boundary costs (an AIMED tile: the octile distance from each seed to an aim cell -- the next portal's middle;
+    // an EXACT tile: the route's own distance at each seed), and the soft level of every origin of the region (the
+    // soft rule as the route's command sees it). Downstream costs are never left out: an aimed tile's are its aim, an
+    // exact tile's its boundary list. A chain reads a tile with its own offset (rem: the rest of the way from the
+    // tile's seeds, route-wide), so the same tile serves routes to different destinations.
+    struct Tile {
+        hier::PlaneId plane;
+        int sector=0;uint16_t region=0;uint32_t gen=0,ngen=0;   // the region, its sector's and the other side's generation
+        hier::Portal exit;               // the run the region leaves by; its other side holds the seeds
+        bool onA=true;                   // the region is the portal's a side
+        int aim=-1;                      // aimed: the cell boundary costs measure toward; -1: exact
+        std::vector<uint32_t> boundary;  // per pair of the run: the seed's boundary cost (kUnreached: no seed)
+        std::vector<std::pair<uint16_t,uint8_t>> soft;   // the region's nonzero soft levels (cell in the sector, level)
+        std::vector<Corridor> avoid;     // the route's mover corridors that reach the region (awareness: a local correction)
+        uint64_t hash=0;
+        std::vector<uint32_t> values;    // K x K, kUnreached outside the region or unreachable
+        uint32_t maxValue=0;             // the largest finite value (a chain's offset must keep sums below kUnreached)
+        uint32_t routes=0,lastUse=0;     // chains holding it (an explicit count: eviction reads only this), last use
+        uint64_t seq=0;                  // insertion order (eviction tie-break)
+        // The mobility class it was built for (footprint, depths, slopes): not part of the key -- the plane's
+        // identity already separates classes -- but checked under TAK_LEGION_VERIFY on every attach, so a plane
+        // slot reused without a new generation would be caught reading its previous class's tiles.
+        uint64_t classSig=0;
+        bool sameKey(const Tile& o) const {
+            return plane==o.plane&&sector==o.sector&&region==o.region&&gen==o.gen&&ngen==o.ngen&&onA==o.onA&&aim==o.aim&&
+                   exit.a==o.exit.a&&exit.b==o.exit.b&&exit.ra==o.exit.ra&&exit.rb==o.exit.rb&&exit.side==o.exit.side&&
+                   exit.start==o.exit.start&&exit.len==o.exit.len&&boundary==o.boundary&&soft==o.soft&&avoid==o.avoid;
+        }
+        uint64_t bytes() const {return 160+uint64_t(values.size())*4+uint64_t(boundary.size())*4+uint64_t(soft.size())*4+uint64_t(avoid.size())*NavSize::kCorridor;}
+    };
+    // One region of a chain (a route plan's transit node): the region, the generations its tile key takes, the node
+    // it leads into (-1: the destination's own field), and the portal it leaves by.
+    struct ChainNode {
+        int s=0;uint16_t r=0;uint32_t gen=0,ngen=0;
+        int parent=-1;
+        hier::Portal exit;bool onA=true;
+    };
     struct FieldTotals {size_t fields=0,cells=0;uint64_t inflight=0;};
     // Integer distance field from a group's goal origins, built with a
     // bounded bucket queue; resumable across ticks under the work quota.
@@ -347,7 +435,7 @@ struct LegionNavigator::Impl {
         Field()=default;
         Field(const Field&)=delete;
         Field& operator=(const Field&)=delete;
-        ~Field() {detach();}
+        ~Field() {detach();for(const auto& t:held)--t->routes;}
         // Leave the field totals (the field is about to be freed; see Impl::orphan).
         void detach() {if(totals) {--totals->fields;totals->cells-=counted;totals->inflight-=inflightBytes;totals=nullptr;}}
         FieldTotals* totals=nullptr;      // set once the window is sized (startField)
@@ -393,47 +481,8 @@ struct LegionNavigator::Impl {
         // at all the group still crosses as before. With a soft obstacle on
         // top a key then rises by at most (kSoftFactor+kBehindFactor-1)*
         // kDiagonal plus the heuristic's kDiagonal = 112, under the 128 buckets.
-        struct Corridor {
-            int64_t x0=0,z0=0,x1=0,z1=0,r=0;bool behind=false;
-            int64_t ux=0,uz=0,L=1,len=0,speed=0,lead=0;
-            bool operator==(const Corridor&) const=default;
-            // 2 inside, 1 within 32 px of it, 0 clear.
-            int level(int64_t px,int64_t pz) const {
-                if(!behind) {
-                    const int64_t d2=segDist2(px,pz,*this);
-                    return d2<=r*r?2:d2<=(r+32)*(r+32)?1:0;
-                }
-                const int64_t ox=px-x0,oz=pz-z0,q=std::abs(ox*uz-oz*ux)/L;
-                if(q>r+32)return 0;
-                const int64_t s=(ox*ux+oz*uz)/L;
-                const int64_t ax=std::abs(px-x1),az=std::abs(pz-z1);
-                const int64_t t=std::max<int64_t>(0,std::max(ax,az)+std::min(ax,az)*2/5-lead)*65536/speed;
-                const int64_t st=L*t/int64_t(kAwareScan);
-                if(s<st-32||s>st+len+32)return 0;
-                return q<=r&&s>=st&&s<=st+len?2:1;
-            }
-        };
         std::vector<Corridor> avoid;
-        uint32_t corridorCharge(int x,int z,int fx,int fz,uint32_t base) const {
-            uint32_t extra=0;
-            const int64_t px=int64_t(x)*16+fx*8,pz=int64_t(z)*16+fz*8;
-            for(const auto& c:avoid) {
-                const int l=c.level(px,pz);
-                if(l==2)extra=std::max(extra,base*((c.behind?kBehindFactor:kSoftFactor)-1));
-                else if(l==1)extra=std::max(extra,base*(kSoftNear-1));
-            }
-            return extra;
-        }
-        static int64_t segDist2(int64_t px,int64_t pz,const Corridor& c) {
-            const int64_t vx=c.x1-c.x0,vz=c.z1-c.z0,wx=px-c.x0,wz=pz-c.z0;
-            const int64_t len2=vx*vx+vz*vz;
-            int64_t qx=c.x0,qz=c.z0;
-            if(len2>0) {
-                const int64_t t=std::clamp<int64_t>(wx*vx+wz*vz,0,len2);
-                qx=c.x0+vx*t/len2;qz=c.z0+vz*t/len2;
-            }
-            return (px-qx)*(px-qx)+(pz-qz)*(pz-qz);
-        }
+        uint32_t corridorCharge(int x,int z,int fx,int fz,uint32_t base) const {return corridorChargeOf(avoid,x,z,fx,fz,base);}
         // The heuristic target (RouteGrid::tx, tz, aimed) is the group's
         // bodies.
         std::vector<std::pair<uint32_t,int>> seedKeys;size_t seedNext=0;   // seeds by key, enqueued in order
@@ -470,10 +519,25 @@ struct LegionNavigator::Impl {
         // runOnRoute): the build no longer pauses and runs on to done.
         // Hashed when set.
         bool runOn=false;
+        // Stage 6: what kind of route it is (RouteKind: the window, a corridor whose tiles RouteGrid::allow lists,
+        // or a tile chain) and a digest of the corridor's tiles or of the chain's plan. Hashed when not a window.
+        uint8_t kind=0;
+        uint64_t corridorSig=0;
+        // A chain: the destination's own field is built first over dAllow's tiles (dDone when finished), then its
+        // transit regions get their tiles in plan order (chainNext: the next to attach); dAllow lists the
+        // destination's tiles (the A* build stays inside them; RouteGrid::allow is the route's whole area, its
+        // transit and halo sectors too). held: the shared tiles it reads (each counts it in routes).
+        std::vector<ChainNode> chain;
+        size_t chainNext=0,chainTransit=0;   // the next transit region to attach; the transit regions (the rest: halo)
+        bool dDone=false;
+        std::vector<uint8_t> attached,repairing;   // per node: its tile is read; a repair is queued for it
+        std::vector<uint8_t> dAllow;
+        std::vector<std::shared_ptr<Tile>> held;
         bool usable() const {return done||covered;}
         RouteView view() const {return RouteView(this);}
     };
     static RouteView view(const Field* f) {return f?f->view():RouteView();}
+    struct RoutePlan;
     struct Group {
         int id=0,player=0,plane=-1;
         uint32_t issuedTick=0;
@@ -529,7 +593,7 @@ struct LegionNavigator::Impl {
         // Group awareness (see awareScan): the movers (by command) its
         // fields plan round, their corridors as planned, and the scans each
         // has been off its way.
-        std::vector<uint64_t> avoidCmd;std::vector<Field::Corridor> avoidSeg;std::vector<uint8_t> avoidOff;
+        std::vector<uint64_t> avoidCmd;std::vector<Corridor> avoidSeg;std::vector<uint8_t> avoidOff;
         // Each entry's class, fixed when it was first planned (kAwareHeadOn or
         // kAwareCross, see awareScan; C28). Hashed with a tag when not head on (C27).
         std::vector<uint8_t> avoidKind;
@@ -571,6 +635,16 @@ struct LegionNavigator::Impl {
         // the admissions and promotes it -- and the tick its start was first refused for want of room
         // (NavAdmit::kNever when clear). Both hashed while set.
         uint32_t requestTick=kNoTick,blockedSince=NavAdmit::kNever;
+        // Stage 6: the plan of the next build (routePlan: kept while the start waits, up to kPlanReuse ticks on one
+        // epoch and membership; hashed while held: its tick, kind and corridor digest), and the corridor widenings
+        // so far (a member outside the corridor rebuilds it; past kMaxWiden the whole-component window takes over;
+        // hashed when set).
+        std::shared_ptr<RoutePlan> plan;
+        uint32_t planTick=kNoTick;uint64_t planEpoch=0;int planMembers=0;
+        uint8_t widens=0;
+        // The demand rule's state (hysteresis, see planRoute): 0 none yet, 1 its last plan took a chain, 2 a field.
+        // Hashed when set.
+        uint8_t routeMode=0;
         // ---- the reach ring (AR-06 part B, PLAN 3.4) ------------------------
         // A reach kind's group (attack, guard) is keyed by its target, the
         // target's origin when the group was seeded (centre) and the members'
@@ -1874,7 +1948,7 @@ struct LegionNavigator::Impl {
     // ones. Every tick() closes the window the previous one opened (foldWindow): the work of the
     // window -- the tick's own plus what ran between ticks (orders) -- goes into the per-class
     // maxima. No decision reads any of it.
-    struct NavCounters {uint64_t initCells=0,resolveCells=0,planeBuild=0,planeRelabel=0,ringCells=0,connectivity=0;};
+    struct NavCounters {uint64_t initCells=0,resolveCells=0,planeBuild=0,planeRelabel=0,ringCells=0,connectivity=0,routeSearch=0,tileBuild=0;};
     mutable NavCounters navc;
     mutable NavAccounting acct;
     std::array<uint64_t,size_t(NavWork::Count)> acctMark{};
@@ -1889,6 +1963,8 @@ struct LegionNavigator::Impl {
         t[size_t(NavWork::SlotSearch)]=stats.slotSearchCells-std::min(stats.slotSearchCells,navc.ringCells);
         t[size_t(NavWork::RingBuild)]=navc.ringCells;
         t[size_t(NavWork::Connectivity)]=navc.connectivity;
+        t[size_t(NavWork::TileBuild)]=navc.tileBuild;
+        t[size_t(NavWork::RouteSearch)]=navc.routeSearch;
         return t;
     }
     // The open window's work per class (peek: accounting() reads it without closing the window).
@@ -1917,6 +1993,7 @@ struct LegionNavigator::Impl {
                 p.pending.size()*S::kBox+p.nearMemo.size()*S::kMemo+p.nearGen.size()*S::kCell32+p.spanMemo.size()*S::kCell32+
                 p.spanGen.size()*S::kCell32+p.loneMemo.size()*S::kCell8+p.loneGen.size()*S::kCell32;
         for(const auto& p:planes)b.portals+=p.hier.bytes();   // stage 6: sectors, region labels, portals
+        b.tiles+=tileBytes;                                   // stage 6: the shared tile cache
         std::set<const Field*> seen;
         for(const auto& [id,g]:groups) {
             for(const Field* f:{g.field.get(),g.next.get()}) {
@@ -3204,6 +3281,210 @@ struct LegionNavigator::Impl {
                                         std::min(box[2],x1+margin),std::min(box[3],z1+margin)};
         return bounded;
     }
+    // ---- stage 6: corridors over the routing hierarchy ----------------------------------------------------------
+    // A route's plan: the window field as before (kind Window), or a CORRIDOR -- the window cut down to the sectors
+    // round the hierarchy's region tree from the goals to the members (sim/legion_hier.h's search), each dilated by
+    // a halo, and the destination's sectors dilated by the area the group's crowd needs there. The field over a
+    // corridor is the same A* build with every origin outside its sectors treated as outside the window: exact
+    // distances within the corridor, bounded (an origin outside it is Unknown, never Unreachable), so a member it
+    // fails to reach widens it (a bounded number of times) and then the whole-component window takes over, as for
+    // any bounded window. A corridor is planned only where it pays: on windows of kCorridorWindow cells or more, and
+    // only if it holds at most half the window's cells; otherwise, or if the search does not reach every member's
+    // region within kRouteExpand regions, the window is built as before (counted: acct.routeFallbacks).
+    //
+    // A TILE CHAIN (kind Chain) serves a group whose demand is low -- few bodies to its goals, no reach ring -- on a
+    // long way (a group planning round movers takes one too: the regions its corridors reach get tiles of their own,
+    // local corrections whose key holds those corridors, and the rest stay shared): the destination gets its own exact field over the sectors its crowd needs
+    // (dAllow), and every region of the tree outside them reads a shared tile toward the portal it leaves by (Tile),
+    // with an offset that makes the value route-wide. A tile whose way leads into another transit region is AIMED
+    // (its seeds' boundary costs measure toward that region's own exit, so it is shared by every route leaving the
+    // region that way, whatever its destination); one leading into the destination's field is EXACT (its boundary
+    // costs are that field's values at its seeds). The offset of a tile is the largest (estimate - boundary cost) over
+    // its seeds, so the estimate on a region's cell next to a seed is above the seed's own estimate: every legal
+    // descent step strictly lowers the route's estimate, across tiles too, and ends on a goal (no loops, no false
+    // minimum). Choosing between a chain and a field is the demand rule (chainDemand) with hysteresis.
+    enum RouteKind : uint8_t {KindWindow=0,KindCorridor=1,KindChain=2};
+    struct RoutePlan {
+        uint8_t kind=KindWindow;
+        std::array<int,4> box{};           // the field's window (cells, inclusive)
+        std::vector<uint8_t> allow;        // corridor / chain: per tile of the window's tile box, 1 = inside
+        size_t cells=0;                    // the cells of the allowed tiles (the corridor's reserved storage; a
+                                           // chain's destination tiles -- its shared tiles are the cache's)
+        uint64_t sig=0;                    // a digest of the allowed tiles / of the chain (hashed with the field)
+        std::vector<uint8_t> dAllow;       // chain: the destination's tiles (its own field)
+        std::vector<ChainNode> nodes;      // chain: the transit regions, every parent before its children, then the halo
+        size_t transit=0;                  // chain: how many of nodes are transit regions
+    };
+    static constexpr size_t kCorridorWindow=131072;  // windows smaller than this keep the window build
+    static constexpr uint8_t kMaxWiden=3;            // corridor rebuilds for members outside it, then the window
+    static constexpr size_t kRouteExpand=1u<<16;     // regions the abstract search may expand for one plan
+    static constexpr int kCorridorHalo=32;           // cells of halo round the tree's sectors
+    static constexpr int kDestMargin=8;              // cells round a chain destination's packed disc (its own field)
+    // Chains or fields by demand (deterministic, with hysteresis): the bodies that would read the route -- this
+    // group's members and those of every other group with the same goals on the plane (they share one field) -- at
+    // most kChainDemand take a chain; a group that took a field keeps fields until the demand falls to
+    // kChainDemandLow. A route of fewer than kChainMinNodes transit regions is a short trip: its corridor or window.
+    static constexpr int kChainDemand=48,kChainDemandLow=24;
+    static constexpr size_t kChainMinNodes=2;
+    int routeDemand(const Group& g) const {
+        int n=g.members;
+        if(const auto found=routeIndex.find({g.plane,seedsKey(g.seeds)});found!=routeIndex.end())
+            for(const int id:found->second)if(id!=g.id) {const auto o=groups.find(id);if(o!=groups.end()&&o->second.seeds==g.seeds)n+=o->second.members;}
+        return n;
+    }
+    RoutePlan planRoute(Group& g,const std::array<int,4>& box) {
+        RoutePlan rp;
+        rp.box=box;
+        const size_t windowCells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
+        if(g.full||windowCells<kCorridorWindow||g.plane<0)return rp;
+        auto& p=planes[size_t(g.plane)];
+        if(!p.hier.ready()||p.legal.empty()||p.stage>0)return rp;
+        const int W=width();
+        std::vector<int> targets;
+        targets.reserve(g.ids.size());
+        for(const int id:g.ids) {
+            const Unit* u=w.unit(id);
+            if(!u||!u->type||!u->alive())continue;
+            targets.push_back(footprintOrigin(u->z,u->type->footZ)*W+footprintOrigin(u->x,u->type->footX));
+        }
+        uint64_t work=0;
+        const auto tree=p.hier.search(g.seeds,targets,p.legal.data(),kRouteExpand,work);
+        if(!tree.complete||tree.nodes.empty()) {navc.routeSearch+=work;startCharge+=work;++acct.routeFallbacks;return rp;}
+        struct Charge {uint64_t& work;Impl& I;~Charge() {I.navc.routeSearch+=work;I.startCharge+=work;}} charge{work,*this};
+        const int K=p.hier.K(),SW=p.hier.sectorsWide(),SH=p.hier.sectorsHigh();
+        auto dilate=[&](std::vector<uint8_t>& mark,int s,int r) {
+            const int sx=s%SW,sz=s/SW;
+            for(int z=std::max(0,sz-r);z<=std::min(SH-1,sz+r);++z)
+                for(int x=std::max(0,sx-r);x<=std::min(SW-1,sx+r);++x)mark[size_t(z)*SW+x]=1;
+        };
+        int halo=kCorridorHalo;
+        // A formation strong enough to pinwheel takes its outer arcs up to kPivotMaxCells off the way (fieldWindow).
+        for(const auto& [seed,count]:g.sharing)if(count>=kPivotMembers) {halo+=kPivotMaxCells;break;}
+        // The destination: the packed disc the crowd of each goal needs (coveredFor's area radius) plus a margin --
+        // the corridor's halo for a corridor (dest), kDestMargin for a chain's own field (chainDest: the sectors that
+        // square round the goal touches, so a lone body's destination is one to four sectors, not a 5 x 5 block).
+        std::vector<uint8_t> dest(size_t(SW)*size_t(SH),0),chainDest(size_t(SW)*size_t(SH),0);
+        const int foot=std::max(p.footX,p.footZ);
+        for(const int seed:g.seeds) {
+            const auto pk=g.peak.find(seed);
+            const int n=pk==g.peak.end()?1:pk->second;
+            const int area=int(isqrtFloor(uint64_t((5*n+3)/4)))*foot+2*foot+4;
+            dilate(dest,p.hier.sectorOfCell(seed),(area+halo+K-1)/K);
+            const int gx=seed%W,gz=seed/W,R=area+kDestMargin,sh=p.hier.shift();
+            for(int sz=std::max(0,gz-R)>>sh;sz<=(std::min(height()-1,gz+R)>>sh);++sz)
+                for(int sx=std::max(0,gx-R)>>sh;sx<=(std::min(W-1,gx+R)>>sh);++sx)chainDest[size_t(sz)*SW+sx]=1;
+        }
+        const auto comp=fieldWindow(g,true);
+        // A set of sectors as a window (clipped to the seeds' component box: nothing outside it is reachable) and
+        // its tiles; false if empty.
+        auto boxOf=[&](const std::vector<uint8_t>& mark,std::array<int,4>& out,size_t& cells,uint64_t& sig)->bool {
+            int bx0=W,bz0=height(),bx1=-1,bz1=-1;
+            cells=0;
+            for(int s=0;s<SW*SH;++s) {
+                if(!mark[size_t(s)])continue;
+                const auto r=p.hier.rect(s);
+                const int x0=std::max(r[0],comp[0]),z0=std::max(r[1],comp[1]),x1=std::min(r[2]-1,comp[2]),z1=std::min(r[3]-1,comp[3]);
+                if(x0>x1||z0>z1)continue;
+                bx0=std::min(bx0,x0);bz0=std::min(bz0,z0);bx1=std::max(bx1,x1);bz1=std::max(bz1,z1);
+                cells+=size_t(x1-x0+1)*size_t(z1-z0+1);
+                sig=mix(sig,uint64_t(s));
+            }
+            out={bx0,bz0,bx1,bz1};
+            return bx1>=bx0;
+        };
+        auto tilesOf=[&](const std::vector<uint8_t>& mark,const std::array<int,4>& b) {
+            const int sh=p.hier.shift(),sx0=b[0]>>sh,sz0=b[1]>>sh,sx1=b[2]>>sh,sz1=b[3]>>sh;
+            std::vector<uint8_t> a(size_t(sx1-sx0+1)*size_t(sz1-sz0+1),0);
+            for(int sz=sz0;sz<=sz1;++sz)for(int sx=sx0;sx<=sx1;++sx)a[size_t(sz-sz0)*size_t(sx1-sx0+1)+size_t(sx-sx0)]=mark[size_t(sz)*SW+sx];
+            return a;
+        };
+        // Chain or field (chainDemand): the transit regions are the tree's outside the destination's sectors.
+        // The demand rule alone moves the hysteresis state; a plan that cannot be a chain for another reason (an
+        // reach ring, a short trip) leaves it as it was.
+        const int demand=routeDemand(g);
+        const bool lowDemand=demand<=(g.routeMode==2?kChainDemandLow:kChainDemand);
+        g.routeMode=lowDemand?1:2;
+        // A group planning round movers (awareness corridors) takes a corridor while memory has room -- its detour
+        // round a crossing stream then has the corridor's width -- and a chain with local corrections once more than
+        // half the field allowance is in use (the stage-4 rule for "memory short"): corridors for every awareness
+        // re-plan of 800 squads filled the allowance and evicted their own fields (many-10000: 5,433 evictions).
+        const bool tight=fieldBytes()*2>fieldAllowance();
+        bool chain=g.ring.cells.empty()&&lowDemand&&(g.avoidSeg.empty()||tight);
+
+        if(chain) {
+            std::vector<int> index(tree.nodes.size(),-1);
+            for(size_t i=0;i<tree.nodes.size();++i) {
+                const auto& n=tree.nodes[i];
+                if(chainDest[size_t(n.s)]||n.parent<0)continue;
+                const auto& pt=p.hier.portal(n.exit);
+                ChainNode c;
+                c.s=n.s;c.r=n.r;c.gen=p.hier.gen(n.s);c.exit=pt;c.onA=pt.a==n.s&&pt.ra==n.r;
+                c.ngen=p.hier.gen(c.onA?pt.b:pt.a);
+                c.parent=index[size_t(n.parent)];
+                index[i]=int(rp.nodes.size());
+                rp.nodes.push_back(c);
+            }
+            chain=rp.nodes.size()>=kChainMinNodes;
+            if(!chain)rp.nodes.clear();
+            rp.transit=rp.nodes.size();
+            // The halo: every region outside the destination one portal away from a transit region, leading into
+            // it (its tile aimed at that region's exit). Attached only when a member steps into one (requestRepair),
+            // so a body pushed off its way is back on the route within a tick instead of rebuilding it.
+            if(chain) {
+                std::map<uint64_t,int> in;
+                for(size_t i=0;i<rp.transit;++i)in[hier::Hierarchy::key(rp.nodes[i].s,rp.nodes[i].r)]=int(i);
+                for(const auto& n:tree.nodes)in.emplace(hier::Hierarchy::key(n.s,n.r),-1);
+                for(size_t i=0;i<rp.transit;++i) {
+                    const ChainNode base=rp.nodes[i];
+                    p.hier.forPortals(base.s,base.r,p.legal.data(),work,[&](const hier::Portal& pt,bool aSide,uint32_t) {
+                        const int ns=aSide?pt.b:pt.a;
+                        const uint16_t nr=aSide?pt.rb:pt.ra;
+                        if(chainDest[size_t(ns)]||!in.emplace(hier::Hierarchy::key(ns,nr),int(rp.nodes.size())).second)return;
+                        ChainNode c;
+                        c.s=ns;c.r=nr;c.gen=p.hier.gen(ns);c.exit=pt;c.onA=!aSide;c.ngen=p.hier.gen(base.s);
+                        c.parent=int(i);
+                        rp.nodes.push_back(c);
+                    });
+                }
+            }
+        }
+        if(chain) {
+            std::vector<uint8_t> all=chainDest;
+            for(const auto& c:rp.nodes)all[size_t(c.s)]=1;
+            uint64_t sig=0x636861696eull,dsig=0;
+            size_t cells=0,dcells=0;
+            std::array<int,4> b{},db{};
+            if(!boxOf(all,b,cells,sig)||!boxOf(chainDest,db,dcells,dsig))return rp;
+            rp.kind=KindChain;rp.box=b;rp.cells=dcells;
+            rp.allow=tilesOf(all,b);rp.dAllow=tilesOf(chainDest,b);
+            for(const auto& c:rp.nodes) {sig=mix(sig,uint64_t(c.s)<<16|c.r);sig=mix(sig,uint64_t(c.exit.start)<<32|uint64_t(c.exit.len)<<8|c.exit.side);}
+            rp.sig=mix(sig,dsig);
+            return rp;
+        }
+        // A corridor: the tree's sectors dilated by the halo, and the destination's.
+        std::vector<uint8_t> mark=dest;
+        const int hs=(halo+K-1)/K;
+        for(const auto& n:tree.nodes)dilate(mark,n.s,hs);
+        uint64_t sig=0x636f727269646f72ull;
+        size_t cells=0;
+        std::array<int,4> b{};
+        if(!boxOf(mark,b,cells,sig)||cells*2>windowCells)return rp;
+        rp.kind=KindCorridor;rp.box=b;rp.cells=cells;rp.sig=sig;
+        rp.allow=tilesOf(mark,b);
+        return rp;
+    }
+    // The group's plan for its next build: planned once and reused while the start waits (for budget or room) up
+    // to kPlanReuse ticks, on the same static epoch and membership; the build drops it (startField).
+    static constexpr uint32_t kPlanReuse=kStillScan;
+    const RoutePlan& routePlan(Group& g,const std::array<int,4>& window) {
+        const uint32_t now=w.tickCounter_;
+        if(!g.plan||g.planTick==kNoTick||now-g.planTick>=kPlanReuse||g.planEpoch!=epoch||g.planMembers!=g.members||g.plan->box[2]<0) {
+            g.plan=std::make_shared<RoutePlan>(planRoute(g,window));
+            g.planTick=now;g.planEpoch=epoch;g.planMembers=g.members;
+        }
+        if(g.plan->kind==KindWindow)g.plan->box=window;   // a window plan follows the window (it moves with the bodies)
+        return *g.plan;
+    }
     // Another group's field that serves this group as well as its own
     // build would: the same plane at the current static epoch, the same
     // seeds, a window holding this group's (a larger window only frees
@@ -3217,32 +3498,64 @@ struct LegionNavigator::Impl {
     // orders) otherwise each built the same whole-map field, and rebuilt it
     // after every static change in a battle: a full quota for seconds.
     // A finished field first, then one in progress, each in group order.
-    std::shared_ptr<Field> sharedField(const Group& g,const std::array<int,4>& box,uint64_t command,bool own) const {
+    // Stage 6: with `plan` (a corridor) the test is coverage of that corridor -- a window field holding its box, or
+    // a corridor field whose tiles include all of its tiles; without one, a corridor field never serves (the
+    // window test above, unchanged, is for window fields only).
+    std::shared_ptr<Field> sharedField(const Group& g,const std::array<int,4>& box,uint64_t command,bool own,const RoutePlan* plan) const {
         std::shared_ptr<Field> hit;
         uint64_t iters=0;
         if(const auto found=routeIndex.find({g.plane,seedsKey(g.seeds)});found!=routeIndex.end()) {
             for(int pass=0;pass<2&&!hit;++pass)for(int id:found->second) {
                 ++iters;
-                if(sharesWith(g,groups.find(id)->second,pass,box,command,own,hit))break;
+                if(sharesWith(g,groups.find(id)->second,pass,box,command,own,plan,hit))break;
             }
         }
         stats.shareScanIters+=iters;
 #ifndef NDEBUG
         if(gVerify) {
             std::shared_ptr<Field> scan;
-            for(int pass=0;pass<2&&!scan;++pass)for(const auto& [id,o]:groups)if(sharesWith(g,o,pass,box,command,own,scan))break;
+            for(int pass=0;pass<2&&!scan;++pass)for(const auto& [id,o]:groups)if(sharesWith(g,o,pass,box,command,own,plan,scan))break;
             if(scan!=hit)verifyFail("route-key index finds another shared field than the full scan");
         }
 #endif
         return hit;
     }
+    // Does route f give every live member of g an estimate?
+    bool reachesMembers(const Group& g,const Field& f) const {
+        for(const int id:g.ids) {
+            const Unit* u=w.unit(id);
+            if(!u||!u->type||!u->alive())continue;
+            if(f.cellAt(footprintOrigin(u->x,u->type->footX),footprintOrigin(u->z,u->type->footZ))==kUnreached)return false;
+        }
+        return true;
+    }
+    // Does field f (on the same plane) hold every tile of corridor plan `rp`?
+    bool coversCorridor(const Field& f,const RoutePlan& rp,int shift) const {
+        if(f.shift!=shift||f.kind==KindChain)return false;
+        const int sx0=rp.box[0]>>shift,sz0=rp.box[1]>>shift,sw=(rp.box[2]>>shift)-sx0+1;
+        for(size_t i=0;i<rp.allow.size();++i) {
+            if(!rp.allow[i])continue;
+            const int sx=sx0+int(i%size_t(sw)),sz=sz0+int(i/size_t(sw));
+            if(sx<f.sx0||sz<f.sz0||sx>=f.sx0+f.sw||sz>=f.sz0+f.sh)return false;
+            if(!f.allow.empty()&&!f.allow[size_t(sz-f.sz0)*size_t(f.sw)+size_t(sx-f.sx0)])return false;
+        }
+        // The plan's cells lie in its own box; a window field must hold all of them, not just their tiles.
+        return f.kind==KindCorridor||(f.x0<=rp.box[0]&&f.z0<=rp.box[1]&&f.x0+f.fw-1>=rp.box[2]&&f.z0+f.fh-1>=rp.box[3]);
+    }
     // sharedField's test of one group: its field, then its next.
-    bool sharesWith(const Group& g,const Group& o,int pass,const std::array<int,4>& box,uint64_t command,bool own,std::shared_ptr<Field>& hit) const {
+    bool sharesWith(const Group& g,const Group& o,int pass,const std::array<int,4>& box,uint64_t command,bool own,const RoutePlan* plan,
+                    std::shared_ptr<Field>& hit) const {
         if(&o==&g||o.plane!=g.plane)return false;
         for(const auto* d:{&o.field,&o.next}) {
             const Field* f=d->get();
             if(!f||f->usable()!=(pass==0)||f->epoch!=epoch||w.tickCounter_-f->started>kStillScan)continue;
-            if(f->x0>box[0]||f->z0>box[1]||f->x0+f->fw-1<box[2]||f->z0+f->fh-1<box[3])continue;
+            if(!plan) {
+                if(f->kind!=KindWindow)continue;
+                if(f->x0>box[0]||f->z0>box[1]||f->x0+f->fw-1<box[2]||f->z0+f->fh-1<box[3])continue;
+            } else if(plan->kind==KindChain) {
+                // A finished chain to the same goals that already reaches every member of this group.
+                if(f->kind!=KindChain||!f->done||!reachesMembers(g,*f))continue;
+            } else if(!coversCorridor(*f,*plan,planes[size_t(g.plane)].hier.shift()))continue;
             if((f->command==kNoSoft)!=(command==kNoSoft)||f->ownArrivals!=own||(own&&f->command!=command))continue;
             if(f->seeds!=g.seeds)continue;
             // Equal charge lists (PLAN 3.3 F, C34): a field planned round
@@ -3314,26 +3627,31 @@ struct LegionNavigator::Impl {
             buildRing(g);
             startCharge+=navc.ringCells-before;
         }
-        const auto box=fieldWindow(g);
-        const size_t cells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
-        {
-            const uint64_t command=g.soft?g.command:kNoSoft;
-            const bool own=ownsArrivals(command);
-            if(auto shared=sharedField(g,box,command,own)) {
-                g.built=w.tickCounter_;++stats.fieldsShared;
-                if(!shared->done)(g.field?g.next:g.field)=std::move(shared);
-                else if(g.field) {
-                    if(g.next&&!g.next->done)++stats.refreshDiscards;
-                    ++stats.refreshCompleted;
-                    {auto oldField=std::move(g.field),oldNext=std::move(g.next);g.field=std::move(shared);orphan(oldField);orphan(oldNext);}
-                    g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);noteAwareInstall(g,*g.field);
-                }
-                else g.field=std::move(shared);
-                listGroup(g);
-                return Start::Shared;
+        const uint64_t command=g.soft?g.command:kNoSoft;
+        const bool own=ownsArrivals(command);
+        auto install=[&](std::shared_ptr<Field> shared) {
+            g.built=w.tickCounter_;++stats.fieldsShared;
+            if(!shared->done)(g.field?g.next:g.field)=std::move(shared);
+            else if(g.field) {
+                if(g.next&&!g.next->done)++stats.refreshDiscards;
+                ++stats.refreshCompleted;
+                {auto oldField=std::move(g.field),oldNext=std::move(g.next);g.field=std::move(shared);orphan(oldField);orphan(oldNext);}
+                g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);noteAwareInstall(g,*g.field);
             }
-        }
+            else g.field=std::move(shared);
+            listGroup(g);
+            return Start::Shared;
+        };
+        const auto window=fieldWindow(g);
+        if(auto shared=sharedField(g,window,command,own,nullptr))return install(std::move(shared));
         if(shareOnly)return Start::NoShare;
+        // Stage 6: the window, or a corridor through the hierarchy (planRoute; reused for kPlanReuse ticks of the
+        // same epoch and membership while the start waits for budget or room).
+        const RoutePlan& plan=routePlan(g,window);
+        if(plan.kind!=KindWindow)
+            if(auto shared=sharedField(g,plan.box,command,own,&plan))return install(std::move(shared));
+        const auto box=plan.box;
+        const size_t cells=plan.kind!=KindWindow?plan.cells:size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
         if(cells/NavBudget::kInitDiv>initRoom)return Start::NoBudget;
         const uint64_t want=uint64_t(cells)*NavSize::kCell32+uint64_t(g.seeds.size())*NavSize::kKeyed,allowance=fieldAllowance();
         while(liveFields()>=kMaxFieldCount||fieldBytes()+want>allowance) {
@@ -3386,13 +3704,24 @@ struct LegionNavigator::Impl {
         ++stats.fieldsStartedByKind[size_t(g.kind)&15];
         f->liftAllied=std::any_of(liftSoftPlayers.begin(),liftSoftPlayers.end(),
             [&](int owner) {return w.allied(owner,int(uint32_t(f->command>>32)));});
-        f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,gSectorShift);
+        if(plan.kind==KindCorridor) {
+            f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,planes[size_t(g.plane)].hier.shift());
+            f->allow=plan.allow;f->kind=KindCorridor;f->corridorSig=plan.sig;++acct.corridors;
+        } else if(plan.kind==KindChain) {
+            // The destination's own field first (dAllow), then the transit tiles (advanceChain).
+            f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,planes[size_t(g.plane)].hier.shift());
+            f->allow=plan.allow;f->dAllow=plan.dAllow;f->chain=plan.nodes;f->kind=KindChain;f->corridorSig=plan.sig;
+            f->chainTransit=plan.transit;f->attached.assign(plan.nodes.size(),0);f->repairing.assign(plan.nodes.size(),0);
+            f->offset.assign(f->tiles.size(),0);f->fin.assign(f->tiles.size(),0);
+            ++acct.chains;
+        } else f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,gSectorShift);
         f->counted=cells;
+        g.plan.reset();g.planTick=kNoTick;   // built: the next build plans afresh
         navc.initCells+=cells;acct.initMax=std::max<uint64_t>(acct.initMax,cells);
         startCharge+=cells/NavBudget::kInitDiv;
         f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;
         f->lastServed=w.tickCounter_;
-        {const auto whole=fieldWindow(g,true);f->bounded=whole!=box;}
+        {const auto whole=fieldWindow(g,true);f->bounded=plan.kind!=KindWindow||whole!=box;}
         if(g.bodyMaxX>=g.bodyMinX) {f->aimed=true;f->tx=(g.bodyMinX+g.bodyMaxX)/2;f->tz=(g.bodyMinZ+g.bodyMaxZ)/2;}
         for(int s:g.seeds) {
             if(!f->inside(s%f->W,s/f->W))continue;
@@ -3411,6 +3740,7 @@ struct LegionNavigator::Impl {
     // buckets suffice). Seeds enter
     // in key order.
     uint64_t advance(Field& f,uint64_t budget) {
+        if(f.kind==KindChain&&f.dDone)return advanceChain(f,budget);
         const auto& p=planes[size_t(f.plane)];
         const int W=width();uint64_t spent=0;
         while((f.queued||f.seedNext<f.seedKeys.size())&&spent<budget) {
@@ -3433,6 +3763,8 @@ struct LegionNavigator::Impl {
                 // Outside the window only after a static change mid-build
                 // (the field is then stale and rebuilt on the new plane).
                 if(!f.inside(x+d[0],z+d[1]))continue;
+                // A chain's own field covers its destination's tiles only (stage 6).
+                if(!f.dAllow.empty()&&!f.dAllow[f.tileOf(x+d[0],z+d[1])])continue;
                 const uint32_t slot=f.cellAt(x+d[0],z+d[1]);
                 if(g+base>=slot)continue;   // no charge can improve it
 #ifndef NDEBUG
@@ -3454,12 +3786,309 @@ struct LegionNavigator::Impl {
             }
         }
         if(!f.queued&&f.seedNext>=f.seedKeys.size()) {
-            f.done=true;++fieldsDone;for(auto& b:f.buckets)std::vector<int>().swap(b);std::vector<std::pair<uint32_t,int>>().swap(f.seedKeys);
+            for(auto& b:f.buckets)std::vector<int>().swap(b);
+            std::vector<std::pair<uint32_t,int>>().swap(f.seedKeys);
+            if(f.kind==KindChain) {
+                // The destination's field is done: its values are final; the transit tiles follow.
+                f.dDone=true;
+                f.work+=spent;f.syncInflight();
+                return spent+(spent<budget?advanceChain(f,budget-spent):0);
+            }
+            f.done=true;++fieldsDone;
             f.demand.clear();
         }
         f.work+=spent;
         f.syncInflight();
         return spent;
+    }
+    // ---- stage 6: the chain's transit tiles ---------------------------------------------------------------------
+    // Attach the chain's transit regions in plan order (every parent before its children), one tile each, until the
+    // budget is spent; the halo regions after them wait until a member steps into one (repairs). A region whose
+    // sector (or the portal's other sector) has been relabelled since the plan stays off the route (and so do the
+    // regions leading into it): the route was touched by that change (staticChanged), its group refreshes, and a
+    // member it does not reach waits for that refresh (move). Returns the work (tile builds, key cells, attaches).
+    uint64_t advanceChain(Field& f,uint64_t budget) {
+        uint64_t spent=0;
+        while(f.chainNext<f.chainTransit&&spent<budget) {
+            attachNode(f,f.chainNext,spent);
+            ++f.chainNext;
+        }
+        if(f.chainNext>=f.chainTransit) {
+            f.done=true;++fieldsDone;f.demand.clear();
+#ifndef NDEBUG
+            if(gVerify)verifyDescent(f);
+#endif
+        }
+        navc.tileBuild+=spent;
+        f.work+=spent+1;   // the version: estimates changed
+        return spent;
+    }
+#ifndef NDEBUG
+    // TAK_LEGION_VERIFY: on a finished chain every cell with an estimate above 0 has a legal step to a neighbour
+    // whose estimate is strictly lower (so every descent strictly lowers the estimate, across tiles too, and ends on
+    // a goal: no loop, no false minimum).
+    void verifyDescent(const Field& f) const {
+        const auto& p=planes[size_t(f.plane)];
+        const int W=width();
+        for(int z=f.z0;z<f.z0+f.fh;++z)for(int x=f.x0;x<f.x0+f.fw;++x) {
+            const uint32_t v=f.cellAt(x,z);
+            if(v==kUnreached||v==0)continue;
+            bool lower=false;
+            for(const auto& d:kDirections)
+                if(step(p,x,z,d[0],d[1])&&f.cellAt(x+d[0],z+d[1])<v) {lower=true;break;}
+            if(!lower) {
+                std::fprintf(stderr,"TAK_LEGION_VERIFY: chain %llu cell (%d,%d) estimate %u has no lower neighbour\n",
+                             (unsigned long long)f.serial,x,z,v);
+                verifyFail("a chain's estimate has a local minimum off its goals");
+            }
+            (void)W;
+        }
+    }
+#endif
+    // Attach chain node `idx` (a transit region, or a halo region a member stepped into): build or find its tile,
+    // compute its offset and read it. False when it stays off the route: nothing to lead into, out of range, or its
+    // geometry relabelled since the plan (counted as an abandon).
+    bool attachNode(Field& f,size_t idx,uint64_t& spent) {
+        auto& p=planes[size_t(f.plane)];
+        const int W=width();
+        const ChainNode& n=f.chain[idx];
+        const int other=n.onA?n.exit.b:n.exit.a;
+        if(!p.hier.built(n.s)||p.hier.gen(n.s)!=n.gen||!p.hier.built(other)||p.hier.gen(other)!=n.ngen) {
+            ++acct.chainAbandons;return false;
+        }
+        if(n.parent>=0&&!f.attached[size_t(n.parent)]) {++acct.chainSkips;return false;}
+        Tile key;
+        key.plane=p.hier.id();key.sector=n.s;key.region=n.r;key.gen=n.gen;key.ngen=n.ngen;key.exit=n.exit;key.onA=n.onA;
+        key.classSig=classSig(p);
+        // The seeds (the portal's other side) and the route's estimate there (its destination field, or the tile
+        // already attached for the region the portal leads into).
+        const int len=n.exit.len;
+        std::vector<int> seed(static_cast<size_t>(len));
+        std::vector<uint32_t> est(static_cast<size_t>(len));
+        bool all=true;
+        for(int i=0;i<len;++i) {
+            seed[size_t(i)]=n.onA?p.hier.farCell(n.exit,i):p.hier.nearCell(n.exit,i);
+            est[size_t(i)]=f.cellAt(seed[size_t(i)]%W,seed[size_t(i)]/W);
+            all&=est[size_t(i)]!=kUnreached;
+        }
+        spent+=uint64_t(len);
+        key.boundary.assign(size_t(len),kUnreached);
+        if(n.parent>=0&&all) {
+            // Aimed: toward the exit of the region it leads into, so the tile is that of every route leaving this
+            // region by this portal toward that exit, whatever its destination. The boundary cost is LINEAR along
+            // the run, falling toward the aim's side: kOrthogonal per cell of the seeds' projection onto the
+            // direction from the run's middle to the aim. The field's lanes then run parallel in that direction (a
+            // straight way crosses an edge square on, a turn cuts its corner diagonally), not radially into one
+            // point (an octile distance to the aim drew every body of a squad into the middle of each portal).
+            const ChainNode& par=f.chain[size_t(n.parent)];
+            key.aim=p.hier.midCell(par.exit,par.s);
+            const int mid=seed[size_t(len/2)];
+            const int64_t dx=key.aim%W-mid%W,dz=key.aim/W-mid/W;
+            const int64_t norm=std::max<int64_t>(1,isqrtFloor(uint64_t(dx*dx+dz*dz)));
+            int64_t top=INT64_MIN;
+            std::vector<int64_t> t(static_cast<size_t>(len));
+            for(int i=0;i<len;++i) {
+                t[size_t(i)]=(seed[size_t(i)]%W-mid%W)*dx+(seed[size_t(i)]/W-mid/W)*dz;
+                top=std::max(top,t[size_t(i)]);
+            }
+            for(int i=0;i<len;++i)key.boundary[size_t(i)]=uint32_t(int64_t(kOrthogonal)*(top-t[size_t(i)])/norm);
+        } else key.boundary=est;   // exact: the route's own values (kUnreached: no seed there)
+        // The region's soft levels as this route's command sees them (the soft rule is part of the key).
+        const auto r=p.hier.rect(n.s);
+        if(softCellCount) {
+            for(int z=r[1];z<r[3];++z)for(int x=r[0];x<r[2];++x) {
+                if(p.hier.regionAt(z*W+x)!=n.r)continue;
+                const int lv=softLevel(x,z,p.footX,p.footZ,f.command,f.softCounts,f.ownArrivals,f.liftAllied);
+                if(lv)key.soft.push_back({uint16_t(((z-r[1])<<p.hier.shift())|(x-r[0])),uint8_t(lv)});
+            }
+            spent+=uint64_t(r[2]-r[0])*uint64_t(r[3]-r[1]);
+        }
+        // The route's mover corridors that charge some origin of the region (group awareness) are part of the key:
+        // the tile is then this route's local correction; a region no corridor reaches keeps the shared tile.
+        for(const Corridor& c:f.avoid) {
+            bool reaches=false;
+            for(int z=r[1];z<r[3]&&!reaches;++z)for(int x=r[0];x<r[2]&&!reaches;++x)
+                reaches=p.hier.regionAt(z*W+x)==n.r&&corridorChargeOf({c},x,z,p.footX,p.footZ,kOrthogonal)>0;
+            spent+=uint64_t(r[2]-r[0])*uint64_t(r[3]-r[1]);
+            if(reaches)key.avoid.push_back(c);
+        }
+        uint64_t built=0;
+        const std::shared_ptr<Tile> tile=tileFor(std::move(key),p,built);
+        spent+=built;
+        // The offset: the largest (estimate - boundary cost) over the seeds, so a cell beside a seed reads more than
+        // the seed itself and every descent step lowers the estimate (an exact tile's is 0).
+        int64_t rem=0;
+        bool any=false;
+        for(int i=0;i<len;++i) {
+            if(tile->boundary[size_t(i)]==kUnreached||est[size_t(i)]==kUnreached)continue;
+            const int64_t d=int64_t(est[size_t(i)])-int64_t(tile->boundary[size_t(i)]);
+            rem=any?std::max(rem,d):d;any=true;
+        }
+        if(!any||int64_t(tile->maxValue)+rem>=int64_t(kUnreached)-1||int64_t(tile->maxValue)+rem<0) {++acct.chainSkips;return false;}
+        attachTile(f,n,tile,rem);
+        f.attached[idx]=1;
+        f.softened|=!tile->soft.empty();
+        return true;
+    }
+    // A member stands in a region of its group's chain's halo that is not attached yet: queue the repair (served in
+    // tick() before the field quota, charged to it). True when the region is a halo region of the chain.
+    bool requestRepair(Group& g,Field& f,int cell) {
+        const auto& p=planes[size_t(f.plane)];
+        const int s=p.hier.sectorOfCell(cell);
+        if(!p.hier.built(s))return false;
+        const uint16_t r=p.hier.regionAt(cell);
+        for(size_t i=f.chainTransit;i<f.chain.size();++i) {
+            const ChainNode& n=f.chain[i];
+            if(n.s!=s||n.r!=r||n.gen!=p.hier.gen(s))continue;
+            if(f.attached[i])return false;
+            if(!f.repairing[i]) {f.repairing[i]=1;repairs.push_back({g.id,f.serial,i});}
+            return true;
+        }
+        return false;
+    }
+    struct Repair {int group=0;uint64_t serial=0;size_t node=0;};
+    std::deque<Repair> repairs;   // halo regions to attach, in request order (hashed while not empty)
+    void serveRepairs(uint64_t& budget) {
+        while(!repairs.empty()&&budget>0) {
+            const Repair r=repairs.front();
+            repairs.pop_front();
+            const auto g=groups.find(r.group);
+            if(g==groups.end()||!g->second.field||g->second.field->serial!=r.serial)continue;
+            Field& f=*g->second.field;
+            f.repairing[r.node]=0;
+            if(f.attached[r.node])continue;
+            uint64_t spent=0;
+            if(attachNode(f,r.node,spent)) {
+                ++acct.chainRepairs;
+#ifndef NDEBUG
+                if(gVerify)verifyDescent(f);
+#endif
+            }
+            navc.tileBuild+=spent;
+            f.work+=spent+1;
+            budget-=std::min(budget,spent);
+        }
+    }
+    // Read tile `t` for region n of chain f at offset rem. A sector the route already holds a tile in (its
+    // destination field's, or another region's) gets one tile of its own holding both: the cells the new tile
+    // reaches that read nothing yet take its values plus rem.
+    static uint64_t classSig(const Plane& p) {
+        uint64_t h=mix(0x636c617373ull,uint64_t(uint32_t(p.footX))<<32|uint32_t(p.footZ));
+        h=mix(h,uint64_t(uint32_t(p.maxDepth))<<32|uint32_t(p.minDepth));h=mix(h,uint64_t(uint32_t(p.maxSlope))<<32|uint32_t(p.maxWaterSlope));
+        return mix(h,p.legacy);
+    }
+    void attachTile(Field& f,const ChainNode& n,const std::shared_ptr<Tile>& t,int64_t rem) {
+        const auto& p=planes[size_t(f.plane)];
+#ifndef NDEBUG
+        if(gVerify&&t->classSig!=classSig(p))verifyFail("a chain read a tile built for another mobility class");
+#endif
+        const auto r=p.hier.rect(n.s);
+        const size_t ti=f.tileOf(r[0],r[1]);
+        if(!f.tiles[ti]) {
+            f.tiles[ti]=t->values.data();f.offset[ti]=rem;f.fin[ti]=1;
+        } else {
+            const size_t cells=f.tileCells();
+            if(!f.own[ti]||f.tiles[ti]!=f.own[ti].get()) {
+                std::unique_ptr<uint32_t[]> mine(new uint32_t[cells]);
+                for(size_t c=0;c<cells;++c) {
+                    const uint32_t v=f.tiles[ti][c];
+                    mine[c]=v==kUnreached?kUnreached:uint32_t(int64_t(v)+f.offset[ti]);
+                }
+                f.own[ti]=std::move(mine);f.tiles[ti]=f.own[ti].get();f.offset[ti]=0;++f.ownTiles;
+            }
+            for(size_t c=0;c<cells;++c)
+                if(t->values[c]!=kUnreached&&f.own[ti][c]==kUnreached)f.own[ti][c]=uint32_t(int64_t(t->values[c])+rem);
+            f.fin[ti]=1;
+        }
+        ++t->routes;t->lastUse=w.tickCounter_;
+        f.held.push_back(t);
+    }
+    // The cache of shared tiles: a hit is a tile whose whole key equals this one; a miss builds it (Dijkstra over
+    // the region from its seeds) and inserts it, then unreferenced tiles are evicted oldest-use first while the cache
+    // holds more than kTileBytes. `built` gains the build's relaxations (0 on a hit).
+    static constexpr uint64_t kTileBytes=uint64_t(64)<<20;
+    std::map<uint64_t,std::vector<std::shared_ptr<Tile>>> tileCache;
+    uint64_t tileBytes=0,tileSeq=0,tileDigest=0;
+    size_t tileCount=0;
+    static uint64_t tileHash(const Tile& t) {
+        uint64_t h=mix(0x74696c65ull,uint64_t(t.plane.slot)<<32|t.plane.generation);
+        h=mix(h,uint64_t(uint32_t(t.sector))<<16|t.region);h=mix(h,uint64_t(t.gen)<<32|t.ngen);
+        h=mix(h,uint64_t(uint32_t(t.exit.a))<<32|uint32_t(t.exit.b));h=mix(h,uint64_t(t.exit.ra)<<48|uint64_t(t.exit.rb)<<32|uint64_t(t.exit.side)<<24|uint64_t(t.onA));
+        h=mix(h,uint64_t(uint32_t(t.exit.start))<<32|uint32_t(t.exit.len));h=mix(h,uint64_t(uint32_t(t.aim)));
+        for(const uint32_t b:t.boundary)h=mix(h,b);
+        for(const auto& [c,l]:t.soft)h=mix(h,uint64_t(c)<<8|l);
+        for(const auto& c:t.avoid) {h=mix(h,uint64_t(c.x0)^uint64_t(c.z0)<<20^uint64_t(c.x1)<<40);h=mix(h,uint64_t(c.z1)^uint64_t(c.r)<<32^uint64_t(c.behind)<<63);
+                                    h=mix(h,uint64_t(c.ux)^uint64_t(c.uz)<<20^uint64_t(c.L)<<40);h=mix(h,uint64_t(c.len)^uint64_t(c.speed)<<24^uint64_t(c.lead)<<48);}
+        return h;
+    }
+    std::shared_ptr<Tile> tileFor(Tile&& key,const Plane& p,uint64_t& built) {
+        key.hash=tileHash(key);
+        auto& bucket=tileCache[key.hash];
+        for(const auto& t:bucket)
+            if(t->sameKey(key)) {t->lastUse=w.tickCounter_;++acct.tileHits;return t;}
+        auto t=std::make_shared<Tile>(std::move(key));
+        built+=buildTile(*t,p);
+        t->seq=++tileSeq;t->lastUse=w.tickCounter_;
+        bucket.push_back(t);
+        tileBytes+=t->bytes();++tileCount;++acct.tilesBuilt;
+        tileDigest+=mix(t->hash,t->seq);
+        acct.tileBytesPeak=std::max(acct.tileBytesPeak,tileBytes);
+        if(tileBytes>kTileBytes)evictTiles();
+        return t;
+    }
+    uint64_t buildTile(Tile& t,const Plane& p) {
+        const int W=width(),sh=p.hier.shift(),K=1<<sh;
+        const auto r=p.hier.rect(t.sector);
+        t.values.assign(size_t(K)*size_t(K),kUnreached);
+        std::vector<uint8_t> level(size_t(K)*size_t(K),0);
+        for(const auto& [c,l]:t.soft)level[c]=l;
+        using Item=std::pair<uint32_t,int>;
+        std::priority_queue<Item,std::vector<Item>,std::greater<Item>> open;
+        std::map<int,uint32_t> seedAt;
+        for(int i=0;i<t.exit.len;++i) {
+            if(t.boundary[size_t(i)]==kUnreached)continue;
+            const int c=t.onA?p.hier.farCell(t.exit,i):p.hier.nearCell(t.exit,i);
+            seedAt[c]=t.boundary[size_t(i)];
+            open.push({t.boundary[size_t(i)],c});
+        }
+        auto inRegion=[&](int x,int z) {return x>=r[0]&&z>=r[1]&&x<r[2]&&z<r[3]&&p.hier.regionAt(z*W+x)==t.region;};
+        uint64_t work=0;
+        while(!open.empty()) {
+            const auto [d,c]=open.top();
+            open.pop();
+            const int x=c%W,z=c/W;
+            const bool mine=inRegion(x,z);
+            if(mine) {if(t.values[size_t(((z-r[1])<<sh)|(x-r[0]))]!=d)continue;}
+            else if(seedAt[c]!=d)continue;
+            for(const auto& dir:kDirections) {
+                ++work;
+                const int nx=x+dir[0],nz=z+dir[1];
+                if(!inRegion(nx,nz)||!step(p,x,z,dir[0],dir[1]))continue;
+                const size_t lc=size_t(((nz-r[1])<<sh)|(nx-r[0]));
+                const uint32_t base=dir[0]&&dir[1]?kDiagonal:kOrthogonal;
+                const uint32_t lv=level[lc];
+                const uint32_t nd=d+(lv==2?base*kSoftFactor:lv==1?base*kSoftNear:base)+
+                    (t.avoid.empty()?0:corridorChargeOf(t.avoid,nx,nz,p.footX,p.footZ,base));
+                if(nd<d||nd>=kUnreached)continue;   // out of range (an exact seed near kUnreached)
+                if(nd<t.values[lc]) {t.values[lc]=nd;open.push({nd,nz*W+nx});}
+            }
+        }
+        for(const uint32_t v:t.values)if(v!=kUnreached)t.maxValue=std::max(t.maxValue,v);
+        return work;
+    }
+    void evictTiles() {
+        std::vector<std::pair<std::pair<uint32_t,uint64_t>,uint64_t>> old;   // ((lastUse, seq), hash)
+        for(const auto& [h,bucket]:tileCache)for(const auto& t:bucket)if(!t->routes)old.push_back({{t->lastUse,t->seq},h});
+        std::sort(old.begin(),old.end());
+        for(const auto& [age,h]:old) {
+            if(tileBytes<=kTileBytes/10*9)break;
+            auto& bucket=tileCache[h];
+            for(size_t i=0;i<bucket.size();++i)if(bucket[i]->seq==age.second) {
+                tileBytes-=bucket[i]->bytes();--tileCount;tileDigest-=mix(bucket[i]->hash,bucket[i]->seq);++acct.tileEvictions;
+                bucket.erase(bucket.begin()+long(i));break;
+            }
+            if(bucket.empty())tileCache.erase(h);
+        }
     }
     // ---- paused first builds (T7 C1) ------------------------------------
     // A group whose first field may pause once its members are planned: no
@@ -3481,6 +4110,7 @@ struct LegionNavigator::Impl {
     // tests that exercise those consumers on paused routes.
     bool pausable(const Group& g) const {
         if(g.field&&g.field->runOn)return false;
+        if(g.field&&g.field->kind==KindChain)return false;   // a chain's destination field is small; its tiles are whole
         if(gPauseAll)return true;
         if(g.kind==Kind::Attack||g.kind==Kind::Guard)return false;
         if(!policy(g.kind).area||g.approach)return true;
@@ -3729,7 +4359,14 @@ struct LegionNavigator::Impl {
         if(b[2]<0)return false;
         for(const Field* f:{g.field.get(),g.next.get()}) {
             if(!f)continue;
-            if(b[0]<=f->x0+f->fw&&b[2]>=f->x0-1&&b[1]<=f->z0+f->fh&&b[3]>=f->z0-1)return true;
+            if(!(b[0]<=f->x0+f->fw&&b[2]>=f->x0-1&&b[1]<=f->z0+f->fh&&b[3]>=f->z0-1))continue;
+            if(f->allow.empty())return true;
+            // Stage 6: a corridor or chain holds only its listed tiles; a change one cell or more from all of them
+            // reaches none of its steps (the same argument as the box), so only those tiles are tested.
+            const int x0=std::max(b[0]-1,f->x0),z0=std::max(b[1]-1,f->z0),x1=std::min(b[2]+1,f->x0+f->fw-1),z1=std::min(b[3]+1,f->z0+f->fh-1);
+            if(x0>x1||z0>z1)continue;
+            for(int sz=z0>>f->shift;sz<=z1>>f->shift;++sz)for(int sx=x0>>f->shift;sx<=x1>>f->shift;++sx)
+                if(f->allow[size_t(sz-f->sz0)*size_t(f->sw)+size_t(sx-f->sx0)])return true;
         }
         return false;
     }
@@ -4425,6 +5062,7 @@ struct LegionNavigator::Impl {
         uint64_t budget=kFieldQuota,visits=0;
         probeListSum+=waitedIds.size()+buildingIds.size()+needFieldIds.size()+staleDoneIds.size();
         probeGroupSum+=groups.size();
+        serveRepairs(budget);   // stage 6: halo tiles members stepped onto (cheap, and a member waits for each)
         serveFields(budget,visits);
         stats.schedGroupVisits+=visits;stats.groupLoopIters+=visits;
         // The longest run of ticks whose whole field quota went to work.
@@ -4779,7 +5417,7 @@ struct LegionNavigator::Impl {
             if(!first&&pairs+work>=budgetOf(NavBudget::kAwareBudget)) {paused=true;break;}
             first=false;awCursor=id;
             const auto a=acc.find(id);
-            std::vector<uint64_t> want;std::vector<Field::Corridor> seg;std::vector<uint8_t> kind;
+            std::vector<uint64_t> want;std::vector<Corridor> seg;std::vector<uint8_t> kind;
             std::vector<int8_t> side;std::vector<uint32_t> placed;std::vector<uint8_t> moved;
             // Stage 5: a usable route serves awareness once the way ahead of
             // the centroid is settled (kAwareCover of key: a need on a paused
@@ -4896,10 +5534,10 @@ struct LegionNavigator::Impl {
                         // Pass behind (G2, user decision 5): the stream's band,
                         // swept in time from its tail to kAwareHorizon past its
                         // head, as wide as the stream plus 16 px (see
-                        // Field::Corridor). The later group never waits at the
+                        // Corridor). The later group never waits at the
                         // stream's edge: it takes the longer way behind it.
                         auto behind=[&]() {
-                            return Field::Corridor{mv.cx-mv.dx*mv.tail/mv.L,mv.cz-mv.dz*mv.tail/mv.L,cx,cz,mv.half+16,true,
+                            return Corridor{mv.cx-mv.dx*mv.tail/mv.L,mv.cz-mv.dz*mv.tail/mv.L,cx,cz,mv.half+16,true,
                                 mv.dx,mv.dz,mv.L,mv.tail+mv.head+mv.L*kAwareHorizon/int64_t(kAwareScan),speed,2*rG};
                         };
                         // A crossing the group gives way to stays planned until
@@ -4910,8 +5548,8 @@ struct LegionNavigator::Impl {
                         // kBehindMove ticks.
                         if(isKnown&&g.avoidKind[ki]==kAwareCross) {
                             if(qg*g.avoidSide[ki]<=0||sg<-(mv.tail+rG+32))continue;
-                            Field::Corridor cor=behind();
-                            const Field::Corridor& was=g.avoidSeg[ki];
+                            Corridor cor=behind();
+                            const Corridor& was=g.avoidSeg[ki];
                             // The planned tail, carried to now, against the live one.
                             const int64_t gone=int64_t(awStarted-g.avoidAt[ki]);   // the snapshot's time (a resumed scan)
                             const int64_t drift=std::max(std::abs(cor.x0-was.x0-was.ux*gone/int64_t(kAwareScan)),std::abs(cor.z0-was.z0-was.uz*gone/int64_t(kAwareScan)));
@@ -4960,7 +5598,7 @@ struct LegionNavigator::Impl {
                             side.push_back(qg<0?-1:1);placed.push_back(awStarted);moved.push_back(true);
                             continue;
                         }
-                        Field::Corridor cor{mv.cx,mv.cz,mv.ax,mv.az,mv.r};
+                        Corridor cor{mv.cx,mv.cz,mv.ax,mv.az,mv.r};
                         // Head on: keep right (plan round a corridor shifted left).
                         {
                             const int64_t tl=std::max<int64_t>(1,isqrtFloor(uint64_t(tx*tx+tz*tz)));
@@ -4979,7 +5617,7 @@ struct LegionNavigator::Impl {
             // Hysteresis: a mover leaves the plan only after kAwareKeep
             // scans off the way; a new one re-plans at once.
             bool replan=false;
-            std::vector<uint64_t> cmd;std::vector<Field::Corridor> keep;std::vector<uint8_t> off,cls;
+            std::vector<uint64_t> cmd;std::vector<Corridor> keep;std::vector<uint8_t> off,cls;
             std::vector<int8_t> sides;std::vector<uint32_t> ats;
             for(size_t i=0;i<g.avoidCmd.size();++i) {
                 const auto at=std::find(want.begin(),want.end(),g.avoidCmd[i]);
@@ -7200,9 +7838,21 @@ struct LegionNavigator::Impl {
         // steering this body by the old field, which cannot reach it. (A
         // refresh does finish under constant static churn, about every 85
         // ticks since the quarter-quota allowance, kRefreshQuota.)
+        // Stage 6: a corridor rebuilds round the body first (its plan takes every member's region again), at most
+        // kMaxWiden times; then the whole component's window takes over, as for any bounded window.
         if(const RouteView r=view(g.field.get());r&&r.bounded()&&!g.full&&(!r.inside(ox,oz)||(r.complete()&&r.estimate(size_t(here))==kUnreached))) {
+            // A chain's halo region: attach its tile (a repair, next tick) instead of rebuilding.
+            if(g.field->kind==KindChain&&r.complete()&&requestRepair(g,*g.field,here)) {m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;}
+            // A corridor or chain a static change touched (its group is stale): the body is unknown to it, not cut
+            // off; it waits for the refresh (demanded at once) instead of widening.
+            if(g.field->kind!=KindWindow&&g.field->touched&&g.stale) {
+                if(!g.demand) {g.demand=true;listGroup(g);}
+                m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
+            }
             if(g.next&&!g.next->done)++stats.refreshDiscards;
-            g.full=true;g.field.reset();g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);listGroup(g);
+            if(g.field->kind!=KindWindow&&g.widens<kMaxWiden) {++g.widens;++acct.corridorWidens;}
+            else g.full=true;
+            g.field.reset();g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);listGroup(g);
             m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
         }
         // The holder rule (approachSettled): checked before routes and
@@ -9556,6 +10206,9 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(p.head)<<32|uint32_t(p.nextLabel));
         }
         h=mix(h,uint64_t(nextGroup));
+        // Stage 6: the shared tile cache (which tiles a chain finds decides the work it is charged), and repairs.
+        if(tileCount) {h=mix(h,0x74696c6573ull);h=mix(h,uint64_t(tileCount));h=mix(h,tileDigest);}
+        for(const auto& r:repairs) {h=mix(h,0x726570616972ull^uint64_t(uint32_t(r.group))<<16);h=mix(h,r.serial);h=mix(h,uint64_t(r.node));}
         for(const auto& [id,g]:groups) {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(g.player));h=mix(h,g.issuedTick);
             h=mix(h,uint64_t(uint32_t(g.minX))<<32|uint32_t(g.minZ));h=mix(h,uint64_t(uint32_t(g.maxX))<<32|uint32_t(g.maxZ));
@@ -9570,7 +10223,17 @@ struct LegionNavigator::Impl {
             h=mix(h,g.lastUse);
             h=mix(h,g.built);
             if(g.field) {h=mix(h,g.field->work);h=mix(h,g.field->done);h=mix(h,g.field->epoch);h=mix(h,g.field->current);h=mix(h,g.field->bounded);h=mix(h,g.field->started);
-                         if(!g.field->done) {h=mix(h,uint64_t(g.field->deficit));h=mix(h,g.field->lastServed);}}
+                         if(!g.field->done) {h=mix(h,uint64_t(g.field->deficit));h=mix(h,g.field->lastServed);}
+                         if(g.field->kind) {h=mix(h,0x6b696e64ull^uint64_t(g.field->kind)<<56);h=mix(h,g.field->corridorSig);
+                                            if(g.field->kind==KindChain) {
+                                                h=mix(h,uint64_t(g.field->chainNext)<<1|g.field->dDone);
+                                                for(size_t i=g.field->chainTransit;i<g.field->chain.size();++i)if(g.field->attached[i])h=mix(h,0x68616c6full^i);
+                                            }}}
+            if(g.next&&g.next->kind) {h=mix(h,0x6e6b696e64ull^uint64_t(g.next->kind)<<56);h=mix(h,g.next->corridorSig);}
+            // Stage 6: a plan held for the next build, and corridor widenings.
+            if(g.plan&&g.planTick!=kNoTick) {h=mix(h,0x706c616eull);h=mix(h,uint64_t(g.planTick)<<8|g.plan->kind);h=mix(h,g.plan->sig);}
+            if(g.widens)h=mix(h,0x7769646e73ull^uint64_t(g.widens)<<48);
+            if(g.routeMode)h=mix(h,0x6d6f6465ull^uint64_t(g.routeMode)<<48);
             // Start requests (stage 4): their age and a refusal stamp, while set.
             if(g.requestTick!=kNoTick) {h=mix(h,0x726571756573ull);h=mix(h,g.requestTick);}
             if(g.blockedSince!=NavAdmit::kNever) {h=mix(h,0x626c6f636bull);h=mix(h,g.blockedSince);}
