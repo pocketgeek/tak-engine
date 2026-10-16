@@ -1514,6 +1514,14 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(geometry_stages_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(geometry_stages_test PRIVATE ${_tak_sdl2})
     add_test(NAME geometry_stages COMMAND geometry_stages_test)
+    # Shadow silhouette tile reuse (workstream E): a tile is kept exactly when its
+    # raster inputs (pre-E expressions) are bit-identical, across every invalidation
+    # cause; body-only local inputs are separated from the shadow's.
+    add_executable(shadow_tiles_test tools/shadow_tiles_test.cpp)
+    target_include_directories(shadow_tiles_test PRIVATE src)
+    target_compile_definitions(shadow_tiles_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(shadow_tiles_test PRIVATE ${_tak_sdl2})
+    add_test(NAME shadow_tiles COMMAND shadow_tiles_test)
     add_executable(geometrysubmit_test tools/geometrysubmit_test.cpp)
     target_include_directories(geometrysubmit_test PRIVATE src)
     target_compile_definitions(geometrysubmit_test PRIVATE SDL_MAIN_HANDLED)

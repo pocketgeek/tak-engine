@@ -72,6 +72,32 @@ struct LocalKeyLayout {
     uint32_t poseBegin = 0;
 };
 
+// ---- shadow inputs (workstream E) -------------------------------------------
+// The shadow silhouette reads every local input except two that only the body
+// reads: the colour atlas (word 3: body UVs) and the frames of animated textures
+// that carry no shadow mask (their frame recolours the body; a masked texture's
+// frame selects the cutout, so it stays a shadow input). `frameMasks` is the
+// visual's flag per animated texture, parallel to the frame words (1 = masked);
+// any other frame-word count (TAK_TEXTURE_TICK_REFERENCE's single tick word)
+// compares every frame word. Exact word comparison; never a hash.
+inline constexpr size_t kLocalKeyAtlasWord = 3;
+inline bool shadowInputsEqual(std::span<const uint64_t> before, LocalKeyLayout beforeLayout,
+                              std::span<const uint64_t> after, LocalKeyLayout afterLayout,
+                              std::span<const uint8_t> frameMasks) {
+    if (before.size() != after.size() || beforeLayout.poseBegin != afterLayout.poseBegin ||
+        after.size() < kLocalKeyFixedWords || afterLayout.poseBegin < kLocalKeyFixedWords ||
+        afterLayout.poseBegin > after.size())
+        return false;
+    for (size_t i = 0; i < kLocalKeyFixedWords; ++i)
+        if (i != kLocalKeyAtlasWord && before[i] != after[i]) return false;
+    const size_t frames = afterLayout.poseBegin - kLocalKeyFixedWords;
+    const bool mapped = frames == frameMasks.size();
+    for (size_t f = 0; f < frames; ++f)
+        if ((!mapped || frameMasks[f]) && before[kLocalKeyFixedWords + f] != after[kLocalKeyFixedWords + f])
+            return false;
+    return std::equal(before.begin() + afterLayout.poseBegin, before.end(), after.begin() + afterLayout.poseBegin);
+}
+
 // ---- material stage key ----------------------------------------------------
 enum MaterialWord : size_t {
     kMaterialVeteran, kMaterialGhost, kMaterialConjuring, kMaterialEmote, kMaterialEmoteColour,
