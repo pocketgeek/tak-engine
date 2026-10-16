@@ -651,6 +651,11 @@ private:
     // One OrderBegin/OrderMembers/OrderCommit/OrderAbort frame (server/orders.h);
     // false: malformed, the caller fails the connection.
     bool handleOrderFrame(Client& c, Room& r, const Frame& f);
+    // Msg::InputDropped: `commands` of a PlayerCommands message, or the order
+    // transaction `serial`, were dropped and will never come back in a bundle.
+    static void sendInputDropped(Client& c, uint32_t commands, uint32_t serial) {
+        Writer w; w.u32(commands); w.u32(serial); c.conn.send(Msg::InputDropped, w);
+    }
     // The player-input budgets, all or nothing: `bytes` of frames against the
     // client's, its account's (or address's) and the server's byte budgets, and
     // `count` commands (an order's members count as commands) against the three
@@ -2045,10 +2050,15 @@ bool Server::handleOrderFrame(Client& c, Room& r, const Frame& f) {
         c.orders.queued(tak::net::orderRecordBytes(*order));
         cmd.order = std::move(order);
         c.cmdQueue.push_back(std::move(cmd));
-    } else if (result == R::Dropped && now - c.ordersLogAt >= 5000 && commandLogs_.take(now, 4)) {
-        c.ordersLogAt = now;
-        std::fprintf(stderr, "client %u: order budget/queue exceeded; dropped %llu orders total\n", c.id,
-                     (unsigned long long)c.orders.dropped());
+    } else if (result == R::Dropped) {
+        // Never acknowledged by a bundle, so the client must hear of it: its window
+        // releases the order (otherwise it would hold its place there for good).
+        sendInputDropped(c, 0, c.orders.droppedSerial());
+        if (now - c.ordersLogAt >= 5000 && commandLogs_.take(now, 4)) {
+            c.ordersLogAt = now;
+            std::fprintf(stderr, "client %u: order budget/queue exceeded; dropped %llu orders total\n", c.id,
+                         (unsigned long long)c.orders.dropped());
+        }
     }
     return true;
 }
@@ -2746,6 +2756,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if(!allowed || ordinary>kCmdQueueMax || count>kCmdQueueMax-ordinary) {
                 if(!allowed) {c.commandBytes.window=now;c.commandBytes.used=4u<<20;}
                 c.cmdDropped+=count;
+                sendInputDropped(c,count,0);   // never acknowledged by a bundle: release them from the client's window
                 if(now-c.commandLogAt>=5000 && commandLogs_.take(now,4)) {
                     c.commandLogAt=now;
                     std::fprintf(stderr,"client %u: command budget/queue exceeded; dropped %llu commands total\n",c.id,(unsigned long long)c.cmdDropped);

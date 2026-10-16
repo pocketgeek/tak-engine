@@ -14,6 +14,8 @@
 //     client's offsets, a dead or another player's member is skipped, several
 //     orders in one tick keep their order (a Stop behind a Move wins, a queued leg
 //     follows), a patrol's return legs keep the identity, and the serial is hashed.
+//     Load and GiveUnit stay per-unit (their outcome depends on the member order,
+//     which an order does not keep); for the order verbs that order changes nothing.
 //  4. Delivery: the mirror's uplink lands a 10,000-unit click whole in its tick at
 //     any round trip, and an ordinary command behind it is not held for its size.
 #include "legion_issue_selection.h"
@@ -21,6 +23,7 @@
 #include "sim/matchsetup.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <random>
@@ -407,6 +410,63 @@ void sameTick() {
     }
 }
 
+// Review R6: an order applies its members in increasing id order, not in the
+// player's selection order. The verbs whose outcome depends on that order (Load:
+// the transport's pickup list; GiveUnit: a recipient near its cap) are not order
+// verbs and pass through packClick per unit, in issue order. For the order verbs
+// the member order changes nothing: a Squad click (evict, then assign) and the
+// per-unit setters over a shuffled selection give the state the per-unit commands
+// give in issue order, in both modes.
+void issueOrder() {
+    using tak::net::packClick;
+    auto unit = [](Command c, int id) { c.unitId = id; return c; };
+    {
+        std::vector<Command> cmds;
+        for (int id : {9, 3, 7}) cmds.push_back(unit(verb(Cmd::Load, 0, 0, 40), id));
+        for (int id : {8, 2}) cmds.push_back(unit(verb(Cmd::GiveUnit, 0, 0, 1), id));
+        uint32_t serial = 1;
+        const auto out = packClick(cmds, {}, serial);
+        bool same = out.size() == cmds.size() && serial == 1;
+        for (size_t i = 0; same && i < out.size(); ++i) same = !out[i].order && out[i].unitId == cmds[i].unitId;
+        check(same, "Load and GiveUnit stay per-unit commands, in issue order");
+        check(!tak::net::orderVerb(Cmd::Load) && !tak::net::orderVerb(Cmd::GiveUnit), "Load and GiveUnit are not order verbs");
+    }
+    for (PathfindingMode mode : {PathfindingMode::Retail, PathfindingMode::Legion}) {
+        const std::string tag = mode == PathfindingMode::Retail ? "Retail" : "Legion";
+        Field a(mode), b(mode);
+        const auto ids = a.block(kGround, 40, 10, 10, 10, 3);
+        b.block(kGround, 40, 10, 10, 10, 3);
+        // Squad 4 already holds ids[0..9]; the player selects 25 units in a shuffled order.
+        std::vector<int> sel(ids.begin() + 5, ids.begin() + 30);
+        std::mt19937 rng(11);
+        std::shuffle(sel.begin(), sel.end(), rng);
+        for (Field* f : {&a, &b})
+            for (int i = 0; i < 10; ++i) f->world.setSquad(ids[size_t(i)], 4);
+        for (bool append : {false, true}) {
+            // GameView::assignSquad: evict (or retype) squad members outside the selection, live
+            // order; then assign the selection in selection order.
+            std::vector<Command> cmds;
+            const std::set<int> chosen(sel.begin(), sel.end());
+            for (int id : ids)
+                if (std::abs(int(a.world.unit(id)->squad)) == 4 && !chosen.count(id))
+                    cmds.push_back(unit(verb(Cmd::SetSquad, 0, 0, append ? -4 : 0), id));
+            for (int id : sel) cmds.push_back(unit(verb(Cmd::SetSquad, 0, 0, -4), id));
+            // The per-unit stream and the setters, in issue order; the same packed.
+            for (Cmd k : {Cmd::Stop, Cmd::Stance, Cmd::SetActive, Cmd::Cloak, Cmd::Destroy})
+                for (int id : sel) cmds.push_back(unit(verb(k, 0, 0, 1), id));
+            for (auto& c : cmds) a.apply(c);
+            uint32_t serial = append ? 100 : 1;
+            for (auto& c : packClick(cmds, {}, serial)) b.apply(c);
+            // b's orders carry serials a's per-unit commands do not; no leg is left by these verbs.
+            check(a.world.stateHash() == b.world.stateHash(),
+                  tag + ": a shuffled Squad click and the setters, packed, equal the per-unit commands (append " +
+                      std::to_string(append) + ")");
+        }
+        a.run(90); b.run(90);
+        check(a.world.stateHash() == b.world.stateHash(), tag + ": and stay equal");
+    }
+}
+
 // ---- 4. delivery ----------------------------------------------------------------
 void delivery() {
     Field f(PathfindingMode::Legion);
@@ -446,6 +506,7 @@ int main() {
         legionIdentity();
         membership();
         sameTick();
+        issueOrder();
         delivery();
     } catch (const std::exception& e) {
         std::fprintf(stderr, "FAIL %s\n", e.what());

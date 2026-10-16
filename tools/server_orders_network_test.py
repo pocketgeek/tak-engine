@@ -5,7 +5,10 @@ A whole transaction (Begin, members in two chunks, Commit) activates as ONE Cmd:
 record in one tick bundle with its exact members; an ordinary command sent right behind
 it lands in the same tick after it (the order takes no command credit, and nothing
 overtakes it); an aborted transaction never reaches a bundle; a burst of orders past the
-per-client window is cut (logged) and the rest activate in serial order; a malformed
+per-client window is cut (logged) and the rest activate in serial order, and the server names
+every cut order to its sender (Msg::InputDropped -- an order that never comes back in a bundle
+must still leave the client's send window, review R1), as it counts every dropped ordinary
+command; a malformed
 transaction (a duplicate member) fails that connection only, and the server keeps
 serving the other account.
 """
@@ -100,13 +103,18 @@ def bundle(r):
     return tick, out
 
 
+DROPS = []   # (commands, serial) of every InputDropped seen, in order
+
+
 def next_bundle(p):
-    """The next TickBundle, skipping every other message (statuses, pings)."""
+    """The next TickBundle, skipping every other message (statuses, pings; InputDropped is kept in DROPS)."""
     while True:
         length = struct.unpack('<I', p.exact(4))[0]
         body = p.exact(length)
         if body[0] == auth.MSG['Ping']:
             p.send('Pong'); continue
+        if body[0] == auth.MSG['InputDropped']:
+            DROPS.append(struct.unpack_from('<II', body, 1)); continue
         if body[0] == auth.MSG['TickBundle']:
             return bundle(auth.Reader(body[1:]))
 
@@ -171,6 +179,20 @@ def main():
                 assert serials[:64] == list(range(10, 74)), serials[:70]
                 text = (root / 'log').read_text()
                 assert 'order budget/queue exceeded' in text, 'the cut was not logged'
+                # Every cut order was named to its sender, once, and no activated one was.
+                cut = sorted(s for c, s in DROPS if s)
+                assert cut == sorted(set(range(10, 210)) - set(serials)), ('drop notices', cut[:5], len(cut), len(serials))
+                assert all(c == 0 for c, s in DROPS), DROPS[:5]
+                del DROPS[:]
+
+                # 3b. Ordinary commands past the queue (512) are dropped whole, and counted to the sender.
+                p.socket.sendall(frame('PlayerCommands', struct.pack('<I', 600) + command(CMD['Stop'], unit=5) * 600))
+                for _ in range(30):
+                    if DROPS:
+                        break
+                    next_bundle(p)
+                assert DROPS == [(600, 0)], DROPS
+                del DROPS[:]
 
                 # 4. The per-second member budget (65,536 a client) delays, never drops: seven orders of 10,000
                 # members sent at once all activate, in serial order, the last once the budget's second turns.
@@ -211,7 +233,7 @@ def main():
                 assert closed, 'a Retail game accepted an order transaction'
                 assert process.poll() is None
     print('PASS selection orders through a local server: whole activation, FIFO without starvation, abort, window, '
-          'member budget delays, malformed, Retail refuses')
+          'drop notices, member budget delays, malformed, Retail refuses')
 
 
 if __name__ == '__main__':

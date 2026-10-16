@@ -460,14 +460,23 @@ inline int cmdSendWindow(int credit, int inFlight) {
 // sim checks ownership and existence per member at activation (applyCommand), where
 // that state is. Chunks never reach the sim, so no partial order is ever visible.
 //
-// Limits (an honest client keeps them through orderSendWindow, so the server never
-// has to drop one): members per order, orders and record bytes outstanding per
-// client (staged at the server, queued there, or sent and not yet seen back).
+// Limits (an honest client keeps them through orderSendWindow): members per
+// order, orders and record bytes outstanding per client (staged at the server,
+// queued there, or sent and not yet seen back). The server can still drop an
+// order the window allowed -- over the per-second byte budgets, which several
+// connections of one account (or one address, without accounts) and the whole
+// server share -- and then says so (Msg::InputDropped), which is what releases
+// it from the client's window: an order the server drops never comes back in a
+// bundle, and without the notice it would hold its place in the window for the
+// rest of the game, and with enough of them the outbox, Stop included, for good.
 constexpr uint32_t kOrderMaxSerial = 0x7ffffffeu;  // the top bit tags an explicit area key (sim/convoy.h); 0 = none
 constexpr uint32_t kOrderMaxMembers = 16384;
 constexpr uint32_t kOrderChunkMembers = 2048;
 constexpr size_t kOrderMaxBytes = 96 * 1024;       // one order's bundle record (16384 ids of 5 bytes fit)
 constexpr size_t kTickOrderBytes = kOrderMaxBytes; // order records in one tick bundle: any order fits an empty tick
+// An order's bundle record before its members: kind, player, serial, template, shape,
+// count (orderVerb never appends x2/z2). Each member then adds its varint delta.
+constexpr size_t kOrderRecordHeader = 2 + 4 + 35 + 1 + 4;
 // The window is mostly bytes (the server's memory per client); the order count is
 // generous so that many small clicks are never throttled by it: at 8 orders a
 // 16-tick round trip carried only half an order a tick, and the scale suite's
@@ -614,6 +623,12 @@ enum class Msg : uint8_t {
     OrderMembers,       // C->S
     OrderCommit,        // C->S
     OrderAbort,         // C->S
+    InputDropped,       // S->C: u32 commands, u32 order serial (0 = none). Input of this
+                        // connection the server dropped over a budget or a window (a
+                        // PlayerCommands message, or an order transaction at its
+                        // Commit): it will never come back in a bundle, so the sender
+                        // releases it from its send windows (cmdInFlight, OrderWindow)
+                        // instead of waiting for an acknowledgement that cannot come.
 
 
 };

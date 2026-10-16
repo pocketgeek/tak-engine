@@ -16,10 +16,14 @@
 //    failed, as for invalid PlayerCommands.
 //  * Over a limit (the byte budget the server passes in, the orders or record
 //    bytes the client may have queued): the transaction is DROPPED -- followed
-//    to its Commit or Abort and discarded, and counted. An honest client never
-//    gets here: orderSendWindow keeps it inside the window, its bytes are far
-//    under the budget, and the per-second member budget delays an order at the
-//    drain instead of dropping it (server.cpp closeTick).
+//    to its Commit or Abort and discarded, and counted; at its Commit the
+//    server tells the client (Msg::InputDropped), which releases it from the
+//    client's window. orderSendWindow keeps an honest client inside the window
+//    and the per-second member budget delays an order at the drain instead of
+//    dropping it (server.cpp closeTick), but the byte budgets are shared with
+//    the account's other connections and the whole server, so a drop can still
+//    happen to an honest client. The limits are tested before the budget is
+//    charged: a frame refused for the window spends none of it.
 //  * Abort discards the open transaction; a disconnect discards it with the
 //    connection (Client::clearCommands). Nothing of either reaches a bundle.
 #include "net/protocol.h"
@@ -62,7 +66,7 @@ public:
                 serial <= last_ || serial <= floor || st.expect == 0 || st.expect > net::kOrderMaxMembers ||
                 !net::validOrderTemplate(st.tmpl, st.shape)) return Result::Malformed;
             last_ = serial;
-            st.dropped = !admit(payload.size()) || queued_ >= net::kOrderWindow;
+            st.dropped = queued_ >= net::kOrderWindow || !admit(payload.size());
             st.members.reserve(st.dropped ? 0 : st.expect);
             stage_ = std::move(st);
             return Result::Ok;
@@ -78,6 +82,11 @@ public:
                 uint64_t(stage_->received) + n > stage_->expect) return Result::Malformed;
             stage_->prev = prev;
             stage_->received += n;
+            // The record grows by this chunk's varints (the payload past serial and count):
+            // past the client's record-byte window the order cannot be queued, so it is
+            // dropped here, before the chunk is charged or kept.
+            stage_->recordBytes += payload.size() - 8;
+            if (!stage_->dropped && queuedBytes_ + stage_->recordBytes > net::kOrderWindowBytes) drop();
             if (!stage_->dropped && !admit(payload.size())) drop();
             if (!stage_->dropped) stage_->members.insert(stage_->members.end(), chunk.begin(), chunk.end());
             return Result::Ok;
@@ -89,7 +98,7 @@ public:
                 stage_->received != n) return Result::Malformed;
             Stage st = std::move(*stage_);
             stage_.reset();
-            if (st.dropped) { ++dropped_; return Result::Dropped; }
+            if (st.dropped) { ++dropped_; droppedSerial_ = st.serial; return Result::Dropped; }
             if (net::orderDigest(st.members) != digest) return Result::Malformed;
             auto o = std::make_shared<net::SelectionOrder>();
             o->serial = st.serial;
@@ -101,6 +110,7 @@ public:
             const size_t bytes = o->bytes;
             if (queued_ >= net::kOrderWindow || queuedBytes_ + bytes > net::kOrderWindowBytes) {
                 ++dropped_;
+                droppedSerial_ = st.serial;
                 return Result::Dropped;
             }
             out = std::move(o);
@@ -128,10 +138,13 @@ public:
     int queuedOrders() const { return queued_; }
     size_t queuedBytes() const { return queuedBytes_; }
     uint64_t dropped() const { return dropped_; }
+    // The serial of the transaction the last Dropped result discarded.
+    uint32_t droppedSerial() const { return droppedSerial_; }
 
 private:
     struct Stage {
         uint32_t serial = 0, expect = 0, received = 0;
+        size_t recordBytes = net::kOrderRecordHeader;   // the bundle record so far (orderRecordBytes)
         net::Command tmpl;
         net::OrderShape shape = net::OrderShape::Shared;
         std::vector<int32_t> members;
@@ -144,6 +157,7 @@ private:
     int queued_ = 0;
     size_t queuedBytes_ = 0;
     uint64_t dropped_ = 0;
+    uint32_t droppedSerial_ = 0;
 };
 
 }  // namespace tak::srv

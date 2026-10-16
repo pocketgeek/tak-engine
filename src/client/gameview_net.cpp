@@ -365,6 +365,15 @@
         // (MpClient::sendOrder) under its own window (orderSendWindow), never behind
         // the command credit. Whatever cannot go yet waits, and so does everything
         // behind it: a Stop issued after a big Move never overtakes it.
+        // Input the server dropped never comes back in a bundle: the server says so
+        // (Msg::InputDropped) and that releases it from the windows, so a drop can
+        // never hold the outbox shut.
+        for (const auto& d : mp_->takeInputDropped()) {
+            cmdInFlight_ -= std::min(cmdInFlight_, int(std::min<uint32_t>(d.commands, uint32_t(INT32_MAX))));
+            if (d.serial) orderWindow_.retire(d.serial);
+            if (tak::devEnv("TAK_NETLOG"))
+                std::fprintf(stderr, "server dropped %u commands, order %u\n", d.commands, d.serial);
+        }
         if (outboxHead_ < outbox_.size() && !cmdCatchUp_) {
             int sendable = tak::net::cmdSendWindow(cmdCredit_, cmdInFlight_);
             size_t at = outboxHead_;
@@ -384,7 +393,7 @@
                 auto& item = outbox_[at];
                 if (item.kind != tak::net::Cmd::Order || !item.order) break;   // out of command credit
                 const size_t bytes = tak::net::orderRecordBytes(*item.order);
-                if (!tak::net::orderSendWindow(orderInFlight_, orderInFlightBytes_, bytes)) break;
+                if (!orderWindow_.fits(bytes)) break;
                 // The serial is the one current when the order LEAVES, not when it was clicked: an
                 // order clicked during a rejoin's catch-up waits here, and nextOrderSerial_ only
                 // passes the orders that activated before the drop as that history is replayed.
@@ -392,8 +401,7 @@
                 // sent, so the serial is set in place.
                 std::const_pointer_cast<tak::net::SelectionOrder>(item.order)->serial = nextOrderSerial_++;
                 mp_->sendOrder(*item.order);
-                ++orderInFlight_;
-                orderInFlightBytes_ += bytes;
+                orderWindow_.sent(item.order->serial, bytes);
                 ++at;
             }
             outboxHead_ = at;
@@ -447,9 +455,7 @@
                     for (const auto& c : bd.cmds) {
                         if (int(c.player) != ms) continue;
                         if (c.kind == tak::net::Cmd::Order) {
-                            if (orderInFlight_ > 0) --orderInFlight_;
-                            const size_t bytes = c.order ? tak::net::orderRecordBytes(*c.order) : 0;
-                            orderInFlightBytes_ -= std::min(orderInFlightBytes_, bytes);
+                            if (c.order) orderWindow_.retire(c.order->serial);
                         } else if (cmdInFlight_ > 0) --cmdInFlight_;
                     }
 #ifndef NDEBUG
@@ -628,8 +634,7 @@
                 std::fprintf(stderr, "catch-up complete at tick %u\n", netTick_);
             cmdInFlight_ = 0;
             cmdCredit_ = tak::net::kCmdCapPerTick;
-            orderInFlight_ = 0;
-            orderInFlightBytes_ = 0;
+            orderWindow_.clear();
         }
         // Send the worker's finished per-tick state hashes to the server (lockstep desync
         // check + flow-control ack). Drained here on the main thread -- mp_ has a single owner.
@@ -1162,8 +1167,7 @@ void GameView::autoplayStep() {
             cmdReplayEnd_ = mp_->replayTicks();
             cmdCatchUp_ = cmdReplayEnd_ > 0;
             cmdInFlight_ = 0;
-            orderInFlight_ = 0;
-            orderInFlightBytes_ = 0;
+            orderWindow_.clear();
             outbox_.clear();   // pre-disconnect orders are moot; the server dropped them
             outboxHead_ = 0;
             startMpGame(mp_->startRoom(), mp_->startSeed());

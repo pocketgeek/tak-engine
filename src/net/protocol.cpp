@@ -66,11 +66,19 @@ Command Reader::cmd() {
 }
 
 bool orderVerb(Cmd c) {
+    // Not Load or GiveUnit: their outcome depends on the order the members are applied
+    // in (who boards a transport first -- its pickup list is built in that order; which
+    // gifts a recipient near its unit cap still takes), and an order applies its members
+    // in increasing id order, not the player's selection order (review R6). They keep
+    // the per-unit path, which applies them as issued. Every verb here sets only that
+    // member's own state, so the member order cannot change what the order does
+    // (selection_order_test issueOrder); it decides only the order in which the
+    // members' path requests are made (Legion: registered), which is id order.
     switch (c) {
     case Cmd::Move: case Cmd::Attack: case Cmd::AttackMove: case Cmd::Patrol: case Cmd::Stop:
-    case Cmd::Load: case Cmd::Unload: case Cmd::Guard: case Cmd::SetWeapon: case Cmd::Destroy:
+    case Cmd::Unload: case Cmd::Guard: case Cmd::SetWeapon: case Cmd::Destroy:
     case Cmd::Assist: case Cmd::Repair: case Cmd::Stance: case Cmd::Cloak: case Cmd::SetActive:
-    case Cmd::SetSquad: case Cmd::GiveUnit:
+    case Cmd::SetSquad:
         return true;
     default:
         return false;
@@ -111,7 +119,7 @@ bool validOrderTemplate(const Command& t, OrderShape shape) {
 
 size_t orderRecordBytes(const SelectionOrder& o) {
     if (o.bytes) return o.bytes;
-    size_t n = 2 + 4 + 35 + 1 + 4;   // kind, player, serial, template, shape, count (orderVerb never appends x2/z2)
+    size_t n = kOrderRecordHeader;
     int64_t prev = -1;
     for (const int32_t id : o.members) {
         uint32_t d = uint32_t(int64_t(id) - prev);

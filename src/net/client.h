@@ -13,6 +13,7 @@
 #include <map>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "net/auth.h"
@@ -238,6 +239,11 @@ public:
     void sendCommands(const std::vector<Command>& cmds);
     // An explicit selection order (Cmd::Order) as its uplink transaction.
     void sendOrder(const SelectionOrder& o);
+    // Input the server dropped (Msg::InputDropped): commands of a PlayerCommands
+    // message, or one order transaction (serial, 0 = none). Taken by the view,
+    // which releases them from its send windows.
+    struct InputDrop { uint32_t commands = 0, serial = 0; };
+    std::vector<InputDrop> takeInputDropped() { return std::exchange(inputDropped_, {}); }
     // posDigest rides only into the recorded replay trail (format 12), never onto the wire.
     void sendHash(uint32_t tick, uint64_t hash, uint64_t posDigest = 0);
     // Flow-control progress (WE S3): the last tick processed and the smoothed RTT.
@@ -343,6 +349,7 @@ private:
     bool expectingSpectate_ = false;
     bool paused_ = false;
     std::map<uint32_t, Bundle> bundles_;
+    std::vector<InputDrop> inputDropped_;
     bool desynced_ = false;
     std::string desyncReason_;
     uint64_t lastRecvMs_ = 0, lastPingMs_ = 0;

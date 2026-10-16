@@ -4,7 +4,11 @@
 // (a second Begin, a foreign serial, a duplicate or decreasing member, more members
 // than declared, a bad digest or count, an old serial, a serial under the slot's
 // floor, a forbidden template, truncated or trailing bytes) is refused; the
-// per-client order window holds; a cleared connection keeps the floor.
+// per-client order window holds; a cleared connection keeps the floor; a frame
+// refused for the window spends none of the byte budget; a dropped order names its
+// serial, and the client's window (net/orderpack.h OrderWindow) recovers from drops
+// it is told of -- without the notice it wedges for good (review R1).
+#include "net/orderpack.h"
 #include "server/orders.h"
 
 #include <cstdio>
@@ -51,10 +55,11 @@ struct Client {
     OrderInbox in;
     uint32_t floor = 0;
     bool admitAll = true;
+    size_t charged = 0;   // bytes the admitted frames charged to the budget
     std::shared_ptr<const SelectionOrder> last;
     R send(Msg kind, const std::vector<uint8_t>& p) {
         std::shared_ptr<const SelectionOrder> out;
-        const R r = in.frame(kind, p, floor, [&](size_t) { return admitAll; }, out);
+        const R r = in.frame(kind, p, floor, [&](size_t b) { if (admitAll) charged += b; return admitAll; }, out);
         if (r == R::Committed) { last = out; in.queued(orderRecordBytes(*out)); }
         return r;
     }
@@ -221,6 +226,7 @@ void limits() {
         Client c;
         c.admitAll = false;
         check(c.whole(1, range(1, 100)) == R::Dropped && !c.last && c.in.dropped() == 1, "an over-budget order is dropped");
+        check(c.in.droppedSerial() == 1, "a dropped order names its serial (Msg::InputDropped)");
         c.admitAll = true;
         check(c.whole(2, range(1, 100)) == R::Committed, "the next order commits once the budget allows");
     }
@@ -228,7 +234,10 @@ void limits() {
         // The window: kOrderWindow queued orders, then a drop until one drains.
         Client c;
         for (int i = 0; i < kOrderWindow; ++i) check(c.whole(uint32_t(i + 1), {1}) == R::Committed, "within the window");
+        const size_t before = c.charged;
         check(c.whole(uint32_t(kOrderWindow + 1), {1}) == R::Dropped, "the order past the window is dropped");
+        check(c.charged == before, "a transaction refused for the window charges none of the byte budget");
+        check(c.in.droppedSerial() == uint32_t(kOrderWindow + 1), "the window drop names its serial");
         c.in.drained(orderRecordBytes(*c.last));
         check(c.whole(uint32_t(kOrderWindow + 2), {1}) == R::Committed, "a drained order frees the window");
     }
@@ -240,6 +249,21 @@ void limits() {
         for (uint32_t s = 1; s <= uint32_t(kOrderWindow); ++s) committed += c.whole(s, big) == R::Committed;
         check(committed * orderRecordBytes(*c.last) <= kOrderWindowBytes && committed >= 4 && committed < kOrderWindow,
               "the record-byte window bounds big orders (" + std::to_string(committed) + " committed)");
+        // Past the record bytes the order is dropped at the chunk that crosses them, and from
+        // there on its chunks are neither charged nor kept.
+        // Fill the record bytes with one-chunk orders until one no longer fits: less than a
+        // chunk's record is left, so the next order's first chunk crosses the window and only
+        // its Begin is charged.
+        Client d;
+        const auto chunk = range(0, int32_t(kOrderChunkMembers), 131000);
+        uint32_t s = 1;
+        while (d.whole(s, chunk) == R::Committed) ++s;
+        check(d.in.queuedOrders() < kOrderWindow, "the record bytes, not the count, stopped the one-chunk orders");
+        const size_t before = d.charged;
+        check(d.whole(++s, big) == R::Dropped, "the order past the record-byte window is dropped");
+        check(d.charged - before == begin(s, moveTo(100, 100), OrderShape::Shared, uint32_t(big.size())).size(),
+              "only the Begin of the order past the record-byte window is charged (" +
+                  std::to_string(d.charged - before) + " bytes)");
     }
     {
         // A cleared connection (disconnect, new room) forgets its serials, not the floor.
@@ -251,12 +275,50 @@ void limits() {
               "after a clear the slot's floor still holds");
     }
 }
+
+// Review R1: the client's order window against a server that drops what the window
+// let through (the byte budgets are shared with the account's other connections and
+// the whole server, so the window alone cannot prevent it). A client that hears of
+// each drop (Msg::InputDropped -> OrderWindow::retire) keeps sending; one that does
+// not -- the client before the notice -- has its window full of orders that will
+// never come back after kOrderWindow drops, and every later order and every command
+// queued behind it in the outbox waits for good.
+void dropsReleaseTheWindow() {
+    Client server;
+    OrderWindow told, deaf;
+    uint32_t serial = 0;
+    int sentTold = 0, sentDeaf = 0;
+    server.admitAll = false;   // a budget another connection of this account spent
+    for (int click = 0; click < 3 * kOrderWindow; ++click) {
+        const auto ids = range(click * 10, 10);
+        const size_t bytes = orderRecordBytes(SelectionOrder{0, moveTo(1, 1), OrderShape::Shared, ids, 0});
+        if (deaf.fits(bytes)) { deaf.sent(uint32_t(click + 1), bytes); ++sentDeaf; }
+        if (!told.fits(bytes)) continue;
+        ++serial;
+        told.sent(serial, bytes);
+        ++sentTold;
+        const R r = server.whole(serial, ids);
+        check(r == R::Dropped, "the server drops while the budget is spent");
+        if (r == R::Dropped) check(told.retire(server.in.droppedSerial()), "the notice names an outstanding order");
+    }
+    check(sentTold == 3 * kOrderWindow && told.count() == 0 && told.bytes() == 0,
+          "a told client's window recovers from every drop (" + std::to_string(sentTold) + " sent)");
+    check(sentDeaf == kOrderWindow && !deaf.fits(kOrderRecordHeader + 1),
+          "without the notice the window wedges after kOrderWindow drops (the R1 failure)");
+    // The budget turns: the told client's next order commits and comes back.
+    server.admitAll = true;
+    check(server.whole(++serial, {1, 2, 3}) == R::Committed, "after the drops the next order commits");
+    told.sent(serial, orderRecordBytes(*server.last));
+    check(told.retire(serial) && told.count() == 0, "a bundle's order retires it");
+    check(!told.retire(serial), "an order retires once");
+}
 }  // namespace
 
 int main() {
     wholeTransactions();
     malformed();
     limits();
+    dropsReleaseTheWindow();
     if (failures) { std::fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     std::printf("server_orders_test: all passed\n");
     return 0;

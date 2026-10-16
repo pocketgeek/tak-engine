@@ -60,8 +60,7 @@ struct ClientRef {
     int cmdInFlight_ = 0;
     uint32_t lastSendTick_ = 0;
     uint32_t nextOrderSerial_ = 1;
-    int orderInFlight_ = 0;
-    size_t orderInFlightBytes_ = 0;
+    tak::net::OrderWindow orderWindow_;
     // The open click (GameView::ClickScope / flushClick).
     std::vector<Command> click_;
     tak::net::ClickShape shape_;
@@ -194,10 +193,10 @@ struct ClientRef {
                 auto& item = outbox_[at];
                 if (item.kind != Cmd::Order || !item.order) break;
                 const size_t bytes = tak::net::orderRecordBytes(*item.order);
-                if (!tak::net::orderSendWindow(orderInFlight_, orderInFlightBytes_, bytes)) break;
+                if (!orderWindow_.fits(bytes)) break;
                 std::const_pointer_cast<tak::net::SelectionOrder>(item.order)->serial = nextOrderSerial_++;
                 sent.push_back(item);
-                ++orderInFlight_; orderInFlightBytes_ += bytes;
+                orderWindow_.sent(item.order->serial, bytes);
                 ++at;
             }
             outboxHead_ = at;
@@ -210,8 +209,7 @@ struct ClientRef {
         for (const auto& c : cmds) {
             if (int(c.player) != localPlayer_) continue;
             if (c.kind == Cmd::Order) {
-                if (orderInFlight_ > 0) --orderInFlight_;
-                orderInFlightBytes_ -= std::min(orderInFlightBytes_, c.order ? tak::net::orderRecordBytes(*c.order) : 0);
+                if (c.order) orderWindow_.retire(c.order->serial);
             } else if (cmdInFlight_ > 0) --cmdInFlight_;
         }
     }

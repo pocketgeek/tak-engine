@@ -914,6 +914,13 @@ void MpClient::onFrame(const Frame& f) {
             }
             break;
         }
+        case Msg::InputDropped: {
+            InputDrop d;
+            d.commands = r.u32();
+            d.serial = r.u32();
+            if (r.ok) inputDropped_.push_back(d);   // at most one per message this client sent
+            break;
+        }
         case Msg::Desynced: {
             uint32_t tk = r.u32(); std::string why = r.str();
             desynced_ = true;

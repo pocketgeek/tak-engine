@@ -1488,10 +1488,9 @@ private:
     std::optional<ClickBuffer> click_;        // the open click (ClickScope), if any
     // Explicit orders (protocol 267): the next serial (continues above every own
     // order seen in a bundle, so a rejoin never reuses one that activated), and the
-    // orders sent but not yet seen back with their record bytes (orderSendWindow).
+    // orders sent but neither seen back nor dropped by the server (OrderWindow).
     uint32_t nextOrderSerial_ = 1;
-    int orderInFlight_ = 0;
-    size_t orderInFlightBytes_ = 0;
+    tak::net::OrderWindow orderWindow_;
     // Index of the first UNSENT command in outbox_. The send path is rate- and
     // window-limited, so it usually ships a prefix and keeps the rest; erasing that
     // prefix shifted every survivor down, making a full drain O(B^2/b) for B queued
