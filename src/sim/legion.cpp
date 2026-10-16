@@ -746,9 +746,10 @@ struct LegionNavigator::Impl {
         // it gates a Stats-only probe, never a decision; not hashed).
         int vertexCell=-1;
         // Stage 5 (see laneTrigger): its last answer, for origin laneCell on
-        // the route (metric, version) laneRoute and the plane epoch laneEpoch.
-        // A pure function of those: derived, never hashed.
-        int laneCell=-1;uint64_t laneRoute=0,laneVersion=0,laneEpoch=~0ull;bool laneHit=false;
+        // the route (metric, version) laneRoute, the plane epoch laneEpoch,
+        // the goal laneGoal (descend's tie-break) and the footprint of
+        // laneType. A pure function of those: derived, never hashed.
+        int laneCell=-1,laneGoal=-1;uint64_t laneRoute=0,laneVersion=0,laneEpoch=~0ull;const UnitType* laneType=nullptr;bool laneHit=false;
         // W9 step 0: which steering source moved the member on its last update (LegionNavigator::Site;
         // 0 none). Observation only: never read by a decision, never hashed.
         uint8_t site=0;
@@ -5846,10 +5847,12 @@ struct LegionNavigator::Impl {
     // many-squad workloads (many-1000 arrivals 834 -> 701: a resumed build
     // charges the soft bodies of a later tick; unexplained further). Static
     // reads (wallOrigin, spanAt) along a chain of estimates (the guidance
-    // descent); a function of the origin and the route's version, memoised.
+    // descent); a function of the origin, the route's version, the goal and
+    // the footprint, memoised.
     bool laneTrigger(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz) {
         const int W=width(),here=oz*W+ox;
-        if(m.laneCell==here&&m.laneRoute==f.metric()&&m.laneVersion==f.version()&&m.laneEpoch==p.epoch)return m.laneHit;
+        if(m.laneCell==here&&m.laneRoute==f.metric()&&m.laneVersion==f.version()&&m.laneEpoch==p.epoch&&
+           m.laneGoal==m.goal&&m.laneType==u.type)return m.laneHit;
         bool hit=false;
         int cell=here;
         for(int k=0;k<=kPivotChain&&!hit;++k) {
@@ -5861,7 +5864,7 @@ struct LegionNavigator::Impl {
             if(next<0)break;
             cell=next;
         }
-        m.laneCell=here;m.laneRoute=f.metric();m.laneVersion=f.version();m.laneEpoch=p.epoch;m.laneHit=hit;
+        m.laneCell=here;m.laneRoute=f.metric();m.laneVersion=f.version();m.laneEpoch=p.epoch;m.laneGoal=m.goal;m.laneType=u.type;m.laneHit=hit;
         return hit;
     }
     // ---- stated regions and certain reads (Legion 10,000 stage 5) -------
