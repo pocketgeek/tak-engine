@@ -1,5 +1,6 @@
 #include "legion.h"
 #include "legion_route.h"
+#include "legion_hier.h"
 #include "sim.h"
 #include "footprint.h"
 #include "idmap.h"
@@ -62,6 +63,9 @@ bool gPauseAll=false;           // LegionNavigator::setPauseAllForTest (process-
 bool gInstrumentProbes=false;   // LegionNavigator::setInstrumentProbes: the vertex probe (Stats only)
 uint64_t gBudgetDiv=1;          // LegionNavigator::setBudgetDivisorForTest (process-wide; 1 in the game)
 uint64_t gFieldBytes=0;         // LegionNavigator::setFieldBytesForTest (process-wide; 0: NavBudget::kFieldBytes)
+// Stage 6: the routing hierarchy's sector size, K = 1 << gSectorShift origins (LegionNavigator::setSectorSizeForTest;
+// 32 in the game, chosen by measurement: docs/legion-10000-progress.md 7.6).
+int gSectorShift=5;
 // A per-tick budget of the registration / plane-build / awareness work, divided by the test divisor.
 uint64_t budgetOf(uint64_t units) {return std::max<uint64_t>(1,units/gBudgetDiv);}
 #ifndef NDEBUG
@@ -317,6 +321,12 @@ struct LegionNavigator::Impl {
         mutable std::vector<uint32_t> loneGen;
         mutable uint32_t loneGenCur=0;
         mutable uint64_t loneEpoch=~0ull,loneCells=~0ull;
+        // Stage 6: the routing hierarchy over `legal` (sectors, regions, portals; sim/legion_hier.h), built lazily
+        // and invalidated where legality changes; and the plane's identity: its slot and a generation that a
+        // reused slot renews, so nothing keyed on another class's plane ever matches (docs 3.4). Derived from
+        // `legal` and the order of builds; never hashed.
+        hier::Hierarchy hier;
+        hier::PlaneId id;
     };
     // Running totals of the live fields (every Field lives in some group's
     // field or next): startField's cap test reads them instead of walking
@@ -835,6 +845,7 @@ struct LegionNavigator::Impl {
 
     World& w;
     std::vector<Plane> planes;
+    uint32_t planeGeneration=0;   // stage 6: PlaneId::generation's counter (never reused; never hashed)
     // Declared before `groups`: the fields it owns update these as they die.
     FieldTotals fieldTotals;
     // startField found no field to evict at (tick, fieldsDone): until a
@@ -1904,6 +1915,7 @@ struct LegionNavigator::Impl {
                 p.cell.size()*S::kCell8+p.queue.size()*S::kCell32+p.run.size()*S::kCell16+p.column.size()*S::kCell32+
                 p.pending.size()*S::kBox+p.nearMemo.size()*S::kMemo+p.nearGen.size()*S::kCell32+p.spanMemo.size()*S::kCell32+
                 p.spanGen.size()*S::kCell32+p.loneMemo.size()*S::kCell8+p.loneGen.size()*S::kCell32;
+        for(const auto& p:planes)b.portals+=p.hier.bytes();   // stage 6: sectors, region labels, portals
         std::set<const Field*> seen;
         for(const auto& [id,g]:groups) {
             for(const Field* f:{g.field.get(),g.next.get()}) {
@@ -2233,11 +2245,13 @@ struct LegionNavigator::Impl {
                 auto& p=planes[size_t(victim)];
                 p.legacy=legacy;p.footX=t.footX;p.footZ=t.footZ;p.maxDepth=maxDepth;p.minDepth=minDepth;
                 p.maxSlope=t.maxSlope;p.maxWaterSlope=t.maxWaterSlope;p.epoch=~0ull;
+                p.id={uint16_t(victim),++planeGeneration};   // the slot holds another class now
                 return victim;
             }
         }
         Plane p;p.legacy=legacy;p.footX=t.footX;p.footZ=t.footZ;p.maxDepth=maxDepth;p.minDepth=minDepth;
         p.maxSlope=t.maxSlope;p.maxWaterSlope=t.maxWaterSlope;p.epoch=~0ull;
+        p.id={uint16_t(planes.size()),++planeGeneration};
         planes.push_back(std::move(p));
         return int(planes.size()-1);
     }
@@ -2447,6 +2461,7 @@ struct LegionNavigator::Impl {
         }
         if(added.empty()&&removed.empty())return work;
         changedAny=true;
+        p.hier.invalidate({bx0,bz0,bx1,bz1});   // stage 6: the sectors whose regions or portals may differ
         if(box)*box={bx0,bz0,bx1,bz1};
         return work+relabel(p,added,removed,bx0,bz0,bx1,bz1,scratch);
     }
@@ -2690,6 +2705,7 @@ struct LegionNavigator::Impl {
     // window's plane budget (planeReady).
     void rebuild(Plane& p,bool sync) {
         p.epoch=epoch;buildPlane(p);labelPlane(p);clearStage(p);
+        p.hier.reset(width(),height(),gSectorShift,p.id);
         uint64_t legalCells=0;for(const int n:p.compSize)legalCells+=uint64_t(std::max(n,0));
         const uint64_t units=4*uint64_t(width())*height()+4*legalCells;
         navc.planeBuild+=units;
@@ -3760,6 +3776,7 @@ struct LegionNavigator::Impl {
     void startBuild(Plane& p) {
         const size_t n=size_t(width())*height();
         p.cell.assign(n,0);p.legal.assign(n,0);p.comp.assign(n,-1);
+        p.hier.reset(width(),height(),gSectorShift,p.id);
         p.compSize.clear();p.compBox.clear();p.liveComps=0;
         p.run.assign(n,0);p.column.assign(size_t(width()),0);
         p.stage=1;p.cursor=0;
@@ -4465,6 +4482,16 @@ struct LegionNavigator::Impl {
         }
         if(s.midrouteCompletions>s.outsideAreaCompletions||s.outsideAreaCompletions>s.arrivals)
             fail("mid-route completions exceed outside-area completions or arrivals");
+        // Stage 6: built hierarchy sectors equal a fresh labelling of their plane (a rotating window of them a
+        // tick: the regions, and the portals of every side marked built).
+        for(const auto& p:planes) {
+            if(!p.hier.ready()||p.stage>0||p.legal.empty())continue;
+            const int n=p.hier.sectorCount();
+            for(int k=0;k<std::min(n,16);++k) {
+                const int sct=int((uint64_t(w.tickCounter_)*16+uint64_t(k))%uint64_t(n));
+                if(!p.hier.sectorMatches(sct,p.legal.data()))fail("a hierarchy sector differs from a fresh labelling");
+            }
+        }
         {
             // anchorsAt against a count of every anchor (settleReach).
             std::map<std::tuple<int,int32_t,int32_t>,int> count;
@@ -9703,6 +9730,13 @@ bool LegionNavigator::planeMatchesRebuild(const Unit& u) {
     Impl::Plane fresh=p;
     impl_->buildPlane(fresh);impl_->labelPlane(fresh);
     if(fresh.legal!=p.legal)return false;
+    // Stage 6: the routing hierarchy, maintained lazily through the same changes, joins exactly the plane's
+    // components (every sector and side built here; derived state only).
+    {
+        auto& q=const_cast<Impl::Plane&>(p);
+        if(q.hier.ready()&&!q.hier.connectivityMatches(q.legal.data(),q.comp.data()))return false;
+        for(int s=0;s<q.hier.sectorCount();++s)if(!q.hier.sectorMatches(s,q.legal.data()))return false;
+    }
     // Same partition up to numbering, and the same size and box per part.
     std::map<int,int> to,from;
     for(size_t c=0;c<p.comp.size();++c) {
@@ -9888,6 +9922,11 @@ void LegionNavigator::setPauseAllForTest(bool on) {gPauseAll=on;}
 void LegionNavigator::setInstrumentProbes(bool on) {gInstrumentProbes=on;}
 void LegionNavigator::setBudgetDivisorForTest(int div) {gBudgetDiv=uint64_t(std::max(div,1));}
 void LegionNavigator::setFieldBytesForTest(uint64_t bytes) {gFieldBytes=bytes;}
+void LegionNavigator::setSectorSizeForTest(int k) {
+    int shift=5;
+    for(int s=2;s<=8;++s)if((1<<s)==k)shift=s;
+    gSectorShift=shift;
+}
 void LegionNavigator::setVerify(bool on) {gVerify=on;}
 bool LegionNavigator::verifying() {return gVerify;}
 void LegionNavigator::setProbe(uint32_t ticks) {gProbe=ticks;}

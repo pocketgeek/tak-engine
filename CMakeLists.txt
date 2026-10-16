@@ -416,6 +416,11 @@ add_executable(navbudget_test tools/navbudget_test.cpp)
 target_include_directories(navbudget_test PRIVATE src)
 add_test(NAME navbudget_test COMMAND navbudget_test)
 set_tests_properties(navbudget_test PROPERTIES LABELS legion)
+# Legion 10,000 stage 6: the routing hierarchy (src/sim/legion_hier.h), header-only.
+add_executable(legion_hier_test tools/legion_hier_test.cpp)
+target_include_directories(legion_hier_test PRIVATE src)
+add_test(NAME legion_hier_test COMMAND legion_hier_test)
+set_tests_properties(legion_hier_test PROPERTIES LABELS legion)
 # Legion 10,000 stage 5: the route-query interface (src/sim/legion_route.h), header-only.
 add_executable(legion_route_test tools/legion_route_test.cpp)
 target_include_directories(legion_route_test PRIVATE src)

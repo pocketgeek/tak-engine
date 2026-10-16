@@ -401,6 +401,10 @@ public:
     // allowance (never below two whole-map fields), so a small fixture can
     // exercise eviction at the cap. Changes behaviour and hashes when set.
     static void setFieldBytesForTest(uint64_t bytes);
+    // Test hook (process-wide; default 32): the routing hierarchy's sector size K (a power of two, 4..256) for
+    // planes built after the call (Legion 10,000 stage 6: the sector-size experiment). Changes behaviour and
+    // hashes when not 32.
+    static void setSectorSizeForTest(int k);
     // Debug builds (NDEBUG undefined): check derived indexes and the Stats
     // after every tick() (aborts on a mismatch). A no-op in release. A debug
     // build starts with it on when TAK_LEGION_VERIFY is set (the only
