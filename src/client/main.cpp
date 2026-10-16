@@ -1931,6 +1931,15 @@ int main(int argc, char** argv) {
                 if(!gameView->animatedTextureChecks())
                     throw std::runtime_error("texture reuse test had no unchanged animated frames across ticks");
             }
+            if(tak::devFlag("TAK_GEOMETRY_VERIFY")) {
+                // Staged geometry (workstream D): every reuse compared with a complete
+                // rebuild (or verifyMonolithicBody/buildUnitGeom threw at the first mismatch).
+                std::printf("GEOMETRY_STAGES hits=%llu placement=%llu material=%llu single_pass=%llu\n",
+                    static_cast<unsigned long long>(gameView->geometryChecks()),
+                    static_cast<unsigned long long>(gameView->placementChecks()),
+                    static_cast<unsigned long long>(gameView->materialChecks()),
+                    static_cast<unsigned long long>(gameView->monolithicChecks()));
+            }
             if(tak::devFlag("TAK_GEOMETRY_OWNERSHIP_VERIFY")) {
                 // Every frame passed, or verifyGeometryOwnership() threw at the first violation.
                 const auto& t=gameView->ownershipTotals();

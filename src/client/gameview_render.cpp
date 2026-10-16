@@ -2274,7 +2274,7 @@
             if (!geomEntries_.valid(g.handle) || geomEntries_.handleOf(u.id) != g.handle) fail("stale entry handle");
             // Content from a previous build must be this unit's (or none: cold).
             if (g.owner >= 0 && g.owner != u.id) fail("entry carries another unit's geometry");
-            if (!g.geometryKey.empty() && g.geometryKey[0] != uint64_t(u.id)) fail("entry key names another unit");
+            if (!g.localKey.empty() && g.localKey[0] != uint64_t(u.id)) fail("entry key names another unit");
             const int slot = frame.slot(u.id);
             if (slot < 0 || geomIndex_[size_t(slot)] != int(i)) fail("slot index out of step");
         }
@@ -2302,7 +2302,7 @@
             const UnitGeom& g = visGeom(i);
             keyNs += g.keyNs;
             if (g.reused) { renderStats_.add(RS::GeometryHits); continue; }
-            if (g.geometryKey.empty()) continue;   // nothing drawable (no model / unbegun site)
+            if (g.localKey.empty()) continue;   // nothing drawable (no model / unbegun site)
             buildNs += g.buildNs;
             renderStats_.add(RS::GeometryMisses);
             renderStats_.addMiss(MC(g.missCause));
@@ -2315,8 +2315,23 @@
             renderStats_.add(RS::InvalZoom, changed(MC::Zoom));
             renderStats_.add(RS::InvalResource, changed(MC::Resource));
             renderStats_.add(RS::InvalSettings, changed(MC::Settings));
-            renderStats_.add(RS::VertsGenerated, g.verts.size());
-            renderStats_.add(RS::ShadowVertsGenerated, g.shadowVerts.size() + g.maskedShadowVerts.size());
+            // Work done (workstream D): a local rebuild generates every vertex; a
+            // partial update rewrites positions and/or colours of retained ones.
+            const size_t shadowVerts = g.shadowVerts.size() + g.maskedShadowVerts.size();
+            if (g.stages & tak::render::kStageLocal) {
+                renderStats_.add(RS::GeomLocalBuilds);
+                renderStats_.add(RS::VertsGenerated, g.verts.size());
+                renderStats_.add(RS::ShadowVertsGenerated, shadowVerts);
+            } else {
+                if (g.stages & tak::render::kStagePlacement) {
+                    renderStats_.add(RS::GeomPlacementOnly);
+                    renderStats_.add(RS::VertsPlaced, g.verts.size() + shadowVerts);
+                }
+                if (g.stages & tak::render::kStageMaterial) {
+                    renderStats_.add(RS::GeomMaterialOnly);
+                    renderStats_.add(RS::VertsRecoloured, g.verts.size());
+                }
+            }
         }
         renderStats_.addWorkNs(RW::GeometryKey, keyNs);
         renderStats_.addWorkNs(RW::GeometryBuild, buildNs);
@@ -2326,8 +2341,7 @@
             capacity += v.capacity() * sizeof(v[0]);
         };
         geomEntries_.forEachPayload([&](const UnitGeom& g) {
-            account(g.geometryKey); account(g.verts); account(g.runs);
-            account(g.shadowVerts); account(g.maskedShadowVerts); account(g.maskedShadowRuns);
+            g.forEachVector(account);       // stage keys, local and screen output
             capacity += sizeof(UnitGeom);   // the entry itself (pool storage)
         });
         const auto& pool = geomEntries_.stats();
@@ -2986,8 +3000,9 @@
     }
 
     void GameView::buildUnitGeom(const UnitR& u, UnitGeom& g, std::vector<Tri>& scratch) {
-        g.reused=false;
-        // Telemetry (worker side): per-slot results the render thread tallies.
+        using namespace tak::render;
+        g.reused=false;g.stages=0;
+        // Telemetry (worker side): per-entry results the render thread tallies.
         // renderStats_ is not written during the parallel pass.
         const bool timed=renderStats_.enabled();
         const auto clockNs=[] {
@@ -2998,8 +3013,9 @@
         g.missMask=0;g.ownerChanged=false;g.reallocs=0;g.keyNs=g.buildNs=0;
         const auto clear=[&] {
             g.canFly=u.type && u.type->canFly;
-            g.geometryKey.clear();g.verts.clear();g.runs.clear();
+            g.localKey.clear();g.verts.clear();g.runs.clear();
             g.shadowVerts.clear();g.maskedShadowVerts.clear();g.maskedShadowRuns.clear();
+            g.localPos.clear();g.baseColor.clear();g.shadowLocal.clear();g.maskedShadowLocal.clear();
             g.shadowAtlasPage=nullptr;
         };
         if (u.underConstruction && !u.buildBegun) {clear();return;}
@@ -3030,7 +3046,6 @@
         // surface, so the sink is added where the terrain lift is subtracted.
         // Zero on land and for every type that carries neither canhover nor floater.
         ay += waterSink(u.type, ix, iz) * zm;
-        scratch.clear();
         // Body attitude precedes the animated piece tree for both ground and
         // flying units. Convert the retail mirrored basis at the same boundary.
         // Retail applies the birth heading to buildings as well as movers.
@@ -3074,42 +3089,38 @@
                 discoMix = 0.55f; disco = true;
             }
         }
-        bool mirror = false;
         SDL_Texture* atlas = (slot >= 0 && size_t(slot) < atlasTex_.size())
                                  ? atlasTex_[size_t(slot)] : nullptr;
-        // Cache complete screen geometry only while every generating input is
-        // identical. Camera, terrain anchor, heading, pose, tint, birth effects,
-        // shadow settings and animated textures all participate. Slots may change
-        // owners as visibility/depth order changes, so identity is explicit too.
         const float occlusion=wallOcclusionY(u.x,u.z);
         const float altitude=anim ? anim->altitude : 0.0f;
         const float birthP=birthProgress(u.id);
         const bool conjuring=u.type && (u.underConstruction || birthP<1.0f);
         const float p=u.replacementOpacity>=0 ? u.replacementOpacity : !u.type ? 1.0f : u.underConstruction
             ? std::clamp(u.hp/u.type->maxHp,0.0f,1.0f) : birthP;
+        const bool ghost=u.type && u.type->ghost;
+
+        // Exact stage keys (client/geometrystages.h). Each stage is reused only
+        // while every input it reads is identical; identity is explicit too.
+        // LOCAL: identity/resources, pose (heading incl. emote spin, body
+        // attitude, piece poses incl. hidden/shadow flags, corpse state), palette
+        // slot and animated texture frames, construction (shadow), shadow toggle.
         thread_local std::vector<uint64_t> key;
         key.clear();
         const auto word=[&](uint64_t value){key.push_back(value);};
-        const auto real=[&](float value){word(std::bit_cast<uint32_t>(value));};
         word(uint64_t(u.id));word(reinterpret_cast<uintptr_t>(u.type));
         word(reinterpret_cast<uintptr_t>(&vt->second));
         word(reinterpret_cast<uintptr_t>(atlas));word(uint64_t(u.player));word(uint64_t(slot));
-        word(u.bodyPitch);word(u.bodyRoll);word(u.veteran);word(u.underConstruction);
-        word(u.type && u.type->ghost);word(u.corpsePhase);word(u.corpseStatue);
-        word(shadowsOnFrame_);word(conjuring);word(disco);
-        word(uint64_t(discoCol.r)|(uint64_t(discoCol.g)<<8)|(uint64_t(discoCol.b)<<16));
-        for(float value:{zm,ax,ay,occlusion,altitude,facing,discoBob,discoMix,p})real(value);
-        // client/geometrykeycause.h reads this layout (telemetry only).
-        static_assert(tak::render::kGeometryKeyFixedWords==26);
-        if(conjuring)real(animClock_);
-        tak::render::GeometryKeyLayout keyLayout;
-        keyLayout.textureBegin=uint32_t(key.size());
+        word(u.bodyPitch);word(u.bodyRoll);word(u.underConstruction);
+        word(u.corpsePhase);word(u.corpseStatue);word(shadowsOnFrame_);word(floatBits(facing));
+#ifndef NDEBUG
+        if (key.size()!=kLocalKeyFixedWords) throw std::logic_error("local geometry key layout");
+#endif
         // Texture playback may hold one frame for multiple simulation ticks.
         // Use its actual inputs, so an unchanged frame retains exact geometry.
         if(!tak::devFlag("TAK_TEXTURE_TICK_REFERENCE"))
             for(const auto* frame:vt->second.meta.animationFrames)word(*frame);
         else if(vt->second.meta.animated)word(front().gameTick);
-        keyLayout.poseBegin=uint32_t(key.size());
+        const LocalKeyLayout layout{uint32_t(key.size())};
         if(anim) {
             word(reinterpret_cast<uintptr_t>(anim->pieceNames));
             const auto poses=!anim->capturedPose.empty() ? anim->capturedPose :
@@ -3117,104 +3128,275 @@
                            std::span<const tak::cob::PieceState>{};
             for(const auto& pose:poses) {
                 word(pose.visible);word(pose.cached);word(pose.shaded);word(pose.rendered);
-                for(float value:pose.move)real(value);
-                for(float value:pose.rot)real(value);
+                for(float value:pose.move)word(floatBits(value));
+                for(float value:pose.rot)word(floatBits(value));
             }
         }
-        const bool cacheHit=!tak::devFlag("TAK_GEOMETRY_NOCACHE") &&
-            !tak::devFlag("TAK_GEOMETRY_REFERENCE") && key==g.geometryKey;
+        // MATERIAL: veterancy, ghost, conjuring progress (+ clock), emote/statue tint.
+        const MaterialKey materialKey{uint64_t(u.veteran),ghost,conjuring,disco,
+            uint64_t(discoCol.r)|(uint64_t(discoCol.g)<<8)|(uint64_t(discoCol.b)<<16),
+            floatBits(discoMix),floatBits(p),conjuring ? floatBits(animClock_) : 0u};
+        // PLACEMENT: zoom, interpolated anchor (lift, sink, altitude), emote bob,
+        // flyer altitude (shadow lean), wall occlusion line (draw-only clip).
+        const PlacementKey placementKey{floatBits(zm),floatBits(ax),floatBits(ay),floatBits(discoBob),
+            floatBits(altitude),floatBits(occlusion)};
+        const bool reference=tak::devFlag("TAK_GEOMETRY_NOCACHE") || tak::devFlag("TAK_GEOMETRY_REFERENCE");
+        const bool localValid=!reference && !g.localKey.empty() && key==g.localKey;
+        // "Materialising" = the summon fade-in/shimmer: either a site still conjuring
+        // (progress = HP fraction) or a unit just summoned from a building (progress =
+        // its viewer-only birth ramp). Its pulse reads the placed screen y.
+        const uint8_t stages=planStages(localValid,placementKey==g.placementKey,
+                                        materialKey==g.materialKey,conjuring);
+        const bool cacheHit=stages==0;
         g.reused=cacheHit;
         g.animatedTexture=vt->second.meta.animated;
-        const bool verifyCache=cacheHit && tak::devFlag("TAK_GEOMETRY_VERIFY");
+        const bool verify=tak::devFlag("TAK_GEOMETRY_VERIFY");
 #ifndef NDEBUG
-        if(tak::devFlag("TAK_GEOMETRY_VERIFY")) {
-            if(verifyCache && vt->second.meta.animated && g.verifiedTick!=front().gameTick)
+        if(verify) {
+            if(cacheHit && vt->second.meta.animated && g.verifiedTick!=front().gameTick)
                 ++animatedTextureChecks_;
             g.verifiedTick=front().gameTick;
         }
 #endif
-        thread_local UnitGeom referenceGeom;
         const int64_t keyEnd=timed ? clockNs() : 0;
         g.keyNs=uint32_t(std::min<int64_t>(keyEnd-keyStart,UINT32_MAX));
-        if(cacheHit && !verifyCache)return;
-        if(verifyCache) {
-            referenceGeom=g;
-#ifndef NDEBUG
-            ++geometryChecks_;
-#endif
-        }
-        using MC=tak::render::MissCause;
+        if(cacheHit && !verify)return;
+
+        UnitGeomInputs in;
+        in.visual=&vt->second;in.anim=anim;in.atlas=atlas;in.facing=facing;
+        in.reuse=!tak::devFlag("TAK_GEOMETRY_REFERENCE");
+        in.body={zm,ax,ay,discoBob};
+        // The shadow leans by the flyer's altitude from the same anchor.
+        in.shadow={zm,ax + kShadowLX * altitude * zm,ay + (kProjY - kShadowLZ) * altitude * zm};
+        in.material.vetGold=(!conjuring && u.veteran >= 4)
+            ? float(std::min(u.veteran, 10) - 3) / 7.0f * 0.5f : 0.0f;
+        in.material.conjuring=conjuring;in.material.progress=p;in.material.clock=animClock_;
+        in.material.emote=disco;in.material.emoteColour=discoCol;in.material.emoteMix=discoMix;
+        // FBI ghost: a spectral body is see-through. Retail switches the renderer
+        // to its translucent blend mode for these; we scale vertex alpha instead.
+        in.material.spectral=ghost && !conjuring;
+
+        using MC=MissCause;
         if(!cacheHit) {
-            const bool reference=tak::devFlag("TAK_GEOMETRY_NOCACHE") || tak::devFlag("TAK_GEOMETRY_REFERENCE");
             g.ownerChanged=g.owner>=0 && g.owner!=u.id;
             if(reference)g.missCause=uint8_t(MC::Reference);
-            else if(g.geometryKey.empty())g.missCause=uint8_t(MC::Cold);
+            else if(g.localKey.empty())g.missCause=uint8_t(MC::Cold);
             else if(g.owner!=u.id)g.missCause=uint8_t(MC::Owner);
             else if(timed) {
-                // Which stages changed (every one, for the Inval* counters) and
+                // Every input category that changed (for the Inval* counters) and
                 // the one the miss is filed under.
-                g.missMask=tak::render::geometryKeyChanges(g.geometryKey,g.keyLayout,key,keyLayout);
-                g.missCause=uint8_t(tak::render::primaryMissCause(g.missMask));
+                uint32_t mask=localValid ? 0u : localKeyChanges(g.localKey,g.localLayout,key,layout);
+                mask|=materialKeyChanges(g.materialKey,materialKey)|placementKeyChanges(g.placementKey,placementKey);
+                g.missMask=mask ? mask : missBit(MC::Changed);
+                g.missCause=uint8_t(primaryMissCause(g.missMask));
             } else g.missCause=uint8_t(MC::Changed);
         }
-        // Capacity before the rebuild, to count reallocations (telemetry).
-        const size_t capacityBefore[6]={g.geometryKey.capacity(),g.verts.capacity(),g.runs.capacity(),
-            g.shadowVerts.capacity(),g.maskedShadowVerts.capacity(),g.maskedShadowRuns.capacity()};
-        g.geometryKey=key;g.owner=u.id;g.keyLayout=keyLayout;
-        // A revision value is never repeated, by this entry or any other (one counter).
-        if(!cacheHit)g.revision=geometryRevision_.fetch_add(1,std::memory_order_relaxed)+1;
-        g.verts.clear();g.runs.clear();g.shadowVerts.clear();
-        g.maskedShadowVerts.clear();g.maskedShadowRuns.clear();
-        g.canFly=u.type && u.type->canFly;
-        const Xform base=modelBodyTransform(u.bodyPitch,u.bodyRoll);
+        // Capacity before the update, to count reallocations (telemetry).
+        std::array<size_t,10> capacityBefore{};
+        if(timed) {size_t k=0;g.forEachVector([&](const auto& v){capacityBefore[k++]=v.capacity();});}
+        if(stages & kStageLocal) {g.localKey=key;g.localLayout=layout;g.owner=u.id;}
+        g.placementKey=placementKey;g.materialKey=materialKey;
+        g.canFly=flying;
+        g.ax=ax;g.ay=ay;g.alt=altitude;g.occY=occlusion;
+        if(stages) {
+            // One value per update, never repeated by this entry or any other.
+            const uint64_t revision=geometryRevision_.fetch_add(1,std::memory_order_relaxed)+1;
+            g.revision=revision;
+            if(stages & kStageLocal)g.localRevision=revision;
+            if(stages & kStagePlacement)g.placementRevision=revision;
+            if(stages & kStageMaterial)g.materialRevision=revision;
+        }
+        g.stages=stages;
+        runUnitGeomStages(u,g,stages,in,scratch);
+        if(timed) {
+            size_t k=0;
+            g.forEachVector([&](const auto& v){g.reallocs+=v.capacity()>capacityBefore[k++];});
+            g.buildNs=uint32_t(std::min<int64_t>(clockNs()-keyEnd,UINT32_MAX));
+        }
+        if(verify && localValid) {
+            // Every reuse, complete or partial, must equal a complete rebuild from the
+            // same inputs, byte for byte.
+            thread_local UnitGeom referenceGeom;
+            referenceGeom.makeCold();
+            runUnitGeomStages(u,referenceGeom,kStageLocal|kStagePlacement|kStageMaterial,in,scratch);
+            const auto bytes=[](const auto& a,const auto& b) {
+                return a.size()==b.size() && (a.empty() ||
+                    std::memcmp(a.data(),b.data(),a.size()*sizeof(a[0]))==0);
+            };
+            if(!bytes(g.verts,referenceGeom.verts) || !bytes(g.shadowVerts,referenceGeom.shadowVerts) ||
+               !bytes(g.maskedShadowVerts,referenceGeom.maskedShadowVerts) ||
+               g.runs!=referenceGeom.runs || g.maskedShadowRuns!=referenceGeom.maskedShadowRuns ||
+               std::memcmp(g.shadowBounds.data(),referenceGeom.shadowBounds.data(),sizeof g.shadowBounds) ||
+               !bytes(g.localPos,referenceGeom.localPos) || !bytes(g.baseColor,referenceGeom.baseColor) ||
+               !bytes(g.shadowLocal,referenceGeom.shadowLocal) ||
+               !bytes(g.maskedShadowLocal,referenceGeom.maskedShadowLocal))
+                throw std::runtime_error(cacheHit ? "cached unit geometry mismatch"
+                    : (stages & kStagePlacement) ? "re-placed unit geometry differs from a rebuild"
+                    : "re-coloured unit geometry differs from a rebuild");
+#ifndef NDEBUG
+            if(cacheHit)++geometryChecks_;
+            if(stages & kStagePlacement)++placementChecks_;
+            if(stages & kStageMaterial)++materialChecks_;
+#endif
+        }
+    }
+
+    void GameView::runUnitGeomStages(const UnitR& u, UnitGeom& g, uint8_t stages, const UnitGeomInputs& in,
+                                     std::vector<Tri>& scratch) {
+        using namespace tak::render;
+        const Visual& visual=*in.visual;
+        const bool verify=tak::devFlag("TAK_GEOMETRY_VERIFY");
         thread_local PreparedPiece prepared;
-        const bool reuse=!tak::devFlag("TAK_GEOMETRY_REFERENCE");
-        if (reuse) preparePiece(vt->second.model.root,vt->second.meta,base,anim,
-                                std::cos(facing),std::sin(facing),prepared);
-        collect(scratch, atlas, vt->second.model.root, base, anim, facing, u.player, mirror,
-                true, false, nullptr, &vt->second.meta,false,reuse ? &prepared : nullptr,isStructure(u.type));
-        if (tak::devFlag("TAK_GEOMETRY_VERIFY")) {
-            thread_local std::vector<Tri> reference;
-            reference.clear();
-            collect(reference,atlas,vt->second.model.root,base,anim,facing,u.player,mirror,
-                    true,false,nullptr,&vt->second.meta,false,nullptr,isStructure(u.type));
-            if (reference.size()!=scratch.size()) throw std::runtime_error("body geometry count mismatch");
-            for (size_t i=0;i<scratch.size();++i) {
-                const auto& a=scratch[i];const auto& b=reference[i];
-                if(a.tex!=b.tex || a.depth!=b.depth) throw std::runtime_error("body geometry order mismatch");
-                for(int j=0;j<3;++j)
-                    if(std::memcmp(&a.v[j],&b.v[j],sizeof(SDL_Vertex)))
-                        throw std::runtime_error("body geometry vertex mismatch");
+        // Sorted compact indices into the collector output (scratch), kept for the
+        // single-pass check below.
+        thread_local std::vector<size_t> triangleOrder;
+        const Xform base=modelBodyTransform(u.bodyPitch,u.bodyRoll);
+        if(stages & kStageLocal) {
+            g.verts.clear();g.runs.clear();g.localPos.clear();g.baseColor.clear();
+            scratch.clear();
+            if (in.reuse) preparePiece(visual.model.root,visual.meta,base,in.anim,
+                                       std::cos(in.facing),std::sin(in.facing),prepared);
+            collect(scratch, in.atlas, visual.model.root, base, in.anim, in.facing, u.player, false,
+                    true, false, nullptr, &visual.meta,false,in.reuse ? &prepared : nullptr,isStructure(u.type));
+            if (verify) {
+                thread_local std::vector<Tri> reference;
+                reference.clear();
+                collect(reference,in.atlas,visual.model.root,base,in.anim,in.facing,u.player,false,
+                        true,false,nullptr,&visual.meta,false,nullptr,isStructure(u.type));
+                if (reference.size()!=scratch.size()) throw std::runtime_error("body geometry count mismatch");
+                for (size_t i=0;i<scratch.size();++i) {
+                    const auto& a=scratch[i];const auto& b=reference[i];
+                    if(a.tex!=b.tex || a.depth!=b.depth) throw std::runtime_error("body geometry order mismatch");
+                    for(int j=0;j<3;++j)
+                        if(std::memcmp(&a.v[j],&b.v[j],sizeof(SDL_Vertex)))
+                            throw std::runtime_error("body geometry vertex mismatch");
+                }
+            }
+            // Sort compact indices, not complete triangles. The collector's vertex
+            // records stay put; stable indices preserve the exact equal-depth order.
+            // Each render worker owns its scratch ordering between unit builds.
+            triangleOrder.resize(scratch.size());
+            for (size_t i=0;i<triangleOrder.size();++i) triangleOrder[i]=i;
+            std::stable_sort(triangleOrder.begin(),triangleOrder.end(),
+                [&](size_t a,size_t b) { return scratch[a].depth>scratch[b].depth; });
+            // Local body: positions apart (placement rewrites screen positions
+            // from them), UVs and base colours in the vertices.
+            SDL_Texture* cur = nullptr;
+            int runStart = 0;
+            bool white=true;
+            g.verts.resize(triangleOrder.size()*3);
+            g.localPos.resize(g.verts.size());
+            size_t out=0;
+            for (size_t triangleIndex : triangleOrder) {
+                const auto& t=scratch[triangleIndex];
+                if (t.tex != cur) {
+                    if (int(out) > runStart)
+                        g.runs.push_back({cur, int(out) - runStart});
+                    cur = t.tex;
+                    runStart = int(out);
+                }
+                for (int i = 0; i < 3; ++i,++out) {
+                    g.verts[out]=t.v[i];
+                    g.localPos[out]=t.v[i].position;
+                    white = white && isWhite(t.v[i].color);
+                }
+            }
+            if (int(out) > runStart)
+                g.runs.push_back({cur, int(out) - runStart});
+            if (!white) {
+                g.baseColor.resize(g.verts.size());
+                for (size_t i=0;i<g.verts.size();++i) g.baseColor[i]=g.verts[i].color;
             }
         }
-        // Sort compact indices, not complete triangles. The collector's vertex
-        // records stay put; stable indices preserve the exact equal-depth order.
-        // Each render worker owns its scratch ordering between unit builds.
-        thread_local std::vector<size_t> triangleOrder;
-        triangleOrder.resize(scratch.size());
-        for (size_t i=0;i<triangleOrder.size();++i) triangleOrder[i]=i;
-        std::stable_sort(triangleOrder.begin(),triangleOrder.end(),
-            [&](size_t a,size_t b) { return scratch[a].depth>scratch[b].depth; });
-        g.ax = ax; g.ay = ay;
-        g.alt = altitude;
-        g.occY = occlusion;
-        // "Materialising" = the summon fade-in/shimmer: either a site still conjuring
-        // (progress = HP fraction) or a unit just summoned from a building (progress =
-        // its viewer-only birth ramp). Both fade alpha in and glow while p < 1.
-        Uint8 alpha = Uint8(p * 255.0f);
-        const bool spectral = u.type && u.type->ghost && !conjuring;
-        float vetGold = (!conjuring && u.veteran >= 4)
-                            ? float(std::min(u.veteran, 10) - 3) / 7.0f * 0.5f : 0.0f;
-        SDL_Texture* cur = nullptr;
-        int runStart = 0;
-        for (size_t triangleIndex : triangleOrder) {
-            const auto& t=scratch[triangleIndex];
-            if (t.tex != cur) {
-                if (int(g.verts.size()) > runStart)
-                    g.runs.push_back({cur, int(g.verts.size()) - runStart});
-                cur = t.tex;
-                runStart = int(g.verts.size());
+        if(stages & kStagePlacement) placeBody(g.localPos,g.verts,in.body);
+        if(stages & kStageMaterial) applyBodyMaterial(g.verts,g.baseColor,in.material);
+        if((stages & kStageLocal) && verify) verifyMonolithicBody(g,scratch,triangleOrder,in);
+        if(stages & kStageLocal) {
+            // Skip the BUILD too when shadows are off, not just the draw -- otherwise the
+            // toggle saves the 3.2ms submit but still pays to walk the model and emit ~700k
+            // vertices nobody looks at, which is most of the point of switching it off.
+            if (shadowsOnFrame_)
+                buildUnitShadow(u, g, visual.model.root, visual.meta, in.anim, in.facing,
+                                scratch,in.reuse ? &prepared : nullptr);
+            else {
+                g.shadowLocal.clear();g.maskedShadowLocal.clear();
+                g.maskedShadowVerts.clear();g.maskedShadowRuns.clear();
             }
+        }
+        if(stages & kStagePlacement) {
+            ShadowBoundsAccumulator bounds;
+            g.shadowVerts.resize(g.shadowLocal.size());
+            for (size_t i=0;i<g.shadowLocal.size();++i) {
+                g.shadowVerts[i]=placeShadowPoint(g.shadowLocal[i],in.shadow);
+                bounds.add(g.shadowVerts[i]);
+            }
+            for (size_t i=0;i<g.maskedShadowLocal.size();++i) {
+                g.maskedShadowVerts[i].position=placeShadowPoint(g.maskedShadowLocal[i],in.shadow);
+                bounds.add(g.maskedShadowVerts[i].position);
+            }
+            g.shadowBounds=bounds.bounds();
+        }
+        // Differential validation of the shadow fast path (positions, masks, order,
+        // corpse culling) against the full collector, after placement.
+        static const bool verifyShadow=tak::devEnv("TAK_SHADOW_VERIFY")!=nullptr;
+        // Lodestones are skipped: they cast their visible geometry including pieces
+        // their scripts mark DONT_CACHE / RENDER_OFF (a deliberate retail deviation in
+        // buildUnitShadow), which the reference collector does not model.
+        const bool lodestone=u.type && u.type->onMana && isStructure(u.type);
+        if (verifyShadow && (stages & kStageLocal) && shadowsOnFrame_ &&
+            !u.underConstruction && castsBlobShadow(u.type) && !lodestone) {
+            const bool corpseCull = u.corpsePhase && !u.corpseStatue;
+            const float sx=in.shadow.sx,sy=in.shadow.sy,zm=in.shadow.zoom;
+            scratch.clear();
+            collect(scratch,nullptr,visual.model.root,base,in.anim,in.facing,
+                    u.player,false,true,true,nullptr,&visual.meta,corpseCull);
+            size_t opaque=0,masked=0,maskRun=0;
+            int inRun=0;
+            auto samePoint=[](SDL_FPoint a,SDL_FPoint b){return a.x==b.x && a.y==b.y;};
+            for (const auto& triangle:scratch) {
+                if (triangle.tex) {
+                    if (maskRun<g.maskedShadowRuns.size() && inRun==g.maskedShadowRuns[maskRun].second) {
+                        ++maskRun;inRun=0;
+                    }
+                    if (maskRun>=g.maskedShadowRuns.size() ||
+                        g.maskedShadowRuns[maskRun].first!=triangle.tex ||
+                        inRun+3>g.maskedShadowRuns[maskRun].second || masked+3>g.maskedShadowVerts.size())
+                        throw std::runtime_error("shadow fast path mask/order mismatch");
+                    inRun+=3;
+                    for (int k=0;k<3;++k) {
+                        const auto& before=triangle.v[k];const auto& after=g.maskedShadowVerts[masked++];
+                        if (!samePoint(after.position,{sx+before.position.x*zm,sy+before.position.y*zm}) ||
+                            !samePoint(after.tex_coord,before.tex_coord) ||
+                            after.color.r!=before.color.r || after.color.g!=before.color.g ||
+                            after.color.b!=before.color.b || after.color.a!=before.color.a)
+                            throw std::runtime_error("shadow fast path masked vertex mismatch");
+                    }
+                } else for (const auto& vertex:triangle.v) {
+                    if (opaque>=g.shadowVerts.size() || !samePoint(g.shadowVerts[opaque++],
+                        {sx+vertex.position.x*zm,sy+vertex.position.y*zm}))
+                        throw std::runtime_error("shadow fast path opaque vertex/order mismatch");
+                }
+            }
+            if (opaque!=g.shadowVerts.size() || masked!=g.maskedShadowVerts.size() ||
+                (masked && (maskRun+1!=g.maskedShadowRuns.size() || inRun!=g.maskedShadowRuns.back().second)))
+                throw std::runtime_error("shadow fast path triangle count mismatch");
+        }
+    }
+
+    // The body transform and colour code of the former single pass (before the
+    // stages), verbatim, over the same sorted collector output.
+    void GameView::verifyMonolithicBody(const UnitGeom& g, const std::vector<Tri>& sorted,
+                                        std::span<const size_t> order, const UnitGeomInputs& in) {
+        const float zm=in.body.zoom,ax=in.body.ax,ay=in.body.ay,discoBob=in.body.bob;
+        const auto& m=in.material;
+        const float p=m.progress;
+        const bool conjuring=m.conjuring,disco=m.emote,spectral=m.spectral;
+        const SDL_Color discoCol=m.emoteColour;
+        const float discoMix=m.emoteMix,vetGold=m.vetGold;
+        Uint8 alpha = Uint8(p * 255.0f);
+        size_t out=0;
+        for (size_t triangleIndex : order) {
+            const auto& t=sorted[triangleIndex];
             for (int i = 0; i < 3; ++i) {
                 SDL_Vertex v = t.v[i];
                 v.position.x = v.position.x * zm + ax;
@@ -3225,7 +3407,7 @@
                     v.color.b = Uint8(v.color.b * (1.0f - vetGold * 0.7f));
                 }
                 if (conjuring) {
-                    float pulse = 0.5f + 0.5f * std::sin(animClock_ * 7.0f +
+                    float pulse = 0.5f + 0.5f * std::sin(m.clock * 7.0f +
                                                          v.position.y * 0.03f);
                     float glow = (1.0f - p) * pulse;
                     v.color.a = alpha;
@@ -3237,53 +3419,27 @@
                     v.color.g = Uint8(int(v.color.g) + int((int(discoCol.g) - int(v.color.g)) * discoMix));
                     v.color.b = Uint8(int(v.color.b) + int((int(discoCol.b) - int(v.color.b)) * discoMix));
                 }
-                // FBI ghost: a spectral body is see-through. Retail switches the
-                // renderer to its translucent blend mode for these; we scale vertex
-                // alpha instead, which lands in the same place through our painter.
-                // Its exact fraction comes from a per-palette .alp table we do not copy.
                 if (spectral) v.color.a = Uint8(int(v.color.a) * 55 / 100);
-                g.verts.push_back(v);
+                if (out>=g.verts.size() || std::memcmp(&v,&g.verts[out],sizeof v))
+                    throw std::runtime_error("staged body geometry differs from the single-pass transform");
+                ++out;
             }
         }
-        if (int(g.verts.size()) > runStart)
-            g.runs.push_back({cur, int(g.verts.size()) - runStart});
-
-        // Skip the BUILD too when shadows are off, not just the draw -- otherwise the
-        // toggle saves the 3.2ms submit but still pays to walk the model and emit ~700k
-        // vertices nobody looks at, which is most of the point of switching it off.
-        if (shadowsOnFrame_)
-            buildUnitShadow(u, g, vt->second.model.root, vt->second.meta, anim, facing,
-                            zm, scratch,reuse ? &prepared : nullptr);
-        else {
-            g.shadowVerts.clear();
-            g.maskedShadowVerts.clear();
-            g.maskedShadowRuns.clear();
-        }
-        if(timed) {
-            const size_t capacityAfter[6]={g.geometryKey.capacity(),g.verts.capacity(),g.runs.capacity(),
-                g.shadowVerts.capacity(),g.maskedShadowVerts.capacity(),g.maskedShadowRuns.capacity()};
-            for(size_t i=0;i<6;++i)g.reallocs+=capacityAfter[i]>capacityBefore[i];
-            g.buildNs=uint32_t(std::min<int64_t>(clockNs()-keyEnd,UINT32_MAX));
-        }
-        if(verifyCache) {
-            const auto bytes=[](const auto& a,const auto& b) {
-                return a.size()==b.size() && (a.empty() ||
-                    std::memcmp(a.data(),b.data(),a.size()*sizeof(a[0]))==0);
-            };
-            if(!bytes(g.verts,referenceGeom.verts) || !bytes(g.shadowVerts,referenceGeom.shadowVerts) ||
-               !bytes(g.maskedShadowVerts,referenceGeom.maskedShadowVerts) ||
-               g.runs!=referenceGeom.runs || g.maskedShadowRuns!=referenceGeom.maskedShadowRuns ||
-               g.shadowBounds!=referenceGeom.shadowBounds)
-                throw std::runtime_error("cached unit geometry mismatch");
-        }
+        if (out!=g.verts.size()) throw std::runtime_error("staged body vertex count differs from the single pass");
+#ifndef NDEBUG
+        ++monolithicChecks_;
+#endif
     }
 
-    // Reuses `scratch`: whatever the caller had in it is already consumed.
+    // Local stage: reuses `scratch` (whatever the caller had in it is already consumed).
+    // Positions are model-projected (before zoom, anchor and altitude lean);
+    // placement turns them into screen positions.
     void GameView::buildUnitShadow(const UnitR& u, UnitGeom& g,
                                    const tak::tdo::Object& root, const PieceMeta& meta,
-                                   const Anim* anim, float facing, float zm,
+                                   const Anim* anim, float facing,
                                    std::vector<Tri>& scratch, const PreparedPiece* prepared) {
-        g.shadowVerts.clear();
+        g.shadowLocal.clear();
+        g.maskedShadowLocal.clear();
         g.maskedShadowVerts.clear();
         g.maskedShadowRuns.clear();
         if (u.underConstruction || !castsBlobShadow(u.type)) return;
@@ -3302,8 +3458,6 @@
         // Deliberate retail deviation: lodestones cast their visible geometry,
         // including pieces marked DONT_CACHE or RENDER_OFF by the retail scripts.
         const bool lodestone = u.type && u.type->onMana && isStructure(u.type);
-        const float sx = g.ax + kShadowLX * g.alt * zm;
-        const float sy = g.ay + (kProjY - kShadowLZ) * g.alt * zm;
         const float cy=std::cos(facing),sn=std::sin(facing);
         // This traversal emits opaque positions directly. The body collector's
         // texture/atlas lookup, UVs, colours, depth and full Tri staging are not
@@ -3380,15 +3534,14 @@
                             static constexpr SDL_FPoint uv[4]={{0,0},{1,0},{1,1},{0,1}};
                             for (int k=0;k<3;++k) {
                                 const auto& point=vertices[indices[k]].position;
-                                g.maskedShadowVerts.push_back({{sx+point.x*zm,sy+point.y*zm},
+                                // Position written by placement (from maskedShadowLocal).
+                                g.maskedShadowLocal.push_back(point);
+                                g.maskedShadowVerts.push_back({point,
                                     {255,255,255,255},{maskUV.x+uv[indices[k]&3].x*maskUV.w,
                                                       maskUV.y+uv[indices[k]&3].y*maskUV.h}});
                             }
                         } else {
-                            for (size_t index:indices) {
-                                const auto& point=vertices[index].position;
-                                g.shadowVerts.push_back({sx+point.x*zm,sy+point.y*zm});
-                            }
+                            for (size_t index:indices) g.shadowLocal.push_back(vertices[index].position);
                         }
                     }
                 }
@@ -3400,56 +3553,6 @@
                      pose ? &pose->children[i] : nullptr);
         };
         collectShadow(collectShadow,root,modelBodyTransform(u.bodyPitch,u.bodyRoll),&meta,true,prepared);
-        float minX=std::numeric_limits<float>::infinity();
-        float minY=std::numeric_limits<float>::infinity();
-        float maxX=-minX,maxY=-minY;
-        for (const SDL_FPoint& p:g.shadowVerts) {
-            minX=std::min(minX,p.x); minY=std::min(minY,p.y);
-            maxX=std::max(maxX,p.x); maxY=std::max(maxY,p.y);
-        }
-        for (const SDL_Vertex& v:g.maskedShadowVerts) {
-            minX=std::min(minX,v.position.x); minY=std::min(minY,v.position.y);
-            maxX=std::max(maxX,v.position.x); maxY=std::max(maxY,v.position.y);
-        }
-        g.shadowBounds={minX,minY,maxX,maxY};
-
-        // Differential validation of the optimized path, including alpha masks
-        // and corpse culling. Disabled during normal rendering and profiling.
-        static const bool verify=tak::devEnv("TAK_SHADOW_VERIFY")!=nullptr;
-        if (verify) {
-            collect(scratch,nullptr,root,modelBodyTransform(u.bodyPitch,u.bodyRoll),anim,facing,
-                    u.player,false,true,true,nullptr,&meta,corpseCull);
-            size_t opaque=0,masked=0,maskRun=0;
-            int inRun=0;
-            auto samePoint=[](SDL_FPoint a,SDL_FPoint b){return a.x==b.x && a.y==b.y;};
-            for (const auto& triangle:scratch) {
-                if (triangle.tex) {
-                    if (maskRun<g.maskedShadowRuns.size() && inRun==g.maskedShadowRuns[maskRun].second) {
-                        ++maskRun;inRun=0;
-                    }
-                    if (maskRun>=g.maskedShadowRuns.size() ||
-                        g.maskedShadowRuns[maskRun].first!=triangle.tex ||
-                        inRun+3>g.maskedShadowRuns[maskRun].second || masked+3>g.maskedShadowVerts.size())
-                        throw std::runtime_error("shadow fast path mask/order mismatch");
-                    inRun+=3;
-                    for (int k=0;k<3;++k) {
-                        const auto& before=triangle.v[k];const auto& after=g.maskedShadowVerts[masked++];
-                        if (!samePoint(after.position,{sx+before.position.x*zm,sy+before.position.y*zm}) ||
-                            !samePoint(after.tex_coord,before.tex_coord) ||
-                            after.color.r!=before.color.r || after.color.g!=before.color.g ||
-                            after.color.b!=before.color.b || after.color.a!=before.color.a)
-                            throw std::runtime_error("shadow fast path masked vertex mismatch");
-                    }
-                } else for (const auto& vertex:triangle.v) {
-                    if (opaque>=g.shadowVerts.size() || !samePoint(g.shadowVerts[opaque++],
-                        {sx+vertex.position.x*zm,sy+vertex.position.y*zm}))
-                        throw std::runtime_error("shadow fast path opaque vertex/order mismatch");
-                }
-            }
-            if (opaque!=g.shadowVerts.size() || masked!=g.maskedShadowVerts.size() ||
-                (masked && (maskRun+1!=g.maskedShadowRuns.size() || inRun!=g.maskedShadowRuns.back().second)))
-                throw std::runtime_error("shadow fast path triangle count mismatch");
-        }
     }
 
     void GameView::drawUnit(const UnitR& u) {

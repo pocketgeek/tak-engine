@@ -65,7 +65,7 @@
 #include "client/renderframe.h"   // UnitR/PlayerR/Frame render snapshot (extracted leaf)
 #include "client/rendertelemetry.h" // per-frame render stats + generation vocabulary
 #include "client/animatedatlas.h"   // per-atlas animated-region tracking
-#include "client/geometrykeycause.h"  // telemetry: which stage a geometry miss came from
+#include "client/geometrystages.h"    // staged unit geometry: local / placement / material (workstream D)
 #include "client/geometryowners.h"    // stable per-unit geometry entries (workstream C)
 #include "client/ordertrail.h"
 #include "client/retailaim.h"
@@ -637,6 +637,12 @@ public:
 #ifndef NDEBUG
     uint64_t geometryChecks() const { return geometryChecks_.load(); }
     uint64_t animatedTextureChecks() const { return animatedTextureChecks_.load(); }
+    // TAK_GEOMETRY_VERIFY (workstream D): partial stage updates compared with a
+    // complete rebuild, by redone stage, and local builds compared with the former
+    // single-pass transform.
+    uint64_t placementChecks() const { return placementChecks_.load(); }
+    uint64_t materialChecks() const { return materialChecks_.load(); }
+    uint64_t monolithicChecks() const { return monolithicChecks_.load(); }
     uint64_t ownershipChecks() const { return ownershipChecks_; }
     const tak::render::EntryPoolStats& ownershipTotals() const { return ownershipTotals_; }
     // Debug harness: the world-reset epoch bump of a rejoin, without the reset.
@@ -925,36 +931,38 @@ private:
 
     // Per-unit screen-space geometry, built in parallel each frame (the expensive
     // model projection) so the single render thread only submits draw calls.
+    // Built in three stages, each kept with its own exact input key
+    // (client/geometrystages.h): LOCAL (piece transforms, collection, depth sort,
+    // texture/UV and shadow-mask choice, shadow silhouette -- model-projected,
+    // before zoom and anchor), PLACEMENT (local -> screen) and MATERIAL (body
+    // colour). A stage is redone only when its own inputs changed, so a camera
+    // pan re-places retained local geometry instead of rebuilding it.
+    // Fields are grouped by the passes that read them: the per-frame key check
+    // and the draw passes first, the retained local output after.
     struct UnitGeom {
-        std::vector<uint64_t> geometryKey; // exact inputs, never a probabilistic hash
-        uint64_t revision=0;
-        bool reused=false;
+        // ---- key check (every visible unit, every frame) ----
+        tak::render::PlacementKey placementKey{};
+        bool reused=false;           // no stage redone this frame
         bool animatedTexture=false;
-#ifndef NDEBUG
-        uint32_t verifiedTick=~0u;
-#endif
+        bool canFly=false;
+        uint8_t stages=0;            // tak::render::StageBit set redone this frame
         int owner=-1;
-        // Telemetry only: why the last build missed (tak::render::MissCause),
-        // written by the worker that built it, tallied by the render thread.
-        uint8_t missCause=0;
-        // Telemetry only (worker-written, render-thread tallied; zero while off):
-        // every stage whose inputs changed (bit per MissCause), whether the slot
-        // changed owner, vector capacity growths, and worker CPU time for the key
-        // check and the rebuild. keyLayout locates the variable-length parts of
-        // geometryKey (client/geometrykeycause.h); it is kept even while off.
-        uint32_t missMask=0;
-        bool ownerChanged=false;
-        uint8_t reallocs=0;
-        uint32_t keyNs=0, buildNs=0;
-        tak::render::GeometryKeyLayout keyLayout{};
+        tak::render::MaterialKey materialKey{};
+        std::vector<uint64_t> localKey;          // exact inputs, never a probabilistic hash
+        tak::render::LocalKeyLayout localLayout{};
+        // ---- draw passes (distant images, shadow atlas, composite, body assembly) ----
+        // `revision` = the screen output: bumped whenever any stage is redone (what
+        // shadow tile stamps and distant images compare). The stage revisions are
+        // bumped only when that stage is redone. All values come from one
+        // GameView-wide counter, so no value repeats for any occupant of an entry.
+        uint64_t revision=0;
         // This entry's current generational handle (render thread, set at claim):
         // the identity downstream caches key on instead of the unit id.
         tak::render::RenderHandle handle{};
         uint64_t handleKey() const { return (uint64_t(handle.generation)<<32)|handle.index; }
+        float ax = 0, ay = 0, occY = 0, alt = 0;
         std::vector<SDL_Vertex> verts;                  // transformed, coloured
         std::vector<std::pair<SDL_Texture*, int>> runs; // (texture, vertex count)
-        float ax = 0, ay = 0, occY = 0, alt = 0;
-        bool canFly = false;
         // Workers emit projected shadow geometry alongside the body. The shadow
         // collector skips body-only lighting, texture lookup and depth records.
         // POSITIONS ONLY (8 bytes/vertex), not SDL_Vertex (20). Every shadow vertex
@@ -968,30 +976,58 @@ private:
         std::vector<SDL_FPoint> shadowVerts;
         std::vector<SDL_Vertex> maskedShadowVerts; // only cutout faces need UVs/textures
         std::vector<std::pair<SDL_Texture*,int>> maskedShadowRuns; // adjacent masks, original order
-        std::array<float,4> shadowBounds{}; // min x/y, max x/y; worker-built
+        std::array<float,4> shadowBounds{}; // min x/y, max x/y of the placed shadow
         SDL_Texture* shadowAtlasPage = nullptr;
         SDL_Rect shadowAtlasSrc{};
         SDL_FRect shadowAtlasDst{};
+        // ---- retained local-stage output (read only when a stage is redone) ----
+        // Body: depth-sorted local positions (parallel to verts) and base colours
+        // (empty = every vertex white, the collector's colour for every textured
+        // face). Shadow: local positions parallel to shadowVerts / maskedShadowVerts.
+        std::vector<SDL_FPoint> localPos;
+        std::vector<SDL_Color> baseColor;
+        std::vector<SDL_FPoint> shadowLocal;
+        std::vector<SDL_FPoint> maskedShadowLocal;
+        uint64_t localRevision=0, placementRevision=0, materialRevision=0;
+#ifndef NDEBUG
+        uint32_t verifiedTick=~0u;
+#endif
+        // Telemetry only (worker-written, render-thread tallied; zero while off):
+        // why the last build missed (tak::render::MissCause), every input category
+        // that changed (bit per MissCause), whether the entry changed owner, vector
+        // capacity growths, and worker CPU time for the key check and the rebuild.
+        uint8_t missCause=0;
+        bool ownerChanged=false;
+        uint8_t reallocs=0;
+        uint32_t missMask=0;
+        uint32_t keyNs=0, buildNs=0;
         // geomEntries_ payload contract (client/geometryowners.h). Cold = no key,
         // so the next build cannot reuse anything; capacity stays for reuse.
-        // `revision` is kept: it comes from one GameView-wide counter, so a value
+        // Revisions are kept: they come from one GameView-wide counter, so a value
         // is never repeated by another occupant of this entry.
         void makeCold() {
-            geometryKey.clear();keyLayout={};owner=-1;reused=false;
+            localKey.clear();localLayout={};owner=-1;reused=false;stages=0;
             verts.clear();runs.clear();shadowVerts.clear();
             maskedShadowVerts.clear();maskedShadowRuns.clear();shadowAtlasPage=nullptr;
+            localPos.clear();baseColor.clear();shadowLocal.clear();maskedShadowLocal.clear();
+        }
+        template <class F> void forEachVector(F&& f) const {
+            f(localKey);f(verts);f(runs);f(shadowVerts);f(maskedShadowVerts);f(maskedShadowRuns);
+            f(localPos);f(baseColor);f(shadowLocal);f(maskedShadowLocal);
         }
         size_t retainedBytes() const {
-            return sizeof(*this)+geometryKey.capacity()*sizeof(uint64_t)+verts.capacity()*sizeof(SDL_Vertex)+
-                runs.capacity()*sizeof(runs[0])+shadowVerts.capacity()*sizeof(SDL_FPoint)+
-                maskedShadowVerts.capacity()*sizeof(SDL_Vertex)+maskedShadowRuns.capacity()*sizeof(maskedShadowRuns[0]);
+            size_t bytes=sizeof(*this);
+            forEachVector([&](const auto& v){bytes+=v.capacity()*sizeof(v[0]);});
+            return bytes;
         }
         void releaseMemory() {
             makeCold();
-            std::vector<uint64_t>().swap(geometryKey);std::vector<SDL_Vertex>().swap(verts);
+            std::vector<uint64_t>().swap(localKey);std::vector<SDL_Vertex>().swap(verts);
             std::vector<std::pair<SDL_Texture*,int>>().swap(runs);std::vector<SDL_FPoint>().swap(shadowVerts);
             std::vector<SDL_Vertex>().swap(maskedShadowVerts);
             std::vector<std::pair<SDL_Texture*,int>>().swap(maskedShadowRuns);
+            std::vector<SDL_FPoint>().swap(localPos);std::vector<SDL_Color>().swap(baseColor);
+            std::vector<SDL_FPoint>().swap(shadowLocal);std::vector<SDL_FPoint>().swap(maskedShadowLocal);
         }
     };
     tak::OpaqueShadowSubmit shadowOpaqueSubmit_;
@@ -1095,6 +1131,7 @@ private:
 #ifndef NDEBUG
     std::atomic<uint64_t> geometryChecks_{0};
     std::atomic<uint64_t> animatedTextureChecks_{0};
+    std::atomic<uint64_t> placementChecks_{0}, materialChecks_{0}, monolithicChecks_{0};
 #endif
     uint64_t profShadowVerts_ = 0;  // shadow vertices copied + submitted, likewise
     // takeProf's own previous values, so it can report per-interval deltas.
@@ -1321,10 +1358,31 @@ private:
 
     // The projected silhouette for one unit, into g.shadowVerts. Split out because
     // it is built alongside the body geometry on the worker pool.
+    // Local stage: shadow positions before placement (g.shadowLocal and
+    // g.maskedShadowLocal; masked UVs/colours into g.maskedShadowVerts).
     void buildUnitShadow(const UnitR& u, UnitGeom& g, const tak::tdo::Object& root,
-                         const PieceMeta& meta, const Anim* anim, float facing, float zm,
+                         const PieceMeta& meta, const Anim* anim, float facing,
                          std::vector<Tri>& scratch, const PreparedPiece* prepared = nullptr);
     void buildUnitGeom(const UnitR& u, UnitGeom& g, std::vector<Tri>& scratch);
+    // Everything buildUnitGeom derives from the unit and the frame before the
+    // stage keys: what the stages compute from.
+    struct UnitGeomInputs {
+        const Visual* visual=nullptr;
+        const Anim* anim=nullptr;
+        SDL_Texture* atlas=nullptr;
+        float facing=0;
+        bool reuse=true;   // false under TAK_GEOMETRY_REFERENCE: no prepared pieces
+        tak::render::BodyPlacement body;
+        tak::render::ShadowPlacement shadow;
+        tak::render::BodyMaterial material;
+    };
+    // Redo the given stages (tak::render::StageBit) of one unit's geometry.
+    void runUnitGeomStages(const UnitR& u, UnitGeom& g, uint8_t stages, const UnitGeomInputs& in,
+                           std::vector<Tri>& scratch);
+    // Debug (TAK_GEOMETRY_VERIFY): the former single-pass body transform from the
+    // sorted collector output, compared with the staged result.
+    void verifyMonolithicBody(const UnitGeom& g, const std::vector<Tri>& sorted,
+                              std::span<const size_t> order, const UnitGeomInputs& in);
 
     // Sprinkle the faction build/summon nano-sparkle over a screen footprint centred at
     // (cx,cy), fpw x fph screen px. Retail draws this over BOTH the worker unit and its

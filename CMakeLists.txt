@@ -1402,6 +1402,24 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 800 600 --novsync)
       set_tests_properties(render_geometry_ownership PROPERTIES TIMEOUT 180
           PASS_REGULAR_EXPRESSION "OWNERSHIP_VERIFY checks=[1-9][0-9]* acquired=[1-9][0-9]* replaced=[1-9][0-9]* destroyed=[0-9]+ expired=[1-9][0-9]* budget=[0-9]+ trimmed=[1-9]")
+      # Staged unit geometry in a real scene (workstream D): a battle with construction
+      # sites, ghosts, flyers and corpses under a panning, zooming camera, so units are
+      # re-placed (pan/zoom), re-coloured (conjuring, summoning, ghosts) and rebuilt
+      # (animation). Every reuse, complete or partial, must equal a complete rebuild,
+      # every local build must equal the former single-pass transform
+      # (TAK_GEOMETRY_VERIFY) and every shadow the full collector (TAK_SHADOW_VERIFY);
+      # each throws at the first mismatch.
+      add_test(NAME render_geometry_stages COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+          TAK_SHADOW_BENCH=150 TAK_RENDER_BATTLE=1 TAK_RENDER_EXTRAS=1 TAK_PROFILE_ZOOM=1
+          TAK_RENDER_CAMERA=1 TAK_RENDER_ZOOM=1
+          TAK_RENDER_STUDY=1 TAK_RENDER_FRAMES=150 TAK_GEOMETRY_VERIFY=1 TAK_SHADOW_VERIFY=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/geometry-stages-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/geometry-stages-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 800 600 --novsync)
+      set_tests_properties(render_geometry_stages PROPERTIES TIMEOUT 180
+          PASS_REGULAR_EXPRESSION "GEOMETRY_STAGES hits=[0-9]+ placement=[1-9][0-9]* material=[1-9][0-9]* single_pass=[1-9]")
       add_test(NAME tactical_dots COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_TACTICAL_DOTS_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/tactical-dots-profile
@@ -1469,7 +1487,7 @@ if(TAK_BUILD_CLIENT)
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
-          tactical_dots spectator_health_bars
+          render_geometry_stages tactical_dots spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()
