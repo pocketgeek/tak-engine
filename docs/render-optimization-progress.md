@@ -62,21 +62,43 @@ replays must not move; nothing in this program may feed the simulation.
   Captures identical in all 648 comparisons; measurements: Experiment 5.
   Outstanding: none for C. Known residual: ~1.5% draw on a dense stationary
   army (entry access order, see Experiment 5), to revisit with D's layout.
-- Workstreams D–N: not started.
-- **Next concrete step:** workstream D (separate preparation from placement)
-  on top of the stable entries: split `UnitGeom`'s single exact key into
-  stage keys (resource/topology, pose + local projection, body material,
-  shadow coverage, placement) hung off the same entry, keep the
-  `TAK_GEOMETRY_VERIFY` exact check, replace `client/geometrykeycause.h`'s
-  layout table with per-stage revisions, and revisit the entry layout (hot
-  fields per pass) to remove the stationary residual. Measure against C2
-  (`~/tak-tmp/render-opt/takclient-C2-candidate`, code of `50acac44`) with
-  `tools/render_benchmark.py --a <C2> --b <candidate>`; pan, zoom, churn and
-  moving are the scenes where D should show (every pan miss is placement-led).
-  Earlier builds remain: B3 (`takclient-B3-candidate`, `ea2db865`), A
-  (`takclient-A-candidate`), p0base (`~/tak-tmp/wt/render-opt-p0base`).
-  Expect Legion contention: use `--wait-quiet` and judge by ABBA group, not
-  only by means (Experiment 5 shows a bimodal machine state of ~15%).
+- **Workstream D (separate preparation from placement) is implemented and
+  verified** (commits `361484d2` stage vocabulary + exact stage arithmetic +
+  `geometry_stages` test, `08d027d4` GameView local/placement/material
+  stages + verifiers + `render_geometry_stages` ctest, `32c5d71a` UnitGeom
+  layout, `ed8e6e2a` exact shadow-coverage revision, `dc04c856` verifier
+  compiled only in debug, `aae1a9fa` MapView section trimming on the study
+  clock (harness repeatability, see Experiment 6), then the docs commit).
+  Tests: `ctest -L quick` 380/380 on build-o2 at `aae1a9fa`;
+  `geometry_stages`, `render_geometry_stages`, `render_telemetry`,
+  `geometry_owners` among them; GL verifier runs (`TAK_GEOMETRY_VERIFY` +
+  `TAK_GEOMETRY_OWNERSHIP_VERIFY`) on effects, churn and pan pass. Captures
+  identical in all 168 comparisons (9 scenes at 1280×960, 5 at 7680×2160).
+  Measurements: Experiment 6. `--mpai` not run: only `src/client` changed
+  (presentation), and every benchmark run checks the world hash (identical
+  A vs B in every scene).
+- Workstreams E–N: not started (E has groundwork: `UnitGeom::shadowRevision`
+  is exact and maintained, but no downstream consumer uses it yet).
+- **Next concrete step:** workstream E (split body and shadow invalidation)
+  on top of D's stage revisions: change the shadow tile stamp
+  (`buildShadowSilhouetteAtlas`) from (`revision`, screen pixel position) to
+  (`shadowRevision`, `placementRevision`/placement key, size, scale), so a
+  body-only change (material or a local rebuild that kept coverage,
+  `geom_shadow_kept`) no longer re-rasterizes coverage; keep
+  `TAK_SHADOW_CACHE_VERIFY` and add a differential test across every
+  invalidation cause. Note the measured limit: in the matrix scenes local
+  rebuilds are pose-driven, so coverage almost always changes with them; E's
+  gain on its own is small until F stops relocating tiles. Measure against
+  D (`~/tak-tmp/render-opt/takclient-DF-candidate`, code of `aae1a9fa`).
+  Earlier builds remain: C2F (`takclient-C2F-candidate`, C2 + the MapView
+  clock fix, worktree `~/tak-tmp/wt/render-opt-c2fix`), C2
+  (`takclient-C2-candidate`, `50acac44`), B3 (`takclient-B3-candidate`,
+  `ea2db865`), A (`takclient-A-candidate`), p0base
+  (`~/tak-tmp/wt/render-opt-p0base`). **Compare `constrained` captures only
+  between builds that both carry `aae1a9fa`** (before it, section trimming
+  followed wall time). Cores 16–23 are reserved for this program since
+  2026-10-16 (Legion moved to 4–15); lean testing applies (affected scenes
+  only, ABBA × 2 per size, one `ctest -L quick` per workstream).
 
 ## Status checklist (A–N)
 
@@ -89,8 +111,8 @@ evidence; nothing below is already fully satisfied.
 | A | Renderer telemetry | **verified** | Phase 0: `FrameStats`, first phases/counters. Workstream A (`37f73c48`…`9569bdbc`): every category the brief lists — candidate/painter, geometry-key evaluation (`w_geometry_key`), geometry prep, shadow alloc/prep/raster/composite, body assembly/submit, atlas, terrain (`t_terrain`, `t_terrain_upload`, worker compose/decode time, job queued/completed/cancelled/discarded/used), worker pool dispatch/wait/busy/wake — and counters for miss causes per stage, owner reassignment, pose/material/placement/zoom/resource/settings invalidation, vertices generated/copied/submitted and bytes uploaded, shadow dirty tiles/area/causes, distant-image hits/held/bakes/refusals, reallocations, logical/native/SDL draws, flushes, target switches, CPU used vs retained bytes, GPU texture creates. Compiled out under `NDEBUG`; off in debug unless asked. GPU draw timeline read from a non-blocking query ring and labelled as timeline (busy time unmeasured); pipelined and forced-completion runs recorded and aggregated separately. Wired into `render_benchmark.py` reports. Cost: no material difference in matched runs (Experiment 3). Limits: draw/flush counts cover the shared world-pass paths only (HUD/effects direct SDL calls uncounted); SDL-internal flushes and driver draws invisible. |
 | B | Animated atlas dirty regions | **verified** | Workstream B (`bae9afd8` painter + tracker + test, `095e1fba` GameView, `42c1c4a6` cached region list + early return, `ea2db865` copy-started colour atlases). `AnimatedAtlasTracker` (`client/animatedatlas.h`) records per colour atlas the frame each animated region holds under `rendererGeneration_` and the new `assetGeneration_`; `animateGlowTextures()` returns at once when no sequence changed, otherwise visits only atlases holding a stale frame and repaints only changed regions (content + gutter, or the transparent clear of an expired sequence). New/reset atlases are painted completely and recorded (`glowDirty_`, which forced a repaint of every atlas, is gone); a second colour starts as a 1:1 copy of a complete atlas and repaints only per-colour, animated and untracked regions. `AtlasPainter` removed the flush per region (blend is recorded per queued copy; one flush only protects a source not already NEAREST — none in shipped data). Cadence unchanged. Tests: `animated_atlas` (synthetic, three-way comparison + CPU oracle, mutation-checked), `render_atlas_verify` (in-game `TAK_ATLAS_VERIFY`, two colours, resets). Captures identical. Shipped data: all 44 animated regions advance on the same ticks, so the region count per repaint is unchanged; the measured savings are the flushes, the repaint-frame cost and multi-colour atlas creation (Experiment 4). |
 | C | Stable geometry ownership | **verified** | Workstream C (`81a29b58` pool + test, `b180e477` GameView integration, `50acac44` index hash). Each drawn unit owns one entry in `geomEntries_` (`StableEntryPool<UnitGeom>`, `client/geometryowners.h`) keyed by `UnitOwner` = (id, world epoch, type, replacement model); the painter passes use `visGeom_`, ordered pointers to those entries, so depth order no longer decides ownership and a unit entering ahead evicts nobody. Destroyed units are released the frame they leave the snapshot; reused ids (rejoin: `Frame::worldEpoch`), replacement models and type changes get a fresh cold entry with a new generation (`HandleSlots`: one table-wide generation counter); renderer reset keeps owners and drops content. Absent units keep their entry ≤ 2 s / ≥ 30 frames within 32 MiB / 8192 entries; released capacity ≤ 8 MiB / 4 s, then freed with all-free tail chunks; id index sized from live entries. Chunks never move (worker-safe growth). Revisions are globally unique; distant images keyed by the entry handle. Tests: `geometry_owners` (unit: reorder, churn/expiry, budgets, destruction, epoch/type/model reuse, reset, growth, parallel writes, memory recovery, randomized; mutation-checked; ASan/UBSan/TSan clean), `render_geometry_ownership` (in game, two verifiers), `distant_models` (new identity never held). Captures identical (648 comparisons). Measured (Experiment 5): `miss_owner` → 0 in every scene; rebuild work −5 to −8% where units move; draw time unchanged within noise; a consistent ~1.5% (≈0.07 ms) residual on a dense stationary army, not material; battle-sparse retained geometry 72.2 → 0.09 MiB after the view empties. |
-| D | Separate preparation from placement | not started | One exact key (`:2707`–`:2737`) covers identity, pose, appearance AND `zm, ax, ay` (screen anchor). Any camera pan or interpolation step rebuilds the piece transforms, collection, triangle sort and screen transform. `preparePiece` already shares the transformed tree between body and shadow inside one build. |
-| E | Split body/shadow invalidation | not started | Body and shadow are rebuilt together on any key miss (`buildUnitGeom` → `buildUnitShadow`, `:2871`). The shadow tile stamp compares the geometry revision AND the screen pixel position, so body-only changes and every pan re-rasterize coverage. |
+| D | Separate preparation from placement | **verified** | Workstream D (`361484d2` vocabulary + test, `08d027d4` GameView stages, `32c5d71a` layout, `ed8e6e2a` shadow-coverage revision, `dc04c856` debug-only verifier, `aae1a9fa` harness clock fix). `buildUnitGeom` keeps three exact stage keys on the unit's stable entry (`client/geometrystages.h`): LOCAL (identity/resources, pose incl. heading/emote spin, pitch/roll, piece poses with hidden/shadow flags, corpse/statue, palette slot, texture frames, construction, shadow toggle) → piece transforms, collection, depth sort, UVs, shadow silhouette in model-projected coordinates; PLACEMENT (zoom, interpolated anchor with lift/sink/altitude, emote bob, flyer altitude, occlusion line) → screen positions; MATERIAL (veterancy, ghost, conjuring progress + clock, tint, opacity) → vertex colours. Only stages whose inputs changed are redone; placement and material use the former single pass's expressions in the same order (bit-identical). Per-stage revisions (`localRevision`, `placementRevision`, `materialRevision`, exact `shadowRevision`); `revision` (the screen output) still advances on any stage, so downstream consumers are unchanged. No hashes; no sim tick as a revision; resets make entries cold. Tests: `geometry_stages` (arithmetic vs the c2c25707 single pass, partial = complete, six header mutations fail it), `render_geometry_stages` (in game, both verifiers), `TAK_GEOMETRY_VERIFY` (every reuse vs a complete rebuild, every local build vs the former single-pass transform, shadow-kept detection vs a copy). Captures identical (168 comparisons). Measured (Experiment 6): in pan/zoom 95% of units are re-placed instead of rebuilt — vertices generated −98%, worker build time −76 to −77%, geometry phase wall −57 to −61%; draw time −17.7% / −16.1% in zoom (material at both sizes), −14 to −20% in pan (every ABBA group, inside pan's spread), −7 to −9% in churn (not material); moving and stationary unchanged within noise. Costs: a local rebuild +7–12% worker time, the key check +28–32% on a pan, geometry memory +18–22% capacity. |
+| E | Split body/shadow invalidation | not started (groundwork from D) | Body and shadow are rebuilt together on any local miss, and the shadow tile stamp still compares `revision` (any stage) AND the screen pixel position, so body-only changes and every pan re-rasterize coverage. Since D the entry carries an exact `shadowRevision` (advanced only when the local shadow output actually changed, `geom_shadow_kept` counts the rest) and `placementRevision` for E to key on. |
 | F | Persistent shadow allocation | not started | `buildShadowSilhouetteAtlas` (`:377`) repacks every visible shadow into height-sorted shelves each frame; tile stamps are compared by TILE INDEX, so one changed size or one unit entering view shifts and re-rasterizes every later tile on that page. Pages: ≤4, 2048² max, grown in powers of two, retained until reset. |
 | G | Distant image lookup before generation | not started | `DistantModels::prepare` (`distantmodels.cpp`) runs after `buildUnitGeom` and needs the generated vertices (bounds, source pointer, revision). Entry key: unit id (the geometry entry's generational handle since C), geometry revision, texture tick, source pointer, zoom/scale; 67 ms refresh, 128 bakes/frame, 64-px tiles, 4 × 2048² pages; pages released only when ALL entries expire. Revision changes on every pan (D), so panning re-bakes. |
 | H | Less full-scene vertex copying | not started (partly present) | `GeometrySubmit` (`geometrysubmit.h`) submits batches ≥512 vertices on the `opengl` backend through client arrays, skipping SDL's per-vertex conversion copy, with an optional retained VBO keyed by a caller revision (used by terrain tiles and fog, not bodies). Bodies are still copied every frame: per-unit `UnitGeom::verts` → `bodyVerts_` (`:782`–`:850`) → client-array upload. No ordered command representation. |
@@ -180,8 +202,8 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 | Painter list | `paintItems_` stable sort by (layer, z) (`:233`); air units layer 1 | render thread |
 | Entry claim (since C) | `claimGeometryEntries` (`gameview_render.cpp`): each painter-ordered unit claims the entry its identity owns in `geomEntries_` (`StableEntryPool<UnitGeom>`, `client/geometryowners.h`); `visUnits_` / `visGeom_` (ordered entry pointers) / `geomIndex_`; then `reclaim` (destroyed, expired, budget, trim) | render thread, before the parallel pass |
 | Atlas maintenance | `atlasFor` per visible colour slot (`:272`), `preparePaletteTextures` for structures (`:284`), `animateGlowTextures` (`:289`) | render thread, render-target draws |
-| Geometry preparation | `pool_.parallelFor` → `buildUnitGeom` (`:306`, `:2614`): exact key, `preparePiece` (`:2574`), `collect` (`:4991`), index sort (`:2791`), screen transform + tint | `ThreadPool pool_`, thread-local scratch, writes only its unit's entry `*visGeom_[i]` |
-| Shadow preparation | `buildUnitShadow` (`:2871`) inside the same worker build | positions-only opaque verts + masked runs |
+| Geometry preparation | `pool_.parallelFor` → `buildUnitGeom`: three exact stage keys (since D), then `runUnitGeomStages` redoes only the changed stages — LOCAL (`preparePiece`, `collect`, index sort, local shadow), PLACEMENT (`placeBody`/shadow placement, bounds), MATERIAL (vertex colours) | `ThreadPool pool_`, thread-local scratch, writes only its unit's entry `*visGeom_[i]` |
+| Shadow preparation | `buildUnitShadow` inside the LOCAL stage (local points retained); the placement stage re-places them | positions-only opaque verts + masked runs |
 | Distant images | `distantModelCache_.prepare` (`:350`, `distantmodels.cpp`) | render thread, offscreen bakes |
 | Shadow atlas | `buildShadowSilhouetteAtlas` (`:377`, called `:656`): pack, dirty tiles, parallel transform, `OpaqueShadowSubmit` + mask batches | render thread + pool for the transform |
 | Shadow composite | ground: `drawShadowBatch` (`:767`, `:2593`); air: drained at the ground→air boundary inside the body replay | render thread |
@@ -194,7 +216,7 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 
 | Cache / buffer | Owner | Key / invalidation | Storage & budget | Lifetime / reset |
 |---|---|---|---|---|
-| Unit geometry (`geomEntries_`, `UnitGeom`; was `geomPool_` before C) | GameView | ownership: `UnitOwner` = (unit id, world epoch, type, replacement model), generational handle per acquisition; content validity: the unchanged exact word vector (id, type, visual, atlas ptr, player, slot, pitch/roll, veteran, construction, ghost, corpse, shadows-on, conjuring, disco, zoom, screen anchor, occlusion, altitude, facing, bob/mix, opacity, anim clock (conjuring), animated texture frames, piece poses); `revision` from one GameView-wide atomic counter | one entry per visible or recently visible unit in 256-entry chunks that never move; absent units kept ≤ 2 s and ≥ 30 frames, within 32 MiB / 8192 entries (oldest first); released capacity kept ≤ 8 MiB / 4 s then freed; all-free tail chunks deallocated; id index sized from live entries | `invalidateRenderTargets` → `makeAllCold` (owners kept, content dropped); world reset → new epoch; destroyed units released the frame they leave the snapshot |
+| Unit geometry (`geomEntries_`, `UnitGeom`; was `geomPool_` before C) | GameView | ownership: `UnitOwner` = (unit id, world epoch, type, replacement model), generational handle per acquisition; content validity (since D): three exact stage keys — local (id, type, visual, atlas ptr, player, slot, pitch/roll, construction, corpse phase, statue, shadows-on, facing, animated texture frames, piece-name table, piece poses), placement (zoom, anchor x/y, emote bob, altitude, occlusion line), material (veteran, ghost, conjuring, emote, tint colour/mix, opacity, anim clock while conjuring); `revision` and the per-stage revisions from one GameView-wide atomic counter | one 512-byte (64-byte aligned) entry per visible or recently visible unit in 256-entry chunks that never move, plus its vectors (screen output and, since D, retained local positions: 8 B per body and per shadow vertex, base colours only for untextured faces); absent units kept ≤ 2 s and ≥ 30 frames, within 32 MiB / 8192 entries (oldest first); released capacity kept ≤ 8 MiB / 4 s then freed; all-free tail chunks deallocated; id index sized from live entries | `invalidateRenderTargets` → `makeAllCold` (owners kept, content dropped); world reset → new epoch; destroyed units released the frame they leave the snapshot |
 | Body buffer `bodyVerts_`, `copyTasks_`, `drawOps_` | GameView | rebuilt each frame | peak capacity retained | session |
 | Shadow silhouette pages | GameView | per-tile stamp (geometry slot ptr, owner, screen pixel pos, slot pos, size, revision, scale) compared by tile index | ≤4 GPU target pages up to 2048² (≤64 MiB), grown, retained | destroyed on reset/teardown |
 | Shadow scratch (`shadowAtlasOpaqueScratch_`, mask scratch, `shadowCompositeBatch_`) | GameView | per frame | capacity retained | cleared on reset |
@@ -275,8 +297,9 @@ Added by workstream A (same header unless noted):
   read the exact geometry key's layout (26 fixed words, optional conjuring
   clock, texture frames, piece table + poses; `GeometryKeyLayout` per entry)
   and name the stages whose inputs changed. Telemetry only — reuse is still
-  decided by the whole-key comparison. Workstream D must keep this table in
-  step with its new keys, or replace it with per-stage revisions.
+  decided by the whole-key comparison. (Removed by workstream D: the
+  attribution now reads the stage keys, `localKeyChanges` /
+  `materialKeyChanges` / `placementKeyChanges` in `client/geometrystages.h`.)
 - `ThreadPool::Stats` (`client/threadpool.h`): optional, null by default;
   dispatch, caller-wait, participant-busy and worker-wake times. Changes no
   chunking or result (`render_telemetry_test` checks identical outputs).
@@ -322,6 +345,38 @@ Added by workstream C:
   `TAK_RENDER_EPOCH=N` (world-epoch bump every N frames, the id reuse of a
   rejoin), `TAK_GEOMETRY_RETAIN_MS` / `TAK_GEOMETRY_TRIM_MS` (shorter
   windows for verification runs).
+
+Added by workstream D:
+
+- `client/geometrystages.h`: the local key layout (`kLocalKeyFixedWords`,
+  `kLocalKeyWordCause`, `LocalKeyLayout`), `MaterialKey`, `PlacementKey`,
+  `planStages(localValid, placementSame, materialSame, materialReadsPlacement)`
+  → `StageBit` set, the placement arithmetic (`BodyPlacement`/`placeBody`,
+  `ShadowPlacement`, bounds) and material arithmetic (`BodyMaterial`), and the
+  per-stage miss attribution. Everything compares exact words/arrays; nothing
+  is hashed.
+- `UnitGeom` (`gameview.h`): `placementKey`, `materialKey`, `localKey` +
+  `localLayout`; retained local output `localPos`, `baseColor`,
+  `shadowLocal`, `maskedShadowLocal`; revisions `localRevision`,
+  `placementRevision`, `materialRevision`, `shadowRevision` (exact: advanced
+  only when the local shadow output differs) next to `revision` (any stage,
+  what current consumers compare); `stages` (redone this frame). Layout: the
+  fields every visible unit touches every frame share cache line 0; 64-byte
+  aligned, 512 bytes.
+- `GameView::runUnitGeomStages(u, g, stages, inputs, scratch)` — the stage
+  executor; `UnitGeomInputs` carries the placement/material parameters.
+- Later workstreams: E keys shadow coverage on (`shadowRevision`,
+  placement); F/G key on the entry handle plus the stage revision they
+  depend on, never on `revision` when a narrower one suffices.
+- Debug: `TAK_GEOMETRY_VERIFY` now checks every complete hit, every
+  placement-only and material-only reuse against a complete rebuild, every
+  local build against the former single-pass transform
+  (`verifyMonolithicBody`) and the shadow-kept detection against a copy;
+  the study prints `GEOMETRY_STAGES hits=… placement=… material=…
+  single_pass=…`. `TAK_GEOMETRY_NOCACHE` / `TAK_GEOMETRY_REFERENCE` rebuild
+  every stage every frame.
+- `MapView::setClockMs` (`aae1a9fa`): the render study drives section idle
+  trimming from its presentation clock (play keeps wall time).
 
 ### Cache ownership and invalidation (workstream C)
 
@@ -388,6 +443,73 @@ sized from live entries and shrinks (`compact`), the tail chunks and the
 counts every payload vector's capacity, the entry objects, the id index and
 the metadata.
 
+### Staged content validity (workstream D)
+
+C answered *whose* entry it is. D splits *is its content still valid?* into
+three stages, each with an exact key on the entry, and reruns only the
+stages whose inputs changed:
+
+```
+inputs ──► LOCAL key ──► piece transforms, collect, depth sort, UVs, mask choice,
+              │          shadow silhouette  →  localPos, baseColor, shadowLocal,
+              │          maskedShadowLocal (model-projected, pre-zoom, pre-anchor)
+              ▼
+         PLACEMENT key ─► verts[i].position = localPos[i]*zoom + anchor (- bob);
+              │           shadow points, shadow bounds, ax/ay/occY/alt
+              ▼
+         MATERIAL key ──► verts[i].color from baseColor (veterancy, conjuring
+                          fade/pulse — reads the placed y, so conjuring units
+                          also redo material on placement — tint, ghost, opacity)
+```
+
+The asset/topology stage of the brief is the identity and resource words at
+the head of the local key (type, visual, atlas pointer, piece-name table)
+plus entry ownership (C): a resource change rebuilds local; a reload or
+renderer reset makes the entry cold. Draw-only clipping state (the wall
+occlusion line) is part of placement.
+
+| Brief input | Stage (key word) | Notes |
+|---|---|---|
+| Interpolated position | placement (anchor x/y) | `interpPose` / replacement position → anchor |
+| Interpolated piece poses | local (piece poses) | captured pose or VM pieces, every move/rot float + visible/cached/shaded/rendered |
+| Heading, emote spin/whip | local (facing) | |
+| Body pitch / roll | local | |
+| Terrain / flyer lift, water sink, altitude lift | placement (anchor) | folded into ax/ay before the key |
+| Flyer altitude (shadow lean) | placement (altitude) | |
+| Emote bob | placement (bob) | |
+| Hidden pieces, shadow-casting flags | local (piece poses) | |
+| Player palette / colour slot | local (player, slot, atlas ptr) | UVs depend on the atlas |
+| Texture frames | local (each animated frame index) | `TAK_TEXTURE_TICK_REFERENCE` substitutes the game tick |
+| Construction | local (shadow suppression) + material (conjuring progress = HP fraction) | |
+| Tint (emote, statue), opacity, veterancy, ghost | material | statue state also in local (corpse phase / statue) |
+| Corpse / replacement model | local (corpse phase, statue; type/visual) + ownership (replacement model ⇒ new entry) | replacement opacity in material, replacement position in placement |
+| Wall occlusion clip line | placement (occlusion) | draw-only clip state |
+| Zoom | placement (zoom) | |
+| Shadow toggle | local (shadows on) | |
+| Resource reload, renderer generation | entry made cold (`invalidateRenderTargets` → `makeAllCold`) | type/visual/atlas pointers also in the local key |
+
+What is never a revision: the sim tick (pose inputs are the poses
+themselves; presentation can change between ticks), a hash of the inputs, or
+the painter index. Exact validation is retained: `TAK_GEOMETRY_VERIFY`
+compares every reuse with a complete rebuild from the same inputs.
+
+What each event redoes:
+
+| Event | Local | Placement | Material | `revision` | `shadowRevision` |
+|---|---|---|---|---|---|
+| Camera pan / zoom, interpolation step that only moves the anchor | — | yes | only while conjuring | +1 | kept |
+| Piece pose / heading / pitch-roll / corpse change | yes | yes | yes | +1 | +1 only if coverage differs |
+| Texture frame or palette change (no mask change) | yes | yes | yes | +1 | kept (`geom_shadow_kept`) |
+| Veterancy / tint / opacity / ghost change | — | — | yes | +1 | kept |
+| Nothing changed | — | — | — | kept | kept |
+| Reset / teardown / new owner | cold: all | all | all | +1 | +1 |
+
+Downstream consumers (shadow tile stamps, distant images, body assembly,
+`drawUnit`) still compare `revision`, so their behaviour is unchanged by D;
+the narrower revisions are for E/F/G. Screen coordinates stay in the
+placement key because the cached output is still screen-space vertices (the
+brief's rule); D removes them from the LOCAL key only.
+
 ### Telemetry reference (RENDERSTATS keys)
 
 `t_*` = render-thread wall ms (nested: `terrain_upload` in `terrain`;
@@ -416,6 +538,7 @@ sampled by the benchmark from `/proc`).
 | Shadow dirty tiles and area | `shadow_tiles_dirty`, `shadow_dirty_pixels` |
 | Allocation / reallocation | `geom_reallocs` (per-unit vector growth), `frame_reallocs` (painter list, draw ops, copy tasks, distant items, visible list, body buffer, shadow scratch), `gpu_texture_creates/destroys` |
 | Submissions, native draws, flushes, target switches | `logical_draws`, `native_draws`, `sdl_geometry_draws`, `retained_draws`, `flushes`, `target_switches` |
+| Staged geometry (D) | `geom_local_builds`, `geom_placement_only`, `geom_material_only`, `verts_placed`, `verts_recoloured`, `geom_shadow_kept`; `verts_generated` counts local rebuilds only since D |
 | Geometry entry ownership (C) | `geom_entries` (live), `geom_entry_acquired/replaced/released_destroyed/released_expired/released_budget/trimmed/refused` (per frame), `geom_entries_retained/warm_free/allocated`, `geom_retained_bytes`, `geom_warm_free_bytes` (gauges) |
 | Used vs retained CPU bytes | `geom_used/capacity_bytes`, `body_used/capacity_bytes`, `shadow_scratch_used/capacity_bytes`, `frame_lists_used/capacity_bytes`, `terrain_mip_cpu_bytes`, `terrain_section_cpu_bytes` |
 | GPU | render-study `gpu_timeline_ms` / `GPUTIMELINE` (draw timeline, not busy time), `gpu_tracked_bytes` |
@@ -1066,6 +1189,133 @@ claim 2.0 / 2.8 / 3.6 ns per unit at 200 / 2000 / 10,000 units in shuffled
 painter order; reclaim scan 0.001 / 0.007 ms per frame at 2000 / 10,000
 entries.
 
+### Experiment 6 — workstream D staged geometry (2026-10-16)
+
+Clients: **A** = C2F (`~/tak-tmp/render-opt/takclient-C2F-candidate`: code
+of `50acac44` = workstream C, plus the MapView clock fix `aae1a9fa`
+cherry-picked, built in `~/tak-tmp/wt/render-opt-c2fix`), **B** = DF
+(`takclient-DF-candidate`, code of `aae1a9fa`). A and B differ only by
+workstream D. Build-o2 (`-O2` Debug), offscreen EGL, SDL `opengl` on the
+RTX 5070 Laptop GPU; `RENDER_ENV` confirmed renderer and output (1280×960 →
+world 1075×888; 7680×2160 → world 7475×2088) for every run. 900 frames, 300
+warmup, forced-completion frames, client pinned to CPUs 16–23 (reserved for
+this program; the Legion program ran on 4–15, load average 2–21 recorded
+per run, pinned-CPU busy fraction 0.19–0.35, no run contended), ABBA × 2 per
+scene and size, `--wait-quiet 60`. Lean testing: only the scenes D affects
+were timed — pan, zoom, churn (camera motion: placement-only reuse), moving
+(pose-led: the worst case for D's local-build overhead) and
+stationary-mixed (regression guard for the larger entry and C's residual).
+Pipelined frames were not measured for D. Output (not in Git):
+`~/tak-tmp/render-opt/runs/df-*`; script `~/tak-tmp/render-opt/d/final.sh`,
+summary `~/tak-tmp/render-opt/d/dtable.py`. Commands:
+
+```sh
+T="python3 tools/render_benchmark.py --a $C2F --b $DF --data ~/tak_data --cpus 16-23"
+$T --output runs/df-captures-normal --scenes pan zoom churn moving effects constrained stationary-mixed total10k-visible small-battle --capture-only
+$T --output runs/df-captures-uhd --sizes uhd --scenes pan zoom churn moving effects --capture-only
+$T --output runs/df-normal --scenes pan zoom churn moving stationary-mixed --repeats 2 --wait-quiet 60
+$T --output runs/df-uhd --sizes uhd --scenes pan zoom churn moving stationary-mixed --repeats 2 --wait-quiet 60
+VCPUS=16-23 python3 ~/tak-tmp/render-opt/d/vrun.py $DF <scene> normal 400 TAK_GEOMETRY_VERIFY=1 TAK_GEOMETRY_OWNERSHIP_VERIFY=1
+python3 ~/tak-tmp/render-opt/d/dtable.py runs/df-normal/results.json runs/df-uhd/results.json
+```
+
+**Correctness.** Captures A vs B: 0 differing pixels in the world view AND
+the full frame in all 108 comparisons at 1280×960 (pan, zoom, churn, moving,
+effects, constrained, stationary-mixed, total10k-visible, small-battle × 12
+frames) and all 60 at 7680×2160 (pan, zoom, churn, moving, effects). World
+hashes identical A vs B in every scene. (An earlier, interrupted D run had
+already found all 15 scenes identical at 1280×960 against C2 except
+`constrained`, whose discrepancy is explained under Known limitations and
+gone once both builds carry `aae1a9fa`.) GL verifier runs on the final code
+(400 frames each, `TAK_GEOMETRY_VERIFY` + `TAK_GEOMETRY_OWNERSHIP_VERIFY`,
+which throw at the first mismatch): effects 33,436 complete hits, 83,117
+placement-only and 1,969 material-only reuses, 201,292 local builds checked
+against the single-pass transform; churn 448,847 placement-only / 661,120
+single-pass; pan 607,386 / 638,417 — no mismatch, no ownership violation;
+effects had 2 local rebuilds whose coverage was detected unchanged
+(`geom_shadow_kept`). `ctest -L quick` 380/380 (incl. `geometry_stages`,
+`render_geometry_stages` on the software renderer).
+
+**What changed in the counters (exact, mean per frame, frames 300–899).**
+
+| Scene, size | Visible | Local builds (B) | Placement-only (B) | Verts generated A → B | Shadow verts generated A → B | Verts placed (B) | Shadow tiles dirty A → B | Geometry used / capacity at last frame, MiB A → B |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| pan 1280 | 1584 | 72 | 1512 | 419.1k → 9.9k | 658.2k → 14.1k | 1.05 M | 1584 → 1584 | 19.0 / 33.3 → 28.0 / 39.8 |
+| zoom 1280 | 1814 | 83 | 1731 | 480.0k → 11.5k | 754.0k → 16.3k | 1.21 M | 1814 → 1814 | 20.8 / 37.5 → 30.6 / 44.9 |
+| churn 1280 | 1794 | 564 | 1229 | 485.0k → 216.9k | 768.3k → 327.5k | 0.71 M | 1794 → 1794 | 23.7 / 43.3 → 34.7 / 52.5 |
+| moving 1280 | 1195 | 757 | 16 | 243.7k → 238.6k | 389.7k → 381.7k | 13k | 1185 → 1185 | 15.2 / 20.6 → 22.6 / 24.5 |
+| stationary-mixed 1280 | 1825 | 83 | 0 | 11.3k → 11.3k | 16.0k → 16.0k | 0 | 858 → 858 | 20.2 / 30.3 → 29.7 / 36.0 |
+| pan 7680×2160 | 2000 | 90 | 1910 | 529.2k → 12.3k | 831.2k → 17.4k | 1.33 M | 2000 → 2000 | 22.2 / 33.4 → 32.7 / 39.6 |
+| zoom 7680×2160 | 2000 | 90 | 1910 | 529.3k → 12.3k | 831.3k → 17.5k | 1.33 M | 2000 → 2000 | 22.2 / 33.4 → 32.7 / 39.6 |
+| churn 7680×2160 | 2294 | 752 | 1542 | 627.1k → 292.1k | 991.2k → 440.4k | 0.89 M | 2294 → 2294 | 29.0 / 45.4 → 42.5 / 55.3 |
+| moving 7680×2160 | 1200 | 762 | 17 | 245.2k → 240.0k | 392.2k → 383.9k | 14k | 1190 → 1190 | 15.3 / 20.6 → 22.6 / 24.5 |
+| stationary-mixed 7680×2160 | 2000 | 90 | 0 | 12.3k → 12.3k | 17.5k → 17.5k | 0 | 914 → 914 | 22.2 / 33.4 → 32.7 / 39.6 |
+
+Geometry hits/misses and every miss cause are identical A vs B (the
+attribution is unchanged; a "miss" now often costs only a re-placement).
+Shadow tiles, dirty pixels and distant bakes are identical: D leaves every
+downstream consumer on `revision` (E/F/G).
+
+**Timing (forced completion, draw mean unless noted; spread = max−min over a
+label's four run means; material = beyond `max(2 × spread, 2%)`; groups =
+B−A per ABBA group).**
+
+| Scene, size | Draw mean ms A → B | Δ | Spread A / B | Material | Groups | Draw p99 A → B | t_geometry A → B | w_geometry_build A → B | w_geometry_key A → B | t_pool_dispatch A → B | GPU timeline A → B |
+|---|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|
+| pan 1280 | 10.015 → 8.014 | −20.0% | 17.1 / 16.3% | no* | −19.3%, −20.6% | 16.06 → 13.94 | 2.831 → 1.113 (−60.7%) | 18.32 → 4.23 (−76.9%, material) | 2.10 → 2.77 (+32%, material) | 1.52 → 0.76 | 4.40 → 4.12 |
+| zoom 1280 | 12.136 → 9.987 | **−17.7%** | 4.0 / 4.3% | **yes** | −17.6%, −17.8% | 20.35 → 16.99 | 3.260 → 1.264 (−61.2%, material) | 23.94 → 5.77 (−75.9%, material) | 3.36 → 3.77 | 1.96 → 1.04 (material) | 7.09 → 6.98 |
+| churn 1280 | 12.365 → 11.203 | −9.4% | 6.7 / 4.6% | no | −10.6%, −8.2% | 19.93 → 18.94 | 3.284 → 2.249 (−31.5%, material) | 24.09 → 13.88 (−42.4%, material) | 3.65 → 4.01 | 2.23 → 1.77 (material) | 5.12 → 5.01 |
+| moving 1280 | 9.701 → 9.683 | −0.2% | 12.3 / 9.3% | no | −6.6%, +6.7% | 15.25 → 15.20 | 1.779 → 1.908 (+7.2%) | 11.11 → 12.16 (+9.5%) | 2.32 → 2.47 | 1.63 → 1.74 | 2.59 → 2.53 |
+| stationary-mixed 1280 | 5.205 → 5.179 | −0.5% | 3.8 / 1.6% | no | −0.9%, −0.1% | 12.60 → 12.45 | 0.471 → 0.465 | 0.537 → 0.581 (+8.1%, material) | 2.83 → 2.71 | 0.22 → 0.23 | 1.91 → 1.94 |
+| pan 7680×2160 | 16.891 → 14.539 | −13.9% | 9.6 / 12.5% | no | −13.7%, −14.1% | 20.19 → 18.02 | 3.427 → 1.465 (−57.2%) | 24.24 → 5.89 (−75.7%, material) | 2.82 → 3.65 (+30%, material) | 1.69 → 0.98 | 10.68 → 10.11 |
+| zoom 7680×2160 | 15.473 → 12.981 | **−16.1%** | 4.4 / 7.3% | **yes** | −16.9%, −15.3% | 20.77 → 18.48 | 3.719 → 1.567 (−57.9%, material) | 25.97 → 5.98 (−77.0%, material) | 2.80 → 3.59 (+28%, material) | 1.69 → 0.90 (material) | 8.96 → 8.61 |
+| churn 7680×2160 | 18.135 → 16.954 | −6.5% | 11.4 / 5.4% | no | −4.7%, −8.3% | 27.38 → 26.21 | 3.918 → 2.787 (−28.9%, material) | 30.01 → 17.09 (−43.1%, material) | 3.65 → 3.89 | 1.98 → 1.75 | 11.92 → 11.66 |
+| moving 7680×2160 | 11.389 → 11.485 | +0.8% | 14.4 / 7.2% | no | −1.0%, +2.8% | 14.19 → 14.08 | 1.783 → 1.851 (+3.8%) | 10.38 → 11.07 (+6.7%) | 1.96 → 1.90 | 1.53 → 1.57 | 3.58 → 3.50 |
+| stationary-mixed 7680×2160 | 8.135 → 8.084 | −0.6% | 3.5 / 5.1% | no | −3.3%, +2.1% | 14.90 → 14.79 | 0.685 → 0.642 | 0.595 → 0.667 (+12.0%, material) | 3.10 → 2.90 | 0.51 → 0.47 | 5.29 → 5.30 |
+
+\* pan at 1280×960: the second ABBA group ran after a Legion sweep started
+on CPUs 4–15 (load average 2 → 14), and every phase, including passes D does
+not touch (`t_shadow_pack` 2.4 → 3.0 ms), rose ~20% in both labels between
+the groups. Within each group B is 19.3% and 20.6% faster, and all four B
+runs (7.48–8.79 ms) are below all four A runs (9.29–11.01 ms); by the fixed
+rule the change is still inside the spread, so it is reported as consistent
+but not material. pan at 7680×2160 likewise: −13.7% / −14.1% per group,
+inside its 25% threshold.
+
+Readings:
+
+- **Camera motion no longer rebuilds models.** In pan and zoom 95% of the
+  visible units are re-placed from retained local geometry; vertices
+  generated fall 98% (only the units whose pose or material changed are
+  rebuilt), worker build time falls 76–77% at both sizes, the geometry
+  phase's wall time 57–61%, and pool dispatch roughly halves. Zoom's draw
+  time falls 17.7% / 16.1% (material at both sizes); pan reads −14 to −20%
+  in every ABBA group; churn −6.5 to −9.4% (not material) with its geometry
+  phase −29 to −32% (material).
+- **The key check costs more on a pan** (`w_geometry_key` +28–32%, ≈ +0.7
+  ms CPU summed over threads at 2000 units, ≈ 0.4 µs per unit): the former
+  single key stopped comparing at the first changed word, the screen anchor
+  (word ~16), so a pan miss was cheap to detect; the local stage must now
+  compare its whole key (every piece pose) to prove it still valid — that
+  comparison is what replaces the rebuild. Stationary scenes, where every
+  key compares to the end in both builds, are unchanged (−4 to −6%).
+- **A local rebuild costs 7–12% more worker time** (stationary-mixed +8.1%
+  / +12.0%, moving +9.5% / +6.7%): the staged build keeps local positions,
+  runs placement as a separate loop and compares the new shadow output with
+  the old for the exact `shadowRevision`. In moving (pose-led: 757 of 773
+  misses rebuild locally) this is the whole effect of D; draw time is
+  unchanged within noise (−0.2% / +0.8%), `t_geometry` +7.2% / +3.8%, below
+  threshold.
+- **Stationary armies are unchanged** (−0.5% / −0.6%, identical counters).
+  C's residual (measured against the pre-C build) was not re-measured; D
+  vs C shows no further cost, and the entry layout change (`32c5d71a`) was
+  not separately timed.
+- **Memory.** Geometry used bytes +45–50%, retained capacity +18–22% at the
+  last frame (entries 280 → 512 bytes, local positions 8 B per body and per
+  shadow vertex, base colours only for untextured faces); peak RSS within
+  run-to-run noise (A/B ranges overlap; largest shift +13 MiB in moving
+  1280). No new GPU resources.
+
 ## Known limitations and unsupported paths
 
 - Only Linux / NVIDIA / SDL `opengl` (offscreen EGL) is measured. Direct3D,
@@ -1134,6 +1384,50 @@ entries.
   (offscreen EGL, RTX 5070) and the SDL software renderer (ctest
   `render_geometry_ownership`, dummy video driver); Direct3D/Metal/GLES not run.
 
+- Workstream D caches screen-space vertices, so a pan still writes every
+  vertex position (`verts_placed`, ~1.05 M per frame in pan) and bumps
+  `revision`; shadow tiles therefore still re-rasterize on every pan
+  (`shadow_tiles_dirty` unchanged) and distant images still re-bake on a
+  zoom. D removes the piece transforms, collection, sort and shadow
+  silhouette collection from that path; the remaining per-pan work belongs
+  to E/F (coverage keyed on `shadowRevision` + placement) and H (placement
+  at submission instead of in the cached vertices).
+- A local rebuild costs 7–12% more worker time than the former single pass
+  (`w_geometry_build`: stationary-mixed +8.1% / +12.0%, moving +9.5% / +6.7%
+  in Experiment 6): it keeps the local positions, runs placement as a
+  separate loop and compares the shadow output element by element for the
+  exact `shadowRevision`. Scenes made of local rebuilds (a moving army whose
+  every unit animates) gain nothing from D; their draw time is unchanged
+  within noise.
+- Memory: entries grew from 280 to 512 bytes and keep local positions (8 B
+  per body and per shadow vertex): `geom_used_bytes` +45–50% and
+  `geom_capacity_bytes` +18–22% at the last frame of the timed scenes
+  (e.g. pan 33.3 → 39.8 MiB capacity; Experiment 6). Peak RSS moves within
+  run-to-run noise (≤ +13 MiB). The existing retention budgets (C) bound
+  it; they are not yet part of a CPU budget (J).
+- Material reuse is exercised only where veterancy, tint, opacity or
+  conjuring change without a pose change (effects: 1,969 material-only
+  reuses in 400 verified frames); the timed scenes have none.
+- `TAK_SHADOW_VERIFY` skips lodestones: its reference collector does not
+  model `buildUnitShadow`'s lodestone shadow deviation, and it already failed
+  on `c2c25707` in the mixed-roster scenes. Not a D regression; the
+  geometry verifier covers lodestones.
+- D has no backend-specific code. Exercised on SDL `opengl` (offscreen EGL,
+  RTX 5070) and the SDL software renderer (`render_geometry_stages`, dummy
+  video driver); Direct3D/Metal/GLES not run.
+- **Harness: `constrained` captures depended on build speed before
+  `aae1a9fa`.** `MapView` section idle trimming used wall time, so under the
+  binding 128 MiB cap a faster build freed idle sections later (frames
+  362/372 instead of 231), which changed when a terrain chunk job had room
+  and which terrain detail frame 360 showed (10,956 pixels at the left edge,
+  max channel error 63, in every C2-vs-D comparison; C2-vs-C2 identical, also
+  with C2 slowed by `TAK_SHADOW_NOCACHE`/serial prep; D with
+  `TAK_GEOMETRY_NOCACHE` still differed; `TAK_TERRAIN_CACHE_OFF` removed
+  the difference). Fixed for the study by driving the trim from the
+  presentation clock; play keeps wall time. The earlier `constrained`
+  comparisons (workstreams A, B, C) were identical, i.e. those builds freed
+  the sections in the same frames.
+
 ## Rejected experiments
 
 - (Historical, 2026-10-04) Native-resolution 64/128/256-px building images:
@@ -1189,3 +1483,7 @@ entries.
   partial-alpha texels is GPU arithmetic that a CPU composite does not
   reproduce bit-exactly, and it would keep (or rebuild) every frame's RGBA in
   CPU memory. Not attempted; recorded as an option for workstream M/J.
+- **D added no rejected experiments.** One capture discrepancy (the
+  `constrained` scene, frame 360) was investigated and traced to the
+  harness's wall-clock section trimming, not to D (see Known limitations);
+  it was fixed in the harness, not by relaxing the comparison.
