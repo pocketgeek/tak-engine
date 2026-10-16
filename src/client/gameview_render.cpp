@@ -28,8 +28,11 @@
         winW_ = winW;
         winH_ = winH;
         // Render telemetry: reset every frame; recording only for debug harnesses.
-        static const bool kRenderStats = tak::devFlag("TAK_RENDER_STATS") || tak::devFlag("TAK_RENDER_STUDY");
+        // The render study records by default; TAK_RENDER_STATS=0 switches it off
+        // there, so the telemetry's own cost can be measured with one binary.
+        static const bool kRenderStats = tak::devFlag("TAK_RENDER_STATS", tak::devFlag("TAK_RENDER_STUDY"));
         renderStats_.begin(kRenderStats);
+        tak::render::gSubmit = {};
         using RS = tak::render::Counter;
         using RP = tak::render::Phase;
         emoteNowMs_ = SDL_GetTicks64();
@@ -122,6 +125,17 @@
             float zm = std::max(mapView_.zoom(), 1e-3f);
             mapView_.setOffset(shakeBaseX + dx / zm, shakeBaseY + dz / zm);
         }
+        // From here the frame draws the world: fold the frame's telemetry (worker
+        // pool, submission counters, terrain workers, memory) when draw() returns.
+        struct TelemetryFold {
+            GameView& view;
+            ~TelemetryFold() { view.pool_.setStats(nullptr); if (view.renderStats_.enabled()) view.foldRenderStats(); }
+        } telemetryFold{*this};
+        if (renderStats_.enabled()) {
+            poolStats_ = {};
+            pool_.setStats(&poolStats_);
+            noteFrameCapacities();
+        }
         // Everything world-space (map, units, effects, bars) is clipped to the map
         // viewport so it never bleeds under the right-hand panel.
         int mvw = mapViewW(winW);
@@ -130,6 +144,7 @@
         mapView_.setUnderlay(miniTex_);   // low-res gap filler (null until the overview bakes)
         {
             const double _t0 = double(SDL_GetPerformanceCounter());
+            tak::render::ScopedPhase terrainPhase(renderStats_, RP::Terrain);
             mapView_.draw(mvw, winH);
             profTerrainMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
                               (double(SDL_GetPerformanceFrequency()) / 1000.0);
@@ -289,9 +304,8 @@
         animateGlowTextures();
         profAtlasMs_ += (double(SDL_GetPerformanceCounter()) - _atl0) /
                         (double(SDL_GetPerformanceFrequency()) / 1000.0);
-        if (renderStats_.on)
-            renderStats_.ms[size_t(RP::AtlasMaintain)] += (double(SDL_GetPerformanceCounter()) - _atl0) /
-                (double(SDL_GetPerformanceFrequency()) / 1000.0);
+        renderStats_.addMs(RP::AtlasMaintain, (double(SDL_GetPerformanceCounter()) - _atl0) /
+                (double(SDL_GetPerformanceFrequency()) / 1000.0));
         profUnits_ += uint64_t(visUnits_.size());   // so PROF ms/frame can be read per unit
         // Sample the shadow toggle HERE, on the main thread, before the workers launch --
         // and BEFORE deriving the draw gate from it. Reading the gate first used last
@@ -310,8 +324,8 @@
         });
         double _ptFreq = double(SDL_GetPerformanceFrequency()) / 1000.0;
         profProjMs_ += (double(SDL_GetPerformanceCounter()) - _pt0) / _ptFreq;
-        if (renderStats_.on) {
-            renderStats_.ms[size_t(RP::GeometryPrep)] += (double(SDL_GetPerformanceCounter()) - _pt0) / _ptFreq;
+        if (renderStats_.enabled()) {
+            renderStats_.addMs(RP::GeometryPrep, (double(SDL_GetPerformanceCounter()) - _pt0) / _ptFreq);
             tallyRenderStats();
         }
         double _st0 = double(SDL_GetPerformanceCounter());
@@ -353,6 +367,14 @@
         renderStats_.add(RS::DistantImages, distantModelCache_.used);
         renderStats_.add(RS::DistantBakes, distantModelCache_.refreshed);
         renderStats_.add(RS::TargetSwitches, distantModelCache_.targetSwitches);
+        renderStats_.add(RS::DistantHits, distantModelCache_.hits);
+        renderStats_.add(RS::DistantHeld, distantModelCache_.held);
+        renderStats_.add(RS::DistantMissNew, distantModelCache_.missNew);
+        renderStats_.add(RS::DistantMissScale, distantModelCache_.missScale);
+        renderStats_.add(RS::DistantMissContent, distantModelCache_.missContent);
+        renderStats_.add(RS::DistantRejectBudget, distantModelCache_.rejectBudget);
+        renderStats_.add(RS::DistantRejectShape, distantModelCache_.rejectShape);
+        renderStats_.add(RS::DistantRejectPages, distantModelCache_.rejectPages);
         static uint64_t distantLogAt=0;
         if(tak::devFlag("TAK_DISTANT_STATS") && SDL_GetTicks64()-distantLogAt>=1000) {
             distantLogAt=SDL_GetTicks64();
@@ -376,6 +398,11 @@
         const char* shadowAtlasFallback="not requested";
         const auto buildShadowSilhouetteAtlas = [&](bool force=false) -> bool {
             const auto fail=[&](const char* why) { shadowAtlasFallback=why; return false; };
+            // Telemetry: allocation/packing runs until the first page is drawn;
+            // then each page alternates transform (prep) and clears + submission
+            // (raster). Reference bakes (force) are verification, not timed.
+            std::optional<tak::render::ScopedPhase> allocPhase;
+            if (!force) allocPhase.emplace(renderStats_, RP::ShadowAlloc);
             SDL_RendererInfo info{};
             if (SDL_GetRendererInfo(ren_, &info) != 0 ||
                 !(info.flags & SDL_RENDERER_ACCELERATED) ||
@@ -483,6 +510,7 @@
                     SDL_Texture* texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
                         SDL_TEXTUREACCESS_TARGET,pageW,pageH);
                     if (!texture) { noteGpuAllocFail(); return fail("target page allocation failed"); }
+                    if (!force) renderStats_.add(RS::ShadowPageAllocs);
                     SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
                     SDL_SetTextureColorMod(texture,0,0,0);
                     SDL_SetTextureAlphaMod(texture,255-kShadowLevel);
@@ -522,13 +550,26 @@
             bool ok=true;
             auto& opaque=shadowAtlasOpaqueScratch_;
             for (size_t p=0;p<usedPages && ok;++p) {
+                if(!force && !allocPhase)allocPhase.emplace(renderStats_, RP::ShadowAlloc);
                 auto& stamps=shadowSilhouettePages_[p].stamps;
                 size_t tile=0;
                 std::vector<SDL_Rect> dirtyRects;
                 for(Work& w:work) if(w.page==p) {
                     const ShadowTileStamp stamp{w.geom,w.geom->owner,w.pixelX,w.pixelY,w.slotX,w.slotY,
                         w.width,w.height,w.geom->revision,scaleX,scaleY};
-                    w.dirty=force || tak::devFlag("TAK_SHADOW_NOCACHE") || tile>=stamps.size() || stamps[tile]!=stamp;
+                    const bool noCache=tak::devFlag("TAK_SHADOW_NOCACHE");
+                    w.dirty=force || noCache || tile>=stamps.size() || stamps[tile]!=stamp;
+                    if(w.dirty && !force && renderStats_.enabled()) {
+                        // First differing field, most fundamental first.
+                        const ShadowTileStamp* old=tile<stamps.size() ? &stamps[tile] : nullptr;
+                        renderStats_.add(noCache ? RS::ShadowDirtyForced : !old ? RS::ShadowDirtyNew :
+                            old->source!=stamp.source || old->owner!=stamp.owner ? RS::ShadowDirtyOwner :
+                            old->revision!=stamp.revision ? RS::ShadowDirtyContent :
+                            old->slotX!=stamp.slotX || old->slotY!=stamp.slotY ? RS::ShadowDirtyRelocated :
+                            old->width!=stamp.width || old->height!=stamp.height ||
+                            old->scaleX!=stamp.scaleX || old->scaleY!=stamp.scaleY ? RS::ShadowDirtyResized :
+                            RS::ShadowDirtyMoved);
+                    }
                     if(tile<stamps.size())stamps[tile]=stamp;else stamps.push_back(stamp);
                     ++tile;
                     if(!w.dirty)++shadowAtlasReusedUnits;
@@ -540,6 +581,9 @@
                 }
                 stamps.resize(tile);
                 if(dirtyRects.empty())continue;
+                allocPhase.reset();
+                std::optional<tak::render::ScopedPhase> rasterPhase;
+                if(!force)rasterPhase.emplace(renderStats_, RP::ShadowRaster);
                 if(!force)renderStats_.add(RS::TargetSwitches);
                 if (SDL_SetRenderTarget(ren_,shadowSilhouettePages_[p].texture)!=0) {ok=false;break;}
                 SDL_RenderSetScale(ren_,1.0f,1.0f);
@@ -612,9 +656,15 @@
                     }
                 };
                 // Forced reference bakes stay serial for atlas pixel comparisons.
+                rasterPhase.reset();
+                {
+                std::optional<tak::render::ScopedPhase> prepPhase;
+                if(!force)prepPhase.emplace(renderStats_, RP::ShadowPrep);
                 if(!force && pointCount+maskPointCount>=32768 && !tak::devFlag("TAK_SHADOW_SERIAL_PREP"))
                     pool_.parallelFor(work.size(),transform);
                 else transform(0,work.size());
+                }
+                if(!force)rasterPhase.emplace(renderStats_, RP::ShadowRaster);
                 SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_NONE);
                 if (shadowOpaqueSubmit_.draw(ren_,opaque,
                         !tak::devFlag("TAK_SHADOW_SDL_SUBMIT"))!=0) {
@@ -626,7 +676,9 @@
                             !tak::devFlag("TAK_SHADOW_SDL_SUBMIT"))!=0) {ok=false;break;}
                 }
             }
+            allocPhase.reset();
             restoreRenderer();
+            if(!force)renderStats_.add(RS::TargetSwitches);   // back to the previous target
             if (!ok) {
                 for(auto& page:shadowSilhouettePages_)page.stamps.clear();
                 return fail("target draw operation failed");
@@ -658,6 +710,7 @@
             renderStats_.add(RS::ShadowUnits, shadowAtlasPackedUnits);
             renderStats_.add(RS::ShadowTilesReused, shadowAtlasReusedUnits);
             renderStats_.add(RS::ShadowPages, shadowAtlasPackedPages);
+            renderStats_.add(RS::ShadowFallback, shadowSilhouetteAtlasActive_ ? 0 : 1);
             if(shadowSilhouetteAtlasActive_ && tak::devFlag("TAK_SHADOW_CACHE_VERIFY")) {
                 const auto readPages=[&] {
                     auto* target=SDL_GetRenderTarget(ren_);
@@ -850,8 +903,8 @@
         renderStats_.add(RS::BodyVertsCopied, size_t(destOff));
         renderStats_.add(RS::BodyBytesCopied, size_t(destOff) * sizeof(SDL_Vertex));
         renderStats_.set(RS::BodyBufferCapacityBytes, bodyVerts_.capacity() * sizeof(SDL_Vertex));
-        if (renderStats_.on)
-            renderStats_.ms[size_t(RP::BodyAssembly)] += (double(SDL_GetPerformanceCounter()) - _asm0) / _ptFreq;
+        renderStats_.set(RS::BodyBufferUsedBytes, bodyVerts_.size() * sizeof(SDL_Vertex));
+        renderStats_.addMs(RP::BodyAssembly, (double(SDL_GetPerformanceCounter()) - _asm0) / _ptFreq);
         const double _bsub0 = double(SDL_GetPerformanceCounter());
         // The deferred air shadows run INSIDE the body window but belong to the shadow
         // phase. Time them separately and back them out below, or body and shadow both
@@ -877,6 +930,7 @@
             const DrawOp& op = drawOps_[opi];
             if (op.f) {
                 const auto& f = *op.f;
+                tak::render::countLogicalDraw();   // the feature body (its shadow/flames/smoke not counted)
                 // Lift the decal onto the terrain relief just like a unit, so a mana
                 // deposit sits at the height its heightmap claims (and lodestones/units
                 // built on it line up) instead of the decal being flat.
@@ -1031,6 +1085,7 @@
                 drawFlame(f.frontFlame);
                 drawFeatureSmoke();
             } else if (op.u) {
+                tak::render::countLogicalDraw();   // one special unit (drawUnit issues several)
                 drawUnit(*op.u);
             } else if (op.count > 0 && op.tex) {   // null atlas page: skip, no white
                 renderStats_.add(RS::BodySubmissions);
@@ -1046,17 +1101,8 @@
         // every air-shadow draw falls inside the same phase as the rest of them.
         drainAirShadows();
         profSubmitMs_ += (double(SDL_GetPerformanceCounter()) - _st0) / _ptFreq;
-        if (renderStats_.on) {
-            renderStats_.ms[size_t(RP::BodySubmit)] += -airShadowMs +
-                (double(SDL_GetPerformanceCounter()) - _bsub0) / _ptFreq;
-            renderStats_.ms[size_t(RP::ShadowComposite)] += airShadowMs;
-            renderStats_.set(RS::TerrainChunkBytes, mapView_.chunkStats().bytes);
-            renderStats_.set(RS::TerrainChunkImages, mapView_.chunkStats().images);
-            renderStats_.set(RS::TerrainChunkUploads, mapView_.chunkStats().uploads);
-            renderStats_.set(RS::TerrainChunkPending, mapView_.chunkStats().pending);
-            renderStats_.set(RS::TerrainSectionBytes, mapView_.sectionBytes());
-            renderStats_.set(RS::GpuTrackedBytes, gpuvram::bytes());
-        }
+        renderStats_.addMs(RP::BodySubmit, -airShadowMs + (double(SDL_GetPerformanceCounter()) - _bsub0) / _ptFreq);
+        renderStats_.addMs(RP::ShadowComposite, airShadowMs);
 
         // Air shadows ran inside this window but belong to the shadow phase; back them
         // out so body and shadow do not both report the same work.
@@ -1511,6 +1557,7 @@
         }
         {
             const double _t0 = double(SDL_GetPerformanceCounter());
+            tak::render::ScopedPhase effectsPhase(renderStats_, RP::Effects);
             drawParticles();
             drawEffects();
             drawUnitFx();
@@ -1520,6 +1567,7 @@
 
         {
             const double _t0 = double(SDL_GetPerformanceCounter());
+            tak::render::ScopedPhase fogPhase(renderStats_, RP::Fog);
             drawFog();
             profFogMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
                           (double(SDL_GetPerformanceFrequency()) / 1000.0);
@@ -2169,16 +2217,32 @@
     // results into this frame's stats, and account the retained geometry pool.
     void GameView::tallyRenderStats() {
         using RS = tak::render::Counter;
+        using MC = tak::render::MissCause;
+        using RW = tak::render::Work;
         renderStats_.add(RS::VisibleUnits, visUnits_.size());
+        uint64_t keyNs = 0, buildNs = 0;
         for (size_t i = 0; i < visUnits_.size(); ++i) {
             const UnitGeom& g = geomPool_[i];
+            keyNs += g.keyNs;
             if (g.reused) { renderStats_.add(RS::GeometryHits); continue; }
             if (g.geometryKey.empty()) continue;   // nothing drawable (no model / unbegun site)
+            buildNs += g.buildNs;
             renderStats_.add(RS::GeometryMisses);
-            renderStats_.addMiss(tak::render::MissCause(g.missCause));
+            renderStats_.addMiss(MC(g.missCause));
+            renderStats_.add(RS::GeometryOwnerReassign, g.ownerChanged);
+            renderStats_.add(RS::GeomReallocs, g.reallocs);
+            const auto changed = [&](MC c) { return (g.missMask & tak::render::missBit(c)) ? 1u : 0u; };
+            renderStats_.add(RS::InvalPose, changed(MC::Pose));
+            renderStats_.add(RS::InvalMaterial, changed(MC::Material));
+            renderStats_.add(RS::InvalPlacement, changed(MC::Placement));
+            renderStats_.add(RS::InvalZoom, changed(MC::Zoom));
+            renderStats_.add(RS::InvalResource, changed(MC::Resource));
+            renderStats_.add(RS::InvalSettings, changed(MC::Settings));
             renderStats_.add(RS::VertsGenerated, g.verts.size());
             renderStats_.add(RS::ShadowVertsGenerated, g.shadowVerts.size() + g.maskedShadowVerts.size());
         }
+        renderStats_.addWorkNs(RW::GeometryKey, keyNs);
+        renderStats_.addWorkNs(RW::GeometryBuild, buildNs);
         size_t used = 0, capacity = 0;
         const auto account = [&](const auto& v) {
             used += v.size() * sizeof(v[0]);
@@ -2191,6 +2255,104 @@
         renderStats_.set(RS::GeomPoolEntries, geomPool_.size());
         renderStats_.set(RS::GeomPoolUsedBytes, used);
         renderStats_.set(RS::GeomPoolCapacityBytes, capacity);
+    }
+
+    // The per-frame buffers whose capacity is retained across frames. One list,
+    // so the reallocation count and the used/capacity accounting agree.
+    void GameView::noteFrameCapacities() {
+        size_t scratch = 0;
+        for (const auto& [texture, vertices] : shadowAtlasMaskScratch_) scratch += vertices.capacity();
+        telemetryCursor_.capacity = {paintItems_.capacity(), drawOps_.capacity(), copyTasks_.capacity(),
+            distantModelItems_.capacity(), visUnits_.capacity(), bodyVerts_.capacity(),
+            shadowAtlasOpaqueScratch_.capacity() + shadowCompositeBatch_.capacity(), scratch};
+    }
+
+    // Render thread, once per frame when draw() returns: everything that is not
+    // tallied in place -- worker pool, submission counters, terrain workers and
+    // uploads (as deltas of their cumulative counters), GPU creations and the
+    // CPU-side used/retained bytes.
+    void GameView::foldRenderStats() {
+        using RS = tak::render::Counter;
+        using RP = tak::render::Phase;
+        using RW = tak::render::Work;
+        auto& stats = renderStats_;
+        stats.add(RS::PoolDispatches, poolStats_.dispatches);
+        stats.add(RS::PoolSerialRuns, poolStats_.serial);
+        stats.add(RS::PoolItems, poolStats_.items);
+        stats.addMs(RP::PoolDispatch, double(poolStats_.dispatchNs) * 1e-6);
+        stats.addMs(RP::PoolWait, double(poolStats_.waitNs) * 1e-6);
+        stats.addWorkNs(RW::PoolBusy, poolStats_.busyNs);
+        stats.addWorkNs(RW::PoolWake, poolStats_.wakeNs);
+
+        const auto& submit = tak::render::gSubmit;
+        stats.add(RS::LogicalDraws, submit.logical);
+        stats.add(RS::NativeDraws, submit.native);
+        stats.add(RS::SdlGeometryDraws, submit.sdl);
+        stats.add(RS::RetainedDraws, submit.retained);
+        stats.add(RS::Flushes, submit.flushes);
+        stats.add(RS::TargetSwitches, submit.targetSwitches);
+        stats.add(RS::VertsSubmitted, submit.verts);
+        stats.add(RS::BytesUploaded, submit.bytes);
+        stats.add(RS::TextureUploadBytes, submit.textureBytes);
+
+        auto& cursor = telemetryCursor_;
+        const auto chunks = mapView_.chunkStats();
+        const auto sections = mapView_.sectionStats();
+        const auto delta = [](uint64_t now, uint64_t before) { return now >= before ? now - before : now; };
+        stats.set(RS::TerrainChunkBytes, chunks.bytes);
+        stats.set(RS::TerrainChunkImages, chunks.images);
+        stats.set(RS::TerrainChunkUploads, chunks.uploads);
+        stats.set(RS::TerrainChunkPending, chunks.pending);
+        stats.set(RS::TerrainSectionBytes, mapView_.sectionBytes());
+        stats.add(RS::TerrainJobsQueued, delta(chunks.jobsQueued, cursor.chunks.jobsQueued));
+        stats.add(RS::TerrainJobsCompleted, delta(chunks.jobsCompleted, cursor.chunks.jobsCompleted));
+        stats.add(RS::TerrainJobsCancelled, delta(chunks.jobsCancelled, cursor.chunks.jobsCancelled));
+        stats.add(RS::TerrainJobsDiscarded, delta(chunks.jobsDiscarded, cursor.chunks.jobsDiscarded));
+        stats.add(RS::TerrainJobsUsed, delta(chunks.jobsUsed, cursor.chunks.jobsUsed));
+        stats.add(RS::TerrainSectionUploads, delta(sections.uploads, cursor.sections.uploads));
+        stats.add(RS::TerrainSectionDecodes, delta(sections.decodes, cursor.sections.decodes));
+        stats.set(RS::TerrainMipCpuBytes, chunks.mipBytes);
+        stats.set(RS::TerrainSectionCpuBytes, sections.decodedCpuBytes);
+        const uint64_t uploadNs = delta(chunks.uploadNs, cursor.chunks.uploadNs) +
+            delta(sections.uploadNs, cursor.sections.uploadNs);
+        stats.addMs(RP::TerrainUpload, double(uploadNs) * 1e-6);
+        stats.addWorkNs(RW::TerrainUpload, uploadNs);
+        stats.addWorkNs(RW::TerrainCompose, delta(chunks.composeNs, cursor.chunks.composeNs));
+        stats.addWorkNs(RW::SectionDecode, delta(sections.decodeNs, cursor.sections.decodeNs));
+        cursor.chunks = chunks;
+        cursor.sections = sections;
+
+        stats.set(RS::GpuTrackedBytes, gpuvram::bytes());
+        stats.add(RS::GpuTextureCreates, delta(gpuvram::g_creates, cursor.gpuCreates));
+        stats.add(RS::GpuTextureDestroys, delta(gpuvram::g_destroys, cursor.gpuDestroys));
+        cursor.gpuCreates = gpuvram::g_creates;
+        cursor.gpuDestroys = gpuvram::g_destroys;
+
+        // Reallocations: capacity growth of the retained per-frame buffers.
+        const auto before = cursor.capacity;
+        noteFrameCapacities();
+        uint64_t grew = 0;
+        for (size_t i = 0; i < before.size(); ++i) grew += cursor.capacity[i] > before[i];
+        stats.add(RS::FrameReallocs, grew);
+
+        size_t listUsed = 0, listCapacity = 0;
+        const auto account = [&](const auto& v) {
+            listUsed += v.size() * sizeof(v[0]);
+            listCapacity += v.capacity() * sizeof(v[0]);
+        };
+        account(paintItems_); account(drawOps_); account(copyTasks_); account(distantModelItems_);
+        account(visUnits_); account(geomIndex_); account(airShadows_);
+        stats.set(RS::FrameListsUsedBytes, listUsed);
+        stats.set(RS::FrameListsCapacityBytes, listCapacity);
+        size_t scratchUsed = 0, scratchCapacity = 0;
+        const auto scratch = [&](const auto& v) {
+            scratchUsed += v.size() * sizeof(v[0]);
+            scratchCapacity += v.capacity() * sizeof(v[0]);
+        };
+        scratch(shadowAtlasOpaqueScratch_); scratch(shadowCompositeBatch_);
+        for (const auto& [texture, vertices] : shadowAtlasMaskScratch_) scratch(vertices);
+        stats.set(RS::ShadowScratchUsedBytes, scratchUsed);
+        stats.set(RS::ShadowScratchCapacityBytes, scratchCapacity);
     }
 
     const tak::tdo::Model* GameView::ghostModel(const std::string& typeId) {
@@ -2317,6 +2479,7 @@
         }
         if (!changed) return;
         glowDirty_ = false;
+        renderStats_.add(tak::render::Counter::AtlasRepaintPasses);
         SDL_Texture* prev = SDL_GetRenderTarget(ren_);
         bool onAny = false;
         for (SDL_Texture* atlas : atlasTex_) {
@@ -2344,10 +2507,15 @@
                 SDL_GetTextureBlendMode(f, &fb);
                 SDL_SetTextureBlendMode(f, SDL_BLENDMODE_NONE);
                 paintAtlasRect(ren_, f, r);            // overwrite with this frame's RGBA
+                renderStats_.add(tak::render::Counter::AtlasCopies, 9);
+                renderStats_.add(tak::render::Counter::AtlasFlushes);
                 SDL_SetTextureBlendMode(f, fb);
             }
         }
-        if (onAny) SDL_SetRenderTarget(ren_, prev);
+        if (onAny) {
+            SDL_SetRenderTarget(ren_, prev);
+            renderStats_.add(tak::render::Counter::TargetSwitches);
+        }
     }
 
     void GameView::invalidateRenderTargets() {
@@ -2547,6 +2715,8 @@
         SDL_SetTextureBlendMode(atlas, SDL_BLENDMODE_BLEND);
         SDL_Texture* prev = SDL_GetRenderTarget(ren_);
         SDL_SetRenderTarget(ren_, atlas);
+        renderStats_.add(tak::render::Counter::AtlasCreated);
+        renderStats_.add(tak::render::Counter::TargetSwitches, 2);   // in and back out
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
         SDL_RenderClear(ren_);
@@ -2562,6 +2732,8 @@
                 : (size_t(slot) < it->second.size() ? size_t(slot) : 0);
             if (ci >= it->second.size()) continue;
             paintAtlasRect(ren_, it->second[ci], r);
+            renderStats_.add(tak::render::Counter::AtlasCopies, 9);
+            renderStats_.add(tak::render::Counter::AtlasFlushes);
         }
         SDL_SetRenderTarget(ren_, prev);
         // NEAREST unless Bilinear Filtering is on; the gutters keep LINEAR in-rect.
@@ -2601,7 +2773,9 @@
         };
         for(const auto* g:shadows) {
             if(!shadowSilhouetteAtlasActive_ || !g->shadowAtlasPage || tak::devFlag("TAK_SHADOW_BATCH_OFF")) {
-                flush();texture=nullptr;drawUnitShadow(*g);continue;
+                flush();texture=nullptr;drawUnitShadow(*g);
+                renderStats_.add(tak::render::Counter::ShadowDirectUnits);
+                continue;
             }
             if(texture!=g->shadowAtlasPage) {flush();texture=g->shadowAtlasPage;}
             tak::appendShadowComposite(shadowCompositeBatch_,g->shadowAtlasSrc,g->shadowAtlasDst,
@@ -2613,6 +2787,15 @@
 
     void GameView::buildUnitGeom(const UnitR& u, UnitGeom& g, std::vector<Tri>& scratch) {
         g.reused=false;
+        // Telemetry (worker side): per-slot results the render thread tallies.
+        // renderStats_ is not written during the parallel pass.
+        const bool timed=renderStats_.enabled();
+        const auto clockNs=[] {
+            return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+        };
+        const int64_t keyStart=timed ? clockNs() : 0;
+        g.missMask=0;g.ownerChanged=false;g.reallocs=0;g.keyNs=g.buildNs=0;
         const auto clear=[&] {
             g.canFly=u.type && u.type->canFly;
             g.geometryKey.clear();g.verts.clear();g.runs.clear();
@@ -2716,12 +2899,17 @@
         word(shadowsOnFrame_);word(conjuring);word(disco);
         word(uint64_t(discoCol.r)|(uint64_t(discoCol.g)<<8)|(uint64_t(discoCol.b)<<16));
         for(float value:{zm,ax,ay,occlusion,altitude,facing,discoBob,discoMix,p})real(value);
+        // client/geometrykeycause.h reads this layout (telemetry only).
+        static_assert(tak::render::kGeometryKeyFixedWords==26);
         if(conjuring)real(animClock_);
+        tak::render::GeometryKeyLayout keyLayout;
+        keyLayout.textureBegin=uint32_t(key.size());
         // Texture playback may hold one frame for multiple simulation ticks.
         // Use its actual inputs, so an unchanged frame retains exact geometry.
         if(!tak::devFlag("TAK_TEXTURE_TICK_REFERENCE"))
             for(const auto* frame:vt->second.meta.animationFrames)word(*frame);
         else if(vt->second.meta.animated)word(front().gameTick);
+        keyLayout.poseBegin=uint32_t(key.size());
         if(anim) {
             word(reinterpret_cast<uintptr_t>(anim->pieceNames));
             const auto poses=!anim->capturedPose.empty() ? anim->capturedPose :
@@ -2746,6 +2934,8 @@
         }
 #endif
         thread_local UnitGeom referenceGeom;
+        const int64_t keyEnd=timed ? clockNs() : 0;
+        g.keyNs=uint32_t(std::min<int64_t>(keyEnd-keyStart,UINT32_MAX));
         if(cacheHit && !verifyCache)return;
         if(verifyCache) {
             referenceGeom=g;
@@ -2754,9 +2944,23 @@
 #endif
         }
         using MC=tak::render::MissCause;
-        if(!cacheHit)g.missCause=uint8_t(tak::devFlag("TAK_GEOMETRY_NOCACHE") || tak::devFlag("TAK_GEOMETRY_REFERENCE")
-            ? MC::Reference : g.geometryKey.empty() ? MC::Cold : g.owner!=u.id ? MC::Owner : MC::Changed);
-        g.geometryKey=key;g.owner=u.id;
+        if(!cacheHit) {
+            const bool reference=tak::devFlag("TAK_GEOMETRY_NOCACHE") || tak::devFlag("TAK_GEOMETRY_REFERENCE");
+            g.ownerChanged=g.owner>=0 && g.owner!=u.id;
+            if(reference)g.missCause=uint8_t(MC::Reference);
+            else if(g.geometryKey.empty())g.missCause=uint8_t(MC::Cold);
+            else if(g.owner!=u.id)g.missCause=uint8_t(MC::Owner);
+            else if(timed) {
+                // Which stages changed (every one, for the Inval* counters) and
+                // the one the miss is filed under.
+                g.missMask=tak::render::geometryKeyChanges(g.geometryKey,g.keyLayout,key,keyLayout);
+                g.missCause=uint8_t(tak::render::primaryMissCause(g.missMask));
+            } else g.missCause=uint8_t(MC::Changed);
+        }
+        // Capacity before the rebuild, to count reallocations (telemetry).
+        const size_t capacityBefore[6]={g.geometryKey.capacity(),g.verts.capacity(),g.runs.capacity(),
+            g.shadowVerts.capacity(),g.maskedShadowVerts.capacity(),g.maskedShadowRuns.capacity()};
+        g.geometryKey=key;g.owner=u.id;g.keyLayout=keyLayout;
         if(!cacheHit)++g.revision;
         g.verts.clear();g.runs.clear();g.shadowVerts.clear();
         g.maskedShadowVerts.clear();g.maskedShadowRuns.clear();
@@ -2853,6 +3057,12 @@
             g.shadowVerts.clear();
             g.maskedShadowVerts.clear();
             g.maskedShadowRuns.clear();
+        }
+        if(timed) {
+            const size_t capacityAfter[6]={g.geometryKey.capacity(),g.verts.capacity(),g.runs.capacity(),
+                g.shadowVerts.capacity(),g.maskedShadowVerts.capacity(),g.maskedShadowRuns.capacity()};
+            for(size_t i=0;i<6;++i)g.reallocs+=capacityAfter[i]>capacityBefore[i];
+            g.buildNs=uint32_t(std::min<int64_t>(clockNs()-keyEnd,UINT32_MAX));
         }
         if(verifyCache) {
             const auto bytes=[](const auto& a,const auto& b) {

@@ -64,6 +64,7 @@
 #include "client/modelview.h"   // standalone 3DO model viewer (extracted leaf)
 #include "client/renderframe.h"   // UnitR/PlayerR/Frame render snapshot (extracted leaf)
 #include "client/rendertelemetry.h" // per-frame render stats + generation vocabulary
+#include "client/geometrykeycause.h"  // telemetry: which stage a geometry miss came from
 #include "client/ordertrail.h"
 #include "client/retailaim.h"
 #include "client/retailflightanimation.h"
@@ -930,6 +931,16 @@ private:
         // Telemetry only: why the last build missed (tak::render::MissCause),
         // written by the worker that built it, tallied by the render thread.
         uint8_t missCause=0;
+        // Telemetry only (worker-written, render-thread tallied; zero while off):
+        // every stage whose inputs changed (bit per MissCause), whether the slot
+        // changed owner, vector capacity growths, and worker CPU time for the key
+        // check and the rebuild. keyLayout locates the variable-length parts of
+        // geometryKey (client/geometrykeycause.h); it is kept even while off.
+        uint32_t missMask=0;
+        bool ownerChanged=false;
+        uint8_t reallocs=0;
+        uint32_t keyNs=0, buildNs=0;
+        tak::render::GeometryKeyLayout keyLayout{};
         std::vector<SDL_Vertex> verts;                  // transformed, coloured
         std::vector<std::pair<SDL_Texture*, int>> runs; // (texture, vertex count)
         float ax = 0, ay = 0, occY = 0, alt = 0;
@@ -1069,6 +1080,18 @@ private:
     tak::render::FrameStats renderStats_;
     tak::render::GenerationCounter rendererGeneration_;
     void tallyRenderStats();
+    // Workstream A: the rest of the frame's telemetry, folded once per frame
+    // after the world pass. Cumulative sources (terrain workers, section decode,
+    // gpuvram) are turned into per-frame deltas against the previous fold.
+    void foldRenderStats();
+    void noteFrameCapacities();   // frame start: capacities, to count reallocations
+    ThreadPool::Stats poolStats_;
+    struct TelemetryCursor {
+        tak::TerrainChunks::Stats chunks{};
+        MapView::SectionStats sections{};
+        uint64_t gpuCreates = 0, gpuDestroys = 0;
+        std::array<size_t, 8> capacity{};
+    } telemetryCursor_;
   public:
     const tak::render::FrameStats& renderStats() const { return renderStats_; }
     tak::render::Generation rendererGeneration() const { return rendererGeneration_.current(); }
