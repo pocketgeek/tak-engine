@@ -19,7 +19,7 @@ branch, pushed after the stage (`git push origin task-legion-10000`; never main,
 |---|---|---|---|---|
 | 1 | 0 | Representative baselines and acceptance tests: scale suite, real-path delivery probe, frozen targets | tools/tests/docs only | implemented and validated (this record, section 6) |
 | 2 | 1 | Indexed `registerMove` group matching; swept-bounds broad phase for `awareScan`; profiled micro-work | exact (hash-identical) | implemented and validated (section 7) |
-| 3 | 2 | Explicit logical orders: client intent identity, bounded selection-order transaction, server sequencing, activation tick, every identity consumer | behaviour + protocol + replay | not implemented |
+| 3 | 2 | Explicit logical orders: client intent identity, bounded selection-order transaction, server sequencing, activation tick, every identity consumer | behaviour + protocol + replay | implemented and validated (section 7.3) |
 | 4 | 3 | Deterministic fair scheduling (classes, deficit round robin, aging, unique jobs), complete work budgets, byte accounting | behaviour (schedule) | not implemented |
 | 5 | 4 | Route-query interface; consumers migrated; Unknown / Reachable / Unreachable kept apart; metric versions | exact first, then behaviour where stated | not implemented |
 | 6 | 5 | Hierarchy over the footprint planes (sectors, regions, portals), sparse tiles, intermediate sharing, search vs field by demand | behaviour | not implemented |
@@ -167,6 +167,23 @@ struct RouteId { uint64_t key = 0; uint32_t planeGen = 0; };  // a route/tile ca
   and gives a committed order one **activation tick**; ownership/existence checks run in the sim, where that
   state is, deterministically, at activation. Ordinary commands are never starved behind a transaction.
 * Limits are constants in `net/protocol.h` next to `kCmdCapPerTick`.
+
+**Amended at stage 3 (as implemented; reasons).**
+
+* `OrderId` is not a separate struct in `Order`: the issuing player is the member's owner at activation (the
+  sim refuses any other player's unit), so a leg stores only `Order::orderSerial` (cold tail; line 1 is full),
+  and the wire carries `net::SelectionOrder{serial, tmpl, shape, members}` inside `net::Cmd::Order`.
+* **The arrival area is the key the click consumers use, not the order.** The A1 decision (wall-4x50's four
+  selections to one point on ticks 1-4 are one destination) makes an area something several orders can share,
+  so `ArrivalAreaId = {OrderId, leg}` would have split those crowds. The area is the convoy table's convoy, now
+  joined ONCE per explicit order (per class) at its click, and keyed `kExplicitArea | serial` when an explicit
+  order opens it (`ConvoyTable::Convoy::key`, `Order::convoyTick`). Points, groups, soft-arrival ownership,
+  formation slots, the A2 wait, flight stations and patrol legs keep keying on that value, which every member of
+  an order now gets in its activation tick; the order serial is used where "the same order" is meant (the
+  pinwheel part, hashing, observers). A queued leg is its own order, so its own area.
+* No per-member coordinates travel: the right-click move is `OrderShape::Offsets`, and the sim recomputes the
+  clamped offsets from the members' positions at activation (integer Fixed arithmetic).
+* `NavSubgroupId` and `RouteId` are not used yet (stages 6 and 8).
 
 ### 3.2 Work and byte accounting (stage 4)
 
@@ -465,7 +482,8 @@ program's targets). Unmet targets after stage 9 are reported as such, not re-fro
 * Stage 1: section 6 (implemented and validated; branch commits aa91fb2f, dc772126 and the record commit).
 * Stage 2: section 7.2 (implemented and validated; fd34151a, 1b8cc086, 946d6972, e290f0ed, 5b6daa11 and the
   record commit).
-* Stages 3-9: not implemented.
+* Stage 3: section 7.3 (implemented and validated; commits listed there).
+* Stages 4-9: not implemented.
 
 ### 7.2 Stage 2 record: exact registration, awareness and profiled micro-work (brief phase 1)
 
@@ -590,14 +608,207 @@ Legion, sight/exploration; neither has an exact structural fix in reach here. St
 parallel planning are where the per-tick movement cost is next addressed; stage 9's report also carries
 `updateNavigationExploration` and `mixed-10000`'s `explore` phase.
 
+### 7.3 Stage 3 record: explicit selection orders and scalable command delivery (brief phase 2)
+
+**Hypothesis.** The 10,000-body click is slow and split because the client sends one command per unit through a
+64-a-tick drain (157-308 ticks) and the sim re-infers the click from proximity and timing (20 groups for one
+click). Carrying the click as ONE explicit order with its exact membership, sequenced whole into one tick by the
+server, removes both: command latency becomes one tick whatever the size, and the click's identity is exact.
+
+**Classification.** Behaviour + protocol + replay (protocol 267; `replay_test` refuses 266). Retail is
+bit-identical: Retail clients keep per-unit commands, the sim stamps nothing outside Legion, and the hash folds
+the new fields only when set (convoy key only when it differs from its first tick, `orderSerial` only when
+non-zero). The AI's and scripts' per-unit commands go through the unchanged inference (`ConvoyTable`), so an
+AI-only Legion game is bit-identical too (`--mpai` below).
+
+**Design (as built).** docs/legion-pathfinding.md "Legion 10,000 stage 3" and section 3.1's amendment. In short:
+`net::Cmd::Order` + `net::SelectionOrder{serial, tmpl, shape, members}`; uplink `OrderBegin` / `OrderMembers`
+(varint deltas, at most 2,048 a frame, strictly increasing) / `OrderCommit` (count + FNV digest) / `OrderAbort`;
+server `server/orders.h` (`OrderInbox`) validates framing, template, serials (per connection and above the slot's
+highest activated serial), counts, digest; malformed -- or an order in a Retail game -- fails the connection,
+over the byte budget or the window drops the transaction (logged); a committed order is ONE FIFO item drained
+whole by a per-tick order budget (96 KiB of records per room, first pick rotating) once the client's per-second
+command budget has room for its members (it waits for it, never dropped), that tick being the activation tick;
+the sim (`applySelectionOrder`) applies every member in increasing id order with the ordinary per-unit
+ownership/existence checks, inside a `World::beginOrder` scope that stamps the member's own legs with the
+order's serial and, for Move/Fight/Patrol, the arrival area the order joins once per class at its click.
+Client: `GameView::ClickScope` + `packClick`; one outbox FIFO; orders under their own window, serials assigned
+when an order leaves (a click held through a rejoin's catch-up still gets a fresh serial).
+
+**Limits (per sender).** One open transaction; 16,384 members an order; 64 orders and 384 KiB of records
+queued at the server or in flight from the client; the existing per-second byte budgets (charged at receipt)
+and the command budget (an order's members count as commands, charged when the order is drained: over it the
+order waits); 512 queued ordinary commands, 64 a tick. All budgets are taken all-or-nothing now (a refused
+frame no longer spends part of them, PlayerCommands included). Server memory per sender is
+bounded by one staging buffer (16,384 ids) and 384 KiB of queued records (at most about 390,000 ids, 1.6 MB, with
+the densest encoding); decode work per frame by 2,048 members. (The window was 8 orders until the scale suite
+showed many-10000 -- 400 squads clicked over 600 ticks through one 16-tick round trip -- waiting up to 196 ticks
+for it: the count is generous now and the bytes bound the memory.) No head-of-line starvation: an order never takes command credit and a command never takes order
+window, a big order of one sender never holds another sender's commands, and within a sender nothing overtakes
+what was sent before it (a Stop behind a Move stays behind it, in the same tick when both fit).
+
+**Edge cases and where they are tested.**
+
+| Case | Behaviour | Test |
+|---|---|---|
+| Incomplete transaction (disconnect mid-stream) | discarded with the connection (`Client::clearCommands`); nothing reaches a bundle | `server_orders_test` (clear), rejoin run |
+| Malformed (second Begin, foreign serial, zero delta = duplicate, decreasing across chunks, too many members, bad digest/count, old serial, serial under the floor, forbidden verb, Offsets on a non-Move, unit id in the template, off-range coordinate, truncated/trailing, nested order, unknown shape, id past INT32_MAX) | connection failed, as for invalid PlayerCommands; other accounts unaffected | `server_orders_test`, `server_orders_network` |
+| Abort | discarded; the serial is not reused | `server_orders_test`, `server_orders_network` |
+| Over the byte budget or the window | transaction dropped and logged; the rest activate in serial order | `server_orders_test`, `server_orders_network` (200-order burst) |
+| Over the per-second member budget | the order waits at the head of its client's FIFO (so does what the client sent after it) until the budget's second turns; never dropped, so the client's window never leaks | `server_orders_network` (7 x 10,000 members) |
+| An order in a Retail game | connection failed (a modified client cannot dodge the 64-a-tick drain) | `server_orders_network` |
+| Legs a member's command gives another unit, or a verb without a click point (Assist's approach move) | per-unit identity, no shared area at the template's (0, 0) | `selection_order_test` (membership) |
+| Dead, gone or given-away member | skipped by the sim's per-unit check at activation | `selection_order_test` (membership) |
+| Several orders in one tick | applied in bundle order: a Stop behind a Move wins, a second Move replaces, a queued (Shift) order appends its own leg and area | `selection_order_test` (sameTick) |
+| Two orders to one point within the area window | one arrival area (decision A1), separate serials | `selection_order_test`, `convoy_test` (sharedArea) |
+| Patrol | outbound and return legs (ground and flyer) carry the order's identity | `selection_order_test`, `convoy_test` |
+| Replay | orders recorded whole in the bundles; strict read validates every order; 266 refused | `selection_order_test` (codec), `replay_test`, replay verify of a recorded Legion game (below) |
+| Rejoin | the bundle log replays the orders; serials continue above the slot's activated floor; a click made during catch-up is sent afterwards with a fresh serial | rejoin run (below) |
+
+**Commits.** 3312368f (wire + server), 2920bd1c (sim application and identity), 887fd663 (client, tools mirror,
+tests, debug harness unit cap), 3b70aea1 (scenario and cost baselines), 956d8dce (order window 8 -> 64 orders, found
+by the scale suite's many-10000), and the commit carrying this record and the docs.
+
+**Review.** An automated high-effort review of the uncommitted diff (read-only) found six bugs and four cleanups;
+all were fixed before the measurements below except one kept by decision: (1) an order the server dropped over the
+per-second member budget never came back, so the client's order window leaked and could lock the outbox -- the
+member budget is now charged at the drain and the order waits instead; (2) explicit Assist/Repair orders opened an
+area at the template's (0, 0) -- only Move/Fight/Patrol orders join an area now; (3) the situation recorder skipped
+`Cmd::Order`; (4) the server accepted orders in Retail rooms -- refused now; (5) legs a member's command gave other
+units got the order's identity -- only the member's own now; (6) members apply in id order rather than selection
+order -- kept and documented (the selection order was incidental). Cleanups: the record size is cached, the serial is
+set in place at send, `orderSerial` has its line assertion, the budget chain and coordinate check are shared.
+
+### Checks (exact commands; base = stage 2 head 54be13b8, its binaries in `~/tak-tmp/scratch/legion-10000/stage3/base-bin`)
+
+Scratch scripts are in `~/tak-tmp/scratch/legion-10000/` (`mpai.sh`, `sweep_both.py`, `sweep_legion.py`,
+`stage3/e2e.sh` = `e2e.sh` with `TAK_UNITCAP=${UNITCAP}`, `stage3/rejoin.sh`, `stage3/outcome_ab.py`,
+`stage3/license.py`).
+
+| Check | Command | Result |
+|---|---|---|
+| ctest quick | `ctest --test-dir build-o2 -L quick -j4 --timeout 900` (scratch XDG, no `TAK_SETTINGS_FILE`), after rebuilding every target | **380/380** passed (377 + `server_orders`, `selection_order`, `server_orders_network`) |
+| Intermediate commits | each of 3312368f and 2920bd1c checked out in a scratch worktree and built (takserver, takclient, legion_scenario and the order tests) | both build; `server_orders_test`, `replay_test`, `convoy_test`, `issue_selection_test` and `server_orders_network` pass at both |
+| Unit and transaction tests | `selection_order_test`, `server_orders_test`, `convoy_test`, `issue_selection_test DATA`, `replay_test`, `server_commands_test`, `python3 tools/server_orders_network_test.py --server build-o2/takserver --data DATA` | all pass |
+| `--mpai` Inner Circle seed 1 | `CORES=16-19 mpai.sh <bin> OUT 60` and `300` | 60 s Retail **2c39430636a3dbda**, Legion **532539f51d70840b**; 300 s Retail **7535cb08ee787b75**, Legion **c707e1a8063bc0c7**: all four equal to the starting revision (an AI-only game issues no orders, the per-unit path is unchanged) |
+| Cross-build determinism | `sh tools/check-determinism.sh` | OK, golden **dcef618cd2e4d558** (g++/clang++ x O0/O2/O3; aarch64 skipped: no toolchain) |
+| Real path, 1,900 bodies | `CORES=20-23 UNITCAP=2000 stage3/e2e.sh <bin> OUT 120` (Ulasem Arena, seed 1, `TAK_STRESS`, `TAK_AUTOPLAY_FORMATION`) | Retail hash **625643300260e8cc** (= stage 1) and delivery unchanged (603/662, 1203/1261, ...); Legion: each formation order (SetSquad + AttackMove, 3,052-3,800 unit commands) lands whole: first = last = 603, 1203, 1804, 2404, 3003 (was 603/662, 1204/1262, 1804/1860, 2403/2454, 3004/3053) |
+| Real path, about 9,000 bodies a side | `CORES=4-15 UNITCAP=10000 stage3/e2e.sh <bin> OUT 120` (debug harness cap; final binaries) | Legion: each order pair (SetSquad + AttackMove, 14,590-18,036 unit commands) lands whole, first = last every time: issue 600 -> 605, 1201 -> 1237, 1806 -> 1846, 2410 -> 2452, 3015 -> 3055 (the gap is the client's playout lead under an 18,000-body sim; the server activates an order in the first tick it closes after receiving it). Retail: the first order lands over 605..950 (345 ticks), the next two are still landing when the following click is issued (superseded with 11,392 of 17,632 and 16,320 of 16,910 landed), the last two take 480 and 271 ticks. No desync either way (`err=none`). At this load the run is not reproducible run to run in either mode -- the autoplay client's issue ticks follow its wall-clock lag, so its inputs differ (an earlier run: Legion lands at 628, 1258, 1861, 2466, 3074; Retail's first order over 604..1116) |
+| Rejoin | `CORES=20-23 stage3/rejoin.sh <bin> OUT` (host + joiner + AI, joiner killed after its second order, rejoins with the ticket) | the rejoined client's orders keep activating (serials above the floor; a click made during catch-up goes out afterwards with a fresh serial), host and rejoined client end on the same hash (**f7675ae2b1c7964b**), the server refuses nothing. (Before serials were given at send time, the click made during catch-up would have reused serial 1 and failed the connection: found by this run.) |
+| Replay | `TAK_REPLAY_VERIFY=1 takclient replay <the Legion e2e recording> --data DATA` | 3,603 ticks, 120 hash checkpoints, no divergence |
+| Legion scenario gate | `sweep_both.py` (gate1, both modes) then, after the review fixes, `sweep_legion.py <bin> gate2 4-19 gate1` (Legion jobs again, Retail lines reused: the fixes cannot reach Retail); `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results gate2/scenarios.jsonl` | before the baseline edits: Retail 0 failures, every Retail hash@ equal; Legion 2,011 failures (742 hash@, the rest in the 46 click-heavy fixtures and motion-cross). After 3b70aea1: **PASS**, 31,768 keys, 0 failed, 2,160 ratchets, 3,053 licensed, 218 floor exceptions; `validate` 0 problems |
+| Identity of the per-unit paths (AI, Retail) | `tools/legion_identity.sh --base ~/tak-tmp/wt/legion-10000-s2base/build-o2 --cand build-o2 --replays ~/tak-tmp/scratch/land-we3/rp --data DATA --cores 20-23 -j 4 --skip mpai,ctest` (base cached) | replays L-bench, L-2h, R-bench, R-2h (protocol byte patched to 267): final hashes and all 61 checkpoint section hashes identical to the stage-2 base (3c0b297f441dde75, b14d12d4cc0ac939, 346cf77e91fe3ec7, fe702dcac891b13d); golden legion and retail SAME. The crowdbench matrix was interrupted (1,008 jobs on four shared cores, 100 done in 22 minutes) and is not reported |
+| legion_cost and the battle windows | `ctest -R '^legion_cost$|^legion_scenario_battle-'` | pass after 3b70aea1 (34 cost-corner/cost-open and 4 battle counters retaken with reasons); the scaling gates hold unchanged (W(4N0)/W(N0) 0.41 / 0.72, slot cells per slot 0.67 / 0.48, upkeep 1.00) |
+| Scale suite | `legion_scale.py run --bin <bin> --out .../stage3/scale --cores 4-19 --per-job 4` (37 jobs; many-10000 and many-5000 rerun on 956d8dce with `--files`, merged into `scale/results-final.jsonl`); `check --targets tools/scenarios/scale/targets.json --base tools/scenarios/scale/baseline-c2c25707.jsonl`; `stage3/scale_ab.py stage2/scale/results.jsonl stage3/scale/results-final.jsonl` | 37/37 exit 0; every Retail state hash equal to stage 2's; targets **118 met, 86 missed, 8 report-only missed** (stage 2: 99 / 110 / 3; the report-only misses are wall-clock `over_budget` / p99 rows, see below). Table below |
+
+**What moved in the Legion fixtures, and why.** 88 of the 89 fixtures whose clicks fit one uplink tick are
+behaviour-identical (every key equal but the convoy lookup counters, which an order now costs once instead of per
+unit, and the hash). motion-cross changes for a reason of its own: its two crossing streams (24 one-body clicks each,
+all on tick 1) opened two convoys with the same first tick, so the per-unit key made them ONE command that never
+planned round itself; explicit areas are keyed per order, so they are two commands and awareness plans the crossing
+(offset 0: fields built 4 -> 10, backward 469 -> 85, flips 48 -> 13, u09 now arrives). The 46 fixtures that issue more
+than 64 unit commands in one tick change because their clicks now start at once instead of in 64-body waves. That is
+proven, not assumed: a scratch build that splits each explicit order into 64-member orders landing one a tick
+reproduces every stage-2 behaviour key on 14 of them (attackring-mob-100, corner-1x448, cost-corner,
+deadend-w4-n120-closed-squad/-room-plain, deadend-w6-n120-room-squad, gen1-route-36057, goalblock-200, liftstream,
+split-450-pocket, strait-3x80, tail-open304, tail-wave, unreach-200; battle-field-2x250 cannot be reproduced exactly,
+because the old mirror sent both players through one FIFO), and splitting into 64-member orders landing in the SAME
+tick reproduces this stage's values (deadend-w4/w6-n120). Keeping 64-body pinwheel parts inside an order changed
+nothing that mattered and was rejected. Over the 46 fixtures, against the stage-2 run (keys moved more than 10%,
+`outcome_ab.py`): 304 keys better, 359 worse; 17 fixtures mostly better (tail-wave 23 better / 5 worse, cost-corner
+22 / 3, liftstream 21 / 4, battle-assault 17 / 21, island-1x150 15 / 9, strait-2x150 11 / 2), 25 mostly worse, the
+worst in narrow dead ends and long routes where a whole column now starts into the bottleneck at once:
+deadend-w4-n120-room-plain arrivals 50 -> 29 (below Retail's 34: a Retail-floor exception), -closed-squad parked_held
+13,732 -> 52,272, corner-1x448 group B never finishing (8,958 -> never), gen1-route-36057 two groups' t90 -> never,
+pocket-615-open 14 keys worse. These are licensed as the cost of the simultaneous start the brief requires, and
+recorded as stage 7-8 inputs (chokepoint admission for genuinely narrow friendly passages, coherent subgroups), not
+fixed here by re-introducing a per-unit release queue (which phase 2 forbids).
+
+**Scale suite, Legion rows, stage 2 -> stage 3** (`a -> b` where the value moved, one value where it did not;
+`deliver.max` = ticks from a click's issue tick to its last member's command, `start.last` = ticks to the last
+member moving, `apply max ms` = the longest single tick spent applying commands, new in this stage; wall columns are
+reported only and were measured on a shared machine).
+
+| scenario | deliver.max | start.last | arrived | completed | stuck | livelock | tick mean ms | tick p99 ms | apply max ms |
+|---|---|---|---|---|---|---|---|---|---|
+| attack-1000 | 33 -> 0 | 61 -> 23 | 99 | 98 -> 99 | 0 | 0 | 0.818 -> 1.161 | 1.778 -> 1.791 | 21.77 |
+| attack-10000 | 339 -> 0 | 1084 -> 42 | 895 -> 882 | 971 -> 954 | 5 -> 8 | 3 -> 7 | 10.038 -> 13.113 | 17.361 -> 28.286 | 36.598 |
+| bridges-1000 | 23 -> 0 | 45 -> 15 | 10 -> 12 | 8 -> 11 | 537 -> 539 | 34 -> 44 | 1.114 -> 1.206 | 1.988 -> 2.079 | 29.89 |
+| bridges-10000 | 308 -> 0 | 526 -> 45 | 0 | 0 | 9020 -> 9053 | 79 -> 88 | 12.463 -> 12.747 | 17.906 -> 22.381 | 35.343 |
+| churn-1000 | 23 -> 0 | 117 -> 46 | 465 -> 436 | 1000 | 0 | 0 | 0.668 -> 0.646 | 1.623 -> 1.632 | 8.319 |
+| churn-10000 | 498 -> 0 | 1637 -> 1230 | 2174 -> 3587 | 9999 -> 9968 | 0 -> 5 | 0 -> 4 | 10.59 -> 8.114 | 22.29 -> 16.646 | 42.836 |
+| idle-10000 | 23 -> 0 | 68 -> 22 | 32 -> 33 | 28 -> 27 | 685 -> 666 | 25 -> 31 | 3.95 -> 5.944 | 5.01 -> 9.123 | 26.854 |
+| many-100 | 0 | 9 | 98 | 98 | 1 | 0 | 0.057 -> 0.049 | 0.152 -> 0.132 | 0.513 |
+| many-1000 | 0 | 19 | 794 | 786 | 92 | 22 | 1.631 -> 1.561 | 3.439 -> 3.161 | 4.851 |
+| many-10000 | 0 | 248 | 546 | 267 | 9164 | 100 | 13.706 -> 12.337 | 16.667 -> 16.398 | 32.933 |
+| many-2500 | 0 | 217 | 785 | 647 | 1395 | 48 | 4.295 -> 3.808 | 7.842 -> 7.049 | 8.222 |
+| many-5000 | 0 | 67 | 470 | 275 | 3819 | 72 | 8.072 -> 6.784 | 10.559 -> 8.911 | 18.613 |
+| maze-1000 | 23 -> 0 | 32 -> 10 | 365 -> 335 | 655 -> 627 | 29 -> 42 | 15 -> 19 | 1.299 -> 1.302 | 2.303 -> 2.279 | 53.91 |
+| maze-10000 | 308 -> 0 | 546 -> 15 | 1468 -> 1070 | 1142 -> 8947 | 6139 -> 843 | 127 -> 25 | 15.051 -> 10.516 | 18.136 -> 21.818 | 56.281 |
+| mixed-1000 | 53 -> 0 | 60 -> 11 | 636 -> 667 | 448 -> 515 | 52 -> 32 | 16 -> 20 | 4.676 -> 4.818 | 10.351 -> 11.812 | 21.731 |
+| mixed-10000 | 622 -> 0 | 623 -> 11 | 2430 -> 2254 | 1978 -> 868 | 4769 -> 6227 | 174 -> 154 | 60.661 -> 88.642 | 112.142 -> 177.118 | 145.941 |
+| one-100 | 1 -> 0 | 9 -> 8 | 100 | 100 | 0 | 0 | 0.059 -> 0.054 | 0.12 -> 0.11 | 2.039 |
+| one-1000 | 23 -> 0 | 65 -> 39 | 809 -> 847 | 999 | 1 -> 0 | 1 -> 0 | 0.551 -> 0.601 | 0.992 -> 1.107 | 6.231 |
+| one-10000 | 308 -> 0 | 652 -> 15 | 1866 -> 6973 | 6257 -> 9964 | 1741 -> 13 | 95 -> 9 | 12.322 -> 9.549 | 18.138 -> 15.861 | 38.906 |
+| one-2500 | 71 -> 0 | 90 -> 29 | 808 -> 1970 | 2317 -> 2495 | 60 -> 2 | 17 -> 2 | 2.078 -> 1.78 | 3.543 -> 3.287 | 12.197 |
+| one-5000 | 150 -> 0 | 219 -> 49 | 1532 -> 3684 | 4316 -> 4988 | 449 -> 0 | 34 -> 0 | 5.481 -> 4.823 | 9.49 -> 9.573 | 23.086 |
+| swap-1000 | 23 -> 0 | 45 -> 20 | 824 -> 781 | 990 -> 965 | 2 -> 5 | 2 -> 5 | 1.191 -> 1.063 | 2.825 -> 2.587 | 29.694 |
+| swap-10000 | 308 -> 0 | 437 -> 15 | 915 -> 1405 | 378 -> 1294 | 8037 -> 5841 | 86 -> 103 | 11.722 -> 17.972 | 15.35 -> 29.125 | 44.31 |
+| swap-2500 | 71 -> 0 | 145 -> 48 | 1721 -> 1859 | 2027 -> 1929 | 5 -> 11 | 4 -> 7 | 3.319 -> 3.463 | 5.977 -> 6.276 | 32.312 |
+| swap-5000 | 150 -> 0 | 243 -> 15 | 1308 -> 2319 | 1474 -> 3181 | 2521 -> 907 | 46 -> 41 | 6.96 -> 6.312 | 11.779 -> 12.841 | 43.713 |
+
+* **The 10,000-body one-selection case** (one-10000): command latency for the whole selection (`deliver.max`) 308 -> **0**
+  ticks, last member moving (`start.last`) 652 -> **15** ticks; with every member starting at once the outcome moves
+  with it: arrived 1,866 -> 6,973, completed 6,257 -> 9,964, stuck 1,741 -> 13, livelock 95 -> 9, groups 20 -> 2,
+  nav memory 62 -> 13 MB, tick mean 12.3 -> 9.5 ms. The cost is the activation tick: **38.9 ms** applying the order
+  at tick 2 (the 10,000 registrations inside `World::order`), the run's only tick over the 33.3 ms budget. That is
+  stage 4's budget work, recorded in section 8.
+* Every single-selection 10,000 row now delivers in 0 ticks (was 308-622) and starts its last member within 11-45
+  ticks (was 437-1,637; churn-10000, whose eight re-clicks keep cancelling members, 1,230).
+* many-* (selections of 25 bodies, one order each) keep every behaviour key of stage 2 (only the hash moves: the order
+  serial is hashed). many-10000 was first run with a window of 8 orders: 400 squads clicked over 600 ticks through a
+  16-tick round trip waited for it (`deliver.max` 196, `start.last` 348); 956d8dce makes the window 64 orders (the
+  384 KiB still bounds the server's memory) and the rerun restores 0 / 248. No gate fixture enables the uplink
+  window (`uplink` appears only in the scale files) and no other scale file has more than three orders inside a
+  round trip, so the window change reaches only this row (and many-5000, rerun with it: identical keys).
+* Outcomes that moved the wrong way: mixed-10000 completed 1,978 -> 868 and stuck 4,769 -> 6,227 (its 13
+  convoys of mixed classes now start at once), attack-10000 arrived 895 -> 882, bridges-10000 stuck 9,020 -> 9,053 (no
+  body arrives either way: the bridges are the stage 7 chokepoint input), churn-1000 arrived 465 -> 436, maze-10000
+  arrived 1,468 -> 1,070 while completing 1,142 -> 8,947. Same cause as the gate fixtures above; licensed on the same
+  basis and listed as stage 7-8 inputs.
+* Wall clock (report only): mixed-10000's tick mean rose 60.7 -> 88.6 ms and its p99 112 -> 177 ms; its job ran
+  next to the 10k real-path run, so the size of the rise is not established by this run. The other 10,000 rows hold
+  within the noise of the shared machine except swap-10000 (p99 15.4 -> 29.1 ms, 75 ticks over budget) and
+  attack-10000 (17.4 -> 28.3 ms): both now plan their whole crowd in the first ticks. Re-measure on a quiet machine
+  in stage 4.
+
+
 ## 8. Next step
 
-Resume from branch `task-legion-10000` (pushed; stage 2 done). Build `build-o2` in the worktree, read sections 3
-and 7.2. Stage 3 (brief phase 2, behaviour + protocol + replay): explicit logical orders per section 3.1 --
-`OrderId` from client intent through the bounded selection-order transaction (`OrderBegin` / `OrderMembers` /
-`OrderCommit` / `OrderAbort`), server framing/limits/sequencing and an activation tick, sim-side ownership and
-existence checks at activation, every identity consumer moved to `OrderId` with `(player, convoyTick)` kept only
-for commands without one; a unit-cap override for the harness so the real client/server path carries a
-10,000-body click; one `kNetVersion` bump (267), `replay_test` refusing 266, new `--mpai` baselines, the scale
-suite's `deliver.*` / `start.*` targets as the measure. Retail must stay bit-identical except where a
-protocol-only field forces otherwise (then say why here).
+Resume from branch `task-legion-10000` (pushed; stages 1-3 done). Build `build-o2` in the worktree, read sections 3
+(3.1 as amended), 7.3 and the stage-3 section of docs/legion-pathfinding.md. Stage 4 (brief phase 3, behaviour:
+the schedule): deterministic fair scheduling and complete budgets per section 3.2. Stage 3 leaves it these
+concrete starting points, measured in 7.3:
+
+* An explicit order activates every member in one tick, so registration (`registerMove`), the first field build
+  and the formation's slot work now land in the first ticks of a click instead of spreading over its 64-unit
+  waves: `work.legion_total.max` rose on the click-heavy fixtures (cost-open N400 208,449 -> 259,232, cost-corner
+  N400 176,789 -> 224,368) while the whole-run work per member-tick held (legion_cost's W(N) table). Budget
+  registration and slot/ring searches as `NavWork` classes, resumable, so a 10,000-body activation tick is bounded
+  without re-creating a per-unit admission queue.
+* The slot hand-out still serves at most `kSlotsPerTick` (32) slots a tick and waits for the area to close
+  (`kGapTicks` 9) before a formation over 64 bodies is taken: a 10,000-body area hands out its last slot about
+  300 ticks after activation (members steer by the shared field meanwhile). That is the next per-unit admission
+  bottleneck the brief names; stage 8's progressive local assignment replaces it, stage 4 budgets it fairly.
+* Membership application is one O(N) pass at the activation tick, and under Legion it registers every member there
+  (`World::order` -> `requestPath` -> `registerMove`): a 10,000-member order costs about 39 ms of `applyCommand`
+  on its activation tick (`apply_max_ms` in SCALE_WALL; the run's one tick over 33.3 ms), on a tick that is
+  otherwise light. Registration is the part to budget (resumable, members registered over a few ticks in id order,
+  their movement waiting only for their own registration).
+* `startField`'s head-of-line `break` and the 384k relaxation quota are unchanged.
+* The congestion cost of simultaneous starts (section 7.3: deadend-w4/w6-n120, corner-1x448, gen1-route-*,
+  pocket-615-*) is a stage 7-8 input; stage 4 must not "fix" it by spreading starts back out.
+
+* Re-measure the scale suite's wall columns on a quiet machine: mixed-10000 (tick mean 60.7 -> 88.6 ms), swap-10000
+  and attack-10000 (p99 about 28-29 ms, both now planning their whole crowd in the first ticks) moved in the stage-3
+  run, which shared the machine with the 10k real-path run (section 7.3, scale table).

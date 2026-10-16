@@ -324,6 +324,7 @@ silently skipped.)
 | Msg | Payload | Notes |
 |---|---|---|
 | `PlayerCommands` | n × Command | client → server; player byte ignored/overwritten |
+| `OrderBegin` / `OrderMembers` / `OrderCommit` / `OrderAbort` | serial, template Command, shape, count / serial, member deltas (≤ 2,048) / serial, count, digest / serial | client → server (protocol 267): one explicit selection order as a transaction; the server puts the committed order whole into ONE TickBundle (`Cmd::Order`, its activation tick). Legion clients send their selection verbs this way, Retail clients keep per-unit commands. `net/protocol.h` beside `kOrderMaxMembers`, `server/orders.h`, docs/legion-pathfinding.md "Legion 10,000 stage 3" |
 | `TickBundle` | tick u32, n × Command (ascending player, then arrival order), m × Event | server → all clients, 30/s; empty bundles are the clock; the event section exists from day one (§3) |
 | `StateHash` | tick u32, hash u64 | client → server, every 30 ticks |
 | `Desynced` | tick, reason | server → one client; client auto-reconnects |
@@ -350,6 +351,12 @@ attackMove) all map onto existing `Train` / `Build` / `AttackMove` commands.
   connection.
 - Per-player per-tick command cap (e.g. 64) so a spammer can't inflate every
   bundle for eight clients; excess commands are dropped with a notice.
+  Explicit orders (protocol 267) have limits of their own: 16,384 members, 64
+  orders / 384 KiB outstanding per client, 96 KiB of order records per tick
+  shared by the room (first pick rotating), the same per-second byte and
+  command budgets (an order's members count as commands; over the command
+  budget an order waits at the head of its client's queue, it is never
+  dropped). An order in a Retail game fails the connection.
 - Full validation of remote input: `Cmd` kind range, `type` strings looked up
   against the registry, unit/target ids sane. Malformed ⇒ disconnect.
 - Lobby rate limits (CreateGame, Chat, ListGames floods).
@@ -751,6 +758,11 @@ so the default 2,000 cap scans 500 slots a player, not 2,000 (hashed pool
 sizes; see the 2026-10-15 grow-as-needed audit in `pathfinding-port.md`). The
 `--mpai` Inner Circle seed 1 hashes: Retail 300 s `7535cb08ee787b75`, 60 s
 `2c39430636a3dbda`; Legion 300 s `c707e1a8063bc0c7`, 60 s `532539f51d70840b`.
+Protocol 267 adds explicit selection orders (`Cmd::Order` in the tick bundles,
+the OrderBegin/OrderMembers/OrderCommit/OrderAbort uplink transaction; Legion
+clients only, so Retail is bit-identical), and protocol 266 recordings no longer
+play. An AI-only game issues no orders, so the `--mpai` hashes above are
+unchanged under 267 (both modes, 60 s and 300 s).
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when

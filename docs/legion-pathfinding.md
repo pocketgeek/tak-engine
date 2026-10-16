@@ -1581,6 +1581,10 @@ Measured by `aware-headon:pair.contacts.permille_x100` and the `aware-*` fixture
 
 ### Convoys: one order per click (W3 A1)
 
+(Since protocol 267 a Legion client's click is an explicit selection order that joins this table once for all
+its members -- see "Legion 10,000 stage 3" below; the per-unit inference described here remains for the AI's
+and scripts' commands, and the table is the arrival-area table for both.)
+
 The client lands a selection over 64 units over several ticks (64 commands
 per tick, and at most 512 outstanding), so each tick's part used to be an
 order of its own. In Legion mode `World::order()` now stamps every order with
@@ -2086,6 +2090,67 @@ Four hash-identical optimisations (docs/legion-10000-progress.md, stage 2, has t
 
 The ctests `legion_verify_{battle-assault,crosslong,gap8}` run the references; each file is one that a
 deliberate mutation of the matching optimisation trips.
+
+### Legion 10,000 stage 3: explicit selection orders (protocol 267)
+
+A click is now one explicit **selection order** (`net::Cmd::Order`, `net/lockstep.h`): the player's intent over a
+whole selection, with an identity (issuing player, serial), a template command (verb, target, point, queue flag),
+a shape and the exact membership. Before, the client sent one command per unit through the 64-a-tick drain and the
+sim inferred the click from proximity and timing (convoys, below); a 10,000-unit click took 157-308 ticks to land
+and became up to 20 groups and several crowds. The record of the stage, with its measurements, is
+docs/legion-10000-progress.md section 7.3.
+
+* **Client** (`GameView::ClickScope`, `flushClick`). The commands one input event (or one autoplay step) issues
+  are one click. In a Legion net game `net/orderpack.h`'s `packClick` turns each run of commands that differ only
+  in their unit into one order; the right-click move is `OrderShape::Offsets` at the click (the sim recomputes the
+  per-unit offsets, so no coordinates travel per member). Retail and offline play send the commands exactly as
+  before, so Retail is bit-identical. The outbox is one FIFO of commands and orders: commands go under the rate
+  credit and the 512 window, an order goes whole as its transaction under its own window (64 orders / 384 KiB
+  outstanding, `orderSendWindow`), and nothing overtakes what was issued before it.
+* **Transport** (`net/protocol.h`, `server/orders.h`). `OrderBegin` / `OrderMembers` (member ids as varint
+  deltas, at most 2,048 a message, strictly increasing, so a duplicate cannot be encoded) / `OrderCommit`
+  (count + FNV digest) / `OrderAbort`. The server validates the framing, the template, serials (increasing per
+  connection and above the slot's highest activated serial, which a reconnect keeps), counts and the digest;
+  malformed fails the connection, as does an order in a Retail game (its clients keep per-unit commands); over
+  the byte budget or the window the transaction is dropped with a log line (an honest client never gets
+  there). A committed order is ONE item of its client's command FIFO; `closeTick` takes it whole while the
+  tick's order budget (96 KiB of records, shared by the room, first pick rotating) holds it and the client's
+  per-second command budget has room for its members (otherwise it WAITS, never dropped, so the client's
+  window cannot leak), and that tick is its activation tick. An ordinary command behind it keeps its place and
+  its own 64-a-tick budget, so a big order never makes it wait for command credit. Chunks never reach a
+  bundle, so no partial order is ever visible; a disconnect drops the open transaction and the queue with the
+  connection.
+* **Sim** (`sim/matchsetup.cpp` `applySelectionOrder`). At activation every member gets the template command in
+  increasing id order (the client's selection order was incidental -- box selection lists bodies in render
+  order -- and id order is the canonical one; it decides, say, who boards a full transport first); ownership
+  and existence are checked per member by the ordinary path (a dead, gone or given-away member is skipped).
+  Inside `World::beginOrder` / `endOrder` every leg the member being applied gets for itself carries the
+  order's identity: `Order::orderSerial` (hashed when set) and, for an order with a click point (Move, Fight,
+  Patrol), its arrival area, which the order joins ONCE per class at its own click (`World::stampIdentity`);
+  a leg of another verb (an Assist's approach move) or of another unit keeps the per-unit identity. The convoy
+  table is now the arrival-area table: several orders of one player and class to one point within its window
+  (`kGapTicks`/`kSpanTicks`) still share one area
+  -- the A1 decision, wall-4x50's four selections -- while one order is never split; an area an order opens is
+  keyed `kExplicitArea | serial` (unique; per-unit commands, the AI's and scripts', still key by first tick).
+* **Identity consumers.** Points, groups (issue key), soft-arrival ownership, formation slots, the A2 slot wait
+  (`commandOpen`, now by area key), flight stations (bucket key), patrol return legs (copy the identity) and the
+  hash key on the area key, which an order now gives all its members at once. The pinwheel's part (`Member::part`)
+  stays the tick a leg's command was applied in, so an order (applied whole) is one part however big, and
+  orders applied in one tick share one, as per-unit commands of one tick always did (making the part the order
+  itself split 24 one-unit clicks of one tick into 24 parts and moved the motion-* fixtures; keeping 64-body rank
+  groups inside an order changed nothing that mattered; both rejected). The awareness same-selection rule (one
+  player, within `kConvoyTicks`, within `kConvoyCells`) is kept only between per-unit commands; two explicit
+  areas are one selection exactly when they are the same area. The first-part provisional formation keeps its
+  under-64 rule (taking it at once for any order size was measured and rejected, see `formationSlot`).
+* **Kept as inference** (`ConvoyTable`, unchanged for them): the AI's commands (server-run, all landing in one
+  tick, so the table already gives one area per AI click at one point) and mission scripts' orders.
+
+Tests: `selection_order_test` (codec, packing, Retail equivalence, Legion identity, membership, same-tick
+replacement / Stop / queue / patrol, delivery), `server_orders_test` (the transaction state machine),
+`server_orders_network` (a real server: whole activation, FIFO without starvation, abort, window, member-budget
+delay, malformed, Retail refusal),
+`convoy_test` (each click shape both as an order and per unit), `issue_selection_test` (the mirror against the
+transcribed client), `replay_test` (266 refused).
 
 ## Instruments
 
