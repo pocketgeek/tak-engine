@@ -126,6 +126,11 @@ constexpr uint32_t kCrowdWindow=45;            // no-progress window for "close 
 // stands on its own slot).
 constexpr int kSettleSlack=2,kSettleGrow=2;
 constexpr uint8_t kRechoices=3;
+// An explicit order's queue (stage 3): its settle bound never grows past its
+// point's crowd bound (the packed area of every body the point gathers, see
+// crowdBound) scaled to the arrival disc, kExplicitSettleNum*(foot+1) /
+// (kExplicitSettleDen*foot), plus kSettleSlack bodies (see settleWindow).
+constexpr uint32_t kExplicitSettleNum=9,kExplicitSettleDen=8;
 constexpr int kSettleRing=64;                  // cells the queue test may visit per window
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
 constexpr uint32_t kPassHold=300;              // ticks a passing body keeps its new lane
@@ -491,6 +496,11 @@ struct LegionNavigator::Impl {
         // The destination area's bound per goal (see areaBound): (field
         // serial, (members, bound)). A function of the field, never hashed.
         std::map<int,std::pair<uint64_t,std::pair<int,uint32_t>>> areaBounds;
+        // The same for an explicit order's crowd bound (see crowdBound): per
+        // goal, the bound of the point's whole crowd in this group's
+        // footprint. A function of the field and the point's hashed
+        // crowdPeak, never hashed.
+        std::map<int,std::pair<uint64_t,std::pair<int,uint32_t>>> crowdBounds;
         // Group awareness (see awareScan): the movers (by command) its
         // fields plan round, their corridors as planned, and the scans each
         // has been off its way.
@@ -699,6 +709,7 @@ struct LegionNavigator::Impl {
         // differs from the point's tick.
         uint32_t part=0;
         Point* pt=nullptr;         // points[point]: alive while this member holds its ref
+        uint16_t ptCells=0;        // the footprint cells it added to its point's crowd (Point::crowdCells)
         std::vector<int> route;           // committed local detour around still bodies
         // Pinwheel (see pivotAim): the member's distance off a wall end it
         // rounds (cells; 0 not yet measured, -1 hugs as the inner file), and
@@ -944,12 +955,17 @@ struct LegionNavigator::Impl {
     IdMap<Member> members;
     Member* member(int id) const {return members.get(id);}
     void putMember(int id,const Member& m) {
-        auto& slot=members[id];slot=m;
+        auto& slot=members[id];const uint16_t hadCells=slot.ptCells;slot=m;slot.ptCells=hadCells;
         markPass(id);
         if(slot.pt) {
             auto& ids=slot.pt->ids;
             const auto at=std::lower_bound(ids.begin(),ids.end(),id);
-            if(at==ids.end()||*at!=id) {ids.insert(at,id);++slot.pt->partRefs[slot.part];}
+            if(at==ids.end()||*at!=id) {
+                ids.insert(at,id);++slot.pt->partRefs[slot.part];
+                const Unit* u=w.unit(id);
+                slot.ptCells=u&&u->type?uint16_t(std::max(1,u->type->footX)*std::max(1,u->type->footZ)):1;
+                slot.pt->crowdCells+=slot.ptCells;slot.pt->crowdPeak=std::max(slot.pt->crowdPeak,slot.pt->crowdCells);
+            }
         }
     }
     // Settled Legion arrivals: the goal origin each one completed on, and how
@@ -1720,6 +1736,13 @@ struct LegionNavigator::Impl {
         // The unseen cue (see stampMeet): the tick some member stamped meetSeen and the least oncoming
         // point found in that tick (a min reduction: independent of the update order). Hashed while set.
         uint32_t cueTick=kNoTick;std::tuple<int,uint32_t,int32_t,int32_t> cueOther{};
+        // The footprint cells of the members `ids` lists (crowdCells) and the
+        // most they ever were (crowdPeak): the size of the whole crowd this
+        // point gathers, every footprint plane together (an explicit
+        // order's settle ceiling, see crowdBound). crowdCells is a function of
+        // `ids` (each member keeps what it added, Member::ptCells); crowdPeak
+        // is history, hashed for an explicit area's point.
+        uint64_t crowdCells=0,crowdPeak=0;
     };
     std::map<std::tuple<int,uint32_t,int32_t,int32_t>,Point> points;
     // C1: the points with an unseen cue (cueTick set) and the points with a latched meet, ascending.
@@ -2559,6 +2582,7 @@ struct LegionNavigator::Impl {
             auto& ids=point->second.ids;
             if(const auto at=std::lower_bound(ids.begin(),ids.end(),id);at!=ids.end()&&*at==id) {
                 ids.erase(at);
+                point->second.crowdCells-=std::min<uint64_t>(point->second.crowdCells,found->second.ptCells);
                 auto& parts=point->second.partRefs;
                 if(auto part=parts.find(found->second.part);part!=parts.end()&&--part->second<=0)parts.erase(part);
             }
@@ -3782,6 +3806,12 @@ struct LegionNavigator::Impl {
             for(const auto& [key,pt]:points)if(!pt.queue.empty())waiting.insert(key);
             if(waiting!=handIds)fail("handIds differs from the points with a queue");
         }
+        // Each point's crowd cells against its listed members' own counts.
+        for(const auto& [key,pt]:points) {
+            uint64_t cells=0;
+            for(const int id:pt.ids)if(const Member* m=member(id))cells+=m->ptCells;
+            if(cells!=pt.crowdCells||pt.crowdCells>pt.crowdPeak)fail("a point's crowd cells differ from its members'");
+        }
         {
             // Each group's member ids (the paused build's cover test).
             std::map<int,std::vector<int>> ids;
@@ -4132,9 +4162,16 @@ struct LegionNavigator::Impl {
                             if(narrow&&dot>=0)continue;   // the same way: followed
                             cls=narrow?kAwareHeadOn:kAwareCross;
                         }
-                        // Crossing ways: only one group gives way, the later
-                        // one (the larger command key: player, then issue
-                        // tick); head on, both keep right.
+                        // Crossing ways: only one group gives way, the one
+                        // with the larger command key (player, then the
+                        // area key); head on, both keep right. Within one
+                        // kind of key that is the later one (per-unit keys
+                        // are the issue tick, explicit keys kExplicitArea |
+                        // serial). Across kinds it is not: an explicit
+                        // order's key always has the top bit set, so for one
+                        // player an explicit order gives way to a per-unit
+                        // (AI or script) command whichever came first.
+                        // Deterministic either way (both keys are sim state).
                         if(cls==kAwareCross&&mv.command>g.command)continue;
                         if(cls==kAwareCross) {
                             want.push_back(mv.command);seg.push_back(behind());kind.push_back(kAwareCross);
@@ -5944,7 +5981,7 @@ struct LegionNavigator::Impl {
         g.peak[centre]=std::max(top,n);
         g.compCell=centre;
         if(g.next) {if(!g.next->done)++stats.refreshDiscards;g.next.reset();}
-        g.stale=true;g.demand=true;g.areaBounds.clear();
+        g.stale=true;g.demand=true;g.areaBounds.clear();g.crowdBounds.clear();
         listGroup(g);
     }
     // The member follows its group's re-seed: new goal (its ring spot,
@@ -8071,6 +8108,27 @@ struct LegionNavigator::Impl {
         const bool behind=front!=kUnreached&&potential<=uint64_t(front)+slack;
         uint32_t cap=uint32_t(std::min<int64_t>(kUnreached-1,factor*((2*reach*kDiagonal)/16+int64_t(3*foot*kOrthogonal))));
         if(behind)cap=std::max(cap,uint32_t(std::min<uint64_t>(kUnreached-1,uint64_t(front)+slack)));
+        // An explicit order's queue is bounded by the order's own crowd. The
+        // reach above grows with everyone settled at the destination, and one
+        // order is now the whole selection: a 10,000-body click's settled
+        // bodies widen the reach until it spans the map, and the queue behind
+        // them, row by row, runs back to where its bodies started (maze-10000:
+        // 7,595 of 8,500 completing beyond the arrival disc, at their starting
+        // rect). The packed area of the point's whole crowd (crowdBound: every
+        // footprint plane's bodies, in this body's footprint, following walls,
+        // so a dead end's strip is its length) is what its bodies can claim,
+        // widened to the arrival disc of that many bodies: AR-08's disc is
+        // 20(foot+1) px per sqrt(n/pi), the packed bound 16 foot px per
+        // sqrt(1.25 n/pi), a ratio of 1.118(foot+1)/foot (9/8 here). Past it
+        // plus kSettleSlack bodies a queued body waits: an honest unarrived
+        // body, never an arrival declared where it stands. Per-unit (inferred)
+        // areas keep the rule above unchanged (the AI, scripts, Retail-mode
+        // tools).
+        if(explicitArea(std::get<1>(m.point))) {
+            const uint64_t ceiling=uint64_t(crowdBound(g,m,fx,fz,body))*kExplicitSettleNum*uint64_t(foot+1)/
+                                   (uint64_t(kExplicitSettleDen)*uint64_t(foot))+slack;
+            cap=uint32_t(std::min<uint64_t>(cap,ceiling));
+        }
         if(!m.settleP)m.settleP=std::min(cap,areaBound(g,m,fx,fz,body)+slack);
         if(potential<=m.settleP&&(dist<=2*reach||behind)&&connected(dist)&&!inExitLane(u,body))return true;
         m.settleP=std::min(cap,m.settleP+grow);
@@ -8133,13 +8191,33 @@ struct LegionNavigator::Impl {
         const auto peak=g.peak.find(m.requested);
         const int n=peak==g.peak.end()?1:peak->second;
         if(n<=1||m.requested<0)return uint32_t((body+4)*kOrthogonal/16);
+        return packedBound(g,g.areaBounds[m.requested],m.requested,n,fx,fz);
+    }
+    // An explicit order's crowd bound: the destination area's bound for the
+    // point's whole crowd -- its peak footprint cells (Point::crowdPeak, every
+    // plane's bodies) in footprints of this body's size, never fewer than
+    // areaBound's own count. One click of mixed footprints gathers one crowd,
+    // but each plane is its own group, whose peak counts its own bodies only.
+    uint32_t crowdBound(Group& g,const Member& m,int fx,int fz,int64_t body) {
+        const auto peak=g.peak.find(m.requested);
+        int n=peak==g.peak.end()?1:peak->second;
+        if(const Point* pt=m.pt;pt&&pt->crowdPeak) {
+            const uint64_t cells=uint64_t(std::max(1,fx))*uint64_t(std::max(1,fz));
+            n=int(std::max<uint64_t>(uint64_t(n),std::min<uint64_t>((pt->crowdPeak+cells-1)/cells,uint64_t(1)<<24)));
+        }
+        if(n<=1||m.requested<0)return uint32_t((body+4)*kOrthogonal/16);
+        return packedBound(g,g.crowdBounds[m.requested],m.requested,n,fx,fz);
+    }
+    // The potential of the last of the ceil(1.25n) footprints nearest goal
+    // origin `seed` by field potential (packed as slotsFor packs slots), cached
+    // in `cached` per field serial and n.
+    uint32_t packedBound(Group& g,std::pair<uint64_t,std::pair<int,uint32_t>>& cached,int seed,int n,int fx,int fz) {
         const Field& f=*g.field;
-        auto& cached=g.areaBounds[m.requested];
         // A paused build (C1) reads settled cells only and is not cached:
         // it settles more cells when it resumes.
         if(f.done&&cached.first==f.serial&&cached.second.first==n)return cached.second.second;
         const int count=(5*n+3)/4;
-        const int W=width(),H=height(),sx=m.requested%W,sz=m.requested/W,foot=std::max(fx,fz);
+        const int W=width(),H=height(),sx=seed%W,sz=seed/W,foot=std::max(fx,fz);
         uint32_t bound=0;
         for(int radius=int(isqrtFloor(uint64_t(count)))*foot+2*foot+4,attempt=0;attempt<4;++attempt,radius*=2) {
             const int x0=std::max(0,sx-radius),z0=std::max(0,sz-radius);
@@ -8437,6 +8515,7 @@ struct LegionNavigator::Impl {
                 h=mix(h,uint64_t(mt.mean0));h=mix(h,uint64_t(mt.meanF));h=mix(h,uint64_t(mt.span)|uint64_t(mt.active)<<63);h=mix(h,uint64_t(uint32_t(mt.q)));
                 h=mix(h,uint64_t(uint32_t(std::get<0>(mt.other)))<<32|std::get<1>(mt.other));h=mix(h,uint64_t(uint32_t(std::get<2>(mt.other)))<<32|uint32_t(std::get<3>(mt.other)));
             }
+            if(explicitArea(std::get<1>(key))&&point.crowdPeak) {h=mix(h,0x63726f7764ull);h=mix(h,point.crowdPeak);}
             if(point.cueTick!=kNoTick) {
                 h=mix(h,0x637565ull);h=mix(h,point.cueTick);
                 h=mix(h,uint64_t(uint32_t(std::get<0>(point.cueOther)))<<32|std::get<1>(point.cueOther));h=mix(h,uint64_t(uint32_t(std::get<2>(point.cueOther)))<<32|uint32_t(std::get<3>(point.cueOther)));
