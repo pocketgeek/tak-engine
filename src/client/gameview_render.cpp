@@ -2320,6 +2320,7 @@
             const size_t shadowVerts = g.shadowVerts.size() + g.maskedShadowVerts.size();
             if (g.stages & tak::render::kStageLocal) {
                 renderStats_.add(RS::GeomLocalBuilds);
+                renderStats_.add(RS::GeomShadowKept, g.shadowKept);
                 renderStats_.add(RS::VertsGenerated, g.verts.size());
                 renderStats_.add(RS::ShadowVertsGenerated, shadowVerts);
             } else {
@@ -3010,7 +3011,7 @@
                 std::chrono::steady_clock::now().time_since_epoch()).count();
         };
         const int64_t keyStart=timed ? clockNs() : 0;
-        g.missMask=0;g.ownerChanged=false;g.reallocs=0;g.keyNs=g.buildNs=0;
+        g.missMask=0;g.ownerChanged=false;g.reallocs=0;g.shadowKept=false;g.keyNs=g.buildNs=0;
         const auto clear=[&] {
             g.canFly=u.type && u.type->canFly;
             g.localKey.clear();g.verts.clear();g.runs.clear();
@@ -3194,6 +3195,8 @@
         // Capacity before the update, to count reallocations (telemetry).
         std::array<size_t,10> capacityBefore{};
         if(timed) {size_t k=0;g.forEachVector([&](const auto& v){capacityBefore[k++]=v.capacity();});}
+        // A cold entry's shadow revision belongs to whatever held it before.
+        const bool cold=g.localKey.empty();
         if(stages & kStageLocal) {g.localKey=key;g.localLayout=layout;g.owner=u.id;}
         g.placementKey=placementKey;g.materialKey=materialKey;
         g.canFly=flying;
@@ -3207,7 +3210,34 @@
             if(stages & kStageMaterial)g.materialRevision=revision;
         }
         g.stages=stages;
-        runUnitGeomStages(u,g,stages,in,scratch);
+        // Debug: the previous shadow output, to check the change detection below.
+        thread_local UnitGeom previousShadow;
+        const bool checkShadowChange=verify && (stages & kStageLocal);
+        if(checkShadowChange) {
+            previousShadow.shadowLocal=g.shadowLocal;previousShadow.maskedShadowLocal=g.maskedShadowLocal;
+            previousShadow.maskedShadowVerts=g.maskedShadowVerts;previousShadow.maskedShadowRuns=g.maskedShadowRuns;
+        }
+        const bool shadowChanged=runUnitGeomStages(u,g,stages,in,scratch);
+        g.shadowKept=(stages & kStageLocal) && !shadowChanged && !cold;
+        if((stages & kStageLocal) && !g.shadowKept)g.shadowRevision=g.localRevision;
+        if(checkShadowChange) {
+            // Masked positions are rewritten by placement; compare their UVs/colours.
+            const auto bytes=[](const auto& a,const auto& b) {
+                return a.size()==b.size() && (a.empty() ||
+                    std::memcmp(a.data(),b.data(),a.size()*sizeof(a[0]))==0);
+            };
+            bool unchanged=bytes(previousShadow.shadowLocal,g.shadowLocal) &&
+                bytes(previousShadow.maskedShadowLocal,g.maskedShadowLocal) &&
+                previousShadow.maskedShadowRuns==g.maskedShadowRuns &&
+                previousShadow.maskedShadowVerts.size()==g.maskedShadowVerts.size();
+            for(size_t i=0;unchanged && i<g.maskedShadowVerts.size();++i) {
+                const auto& a=previousShadow.maskedShadowVerts[i];const auto& b=g.maskedShadowVerts[i];
+                unchanged=!std::memcmp(&a.color,&b.color,sizeof a.color) &&
+                          !std::memcmp(&a.tex_coord,&b.tex_coord,sizeof a.tex_coord);
+            }
+            if(unchanged==shadowChanged)
+                throw std::runtime_error("shadow coverage change detection disagrees with the output");
+        }
         if(timed) {
             size_t k=0;
             g.forEachVector([&](const auto& v){g.reallocs+=v.capacity()>capacityBefore[k++];});
@@ -3241,8 +3271,9 @@
         }
     }
 
-    void GameView::runUnitGeomStages(const UnitR& u, UnitGeom& g, uint8_t stages, const UnitGeomInputs& in,
+    bool GameView::runUnitGeomStages(const UnitR& u, UnitGeom& g, uint8_t stages, const UnitGeomInputs& in,
                                      std::vector<Tri>& scratch) {
+        bool shadowChanged=false;
         using namespace tak::render;
         const Visual& visual=*in.visual;
         const bool verify=tak::devFlag("TAK_GEOMETRY_VERIFY");
@@ -3316,9 +3347,10 @@
             // toggle saves the 3.2ms submit but still pays to walk the model and emit ~700k
             // vertices nobody looks at, which is most of the point of switching it off.
             if (shadowsOnFrame_)
-                buildUnitShadow(u, g, visual.model.root, visual.meta, in.anim, in.facing,
-                                scratch,in.reuse ? &prepared : nullptr);
+                shadowChanged=buildUnitShadow(u, g, visual.model.root, visual.meta, in.anim, in.facing,
+                                              scratch,in.reuse ? &prepared : nullptr);
             else {
+                shadowChanged=!g.shadowLocal.empty() || !g.maskedShadowLocal.empty();
                 g.shadowLocal.clear();g.maskedShadowLocal.clear();
                 g.maskedShadowVerts.clear();g.maskedShadowRuns.clear();
             }
@@ -3381,6 +3413,7 @@
                 (masked && (maskRun+1!=g.maskedShadowRuns.size() || inRun!=g.maskedShadowRuns.back().second)))
                 throw std::runtime_error("shadow fast path triangle count mismatch");
         }
+        return shadowChanged;
     }
 
     // The body transform and colour code of the former single pass (before the
@@ -3434,15 +3467,43 @@
     // Local stage: reuses `scratch` (whatever the caller had in it is already consumed).
     // Positions are model-projected (before zoom, anchor and altitude lean);
     // placement turns them into screen positions.
-    void GameView::buildUnitShadow(const UnitR& u, UnitGeom& g,
+    bool GameView::buildUnitShadow(const UnitR& u, UnitGeom& g,
                                    const tak::tdo::Object& root, const PieceMeta& meta,
                                    const Anim* anim, float facing,
                                    std::vector<Tri>& scratch, const PreparedPiece* prepared) {
-        g.shadowLocal.clear();
-        g.maskedShadowLocal.clear();
-        g.maskedShadowVerts.clear();
+        if (u.underConstruction || !castsBlobShadow(u.type)) {
+            const bool changed=!g.shadowLocal.empty() || !g.maskedShadowLocal.empty();
+            g.shadowLocal.clear();g.maskedShadowLocal.clear();
+            g.maskedShadowVerts.clear();g.maskedShadowRuns.clear();
+            return changed;
+        }
+        // The output is rewritten in place and each element compared with the one
+        // it replaces, so whether the coverage changed is known exactly without a
+        // copy or a hash. Runs are tiny: compared with a copy.
+        bool same=true;
+        size_t opaqueCount=0,maskedCount=0;
+        const auto putOpaque=[&](SDL_FPoint point) {
+            if (opaqueCount<g.shadowLocal.size()) {
+                same=same && !std::memcmp(&g.shadowLocal[opaqueCount],&point,sizeof point);
+                g.shadowLocal[opaqueCount]=point;
+            } else {same=false;g.shadowLocal.push_back(point);}
+            ++opaqueCount;
+        };
+        // Masked vertex: position written by placement (from maskedShadowLocal).
+        const auto putMasked=[&](SDL_FPoint point,SDL_FPoint uv) {
+            const SDL_Vertex vertex{point,{255,255,255,255},uv};
+            if (maskedCount<g.maskedShadowLocal.size()) {
+                const SDL_Vertex& old=g.maskedShadowVerts[maskedCount];
+                same=same && !std::memcmp(&g.maskedShadowLocal[maskedCount],&point,sizeof point) &&
+                     !std::memcmp(&old.color,&vertex.color,sizeof vertex.color) &&
+                     !std::memcmp(&old.tex_coord,&uv,sizeof uv);
+                g.maskedShadowLocal[maskedCount]=point;g.maskedShadowVerts[maskedCount]=vertex;
+            } else {same=false;g.maskedShadowLocal.push_back(point);g.maskedShadowVerts.push_back(vertex);}
+            ++maskedCount;
+        };
+        thread_local std::vector<std::pair<SDL_Texture*,int>> previousRuns;
+        previousRuns.assign(g.maskedShadowRuns.begin(),g.maskedShadowRuns.end());
         g.maskedShadowRuns.clear();
-        if (u.underConstruction || !castsBlobShadow(u.type)) return;
         scratch.clear();
         // Only a body that is actually LYING FLAT culls. See the shadow branch in
         // collect() for why this must not widen: the cull tears UPRIGHT single-sided
@@ -3532,16 +3593,12 @@
                                 g.maskedShadowRuns.push_back({mask,0});
                             g.maskedShadowRuns.back().second+=3;
                             static constexpr SDL_FPoint uv[4]={{0,0},{1,0},{1,1},{0,1}};
-                            for (int k=0;k<3;++k) {
-                                const auto& point=vertices[indices[k]].position;
-                                // Position written by placement (from maskedShadowLocal).
-                                g.maskedShadowLocal.push_back(point);
-                                g.maskedShadowVerts.push_back({point,
-                                    {255,255,255,255},{maskUV.x+uv[indices[k]&3].x*maskUV.w,
-                                                      maskUV.y+uv[indices[k]&3].y*maskUV.h}});
-                            }
+                            for (int k=0;k<3;++k)
+                                putMasked(vertices[indices[k]].position,
+                                          {maskUV.x+uv[indices[k]&3].x*maskUV.w,
+                                           maskUV.y+uv[indices[k]&3].y*maskUV.h});
                         } else {
-                            for (size_t index:indices) g.shadowLocal.push_back(vertices[index].position);
+                            for (size_t index:indices) putOpaque(vertices[index].position);
                         }
                     }
                 }
@@ -3553,6 +3610,11 @@
                      pose ? &pose->children[i] : nullptr);
         };
         collectShadow(collectShadow,root,modelBodyTransform(u.bodyPitch,u.bodyRoll),&meta,true,prepared);
+        same=same && opaqueCount==g.shadowLocal.size() && maskedCount==g.maskedShadowLocal.size() &&
+             previousRuns==g.maskedShadowRuns;
+        g.shadowLocal.resize(opaqueCount);
+        g.maskedShadowLocal.resize(maskedCount);g.maskedShadowVerts.resize(maskedCount);
+        return !same;
     }
 
     void GameView::drawUnit(const UnitR& u) {

@@ -309,6 +309,7 @@ enum class Counter : uint8_t {
     GeomMaterialOnly,    // units re-coloured from retained local geometry (no local rebuild)
     VertsPlaced,         // body + shadow vertices re-placed without a local rebuild
     VertsRecoloured,     // body vertices re-coloured without a local rebuild
+    GeomShadowKept,      // local rebuilds whose shadow coverage came out identical (shadowRevision kept)
     Count
 };
 
@@ -363,7 +364,7 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "geom_entry_refused", "geom_entries_retained", "geom_entries_warm_free",
     "geom_entries_allocated", "geom_retained_bytes", "geom_warm_free_bytes",
     "geom_local_builds", "geom_placement_only", "geom_material_only", "verts_placed",
-    "verts_recoloured"};
+    "verts_recoloured", "geom_shadow_kept"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

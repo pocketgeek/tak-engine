@@ -953,6 +953,7 @@ private:
         uint8_t missCause=0;
         bool ownerChanged=false;
         uint8_t reallocs=0;
+        bool shadowKept=false;       // local rebuild left the shadow coverage unchanged
         uint32_t missMask=0;
         uint32_t keyNs=0, buildNs=0;
         tak::render::PlacementKey placementKey{};
@@ -998,7 +999,11 @@ private:
         std::vector<SDL_Color> baseColor;
         std::vector<SDL_FPoint> shadowLocal;
         std::vector<SDL_FPoint> maskedShadowLocal;
-        uint64_t localRevision=0, placementRevision=0, materialRevision=0;
+        // shadowRevision = the local shadow coverage (shadowLocal, maskedShadowLocal,
+        // masked UVs and runs): advanced by a local rebuild only when that output
+        // actually differs, so a body-only local change (texture frame, palette)
+        // leaves it alone. With placementKey it is what coverage reuse needs.
+        uint64_t localRevision=0, placementRevision=0, materialRevision=0, shadowRevision=0;
 #ifndef NDEBUG
         uint32_t verifiedTick=~0u;
 #endif
@@ -1360,8 +1365,9 @@ private:
     // The projected silhouette for one unit, into g.shadowVerts. Split out because
     // it is built alongside the body geometry on the worker pool.
     // Local stage: shadow positions before placement (g.shadowLocal and
-    // g.maskedShadowLocal; masked UVs/colours into g.maskedShadowVerts).
-    void buildUnitShadow(const UnitR& u, UnitGeom& g, const tak::tdo::Object& root,
+    // g.maskedShadowLocal; masked UVs/colours into g.maskedShadowVerts). Returns
+    // whether the output differs from what the entry held (exact, element by element).
+    bool buildUnitShadow(const UnitR& u, UnitGeom& g, const tak::tdo::Object& root,
                          const PieceMeta& meta, const Anim* anim, float facing,
                          std::vector<Tri>& scratch, const PreparedPiece* prepared = nullptr);
     void buildUnitGeom(const UnitR& u, UnitGeom& g, std::vector<Tri>& scratch);
@@ -1378,7 +1384,8 @@ private:
         tak::render::BodyMaterial material;
     };
     // Redo the given stages (tak::render::StageBit) of one unit's geometry.
-    void runUnitGeomStages(const UnitR& u, UnitGeom& g, uint8_t stages, const UnitGeomInputs& in,
+    // Returns whether the local shadow coverage changed (local stage only).
+    bool runUnitGeomStages(const UnitR& u, UnitGeom& g, uint8_t stages, const UnitGeomInputs& in,
                            std::vector<Tri>& scratch);
     // Debug (TAK_GEOMETRY_VERIFY): the former single-pass body transform from the
     // sorted collector output, compared with the staged result.
