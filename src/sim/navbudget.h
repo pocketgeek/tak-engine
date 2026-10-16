@@ -120,7 +120,7 @@ struct NavBudget {
     static constexpr uint64_t kRegBase = 64;
     static constexpr uint64_t kRegBudget = 4096 * kRegBase;
     // Connectivity: first plane builds a registration waits for (advanceBuild units per tick).
-    static constexpr uint64_t kPlaneBuildBudget = 655'360;
+    static constexpr uint64_t kPlaneBuildBudget = 1'048'576;
     // Awareness: candidate pairs + conflict samples + descent cells per tick; a scan that needs more
     // resumes next tick on the same snapshot.
     static constexpr uint64_t kAwareBudget = 262'144;

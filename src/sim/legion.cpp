@@ -1910,14 +1910,41 @@ struct LegionNavigator::Impl {
     std::vector<uint32_t> regSeq;      // unit id -> the seq of its live queue entry (0: not queued)
     uint32_t regNextSeq=0;
     size_t regLive=0;                  // live entries in regQueue
+    // Units whose live entry waits for its plane's first build (regPlane[id]) and their count: an
+    // in-tick registration may pass entries that wait only for a plane (another class's, or a plane
+    // being built), never one that waits for the budget.
+    std::vector<uint8_t> regPlane;
+    size_t regBlocked=0;
     uint64_t regBudget=0;              // units left in the current window
     bool regCommandWindow=false;       // the current window is a command batch (refilled at its first call)
     bool queued(int id) const {return id>=0&&size_t(id)<regSeq.size()&&regSeq[size_t(id)]!=0;}
+    void setPlaneBlocked(int id,bool on) {
+        if(size_t(id)>=regPlane.size())regPlane.resize(size_t(id)+1,0);
+        if(bool(regPlane[size_t(id)])==on)return;
+        regPlane[size_t(id)]=on;if(on)++regBlocked;else --regBlocked;
+    }
     void unqueue(int id) {
         if(!queued(id))return;
+        setPlaneBlocked(id,false);
         regSeq[size_t(id)]=0;--regLive;
         while(!regQueue.empty()&&regSeq[size_t(regQueue.front().id)]!=regQueue.front().seq)regQueue.pop_front();
     }
+    // Is the unit's plane ready for a registration? On a placement map a plane never built (or still
+    // building) is not: its first build is an incremental job (buildPlanes, kPlaneBuildBudget a tick)
+    // the registration waits for instead of a whole-map build inside the call. A built plane is ready
+    // (a stale one -- legacy nav-grid worlds, or after a whole-map change -- still rebuilds in plane(),
+    // reported as a synchronous stage). Marks the plane wanted (planeWant, first come first served).
+    bool planeReady(const Unit& u) {
+        if(!placementPlane()||width()<2||height()<2)return true;
+        const int index=planeFor(*u.type);
+        const Plane& p=planes[size_t(index)];
+        if(p.stage==0&&p.epoch!=~0ull)return true;
+        if(std::find(planeWant.begin(),planeWant.end(),index)==planeWant.end())planeWant.push_back(index);
+        return false;
+    }
+    // Planes registrations wait for, in demand order; a plane leaves when built. Hashed while not
+    // empty, with each one's build stage and cursor.
+    std::vector<int> planeWant;
     void registerCharged(Unit& u) {
         const uint64_t joins=stats.joinIterations,cells=navc.resolveCells;
         registerMove(u);
@@ -1928,29 +1955,62 @@ struct LegionNavigator::Impl {
     void requestRegister(Unit& u) {
         if(!w.inTick_&&!regCommandWindow) {regBudget=NavBudget::kRegBudget;regCommandWindow=true;}
         if(queued(u.id))return;
-        if(regLive==0&&regBudget>0) {registerCharged(u);return;}
+        const bool open=regLive==regBlocked&&regBudget>0;   // nothing waits that this could overtake
+        const bool ready=planeReady(u);
+        if(open&&ready) {registerCharged(u);return;}
         if(size_t(u.id)>=regSeq.size())regSeq.resize(size_t(u.id)+1,0);
         if(++regNextSeq==0)regNextSeq=1;
         regSeq[size_t(u.id)]=regNextSeq;++regLive;
         regQueue.push_back({regNextSeq,u.id,w.tickCounter_});
-        ++acct.regDeferred;
+        if(!ready) {setPlaneBlocked(u.id,true);++acct.planeWaits;}
+        else ++acct.regDeferred;
     }
     // move()'s own re-registrations: false while the unit waits in the queue.
     bool registerNow(Unit& u) {requestRegister(u);return !queued(u.id);}
     void requestCancel(int id) {unqueue(id);leave(id);}
-    // tick()'s first step: a fresh budget, then the waiting registrations, oldest first.
-    void drainRegistrations() {
-        regBudget=NavBudget::kRegBudget;regCommandWindow=false;
-        while(regLive&&regBudget>0) {
+    // tick()'s first step (refill) and its step after the plane builds (no refill): the waiting
+    // registrations, oldest first, while the budget lasts. One whose plane is not ready yet keeps its
+    // place and the walk goes on past it (planes are per mobility class, so a class waiting for its
+    // first build never holds up another); at most kRegScan of them are stepped over per pass.
+    static constexpr size_t kRegScan=65536;
+    void drainRegistrations(bool refill) {
+        if(refill) {regBudget=NavBudget::kRegBudget;regCommandWindow=false;}
+        std::deque<RegEntry> kept;
+        size_t skipped=0;
+        while(regLive&&regBudget>0&&!regQueue.empty()&&skipped<kRegScan) {
             const RegEntry e=regQueue.front();regQueue.pop_front();
             if(regSeq[size_t(e.id)]!=e.seq)continue;   // cancelled, or re-queued behind
+            Unit* u=w.unit(e.id);
+            if(u&&u->alive()&&u->type&&!planeReady(*u)) {kept.push_back(e);setPlaneBlocked(e.id,true);++skipped;continue;}
+            setPlaneBlocked(e.id,false);
             regSeq[size_t(e.id)]=0;--regLive;
             acct.regWaitMax=std::max<uint64_t>(acct.regWaitMax,w.tickCounter_-e.since);
-            Unit* u=w.unit(e.id);
             if(!u||!u->alive()) {leave(e.id);continue;}
             registerCharged(*u);   // an unsupported leg by now: registerMove just leaves
         }
+        if(!kept.empty())regQueue.insert(regQueue.begin(),kept.begin(),kept.end());
         while(!regQueue.empty()&&regSeq[size_t(regQueue.front().id)]!=regQueue.front().seq)regQueue.pop_front();
+    }
+    // The first builds registrations wait for (planeWant, in demand order): kPlaneBuildBudget units a
+    // tick of the same resumable build the background prebuild runs (identical result to
+    // buildPlane + labelPlane). A plane finished here takes its waiting registrations in this tick.
+    void buildPlanes() {
+        uint64_t budget=NavBudget::kPlaneBuildBudget;
+        bool finished=false;
+        for(const int index:planeWant) {
+            if(budget==0)break;
+            if(size_t(index)>=planes.size())continue;
+            Plane& p=planes[size_t(index)];
+            if(p.stage==0&&p.epoch!=~0ull)continue;
+            if(p.stage==0)startBuild(p);
+            const uint64_t spent=advanceBuild(p,budget);
+            navc.planeBuild+=spent;budget-=std::min(budget,spent);
+            finished|=p.stage==0;
+        }
+        std::erase_if(planeWant,[&](int index) {
+            return size_t(index)>=planes.size()||(planes[size_t(index)].stage==0&&planes[size_t(index)].epoch!=~0ull);
+        });
+        if(finished)drainRegistrations(false);
     }
     explicit Impl(World& world):w(world) {}
 
@@ -2020,7 +2080,8 @@ struct LegionNavigator::Impl {
             for(size_t i=0;i<planes.size();++i) {
                 bool used=false;
                 for(const auto& [id,g]:groups) {++iters;if(g.plane==int(i)) {used=true;break;}}
-                if(!used&&(victim<0||planes[i].lastUse<planes[size_t(victim)].lastUse))victim=int(i);
+                // A plane still building (first builds registrations wait for) is never a victim.
+                if(!used&&planes[i].stage==0&&(victim<0||planes[i].lastUse<planes[size_t(victim)].lastUse))victim=int(i);
             }
             stats.groupLoopIters+=iters;
             if(victim>=0) {
@@ -3755,12 +3816,12 @@ struct LegionNavigator::Impl {
     }
     void tick() {
         foldWindow();
-        drainRegistrations();
+        drainRegistrations(true);
         if(gProbe) {
             using Clock=std::chrono::steady_clock;
             auto ms=[](Clock::time_point a,Clock::time_point b) {return std::chrono::duration<double,std::milli>(b-a).count();};
             const auto t0=Clock::now();
-            syncStatic();
+            syncStatic();buildPlanes();
             const auto t1=Clock::now();
             stampGrounded();
             const auto t2=Clock::now();
@@ -3771,7 +3832,7 @@ struct LegionNavigator::Impl {
             probeSyncMs+=ms(t0,t1);probeStampMs+=ms(t1,t2);probeLiftMs+=ms(t3,t4);
             if(ms(t0,t1)>probeSyncMaxMs) {probeSyncMaxMs=ms(t0,t1);probeSyncMax=probeSync;}
         } else {
-            syncStatic();
+            syncStatic();buildPlanes();
             stampGrounded();
             scanStill();
             liftFlyers();
@@ -3950,6 +4011,9 @@ struct LegionNavigator::Impl {
             for(const auto& e:regQueue)if(regSeq[size_t(e.id)]==e.seq) {++live;if(!ids.insert(e.id).second)fail("a unit has two live registration entries");}
             size_t marked=0;for(const uint32_t q:regSeq)marked+=q!=0;
             if(live!=regLive||marked!=regLive)fail("regLive differs from the live registration entries");
+            size_t blocked=0;
+            for(size_t id=0;id<regPlane.size();++id)if(regPlane[id]) {++blocked;if(!queued(int(id)))fail("a unit not queued is marked plane-blocked");}
+            if(blocked!=regBlocked)fail("regBlocked differs from the plane-blocked marks");
         }
         if(s.midrouteCompletions>s.outsideAreaCompletions||s.outsideAreaCompletions>s.arrivals)
             fail("mid-route completions exceed outside-area completions or arrivals");
@@ -8653,6 +8717,12 @@ struct LegionNavigator::Impl {
         if(regLive) {
             h=mix(h,0x7265677175657565ull);h=mix(h,uint64_t(regLive));
             for(const auto& e:regQueue)if(regSeq[size_t(e.id)]==e.seq)h=mix(h,uint64_t(uint32_t(e.id)));
+        }
+        // First plane builds registrations wait for (stage 4), while any.
+        for(const int index:planeWant) {
+            const Plane& p=planes[size_t(index)];
+            h=mix(h,0x706c616e65ull^uint64_t(uint32_t(index))<<40);h=mix(h,uint64_t(uint32_t(p.stage))<<32|uint32_t(p.cursor));
+            h=mix(h,uint64_t(p.head)<<32|uint32_t(p.nextLabel));
         }
         h=mix(h,uint64_t(nextGroup));
         for(const auto& [id,g]:groups) {
