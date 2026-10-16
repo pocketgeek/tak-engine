@@ -3707,12 +3707,14 @@ struct LegionNavigator::Impl {
         if(plan.kind==KindCorridor) {
             f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,planes[size_t(g.plane)].hier.shift());
             f->allow=plan.allow;f->kind=KindCorridor;f->corridorSig=plan.sig;++acct.corridors;
+            f->bind();
         } else if(plan.kind==KindChain) {
             // The destination's own field first (dAllow), then the transit tiles (advanceChain).
             f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,planes[size_t(g.plane)].hier.shift());
             f->allow=plan.allow;f->dAllow=plan.dAllow;f->chain=plan.nodes;f->kind=KindChain;f->corridorSig=plan.sig;
             f->chainTransit=plan.transit;f->attached.assign(plan.nodes.size(),0);f->repairing.assign(plan.nodes.size(),0);
             f->offset.assign(f->tiles.size(),0);f->fin.assign(f->tiles.size(),0);
+            f->bind();
             ++acct.chains;
         } else f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,gSectorShift);
         f->counted=cells;

@@ -80,6 +80,16 @@ struct RouteGrid {
     // everywhere it reaches (fin), whatever the build's key. Empty: no offsets, no attached tiles.
     std::vector<int64_t> offset;
     std::vector<uint8_t> fin;
+    // The hot reads go through these (bind(): nullptr for an empty vector), so a window route's lookup is the tile
+    // load alone. Call bind() after allow / offset / fin are sized (initTiles does; their sizes never change after).
+    const uint8_t* allowP = nullptr;
+    const int64_t* offsetP = nullptr;
+    const uint8_t* finP = nullptr;
+    void bind() {
+        allowP = allow.empty() ? nullptr : allow.data();
+        offsetP = offset.empty() ? nullptr : offset.data();
+        finP = fin.empty() ? nullptr : fin.data();
+    }
     uint32_t current = 0;                         // the build's current key (every key below it is settled)
     int tx = 0, tz = 0;                           // heuristic target
     bool aimed = false;
@@ -113,11 +123,12 @@ struct RouteGrid {
         allow.clear();
         offset.clear();
         fin.clear();
+        bind();
     }
     size_t cells() const { return size_t(fw) * size_t(fh); }   // the window's cells
     size_t tileCells() const { return size_t(1) << (2 * shift); }
     bool inside(int x, int z) const {
-        return x >= x0 && z >= z0 && x < x0 + fw && z < z0 + fh && (allow.empty() || allow[tileOf(x, z)]);
+        return x >= x0 && z >= z0 && x < x0 + fw && z < z0 + fh && (!allowP || allowP[tileOf(x, z)]);
     }
     size_t tileOf(int x, int z) const { return size_t(((z >> shift) - sz0) * sw + ((x >> shift) - sx0)); }
     size_t inTile(int x, int z) const {
@@ -130,11 +141,11 @@ struct RouteGrid {
         const uint32_t* t = tiles[ti];
         if (!t) return route::kNone;
         const uint32_t v = t[inTile(x, z)];
-        if (offset.empty() || v == route::kNone) return v;
-        return uint32_t(int64_t(v) + offset[ti]);   // a chain keeps every sum below kNone (legion.cpp attachTile)
+        if (!offsetP || v == route::kNone) return v;
+        return uint32_t(int64_t(v) + offsetP[ti]);   // a chain keeps every sum below kNone (legion.cpp attachTile)
     }
     // An attached tile: every value it holds is final.
-    bool finalTile(int x, int z) const { return !fin.empty() && inside(x, z) && fin[tileOf(x, z)]; }
+    bool finalTile(int x, int z) const { return finP && inside(x, z) && finP[tileOf(x, z)]; }
     // The builder's write: the cell's slot, its tile allocated (all kNone) on first use. (x, z) inside the window.
     uint32_t& slot(int x, int z) {
         const size_t t = tileOf(x, z);
