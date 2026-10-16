@@ -1368,6 +1368,31 @@ void pausedemand() {
     check(f.world.unit(lead)->orders.empty()&&f.world.unit(late)->orders.empty(),"pausedemand: a body did not arrive");
 }
 
+// Legion 10,000 stage 4 (review of b052597e / d487d65d): more mobility classes than kMaxPlanes (24) ask for
+// their first route together. A plane a waiting registration still needs is never an eviction victim, so
+// each class's registration consumes its plane: every body arrives and each plane is built once. (Before
+// the fix a queued plane could be evicted and rebuilt: 36 builds here, and with other timings two classes
+// evicting each other's plane every tick, leaving their bodies Waiting for good.)
+void planepin() {
+    Fixture f(400,400);   // over 131k cells: first plane builds are incremental jobs the registrations wait for
+    f.publish();
+    std::vector<UnitType> types;
+    for(int i=0;i<25;++i) {auto t=mover(1);t.id=t.name="legion-slope-"+std::to_string(i);t.maxSlope=10+i;types.push_back(t);}
+    std::vector<int> ids;
+    for(int i=0;i<25;++i)ids.push_back(f.spawn(types[size_t(i)],4+(i%5)*3,4+(i/5)*3));
+    f.start();
+    for(size_t i=0;i<ids.size();++i)f.world.order(ids[i],float((60+int(i)%5*2)*16),float((60+int(i)/5*2)*16),false);
+    int t=0,done=0;
+    for(;t<3000&&done<int(ids.size());++t) {
+        f.world.tick(1.f/30);
+        done=0;for(int id:ids)done+=f.world.unit(id)->orders.empty();
+    }
+    std::printf("planepin ticks=%d arrived=%d/%zu plane_builds=%llu\n",t,done,ids.size(),(unsigned long long)f.world.legionStats().planeBuilds);
+    check(done==int(ids.size()),"planepin: a body of one of 25 mobility classes never arrived");
+    // One build per class: a plane evicted before its registrations used it is built again (36 before the fix).
+    check(f.world.legionStats().planeBuilds==ids.size(),"planepin: a plane was evicted before its waiting registrations used it");
+}
+
 void b3events() {
     Fixture f(96,64);
     f.publish();
@@ -3878,7 +3903,7 @@ int main(int argc,char** argv) {
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
-        {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
+        {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
         {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"entryplanes",entryplanes}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}

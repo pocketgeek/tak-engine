@@ -392,6 +392,10 @@ set_tests_properties(legion_staticidle PROPERTIES LABELS "legion;w4")
 # W4 C1: a paused first build resumes for a member's demand within 10 ticks.
 add_test(NAME legion_pausedemand COMMAND legion_world_test pausedemand)
 set_tests_properties(legion_pausedemand PROPERTIES LABELS "legion;w4")
+# Legion 10,000 stage 4: more mobility classes than kMaxPlanes start together; no plane is evicted before
+# the registrations waiting for it use it (it failed on the pre-review head: 36 builds for 25 classes).
+add_test(NAME legion_planepin COMMAND legion_world_test planepin)
+set_tests_properties(legion_planepin PROPERTIES LABELS "legion")
 foreach(legion_probe pocket deadend tail)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
