@@ -41,7 +41,12 @@ inline constexpr uint16_t kOrthogonal = 5, kDiagonal = 7;
 
 enum class Reach : uint8_t { Unknown, Reachable, Unreachable };
 
-// A distance still to go, in a stated metric. Compare values only when the metrics are equal.
+// A distance still to go, in a stated metric. Compare values only when the metrics are equal; a new metric
+// re-baselines a progress measure and never counts as a gain (nor restarts a stall). The value is route-wide: a
+// distance to the route's goals, never a distance to an intermediate boundary (a provider built from tiles adds the
+// exit's route-wide remainder and gives the tile chain its own metric), so 0 is a goal of the route and never a tile
+// exit. (The navigator's members read 0 as standing on one of the route's seeds, which is not necessarily their own
+// goal: they measure the rest in squared cells to it, a metric of its own.)
 struct Progress {
     uint32_t value = 0;
     uint64_t metric = 0;

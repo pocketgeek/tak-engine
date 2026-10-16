@@ -381,6 +381,11 @@ public:
     // Test hook (process-wide; the awareness fixtures' OFF arm): awareScan does
     // nothing while set. Changes behaviour and hashes when set; default off.
     static void setAwareOffForTest(bool off);
+    // Test hook (process-wide; default off): every first build may pause
+    // (Legion 10,000 stage 5), so the consumers that state their region --
+    // the lanes, packed slots, reach rings, the formation entrance -- run on
+    // paused routes in small fixtures. Changes behaviour and hashes when set.
+    static void setPauseAllForTest(bool on);
     // Instrument probes (process-wide; default off): the W8 step 1 vertex
     // probe behind Stats' vertex_* counters, which no decision reads. The
     // tools that report those counters (legion_scenario, legion_world_test)

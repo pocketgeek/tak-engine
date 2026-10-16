@@ -60,6 +60,9 @@
 //   sched.init_max                             the scheduler's service record (NavAccounting)
 //   route.demand_peak, route.demand_dropped    stage 5: the most demand entries one paused build held, and
 //                                              demands a full list could not represent (NavAccounting)
+//   route.needs.<consumer>, route.run_on.<consumer>
+//                                              stage 5: regions consumers asked a paused build for, and
+//                                              routes a consumer's uncertain read made run on to done
 // Everything is integer and in body order, so every compiler reports the same numbers.
 #include "legion_observe.h"
 #include "sim/legion.h"
@@ -329,6 +332,10 @@ public:
                 k.emplace_back(p + "sched.init_max", int64_t(a.initMax));
                 k.emplace_back(p + "route.demand_peak", int64_t(a.demandPeak));
                 k.emplace_back(p + "route.demand_dropped", int64_t(a.demandDropped));
+                for (size_t c = 0; c < size_t(tak::sim::RouteNeed::Count); ++c) {
+                    k.emplace_back(p + "route.needs." + tak::sim::kRouteNeedNames[c], int64_t(a.routeNeeds[c]));
+                    k.emplace_back(p + "route.run_on." + tak::sim::kRouteNeedNames[c], int64_t(a.routeRunOns[c]));
+                }
             }
         }
     }

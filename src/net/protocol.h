@@ -19,7 +19,12 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 268;      // 268: Legion navigation scheduling and budgets (Legion 10,000 stage 4; Retail bit-identical): registration
+constexpr uint32_t kNetVersion = 269;      // 269: Legion route queries (Legion 10,000 stage 5; Retail bit-identical): the consumers that read a route
+                                           //      past their own cell state the region they need on a paused build and read it through certainty
+                                           //      checks (new hashed state: a route's run-on flag, a formation's pending entrance), demand on a paused
+                                           //      build is never dropped, and the detour record and the approach gain compare within one route metric
+                                           //      (the gain's clock stops while the route gives no value). 268 replays refused
+                                           // 268: Legion navigation scheduling and budgets (Legion 10,000 stage 4; Retail bit-identical): registration
                                            //      budgeted per window (a hashed FIFO past it), first plane builds incremental, awareness resumable,
                                            //      field service by unique jobs in classes with deficit round robin, age promotion and a bounded
                                            //      fit scan, field initialisation charged, a fixed byte allowance for fields. 267 replays refused

@@ -153,8 +153,10 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 268, "replay format 11 is kept under protocol 268");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 268");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 269, "replay format 11 is kept under protocol 269");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 269");
+    // 269 changes Legion's route consumers (stated regions on paused builds, metric-versioned progress).
+    check(!supportedReplayProtocol(13, 268), "previous scheduling protocol is refused");
     // 268 changes Legion's navigation schedule (budgeted registration, incremental plane builds, fair field service).
     check(!supportedReplayProtocol(13, 267), "previous explicit-order protocol is refused");
     // 267 adds explicit selection orders (Cmd::Order in tick bundles; Legion clicks apply whole in one tick).

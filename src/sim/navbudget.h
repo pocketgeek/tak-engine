@@ -35,6 +35,22 @@ inline constexpr const char* kNavWorkNames[size_t(NavWork::Count)] = {
     "field_relax", "field_init", "plane_build", "plane_relabel", "registration", "awareness",
     "slot_search", "ring_build", "connectivity", "tile_build", "route_search"};
 
+// The route consumers that state the region they need (Legion 10,000 stage 5, docs/legion-10000-progress.md 3.3):
+// on a paused build each asks for its region (a need) and reads it through the certainty checks; one that meets a
+// read a later slice could change has the route run on to done (a run-on). Observation counters per consumer.
+enum class RouteNeed : uint8_t {
+    Lanes,       // the passage gate, the passage lanes and the pinwheel (their chain, strip and arc)
+    Awareness,   // group awareness's descent chain from the group's centroid
+    SoftBlock,   // MV-05's chains from the centroid and the tail
+    Slots,       // packed per-goal slots (the window round the goal)
+    Ring,        // the reach ring's spots
+    Entrance,    // a formation's entrance search and the slot exchange at it
+    RingDirect,  // a ring member's walk to its own spot
+    Count
+};
+inline constexpr const char* kRouteNeedNames[size_t(RouteNeed::Count)] = {
+    "lanes", "awareness", "softblock", "slots", "ring", "entrance", "ringdirect"};
+
 // Service classes of the field scheduler, highest priority first.
 enum class NavClass : uint8_t {
     Waiting,        // a member stands still for want of this field (or a paused build it waits on)
@@ -111,6 +127,8 @@ struct NavAccounting {
     // Route demand (stage 5): the most demand entries one paused build held at once, and the demands that
     // could not be represented (dropped from a full list: a subscriber whose need the build then never saw).
     uint64_t demandPeak = 0, demandDropped = 0;
+    // Stated regions (stage 5): needs raised on a paused build, and routes made to run on to done, per consumer.
+    std::array<uint64_t, size_t(RouteNeed::Count)> routeNeeds{}, routeRunOns{};
 };
 
 // Per-tick budgets (constants: the same on every peer). Units and the reference cost per unit
