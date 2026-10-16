@@ -23,6 +23,8 @@
 // 6. The bounded fit scan: a request too large for the free room is stepped over (at most kFitScan
 //    refusals a tick) while smaller ones start, reserves after kReserveAge ticks, and from then on nothing
 //    that arrived after it starts before it does.
+// 7. The scan bounds (kWaitFitScan in the Waiting class, kFitScan below it), and a reservation stops its
+//    own class and every later one.
 #include "sim/navbudget.h"
 
 #include <algorithm>
@@ -228,8 +230,9 @@ void fitScan() {
         if (t == 40) { reqs.push_back({t, nextId, 10}); bigId = nextId++; }
         std::sort(reqs.begin(), reqs.end(), [](const Req& a, const Req& b) { return a.since != b.since ? a.since < b.since : a.id < b.id; });
         NavAdmit admit;
+        admit.waiting = false;   // a class below Waiting: the narrow scan, and a reservation stops it
         uint32_t refusals = 0;
-        for (auto it = reqs.begin(); it != reqs.end() && !admit.stopped;) {
+        for (auto it = reqs.begin(); it != reqs.end() && !admit.stopped();) {
             if (used + it->size <= 20) {
                 NavAdmit::admitted(it->blocked);
                 used += it->size;
@@ -261,6 +264,28 @@ void fitScan() {
 }
 }  // namespace
 
+void waitingReservation() {
+    std::printf("7. the Waiting class's scan and a reservation\n");
+    // A Waiting request refused since t = 0 reserves at t = 200: nothing after it starts that tick, in
+    // its class or a later one.
+    NavAdmit admit;
+    uint32_t bigBlocked = 0;
+    admit.refuse(bigBlocked, 200);
+    const bool stoppedHere = admit.stopped();
+    admit.nextClass();
+    check(admit.reserved && stoppedHere && admit.stopped(), "a reservation stops its own class and every later one");
+    // The narrow scan below the Waiting class, the wide one in it.
+    NavAdmit b;
+    b.nextClass();
+    int n = 0;
+    for (; n < 100 && !b.stopped(); ++n) { uint32_t t = NavAdmit::kNever; b.refuse(t, 0); }
+    check(n == NavBudget::kFitScan, "a class below Waiting steps over at most kFitScan refusals");
+    NavAdmit c;
+    int m = 0;
+    for (; m < 1000 && !c.stopped(); ++m) { uint32_t t = NavAdmit::kNever; c.refuse(t, 0); }
+    check(m == NavBudget::kWaitFitScan, "the Waiting class steps over at most kWaitFitScan refusals");
+}
+
 int main() {
     fairness();
     oldestFirst();
@@ -268,6 +293,7 @@ int main() {
     load(true);
     sharedJob();
     fitScan();
+    waitingReservation();
     if (failures) { std::printf("navbudget_test: %d FAILED\n", failures); return 1; }
     std::printf("navbudget_test: all passed\n");
     return 0;

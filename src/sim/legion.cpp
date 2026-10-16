@@ -4012,8 +4012,15 @@ struct LegionNavigator::Impl {
             const NavClass cls=NavClass(ci);
             // Admissions. An aware re-plan past kAwareStarts this tick waits with the stale refreshes.
             auto& list=requests[ci];
+            if(ci>0)admit.nextClass();
+            // A new build is admitted only while the class's window has a free slot: a build past the
+            // window would hold its whole potential array unserved -- and an unfinished field is never an
+            // eviction victim -- so beyond it a request may only take a field another group has.
+            const size_t window=refreshClass(cls)?NavBudget::kRefreshWindow:NavBudget::kWindow;
+            size_t inflight=0;
+            for(const auto& [serial,j]:jobs)inflight+=j.f&&j.cls==cls&&!j.f->done;
             for(size_t k=0;k<list.size();++k) {
-                if(budget==0||admit.stopped)break;
+                if(budget==0||admit.stopped())break;
                 const Request r=list[k];
                 Group& g=*groups.get(r.id);
                 if(g.next||(g.field&&!g.stale))continue;   // started (shared) since it was listed
@@ -4036,14 +4043,17 @@ struct LegionNavigator::Impl {
                 if(budget==0)break;
                 // With the refresh allowance spent, a stale group in a refresh class only takes a field
                 // another group already has (see sharedField).
-                const bool shareOnly=refreshing&&refreshClass(cls)&&refresh==0;
+                const bool full=inflight>=window;
+                const bool shareOnly=(refreshing&&refreshClass(cls)&&refresh==0)||full;
                 const Start got=startField(g,shareOnly,budget+charged==kFieldQuota?~0ull:budget);
                 budget-=std::min(budget,startCharge);
-                if(got==Start::NoShare) {++stats.refreshDeferred;continue;}
+                if(got==Start::NoShare) {if(!full)++stats.refreshDeferred;continue;}
                 if(got==Start::NoBudget)continue;
                 if(got==Start::NoRoom) {
                     ++acct.fitSkips;
-                    if(admit.refuse(g.blockedSince,now)&&admit.reserved)++acct.reservations;
+                    const bool was=admit.reserved;
+                    admit.refuse(g.blockedSince,now);
+                    if(admit.reserved&&!was)++acct.reservations;
                     continue;
                 }
                 NavAdmit::admitted(g.blockedSince);
@@ -4051,7 +4061,7 @@ struct LegionNavigator::Impl {
                 if(Field* f=g.next?g.next.get():g.field.get();f&&!f->done) {
                     const bool fresh=!jobs.count(f->serial);
                     subscribe(g,f,cls);
-                    if(fresh)jobs[f->serial].cls=cls;   // a new build serves in the class that admitted it
+                    if(fresh) {jobs[f->serial].cls=cls;++inflight;}   // a new build serves in the class that admitted it
                 }
             }
             // This class's jobs, by deficit round robin.

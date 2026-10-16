@@ -111,9 +111,11 @@ struct NavBudget {
     // Age promotion: a job (or start request) that has gone this many ticks without service moves up
     // one class, so no class starves another for longer than (classes - 1) x kAgeStep.
     static constexpr uint32_t kAgeStep = 150;
-    // Bounded fit scan: start requests refused for capacity that the admission steps over per tick,
-    // and the age at which a refused request reserves (nothing behind it may start until it does).
-    static constexpr int kFitScan = 8;
+    // Bounded fit scan: start requests refused for capacity that the admission steps over per tick --
+    // kWaitFitScan in the Waiting class (members stand still for these: every one that fits should
+    // start), kFitScan in the others -- and the age at which a refused request reserves: nothing after
+    // it may start until it does.
+    static constexpr int kFitScan = 8, kWaitFitScan = 256;
     static constexpr uint32_t kReserveAge = 150;
     // Field memory: deterministic bytes (potentials + in-flight frontiers) every live field may use
     // together. A fixed allowance, not a number of whole maps, with a floor of two whole-map fields
@@ -198,22 +200,31 @@ void navDrr(const std::vector<Job>& jobs, size_t window, NavCursor& cursor, uint
     }
 }
 
-// The bounded fit scan of one tick's admission: start requests are tried oldest first; one refused
-// for capacity is stepped over, at most kFitScan times a tick, unless it has been refused for
-// kReserveAge ticks -- then it reserves: nothing after it may start this tick, so the capacity that
-// frees next goes to it. `blockedSince` is the request's own (hashed) stamp, kNever when clear.
+// The bounded fit scan of one tick's admission: start requests are tried class by class, oldest first;
+// one refused for capacity is stepped over -- at most kWaitFitScan times a tick in the Waiting class
+// (their members stand still: every one that fits should start), kFitScan in each other class -- unless
+// it has been refused for kReserveAge ticks: then it reserves, and nothing after it starts this tick, in
+// its class or any later one, so the capacity that frees next is its (no request is overtaken for ever).
+// (Letting the Waiting class's smaller requests start round a Waiting reservation was measured too: a few
+// percent more arrivals in the overloaded many-squad rows, but a large waiting request could then be
+// overtaken without end.) `blockedSince` is the request's own (hashed) stamp, kNever when clear. Call
+// nextClass() between classes.
 struct NavAdmit {
     static constexpr uint32_t kNever = ~0u;
     int skips = 0;
-    bool stopped = false;      // the scan ended this tick (reservation or the bound)
-    bool reserved = false;     // ... because a request reserved
-    // A refusal; true when the scan must stop.
+    bool waiting = true;       // the class being admitted is the Waiting class
+    bool classStopped = false; // the scan of this class ended (its bound, or a reservation)
+    bool reserved = false;     // a request reserved this tick: the rest of the tick is stopped
+    bool stopped() const { return classStopped; }
+    // A refusal; true when this class's scan must stop.
     bool refuse(uint32_t& blockedSince, uint32_t now) {
         if (blockedSince == kNever) blockedSince = now;
-        if (now - blockedSince >= NavBudget::kReserveAge) { stopped = reserved = true; return true; }
-        if (++skips >= NavBudget::kFitScan) { stopped = true; return true; }
+        if (now - blockedSince >= NavBudget::kReserveAge) { reserved = classStopped = true; return true; }
+        if (++skips >= (waiting ? NavBudget::kWaitFitScan : NavBudget::kFitScan)) { classStopped = true; return true; }
         return false;
     }
+    // The next class: a fresh scan bound, stopped outright if a request reserved.
+    void nextClass() { waiting = false; skips = 0; classStopped = reserved; }
     static void admitted(uint32_t& blockedSince) { blockedSince = kNever; }
 };
 
