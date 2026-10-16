@@ -429,7 +429,9 @@ uncontended / with the binding cap), `exp3-uhd`; merged in `before-final-uhd`:
 | zoom | 2000 | 16.532 (6.8%) | 18.586 (4.3%) | 19.209 (6.1%) | 20.30 / 22.75 | 11.12 | 0 of 4 | 14% |
 
 **Captures at 7680×2160 also reproduced exactly**: 0 differing pixels, world
-view and full frame, all 12 frames, all 14 scenes.
+view and full frame, all 12 frames, all 14 scenes. (The 7680×2160 PNGs, ~10 GB, were deleted
+after comparison; the per-frame comparison JSON `captures-<scene>-uhd.json` is
+kept. 1280×960 captures are kept under each run's `captures/`.)
 
 Counters and phases, 7680×2160 (zoom = actual zoom in force where recorded):
 
