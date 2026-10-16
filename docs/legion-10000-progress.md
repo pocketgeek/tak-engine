@@ -18,7 +18,7 @@ branch, pushed after the stage (`git push origin task-legion-10000`; never main,
 | Stage | Brief phase | Content | Kind | Status |
 |---|---|---|---|---|
 | 1 | 0 | Representative baselines and acceptance tests: scale suite, real-path delivery probe, frozen targets | tools/tests/docs only | implemented and validated (this record, section 6) |
-| 2 | 1 | Indexed `registerMove` group matching; swept-bounds broad phase for `awareScan`; profiled micro-work | exact (hash-identical) | not implemented |
+| 2 | 1 | Indexed `registerMove` group matching; swept-bounds broad phase for `awareScan`; profiled micro-work | exact (hash-identical) | implemented and validated (section 7) |
 | 3 | 2 | Explicit logical orders: client intent identity, bounded selection-order transaction, server sequencing, activation tick, every identity consumer | behaviour + protocol + replay | not implemented |
 | 4 | 3 | Deterministic fair scheduling (classes, deficit round robin, aging, unique jobs), complete work budgets, byte accounting | behaviour (schedule) | not implemented |
 | 5 | 4 | Route-query interface; consumers migrated; Unknown / Reachable / Unreachable kept apart; metric versions | exact first, then behaviour where stated | not implemented |
@@ -116,7 +116,7 @@ What the brief lists, against the code at the start (read from `legion.{h,cpp}`,
 * Explicit logical orders (identity from client intent; transaction; activation tick; arrival-area,
   subgroup and route identities as separate things).
 * Indexed group matching: `registerMove` scans every group (`joinIterations`); `awareScan` pairs every group
-  with every mover every 30 ticks.
+  with every mover every 30 ticks. (Done in stage 2: join index, awareness broad phase.)
 * A route-query interface: steering, pinwheel, awareness, packing and rings read `Field::at` /
   `known` / `done` directly from the monolithic window.
 * Any hierarchy (sectors, regions, portals), sparse tiles, intermediate-route sharing, search-versus-field
@@ -282,6 +282,11 @@ python3 tools/legion_check.py check --cumulative --baseline tools/scenarios/base
 #   --serverport P --mpai --time 300   (and --time 60)
 sh tools/check-determinism.sh
 ctest --test-dir build-o2 -L quick -j20      # scratch XDG_DATA_HOME, no TAK_SETTINGS_FILE export
+# exact stages (stage 2 on): identity against a build of the previous head (base cache under ~/.cache/tak-identity)
+tools/legion_identity.sh --base BASE/build-o2 --cand build-o2 --replays ~/tak-tmp/scratch/land-we3/rp \
+  --data ~/TAK/assets/game --cores 4-23 -j 20 [--verify]   # --verify: rerun the ctest section without it (7.2)
+# the brute-force references: TAK_LEGION_VERIFY=1 legion_scenario F --mode legion --workers --offsets 0 (debug builds)
+# wall-time A/B: compare arms on the SAME core set (0-7 P-cores, 8-23 E-cores), from copied binaries
 ```
 
 ## 6. Stage 1 record: baselines and acceptance tests
@@ -458,15 +463,141 @@ program's targets). Unmet targets after stage 9 are reported as such, not re-fro
 ## 7. Stage records
 
 * Stage 1: section 6 (implemented and validated; branch commits aa91fb2f, dc772126 and the record commit).
-* Stages 2-9: not implemented.
+* Stage 2: section 7.2 (implemented and validated; fd34151a, 1b8cc086, 946d6972, e290f0ed, 5b6daa11 and the
+  record commit).
+* Stages 3-9: not implemented.
+
+### 7.2 Stage 2 record: exact registration, awareness and profiled micro-work (brief phase 1)
+
+**Hypothesis.** `registerMove`'s walk of every group and `awareScan`'s every-group-with-every-mover sampling grow
+with the number of groups and become a per-tick cost with hundreds of groups; both can be narrowed without changing
+a decision. Then profile the 10,000-body workloads and remove demonstrated costs the same way.
+
+**Classification.** Exact. No hashed state, no decision, no wire format changes; no protocol bump (still 266).
+Only work counters (`join_iterations`, `group_loop_iters`, `aware_pairs`, `lane_work`, `legion_total`), the
+in-game `vertex_*` Stats (now zero in the game) and the navigator's memory estimate move.
+
+**Touched code.** `src/sim/legion.{h,cpp}` (join index, broad phase, `setInstrumentProbes`, `Member::gateMemo`),
+`tools/legion_scenario.cpp` (`--no-vertex-probe`; turns the probe on otherwise), `tools/legion_world_test.cpp`
+(probe on), `tools/legion_scale.py` (`run --no-vertex-probe`), `CMakeLists.txt` + `tools/ctest_costs.txt`
+(three verify ctests), `docs/legion-pathfinding.md` (section "Legion 10,000 stage 2").
+
+**What landed (commits).**
+
+| Commit | Change | Reference kept under `TAK_LEGION_VERIFY` |
+|---|---|---|
+| fd34151a | `registerMove` join index: groups keyed by (player, plane, kind, approach, ring target + bucket for a reach kind, else issue key), all fixed at creation; the member walks its entry in id order with the whole predicate unchanged | brute-force walk of all groups on every join (same winner or abort); index against a scan of the groups each tick |
+| 1b8cc086 | `awareScan` broad phase: movers in a 1,024 px grid over their swept boxes grown by `half + max(tail, head) + 66`; a group reads the cells of its descent-chain box grown by `2 rG`; planned movers (`avoidCmd`) always candidates; candidates in mover order | every dropped mover's 31 conflict samples are run; a hit aborts |
+| 946d6972 | the W8 vertex probe (Stats only, read by no decision) runs only under `LegionNavigator::setInstrumentProbes`; on in `legion_scenario` (unless `--no-vertex-probe`) and `legion_world_test`, off in the game | hashes compared probe on / off |
+| e290f0ed | `gateCommit` memo: a static decline (inputs: origin, goal, footprint, field serial, navigator and plane epochs, lane band) is remembered; the same inputs decline again without the walk | every memo hit is recomputed; passing the static checks aborts |
+| 5b6daa11 | ctests `legion_verify_{battle-assault,crosslong,gap8}` (references on) | - |
+
+**Why the broad phase cannot drop an accepted conflict.** A mover outside the plan is accepted only through a
+conflict sample `t`: `|q| <= A = half + rG + 32` and `-(tail + rG + 32) <= s <= head + rG + 32`, where `s`, `q`
+are the offset `P - Q` (group way point minus mover box centre) dotted with `(dx, dz)` and divided, truncated, by
+`L = isqrtFloor(dx^2 + dz^2) <= |(dx, dz)|`. So the true components along and across the heading are under `B + 1`
+and `A + 1` (`B = max(tail, head) + rG + 32`), `|P - Q| < (A + 1) + (B + 1)`, and each coordinate differs by less
+than `(half + max(tail, head) + 66) + 2 rG`. `P` is an interpolation between consecutive chain cell centres
+(`at`), inside the chain's box; `Q = (cx + trunc(dx t / 30), ...)`, `0 <= t <= 450`, inside the box from the
+centroid to `centroid + 15 (dx, dz)`. Overlap of the two grown boxes is necessary; the grid lists a mover in
+every cell its grown box covers and a group reads every cell its grown box covers, with the same monotone
+clamped cell function, so overlapping boxes share a cell. Movers already in the plan are added explicitly
+(a planned crossing stays planned off its box), and the candidate list is sorted, so decisions and the plan's
+order are those of the full walk. The join index is exact because the keyed fields are set only at group
+creation (`g.plane` cannot change while the group lives: a plane slot is reused only when no group uses it)
+and every non-keyed condition is still evaluated, in the same id order.
+
+**Mutation checks (each reference can fail).** A scratch build (`~/tak-tmp/wt/legion-10000-mut`, `TAK_MUT=...`)
+walking each join entry in reverse fails `TAK_LEGION_VERIFY` on battle-assault (tick 260), battle-field-2x250
+(701) and battle-field-2x500 (744) and nowhere else in the 143 files; zero broad-phase margins fail on crosslong
+(tick 435); a memo key without the origin fails on gap8 (466), gapsweep (439) and corner-1x448 (872).
+
+**Profile (gperftools CPU profiler, `LD_PRELOAD=libprofiler.so.0`, 200 Hz, 6,000 ticks, three workers; reader
+`~/tak-tmp/scratch/legion-10000/stage2/prof/pprof.py`).** At the starting revision `registerMove` and `awareScan`
+were each under 0.2% of samples on one-, many- and churn-10000: the two mandated optimisations remove growth,
+not a present cost (counters below). The demonstrated costs were elsewhere: `gateCommit` (about 10% of
+one-10000's samples: the descent walk and cross-sections of uncommitted lane members every tick) and the
+vertex probe (3.8% one-10000, 5.0% churn-10000; 5-7% of the tick). After e290f0ed `gateAim` / `gateCommit`
+left the top of the profile; what remains is flat per-unit steering (`drive` 11-24%: `stepFree`, `yieldLane`,
+occupancy reads), field relaxation (`advance`, 6% of many-10000), and outside Legion `updateNavigationExploration`
+(6-16%, sight/exploration, shared with Retail) and `rebuildSpatial` (3-5%). Investigated and left: World::unit
+self time is cache misses on its fast path (the slow scan never showed); `ringSignature` (3.5% of many-10000) is
+a cheap hash bound by occupancy reads; `descend` takes the member's goal for tie-breaks, so a per-field memo of
+it would not be shared; loops over id high-water marks run only in `checksum()` and verify code, absent from
+the profiles; awareness allocations are per scan (every 30 ticks) and below 0.2%.
+
+**Work counters (scale suite, full runs, starting revision -> stage 2).**
+
+| scenario | join_iterations total (max/tick) | group_loop_iters total | aware_pairs total (max/scan) |
+|---|---|---|---|
+| many-10000 (800 groups) | 8,008,800 (39,972) -> 19,200 (48) | 14,808,992 -> 6,819,392 | 513,064 (6,754) -> 186,608 (1,182) |
+| many-5000 | 2,004,400 (19,972) -> 9,600 (48) | 2,957,970 -> 963,170 | 587,751 (8,200) -> 369,051 (2,255) |
+| many-2500 | 502,200 (9,972) -> 4,800 (48) | 709,364 -> 211,964 | 456,259 (7,626) -> 310,495 (3,202) |
+| churn-10000 | 1,892,810 (2,826) -> 100,898 (128) | 1,926,832 -> 134,920 | 40,976 -> 40,976 |
+| one-10000 | 194,136 (2,500) -> 19,980 (128) | 206,216 -> 32,060 | 18,385 -> 18,385 |
+| bridges-10000 | 203,060 (2,500) -> 19,980 (128) | 228,296 -> 45,216 | 1,867 -> 1,867 |
+
+(`aware_pairs` now counts broad-phase candidates; where every mover was already near every group it is unchanged.)
+
+**Wall time A/B** (`~/tak-tmp/scratch/legion-10000/stage2/ab2/run.sh`: 6,000 ticks, three workers, observer on,
+no `TAK_PHASE`; the three arms of a scenario run at once on cores 4-7, 8-11 and 12-15, rotated over three
+repetitions; each arm compared with the base on the SAME core set, because cores 0-7 are P-cores (5.3-5.4 GHz)
+and 8-23 E-cores (4.7 GHz): a P/E difference of about 20% swamps a single unpaired run). Tick mean, base ->
+stage 2 with the probe on (as the gate runs) / probe off (as the game):
+
+| scenario | cores 4-7 | cores 8-11 | cores 12-15 |
+|---|---|---|---|
+| one-10000 | 13.24 -> 11.37 (-14%) / 10.59 (-20%) | 15.15 -> 13.83 (-9%) / 12.88 (-15%) | 15.29 -> 13.46 (-12%) / 13.20 (-14%) |
+| churn-10000 | 13.74 -> 12.62 (-8%) / 11.34 (-17%) | 16.09 -> 15.10 (-6%) / 14.08 (-13%) | 16.25 -> 14.84 (-9%) / 14.21 (-13%) |
+| swap-10000 | 11.88 -> 11.00 (-7%) / 10.62 (-11%) | 14.24 -> 13.17 (-8%) / 12.45 (-13%) | 13.35 -> 13.86 (+4%) / 12.89 (-3%) |
+| many-10000 | 9.90 -> 9.64 (-3%) / 9.51 (-4%) | 12.04 -> 12.07 (0%) / 11.89 (-1%) | 12.17 -> 12.02 (-1%) / 12.05 (-1%) |
+
+Every run of a scenario gave the same state hash. The full scale-suite runs (five jobs at once, mixed P/E slots)
+are single runs and only indicative; their tick numbers are in `~/tak-tmp/scratch/legion-10000/stage2/scale/`.
+
+**Memory.** `Member::gateMemo` adds 56 bytes a member: the navigator estimate (`scale.nav.bytes_peak`) rises by
+exactly that (one-1000 +56,000 B, +3.3%; 10,000 members +560 kB; +0.07% to +1.9% elsewhere). The join index holds
+one int per group plus one map node per key; the broad-phase grid is per scan.
+
+**Checks (exact commands; base = `~/tak-tmp/wt/legion-10000-s2base` at c4233fb9, build-o2).**
+
+| Check | Command | Result |
+|---|---|---|
+| Identity harness, full, references on | `tools/legion_identity.sh --base <s2base>/build-o2 --cand build-o2 --replays ~/tak-tmp/scratch/land-we3/rp --data ~/TAK/assets/game --cores 4-23 -j 20 --verify --out .../identity/run1` | mpai Legion 300 s **c707e1a8063bc0c7** x2 both builds, Retail **7535cb08ee787b75** x2; replays L/R-bench and L/R-2h final and checkpoint hashes SAME; golden legion/retail SAME; determinism dcef618cd2e4d558 SAME; crowdbench 504 rows SAME; ctest: 68 legion_check_* / legion_cost FAIL only on `work.soft_hash_verify_ticks`, a counter that exists only under `--verify` (an inherited harness limitation: `--verify` cannot be combined with the work-counter gates), plus the three new tests "missing in base" |
+| Identity ctest section without references | same, `--skip mpai,replays,golden,crowdbench,determinism`, no `--verify`, `--out .../identity/run2-ctest` | 355 SAME, the only FAIL rows the three new `legion_verify_*` tests (absent from the base) |
+| `TAK_LEGION_VERIFY` sweep | every `tools/scenarios/*.scn` (135) plus scale `{one,many,churn,swap,maze,bridges,mixed}-1000` and many-2500: `TAK_LEGION_VERIFY=1 TAK_SIM_WORKERS=3 legion_scenario F --mode legion --workers --offsets 0 --json --data ~/TAK/assets/game` | 144/144 exit 0 (join and broad-phase references at fd34151a+1b8cc086, all four at e290f0ed) |
+| Legion scenario gate | `sweep_both.py build-o2/legion_scenario OUT 4-23` then `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results OUT/scenarios.jsonl` | **PASS** 31,753 keys, 0 failed, 1,670 ratchets (1,563 at the start: the new ones are all work counters: join_iterations, group_loop_iters, aware_pairs, legion_total, lane_work, churn.bin0), 2,261 licensed (2,265: four licensed work keys now ratchet), 216 floor exceptions, 864 report-only; every `hash@` equal |
+| `--mpai` 60 s | `CORES=16-23 mpai.sh build-o2 OUT 60` | Retail **2c39430636a3dbda**, Legion **532539f51d70840b** (equal) |
+| Scale suite | `legion_scale.py run --bin build-o2/legion_scenario --out .../stage2/scale --cores 4-23 --per-job 4`; `check --targets tools/scenarios/scale/targets.json --base tools/scenarios/scale/baseline-c2c25707.jsonl` | 37/37 exit 0; every state hash equal to the baseline's; targets **99 met, 110 missed, 3 report-only missed** (identical to the start: an exact stage moves no behaviour key); keys that moved: only `work.legion_total.*`, `work.legion_all.*` and `scale.nav.bytes_peak` |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j20 --timeout 900` (scratch XDG, no `TAK_SETTINGS_FILE`) | **377/377** passed (375 + the two quick verify tests) |
+| New ctests | `ctest -R legion_verify_` | 3/3 pass (battle-assault 11 s, cost-listed) |
+| Release build | `cmake --build build` (all targets) | builds (the references compile out) |
+| Automated commit reviews | `.git/worktrees/legion-10000/codex-reviews/{fd34151a,1b8cc086,946d6972,e290f0ed,5b6daa11}.md` | no actionable findings |
+
+**Inherited versus new failures.** New: none. Inherited: none in these checks; the identity harness's `--verify`
+mode fails the work-counter gates on a verify-only counter (above), a tool limitation recorded here, not fixed
+(changing the harness is out of this stage's scope; run its ctest section without `--verify`, as done).
+Not run: non-quick nightly ctests outside the identity selection, Windows/macOS, the nightly logs.
+
+**Traps met.** The automated reviewer builds in the worktree's `build-o2` while it reviews, so a binary can be
+replaced under a running profile (seen as "(deleted)" in the profile's maps): profile and A/B from a copied
+binary. A `pkill -f` pattern that matched the shell's own command line killed it (memory note
+`pkill-self-match`): kill by exact pid.
+
+**Outstanding.** The two mandated optimisations remove growth that the present scale workloads barely exercise
+(under 0.2% of samples at the start). The 10,000-body tick is now dominated by flat per-unit steering and, outside
+Legion, sight/exploration; neither has an exact structural fix in reach here. Stage 4's budgets and stage 9's
+parallel planning are where the per-tick movement cost is next addressed; stage 9's report also carries
+`updateNavigationExploration` and `mixed-10000`'s `explore` phase.
 
 ## 8. Next step
 
-Resume from branch `task-legion-10000` (pushed). Build `build-o2` in the worktree, read sections 3 and 6.
-Stage 2 (exact optimisations): index `registerMove`'s group candidates by (player, plane, kind, issue or
-reach key, approach) with a spatial filter on the goal box, keep the brute-force predicate as a verify-mode
-reference with identical winner order; swept-bounds broad phase for `awareScan`. Prove with
-`legion_identity.sh --base <c2c25707 build> --cand <stage-2 build>` and hash-equal `legion_check`; rerun the
-scale suite and `legion_scale.py check --base tools/scenarios/scale/baseline-c2c25707.jsonl`: every hash and
-key must be equal (an exact stage moves nothing), only work counters and wall time may change. Measure
-`join_iterations` and `aware_pairs` / `aware_work` on `many-10000` (800 groups) before and after.
+Resume from branch `task-legion-10000` (pushed; stage 2 done). Build `build-o2` in the worktree, read sections 3
+and 7.2. Stage 3 (brief phase 2, behaviour + protocol + replay): explicit logical orders per section 3.1 --
+`OrderId` from client intent through the bounded selection-order transaction (`OrderBegin` / `OrderMembers` /
+`OrderCommit` / `OrderAbort`), server framing/limits/sequencing and an activation tick, sim-side ownership and
+existence checks at activation, every identity consumer moved to `OrderId` with `(player, convoyTick)` kept only
+for commands without one; a unit-cap override for the harness so the real client/server path carries a
+10,000-body click; one `kNetVersion` bump (267), `replay_test` refusing 266, new `--mpai` baselines, the scale
+suite's `deliver.*` / `start.*` targets as the measure. Retail must stay bit-identical except where a
+protocol-only field forces otherwise (then say why here).

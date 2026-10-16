@@ -2057,6 +2057,36 @@ opened excepted (cluster `LR-264`); the behaviour losses and the new fixtures'
 floor failures in a commit of their own; the Legion navigation golden
 regenerated (Retail's unchanged).
 
+### Legion 10,000 stage 2: exact join index, awareness broad phase (fd34151a .. e290f0ed, no protocol change)
+
+Four hash-identical optimisations (docs/legion-10000-progress.md, stage 2, has the proof runs and numbers):
+
+* **Join index.** `registerMove` used to walk every live group for the first one a member may join. Groups are
+  now indexed by the equality part of the join predicate, all fixed at creation: player, plane, kind, approach,
+  and the ring target and bucket for a reach kind or the issue key otherwise (`joinIndex`). The member walks its
+  entry in ascending id order and applies the whole predicate unchanged (component through `groupComp`, goal
+  box, seeds, field), so the first group to pass is the first of all groups. `TAK_LEGION_VERIFY` runs the
+  brute-force walk on every join and checks the index against a scan of the groups.
+* **Awareness broad phase.** `awareScan` used to run its 31 conflict samples for every (group, mover) pair. A
+  mover not yet planned round enters a plan only through a sample where the group's way point (on its descent
+  chain, inside the chain's box of cell centres) and the mover's box centre (inside its swept box over the
+  450-tick horizon) are within `(half + max(tail, head) + 66) + 2 rG` px in each coordinate: `s` and `q` divide
+  by `L`, which is at most the heading's length, so the offset along and across the heading is under `B+1` and
+  `A+1`. Movers are listed in a 1,024 px grid over their grown swept boxes; a group reads the cells its chain
+  box grown by `2 rG` covers, and every mover already in its plan is a candidate whatever its place (a crossing
+  stays planned off its box). Candidates are visited in the original mover order, so the plan and its order are
+  unchanged. `TAK_LEGION_VERIFY` samples every dropped mover and fails on a conflict.
+* **The vertex probe is a tool instrument.** The W8 step 1 vertex probe (`vertexInstrument`), which no decision
+  reads, runs only while `LegionNavigator::setInstrumentProbes` is on: `legion_scenario` (unless
+  `--no-vertex-probe`) and `legion_world_test` turn it on, the game does not. It was 5-7% of a 10,000-body tick.
+* **Gate memo.** `gateCommit`, asked every tick for every uncommitted lane member, declines in open ground
+  before it reads any soft body. Those checks read only the static plane, the finished field, the member's goal,
+  origin, footprint and lane band; `Member::gateMemo` keeps them when a call declines there and the same inputs
+  decline again without walking the chain (never hashed; `TAK_LEGION_VERIFY` recomputes every hit).
+
+The ctests `legion_verify_{battle-assault,crosslong,gap8}` run the references; each file is one that a
+deliberate mutation of the matching optimisation trips.
+
 ## Instruments
 
 What each tool sees, and what it cannot. A number is only as good as the
