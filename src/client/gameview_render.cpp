@@ -143,6 +143,9 @@
         SDL_Rect worldClip{0, 0, mvw, winH};
         SDL_RenderSetClipRect(ren_, &worldClip);
         mapView_.setUnderlay(miniTex_);   // low-res gap filler (null until the overview bakes)
+        // The study's fixed clock: section idle trimming (and so what a capped frame has
+        // resident) must not follow the build's speed.
+        if (tak::devFlag("TAK_RENDER_STUDY")) mapView_.setClockMs(uint64_t(animClock_*1000));
         {
             const double _t0 = double(SDL_GetPerformanceCounter());
             tak::render::ScopedPhase terrainPhase(renderStats_, RP::Terrain);

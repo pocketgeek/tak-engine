@@ -73,6 +73,11 @@ public:
     // rectangle. The owner sets this (GameView's minimap texture); null = none.
     void setUnderlay(SDL_Texture* t) { underlay_ = t; }
 
+    // Clock for section idle times (ms). Wall time unless the owner supplies its own,
+    // e.g. the render study's fixed presentation clock, so which sections a frame has
+    // resident does not depend on how fast the build runs.
+    void setClockMs(uint64_t ms) { clockMs_ = ms; clockSet_ = true; }
+
     void invalidateRenderTargets();
 
     void draw(int winW, int winH);
@@ -167,6 +172,9 @@ private:
     bool pinNext_ = false, pinning_ = false; // finishChunks(): the next draw has no upload limits
     static constexpr size_t kSectionBudget = size_t(64) << 20;
     static constexpr uint64_t kSectionIdleMs = 3000;
+    uint64_t clockMs_ = 0;
+    bool clockSet_ = false;
+    uint64_t nowMs() const;
     static constexpr int kSectionUploadsPerFrame = 32;   // 32 MiB: a 4K jump in one frame
     void evictSection(std::map<uint32_t, Section>::iterator);
     // The resident section not drawn this frame that was used longest ago (end() = none).

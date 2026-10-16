@@ -329,7 +329,7 @@ void MapView::draw(int winW, int winH) {
     // Mark what the batch samples as in use BEFORE uploading, so making room for a
     // missing section never evicts one this frame draws.
     const auto stamp=[&] {
-        const uint64_t now=SDL_GetTicks64();
+        const uint64_t now=nowMs();
         for(uint32_t key:batchKeys_)if(auto i=sections_.find(key);i!=sections_.end()) {i->second.frame=frame_;i->second.usedMs=now;}
     };
     if(changed)rebuildTileBatch(winW,winH);
@@ -385,7 +385,7 @@ bool MapView::uploadWantedSections() {
     // Chunks off: the fallback IS the terrain, so only the GPU cap bounds it.
     const size_t budget = chunksEnabled_ ? kSectionBudget : SIZE_MAX;
     const int perFrame = pinning_ ? INT_MAX : kSectionUploadsPerFrame;
-    const uint64_t now = SDL_GetTicks64();
+    const uint64_t now = nowMs();
     int n = 0;
     std::vector<uint32_t> decode;
     for (uint32_t key : wanted_) {
@@ -443,6 +443,8 @@ bool MapView::uploadWantedSections() {
     return n > 0;
 }
 
+uint64_t MapView::nowMs() const { return clockSet_ ? clockMs_ : SDL_GetTicks64(); }
+
 std::map<uint32_t, MapView::Section>::iterator MapView::oldestIdleSection() {
     auto oldest = sections_.end();
     for (auto i = sections_.begin(); i != sections_.end(); ++i)
@@ -461,7 +463,7 @@ void MapView::evictSection(std::map<uint32_t, Section>::iterator it) {
 
 void MapView::trimSections() {
     if (pinning_ || !sectionBytes_) return;
-    const uint64_t now = SDL_GetTicks64();
+    const uint64_t now = nowMs();
     for (auto i = sections_.begin(); i != sections_.end();) {
         auto next = std::next(i);
         if (i->second.tex && i->second.frame != frame_ && now - i->second.usedMs >= kSectionIdleMs)
