@@ -716,6 +716,15 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(legion_sched_load legion_sched_load_div legion_sched_mix legion_sched_pin legion_sched_inflight
                        PROPERTIES LABELS legion TIMEOUT 900)
   set_tests_properties(legion_sched_load_div PROPERTIES ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
+  # Legion 10,000 stage 5: the route consumers that state their region (lanes, slots, rings, the formation
+  # entrance, awareness) on paused routes, every first build pausable (--pause-all), under TAK_LEGION_VERIFY,
+  # serial == workers; each consumer asked a paused build for its region and no read was uncertain
+  # (tools/legion_route_paused_test.py).
+  add_test(NAME legion_route_paused
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_route_paused_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios --data "${TAK_TEST_DATA}")
+  set_tests_properties(legion_route_paused PROPERTIES LABELS legion TIMEOUT 900
+                       ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison
