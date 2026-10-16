@@ -1140,7 +1140,7 @@ private:
     std::vector<const ModelTextureAnimation*> animatedRegionClocks_;
     tak::render::Generation animatedRegionsAsset_ = tak::render::kNoGeneration;
     void collectAnimatedRegions();
-    void paintAtlasContents(int slot, tak::render::AtlasPainter& painter);
+    void paintAtlasContents(int slot, tak::render::AtlasPainter& painter, SDL_Texture* from = nullptr);
 #ifndef NDEBUG
     void verifyAtlases();          // TAK_ATLAS_VERIFY: compare with a complete repaint
     uint64_t atlasVerifyChecks_ = 0;

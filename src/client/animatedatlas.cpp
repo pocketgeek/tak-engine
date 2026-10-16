@@ -18,15 +18,7 @@ void AtlasPainter::clear(const SDL_Rect& content) {
 void AtlasPainter::copy(SDL_Texture* src, const SDL_Rect& d, const SDL_BlendMode* blend) {
     int w = 0, h = 0;
     if (!src || SDL_QueryTexture(src, nullptr, nullptr, &w, &h) != 0 || w <= 0 || h <= 0) return;
-    SDL_ScaleMode scale = SDL_ScaleModeNearest;
-    SDL_GetTextureScaleMode(src, &scale);
-    if (scale != SDL_ScaleModeNearest) {
-        // Draws of src already queued must run with its own mode.
-        SDL_RenderFlush(renderer_);
-        if (counts_) ++counts_->flushes;
-        restore_.emplace_back(src, scale);
-        SDL_SetTextureScaleMode(src, SDL_ScaleModeNearest);
-    }
+    sampleNearest(src);
     SDL_BlendMode previous = SDL_BLENDMODE_NONE;
     if (blend) {
         SDL_GetTextureBlendMode(src, &previous);
@@ -42,6 +34,28 @@ void AtlasPainter::copy(SDL_Texture* src, const SDL_Rect& d, const SDL_BlendMode
     // The blend mode was recorded with each queued copy; restoring it now is safe.
     if (blend) SDL_SetTextureBlendMode(src, previous);
     if (counts_) counts_->copies += 9;
+}
+
+void AtlasPainter::sampleNearest(SDL_Texture* src) {
+    SDL_ScaleMode scale = SDL_ScaleModeNearest;
+    SDL_GetTextureScaleMode(src, &scale);
+    if (scale == SDL_ScaleModeNearest) return;
+    // Draws of src already queued must run with its own mode.
+    SDL_RenderFlush(renderer_);
+    if (counts_) ++counts_->flushes;
+    restore_.emplace_back(src, scale);
+    SDL_SetTextureScaleMode(src, SDL_ScaleModeNearest);
+}
+
+void AtlasPainter::duplicate(SDL_Texture* src) {
+    if (!src) return;
+    sampleNearest(src);   // a colour atlas is LINEAR while Bilinear Filtering is on
+    SDL_BlendMode previous = SDL_BLENDMODE_NONE;
+    SDL_GetTextureBlendMode(src, &previous);
+    SDL_SetTextureBlendMode(src, SDL_BLENDMODE_NONE);
+    SDL_RenderCopy(renderer_, src, nullptr, nullptr);
+    SDL_SetTextureBlendMode(src, previous);
+    if (counts_) ++counts_->copies;
 }
 
 void AtlasPainter::finish() {

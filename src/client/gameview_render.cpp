@@ -2740,10 +2740,18 @@
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
         SDL_RenderClear(ren_);
+        // Most model textures look the same in every colour atlas, so a second colour
+        // starts as a copy of an atlas already complete under these generations and
+        // repaints only what differs (see paintAtlasContents).
+        SDL_Texture* from = nullptr;
+        for (size_t other = 0; other < atlasTex_.size() && !from; ++other)
+            if (atlasTex_[other] && int(other) != slot &&
+                atlasTracker_.known(other, rendererGeneration_.current(), assetGeneration_.current()))
+                from = atlasTex_[other];
         tak::render::AtlasPaintCounts counts;
         {
             tak::render::AtlasPainter painter(ren_, &counts);
-            paintAtlasContents(slot, painter);
+            paintAtlasContents(slot, painter, from);
             painter.finish();   // before leaving the atlas target
         }
         renderStats_.add(tak::render::Counter::AtlasCopies, counts.copies);
@@ -2764,8 +2772,15 @@
     // region exactly as AnimatedAtlasTracker repaints it (blend NONE, the frame
     // selected now, transparent once expired). Leaves animatedRegions_ describing
     // what was painted. Also the reference for TAK_ATLAS_VERIFY.
-    void GameView::paintAtlasContents(int slot, tak::render::AtlasPainter& painter) {
+    //
+    // With `from` (another complete colour atlas of this layout) the target starts as
+    // a 1:1 copy of it, and only regions whose content can differ are cleared (rect +
+    // gutter) and repainted: textures with per-colour variants, every animated
+    // region, and the untracked sequences below. Everything else -- single-frame
+    // textures, gutters and padding -- is the same in every colour atlas.
+    void GameView::paintAtlasContents(int slot, tak::render::AtlasPainter& painter, SDL_Texture* from) {
         collectAnimatedRegions();
+        if (from) painter.duplicate(from);
         for (const auto& [name, r] : atlasRect_) {
             auto it = textures_.find(name);
             if (it == textures_.end() || it->second.empty()) continue;
@@ -2775,6 +2790,9 @@
             const auto animation = modelTextureAnimations_.find(name);
             if (animation != modelTextureAnimations_.end() && it->second.size() >= 2)
                 continue;   // an animated region: painted below
+            // Same in every colour atlas: one frame and no clock.
+            if (from && animation == modelTextureAnimations_.end() && it->second.size() < 2) continue;
+            if (from) painter.clear(r);
             const size_t ci = animation != modelTextureAnimations_.end()
                 ? animation->second.frame
                 : (size_t(slot) < it->second.size() ? size_t(slot) : 0);

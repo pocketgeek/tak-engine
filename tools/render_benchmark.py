@@ -85,6 +85,10 @@ SCENES = {
                        "TAK_RENDER_CHURN": "60", "TAK_RENDER_RESET": "300"},
                   notes="moving army + panning camera; 5% of the army dies/respawns every "
                         "60 frames; simulated render-target reset every 300 frames"),
+    "colour-reset": dict(count=200, type="araarch", zoom=1.0,
+                         env={"TAK_RENDER_BATTLE": "1", "TAK_RENDER_RESET": "120"},
+                         notes="small battle (two player colours) with a simulated render-target "
+                               "reset every 120 frames: both colour atlases are recreated"),
     "battle-sparse": dict(count=2000, zoom=0.5,
                           env={"TAK_RENDER_BATTLE": "1", "TAK_RENDER_SPARSE_AFTER": "450",
                                "TAK_RENDER_SPARSE_OFFSET": "8800,200"},

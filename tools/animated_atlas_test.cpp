@@ -84,6 +84,8 @@ struct Fixture {
     std::vector<SDL_Rect> rects;
     std::vector<SDL_Texture*> staticPerSlot;             // player-colour variants
     SDL_Rect staticRect{40, 30, 9, 7};
+    SDL_Texture* shared = nullptr;                       // the same in every colour atlas
+    SDL_Rect sharedRect{20, 2, 7, 7};
     std::vector<tak::render::AnimatedRegion> regions;
 };
 
@@ -97,7 +99,8 @@ Fixture makeFixture() {
     f.sequences.push_back({makeTexture(5, 7, 4), makeTexture(5, 7, 5)});
     f.sequences.push_back({makeTexture(6, 5, 6), makeTexture(6, 5, 7, SDL_ScaleModeLinear),
                            makeTexture(3, 5, 8), makeTexture(6, 5, 9)});
-    for (int slot = 0; slot < 4; ++slot) f.staticPerSlot.push_back(makeTexture(9, 7, 100 + slot));
+    for (int slot = 0; slot < 5; ++slot) f.staticPerSlot.push_back(makeTexture(9, 7, 100 + slot));
+    f.shared = makeTexture(7, 7, 200);
     for (size_t i = 0; i < f.rects.size(); ++i) f.regions.push_back({f.rects[i], &f.sequences[i], 0});
     return f;
 }
@@ -121,6 +124,25 @@ SDL_Texture* createAtlas(const Fixture& f, int slot, tak::render::AtlasPaintCoun
     clearTarget(atlas);
     {
         tak::render::AtlasPainter painter(ren, counts);
+        painter.copy(f.shared, f.sharedRect, nullptr);
+        painter.copy(f.staticPerSlot[size_t(slot)], f.staticRect, nullptr);
+        for (const auto& r : f.regions) tak::render::paintAnimatedRegion(painter, r);
+        painter.finish();
+    }
+    SDL_SetRenderTarget(ren, nullptr);
+    return atlas;
+}
+
+// GameView::atlasFor with another complete atlas: copy it whole, then clear and
+// repaint only the per-colour texture and every animated region.
+SDL_Texture* createAtlasFrom(const Fixture& f, int slot, SDL_Texture* from,
+                             tak::render::AtlasPaintCounts* counts = nullptr) {
+    SDL_Texture* atlas = newAtlas();
+    clearTarget(atlas);
+    {
+        tak::render::AtlasPainter painter(ren, counts);
+        painter.duplicate(from);
+        painter.clear(f.staticRect);
         painter.copy(f.staticPerSlot[size_t(slot)], f.staticRect, nullptr);
         for (const auto& r : f.regions) tak::render::paintAnimatedRegion(painter, r);
         painter.finish();
@@ -151,6 +173,7 @@ void legacyPaintRect(SDL_Texture* src, const SDL_Rect& d) {
 SDL_Texture* legacyCreate(const Fixture& f, int slot) {
     SDL_Texture* atlas = newAtlas();
     clearTarget(atlas);
+    legacyPaintRect(f.shared, f.sharedRect);
     legacyPaintRect(f.staticPerSlot[size_t(slot)], f.staticRect);
     for (const auto& r : f.regions)
         if (r.frame < r.frames->size()) legacyPaintRect((*r.frames)[r.frame], r.rect);
@@ -284,17 +307,32 @@ int main() {
         sawExpiry |= fr[1] == 2 && last[1] != 2;
         const std::string when = "step " + std::to_string(step);
 
-        // Late atlas creation: a third colour slot appears after B expired.
+        // Late atlas creation: a third colour slot appears after B expired, painted
+        // completely; a fourth starts as a copy of atlas 0 while atlas 0 samples
+        // LINEAR (Bilinear Filtering on), which the copy must not pick up.
+        const size_t existing = atlases.size();
         if (step == 7) {
             atlases.push_back(createAtlas(f, 2));
             tracker.created(2, rendererGen.current(), assetGen.current(), f.regions);
             legacy.push_back(legacyCreate(f, 2));
         }
+        if (step == 10) {
+            SDL_SetTextureScaleMode(atlases[0], SDL_ScaleModeLinear);
+            tak::render::AtlasPaintCounts created;
+            atlases.push_back(createAtlasFrom(f, 3, atlases[0], &created));
+            SDL_ScaleMode mode = SDL_ScaleModeNearest;
+            SDL_GetTextureScaleMode(atlases[0], &mode);
+            check(mode == SDL_ScaleModeLinear, "copied-from atlas keeps its LINEAR mode");
+            check(created.flushes == 2, "copying a LINEAR atlas flushes before and after");
+            check(created.copies < 9 * (f.regions.size() + 3), "a copied atlas repaints only what differs");
+            SDL_SetTextureScaleMode(atlases[0], SDL_ScaleModeNearest);
+            tracker.created(3, rendererGen.current(), assetGen.current(), f.regions);
+            legacy.push_back(legacyCreate(f, 3));
+        }
         tak::render::AtlasPaintCounts counts;
         size_t painted = 0;
         updateAll(counts, painted);
         // Only the regions whose frame changed, once per atlas that existed before.
-        const size_t existing = step == 7 ? 2 : atlases.size();
         check(painted == changed * existing,
               when + ": painted " + std::to_string(painted) + " regions, expected " +
               std::to_string(changed * existing));
@@ -306,7 +344,7 @@ int main() {
         SDL_ScaleMode linearNow = SDL_ScaleModeNearest;
         SDL_GetTextureScaleMode(f.sequences[2][1], &linearNow);
         check(linearNow == SDL_ScaleModeLinear, when + ": a LINEAR source's scale mode is restored");
-        if (anyChanged || step == 7) legacyRepaintAll(f, legacy);
+        if (anyChanged || step == 7 || step == 10) legacyRepaintAll(f, legacy);
         compareAll(when, true);
         last = fr;
     }
@@ -324,8 +362,8 @@ int main() {
     // source blend until the next repaint pass. The new atlas is painted as a
     // repaint would be from the start (documented: the old transient frame differs).
     {
-        SDL_Texture* oldLate = legacyCreate(f, 3);
-        SDL_Texture* newLate = createAtlas(f, 3);
+        SDL_Texture* oldLate = legacyCreate(f, 4);
+        SDL_Texture* newLate = createAtlas(f, 4);
         const bool transientDiffers = readAtlas(oldLate) != readAtlas(newLate);
         std::vector<SDL_Texture*> one{oldLate};
         legacyRepaintAll(f, one);
@@ -351,6 +389,7 @@ int main() {
         clearTarget(atlases[1]);
         {
             tak::render::AtlasPainter painter(ren);
+            painter.copy(f.shared, f.sharedRect, nullptr);
             painter.copy(f.staticPerSlot[1], f.staticRect, nullptr);
             painter.finish();
         }
@@ -379,6 +418,7 @@ int main() {
     for (auto* a : legacy) if (a) SDL_DestroyTexture(a);
     for (auto& seq : f.sequences) for (auto* t : seq) SDL_DestroyTexture(t);
     for (auto* t : f.staticPerSlot) SDL_DestroyTexture(t);
+    SDL_DestroyTexture(f.shared);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(window);
     SDL_Quit();

@@ -65,10 +65,15 @@ public:
     // nullptr uses the source's own mode. A source whose size cannot be queried is
     // skipped, as before.
     void copy(SDL_Texture* src, const SDL_Rect& content, const SDL_BlendMode* blend);
+    // Copy the whole of `src` (an atlas of the same size) 1:1 onto the whole target
+    // with blend NONE: pixels, gutters and padding exactly. Lets a new colour atlas
+    // start from an existing one and repaint only the regions that differ.
+    void duplicate(SDL_Texture* src);
     // Run what is queued if a source's scale mode was changed, then restore it.
     void finish();
 
 private:
+    void sampleNearest(SDL_Texture* src);
     SDL_Renderer* renderer_;
     AtlasPaintCounts* counts_;
     std::vector<std::pair<SDL_Texture*, SDL_ScaleMode>> restore_;
