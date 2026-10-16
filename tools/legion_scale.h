@@ -52,7 +52,7 @@
 //                                              navigator tick window spent; the most of all classes at once
 //   navbytes.peak, navbytes.<category>_at_peak  deterministic NavBytes: the largest total sampled (every
 //                                              30 ticks and at the end) and its categories then
-//   sched.gap_max.<class>, sched.age_max.<class>, sched.promotions, sched.fit_skips, sched.reservations,
+//   sched.gap_max.<class>, sched.gap_max.any, sched.age_max.<class>, sched.promotions, sched.fit_skips, sched.reservations,
 //   sched.reg_deferred, sched.reg_wait_max, sched.plane_waits, sched.sync_plane_calls, sched.sync_plane_max,
 //   sched.init_max                             the scheduler's service record (NavAccounting)
 // Everything is integer and in body order, so every compiler reports the same numbers.
@@ -303,6 +303,7 @@ public:
                     k.emplace_back(p + "sched.gap_max." + tak::sim::kNavClassNames[c], int64_t(a.serviceGapMax[c]));
                     k.emplace_back(p + "sched.age_max." + tak::sim::kNavClassNames[c], int64_t(a.requestAgeMax[c]));
                 }
+                k.emplace_back(p + "sched.gap_max.any", int64_t(a.serviceGapAny));
                 k.emplace_back(p + "sched.promotions", int64_t(a.promotions));
                 k.emplace_back(p + "sched.fit_skips", int64_t(a.fitSkips));
                 k.emplace_back(p + "sched.reservations", int64_t(a.reservations));

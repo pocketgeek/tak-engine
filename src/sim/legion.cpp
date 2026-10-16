@@ -85,7 +85,7 @@ uint32_t gProbe=std::getenv("TAK_LPROBE")?uint32_t(std::strtoul(std::getenv("TAK
 #else
 uint32_t gProbe=0;
 #endif
-constexpr size_t kMaxFields=48,kMaxPlanes=24;     // field budget: kMaxFields whole maps of cells
+constexpr size_t kMaxPlanes=24;                   // the field budget is bytes (NavBudget::kFieldBytes)
 constexpr size_t kMaxFieldCount=1024;             // live fields (and in-progress rebuilds), any size
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
 constexpr uint32_t kNoTick=~0u;                // an unset tick stamp
@@ -307,7 +307,9 @@ struct LegionNavigator::Impl {
     // field or next): startField's cap test reads them instead of walking
     // every group, which cost O(groups) per call and O(groups^2) per tick
     // with many groups waiting at the cap. Derived, never hashed.
-    struct FieldTotals {size_t fields=0,cells=0;};
+    // inflight: the deterministic bytes of the unfinished builds' frontiers (queued bucket entries
+    // and seeds not yet enqueued, Field::inflightBytes), part of the byte allowance (stage 4).
+    struct FieldTotals {size_t fields=0,cells=0;uint64_t inflight=0;};
     // Integer distance field from a group's goal origins, built with a
     // bounded bucket queue; resumable across ticks under the work quota.
     // A field covers only the bounding box of its seeds' static component
@@ -317,8 +319,23 @@ struct LegionNavigator::Impl {
         Field()=default;
         Field(const Field&)=delete;
         Field& operator=(const Field&)=delete;
-        ~Field() {if(totals) {--totals->fields;totals->cells-=potential.size();}}
+        ~Field() {if(totals) {--totals->fields;totals->cells-=potential.size();totals->inflight-=inflightBytes;}}
         FieldTotals* totals=nullptr;      // set once potential is sized (startField)
+        // The scheduler's job state (Legion 10,000 stage 4; a field is one job however many groups
+        // share it): its deficit round robin credit and the last tick it was given work (its start
+        // tick until then). Hashed with the field. inflightBytes: its frontier's share of
+        // FieldTotals::inflight (derived from queued and the seeds, never hashed).
+        int64_t deficit=0;
+        uint32_t lastServed=0;
+        uint64_t inflightBytes=0;
+        // Observation only (accounting's per-class service gaps; never hashed, read by no decision): the
+        // class the job last had and the tick it entered it.
+        NavClass seenClass=NavClass::Count;uint32_t classSince=0;
+        void syncInflight() {
+            const uint64_t now=done?0:uint64_t(queued)*NavSize::kCell32+uint64_t(seedKeys.size()-seedNext)*NavSize::kKeyed;
+            if(totals)totals->inflight=totals->inflight-inflightBytes+now;
+            inflightBytes=now;
+        }
         int plane=-1;
         uint64_t epoch=0;
         uint64_t serial=0;                // unique per field built (identifies it to the aim memo)
@@ -545,6 +562,11 @@ struct LegionNavigator::Impl {
         uint64_t pausedSerial=0;
         uint32_t byBuiltKey=0;
         std::array<uint64_t,2> routeKeys{};uint8_t routeCount=0;   // its routeIndex entries
+        // Start requests (Legion 10,000 stage 4): the tick the group last became a request (it went on
+        // needFieldIds or staleDoneIds, or a suppressed refresh became eligible again) -- its age orders
+        // the admissions and promotes it -- and the tick its start was first refused for want of room
+        // (NavAdmit::kNever when clear). Both hashed while set.
+        uint32_t requestTick=kNoTick,blockedSince=NavAdmit::kNever;
         // ---- the reach ring (AR-06 part B, PLAN 3.4) ------------------------
         // A reach kind's group (attack, guard) is keyed by its target, the
         // target's origin when the group was seeded (centre) and the members'
@@ -927,8 +949,11 @@ struct LegionNavigator::Impl {
             on=want;
         };
         put(buildingIds,g.onBuilding,wantsBuilding(g));
+        const bool wasRequest=g.onNeedField||g.onStaleDone;
         put(needFieldIds,g.onNeedField,wantsNeedField(g));
         put(staleDoneIds,g.onStaleDone,wantsStaleDone(g));
+        if(g.onNeedField||g.onStaleDone) {if(!wasRequest)g.requestTick=w.tickCounter_;}
+        else {g.requestTick=kNoTick;g.blockedSince=NavAdmit::kNever;}
         const bool built=g.field!=nullptr;
         if(g.onByBuilt&&(!built||g.byBuiltKey!=g.built)) {byBuilt.erase({g.byBuiltKey,g.id});g.onByBuilt=false;}
         if(built&&!g.onByBuilt) {byBuilt.insert({g.built,g.id});g.byBuiltKey=g.built;g.onByBuilt=true;}
@@ -3125,9 +3150,26 @@ struct LegionNavigator::Impl {
     // group for a while (oldest build first); otherwise the group waits for
     // a slot. Evicting the least recently used field every tick thrashed:
     // all live groups use theirs every tick.
-    bool startField(Group& g,bool shareOnly=false) {
+    // A start's outcome (stage 4): a new build, another group's field taken, nothing to share (share
+    // only), no room under the byte allowance or the field count, or its initialisation (cells /
+    // kInitDiv units) more than `initRoom` -- the budget left this tick when it is not the whole
+    // quota (the first start of a tick always fits).
+    enum class Start : uint8_t {Built,Shared,NoShare,NoRoom,NoBudget};
+    uint64_t startCharge=0;   // the last start's initialisation + ring units (the scheduler charges them)
+    // The bytes every live field holds now, and the allowance: NavBudget::kFieldBytes, but never less
+    // than two whole-map fields, so that no single request exceeds it on any map.
+    uint64_t fieldBytes() const {return uint64_t(liveFieldCells())*NavSize::kCell32+fieldTotals.inflight;}
+    uint64_t fieldAllowance() const {
+        return std::max<uint64_t>(NavBudget::kFieldBytes,2*uint64_t(width())*uint64_t(height())*NavSize::kCell32);
+    }
+    Start startField(Group& g,bool shareOnly=false,uint64_t initRoom=~0ull) {
+        startCharge=0;
         // A reach group of two or more members plans to its ring (AR-06).
-        if(!g.field&&!g.ring.tried&&g.reachIds.size()>=kRingMembers)buildRing(g);
+        if(!g.field&&!g.ring.tried&&g.reachIds.size()>=kRingMembers) {
+            const uint64_t before=navc.ringCells;
+            buildRing(g);
+            startCharge+=navc.ringCells-before;
+        }
         const auto box=fieldWindow(g);
         const size_t cells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
         {
@@ -3139,21 +3181,23 @@ struct LegionNavigator::Impl {
                 else if(g.field) {
                     if(g.next&&!g.next->done)++stats.refreshDiscards;
                     ++stats.refreshCompleted;
+                    retire(g.field);
                     g.field=std::move(shared);g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);noteAwareInstall(g,*g.field);
                 }
                 else g.field=std::move(shared);
                 listGroup(g);
-                return true;
+                return Start::Shared;
             }
         }
-        if(shareOnly)return false;
-        const size_t budget=kMaxFields*size_t(width())*size_t(height());
-        while(liveFields()>=kMaxFieldCount||liveFieldCells()+cells>budget) {
+        if(shareOnly)return Start::NoShare;
+        if(cells/NavBudget::kInitDiv>initRoom)return Start::NoBudget;
+        const uint64_t want=uint64_t(cells)*NavSize::kCell32+uint64_t(g.seeds.size())*NavSize::kKeyed,allowance=fieldAllowance();
+        while(liveFields()>=kMaxFieldCount||fieldBytes()+want>allowance) {
             // A victim is a group whose finished field is past its tenure
             // and its own (dropping a shared one frees nothing).
             // Within one tick that set only grows when a field finishes
             // (fieldsDone): evictions and new builds only shrink it.
-            if(noVictimTick==w.tickCounter_&&noVictimDone==fieldsDone)return false;
+            if(noVictimTick==w.tickCounter_&&noVictimDone==fieldsDone)return Start::NoRoom;
             // The oldest build first (ties: the lowest id), so the walk in
             // byBuilt order stops at the first victim or at tenure.
             Group* victim=nullptr;
@@ -3173,8 +3217,9 @@ struct LegionNavigator::Impl {
                 if(scan!=victim)verifyFail("byBuilt eviction victim differs from the full scan");
             }
 #endif
-            if(!victim) {noVictimTick=w.tickCounter_;noVictimDone=fieldsDone;return false;}
+            if(!victim) {noVictimTick=w.tickCounter_;noVictimDone=fieldsDone;return Start::NoRoom;}
             if(victim->next&&!victim->next->done)++stats.refreshDiscards;
+            retire(victim->field);retire(victim->next);
             victim->field.reset();victim->next.reset();victim->stale=false;victim->demand=false;victim->awareDemand=false;++stats.fieldEvictions;
             listGroup(*victim);
         }
@@ -3191,7 +3236,9 @@ struct LegionNavigator::Impl {
         f->W=width();f->x0=box[0];f->z0=box[1];f->fw=box[2]-box[0]+1;f->fh=box[3]-box[1]+1;
         f->potential.assign(cells,kUnreached);
         navc.initCells+=cells;acct.initMax=std::max<uint64_t>(acct.initMax,cells);
+        startCharge+=cells/NavBudget::kInitDiv;
         f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;
+        f->lastServed=w.tickCounter_;
         {const auto whole=fieldWindow(g,true);f->bounded=whole!=box;}
         if(g.bodyMaxX>=g.bodyMinX) {f->aimed=true;f->tx=(g.bodyMinX+g.bodyMaxX)/2;f->tz=(g.bodyMinZ+g.bodyMaxZ)/2;}
         for(int s:g.seeds) {
@@ -3200,9 +3247,10 @@ struct LegionNavigator::Impl {
         }
         std::sort(f->seedKeys.begin(),f->seedKeys.end());
         f->current=f->seedKeys.empty()?0:f->seedKeys.front().first;
+        f->syncInflight();
         if(g.field)g.next=std::move(f);else g.field=std::move(f);
         listGroup(g);
-        return true;
+        return Start::Built;
     }
     // Dial's algorithm on key = potential + heuristic (A*; consistent, so
     // a key never drops below its parent's and rises by at most
@@ -3257,6 +3305,7 @@ struct LegionNavigator::Impl {
             std::vector<std::pair<int,uint32_t>>().swap(f.demand);
         }
         f.work+=spent;
+        f.syncInflight();
         return spent;
     }
     // ---- paused first builds (T7 C1) ------------------------------------
@@ -3837,6 +3886,212 @@ struct LegionNavigator::Impl {
         }
         stats.liftMembersWalked+=walked;stats.liftMembersSkipped+=skipped;
     }
+    // ---- field service (Legion 10,000 stage 4) ---------------------------------------------------
+    // One deterministic quota a tick (NavBudget::kFieldQuota, less the plane debt, at most half of
+    // it) pays field relaxations, field initialisation (cells / kInitDiv at a start) and reach-ring
+    // cells. The work is served by JOB: a field being built, however many groups share it, so a
+    // shared field gets one allocation. A job's class is the most urgent its groups ask for:
+    // Waiting (a member stands still for want of it, or a paused build it waits on), FirstRoute (a
+    // group's first field), AwareRepair (an awareness re-plan), StaleRefresh (after a static change;
+    // the members steer by the finished stale field). Classes are served in that order; within a
+    // class the jobs share the quota by deficit round robin (navDrr: a slice of kSlice a visit, the
+    // cursor kept across ticks, so no job is always last), the two refresh classes inside the
+    // refresh allowance (kRefreshQuota) as before. A job (or a start request) that has gone
+    // kAgeStep ticks without service moves up one class (navPromote; a promoted refresh no longer
+    // spends the refresh allowance), so no class starves another for longer than three steps.
+    // Start requests -- groups with no field, then stale refreshes -- are admitted at the head of
+    // their class, oldest request first; one refused for want of room (the byte allowance or the
+    // field count) is stepped over, at most kFitScan a tick, unless it has been refused for
+    // kReserveAge ticks: then it reserves and nothing after it starts this tick (NavAdmit), so the
+    // room that frees next is its. A start whose initialisation does not fit the budget left waits
+    // for the next tick (the first start of a tick always fits). Everything here reads hashed state
+    // only and walks ids, serials and lists in a fixed order.
+    struct FieldJob {uint64_t key=0;Field* f=nullptr;std::vector<Group*> subs;NavClass base=NavClass::StaleRefresh,cls=NavClass::StaleRefresh;};
+    std::array<NavCursor,size_t(NavClass::Count)> navCursor{};   // per class: the round-robin position (hashed when set)
+    // The jobs of the serveFields call in progress (nullptr outside it). A field a start or an
+    // install is about to free (its last reference) is retired first: its job is marked dead, so no
+    // ring visit reads it after it is gone.
+    std::map<uint64_t,FieldJob>* liveJobs=nullptr;
+    void retire(const std::shared_ptr<Field>& f) {
+        if(!liveJobs||!f||f.use_count()!=1)return;
+        if(const auto it=liveJobs->find(f->serial);it!=liveJobs->end())it->second.f=nullptr;
+    }
+    // A group's own class for a field it waits on (f: its field or its replacement).
+    NavClass jobClass(const Group& g,const Field& f) const {
+        if(&f==g.next.get())return g.awareDemand?NavClass::AwareRepair:NavClass::StaleRefresh;
+        return w.tickCounter_-g.waited<=1?NavClass::Waiting:NavClass::FirstRoute;
+    }
+    static bool refreshClass(NavClass c) {return c==NavClass::AwareRepair||c==NavClass::StaleRefresh;}
+    void serveFields(uint64_t& budget,uint64_t& visits) {
+        const uint32_t now=w.tickCounter_;
+        // Plane rebuilds and labelling are charged against the same quota (debt carries over); at
+        // most half of it pays plane debt in one tick, so field work always progresses.
+        uint64_t charged=0;
+        auto settle=[&] {
+            const uint64_t c=std::min({budget,planeDebt,kFieldQuota/2-charged});
+            budget-=c;planeDebt-=c;charged+=c;
+        };
+        settle();
+        // Who the work was for (Stats only), and the install of a finished field into its group.
+        auto finish=[&](Group& g,Field& f,uint64_t spent) {
+            stats.fieldWork+=spent;
+            if(spent) {
+                if(g.next.get()==&f)
+                    (now-g.movingTick<=2?stats.fieldWorkRefreshMoving:stats.fieldWorkRefreshIdle)+=spent;
+                else
+                    (policy(g.kind).area&&!g.approach&&g.members>int(g.sharing.size())?stats.fieldWorkFirstSlot:stats.fieldWorkFirstSolo)+=spent;
+            }
+            if(f.done) {
+                ++stats.fieldsBuilt;noteAwareInstall(g,f);
+                if(g.next) {retire(g.field);g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;g.demand=false;g.awareDemand=false;restaleSlots(g);++stats.refreshCompleted;}
+                listGroup(g);
+            }
+        };
+        // Another subscriber finished a shared build: a refresh is installed; a first field is just
+        // usable (it is the same object), so the group only leaves the building list.
+        auto installed=[&](Group& g,Field& f) {
+            if(g.next.get()==&f)finish(g,f,0);
+            else if(!wantsBuilding(g))listGroup(g);
+        };
+        // ---- the jobs: every unfinished field a group waits on, by serial ----
+        std::map<uint64_t,FieldJob> jobs;
+        liveJobs=&jobs;
+        struct Clear {std::map<uint64_t,FieldJob>*& p;~Clear() {p=nullptr;}} clearJobs{liveJobs};
+        auto subscribe=[&](Group& g,Field* f,NavClass c) {
+            auto& j=jobs[f->serial];
+            if(!j.f) {j.key=f->serial;j.f=f;j.base=c;}
+            if(std::find(j.subs.begin(),j.subs.end(),&g)==j.subs.end())j.subs.push_back(&g);
+            if(c<j.base)j.base=c;
+        };
+        // Groups whose member stood still for want of a field (a paused build it waits on included).
+        for(int id=after(waitedIds,0);id;id=after(waitedIds,id)) {
+            ++visits;
+            Group& g=groups.find(id)->second;
+            if(now-g.waited>1) {waitedIds.erase(id);continue;}
+            if(g.next||!g.field||g.field->done)continue;
+            subscribe(g,g.field.get(),NavClass::Waiting);
+        }
+        for(int id=after(buildingIds,0);id;id=after(buildingIds,id)) {
+            ++visits;
+            Group& g=groups.find(id)->second;
+            if(g.next&&g.next->done) {installed(g,*g.next);continue;}   // a refresh another group finished
+            if(g.field&&!g.field->done&&g.pausedSerial!=g.field->serial)subscribe(g,g.field.get(),jobClass(g,*g.field));
+            if(g.next)subscribe(g,g.next.get(),jobClass(g,*g.next));
+            if(!wantsBuilding(g))listGroup(g);   // a shared first build another group finished
+        }
+        // Each job's class this tick: its most urgent group's, promoted by the time since its last work.
+        for(auto& [serial,j]:jobs) {
+            if(!j.f)continue;
+            j.cls=navPromote(j.base,now-j.f->lastServed);
+            if(j.cls!=j.base)++acct.promotions;
+            if(j.f->seenClass!=j.cls) {j.f->seenClass=j.cls;j.f->classSince=now;}
+        }
+        // ---- the start requests, oldest first within their class ----
+        struct Request {uint32_t since;int id;NavClass base;};
+        std::array<std::vector<Request>,size_t(NavClass::Count)> requests;
+        auto ask=[&](Group& g,NavClass base) {
+            if(g.requestTick==kNoTick)g.requestTick=now;
+            requests[size_t(navPromote(base,now-g.requestTick))].push_back({g.requestTick,g.id,base});
+        };
+        for(const int id:needFieldIds) {
+            Group& g=groups.find(id)->second;
+            if(!g.field&&!g.next)ask(g,now-g.waited<=1?NavClass::Waiting:NavClass::FirstRoute);
+        }
+        for(const int id:staleDoneIds) {
+            Group& g=groups.find(id)->second;
+            if(g.field&&g.stale&&!g.next&&g.field->usable())ask(g,g.awareDemand?NavClass::AwareRepair:NavClass::StaleRefresh);
+        }
+        auto older=[](const Request& a,const Request& b) {return std::tie(a.since,a.id)<std::tie(b.since,b.id);};
+        for(auto& list:requests) {std::sort(list.begin(),list.end(),older);visits+=list.size();}
+        // ---- serve the classes in order ----
+        uint64_t refresh=kRefreshQuota;
+        NavAdmit admit;
+        int awareStarts=0;
+        for(size_t ci=0;ci<size_t(NavClass::Count);++ci) {
+            const NavClass cls=NavClass(ci);
+            // Admissions. An aware re-plan past kAwareStarts this tick waits with the stale refreshes.
+            auto& list=requests[ci];
+            for(size_t k=0;k<list.size();++k) {
+                if(budget==0||admit.stopped)break;
+                const Request r=list[k];
+                Group& g=*groups.get(r.id);
+                if(g.next||(g.field&&!g.stale))continue;   // started (shared) since it was listed
+                const bool refreshing=g.field!=nullptr;
+                if(refreshing) {
+                    // B1: nobody steers by an inactive group's stale field; it refreshes the tick the
+                    // group is active again (its request age restarts then).
+                    if(!active(g)) {++stats.refreshSuppressed;g.suppressed=true;g.requestTick=now;continue;}
+                    if(cls==NavClass::AwareRepair&&r.base==NavClass::AwareRepair) {
+                        if(awareStarts>=kAwareStarts) {
+                            auto& stale=requests[size_t(NavClass::StaleRefresh)];
+                            stale.insert(std::upper_bound(stale.begin(),stale.end(),r,older),r);
+                            continue;
+                        }
+                        ++awareStarts;
+                    }
+                    if(g.suppressed) {++stats.demandResumes;g.suppressed=false;}
+                }
+                plane(g.plane);settle();
+                if(budget==0)break;
+                // With the refresh allowance spent, a stale group in a refresh class only takes a field
+                // another group already has (see sharedField).
+                const bool shareOnly=refreshing&&refreshClass(cls)&&refresh==0;
+                const Start got=startField(g,shareOnly,budget+charged==kFieldQuota?~0ull:budget);
+                budget-=std::min(budget,startCharge);
+                if(got==Start::NoShare) {++stats.refreshDeferred;continue;}
+                if(got==Start::NoBudget)continue;
+                if(got==Start::NoRoom) {
+                    ++acct.fitSkips;
+                    if(admit.refuse(g.blockedSince,now)&&admit.reserved)++acct.reservations;
+                    continue;
+                }
+                NavAdmit::admitted(g.blockedSince);
+                acct.requestAgeMax[size_t(r.base)]=std::max<uint64_t>(acct.requestAgeMax[size_t(r.base)],now-r.since);
+                if(Field* f=g.next?g.next.get():g.field.get();f&&!f->done) {
+                    const bool fresh=!jobs.count(f->serial);
+                    subscribe(g,f,cls);
+                    if(fresh)jobs[f->serial].cls=cls;   // a new build serves in the class that admitted it
+                }
+            }
+            // This class's jobs, by deficit round robin.
+            struct Ref {uint64_t key;int64_t* deficit;FieldJob* job;};
+            std::vector<Ref> ring;
+            for(auto& [serial,j]:jobs)if(j.f&&j.cls==cls&&!j.f->done)ring.push_back({serial,&j.f->deficit,&j});
+            if(ring.empty())continue;
+            settle();
+            navDrr(ring,refreshClass(cls)?NavBudget::kRefreshWindow:NavBudget::kWindow,navCursor[ci],budget,
+                   refreshClass(cls)?&refresh:nullptr,[&](Ref& ref,uint64_t allow)->NavVisit {
+                FieldJob& j=*ref.job;
+                if(!j.f)return {};   // retired: freed by an eviction or an install this tick
+                Field& f=*j.f;
+                // The group that builds it: the first subscriber holding it as its own first field,
+                // else the first holding it at all (subscriptions can change during the tick).
+                Group* holder=nullptr;
+                for(Group* o:j.subs)if(o->field.get()==&f) {holder=o;break;}
+                if(!holder)for(Group* o:j.subs)if(o->next.get()==&f) {holder=o;break;}
+                if(!holder)return {};
+                Group& g=*holder;
+                ++visits;
+                plane(g.plane);
+                // A paused first build with no demand waits (see serve); it is not asking for work, so
+                // its service clock restarts.
+                const bool pause=g.field.get()==&f&&pausable(g);
+                if(pause&&f.covered&&f.demand.empty()) {f.lastServed=now;return {};}
+                const uint32_t gap=now-f.lastServed;
+                const uint64_t spent=pause?serve(g,f,allow):advance(f,allow);
+                if(spent) {
+                    // The wait this class saw: since the last slice, or since the job entered the class.
+                    const uint32_t inClass=now-std::max(f.lastServed,f.classSince);
+                    acct.serviceGapMax[size_t(j.cls)]=std::max<uint64_t>(acct.serviceGapMax[size_t(j.cls)],inClass);
+                    acct.serviceGapAny=std::max<uint64_t>(acct.serviceGapAny,gap);
+                    f.lastServed=now;
+                }
+                finish(g,f,spent);
+                if(f.done)for(Group* o:j.subs)if(o!=&g&&(o->field.get()==&f||o->next.get()==&f))installed(*o,f);
+                return {spent,!f.done&&!(pause&&f.covered&&f.demand.empty())};
+            });
+        }
+    }
     void tick() {
         foldWindow();
         drainRegistrations(true);
@@ -3869,120 +4124,10 @@ struct LegionNavigator::Impl {
         // Yields run even while no Legion member remains (a committed yield
         // must finish or time out, never freeze until the next order).
         serviceYields();
-        // Plane rebuilds and labelling are charged against the same
-        // deterministic quota as field relaxations (debt carries over).
-        // At most half the quota pays plane debt in one tick, so field work
-        // always progresses (the rest of the debt carries over).
-        uint64_t budget=kFieldQuota,charged=0;
-        auto settle=[&] {
-            const uint64_t c=std::min({budget,planeDebt,kFieldQuota/2-charged});
-            budget-=c;planeDebt-=c;charged+=c;
-        };
-        settle();
-        uint64_t visits=0;
+        uint64_t budget=kFieldQuota,visits=0;
         probeListSum+=waitedIds.size()+buildingIds.size()+needFieldIds.size()+staleDoneIds.size();
         probeGroupSum+=groups.size();
-        auto finish=[&](Group& g,Field& f,uint64_t spent) {
-            budget-=std::min(budget,spent);stats.fieldWork+=spent;
-            if(spent) {
-                // Who the work was for (Stats only): a refresh is the
-                // replacement building in `next`; a group has an area when
-                // some goal is shared (more members than distinct goals).
-                if(g.next.get()==&f)
-                    (w.tickCounter_-g.movingTick<=2?stats.fieldWorkRefreshMoving:stats.fieldWorkRefreshIdle)+=spent;
-                else
-                    (policy(g.kind).area&&!g.approach&&g.members>int(g.sharing.size())?stats.fieldWorkFirstSlot:stats.fieldWorkFirstSolo)+=spent;
-            }
-            if(f.done) {
-                ++stats.fieldsBuilt;noteAwareInstall(g,f);
-                if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;g.demand=false;g.awareDemand=false;restaleSlots(g);++stats.refreshCompleted;}
-                listGroup(g);
-            }
-        };
-        // Groups with a member standing still for want of a field come
-        // first (their field starts, or its frontier advances toward them),
-        // then first fields whose members all steer already, then refreshes
-        // (members still steer by the finished stale field).
-        // Each loop walks its work list (see buildingIds) in id order with
-        // the predicate of a walk over every group: a list holds every
-        // group the predicate accepts, including one a step of the loop
-        // makes eligible (an eviction), so the same groups are served in
-        // the same order.
-        for(int id=after(waitedIds,0);id;id=after(waitedIds,id)) {
-            if(budget==0)break;
-            ++visits;
-            Group& g=groups.find(id)->second;
-            if(w.tickCounter_-g.waited>1) {waitedIds.erase(id);continue;}
-            if(g.next||(g.field&&g.field->done))continue;
-            plane(g.plane);settle();
-            if(budget==0)break;
-            if(!g.field&&!startField(g))continue;
-            if(!g.field->done)finish(g,*g.field,pausable(g)?serve(g,*g.field,budget):advance(*g.field,budget));   // (done: shared)
-        }
-        uint64_t refresh=kRefreshQuota;
-        // Refreshes advance in two sub-passes: aware re-plans first (PLAN
-        // 3.3 F, C7), then the rest, all inside the one refresh allowance.
-        for(int pass=0;pass<3;++pass)for(int id=after(buildingIds,0);id;id=after(buildingIds,id)) {
-            if(budget==0)break;
-            Group& g=groups.find(id)->second;
-            if(pass>0&&(pass==1)!=g.awareDemand)continue;
-            ++visits;
-            Field* f=pass>0?g.next.get():g.field&&!g.field->done?g.field.get():nullptr;
-            if(!f) {if(!wantsBuilding(g))listGroup(g);continue;}   // a shared build another group finished
-            if(f->done) {finish(g,*f,0);continue;}   // a refresh another group finished
-            if(pass>0&&refresh==0)continue;
-            // A paused first build with no demand waits (see serve; such a
-            // group is normally off this list).
-            const bool pause=pass==0&&pausable(g);
-            if(pause&&f->covered&&f->demand.empty())continue;
-            plane(g.plane);settle();
-            if(budget==0)break;
-            const uint64_t spent=pause?serve(g,*f,budget):advance(*f,pass>0?std::min(budget,refresh):budget);
-            if(pass>0)refresh-=std::min(refresh,spent);
-            finish(g,*f,spent);
-        }
-        // Groups that need a field start in id order: first those with none
-        // (they cannot steer at all), then stale refreshes. Served first,
-        // refreshes of older groups under constant churn starved a new
-        // group forever.
-        // Stale refreshes start aware re-plans first (at most
-        // kAwareStarts a tick, in id order; PLAN 3.3 F), then the rest.
-        int awareStarts=0;std::vector<int> awareSeen;
-        for(int pass=0;pass<3;++pass) {
-            const std::set<int>& ids=pass==0?needFieldIds:staleDoneIds;
-            for(int id=after(ids,0);id;id=after(ids,id)) {
-                if(budget==0)break;
-                Group& g=groups.find(id)->second;
-                if(pass==1&&(!g.awareDemand||awareStarts>=kAwareStarts))continue;
-                if(pass==2&&std::find(awareSeen.begin(),awareSeen.end(),id)!=awareSeen.end())continue;   // the aware sub-pass had it
-                ++visits;
-                if(pass==1)awareSeen.push_back(id);
-                // (A stale paused first build is refreshed as a finished one
-                // would be: it never finishes on its own.)
-                if((g.field&&(!g.stale||!g.field->usable()))||g.next)continue;
-                if((pass==0)!=(g.field==nullptr))continue;
-                if(pass==1)++awareStarts;
-                // B1: nobody steers by an inactive group's stale field; it
-                // stays listed and refreshes the tick the group is active
-                // (refresh suppressed / demand resumes count the visits). A
-                // refresh already under way keeps building whatever its group
-                // does (pausing it measured worse: crowdtrap 200x1 arrived
-                // settled -4% on every seed).
-                if(pass>0&&!active(g)) {++stats.refreshSuppressed;g.suppressed=true;continue;}
-                if(pass>0&&g.suppressed) {++stats.demandResumes;g.suppressed=false;}
-                plane(g.plane);settle();
-                if(budget==0)break;
-                // With the refresh allowance spent, a stale group only takes a
-                // field another group already has (see sharedField).
-                const bool shareOnly=pass>0&&refresh==0;
-                if(!startField(g,shareOnly)) {if(shareOnly) {++stats.refreshDeferred;continue;}break;}
-                Field& f=g.next?*g.next:*g.field;
-                if(f.done)continue;   // shared
-                const uint64_t spent=pass==0&&pausable(g)?serve(g,f,budget):advance(f,pass>0?std::min(budget,refresh):budget);
-                if(pass>0)refresh-=std::min(refresh,spent);
-                finish(g,f,spent);
-            }
-        }
+        serveFields(budget,visits);
         stats.schedGroupVisits+=visits;stats.groupLoopIters+=visits;
         // The longest run of ticks whose whole field quota went to work.
         quotaPegRun=budget==0?quotaPegRun+1:0;
@@ -8802,6 +8947,10 @@ struct LegionNavigator::Impl {
             h=mix(h,0x7265677175657565ull);h=mix(h,uint64_t(regLive));
             for(const auto& e:regQueue)if(regSeq[size_t(e.id)]==e.seq)h=mix(h,uint64_t(uint32_t(e.id)));
         }
+        // The field scheduler's round-robin cursors (stage 4), while any is set.
+        for(size_t c=0;c<navCursor.size();++c)if(navCursor[c].key||navCursor[c].resume) {
+            h=mix(h,0x637572736f72ull^uint64_t(c)<<48^uint64_t(navCursor[c].resume)<<47);h=mix(h,navCursor[c].key);
+        }
         // An awareness scan in progress (stage 4).
         if(awCursor>=0) {h=mix(h,0x6177617265736361ull);h=mix(h,uint64_t(uint32_t(awCursor))<<32|awStarted);h=mix(h,awDigest);}
         // First plane builds registrations wait for (stage 4), while any.
@@ -8817,13 +8966,18 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(uint32_t(g.compCell)));h=mix(h,g.stale);h=mix(h,g.approach);h=mix(h,g.command);h=mix(h,g.soft);
             if(g.kind!=Kind::Move)h=mix(h,uint64_t(g.kind));
             for(const auto& [seed,count]:g.sharing) {h=mix(h,uint64_t(seed));h=mix(h,uint64_t(count));}
-            if(g.next) {h=mix(h,g.next->work);h=mix(h,g.next->done);h=mix(h,g.next->epoch);h=mix(h,g.next->started);}
+            if(g.next) {h=mix(h,g.next->work);h=mix(h,g.next->done);h=mix(h,g.next->epoch);h=mix(h,g.next->started);
+                        h=mix(h,uint64_t(g.next->deficit));h=mix(h,g.next->lastServed);}
             h=mix(h,uint64_t(g.members));h=mix(h,uint64_t(g.plane));
             for(int s:g.seeds)h=mix(h,uint64_t(s));
             for(const auto& [seed,n]:g.peak) {h=mix(h,uint64_t(seed));h=mix(h,uint64_t(n));}
             h=mix(h,g.lastUse);
             h=mix(h,g.built);
-            if(g.field) {h=mix(h,g.field->work);h=mix(h,g.field->done);h=mix(h,g.field->epoch);h=mix(h,g.field->current);h=mix(h,g.field->bounded);h=mix(h,g.field->started);}
+            if(g.field) {h=mix(h,g.field->work);h=mix(h,g.field->done);h=mix(h,g.field->epoch);h=mix(h,g.field->current);h=mix(h,g.field->bounded);h=mix(h,g.field->started);
+                         if(!g.field->done) {h=mix(h,uint64_t(g.field->deficit));h=mix(h,g.field->lastServed);}}
+            // Start requests (stage 4): their age and a refusal stamp, while set.
+            if(g.requestTick!=kNoTick) {h=mix(h,0x726571756573ull);h=mix(h,g.requestTick);}
+            if(g.blockedSince!=NavAdmit::kNever) {h=mix(h,0x626c6f636bull);h=mix(h,g.blockedSince);}
             // A paused first build (C1), tagged only when set.
             if(g.field&&(g.field->covered||!g.field->demand.empty())) {
                 h=mix(h,0x434f5645524544ull);h=mix(h,g.field->covered);

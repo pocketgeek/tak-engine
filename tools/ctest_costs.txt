@@ -22,12 +22,14 @@ legion_movement_orders_trolls_maze 46
 legion_gen1_route_61923_o0 44
 placement 43
 mapgen_ports 42
+legion_sched_load_div 41
 movement_orders_trolls 40
 cartographer_ui_smoke 40
 legion_scenario_battle-assault 36
 mapgen_mana 35
 legion_scenario_densehead 34
 legion_situation_r9-65850_retail 32
+legion_sched_load 32
 cartographer_place_terrain_zhon 31
 naval_ai 30
 legion_gen1_route_45941_o0 29

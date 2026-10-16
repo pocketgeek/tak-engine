@@ -408,6 +408,10 @@ target_link_libraries(legion_observe_selftest PRIVATE tak-formats)
 add_test(NAME legion_observe_selftest COMMAND legion_observe_selftest)
 set_tests_properties(legion_observe_selftest PROPERTIES LABELS legion)
 # .scn scenarios and issueSelection (the client's 64-per-tick order split).
+add_executable(navbudget_test tools/navbudget_test.cpp)
+target_include_directories(navbudget_test PRIVATE src)
+add_test(NAME navbudget_test COMMAND navbudget_test)
+set_tests_properties(navbudget_test PROPERTIES LABELS legion)
 add_executable(convoy_test tools/convoy_test.cpp)
 target_link_libraries(convoy_test PRIVATE tak-formats)
 add_test(NAME convoy_test COMMAND convoy_test)
@@ -671,6 +675,20 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME legion_doc_links_selftest
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_doc_links.py --root ${CMAKE_SOURCE_DIR} --selftest)
   set_tests_properties(legion_doc_links legion_doc_links_selftest PROPERTIES LABELS legion TIMEOUT 120)
+  # Legion 10,000 stage 4: the field scheduler under continuous load (tools/scenarios/scale/sched-load.scn:
+  # field requests faster than the quota serves them for the whole run). Service gaps and start-request ages
+  # within the policy's bounds, no body waiting over 60 ticks for a field, serial == workers
+  # (tools/legion_sched_load_test.py). The _div run divides the registration, plane-build and awareness
+  # budgets by 64 under TAK_LEGION_VERIFY: the registration FIFO, the incremental plane builds and the
+  # resumable awareness scan all run over budget, with every index checked.
+  add_test(NAME legion_sched_load
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-load.scn)
+  add_test(NAME legion_sched_load_div
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-load.scn --budget-div 64)
+  set_tests_properties(legion_sched_load legion_sched_load_div PROPERTIES LABELS legion TIMEOUT 900)
+  set_tests_properties(legion_sched_load_div PROPERTIES ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison

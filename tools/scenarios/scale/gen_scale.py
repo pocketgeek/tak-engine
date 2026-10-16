@@ -27,6 +27,10 @@ Families (N = bodies; see the progress record for what each one stands for):
              (cancellation), static features dropped along its way every 10 ticks (static churn), and a
              tenth sent into a sealed box (unreachable)
   idle-N     N-N/10 idle bodies standing in a block and N/10 movers sent through it (moving vs idle)
+  sched-load continuous navigation load (stage 4): 48 squads of 10 re-clicked to new far tiles every 160 ticks
+             and a rock walking across the map every 10 ticks, so field requests (first routes and stale
+             refreshes) arrive faster than the quota serves them for the whole run: service fairness and the
+             longest request age under load, not throughput (ctest legion_sched_load)
 """
 import math
 import os
@@ -266,6 +270,37 @@ def churn(n, w=None, h=None):
           f"on their way; {un} sent into a sealed box.")
 
 
+def sched_load(squads=48, squad=10, tile=64, every=160, ticks=4800):
+    g = int(math.ceil(math.sqrt(squads)))
+    w = h = g * tile + 32
+    perm = lcg_perm(squads)
+    L = header("sched-load", ticks, w, h, players=2, teams=[(1, 0)])
+    L.append("type r roster")
+    for i in range(squads):
+        gx, gz = i % g, i // g
+        x0, z0 = 16 + gx * tile + 20, 16 + gz * tile + 20
+        L.append(f"group S{i} {i % 2} r {squad} rect {x0} {z0} {x0 + 16} {z0 + 16}")
+    # A 4x4 rock placed and lifted every 10 ticks, walking down the map's middle column (static churn:
+    # stale refreshes for the groups whose windows it touches).
+    L.append(f"churn {w // 2} 16 4 4 every=10 walk=0,8,1 toggle from=100 until={ticks - 600}")
+    orders = []
+    for i in range(squads):
+        # Re-clicked every `every` ticks (staggered by squad) to the next tile of its permutation cycle,
+        # always across the map: every click is a new order, a new group and a new first route.
+        j, t = i, 2 + (i * every) // squads
+        while t < ticks - 900:
+            j = perm[j]
+            gx, gz = j % g, j // g
+            if abs(gx - i % g) + abs(gz - i // g) < g // 2:
+                gx, gz = g - 1 - gx, g - 1 - gz
+            orders.append((t, i, 16 + gx * tile + tile // 2, 16 + gz * tile + tile // 2))
+            t += every
+    for t, i, dx, dz in sorted(orders):
+        L.append(f"at {t} move S{i} {dx} {dz}")
+    write("sched-load", L, f"sched-load: {squads} squads of {squad} re-clicked to far tiles every {every} ticks with a rock\n"
+          "walking across the map: continuous navigation load (field requests faster than the quota serves).")
+
+
 def box_lines(x0, z0, x1, z1):
     return [f"wall {x0} {z0} {x1 - x0} 2", f"wall {x0} {z1 - 2} {x1 - x0} 2",
             f"wall {x0} {z0} 2 {z1 - z0}", f"wall {x1 - 2} {z0} 2 {z1 - z0}"]
@@ -299,3 +334,4 @@ if __name__ == "__main__":
         attack(n)
         churn(n)
     idle(10000)
+    sched_load()

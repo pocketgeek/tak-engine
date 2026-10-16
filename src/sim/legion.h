@@ -300,7 +300,8 @@ public:
     // its chain. Returns the mismatches; `report` gets the counts.
     int laneGeometryCheck(const Unit&,int queries,uint64_t seed,std::string* report);
     // Test hook: the unit's movement state (0 none, 1 moving, 2 holding,
-    // 3 waiting for its field, 4 arrived, 5 trapped, 6 engaged) and its group's identity.
+    // 3 waiting for its field -- or for its registration, stage 4 -- 4 arrived,
+    // 5 trapped, 6 engaged) and its group's identity.
     int unitState(int id) const;
     int unitGroup(int id) const;
     // Test hook: the unit's settled-arrival records, as bits: 1 anchor,

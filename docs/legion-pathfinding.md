@@ -2171,6 +2171,62 @@ member-budget delay, malformed, Retail refusal),
 `convoy_test` (each click shape both as an order and per unit), `issue_selection_test` (the mirror against the
 transcribed client), `replay_test` (266 refused).
 
+### Legion 10,000 stage 4: fair scheduling and complete budgets (protocol 268)
+
+Every piece of navigation work that can grow with the army now has a deterministic per-tick budget in its own
+units (`sim/navbudget.h`: `NavWork`, `NavBudget`), and the field quota is served by job, class and round robin
+instead of group id order. The record, with the measurements, is docs/legion-10000-progress.md section 7.4.
+
+* **Registration** (`requestRegister`, `drainRegistrations`). `registerMove` costs `kRegBase` units plus its join
+  candidates and its goal-resolution cells; a window -- one batch of commands between two ticks, or one tick --
+  may spend `kRegBudget` (4,096 plain registrations). While the budget lasts and nothing waits, a registration
+  runs at once, exactly as before (every gate fixture is unchanged by this). Past it, registrations wait in a FIFO
+  that the next `tick()` drains first; while any waits, later ones queue behind it; a waiting unit brakes with its
+  order kept and reads as Waiting to the observers; a cancel runs at once and drops a waiting registration. The
+  FIFO is hashed while not empty; the budgets never outlive their window, so they are not state.
+* **First plane builds** (`planeReady`, `buildPlanes`). A plane whose whole build can never exceed one window's
+  plane budget (`kPlaneBuildBudget`, 1 Mi units: maps up to 131k cells) is built at once inside the call, as
+  before. A larger one is no longer built inside the registration that first needs it (one-10000: two planes,
+  11.7M units, 30 ms of a 39 ms tick): the registration waits, and the same resumable build the background
+  prebuild uses runs `kPlaneBuildBudget` units a tick for the wanted planes, in demand order, right after
+  `syncStatic`; a plane finished there takes its waiting registrations in the same tick. The FIFO steps over
+  entries that wait only for a plane (planes are per mobility class). A building plane is never evicted.
+* **Awareness** (`awareScan`). The snapshot (movers, groups' accumulators, broad-phase grid) is taken on the scan
+  tick as before; the groups are then judged in id order against it, `kAwareBudget` units a tick and at least one
+  group, resuming on the next tick when a scan needs more. Under the budget (every measured workload) a scan ends
+  in its own tick, exactly as before.
+* **Field service** (`serveFields`). One quota a tick pays relaxations, field initialisation (cells /
+  `kInitDiv`, charged when a build starts; a start whose initialisation does not fit the budget left waits for
+  the next tick, the first start of a tick always fits) and reach-ring cells. Work is served by JOB -- a field being
+  built, however many groups share it -- in four classes, most urgent first: Waiting (a member stands for want of
+  it), FirstRoute, AwareRepair, StaleRefresh (the last two inside the refresh allowance, as before). Within a
+  class the jobs share the quota by deficit round robin over a window of the class's oldest jobs (`navDrr`:
+  `kWindow` 12, the refresh classes `kRefreshWindow` 3; `kSlice` a visit; the cursor kept across ticks, a visit
+  the budget cut short resuming first without a new slice, so no job of the window is always last); the next
+  oldest enters as one leaves. A job that has gone `kAgeStep` ticks without work moves up a class (`navPromote`),
+  so no class starves another for more than three steps. (Round robin over every job at once was built first
+  and rejected: every in-flight awareness refresh progressed slowly, outlived the 30-tick awareness cadence and
+  was discarded by the next re-plan -- many-1000 discards 41 -> 1,960, arrivals -5%.) Start requests are admitted at the head
+  of their class, oldest first; one refused for want of room is stepped over (at most `kFitScan` a tick, so a
+  large request no longer blocks every admission behind it), and after `kReserveAge` ticks of refusals it
+  reserves: nothing behind it starts, so the room that frees next is its (`NavAdmit`).
+* **Memory** (`NavBytes`, `fieldAllowance`). Deterministic bytes (element counts times fixed sizes) for every
+  container, by category; the field cap is a fixed byte allowance (`kFieldBytes`, 128 MiB, never below two
+  whole-map fields) over the potentials and the unfinished builds' frontiers, no longer 48 whole maps of cells.
+  The process heap is measured beside it by the tools, never read by the sim.
+* **Still synchronous** (reported by `accounting().syncPlane*` and in the record): a stale plane's rebuild on use
+  (legacy nav-grid worlds, or after a whole-map change), the whole-plane relabel an incremental refresh falls back
+  to, the incremental refresh itself (bounded by the changed rectangles), the awareness snapshot (one pass over
+  the members every 30 ticks), a formation's slot ranking when its area closes, a single field's initialisation
+  (at most one whole map).
+* **Exact optimisation in the stage** (d190169c): `packedBound` and `slotsFor` sort their window's cells by a
+  stable counting sort (the cells are collected in ascending order): a 10,000-body area was a 20 ms sort.
+
+Tests: `navbudget_test` (the policy alone under continuous synthetic overload: fairness, service gaps, age
+promotion, a shared job, the fit scan and reservation; each mutated policy fails it), `legion_sched_load` and
+`legion_sched_load_div` (the scheduler under continuous load in the sim; budgets divided by 64 under
+`TAK_LEGION_VERIFY`), `replay_test` (267 refused).
+
 ## Instruments
 
 What each tool sees, and what it cannot. A number is only as good as the

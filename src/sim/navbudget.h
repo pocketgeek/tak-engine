@@ -67,7 +67,7 @@ struct NavSize {
 
 // Observation-only accounting (LegionNavigator::accounting): never hashed, never read by a decision.
 // `total` is cumulative per class; `tickMax` the most any one navigator tick window (one tick() to the
-// next, so command-time work counts toward the tick it lands before) spent per class; `tickAll` the
+// next: the tick, then the commands applied before the next one) spent per class; `tickAll` the
 // most of every class together in one window; `bytes` the current NavBytes and `bytesPeak` its largest
 // total so far (sampled when accounting() is read).
 struct NavAccounting {
@@ -75,12 +75,15 @@ struct NavAccounting {
     uint64_t tickAll = 0;
     NavBytes bytes;
     uint64_t bytesPeak = 0;
-    // The scheduler's service record (stage 4): the longest a field job went without a slice of work
-    // (ticks, by its base class), the longest a start request waited (ticks from its request to its
-    // field starting, by class), the jobs promoted by age, capacity refusals the fit scan stepped over,
-    // reservations (a refused request old enough that nothing may overtake it), and registrations that
-    // waited for the budget or for their plane (and the longest such wait, ticks).
+    // The scheduler's service record (stage 4): the longest a field job asking for work waited for a
+    // slice while in a class (ticks since its last slice or since it entered the class, whichever is
+    // later, by the class it was served in) and in any class (serviceGapAny), the longest a start request
+    // waited (ticks from its request to its field starting, by its own class), job-ticks spent in a class
+    // above the job's own (age promotion), capacity refusals the fit scan stepped over, reservations (a
+    // refused request old enough that nothing may overtake it), registrations that waited for the budget
+    // and for their plane, and the longest such wait (ticks).
     std::array<uint64_t, size_t(NavClass::Count)> serviceGapMax{}, requestAgeMax{};
+    uint64_t serviceGapAny = 0;
     uint64_t promotions = 0, fitSkips = 0, reservations = 0;
     uint64_t regDeferred = 0, regWaitMax = 0, planeWaits = 0;
     // Synchronous stages that ran over their budget unit (reported, never hidden): whole-plane
@@ -100,8 +103,11 @@ struct NavBudget {
     // neighbour test with soft and corridor reads).
     static constexpr uint64_t kInitDiv = 16;
     // Deficit round robin: the slice a job may spend per visit (a multiple of the paused-build
-    // slice, so a paused build stops at the same points however its work is cut).
+    // slice, so a paused build stops at the same points however its work is cut), and the window: how
+    // many of a class's oldest jobs share the quota at once (about as many as one tick's quota gives a
+    // slice each; the refresh classes as many as the refresh allowance does).
     static constexpr int64_t kSlice = 32768;
+    static constexpr size_t kWindow = 12, kRefreshWindow = 3;
     // Age promotion: a job (or start request) that has gone this many ticks without service moves up
     // one class, so no class starves another for longer than (classes - 1) x kAgeStep.
     static constexpr uint32_t kAgeStep = 150;
@@ -136,37 +142,59 @@ constexpr NavClass navPromote(NavClass base, uint32_t age) {
 // and could use more). A visit that spends nothing must return keep = false.
 struct NavVisit { uint64_t spent = 0; bool keep = false; };
 
-// Deficit round robin over `ring` (jobs in ascending key order) from the first key above `cursor`,
-// until `budget` (and `cap`, a second limit the same work also spends, e.g. the refresh allowance;
-// nullptr: none) is spent or no job stays. Each visit adds kSlice to the job's deficit (capped at
-// 2 kSlice) and lets it spend up to that deficit; `cursor` becomes the key of the last job served.
+// A class's round-robin position, kept across ticks (hashed by the navigator): the key of the last job
+// served, and whether its visit was cut short by the budget with deficit left (it resumes first, without
+// a new slice: one slice per job per round, as deficit round robin requires).
+struct NavCursor {
+    uint64_t key = 0;
+    bool resume = false;
+};
+
+// Deficit round robin over a bounded window of a class's jobs. `jobs` are in ascending key order (the key
+// is the job's start serial, so the oldest first); the window holds the oldest `window` jobs that still
+// want work in this call, and a job that leaves it (finished, paused, or out of work) is replaced by the
+// next oldest. Each round visits the window from the cursor (the first key above it, or the cut-short job
+// itself), so no job of the window is always the one the end of a tick reaches; a visit adds `slice` to
+// the job's deficit (capped at two slices; nothing on a resumed visit) and lets it spend up to that. It
+// ends when `budget` (and `cap`, a second limit the same work also spends, e.g. the refresh allowance;
+// nullptr: none) is spent or no job wants work. The window bounds how many jobs share the quota at once,
+// so each still finishes promptly (a refresh is worth nothing until it is done, and the next awareness
+// re-plan discards one still building); jobs behind it wait their turn oldest first, and age promotion
+// (navPromote) bounds how long that is.
 // Job: { uint64_t key; int64_t* deficit; ... }. serve(Job&, allowance) -> NavVisit.
 template <class Job, class Serve>
-void navDrr(std::vector<Job>& ring, uint64_t& cursor, uint64_t& budget, uint64_t* cap, Serve&& serve) {
-    if (ring.empty()) return;
-    size_t start = 0;
-    while (start < ring.size() && ring[start].key <= cursor) ++start;
-    if (start == ring.size()) start = 0;
-    std::rotate(ring.begin(), ring.begin() + std::ptrdiff_t(start), ring.end());
-    while (budget > 0 && (!cap || *cap > 0) && !ring.empty()) {
-        size_t kept = 0;
-        for (size_t i = 0; i < ring.size(); ++i) {
-            Job& j = ring[i];
-            if (budget == 0 || (cap && *cap == 0)) { ring[kept++] = j; continue; }
+void navDrr(const std::vector<Job>& jobs, size_t window, NavCursor& cursor, uint64_t& budget, uint64_t* cap,
+            Serve&& serve, int64_t slice = NavBudget::kSlice) {
+    auto room = [&] { return budget > 0 && (!cap || *cap > 0); };
+    std::vector<Job> ring, kept;
+    size_t next = 0;
+    while (room()) {
+        while (ring.size() < window && next < jobs.size()) ring.push_back(jobs[next++]);
+        if (ring.empty()) return;
+        size_t start = 0;
+        while (start < ring.size() && (cursor.resume ? ring[start].key < cursor.key : ring[start].key <= cursor.key)) ++start;
+        if (start == ring.size()) start = 0;
+        const bool resuming = cursor.resume && ring[start].key == cursor.key;
+        cursor.resume = false;
+        kept.clear();
+        for (size_t n = 0; n < ring.size(); ++n) {
+            Job& j = ring[(start + n) % ring.size()];
+            if (!room()) { kept.push_back(j); continue; }
             int64_t& d = *j.deficit;
-            d = std::min<int64_t>(d + NavBudget::kSlice, 2 * NavBudget::kSlice);
-            if (d <= 0) { ring[kept++] = j; continue; }
+            if (!(resuming && n == 0)) d = std::min<int64_t>(d + slice, 2 * slice);
+            if (d <= 0) { kept.push_back(j); continue; }
             uint64_t allow = std::min<uint64_t>(uint64_t(d), budget);
             if (cap) allow = std::min(allow, *cap);
             const NavVisit v = serve(j, allow);
             budget -= std::min(budget, v.spent);
             if (cap) *cap -= std::min(*cap, v.spent);
             d -= int64_t(v.spent);
-            if (v.spent) cursor = j.key;
-            if (v.keep && v.spent) ring[kept++] = j;
-            else d = 0;   // left the ring: an idle job carries no credit (DRR)
+            if (v.spent) cursor = {j.key, d > 0 && v.keep && !room()};
+            if (v.keep && v.spent) kept.push_back(j);
+            else d = 0;   // left the window: an idle job carries no credit (DRR)
         }
-        ring.resize(kept);
+        std::sort(kept.begin(), kept.end(), [](const Job& a, const Job& b) { return a.key < b.key; });
+        ring.swap(kept);
     }
 }
 
