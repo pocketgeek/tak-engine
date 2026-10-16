@@ -8200,11 +8200,15 @@ struct LegionNavigator::Impl {
     // but each plane is its own group, whose peak counts its own bodies only.
     uint32_t crowdBound(Group& g,const Member& m,int fx,int fz,int64_t body) {
         const auto peak=g.peak.find(m.requested);
-        int n=peak==g.peak.end()?1:peak->second;
+        const int own=peak==g.peak.end()?1:peak->second;
+        int n=own;
         if(const Point* pt=m.pt;pt&&pt->crowdPeak) {
             const uint64_t cells=uint64_t(std::max(1,fx))*uint64_t(std::max(1,fz));
             n=int(std::max<uint64_t>(uint64_t(n),std::min<uint64_t>((pt->crowdPeak+cells-1)/cells,uint64_t(1)<<24)));
         }
+        // A crowd of this plane's bodies alone is the destination area itself (areaBound's
+        // cache): only a crowd of several footprints packs anew.
+        if(n==own)return areaBound(g,m,fx,fz,body);
         if(n<=1||m.requested<0)return uint32_t((body+4)*kOrthogonal/16);
         return packedBound(g,g.crowdBounds[m.requested],m.requested,n,fx,fz);
     }
