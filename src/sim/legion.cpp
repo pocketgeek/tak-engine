@@ -789,10 +789,12 @@ struct LegionNavigator::Impl {
         // detourCount, detourBest) are hashed.
         uint32_t nearest=0xffffffffu;
         int64_t detourBest=-1;            // `nearest` when the last local detour was planned
-        // Stage 5: the metric `nearest` is in (as progressKind and
-        // progressSerial for `progress`): a new one re-baselines it without
-        // counting a record. Derived, not hashed, like progressKind.
-        uint8_t nearestKind=0;uint64_t nearestSerial=0;
+        // Stage 5: the least distance read in the current metric
+        // (nearestHere; the metric: nearestKind, nearestSerial, as
+        // progressKind and progressSerial for `progress`). A record now needs
+        // a gain within the metric as well as on `nearest`, so a metric
+        // transition is never a record. Derived, not hashed, like progressKind.
+        uint32_t nearestHere=0xffffffffu;uint8_t nearestKind=0;uint64_t nearestSerial=0;
         // "Close enough": the start of the current no-progress window and the
         // pixel distance to the requested point then (see settleWindow), and
         // the start of the run of still windows that ends there (kNoTick:
@@ -6934,7 +6936,7 @@ struct LegionNavigator::Impl {
             else {ringRelease(g,u.id,m);m.slot=-1;m.goal=m.requested;}
         } else {m.slot=-1;m.goal=m.requested;}
         m.lineCell=-1;m.line=false;m.route.clear();m.routeTicks=0;
-        m.progress=m.nearest=0xffffffffu;m.rechoices=0;m.pivotCell=-1;m.pivotAim=-1;m.gateCell=-1;
+        m.progress=m.nearest=m.nearestHere=0xffffffffu;m.rechoices=0;m.pivotCell=-1;m.pivotAim=-1;m.gateCell=-1;
         markPass(u,m);
     }
     // An illegal goal (AR-07): a slot member gives its slot back and claims
@@ -6954,7 +6956,7 @@ struct LegionNavigator::Impl {
         }
         const int near=nearestLegal(p,m.goal%W,m.goal/W,region);
         if(near<0||compAt(p,near)!=region)return false;
-        m.goal=near;m.lineCell=-1;m.line=false;m.route.clear();m.progress=m.nearest=0xffffffffu;
+        m.goal=near;m.lineCell=-1;m.line=false;m.route.clear();m.progress=m.nearest=m.nearestHere=0xffffffffu;
         markPass(u,m);
         return true;
     }
@@ -7288,16 +7290,20 @@ struct LegionNavigator::Impl {
             const bool ontoSeed=fresh&&at==0&&m.headSerial==f.metric()&&m.headBest>0;
             if(fresh&&!ontoSeed) {m.progress=left;m.progressKind=kind;m.progressSerial=serial;}
             else if(ontoSeed||left<m.progress) {m.progress=left;m.progressKind=kind;m.progressSerial=serial;m.stallTick=w.tickCounter_;}
-            // The detour record compares within one metric too (stage 5): a new
-            // metric re-baselines it without a record (until stage 5 a body
-            // whose field went missing read squared cells, far below its
-            // potential x64, as a record and restarted its detour back-off),
-            // and "no record since the last detour" (detourBest) carries over.
-            if(m.nearest!=0xffffffffu&&(kind!=m.nearestKind||serial!=m.nearestSerial)) {
-                const bool none=int64_t(m.nearest)==m.detourBest;
-                m.nearest=left;
-                if(none)m.detourBest=int64_t(left);
-            } else if(left<m.nearest) {m.nearest=left;m.detourCount=0;}
+            // A metric transition is never a record (stage 5): a record needs a
+            // gain within the current metric (nearestHere) as well as a new low
+            // of `nearest`. (Until stage 5 a body whose field went missing read
+            // squared cells, far below its potential x64, as a record and
+            // restarted its detour back-off. Re-basing `nearest` itself per
+            // metric was measured and rejected: it counted every gain after a
+            // refresh as a record, which the rules were not tuned on --
+            // battle-assault +9.7% detours, many-1000 -4.4% arrivals and +48%
+            // stuck over three offsets.)
+            if(m.nearest!=0xffffffffu&&(kind!=m.nearestKind||serial!=m.nearestSerial))m.nearestHere=left;
+            else if(left<m.nearestHere) {
+                m.nearestHere=left;
+                if(left<m.nearest) {m.nearest=left;m.detourCount=0;}
+            }
             m.nearestKind=kind;m.nearestSerial=serial;
             if(f) {
                 if(f.metric()!=m.headSerial) {m.headSerial=f.metric();m.headBest=at;}
