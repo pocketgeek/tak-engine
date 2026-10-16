@@ -2190,16 +2190,26 @@ instead of group id order. The record, with the measurements, is docs/legion-100
   11.7M units, 30 ms of a 39 ms tick): the registration waits, and the same resumable build the background
   prebuild uses runs `kPlaneBuildBudget` units a tick for the wanted planes, in demand order, right after
   `syncStatic`; a plane finished there takes its waiting registrations in the same tick. The FIFO steps over
-  entries that wait only for a plane (planes are per mobility class). A building plane is never evicted.
+  entries that wait only for a plane (planes are per mobility class); when a plane is ready, its waiters' marks
+  clear (they wait for the budget now, so nothing bypasses them). Neither a building plane nor one a waiting
+  registration needs is evicted (`queuedNeeds`; with more classes than `kMaxPlanes` two queued classes used to
+  evict each other's plane: `legion_planepin`). A destination area stays open while members of it wait to
+  register (`commandOpen`, `regAreas`), so its formation is not sized without them.
 * **Awareness** (`awareScan`). The snapshot (movers, groups' accumulators, broad-phase grid) is taken on the scan
   tick as before; the groups are then judged in id order against it, `kAwareBudget` units a tick and at least one
   group, resuming on the next tick when a scan needs more. Under the budget (every measured workload) a scan ends
-  in its own tick, exactly as before.
+  in its own tick, exactly as before. A resumed scan judges every group at the snapshot's time: corridor ages and
+  stamps use the scan tick, and a mover's displacement is scaled to `kAwareScan` ticks when its two samples are
+  farther apart (a scan that ran past the next scan tick).
 * **Field service** (`serveFields`). One quota a tick pays relaxations, field initialisation (cells /
   `kInitDiv`, charged when a build starts; a start whose initialisation does not fit the budget left waits for
   the next tick, the first start of a tick always fits) and reach-ring cells. Work is served by JOB -- a field being
   built, however many groups share it -- in four classes, most urgent first: Waiting (a member stands for want of
-  it), FirstRoute, AwareRepair, StaleRefresh (the last two inside the refresh allowance, as before). Within a
+  it), FirstRoute, AwareRepair, StaleRefresh (the last two inside the refresh allowance, as before; a refresh's
+  initialisation is charged to that allowance too). A job holds its field for the whole `serveFields` call: a
+  field an install or an eviction drops mid-call is retired at once (out of the totals, no further visit) but
+  freed only when the call ends, so no pointer the rings hold is left dangling. A shared paused build pauses only
+  if every subscriber holding it may pause (`jobPausable`); an idle paused build takes no window slot. Within a
   class the jobs share the quota by deficit round robin over a window of the class's oldest jobs (`navDrr`:
   `kWindow` 12, the refresh classes `kRefreshWindow` 3; `kSlice` a visit; the cursor kept across ticks, a visit
   the budget cut short resuming first without a new slice, so no job of the window is always last); the next
@@ -2207,9 +2217,14 @@ instead of group id order. The record, with the measurements, is docs/legion-100
   so no class starves another for more than three steps. (Round robin over every job at once was built first
   and rejected: every in-flight awareness refresh progressed slowly, outlived the 30-tick awareness cadence and
   was discarded by the next re-plan -- many-1000 discards 41 -> 1,960, arrivals -5%.) Start requests are admitted at the head
-  of their class, oldest first; one refused for want of room is stepped over (at most `kFitScan` a tick, so a
-  large request no longer blocks every admission behind it), and after `kReserveAge` ticks of refusals it
-  reserves: nothing behind it starts, so the room that frees next is its (`NavAdmit`).
+  of their class, oldest first, and a new build only while the class's window has a free slot (beyond it a request
+  may only take a field another group already has: a build past the window would hold its potential array
+  unserved, and an unfinished field is never an eviction victim). One refused for want of room is stepped over --
+  at most `kWaitFitScan` (256) times a tick in the Waiting class, whose members stand still, `kFitScan` (8) in the
+  others, so a large request no longer blocks every admission behind it -- and after `kReserveAge` ticks of
+  refusals it reserves (also when its class's window is full): nothing after it starts, in its class or a later one, so the room that frees next is its
+  (`NavAdmit`; letting smaller waiting requests start round it was measured and rejected: a large waiting request
+  could be overtaken without end).
 * **Memory** (`NavBytes`, `fieldAllowance`). Deterministic bytes (element counts times fixed sizes) for every
   container, by category; the field cap is a fixed byte allowance (`kFieldBytes`, 128 MiB, never below two
   whole-map fields) over the potentials and the unfinished builds' frontiers, no longer 48 whole maps of cells.
@@ -2225,7 +2240,8 @@ instead of group id order. The record, with the measurements, is docs/legion-100
 Tests: `navbudget_test` (the policy alone under continuous synthetic overload: fairness, service gaps, age
 promotion, a shared job, the fit scan and reservation; each mutated policy fails it), `legion_sched_load` and
 `legion_sched_load_div` (the scheduler under continuous load in the sim; budgets divided by 64 under
-`TAK_LEGION_VERIFY`), `replay_test` (267 refused).
+`TAK_LEGION_VERIFY`; the accounting counts the waits still open at the end of every tick, so ongoing starvation
+is measured, not only the waits that ended), `legion_planepin`, `replay_test` (267 refused).
 
 ## Instruments
 
