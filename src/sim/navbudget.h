@@ -129,6 +129,13 @@ struct NavAccounting {
     uint64_t demandPeak = 0, demandDropped = 0;
     // Stated regions (stage 5): needs raised on a paused build, and routes made to run on to done, per consumer.
     std::array<uint64_t, size_t(RouteNeed::Count)> routeNeeds{}, routeRunOns{};
+    // Stage 6 (hierarchical routes): corridor fields built, corridors widened for a member outside them, plans
+    // that fell back to the window because the search did not reach every member's region within its bound.
+    uint64_t corridors = 0, corridorWidens = 0, routeFallbacks = 0;
+    // Tile chains: chains built, shared tiles built and found in the cache, tiles evicted, the cache's largest size
+    // (bytes), transit regions a chain left off (nothing to lead into) and chains a relabel ended early.
+    uint64_t chains = 0, tilesBuilt = 0, tileHits = 0, tileEvictions = 0, tileBytesPeak = 0, chainSkips = 0, chainAbandons = 0;
+    uint64_t chainRepairs = 0;   // halo regions attached because a member stepped into one
 };
 
 // Per-tick budgets (constants: the same on every peer). Units and the reference cost per unit

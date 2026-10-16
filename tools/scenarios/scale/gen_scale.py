@@ -27,6 +27,8 @@ Families (N = bodies; see the progress record for what each one stands for):
              (cancellation), static features dropped along its way every 10 ticks (static churn), and a
              tenth sent into a sealed box (unreachable)
   idle-N     N-N/10 idle bodies standing in a block and N/10 movers sent through it (moving vs idle)
+  scatter-N  stage 6: N bodies, each its own selection, clicked to N different distant destinations (unrelated
+             routes, no sharing: the other extreme to one-10000's single objective): 2500, 10000
   sched-load continuous navigation load (stage 4): 48 squads of 10 re-clicked to new far tiles every 160 ticks
              and a rock walking across the map every 10 ticks, so field requests (first routes and stale
              refreshes) arrive faster than the quota serves them for the whole run: service fairness and the
@@ -60,10 +62,10 @@ def ticks_for(cells):
     return int(cells * 16 / SPEED * 1.3 + 1500) // 100 * 100
 
 
-def header(name, ticks, w, h, players=1, teams=(), seed=7, weapons="off"):
+def header(name, ticks, w, h, players=1, teams=(), seed=7, weapons="off", uplink=True):
     lines = [f"scn 1", f"name {name}", f"ticks {ticks}", f"seed {seed}", f"players {players}"]
     lines += [f"team {p} {t}" for p, t in teams]
-    lines += [f"weapons {weapons}", "uplink 16", "probe scale", f"map flat {w} {h}"]
+    lines += [f"weapons {weapons}"] + (["uplink 16"] if uplink else []) + ["probe scale", f"map flat {w} {h}"]
     return lines
 
 
@@ -353,6 +355,35 @@ def box_lines(x0, z0, x1, z1):
             f"wall {x0} {z0} 2 {z1 - z0}", f"wall {x1 - 2} {z0} 2 {z1 - z0}"]
 
 
+def scatter(n):
+    """Stage 6: the other extreme of the brief's pair (one-10000 is 10,000 bodies sharing one objective): n bodies,
+    each its own selection clicked to its own distant destination over the first 600 ticks -- n unrelated routes. No
+    `uplink`: n one-body orders through the 64-order window would make delivery (not navigation) the whole story; the
+    runner's default 64 commands a tick is used, so delivery.* here is not the real path's."""
+    pitch = 8
+    g = int(math.ceil(math.sqrt(n)))
+    w = h = g * pitch + 32
+    perm = lcg_perm(n, seed=777)
+    L = header(f"scatter-{n}", ticks_for(int(w * 1.2)), w, h, players=2, teams=[(1, 0)], uplink=False)
+    L.append("type r roster")
+    orders = []
+    for i in range(n):
+        gx, gz = i % g, i // g
+        x0, z0 = 16 + gx * pitch + 2, 16 + gz * pitch + 2
+        L.append(f"group B{i} {i % 2} r 1 rect {x0} {z0} {x0 + 4} {z0 + 4}")
+        j = perm[i]
+        if abs(j % g - gx) + abs(j // g - gz) < g // 3:
+            j = (g - 1 - gx) + g * min(g - 1, (g - 1 - gz))
+            if j >= n:
+                j = n - 1 - i % max(1, g)
+        dx, dz = 16 + (j % g) * pitch + 4, 16 + (j // g) * pitch + 4
+        orders.append((2 + (i * 600) // n, i, dx, dz))
+    for t, i, dx, dz in sorted(orders):
+        L.append(f"at {t} move B{i} {dx} {dz}")
+    write(f"scatter-{n}", L, f"scatter-{n}: {n} bodies, each its own selection clicked to its own distant destination over the\n"
+          "first 600 ticks (two allied players): unrelated destinations, no sharing (stage 6's other extreme).")
+
+
 def idle(n, w=None, h=None):
     m = n // 10
     k = n - m
@@ -381,5 +412,7 @@ if __name__ == "__main__":
         attack(n)
         churn(n)
     idle(10000)
+    for n in (2500, 10000):
+        scatter(n)
     sched_load()
     sched_mix()

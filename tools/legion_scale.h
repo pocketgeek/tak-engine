@@ -63,6 +63,12 @@
 //   route.needs.<consumer>, route.run_on.<consumer>
 //                                              stage 5: regions consumers asked a paused build for, and
 //                                              routes a consumer's uncertain read made run on to done
+//   route.corridors, route.corridor_widens, route.fallbacks
+//                                              stage 6: corridor fields built, corridors and chains rebuilt round a
+//                                              member outside them, plans the search could not complete (windows)
+//   route.chains, route.tiles_built, route.tile_hits, route.tile_evictions, route.tile_bytes_peak,
+//   route.chain_skips, route.chain_abandons    stage 6: tile chains built; shared tiles built, found, evicted;
+//                                              the tile cache's peak; regions left off; chains a relabel ended
 // Everything is integer and in body order, so every compiler reports the same numbers.
 #include "legion_observe.h"
 #include "sim/legion.h"
@@ -336,6 +342,17 @@ public:
                     k.emplace_back(p + "route.needs." + tak::sim::kRouteNeedNames[c], int64_t(a.routeNeeds[c]));
                     k.emplace_back(p + "route.run_on." + tak::sim::kRouteNeedNames[c], int64_t(a.routeRunOns[c]));
                 }
+                k.emplace_back(p + "route.corridors", int64_t(a.corridors));
+                k.emplace_back(p + "route.corridor_widens", int64_t(a.corridorWidens));
+                k.emplace_back(p + "route.fallbacks", int64_t(a.routeFallbacks));
+                k.emplace_back(p + "route.chains", int64_t(a.chains));
+                k.emplace_back(p + "route.tiles_built", int64_t(a.tilesBuilt));
+                k.emplace_back(p + "route.tile_hits", int64_t(a.tileHits));
+                k.emplace_back(p + "route.tile_evictions", int64_t(a.tileEvictions));
+                k.emplace_back(p + "route.tile_bytes_peak", int64_t(a.tileBytesPeak));
+                k.emplace_back(p + "route.chain_skips", int64_t(a.chainSkips));
+                k.emplace_back(p + "route.chain_abandons", int64_t(a.chainAbandons));
+                k.emplace_back(p + "route.chain_repairs", int64_t(a.chainRepairs));
             }
         }
     }
