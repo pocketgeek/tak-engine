@@ -3420,6 +3420,9 @@
     // stages), verbatim, over the same sorted collector output.
     void GameView::verifyMonolithicBody(const UnitGeom& g, const std::vector<Tri>& sorted,
                                         std::span<const size_t> order, const UnitGeomInputs& in) {
+#ifdef NDEBUG
+        (void)g;(void)sorted;(void)order;(void)in;   // debug verifier only
+#else
         const float zm=in.body.zoom,ax=in.body.ax,ay=in.body.ay,discoBob=in.body.bob;
         const auto& m=in.material;
         const float p=m.progress;
@@ -3459,7 +3462,6 @@
             }
         }
         if (out!=g.verts.size()) throw std::runtime_error("staged body vertex count differs from the single pass");
-#ifndef NDEBUG
         ++monolithicChecks_;
 #endif
     }
