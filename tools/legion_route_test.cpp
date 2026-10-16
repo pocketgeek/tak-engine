@@ -89,6 +89,19 @@ int main() {
         const RouteView v;
         CHECK(!v && !v.complete() && !v.usable() && !v.paused());
     }
+    {   // Demand: one entry per cell, the widest margin, arrival order, no cap.
+        RouteDemand d;
+        CHECK(d.need(30, 10) && !d.need(30, 5) && d.entries()[0].second == 10);
+        CHECK(!d.need(30, 40) && d.entries()[0].second == 40 && d.size() == 1);
+        for (int c = 0; c < 1000; ++c) d.need(1000 + c, uint32_t(c));
+        CHECK(d.size() == 1001);                                    // the 32-entry list kept 32
+        d.drop([](int cell, uint32_t) { return cell % 2 == 0; });   // drop even cells, keep the order
+        CHECK(d.size() == 500 && d.entries()[0].first == 1001 && d.entries()[1].first == 1003);
+        CHECK(!d.need(1003, 0) && d.size() == 500);                 // the index follows the compaction
+        CHECK(d.need(1002, 7) && d.entries().back() == std::make_pair(1002, 7u));
+        d.clear();
+        CHECK(d.empty() && d.need(5, 1));
+    }
     if (failures) {
         std::fprintf(stderr, "legion_route_test: %d failure(s)\n", failures);
         return 1;

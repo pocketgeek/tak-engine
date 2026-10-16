@@ -439,8 +439,9 @@ struct LegionNavigator::Impl {
         // potential), so what was usable stays usable.
         // Cells members reached unsettled (or under the cover margin): the
         // waited loop advances the build until each is settled with its
-        // margin, then clears them. (cell, margin), in arrival order.
-        std::vector<std::pair<int,uint32_t>> demand;
+        // margin, then clears them. (cell, margin), in arrival order, every
+        // need represented (RouteDemand, stage 5: no cap).
+        RouteDemand demand;
         bool usable() const {return done||covered;}
         RouteView view() const {return RouteView(this);}
     };
@@ -1864,7 +1865,7 @@ struct LegionNavigator::Impl {
                 b.fields+=S::kField+f->potential.size()*S::kCell32+f->seeds.size()*S::kCell32+f->avoid.size()*S::kCorridor;
                 if(f->done)continue;
                 for(const auto& q:f->buckets)b.inflight+=q.size()*S::kCell32;
-                b.inflight+=f->seedKeys.size()*S::kKeyed+f->demand.size()*S::kKeyed;
+                b.inflight+=f->seedKeys.size()*S::kKeyed+f->demand.size()*(S::kKeyed+S::kNode+16);   // RouteDemand: entry + index node
             }
             b.metadata+=S::kGroup+g.seeds.size()*S::kCell32+(g.sharing.size()+g.peak.size())*(S::kNode+8)+g.ids.size()*S::kCell32+
                 g.reachIds.size()*S::kCell32+(g.areaBounds.size()+g.crowdBounds.size())*(S::kNode+24)+
@@ -3391,7 +3392,7 @@ struct LegionNavigator::Impl {
         }
         if(!f.queued&&f.seedNext>=f.seedKeys.size()) {
             f.done=true;++fieldsDone;for(auto& b:f.buckets)std::vector<int>().swap(b);std::vector<std::pair<uint32_t,int>>().swap(f.seedKeys);
-            std::vector<std::pair<int,uint32_t>>().swap(f.demand);
+            f.demand.clear();
         }
         f.work+=spent;
         f.syncInflight();
@@ -3449,8 +3450,8 @@ struct LegionNavigator::Impl {
     // the field first paused, every live member's cell inside the window.
     bool coveredFor(const Group& g,Field& f) {
         const int W=width();
-        std::erase_if(f.demand,[&](const std::pair<int,uint32_t>& d) {
-            return !f.inside(d.first%W,d.first/W)||f.ahead(size_t(d.first),d.second);
+        f.demand.drop([&](int cell,uint32_t margin) {
+            return !f.inside(cell%W,cell/W)||f.ahead(size_t(cell),margin);
         });
         if(!f.demand.empty())return false;
         if(f.covered)return true;
@@ -3492,15 +3493,12 @@ struct LegionNavigator::Impl {
     }
     // A member stands where its group's paused field is not settled with
     // its margin: the waited loop resumes the build (setWaited) up to it.
-    // Members re-ask every update they stand there, so only the newest
-    // kDemandCells cells are kept.
+    // Members re-ask every update they stand there; every need is kept until
+    // the build meets it (RouteDemand: until stage 5 only the newest 32 cells
+    // were, so past 32 standing members some needs were forgotten).
     void demand(Group& g,Field& f,int cell,uint32_t margin) {
-        static constexpr size_t kDemandCells=32;
         setWaited(g);
-        for(auto& d:f.demand)if(d.first==cell) {d.second=std::max(d.second,margin);return;}
-        if(f.demand.size()>=kDemandCells) {f.demand.erase(f.demand.begin());++acct.demandDropped;}
-        f.demand.push_back({cell,margin});
-        acct.demandPeak=std::max<uint64_t>(acct.demandPeak,f.demand.size());
+        if(f.demand.need(cell,margin))acct.demandPeak=std::max<uint64_t>(acct.demandPeak,f.demand.size());
     }
     // Structure footprints as last stamped into the planes (id order).
     struct Stamp {
@@ -9195,7 +9193,7 @@ struct LegionNavigator::Impl {
             // A paused first build (C1), tagged only when set.
             if(g.field&&(g.field->covered||!g.field->demand.empty())) {
                 h=mix(h,0x434f5645524544ull);h=mix(h,g.field->covered);
-                for(const auto& [cell,margin]:g.field->demand)h=mix(h,uint64_t(uint32_t(cell))<<16|margin);
+                for(const auto& [cell,margin]:g.field->demand.entries())h=mix(h,uint64_t(uint32_t(cell))<<16|margin);
             }
             for(size_t i=0;i<g.avoidCmd.size();++i) {
                 h=mix(h,g.avoidCmd[i]);h=mix(h,g.avoidOff[i]);const auto& c=g.avoidSeg[i];

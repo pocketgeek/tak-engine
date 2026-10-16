@@ -24,7 +24,9 @@
 //  * freshness: the geometry epoch the route was built on, apart from all of the above.
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace tak::sim {
@@ -142,6 +144,52 @@ public:
 
 private:
     const RouteGrid* g_ = nullptr;
+};
+
+// The demand on a paused build (C1): the neighbourhoods its subscribers need settled, each a (cell, margin) --
+// the cell settled with that much key to spare (RouteView::covered). A subscriber is a member standing where the
+// build has not covered it (and, from stage 5, a consumer's stated region). One entry per cell, the widest margin
+// kept, in arrival order (the order the checksum folds them in); the builder drops the entries it has met. No cap:
+// every need is represented until it is met. (Until stage 5 the list held the newest 32 cells and dropped the
+// oldest: past 32 standing members the build never saw some members' needs, and they stood on a paused build
+// that never resumed for them.) Lookup by cell is indexed, so a need costs O(log n), not a walk of the list.
+class RouteDemand {
+public:
+    bool empty() const { return e_.empty(); }
+    size_t size() const { return e_.size(); }
+    const std::vector<std::pair<int, uint32_t>>& entries() const { return e_; }
+    // Add a need; an existing entry for the cell keeps the wider margin. True when the cell is new.
+    bool need(int cell, uint32_t margin) {
+        const auto [at, fresh] = index_.try_emplace(cell, e_.size());
+        if (!fresh) {
+            auto& m = e_[at->second].second;
+            if (margin > m) m = margin;
+            return false;
+        }
+        e_.push_back({cell, margin});
+        return true;
+    }
+    // Drop every entry `met(cell, margin)` says is met, keeping the others in order.
+    template <class Met> void drop(const Met& met) {
+        size_t out = 0;
+        bool dropped = false;
+        for (size_t i = 0; i < e_.size(); ++i) {
+            if (met(e_[i].first, e_[i].second)) { dropped = true; continue; }
+            e_[out++] = e_[i];
+        }
+        if (!dropped) return;
+        e_.resize(out);
+        index_.clear();
+        for (size_t i = 0; i < e_.size(); ++i) index_.emplace(e_[i].first, i);
+    }
+    void clear() {
+        std::vector<std::pair<int, uint32_t>>().swap(e_);
+        index_.clear();
+    }
+
+private:
+    std::vector<std::pair<int, uint32_t>> e_;
+    std::map<int, size_t> index_;   // cell -> position in e_
 };
 
 }  // namespace tak::sim
