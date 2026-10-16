@@ -320,7 +320,9 @@ struct LegionNavigator::Impl {
         Field()=default;
         Field(const Field&)=delete;
         Field& operator=(const Field&)=delete;
-        ~Field() {if(totals) {--totals->fields;totals->cells-=potential.size();totals->inflight-=inflightBytes;}}
+        ~Field() {detach();}
+        // Leave the field totals (the field is about to be freed; see Impl::orphan).
+        void detach() {if(totals) {--totals->fields;totals->cells-=potential.size();totals->inflight-=inflightBytes;totals=nullptr;}}
         FieldTotals* totals=nullptr;      // set once potential is sized (startField)
         // The scheduler's job state (Legion 10,000 stage 4; a field is one job however many groups
         // share it): its deficit round robin credit and the last tick it was given work (its start
@@ -3249,7 +3251,8 @@ struct LegionNavigator::Impl {
                 else if(g.field) {
                     if(g.next&&!g.next->done)++stats.refreshDiscards;
                     ++stats.refreshCompleted;
-                    g.field=std::move(shared);g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);noteAwareInstall(g,*g.field);
+                    {auto oldField=std::move(g.field),oldNext=std::move(g.next);g.field=std::move(shared);orphan(oldField);orphan(oldNext);}
+                    g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);noteAwareInstall(g,*g.field);
                 }
                 else g.field=std::move(shared);
                 listGroup(g);
@@ -3286,7 +3289,8 @@ struct LegionNavigator::Impl {
 #endif
             if(!victim) {noVictimTick=w.tickCounter_;noVictimDone=fieldsDone;return Start::NoRoom;}
             if(victim->next&&!victim->next->done)++stats.refreshDiscards;
-            victim->field.reset();victim->next.reset();victim->stale=false;victim->demand=false;victim->awareDemand=false;++stats.fieldEvictions;
+            {auto oldField=std::move(victim->field),oldNext=std::move(victim->next);orphan(oldField);orphan(oldNext);}
+            victim->stale=false;victim->demand=false;victim->awareDemand=false;++stats.fieldEvictions;
             listGroup(*victim);
         }
         g.built=w.tickCounter_;
@@ -3975,11 +3979,20 @@ struct LegionNavigator::Impl {
     // only and walks ids, serials and lists in a fixed order.
     // A job holds its field (keep) for the whole serveFields call, so a field an install or an eviction
     // drops mid-tick stays valid for every pointer the rings hold into it; it is freed when the call ends.
+    // Such a field is retired at once (orphan: f cleared, out of the totals), as if freed.
     struct FieldJob {uint64_t key=0;std::shared_ptr<Field> keep;Field* f=nullptr;std::vector<Group*> subs;NavClass base=NavClass::StaleRefresh,cls=NavClass::StaleRefresh;};
     std::array<NavCursor,size_t(NavClass::Count)> navCursor{};   // per class: the round-robin position (hashed when set)
     // The jobs of the serveFields call in progress (nullptr outside it). A field's references not
     // counting its job's own (eviction takes only a field no other group holds, as before).
     std::map<uint64_t,FieldJob>* liveJobs=nullptr;
+    // A field dropped while the scheduler's job still holds it leaves the totals at once, as it did when
+    // dropping it freed it: the room it held is free to the admissions of the same call.
+    // Its job is retired too (f cleared, the field kept): no ring visit serves it, no window counts it.
+    void orphan(const std::shared_ptr<Field>& f) const {
+        if(!f||ownRefs(f)!=1)return;
+        f->detach();
+        if(liveJobs)if(const auto it=liveJobs->find(f->serial);it!=liveJobs->end())it->second.f=nullptr;
+    }
     long ownRefs(const std::shared_ptr<Field>& f) const {
         long n=f.use_count();
         if(liveJobs)if(const auto it=liveJobs->find(f->serial);it!=liveJobs->end()&&it->second.keep==f)--n;
@@ -4024,7 +4037,7 @@ struct LegionNavigator::Impl {
             }
             if(f.done) {
                 ++stats.fieldsBuilt;noteAwareInstall(g,f);
-                if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;g.demand=false;g.awareDemand=false;restaleSlots(g);++stats.refreshCompleted;}
+                if(g.next) {auto oldField=std::move(g.field);g.field=std::move(g.next);orphan(oldField);++fieldsDone;g.stale=g.field->epoch!=epoch;g.demand=false;g.awareDemand=false;restaleSlots(g);++stats.refreshCompleted;}
                 listGroup(g);
             }
         };
@@ -4171,7 +4184,8 @@ struct LegionNavigator::Impl {
             navDrr(ring,refreshClass(cls)?NavBudget::kRefreshWindow:NavBudget::kWindow,navCursor[ci],budget,
                    refreshClass(cls)?&refresh:nullptr,[&](Ref& ref,uint64_t allow)->NavVisit {
                 FieldJob& j=*ref.job;
-                Field& f=*j.f;   // alive: the job holds it
+                if(!j.f)return {};   // retired: dropped by an eviction or an install this tick (j.keep holds it)
+                Field& f=*j.f;
                 // The group that builds it: the first subscriber holding it as its own first field,
                 // else the first holding it at all (subscriptions can change during the tick).
                 Group* holder=nullptr;

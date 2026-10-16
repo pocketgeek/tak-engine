@@ -11452,9 +11452,9 @@
   },
   {
    "key": "work.sched_group_visits.total",
-   "max": 464,
+   "max": 466,
    "mode": "legion",
-   "reason": "stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of chase-50 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). work.sched_group_visits.total 464 at the stage-4 gate: higher than allowed (per-step vs head base 54 x1.10; cumulative vs reference 54 x1.10), got 464. Before: W5 exit (AR-06 reach rings, AR-07 re-seed in place, MV-05 late soft blocks): the fixture's step-0 base measured the W4 behaviour that W5 replaces -- attackers, guards and chasers strung out far from their target or re-registering every few ticks. At the exit the army reaches its target and stands round it as a ring of Engaged bodies that fire, so bodies that used to wander now stand and turn to face the target (spins, reversals, statue / hold ticks, waiting_held, near-wall samples) and the work of planning rings and re-seeding is counted. Pinned at the exit value; the theme keys (reach.*, damage, g.*.done, registrations) improved (docs/legion-exit-tables.md, W5 exit).",
+   "reason": "stage 4 review fixes (136ab4a1 + the orphan follow-up, protocol 268): a refresh's initialisation is now charged to the refresh allowance (kRefreshQuota) as well as the field quota, as documented; refreshes that no longer fit wait for a later tick, so the scheduler visits a few more groups. Every chase-50 hash at every gate offset is unchanged (no outcome moved); attributed by toggling each review fix separately (only the refresh charge moves this counter). work.sched_group_visits.total 466 at the gate (was 464). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of chase-50 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). work.sched_group_visits.total 464 at the stage-4 gate: higher than allowed (per-step vs head base 54 x1.10; cumulative vs reference 54 x1.10), got 464. Before: W5 exit (AR-06 reach rings, AR-07 re-seed in place, MV-05 late soft blocks): the fixture's step-0 base measured the W4 behaviour that W5 replaces -- attackers, guards and chasers strung out far from their target or re-registering every few ticks. At the exit the army reaches its target and stands round it as a ring of Engaged bodies that fire, so bodies that used to wander now stand and turn to face the target (spins, reversals, statue / hold ticks, waiting_held, near-wall samples) and the work of planning rings and re-seeding is counted. Pinned at the exit value; the theme keys (reach.*, damage, g.*.done, registrations) improved (docs/legion-exit-tables.md, W5 exit).",
    "scenario": "chase-50"
   },
   {
@@ -30563,9 +30563,9 @@
   },
   {
    "key": "work.group_loop_iters.total",
-   "max": 573,
+   "max": 575,
    "mode": "legion",
-   "reason": "stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of chase-50 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). work.group_loop_iters.total 573 at the stage-4 gate (entry 7613): higher than allowed (cumulative vs reference 336 x1.10), got 573",
+   "reason": "stage 4 review fixes (136ab4a1 + the orphan follow-up, protocol 268): a refresh's initialisation is now charged to the refresh allowance (kRefreshQuota) as well as the field quota, as documented; refreshes that no longer fit wait for a later tick, so the scheduler visits a few more groups. Every chase-50 hash at every gate offset is unchanged (no outcome moved); attributed by toggling each review fix separately (only the refresh charge moves this counter). work.group_loop_iters.total 575 at the gate (was 573). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of chase-50 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). work.group_loop_iters.total 573 at the stage-4 gate (entry 7613): higher than allowed (cumulative vs reference 336 x1.10), got 573",
    "scenario": "chase-50"
   },
   {
@@ -338381,6 +338381,12 @@
    "ratchets": [],
    "reason": "stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): Legion hash retakes and licences for the keys the incremental plane builds and the fair field scheduler moved (docs/legion-10000-progress.md 7.4)",
    "when": "2026-10-16T00:00:00Z"
+  },
+  {
+   "cleared_exceptions": [],
+   "ratchets": [],
+   "reason": "stage 4 review fixes: chase-50 work-counter licences (sched_group_visits, group_loop_iters) moved by the refresh-allowance charge; hashes unchanged (docs/legion-10000-progress.md 7.4)",
+   "when": "2026-10-16T12:00:00Z"
   }
  ],
  "references": {
