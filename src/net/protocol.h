@@ -468,7 +468,11 @@ constexpr uint32_t kOrderMaxMembers = 16384;
 constexpr uint32_t kOrderChunkMembers = 2048;
 constexpr size_t kOrderMaxBytes = 96 * 1024;       // one order's bundle record (16384 ids of 5 bytes fit)
 constexpr size_t kTickOrderBytes = kOrderMaxBytes; // order records in one tick bundle: any order fits an empty tick
-constexpr int kOrderWindow = 8;
+// The window is mostly bytes (the server's memory per client); the order count is
+// generous so that many small clicks are never throttled by it: at 8 orders a
+// 16-tick round trip carried only half an order a tick, and the scale suite's
+// many-10000 (400 squads clicked over 600 ticks) waited up to 196 ticks for it.
+constexpr int kOrderWindow = 64;
 constexpr size_t kOrderWindowBytes = 4 * kOrderMaxBytes;
 // May another order of `bytes` record bytes go out with `inFlight` orders of
 // `inFlightBytes` outstanding?

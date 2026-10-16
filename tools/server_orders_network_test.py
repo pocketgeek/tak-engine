@@ -159,32 +159,32 @@ def main():
                 serials = [it[2] for _, it in mine(seen) if it[0] == 'order']
                 assert serials == [3], serials
 
-                # 3. A burst past the per-client window (8 orders): some are cut and logged, the rest
+                # 3. A burst past the per-client window (64 orders): some are cut and logged, the rest
                 # activate in serial order.
-                burst = b''.join(transaction(s, [s], command(CMD['Stop'])) for s in range(10, 40))
+                burst = b''.join(transaction(s, [s], command(CMD['Stop'])) for s in range(10, 210))
                 p.socket.sendall(burst)
-                seen = until(p, lambda s: len([1 for _, it in mine(s) if it[0] == 'order']) >= 8, ticks=60)
+                seen = until(p, lambda s: len([1 for _, it in mine(s) if it[0] == 'order']) >= 64, ticks=60)
                 for _ in range(20):
                     seen.append(next_bundle(p))
                 serials = [it[2] for _, it in mine(seen) if it[0] == 'order']
-                assert serials == sorted(serials) and 8 <= len(serials) < 30, serials
-                assert serials[:8] == list(range(10, 18)), serials
+                assert serials == sorted(serials) and 64 <= len(serials) < 200, (len(serials), serials[:5])
+                assert serials[:64] == list(range(10, 74)), serials[:70]
                 text = (root / 'log').read_text()
                 assert 'order budget/queue exceeded' in text, 'the cut was not logged'
 
                 # 4. The per-second member budget (65,536 a client) delays, never drops: seven orders of 10,000
                 # members sent at once all activate, in serial order, the last once the budget's second turns.
                 big = list(range(0, 20000, 2))
-                p.socket.sendall(b''.join(transaction(s, big, move) for s in range(50, 57)))
-                seen = until(p, lambda s: any(it[0] == 'order' and it[2] == 56 for _, it in mine(s)), ticks=400)
+                p.socket.sendall(b''.join(transaction(s, big, move) for s in range(250, 257)))
+                seen = until(p, lambda s: any(it[0] == 'order' and it[2] == 256 for _, it in mine(s)), ticks=400)
                 got = [(t, it[2]) for t, it in mine(seen) if it[0] == 'order']
-                assert [g for _, g in got] == list(range(50, 57)), got
+                assert [g for _, g in got] == list(range(250, 257)), got
                 # 70,000 members cannot all fit one budget second (65,536): at least the last waits for it to turn.
                 assert got[-1][0] > got[0][0], 'the member budget did not delay the last order: %s' % got
 
                 # 5. A malformed transaction (a duplicate member: a zero delta) fails this connection only.
-                bad = frame('OrderBegin', struct.pack('<I', 100) + move + bytes([0]) + struct.pack('<I', 2))
-                bad += frame('OrderMembers', struct.pack('<II', 100, 2) + varint(6) + varint(0))
+                bad = frame('OrderBegin', struct.pack('<I', 300) + move + bytes([0]) + struct.pack('<I', 2))
+                bad += frame('OrderMembers', struct.pack('<II', 300, 2) + varint(6) + varint(0))
                 p.socket.sendall(bad)
                 closed = False
                 try:
