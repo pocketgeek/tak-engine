@@ -665,8 +665,11 @@
                 auto& needs=shadowTileNeeds_;
                 needs.clear();
                 // Tiles that are redrawn this frame wherever they sit: new, other
-                // coverage, other size or output scale, other zoom. When nearly all
-                // are, moving them costs nothing, and a loose atlas is repacked.
+                // coverage, other size or output scale, other zoom, other sub-pixel
+                // phase of the placement (a whole-pixel translation keeps its phase and
+                // may still be reused; see sameTilePoints). A wrong guess here costs a
+                // redraw, never a stale tile. When all (or nearly all, in a loose
+                // atlas) are redrawn anyway, moving them costs nothing: repack.
                 size_t dirtyAnyway=0;
                 uint64_t tilePx=0;
                 for (size_t wi=0;wi<work.size();++wi) {
@@ -686,7 +689,11 @@
                         dirtyAnyway+=!hasBefore[wi] || b.source!=w.geom || b.owner!=g.owner ||
                             b.coverage!=g.shadowRevision || b.width!=w.width || b.height!=w.height ||
                             !sameBits(b.placement.zoom,g.shadowPlacement.zoom) ||
-                            !sameBits(b.scaleX,scaleX) || !sameBits(b.scaleY,scaleY);
+                            !sameBits(b.scaleX,scaleX) || !sameBits(b.scaleY,scaleY) ||
+                            !sameBits(b.placement.sx-std::floor(b.placement.sx),
+                                      g.shadowPlacement.sx-std::floor(g.shadowPlacement.sx)) ||
+                            !sameBits(b.placement.sy-std::floor(b.placement.sy),
+                                      g.shadowPlacement.sy-std::floor(g.shadowPlacement.sy));
                     }
                     if (a && !atlasTimes.repack &&
                         tak::render::shadowCellKeeps(a->cell.w,a->cell.h,w.width+2,w.height+2,pageH)) {
@@ -708,7 +715,7 @@
                 const bool failedLast=pol.failFrame && pol.failFrame+1==frame;
                 bool compact=atlasTimes.repack || failedLast, freeRepack=false;
                 if (!compact && work.size()>=16 && dirtyAnyway==work.size()) {
-                    // Every tile is redrawn wherever it sits (continuous zoom, a reset):
+                    // Every tile is redrawn wherever it sits (zoom, a sub-pixel pan, a reset):
                     // the former packer's cursor places them in O(1) each, cheaper than
                     // best-fitting every outgrown tile, and the clears become one page
                     // clear. Nothing kept is lost.

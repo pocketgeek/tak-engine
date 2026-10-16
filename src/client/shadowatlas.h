@@ -137,8 +137,12 @@ public:
     }
 
     // Frees every allocation and empties every page (compaction). Pages stay.
+    // O(n): every index is free, and an ascending list is already a min-heap.
     void releaseAll() {
-        for (uint32_t i = 0; i < live_.size(); ++i) if (live_[i]) freeIndex(i);
+        std::fill(live_.begin(), live_.end(), false);
+        free_.resize(live_.size());
+        for (uint32_t i = 0; i < free_.size(); ++i) free_[i] = i;
+        liveCount_ = 0;
         for (auto& page : pages_) if (page.live) {
             page.shelves.clear();
             page.rows.assign(1, {0, pageH_});
