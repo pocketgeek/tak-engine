@@ -5336,14 +5336,14 @@ struct LegionNavigator::Impl {
         for(int radius=int(isqrtFloor(uint64_t(count)))*foot+2*foot+4,attempt=0;attempt<4;++attempt,radius*=2) {
             const int x0=std::max(0,sx-radius),z0=std::max(0,sz-radius);
             const int x1=std::min(W-1,sx+radius),z1=std::min(H-1,sz+radius);
-            std::vector<std::pair<uint32_t,int>> order;
+            auto& order=pbOrder;order.clear();
             stats.slotSearchCells+=uint64_t(x1-x0+1)*uint64_t(z1-z0+1);
             for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x) {
                 const int cell=z*W+x;
                 if(legal(p,x,z)&&f.at(size_t(cell))!=kUnreached&&(!s.stale||slotFree(m,cell,fx,fz)))
                     order.push_back({f.at(size_t(cell)),cell});
             }
-            std::sort(order.begin(),order.end());
+            sortByPotential(order);
             const int bw=x1-x0+1+fx,bh=z1-z0+1+fz;
             std::vector<uint8_t> used(size_t(bw)*bh,0);
             s.cells.clear();
@@ -8462,6 +8462,31 @@ struct LegionNavigator::Impl {
         if(n<=1||m.requested<0)return uint32_t((body+4)*kOrthogonal/16);
         return packedBound(g,g.crowdBounds[m.requested],m.requested,n,fx,fz);
     }
+    // (potential, cell) pairs collected in increasing cell order, sorted as
+    // std::sort sorts the pairs: by potential, ties by cell. The cells already
+    // ascend, so a stable counting sort by potential gives exactly that order in
+    // linear time (Legion 10,000 stage 4: a 10,000-body area sorted ~200k pairs,
+    // 20 ms in one tick); a potential range far wider than the list falls back to
+    // a stable comparison sort on the potential alone (the same order).
+    std::vector<std::pair<uint32_t,int>> pbOrder,pbSorted;std::vector<uint32_t> pbCount;   // scratch
+    void sortByPotential(std::vector<std::pair<uint32_t,int>>& order) {
+#ifndef NDEBUG
+        if(gVerify)for(size_t i=1;i<order.size();++i)if(order[i-1].second>=order[i].second)verifyFail("sortByPotential: cells not ascending");
+#endif
+        if(order.size()<2)return;
+        uint32_t lo=order[0].first,hi=lo;
+        for(const auto& [v,c]:order) {lo=std::min(lo,v);hi=std::max(hi,v);}
+        if(uint64_t(hi-lo)>8*uint64_t(order.size())+1024) {
+            std::stable_sort(order.begin(),order.end(),[](const auto& a,const auto& b) {return a.first<b.first;});
+            return;
+        }
+        pbCount.assign(size_t(hi-lo)+2,0);
+        for(const auto& [v,c]:order)++pbCount[size_t(v-lo)+1];
+        for(size_t i=1;i<pbCount.size();++i)pbCount[i]+=pbCount[i-1];
+        pbSorted.resize(order.size());
+        for(const auto& e:order)pbSorted[pbCount[size_t(e.first-lo)]++]=e;
+        order.swap(pbSorted);
+    }
     // The potential of the last of the ceil(1.25n) footprints nearest goal
     // origin `seed` by field potential (packed as slotsFor packs slots), cached
     // in `cached` per field serial and n.
@@ -8476,12 +8501,12 @@ struct LegionNavigator::Impl {
         for(int radius=int(isqrtFloor(uint64_t(count)))*foot+2*foot+4,attempt=0;attempt<4;++attempt,radius*=2) {
             const int x0=std::max(0,sx-radius),z0=std::max(0,sz-radius);
             const int x1=std::min(W-1,sx+radius),z1=std::min(H-1,sz+radius);
-            std::vector<std::pair<uint32_t,int>> order;
+            auto& order=pbOrder;order.clear();
             stats.slotSearchCells+=uint64_t(x1-x0+1)*uint64_t(z1-z0+1);
             const Plane& p=plane(g.plane);
             for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x)
-                if(legal(p,x,z)&&f.known(size_t(z*W+x))!=kUnreached)order.push_back({f.known(size_t(z*W+x)),z*W+x});
-            std::sort(order.begin(),order.end());
+                if(legal(p,x,z))if(const uint32_t v=f.known(size_t(z*W+x));v!=kUnreached)order.push_back({v,z*W+x});
+            sortByPotential(order);
             const int bw=x1-x0+1+fx,bh=z1-z0+1+fz;
             std::vector<uint8_t> used(size_t(bw)*bh,0);
             int packed=0;
