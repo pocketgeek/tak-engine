@@ -626,13 +626,16 @@ AI-only Legion game is bit-identical too (`--mpai` below).
 (varint deltas, at most 2,048 a frame, strictly increasing) / `OrderCommit` (count + FNV digest) / `OrderAbort`;
 server `server/orders.h` (`OrderInbox`) validates framing, template, serials (per connection and above the slot's
 highest activated serial), counts, digest; malformed -- or an order in a Retail game -- fails the connection,
-over the byte budget or the window drops the transaction (logged); a committed order is ONE FIFO item drained
+over the byte budget or the window drops the transaction (logged, and the sender told: `Msg::InputDropped`, fix
+round below); a committed order is ONE FIFO item drained
 whole by a per-tick order budget (96 KiB of records per room, first pick rotating) once the client's per-second
 command budget has room for its members (it waits for it, never dropped), that tick being the activation tick;
-the sim (`applySelectionOrder`) applies every member in increasing id order with the ordinary per-unit
+the sim (`applySelectionOrder`) applies every member in increasing id order (so Load and GiveUnit, whose outcome
+depends on that order, stay per-unit commands: fix round, R6) with the ordinary per-unit
 ownership/existence checks, inside a `World::beginOrder` scope that stamps the member's own legs with the
 order's serial and, for Move/Fight/Patrol, the arrival area the order joins once per class at its click.
-Client: `GameView::ClickScope` + `packClick`; one outbox FIFO; orders under their own window, serials assigned
+Client: `GameView::ClickScope` + `packClick`; one outbox FIFO; orders under their own window (`OrderWindow`, by
+serial, released by the order's bundle or by the server's drop notice), serials assigned
 when an order leaves (a click held through a rejoin's catch-up still gets a fresh serial).
 
 **Limits (per sender).** One open transaction; 16,384 members an order; 64 orders and 384 KiB of records
@@ -647,6 +650,15 @@ for it: the count is generous now and the bytes bound the memory.) No head-of-li
 window, a big order of one sender never holds another sender's commands, and within a sender nothing overtakes
 what was sent before it (a Stop behind a Move stays behind it, in the same tick when both fit).
 
+**Worst case one sender can force into one tick** (verifier, non-blocking (a)). Before this stage a sender put at
+most 64 unit commands into a tick. Now the bound is the room's order budget (`kTickOrderBytes`, 96 KiB of records a
+tick, about 98,000 members at the densest encoding) and the per-second member budget (65,536 per client and per
+account, 524,288 for the server): one sender can land 65,536 members in one tick (four 16,384-member orders of
+consecutive ids), several senders together up to the 96 KiB. At the measured registration cost (one-10000: about
+39 ms for 10,000 members in `World::order`) that is about 250 ms of `applyCommand` for one sender's 65,536 members,
+and about 380 ms for a tick filled to 96 KiB by several. Stage 4's resumable, budgeted registration (section 8)
+must bound it; nothing in stage 3 does.
+
 **Edge cases and where they are tested.**
 
 | Case | Behaviour | Test |
@@ -654,11 +666,13 @@ what was sent before it (a Stop behind a Move stays behind it, in the same tick 
 | Incomplete transaction (disconnect mid-stream) | discarded with the connection (`Client::clearCommands`); nothing reaches a bundle | `server_orders_test` (clear), rejoin run |
 | Malformed (second Begin, foreign serial, zero delta = duplicate, decreasing across chunks, too many members, bad digest/count, old serial, serial under the floor, forbidden verb, Offsets on a non-Move, unit id in the template, off-range coordinate, truncated/trailing, nested order, unknown shape, id past INT32_MAX) | connection failed, as for invalid PlayerCommands; other accounts unaffected | `server_orders_test`, `server_orders_network` |
 | Abort | discarded; the serial is not reused | `server_orders_test`, `server_orders_network` |
-| Over the byte budget or the window | transaction dropped and logged; the rest activate in serial order | `server_orders_test`, `server_orders_network` (200-order burst) |
+| Over the byte budget or the window | transaction dropped and logged; the rest activate in serial order; the sender is told (`Msg::InputDropped`, serial) and its window releases the order, so a drop never holds the outbox (the windows are tested before the byte budget is charged) | `server_orders_test` (dropsReleaseTheWindow, the uncharged refusals), `server_orders_network` (200-order burst: every cut serial named once) |
+| Ordinary commands dropped (queue or byte budget) | dropped whole and logged; the sender is told the count and its command window releases them (before this fix round the same leak existed for commands: inherited from c2c25707, fixed here with the same notice) | `server_orders_network` (600 commands past the 512 queue) |
 | Over the per-second member budget | the order waits at the head of its client's FIFO (so does what the client sent after it) until the budget's second turns; never dropped, so the client's window never leaks | `server_orders_network` (7 x 10,000 members) |
 | An order in a Retail game | connection failed (a modified client cannot dodge the 64-a-tick drain) | `server_orders_network` |
 | Legs a member's command gives another unit, or a verb without a click point (Assist's approach move) | per-unit identity, no shared area at the template's (0, 0) | `selection_order_test` (membership) |
 | Dead, gone or given-away member | skipped by the sim's per-unit check at activation | `selection_order_test` (membership) |
+| Order-dependent verbs (Load, GiveUnit) | not order verbs: sent per unit in issue order, as before (an order applies members in id order) | `selection_order_test` (issueOrder) |
 | Several orders in one tick | applied in bundle order: a Stop behind a Move wins, a second Move replaces, a queued (Shift) order appends its own leg and area | `selection_order_test` (sameTick) |
 | Two orders to one point within the area window | one arrival area (decision A1), separate serials | `selection_order_test`, `convoy_test` (sharedArea) |
 | Patrol | outbound and return legs (ground and flyer) carry the order's identity | `selection_order_test`, `convoy_test` |
@@ -676,7 +690,9 @@ member budget is now charged at the drain and the order waits instead; (2) expli
 area at the template's (0, 0) -- only Move/Fight/Patrol orders join an area now; (3) the situation recorder skipped
 `Cmd::Order`; (4) the server accepted orders in Retail rooms -- refused now; (5) legs a member's command gave other
 units got the order's identity -- only the member's own now; (6) members apply in id order rather than selection
-order -- kept and documented (the selection order was incidental). Cleanups: the record size is cached, the serial is
+order -- kept and documented (the selection order was incidental). **Both (1) and (6) were reopened by a later
+review and are resolved in the fix round below**: (1) covered only the member budget, and the byte budgets and the
+windows could still drop an order the client never heard of; (6) the order matters for Load and GiveUnit. Cleanups: the record size is cached, the serial is
 set in place at send, `orderSerial` has its line assertion, the budget chain and coordinate check are shared.
 
 ### Checks (exact commands; base = stage 2 head 54be13b8, its binaries in `~/tak-tmp/scratch/legion-10000/stage3/base-bin`)
@@ -744,7 +760,7 @@ reported only and were measured on a shared machine).
 | many-2500 | 0 | 217 | 785 | 647 | 1395 | 48 | 4.295 -> 3.808 | 7.842 -> 7.049 | 8.222 |
 | many-5000 | 0 | 67 | 470 | 275 | 3819 | 72 | 8.072 -> 6.784 | 10.559 -> 8.911 | 18.613 |
 | maze-1000 | 23 -> 0 | 32 -> 10 | 365 -> 335 | 655 -> 627 | 29 -> 42 | 15 -> 19 | 1.299 -> 1.302 | 2.303 -> 2.279 | 53.91 |
-| maze-10000 | 308 -> 0 | 546 -> 15 | 1468 -> 1070 | 1142 -> 8947 | 6139 -> 843 | 127 -> 25 | 15.051 -> 10.516 | 18.136 -> 21.818 | 56.281 |
+| maze-10000 (misread: see the fix round) | 308 -> 0 | 546 -> 15 | 1468 -> 1070 | 1142 -> 8947 | 6139 -> 843 | 127 -> 25 | 15.051 -> 10.516 | 18.136 -> 21.818 | 56.281 |
 | mixed-1000 | 53 -> 0 | 60 -> 11 | 636 -> 667 | 448 -> 515 | 52 -> 32 | 16 -> 20 | 4.676 -> 4.818 | 10.351 -> 11.812 | 21.731 |
 | mixed-10000 | 622 -> 0 | 623 -> 11 | 2430 -> 2254 | 1978 -> 868 | 4769 -> 6227 | 174 -> 154 | 60.661 -> 88.642 | 112.142 -> 177.118 | 145.941 |
 | one-100 | 1 -> 0 | 9 -> 8 | 100 | 100 | 0 | 0 | 0.059 -> 0.054 | 0.12 -> 0.11 | 2.039 |
@@ -774,7 +790,11 @@ reported only and were measured on a shared machine).
 * Outcomes that moved the wrong way: mixed-10000 completed 1,978 -> 868 and stuck 4,769 -> 6,227 (its 13
   convoys of mixed classes now start at once), attack-10000 arrived 895 -> 882, bridges-10000 stuck 9,020 -> 9,053 (no
   body arrives either way: the bridges are the stage 7 chokepoint input), churn-1000 arrived 465 -> 436, maze-10000
-  arrived 1,468 -> 1,070 while completing 1,142 -> 8,947. Same cause as the gate fixtures above; licensed on the same
+  arrived 1,468 -> 1,070 and its room held 218 -> 54 bodies at the end. **Correction (fix round):** maze-10000's
+  "completed 1,142 -> 8,947, stuck 6,139 -> 843" is not an improvement: 7,595 of group A's 8,500 orders were retired
+  far outside the arrival disc (median 469 cells from the click, at the starting rect; `complete_outside_n` 289 ->
+  7,878, frozen max 690), so "stuck" fell because orders were retired where the bodies stood, not because bodies
+  arrived. Same cause as the gate fixtures above; licensed on the same
   basis and listed as stage 7-8 inputs.
 * Wall clock (report only): mixed-10000's tick mean rose 60.7 -> 88.6 ms and its p99 112 -> 177 ms; its job ran
   next to the 10k real-path run, so the size of the rise is not established by this run. The other 10,000 rows hold
@@ -783,9 +803,158 @@ reported only and were measured on a shared machine).
   in stage 4.
 
 
+### 7.3 fix round: verifier rejection and review R1 / R6 (2026-10-16)
+
+The verifier rejected the first stage-3 record (head 2711702e) for a records gap: one red-line regression was misread
+and three frozen targets that stage 2 met were missed without being named. A separate code review left two findings
+open (R1, R6). Everything below is on the branch after 2711702e.
+
+**Findings and what was done.**
+
+1. **maze-10000: orders retired far outside the arrival disc (the verifier's blocking item).** At 2711702e group A's
+   `complete_outside_radius` was 0 -> 7,595, `complete_dist_median` 117 -> 469 cells, `work.outside_area_completions`
+   445 -> 8,183, `region.room.inside` 218 -> 54, `scale.complete_outside_n` 289 -> 7,878 (frozen max 690). Mechanism
+   (confirmed): the queue-settle rule (C29: a body one row behind a settled arrival of its own command may settle, so
+   a queue settles back row by row) is bounded only by the reach of everyone settled at the destination. Explicit
+   orders made all 8,500 bodies one area, so the queue ran back out through the compound doors to the starting rect;
+   at stage 2 the same bodies were 20 convoys. That is the forbidden pattern (distant stationary units declared
+   arrived), so it is **fixed, not licensed** (f611b163, 1a74fbb0): an explicit area's settle bound never grows past
+   the packed bound of the point's whole crowd (`Point::crowdCells` / `crowdPeak`: every footprint plane's bodies,
+   packed in this body's footprint along the field, so a dead end's strip is its length), widened to AR-08's arrival
+   disc (9(foot+1)/(8 foot): the disc's 20(foot+1) px against the packed bound's 16 foot px per sqrt(1.25 n/pi)), plus
+   the usual slack. Beyond it a queued body keeps its order and waits. Per-unit areas (AI, scripts, Retail-mode tools)
+   keep the old rule, so `--mpai` and Retail are unchanged. `crowdPeak` is hashed for explicit-area points. Tried and
+   rejected: a 3/2 factor (same scale-suite result, tighter than the disc), and a straight-line test against the
+   disc itself (a dead end's queue is a strip longer than any disc: 1,174 gate keys failed against 380).
+2. **Three targets met at stage 2 and missed at 2711702e, now named as new regressions** (`legion_scale.py check`
+   on stage 2's and 2711702e's results, MISS lists diffed):
+
+   | target (Legion) | frozen | stage 2 | 2711702e | fix round | status |
+   |---|---|---|---|---|---|
+   | maze-10000 `scale.complete_outside_n` | max 690 | 289 | 7,878 | 295 | fixed (item 1) |
+   | churn-10000 `scale.livelock_end` | max 0 | 0 | 4 | 106 | **open**, new regression (section 8) |
+   | one-100 `scale.arrive.t99` | max 2588 | 2465 | 2608 | 2608 | **open**, new regression: the 100-body click now starts at once instead of 64 + 36 (section 8) |
+
+3. **R1 (serious): a dropped order could wedge the client's outbox for good** (6fbce6bd). The member budget waited at
+   the drain already, but the per-second byte budgets (shared with the account's other connections -- or the
+   address's, without accounts -- and the whole server), the order window and the record-byte window could still drop
+   an order the client never heard of: it never came back in a bundle, so it held its place in the client's window,
+   and after 64 of them the order at the outbox head never went and every command behind it (Stop, Build, Train)
+   waited for the rest of the game. Now the server tells the sender (`Msg::InputDropped`: a dropped transaction's
+   serial at its Commit, or the count of a dropped `PlayerCommands` message -- the same leak existed for ordinary
+   commands since before the program, fixed by the same notice), and the client's `OrderWindow` (`net/orderpack.h`,
+   per serial) and command window release it, so both always recover. The inbox now tests the order window before
+   charging a Begin, and the record-byte window per chunk before charging it, so a frame refused for a window spends
+   none of the byte budget. Tests: `server_orders_network` gains "every cut serial named once" and the 600-command
+   drop -- it **fails on the 2711702e server** (`AssertionError: ('drop notices', [], 0, 64)`) and passes now;
+   `server_orders_test` `dropsReleaseTheWindow` drives the real `OrderInbox` and `OrderWindow` with a spent budget
+   (192 orders, all dropped): a client that hears of each drop keeps sending and recovers; one that does not wedges
+   after `kOrderWindow` drops; plus the uncharged-refusal checks. `issue_selection_test`'s transcribed client uses
+   `OrderWindow`. The wire change stays inside protocol 267 (unreleased; `InputDropped` is appended to `Msg`).
+4. **R6: members apply in id order, not selection order** (6fbce6bd). Decision: the order is not carried (it would
+   cost a second list as large as the members); the verbs whose outcome depends on it are taken out of `orderVerb`
+   and keep the per-unit path in issue order -- **Load** (the transport's pickup list is built in application order:
+   who boards a short-capacity transport first) and **GiveUnit** (which gifts a recipient near its unit cap takes).
+   Every remaining order verb sets only its member's own state; the id order decides only the order of the members'
+   path requests (registrations), part of the stage's licensed behaviour change. `selection_order_test` `issueOrder`:
+   Load/GiveUnit pass through `packClick` per unit in issue order; a shuffled Squad click (evict + assign, and the
+   append form) plus Stop/Stance/SetActive/Cloak/Destroy over a shuffled selection give, packed, exactly the state
+   hash of the per-unit commands in issue order, in Retail and in Legion, and after 90 ticks. No scenario issues Load
+   or GiveUnit, so no gate key moved for R6.
+5. **Non-blocking items.** (a) the per-tick worst case one sender can force is now written under "Limits" above
+   (about 250 ms of registration for 65,536 members in one tick; stage 4 must bound it). (b) the awareness crossing
+   tie-break across key kinds is documented at legion.cpp's crossing rule (an explicit key always has the top bit
+   set, so for one player an explicit order gives way to an AI or script per-unit command whichever came first;
+   deterministic) -- kept, not reordered, since no fixture exercises the mixed case and reordering would move
+   hashes for nothing measured. (c) `tools/check-determinism.sh` covers only the detmath shim (g++/clang++ x
+   O0/O2/O3); its pass says nothing about `Cmd::Order` across compilers. The explicit-order path is covered only by
+   same-binary runs at different worker counts (`serial_eq_workers` on every gate line; one-10000 equal at 1 and 3
+   workers). **Missing:** a gcc-vs-clang run of an explicit-order fixture (open, section 8). (d) the verifier's dry
+   run truncated build-o2's ninja state; this round rebuilt every target there from scratch (369 steps).
+6. **Review cleanups** (cached `orderRecordBytes`, no deep copy for provisional serials, `orderSerial`'s line
+   assertion) were already in 2711702e (`SelectionOrder::bytes`, the serial set in place at send, `TAK_ORDER_LINE(
+   orderSerial, 4)`); nothing further.
+
+**The trade the settle bound makes, read honestly.** Bodies that 2711702e retired outside the disc now keep their
+order and stand waiting, so `stuck_end` (and, where the waiting bodies keep pressing, `livelock_end`) rise exactly
+where `complete_outside_n` falls; arrivals inside the disc rise a little everywhere. Summed, the bodies that are not
+honestly arrived (stuck + completed outside) fall in every row against 2711702e (scale suite, Legion,
+stage 2 -> 2711702e -> fix round):
+
+| scenario | arrived | completed | outside disc | stuck | livelock | stuck + outside |
+|---|---|---|---|---|---|---|
+| one-1000 | 809 -> 847 -> 875 | 999 -> 999 -> 831 | 191 -> 156 -> 4 | 1 -> 0 -> 90 | 1 -> 0 -> 15 | 192 -> 156 -> 94 |
+| one-2500 | 808 -> 1970 -> 2008 | 2317 -> 2495 -> 1851 | 1519 -> 526 -> 4 | 60 -> 2 -> 407 | 17 -> 2 -> 19 | 1579 -> 528 -> 411 |
+| one-5000 | 1532 -> 3684 -> 3735 | 4316 -> 4988 -> 3418 | 2790 -> 1306 -> 6 | 449 -> 0 -> 1097 | 34 -> 0 -> 29 | 3239 -> 1306 -> 1103 |
+| one-10000 | 1866 -> 6973 -> 7050 | 6257 -> 9964 -> 6347 | 4394 -> 2999 -> 5 | 1741 -> 13 -> 2665 | 95 -> 9 -> 38 | 6135 -> 3012 -> 2670 |
+| swap-1000 | 824 -> 781 -> 798 | 990 -> 965 -> 785 | 171 -> 192 -> 9 | 2 -> 5 -> 71 | 2 -> 5 -> 13 | 173 -> 197 -> 80 |
+| swap-2500 | 1721 -> 1859 -> 1914 | 2027 -> 1929 -> 1715 | 396 -> 177 -> 0 | 5 -> 11 -> 57 | 4 -> 7 -> 9 | 401 -> 188 -> 57 |
+| swap-5000 | 1308 -> 2319 -> 2329 | 1474 -> 3181 -> 2162 | 195 -> 874 -> 3 | 2521 -> 907 -> 1610 | 46 -> 41 -> 61 | 2716 -> 1781 -> 1613 |
+| swap-10000 | 915 -> 1405 -> 1420 | 378 -> 1294 -> 1186 | 0 -> 29 -> 0 | 8037 -> 5841 -> 5782 | 86 -> 103 -> 105 | 8037 -> 5870 -> 5782 |
+| churn-1000 | 465 -> 436 -> 488 | 1000 -> 1000 -> 574 | 539 -> 567 -> 111 | 0 -> 0 -> 219 | 0 -> 0 -> 14 | 539 -> 567 -> 330 |
+| churn-10000 | 2174 -> 3587 -> 3702 | 9999 -> 9968 -> 4500 | 7828 -> 6390 -> 1045 | 0 -> 5 -> 4402 | 0 -> 4 -> 106 | 7828 -> 6395 -> 5447 |
+| maze-1000 | 365 -> 335 -> 392 | 655 -> 627 -> 433 | 291 -> 296 -> 57 | 29 -> 42 -> 123 | 15 -> 19 -> 32 | 320 -> 338 -> 180 |
+| maze-10000 | 1468 -> 1070 -> 1109 | 1142 -> 8947 -> 1189 | 289 -> 7878 -> 295 | 6139 -> 843 -> 7695 | 127 -> 25 -> 82 | 6428 -> 8721 -> 7990 |
+| attack-10000 | 895 -> 882 -> 884 | 971 -> 954 -> 869 | 90 -> 87 -> 18 | 5 -> 8 -> 40 | 3 -> 7 -> 9 | 95 -> 95 -> 58 |
+
+maze-10000 stays worse than stage 2 in arrivals (1,468 -> 1,109) and room occupancy (218 -> 54): that is the
+simultaneous start into the compound doors, the stage 7-8 chokepoint input recorded above, no longer hidden by
+retired orders.
+
+**Frozen targets, fix round** (`legion_scale.py check`): **124 met, 82 missed, 6 report-only missed** (2711702e:
+118 / 86 / 8; stage 2: 99 / 110 / 3). Against 2711702e, 12 met now: `complete_outside_n` on churn-1000/-10000,
+maze-1000/-10000, one-1000/-2500/-5000/-10000, swap-1000/-2500/-5000, and many-5000 `wait.max`. **New misses
+against 2711702e (new regressions of this round, recorded, not fixed):** `stuck_end` on churn-10000 (max 1,000:
+4,402), churn-1000 (max 100: 219), maze-1000 (max 50: 123), one-1000 (max 0: 90), one-5000 (max 0: 1,097);
+`livelock_end` on churn-1000 (14), one-1000 (15), one-5000 (29). Every one is a body that 2711702e retired outside
+its disc and that now waits; the `livelock_end` ones are waiting bodies that keep pressing the crowd (walking in
+place) rather than standing. Against stage 2 the new misses are churn-10000 `livelock_end` and `stuck_end`,
+churn-1000 `livelock_end` and `stuck_end`, maze-1000 `stuck_end` and one-100 `arrive.t99`; one-1000's and
+one-5000's `stuck_end`/`livelock_end` were missed at stage 2 too (one-1000 1 / 1, one-5000 449 / 34), met at
+2711702e only because those bodies were retired outside the disc. Retail: every Retail row's state hash equal to stage 2's.
+
+**Gate licences (fix round, `tools/scenarios/baseline.json`).** Run on the final scenario binary (byte-identical to
+the one swept): 380 failures before the edits -- 270 `hash@` (41 fixtures), 105 bands, 5 offset spreads. By
+fixture: 18 hash-only (the hash folds `crowdPeak`; no behaviour or work key moved: chase-*, deadend-w2-n120-*,
+deadend-w2-n40-closed-*, corner-8x30, deadend-multi-4x120, fight-retarget, goalblock-200/-fight-200, mazeapproach,
+mixed-spacing-04x/-05x, ringcross), 3 work-only (motion-cross/-open/-wall: the crowd bound of a crowd of several
+footprints is its own packed-bound search, `slot_search_cells`; `work.legion_total` moves by at most 0.3%), 20 behaviour
+(corner-4x50, deadend-w2/w4/w6-n40-room-*, doorplug-112, gen1-route-45941/-54772/-65845, goalblock-near-200,
+pocket-304/-615-open/-wall, strait, strait-3x80, tail-corner380, tail-open570, tail-wave, wall-4x50). The
+behaviour fixtures move the same way as the scale suite: completions outside the disc fall (tail-wave 147 -> 131,
+pocket-304-wall 60 -> 20, wall-4x50 C 13 -> 9), arrivals rise a little (tail-open570 525 -> 534, wall-4x50 C 37 ->
+41, D 36 -> 39), and the waiting rises (`parked_held` tail-wave 9,631 -> 22,534, strait 6,603 -> 53,117;
+`still900_ever`, reversals and the held-recheck/detour work of the waiting bodies). strait's B loses 6 of 48
+completions that were inside the observer's disc (its potential runs along the walls, so the packed bound is
+tighter than the disc there): the one place the bound is stricter than the acceptance disc. Each key carries its
+reason (scratch `fix3/license.py`; cluster S3F-267 for the five spreads); a stage-3 licence on the same key was
+updated, not stacked. After the edits: `legion_check check --cumulative` **PASS** (31,768 keys, 0 failed, 2,184
+ratchets, 3,082 licensed, 218 floor exceptions), `validate` 0 problems.
+
+**Fix-round checks** (scratch `~/tak-tmp/scratch/legion-10000/fix3/`; final binaries in `fix3/final`; `build-o2`
+rebuilt for every target after the last src change):
+
+| Check | Command | Result |
+|---|---|---|
+| Unit and transaction tests | `selection_order_test`, `server_orders_test`, `convoy_test`, `replay_test`, `server_commands_test`, `issue_selection_test DATA` | all pass |
+| Drop notices, real server | `python3 tools/server_orders_network_test.py --server build-o2/takserver --data DATA`; the same test against the 2711702e server (`~/tak-tmp/wt/legion-10000-verify3/build-o2/takserver`) | PASS; the 2711702e server FAILS at the drop notices (none sent) |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j12 --timeout 900` (scratch XDG, no `TAK_SETTINGS_FILE`) | **380/380** passed |
+| legion_cost, battle windows | `ctest --test-dir build-o2 -R '^legion_cost$|^legion_scenario_battle-'` | pass |
+| `--mpai` Inner Circle seed 1 | `CORES=20-23 mpai.sh fix3/final OUT 60` and `300` | 60 s Retail **2c39430636a3dbda**, Legion **532539f51d70840b** (both unchanged); 300 s Retail **7535cb08ee787b75**, Legion **c707e1a8063bc0c7** (both unchanged) |
+| Legion verifier | `TAK_LEGION_VERIFY=1 legion_scenario F --mode legion --workers --offsets 0 [--data DATA]` for wall-4x50, motion-cross, deadend-w4-n120-room-plain, corner-1x448 (behaviour-identical build `bin2`) | no failure |
+| Legion scenario gate | `sweep_legion.py fix3/bin3/legion_scenario fix3/gate3 4-15 stage3/gate2` (Legion jobs; Retail lines reused: the change cannot reach Retail, and the verifier re-ran all 135 Retail fixtures on 2711702e), `fix3/license.py ... --apply`, `legion_check.py check --cumulative` | PASS as above |
+| Scale suite | `legion_scale.py run --bin fix3/final/legion_scenario --out fix3/scale-final --cores 4-23 --per-job 4`; `check --targets tools/scenarios/scale/targets.json` | 37/37 exit 0; 124 / 82 / 6; Retail hashes equal; one-10000 Legion `deliver.max` 0, `start.last` 15, apply max 36.9 ms (the activation tick, 2 ticks over budget in the run) |
+| Rejoin | `CORES=20-23 stage3/rejoin.sh fix3/final fix3/rejoin` | host and rejoined client end on the same hash (**5b62dfb66c61a1fc**), server refuses nothing, the rejoined client's orders keep landing whole |
+| Replay | `TAK_REPLAY_VERIFY=1 takclient replay <the rejoin host's recording> --data DATA` | 4,518 ticks, 150 checkpoints, no divergence |
+| Cross-build determinism | `sh tools/check-determinism.sh` | OK, golden **dcef618cd2e4d558** (g++/clang++ x O0/O2/O3; aarch64 skipped, no toolchain; the detmath shim only, see (c) above) |
+
+**Commits (fix round).** f611b163 (explicit-area settle bound), 6fbce6bd (drop notices + `OrderWindow`; Load and
+GiveUnit per-unit), 1a74fbb0 (a one-footprint crowd reuses `areaBound`), 4e97d133 (scenario baseline) and the
+commit carrying this record.
+
 ## 8. Next step
 
-Resume from branch `task-legion-10000` (pushed; stages 1-3 done). Build `build-o2` in the worktree, read sections 3
+Resume from branch `task-legion-10000` (pushed; stages 1-3 done, stage 3 including its fix round). Build `build-o2` in the worktree, read sections 3
 (3.1 as amended), 7.3 and the stage-3 section of docs/legion-pathfinding.md. Stage 4 (brief phase 3, behaviour:
 the schedule): deterministic fair scheduling and complete budgets per section 3.2. Stage 3 leaves it these
 concrete starting points, measured in 7.3:
@@ -806,8 +975,33 @@ concrete starting points, measured in 7.3:
   otherwise light. Registration is the part to budget (resumable, members registered over a few ticks in id order,
   their movement waiting only for their own registration).
 * `startField`'s head-of-line `break` and the 384k relaxation quota are unchanged.
+* **Bound the per-tick activation worst case** (7.3 "Limits"): one sender can land 65,536 members in one tick
+  (about 250 ms of registration at the measured 39 ms per 10,000), several senders 96 KiB of records (about 380 ms).
+  Stage 4's resumable registration must make this a bounded number of `NavWork` units per tick.
 * The congestion cost of simultaneous starts (section 7.3: deadend-w4/w6-n120, corner-1x448, gen1-route-*,
   pocket-615-*) is a stage 7-8 input; stage 4 must not "fix" it by spreading starts back out.
+
+**Must-fix inputs for stages 7-8 from the stage-3 fix round (frozen targets that now miss; 7.3 fix round).** The
+explicit-area settle bound stops orders retiring far outside their disc; the bodies past it now wait, visibly. The
+stages that add chokepoint admission and coherent subgroups must get them INTO the area, and make the ones that
+must wait stand (held) instead of pressing the crowd, without loosening the bound:
+
+* `scale.stuck_end` (frozen max): one-1000 (0: 90), one-2500 (0: 407), one-5000 (0: 1,097), one-10000 (0: 2,665),
+  churn-1000 (100: 219), churn-10000 (1,000: 4,402), maze-1000 (50: 123), maze-10000 (500: 7,695),
+  swap-1000/-2500/-5000/-10000 (0: 71 / 57 / 1,610 / 5,782).
+* `scale.livelock_end` (max 0): one-1000 15, one-5000 29, one-10000 38, churn-1000 14, churn-10000 106 (0 at stage 2:
+  a new regression of stage 3), maze-1000 32, maze-10000 82 -- waiting bodies that walk in place.
+* `scale.arrive.n` (min): maze-10000 9,215: 1,109 (stage 2 1,468; its room 218 -> 54 bodies: the whole column now
+  starts into the compound doors at once).
+* one-100 `scale.arrive.t99` (max 2,588: 2,608; stage 2 2,465): the 100-body click starts at once instead of 64 +
+  36 (a new regression of stage 3).
+* strait's group B loses 6 of 48 completions inside the observer's disc because the packed bound follows the walls
+  more tightly than the disc there: if stage 8's admission keeps that bound, widen it for such strips, never past the
+  disc.
+
+**Coverage missing (verifier (c)).** `tools/check-determinism.sh` covers only the detmath shim. Add a gcc-vs-clang
+run of explicit-order fixtures (a clang build of `legion_scenario`, then e.g. one-1000, wall-4x50 and motion-cross
+in Legion against the gcc build's `hash@`), before the parallel planning of stage 9 at the latest.
 
 * Re-measure the scale suite's wall columns on a quiet machine: mixed-10000 (tick mean 60.7 -> 88.6 ms), swap-10000
   and attack-10000 (p99 about 28-29 ms, both now planning their whole crowd in the first ticks) moved in the stage-3

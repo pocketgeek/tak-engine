@@ -2112,8 +2112,12 @@ docs/legion-10000-progress.md section 7.3.
   (count + FNV digest) / `OrderAbort`. The server validates the framing, the template, serials (increasing per
   connection and above the slot's highest activated serial, which a reconnect keeps), counts and the digest;
   malformed fails the connection, as does an order in a Retail game (its clients keep per-unit commands); over
-  the byte budget or the window the transaction is dropped with a log line (an honest client never gets
-  there). A committed order is ONE item of its client's command FIFO; `closeTick` takes it whole while the
+  the byte budget or the window the transaction is dropped with a log line and the sender is told
+  (`Msg::InputDropped`, which also counts dropped `PlayerCommands`): the byte budgets are shared with the
+  account's other connections and the whole server, so an honest client can be dropped, and a dropped order
+  never comes back in a bundle -- without the notice it held its place in the client's window (`OrderWindow`,
+  by serial) for good, and enough of them closed the outbox, Stop included (review R1). The windows are
+  tested before the budget is charged. A committed order is ONE item of its client's command FIFO; `closeTick` takes it whole while the
   tick's order budget (96 KiB of records, shared by the room, first pick rotating) holds it and the client's
   per-second command budget has room for its members (otherwise it WAITS, never dropped, so the client's
   window cannot leak), and that tick is its activation tick. An ordinary command behind it keeps its place and
@@ -2121,8 +2125,11 @@ docs/legion-10000-progress.md section 7.3.
   bundle, so no partial order is ever visible; a disconnect drops the open transaction and the queue with the
   connection.
 * **Sim** (`sim/matchsetup.cpp` `applySelectionOrder`). At activation every member gets the template command in
-  increasing id order (the client's selection order was incidental -- box selection lists bodies in render
-  order -- and id order is the canonical one; it decides, say, who boards a full transport first); ownership
+  increasing id order, not the player's selection order (the order is not carried: it would cost a second list
+  as large as the members). The verbs whose outcome depends on that order -- Load (the transport's pickup list
+  is built in application order) and GiveUnit (a recipient near its unit cap) -- are therefore not order verbs
+  and keep the per-unit path in issue order (review R6); every order verb sets only its member's own state, so
+  only the order of the members' path requests (registrations) follows id order; ownership
   and existence are checked per member by the ordinary path (a dead, gone or given-away member is skipped).
   Inside `World::beginOrder` / `endOrder` every leg the member being applied gets for itself carries the
   order's identity: `Order::orderSerial` (hashed when set) and, for an order with a click point (Move, Fight,
@@ -2142,13 +2149,25 @@ docs/legion-10000-progress.md section 7.3.
   player, within `kConvoyTicks`, within `kConvoyCells`) is kept only between per-unit commands; two explicit
   areas are one selection exactly when they are the same area. The first-part provisional formation keeps its
   under-64 rule (taking it at once for any order size was measured and rejected, see `formationSlot`).
+* **Settle bound of an explicit area** (`settleWindow`, `crowdBound`). One order is a whole selection, so the
+  queue-settle rule (a body one row behind a settled arrival of its own command may settle, C29) let a
+  10,000-body order's queue run back to where its bodies started: at the first stage-3 head maze-10000 retired
+  7,595 of 8,500 orders far outside the arrival disc, at their starting rect. An explicit area's settle bound
+  now never grows past the packed bound of the point's whole crowd (`Point::crowdCells`/`crowdPeak`: every
+  footprint plane's bodies, packed in this body's footprint along the field, so a dead end's strip is its
+  length) widened to AR-08's arrival disc (`kExplicitSettleNum`(foot+1) / (`kExplicitSettleDen` foot), the
+  ratio of the disc's 20(foot+1) px to the packed bound's 16 foot px per sqrt(1.25 n/pi)), plus the slack;
+  beyond it a queued body keeps its order and waits, an unarrived body. A crowd of one footprint reuses the
+  destination area's own bound (`areaBound`'s cache). Per-unit areas keep the old rule. (A straight-line test
+  against the disc itself was tried too and rejected: a dead end's queue is a strip longer than any disc, and
+  it stopped those queues' bodies -- 1,174 gate keys failed against 380.)
 * **Kept as inference** (`ConvoyTable`, unchanged for them): the AI's commands (server-run, all landing in one
   tick, so the table already gives one area per AI click at one point) and mission scripts' orders.
 
 Tests: `selection_order_test` (codec, packing, Retail equivalence, Legion identity, membership, same-tick
 replacement / Stop / queue / patrol, delivery), `server_orders_test` (the transaction state machine),
-`server_orders_network` (a real server: whole activation, FIFO without starvation, abort, window, member-budget
-delay, malformed, Retail refusal),
+`server_orders_network` (a real server: whole activation, FIFO without starvation, abort, window, drop notices,
+member-budget delay, malformed, Retail refusal),
 `convoy_test` (each click shape both as an order and per unit), `issue_selection_test` (the mirror against the
 transcribed client), `replay_test` (266 refused).
 
