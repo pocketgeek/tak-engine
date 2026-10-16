@@ -2322,8 +2322,11 @@ docs/legion-10000-progress.md section 7.5.
   potential as a record and restarted the back-off) and the approach holder's gain (across routes, its window
   restarted wherever the route gave no value). A metric transition is now never a record (a record needs a gain
   within the current metric, `nearestHere`, as well as a new low of `nearest`); the gain is per route serial with a
-  clock that stops while the route gives no value; and a complete route built on older geometry no longer traps a
-  body it does not reach. Re-basing `nearest` itself per metric was built first and rejected: it counted every gain
+  clock that stops while the route gives no value; and a complete route that a static change has touched since
+  its build no longer traps a body it does not reach (`RouteGrid::touched`, set by `staticChanged` for exactly the
+  groups it marks stale, so a refresh decides; an epoch comparison was used first and left a body Waiting for ever
+  when an unrelated change on another island or plane bumped the shared epoch, since nothing refreshes an untouched
+  route). Re-basing `nearest` itself per metric was built first and rejected: it counted every gain
   after a refresh as a record, which the rules were not tuned on (battle-assault +9.7% detours; many-1000 -4.4%
   arrivals and +48% stuck over three offsets). The stall clock, the headway clock (already per metric), the hold
   clock, the crowd window and the settle bound are unchanged; the settle bound compares potentials across a refresh

@@ -256,7 +256,8 @@ public:
   build state, serial, geometry epoch and work count) and `RouteView`. A `Field` is a `RouteGrid` plus the builder's
   state; only the builder reads the cells. View queries: `estimate` (direction guidance: exact where settled, a real
   way's length where reached; replaces the sketch's tentative-free `descend` input), `known`, `settled`,
-  `covered(cell, margin)`, `reach(cell, epochNow)`, `progress(cell)`, `metric()` (the route serial),
+  `covered(cell, margin)`, `reach(cell)` (Unreachable only on a complete, unbounded route that no static change has
+  touched since its build: `RouteGrid::touched`, 7.5 fix round), `progress(cell)`, `metric()` (the route serial),
   `version()` (the work count: any estimate may change when it does), `geometryEpoch()`, `complete()`, `paused()`,
   `usable()`, `bounded()`, `softened()`. `descend` stays a navigator function taking a view (it needs the plane's
   step rule and lane grid); its `check` flag reports a step that a later slice could change.
@@ -1502,9 +1503,9 @@ audit the progress measures for comparisons across metrics.
 | 8c6efbff | `sim/legion_route.h` (`RouteGrid`, `RouteView`, `Reach`, `Progress`); `Field : RouteGrid`; every consumer reads through a view; demand gauges in NavAccounting (`route.demand_peak`, `route.demand_dropped`); `legion_route_test` | exact |
 | 5f60ce54 | `RouteDemand`: one entry per cell, widest margin, arrival order, indexed, no cap | exact wherever the old 32-cell list never filled (every gate and scale workload: `route.demand_dropped` 0, peak <= 1) |
 | 662574f1 | consumers state their region (`need`, `needIds`), certainty checks (`certainValue`, `certainReach`, `descend` check), `runOn`, `laneTrigger`, ring spots in a reach group's first pause, pending entrance, incremental cover scan; `setPauseAllForTest` / `--pause-all`; route need / run-on accounting; protocol 269 | behaviour (the 4 battle gate fixtures) |
-| 35cac631 | progress measures within one metric: detour record re-baselined per metric, approach gain per route with a stopped clock on missing data, trapped only on proven unreachability (fresh geometry) | behaviour (17 gate fixtures; the detour part superseded by 9bd3f5c3) |
+| 35cac631 | progress measures within one metric: detour record re-baselined per metric, approach gain per route with a stopped clock on missing data, trapped only on proven unreachability (fresh geometry; the epoch test replaced by 1905d086, 7.5 fix round) | behaviour (17 gate fixtures; the detour part superseded by 9bd3f5c3) |
 | 1de75fda | a pending entrance is retried at most once a tick (O(members^2) a tick otherwise) | behaviour only with pending entrances (none in the gate outside `--pause-all`) |
-| 9bd3f5c3 | a metric transition is never a detour record, instead of re-basing the record per metric | behaviour (the final gate: 11 fixtures moved in all, below) |
+| 9bd3f5c3 | a metric transition is never a detour record, instead of re-basing the record per metric | behaviour (the final gate: 10 fixtures moved in all, below) |
 | cc684793 | `legion_route_paused` ctest (`tools/legion_route_paused_test.py`) | tests |
 | 949ec7d1 | scenario licences and hash retakes, the Legion navigation golden (gcc = clang) | baselines |
 
@@ -1580,7 +1581,7 @@ eviction victim like a finished field). What the consumers need to run on partia
 | `headBest` / `headTick` (headway clock, flyer rules) | potential on the group's field | already per serial | none |
 | `nearest` (detour record: back-off restart, yield-first) | the least of both measures, never re-based | a lost field (eviction, a seed, a bounded window) read squared cells far below potential x64 as a record and restarted the back-off; a cheaper refresh did too | a metric transition is never a record: a new low also needs a gain within the current metric (`nearestHere`) |
 | `gainBest` / `gainTick` (approach holder, AR-11) | potential, across fields | a new field's other charges counted as gain or hid one; missing data restarted the window, so a group whose field kept going missing never settled | per route serial; the clock stops while the route gives no value (missing data neither retires the order nor restarts a genuine stall) |
-| trapped (`trapped()` on an unreached cell) | a complete route's kNone | read as proof even when built on older geometry | only on `Reach::Unreachable` (fresh geometry); otherwise the body waits for the refresh |
+| trapped (`trapped()` on an unreached cell) | a complete route's kNone | read as proof even when built on older geometry | only on `Reach::Unreachable` (a route no static change has touched since its build, 1905d086); otherwise the body waits for the refresh its group is then due |
 | hold clock (`heldSince`, `holdUpdates`) | steps | metric-free | none |
 | crowd window (`windowDist`) | pixels to the point | metric-free | none |
 | `settleP` (settle bound) | potential, across refreshes | a tolerance that grows per window; re-basing it per route would restart its growth on every refresh under churn | none, on purpose |
@@ -1615,10 +1616,12 @@ In the gate battle-assault's detours are back at the stage-4 head's level (below
 
 * Retail: all 135 fixtures identical (hashes and keys; final both-mode sweep `stage5/gate-f5`, Retail lines reused
   in `gate-g7`: no Retail code path changed after it).
-* Legion: 124 of 135 identical. 662574f1 moved the four battle fixtures (battle-assault, battle-field-2x60, -2x250,
+* Legion: 125 of 135 identical (corrected in the fix round: the first version of this record said 124 and named
+  crosslong, which is identical at every offset in `gate-g7`). 662574f1 moved the four battle fixtures (battle-assault, battle-field-2x60, -2x250,
   -2x500: their solo groups' paused builds now serve every member's claim, awareness and MV-05); the progress
   commits moved battle-assault again, densehead, lateblock-late-16, and attackring-river-64, attackring-wall-64,
-  mixed2, unreach-200 hash-only or only at non-core offsets (crosslong at a non-core offset).
+  mixed2, unreach-200 hash-only or only at non-core offsets. (crosslong moved only in the superseded 35cac631 gate,
+  `gate-f5`.)
 * Outcome keys moved more than 10% (regated medians, `stage3/outcome_ab.py --all`): 13 better, 8 worse, all 8 inside
   the stage-4 head's own core-offset range (`stage5/judge5.py`): battle-assault deaths and left-behind of single
   squads (A1 16 -> 21, A4 20 -> 24, B5 27 -> 32, A6 7 -> 9, B9 31 -> 39), its walk_net 0 -> 30 (range 0..75),
@@ -1708,10 +1711,106 @@ the rest); Windows/macOS.
 * `needIds` membership is not hashed (like `waitedIds`; the demand entries and `waited` stamps are): it follows from
   hashed state and the same tick sequence on a peer replaying from tick 0.
 
+### 7.5 fix round: verifier rejection (2026-10-16)
+
+The verifier rejected stage 5 for one confirmed liveness regression and noted two minor items. All three are
+addressed; scratch `~/tak-tmp/scratch/legion-10000/stage5/` (`fixA/` = binaries of 1905d086, `fixB/` = 701094eb),
+the verifier's repro in `~/tak-tmp/scratch/verify-s5/`.
+
+| Commit | Content | Kind |
+|---|---|---|
+| 1905d086 | `RouteGrid::touched`; `RouteView::reach(cell)` proves Unreachable on a complete, unbounded route no static change has touched since its build (was: route epoch == navigator epoch); `legion_world_test trapped` gains the verifier's geometry; `legion_route_test` updated | behaviour (a liveness fix; no gate fixture or scale row moves) |
+| 701094eb | `laneTrigger`'s memo keyed on the goal and the unit type too | behaviour in principle (stale memo answers); no gate fixture or scale row moves |
+
+**Problem 1 (confirmed, fixed): a body never trapped after an unrelated static change.** `reach` returned
+Unreachable only when `RouteGrid::epoch == epoch`. `epoch` is the navigator's single static epoch: `staticChanged`
+bumps it on every static change on any island or plane but marks stale (and so refreshes) only the groups whose
+field window the change touches (`fieldTouched`). An untouched group kept its complete route with an older epoch and
+nothing ever refreshed it (the waited-group service also skips done fields), so a body that route does not reach
+read Unknown for ever: it stood Waiting and its order never reached the trapped / retire path. The record's "the
+body waits for the refresh" was false for untouched routes.
+
+Fix: `RouteGrid::touched` is set in `staticChanged` on the group's field and next for exactly the groups it marks
+stale (every group when a change comes without boxes); `reach` proves Unreachable on `done && !bounded &&
+!touched`. A touched route's group is stale, so its refresh (built on the newer geometry) decides; an untouched route
+stays proven, which is sound because `fieldTouched`'s box test already guarantees a change farther than one cell
+from the window cannot alter a step inside it or join another region to it (the same argument the staleness rule
+relies on). `touched` is not hashed: it is a function of hashed state (the field epochs and windows and the world's
+static changes); the field epoch stays in the checksum.
+
+Verifier's repro (`legion_scenario pocket.scn --mode legion --offsets 0 --ticks 25000 --json`):
+
+| binary | g.P.complete_n | trapped (work.trapped.total) | hash |
+|---|---|---|---|
+| stage-4 head (`stage5/base`) | 1 | 5 | f0f53275e711b9e5 |
+| 9bd3f5c3 (`stage5/final`) | 0 | 1 (24,980 waiting member ticks) | 3d4e59b142e02bed |
+| 1905d086 (`stage5/fixA`) | 1 | 5 | 095ee1a9c2663cee |
+
+`calm.scn` (no churn): 4e2cbd60dbbc371b on all three at the default ticks, 096347cc56e3232d on 9bd3f5c3 and
+1905d086 at 25,000 ticks (the hashes differ from the verifier's calm figure only by run length).
+
+Test: `legion_world_test trapped` now also builds the verifier's geometry (a sealed 8x8 pocket on a 256x64 map split
+by a wall, ten free bodies, churn on the far island from tick 20 to 60, as `addFeature` toggles like the scenario
+`churn`): the pocket's order must retire, the free bodies arrive. Passes on 1905d086 (cleared at tick 9,050, 5
+trapped events). Mutant check (`stage5/mutant.sh 2`: every static change touches every route, which is the old
+epoch rule's behaviour): fails with "trapped order never retired after churn on another island" (1 trapped event,
+never retired). A first draft of the test used `blockCells`, which goes through the boxless world-epoch path (every
+group touched and refreshed), and passed under the mutant too; it was replaced. `legion_route_test` checks that an
+untouched route with an older epoch still proves Unreachable and a touched one reads Unknown.
+
+Considered and not taken: letting a refresh started after a touch "answer" the doubt even when touched again (a
+bound for never-ending churn inside the window). Built and tried on the world test's churn cases (`mutant.sh 1`
+removes it): no case distinguished it, because under never-ending churn the inherited re-registration below
+already restarts the trapped grace on every change; it would only add a tolerance of older geometry. Left out; the bound belongs with the fix of the inherited issue.
+
+**Inherited, not fixed (recorded for stage 6+): under never-ending static churn anywhere, no trapped order retires.**
+`move` re-registers a Trapped member whenever `trappedEpoch != epoch` (any static change on any island or plane),
+which restarts its grace period (`kTrappedRetire`). Proof that it is inherited: `verify-s5/island-forever.scn`
+(pocket.scn without `until=60`) never retires P on the starting revision's build (`~/TAK/build-o2`, built from
+c2c25707: complete_n 0, 1,199 trapped events), on the stage-4 head, or on 701094eb (same hash as the stage-4 head,
+3001d8162d07fe11); `window.scn` / `window10.scn` (churn inside the route's window every 1 / 10 ticks) are
+identical on the stage-4 head, 9bd3f5c3 and 1905d086 (complete_n 0). In a battle, corpses are static changes, so a
+trapped body's order may never retire while fighting goes on anywhere. A fix would re-register only when a change
+touches the member's region or its route (the `touched` flag gives the route half); it changes trapped behaviour in
+every battle fixture and is a behaviour change of its own, so it is not folded into this fix round.
+
+Related precision note (no liveness effect): `provenUnreached` (the paused-route certainty check) still requires
+`geometryEpoch() == epoch`. After an untouched change it reports "not proven", the consumer's read is uncertain and
+the route runs on to done (`runOn`): the worst case is the old wait for done, never a stall. Switching it to the
+touched flag would let paused routes serve more reads after unrelated churn; left for stage 6 with the tiles.
+
+**Problem 2 (minor, fixed): `laneTrigger`'s memo.** The memoised walk also depends on `m.goal` (`descend`'s
+tie-break) and the unit's footprint; the key now includes the goal and the unit type (701094eb). The comment's
+"pure function of those" is now true.
+
+**Problem 3 (minor, corrected): fixtures moved.** The final stage-5 gate (`gate-g7` against `stage4/r2/gate-f11`)
+moved 10 Legion fixtures, not 11: attackring-river-64, attackring-wall-64, battle-assault, battle-field-2x60,
+-2x250, -2x500, densehead, lateblock-late-16, mixed2, unreach-200. crosslong is identical at every offset (it moved
+only in the superseded 35cac631 gate). Corrected in 7.5 above (`stage5/cmpgate.py`).
+
+**Checks (fix round; exact commands).**
+
+| Check | Command | Result |
+|---|---|---|
+| Unit / world tests | `build-o2/legion_route_test`; `TAK_LEGION_VERIFY=1 build-o2/legion_world_test trapped` | pass; the trapped case fails under mutant 2 (above) |
+| Legion gate, 1905d086 | `python3 sweep_legion.py stage5/fixA/legion_scenario stage5/gate-h1 4-15 stage5/gate-g7`; `python3 stage5/cmpgate.py stage5/gate-g7/scenarios.jsonl stage5/gate-h1/scenarios.jsonl` | 135/135 Legion fixtures identical to 9bd3f5c3 (hashes at every offset and exec, every key); serial == workers everywhere |
+| Legion gate, 701094eb | same with `stage5/fixB`, `stage5/gate-h2` | 135/135 identical; `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results stage5/gate-h2/scenarios.jsonl`: PASS, 31,772 keys, 0 failed (no baseline edit: nothing moved) |
+| Scale suite, Legion rows, 701094eb | `python3 tools/legion_scale.py run --bin stage5/fixB/legion_scenario --out stage5/scale3 --modes legion --cores 4-15 --per-job 4`; merged with the Retail rows of `scale-final.jsonl` into `stage5/scale-final2.jsonl`; `legion_scale.py check` | all 27 jobs exit 0; all 27 Legion state hashes identical to the stage-5 final run; targets 118 met / 90 missed / 4 report-only missed. The two extra report-only misses are attack-10000's wall time (p99 36.4 ms, 117 ticks over budget) in that one run on a loaded machine; rerun alone on cores 4-7, alternating 9bd3f5c3 and 701094eb twice: p99 13.9 / 13.7 ms, 0 over budget for both (`stage5/wt-*`), so no wall-time change. Sim targets: 120 / 90 as before |
+| `--mpai` Inner Circle seed 1, 60 s | `CORES=4-15 bash mpai.sh stage5/fixB stage5/mpai60-fix 60` | Retail **2c39430636a3dbda**, Legion **f75b2a11410f43b4**: unchanged |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j12 --timeout 900` (scratch XDG, no `TAK_SETTINGS_FILE`) | **385/385** (`stage5/ctest-quick-fix.log`) |
+| Legion ctests outside quick | `ctest -R 'legion_trapped\|legion_route\|legion_unreachable\|legion_churn\|legion_penstale\|legion_approach\|^legion_cost$\|legion_sched\|^legion_scenario_battle-\|legion_baseline_reasons\|legion_check\|legion_doc_links\|legion_quota\|legion_planepin\|replay_test\|navbudget\|navigation_determinism\|legion_pausedemand\|legion_verify' -j12 --timeout 1200` | **101/101** (`stage5/ctest-legion-fix.log`; navigation golden unchanged, replay_test refuses 268) |
+
+Retail: no Retail code path changed (only the navigator and its tests); the Retail `--mpai` hash is unchanged and the
+Retail gate lines are those of `gate-f5` (unchanged since). kNetVersion stays 269: no wire change, and stage 5's
+protocol bump already covers its behaviour (the fix changes no gate, scale or `--mpai` hash).
+
+Not run (lean testing): ASan (no ownership or lifetime change: a bool on the field and three memo fields on the
+member), cross-compiler determinism (no golden moved), crowdbench, 300 s `--mpai`, rejoin/replay runs, Windows/macOS.
+
 ## 8. Next step
 
-Resume from branch `task-legion-10000` (pushed; stages 1-5 done). Build `build-o2` in the worktree, read sections 3
-(3.3 and 3.4 as amended), 7.5 and the stage-5 section of docs/legion-pathfinding.md. Stage 6 (brief phase 5): the
+Resume from branch `task-legion-10000` (pushed; stages 1-5 done, stage 5 head 701094eb after its fix round). Build `build-o2` in the worktree, read sections 3
+(3.3 and 3.4 as amended), 7.5 with its fix round and the stage-5 section of docs/legion-pathfinding.md. Stage 6 (brief phase 5): the
 hierarchy over the footprint planes (sectors, regions, portals with the identities of 3.4), sparse tiles behind
 `RouteView` (`sim/legion_route.h`: replace `RouteGrid` as the storage a view reads; the consumers already ask only
 `estimate`, `known`, `covered`, `reach`, `progress`, `metric`, `version`, `geometryEpoch`), intermediate sharing,
@@ -1721,7 +1820,8 @@ and search versus field by demand. Stage 5 leaves it:
   `coveredFor`) and the scheduler/eviction/accounting/checksum are the provider. A tile provider must keep the
   view's contracts: `estimate` a real way's length where reached (descent stays sound on it), `known` never
   tentative, `covered(cell, margin)` exact (the consumers' stated regions rely on it), `reach` Unreachable only when
-  proven on current geometry, `progress` route-wide (a tile-local zero is never a goal; give a tile chain its own
+  proven on geometry no change has touched since (and a touched route's group must be refreshed, or a body waits on
+  it for ever: 7.5 fix round), `progress` route-wide (a tile-local zero is never a goal; give a tile chain its own
   metric), `version` changing whenever an estimate may.
 * **Consumers already state their regions** (662574f1): lanes `kLaneCover` (asked only when `laneTrigger` sees a
   wall end or passage ahead), awareness `kAwareCover`, the entrance's radius, a reach group's ring spots, slots'
@@ -1740,6 +1840,11 @@ and search versus field by demand. Stage 5 leaves it:
 * **The detour record**: a metric transition is never a record (9bd3f5c3). Tile chains change metric often; the
   rule holds there, but re-measure the back-off where transitions are frequent (many-2500 lost ~3% of its arrivals
   when transition records stopped restarting the back-off).
+* **Trapped orders under never-ending static churn** (inherited from c2c25707, 7.5 fix round): a Trapped member
+  re-registers on every static change anywhere (`trappedEpoch != epoch`), restarting its grace, so while corpses
+  keep landing anywhere no trapped order retires. Fix by re-registering only when a change touches the member's
+  region or route (`RouteGrid::touched` covers the route half); measure on the battle fixtures, it moves them.
+  Also `provenUnreached` still compares epochs (precision only: an uncertain read runs the route on to done).
 * Stage-4 items still open: the quota-saturated many-squad rows (many-5000 / many-10000 request ages and
   `wait.max` in the thousands of ticks: the drain time of whole-window builds), the per-kind in-flight cap's half
   threshold, many-2500's aware-repair wait under the cap, the queued-area recheck without an in-sim test.
