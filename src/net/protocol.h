@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 267;      // 267: explicit selection orders (Legion 10,000 stage 3): Cmd::Order carries one player intent over a
+constexpr uint32_t kNetVersion = 268;      // 268: Legion navigation scheduling and budgets (Legion 10,000 stage 4; Retail bit-identical): registration
+                                           //      budgeted per window (a hashed FIFO past it), first plane builds incremental, awareness resumable,
+                                           //      field service by unique jobs in classes with deficit round robin, age promotion and a bounded
+                                           //      fit scan, field initialisation charged, a fixed byte allowance for fields. 267 replays refused
+                                           // 267: explicit selection orders (Legion 10,000 stage 3): Cmd::Order carries one player intent over a
                                            //      selection; the uplink sends it as an OrderBegin/OrderMembers/OrderCommit transaction, the server
                                            //      puts it whole into one tick bundle (its activation tick) and the sim applies every member there.
                                            //      Legion clients send their selection orders this way (Retail clients keep per-unit commands, so

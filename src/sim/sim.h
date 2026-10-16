@@ -2795,6 +2795,11 @@ private:
         int x=0,z=0,width=0,height=0;
         BodyCells cells;
     };
+    // Inside World::tick (set for its whole extent). Between ticks the lockstep
+    // driver applies commands: Legion queues the navigator events those raise and
+    // replays them at the start of its next tick (Legion 10,000 stage 4). Derived
+    // from the call context, never hashed.
+    bool inTick_=false;
     // Tick-local broad phase. Buckets keep conservative candidates, including
     // dead/flying bodies; exact current eligibility and yards are checked below.
     bool bodyIndexEnabled_=false;

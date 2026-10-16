@@ -267,6 +267,10 @@ public:
     // Which mission goal Legion would route for this unit (None: Retail).
     LegionMission mission(const Unit&) const;
     // A supported leg became current (order, queued leg, controller reset).
+    // Registration is budgeted (Legion 10,000 stage 4, NavBudget::kRegBudget a
+    // window): it runs at once while the window's budget lasts and nothing
+    // waits; otherwise the unit waits (braking, order kept) in a FIFO that the
+    // next tick() drains first. cancel() runs at once and drops a waiting one.
     void registerMove(Unit&);
     void cancel(int id);
     // The unit's orders changed (a leg gained or retired, a mission step, its

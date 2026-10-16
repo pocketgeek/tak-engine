@@ -7,6 +7,7 @@
 #include <array>
 #include <chrono>
 #include <climits>
+#include <deque>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -1837,6 +1838,11 @@ struct LegionNavigator::Impl {
         a.tickAll=std::max(a.tickAll,all);
     }
     void foldWindow() {windowMax(acct);acctMark=workTotals();}
+    // Whole-plane relabels an incremental refresh fell back to: synchronous stages (2 W H units each).
+    void noteSyncRelabels(uint64_t n) const {
+        if(!n)return;
+        acct.syncPlaneCalls+=n;acct.syncPlaneMax=std::max<uint64_t>(acct.syncPlaneMax,2*uint64_t(width())*height());
+    }
     // NavBytes (navbudget.h): element counts x fixed sizes, every container the navigator keeps.
     NavBytes navBytes() const {
         using S=NavSize;
@@ -1877,7 +1883,74 @@ struct LegionNavigator::Impl {
             grounded.size()*S::kCell32+liftHome.size()*S::kCell32+passMask.size()*S::kCell16+liftBuckets.size()*S::kCell16+
             watchMark.size()+anchorMark.size();
         for(const auto& k:softCounts)b.scratch+=k.at.size()*S::kCell32;
+        // Retained scratch: the plane refresh's split-search marks, the lift walk's goal map, the
+        // structure stamps and the per-plane change boxes.
+        b.scratch+=refreshScratch.seenGen.size()*S::kCell32+refreshScratch.seenBy.size()*S::kCell32+
+            liftGoal.size()*S::kCell32+liftGoalCells.size()*S::kCell32+(stamps.size()+nowStamps.size())*24+
+            structurePtrs.size()*S::kKeyed+touch.size()*S::kBox+refreshList.size()*S::kKeyed+refreshResults.size()*24+
+            groundedCells.size()*S::kCell32+groundedIds.size()*S::kCell32+liftHomeCells.size()*S::kCell32+
+            liftedIds.size()*S::kCell32+passMaskList.size()*S::kCell32+liftBucketList.size()*S::kCell32;
+        b.queues+=regQueue.size()*12+regSeq.size()*S::kCell32;
         return b;
+    }
+    // ---- the registration budget (Legion 10,000 stage 4) -----------------------------------------
+    // registerMove costs NavBudget::kRegBase units plus its join candidates and its goal-resolution
+    // cells. A window -- one batch of commands between two ticks, or one tick -- may spend
+    // kRegBudget units (the registration that starts while any is left may overshoot by itself).
+    // While the budget lasts and nothing waits, a registration runs at once, exactly as before, so a
+    // window under budget behaves as it always did. Past it, registrations wait in a FIFO (regQueue;
+    // a waiting unit brakes in move()) that the next tick() drains first, oldest first, with its
+    // fresh budget; while any waits, every later registration queues behind it, so a burst cannot
+    // starve the units ahead of it. A cancel runs at once and drops the unit's queued registration;
+    // a queued unit asked to register again keeps its place (registerMove reads its orders then).
+    // Hashed while not empty (the waiting ids, in order). The budgets themselves never outlive their
+    // window (refilled at each tick() and at each command batch), so they are not state.
+    struct RegEntry {uint32_t seq=0;int id=0;uint32_t since=0;};
+    std::deque<RegEntry> regQueue;
+    std::vector<uint32_t> regSeq;      // unit id -> the seq of its live queue entry (0: not queued)
+    uint32_t regNextSeq=0;
+    size_t regLive=0;                  // live entries in regQueue
+    uint64_t regBudget=0;              // units left in the current window
+    bool regCommandWindow=false;       // the current window is a command batch (refilled at its first call)
+    bool queued(int id) const {return id>=0&&size_t(id)<regSeq.size()&&regSeq[size_t(id)]!=0;}
+    void unqueue(int id) {
+        if(!queued(id))return;
+        regSeq[size_t(id)]=0;--regLive;
+        while(!regQueue.empty()&&regSeq[size_t(regQueue.front().id)]!=regQueue.front().seq)regQueue.pop_front();
+    }
+    void registerCharged(Unit& u) {
+        const uint64_t joins=stats.joinIterations,cells=navc.resolveCells;
+        registerMove(u);
+        const uint64_t units=NavBudget::kRegBase+(stats.joinIterations-joins)+(navc.resolveCells-cells);
+        regBudget-=std::min(regBudget,units);
+    }
+    // A supported leg asks for registration (World::requestPath, or move() itself).
+    void requestRegister(Unit& u) {
+        if(!w.inTick_&&!regCommandWindow) {regBudget=NavBudget::kRegBudget;regCommandWindow=true;}
+        if(queued(u.id))return;
+        if(regLive==0&&regBudget>0) {registerCharged(u);return;}
+        if(size_t(u.id)>=regSeq.size())regSeq.resize(size_t(u.id)+1,0);
+        if(++regNextSeq==0)regNextSeq=1;
+        regSeq[size_t(u.id)]=regNextSeq;++regLive;
+        regQueue.push_back({regNextSeq,u.id,w.tickCounter_});
+        ++acct.regDeferred;
+    }
+    // move()'s own re-registrations: false while the unit waits in the queue.
+    bool registerNow(Unit& u) {requestRegister(u);return !queued(u.id);}
+    void requestCancel(int id) {unqueue(id);leave(id);}
+    // tick()'s first step: a fresh budget, then the waiting registrations, oldest first.
+    void drainRegistrations() {
+        regBudget=NavBudget::kRegBudget;regCommandWindow=false;
+        while(regLive&&regBudget>0) {
+            const RegEntry e=regQueue.front();regQueue.pop_front();
+            if(regSeq[size_t(e.id)]!=e.seq)continue;   // cancelled, or re-queued behind
+            regSeq[size_t(e.id)]=0;--regLive;
+            acct.regWaitMax=std::max<uint64_t>(acct.regWaitMax,w.tickCounter_-e.since);
+            Unit* u=w.unit(e.id);
+            if(!u||!u->alive()) {leave(e.id);continue;}
+            registerCharged(*u);   // an unsupported leg by now: registerMove just leaves
+        }
+        while(!regQueue.empty()&&regSeq[size_t(regQueue.front().id)]!=regQueue.front().seq)regQueue.pop_front();
     }
     explicit Impl(World& world):w(world) {}
 
@@ -3320,6 +3393,7 @@ struct LegionNavigator::Impl {
                 for(const auto& r:refreshResults)work+=r.work;
                 const uint64_t relabel=refreshScratch.relabels*2*uint64_t(width())*height();
                 navc.planeRelabel+=relabel;navc.connectivity+=work-std::min(work,relabel);
+                noteSyncRelabels(refreshScratch.relabels);
             }
             for(const auto& r:refreshResults) {
                 planeDebt=std::min(planeDebt+r.work,kFieldQuota/2);
@@ -3479,6 +3553,7 @@ struct LegionNavigator::Impl {
                             const uint64_t work=refreshPlane(p,pending,changed,refreshScratch);
                             const uint64_t relabel=refreshScratch.relabels*2*uint64_t(W)*H;
                             navc.planeRelabel+=relabel;navc.connectivity+=work-std::min(work,relabel);
+                            noteSyncRelabels(refreshScratch.relabels);
                             stats.planeRelabels+=refreshScratch.relabels;refreshScratch.relabels=0;
                         }
                         break;
@@ -3680,6 +3755,7 @@ struct LegionNavigator::Impl {
     }
     void tick() {
         foldWindow();
+        drainRegistrations();
         if(gProbe) {
             using Clock=std::chrono::steady_clock;
             auto ms=[](Clock::time_point a,Clock::time_point b) {return std::chrono::duration<double,std::milli>(b-a).count();};
@@ -3869,6 +3945,12 @@ struct LegionNavigator::Impl {
         uint64_t dist=0;
         for(uint64_t n:s.completionDist)dist+=n;
         if(dist!=s.arrivals)fail("completion distance histogram does not sum to arrivals");
+        {   // the registration FIFO: one live entry per queued id, and the count
+            size_t live=0;std::set<int> ids;
+            for(const auto& e:regQueue)if(regSeq[size_t(e.id)]==e.seq) {++live;if(!ids.insert(e.id).second)fail("a unit has two live registration entries");}
+            size_t marked=0;for(const uint32_t q:regSeq)marked+=q!=0;
+            if(live!=regLive||marked!=regLive)fail("regLive differs from the live registration entries");
+        }
         if(s.midrouteCompletions>s.outsideAreaCompletions||s.outsideAreaCompletions>s.arrivals)
             fail("mid-route completions exceed outside-area completions or arrivals");
         {
@@ -6207,6 +6289,8 @@ struct LegionNavigator::Impl {
     static bool giveWayHolder(const Member&) {return false;}
     void move(Unit& u,Fixed maximum) {
         contactRefused=nullptr;pivoting=nullptr;
+        // Waiting for its registration (the budget): it stands, order kept.
+        if(queued(u.id)) {w.brakeGround(u);return;}
         Member* found=member(u.id);
         // A member parting a lane (partable) takes its side-step from
         // serviceYields; it keeps its order and hold clock meanwhile.
@@ -6223,7 +6307,8 @@ struct LegionNavigator::Impl {
         // timers; a member of a group already re-seeded is reseated.
         if(found&&rule.moving&&found->controller==key&&found->kind==kind&&
            w.tickCounter_/kReseedTicks!=found->seededAt/kReseedTicks&&!reseed(u,*found,leg)) {
-            registerMove(u);found=member(u.id);
+            if(!registerNow(u)) {w.brakeGround(u);return;}
+            found=member(u.id);
             if(!found) {w.brakeGround(u);return;}
         }
         // A new controller, or terrain that changed since this body was
@@ -6240,7 +6325,8 @@ struct LegionNavigator::Impl {
         if(!found||found->controller!=key||found->kind!=kind||
            (found->state==Trapped&&found->trappedEpoch!=epoch)||
            (found->approach&&found->approachEpoch!=epoch)) {
-            registerMove(u);found=member(u.id);
+            if(!registerNow(u)) {w.brakeGround(u);return;}
+            found=member(u.id);
             if(!found) {w.brakeGround(u);return;}
         }
         auto& m=*found;m.movedTick=w.tickCounter_;m.site=LegionNavigator::SiteNone;
@@ -6273,7 +6359,7 @@ struct LegionNavigator::Impl {
         // walking to it kTrappedRetire after the order (the walk's age limit).
         if(m.approach&&(m.state==Trapped||w.tickCounter_-m.approachSince>=kTrappedRetire)) {trapped(u,m);return;}
         auto group=groups.find(m.group);
-        if(group==groups.end()) {registerMove(u);w.brakeGround(u);return;}
+        if(group==groups.end()) {registerNow(u);w.brakeGround(u);return;}
         auto& g=group->second;g.lastUse=w.tickCounter_;
         if(m.state==Moving)g.movingTick=w.tickCounter_;
         const auto& p=plane(g.plane);
@@ -6285,7 +6371,7 @@ struct LegionNavigator::Impl {
         // member takes the nearest legal origin of its region, in its group
         // (AR-07: no new group or field); a fresh registration only when
         // none is left in the region.
-        if(!legal(p,m.goal%W,m.goal/W)&&!regoal(u,m,g,p,ox,oz)) {registerMove(u);w.brakeGround(u);return;}
+        if(!legal(p,m.goal%W,m.goal/W)&&!regoal(u,m,g,p,ox,oz)) {registerNow(u);w.brakeGround(u);return;}
         const int here=oz*W+ox;
         const Field* f=g.field&&g.field->done?g.field.get():nullptr;
         if(f&&(m.state==Moving||m.state==Holding)) {
@@ -8563,6 +8649,11 @@ struct LegionNavigator::Impl {
     uint64_t checksum() const {
         uint64_t h=mix(0x4c4547494f4eull,epoch);
         h=mix(h,planeDebt);h=mix(h,uint64_t(pruneCursor));
+        // Registrations waiting for the budget (stage 4), while any wait.
+        if(regLive) {
+            h=mix(h,0x7265677175657565ull);h=mix(h,uint64_t(regLive));
+            for(const auto& e:regQueue)if(regSeq[size_t(e.id)]==e.seq)h=mix(h,uint64_t(uint32_t(e.id)));
+        }
         h=mix(h,uint64_t(nextGroup));
         for(const auto& [id,g]:groups) {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(g.player));h=mix(h,g.issuedTick);
@@ -8688,8 +8779,8 @@ LegionNavigator::~LegionNavigator() {
 }
 bool LegionNavigator::supports(const Unit& u) const {return impl_->supports(u);}
 LegionMission LegionNavigator::mission(const Unit& u) const {return impl_->kindOf(u);}
-void LegionNavigator::registerMove(Unit& u) {impl_->registerMove(u);}
-void LegionNavigator::cancel(int id) {impl_->leave(id);}
+void LegionNavigator::registerMove(Unit& u) {impl_->requestRegister(u);}
+void LegionNavigator::cancel(int id) {impl_->requestCancel(id);}
 void LegionNavigator::ordersChanged(int id) {impl_->validate(id);}
 void LegionNavigator::tick() {impl_->tick();}
 void LegionNavigator::move(Unit& u,Fixed maximum) {impl_->move(u,maximum);impl_->markPass(u.id);}
@@ -8812,6 +8903,7 @@ int LegionNavigator::laneGeometryCheck(const Unit& u,int queries,uint64_t seed,s
     return bad+vbad;
 }
 int LegionNavigator::unitState(int id) const {
+    if(impl_->queued(id))return 3;   // waiting for its registration: navigation service delay
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:int(found->second.state);
 }

@@ -12241,6 +12241,8 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
 void World::tick(float dt) {
     bodyIndexEnabled_=true;bodyIndexValid_=false;
     struct BodyIndexScope { bool& enabled; ~BodyIndexScope(){enabled=false;} } bodyIndexScope{bodyIndexEnabled_};
+    inTick_=true;
+    struct TickScope { bool& in; ~TickScope(){in=false;} } tickScope{inTick_};
     if (retailAllocation_)
         std::sort(units_.begin(),units_.end(),[](const auto& a,const auto& b){return a.id<b.id;});
     // The profiled tick starts here, so navigator upkeep (Legion
