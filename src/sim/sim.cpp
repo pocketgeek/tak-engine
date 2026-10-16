@@ -1703,7 +1703,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
         o.autoTarget = tmpl.autoTarget;
         o.chaseLeashed = tmpl.chaseLeashed; o.chaseLeash = tmpl.chaseLeash; o.chaseOrigin = tmpl.chaseOrigin;
         o.issuedTick = tmpl.issuedTick;
-        o.convoyTick = tmpl.convoyTick;
+        o.setIdentity(tmpl.identity());
         o.goal = (i + 1 == path.size());
         o.navigationExhausted=false;
         o.navigationConsumed=false;
@@ -1820,17 +1820,20 @@ static bool retainGroundRoute(const Unit& u,const Order& goal) {
 // own, offset or not, and the test that applies to it follows the shared
 // predicate the client used to build it.
 uint32_t World::joinConvoy(const Unit& u, ConvoyClass cls, Fixed x, Fixed z) {
-    const bool shared=legionSharedClick(u.type->canFly,u.type->footX,u.type->footZ);
+    return joinArea(u.player, cls, x, z, legionSharedClick(u.type->canFly,u.type->footX,u.type->footZ), ConvoyTable::kNone);
+}
+
+uint32_t World::joinArea(int player, ConvoyClass cls, Fixed x, Fixed z, bool shared, uint32_t key) {
 #ifndef NDEBUG
     // TAK_LEGION_VERIFY: the indexed lookup picks the convoy a scan of the
     // whole table picks.
     const ConvoyTable::Convoy* brute=nullptr;
     const bool verify=LegionNavigator::verifying();
-    if(verify) {convoys_.prune(tickCounter_);brute=convoys_.bruteMatch(u.player,cls,x.v,z.v,shared,tickCounter_);}
+    if(verify) {convoys_.prune(tickCounter_);brute=convoys_.bruteMatch(player,cls,x.v,z.v,shared,tickCounter_);}
     const uint32_t bruteId=brute?brute->id:0;
     const size_t open=convoys_.size();
 #endif
-    const auto& convoy=convoys_.join(u.player,cls,x.v,z.v,shared,tickCounter_);
+    const auto& convoy=convoys_.join(player,cls,x.v,z.v,shared,tickCounter_,key);
 #ifndef NDEBUG
     if(verify&&bruteId&&convoy.id!=bruteId) {
         std::fprintf(stderr,"TAK_LEGION_VERIFY tick %u: convoy index picked %u, a scan picks %u\n",
@@ -1842,10 +1845,35 @@ uint32_t World::joinConvoy(const Unit& u, ConvoyClass cls, Fixed x, Fixed z) {
         std::abort();
     }
 #endif
-    return convoy.first;
+    return convoy.key;
 }
 
-void World::order(int unitId, float x, float z, bool queue, ConvoyClass cls, std::optional<uint32_t> convoyCopy) {
+void World::beginOrder(uint32_t serial, int player, bool point, Fixed x, Fixed z) {
+    activeOrder_ = ActiveOrder{};
+    activeOrder_->serial = serial;
+    activeOrder_->player = player;
+    activeOrder_->point = point;
+    activeOrder_->x = x;
+    activeOrder_->z = z;
+}
+
+// An explicit order's members share its identity: the order joins the area
+// table once per class, as one shared order at its own click, on the first leg
+// of that class any member gets. Only the member being applied (orderMember)
+// gets it, and only for an order with a click point; anything else -- a leg the
+// command gives another unit, an Assist's approach move toward its site -- joins
+// per unit, as before 267. (A changed owner is refused before this by
+// applyCommand's ownership check.)
+OrderIdentity World::stampIdentity(const Unit& u, ConvoyClass cls, Fixed x, Fixed z) {
+    if (!activeOrder_ || !activeOrder_->point || activeOrder_->member != u.id || activeOrder_->player != u.player)
+        return {joinConvoy(u, cls, x, z), 0};
+    uint32_t& area = activeOrder_->area[size_t(cls)];
+    if (area == ConvoyTable::kNone)
+        area = joinArea(u.player, cls, activeOrder_->x, activeOrder_->z, true, kExplicitArea | activeOrder_->serial);
+    return {area, activeOrder_->serial};
+}
+
+void World::order(int unitId, float x, float z, bool queue, ConvoyClass cls, std::optional<OrderIdentity> identityCopy) {
     OrdersNote note{*this,unitId};
     Unit* u = unit(unitId);
     // isStructure(), NOT canMove: the Keep and both Taros/Veruna walls declare
@@ -1866,7 +1894,7 @@ void World::order(int unitId, float x, float z, bool queue, ConvoyClass cls, std
         u->orders.back().issuedTick = tickCounter_;
         if (isLegionPathfinding(pathfindingMode_)) {
             Order& o = u->orders.back();
-            o.convoyTick = convoyCopy ? *convoyCopy : joinConvoy(*u, cls, o.x, o.z);
+            o.setIdentity(identityCopy ? *identityCopy : stampIdentity(*u, cls, o.x, o.z));
         }
     };
     if (u->type->canFly) {
@@ -2106,8 +2134,8 @@ void World::tickFlightPatrol(Unit& u) {
                 if (!anchored) {
                     Order anchor;anchor.x=u.x;anchor.z=u.z;anchor.goal=anchor.patrol=true;
                     anchor.mission.flags=0x1000412u;anchor.issuedTick=w.tickCounter_;
-                    // A return leg: it belongs to the outbound leg's convoy.
-                    anchor.convoyTick=u.orders.front().convoyTick;
+                    // A return leg: it belongs to the outbound leg's convoy (and order).
+                    anchor.setIdentity(u.orders.front().identity());
                     u.orders.push_back(anchor);
                 }
                 m.flags|=0x4000u;
@@ -3072,7 +3100,7 @@ void World::tickGroundMission(Unit& u) {
         uint64_t replaceController=0;
         bool completeUnloadApproach=false,abortUnloadApproach=false;
         std::optional<std::pair<Fixed,Fixed>> patrolReturn; // appended after dispatch
-        uint32_t patrolReturnConvoy=ConvoyTable::kNone;      // ... with the outbound leg's convoy
+        OrderIdentity patrolReturnIdentity;                  // ... with the outbound leg's convoy and order
         bool enabled() const { return u.alive() && !u.underConstruction && !u.embarked(); }
         bool canStandby() const { return w.standbyEligible(u); }
         RetailMissionState* head() {
@@ -3269,7 +3297,7 @@ void World::tickGroundMission(Unit& u) {
                         bool loop=false;
                         for (size_t i=current+1;i<u.orders.size();++i)
                             loop|=u.orders[i].goal && u.orders[i].patrol && !u.orders[i].patrolOpen;
-                        if (!loop) {patrolReturn=std::pair{u.x,u.z};patrolReturnConvoy=goal.convoyTick;}
+                        if (!loop) {patrolReturn=std::pair{u.x,u.z};patrolReturnIdentity=goal.identity();}
                     },resetGoal,[]{return 0;});
             // Retail relaxes the goal radius after failed searches. Legion
             // waits/retries the same plain Move instead: a blocked army must
@@ -3355,7 +3383,7 @@ void World::tickGroundMission(Unit& u) {
     } host{*this,u};
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if(host.patrolReturn) patrolTo(u.id,host.patrolReturn->first.toFloat(),host.patrolReturn->second.toFloat(),true,
-                                   host.patrolReturnConvoy);
+                                   host.patrolReturnIdentity);
     if(host.abortUnloadApproach) {
         dropLeg(u);
         if(!u.orders.empty() && u.orders.front().unload)
@@ -4401,17 +4429,17 @@ void World::patrol(int unitId, float x, float z) {
         b.goal=b.patrol=b.attackMove=true;
         // The outbound leg joins the click's Patrol convoy; the return leg (the
         // flyer's own position) copies it rather than open a convoy of its own.
-        if(isLegionPathfinding(pathfindingMode_))a.convoyTick=b.convoyTick=joinConvoy(*u,ConvoyClass::Patrol,b.x,b.z);
+        if(isLegionPathfinding(pathfindingMode_)) {const auto id=stampIdentity(*u,ConvoyClass::Patrol,b.x,b.z);a.setIdentity(id);b.setIdentity(id);}
         u->orders.push_back(b);u->orders.push_back(a);
         return;
     }
     const float rx=u->x.toFloat(),rz=u->z.toFloat();
     patrolTo(unitId,x,z,false);
-    const uint32_t outbound=u->orders.empty()?ConvoyTable::kNone:u->orders.back().convoyTick;
+    const OrderIdentity outbound=u->orders.empty()?OrderIdentity{}:u->orders.back().identity();
     patrolTo(unitId,rx,rz,true,outbound);
 }
 
-void World::patrolTo(int unitId, float x, float z, bool queue, std::optional<uint32_t> convoyCopy) {
+void World::patrolTo(int unitId, float x, float z, bool queue, std::optional<OrderIdentity> identityCopy) {
     Unit* u = unit(unitId);
     // isStructure(), NOT canMove: the Keep and both Taros/Veruna walls declare
     // canmove=1 with no velocity (the CLAUDE.md gotcha). Gating on canMove let a
@@ -4426,7 +4454,7 @@ void World::patrolTo(int unitId, float x, float z, bool queue, std::optional<uin
         return;
     }
     size_t before = queue ? u->orders.size() : 0;
-    order(unitId, x, z, queue, ConvoyClass::Patrol, convoyCopy);
+    order(unitId, x, z, queue, ConvoyClass::Patrol, identityCopy);
     // Mark every waypoint of this move as a looping, engage-en-route patrol leg; a
     // chain of patrolTo calls then cycles the unit through all of them.
     for (size_t i = before; i < u->orders.size(); ++i) {
@@ -14451,6 +14479,7 @@ uint64_t World::stateHash() const {
                 } else mix(0);
             }
             if (order.convoyTick != ConvoyTable::kNone) {mix(0x434f4e5654494bull);mix(order.convoyTick);}
+            if (order.orderSerial) {mix(0x4f52444552534e00ull);mix(order.orderSerial);}
             if (order.placementFailures) {mix(0x504c4143454dull);mix(order.placementFailures);mix(order.placementRetryTick);}
             if (order.chaseLeashed) {
                 mix(0x434841534555ull);mix(order.chaseLeash);

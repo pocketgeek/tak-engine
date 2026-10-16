@@ -31,6 +31,17 @@
 // candidate tested count in Stats::tests: a shared order costs 6 probes, a
 // non-shared one 14, plus the convoys near it.
 //
+// Explicit orders (protocol 267, Legion 10,000 stage 3). A selection order
+// (net::Cmd::Order) knows its exact membership, so it joins the table ONCE, at
+// its own click point as a shared order, for all its members (World::
+// stampIdentity), instead of once per unit. The table is then the ARRIVAL AREA
+// table: several orders of one player and class to one point within the window
+// (wall-4x50's four selections on ticks 1-4) still share one area, as the user's
+// decision A1 has it, while one order is never split however many units it has.
+// Every convoy carries its area key: an area an explicit order opens is keyed
+// kExplicitArea | serial (unique, never a tick); one a per-unit command opens
+// (the AI, scripts) keeps its first tick, as before.
+//
 // Hashed state (World::stateHash folds checksum() while the table is not
 // empty): the table only. The indexes are derived from it and checked against
 // a rebuild by indexesMatch() under TAK_LEGION_VERIFY.
@@ -45,6 +56,17 @@ namespace tak::sim {
 // The order classes a convoy keeps apart: a fight and a patrol sent to one
 // point a moment apart stay separate orders.
 enum class ConvoyClass : uint8_t {Move=0,Fight=1,Patrol=2};
+
+// An order leg's identity under Legion (Order::convoyTick / orderSerial): its
+// arrival area key and the serial of the explicit order that gave it (0: none).
+struct OrderIdentity {
+    uint32_t convoyTick=0xffffffffu;
+    uint32_t serial=0;
+};
+// The tag of an explicit order's area key and pinwheel part (serials are at
+// most net::kOrderMaxSerial, so tag | serial is never kNone and never a tick).
+constexpr uint32_t kExplicitArea=0x80000000u;
+constexpr bool explicitArea(uint32_t key) {return key!=0xffffffffu&&(key&kExplicitArea)!=0;}
 
 class ConvoyTable {
 public:
@@ -62,6 +84,7 @@ public:
 
     struct Convoy {
         uint32_t id=0,first=0,last=0;
+        uint32_t key=0;             // the area key (see above): `first`, or kExplicitArea | serial
         int player=0;
         ConvoyClass cls=ConvoyClass::Move;
         bool anchored=false;
@@ -75,21 +98,29 @@ public:
         uint64_t orders=0,tests=0,testsMax=0,over16=0,over64=0;
     };
 
-    // Join the matching open convoy or open one; returns it.
-    const Convoy& join(int player,ConvoyClass cls,int32_t x,int32_t z,bool shared,uint32_t now);
+    // Join the matching open convoy or open one; returns it. `key`, when not
+    // kNone, is the area key a convoy this join opens gets (an explicit order's).
+    const Convoy& join(int player,ConvoyClass cls,int32_t x,int32_t z,bool shared,uint32_t now,uint32_t key=kNone);
     // The convoy join() would pick, by a scan of the whole table (nullptr: it
     // would open one). The reference the indexes are checked against.
     const Convoy* bruteMatch(int player,ConvoyClass cls,int32_t x,int32_t z,bool shared,uint32_t now) const;
     // Erase every convoy no order at `now` can join. Idempotent per tick.
     void prune(uint32_t now);
     void clear();
-    // Can an order still join a convoy of `player` that opened at `first`
-    // (any class)? Legion's deferred slot assignment (A2) waits while it can.
-    bool joinable(int player,uint32_t first,uint32_t now) const {
+    // Can an order still join an area of `player` keyed `key` (any class)?
+    // Legion's deferred slot assignment (A2) waits while it can. A tick key is
+    // looked up by its first tick, as before; an explicit key (few areas are
+    // open at once) by a scan of the player's convoys.
+    bool joinable(int player,uint32_t key,uint32_t now) const {
+        if(explicitArea(key)) {
+            for(auto it=table_.lower_bound({player,0,0,0});it!=table_.end()&&std::get<0>(it->first)==player;++it)
+                if(it->second.key==key&&open(it->second,now))return true;
+            return false;
+        }
         for(uint8_t cls=0;cls<3;++cls)
-            for(auto it=table_.lower_bound({player,cls,first,0});it!=table_.end()&&
-                std::get<0>(it->first)==player&&std::get<1>(it->first)==cls&&std::get<2>(it->first)==first;++it)
-                if(open(it->second,now))return true;
+            for(auto it=table_.lower_bound({player,cls,key,0});it!=table_.end()&&
+                std::get<0>(it->first)==player&&std::get<1>(it->first)==cls&&std::get<2>(it->first)==key;++it)
+                if(open(it->second,now)&&it->second.key==key)return true;
         return false;
     }
     bool empty() const {return table_.empty();}

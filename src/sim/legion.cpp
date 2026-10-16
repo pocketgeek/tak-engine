@@ -693,7 +693,8 @@ struct LegionNavigator::Impl {
         int8_t passRX=0,passRZ=0;         // the side it moved over to
         std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, command (convoy) tick, requested point
         // The 64-unit part of the click this member's order came in (the
-        // order's own issuedTick; the point's tick is the convoy's, A2). The
+        // order's own issuedTick; the point's tick is the convoy's, A2); an
+        // explicit order (protocol 267) lands whole, so it is one part. The
         // pinwheel ranks a member within its part (C33). Hashed when it
         // differs from the point's tick.
         uint32_t part=0;
@@ -2678,6 +2679,12 @@ struct LegionNavigator::Impl {
         m.requested=m.goal;
         // A kind without a shared destination area gets a point of its own
         // (keyed by the unit), so no formation or area logic joins it.
+        // The part: the tick the leg's command was applied in. An explicit
+        // order (protocol 267) is applied whole in one tick, so it is one part
+        // however many units it has; orders applied in one tick share it, as
+        // per-unit commands of one tick always did. (Keeping 64-body rank
+        // groups inside an order was measured and rejected: the click-heavy
+        // fixtures move with the simultaneous start, not with the parts.)
         m.point={rule.area?u.player:-1-u.id,rule.area?command:issue,tx.v,tz.v};m.part=leg.issuedTick;
         {auto& pt=points[m.point];++pt.refs;m.pt=&pt;}
         unpin();
@@ -4056,9 +4063,12 @@ struct LegionNavigator::Impl {
                         if(mv.command==g.command)continue;
                         // One selection sent as several groups (one player,
                         // within kConvoyTicks, to points within kConvoyCells)
-                        // never plans round itself.
+                        // never plans round itself. An explicit order's area
+                        // (protocol 267) is exact: the same command or not, so
+                        // the tick rule is for per-unit commands only.
                         const int64_t gcx=int64_t(g.minX+g.maxX)*8,gcz=int64_t(g.minZ+g.maxZ)*8;
-                        if(mv.player==g.player&&(mv.issue>g.issuedTick?mv.issue-g.issuedTick:g.issuedTick-mv.issue)<=kConvoyTicks&&
+                        if(mv.player==g.player&&!explicitArea(mv.issue)&&!explicitArea(g.issuedTick)&&
+                           (mv.issue>g.issuedTick?mv.issue-g.issuedTick:g.issuedTick-mv.issue)<=kConvoyTicks&&
                            std::abs(mv.px-gcx)<=kConvoyCells*16&&std::abs(mv.pz-gcz)<=kConvoyCells*16)continue;
                         const bool friendly=mv.player==g.player||w.allied(g.player,mv.player);
                         if(!friendly) {
@@ -4522,10 +4532,12 @@ struct LegionNavigator::Impl {
     // the uplink landed as several commands -- the convoy rule of the
     // awareness scan: one player, within kConvoyTicks, to points within
     // kConvoyCells.
+    // (An explicit order's area key, protocol 267, is exact: equal or not.)
     static bool oneSelection(const PointKey& a,const PointKey& b) {
         if(std::get<0>(a)!=std::get<0>(b))return false;
         if(std::get<1>(a)==std::get<1>(b))return true;
         const uint32_t ia=std::get<1>(a),ib=std::get<1>(b);
+        if(explicitArea(ia)||explicitArea(ib))return false;
         return (ia>ib?ia-ib:ib-ia)<=kConvoyTicks&&
             std::abs(int64_t(std::get<2>(a))-std::get<2>(b))<=int64_t(kConvoyCells*16)<<16&&
             std::abs(int64_t(std::get<3>(a))-std::get<3>(b))<=int64_t(kConvoyCells*16)<<16;
@@ -5470,6 +5482,8 @@ struct LegionNavigator::Impl {
     // several ticks (the 64-per-tick uplink); its convoy stays joinable for
     // up to kGapTicks after its last order (sim/convoy.h). Slots wait for it
     // to close, so the formation is sized and ranked over the whole click.
+    // An explicit order (protocol 267) lands whole in one tick, but its area
+    // stays joinable by further orders to the same point for as long.
     bool commandOpen(const std::tuple<int,uint32_t,int32_t,int32_t>& key) const {
         return std::get<0>(key)>=0&&w.convoys().joinable(std::get<0>(key),std::get<1>(key),w.tickCounter_);
     }
@@ -5526,7 +5540,11 @@ struct LegionNavigator::Impl {
         // tick (kUplinkPart) is the whole click as far as the server can
         // tell: it takes its formation at once, provisionally, and if another
         // part joins the point before the convoy closes the formation is
-        // rebuilt over every part then. (Waiting the convoy's 9-plus ticks
+        // rebuilt over every part then.
+        // (An explicit order, protocol 267, keeps this rule unchanged: taking
+        // the formation at once for any order size was measured and rejected --
+        // one-1000 822 arrived instead of 847, churn-1000's last member started
+        // at 86 instead of 46, one-2500 2014 instead of 1970, the rest equal.) (Waiting the convoy's 9-plus ticks
         // without slots walked small groups -- the flyer fixtures' 40,
         // doorplug's 60 -- the first stretch by the shared field alone,
         // bunched on the line to the click.)

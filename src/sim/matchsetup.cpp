@@ -32,8 +32,59 @@ namespace tak::sim {
 
 const char* const kMonarchs[5] = {"araking", "tarnecro", "vermage", "zonhunt", "cresage"};
 
+// One explicit selection order (Cmd::Order, protocol 267): every member gets
+// the template command, in increasing id order, inside one World::beginOrder
+// scope, so under Legion all their legs carry the order's identity and the order
+// joins its arrival area once. Ownership and existence are checked per member by
+// the ordinary command path (a dead, gone or given-away member is skipped), so
+// the sim itself refuses what the server cannot know. The server and the strict
+// replay reader validate the order; an invalid one is ignored here as well.
+static void applySelectionOrder(World& world, const TypeRegistry& reg, const tak::net::Command& c) {
+    using tak::net::OrderShape;
+    if (!c.order || !tak::net::validOrder(*c.order)) return;
+    const auto& o = *c.order;
+    tak::net::Command m = o.tmpl;
+    m.player = c.player;
+    const Fixed cx0 = Fixed::fromFloat(o.tmpl.x), cz0 = Fixed::fromFloat(o.tmpl.z);
+    auto owned = [&](int id) -> const Unit* {
+        const Unit* u = world.unit(id);
+        return u && u->alive() && u->type && u->player == int(c.player) ? u : nullptr;
+    };
+    // Offsets: the centroid of the live owned members (raw Fixed, truncated mean).
+    int64_t sx = 0, sz = 0, n = 0;
+    if (o.shape == OrderShape::Offsets)
+        for (const int32_t id : o.members)
+            if (const Unit* u = owned(id)) { sx += u->x.v; sz += u->z.v; ++n; }
+    const bool legion = isLegionPathfinding(world.pathfindingMode());
+    // The verbs whose template carries the click: their members share an area there.
+    const bool point = o.tmpl.kind == tak::net::Cmd::Move || o.tmpl.kind == tak::net::Cmd::AttackMove ||
+                       o.tmpl.kind == tak::net::Cmd::Patrol;
+    world.beginOrder(o.serial, int(c.player), point, cx0, cz0);
+    for (const int32_t id : o.members) {
+        m.unitId = id;
+        world.orderMember(id);
+        if (o.shape == OrderShape::Offsets && n) {
+            const Unit* u = owned(id);
+            if (!u) continue;
+            if (!(legion && legionSharedClick(u->type->canFly, u->type->footX, u->type->footZ))) {
+                constexpr int64_t kReach = int64_t(60) << 16;
+                const int64_t ox = std::clamp<int64_t>(int64_t(u->x.v) - sx / n, -kReach, kReach);
+                const int64_t oz = std::clamp<int64_t>(int64_t(u->z.v) - sz / n, -kReach, kReach);
+                m.x = Fixed::raw(int32_t(cx0.v + ox)).toFloat();
+                m.z = Fixed::raw(int32_t(cz0.v + oz)).toFloat();
+            } else {
+                m.x = o.tmpl.x;
+                m.z = o.tmpl.z;
+            }
+        }
+        applyCommand(world, reg, m);
+    }
+    world.endOrder();
+}
+
 void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command& c) {
     using tak::net::Cmd;
+    if (c.kind == Cmd::Order) { applySelectionOrder(world, reg, c); return; }
     // An infinitely producing mobile builder stays on that job until Stop.
     // Move/patrol describe its output rally, without redirecting construction.
     // Gate before redirect(): rejected orders must not cancel its construction.
