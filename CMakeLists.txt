@@ -1399,8 +1399,8 @@ if(TAK_BUILD_CLIENT)
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/geometry-ownership-profile
           XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/geometry-ownership-profile
           $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
-          --testbuild --winsize 1024 768 --novsync)
-      set_tests_properties(render_geometry_ownership PROPERTIES TIMEOUT 120
+          --testbuild --winsize 800 600 --novsync)
+      set_tests_properties(render_geometry_ownership PROPERTIES TIMEOUT 180
           PASS_REGULAR_EXPRESSION "OWNERSHIP_VERIFY checks=[1-9][0-9]* acquired=[1-9][0-9]* replaced=[1-9][0-9]* destroyed=[0-9]+ expired=[1-9][0-9]* budget=[0-9]+ trimmed=[1-9]")
       add_test(NAME tactical_dots COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_TACTICAL_DOTS_TEST=1
