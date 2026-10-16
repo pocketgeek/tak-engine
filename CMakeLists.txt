@@ -1499,6 +1499,15 @@ if(TAK_BUILD_CLIENT)
       add_test(NAME terrain_cache COMMAND terrain_cache_test "${TAK_TEST_DATA}")
       set_tests_properties(terrain_cache PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     endif()
+    # Animated colour-atlas regions: incremental repaint == complete repaint ==
+    # the previous repaint-everything scheme (frames, gutters, expiry, late atlas,
+    # renderer reset). Software renderer under the dummy video driver.
+    add_executable(animated_atlas_test tools/animated_atlas_test.cpp src/client/animatedatlas.cpp)
+    target_include_directories(animated_atlas_test PRIVATE src)
+    target_compile_definitions(animated_atlas_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(animated_atlas_test PRIVATE ${_tak_sdl2})
+    add_test(NAME animated_atlas COMMAND animated_atlas_test)
+    set_tests_properties(animated_atlas PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     add_executable(distant_models_test tools/distant_models_test.cpp src/client/distantmodels.cpp)
     target_include_directories(distant_models_test PRIVATE src)
     target_compile_definitions(distant_models_test PRIVATE SDL_MAIN_HANDLED)
