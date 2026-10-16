@@ -1921,6 +1921,7 @@ struct LegionNavigator::Impl {
     std::vector<uint8_t> regPlane;
     size_t regBlocked=0;
     uint64_t regBudget=0;              // units left in the current window
+    uint64_t planeLeft=0;              // plane-build units left in the current window (buildPlanes, planeReady)
     bool regCommandWindow=false;       // the current window is a command batch (refilled at its first call)
     bool queued(int id) const {return id>=0&&size_t(id)<regSeq.size()&&regSeq[size_t(id)]!=0;}
     void setPlaneBlocked(int id,bool on) {
@@ -1939,11 +1940,21 @@ struct LegionNavigator::Impl {
     // the registration waits for instead of a whole-map build inside the call. A built plane is ready
     // (a stale one -- legacy nav-grid worlds, or after a whole-map change -- still rebuilds in plane(),
     // reported as a synchronous stage). Marks the plane wanted (planeWant, first come first served).
+    // A plane whose whole build can never exceed one window's plane budget (8 W H units at most:
+    // maps up to 131k cells) is built at once, inside the call, exactly as before, while any of the
+    // window's budget is left (so it may overshoot by one such plane); only a larger one becomes the
+    // incremental job.
     bool planeReady(const Unit& u) {
         if(!placementPlane()||width()<2||height()<2)return true;
         const int index=planeFor(*u.type);
-        const Plane& p=planes[size_t(index)];
+        Plane& p=planes[size_t(index)];
         if(p.stage==0&&p.epoch!=~0ull)return true;
+        if(8*uint64_t(width())*uint64_t(height())<=budgetOf(NavBudget::kPlaneBuildBudget)&&planeLeft>0) {
+            const uint64_t before=navc.planeBuild;
+            rebuild(p,false);
+            planeLeft-=std::min(planeLeft,navc.planeBuild-before);
+            return true;
+        }
         if(std::find(planeWant.begin(),planeWant.end(),index)==planeWant.end())planeWant.push_back(index);
         return false;
     }
@@ -1958,7 +1969,9 @@ struct LegionNavigator::Impl {
     }
     // A supported leg asks for registration (World::requestPath, or move() itself).
     void requestRegister(Unit& u) {
-        if(!w.inTick_&&!regCommandWindow) {regBudget=budgetOf(NavBudget::kRegBudget);regCommandWindow=true;}
+        if(!w.inTick_&&!regCommandWindow) {
+            regBudget=budgetOf(NavBudget::kRegBudget);planeLeft=budgetOf(NavBudget::kPlaneBuildBudget);regCommandWindow=true;
+        }
         if(queued(u.id))return;
         const bool open=regLive==regBlocked&&regBudget>0;   // nothing waits that this could overtake
         const bool ready=planeReady(u);
@@ -1979,7 +1992,7 @@ struct LegionNavigator::Impl {
     // first build never holds up another); at most kRegScan of them are stepped over per pass.
     static constexpr size_t kRegScan=65536;
     void drainRegistrations(bool refill) {
-        if(refill) {regBudget=budgetOf(NavBudget::kRegBudget);regCommandWindow=false;}
+        if(refill) {regBudget=budgetOf(NavBudget::kRegBudget);planeLeft=budgetOf(NavBudget::kPlaneBuildBudget);regCommandWindow=false;}
         std::deque<RegEntry> kept;
         size_t skipped=0;
         while(regLive&&regBudget>0&&!regQueue.empty()&&skipped<kRegScan) {
@@ -2000,7 +2013,7 @@ struct LegionNavigator::Impl {
     // tick of the same resumable build the background prebuild runs (identical result to
     // buildPlane + labelPlane). A plane finished here takes its waiting registrations in this tick.
     void buildPlanes() {
-        uint64_t budget=budgetOf(NavBudget::kPlaneBuildBudget);
+        uint64_t& budget=planeLeft;
         bool finished=false;
         for(const int index:planeWant) {
             if(budget==0)break;
@@ -2547,6 +2560,16 @@ struct LegionNavigator::Impl {
         if(!placementPlane())e=mix(e,w.nav_.version());
         return e;
     }
+    // A whole-plane build in one call (buildPlane + labelPlane). `sync`: outside any budget -- a
+    // stale rebuild on use, or a test hook -- reported as a synchronous stage; otherwise inside the
+    // window's plane budget (planeReady).
+    void rebuild(Plane& p,bool sync) {
+        p.epoch=epoch;buildPlane(p);labelPlane(p);clearStage(p);
+        uint64_t legalCells=0;for(const int n:p.compSize)legalCells+=uint64_t(std::max(n,0));
+        const uint64_t units=4*uint64_t(width())*height()+4*legalCells;
+        navc.planeBuild+=units;
+        if(sync) {++acct.syncPlaneCalls;acct.syncPlaneMax=std::max(acct.syncPlaneMax,units);}
+    }
     Plane& plane(int index) {
         auto& p=planes[size_t(index)];
         if(p.epoch!=epoch) {
@@ -2556,12 +2579,7 @@ struct LegionNavigator::Impl {
             // split into groups (a started field takes no new seeds) and cost
             // jagged 2000 about 30% of its arrivals (seeds 0/7/42).
             const bool first=p.epoch==~0ull;
-            p.epoch=epoch;buildPlane(p);labelPlane(p);clearStage(p);
-            {   // a synchronous whole-plane stage (accounting: reported, never hidden)
-                uint64_t legalCells=0;for(const int n:p.compSize)legalCells+=uint64_t(std::max(n,0));
-                const uint64_t units=4*uint64_t(width())*height()+4*legalCells;
-                navc.planeBuild+=units;++acct.syncPlaneCalls;acct.syncPlaneMax=std::max(acct.syncPlaneMax,units);
-            }
+            rebuild(p,true);
             // The carried debt is clamped to half a tick's quota: under
             // constant churn (corpses, burning features) every epoch rebuilds
             // every plane in use, and an unbounded debt starved all field
