@@ -2,6 +2,7 @@
 #include "util/virtualpath.h"
 #include "client/streaming.h"
 #include <set>
+#include <cstring>
 #include <functional>
 #include "client/gameview.h"
 #include "client/cursortiming.h"
@@ -2466,56 +2467,61 @@
         }
     }
 
-    static void paintAtlasRect(SDL_Renderer* r, SDL_Texture* src, const SDL_Rect& d);
+    // The animated model textures that have an atlas rect, in registry order, with
+    // the frame each selects now. The order is fixed for one asset generation, so
+    // AnimatedAtlasTracker can index its per-atlas record by position. Sequences
+    // whose frames did not all load (fewer than two textures) are not animated in
+    // the atlas: a new atlas paints their selected frame once, as before.
+    void GameView::collectAnimatedRegions() {
+        animatedRegions_.clear();
+        for (const auto& name : animatedTex_) {
+            auto rit = atlasRect_.find(name);
+            auto tit = textures_.find(name);
+            if (rit == atlasRect_.end() || tit == textures_.end() || tit->second.size() < 2)
+                continue;
+            animatedRegions_.push_back({rit->second, &tit->second,
+                                        modelTextureAnimations_.at(name).frame});
+        }
+    }
 
     void GameView::animateGlowTextures() {
         if (animatedTex_.empty()) return;
-        bool changed = glowDirty_;
-        for (auto& [name, animation] : modelTextureAnimations_) {
-            const size_t frame = tak::retailEffectFrame(animation.durations,
+        for (auto& [name, animation] : modelTextureAnimations_)
+            animation.frame = tak::retailEffectFrame(animation.durations,
                 animation.loop, front().gameTick).value_or(animation.durations.size());
-            changed |= frame != animation.frame;
-            animation.frame = frame;
-        }
-        if (!changed) return;
-        glowDirty_ = false;
-        renderStats_.add(tak::render::Counter::AtlasRepaintPasses);
-        SDL_Texture* prev = SDL_GetRenderTarget(ren_);
-        bool onAny = false;
-        for (SDL_Texture* atlas : atlasTex_) {
-            if (!atlas) continue;
-            SDL_SetRenderTarget(ren_, atlas);
-            renderStats_.add(tak::render::Counter::TargetSwitches);
-            onAny = true;
-            for (const auto& name : animatedTex_) {
-                auto rit = atlasRect_.find(name);
-                auto tit = textures_.find(name);
-                if (rit == atlasRect_.end() || tit == textures_.end() ||
-                    tit->second.size() < 2)
+        collectAnimatedRegions();
+        // Only atlases holding a stale frame are visited: an unchanged frame costs no
+        // target switch, and a changed sequence repaints its own region (and gutter)
+        // in each atlas -- not every animated region of every atlas.
+        const auto renderer = rendererGeneration_.current(), asset = assetGeneration_.current();
+        tak::render::AtlasPaintCounts counts;
+        SDL_Texture* prev = nullptr;
+        bool switched = false;
+        {
+            tak::render::AtlasPainter painter(ren_, &counts);
+            for (size_t slot = 0; slot < atlasTex_.size(); ++slot) {
+                SDL_Texture* atlas = atlasTex_[slot];
+                if (!atlas || atlasTracker_.current(slot, renderer, asset, animatedRegions_))
                     continue;
-                const size_t frame = modelTextureAnimations_.at(name).frame;
-                SDL_Texture* f = frame < tit->second.size() ? tit->second[frame] : nullptr;
-                SDL_Rect r = rit->second;
-                SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
-                SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
-                const SDL_Rect padded{r.x - 1, r.y - 1, r.w + 2, r.h + 2};
-                SDL_RenderFillRect(ren_, &padded);     // clear the region + gutter (transparent)
-                renderStats_.add(tak::render::Counter::AtlasRegionsPainted);
-                renderStats_.add(tak::render::Counter::AtlasPixelsPainted, uint64_t(padded.w) * uint64_t(padded.h));
-                if (!f) continue;  // expired non-looping sequence
-                SDL_BlendMode fb;
-                SDL_GetTextureBlendMode(f, &fb);
-                SDL_SetTextureBlendMode(f, SDL_BLENDMODE_NONE);
-                paintAtlasRect(ren_, f, r);            // overwrite with this frame's RGBA
-                renderStats_.add(tak::render::Counter::AtlasCopies, 9);
-                renderStats_.add(tak::render::Counter::AtlasFlushes);
-                SDL_SetTextureBlendMode(f, fb);
+                if (!switched) { prev = SDL_GetRenderTarget(ren_); switched = true; }
+                SDL_SetRenderTarget(ren_, atlas);
+                renderStats_.add(tak::render::Counter::TargetSwitches);
+                atlasTracker_.update(slot, renderer, asset, animatedRegions_, painter);
             }
+            painter.finish();   // while the atlas is still the target its copies belong to
         }
-        if (onAny) {
+        if (switched) {
             SDL_SetRenderTarget(ren_, prev);
             renderStats_.add(tak::render::Counter::TargetSwitches);
+            renderStats_.add(tak::render::Counter::AtlasRepaintPasses);
         }
+        renderStats_.add(tak::render::Counter::AtlasRegionsPainted, counts.regions);
+        renderStats_.add(tak::render::Counter::AtlasPixelsPainted, counts.pixels);
+        renderStats_.add(tak::render::Counter::AtlasCopies, counts.copies);
+        renderStats_.add(tak::render::Counter::AtlasFlushes, counts.flushes);
+#ifndef NDEBUG
+        if (tak::devFlag("TAK_ATLAS_VERIFY")) verifyAtlases();
+#endif
     }
 
     void GameView::invalidateRenderTargets() {
@@ -2533,13 +2539,14 @@
         shadowAtlasOpaqueScratch_.clear();
         shadowAtlasMaskScratch_.clear();
         shadowSilhouetteAtlasActive_=false;
-        glowDirty_ = true;   // whatever was painted died with the atlases
+        atlasTracker_.clear();   // whatever was painted died with the atlases
     }
 
     void GameView::destroyGpuTextures() {
         for(auto& [size,texture]:lightningTextures_)gpuvram::destroy(texture);
         lightningTextures_.clear();
         invalidateRenderTargets();   // colour atlases + the shadow mask
+        assetGeneration_.bump();     // model textures (atlas sources) die below
         auto kill = [](SDL_Texture*& t) { if (t) { gpuvram::destroy(t); t = nullptr; } };
         for (auto& [n, frames] : textures_)
             for (SDL_Texture* t : frames) if (t) gpuvram::destroy(t);
@@ -2647,28 +2654,9 @@
         mapView_.setBilinear(on);
     }
 
-    // Copy one model texture into its atlas rect plus a one-texel clamped gutter
-    // (the layout leaves a two-texel pad). With Bilinear Filtering on, model textures
-    // then sample the texture's own edge at a polygon's UV boundary instead of the
-    // transparent pad. Uses the source's current blend mode for body and gutter alike.
-    static void paintAtlasRect(SDL_Renderer* r, SDL_Texture* src, const SDL_Rect& d) {
-        int w = 0, h = 0;
-        if (SDL_QueryTexture(src, nullptr, nullptr, &w, &h) != 0 || w <= 0 || h <= 0) return;
-        SDL_RenderCopy(r, src, nullptr, &d);
-        const SDL_Rect edges[8][2] = {
-            {{0, 0, w, 1}, {d.x, d.y - 1, d.w, 1}}, {{0, h - 1, w, 1}, {d.x, d.y + d.h, d.w, 1}},
-            {{0, 0, 1, h}, {d.x - 1, d.y, 1, d.h}}, {{w - 1, 0, 1, h}, {d.x + d.w, d.y, 1, d.h}},
-            {{0, 0, 1, 1}, {d.x - 1, d.y - 1, 1, 1}}, {{w - 1, 0, 1, 1}, {d.x + d.w, d.y - 1, 1, 1}},
-            {{0, h - 1, 1, 1}, {d.x - 1, d.y + d.h, 1, 1}}, {{w - 1, h - 1, 1, 1}, {d.x + d.w, d.y + d.h, 1, 1}}};
-        SDL_ScaleMode scale; SDL_GetTextureScaleMode(src, &scale);
-        SDL_SetTextureScaleMode(src, SDL_ScaleModeNearest);
-        for (const auto& e : edges) SDL_RenderCopy(r, src, &e[0], &e[1]);
-        SDL_RenderFlush(r);   // batched copies must run before the scale mode changes back
-        SDL_SetTextureScaleMode(src, scale);
-    }
-
     void GameView::buildAtlasLayout() {
         atlasLaidOut_ = true;
+        assetGeneration_.bump();   // region rects (and the animated-region list) change
         struct Item { const std::string* name; int w, h; };
         std::vector<Item> items;
         items.reserve(textures_.size());
@@ -2720,6 +2708,32 @@
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
         SDL_RenderClear(ren_);
+        tak::render::AtlasPaintCounts counts;
+        {
+            tak::render::AtlasPainter painter(ren_, &counts);
+            paintAtlasContents(slot, painter);
+            painter.finish();   // before leaving the atlas target
+        }
+        renderStats_.add(tak::render::Counter::AtlasCopies, counts.copies);
+        renderStats_.add(tak::render::Counter::AtlasFlushes, counts.flushes);
+        SDL_SetRenderTarget(ren_, prev);
+        // NEAREST unless Bilinear Filtering is on; the gutters keep LINEAR in-rect.
+        SDL_SetTextureScaleMode(atlas, unitScaleMode());
+        atlasTex_[slot] = atlas;
+        // Completely painted: the tracker now knows which frame every animated region
+        // holds, so the next update repaints only what changes after this.
+        atlasTracker_.created(size_t(slot), rendererGeneration_.current(),
+                              assetGeneration_.current(), animatedRegions_);
+        return atlas;
+    }
+
+    // Everything a colour atlas holds, painted into the current (cleared) target: each
+    // model texture's slot variant with its source blend mode, and each animated
+    // region exactly as AnimatedAtlasTracker repaints it (blend NONE, the frame
+    // selected now, transparent once expired). Leaves animatedRegions_ describing
+    // what was painted. Also the reference for TAK_ATLAS_VERIFY.
+    void GameView::paintAtlasContents(int slot, tak::render::AtlasPainter& painter) {
+        collectAnimatedRegions();
         for (const auto& [name, r] : atlasRect_) {
             auto it = textures_.find(name);
             if (it == textures_.end() || it->second.empty()) continue;
@@ -2727,21 +2741,66 @@
             // (projectiles, debris and previews). Start with the selected frame,
             // not a player-colour index that lasts until the next repaint.
             const auto animation = modelTextureAnimations_.find(name);
+            if (animation != modelTextureAnimations_.end() && it->second.size() >= 2)
+                continue;   // an animated region: painted below
             const size_t ci = animation != modelTextureAnimations_.end()
                 ? animation->second.frame
                 : (size_t(slot) < it->second.size() ? size_t(slot) : 0);
             if (ci >= it->second.size()) continue;
-            paintAtlasRect(ren_, it->second[ci], r);
-            renderStats_.add(tak::render::Counter::AtlasCopies, 9);
-            renderStats_.add(tak::render::Counter::AtlasFlushes);
+            painter.copy(it->second[ci], r, nullptr);
         }
-        SDL_SetRenderTarget(ren_, prev);
-        // NEAREST unless Bilinear Filtering is on; the gutters keep LINEAR in-rect.
-        SDL_SetTextureScaleMode(atlas, unitScaleMode());
-        atlasTex_[slot] = atlas;
-        glowDirty_ = true;   // fresh atlas: its animated regions are unpainted
-        return atlas;
+        for (const auto& region : animatedRegions_) tak::render::paintAnimatedRegion(painter, region);
     }
+
+#ifndef NDEBUG
+    // TAK_ATLAS_VERIFY (debug): after each update, every colour atlas must equal, byte
+    // for byte -- content, gutters and padding -- a fresh atlas completely painted
+    // with the frames selected now. Covers frame changes, expiry, late creation and
+    // renderer resets in whatever scene runs. Throws on the first mismatch.
+    void GameView::verifyAtlases() {
+        if (atlasW_ <= 0 || atlasH_ <= 0) return;
+        SDL_Texture* prev = SDL_GetRenderTarget(ren_);
+        const size_t bytes = size_t(atlasW_) * size_t(atlasH_) * 4;
+        std::vector<uint8_t> live(bytes), reference(bytes);
+        for (size_t slot = 0; slot < atlasTex_.size(); ++slot) {
+            SDL_Texture* atlas = atlasTex_[slot];
+            if (!atlas) continue;
+            SDL_Texture* scratch = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
+                SDL_TEXTUREACCESS_TARGET, atlasW_, atlasH_);
+            if (!scratch) throw std::runtime_error("atlas verify: scratch target allocation failed");
+            SDL_SetRenderTarget(ren_, scratch);
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
+            SDL_RenderClear(ren_);
+            {
+                tak::render::AtlasPainter painter(ren_);
+                paintAtlasContents(int(slot), painter);
+                painter.finish();
+            }
+            const int readRef = SDL_RenderReadPixels(ren_, nullptr, SDL_PIXELFORMAT_RGBA32,
+                                                     reference.data(), atlasW_ * 4);
+            SDL_SetRenderTarget(ren_, atlas);
+            const int readLive = SDL_RenderReadPixels(ren_, nullptr, SDL_PIXELFORMAT_RGBA32,
+                                                      live.data(), atlasW_ * 4);
+            SDL_SetRenderTarget(ren_, prev);
+            gpuvram::destroy(scratch);
+            if (readRef || readLive) throw std::runtime_error("atlas verify: readback failed");
+            ++atlasVerifyChecks_;
+            if (live == reference) continue;
+            size_t at = 0, differing = 0;
+            for (size_t i = 0; i < bytes; i += 4)
+                if (std::memcmp(&live[i], &reference[i], 4)) { if (!differing++) at = i / 4; }
+            const int x = int(at % size_t(atlasW_)), y = int(at / size_t(atlasW_));
+            std::string region = "(none)";
+            for (const auto& [name, r] : atlasRect_)
+                if (x >= r.x - 1 && x <= r.x + r.w && y >= r.y - 1 && y <= r.y + r.h) region = name;
+            std::fprintf(stderr, "ATLAS_VERIFY MISMATCH slot=%zu tick=%u pixels=%zu first=(%d,%d) region=%s\n",
+                slot, unsigned(front().gameTick), differing, x, y, region.c_str());
+            throw std::runtime_error("animated atlas differs from a complete repaint");
+        }
+        atlasVerifyRegions_ = animatedRegions_.size();
+    }
+#endif
 
     void GameView::preparePiece(const tak::tdo::Object& object,const PieceMeta& meta,
                                 const Xform& parent,const Anim* anim,float cy,float sy,

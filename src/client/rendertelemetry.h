@@ -233,9 +233,9 @@ enum class Counter : uint8_t {
     DistantRejectBudget, // over the per-frame bake budget: live geometry instead
     DistantRejectShape,  // translucent, too large or degenerate: live geometry instead
     DistantRejectPages,  // no page room / VRAM budget: live geometry instead
-    AtlasRepaintPasses,  // animated-texture repaint passes (each walks every colour atlas)
-    AtlasCopies,         // texture copies into atlases (body + gutters)
-    AtlasFlushes,        // explicit flushes in atlas painting
+    AtlasRepaintPasses,  // frames whose animated-texture update repainted any atlas region
+    AtlasCopies,         // texture copies into atlases (body + gutters; creation included)
+    AtlasFlushes,        // explicit flushes in atlas painting (creation included)
     AtlasCreated,        // colour atlases created this frame
     LogicalDraws,        // draw calls issued by counted world paths (see SubmitCounters)
     NativeDraws,         // glDrawArrays issued by the native GL batch paths

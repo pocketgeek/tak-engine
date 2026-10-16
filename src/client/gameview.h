@@ -64,6 +64,7 @@
 #include "client/modelview.h"   // standalone 3DO model viewer (extracted leaf)
 #include "client/renderframe.h"   // UnitR/PlayerR/Frame render snapshot (extracted leaf)
 #include "client/rendertelemetry.h" // per-frame render stats + generation vocabulary
+#include "client/animatedatlas.h"   // per-atlas animated-region tracking
 #include "client/geometrykeycause.h"  // telemetry: which stage a geometry miss came from
 #include "client/ordertrail.h"
 #include "client/retailaim.h"
@@ -1115,9 +1116,27 @@ private:
     int atlasW_ = 0, atlasH_ = 0;
     std::vector<SDL_Texture*> atlasTex_;   // per colour slot; nullptr until built
     uint64_t atlasRetryAt_ = 0;            // SDL_GetTicks64 after which a failed atlas create retries
-    // Per-sequence authored clocks; atlas pixels are updated only on a frame
-    // change or atlas rebuild. Geometry workers read the selected frame.
-    bool glowDirty_ = true;
+    // Per-sequence authored clocks; geometry workers read the selected frame.
+    // Atlas regions are repainted per atlas and per sequence: atlasTracker_ records
+    // the frame each animated region of each colour atlas holds (created under
+    // rendererGeneration_ and assetGeneration_), so only regions whose frame changed
+    // are painted, and a new or reset atlas is painted completely when created.
+    tak::render::AnimatedAtlasTracker atlasTracker_;
+    // Model texture / atlas layout lifetime (texture reload, layout rebuild).
+    tak::render::GenerationCounter assetGeneration_;
+    // Animated regions in a fixed order (animatedTex_), rebuilt with each update.
+    std::vector<tak::render::AnimatedRegion> animatedRegions_;
+    void collectAnimatedRegions();
+    void paintAtlasContents(int slot, tak::render::AtlasPainter& painter);
+#ifndef NDEBUG
+    void verifyAtlases();          // TAK_ATLAS_VERIFY: compare with a complete repaint
+    uint64_t atlasVerifyChecks_ = 0;
+    size_t atlasVerifyRegions_ = 0;
+public:
+    uint64_t atlasVerifyChecks() const { return atlasVerifyChecks_; }
+    size_t atlasVerifyRegions() const { return atlasVerifyRegions_; }
+private:
+#endif
     bool atlasLaidOut_ = false;
     std::set<std::string> animatedTex_;
     struct ModelTextureAnimation {

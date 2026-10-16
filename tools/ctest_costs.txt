@@ -33,6 +33,7 @@ legion_gen1_route_45941_o0 29
 legion_deadend 28
 legion_scenario_battle-field-2x500 28
 render_texture_reuse 28
+render_atlas_verify 26
 legion_gen1_route_36057_o0 27
 legion_gen1_route_45941_o1 27
 legion_gen1_route_54772_o0 27

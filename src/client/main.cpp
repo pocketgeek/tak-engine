@@ -1928,6 +1928,14 @@ int main(int argc, char** argv) {
                 if(!gameView->animatedTextureChecks())
                     throw std::runtime_error("texture reuse test had no unchanged animated frames across ticks");
             }
+            if(tak::devFlag("TAK_ATLAS_VERIFY")) {
+                // Every check passed, or verifyAtlases() threw at the first mismatch.
+                std::printf("ATLAS_VERIFY checks=%llu regions=%zu\n",
+                    static_cast<unsigned long long>(gameView->atlasVerifyChecks()),
+                    gameView->atlasVerifyRegions());
+                if(!gameView->atlasVerifyChecks())
+                    throw std::runtime_error("atlas verify ran no checks");
+            }
             running=false;quitApp=true;
             if(studyQuery){studyDeleteQuery(GLsizei(kStudyQueries),studyQueries);studyQuery=false;}
         }
