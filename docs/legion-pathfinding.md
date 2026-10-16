@@ -1810,7 +1810,9 @@ lift walk, the aim memo (keyed on the field's work count, so a resumed build
 invalidates it), eviction, `sharedField`, and a formation's slot hand-out
 (`claimSlot` for a member whose only slot is its formation's: it reads no
 potential). The pinwheel, `awareScan` and the aware replan keep `done`: a
-paused group plans round no crossing traffic until its field finishes. Field
+paused group plans round no crossing traffic until its field finishes. (Since
+Legion 10,000 stage 5 none of them waits for `done`: they state the region they
+need and read it through certainty checks; see that section below.) Field
 descent (`aimCell`, the drive and detour code) may read a tentative potential
 beyond the margin; descent stays sound on it, as on a half-built field.
 
@@ -2269,6 +2271,68 @@ the tenure and the measured queue -- removing the reservation or serving by id i
 `legion_sched_inflight` (many-2500: while memory is short no admission takes a kind past its windows; 78
 refreshes in flight without the per-kind cap),
 `legion_planepin`, `replay_test` (267 refused).
+
+### Legion 10,000 stage 5: route queries (protocol 269)
+
+Movement consumers no longer read a field's cells; they ask a **route** (`src/sim/legion_route.h`) what they need,
+so stage 6 can replace the storage (sparse tiles) behind the same queries. The record, with the measurements, is
+docs/legion-10000-progress.md section 7.5.
+
+* **The interface** (`RouteView` over `RouteGrid`, exact: 8c6efbff). A `Field` is a `RouteGrid` (its window,
+  potentials, build state, serial, epoch, work count) plus the builder's own state; only the builder (`startField`,
+  `advance`, `serve`, `coveredFor`) touches the cells. A view answers, kept apart: `estimate` (direction guidance:
+  exact where settled, a real way's length where reached but unsettled -- the descent stays sound on it, as on a
+  half-built field), `known` (exact or none, never a tentative value), `covered(cell, margin)` (settled with that
+  much key to spare: every cell within cost margin/2 of it is final), `reach` (Unknown / Reachable / Unreachable:
+  Unreachable only on a complete route that spans the cell's static component and was built on the current
+  geometry; Unknown never retires an order), `progress` (a distance with its metric, the route serial) and
+  `geometryEpoch` (freshness, apart from all of the above). `legion_route_test` checks the answers on building,
+  paused, complete, bounded and stale routes.
+* **Demand** (`RouteDemand`, exact wherever the old list never filled: 5f60ce54). A paused build's demand is one
+  entry per cell (the widest margin), in arrival order, indexed, with no cap; the 32-cell list dropped the oldest,
+  so past 32 standing members some members' needs were never seen.
+* **Stated regions** (662574f1). The consumers that read past their own settled cell -- the passage gate, passage
+  lanes and pinwheel, awareness, MV-05's soft-block probe, packed slots, reach rings, the formation entrance, a ring
+  member's walk to its spot -- run on a usable route (complete, or paused once it covered its group), not only a
+  finished one. Each states the region it needs as `(cell, margin)` -- the lanes `kLaneCover` past the body (asked
+  for only when a wall end or a passage lies on the way, `laneTrigger`), awareness `kAwareCover` ahead of the
+  centroid, the entrance its open-ground test's radius round the point, a reach group its ring's spots (part of its
+  first pause) -- and asks a paused build for it (`need`: a demand entry, served in the FirstRoute class through
+  `needIds`, so a stated region does not take the Waiting class's place ahead of standing members and refreshes).
+  It reads the region through certainty checks: `certainValue`, `certainReach` and `descend`'s check take a value
+  as final only where the cell is settled, or proven unreachable (illegal, or outside the route's component on the
+  current geometry). A consumer that meets any other read acts as on a route not yet built (no lane, slot, ring
+  spot, corridor or entrance this time) and the route runs on to done (`Field::runOn`, hashed): no tentative or
+  unknown value is acted on, and the worst case is the old wait for `done`. A formation's entrance waits for its
+  region (`kEntryPending`, hashed) and is computed when it is settled. `serve`'s cover scan is incremental within
+  one call (coverage only grows while a call advances the build), so a 10,000-body group costs O(members) per
+  call, not per slice.
+* **Which builds pause is unchanged.** Solo groups pause as before (C1); slot groups, pinwheel parts and reach
+  groups still run to done. Letting them pause too was built and measured (three offsets of the scale files, and
+  the gate fixtures with `--pause-all`): many-5000's longest field wait halves (1,189-1,234 -> 627-660 ticks) and
+  its arrivals rise 8%, attack and battle fixtures spend a third less field work, but awareness on those paused
+  routes asks for whole-window refreshes that dominate the work, many-2500's arrivals fall 6% and sched-load's
+  stuck bodies double (101 -> 181-211) over the offsets, not diagnosed to the end; it is not taken here
+  (`setPauseAllForTest` / `legion_scenario --pause-all` keep it for tests; stage 6's sparse tiles change the
+  economics it was measured under). `legion_route_paused` runs the consumers on paused routes under
+  `TAK_LEGION_VERIFY`.
+* **Progress across metrics** (35cac631, 9bd3f5c3). An audit of the detour and
+  back-off measures found two that compared values across metrics: the detour record (`Member::nearest`, the least
+  of potential x64 on any field and squared cells to the own goal: a lost field read squared cells far below its
+  potential as a record and restarted the back-off) and the approach holder's gain (across routes, its window
+  restarted wherever the route gave no value). A metric transition is now never a record (a record needs a gain
+  within the current metric, `nearestHere`, as well as a new low of `nearest`); the gain is per route serial with a
+  clock that stops while the route gives no value; and a complete route built on older geometry no longer traps a
+  body it does not reach. Re-basing `nearest` itself per metric was built first and rejected: it counted every gain
+  after a refresh as a record, which the rules were not tuned on (battle-assault +9.7% detours; many-1000 -4.4%
+  arrivals and +48% stuck over three offsets). The stall clock, the headway clock (already per metric), the hold
+  clock, the crowd window and the settle bound are unchanged; the settle bound compares potentials across a refresh
+  on purpose (a tolerance that must keep growing under churn).
+* `Progress` is route-wide by definition: a provider built from tiles adds the exit's remaining distance and gives
+  the tile chain its own metric, so a tile-local zero is never read as standing on a goal.
+
+Tests: `legion_route_test` (the view and the demand alone), `legion_route_paused` (the consumers on paused routes:
+verify on, serial == workers, every consumer asked for its region, no read uncertain), `replay_test` (268 refused).
 
 ## Instruments
 
