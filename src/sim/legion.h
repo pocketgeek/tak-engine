@@ -392,6 +392,10 @@ public:
     // fixtures exercise their resumable, over-budget paths. Changes behaviour
     // and hashes when above 1.
     static void setBudgetDivisorForTest(int div);
+    // Test hook (process-wide; 0 = NavBudget::kFieldBytes): the field byte
+    // allowance (never below two whole-map fields), so a small fixture can
+    // exercise eviction at the cap. Changes behaviour and hashes when set.
+    static void setFieldBytesForTest(uint64_t bytes);
     // Debug builds (NDEBUG undefined): check derived indexes and the Stats
     // after every tick() (aborts on a mismatch). A no-op in release. A debug
     // build starts with it on when TAK_LEGION_VERIFY is set (the only

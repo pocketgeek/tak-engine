@@ -59,6 +59,7 @@ uint32_t gRestStride=kRestStride;
 bool gAwareOff=false;
 bool gInstrumentProbes=false;   // LegionNavigator::setInstrumentProbes: the vertex probe (Stats only)
 uint64_t gBudgetDiv=1;          // LegionNavigator::setBudgetDivisorForTest (process-wide; 1 in the game)
+uint64_t gFieldBytes=0;         // LegionNavigator::setFieldBytesForTest (process-wide; 0: NavBudget::kFieldBytes)
 // A per-tick budget of the registration / plane-build / awareness work, divided by the test divisor.
 uint64_t budgetOf(uint64_t units) {return std::max<uint64_t>(1,units/gBudgetDiv);}
 #ifndef NDEBUG
@@ -3160,7 +3161,7 @@ struct LegionNavigator::Impl {
     // than two whole-map fields, so that no single request exceeds it on any map.
     uint64_t fieldBytes() const {return uint64_t(liveFieldCells())*NavSize::kCell32+fieldTotals.inflight;}
     uint64_t fieldAllowance() const {
-        return std::max<uint64_t>(NavBudget::kFieldBytes,2*uint64_t(width())*uint64_t(height())*NavSize::kCell32);
+        return std::max<uint64_t>(gFieldBytes?gFieldBytes:NavBudget::kFieldBytes,2*uint64_t(width())*uint64_t(height())*NavSize::kCell32);
     }
     Start startField(Group& g,bool shareOnly=false,uint64_t initRoom=~0ull) {
         startCharge=0;
@@ -9316,6 +9317,7 @@ void LegionNavigator::setRestStrideForTest(int stride) {gRestStride=uint32_t(std
 void LegionNavigator::setAwareOffForTest(bool off) {gAwareOff=off;}
 void LegionNavigator::setInstrumentProbes(bool on) {gInstrumentProbes=on;}
 void LegionNavigator::setBudgetDivisorForTest(int div) {gBudgetDiv=uint64_t(std::max(div,1));}
+void LegionNavigator::setFieldBytesForTest(uint64_t bytes) {gFieldBytes=bytes;}
 void LegionNavigator::setVerify(bool on) {gVerify=on;}
 bool LegionNavigator::verifying() {return gVerify;}
 void LegionNavigator::setProbe(uint32_t ticks) {gProbe=ticks;}

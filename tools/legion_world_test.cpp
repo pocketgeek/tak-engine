@@ -923,6 +923,12 @@ void slotblock() {
 void quota() {
     // Many independent single-unit orders on a large map exceed the field
     // cap: evicted fields rebuild deterministically and nobody starves.
+    // Since Legion 10,000 stage 4 the cap is a fixed byte allowance (128 MiB,
+    // far above 64 fields of this map); the fixture sets it to what the old
+    // cap of 48 whole maps of cells was here, so it still exercises eviction,
+    // now through the byte allowance.
+    LegionNavigator::setFieldBytesForTest(48ull*320*320*4);
+    struct Reset {~Reset() {LegionNavigator::setFieldBytesForTest(0);}} reset;
     Fixture f(320,320);
     f.rect(150,0,4,150);f.rect(150,170,4,150);
     f.publish();
