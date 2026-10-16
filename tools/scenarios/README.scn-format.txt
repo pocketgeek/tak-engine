@@ -31,6 +31,11 @@ never names a pathfinding mode: the runner builds it once per mode.
                                 only the server's 64-per-tick drain); explicit
                                 orders (Legion clicks) have their own window of 8
                                 orders and do not wait for it
+  navbytes N                    Legion only, tests: the navigator's field byte allowance
+                                (LegionNavigator::setFieldBytesForTest; never below two
+                                whole-map fields; default NavBudget::kFieldBytes): memory
+                                pressure on a small map (legion_scenario --field-bytes
+                                overrides)
   gateoffsets O,O,...           the start offsets legion_scenario --check / --baseline
                                 run by default when the gate's eleven (0,+-1..+-5)
                                 put a spawn off the map; at least nine, the core

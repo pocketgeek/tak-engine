@@ -147,6 +147,7 @@ struct Scenario {
     bool crusades = false;            // `crusades on`: the Crusades balance overlay (unitscb/canbuildcb)
     bool wanderers = true;            // `wanderers off`: fbi types lose Standby_wander (their home-pull)
     int roundTrip = -1;               // `uplink R`: the 512-command window
+    uint64_t navBytes = 0;            // `navbytes N`: the Legion field byte allowance (0: the game's)
     bool probeApproach = false;       // `probe approach`: the runner reports per-unit approach arrival and order completion
     bool probeLanes = false;          // `probe lanes`: the runner reports the lanes.* counters (W8 step 0)
     bool probeW9 = false;             // `probe w9`: the runner reports the w9.* counters and the debug-build census.* keys (W9 step 0)
@@ -372,6 +373,7 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             (w[1] == "approach" ? s.probeApproach : w[1] == "aware" ? s.probeAware : w[1] == "lanes" ? s.probeLanes
              : w[1] == "w9" ? s.probeW9 : w[1] == "scale" ? s.probeScale : s.probeClaims) = true;
         } else if (k == "uplink") { need(2, 2); s.roundTrip = int(c.integer(w[1], 1, 600)); }
+        else if (k == "navbytes") { need(2, 2); s.navBytes = uint64_t(c.integer(w[1], 1, int64_t(1) << 40)); }
         else if (k == "gateoffsets") {
             need(2, 2);
             s.gateOffsets.clear();
@@ -737,6 +739,7 @@ inline std::string format(const Scenario& s) {
         o << "\n";
     } else o << "explored " << (s.explored ? "all" : "none") << "\n";
     if (s.roundTrip >= 0) o << "uplink " << s.roundTrip << "\n";
+    if (s.navBytes) o << "navbytes " << s.navBytes << "\n";
     if (s.probeApproach) o << "probe approach\n";
     if (s.probeClaims) o << "probe claims\n";
     if (s.probeAware) o << "probe aware\n";

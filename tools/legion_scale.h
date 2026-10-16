@@ -53,6 +53,9 @@
 //   navbytes.peak, navbytes.<category>_at_peak  deterministic NavBytes: the largest total sampled (every
 //                                              30 ticks and at the end) and its categories then
 //   sched.gap_max.<class>, sched.gap_max.any, sched.age_max.<class>, sched.promotions, sched.fit_skips, sched.reservations,
+//   sched.request_promotions, sched.requests_max, sched.stopped_shares, sched.admissions,
+//   sched.shared_evictions, sched.inflight_max.first, sched.inflight_max.refresh, sched.request_cells_max,
+//   sched.admit_gap_max,
 //   sched.reg_deferred, sched.reg_wait_max, sched.plane_waits, sched.sync_plane_calls, sched.sync_plane_max,
 //   sched.init_max                             the scheduler's service record (NavAccounting)
 // Everything is integer and in body order, so every compiler reports the same numbers.
@@ -307,6 +310,15 @@ public:
                 k.emplace_back(p + "sched.promotions", int64_t(a.promotions));
                 k.emplace_back(p + "sched.fit_skips", int64_t(a.fitSkips));
                 k.emplace_back(p + "sched.reservations", int64_t(a.reservations));
+                k.emplace_back(p + "sched.request_promotions", int64_t(a.requestPromotions));
+                k.emplace_back(p + "sched.requests_max", int64_t(a.requestsMax));
+                k.emplace_back(p + "sched.stopped_shares", int64_t(a.stoppedShares));
+                k.emplace_back(p + "sched.admissions", int64_t(a.admissions));
+                k.emplace_back(p + "sched.shared_evictions", int64_t(a.sharedEvictions));
+                k.emplace_back(p + "sched.inflight_max.first", int64_t(a.firstInflightMax));
+                k.emplace_back(p + "sched.inflight_max.refresh", int64_t(a.refreshInflightMax));
+                k.emplace_back(p + "sched.request_cells_max", int64_t(a.requestCellsMax));
+                k.emplace_back(p + "sched.admit_gap_max", int64_t(a.admitGapMax));
                 k.emplace_back(p + "sched.reg_deferred", int64_t(a.regDeferred));
                 k.emplace_back(p + "sched.reg_wait_max", int64_t(a.regWaitMax));
                 k.emplace_back(p + "sched.plane_waits", int64_t(a.planeWaits));

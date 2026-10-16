@@ -85,6 +85,23 @@ struct NavAccounting {
     std::array<uint64_t, size_t(NavClass::Count)> serviceGapMax{}, requestAgeMax{};
     uint64_t serviceGapAny = 0;
     uint64_t promotions = 0, fitSkips = 0, reservations = 0;
+    // Start requests listed in a class above their own (request-ticks: age promotion of requests), the
+    // most start requests listed in one tick (the queue the request ages are measured against), and
+    // starts admitted after the room scan had stopped (a reservation or the fit-scan bound): only by
+    // sharing a field that already exists, which takes no room; and every start request admitted (a new
+    // build or a share: the admission rate the queue drains at).
+    uint64_t requestPromotions = 0, requestsMax = 0, stoppedShares = 0, admissions = 0;
+    // Evictions of a shared field (dropped from every holder at once), and the most field builds in flight
+    // and asking for work at the end of a tick's admissions, first builds and refreshes (each at most its
+    // window: an admitted build is always served).
+    uint64_t sharedEvictions = 0, firstInflightMax = 0, refreshInflightMax = 0;
+    // The most field cells the start requests listed in one tick would need together (their windows): the
+    // queue, in memory, a request's wait is measured against (tools/legion_sched_load_test.py).
+    uint64_t requestCellsMax = 0;
+    // The longest run of consecutive ticks in which a start request was refused for room and no new build
+    // started (admission liveness under memory pressure: every finished field is a victim one tenure after
+    // it starts, so this stays within kFieldTenure + kStillScan + the longest build).
+    uint64_t admitGapMax = 0;
     uint64_t regDeferred = 0, regWaitMax = 0, planeWaits = 0;
     // Synchronous stages that ran over their budget unit (reported, never hidden): whole-plane
     // relabels/rebuilds done in one call, the largest such call (units), and the largest single
@@ -108,6 +125,11 @@ struct NavBudget {
     // slice each; the refresh classes as many as the refresh allowance does).
     static constexpr int64_t kSlice = 32768;
     static constexpr size_t kWindow = 12, kRefreshWindow = 3;
+    // New builds in flight (asking for work), by kind over every class, besides each class's own window: a
+    // first build sits in the Waiting or the FirstRoute window, a refresh in the AwareRepair or the
+    // StaleRefresh one, so each kind may fill the two windows it can be served in -- and no more, whichever
+    // class its jobs move to (at most one window's worth of them then waits unserved, holding memory).
+    static constexpr size_t kFirstInflight = 2 * kWindow, kRefreshInflight = 2 * kRefreshWindow;
     // Age promotion: a job (or start request) that has gone this many ticks without service moves up
     // one class, so no class starves another for longer than (classes - 1) x kAgeStep.
     static constexpr uint32_t kAgeStep = 150;
@@ -203,8 +225,10 @@ void navDrr(const std::vector<Job>& jobs, size_t window, NavCursor& cursor, uint
 // The bounded fit scan of one tick's admission: start requests are tried class by class, oldest first;
 // one refused for capacity is stepped over -- at most kWaitFitScan times a tick in the Waiting class
 // (their members stand still: every one that fits should start), kFitScan in each other class -- unless
-// it has been refused for kReserveAge ticks: then it reserves, and nothing after it starts this tick, in
-// its class or any later one, so the capacity that frees next is its (no request is overtaken for ever).
+// it has been refused for kReserveAge ticks: then it reserves, and nothing after it takes new room this
+// tick, in its class or any later one, so the capacity that frees next is its (no request is overtaken for
+// ever). Behind a stopped scan (the bound or a reservation) a request may still start by sharing a field
+// that already exists: that takes no room, so it delays nobody (serveFields: shareOnly).
 // (Letting the Waiting class's smaller requests start round a Waiting reservation was measured too: a few
 // percent more arrivals in the overloaded many-squad rows, but a large waiting request could then be
 // overtaken without end.) `blockedSince` is the request's own (hashed) stamp, kNever when clear. Call
@@ -213,13 +237,16 @@ struct NavAdmit {
     static constexpr uint32_t kNever = ~0u;
     int skips = 0;
     bool waiting = true;       // the class being admitted is the Waiting class
-    bool classStopped = false; // the scan of this class ended (its bound, or a reservation)
-    bool reserved = false;     // a request reserved this tick: the rest of the tick is stopped
+    bool classStopped = false; // the room scan of this class ended (its bound, or a reservation)
+    bool reserved = false;     // a request reserved this tick: the rest of the tick takes no new room
+    // The room scan of this class has ended: its remaining requests (and, after a reservation, every
+    // later class's) may still start, but only by sharing a field that already exists (no new room).
     bool stopped() const { return classStopped; }
+    void reserve() { reserved = classStopped = true; }
     // A refusal; true when this class's scan must stop.
     bool refuse(uint32_t& blockedSince, uint32_t now) {
         if (blockedSince == kNever) blockedSince = now;
-        if (now - blockedSince >= NavBudget::kReserveAge) { reserved = classStopped = true; return true; }
+        if (now - blockedSince >= NavBudget::kReserveAge) { reserve(); return true; }
         if (++skips >= (waiting ? NavBudget::kWaitFitScan : NavBudget::kFitScan)) { classStopped = true; return true; }
         return false;
     }
