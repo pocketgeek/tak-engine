@@ -2469,31 +2469,63 @@
 
     // The animated model textures that have an atlas rect, in registry order, with
     // the frame each selects now. The order is fixed for one asset generation, so
-    // AnimatedAtlasTracker can index its per-atlas record by position. Sequences
-    // whose frames did not all load (fewer than two textures) are not animated in
-    // the atlas: a new atlas paints their selected frame once, as before.
+    // AnimatedAtlasTracker can index its per-atlas record by position, and the list
+    // is only rebuilt when that generation changes (texture reload, layout); the
+    // pointers it holds (texture vectors, animation clocks) are map nodes that live
+    // as long as that generation. Sequences whose frames did not all load (fewer than
+    // two textures) are not animated in the atlas: a new atlas paints their selected
+    // frame once, as before.
     void GameView::collectAnimatedRegions() {
+        if (animatedRegionsAsset_ == assetGeneration_.current()) {
+            for (size_t i = 0; i < animatedRegions_.size(); ++i)
+                animatedRegions_[i].frame = animatedRegionClocks_[i]->frame;
+            return;
+        }
+        animatedRegionsAsset_ = assetGeneration_.current();
         animatedRegions_.clear();
+        animatedRegionClocks_.clear();
         for (const auto& name : animatedTex_) {
             auto rit = atlasRect_.find(name);
             auto tit = textures_.find(name);
-            if (rit == atlasRect_.end() || tit == textures_.end() || tit->second.size() < 2)
+            auto ait = modelTextureAnimations_.find(name);
+            if (rit == atlasRect_.end() || tit == textures_.end() || tit->second.size() < 2 ||
+                ait == modelTextureAnimations_.end())
                 continue;
-            animatedRegions_.push_back({rit->second, &tit->second,
-                                        modelTextureAnimations_.at(name).frame});
+            animatedRegions_.push_back({rit->second, &tit->second, ait->second.frame});
+            animatedRegionClocks_.push_back(&ait->second);
         }
     }
 
     void GameView::animateGlowTextures() {
         if (animatedTex_.empty()) return;
-        for (auto& [name, animation] : modelTextureAnimations_)
-            animation.frame = tak::retailEffectFrame(animation.durations,
+        bool changed = false;
+        for (auto& [name, animation] : modelTextureAnimations_) {
+            const size_t frame = tak::retailEffectFrame(animation.durations,
                 animation.loop, front().gameTick).value_or(animation.durations.size());
-        collectAnimatedRegions();
-        // Only atlases holding a stale frame are visited: an unchanged frame costs no
-        // target switch, and a changed sequence repaints its own region (and gutter)
-        // in each atlas -- not every animated region of every atlas.
+            changed |= frame != animation.frame;
+            animation.frame = frame;
+        }
         const auto renderer = rendererGeneration_.current(), asset = assetGeneration_.current();
+#ifndef NDEBUG
+        static const bool verify = tak::devFlag("TAK_ATLAS_VERIFY");
+#endif
+        if (!changed) {
+            // Every atlas recorded under the current generations was brought up to date
+            // by the last update or painted since with these same frames: nothing to do.
+            bool known = true;
+            for (size_t slot = 0; slot < atlasTex_.size() && known; ++slot)
+                known = !atlasTex_[slot] || atlasTracker_.known(slot, renderer, asset);
+            if (known) {
+#ifndef NDEBUG
+                if (verify) { collectAnimatedRegions(); verifyAtlases(); }
+#endif
+                return;
+            }
+        }
+        collectAnimatedRegions();
+        // Only atlases holding a stale frame are visited, and a changed sequence
+        // repaints its own region (and gutter) in each -- not every animated region of
+        // every atlas.
         tak::render::AtlasPaintCounts counts;
         SDL_Texture* prev = nullptr;
         bool switched = false;
@@ -2520,7 +2552,7 @@
         renderStats_.add(tak::render::Counter::AtlasCopies, counts.copies);
         renderStats_.add(tak::render::Counter::AtlasFlushes, counts.flushes);
 #ifndef NDEBUG
-        if (tak::devFlag("TAK_ATLAS_VERIFY")) verifyAtlases();
+        if (verify) verifyAtlases();
 #endif
     }
 

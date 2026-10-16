@@ -1124,8 +1124,21 @@ private:
     tak::render::AnimatedAtlasTracker atlasTracker_;
     // Model texture / atlas layout lifetime (texture reload, layout rebuild).
     tak::render::GenerationCounter assetGeneration_;
-    // Animated regions in a fixed order (animatedTex_), rebuilt with each update.
+    bool atlasLaidOut_ = false;
+    std::set<std::string> animatedTex_;
+    struct ModelTextureAnimation {
+        std::vector<uint16_t> durations;
+        bool loop = false;
+        size_t frame = 0;
+    };
+    std::map<std::string, ModelTextureAnimation> modelTextureAnimations_;
+    void animateGlowTextures();
+    // Animated regions in a fixed order (animatedTex_). The list (rects, frame
+    // textures, and the clock each region follows) is built once per asset
+    // generation; an update only copies the selected frames into it.
     std::vector<tak::render::AnimatedRegion> animatedRegions_;
+    std::vector<const ModelTextureAnimation*> animatedRegionClocks_;
+    tak::render::Generation animatedRegionsAsset_ = tak::render::kNoGeneration;
     void collectAnimatedRegions();
     void paintAtlasContents(int slot, tak::render::AtlasPainter& painter);
 #ifndef NDEBUG
@@ -1137,15 +1150,6 @@ public:
     size_t atlasVerifyRegions() const { return atlasVerifyRegions_; }
 private:
 #endif
-    bool atlasLaidOut_ = false;
-    std::set<std::string> animatedTex_;
-    struct ModelTextureAnimation {
-        std::vector<uint16_t> durations;
-        bool loop = false;
-        size_t frame = 0;
-    };
-    std::map<std::string, ModelTextureAnimation> modelTextureAnimations_;
-    void animateGlowTextures();
     // Authored palette lookup sheets: each frame has the 20 reachable shade bands (5–24)
     // arranged in a four-column sheet. Shared pages preserve batching across polygon light levels.
     struct PaletteTextureSource {

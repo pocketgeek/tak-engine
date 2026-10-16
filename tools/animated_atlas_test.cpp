@@ -367,8 +367,12 @@ int main() {
         updateAll(counts, painted);
         check(painted == f.regions.size() * 2, "asset generation change repaints every region");
         compareAll("after asset generation change", false);
+        check(tracker.known(0, rendererGen.current(), assetGen.current()), "updated slot is known");
+        check(!tracker.known(0, rendererGen.current(), assetGen.current() + 1), "another generation is not known");
         tracker.forget(0);
         check(tracker.painted(0, 0) == tak::render::AnimatedAtlasTracker::kUnpainted, "forget clears a slot");
+        check(!tracker.known(0, rendererGen.current(), assetGen.current()), "a forgotten slot is not known");
+        check(!tracker.known(7, rendererGen.current(), assetGen.current()), "a never-seen slot is not known");
     }
 
     for (auto* a : atlases) if (a) SDL_DestroyTexture(a);

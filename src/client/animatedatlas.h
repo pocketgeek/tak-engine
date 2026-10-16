@@ -100,6 +100,12 @@ public:
     // under another generation, has every region repainted. Returns regions painted.
     size_t update(size_t slot, Generation renderer, Generation asset,
                   std::span<const AnimatedRegion> regions, AtlasPainter& painter);
+    // True when the slot has a record under these generations (its painted frames
+    // are known, whatever they are).
+    bool known(size_t slot, Generation renderer, Generation asset) const {
+        return slot < slots_.size() && slots_[slot].renderer == renderer &&
+               slots_[slot].asset == asset && renderer != kNoGeneration;
+    }
     // True when update() would paint nothing for this slot.
     bool current(size_t slot, Generation renderer, Generation asset,
                  std::span<const AnimatedRegion> regions) const;

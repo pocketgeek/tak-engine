@@ -2364,6 +2364,7 @@
     }
 
     void GameView::loadTextures() {
+        assetGeneration_.bump();   // the model texture registry changes below
         // Faction texture banks use their own palettes (palettes/<side>_textures.pcx).
         // The VFS merges base + Iron Plague (cre) texture GAFs into one namespace.
         std::map<std::string, tak::gaf::Palette> pals;
