@@ -1730,6 +1730,7 @@ struct LegionNavigator::Impl {
         // positions on demand (see pivotAim), so never hashed.
         int64_t liveX=0,liveZ=0;uint32_t liveTick=~0u;
         int64_t awareX=0,awareZ=0;bool awareSeen=false;   // centroid (px) at the last awareScan (hashed)
+        uint32_t awareTick=0;   // the tick of that sample (a resumed scan can make samples more than kAwareScan apart; derived, never hashed)
         SlotShape shape;   // I2 probe, set by assignFormation (never hashed)
         // Members per 64-unit part (Member::part) over `ids`: the pinwheel's
         // per-part cap and threshold (C33). Derived, never hashed.
@@ -1919,7 +1920,9 @@ struct LegionNavigator::Impl {
             structurePtrs.size()*S::kKeyed+touch.size()*S::kBox+refreshList.size()*S::kKeyed+refreshResults.size()*24+
             groundedCells.size()*S::kCell32+groundedIds.size()*S::kCell32+liftHomeCells.size()*S::kCell32+
             liftedIds.size()*S::kCell32+passMaskList.size()*S::kCell32+liftBucketList.size()*S::kCell32;
-        b.queues+=regQueue.size()*12+regSeq.size()*S::kCell32+regPlane.size()+planeWant.size()*S::kCell32;
+        b.queues+=regQueue.size()*24+regSeq.size()*S::kCell32+regPlane.size()+planeWant.size()*S::kCell32+
+            regAreas.size()*(S::kNode+16)+regAreaOf.size()*S::kMemo;
+        b.scratch+=(pbOrder.size()+pbSorted.size())*S::kKeyed+pbCount.size()*S::kCell32;
         b.scratch+=awMovers.size()*S::kMover+awAcc.size()*(S::kNode+48)+awByCommand.size()*16+awGrid.size()*24;
         for(const auto& cell:awGrid)b.scratch+=cell.size()*S::kCell32;
         return b;
@@ -1936,7 +1939,24 @@ struct LegionNavigator::Impl {
     // a queued unit asked to register again keeps its place (registerMove reads its orders then).
     // Hashed while not empty (the waiting ids, in order). The budgets themselves never outlive their
     // window (refilled at each tick() and at each command batch), so they are not state.
-    struct RegEntry {uint32_t seq=0;int id=0;uint32_t since=0;};
+    struct RegEntry {uint32_t seq=0;int id=0;uint32_t since=0;int player=-1;uint32_t area=0;};
+    // (player, area key) -> live queued registrations of that area (the area a point of the unit's leg
+    // would key on: its convoy, else its issue tick); commandOpen keeps such an area's formation open.
+    // A function of the queue (hashed), never hashed itself.
+    std::map<std::pair<int,uint32_t>,int> regAreas;
+    std::vector<uint64_t> regAreaOf;   // unit id -> its live entry's (player, area), packed (~0: none)
+    void areaCount(int id,int player,uint32_t area,int delta) {
+        if(player<0)return;
+        auto& n=regAreas[{player,area}];n+=delta;
+        if(n<=0)regAreas.erase({player,area});
+        if(size_t(id)>=regAreaOf.size())regAreaOf.resize(size_t(id)+1,~0ull);
+        regAreaOf[size_t(id)]=delta>0?(uint64_t(uint32_t(player))<<32|area):~0ull;
+    }
+    void areaRelease(int id) {
+        if(size_t(id)>=regAreaOf.size()||regAreaOf[size_t(id)]==~0ull)return;
+        const uint64_t k=regAreaOf[size_t(id)];
+        areaCount(id,int(uint32_t(k>>32)),uint32_t(k),-1);
+    }
     std::deque<RegEntry> regQueue;
     std::vector<uint32_t> regSeq;      // unit id -> the seq of its live queue entry (0: not queued)
     uint32_t regNextSeq=0;
@@ -1957,7 +1977,7 @@ struct LegionNavigator::Impl {
     }
     void unqueue(int id) {
         if(!queued(id))return;
-        setPlaneBlocked(id,false);
+        setPlaneBlocked(id,false);areaRelease(id);
         regSeq[size_t(id)]=0;--regLive;
         while(!regQueue.empty()&&regSeq[size_t(regQueue.front().id)]!=regQueue.front().seq)regQueue.pop_front();
     }
@@ -2005,7 +2025,13 @@ struct LegionNavigator::Impl {
         if(size_t(u.id)>=regSeq.size())regSeq.resize(size_t(u.id)+1,0);
         if(++regNextSeq==0)regNextSeq=1;
         regSeq[size_t(u.id)]=regNextSeq;++regLive;
-        regQueue.push_back({regNextSeq,u.id,w.tickCounter_});
+        int areaPlayer=-1;uint32_t area=0;
+        if(!u.orders.empty()) {
+            const auto& leg=u.orders[World::currentLeg(u.orders)];
+            areaPlayer=u.player;area=leg.convoyTick!=ConvoyTable::kNone?leg.convoyTick:leg.issuedTick;
+        }
+        regQueue.push_back({regNextSeq,u.id,w.tickCounter_,areaPlayer,area});
+        areaCount(u.id,areaPlayer,area,+1);
         if(!ready) {setPlaneBlocked(u.id,true);++acct.planeWaits;}
         else ++acct.regDeferred;
     }
@@ -2026,7 +2052,7 @@ struct LegionNavigator::Impl {
             if(regSeq[size_t(e.id)]!=e.seq)continue;   // cancelled, or re-queued behind
             Unit* u=w.unit(e.id);
             if(u&&u->alive()&&u->type&&!planeReady(*u)) {kept.push_back(e);setPlaneBlocked(e.id,true);++skipped;continue;}
-            setPlaneBlocked(e.id,false);
+            setPlaneBlocked(e.id,false);areaRelease(e.id);
             regSeq[size_t(e.id)]=0;--regLive;
             acct.regWaitMax=std::max<uint64_t>(acct.regWaitMax,w.tickCounter_-e.since);
             if(!u||!u->alive()) {leave(e.id);continue;}
@@ -2054,7 +2080,31 @@ struct LegionNavigator::Impl {
         std::erase_if(planeWant,[&](int index) {
             return size_t(index)>=planes.size()||(planes[size_t(index)].stage==0&&planes[size_t(index)].epoch!=~0ull);
         });
-        if(finished)drainRegistrations(false);
+        if(finished)planesFinished();
+    }
+    // A plane became ready: the entries that waited only for it wait for the budget now (their mark
+    // clears, so nothing bypasses them as plane-blocked), and the FIFO drains with what is left.
+    void planesFinished() {
+        for(const auto& e:regQueue) {
+            if(regSeq[size_t(e.id)]!=e.seq||size_t(e.id)>=regPlane.size()||!regPlane[size_t(e.id)])continue;
+            const Unit* u=w.unit(e.id);
+            if(!u||!u->type)continue;
+            const int index=findPlaneFor(*u->type);
+            if(index>=0&&planes[size_t(index)].stage==0&&planes[size_t(index)].epoch!=~0ull)setPlaneBlocked(e.id,false);
+        }
+        drainRegistrations(false);
+    }
+    // planeFor without creating or evicting (-1: no plane for the class yet).
+    int findPlaneFor(const UnitType& t) const {
+        const bool legacy=!placementPlane();
+        const int maxDepth=t.canFly||t.domain!=UnitType::Domain::Ground?10000:(t.maxWaterDepth>0?t.maxWaterDepth:20);
+        const int minDepth=t.domain==UnitType::Domain::Water?(t.minWaterDepth>0?t.minWaterDepth:13):-10000;
+        for(size_t i=0;i<planes.size();++i) {
+            const auto& p=planes[i];
+            if(p.legacy==legacy&&p.footX==t.footX&&p.footZ==t.footZ&&(legacy||
+               (p.maxDepth==maxDepth&&p.minDepth==minDepth&&p.maxSlope==t.maxSlope&&p.maxWaterSlope==t.maxWaterSlope)))return int(i);
+        }
+        return -1;
     }
     explicit Impl(World& world):w(world) {}
 
@@ -2107,6 +2157,23 @@ struct LegionNavigator::Impl {
     }
 
     // ---- static plane -------------------------------------------------
+    // Does a waiting registration need plane `index` (its unit's mobility class)? Walks the FIFO; only
+    // asked when a plane must be evicted (24 planes in use), so rarely.
+    bool queuedNeeds(int index) const {
+        if(!regLive||size_t(index)>=planes.size())return false;
+        const Plane& p=planes[size_t(index)];
+        for(const auto& e:regQueue) {
+            if(regSeq[size_t(e.id)]!=e.seq)continue;
+            const Unit* u=w.unit(e.id);
+            if(!u||!u->type)continue;
+            const auto& t=*u->type;
+            const int maxDepth=t.canFly||t.domain!=UnitType::Domain::Ground?10000:(t.maxWaterDepth>0?t.maxWaterDepth:20);
+            const int minDepth=t.domain==UnitType::Domain::Water?(t.minWaterDepth>0?t.minWaterDepth:13):-10000;
+            if(p.footX==t.footX&&p.footZ==t.footZ&&(p.legacy||(p.maxDepth==maxDepth&&p.minDepth==minDepth&&
+               p.maxSlope==t.maxSlope&&p.maxWaterSlope==t.maxWaterSlope)))return true;
+        }
+        return false;
+    }
     int planeFor(const UnitType& t) {
         const bool legacy=!placementPlane();
         const int maxDepth=t.canFly||t.domain!=UnitType::Domain::Ground?10000:(t.maxWaterDepth>0?t.maxWaterDepth:20);
@@ -2124,8 +2191,8 @@ struct LegionNavigator::Impl {
             for(size_t i=0;i<planes.size();++i) {
                 bool used=false;
                 for(const auto& [id,g]:groups) {++iters;if(g.plane==int(i)) {used=true;break;}}
-                // A plane still building (first builds registrations wait for) is never a victim.
-                if(!used&&planes[i].stage==0&&(victim<0||planes[i].lastUse<planes[size_t(victim)].lastUse))victim=int(i);
+                // A plane still building, or one a waiting registration needs, is never a victim.
+                if(!used&&planes[i].stage==0&&!queuedNeeds(int(i))&&(victim<0||planes[i].lastUse<planes[size_t(victim)].lastUse))victim=int(i);
             }
             stats.groupLoopIters+=iters;
             if(victim>=0) {
@@ -3182,7 +3249,6 @@ struct LegionNavigator::Impl {
                 else if(g.field) {
                     if(g.next&&!g.next->done)++stats.refreshDiscards;
                     ++stats.refreshCompleted;
-                    retire(g.field);
                     g.field=std::move(shared);g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);noteAwareInstall(g,*g.field);
                 }
                 else g.field=std::move(shared);
@@ -3207,20 +3273,19 @@ struct LegionNavigator::Impl {
                 ++iters;
                 if(w.tickCounter_-built<kFieldTenure)break;
                 Group& o=groups.find(id)->second;
-                if(o.field->usable()&&o.field.use_count()==1) {victim=&o;break;}
+                if(o.field->usable()&&ownRefs(o.field)==1) {victim=&o;break;}
             }
             stats.groupLoopIters+=iters;
 #ifndef NDEBUG
             if(gVerify) {
                 Group* scan=nullptr;
                 for(auto& [id,o]:groups)
-                    if(o.field&&o.field->usable()&&o.field.use_count()==1&&w.tickCounter_-o.built>=kFieldTenure&&(!scan||o.built<scan->built))scan=&o;
+                    if(o.field&&o.field->usable()&&ownRefs(o.field)==1&&w.tickCounter_-o.built>=kFieldTenure&&(!scan||o.built<scan->built))scan=&o;
                 if(scan!=victim)verifyFail("byBuilt eviction victim differs from the full scan");
             }
 #endif
             if(!victim) {noVictimTick=w.tickCounter_;noVictimDone=fieldsDone;return Start::NoRoom;}
             if(victim->next&&!victim->next->done)++stats.refreshDiscards;
-            retire(victim->field);retire(victim->next);
             victim->field.reset();victim->next.reset();victim->stale=false;victim->demand=false;victim->awareDemand=false;++stats.fieldEvictions;
             listGroup(*victim);
         }
@@ -3634,6 +3699,7 @@ struct LegionNavigator::Impl {
             startBuild(*p);
         }
         navc.planeBuild+=advanceBuild(*p,kPrebuildCells);
+        if(p->stage==0)planesFinished();   // a background build registrations may be waiting for
     }
     // Returns the units spent (accounting).
     uint64_t advanceBuild(Plane& p,uint64_t budget) {
@@ -3907,15 +3973,17 @@ struct LegionNavigator::Impl {
     // room that frees next is its. A start whose initialisation does not fit the budget left waits
     // for the next tick (the first start of a tick always fits). Everything here reads hashed state
     // only and walks ids, serials and lists in a fixed order.
-    struct FieldJob {uint64_t key=0;Field* f=nullptr;std::vector<Group*> subs;NavClass base=NavClass::StaleRefresh,cls=NavClass::StaleRefresh;};
+    // A job holds its field (keep) for the whole serveFields call, so a field an install or an eviction
+    // drops mid-tick stays valid for every pointer the rings hold into it; it is freed when the call ends.
+    struct FieldJob {uint64_t key=0;std::shared_ptr<Field> keep;Field* f=nullptr;std::vector<Group*> subs;NavClass base=NavClass::StaleRefresh,cls=NavClass::StaleRefresh;};
     std::array<NavCursor,size_t(NavClass::Count)> navCursor{};   // per class: the round-robin position (hashed when set)
-    // The jobs of the serveFields call in progress (nullptr outside it). A field a start or an
-    // install is about to free (its last reference) is retired first: its job is marked dead, so no
-    // ring visit reads it after it is gone.
+    // The jobs of the serveFields call in progress (nullptr outside it). A field's references not
+    // counting its job's own (eviction takes only a field no other group holds, as before).
     std::map<uint64_t,FieldJob>* liveJobs=nullptr;
-    void retire(const std::shared_ptr<Field>& f) {
-        if(!liveJobs||!f||f.use_count()!=1)return;
-        if(const auto it=liveJobs->find(f->serial);it!=liveJobs->end())it->second.f=nullptr;
+    long ownRefs(const std::shared_ptr<Field>& f) const {
+        long n=f.use_count();
+        if(liveJobs)if(const auto it=liveJobs->find(f->serial);it!=liveJobs->end()&&it->second.keep==f)--n;
+        return n;
     }
     // A group's own class for a field it waits on (f: its field or its replacement).
     NavClass jobClass(const Group& g,const Field& f) const {
@@ -3923,6 +3991,18 @@ struct LegionNavigator::Impl {
         return w.tickCounter_-g.waited<=1?NavClass::Waiting:NavClass::FirstRoute;
     }
     static bool refreshClass(NavClass c) {return c==NavClass::AwareRepair||c==NavClass::StaleRefresh;}
+    // May this job's build pause (serve) rather than run to done (advance)? Only a first build every
+    // subscriber holding it as its own field may pause, and that no subscriber holds as a refresh.
+    bool jobPausable(const FieldJob& j) const {
+        bool any=false;
+        for(const Group* o:j.subs) {
+            if(o->next.get()==j.f)return false;
+            if(o->field.get()==j.f) {if(!pausable(*o))return false;any=true;}
+        }
+        return any;
+    }
+    // A paused build nobody asks to resume: not asking for work (no window slot, no visit).
+    bool jobIdle(const FieldJob& j) const {return j.f->covered&&j.f->demand.empty()&&jobPausable(j);}
     void serveFields(uint64_t& budget,uint64_t& visits) {
         const uint32_t now=w.tickCounter_;
         // Plane rebuilds and labelling are charged against the same quota (debt carries over); at
@@ -3944,7 +4024,7 @@ struct LegionNavigator::Impl {
             }
             if(f.done) {
                 ++stats.fieldsBuilt;noteAwareInstall(g,f);
-                if(g.next) {retire(g.field);g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;g.demand=false;g.awareDemand=false;restaleSlots(g);++stats.refreshCompleted;}
+                if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;g.demand=false;g.awareDemand=false;restaleSlots(g);++stats.refreshCompleted;}
                 listGroup(g);
             }
         };
@@ -3958,9 +4038,10 @@ struct LegionNavigator::Impl {
         std::map<uint64_t,FieldJob> jobs;
         liveJobs=&jobs;
         struct Clear {std::map<uint64_t,FieldJob>*& p;~Clear() {p=nullptr;}} clearJobs{liveJobs};
-        auto subscribe=[&](Group& g,Field* f,NavClass c) {
+        auto subscribe=[&](Group& g,const std::shared_ptr<Field>& sp,NavClass c) {
+            Field* f=sp.get();
             auto& j=jobs[f->serial];
-            if(!j.f) {j.key=f->serial;j.f=f;j.base=c;}
+            if(!j.f) {j.key=f->serial;j.keep=sp;j.f=f;j.base=c;}
             if(std::find(j.subs.begin(),j.subs.end(),&g)==j.subs.end())j.subs.push_back(&g);
             if(c<j.base)j.base=c;
         };
@@ -3970,14 +4051,14 @@ struct LegionNavigator::Impl {
             Group& g=groups.find(id)->second;
             if(now-g.waited>1) {waitedIds.erase(id);continue;}
             if(g.next||!g.field||g.field->done)continue;
-            subscribe(g,g.field.get(),NavClass::Waiting);
+            subscribe(g,g.field,NavClass::Waiting);
         }
         for(int id=after(buildingIds,0);id;id=after(buildingIds,id)) {
             ++visits;
             Group& g=groups.find(id)->second;
             if(g.next&&g.next->done) {installed(g,*g.next);continue;}   // a refresh another group finished
-            if(g.field&&!g.field->done&&g.pausedSerial!=g.field->serial)subscribe(g,g.field.get(),jobClass(g,*g.field));
-            if(g.next)subscribe(g,g.next.get(),jobClass(g,*g.next));
+            if(g.field&&!g.field->done&&g.pausedSerial!=g.field->serial)subscribe(g,g.field,jobClass(g,*g.field));
+            if(g.next)subscribe(g,g.next,jobClass(g,*g.next));
             if(!wantsBuilding(g))listGroup(g);   // a shared first build another group finished
         }
         // Each job's class this tick: its most urgent group's, promoted by the time since its last work.
@@ -4018,7 +4099,7 @@ struct LegionNavigator::Impl {
             // eviction victim -- so beyond it a request may only take a field another group has.
             const size_t window=refreshClass(cls)?NavBudget::kRefreshWindow:NavBudget::kWindow;
             size_t inflight=0;
-            for(const auto& [serial,j]:jobs)inflight+=j.f&&j.cls==cls&&!j.f->done;
+            for(const auto& [serial,j]:jobs)inflight+=j.f&&j.cls==cls&&!j.f->done&&!jobIdle(j);
             for(size_t k=0;k<list.size();++k) {
                 if(budget==0||admit.stopped())break;
                 const Request r=list[k];
@@ -4044,10 +4125,23 @@ struct LegionNavigator::Impl {
                 // With the refresh allowance spent, a stale group in a refresh class only takes a field
                 // another group already has (see sharedField).
                 const bool full=inflight>=window;
-                const bool shareOnly=(refreshing&&refreshClass(cls)&&refresh==0)||full;
-                const Start got=startField(g,shareOnly,budget+charged==kFieldQuota?~0ull:budget);
+                const bool chargeRefresh=refreshing&&refreshClass(cls);   // an unpromoted refresh: inside the refresh allowance
+                const bool shareOnly=(chargeRefresh&&refresh==0)||full;
+                uint64_t initRoom=budget+charged==kFieldQuota?~0ull:budget;
+                if(chargeRefresh)initRoom=std::min(initRoom,refresh);
+                const Start got=startField(g,shareOnly,initRoom);
                 budget-=std::min(budget,startCharge);
-                if(got==Start::NoShare) {if(!full)++stats.refreshDeferred;continue;}
+                if(chargeRefresh)refresh-=std::min(refresh,startCharge);
+                if(got==Start::NoShare) {
+                    if(!full) {++stats.refreshDeferred;continue;}
+                    // The window is full: a request refused for want of room long enough still reserves,
+                    // so no later class takes the room it waits for.
+                    if(g.blockedSince!=NavAdmit::kNever&&now-g.blockedSince>=NavBudget::kReserveAge) {
+                        if(!admit.reserved)++acct.reservations;
+                        admit.reserved=true;break;
+                    }
+                    continue;
+                }
                 if(got==Start::NoBudget)continue;
                 if(got==Start::NoRoom) {
                     ++acct.fitSkips;
@@ -4058,23 +4152,26 @@ struct LegionNavigator::Impl {
                 }
                 NavAdmit::admitted(g.blockedSince);
                 acct.requestAgeMax[size_t(r.base)]=std::max<uint64_t>(acct.requestAgeMax[size_t(r.base)],now-r.since);
-                if(Field* f=g.next?g.next.get():g.field.get();f&&!f->done) {
+                if(const std::shared_ptr<Field>& sp=g.next?g.next:g.field;sp&&!sp->done) {
+                    Field* f=sp.get();
                     const bool fresh=!jobs.count(f->serial);
-                    subscribe(g,f,cls);
+                    subscribe(g,sp,cls);
                     if(fresh) {jobs[f->serial].cls=cls;++inflight;}   // a new build serves in the class that admitted it
                 }
             }
             // This class's jobs, by deficit round robin.
             struct Ref {uint64_t key;int64_t* deficit;FieldJob* job;};
             std::vector<Ref> ring;
-            for(auto& [serial,j]:jobs)if(j.f&&j.cls==cls&&!j.f->done)ring.push_back({serial,&j.f->deficit,&j});
+            for(auto& [serial,j]:jobs)if(j.f&&j.cls==cls&&!j.f->done) {
+                if(jobIdle(j)) {j.f->lastServed=now;continue;}   // a paused build nobody asks to resume
+                ring.push_back({serial,&j.f->deficit,&j});
+            }
             if(ring.empty())continue;
             settle();
             navDrr(ring,refreshClass(cls)?NavBudget::kRefreshWindow:NavBudget::kWindow,navCursor[ci],budget,
                    refreshClass(cls)?&refresh:nullptr,[&](Ref& ref,uint64_t allow)->NavVisit {
                 FieldJob& j=*ref.job;
-                if(!j.f)return {};   // retired: freed by an eviction or an install this tick
-                Field& f=*j.f;
+                Field& f=*j.f;   // alive: the job holds it
                 // The group that builds it: the first subscriber holding it as its own first field,
                 // else the first holding it at all (subscriptions can change during the tick).
                 Group* holder=nullptr;
@@ -4086,7 +4183,7 @@ struct LegionNavigator::Impl {
                 plane(g.plane);
                 // A paused first build with no demand waits (see serve); it is not asking for work, so
                 // its service clock restarts.
-                const bool pause=g.field.get()==&f&&pausable(g);
+                const bool pause=jobPausable(j);
                 if(pause&&f.covered&&f.demand.empty()) {f.lastServed=now;return {};}
                 const uint32_t gap=now-f.lastServed;
                 const uint64_t spent=pause?serve(g,f,allow):advance(f,allow);
@@ -4101,6 +4198,19 @@ struct LegionNavigator::Impl {
                 if(f.done)for(Group* o:j.subs)if(o!=&g&&(o->field.get()==&f||o->next.get()==&f))installed(*o,f);
                 return {spent,!f.done&&!(pause&&f.covered&&f.demand.empty())};
             });
+        }
+        // Accounting (observation only): the waits still open at the end of the tick -- a job that asked
+        // for work and got none, a request not admitted -- count too, so ongoing starvation is measured.
+        for(const auto& [serial,j]:jobs) {
+            if(!j.f||j.f->done||j.f->lastServed==now)continue;
+            const uint32_t inClass=now-std::max(j.f->lastServed,j.f->classSince);
+            acct.serviceGapMax[size_t(j.cls)]=std::max<uint64_t>(acct.serviceGapMax[size_t(j.cls)],inClass);
+            acct.serviceGapAny=std::max<uint64_t>(acct.serviceGapAny,now-j.f->lastServed);
+        }
+        for(const auto& list:requests)for(const Request& r:list) {
+            const Group* g=groups.get(r.id);
+            if(!g||g->next||(g->field&&!g->stale)||g->requestTick==kNoTick)continue;   // admitted, or not waiting now
+            acct.requestAgeMax[size_t(r.base)]=std::max<uint64_t>(acct.requestAgeMax[size_t(r.base)],now-g->requestTick);
         }
     }
     void tick() {
@@ -4395,8 +4505,13 @@ struct LegionNavigator::Impl {
                 }
                 if(n<kAwareMembers) {pt.awareSeen=false;continue;}
                 const int64_t cx=sx/n,cz=sz/n;
-                const int64_t dx=pt.awareSeen?cx-pt.awareX:0,dz=pt.awareSeen?cz-pt.awareZ:0;
-                pt.awareX=cx;pt.awareZ=cz;pt.awareSeen=true;
+                int64_t dx=pt.awareSeen?cx-pt.awareX:0,dz=pt.awareSeen?cz-pt.awareZ:0;
+                // The displacement per kAwareScan ticks (samples are farther apart after a scan that
+                // resumed past its next scan tick; exactly kAwareScan otherwise).
+                if(const uint32_t dt=w.tickCounter_-pt.awareTick;pt.awareSeen&&dt!=kAwareScan&&dt>0) {
+                    dx=dx*int64_t(kAwareScan)/int64_t(dt);dz=dz*int64_t(kAwareScan)/int64_t(dt);
+                }
+                pt.awareX=cx;pt.awareZ=cz;pt.awareSeen=true;pt.awareTick=w.tickCounter_;
                 if(dx*dx+dz*dz<16*16)continue;   // standing: the soft-obstacle scan sees still bodies
                 const int64_t L=std::max<int64_t>(1,isqrtFloor(uint64_t(dx*dx+dz*dz)));
                 int64_t ss=0,tail=0,head=0,half=0;
@@ -4589,13 +4704,13 @@ struct LegionNavigator::Impl {
                             Field::Corridor cor=behind();
                             const Field::Corridor& was=g.avoidSeg[ki];
                             // The planned tail, carried to now, against the live one.
-                            const int64_t gone=int64_t(w.tickCounter_-g.avoidAt[ki]);
+                            const int64_t gone=int64_t(awStarted-g.avoidAt[ki]);   // the snapshot's time (a resumed scan)
                             const int64_t drift=std::max(std::abs(cor.x0-was.x0-was.ux*gone/int64_t(kAwareScan)),std::abs(cor.z0-was.z0-was.uz*gone/int64_t(kAwareScan)));
                             const int64_t limit=std::max<int64_t>(32,mv.half/2);
-                            const bool move=!was.behind||(drift>limit&&w.tickCounter_-g.avoidAt[ki]>=kBehindMove);
+                            const bool move=!was.behind||(drift>limit&&awStarted-g.avoidAt[ki]>=kBehindMove);
                             if(!move)cor=was;
                             want.push_back(mv.command);seg.push_back(cor);kind.push_back(kAwareCross);side.push_back(g.avoidSide[ki]);
-                            placed.push_back(move?w.tickCounter_:g.avoidAt[ki]);moved.push_back(move);
+                            placed.push_back(move?awStarted:g.avoidAt[ki]);moved.push_back(move);
                             continue;
                         }
                         // The conflict: the first sample where the group's disc
@@ -4633,7 +4748,7 @@ struct LegionNavigator::Impl {
                         if(cls==kAwareCross&&mv.command>g.command)continue;
                         if(cls==kAwareCross) {
                             want.push_back(mv.command);seg.push_back(behind());kind.push_back(kAwareCross);
-                            side.push_back(qg<0?-1:1);placed.push_back(w.tickCounter_);moved.push_back(true);
+                            side.push_back(qg<0?-1:1);placed.push_back(awStarted);moved.push_back(true);
                             continue;
                         }
                         Field::Corridor cor{mv.cx,mv.cz,mv.ax,mv.az,mv.r};
@@ -5983,7 +6098,11 @@ struct LegionNavigator::Impl {
     // An explicit order (protocol 267) lands whole in one tick, but its area
     // stays joinable by further orders to the same point for as long.
     bool commandOpen(const std::tuple<int,uint32_t,int32_t,int32_t>& key) const {
-        return std::get<0>(key)>=0&&w.convoys().joinable(std::get<0>(key),std::get<1>(key),w.tickCounter_);
+        if(std::get<0>(key)<0)return false;
+        // Members of this area still waiting for their registration (the budget or their plane) will
+        // join it: the formation is not sized without them (stage 4).
+        if(const auto pending=regAreas.find({std::get<0>(key),std::get<1>(key)});pending!=regAreas.end()&&pending->second>0)return true;
+        return w.convoys().joinable(std::get<0>(key),std::get<1>(key),w.tickCounter_);
     }
     // I2 slot-shape probe (observation only, never hashed): the members'
     // spread and their slots' layout in the approach frame (along: centroid
