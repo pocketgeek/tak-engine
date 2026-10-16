@@ -1543,6 +1543,12 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(shadow_tiles_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(shadow_tiles_test PRIVATE ${_tak_sdl2})
     add_test(NAME shadow_tiles COMMAND shadow_tiles_test)
+    # Persistent shadow tile allocation (workstream F): the sequential mode equals
+    # the former per-frame packer slot for slot; randomized churn never overlaps
+    # cells or moves a live one; generational handles; full page reclamation.
+    add_executable(shadow_atlas_test tools/shadow_atlas_test.cpp)
+    target_include_directories(shadow_atlas_test PRIVATE src)
+    add_test(NAME shadow_atlas COMMAND shadow_atlas_test)
     add_executable(geometrysubmit_test tools/geometrysubmit_test.cpp)
     target_include_directories(geometrysubmit_test PRIVATE src)
     target_compile_definitions(geometrysubmit_test PRIVATE SDL_MAIN_HANDLED)
