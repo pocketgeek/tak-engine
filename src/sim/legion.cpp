@@ -94,7 +94,12 @@ uint32_t gProbe=std::getenv("TAK_LPROBE")?uint32_t(std::strtoul(std::getenv("TAK
 uint32_t gProbe=0;
 #endif
 constexpr size_t kMaxPlanes=24;                   // the field budget is bytes (NavBudget::kFieldBytes)
-constexpr size_t kMaxFieldCount=1024;             // live fields (and in-progress rebuilds), any size
+constexpr size_t kMaxFieldCount=1024;             // live fields (and in-progress rebuilds), any size -- but chains:
+// Stage 6: a tile chain's own storage is its destination's few tiles (its transit tiles are the shared cache's, bounded
+// by kTileBytes), so chains have a count cap of their own: 1,024 one-body chains held every slot of the count cap in
+// scatter-10000 (10,000 unrelated routes) and no other route could start for the rest of the run. The byte allowance
+// bounds their storage as it bounds every field's.
+constexpr size_t kMaxChainCount=16384;
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
 constexpr uint32_t kNoTick=~0u;                // an unset tick stamp
 constexpr uint32_t kTrappedRetire=9000;        // ticks (5 min) a trapped order waits for terrain to open
@@ -423,7 +428,7 @@ struct LegionNavigator::Impl {
         int parent=-1;
         hier::Portal exit;bool onA=true;
     };
-    struct FieldTotals {size_t fields=0,cells=0;uint64_t inflight=0;};
+    struct FieldTotals {size_t fields=0,cells=0,chains=0;uint64_t inflight=0;};
     // Integer distance field from a group's goal origins, built with a
     // bounded bucket queue; resumable across ticks under the work quota.
     // A field covers only the bounding box of its seeds' static component
@@ -438,7 +443,7 @@ struct LegionNavigator::Impl {
         Field& operator=(const Field&)=delete;
         ~Field() {detach();for(const auto& t:held)--t->routes;}
         // Leave the field totals (the field is about to be freed; see Impl::orphan).
-        void detach() {if(totals) {--totals->fields;totals->cells-=counted;totals->inflight-=inflightBytes;totals=nullptr;}}
+        void detach() {if(totals) {--totals->fields;totals->chains-=kind==2;totals->cells-=counted;totals->inflight-=inflightBytes;totals=nullptr;}}
         FieldTotals* totals=nullptr;      // set once the window is sized (startField)
         size_t counted=0;                 // its cells in FieldTotals::cells (the window's)
         // The scheduler's job state (Legion 10,000 stage 4; a field is one job however many groups
@@ -3290,13 +3295,15 @@ struct LegionNavigator::Impl {
     // corridor is the same A* build with every origin outside its sectors treated as outside the window: exact
     // distances within the corridor, bounded (an origin outside it is Unknown, never Unreachable), so a member it
     // fails to reach widens it (a bounded number of times) and then the whole-component window takes over, as for
-    // any bounded window. A corridor is planned only where it pays: on windows of kCorridorWindow cells or more, and
-    // only if it holds at most half the window's cells; otherwise, or if the search does not reach every member's
-    // region within kRouteExpand regions, the window is built as before (counted: acct.routeFallbacks).
+    // any bounded window. Only a low-demand route is planned (a high-demand one keeps its window: one exact field
+    // the whole crowd shares), only on windows of kCorridorWindow cells or more, and a corridor only if it holds at
+    // most half the window's cells; otherwise, or if the search does not reach every member's region within
+    // kRouteExpand regions, the window is built as before (counted: acct.routeFallbacks).
     //
     // A TILE CHAIN (kind Chain) serves a group whose demand is low -- few bodies to its goals, no reach ring -- on a
-    // long way (a group planning round movers takes one too: the regions its corridors reach get tiles of their own,
-    // local corrections whose key holds those corridors, and the rest stay shared): the destination gets its own exact field over the sectors its crowd needs
+    // long way (a group planning round movers takes one once memory is short: the regions its corridors reach get
+    // tiles of their own, local corrections whose key holds those corridors, and the rest stay shared): the
+    // destination gets its own exact field over the sectors its crowd needs
     // (dAllow), and every region of the tree outside them reads a shared tile toward the portal it leaves by (Tile),
     // with an offset that makes the value route-wide. A tile whose way leads into another transit region is AIMED
     // (its seeds' boundary costs measure toward that region's own exit, so it is shared by every route leaving the
@@ -3341,6 +3348,15 @@ struct LegionNavigator::Impl {
         if(g.full||windowCells<kCorridorWindow||g.plane<0)return rp;
         auto& p=planes[size_t(g.plane)];
         if(!p.hier.ready()||p.legal.empty()||p.stage>0)return rp;
+        // The demand rule first (it alone moves the hysteresis state): a high-demand route keeps the window -- one
+        // exact field the whole crowd shares, the field side of the rule -- and needs no search. Corridors for big
+        // crowds were measured and dropped: churn-10000's 10,000-body army lost 20% of its arrivals in a
+        // 32-cell-halo corridor (4,603 -> 3,664 over three offsets) and 8% even with a halo as wide as the crowd;
+        // with the window 5,065 (offsets 0 and 1).
+        const int demand=routeDemand(g);
+        const bool lowDemand=demand<=(g.routeMode==2?kChainDemandLow:kChainDemand);
+        g.routeMode=lowDemand?1:2;
+        if(!lowDemand)return rp;
         const int W=width();
         std::vector<int> targets;
         targets.reserve(g.ids.size());
@@ -3400,18 +3416,13 @@ struct LegionNavigator::Impl {
             for(int sz=sz0;sz<=sz1;++sz)for(int sx=sx0;sx<=sx1;++sx)a[size_t(sz-sz0)*size_t(sx1-sx0+1)+size_t(sx-sx0)]=mark[size_t(sz)*SW+sx];
             return a;
         };
-        // Chain or field (chainDemand): the transit regions are the tree's outside the destination's sectors.
-        // The demand rule alone moves the hysteresis state; a plan that cannot be a chain for another reason (an
-        // reach ring, a short trip) leaves it as it was.
-        const int demand=routeDemand(g);
-        const bool lowDemand=demand<=(g.routeMode==2?kChainDemandLow:kChainDemand);
-        g.routeMode=lowDemand?1:2;
+        // A chain (low demand, above): the transit regions are the tree's outside the destination's sectors.
         // A group planning round movers (awareness corridors) takes a corridor while memory has room -- its detour
         // round a crossing stream then has the corridor's width -- and a chain with local corrections once more than
         // half the field allowance is in use (the stage-4 rule for "memory short"): corridors for every awareness
         // re-plan of 800 squads filled the allowance and evicted their own fields (many-10000: 5,433 evictions).
         const bool tight=fieldBytes()*2>fieldAllowance();
-        bool chain=g.ring.cells.empty()&&lowDemand&&(g.avoidSeg.empty()||tight);
+        bool chain=g.ring.cells.empty()&&(g.avoidSeg.empty()||tight);
 
         if(chain) {
             std::vector<int> index(tree.nodes.size(),-1);
@@ -3463,7 +3474,8 @@ struct LegionNavigator::Impl {
             rp.sig=mix(sig,dsig);
             return rp;
         }
-        // A corridor: the tree's sectors dilated by the halo, and the destination's.
+        // A corridor (a low-demand group planning round movers while memory has room, a reach ring, or a short
+        // trip): the tree's sectors dilated by the halo, and the destination's.
         std::vector<uint8_t> mark=dest;
         const int hs=(halo+K-1)/K;
         for(const auto& n:tree.nodes)dilate(mark,n.s,hs);
@@ -3646,18 +3658,25 @@ struct LegionNavigator::Impl {
         };
         const auto window=fieldWindow(g);
         if(auto shared=sharedField(g,window,command,own,nullptr))return install(std::move(shared));
+        // A share-only start may take a corridor or chain another group already has too (a share allocates
+        // nothing) -- by the plan the group already holds, if any: a share-only request is asked every tick it waits,
+        // and planning each one (the region search) cost scatter-10000 a quarter of its tick.
+        if(shareOnly) {
+            if(g.plan&&g.planTick!=kNoTick&&g.planEpoch==epoch&&g.planMembers==g.members&&g.plan->kind!=KindWindow)
+                if(auto shared=sharedField(g,g.plan->box,command,own,g.plan.get()))return install(std::move(shared));
+            return Start::NoShare;
+        }
         // Stage 6: the window, or a corridor or chain through the hierarchy (planRoute; reused for kPlanReuse ticks
-        // of the same epoch and membership while the start waits for budget or room). A share-only start may take
-        // a corridor or chain another group already has too (a share allocates nothing).
+        // of the same epoch and membership while the start waits for budget or room).
         const RoutePlan& plan=routePlan(g,window);
         if(plan.kind!=KindWindow)
             if(auto shared=sharedField(g,plan.box,command,own,&plan))return install(std::move(shared));
-        if(shareOnly)return Start::NoShare;
         const auto box=plan.box;
         const size_t cells=plan.kind!=KindWindow?plan.cells:size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
         if(cells/NavBudget::kInitDiv>initRoom)return Start::NoBudget;
         const uint64_t want=uint64_t(cells)*NavSize::kCell32+uint64_t(g.seeds.size())*NavSize::kKeyed,allowance=fieldAllowance();
-        while(liveFields()>=kMaxFieldCount||fieldBytes()+want>allowance) {
+        const bool chainStart=plan.kind==KindChain;
+        while((chainStart?fieldTotals.chains>=kMaxChainCount:liveFields()-fieldTotals.chains>=kMaxFieldCount)||fieldBytes()+want>allowance) {
             // A victim is a finished field past its tenure: one group's own, or a shared one every holder
             // of which is past its tenure (evictionHolders), dropped from all of them.
             // Within one tick that set only grows when a field finishes
@@ -3723,7 +3742,7 @@ struct LegionNavigator::Impl {
         f->counted=cells;
         navc.initCells+=cells;acct.initMax=std::max<uint64_t>(acct.initMax,cells);
         startCharge+=cells/NavBudget::kInitDiv;
-        f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;
+        f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;fieldTotals.chains+=f->kind==KindChain;
         f->lastServed=w.tickCounter_;
         {const auto whole=fieldWindow(g,true);f->bounded=f->kind!=KindWindow||whole!=box;}
         if(g.bodyMaxX>=g.bodyMinX) {f->aimed=true;f->tx=(g.bodyMinX+g.bodyMaxX)/2;f->tz=(g.bodyMinZ+g.bodyMaxZ)/2;}
