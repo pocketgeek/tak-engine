@@ -478,6 +478,10 @@ bool MapView::uploadWantedSections() {
             continue;
         }
         const size_t size = size_t(img->width) * img->height * 4;
+        // A section fills a visible hole: an urgent upload of the frame's terrain budget,
+        // shared with the chunk images (finishChunks frames: unlimited). The rest waits
+        // for the next frame; the underlay shows meanwhile.
+        if (!uploadBudget_.admit(tak::terrainwork::UploadBudget::Section, true, size)) continue;
         // Idle sections make room first; the budget never refuses one needed now. Under
         // the GPU cap, off-screen chunks go next: terrain on screen comes first.
         while (sectionBytes_ + size > budget || !gpuvram::wouldFit(size)) {
@@ -494,7 +498,9 @@ bool MapView::uploadWantedSections() {
         SDL_UpdateTexture(t, nullptr, img->rgba.data(), img->width * 4);
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);   // opaque texels; the aprons fade by vertex alpha
         SDL_SetTextureScaleMode(t, bilinear_ ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
-        sectionStats_.uploadNs += steadyNs() - uploadStart;   // CPU submission only
+        const uint64_t uploadNs = steadyNs() - uploadStart;   // CPU submission only
+        sectionStats_.uploadNs += uploadNs;
+        uploadBudget_.record(tak::terrainwork::UploadBudget::Section, size, uploadNs);
         ++sectionStats_.uploads;
         sectionStats_.uploadBytes += size;
         tak::render::countTextureUpload(size);
