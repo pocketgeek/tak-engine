@@ -1964,6 +1964,18 @@ int main(int argc, char** argv) {
                     ull(t.assembled),ull(t.assembledVertices));
                 if(!t.frames && !t.streams)throw std::runtime_error("body arena verify ran no checks");
             }
+            if(tak::devFlag("TAK_CPU_TRIM_VERIFY")) {
+                // Retained CPU buffers (workstream J): every trim kept the buffer's
+                // contents and no buffer was trimmed twice within a window, or draw() threw.
+                const auto& t=gameView->cpuTrimVerifyTotals();
+                using ull=unsigned long long;
+                std::printf("CPU_TRIM_VERIFY frames=%llu trims=%llu worker_trims=%llu released=%llu content_checks=%llu "
+                            "regrowths=%llu peak_retained=%llu final_retained=%llu recovered=%llu\n",
+                    ull(t.frames),ull(t.trims),ull(t.workerTrims),ull(t.released),ull(t.contentChecks),
+                    ull(t.regrowths),ull(t.peakRetained),ull(t.finalRetained),
+                    ull(t.peakRetained>t.finalRetained ? t.peakRetained-t.finalRetained : 0));
+                if(!t.frames)throw std::runtime_error("cpu trim verify ran no frames");
+            }
             if(tak::devFlag("TAK_SCHEDULE_VERIFY")) {
                 // Cost-planned pool passes (workstream I): every pass matched a serial
                 // re-run and built each visible unit once, or draw() threw.

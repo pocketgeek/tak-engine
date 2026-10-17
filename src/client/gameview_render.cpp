@@ -132,6 +132,14 @@
             GameView& view;
             ~TelemetryFold() { view.pool_.setStats(nullptr); if (view.renderStats_.enabled()) view.foldRenderStats(); }
         } telemetryFold{*this};
+        // Workstream J: retained buffers are trimmed after the frame's last use and
+        // before the fold above reports them (destroyed first: declared after it).
+        struct RetainedTrim {
+            GameView& view;
+            ~RetainedTrim() {
+                try { view.trimRetainedBuffers(); } catch (const std::exception&) { /* keep the buffers */ }
+            }
+        } retainedTrim{*this};
         if (renderStats_.enabled()) {
             poolStats_ = {};
             pool_.setStats(&poolStats_);
@@ -328,9 +336,11 @@
         double _pt0 = double(SDL_GetPerformanceCounter());
         {
         const auto buildRange = [this](size_t b, size_t e) {
-            thread_local std::vector<Tri> scratch;
-            for (size_t i = b; i < e; ++i)
-                buildUnitGeom(*visUnits_[i], *visGeom_[i], scratch, true);
+            WorkerScratch& ws = workerScratch();
+            for (size_t i = b; i < e; ++i) {
+                buildUnitGeom(*visUnits_[i], *visGeom_[i], ws.tris, true);
+                ws.note();
+            }
         };
         readSchedules();
         if (scheduleUniform_) pool_.parallelFor(visUnits_.size(), buildRange);
@@ -1171,6 +1181,12 @@
                 // unit first, then group cutout faces by their coverage page. This
                 // avoids per-unit texture changes without changing unit silhouette
                 // coverage or the separate per-unit composite pass.
+                noteNeed(Retained::ShadowOpaque,opaque);   // refilled per page (workstream J)
+                {
+                    size_t maskBytes=0;
+                    for (const auto& [texture,vertices]:shadowAtlasMaskScratch_) maskBytes+=vertices.size()*sizeof(SDL_Vertex);
+                    noteNeed(Retained::ShadowMask,maskBytes);
+                }
                 opaque.clear();
                 auto& maskBatches=shadowAtlasMaskScratch_;
                 for (auto& [texture,vertices]:maskBatches) vertices.clear();
@@ -1242,6 +1258,7 @@
                     using RSch=tak::render::RenderSchedules;
                     auto& items=shadowPrepItems_;
                     std::optional<tak::render::ScopedPhase> planPhase(std::in_place,renderStats_,RP::SchedulePlan);
+                    noteNeed(Retained::ShadowPrepItems,items);
                     items.clear();
                     shadowPlan_.begin(schedules_.shadowPrep);
                     for(size_t wi=0;wi<work.size();++wi) {
@@ -1601,6 +1618,7 @@
             bodyArena_.begin(bodyArenaFrame_, distantNow_);
             for (DrawOp& op : drawOps_) {
                 if (!op.tex || size_t(op.count) < kNativeMin) continue;
+                noteNeed(Retained::ArenaRanges, bodyArenaRanges_);
                 bodyArenaRanges_.clear();
                 for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
                     const BodyRange& r = bodyRanges_[k];
@@ -1831,6 +1849,7 @@
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_MOD);
             drawShadowBatch(airShadows_);
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            noteNeed(Retained::AirShadows, airShadows_);
             airShadows_.clear();
             const double ms = (double(SDL_GetPerformanceCounter()) - _as0) / _ptFreq;
             profShadowMs_ += ms;
@@ -3391,6 +3410,160 @@
         renderStats_.set(RS::GeomEntriesAllocated, pool.allocated);
         renderStats_.set(RS::GeomRetainedBytes, pool.retainedBytes);
         renderStats_.set(RS::GeomWarmFreeBytes, pool.warmFreeBytes);
+        // Workstream J: entries of units in view (plus the index) cannot be evicted;
+        // retained absent entries and warm free capacity are what C's budgets reclaim.
+        renderStats_.set(RS::GeomPinnedBytes, capacity - std::min(capacity, pool.retainedBytes + pool.warmFreeBytes));
+    }
+
+    // Workstream J: per-participant scratch (see WorkerScratch in gameview.h).
+    GameView::WorkerScratch& GameView::workerScratch() {
+        const unsigned slot = ThreadPool::participant(pool_);
+#ifndef NDEBUG
+        // Slot 0 is the render thread's; any other thread here would share it.
+        if (!slot && std::this_thread::get_id() != renderThread_)
+            throw std::logic_error("render scratch used off the render thread and the pool");
+#endif
+        return *workerScratch_[slot];
+    }
+
+    size_t GameView::WorkerScratch::usedBytes() const {
+        const auto bytes = [](const auto& v) { return v.size() * sizeof(v[0]); };
+        return bytes(tris) + bytes(order) + bytes(key) + bytes(previousRuns) + bytes(shadowVerts) +
+               bytes(collectVerts);
+    }
+
+    size_t GameView::WorkerScratch::capacityBytes() const {
+        const auto bytes = [](const auto& v) { return v.capacity() * sizeof(v[0]); };
+        const auto piece = [&](const auto& self, const PreparedPiece& p) -> size_t {
+            size_t n = bytes(p.rotated) + bytes(p.children);
+            for (const auto& c : p.children) n += self(self, c);
+            return n;
+        };
+        return bytes(tris) + bytes(order) + bytes(key) + bytes(previousRuns) + bytes(shadowVerts) +
+               bytes(collectVerts) + piece(piece, prepared);
+    }
+
+    void GameView::WorkerScratch::release() {
+        std::vector<Tri>().swap(tris);
+        std::vector<size_t>().swap(order);
+        prepared = PreparedPiece{};
+        std::vector<uint64_t>().swap(key);
+        std::vector<std::pair<SDL_Texture*, int>>().swap(previousRuns);
+        std::vector<ShadowCollectVertex>().swap(shadowVerts);
+        std::vector<CollectVertex>().swap(collectVerts);
+        peak = 0;
+    }
+
+    // Frame end, render thread, no pool pass running: every retained per-frame buffer
+    // and every worker scratch slot is observed against its trim policy
+    // (client/cpubudget.h). Buffers are shrunk only after a whole window of low
+    // demand, never below their contents.
+    void GameView::trimRetainedBuffers() {
+        ++trimFrame_;
+        const uint64_t now = tak::devFlag("TAK_RENDER_STUDY") ? uint64_t(animClock_ * 1000) : SDL_GetTicks64();
+#ifndef NDEBUG
+        const bool verify = tak::devFlag("TAK_CPU_TRIM_VERIFY");
+        if (verify) ++cpuTrimVerify_.frames;
+#else
+        constexpr bool verify = false;
+#endif
+        const auto observe = [&](Retained id, auto& v) {
+            auto& slot = retained_[size_t(id)];
+            using T = std::decay_t<decltype(v[0])>;
+            constexpr size_t elem = sizeof(T);
+            const size_t need = std::max(slot.peak, v.size() * elem);
+            slot.peak = 0;
+            if (verify && slot.trimmedTo && v.capacity() * elem > slot.trimmedTo) {
+                ++cpuTrimVerify_.regrowths;
+                slot.trimmedTo = 0;
+            }
+            if (const size_t target = slot.tracker.observe(need, v.capacity() * elem, trimFrame_, now, trimPolicy_)) {
+                std::vector<uint8_t> before;
+                if constexpr (std::is_trivially_copyable_v<T>)
+                    if (verify) before.assign(reinterpret_cast<const uint8_t*>(v.data()),
+                                              reinterpret_cast<const uint8_t*>(v.data() + v.size()));
+                const size_t size = v.size();
+                if (const size_t released = tak::render::shrinkVector(v, target / elem)) {
+                    ++trimsThisFrame_;
+                    trimBytesThisFrame_ += released;
+                    if (verify) {
+                        if (v.size() != size) throw std::runtime_error("cpu trim verify: a trim changed a buffer's size");
+                        if constexpr (std::is_trivially_copyable_v<T>) {
+                            if (size && std::memcmp(before.data(), v.data(), before.size()))
+                                throw std::runtime_error("cpu trim verify: a trim changed a buffer's contents");
+                            ++cpuTrimVerify_.contentChecks;
+                        }
+                        if (slot.lastTrimFrame && trimFrame_ - slot.lastTrimFrame < trimPolicy_.windowFrames)
+                            throw std::runtime_error("cpu trim verify: a buffer was trimmed twice within one window");
+                        slot.lastTrimFrame = trimFrame_;
+                        slot.trimmedTo = v.capacity() * elem;
+                        ++cpuTrimVerify_.trims;
+                        cpuTrimVerify_.released += released;
+                    }
+                }
+            }
+        };
+        observe(Retained::BodyVerts, bodyVerts_);
+        observe(Retained::PaintItems, paintItems_);
+        observe(Retained::DrawOps, drawOps_);
+        observe(Retained::CopyTasks, copyTasks_);
+        observe(Retained::DistantItems, distantModelItems_);
+        observe(Retained::BodySources, bodySources_);
+        observe(Retained::BodyRanges, bodyRanges_);
+        observe(Retained::ArenaFirsts, bodyArenaFirsts_);
+        observe(Retained::ArenaCounts, bodyArenaCounts_);
+        observe(Retained::ArenaRanges, bodyArenaRanges_);
+        observe(Retained::VisUnits, visUnits_);
+        observe(Retained::VisGeom, visGeom_);
+        observe(Retained::VisCost, visCost_);
+        observe(Retained::GeomIndex, geomIndex_);
+        observe(Retained::AirShadows, airShadows_);
+        observe(Retained::ShadowPrepItems, shadowPrepItems_);
+        observe(Retained::ShadowOpaque, shadowAtlasOpaqueScratch_);
+        observe(Retained::ShadowComposite, shadowCompositeBatch_);
+        observe(Retained::ShadowTileStamps, shadowTileStamps_);
+        observe(Retained::ShadowTileBefore, shadowTileBefore_);
+        observe(Retained::ShadowTileHasBefore, shadowTileHasBefore_);
+        observe(Retained::ShadowTileChecks, shadowTileChecks_);
+        observe(Retained::ShadowTileNeeds, shadowTileNeeds_);
+        // F's per-cell stamps are sized by the cell index bound (its handle trimming
+        // shrinks the size, never the capacity); their contents are kept.
+        observe(Retained::ShadowCellStamps, shadowCellStamps_);
+        observe(Retained::ShadowCellStampValid, shadowCellStampValid_);
+        observe(Retained::ModelTris, tris_);
+        observe(Retained::ModelTriBatch, triBatch_);
+        {   // The per-coverage-page mask batches: one map, trimmed as a whole (scratch
+            // refilled per page, so releasing every vector loses nothing).
+            auto& slot = retained_[size_t(Retained::ShadowMask)];
+            size_t used = 0, capacity = 0;
+            for (const auto& [texture, vertices] : shadowAtlasMaskScratch_) {
+                used += vertices.size() * sizeof(SDL_Vertex);
+                capacity += vertices.capacity() * sizeof(SDL_Vertex);
+            }
+            const size_t need = std::max(slot.peak, used);
+            slot.peak = 0;
+            if (slot.tracker.observe(need, capacity, trimFrame_, now, trimPolicy_) && capacity) {
+                std::unordered_map<SDL_Texture*, std::vector<SDL_Vertex>>().swap(shadowAtlasMaskScratch_);
+                ++trimsThisFrame_;
+                trimBytesThisFrame_ += capacity;
+            }
+        }
+        // Worker scratch: between passes the render thread owns every slot
+        // (ThreadPool::participant). A slot whose capacity outlived its use is
+        // released whole; its worker regrows it to what it needs next.
+        for (size_t i = 0; i < workerScratch_.size(); ++i) {
+            WorkerScratch& ws = *workerScratch_[i];
+            ws.note();
+            const size_t capacity = ws.capacityBytes();
+            const size_t need = ws.peak;
+            ws.peak = 0;
+            if (workerTrim_[i].observe(need, capacity, trimFrame_, now, trimPolicy_) && capacity) {
+                ws.release();
+                ++trimsThisFrame_;
+                trimBytesThisFrame_ += capacity;
+                if (verify) { ++cpuTrimVerify_.workerTrims; cpuTrimVerify_.released += capacity; }
+            }
+        }
     }
 
     // The per-frame buffers whose capacity is retained across frames. One list,
@@ -3523,6 +3696,50 @@
         for (const auto& [texture, vertices] : shadowAtlasMaskScratch_) scratch(vertices);
         stats.set(RS::ShadowScratchUsedBytes, scratchUsed);
         stats.set(RS::ShadowScratchCapacityBytes, scratchCapacity);
+
+        // Workstream J: retained-buffer trims (this frame, already done), worker
+        // scratch, and the CPU totals (see the accounting table in the progress record).
+        stats.add(RS::CpuTrims, trimsThisFrame_);
+        stats.add(RS::CpuTrimBytes, trimBytesThisFrame_);
+        trimsThisFrame_ = trimBytesThisFrame_ = 0;
+        size_t workerUsed = 0, workerCapacity = 0;
+        for (const auto& ws : workerScratch_) { workerUsed += ws->usedBytes(); workerCapacity += ws->capacityBytes(); }
+        stats.set(RS::WorkerScratchUsedBytes, workerUsed);
+        stats.set(RS::WorkerScratchCapacityBytes, workerCapacity);
+        size_t modelUsed = 0, modelCapacity = 0;   // render-thread model scratch (drawUnit, debris, shots)
+        for (const auto* v : {&tris_}) { modelUsed += v->size() * sizeof(Tri); modelCapacity += v->capacity() * sizeof(Tri); }
+        modelUsed += triBatch_.size() * sizeof(SDL_Vertex);
+        modelCapacity += triBatch_.capacity() * sizeof(SDL_Vertex);
+        const size_t bodyUsed = bodyVerts_.size() * sizeof(SDL_Vertex), bodyCapacity = bodyVerts_.capacity() * sizeof(SDL_Vertex);
+        stats.set(RS::BodyBufferCapacityBytes, bodyCapacity);   // after this frame's trim
+        const uint64_t geomUsed = stats.get(RS::GeomPoolUsedBytes), geomCapacity = stats.get(RS::GeomPoolCapacityBytes);
+        const uint64_t geomPinned = stats.get(RS::GeomPinnedBytes);
+        const uint64_t arenaCpu = stats.get(RS::ArenaCpuBytes), distantMeta = stats.get(RS::DistantMetadataBytes);
+        const uint64_t sectionUsed = sections.cpu.usedBytes, sectionPinned = sections.cpu.pinnedBytes;
+        const uint64_t mipUsed = chunks.mipBytes, mipPinned = chunks.mipPinnedBytes;
+        // used: bytes holding this frame's data or cached content; retained: allocated.
+        const uint64_t frameUsed = bodyUsed + listUsed + scratchUsed + workerUsed + modelUsed;
+        const uint64_t frameCapacity = bodyCapacity + listCapacity + scratchCapacity + workerCapacity + modelCapacity;
+        const uint64_t used = geomUsed + frameUsed + sectionUsed + mipUsed + arenaCpu + distantMeta;
+        const uint64_t retained = geomCapacity + frameCapacity + sectionUsed + mipUsed + arenaCpu + distantMeta;
+        // pinned: needed now (entries in view, images a job/upload holds, this frame's
+        // buffer contents); evictable: what the budgets/trims may release.
+        const uint64_t pinned = geomPinned + sectionPinned + mipPinned + frameUsed;
+        const uint64_t evictable = (geomCapacity - std::min(geomCapacity, geomPinned)) +
+            (sectionUsed - std::min(sectionUsed, sectionPinned)) + (mipUsed - std::min(mipUsed, mipPinned)) +
+            (frameCapacity - std::min(frameCapacity, frameUsed));
+        cpuPeakBytes_ = std::max(cpuPeakBytes_, size_t(retained));
+#ifndef NDEBUG
+        if (tak::devFlag("TAK_CPU_TRIM_VERIFY")) {
+            cpuTrimVerify_.peakRetained = std::max<uint64_t>(cpuTrimVerify_.peakRetained, retained);
+            cpuTrimVerify_.finalRetained = retained;
+        }
+#endif
+        stats.set(RS::CpuCacheUsedBytes, used);
+        stats.set(RS::CpuCacheRetainedBytes, retained);
+        stats.set(RS::CpuCachePinnedBytes, pinned);
+        stats.set(RS::CpuCacheEvictableBytes, evictable);
+        stats.set(RS::CpuCachePeakBytes, cpuPeakBytes_);
     }
 
     const tak::tdo::Model* GameView::ghostModel(const std::string& typeId) {
@@ -4165,6 +4382,7 @@
         auto flush=[&] {
             if(!shadowCompositeBatch_.empty()) {
                 bodySubmit_.draw(ren_,texture,shadowCompositeBatch_,!tak::devFlag("TAK_SHADOW_SDL_SUBMIT"));
+                noteNeed(Retained::ShadowComposite,shadowCompositeBatch_);
                 shadowCompositeBatch_.clear();
             }
         };
@@ -4290,7 +4508,7 @@
         // LOCAL: identity/resources, pose (heading incl. emote spin, body
         // attitude, piece poses incl. hidden/shadow flags, corpse state), palette
         // slot and animated texture frames, construction (shadow), shadow toggle.
-        thread_local std::vector<uint64_t> key;
+        std::vector<uint64_t>& key=workerScratch().key;
         key.clear();
         const auto word=[&](uint64_t value){key.push_back(value);};
         word(uint64_t(u.id));word(reinterpret_cast<uintptr_t>(u.type));
@@ -4525,9 +4743,10 @@
     // Same frame, same inputs: every stage key matches, so only the pending body
     // stages run and the revision does not move.
     void GameView::materializeDistantBody(size_t index) {
-        thread_local std::vector<Tri> scratch;
+        WorkerScratch& ws = workerScratch();
         UnitGeom& g = visGeom(index);
-        buildUnitGeom(*visUnits_[index], g, scratch, false);
+        buildUnitGeom(*visUnits_[index], g, ws.tris, false);
+        ws.note();
         auto& item = distantModelItems_[index];
         item.source = g.verts; item.runs = g.runs; item.revision = g.revision; item.bodyDeferred = false;
     }
@@ -4576,10 +4795,11 @@
         using namespace tak::render;
         const Visual& visual=*in.visual;
         const bool verify=tak::devFlag("TAK_GEOMETRY_VERIFY");
-        thread_local PreparedPiece prepared;
+        WorkerScratch& ws=workerScratch();
+        PreparedPiece& prepared=ws.prepared;
         // Sorted compact indices into the collector output (scratch), kept for the
         // single-pass check below.
-        thread_local std::vector<size_t> triangleOrder;
+        std::vector<size_t>& triangleOrder=ws.order;
         const Xform base=modelBodyTransform(u.bodyPitch,u.bodyRoll);
         // The piece transforms serve the body collection and the silhouette; with
         // the body held back (G) they are prepared only when the silhouette is
@@ -4823,7 +5043,7 @@
             } else {same=false;g.maskedShadowLocal.push_back(point);g.maskedShadowVerts.push_back(vertex);}
             ++maskedCount;
         };
-        thread_local std::vector<std::pair<SDL_Texture*,int>> previousRuns;
+        std::vector<std::pair<SDL_Texture*,int>>& previousRuns=workerScratch().previousRuns;
         previousRuns.assign(g.maskedShadowRuns.begin(),g.maskedShadowRuns.end());
         g.maskedShadowRuns.clear();
         scratch.clear();
@@ -4845,8 +5065,8 @@
         // This traversal emits opaque positions directly. The body collector's
         // texture/atlas lookup, UVs, colours, depth and full Tri staging are not
         // needed for an opaque shadow. Keep its piece/fan order and arithmetic.
-        struct ShadowVertex { SDL_FPoint position;float x,y,z;bool valid; };
-        thread_local std::vector<ShadowVertex> vertices;
+        using ShadowVertex=ShadowCollectVertex;
+        std::vector<ShadowVertex>& vertices=workerScratch().shadowVerts;
         const auto collectShadow=[&](auto&& self,const tak::tdo::Object& object,
                                      const Xform& parent,const PieceMeta* cached,bool isRoot,
                                      const PreparedPiece* pose)->void {
@@ -5087,6 +5307,7 @@
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
             // The silhouette is flat, untextured and single-colour, so the whole
             // model collapses to ONE draw call: re-tint every vertex and submit.
+            noteNeed(Retained::ModelTriBatch, triBatch_);
             triBatch_.clear();
             for (const SDL_Vertex& sv : g.verts) {
                 SDL_Vertex v = sv;
@@ -6204,6 +6425,7 @@
         snapshot.pieceNames = &debris.names;
         snapshot.capturedPose = debris.poses;
         constexpr float radians = 6.28318530717959f / 65536.0f;
+        noteNeed(Retained::ModelTris, tris_);
         tris_.clear();
         // A detached piece is a real model root, not the ground-reference root of
         // a unit model. Retail sends it through the same projected-model shadow
@@ -6285,7 +6507,8 @@
                 SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
             }
             Anim snapshot;snapshot.pieceNames=&debris.names;snapshot.capturedPose=debris.poses;
-            tris_.clear();
+            noteNeed(Retained::ModelTris, tris_);
+        tris_.clear();
             constexpr float radians=6.28318530717959f/65536.f;
             collect(tris_,atlasFor(playerColorSlot(debris.player)),debris.model,
                 modelBodyTransform(debris.motion.rotation[0],debris.motion.rotation[2]),
@@ -6774,6 +6997,7 @@
         // These retail bolt meshes have their arrowhead on -Z; the other
         // directional projectile meshes (including araarrow) point along +Z.
         if (name == "verbal1" || name == "verbal1_vet") facing += 3.14159265f;
+        noteNeed(Retained::ModelTris, tris_);
         tris_.clear();
         SDL_Texture* atlas = atlasFor(playerColorSlot(player));
         // Projectile roots contain the shot itself, unlike unit roots whose
@@ -6836,6 +7060,7 @@
                      bool invalid) {
         const tak::tdo::Model* model = ghostModel(type->id);
         if (!model) return;
+        noteNeed(Retained::ModelTris, tris_);
         tris_.clear();
         SDL_Texture* atlas = atlasFor(colorSlot_[localPlayer_ & 7]);
         collect(tris_, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
@@ -6967,8 +7192,8 @@
             // for n vertices -- six transforms for a quad that needs four. The
             // UVs still come from the fan position (retail maps a quad's corners
             // to the four UV corners), so only the geometry is shared.
-            struct VOut { SDL_FPoint pos; float px, py, pz, d; bool ok; };
-            thread_local std::vector<VOut> vcache;
+            using VOut = CollectVertex;
+            std::vector<VOut>& vcache = workerScratch().collectVerts;
             vcache.resize(p.indices.size());
             for (size_t vi2 = 0; vi2 < p.indices.size(); ++vi2) {
                 VOut& vo = vcache[vi2];

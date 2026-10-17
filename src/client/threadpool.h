@@ -49,7 +49,12 @@ public:
         n_ = std::clamp(threads, 1u, kMaxThreads);
         workers_.reserve(n_ - 1);
         for (unsigned i = 1; i < n_; ++i) workers_.push_back(std::make_unique<Worker>());
-        for (auto& w : workers_) w->thread = std::thread([this, wp = w.get()] { workerLoop(*wp); });
+        for (unsigned i = 0; i < workers_.size(); ++i)
+            workers_[i]->thread = std::thread([this, wp = workers_[i].get(), i] {
+                tlsPool_ = this;
+                tlsParticipant_ = i + 1;
+                workerLoop(*wp);
+            });
     }
     ~ThreadPool() {
         for (auto& w : workers_) {
@@ -95,6 +100,17 @@ public:
     };
     void setStats(Stats* stats) { stats_ = stats; }
     unsigned threads() const { return n_; }
+
+    // This thread's participant index in `pool`: 1..threads()-1 on its workers, 0 on
+    // any other thread -- i.e. on the pool's caller, the one thread that may drive
+    // it (rendering workstream J). Per-participant scratch indexed by it is touched by
+    // its worker only inside a chunk, and the caller observes every chunk finished
+    // (acquire on the chunk count) before a pass returns and publishes its writes
+    // (release on the claim word) before the next one starts, so between passes the
+    // caller may inspect, account and trim every slot.
+    static unsigned participant(const ThreadPool& pool) {
+        return tlsPool_ == &pool ? tlsParticipant_ : 0;
+    }
 
     // Uniform chunks of kChunk items. minParallel: run serially below this count.
     // Wakes at most one worker per chunk. A callsite whose per-item work is tiny
@@ -245,6 +261,9 @@ private:
             drain(true);
         }
     }
+
+    static inline thread_local const ThreadPool* tlsPool_ = nullptr;
+    static inline thread_local unsigned tlsParticipant_ = 0;
 
     unsigned n_ = 1;
     std::vector<std::unique_ptr<Worker>> workers_;

@@ -253,6 +253,52 @@ int main() {
         for (int i = 0; i < 50; ++i) { ThreadPool p(5); p.parallelFor(100, [](size_t, size_t) {}, 1); }
         check(ThreadPool::defaultThreads() >= 1, "default size is at least one thread");
     }
+    {   // Participant indices (workstream J): per-participant scratch slots. Two chunks
+        // running at once never share an index; the caller is 0, and another pool's
+        // workers are 0 for this pool. Slots grown inside chunks and trimmed by the
+        // caller between passes -- run under TSan: the pass boundaries order them.
+        ThreadPool pool(6), other(3);
+        check(ThreadPool::participant(pool) == 0, "the caller is participant 0");
+        std::vector<std::atomic<int>> inUse(pool.threads());
+        std::vector<std::vector<uint64_t>> slots(pool.threads());
+        std::atomic<bool> clash{false}, range{true}, foreign{true}, otherWorkers{false};
+        std::set<unsigned> seen;
+        std::mutex seenMu;
+        std::mt19937 rng(11);
+        size_t trimmed = 0;
+        for (int round = 0; round < 3000; ++round) {
+            std::vector<uint32_t> bounds{0};
+            const size_t count = 64 + rng() % 400;
+            while (bounds.back() < count) bounds.push_back(uint32_t(std::min<size_t>(count, bounds.back() + 1 + rng() % 7)));
+            pool.parallelChunks(bounds, 1 + rng() % 6, [&](size_t b, size_t e) {
+                const unsigned p = ThreadPool::participant(pool);
+                if (p >= pool.threads()) { range = false; return; }
+                if (inUse[p].fetch_add(1) != 0) clash = true;
+                auto& slot = slots[p];
+                for (size_t i = b; i < e; ++i) slot.push_back(value(i));
+                if (round % 500 == 0) { std::lock_guard<std::mutex> lk(seenMu); seen.insert(p); }
+                inUse[p].fetch_sub(1);
+            });
+            if (round % 7 == 0)
+                other.parallelFor(64, [&](size_t, size_t) {
+                    if (ThreadPool::participant(pool) != 0) foreign = false;
+                    if (ThreadPool::participant(other) != 0) otherWorkers = true;
+                    const auto until = std::chrono::steady_clock::now() + std::chrono::microseconds(50);
+                    while (std::chrono::steady_clock::now() < until) {}
+                }, 1);
+            // Between passes the caller owns every slot: account and trim them.
+            for (auto& slot : slots) {
+                if (round % 13 == 0) { trimmed += slot.capacity(); std::vector<uint64_t>().swap(slot); }
+                else slot.clear();
+            }
+        }
+        check(!clash.load(), "two running chunks never share a participant index");
+        check(range.load(), "participant indices stay below threads()");
+        check(foreign.load(), "another pool's workers are participant 0 here");
+        check(otherWorkers.load(), "fixture: the other pool's workers ran chunks");
+        check(seen.size() > 1, "workers ran with their own indices");
+        check(trimmed > 0, "fixture: slots were trimmed between passes");
+    }
     if (failures) return EXIT_FAILURE;
     std::printf("PASS: work plans and cost-planned pool passes\n");
     return EXIT_SUCCESS;

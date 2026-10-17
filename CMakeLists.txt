@@ -1483,6 +1483,24 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 800 600 --novsync)
       set_tests_properties(render_distant_lookup PROPERTIES TIMEOUT 300
           PASS_REGULAR_EXPRESSION "DISTANT_VERIFY frames=[1-9][0-9]* deferred=[1-9][0-9]* checked=[1-9][0-9]* catchup=0 late=0")
+      # CPU budgets (workstream J) in a real scene: a battle, then a sustained empty
+      # view, with short trim windows and tiny terrain budgets. Retained buffers must
+      # be trimmed after the demand falls, keep their contents byte for byte, never be
+      # trimmed twice within a window, and the renderer's CPU memory must come down
+      # (TAK_CPU_TRIM_VERIFY); every geometry reuse still equals a rebuild.
+      add_test(NAME render_cpu_budget COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software
+          TAK_SHADOW_BENCH=300 TAK_PROFILE_ZOOM=0.5 TAK_RENDER_BATTLE=1
+          TAK_RENDER_SPARSE_AFTER=90 TAK_RENDER_SPARSE_OFFSET=8800,200
+          TAK_CPU_TRIM_MS=400 TAK_CPU_TRIM_FRAMES=20 TAK_CPU_TRIM_FLOOR_KIB=1
+          TAK_TERRAIN_SECTION_BUDGET_MIB=8 TAK_TERRAIN_MIP_BUDGET_MIB=2
+          TAK_RENDER_STUDY=1 TAK_RENDER_FRAMES=200 TAK_CPU_TRIM_VERIFY=1 TAK_GEOMETRY_VERIFY=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/cpu-budget-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/cpu-budget-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 800 600 --novsync)
+      set_tests_properties(render_cpu_budget PROPERTIES TIMEOUT 300
+          PASS_REGULAR_EXPRESSION "CPU_TRIM_VERIFY frames=[1-9][0-9]* trims=[1-9][0-9]* .*content_checks=[1-9][0-9]* .*recovered=[1-9]")
       # Retained body vertices (workstream H) on the software renderer: the arena's
       # storage is simulated in CPU memory (TAK_BODY_ARENA_SOFTWARE) and its commands
       # are drawn by gathering their ranges, so the planner's bookkeeping runs in the
@@ -1628,7 +1646,7 @@ if(TAK_BUILD_CLIENT)
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
-          render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_body_arena render_body_arena_still render_body_arena_fail tactical_dots spectator_health_bars
+          render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail tactical_dots spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()
@@ -1651,6 +1669,10 @@ if(TAK_BUILD_CLIENT)
     target_link_libraries(work_schedule_test PRIVATE Threads::Threads)
     add_test(NAME work_schedule COMMAND work_schedule_test)
     # Stable generational ownership of per-unit geometry entries (workstream C).
+    # Retained-buffer trim policy (client/cpubudget.h, workstream J).
+    add_executable(cpu_budget_test tools/cpu_budget_test.cpp)
+    target_include_directories(cpu_budget_test PRIVATE src)
+    add_test(NAME cpu_budget COMMAND cpu_budget_test)
     add_executable(geometry_owners_test tools/geometry_owners_test.cpp)
     target_include_directories(geometry_owners_test PRIVATE src)
     target_link_libraries(geometry_owners_test PRIVATE Threads::Threads)

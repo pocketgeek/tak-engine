@@ -69,6 +69,7 @@
 #include "client/geometryowners.h"    // stable per-unit geometry entries (workstream C)
 #include "client/shadowtiles.h"       // shadow silhouette tile keys and reuse (workstream E)
 #include "client/shadowatlas.h"       // persistent shadow tile cells (workstream F)
+#include "client/cpubudget.h"         // retained CPU buffer trimming (workstream J)
 #include "client/ordertrail.h"
 #include "client/retailaim.h"
 #include "client/retailflightanimation.h"
@@ -672,6 +673,14 @@ public:
                                    uint64_t streamReasons[6]{};   // by tak::render::ArenaStreamReason
                                  };
     const BodyArenaVerifyTotals& bodyArenaVerifyTotals() const { return bodyArenaVerify_; }
+    // Workstream J (TAK_CPU_TRIM_VERIFY): every trimmed buffer kept its contents
+    // byte for byte, no buffer was trimmed twice within one policy window, regrowths
+    // after a trim are counted; retained bytes = the renderer's CPU buffers + caches.
+    struct CpuTrimVerifyTotals {
+        uint64_t frames=0, trims=0, workerTrims=0, released=0, contentChecks=0, regrowths=0;
+        uint64_t peakRetained=0, finalRetained=0;
+    };
+    const CpuTrimVerifyTotals& cpuTrimVerifyTotals() const { return cpuTrimVerify_; }
     struct ShadowCacheVerifyTotals {
         uint64_t frames=0, tiles=0, reused=0, body=0, translated=0, original=0;
         // Workstream F: tiles reused in a cell kept from an earlier frame, cells
@@ -827,6 +836,30 @@ private:
     void preparePiece(const tak::tdo::Object& object,const PieceMeta& meta,
                       const Xform& parent,const Anim* anim,float cy,float sy,
                       PreparedPiece& out);
+    // collect()'s per-primitive transformed vertices, and the shadow collector's.
+    struct CollectVertex { SDL_FPoint pos; float px, py, pz, d; bool ok; };
+    struct ShadowCollectVertex { SDL_FPoint position; float x, y, z; bool valid; };
+    // Scratch of one participant of the render pool (workstream J; thread_locals
+    // before): slot 0 belongs to the render thread (the pool's only caller), slot k
+    // to pool worker k, which touches it only inside a chunk. Between passes the
+    // render thread owns every slot (ThreadPool::participant), so it accounts and
+    // trims them without racing a worker. Sized by the largest model a participant
+    // built, not by the army.
+    struct WorkerScratch {
+        std::vector<Tri> tris;                // collector output (body, silhouette)
+        std::vector<size_t> order;            // depth-sorted triangle indices
+        PreparedPiece prepared;               // piece transforms shared by body and shadow
+        std::vector<uint64_t> key;            // the local stage key being compared
+        std::vector<std::pair<SDL_Texture*, int>> previousRuns;
+        std::vector<ShadowCollectVertex> shadowVerts;
+        std::vector<CollectVertex> collectVerts;
+        size_t peak = 0;                      // largest use since the last fold (bytes)
+        size_t usedBytes() const;
+        size_t capacityBytes() const;
+        void note() { peak = std::max(peak, usedBytes()); }
+        void release();                       // drop every capacity (owner only)
+    };
+    WorkerScratch& workerScratch();
 
     struct Visual {
         tak::tdo::Model model;
@@ -3408,6 +3441,52 @@ private:
         return ThreadPool::defaultThreads();
     }
     ThreadPool pool_{renderPoolThreads()};
+    // One scratch per pool participant (see WorkerScratch); cache-line separated.
+    std::vector<std::unique_ptr<WorkerScratch>> workerScratch_ = [this] {
+        std::vector<std::unique_ptr<WorkerScratch>> slots(pool_.threads());
+        for (auto& slot : slots) slot = std::make_unique<WorkerScratch>();
+        return slots;
+    }();
+#ifndef NDEBUG
+    std::thread::id renderThread_ = std::this_thread::get_id();   // owner of scratch slot 0
+#endif
+    // Retained renderer buffers trimmed after sustained low demand (workstream J,
+    // client/cpubudget.h). Render thread only. noteNeed() records a frame's peak use
+    // of a buffer that is refilled more than once per frame, before each refill.
+    enum class Retained : uint8_t {
+        BodyVerts, PaintItems, DrawOps, CopyTasks, DistantItems, BodySources, BodyRanges,
+        ArenaFirsts, ArenaCounts, ArenaRanges, VisUnits, VisGeom, VisCost, GeomIndex, AirShadows,
+        ShadowPrepItems, ShadowOpaque, ShadowComposite, ShadowMask, ShadowTileStamps,
+        ShadowTileBefore, ShadowTileHasBefore, ShadowTileChecks, ShadowTileNeeds, ShadowCellStamps,
+        ShadowCellStampValid, ModelTris, ModelTriBatch, Count
+    };
+    struct RetainedSlot {
+        tak::render::TrimTracker tracker;
+        size_t peak = 0;
+        uint64_t lastTrimFrame = 0; size_t trimmedTo = 0;   // TAK_CPU_TRIM_VERIFY
+    };
+    CpuTrimVerifyTotals cpuTrimVerify_{};
+    std::array<RetainedSlot, size_t(Retained::Count)> retained_{};
+    std::vector<tak::render::TrimTracker> workerTrim_ = std::vector<tak::render::TrimTracker>(pool_.threads());
+    tak::render::TrimPolicy trimPolicy_ = [] {
+        tak::render::TrimPolicy p;
+        // Debug: TAK_CPU_TRIM_MS=N / TAK_CPU_TRIM_FRAMES=N shorten the window (tests).
+        if (const char* v = tak::devEnv("TAK_CPU_TRIM_MS")) p.windowMs = uint64_t(std::max(1, std::atoi(v)));
+        if (const char* v = tak::devEnv("TAK_CPU_TRIM_FRAMES")) p.windowFrames = uint32_t(std::max(2, std::atoi(v)));
+        if (const char* v = tak::devEnv("TAK_CPU_TRIM_FLOOR_KIB")) p.floorBytes = size_t(std::max(0, std::atoi(v))) << 10;
+        return p;
+    }();
+    uint64_t trimFrame_ = 0;
+    uint64_t trimsThisFrame_ = 0, trimBytesThisFrame_ = 0;   // telemetry, folded per frame
+    size_t cpuPeakBytes_ = 0;
+    void noteNeed(Retained b, size_t bytes) {
+        auto& slot = retained_[size_t(b)];
+        slot.peak = std::max(slot.peak, bytes);
+    }
+    template <class V> void noteNeed(Retained b, const V& v) { noteNeed(b, v.size() * sizeof(v[0])); }
+    // Frame end (render thread, no pass running): trim what sustained low demand left
+    // oversized -- the retained buffers above and the worker scratch slots.
+    void trimRetainedBuffers();
     std::vector<std::pair<int,tak::cob::Vm*>> explosionVmTick_;
     std::vector<tak::cob::Vm*> vmTick_;     // scratch list for the parallel pass
     SoundClasses soundClasses_;
