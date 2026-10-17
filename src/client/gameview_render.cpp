@@ -1583,14 +1583,18 @@
                 runCopies();
                 bodyArenaFirsts_.clear();
                 bodyArenaCounts_.clear();
+#ifndef NDEBUG
                 ++bodyArenaVerify_.fallbacks;
+#endif
             }
         }
         if (arenaPlanned) {   // streamed: still record what was seen (the stable test)
+#ifndef NDEBUG
             ++bodyArenaVerify_.streamReasons[size_t(bodyArena_.stats().reason)];
+            ++bodyArenaVerify_.streams;
+#endif
             bodyArena_.end(true);
             renderStats_.add(RS::ArenaStream);
-            ++bodyArenaVerify_.streams;
         }
         if (bodyArena_.capacity() &&
             (bodyArena_.shouldRelease(bodyArenaFrame_, distantNow_) || bodyArenaPressure()))
@@ -3477,6 +3481,9 @@
     // through its merged ranges must equal the command assembled from its
     // sources -- exactly what the streaming path would draw.
     void GameView::verifyBodyArena(const tak::render::ArenaFrameStats& stats) {
+#ifdef NDEBUG
+        (void)stats;   // debug verifier only
+#else
         std::vector<SDL_Vertex> drawn, expected;
         for (const DrawOp& op : drawOps_) {
             if (op.arenaFirst < 0) continue;
@@ -3516,6 +3523,7 @@
         else if (stats.rollover) ++bodyArenaVerify_.rollovers;
         else ++bodyArenaVerify_.rebuilds;
         bodyArenaVerify_.drains += bodyArena_.releaseSlot() >= 0;
+#endif
     }
 
     void GameView::invalidateRenderTargets() {
