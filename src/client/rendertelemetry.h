@@ -350,6 +350,8 @@ enum class Counter : uint8_t {
     ArenaStream,         // frame streamed (assembled) its native-size commands: unstable / budget / off
     ArenaVertsRetained,  // body vertices drawn from resident arena ranges (nothing copied or uploaded)
     ArenaVertsUploaded,  // body vertices written into the arena (also in body_verts_copied, bytes_uploaded)
+    ArenaVertsTwice,     // of those, vertices also copied into a small (assembled) command this frame:
+                         // an uploaded source goes up whole, so its runs drawn assembled are copied twice
     ArenaDraws,          // commands drawn from the arena (one native draw each)
     ArenaRanges,         // merged ranges those draws covered (glMultiDrawArrays entries)
     ArenaFallbacks,      // arena commands drawn assembled after all (write failure, texture check)
@@ -422,7 +424,7 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "distant_bounds_reused", "distant_page_releases", "distant_migrated", "distant_pages",
     "distant_tiles", "distant_metadata_bytes",
     "arena_append", "arena_rebuild", "arena_stream", "arena_verts_retained", "arena_verts_uploaded",
-    "arena_draws", "arena_ranges", "arena_fallbacks", "arena_releases", "arena_capacity_bytes",
+    "arena_verts_twice", "arena_draws", "arena_ranges", "arena_fallbacks", "arena_releases", "arena_capacity_bytes",
     "arena_inflight_bytes", "arena_cpu_bytes"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",

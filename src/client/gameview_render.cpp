@@ -1517,22 +1517,40 @@
                 for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
                     const BodyRange& r = bodyRanges_[k];
                     copyTasks_.push_back({bodySources_[r.source].data + r.offset, r.count, uint32_t(destOff)});
+                    bodySources_[r.source].assembled += r.count;
                     destOff += int(r.count);
                 }
             }
         };
         queueAssembled(false);
-        size_t uploaded = 0;
+        size_t uploaded = 0, uploadedTwice = 0;
         const size_t staged = size_t(destOff);
-        if (arenaFrame)
+        if (arenaFrame) {
             for (const auto& up : bodyArena_.uploads()) {
                 const auto& src = bodyArena_.sources()[up.source];
                 copyTasks_.push_back({src.data, src.count, uint32_t(staged + (up.dst - bodyArena_.writeBegin()))});
                 uploaded += src.count;
             }
+            // A source goes up whole (its slot holds every run, so a later frame
+            // can draw any of them from it), so the runs it also has in small,
+            // assembled commands are copied twice. Counted, not avoided: avoiding
+            // it means one upload call per such source instead of one per frame.
+            for (const BodySource& src : bodySources_)
+                if (src.assembled && src.arena != UINT32_MAX && bodyArena_.written(src.arena))
+                    uploadedTwice += src.assembled;
+        }
         destOff += int(uploaded);
-        const auto runCopies = [&] {
-            bodyVerts_.resize(size_t(destOff));
+        // Grow the copy buffer by a bounded step (1/16 above the need), never
+        // std::vector's doubling, which kept twice the vertex need resident once
+        // a frame's uploads went a little past the capacity. Contents are only
+        // kept when a frame re-assembles behind the commands already copied.
+        const auto runCopies = [&](bool keep) {
+            const size_t need = size_t(destOff);
+            if (need > bodyVerts_.capacity()) {
+                if (!keep) bodyVerts_.clear();
+                bodyVerts_.reserve(need + need / 16);
+            }
+            bodyVerts_.resize(need);
             SDL_Vertex* const out = bodyVerts_.data();
             pool_.parallelFor(copyTasks_.size(), [this, out](size_t b, size_t e) {
                 for (size_t i = b; i < e; ++i) {
@@ -1541,11 +1559,23 @@
                 }
             });
         };
-        runCopies();
-        size_t arenaRetained = 0, arenaUploaded = 0;
+        runCopies(false);
+        size_t copied = size_t(destOff);   // assembled + staged uploads (+ a write failure's re-assembly)
+        size_t arenaRetained = 0, arenaUploaded = 0, arenaTwice = 0;
         if (arenaFrame) {
             const int cur = bodyArena_.curSlot();
-            const bool ok = bodyArenaBuffers_[cur].write(bodyArena_.writeBegin(), bodyVerts_.data() + staged, uploaded);
+            bool ok = bodyArenaBuffers_[cur].write(bodyArena_.writeBegin(), bodyVerts_.data() + staged, uploaded);
+#ifndef NDEBUG
+            // Debug TAK_BODY_ARENA_FAIL_WRITE=N: the first write with uploads in each
+            // window of N frames fails (tests the fallback).
+            if (const char* v = tak::devEnv("TAK_BODY_ARENA_FAIL_WRITE"); v && ok && uploaded && std::atoi(v) > 0) {
+                static uint64_t failedWindow = 0;
+                if (const uint64_t window = bodyArenaFrame_ / uint64_t(std::atoi(v)); window > failedWindow) {
+                    failedWindow = window;
+                    ok = false;
+                }
+            }
+#endif
             const tak::render::ArenaFrameStats arenaStats = bodyArena_.stats();
             if (ok) {
                 if (bodyArenaVerifyOn_ && !bodyArenaBuffers_[cur].simulated())
@@ -1567,20 +1597,24 @@
                     op.arenaRanges = uint32_t(bodyArenaFirsts_.size() - begin);
                 }
                 arenaUploaded = uploaded;
+                arenaTwice = uploadedTwice;
                 if (bodyArenaVerifyOn_) verifyBodyArena(arenaStats);
             }
             bodyArena_.end(ok);
             arenaPlanned = false;
             renderStats_.add(arenaStats.mode == ArenaMode::Append ? RS::ArenaAppend : RS::ArenaRebuild);
             if (!ok) {
-                // The storage contents are lost: draw these commands assembled.
+                // The storage contents are lost: draw these commands assembled, in
+                // place of the staged uploads (the assembled commands before them stay).
                 releaseBodyArena();
                 renderStats_.add(RS::ArenaFallbacks);
                 arenaFrame = false;
                 copyTasks_.clear();
                 for (DrawOp& op : drawOps_) op.arenaFirst = -1;
+                destOff = int(staged);
                 queueAssembled(false);
-                runCopies();
+                runCopies(true);
+                copied += size_t(destOff) - staged;
                 bodyArenaFirsts_.clear();
                 bodyArenaCounts_.clear();
 #ifndef NDEBUG
@@ -1601,10 +1635,14 @@
             releaseBodyArena();
         bodyVertexTotal_ = 0;
         for (const DrawOp& op : drawOps_) if (op.tex && op.count > 0) bodyVertexTotal_ += size_t(op.count);
-        renderStats_.add(RS::BodyVertsCopied, size_t(destOff));   // assembled + staged arena uploads
-        renderStats_.add(RS::BodyBytesCopied, size_t(destOff) * sizeof(SDL_Vertex));
+#ifndef NDEBUG
+        if (bodyArenaVerifyOn_) verifyBodyAssembled(arenaFrame ? uploaded : 0);
+#endif
+        renderStats_.add(RS::BodyVertsCopied, copied);
+        renderStats_.add(RS::BodyBytesCopied, copied * sizeof(SDL_Vertex));
         renderStats_.add(RS::ArenaVertsRetained, arenaRetained);
         renderStats_.add(RS::ArenaVertsUploaded, arenaUploaded);
+        renderStats_.add(RS::ArenaVertsTwice, arenaTwice);
         tak::render::countUploadBytes(arenaUploaded * sizeof(SDL_Vertex));
         size_t arenaBytes = 0, arenaInflight = 0, mirrorBytes = 0;
         for (int k = 0; k < tak::render::kArenaSlots; ++k) {
@@ -1811,9 +1849,13 @@
                     const bool simulated = arenaBuffer.simulated();
                     const int drawn = simulated ? 1 : bodySubmit_.drawBuffer(ren_, op.tex, arenaBuffer.id(),
                                                                              firsts, counts, size_t(op.count));
-                    if (drawn != 1) {
+                    if (drawn == 0) {
                         renderStats_.add(RS::ArenaDraws);
                         renderStats_.add(RS::ArenaRanges, firsts.size());
+                    } else if (drawn < 0) {
+                        // SDL error while priming: nothing drawn, as draw() would
+                        // have failed the same way. Not an arena draw.
+                        renderStats_.add(RS::ArenaFallbacks);
                     } else {
                         // Not drawable from the buffer here: the simulated arena (its
                         // vertices gathered through the ranges -- the software-renderer
@@ -3523,6 +3565,34 @@
         else if (stats.rollover) ++bodyArenaVerify_.rollovers;
         else ++bodyArenaVerify_.rebuilds;
         bodyArenaVerify_.drains += bodyArena_.releaseSlot() >= 0;
+#endif
+    }
+
+    // Debug (TAK_BODY_ARENA_VERIFY): every assembled command equals its sources,
+    // and the assembled commands and staged uploads fill bodyVerts_ without a gap
+    // (a write failure re-assembles in place of the staged uploads).
+    void GameView::verifyBodyAssembled(size_t stagedVerts) {
+#ifdef NDEBUG
+        (void)stagedVerts;   // debug verifier only
+#else
+        size_t total = 0;   // commands are checked inside the buffer; their sum must fill it
+        for (const DrawOp& op : drawOps_) {
+            if (!op.tex || op.count <= 0 || op.arenaFirst >= 0) continue;
+            if (op.start < 0 || size_t(op.start) + size_t(op.count) > bodyVerts_.size())
+                throw std::runtime_error("body arena: assembled command outside the copy buffer");
+            const SDL_Vertex* out = bodyVerts_.data() + op.start;
+            for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
+                const BodyRange& r = bodyRanges_[k];
+                if (std::memcmp(out, bodySources_[r.source].data + r.offset, r.count * sizeof(SDL_Vertex)) != 0)
+                    throw std::runtime_error("body arena: assembled command differs from its sources");
+                out += r.count;
+            }
+            total += size_t(op.count);
+            ++bodyArenaVerify_.assembled;
+            bodyArenaVerify_.assembledVertices += size_t(op.count);
+        }
+        if (total + stagedVerts != bodyVerts_.size())
+            throw std::runtime_error("body arena: gap or overrun in the copy buffer");
 #endif
     }
 

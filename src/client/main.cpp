@@ -1947,18 +1947,21 @@ int main(int argc, char** argv) {
             }
             if(tak::devFlag("TAK_BODY_ARENA_VERIFY")) {
                 // Retained body vertices (workstream H): every arena command gathered
-                // from the arena contents matched its sources, or draw() threw.
+                // from the arena contents, and every assembled command, matched its
+                // sources, or draw() threw.
                 const auto& t=gameView->bodyArenaVerifyTotals();
                 using ull=unsigned long long;
                 std::printf("BODY_ARENA_VERIFY frames=%llu commands=%llu vertices=%llu retained=%llu uploaded=%llu "
                             "appends=%llu rebuilds=%llu streams=%llu fallbacks=%llu "
                             "rollovers=%llu drains=%llu old_commands=%llu "
-                            "stream_disallowed=%llu stream_empty=%llu stream_retry=%llu stream_unstable=%llu stream_budget=%llu\n",
+                            "stream_disallowed=%llu stream_empty=%llu stream_retry=%llu stream_unstable=%llu stream_budget=%llu "
+                            "assembled=%llu assembled_vertices=%llu\n",
                     ull(t.frames),ull(t.commands),ull(t.vertices),ull(t.retained),ull(t.uploaded),
                     ull(t.appends),ull(t.rebuilds),ull(t.streams),ull(t.fallbacks),
                     ull(t.rollovers),ull(t.drains),ull(t.oldCommands),
                     ull(t.streamReasons[1]),ull(t.streamReasons[2]),ull(t.streamReasons[3]),
-                    ull(t.streamReasons[4]),ull(t.streamReasons[5]));
+                    ull(t.streamReasons[4]),ull(t.streamReasons[5]),
+                    ull(t.assembled),ull(t.assembledVertices));
                 if(!t.frames && !t.streams)throw std::runtime_error("body arena verify ran no checks");
             }
             if(tak::devFlag("TAK_DISTANT_VERIFY")) {

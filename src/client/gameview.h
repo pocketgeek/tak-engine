@@ -653,10 +653,12 @@ public:
     struct DistantVerifyTotals { uint64_t frames=0, deferred=0, checked=0, catchup=0, late=0; };
     const DistantVerifyTotals& distantVerifyTotals() const { return distantVerify_; }
     // Workstream H (TAK_BODY_ARENA_VERIFY): every arena command gathered from a
-    // CPU mirror of the arena through its ranges equalled the assembled command.
+    // CPU mirror of the arena through its ranges equalled the assembled command,
+    // and every assembled command equalled its sources, packed without gaps.
     struct BodyArenaVerifyTotals { uint64_t frames=0, commands=0, vertices=0, retained=0, uploaded=0,
                                    appends=0, rebuilds=0, streams=0, fallbacks=0,
-                                   rollovers=0, drains=0, oldCommands=0;
+                                   rollovers=0, drains=0, oldCommands=0,
+                                   assembled=0, assembledVertices=0;   // assembled commands checked
                                    uint64_t streamReasons[6]{};   // by tak::render::ArenaStreamReason
                                  };
     const BodyArenaVerifyTotals& bodyArenaVerifyTotals() const { return bodyArenaVerify_; }
@@ -1185,7 +1187,8 @@ private:
     // bodyArenaFirsts_/Counts_ (placement stays in the screen-space vertices:
     // D's arithmetic is the CPU's, bit for bit).
     struct BodySource { const SDL_Vertex* data; uint32_t count, slot, generation; uint64_t revision;
-                        uint32_t arena = UINT32_MAX; };   // planner index (arena frames)
+                        uint32_t arena = UINT32_MAX;      // planner index (arena frames)
+                        uint32_t assembled = 0; };        // of its vertices copied into assembled commands
     struct BodyRange { uint32_t source, offset, count; };
     // One vertex copy into bodyVerts_ (an assembled command, or a changed arena
     // source staged behind them for the frame's single upload).
@@ -1210,6 +1213,7 @@ private:
     size_t bodyArenaBudget() const;
     bool bodyArenaPressure() const;
     void verifyBodyArena(const tak::render::ArenaFrameStats& stats);
+    void verifyBodyAssembled(size_t stagedVerts);
     // Feature sync: the sim-side state of each visual feature, refreshed only when
     // World::featGeneration() moves. A member rather than a function-static so a new
     // game cannot inherit the previous one's array.

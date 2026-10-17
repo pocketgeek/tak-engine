@@ -1470,11 +1470,18 @@ if(TAK_BUILD_CLIENT)
       # _still variant holds the camera on a tight storage (TAK_BODY_ARENA_HEADROOM)
       # so it rolls over: commands draw from the draining storage, migrate, and the
       # storage drains. Every arena command must equal the command assembled from its
-      # sources (TAK_BODY_ARENA_VERIFY); no command may fall back.
-      foreach(_variant IN ITEMS "" "_still")
+      # sources, and every assembled command its sources with no gap in the copy
+      # buffer (TAK_BODY_ARENA_VERIFY); no command may fall back. In the _fail
+      # variant the first arena write with uploads in every 40 frames fails
+      # (TAK_BODY_ARENA_FAIL_WRITE): that frame's arena commands are re-assembled in
+      # place of the staged uploads.
+      foreach(_variant IN ITEMS "" "_still" "_fail")
         if(_variant STREQUAL "_still")
           set(_arena_env TAK_BODY_ARENA_HEADROOM=1.2)
-          set(_arena_pass "fallbacks=0 rollovers=[1-9][0-9]* drains=[1-9][0-9]* old_commands=[1-9]")
+          set(_arena_pass "fallbacks=0 rollovers=[1-9][0-9]* drains=[1-9][0-9]* old_commands=[1-9].* assembled=[1-9]")
+        elseif(_variant STREQUAL "_fail")
+          set(_arena_env TAK_BODY_ARENA_FAIL_WRITE=40)
+          set(_arena_pass "fallbacks=[1-9][0-9]* .* assembled=[1-9]")
         else()
           set(_arena_env TAK_RENDER_CAMERA_SNAP=20)
           set(_arena_pass "streams=[1-9][0-9]* fallbacks=0")
@@ -1598,7 +1605,7 @@ if(TAK_BUILD_CLIENT)
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
-          render_geometry_stages render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_body_arena render_body_arena_still tactical_dots spectator_health_bars
+          render_geometry_stages render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_body_arena render_body_arena_still render_body_arena_fail tactical_dots spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()
