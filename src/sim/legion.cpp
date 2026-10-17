@@ -420,6 +420,17 @@ struct LegionNavigator::Impl {
         std::vector<uint32_t> values;    // K x K, kUnreached outside the region or unreachable
         uint32_t maxValue=0;             // the largest finite value (a chain's offset must keep sums below kUnreached)
         uint32_t routes=0,lastUse=0;     // chains holding it (an explicit count: eviction reads only this), last use
+        // Stage 7: the eviction queue of its cache (unreferenced tiles by (lastUse, seq)), nullptr once evicted: a tile is
+        // in it exactly while no chain holds it, so an eviction pops the oldest instead of scanning the whole cache --
+        // the scan ran after every attach while referenced tiles alone held more than the allowance (scatter-10000:
+        // half of the run's time). Same victims in the same order as the scan.
+        std::set<std::tuple<uint32_t,uint64_t,const void*>>* unref=nullptr;
+        void acquire() {if(routes++==0&&unref)unref->erase({lastUse,seq,this});}
+        void release() {if(--routes==0&&unref)unref->insert({lastUse,seq,this});}
+        void touch(uint32_t now) {
+            if(routes==0&&unref) {unref->erase({lastUse,seq,this});lastUse=now;unref->insert({lastUse,seq,this});}
+            else lastUse=now;
+        }
         uint64_t seq=0;                  // insertion order (eviction tie-break)
         // The mobility class it was built for (footprint, depths, slopes): not part of the key -- the plane's
         // identity already separates classes -- but checked under TAK_LEGION_VERIFY on every attach, so a plane
@@ -453,7 +464,7 @@ struct LegionNavigator::Impl {
         Field()=default;
         Field(const Field&)=delete;
         Field& operator=(const Field&)=delete;
-        ~Field() {detach();for(const auto& t:held)--t->routes;}
+        ~Field() {detach();for(const auto& t:held)t->release();}
         // Leave the field totals (the field is about to be freed; see Impl::orphan).
         void detach() {if(totals) {--totals->fields;totals->chains-=kind==2;totals->cells-=counted;totals->inflight-=inflightBytes;totals=nullptr;}}
         FieldTotals* totals=nullptr;      // set once the window is sized (startField)
@@ -4276,7 +4287,7 @@ struct LegionNavigator::Impl {
                 if(t->values[c]!=kUnreached&&f.own[ti][c]==kUnreached)f.own[ti][c]=uint32_t(int64_t(t->values[c])+rem);
             f.fin[ti]=1;
         }
-        ++t->routes;t->lastUse=w.tickCounter_;
+        t->acquire();t->touch(w.tickCounter_);
         f.held.push_back(t);
     }
     // The cache of shared tiles: a hit is a tile whose whole key equals this one; a miss builds it (Dijkstra over
@@ -4292,7 +4303,15 @@ struct LegionNavigator::Impl {
     // and get their own, smaller allowance, so traffic never evicts terrain. tileBytes / tileCount / tileDigest
     // cover both (the digest is hashed).
     static constexpr uint64_t kTileBytes=uint64_t(48)<<20,kCorrectionBytes=uint64_t(16)<<20;
-    struct TileCache {std::map<uint64_t,std::vector<std::shared_ptr<Tile>>> map;uint64_t bytes=0;};
+    struct TileCache {
+        std::map<uint64_t,std::vector<std::shared_ptr<Tile>>> map;uint64_t bytes=0;
+        std::set<std::tuple<uint32_t,uint64_t,const void*>> unref;   // its unreferenced tiles, oldest use first (Tile::unref)
+        TileCache()=default;
+        TileCache(const TileCache&)=delete;
+        TileCache& operator=(const TileCache&)=delete;
+        // The caches are declared after the groups and go first: a chain destroyed later must not touch this queue.
+        ~TileCache() {for(auto& [h,bucket]:map)for(auto& t:bucket)t->unref=nullptr;}
+    };
     TileCache staticTiles,corrTiles;
     static bool correction(const Tile& t) {return !t.soft.empty()||!t.avoid.empty();}
     TileCache& cacheOf(const Tile& t) {return correction(t)?corrTiles:staticTiles;}
@@ -4316,7 +4335,7 @@ struct LegionNavigator::Impl {
         auto& bucket=C.map[key.hash];
         for(const auto& t:bucket)
             if(t->sameKey(key)) {
-                t->lastUse=w.tickCounter_;++acct.tileHits;acct.tileCrossHits+=t->builtFor!=asker;
+                t->touch(w.tickCounter_);++acct.tileHits;acct.tileCrossHits+=t->builtFor!=asker;
                 if(&C==&corrTiles)++acct.correctionHits;
                 return t;
             }
@@ -4324,6 +4343,7 @@ struct LegionNavigator::Impl {
         auto t=std::make_shared<Tile>(std::move(key));
         built+=buildTile(*t,p);
         t->seq=++tileSeq;t->lastUse=w.tickCounter_;
+        t->unref=&C.unref;C.unref.insert({t->lastUse,t->seq,t.get()});   // unreferenced until a chain attaches it
         bucket.push_back(t);
         tileBytes+=t->bytes();C.bytes+=t->bytes();++tileCount;++acct.tilesBuilt;
         if(&C==&corrTiles)++acct.correctionsBuilt;
@@ -4375,18 +4395,18 @@ struct LegionNavigator::Impl {
         for(TileCache* C:{&staticTiles,&corrTiles}) {
             const uint64_t limit=C==&staticTiles?kTileBytes:kCorrectionBytes;
             if(C->bytes<=limit)continue;
-            std::vector<std::pair<std::pair<uint32_t,uint64_t>,uint64_t>> old;   // ((lastUse, seq), hash)
-            for(const auto& [h,bucket]:C->map)for(const auto& t:bucket)if(!t->routes)old.push_back({{t->lastUse,t->seq},h});
-            std::sort(old.begin(),old.end());
-            for(const auto& [age,h]:old) {
-                if(C->bytes<=limit/10*9)break;
-                auto& bucket=C->map[h];
-                for(size_t i=0;i<bucket.size();++i)if(bucket[i]->seq==age.second) {
-                    const uint64_t b=bucket[i]->bytes();
-                    tileBytes-=b;C->bytes-=b;--tileCount;tileDigest-=mix(bucket[i]->hash,bucket[i]->seq);++acct.tileEvictions;
+            while(C->bytes>limit/10*9&&!C->unref.empty()) {
+                const Tile* victim=static_cast<const Tile*>(std::get<2>(*C->unref.begin()));
+                C->unref.erase(C->unref.begin());
+                const uint64_t hash=victim->hash;   // the erase below frees the tile (no chain holds it)
+                auto& bucket=C->map[hash];
+                for(size_t i=0;i<bucket.size();++i)if(bucket[i].get()==victim) {
+                    const uint64_t b=victim->bytes();
+                    tileBytes-=b;C->bytes-=b;--tileCount;tileDigest-=mix(hash,victim->seq);++acct.tileEvictions;
+                    bucket[i]->unref=nullptr;
                     bucket.erase(bucket.begin()+long(i));break;
                 }
-                if(bucket.empty())C->map.erase(h);
+                if(bucket.empty())C->map.erase(hash);
             }
         }
     }
