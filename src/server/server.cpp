@@ -2485,8 +2485,9 @@ void Server::tryStart(Client& c) {
                                  ms.aiProfile.empty() ? "" : (" profile=" + ms.aiProfile).c_str());
             }
         } else {
-            // The same builder every client mirrors (net/matchconfig.h): Absurd AI
-            // income, the passive stance and the player count all come from it.
+            // The same builder every client mirrors (net/matchconfig.h): the Absurd and
+            // Absurdly Defensive income, the defensive stance and the player count all
+            // come from it.
             tak::sim::MatchConfig cfg = tak::net::matchConfigFor(r->opts, r->slots, r->seed);
             cfg.vfs = r->mapVfs ? r->mapVfs.get() : &ds->vfs;
             cfg.mapPath = mapPath;
@@ -2595,7 +2596,8 @@ void Server::gameMsg(Client& c, const Frame& f) {
             s.color = color % 10;
             s.team = uint8_t(team % kMaxSlots);
             s.ready = ready ? 1 : 0;
-            s.aiLevel = aiLevel > 4 ? 2 : aiLevel;   // 0=passive 1=easy 2=normal 3=hard 4=absurd
+            // 0=passive 1=easy 2=normal 3=hard 4=absurd 5=absurdly defensive
+            s.aiLevel = aiLevel >= tak::ai::kAiLevels ? 2 : aiLevel;
             broadcastLobby(*r);
             break;
         }

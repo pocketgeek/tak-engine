@@ -101,6 +101,7 @@ RUNS=(
   "fog-full|Ulasem Arena|TAK_FOG=2|"
   "ai-absurd|Ulasem Arena|TAK_AI_LEVEL=4|"
   "ai-passive|Ulasem Arena|TAK_AI_LEVEL=0|"
+  "ai-absurdly-defensive|Ulasem Arena|TAK_AI_LEVEL=5|"
   "speed-4x|Ulasem Arena|TAK_SPEED=40|"
   "flow-bench-high|Ulasem Arena|TAK_BENCH=3|"
   "flow-bench-absurd|Ulasem Arena|TAK_BENCH=6|"

@@ -153,8 +153,10 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 274, "replay format 11 is kept under protocol 274");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 274");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 275, "replay format 11 is kept under protocol 275");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 275");
+    // 275 adds AI level 5 (Absurdly Defensive), whose double income every peer derives from the level.
+    check(!supportedReplayProtocol(13, 274), "previous protocol without Absurdly Defensive is refused");
     // 274 finishes a lodestone upgrade under a short share (scale the tick of work, then clamp).
     check(!supportedReplayProtocol(13, 273), "previous stalling lodestone-upgrade protocol is refused");
     // 273 shares short mana across concurrent construction (retail allocation) instead of first-come.

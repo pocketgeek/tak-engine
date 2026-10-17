@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 274;      // 274: a lodestone upgrade scales its tick of work by the construction share BEFORE
+constexpr uint32_t kNetVersion = 275;      // 275: AI level 5, Absurdly Defensive (SlotInfo.aiLevel): Defensive play with
+                                           //      Absurd's double income. Peers derive the income multiplier and the
+                                           //      defensive stance from the level, so an older peer would clamp 5 to Normal
+                                           //      and desync. Sim unchanged. 274 replays refused
+                                           // 274: a lodestone upgrade scales its tick of work by the construction share BEFORE
                                            //      clamping it to what is left (retail 429af0), so a short share no longer leaves the
                                            //      site one ulp from done at full hp until the allocation rises above one half.
                                            //      273 replays refused
@@ -689,7 +693,8 @@ struct SlotInfo {
     uint8_t color = 0;     // 0..9 palette slot
     uint8_t team = 0;      // 0..kMaxSlots-1
     uint8_t ready = 0;
-    uint8_t aiLevel = 2;   // AI difficulty: 0=passive 1=easy 2=normal 3=hard 4=absurd
+    uint8_t aiLevel = 2;   // AI difficulty: 0=passive (Defensive) 1=easy 2=normal 3=hard 4=absurd
+                           // 5=absurdly defensive (ai::Difficulty)
     std::string name;      // player display name ("" for open/ai)
 };
 

@@ -273,11 +273,12 @@ scenario.
 
 | Difficulty | What to expect |
 | --- | --- |
-| **Defensive** | Builds at home. Sends its army to meet attackers near its base, then pulls it back, including attackers it cannot see that shoot its units from out of sight. Does not build where enemy troops are about. Never raids. |
+| **Defensive** | Keeps building as fast as its mana income allows, with no limit of its own on how many factories, builders, towers or troops it makes; only the room's unit cap and the game's rules stop it. Builds at home, though its builders claim mana deposits farther out. Sends its army to meet attackers near its base, then pulls it back, including attackers it cannot see that shoot its units from out of sight. Does not build where enemy troops are about. Never raids. |
 | **Easy** | Builds slowly. First attack after about four minutes, then small waves of at most eight units, at least two minutes apart. |
 | **Normal** | Sends small raiding parties to probe and scout while it builds up a main army sized to its income. |
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
 | **Absurd** | Plays like Hard, with **double mana income**. |
+| **Absurdly Defensive** | Plays like Defensive, with Absurd's **double mana income**. |
 
 At every difficulty, the AI's Monarch fights back when it is attacked, or when
 an armed enemy comes within its reach, instead of carrying on with a build.
@@ -296,8 +297,9 @@ for it, its own or an ally's, has got no nearer for a minute, and sends its own
 stuck builders to other work.
 
 Normal starts with its Monarch and one builder and adds builders as its income
-grows, up to the Monarch and four; Easy and Defensive keep two. No AI builds more
-of one builder type than the original game's AI file allows. Zhon has no factory
+grows, up to the Monarch and four; Easy keeps two. Defensive and Absurdly
+Defensive add one per 50 income with no ceiling. No other AI builds more of one
+builder type than the original game's AI file allows. Zhon has no factory
 buildings, so its AI counts its Beast Handlers, Tamers, Lords and Shamans as
 both producers and builders. An AI whose mana store is nearly full keeps its
 builders building income rather than leaving them idle.

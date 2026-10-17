@@ -1,5 +1,7 @@
 // Command-level AI policy tests; movement continues through the normal World API.
 #include "ai/ai.h"
+#include "net/matchconfig.h"
+#include "net/replayhdr.h"
 #include "sim/matchsetup.h"
 #include "hpi/hpi.h"
 #include <cmath>
@@ -196,8 +198,9 @@ static void monarchFightsBack(const sim::TypeRegistry& registry,const ai::Profil
 
 // Retail limits each builder type, not the total (ai/default.txt: arabuild,
 // arafly and arapries 4 each), and has no difficulty levels. Normal grows from the
-// Monarch plus one to the Monarch plus four as income allows; Easy and Defensive
-// stay at the Monarch plus one.
+// Monarch plus one to the Monarch plus four as income allows; Easy stays at the
+// Monarch plus one. Defensive adds one per 50 income with no ceiling, the
+// profile's per-type limit included.
 static void builderCaps() {
     auto files=std::make_shared<hpi::Vfs::Files>();
     auto file=[&](const std::string& path,const std::string& text) {
@@ -232,8 +235,13 @@ static void builderCaps() {
     check(trainsMason(ai::Difficulty::Normal,100,1),"Normal adds builders as its income grows");
     check(trainsMason(ai::Difficulty::Normal,150,3),"Normal grows to the Monarch and four builders");
     check(!trainsMason(ai::Difficulty::Normal,1000,4),"Normal stops at the Monarch and four builders");
-    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Easy})
-        check(!trainsMason(difficulty,150,1),"Easy and Defensive keep the Monarch and one builder");
+    check(!trainsMason(ai::Difficulty::Easy,150,1),"Easy keeps the Monarch and one builder");
+    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive}) {
+        check(!trainsMason(difficulty,20,1),"Defensive opens with the Monarch and one builder");
+        check(trainsMason(difficulty,150,1),"Defensive adds builders as its income grows");
+        check(trainsMason(difficulty,1000,4),"Defensive passes the profile's builder limit while income allows");
+        check(!trainsMason(difficulty,1000,21),"Defensive's builders still follow income: the Monarch and one per 50");
+    }
 }
 
 static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profile& profile,
@@ -559,20 +567,188 @@ static void fullStore() {
     check(!buildsMine(ai::Difficulty::Easy,4800),"Easy's builders rest beside a full store");
 }
 
+// Defensive and Absurdly Defensive keep building in step with their income with no
+// AI-imposed ceiling: no cap on factories, builders or towers, no profile limits,
+// every idle producer acting each think, the orders of one think held against the
+// store. Only game rules -- the unit cap, FBI limits, placement -- bound them.
+static void unboundedLevels() {
+    auto files=std::make_shared<hpi::Vfs::Files>();
+    auto file=[&](const std::string& path,const std::string& text) {
+        std::string lines;
+        for (char ch : text) { lines += ch; if (ch == ';' || ch == '{' || ch == '}') lines += '\n'; }
+        (*files)[path]={lines.begin(),lines.end()};
+    };
+    auto type=[&](const char* id,const char* fields) {
+        file(std::string("units/")+id+".fbi",std::string("[UNITINFO]{unitname=")+id+
+            ";objectname="+id+";maxdamage=100;footprintx=2;footprintz=2;buildtime=30;buildcost=10;"+fields+"}");
+    };
+    type("soldier","canmove=1;maxvelocity=1;");
+    type("factory","builder=1;workertime=30;");
+    type("lode","mogriumincome=20;");
+    type("tower","");
+    type("worker","builder=1;workertime=30;canmove=1;maxvelocity=1;");
+    file("canbuild/factory/soldier.tdf","[CANBUILD]{sortbias=0;}");
+    for (const char* child : {"factory","lode","tower"})
+        file(std::string("canbuild/worker/")+child+".tdf","[CANBUILD]{sortbias=0;}");
+    hpi::Vfs vfs;vfs.setMapFiles(files);
+    sim::TypeRegistry reg;reg.loadDir(vfs,"units");reg.loadBuildTree(vfs,"canbuild");
+    const auto levels={ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive,ai::Difficulty::Hard};
+    auto count=[](const std::vector<net::Command>& cs,net::Cmd kind,const char* type) {
+        return int(std::count_if(cs.begin(),cs.end(),[&](const auto& c){return c.kind==kind && std::string(c.type)==type;}));
+    };
+    for (auto difficulty : levels) {
+        const bool unbounded=ai::defensiveLevel(difficulty);
+        // Factories: Defensive used to stop at 32 (as Hard still does) whatever its income.
+        {
+            sim::World w;terrain(w);w.buildNavClasses(reg);
+            w.player(0).mana=100000;w.player(0).income=1000;
+            for (int i=0;i<32;++i) w.spawn(reg.find("factory"),2400+float(i%8)*120,2400+float(i/8)*120,0,0);
+            w.spawn(reg.find("worker"),2820,3100,0,0);
+            ai::Profile p;p.weight["factory"]=10;p.weight["soldier"]=10;
+            ai::Controller controller(0,reg,p,1,difficulty);
+            check((count(think(controller,w),net::Cmd::Build,"factory")>0)==unbounded,
+                  "Defensive adds factories past 32 while its income asks for more; Hard keeps its ceiling");
+        }
+        // Producers: every idle factory acts in one think (Defensive used to move three)...
+        {
+            sim::World w;terrain(w);w.buildNavClasses(reg);
+            w.player(0).mana=10000;w.player(0).income=100;
+            for (int i=0;i<12;++i) w.spawn(reg.find("factory"),400+float(i%4)*200,400+float(i/4)*200,0,0);
+            ai::Profile p;p.weight["soldier"]=10;
+            ai::Controller controller(0,reg,p,1,difficulty);
+            const int trains=count(think(controller,w),net::Cmd::Train,"soldier");
+            check(unbounded ? trains==12 : trains==8,"Defensive moves every idle producer each think; Hard eight");
+            // ...but one think's orders are held against the store: 25 mana and no
+            // income start two 10-mana soldiers, not twelve.
+            w.player(0).mana=25;w.player(0).income=0;
+            ai::Controller broke(0,reg,p,1,difficulty);
+            const int poor=count(think(broke,w),net::Cmd::Train,"soldier");
+            check(!unbounded || poor==2,"Defensive's orders in one think stay within its mana");
+        }
+        // Profile limits: a second lodestone past `limit lode 1`, a tower past `limit tower 1`.
+        {
+            sim::World w;terrain(w);w.buildNavClasses(reg);
+            w.setManaSpots({{1200,800},{1200,1100}});
+            w.spawn(reg.find("factory"),800,800,0,0);
+            w.spawn(reg.find("lode"),1200,800,0,0);
+            const int worker=w.spawn(reg.find("worker"),1000,1000,0,0);
+            w.player(0).mana=5000;w.player(0).income=10;
+            ai::Profile p;p.weight["lode"]=10;p.limit["lode"]=1;
+            ai::Controller controller(0,reg,p,1,difficulty);
+            const auto cs=think(controller,w);
+            check(std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+                return c.unitId==worker && c.kind==net::Cmd::Build && std::string(c.type)=="lode";
+            })==unbounded || difficulty==ai::Difficulty::Hard,"Defensive builds income past the profile's lodestone limit");
+        }
+        // Towers: Defensive used to stop at 48, Hard stops at six.
+        {
+            sim::World w;terrain(w);w.buildNavClasses(reg);
+            for (int i=0;i<48;++i) w.spawn(reg.find("tower"),2400+float(i%8)*64,2400+float(i/8)*64,0,0);
+            w.spawn(reg.find("worker"),2624,3000,0,0);
+            w.player(0).mana=100000;w.player(0).income=2000;
+            ai::Profile q;q.weight["tower"]=10;q.limit["tower"]=1;
+            ai::Controller towers(0,reg,q,1,difficulty);
+            check((count(think(towers,w),net::Cmd::Build,"tower")>0)==unbounded,
+                  "Defensive builds towers past 48 and the profile's limit as income grows");
+        }
+    }
+    // Idle fighters walk out of the base to a ring around it and stay home there;
+    // a fighter already outside the base is left alone.
+    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive}) {
+        sim::World w;terrain(w);w.buildNavClasses(reg);
+        w.spawn(reg.find("factory"),1600,1600,0,0);
+        const int inside=w.spawn(reg.find("soldier"),1640,1680,0,0);
+        const int outside=w.spawn(reg.find("soldier"),1600,2400,0,0);
+        ai::Profile none;
+        ai::Controller controller(0,reg,none,1,difficulty,{{3400,3400}});
+        const auto cs=think(controller,w);
+        check(attacks(cs)==0 && std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+            const float dx=c.x-1600,dz=c.z-1600;
+            return c.unitId==inside && c.kind==net::Cmd::Move && dx*dx+dz*dz>420.f*420 && dx*dx+dz*dz<1200.f*1200;
+        }) && std::none_of(cs.begin(),cs.end(),[&](const auto& c){return c.unitId==outside && c.kind==net::Cmd::Move;}),
+              "Defensive walks idle troops out of its base to the ring around it, and no further");
+    }
+    // A factory waiting half a minute on a queue head it cannot place (its pad
+    // blocked) gives that order up and trains something else for a while.
+    {
+        sim::World w;terrain(w);w.buildNavClasses(reg);
+        w.player(0).mana=0;w.player(0).income=0;
+        const int factory=w.spawn(reg.find("factory"),800,800,0,0);
+        w.unit(factory)->buildQueue.push_back(reg.find("soldier"));
+        ai::Profile p;p.weight["soldier"]=10;
+        ai::Controller controller(0,reg,p,1,ai::Difficulty::Passive);
+        auto unqueues=[&](uint32_t tick) {
+            const auto cs=think(controller,w,tick);
+            return std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+                return c.kind==net::Cmd::Unqueue && c.unitId==factory && std::string(c.type)=="soldier";
+            });
+        };
+        check(!unqueues(0) && !unqueues(29*30),"a queue head waits half a minute for its pad");
+        check(unqueues(30*30),"a queue head that never found a site is given up after half a minute");
+        w.unit(factory)->buildQueue.clear();w.player(0).mana=1000;
+        const auto retry=think(controller,w,31*30);
+        check(std::none_of(retry.begin(),retry.end(),[](const auto& c){return c.kind==net::Cmd::Train;}),
+              "the factory does not retry the refused type at once");
+    }
+}
+
+// Absurdly Defensive (wire level 5) is Defensive with Absurd's double income, end
+// to end: the level, the multiplier and stance every peer derives from it, and
+// the room and replay records that carry it.
+static void levelWiring() {
+    check(ai::difficultyFromLevel(5)==ai::Difficulty::AbsurdlyDefensive && ai::difficultyFromLevel(6)==ai::Difficulty::Normal,
+          "aiLevel 5 is Absurdly Defensive; an unknown level is Normal");
+    check(ai::incomeMultFor(ai::Difficulty::AbsurdlyDefensive)==2.0f && ai::incomeMultFor(ai::Difficulty::Absurd)==2.0f &&
+          ai::incomeMultFor(ai::Difficulty::Passive)==1.0f,"Absurdly Defensive earns Absurd's double income");
+    const auto a=ai::paramsFor(ai::Difficulty::AbsurdlyDefensive),d=ai::paramsFor(ai::Difficulty::Passive);
+    check(!a.attack && !a.scout && a.unbounded && a.thinkPeriod==d.thinkPeriod && a.producersPerThink==d.producersPerThink &&
+          a.limitScale==d.limitScale && a.raidSize==d.raidSize && a.waveSize==d.waveSize,
+          "Absurdly Defensive plays exactly as Defensive");
+    net::SlotInfo slots[net::kMaxSlots]{};
+    slots[0].type=1;slots[0].aiLevel=2;
+    slots[1].type=2;slots[1].aiLevel=5;slots[1].faction=3;slots[1].team=1;
+    slots[2].type=2;slots[2].aiLevel=0;slots[2].team=2;
+    slots[3].type=2;slots[3].aiLevel=4;slots[3].team=3;
+    {
+        net::Writer wr;net::put(wr,slots[1]);net::Reader rd(wr.b.data(),wr.b.size());net::SlotInfo back;
+        net::get(rd,back);
+        check(rd.ok && back.aiLevel==5,"the room's slot record carries level 5");
+    }
+    auto expect=[](const sim::MatchConfig& cfg) {
+        return cfg.slots.size()==4 && cfg.slots[0].manaMult==1 && !cfg.slots[0].defensiveAi &&
+            cfg.slots[1].manaMult==2 && cfg.slots[1].defensiveAi &&
+            cfg.slots[2].manaMult==1 && cfg.slots[2].defensiveAi &&
+            cfg.slots[3].manaMult==2 && !cfg.slots[3].defensiveAi;
+    };
+    net::GameOptions opts;
+    check(expect(net::matchConfigFor(opts,slots,7)),"the match config gives level 5 double income and the defensive stance");
+    // Through a replay header and back, as the replay loader rebuilds the config.
+    net::Writer wr;net::writeReplayHeader(wr,net::replayHeaderFor(opts,"Inner Circle","",slots,7));
+    net::Reader rd(wr.b.data()+4,wr.b.size()-4);   // past the TAKR magic, as the loader reads
+    net::ReplayHeader h;uint32_t fmt=0,proto=0;
+    const bool read=net::readReplayHeader(rd,h,fmt,proto);
+    net::GameOptions o2;net::SlotInfo back[net::kMaxSlots];net::matchInputsFrom(h,o2,back);
+    check(read && proto==net::kNetVersion && back[1].aiLevel==5 && expect(net::matchConfigFor(o2,back,7)),
+          "a replay header keeps level 5 and replays it with double income");
+    check(!net::supportedReplayProtocol(fmt,272),"a protocol 272 replay, which had no level 5, is refused");
+}
+
 int main(int argc,char** argv) {
     sim::TypeRegistry empty;ai::Profile profile;auto soldier=fighter();
-    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
+    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd,
+                            ai::Difficulty::AbsurdlyDefensive}) {
         sim::World w;terrain(w);w.player(0).income=100;
         for (int i=0;i<35;++i) w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
         ai::Controller controller(0,empty,profile,1,difficulty,{{3400,800}});
         auto cs=think(controller,w);
-        check(attacks(cs)==(difficulty==ai::Difficulty::Passive ? 0 : 35),"difficulty permits heavy attacks only for attacking AIs");
-        if (difficulty==ai::Difficulty::Passive) {
+        check(attacks(cs)==(ai::defensiveLevel(difficulty) ? 0 : 35),"difficulty permits heavy attacks only for attacking AIs");
+        if (ai::defensiveLevel(difficulty)) {
             check(std::count_if(cs.begin(),cs.end(),[](const auto& c){return c.kind==net::Cmd::Stance && c.targetId==1;})==35,
                   "Passive AI orders defensive rather than hold-fire stances");
         }
     }
     builderCaps();
+    unboundedLevels();
     mobileProducers();
     builderTotals();
     fullStore();
@@ -706,6 +882,7 @@ int main(int argc,char** argv) {
         check(earned[0]>0 && std::abs(earned[1]-earned[0]*2)<0.001,
               "Absurd doubles recurring, feature, ordered-corpse and automatic-corpse income");
     }
+    levelWiring();
     {
         // Self-contained production tree: profile caps must not stop a defensive
         // or aggressive AI while mana and the actual game cap allow more troops.
@@ -1185,8 +1362,8 @@ int main(int argc,char** argv) {
                     const bool builds=std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
                         return c.unitId==worker && c.kind==net::Cmd::Build && std::string(c.type)=="lode";
                     });
-                    // Defensive's own 600 px leash still holds its builders closer.
-                    const bool expected=inside && !(difficulty==ai::Difficulty::Passive && !monarch);
+                    // Defensive's builders claim deposits as far as Normal's; its Monarch stays home.
+                    const bool expected=inside;
                     check(builds==expected,monarch
                           ? (inside ? "the Monarch builds the short-of-mana lodestone within 560 px of home"
                                     : "the Monarch leaves a deposit beyond 560 px of home to the ordinary ladder")

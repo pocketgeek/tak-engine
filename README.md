@@ -796,11 +796,12 @@ enemy units outside current sight remain untargetable.
 
 | AI | What to expect |
 | --- | --- |
-| Defensive | Keeps building at home; sends its army to intercept spotted threats near its base and buildings, then recalls it; sends no offensive raids |
+| Defensive | Keeps building in step with its mana income with no AI-imposed limit (only the unit cap and game rules); sends its army to intercept spotted threats near its base and buildings, then recalls it; sends no offensive raids |
 | Easy | Builds slowly; first attack after four minutes, then waves of at most eight units at least two minutes apart |
 | Normal | Sends probing raids while saving a larger attacking force |
 | Hard | Keeps expanding income and production, spending on raids and larger attack waves |
 | Absurd | Hard behavior with double mana income, including reclaim |
+| Absurdly Defensive | Defensive behavior with Absurd's double mana income ([details](docs/ai-defensive-2026-10-17.md)) |
 
 Choose **Generate Random Map** under the map preview to configure a Mainland,
 Lakes, or Islands map, up to **64×64**. Every new mana site has surrounding ruins.
