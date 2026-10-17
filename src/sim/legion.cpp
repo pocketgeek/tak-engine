@@ -1194,18 +1194,20 @@ struct LegionNavigator::Impl {
     // cell (never farther than one cell from that goal origin, so it stays
     // inside its destination area) to open a lane for a same-player member
     // whose own goal it walls in. Capped per body: no endless shuffling.
-    struct Anchor {int goal=-1;uint8_t yields=0;std::tuple<int,uint32_t,int32_t,int32_t> point{};};
+    struct Anchor {int goal=-1;uint8_t yields=0;std::tuple<int,uint32_t,int32_t,int32_t> point{};
+                   uint16_t cells=0;};   // cells: its footprint's (stage 8; derived from its type, never hashed)
     IdMap<Anchor> anchors;
     // Settled arrivals per destination (player, requested point): the crowd
     // a settling body's reach is sized by (see settleReach). A function of
     // `anchors`, kept with it by setAnchor/dropAnchor; never hashed.
     std::map<std::tuple<int,int32_t,int32_t>,int> anchorsAt;
+    std::map<std::tuple<int,int32_t,int32_t>,uint64_t> anchorCellsAt;   // stage 8: their footprint cells (crowdBound)
     static std::tuple<int,int32_t,int32_t> destination(const std::tuple<int,uint32_t,int32_t,int32_t>& p) {
         return {std::get<0>(p),std::get<2>(p),std::get<3>(p)};
     }
     void setAnchor(int id,const Anchor& a) {
         dropAnchor(id);
-        anchors[id]=a;markAnchor(id,true);++anchorsAt[destination(a.point)];
+        anchors[id]=a;markAnchor(id,true);++anchorsAt[destination(a.point)];anchorCellsAt[destination(a.point)]+=a.cells;
     }
     // ---- event-driven erasure (T7 B3) -----------------------------------
     // A settled body stays an anchor while it is alive and idle, or stands
@@ -1252,6 +1254,10 @@ struct LegionNavigator::Impl {
     IdMap<Anchor>::iterator dropAnchor(IdMap<Anchor>::iterator it) {
         const auto d=anchorsAt.find(destination(it->second.point));
         if(d!=anchorsAt.end()&&--d->second<=0)anchorsAt.erase(d);
+        if(const auto c=anchorCellsAt.find(destination(it->second.point));c!=anchorCellsAt.end()) {
+            c->second-=std::min<uint64_t>(c->second,it->second.cells);
+            if(!c->second)anchorCellsAt.erase(c);
+        }
         markAnchor(it->first,false);
         return anchors.erase(it);
     }
@@ -7497,7 +7503,7 @@ struct LegionNavigator::Impl {
         completionStats(u,m);
         if(policy(m.kind).passThrough) {leave(u.id);return;}
         m.state=Arrived;
-        setAnchor(u.id,Anchor{m.goal,0,m.point});
+        setAnchor(u.id,Anchor{m.goal,0,m.point,uint16_t(std::max(1,u.type->footX)*std::max(1,u.type->footZ))});
         leave(u.id);
     }
     // Where a leg completed, from its click (Stats only): the distance
@@ -11164,12 +11170,12 @@ struct LegionNavigator::Impl {
         if(const Point* pt=m.pt;pt&&pt->crowdPeak) {
             const uint64_t cells=uint64_t(std::max(1,fx))*uint64_t(std::max(1,fz));
             n=int(std::max<uint64_t>(uint64_t(n),std::min<uint64_t>((pt->crowdPeak+cells-1)/cells,uint64_t(1)<<24)));
-            // Stage 8: the bodies the area still gathers and those already settled at its point. One order's
+            // Stage 8: the footprint cells of the bodies the area still gathers and of those already settled at its point. One order's
             // arrivals leave the point's crowd as they settle, so for it this is its whole size again (as the
             // peak is); for an order that joined an earlier order's area (sharedArea) the peak counts only the
             // members that were on their way together, not the crowd already standing there.
-            const auto settled=anchorsAt.find(destination(m.point));
-            const uint64_t now=(pt->crowdCells+cells-1)/cells+uint64_t(settled==anchorsAt.end()?0:settled->second);
+            const auto settled=anchorCellsAt.find(destination(m.point));
+            const uint64_t now=(pt->crowdCells+(settled==anchorCellsAt.end()?0:settled->second)+cells-1)/cells;
             n=int(std::max<uint64_t>(uint64_t(n),std::min<uint64_t>(now,uint64_t(1)<<24)));
         }
         // A crowd of this plane's bodies alone is the destination area itself (areaBound's
