@@ -673,14 +673,8 @@ public:
                                    uint64_t streamReasons[6]{};   // by tak::render::ArenaStreamReason
                                  };
     const BodyArenaVerifyTotals& bodyArenaVerifyTotals() const { return bodyArenaVerify_; }
-    // Workstream J (TAK_CPU_TRIM_VERIFY): every trimmed buffer kept its contents
-    // byte for byte, no buffer was trimmed twice within one policy window, regrowths
-    // after a trim are counted; retained bytes = the renderer's CPU buffers + caches.
-    struct CpuTrimVerifyTotals {
-        uint64_t frames=0, trims=0, workerTrims=0, released=0, contentChecks=0, regrowths=0;
-        uint64_t peakRetained=0, finalRetained=0;
-    };
-    const CpuTrimVerifyTotals& cpuTrimVerifyTotals() const { return cpuTrimVerify_; }
+    // Workstream J (TAK_CPU_TRIM_VERIFY): see CpuTrimVerifyTotals.
+    const auto& cpuTrimVerifyTotals() const { return cpuTrimVerify_; }
     struct ShadowCacheVerifyTotals {
         uint64_t frames=0, tiles=0, reused=0, body=0, translated=0, original=0;
         // Workstream F: tiles reused in a cell kept from an earlier frame, cells
@@ -3464,6 +3458,13 @@ private:
         tak::render::TrimTracker tracker;
         size_t peak = 0;
         uint64_t lastTrimFrame = 0; size_t trimmedTo = 0;   // TAK_CPU_TRIM_VERIFY
+    };
+    // TAK_CPU_TRIM_VERIFY (debug): every trimmed buffer kept its contents byte for
+    // byte, no buffer was trimmed twice within one policy window, regrowths after a
+    // trim are counted; retained bytes = the renderer's CPU buffers + caches.
+    struct CpuTrimVerifyTotals {
+        uint64_t frames=0, trims=0, workerTrims=0, released=0, contentChecks=0, regrowths=0;
+        uint64_t peakRetained=0, finalRetained=0;
     };
     CpuTrimVerifyTotals cpuTrimVerify_{};
     std::array<RetainedSlot, size_t(Retained::Count)> retained_{};
