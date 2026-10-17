@@ -24,7 +24,7 @@ branch, pushed after the stage (`git push origin task-legion-10000`; never main,
 | 5 | 4 | Route-query interface; consumers migrated; Unknown / Reachable / Unreachable kept apart; metric versions | exact first, then behaviour where stated | implemented and validated (section 7.5) |
 | 6 | 5 | Hierarchy over the footprint planes (sectors, regions, portals), sparse tiles, intermediate sharing, search vs field by demand | behaviour | implemented and validated (section 7.6) |
 | 7 | 6 | Static navigation apart from dynamic traffic; local dirty tiles; closures vs improvements | behaviour | implemented and validated (section 7.7) |
-| 8 | 7 | Navigation subgroups, shared chokepoint state and admission, multi-entrance mixed-footprint arrivals, local engagement | behaviour | not implemented |
+| 8 | 7 | Navigation subgroups, shared chokepoint state and admission, multi-entrance mixed-footprint arrivals, local engagement | behaviour | implemented and validated (section 7.8; awareness by streams measured and rejected) |
 | 9 | 8 | Parallel tile builds / per-plane preprocessing with deterministic publication; reassess movement; final 10k report | exact (parallel) + report | not implemented |
 
 Per stage, the record (section 7) gives: hypothesis, touched code, exact-versus-behaviour classification,
@@ -302,6 +302,21 @@ struct TileKey  { PlaneId plane; SectorId sector; uint32_t geometryGen; uint64_t
   reach the region. A tile serves one region, not a whole sector: a sector is never one node.
 * `NavSubgroupId` and `RouteId` stay unused (stage 8 and the stage-7 route dependencies).
 
+**Amended at stage 8 (as implemented; reasons).**
+
+* **Chokepoint state does not hang off `PortalId`**: a portal is per movement plane (its run is in that plane's
+  origins), but one bridge is one queue for every class crossing it. An opening is identified by its cells on the
+  boundary line, `(side, line, lo, hi)`, the same for every plane when the same obstacles bound it (`Opening`,
+  `openingIndex`); per plane, each sector side's openings are cached by both sectors' generations. Width is the
+  physical one (cells); a class's lanes follow from it.
+* **A navigation subgroup is a group**: no `NavSubgroupId` type. A big group's squares moved to another passage become
+  a new Legion group of the same order (`splitGroup`), with a navigator-allocated id (deterministic, never a packet
+  chunk), its own route and field, judged on its own afterwards; the order's other per-order state (its point, its
+  formation, its crowd bound) is shared through the point as before. Awareness by streams (one mover per separate part)
+  was built and rejected (7.8), so awareness keeps one mover per destination area.
+* **A destination area can span orders**: an explicit order to a point an earlier explicit area of the same player
+  still gathers at takes that area's key (`sharedArea`); `ArrivalAreaId` stays the convoy key as amended at stage 3.
+
 **Amended at stage 7 (as implemented; reasons).**
 
 * A route's static dependencies are its own tiles (`RouteGrid::allow`; a window: its box), tested per changed cluster
@@ -385,6 +400,10 @@ tools/legion_identity.sh --base BASE/build-o2 --cand build-o2 --replays ~/tak-tm
 #   runs the test, restores); licences from the gate's check output plus an offset-0 --scale run per moved fixture
 #   (scratch stage7/license7.py CHECK BASE.jsonl NEW.jsonl ATTR_DIR [--apply]); AddressSanitizer: build-asan (-O1)
 #   legion_world_test / legion_scenario on the lifetime-sensitive cases (7.7)
+# stage 8: rendered frames: legion_scenario F --dump-units N (DUMP lines; scratch stage8/tools/crop.py renders a tick);
+#   dev A/B: scratch stage8/tools/ab.py run BIN OUT FILES --offsets 0,1,-1 / ab.py cmp BASE NEW; licences:
+#   stage8/tools/license8.py CHECK BASE.jsonl NEW.jsonl ATTR_DIR [--apply] (ATTR_DIR: an offset-0 --scale run per fixture,
+#   stage8/tools/attr.py); one scale file against bounds: tools/legion_scale_check.py BIN SCALE_DIR NAME --min K=V --max K=V
 ```
 
 ## 6. Stage 1 record: baselines and acceptance tests
@@ -568,7 +587,8 @@ program's targets). Unmet targets after stage 9 are reported as such, not re-fro
 * Stage 5: section 7.5 (implemented and validated; commits listed there).
 * Stage 6: section 7.6 (implemented and validated; commits listed there).
 * Stage 7: section 7.7 (implemented and validated; commits listed there).
-* Stages 8-9: not implemented.
+* Stage 8: section 7.8 (implemented and validated; commits listed there).
+* Stage 9: not implemented.
 
 ### 7.2 Stage 2 record: exact registration, awareness and profiled micro-work (brief phase 1)
 
@@ -2325,42 +2345,307 @@ and five scale files instead), `legion_cost`. ASan was run once on the final cod
   four rows above hash-equal. The rerun is clean: legion_world_test chainresolve, trafficlane, chains, chainschurn,
   trapped, improvedefer (verify on), legion_scenario scatter-2500 and many-2500 (4,000 ticks), refreshchurn.
 
+### 7.8 Stage 8 record: chokepoints, subgroups and arrivals (brief phase 7)
+
+**Hypothesis.** After stage 7 the big rows still lost most of their bodies in three places nothing navigated for:
+(1) narrow passages -- every group took the nearest one whatever its queue (bridges-1000: both armies on the
+12-cell bridge, head on, 5 of 1,000 arrived; maze-1000: all 850 queued at one 6-cell door, 632 arrived in 20,000
+ticks); (2) destination areas -- rendered dumps showed the front of every formation settling 20-60 cells short of
+its slot (one-1000: 766 of 854 completions off their slot; the area filled from the click backwards and the last
+tenth stood outside it); (3) two orders to one point were two crowds (churn-1000's re-sent half planned round the
+other half's arrivals). Queue-aware route choice with commitment and admission at narrow passages, arrival rules
+that measure headway on a member's own slot, and one destination area per point should recover them without
+changing how bodies step or collide.
+
+**Classification.**
+
+| Commit | Content | Kind |
+|---|---|---|
+| 8118d9d6 | `legion_scenario --dump-units N` (the stage-7 scratch hook as a tool flag) | tools |
+| 4f30f19e | a formation member gaining on its own slot is not still (`Member::windowSlotDist`); `legion_arrival`; protocol 272 | behaviour |
+| 6de86025 | openings (narrow sector-boundary crossings) with queue areas and delays, route charges (`Field::via`, `Field::charges`), queue-aware region search, re-plans with commitment (`predictEntrants`, `openingDrift`), admission at narrow passages (`admissionHold`); `legion_choke` | behaviour |
+| ca418eca | awareness by streams | behaviour (reverted by 45d4e097) |
+| 924c43ba | shared destination areas across orders (`sharedArea`, `destArea`); `legion_sharedarea` | behaviour |
+| b4849440 | a formation member with a free step toward its own slot is not pressed (`freeTowardSlot`); `legion_arrival_press` | behaviour |
+| e9d2e8fb | an entrance per group of a destination area (`Point::entries`); scale fixture room2door; `legion_entrances` | behaviour |
+| 45d4e097 | revert of the stream split (measured, rejected) | behaviour |
+| 4ed220d1 | navigation subgroups for route allocation (`allocateQueue`, `splitGroup`); groups' own entrants hashed | behaviour |
+| 1bb377c3, 456ffb6f | the explicit crowd bound counts the cells settled at its point (`anchorCellsAt`): the fix of a shared-area regression found by the gate (tail-wave); 1bb377c3 counted bodies and failed `legion_arrival_press`, 456ffb6f counts cells | behaviour (fix) |
+| 11da1910 | `legion_hovershore`: walkers spawned clear of the landed hovercraft | test fixture |
+| 8c2bb90b | scenario licences and hash retakes (`license8.py`); the Legion navigation golden | baselines |
+
+Retail is untouched: no Retail code path reads any of it (gate: 135/135 Retail fixtures identical to the stage-7 head,
+hashes and keys; the Retail navigation golden and Retail `--mpai` unchanged).
+
+**Design (as built).** docs/legion-pathfinding.md "Legion 10,000 stage 8". In short: an OPENING is a portal run of the
+hierarchy bounded at both ends by obstacles (followed past sector corners; fewer than 64 origins), identified by its
+cells so every movement class crossing one bridge shares one queue. Window and corridor fields of groups of 8 or more
+record each cell's next opening; every 30 ticks the members' queue areas are summed per opening and direction, and
+the delay is area / width (an opposing body counts twice on a narrow opening, half on a wide one). New routes carry
+the delays as charges on the crossing steps (without the group's own entrants, halved where it already crosses);
+groups re-plan when the region search with today's queues would move a quarter of their queue area, one at a time
+with the move committed before the next is judged; a group of 128 or more splits squares of its members off as a
+subgroup for another passage when that shortens its queue by more than the detour; narrow passages (16 cells or less)
+admit one direction at a time. An explicit order to the point an earlier explicit area of the same player still
+gathers at joins that area. A formation member's headway is also measured on its own slot (gaining, or a free step
+toward it). Each group of an area finds its own entrance.
+
+**How the design was chosen (dev set: one-100, many-100, one-1000, swap-1000, maze-1000, many-1000, churn-1000,
+bridges-1000, mixed-1000, attack-1000, scatter-400; offsets 0 / 1 / -1 unless stated; scratch
+`~/tak-tmp/scratch/legion-10000/stage8/`).**
+
+* *Diagnosis first* (`dbg/`, rendered `--dump-units` frames and a temporary completion trace, never committed): the
+  three failures above; at bridges-1000 the two armies formed one single file from bank to bank through the 12-cell
+  bridge and met in its middle; at maze-1000 the crowd flattened against the compound's west wall.
+* *Arrival headway on the own slot* (4f30f19e): one-1000 arrivals 2,615 -> 2,951, stuck 268 -> 26 (record-based
+  gain; a first form that compared with the last window only made many-1000's stuck rise 147 -> 197, the record form
+  157). *Free step toward the slot* (b4849440): one-1000 2,951 -> 2,995 (t99 reached on all three offsets), one-2500
+  6,556 -> 6,708, swap-1000 2,724 -> 2,826, churn-1000 2,398 -> 2,476.
+* *Rejected: moving an off-slot arrival's claim to the cells it stands on* (`settleSwap`): the displaced members
+  taking its freed (deeper) slot gave one-1000 2,951 -> 2,836; searching again 2,737.
+* *Chokepoints, the iterations that failed first* (offset 0, bridges / maze arrivals of 1,000): one damped charge per
+  opening for a whole group including its own entrants made every group swing between doors at each re-plan (maze
+  498 against 632; replans every 300 ticks, `OPREPLAN` traces); leaving a group's own entrants out stopped the self-
+  induced swing but two groups traded places (maze 498); committing each re-plan in the table before the next group
+  is judged, and keeping the commitment while the replacement builds, settled it (maze 929, stuck 0); re-planning only
+  for a change that can move the choice cut bridges' re-plans 185 -> 84; deciding re-plans by the region search's
+  prediction (a quarter of the queue area moving) took them to 7 and 1 (bridges 596, maze 916). An opposing body
+  counted once on a narrow passage (with admission alternating) collapsed bridges to 151 (both armies on one bridge,
+  their waiting crowds sealing each other's exits); twice, as kept, 487-674 depending on the other rules.
+* *Admission* (kept for stragglers): without it bridges-1000 over three offsets 1,854 -> 1,846 arrivals and stuck 61 ->
+  211 (opposing stragglers left on a narrow bridge). Its first forms deadlocked: a body already in the strip taking the
+  token (no waits at all), admitted bodies still before the strip counted as occupants (each army waiting at its own
+  mouth), and turning the token without a clearing time (333 turns, 142 arrivals).
+* *Chokepoints, final, against the previous commit*: bridges-1000 22 -> 1,854 of 3,000 arrivals, stuck 1,585 -> 61;
+  maze-1000 1,938 -> 2,740, stuck 131 -> 1; rows without openings identical.
+* *Shared areas* (924c43ba): churn-1000 1,801 -> 2,398, stuck 389 -> 69.
+* *Rejected: awareness by streams* (ca418eca, reverted by 45d4e097): one mover per spatially separate part of a
+  destination area. swap-1000 gained (2,573 -> 2,724) but swap-2500 lost (offsets 0 / 1 / -1: 2,016 / 1,929 / 1,860 ->
+  1,728 / 1,608 / 1,668, stuck 33 / 32 / 26 -> 240 / 130 / 286): two armies passing through each other split each other
+  into lanes, each a mover with an identity of its own, and the 1,250-body window fields were re-planned under the
+  crowd. A variant splitting only parts that terrain separates (the line between their centroids crosses an illegal
+  origin) moved neither swap row, and on a fixture built for it (`scn/mountain2.scn`: 400 bodies round both sides of an
+  obstacle, 60 crossing behind it) the crossers' t90 was worse on all three offsets (7,056 / 6,427 / 6,307 -> 8,046 /
+  6,831 / 6,696). (The commit message of 45d4e097 quotes swap-2500 as 5,805 -> 5,076 / stuck 416; the exact figures are
+  these.)
+* *An entrance per group* (e9d2e8fb): room2door over five offsets t90 mean 2,975 -> 3,023 (within its spread; all 100
+  arrive both ways), no dev row moved: kept as the correct generalisation (each group's entrance on its own plane and
+  field), not as a measured gain.
+* *Rejected: local engagement by an uncapped re-seed distance* (a far reach group re-seeds after D/8 cells of target
+  movement instead of min(D/8, 8)): attack-1000 g.A.arrived 213 -> 170, still900_ever 36 -> 122, parked_held +44%,
+  against field work -14% and fewer reversals. The capped rule stays: it already keeps a far group's route unless the
+  target has moved a distance that grows with the group's distance (up to 8 cells); the brief's "local engagement
+  placement" is that rule plus the ring kept in place (reseedGroup), unchanged by this stage.
+* *Subgroups for allocation* (4ed220d1): bridges-10000 (offset 0) 226 -> 284 arrivals, stuck 8,551 -> 4,738 (12
+  splits, 4,801 members moved); bridges-1000 1,904 -> 1,930 (stuck 53 -> 80), maze-1000 2,756 -> 2,753, churn-1000
+  unchanged (three offsets).
+* *The gate found two regressions*, both fixed before the record: tail-wave (304 bodies sent 4,030 ticks after 150 to
+  the same point now share its area; the explicit crowd bound counted only the second order's members, completions
+  280 -> 260, still900_ever 9 -> 38; with the settled cells counted 297-302 on all gate offsets, still900_ever 2), and
+  `legion_hovershore` (a test fixture spawning walkers on a landed hovercraft's cells; 11da1910).
+
+**What moved in the gate, and why** (final sweep: `gate1` both modes on the binaries of 4ed220d1, `gate2` Legion on the
+final binaries (456ffb6f's code), Retail lines from `gate1` -- no Retail code changed after it; compared with the
+stage-7 head's `stage7/gate5` / `gate2` by `stage5/cmpgate.py` and `stage5/judge5.py`).
+
+* Retail: 135/135 fixtures identical (hashes and keys) to the stage-7 head.
+* Legion: 26 hash-only (the new hashed state: slot records, the label flag of routes of 8 or more members), 5 with
+  only work counters moved, 104 with outcome keys moved -- most through the arrival rules, which act wherever a
+  formation's slots lie beyond the click; the offset-0 `--scale` run of each fixture (`attr/`) shows openings admitted
+  in 33, queue re-plans in 15, a shared area in 1 and a per-group entrance in 2. `judge5.py` over the five core
+  offsets: 644 keys better, 226 worse inside the stage-7 head's own offset range, 37 worse outside it:
+  * completion distance from the click (`complete_dist_median/max`) in the corner, motion, gen1-route, split-450 and
+    mixed-spacing fixtures (e.g. corner-8x56 group C 14 -> 19 cells): bodies now complete on their slots, farther from
+    the click than where they used to settle short -- the intended effect, read by a key that measures the click;
+  * gap14's last body: done 2,299 -> 3,017 ticks and statue_ticks 1,649 -> 2,807 (one offset of eleven leaves one body
+    completing outside the area): in a 48-body formation through a 14-cell gap the last bodies keep stepping toward
+    their slots (a free step toward the slot) and spend their re-choices before settling; a recorded cost of the
+    arrival rule (new regression, below);
+  * corner-1x448 group D completions 47 -> 42 and left_behind 9 -> 14 (core medians; c1 already): a 448-body crowd into
+    a pocket between a wall and the map edge, where the rear group now queues for slots instead of settling short;
+  * aware-cross b00.done 1,767 -> 1,992 (the free-step rule); motion-cross's one body u43 now arrives on 3 of 11
+    offsets (7 of 11 before);
+  * follow_chain_mean (an instrument of files following one another) up in five fixtures; crosslong sideways +16%;
+    mazeform back +14%; tail-wave contact_settled_permille 228 -> 1,723 (the second order now packs against the first
+    one's settled crowd as one crowd: contact with settled bodies is the point); deadend-w6-n40-closed-squad
+    statue_ticks +17%; corner-4x50 still900_ever 33 -> 42.
+* `legion_check check --cumulative`: before the licences 1,500 failures (854 hash@ retakes, 528 bands, 32 offset spreads,
+  4 bounds, 80 new work entries, 2 Retail floors); after `license8.py --apply` (each fixture's reason from the arrival
+  rule plus the stage-8 counters that fired in its `attr/` run): PASS, 31,859 keys, 0 failed, 3,333 licensed, 220
+  floor exceptions; `validate` 0 problems. Cluster S8-272 holds the offset-spread exceptions.
+
+**The scale suite on the final code** (`legion_scale.py run --bin final3/legion_scenario --out scale1 --cores 4-15
+--per-job 4 --workers 3`, one run per file at offset 0, against the stage-7 head's `stage7/scale3` by
+`tools/scale_ab8.py`; wall columns single runs on a machine shared with ctest, report only). Retail rows: every state
+hash equal.
+
+| scenario | start.last | wait.max | arrived | t90 | completed | outside | stuck | livelock | fields | navbytes MB (det) | tick mean ms | whole max ms | over 33 ms |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| attack-1000 | 30 | 6 | 99 | 4142 -> 4055 | 98 -> 99 | 0 | 0 | 0 | 6 | 32 | 0.899 -> 1.056 | 8.488 | 0 -> 0 |
+| attack-10000 | 131 | 9 | 882 -> 946 | -1 -> 4630 | 912 -> 932 | 51 -> 10 | 48 -> 18 | 15 -> 9 | 17 -> 29 | 61 | 14.38 -> 11.931 | 21.953 | 0 -> 0 |
+| bridges-1000 | 25 | 8 | 5 -> 653 | -1 | 4 -> 587 | 0 | 547 -> 32 | 38 -> 2 | 6 -> 7 | 68 | 1.156 -> 1.408 | 7.916 | 0 -> 0 |
+| bridges-10000 | 84 | 9 | 1 -> 284 | -1 | 0 -> 204 | 0 | 9047 -> 4738 | 92 -> 76 | 7 -> 18 | 100 | 11.707 -> 15.426 | 27.854 | 0 -> 0 |
+| churn-1000 | 93 | 2 | 608 -> 833 | -1 | 723 -> 979 | 133 -> 200 | 168 -> 5 | 16 -> 3 | 8 -> 7 | 20 | 0.67 -> 0.653 | 7.435 | 0 -> 0 |
+| churn-10000 | 1387 -> 1039 | 13 | 5109 -> 5984 | -1 | 6366 -> 7407 | 1425 -> 1847 | 2809 -> 1766 | 77 -> 75 | 11 -> 8 | 104 | 10.631 -> 10.01 | 27.105 | 0 -> 0 |
+| idle-10000 | 41 | 6 | 39 -> 38 | -1 | 25 | 0 | 192 -> 60 | 8 -> 3 | 4 -> 3 | 40 | 3.86 -> 3.883 | 14.517 | 0 -> 0 |
+| many-100 | 9 | 0 | 98 -> 96 | 2006 -> 1616 | 99 -> 100 | 3 -> 5 | 0 | 0 | 8 | 1 | 0.058 -> 0.045 | 1.675 | 0 -> 0 |
+| many-1000 | 19 | 0 | 776 -> 803 | -1 | 775 -> 797 | 24 -> 23 | 64 -> 30 | 21 -> 12 | 93 -> 99 | 25 | 1.755 -> 1.764 | 7.473 | 0 -> 0 |
+| many-10000 | 25 -> 80 | 10 | 4900 -> 4875 | -1 | 4900 -> 4864 | 125 -> 131 | 2473 -> 2363 | 346 -> 284 | 820 -> 758 | 220 | 26.861 -> 26.672 | 61.429 | 3615 -> 3142 |
+| many-2500 | 17 -> 18 | 2 | 1315 -> 1425 | -1 | 1355 -> 1434 | 84 -> 64 | 469 -> 310 | 95 -> 92 | 260 -> 261 | 81 | 4.918 -> 5.888 | 17.721 | 0 -> 0 |
+| many-5000 | 22 -> 27 | 5 | 2567 -> 2575 | -1 | 2566 -> 2573 | 60 -> 70 | 1073 -> 1153 | 163 -> 182 | 443 -> 402 | 130 | 10.549 -> 10.287 | 28.653 | 0 -> 0 |
+| maze-1000 | 24 | 15 | 618 -> 950 | -1 -> 17394 | 643 -> 979 | 50 | 20 -> 0 | 7 -> 0 | 6 -> 10 | 121 | 1.155 -> 1.801 | 12.858 | 0 -> 0 |
+| maze-10000 | 42 | 16 | 1186 -> 2395 | -1 | 1387 -> 1798 | 440 -> 312 | 5206 -> 4594 | 65 -> 173 | 7 -> 21 | 175 | 13.173 -> 18.154 | 44.527 | 0 -> 5 |
+| mixed-1000 | 15 | 6 | 640 -> 630 | -1 | 460 -> 468 | 0 | 39 | 19 | 5 | 40 | 4.019 -> 3.968 | 23.388 | 0 -> 0 |
+| mixed-10000 | 49 | 41 | 2256 -> 2265 | -1 | 1910 -> 1911 | 0 | 6307 -> 6459 | 97 -> 112 | 5 | 244 | 54.902 -> 61.171 | 303.378 | 19218 -> 19178 |
+| one-100 | 8 | 0 | 100 | 2186 | 100 | 0 | 0 | 0 | 2 | 2 | 0.061 -> 0.06 | 5.511 | 0 -> 0 |
+| one-1000 | 41 | 0 | 893 -> 999 | -1 -> 4041 | 854 -> 971 | 2 -> 0 | 80 -> 1 | 15 -> 0 | 2 | 9 | 0.57 -> 0.534 | 9.885 | 0 -> 0 |
+| one-10000 | 92 | 11 | 7081 -> 7468 | -1 | 6377 -> 6773 | 10 -> 11 | 2657 -> 2291 | 61 -> 31 | 2 | 58 | 10.417 -> 10.492 | 20.313 | 0 -> 0 |
+| one-2500 | 38 | 3 | 1983 -> 2209 | -1 | 1830 -> 2061 | 5 | 410 -> 226 | 20 -> 14 | 2 | 18 | 1.875 -> 1.775 | 8.155 | 0 -> 0 |
+| one-5000 | 106 | 6 | 3744 -> 4075 | -1 | 3389 -> 3755 | 1 -> 9 | 1087 -> 777 | 29 -> 26 | 2 | 31 | 4.002 -> 3.883 | 10.035 | 0 -> 0 |
+| room2door | 11 | 0 | 100 | 2154 | 100 | 0 | 0 | 0 | 2 | 8 |  -> 0.093 | 10.828 |  -> 0 |
+| scatter-10000 | 17 -> 18 | 2318 -> 2349 | 5109 -> 5068 | -1 | 5112 -> 5061 | 20 -> 14 | 967 -> 1373 | 228 -> 194 | 5284 -> 4717 | 368 | 27.917 -> 27.929 | 53.252 | 577 -> 544 |
+| scatter-2500 | 17 | 816 -> 688 | 1669 -> 1714 | -1 | 1667 -> 1711 | 4 | 212 -> 206 | 54 | 1100 -> 988 | 163 | 7.157 -> 6.06 | 14.073 | 0 -> 0 |
+| scatter-400 | 17 | 0 -> 1 | 392 -> 398 | 3073 -> 3006 | 394 -> 399 | 2 | 0 | 0 | 396 -> 367 | 30 | 0.307 -> 0.266 | 2.372 | 0 -> 0 |
+| sched-load | -1 | 1 | 30 | -1 | 18 -> 26 | 2 -> 1 | 99 -> 121 | 34 -> 36 | 153 -> 119 | 53 | 2.08 -> 1.926 | 5.845 | 0 -> 0 |
+| sched-mix | 15 -> 23 | 200 -> 207 | 414 -> 416 | -1 | 414 -> 412 | 2 -> 1 | 0 | 0 | 48 -> 50 | 11 | 3.164 -> 3.591 | 8.216 | 0 -> 0 |
+| swap-1000 | 25 | 8 | 866 -> 863 | -1 | 843 -> 845 | 5 -> 8 | 39 -> 50 | 16 -> 14 | 7 | 47 | 1.298 -> 1.258 | 8.306 | 0 -> 0 |
+| swap-10000 | 164 | 9 | 1572 -> 1644 | -1 | 1296 | 0 | 5996 -> 5919 | 113 -> 136 | 7 | 63 | 14.12 -> 14.483 | 28.865 | 0 -> 0 |
+| swap-2500 | 72 | 8 | 1981 -> 2052 | -1 | 1736 -> 1741 | 0 | 50 -> 26 | 14 -> 10 | 6 | 46 | 3.775 -> 3.247 | 14.415 | 0 -> 0 |
+| swap-5000 | 38 | 8 | 1931 -> 2115 | -1 | 1756 -> 1876 | 1 | 2017 -> 1637 | 77 -> 51 | 6 | 62 | 6.298 -> 6.414 | 16.909 | 0 -> 0 |
+
+* **Chokepoints.** bridges-1000 5 -> 653 arrivals, stuck 547 -> 32, both alternative bridges used (the frozen
+  `gate.bridge0/2.samples` targets met for the first time, 1,000 and 10,000); maze-1000 618 -> 950, stuck 20 -> 0
+  (t90 reached: 17,394); bridges-10000 1 -> 284, stuck 9,047 -> 4,738; maze-10000 1,186 -> 2,395.
+* **Capacity, stated.** bridges-10000 and maze-10000 cannot meet their frozen arrival targets inside their run
+  length on any route policy: bridges-10000's three bridges take about 12 lanes of 3x3 bodies (one body per lane
+  every ~40 ticks at the roster's slowest speed) -- after ~6,000 ticks of walking, at most ~2,800 of 10,000 can cross
+  in 15,300 ticks; maze-10000's four 6-cell outer doors take ~7 lanes, ~2,450 bodies in its 20,000 ticks. maze-10000
+  is at that capacity (2,395 arrive); bridges-10000 is not (284; a waiting army at each mouth and a straggler line on
+  the 12-cell bridge, below). The targets stay frozen and are reported as missed (section 6: unmet targets are never
+  re-frozen); a feasible-layout version of these two rows is an input for the final report.
+* **Arrivals.** one-1000 893 -> 999 (t90 4,041; stuck 80 -> 1), one-2500 1,983 -> 2,209, one-5000 3,744 -> 4,075,
+  one-10000 7,081 -> 7,468 (stuck 2,657 -> 2,291); swap-2500 1,981 -> 2,052, swap-5000 1,931 -> 2,115 (stuck 2,017 ->
+  1,637), swap-10000 1,572 -> 1,644; attack-10000 882 -> 946 (t90 reached: 4,630; completions outside the disc 51 ->
+  10).
+* **Shared areas.** churn-1000 608 -> 833, stuck 168 -> 5; churn-10000 5,109 -> 5,984, stuck 2,809 -> 1,766, last member
+  to start 1,387 -> 1,039 (the stage-7 regression of its last start partly undone).
+* **Moved against** (offset-0 samples; three-offset reruns where stated): scatter-10000 stuck at the end 967 -> 1,373
+  (arrivals 5,109 -> 5,068); sched-load stuck 99 -> 121 (completions 18 -> 26); many-10000 last member to start 25 ->
+  80 (within its target of 90) and arrivals 4,900 -> 4,875; many-100 98 -> 96 at offset 0, but over five offsets 462 ->
+  461 arrivals and completions outside the disc 40 -> 33; swap-1000 866 -> 863 (stuck 39 -> 50); mixed-10000 stuck
+  6,307 -> 6,459.
+* **Frozen targets** (`legion_scale.py check`): met 128, missed 79, report-only missed 5 (stage 7: 120 / 88 / 4).
+  Newly met: bridges-1000 and bridges-10000 `gate.bridge0.samples` and `gate.bridge2.samples` (four), churn-1000
+  `stuck_end`, many-100 `arrive.t90`, maze-1000 `arrive.n` and `livelock_end`, one-1000 `arrive.n` and `livelock_end`.
+  Newly missed: many-100 `arrive.n` (96 against 98; the five-offset sum is unchanged), maze-10000 wall.over_budget
+  (report only: 5 ticks over 33.3 ms).
+* **Wall time** (report only). Where bodies now move instead of standing the movement phase pays for them: maze-10000
+  tick mean 13.2 -> 18.2 ms (moving unit-ticks 26.0 M -> 63.3 M), bridges-10000 11.7 -> 15.4 ms (16.0 M -> 48.4 M);
+  one-10000 10.4 -> 10.5 ms, many-10000 26.9 -> 26.7 ms (3,142 ticks over budget, 3,615 at stage 7), scatter-10000 27.9
+  -> 27.9 ms. Peak RSS at 10,000 bodies 142-515 MB (scatter-10000 515, stage 7 531).
+
+**Checks (exact commands; scratch `~/tak-tmp/scratch/legion-10000/stage8/`; `final3/` = the binaries of the final code
+(456ffb6f + the test fixture, from a clean `build-o2`: `final2/` is byte-identical); all `build-o2`, `-O2 -g`, cores
+4-15).**
+
+| Check | Command | Result |
+|---|---|---|
+| New tests | `ctest --test-dir build-o2 -R 'legion_(arrival|arrival_press|choke|sharedarea|entrances)'`; each new test against the code before its mechanism (mutation by history) | pass on the final code; each fails without its mechanism (legion_arrival 893 arrive; legion_choke 5; legion_sharedarea 717; legion_arrival_press 978 / t99 never; legion_entrances has no per-group entrance) |
+| Legion scenario gate, both modes | `sweep_both.py final1/legion_scenario gate1 4-15`; `sweep_legion.py final2/legion_scenario gate2 4-15 gate1`; `cmpgate.py`, `judge5.py`; `license8.py gate2-check.txt stage7/gate5/scenarios.jsonl gate2/scenarios.jsonl attr --apply`; `legion_check.py check --cumulative`, `validate` | Retail 135/135 identical to the stage-7 head; Legion as above; PASS 31,859 keys, 0 failed |
+| Scale suite | `legion_scale.py run --bin final3/legion_scenario --out scale1 --cores 4-15 --per-job 4 --workers 3`; `check --targets` | above; every job rc 0; Retail rows hash-equal; targets met 128, missed 79 |
+| `--mpai` Inner Circle seed 1, 60 s | `CORES=12-15 bash ../mpai.sh final3 mpai60 60` (scratch XDG; `takserver --local --no-auth --seed 1`) | Retail **2c39430636a3dbda**, Legion **f75b2a11410f43b4**: both unchanged (Inner Circle moves four units through no opening, no formation beyond its click; no new baselines) |
+| Replay protocol | `build-o2/replay_test` | pass: 272 kept, 271 refused |
+| Navigation golden | `navigation_checkpoint_test {retail,legion} {serial,workers}` on build-o2 (gcc) and build-clang | serial == workers in both; Retail lines unchanged; Legion lines retaken, gcc == clang |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j10 --timeout 1800` (scratch XDG, no `TAK_SETTINGS_FILE`) | 392/392 on the final code (before the fixture fix and the golden: `legion_hovershore` and `navigation_determinism` failed, both explained above) |
+| ctest Legion (non-quick, the stage's) | `ctest --test-dir build-o2 -R 'legion_(trapped|improvedefer|chainresolve|trafficlane|traffic|chains|chainschurn|chainplane|sched|route_paused|scale_|choke|entrances|sharedarea|arrival)' -LE quick` | 13/13 |
+| AddressSanitizer + verify | `build-asan` (`-O1`), `TAK_LEGION_VERIFY=1`: legion_scenario bridges-1000, maze-1000, churn-1000, room2door (6,000 ticks; splits, re-plans, admissions, shared areas and a per-group entrance all exercised), legion_world_test hovershore, chainresolve, trafficlane, trapped, improvedefer | clean (run because subgroups move members between groups, admitted members live in a set, and fields own label tiles) |
+
+**Inherited vs new failures.**
+
+* *Inherited* (present at the stage-7 head, unchanged in kind): 79 of the frozen scale targets (section 8) -- among
+  them the two capacity-bound rows; mixed-10000's wall time (the explore phase); many-10000's over-budget ticks.
+* *Fixed here*: bridges-* both alternatives unused (the frozen bridge targets), maze-1000's single door, one-1000's
+  arrivals, churn-1000's two-crowds cost (the stage-7 regression: stuck 168 -> 5), many-100's t90 (the stage-7
+  regression, back to 1,616).
+* *New, recorded and not fixed*: gap14's last body (done +31%) and the other worse-outside-range keys listed in the
+  gate section (the arrival rules' cost in small formations through gaps and into cramped pockets); scatter-10000
+  stuck at the end 967 -> 1,373 and sched-load 99 -> 121 (offset-0 samples, not rerun over offsets and not diagnosed
+  to the end: neither has an opening; both join orders to shared destination areas -- scatter-10000 1,718 member
+  registrations, sched-load 6,640, unrelated squads clicked to a tile another squad of the player still gathers at.
+  Measured with the shared areas switched off on the final code (offsets 0 / 1 / -1): sched-load arrivals 85 -> 100 and
+  completions 56 -> 88 with them, but stuck at the end 297 -> 358 and livelock 97 -> 137; scatter-2500 arrivals 5,028 ->
+  5,127, stuck 614 -> 609. So the shared areas trade sched-load's end state for its throughput; the stuck bodies of a
+  merged area (a squad whose area another squad's crowd already fills) are the stage-9 input); many-100 `arrive.n` at
+  offset 0.
+
+**Not run at this stage** (lean testing): the cross-compiler determinism script (the navigation golden was compared
+gcc against clang), the crowdbench matrix, repeated wall-time A/Bs, the 300 s `--mpai`, Windows/macOS, the identity
+harness and `legion_cost` (no commit of this stage is exact).
+
+**Found by the checks and fixed before the record**: the shared-area crowd bound (tail-wave; 1bb377c3, then 456ffb6f
+when 1bb377c3 failed `legion_arrival_press` -- it counted settled bodies, not their cells); `legion_hovershore`'s
+spawn (11da1910). A false lead on the way: a bisect of hovershore whose incremental builds silently kept an old
+binary first pointed at "the same source, different results"; a clean build of each commit placed it at b4849440
+(the free-step rule moving where hovercraft land), not undefined behaviour.
+
 ## 8. Next step
 
-Resume from branch `task-legion-10000` (pushed; stages 1-7 done; stage 7 head = its record commit). Build `build-o2` in
-the worktree, read sections 3 (3.4 as amended at stages 6 and 7), 7.7 and the stage-7 section of
-docs/legion-pathfinding.md. Stage 8 (brief phase 7): navigation subgroups, shared chokepoint state and admission,
-multi-entrance mixed-footprint arrivals, local engagement. Stage 7 leaves it:
+Resume from branch `task-legion-10000` (pushed; stages 1-8 done; stage 8 head = its record commit). Build `build-o2` in
+the worktree (a clean configure takes half a minute with ccache; a build dir whose `.ninja_log` reports "premature end
+of file" should be rebuilt clean), read sections 3 (3.4 as amended at stages 6-8), 7.8 and the stage-8 section of
+docs/legion-pathfinding.md. Stage 9 (brief phase 8): parallelise independent planning (tile builds, per-plane
+preprocessing) with deterministic publication, reassess movement, and the final measured before/after report. Stage 8
+leaves it:
+
+* **Crowds round static corners and soft blocks.** A big formation rounding an obstacle edge single-files along the
+  shortest line and jams at the corner when anything crosses it there (`scn/mountain.scn` in the stage-8 scratch:
+  400 bodies, 32 arrive, inherited from c2c25707, Retail 59); idle-10000's 1,000 movers hug the bottom edge of the
+  9,000-body idle block in one file (38 of 1,000 arrive; the soft charge keeps one cell off the block, not a stream's
+  width). Nothing spreads a crowd across the free width beside an obstacle; the pinwheel acts only at static wall ends.
+* **Head-on crowds at a narrow passage's mouths.** bridges-10000: each army waits massed at its mouth of the 12-cell
+  bridge, a line of the other army's stragglers stands on the bridge itself, and the passage never turns (admission
+  counts occupants, but the stragglers cannot leave into the waiting crowd). Keeping an exit lane clear at a mouth, or
+  lane reservation by direction on a passage of two lanes or more, is the open item; the row is capacity-bound in any
+  case (section 7.8).
+* **The arrival rules' cost.** Small formations through gaps and into cramped pockets finish their last bodies later
+  (gap14 +31%, corner-1x448's rear group); bodies with a free step toward their slot spend their re-choices first.
+* **Shared areas and unrelated squads.** sched-load's and scatter's unrelated squads clicked to a tile another squad
+  still gathers at share its area: more completions, more bodies stuck at the end (7.8).
+* **Awareness by streams** was rejected (7.8); the giant-obstacle case it was for showed no cost in the fixtures built
+  for it. Revisit only with a fixture where one mover the size of two separate streams makes a crosser wait.
+* **For the final report:** the two capacity-bound rows (bridges-10000, maze-10000) need a feasible-layout version to
+  measure navigation rather than capacity; the frozen targets stay as frozen.
+
+**Must-fix inputs (frozen targets that still miss; final stage-8 scale run, `stage8/scale1-check.txt`: met 128, missed
+79, report-only 5).** `start.last` for big single clicks (attack-10000 131, one-10000 92, one-5000 106, swap-10000 164,
+churn-1000 93, churn-10000 1,039); `arrive.n` in the rows that still fall short (one-2500 2,209, one-5000 4,075,
+one-10000 7,468, swap-* , many-1000 803 and up, maze-10000 2,395, bridges-* 653 / 284, idle-10000 38, mixed-*);
+`stuck_end` and `livelock_end` in most 1,000-plus rows; `complete_outside_n` in churn-1000 (200), churn-10000 (1,847),
+many-2500 (64), many-1000 (23); many-100 `arrive.n` at offset 0; the wall-time report-only misses (mixed-10000,
+many-10000, maze-10000).
+
+### 8.0 The stage-7 next step, as it stands after stage 8
+
+* Two orders to one point: done (shared destination areas, 7.8; churn-1000 stuck 168 -> 5).
+* Crossing traffic still knots: unchanged in kind (awareness by streams rejected; crossings are not openings).
+  many-10000 stuck 2,473 -> 2,363, scatter-10000 967 -> 1,373 (shared areas, 7.8).
+* Bridges: done in kind (openings with queues, re-plans with commitment, subgroups, admission; both alternatives used
+  at 1,000 and 10,000); bridges-10000 is capacity-bound and stalls at the mouths (above).
+* Open stage-7 items: unchanged (no sector -> route reverse index; windows bake soft costs; a live chain's corrections
+  refresh only through a re-plan; `kImproveDefer` a judgement; the improvement log's floor; demand per cell; the
+  pausing extension not re-measured with tiles).
+* sched-load: stuck 99 -> 121 at offset 0 (shared areas, 7.8); its scheduler ctests still run with `--no-hier-routes`.
+
+### 8.0.1 The stage-7 next step as it was written (kept for the record)
 
 * **Two orders to one point are two destination crowds.** churn-1000's B (stopped, then sent again to the point A is
   arriving at) is another order: A's held arrivals are a jam to it, B re-plans round them (jam blocks), and its
   completions outside the disc rose (five offsets 151 -> 179). Shared arrival areas across orders, or a jam rule that
   knows the destination crowd, is the stage-8 arrival-area subject.
-* **Crossing traffic still knots, less.** Jams are traffic now, but scatter-2500 still ends with ~200 stuck, many-2500
-  with ~390, many-10000 with 2,473 (section 7.7): the knots form faster than routes avoid them where every way crosses
-  the middle. Stage 8's subgroup awareness and crossing allocation (commitment, approach pressure) are the inputs; the
-  jam detours raised many-2500's livelock_end (73 -> ~100: bodies walking round a knot without getting anywhere).
+* **Crossing traffic still knots, less.** (see 8.0)
 * **Bridges.** The coarse search now charges a region's standing traffic, but both armies still take the nearest
-  bridge (bridges rows unchanged): the charge comes from bodies already standing, not from the approach pressure and
-  committed entrants a chokepoint needs (stage 8's portal traffic state).
-* **Open stage-7 items (recorded, not hidden).** No sector -> route reverse index (staticChanged walks the groups once
-  per change: fine at ~800 groups); window fields bake soft costs and corridors in their own build (a window is a whole
-  rebuild; no local correction for windows); a live chain's corrections refresh only through a re-plan (traffic changes
-  inside an attached region are not re-corrected in place); `kImproveDefer` (150) is a judgement, not tuned; the
-  improvement log's floor makes a member older than 1,024 improvements re-register as before; demand is still per cell
-  (stage-5 item); the pausing extension is not re-measured with tiles (stage-5 item).
-* **sched-load**: back to the stage-5 level (stuck ~99 against 101); its scheduler ctests still run with
-  `--no-hier-routes` (they exist to saturate the quota, which chains no longer do).
-
-**Must-fix inputs for stage 8 (frozen targets that still miss; final stage-7 scale run, `stage7/scale3-check.txt`: met
-120, missed 88, report-only 4).** As at stage 6 (its list is kept in 8.1 below), with two new misses -- many-100 `arrive.t90` (2,006) and
-`complete_outside_n` (3) -- and many-100 `stuck_end` now met. `start.last` for big single clicks (attack-10000 131,
-one-10000 92, one-5000 106, swap-10000 164, churn-1000 93, churn-10000 1,387 -- worse, the two-orders-to-one-point
-cost); `complete_outside_n` in churn-1000 (133), churn-10000 (1,425), many-2500 (84), many-1000 (24); `stuck_end` and
-`livelock_end` in every 1,000-plus row (much lower in the crossing rows: many-10000 2,473, scatter-10000 967, idle-10000
-192); `arrive.n` in the rows that still fall short; the bridges rows' gate samples; mixed-10000's and many-10000's wall
-time (report only). The scatter files still carry no frozen targets; scatter-10000's navigation tail (`wait.max`
-2,318) is the admission input stage 6 recorded at 395.
+  bridge: the charge comes from bodies already standing, not from the approach pressure and committed entrants a
+  chokepoint needs (stage 8's portal traffic state).
 
 ### 8.1 The stage-6 next step, as it stands after stage 7
 
