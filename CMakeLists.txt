@@ -1441,6 +1441,29 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1024 768 --novsync)
       set_tests_properties(render_shadow_cache PROPERTIES TIMEOUT 300
           PASS_REGULAR_EXPRESSION "shadow_skipped=[1-9][0-9]*\nSHADOW_CACHE_VERIFY frames=[1-9][0-9]* tiles=[0-9]+ reused=[0-9]+ body=[1-9][0-9]* translated=[1-9]")
+      # Cost-planned pool passes (workstream I), on the software renderer with the
+      # shadow atlas: a mixed roster that moves (local rebuilds), whole-pixel camera
+      # steps (shadow point checks), a veterancy cycle, deaths/respawns (cold
+      # entries) and render-target resets, on a 4-thread pool with policies that
+      # make every pass parallel. Each planned geometry pass must build every
+      # visible unit exactly once; the shadow checks, tile transforms and body
+      # copies must equal a serial re-run bit for bit (TAK_SCHEDULE_VERIFY); every
+      # reuse equals a complete rebuild (TAK_GEOMETRY_VERIFY).
+      add_test(NAME render_schedule COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software
+          TAK_SHADOW_ATLAS_SOFTWARE=1 TAK_SHADOW_BENCH=120 TAK_PROFILE_ZOOM=1
+          TAK_RENDER_ROSTER=araarch,zonter,versword,tarnecro,tarwitch,aralode TAK_RENDER_EXTRAS=1
+          TAK_RENDER_MOTION=1 TAK_RENDER_CAMERA_SNAP=20 TAK_RENDER_VETERAN=25 TAK_RENDER_CHURN=30
+          TAK_RENDER_RESET=70 TAK_RENDER_POOL_THREADS=4
+          TAK_SCHEDULE_GEOMETRY=0,4000,3000 TAK_SCHEDULE_SHADOW_CHECK=0,500,100
+          TAK_SCHEDULE_SHADOW_PREP=0,500,100 TAK_SCHEDULE_COPY=0,500,100,4
+          TAK_RENDER_STUDY=1 TAK_RENDER_FRAMES=140 TAK_SCHEDULE_VERIFY=1 TAK_GEOMETRY_VERIFY=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/schedule-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/schedule-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1024 768 --novsync)
+      set_tests_properties(render_schedule PROPERTIES TIMEOUT 300
+          PASS_REGULAR_EXPRESSION "SCHEDULE_VERIFY frames=[1-9][0-9]* geometry_passes=[1-9][0-9]* builds=[1-9][0-9]* parallel_passes=[1-9][0-9]* checks=[1-9][0-9]* prep_passes=[1-9][0-9]* prep_points=[1-9][0-9]* copy_passes=[1-9][0-9]* copy_vertices=[1-9]")
       # Distant-image lookup before body generation (workstream G), on the software
       # renderer (TAK_DISTANT_SOFTWARE runs the image cache there): a mixed roster at
       # zoom 0.5 under a panning camera (held images re-placed, bodies deferred),
@@ -1605,7 +1628,7 @@ if(TAK_BUILD_CLIENT)
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
-          render_geometry_stages render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_body_arena render_body_arena_still render_body_arena_fail tactical_dots spectator_health_bars
+          render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_body_arena render_body_arena_still render_body_arena_fail tactical_dots spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()

@@ -326,12 +326,59 @@
         distantEarly_=!tak::devFlag("TAK_DISTANT_LOOKUP_LATE");
         distantOff_=tak::devFlag("TAK_DISTANT_MODELS_OFF");
         double _pt0 = double(SDL_GetPerformanceCounter());
-        pool_.parallelFor(visUnits_.size(), [this](size_t b, size_t e) {
+        {
+        const auto buildRange = [this](size_t b, size_t e) {
             thread_local std::vector<Tri> scratch;
             for (size_t i = b; i < e; ++i)
                 buildUnitGeom(*visUnits_[i], *visGeom_[i], scratch, true);
-        });
+        };
+        readSchedules();
+        if (scheduleUniform_) pool_.parallelFor(visUnits_.size(), buildRange);
+        else {
+            // Workstream I: chunks of about equal estimated work, from what each
+            // entry's previous build redid (UnitGeom::nextCost; cold entries carry
+            // a full-build estimate). Only a hint: a misprediction costs balance,
+            // never correctness -- every unit still writes only its own entry.
+            geomPlan_.begin(schedules_.geometry);
+            for (const UnitGeom* g : visGeom_) geomPlan_.add(tak::render::GeometryCostModel::unpack(g->nextCost));
+            geomPlan_.finish(pool_.threads());
+            schedThreadsGeom_ += geomPlan_.participants();
+            schedEstimateGeomNs_ += geomPlan_.estimateNs();
+#ifndef NDEBUG
+            if (scheduleVerifyOn_) geomBuildCalls_.store(0, std::memory_order_relaxed);
+#endif
+            runPlanned('g', geomPlan_, buildRange);
+#ifndef NDEBUG
+            if (scheduleVerifyOn_) {
+                verifyPlan(geomPlan_, visUnits_.size());
+                if (geomBuildCalls_.load() != visUnits_.size())
+                    throw std::runtime_error("schedule verify: a visible unit was not built exactly once");
+                ++scheduleVerify_.frames; ++scheduleVerify_.geometryPasses;
+                scheduleVerify_.geometryBuilds += visUnits_.size();
+                scheduleVerify_.parallelPasses += geomPlan_.participants() > 1;
+            }
+#endif
+        }
+        }
         double _ptFreq = double(SDL_GetPerformanceFrequency()) / 1000.0;
+#ifndef NDEBUG
+        // Calibration (TAK_SCHEDULE_SAMPLES, workstream I): every 15th frame, one
+        // line per visible unit -- stages, body stages, key words, body vertices,
+        // shadow points (opaque, masked), runs, key and build ns -- to fit
+        // GeometryCostModel against (run serially: TAK_RENDER_POOL_THREADS=1).
+        if (const char* path = tak::devEnv("TAK_SCHEDULE_SAMPLES"); path && renderStats_.enabled()) {
+            static uint64_t sampleFrame = 0;
+            if (++sampleFrame % 15 == 0) if (FILE* f = std::fopen(path, "a")) {
+                for (size_t i = 0; i < visUnits_.size(); ++i) {
+                    const UnitGeom& g = *visGeom_[i];
+                    std::fprintf(f, "G %u %u %zu %zu %zu %zu %zu %u %u\n", unsigned(g.stages), unsigned(g.bodyRun),
+                                 g.localKey.size(), g.verts.size(), g.shadowLocal.size(), g.maskedShadowLocal.size(),
+                                 g.runs.size(), g.keyNs, g.buildNs);
+                }
+                std::fclose(f);
+            }
+        }
+#endif
         profProjMs_ += (double(SDL_GetPerformanceCounter()) - _pt0) / _ptFreq;
         if (renderStats_.enabled()) {
             renderStats_.addMs(RP::GeometryPrep, (double(SDL_GetPerformanceCounter()) - _pt0) / _ptFreq);
@@ -983,8 +1030,44 @@
                         if (same) w.verdict=tak::render::TileVerdict::ReuseTranslated;
                     }
                 };
-                if (checkPoints>=32768 && checks.size()>=16) pool_.parallelFor(checks.size(),check);
-                else check(0,checks.size());
+                if (scheduleUniform_) {
+                    if (checkPoints>=32768 && checks.size()>=16) pool_.parallelFor(checks.size(),check);
+                    else check(0,checks.size());
+                } else if (!checks.empty()) {
+                    // Workstream I: planned by points to recompute.
+                    using RSch=tak::render::RenderSchedules;
+                    shadowPlan_.begin(schedules_.shadowCheck);
+                    for (size_t c:checks) {
+                        const UnitGeom& g=*work[c].geom;
+                        shadowPlan_.add(RSch::kShadowCheckPerPointNs*double(g.shadowLocal.size()+g.maskedShadowLocal.size()));
+                    }
+                    shadowPlan_.finish(pool_.threads());
+                    schedThreadsShadow_+=shadowPlan_.participants();
+#ifndef NDEBUG
+                    std::vector<tak::render::TileVerdict> pre;
+                    if (scheduleVerifyOn_) for (size_t c:checks) pre.push_back(work[c].verdict);
+#endif
+                    runPlanned('s',shadowPlan_,check);
+#ifndef NDEBUG
+                    if (scheduleVerifyOn_) {
+                        // The planned checks equal a serial re-run from the same
+                        // verdicts: kept as translated exactly when the points recompute
+                        // bit-identical.
+                        verifyPlan(shadowPlan_,checks.size());
+                        std::vector<tak::render::TileVerdict> parallel;
+                        for (size_t c=0;c<checks.size();++c) {
+                            parallel.push_back(work[checks[c]].verdict);
+                            work[checks[c]].verdict=pre[c];
+                        }
+                        check(0,checks.size());
+                        for (size_t c=0;c<checks.size();++c)
+                            if (work[checks[c]].verdict!=parallel[c])
+                                throw std::runtime_error("schedule verify: shadow point check differs from a serial run");
+                        scheduleVerify_.checks+=checks.size();
+                        scheduleVerify_.parallelPasses+=shadowPlan_.participants()>1;
+                    }
+#endif
+                }
             }
 
             SDL_Texture* previousTarget=SDL_GetRenderTarget(ren_);
@@ -1143,9 +1226,51 @@
                 {
                 std::optional<tak::render::ScopedPhase> prepPhase;
                 if(!force)prepPhase.emplace(renderStats_, RP::ShadowPrep);
-                if(!force && pointCount+maskPointCount>=32768 && !tak::devFlag("TAK_SHADOW_SERIAL_PREP"))
-                    pool_.parallelFor(work.size(),transform);
-                else transform(0,work.size());
+                if(force || tak::devFlag("TAK_SHADOW_SERIAL_PREP")) transform(0,work.size());
+                else if(scheduleUniform_) {
+                    if(pointCount+maskPointCount>=32768) pool_.parallelFor(work.size(),transform);
+                    else transform(0,work.size());
+                } else {
+                    // Workstream I: only this page's dirty tiles, planned by their
+                    // points (opaque positions and masked vertices to transform).
+                    using RSch=tak::render::RenderSchedules;
+                    auto& items=shadowPrepItems_;
+                    items.clear();
+                    shadowPlan_.begin(schedules_.shadowPrep);
+                    for(size_t wi=0;wi<work.size();++wi) {
+                        const Work& w=work[wi];
+                        if(w.page!=p || !w.dirty)continue;
+                        items.push_back(uint32_t(wi));
+                        size_t masked=0;
+                        for(size_t mi=w.maskBegin;mi<w.maskEnd;++mi)masked+=masks[mi].count;
+                        shadowPlan_.add(RSch::kShadowPrepPerPointNs*double(w.geom->shadowVerts.size())+
+                                        RSch::kShadowPrepPerMaskedNs*double(masked));
+                    }
+                    shadowPlan_.finish(pool_.threads());
+                    schedThreadsShadow_+=shadowPlan_.participants();
+                    runPlanned('p',shadowPlan_,[&](size_t b,size_t e) {
+                        for(size_t k=b;k<e;++k)transform(items[k],items[k]+1);
+                    });
+#ifndef NDEBUG
+                    if(scheduleVerifyOn_) {
+                        // The transform is a pure function of the sources: a serial
+                        // re-run over every tile must leave the outputs bit-identical.
+                        verifyPlan(shadowPlan_,items.size());
+                        const std::vector<SDL_FPoint> parallelOpaque=opaque;
+                        std::vector<std::pair<const std::vector<SDL_Vertex>*,std::vector<SDL_Vertex>>> parallelMasks;
+                        for(const auto& [texture,vertices]:maskBatches)parallelMasks.push_back({&vertices,vertices});
+                        transform(0,work.size());
+                        const auto same=[](const auto& a,const auto& b) {
+                            return a.size()==b.size() && (a.empty() || !std::memcmp(a.data(),b.data(),a.size()*sizeof(a[0])));
+                        };
+                        bool ok=same(parallelOpaque,opaque);
+                        for(const auto& [now,before]:parallelMasks)ok=ok && same(*now,before);
+                        if(!ok)throw std::runtime_error("schedule verify: shadow tile transform differs from a serial run");
+                        ++scheduleVerify_.prepPasses;scheduleVerify_.prepPoints+=pointCount+maskPointCount;
+                        scheduleVerify_.parallelPasses+=shadowPlan_.participants()>1;
+                    }
+#endif
+                }
                 }
                 if(!force)rasterPhase.emplace(renderStats_, RP::ShadowRaster);
                 SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_NONE);
@@ -1552,12 +1677,38 @@
             }
             bodyVerts_.resize(need);
             SDL_Vertex* const out = bodyVerts_.data();
-            pool_.parallelFor(copyTasks_.size(), [this, out](size_t b, size_t e) {
+            const auto copyRange = [this, out](size_t b, size_t e) {
                 for (size_t i = b; i < e; ++i) {
                     const CopyTask& t = copyTasks_[i];
                     std::copy(t.src, t.src + t.count, out + t.dst);
                 }
-            });
+            };
+            if (scheduleUniform_) pool_.parallelFor(copyTasks_.size(), copyRange);
+            else {
+                // Workstream I: planned by bytes; a copy stops scaling at a few threads.
+                copyPlan_.begin(schedules_.bodyCopy);
+                for (const CopyTask& t : copyTasks_)
+                    copyPlan_.add(tak::render::RenderSchedules::kCopyPerTaskNs +
+                                  tak::render::RenderSchedules::kCopyPerByteNs * double(t.count * sizeof(SDL_Vertex)));
+                copyPlan_.finish(pool_.threads());
+                schedThreadsCopy_ += copyPlan_.participants();
+                runPlanned('c', copyPlan_, copyRange);
+#ifndef NDEBUG
+                if (scheduleVerifyOn_) {
+                    // Each task copies into its own destination range: a serial re-run
+                    // into a scratch buffer must match the planned result exactly.
+                    verifyPlan(copyPlan_, copyTasks_.size());
+                    std::vector<SDL_Vertex> serial(bodyVerts_.size());
+                    for (const CopyTask& t : copyTasks_) std::copy(t.src, t.src + t.count, serial.data() + t.dst);
+                    for (const CopyTask& t : copyTasks_)
+                        if (t.count && std::memcmp(serial.data() + t.dst, out + t.dst, t.count * sizeof(SDL_Vertex)))
+                            throw std::runtime_error("schedule verify: body copy differs from a serial run");
+                    ++scheduleVerify_.copyPasses;
+                    scheduleVerify_.copyVertices += need;
+                    scheduleVerify_.parallelPasses += copyPlan_.participants() > 1;
+                }
+#endif
+            }
         };
         runCopies(false);
         size_t copied = size_t(destOff);   // assembled + staged uploads (+ a write failure's re-assembly)
@@ -3009,6 +3160,62 @@
     // painter order, resolves the geometry entry it owns (client/geometryowners.h),
     // then entries of destroyed / long-absent units are reclaimed. Depth order only
     // decides the order of visGeom_; it never moves a unit to another entry.
+    // Debug calibration (TAK_SCHEDULE_SAMPLES=<file>, render telemetry on): one
+    // line per planned pass -- kind, items, chunks, participants, estimate and
+    // measured wall time (ns). Run with TAK_RENDER_POOL_THREADS=1 for serial
+    // per-pass costs to fit the rates in client/workschedule.h against.
+    void GameView::runPlanned(char kind, const tak::render::WorkPlan& plan,
+                              const std::function<void(size_t,size_t)>& fn) {
+#ifndef NDEBUG
+        static const char* const samples = tak::devEnv("TAK_SCHEDULE_SAMPLES");
+        if (samples && renderStats_.enabled()) {
+            const auto t0 = std::chrono::steady_clock::now();
+            pool_.parallelChunks(plan.bounds(), plan.participants(), fn);
+            const double ns = double(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - t0).count());
+            if (FILE* f = std::fopen(samples, "a")) {
+                std::fprintf(f, "%c %zu %zu %u %.0f %.0f\n", kind, plan.items(), plan.chunks(),
+                             plan.participants(), plan.estimateNs(), ns);
+                std::fclose(f);
+            }
+            return;
+        }
+#else
+        (void)kind;
+#endif
+        pool_.parallelChunks(plan.bounds(), plan.participants(), fn);
+    }
+
+#ifndef NDEBUG
+    void GameView::verifyPlan(const tak::render::WorkPlan& plan, size_t items) const {
+        const auto b = plan.bounds();
+        bool ok = !b.empty() && b.front() == 0 && b.back() == items && plan.items() == items &&
+                  plan.participants() >= 1;
+        for (size_t k = 1; ok && k < b.size(); ++k) ok = b[k] > b[k - 1];
+        if (!ok) throw std::runtime_error("schedule verify: malformed work plan");
+    }
+#endif
+
+    void GameView::readSchedules() {
+        if (schedulesRead_) return;
+        schedulesRead_ = true;
+#ifndef NDEBUG
+        if (const char* v = tak::devEnv("TAK_RENDER_SCHEDULE")) scheduleUniform_ = std::strcmp(v, "uniform") == 0;
+        scheduleVerifyOn_ = tak::devFlag("TAK_SCHEDULE_VERIFY");
+        const auto policy = [](const char* name, tak::render::SchedulePolicy& p) {
+            const char* v = tak::devEnv(name);
+            if (!v) return;
+            double a = 0, b = 0, c = 0; unsigned m = p.maxParticipants;
+            const int n = std::sscanf(v, "%lf,%lf,%lf,%u", &a, &b, &c, &m);
+            if (n >= 3) { p.serialBelowNs = a; p.workerNs = b; p.chunkNs = c; p.maxParticipants = n >= 4 ? m : p.maxParticipants; }
+        };
+        policy("TAK_SCHEDULE_GEOMETRY", schedules_.geometry);
+        policy("TAK_SCHEDULE_SHADOW_CHECK", schedules_.shadowCheck);
+        policy("TAK_SCHEDULE_SHADOW_PREP", schedules_.shadowPrep);
+        policy("TAK_SCHEDULE_COPY", schedules_.bodyCopy);
+#endif
+    }
+
     void GameView::claimGeometryEntries() {
 #ifndef NDEBUG
         // Debug: shorter retention / trim windows, so a short verification run
@@ -3196,6 +3403,15 @@
         stats.add(RS::PoolDispatches, poolStats_.dispatches);
         stats.add(RS::PoolSerialRuns, poolStats_.serial);
         stats.add(RS::PoolItems, poolStats_.items);
+        stats.add(RS::PoolPosted, poolStats_.posted);
+        stats.add(RS::PoolIdleWakes, poolStats_.idleWakes);
+        stats.add(RS::PoolChunks, poolStats_.chunks);
+        stats.add(RS::SchedGeometryThreads, schedThreadsGeom_);
+        stats.add(RS::SchedShadowThreads, schedThreadsShadow_);
+        stats.add(RS::SchedCopyThreads, schedThreadsCopy_);
+        stats.add(RS::SchedGeometryEstimateUs, uint64_t(schedEstimateGeomNs_ * 1e-3 + 0.5));
+        schedThreadsGeom_ = schedThreadsShadow_ = schedThreadsCopy_ = 0;
+        schedEstimateGeomNs_ = 0;
         stats.addMs(RP::PoolDispatch, double(poolStats_.dispatchNs) * 1e-6);
         stats.addMs(RP::PoolWait, double(poolStats_.waitNs) * 1e-6);
         stats.addWorkNs(RW::PoolBusy, poolStats_.busyNs);
@@ -3936,6 +4152,9 @@
 
     void GameView::buildUnitGeom(const UnitR& u, UnitGeom& g, std::vector<Tri>& scratch, bool mayDeferBody) {
         using namespace tak::render;
+#ifndef NDEBUG
+        if(scheduleVerifyOn_)geomBuildCalls_.fetch_add(1,std::memory_order_relaxed);
+#endif
         g.reused=false;g.stages=0;g.bodyRun=0;g.bodyDeferred=false;
         // Telemetry (worker side): per-entry results the render thread tallies.
         // renderStats_ is not written during the parallel pass.
@@ -4110,7 +4329,14 @@
 #endif
         const int64_t keyEnd=timed ? clockNs() : 0;
         g.keyNs=uint32_t(std::min<int64_t>(keyEnd-keyStart,UINT32_MAX));
-        if(cacheHit && !bodyStages && !verify)return;
+        // Workstream I: the next build is predicted to redo what this one redoes
+        // (moving units keep moving, still ones stay hits); sizes after the build.
+        const auto predictNext=[&] {
+            using CM=tak::render::GeometryCostModel;
+            g.nextCost=CM::pack(CM::estimateNs(stages,bodyStages,key.size(),g.verts.size(),
+                                               g.shadowLocal.size()+g.maskedShadowLocal.size()));
+        };
+        if(cacheHit && !bodyStages && !verify) {predictNext();return;}
 
         UnitGeomInputs in;
         in.visual=&vt->second;in.anim=anim;in.atlas=atlas;in.facing=facing;
@@ -4170,6 +4396,7 @@
             previousShadow.maskedShadowVerts=g.maskedShadowVerts;previousShadow.maskedShadowRuns=g.maskedShadowRuns;
         }
         const bool shadowChanged=runUnitGeomStages(u,g,stages,bodyStages,in,scratch);
+        predictNext();
         g.bodyRun=bodyStages;
         g.bodyPending=deferBody ? uint8_t(g.bodyPending|stages) : uint8_t(0);
         g.shadowKept=(stages & kStageLocal) && !shadowChanged && !cold;

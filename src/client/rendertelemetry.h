@@ -359,6 +359,14 @@ enum class Counter : uint8_t {
     ArenaCapacityBytes,  // gauge: arena storage (tracked GPU buffer bytes)
     ArenaInflightBytes,  // gauge: orphaned/released storage still counted (in flight)
     ArenaCpuBytes,       // gauge: planner records, per-frame command lists, staging, mirror
+    // Workstream I (cost-planned pool passes, client/workschedule.h).
+    PoolPosted,          // workers woken by parallel passes (participants minus the caller)
+    PoolIdleWakes,       // woken workers that found every chunk already taken
+    PoolChunks,          // chunks handed out by parallel passes
+    SchedGeometryThreads,// participants of the geometry pass (1 = ran on the render thread)
+    SchedShadowThreads,  // participants of the shadow check + prep passes (summed)
+    SchedCopyThreads,    // participants of the body copy pass
+    SchedGeometryEstimateUs, // the geometry plan's estimated work, microseconds
     Count
 };
 
@@ -425,7 +433,9 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "distant_tiles", "distant_metadata_bytes",
     "arena_append", "arena_rebuild", "arena_stream", "arena_verts_retained", "arena_verts_uploaded",
     "arena_verts_twice", "arena_draws", "arena_ranges", "arena_fallbacks", "arena_releases", "arena_capacity_bytes",
-    "arena_inflight_bytes", "arena_cpu_bytes"};
+    "arena_inflight_bytes", "arena_cpu_bytes",
+    "pool_posted", "pool_idle_wakes", "pool_chunks", "sched_geometry_threads", "sched_shadow_threads",
+    "sched_copy_threads", "sched_geometry_estimate_us"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

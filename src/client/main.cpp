@@ -1964,6 +1964,17 @@ int main(int argc, char** argv) {
                     ull(t.assembled),ull(t.assembledVertices));
                 if(!t.frames && !t.streams)throw std::runtime_error("body arena verify ran no checks");
             }
+            if(tak::devFlag("TAK_SCHEDULE_VERIFY")) {
+                // Cost-planned pool passes (workstream I): every pass matched a serial
+                // re-run and built each visible unit once, or draw() threw.
+                const auto& t=gameView->scheduleVerifyTotals();
+                using ull=unsigned long long;
+                std::printf("SCHEDULE_VERIFY frames=%llu geometry_passes=%llu builds=%llu parallel_passes=%llu "
+                            "checks=%llu prep_passes=%llu prep_points=%llu copy_passes=%llu copy_vertices=%llu\n",
+                    ull(t.frames),ull(t.geometryPasses),ull(t.geometryBuilds),ull(t.parallelPasses),ull(t.checks),
+                    ull(t.prepPasses),ull(t.prepPoints),ull(t.copyPasses),ull(t.copyVertices));
+                if(!t.frames)throw std::runtime_error("schedule verify ran no checks");
+            }
             if(tak::devFlag("TAK_DISTANT_VERIFY")) {
                 // Distant-image lookup before body generation (workstream G): every
                 // deferred body was regenerated in a copy and matched, or draw() threw.

@@ -77,6 +77,7 @@
 #include "client/monarchalert.h"
 #include "client/sound.h"     // WAV mixer + music + soundclasses (extracted leaf)
 #include "client/threadpool.h"   // data-parallel worker pool (extracted leaf)
+#include "client/workschedule.h"   // estimated-cost plans for the pool passes (workstream I)
 #include "client/gpuvram.h"   // GPU memory accountant + safety-net cap (Options limit)
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
@@ -652,6 +653,15 @@ public:
     // compared), deferred bodies generated after prepare (catch-up) or inside it.
     struct DistantVerifyTotals { uint64_t frames=0, deferred=0, checked=0, catchup=0, late=0; };
     const DistantVerifyTotals& distantVerifyTotals() const { return distantVerify_; }
+    // TAK_SCHEDULE_VERIFY (workstream I): every geometry pass built each visible
+    // unit exactly once under a well-formed plan; the shadow point checks, shadow
+    // tile transforms and body copies of the planned passes equal a serial re-run,
+    // bit for bit.
+    struct ScheduleVerifyTotals {
+        uint64_t frames=0, geometryPasses=0, geometryBuilds=0, parallelPasses=0, checks=0,
+                 prepPasses=0, prepPoints=0, copyPasses=0, copyVertices=0;
+    };
+    const ScheduleVerifyTotals& scheduleVerifyTotals() const { return scheduleVerify_; }
     // Workstream H (TAK_BODY_ARENA_VERIFY): every arena command gathered from a
     // CPU mirror of the arena through its ranges equalled the assembled command,
     // and every assembled command equalled its sources, packed without gaps.
@@ -1004,7 +1014,11 @@ private:
         bool ownerChanged=false;
         uint8_t reallocs=0;
         bool shadowKept=false;       // local rebuild left the shadow coverage unchanged
-        uint32_t missMask=0;
+        uint16_t missMask=0;         // bit per MissCause (10 causes)
+        // Workstream I: estimated cost of this entry's next build, in units of
+        // kGeomCostUnitNs, from what this frame's build redid (render-thread read
+        // when planning the next pass's chunks; only a load-balance hint).
+        uint16_t nextCost=0;
         uint32_t keyNs=0, buildNs=0;
         tak::render::PlacementKey placementKey{};
         // `revision` = the screen output: bumped whenever any stage is redone (what
@@ -1082,6 +1096,7 @@ private:
         // Revisions are kept: they come from one GameView-wide counter, so a value
         // is never repeated by another occupant of this entry.
         void makeCold() {
+            nextCost=tak::render::GeometryCostModel::pack(tak::render::GeometryCostModel::kColdNs);
             localKey.clear();localLayout={};owner=-1;reused=false;stages=0;
             bodyPending=bodyRun=0;bodyDeferred=false;
             verts.clear();runs.clear();shadowVerts.clear();
@@ -1226,6 +1241,29 @@ private:
     uint32_t lastFeatGen_ = UINT32_MAX;   // != any real generation, so the first sync runs
 
     std::vector<CopyTask> copyTasks_;
+    // Workstream I: the renderer's pool passes are planned by estimated cost
+    // (client/workschedule.h): chunks of about equal estimated work and only as
+    // many woken threads as the estimate pays for. Debug TAK_RENDER_SCHEDULE=
+    // uniform restores the pre-I uniform passes (fixed 8-item chunks, every
+    // thread, the former thresholds) on the same pool; TAK_SCHEDULE_<PASS>=
+    // serialBelowNs,workerNs,chunkNs[,maxThreads] overrides a policy (tuning).
+    tak::render::RenderSchedules schedules_;
+    bool scheduleUniform_ = false;
+    bool schedulesRead_ = false;
+    bool scheduleVerifyOn_ = false;             // debug TAK_SCHEDULE_VERIFY (never set in release)
+#ifndef NDEBUG
+    ScheduleVerifyTotals scheduleVerify_;
+    std::atomic<uint64_t> geomBuildCalls_{0};   // buildUnitGeom calls (verify only)
+    void verifyPlan(const tak::render::WorkPlan& plan, size_t items) const;
+#endif
+    void readSchedules();
+    // Run a planned pass on pool_ (debug: timed calibration samples).
+    void runPlanned(char kind, const tak::render::WorkPlan& plan, const std::function<void(size_t,size_t)>& fn);
+    tak::render::WorkPlan geomPlan_, shadowPlan_, copyPlan_;
+    std::vector<uint32_t> shadowPrepItems_;   // dirty tiles of the page being rasterized
+    // Telemetry: participants and estimates of this frame's planned passes.
+    uint64_t schedThreadsGeom_ = 0, schedThreadsShadow_ = 0, schedThreadsCopy_ = 0;
+    double schedEstimateGeomNs_ = 0;
     std::vector<DrawOp> drawOps_;
     // TAK_PROF sub-phase timers (main thread). ALL of these are MONOTONIC -- they only
     // ever grow, and takeProf() returns the delta since its last call rather than zeroing
@@ -3358,7 +3396,15 @@ private:
     std::vector<SDL_Vertex> partBatch_;   // reused particle-quad batch
 
     SoundBank sounds_;
-    ThreadPool pool_;                       // for parallel per-unit VM ticks
+    // Worker pool for the per-unit VM ticks and the renderer's parallel passes:
+    // one thread per CPU this process may use (debug TAK_RENDER_POOL_THREADS=N
+    // overrides it, e.g. 1 for a serial reference run).
+    static unsigned renderPoolThreads() {
+        if (const char* v = tak::devEnv("TAK_RENDER_POOL_THREADS"); v && std::atoi(v) > 0)
+            return unsigned(std::atoi(v));
+        return ThreadPool::defaultThreads();
+    }
+    ThreadPool pool_{renderPoolThreads()};
     std::vector<std::pair<int,tak::cob::Vm*>> explosionVmTick_;
     std::vector<tak::cob::Vm*> vmTick_;     // scratch list for the parallel pass
     SoundClasses soundClasses_;

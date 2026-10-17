@@ -544,7 +544,10 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "shadow_migrated", "shadow_page_releases", "shadow_page_shrinks",
                     "shadow_cells", "shadow_cells_retained", "shadow_pages", "shadow_page_allocs",
                     "shadow_atlas_capacity_px", "shadow_atlas_cell_px", "shadow_atlas_tile_px",
-                    "shadow_atlas_shelf_free_px"]
+                    "shadow_atlas_shelf_free_px",
+                    # workstream I: cost-planned pool passes
+                    "pool_posted", "pool_idle_wakes", "pool_chunks", "sched_geometry_threads",
+                    "sched_shadow_threads", "sched_copy_threads", "sched_geometry_estimate_us"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",
