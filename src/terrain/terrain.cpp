@@ -46,6 +46,12 @@ void Compositor::setBudget(size_t high, size_t low) {
     if (used_ > high_) evictLocked(low_, dropped);
 }
 
+void Compositor::trim() {
+    std::vector<SectionRef> dropped;
+    std::lock_guard<std::mutex> lk(mu_);
+    if (used_ > high_) evictLocked(low_, dropped);
+}
+
 bool Compositor::admitsPrefetch(size_t bytes) {
     std::lock_guard<std::mutex> lk(mu_);
     return low_ == SIZE_MAX || used_ + bytes <= low_;

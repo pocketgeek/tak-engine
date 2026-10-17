@@ -18,6 +18,16 @@ uint64_t steadyNs() {
     return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
+// Debug: TAK_TERRAIN_SECTION_BUDGET_MIB=N sets the decoded-section budget's high
+// mark (low = 7/8 of it); release builds always use the defaults.
+void applySectionBudget(tak::terrain::Compositor& comp) {
+    size_t high = MapView::kSectionCpuHigh, low = MapView::kSectionCpuLow;
+    if (const char* v = tak::devEnv("TAK_TERRAIN_SECTION_BUDGET_MIB")) {
+        high = size_t(std::max(1L, std::atol(v))) << 20;
+        low = high - high / 8;
+    }
+    comp.setBudget(high, low);
+}
 }
 
 tak::tnt::Map MapView::genOrLoad(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
@@ -28,12 +38,14 @@ tak::tnt::Map MapView::genOrLoad(const tak::hpi::Vfs& vfs, const std::string& ma
 
 MapView::MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& mapPath)
     : ren_(ren), map_(genOrLoad(vfs, mapPath)), comp_(vfs) {
+    applySectionBudget(comp_);
     secWorker_ = std::thread([this] { sectionWorkerLoop(); });
     queueAllSections();
 }
 
 MapView::MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, tak::tnt::Map map)
     : ren_(ren), map_(std::move(map)), comp_(vfs) {
+    applySectionBudget(comp_);
     secWorker_ = std::thread([this] { sectionWorkerLoop(); });
     queueAllSections();
 }
@@ -59,8 +71,6 @@ void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
     for (auto& [k, s] : sections_) if (s.tex) gpuvram::destroy(s.tex);
     sections_.clear();
     sectionBytes_ = 0;
-    ready_.clear();   // comp_ was cleared: nothing is decoded any more
-    sectionStats_.decodedCpuBytes = 0;
     wanted_.clear();
     batchKeys_.clear();
     tileBatch_.clear();
@@ -91,7 +101,7 @@ void MapView::queueAllSections() {
     std::set<uint32_t> keys(map_.tileKeys.begin(), map_.tileKeys.end());
     std::lock_guard<std::mutex> lk(secMu_);
     for (uint32_t k : keys)
-        if (secPending_.insert(k).second) decodeQueue_.push_back(k);
+        if (secPending_.insert(k).second) decodeQueue_.push_back({k, false});
     secCv_.notify_all();
 }
 
@@ -103,7 +113,7 @@ void MapView::tilesEdited(int bx,int by,int width,int height) {
     std::set<uint32_t> keys;
     for(int y=y0;y<y1;++y)for(int x=x0;x<x1;++x)keys.insert(map_.tileKeys[size_t(y)*map_.blocksX+x]);
     std::lock_guard lock(secMu_);
-    for(uint32_t key:keys)if(secPending_.insert(key).second)decodeQueue_.push_back(key);
+    for(uint32_t key:keys)if(secPending_.insert(key).second)decodeQueue_.push_back({key,false});
     secCv_.notify_all();
 }
 
@@ -314,6 +324,7 @@ void MapView::draw(int winW, int winH) {
     // chunks use the original tile geometry while the worker prepares them.
     ++frame_;
     pinning_=std::exchange(pinNext_,false);
+    comp_.trim();   // over the CPU budget only while pins held more (a cheap check otherwise)
     chunksEnabled_=!tak::devFlag("TAK_TERRAIN_CACHE_OFF");
     if(chunksEnabled_) {
         chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_);
@@ -365,20 +376,15 @@ void MapView::setBilinear(bool b) {
 void MapView::setZoomSpeed(float m) { zoomSpeed_ = std::clamp(m, 0.25f, 4.0f); }
 
 void MapView::uploadReadySections() {
-    std::vector<uint32_t> ready;
+    std::vector<std::pair<uint32_t, bool>> ready;
     {
         std::lock_guard<std::mutex> lk(secMu_);
         ready.swap(decoded_);
     }
-    for (uint32_t key : ready) {
-        tak::terrain::SectionRef image;   // pinned for this use only
-        try { image = comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) {
-            if (!sections_.count(key)) sections_[key] = {};   // absent JPG: never retried
-            continue;
-        }
-        if (ready_.insert({key, map_.stockTerrain}).second)
-            sectionStats_.decodedCpuBytes += image->rgba.capacity();
-    }
+    // Decoded images stay in the compositor until used (or evicted under its CPU
+    // budget); only an absent JPG needs noting here, so it is never retried.
+    for (const auto& [key, found] : ready)
+        if (!found && !sections_.count(key)) sections_[key] = {};
 }
 
 bool MapView::uploadWantedSections() {
@@ -390,10 +396,16 @@ bool MapView::uploadWantedSections() {
     std::vector<uint32_t> decode;
     for (uint32_t key : wanted_) {
         if (sections_.count(key)) continue;
-        if (!ready_.count({key, map_.stockTerrain})) { decode.push_back(key); continue; }
+        // Never decode on the render thread in normal play: what the compositor does
+        // not hold (not decoded yet, or evicted under its CPU budget) is requested from
+        // the decode worker, ahead of the prefetch. finishChunks() frames (captures,
+        // the briefing backdrop) decode here instead, so they show complete terrain.
+        bool absent = false;
+        tak::terrain::SectionRef img = comp_.cachedSection(key, map_.stockTerrain, &absent);   // pinned until uploaded
+        if (absent) { sections_[key] = {}; continue; }
+        if (!img && !pinning_) { decode.push_back(key); continue; }
         if (n >= perFrame) continue;   // the rest next frame; the underlay shows meanwhile
-        tak::terrain::SectionRef img;   // pinned until its texture upload below
-        try { img = comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) {
+        if (!img) try { img = comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) {
             sections_[key] = {};
             continue;
         }
@@ -432,11 +444,13 @@ bool MapView::uploadWantedSections() {
         std::lock_guard<std::mutex> lk(secMu_);
         for (uint32_t k : decode) {
             if (!secPending_.insert(k).second) {
-                auto it = std::find(decodeQueue_.begin(), decodeQueue_.end(), k);
-                if (it == decodeQueue_.end() || it == decodeQueue_.begin()) continue;   // in flight / decoded
+                auto it = std::find_if(decodeQueue_.begin(), decodeQueue_.end(),
+                                       [k](const DecodeRequest& r) { return r.key == k; });
+                if (it == decodeQueue_.end()) continue;   // in flight
+                if (it == decodeQueue_.begin()) { it->demand = true; continue; }
                 decodeQueue_.erase(it);
             }
-            decodeQueue_.push_front(k);
+            decodeQueue_.push_front({k, true});
         }
         secCv_.notify_all();
     }
@@ -484,18 +498,28 @@ void MapView::sectionWorkerLoop() {
     for (;;) {
         secCv_.wait(lk, [this] { return secStop_ || !decodeQueue_.empty(); });
         if (secStop_) return;
-        uint32_t key = decodeQueue_.front();
+        const DecodeRequest request = decodeQueue_.front();
         decodeQueue_.pop_front();
         secBusy_ = true;
         lk.unlock();
-        // Decode into the Compositor cache (the heavy JPEG work, once per section).
-        const uint64_t decodeStart = steadyNs();
-        try { comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) { /* absent */ }
-        sectionDecodeNs_.fetch_add(steadyNs() - decodeStart, std::memory_order_relaxed);
-        sectionDecodes_.fetch_add(1, std::memory_order_relaxed);
+        // Decode into the Compositor cache (the heavy JPEG work, once per section while
+        // it stays within the CPU budget). A prefetch only fills free budget: it never
+        // makes the cache evict, so a map larger than the budget is not decoded whole
+        // and then trimmed; what a view needs arrives as a demand request instead.
+        bool found = true;
+        const bool cached = comp_.cachedSection(request.key, map_.stockTerrain) != nullptr;
+        if (!cached && !request.demand && !comp_.admitsPrefetch(0)) {
+            prefetchSkipped_.fetch_add(1, std::memory_order_relaxed);
+        } else if (!cached) {
+            const uint64_t decodeStart = steadyNs();
+            try { comp_.sectionImage(request.key, map_.stockTerrain); } catch (const std::exception&) { found = false; }
+            sectionDecodeNs_.fetch_add(steadyNs() - decodeStart, std::memory_order_relaxed);
+            sectionDecodes_.fetch_add(1, std::memory_order_relaxed);
+        }
         lk.lock();
         secBusy_ = false;
-        decoded_.push_back(key);
+        secPending_.erase(request.key);
+        decoded_.push_back({request.key, found});
         secCv_.notify_all();   // reload()/finishChunks() may be waiting
     }
 }

@@ -194,6 +194,42 @@ int main(int argc,char** argv) try {
             check(holes()==0,"...and leaves no hole");
             gpuvram::setLimit(gpuvram::kAutoLimit);gpuvram::removeBuffer(pretend);
         }
+        // Workstream J: a decoded-section budget far below what the map decodes to
+        // (Ulasem Arena ~64 MiB) evicts and re-decodes, yet every finished frame is
+        // texel-identical to the unbudgeted one, nothing stays pinned between jobs,
+        // and the cache settles inside the budget.
+        {
+            const std::string name=argc==3 ? argv[2] : "Ulasem Arena";
+            MapView reference(renderer,vfs,tak::hpi::findMap(vfs,name));
+            MapView budgeted(renderer,vfs,tak::hpi::findMap(vfs,name));
+            reference.compositor().setBudget(SIZE_MAX,SIZE_MAX);
+            const size_t high=size_t(4)<<20,low=size_t(3)<<20;
+            budgeted.compositor().setBudget(high,low);
+            SDL_RenderSetScale(renderer,1,1);SDL_RenderSetViewport(renderer,nullptr);SDL_RenderSetClipRect(renderer,&terrainClip);
+            const auto settled=[&](MapView& view,float x,float y,float zoom) {
+                view.setZoom(zoom);view.setOffset(x,y);
+                const auto start=SDL_GetTicks();
+                for(;;) {
+                    SDL_SetRenderDrawColor(renderer,255,0,255,255);SDL_RenderClear(renderer);view.draw(610,450);
+                    const auto stats=view.chunkStats();
+                    if(stats.visible && stats.visible==stats.ready)break;
+                    check(SDL_GetTicks()-start<120000,"budgeted terrain chunks failed to finish");SDL_Delay(1);
+                }
+                return read();
+            };
+            const float views[][3]={{300,300,.05f},{800,800,1},{5000,5000,.5f},{9000,9000,1},{2000,6000,.25f},{800,800,1}};
+            for(const auto& v:views)
+                check(settled(budgeted,v[0],v[1],v[2])==settled(reference,v[0],v[1],v[2]),
+                      "budgeted sections render the same terrain");
+            const auto cpu=budgeted.sectionStats().cpu;
+            check(cpu.evictions>0,"fixture: the budget evicted sections");
+            check(cpu.pinnedBytes==0,"no section stays pinned after its jobs");
+            check(cpu.usedBytes<=high,"decoded sections settle inside the budget");
+            check(reference.sectionStats().cpu.evictions==0,"an unbounded compositor never evicts");
+            std::fprintf(stderr,"budgeted sections: decodes=%llu redecodes=%llu evictions=%llu used=%zu peak=%zu\n",
+                (unsigned long long)cpu.decodes,(unsigned long long)cpu.redecodes,
+                (unsigned long long)cpu.evictions,cpu.usedBytes,cpu.peakBytes);
+        }
         SDL_SetRenderTarget(renderer,nullptr);SDL_DestroyTexture(target);
     }
     check(gpuvram::bytes()==baseline,"terrain teardown frees textures");

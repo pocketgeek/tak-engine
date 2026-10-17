@@ -163,6 +163,11 @@ void budget() {
     st = c.stats();
     check(st.usedBytes == 4 * s && st.pinnedBytes == 4 * s, "only unpinned images evicted");
     for (uint32_t k = 5; k <= 8; ++k) check(c.cachedSection(k) != nullptr, "pinned kept");
+    // Releasing pins does not reach the cache: trim() brings it back inside the budget.
+    pins.clear();
+    check(c.stats().usedBytes == 4 * s, "unpinned images linger until the next insertion or trim");
+    c.trim();
+    check(c.stats().usedBytes <= s * 5 / 2, "trim evicts to the low watermark");
     // A held image is skipped by every later eviction burst, however old it gets.
     pins.clear();
     c.clear();

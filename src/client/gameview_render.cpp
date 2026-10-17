@@ -3456,9 +3456,16 @@
         stats.add(RS::TerrainJobsDiscarded, delta(chunks.jobsDiscarded, cursor.chunks.jobsDiscarded));
         stats.add(RS::TerrainJobsUsed, delta(chunks.jobsUsed, cursor.chunks.jobsUsed));
         stats.add(RS::TerrainSectionUploads, delta(sections.uploads, cursor.sections.uploads));
-        stats.add(RS::TerrainSectionDecodes, delta(sections.decodes, cursor.sections.decodes));
+        // Decodes by any thread (section worker, chunk worker, finish frames), as the
+        // compositor counts them (before J: the section worker's attempts, hits included).
+        stats.add(RS::TerrainSectionDecodes, delta(sections.cpu.decodes, cursor.sections.cpu.decodes));
         stats.set(RS::TerrainMipCpuBytes, chunks.mipBytes);
-        stats.set(RS::TerrainSectionCpuBytes, sections.decodedCpuBytes);
+        stats.set(RS::TerrainSectionCpuBytes, sections.cpu.usedBytes);
+        stats.set(RS::TerrainSectionPinnedBytes, sections.cpu.pinnedBytes);
+        stats.set(RS::TerrainSectionPeakBytes, sections.cpu.peakBytes);
+        stats.add(RS::TerrainSectionEvictions, delta(sections.cpu.evictions, cursor.sections.cpu.evictions));
+        stats.add(RS::TerrainSectionRedecodes, delta(sections.cpu.redecodes, cursor.sections.cpu.redecodes));
+        stats.add(RS::TerrainSectionPrefetchSkipped, delta(sections.prefetchSkipped, cursor.sections.prefetchSkipped));
         const uint64_t uploadNs = delta(chunks.uploadNs, cursor.chunks.uploadNs) +
             delta(sections.uploadNs, cursor.sections.uploadNs);
         stats.addMs(RP::TerrainUpload, double(uploadNs) * 1e-6);

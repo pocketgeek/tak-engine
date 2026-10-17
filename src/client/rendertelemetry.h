@@ -368,6 +368,28 @@ enum class Counter : uint8_t {
     SchedShadowThreads,  // participants of the shadow check + prep passes (summed)
     SchedCopyThreads,    // participants of the body copy pass
     SchedGeometryEstimateUs, // the geometry plan's estimated work, microseconds
+    // Workstream J (CPU cache budgets). Gauges unless noted; "pinned" = held by an
+    // active consumer (not evictable now), "peak" = highest since the view was built.
+    TerrainSectionPinnedBytes, // decoded sections a consumer holds (compose job, upload)
+    TerrainSectionPeakBytes,
+    TerrainSectionEvictions,   // per frame: decoded sections dropped by the CPU budget
+    TerrainSectionRedecodes,   // per frame: decodes of sections evicted earlier
+    TerrainSectionPrefetchSkipped, // per frame: load-time prefetches refused (budget full)
+    TerrainMipPinnedBytes,     // mip images the running compose job holds
+    TerrainMipPeakBytes,
+    TerrainMipEvictions,       // per frame: mip images dropped by the CPU budget
+    TerrainMipRegens,          // per frame: mip images regenerated after an eviction/trim
+    TerrainMipTrims,           // per frame: idle trims of the mip cache (sustained low demand)
+    CpuTrims,                  // per frame: retained renderer buffers shrunk after low demand
+    CpuTrimBytes,              // per frame: capacity those trims released
+    WorkerScratchUsedBytes,    // render workers' per-thread scratch: last use
+    WorkerScratchCapacityBytes,// ... retained capacity
+    GeomPinnedBytes,           // geometry entries of units in view (not evictable)
+    CpuCacheUsedBytes,         // totals over the renderer's CPU caches and buffers
+    CpuCacheRetainedBytes,     //   (see the J accounting table in the progress record)
+    CpuCachePinnedBytes,
+    CpuCacheEvictableBytes,
+    CpuCachePeakBytes,         // highest CpuCacheRetainedBytes seen at a frame end
     Count
 };
 
@@ -436,7 +458,13 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "arena_verts_twice", "arena_draws", "arena_ranges", "arena_fallbacks", "arena_releases", "arena_capacity_bytes",
     "arena_inflight_bytes", "arena_cpu_bytes",
     "pool_posted", "pool_idle_wakes", "pool_chunks", "sched_geometry_threads", "sched_shadow_threads",
-    "sched_copy_threads", "sched_geometry_estimate_us"};
+    "sched_copy_threads", "sched_geometry_estimate_us",
+    "terrain_section_pinned_bytes", "terrain_section_peak_bytes", "terrain_section_evictions",
+    "terrain_section_redecodes", "terrain_section_prefetch_skipped", "terrain_mip_pinned_bytes",
+    "terrain_mip_peak_bytes", "terrain_mip_evictions", "terrain_mip_regens", "terrain_mip_trims",
+    "cpu_trims", "cpu_trim_bytes", "worker_scratch_used_bytes", "worker_scratch_capacity_bytes",
+    "geom_pinned_bytes", "cpu_cache_used_bytes", "cpu_cache_retained_bytes",
+    "cpu_cache_pinned_bytes", "cpu_cache_evictable_bytes", "cpu_cache_peak_bytes"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

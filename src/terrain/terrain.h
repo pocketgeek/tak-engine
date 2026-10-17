@@ -68,6 +68,11 @@ public:
     // cache may exceed `high` while consumers hold more than that.
     void setBudget(size_t high, size_t low);
 
+    // Evict to the low mark if the cache is above the high mark. Insertions do this
+    // themselves; consumers call it after releasing pins (a compose job that held
+    // more than the budget), since releasing a pin does not reach the cache.
+    void trim();
+
     // Speculative decode admission (load-time prefetch): true while the cache has
     // room below `low`. A prefetch never evicts anything; demand decodes do.
     bool admitsPrefetch(size_t bytes);

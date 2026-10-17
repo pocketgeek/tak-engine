@@ -123,6 +123,8 @@ void TerrainChunks::work() {
         auto job=std::move(jobs_.front());jobs_.pop_front();busy_=true;lock.unlock();
         const uint64_t started=nowNs();
         try {compose(job);}catch(...) {job.pixels.clear();}
+        // The job's pins are released: sections it held past the CPU budget can go now.
+        compositor_.trim();
         composeNs_.fetch_add(nowNs()-started,std::memory_order_relaxed);
         jobsCompleted_.fetch_add(1,std::memory_order_relaxed);
         lock.lock();if(job.epoch==epoch_ && !job.cancelled->load(std::memory_order_relaxed))done_.push_back(std::move(job));

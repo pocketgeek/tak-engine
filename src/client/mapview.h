@@ -111,15 +111,25 @@ public:
     // Render telemetry for the section fallback (cumulative; the reader takes deltas).
     struct SectionStats {
         uint64_t uploads = 0, uploadBytes = 0, uploadNs = 0, decodes = 0, decodeNs = 0;
-        size_t decodedCpuBytes = 0;   // decoded images the compositor holds (taken in so far)
+        uint64_t prefetchSkipped = 0;   // load-time prefetches refused: the budget was full
+        tak::terrain::Compositor::Stats cpu;   // decoded images: bytes, pins, peak, evictions
     };
-    SectionStats sectionStats() const {
+    SectionStats sectionStats() {
         SectionStats s = sectionStats_;
         s.decodes = sectionDecodes_.load(std::memory_order_relaxed);
         s.decodeNs = sectionDecodeNs_.load(std::memory_order_relaxed);
+        s.prefetchSkipped = prefetchSkipped_.load(std::memory_order_relaxed);
+        s.cpu = comp_.stats();
         return s;
     }
-    // Every queued section JPG decoded and taken in (ensureChunks). Tests only.
+    // CPU budget for decoded sections (workstream J): above kSectionCpuHigh the
+    // compositor evicts least recently used, unpinned sections down to kSectionCpuLow.
+    // 97.7% of the shipped maps decode to less (median 21 MiB, Ulasem Arena 64 MiB,
+    // the largest 402 MiB), so on them nothing is ever evicted and behaviour is the
+    // pre-J one: every referenced section decoded at load and kept.
+    static constexpr size_t kSectionCpuHigh = size_t(128) << 20;
+    static constexpr size_t kSectionCpuLow = size_t(112) << 20;
+    // Every queued section JPG decoded (or skipped) and taken in. Tests only.
     bool sectionsDecoded() {
         std::lock_guard<std::mutex> lk(secMu_);
         return decodeQueue_.empty() && !secBusy_ && decoded_.empty();
@@ -132,9 +142,10 @@ private:
     // build it procedurally in memory (client & server share the deterministic gen).
     static tak::tnt::Map genOrLoad(const tak::hpi::Vfs& vfs, const std::string& mapPath);
 
-    // Collect the map's unique section keys and queue them for decode.
+    // Collect the map's unique section keys and queue them for decode (a speculative
+    // prefetch: skipped once the decoded sections reach the CPU budget's low mark).
     void queueAllSections();
-    // Main thread: note sections the worker has decoded (ready_), or found absent.
+    // Main thread: note the sections the worker found absent.
     void uploadReadySections();
     // Main thread: upload the wanted_ sections (a per-frame limit), first evicting idle
     // ones over the idle budget or the GPU cap. Returns whether any uploaded.
@@ -164,7 +175,6 @@ private:
     // GPU cap refuses; then the underlay shows, as it always did before an upload.
     struct Section { SDL_Texture* tex = nullptr; int w = 0, h = 0; uint64_t frame = 0, usedMs = 0; };
     std::map<uint32_t, Section> sections_;   // key -> resident texture, or tex=null = absent JPG
-    std::set<std::pair<uint32_t, bool>> ready_;   // (key, stockTerrain) decoded in comp_ (main thread)
     std::vector<uint32_t> wanted_;           // sampled by the fallback this frame, not resident
     std::vector<uint32_t> batchKeys_;        // resident sections the current batch samples
     size_t sectionBytes_ = 0;
@@ -182,16 +192,18 @@ private:
 
     // Async section decode: the worker JPEG-decodes referenced sections into the
     // Compositor cache off-thread (the chunk worker reads the same cache); the main
-    // thread notes them in ready_ and uploads on demand.
+    // thread uploads on demand what the cache holds (cachedSection never decodes) and
+    // asks the worker, ahead of the prefetch, for what it does not hold (any more).
+    struct DecodeRequest { uint32_t key; bool demand; };   // demand: the fallback needs it now
     std::thread secWorker_;
     std::mutex secMu_;
     std::condition_variable secCv_;
-    std::deque<uint32_t> decodeQueue_;   // keys awaiting decode
-    std::vector<uint32_t> decoded_;      // keys decoded, awaiting ready_
-    std::set<uint32_t> secPending_;      // queued / in flight / decoded (dedup)
+    std::deque<DecodeRequest> decodeQueue_;   // awaiting decode; demand requests in front
+    std::vector<std::pair<uint32_t, bool>> decoded_;   // (key, found) done, awaiting the main thread
+    std::set<uint32_t> secPending_;      // queued or in flight (dedup); decoded keys leave it
     bool secStop_ = false, secBusy_ = false;
     SectionStats sectionStats_;                       // main thread
-    std::atomic<uint64_t> sectionDecodes_{0}, sectionDecodeNs_{0};   // decode worker
+    std::atomic<uint64_t> sectionDecodes_{0}, sectionDecodeNs_{0}, prefetchSkipped_{0};   // decode worker
 
     // Per-frame tile-quad batch, keyed by section texture; cached across frames
     // when the view is static (idle spectating rebuilds nothing).
