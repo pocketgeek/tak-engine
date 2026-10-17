@@ -10899,7 +10899,9 @@ struct LegionNavigator::Impl {
         // steering, toward its slot, takes no step, or steps to and fro)
         // re-chooses its slot, and once its re-choices are spent it counts
         // as pressed.
-        const bool press=pressed(u,p,f,ox,oz,potential);
+        // Stage 8: a formation member with a free step toward its own slot is not pressed either (its slot may lie
+        // beyond the click, where every step toward it climbs the field).
+        const bool press=pressed(u,p,f,ox,oz,potential)&&!(m.slot>=0&&freeTowardSlot(u,m,p,ox,oz));
 #ifndef NDEBUG
         if(!press&&m.stillSince!=kNoTick&&w.tickCounter_-m.stillSince>=2*kCrowdWindow) {
             uint32_t ab=0;
@@ -10988,6 +10990,16 @@ struct LegionNavigator::Impl {
     }
     // Pressed: no neighbour origin nearer the point (lower potential) that
     // the body could step into now.
+    bool freeTowardSlot(const Unit& u,const Member& m,const Plane& p,int ox,int oz) const {
+        const int W=width(),gx=m.goal%W,gz=m.goal/W;
+        const int64_t d0=int64_t(gx-ox)*(gx-ox)+int64_t(gz-oz)*(gz-oz);
+        for(const auto& d:kDirections) {
+            const int nx=ox+d[0],nz=oz+d[1];
+            if(int64_t(gx-nx)*(gx-nx)+int64_t(gz-nz)*(gz-nz)>=d0||!step(p,ox,oz,d[0],d[1]))continue;
+            if(stepFree(u,ox,oz,nx,nz))return true;
+        }
+        return false;
+    }
     bool pressed(const Unit& u,const Plane& p,RouteView f,int ox,int oz,uint32_t potential) const {
         const int W=width();
         for(const auto& d:kDirections) {

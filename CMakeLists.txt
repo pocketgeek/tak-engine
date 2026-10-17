@@ -783,6 +783,13 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale churn-1000 --data "${TAK_TEST_DATA}"
                    --min scale.arrive.shared_areas=1 --min scale.arrive.n=780 --max scale.stuck_end=40)
   set_tests_properties(legion_sharedarea PROPERTIES LABELS legion TIMEOUT 900 SKIP_RETURN_CODE 77)
+  # Legion 10,000 stage 8: a formation member with a free step toward its own slot is not pressed (one-1000: at
+  # least 995 of 1,000 arrive, the 99th percentile too, at most 5 stuck; the previous commit 978 / never / 14).
+  add_test(NAME legion_arrival_press
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale one-1000 --data "${TAK_TEST_DATA}"
+                   --min scale.arrive.n=995 --min scale.arrive.t99=1 --max scale.stuck_end=5)
+  set_tests_properties(legion_arrival_press PROPERTIES LABELS legion TIMEOUT 900 SKIP_RETURN_CODE 77)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison
