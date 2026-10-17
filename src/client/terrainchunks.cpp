@@ -65,12 +65,30 @@ void TerrainChunks::resetSource() {
     clear();
     std::unique_lock lock(mutex_);
     cv_.wait(lock,[&]{return !busy_;});
-    mips_.clear();mipBytes_.store(0,std::memory_order_relaxed);
+    // The worker is idle and holds the lock's handshake: its fields are ours now.
+    mips_.clear();mipsEvicted_.clear();mipBytes_.store(0,std::memory_order_relaxed);
+}
+void TerrainChunks::setMipBudget(size_t high,size_t low,uint64_t idleMs) {
+    mipHigh_.store(high,std::memory_order_relaxed);
+    mipLow_.store(std::min(low,high),std::memory_order_relaxed);
+    mipIdleMs_=idleMs;
+}
+void TerrainChunks::evictMips(size_t target) {
+    while(mipBytes_.load(std::memory_order_relaxed)>target) {
+        auto victim=mips_.end();
+        for(auto i=mips_.begin();i!=mips_.end();++i)
+            if(i->second.image.use_count()==1 && (victim==mips_.end() || i->second.lastUse<victim->second.lastUse))victim=i;
+        if(victim==mips_.end())return;   // the rest is pinned by the running job
+        mipBytes_.fetch_sub(victim->second.bytes,std::memory_order_relaxed);
+        mipEvictions_.fetch_add(1,std::memory_order_relaxed);
+        mipsEvicted_.insert(victim->first);
+        mips_.erase(victim);
+    }
 }
 terrain::SectionRef TerrainChunks::mip(uint32_t key,int level,bool stockTerrain) {
     if(!level)return compositor_.sectionImage(key,stockTerrain);
     const auto id=std::tuple{key,level,stockTerrain};
-    if(auto i=mips_.find(id);i!=mips_.end())return i->second;
+    if(auto i=mips_.find(id);i!=mips_.end()) {i->second.lastUse=++mipClock_;return i->second.image;}
     const terrain::SectionRef source=mip(key,level-1,stockTerrain);   // pinned while it is read
     const auto& src=*source;
     auto image=std::make_shared<jpeg::Image>();auto& out=*image;
@@ -82,8 +100,14 @@ terrain::SectionRef TerrainChunks::mip(uint32_t key,int level,bool stockTerrain)
             sum+=src.rgba[(size_t(std::min(y*2+dy,src.height-1))*src.width+std::min(x*2+dx,src.width-1))*4+c];
         out.rgba[(size_t(y)*out.width+x)*4+c]=uint8_t((sum+2)/4);
     }
-    mipBytes_.fetch_add(out.rgba.size(),std::memory_order_relaxed);
-    return mips_.emplace(id,std::move(image)).first->second;
+    const size_t bytes=out.rgba.capacity();
+    const size_t total=mipBytes_.fetch_add(bytes,std::memory_order_relaxed)+bytes;
+    if(total>mipPeakBytes_.load(std::memory_order_relaxed))mipPeakBytes_.store(total,std::memory_order_relaxed);
+    if(mipsEvicted_.count(id))mipRegens_.fetch_add(1,std::memory_order_relaxed);
+    terrain::SectionRef result=std::move(image);   // pinned by the caller
+    mips_[id]=Mip{result,bytes,++mipClock_};
+    if(total>mipHigh_.load(std::memory_order_relaxed))evictMips(mipLow_.load(std::memory_order_relaxed));
+    return result;
 }
 void TerrainChunks::compose(Job& j) {
     const auto [level,cx,cy]=j.key;const int tile=32>>level;
@@ -95,6 +119,11 @@ void TerrainChunks::compose(Job& j) {
         auto [entry,added]=decoded.try_emplace(t.key);
         if(added)try {entry->second=mip(t.key,level,j.stockTerrain);}catch(...) {}
         images.push_back(entry->second.get());
+    }
+    if(level) {   // level 0 images are the compositor's (counted there)
+        size_t pinned=0;
+        for(const auto& [key,image]:decoded)if(image)pinned+=image->rgba.capacity();
+        mipPinnedBytes_.store(pinned,std::memory_order_relaxed);
     }
     j.pixels.resize(size_t(j.w+2)*(j.h+2)*4);
     // A texel of real neighbouring terrain on every side prevents filtering
@@ -118,21 +147,50 @@ void TerrainChunks::compose(Job& j) {
 void TerrainChunks::work() {
     std::unique_lock lock(mutex_);
     for(;;) {
-        cv_.wait(lock,[&]{return stop_ || (!jobs_.empty() && done_.size()<8);});
+        cv_.wait(lock,[&]{return stop_ || trimMips_ || (!jobs_.empty() && done_.size()<8);});
         if(stop_)return;
+        if(trimMips_ && jobs_.empty()) {
+            // Sustained low demand (the render thread's request): no job runs, so no
+            // mip is pinned; the worker drops its own images (only it touches them).
+            trimMips_=false;busy_=true;lock.unlock();
+            if(!mips_.empty()) {
+                for(const auto& [id,m]:mips_)mipsEvicted_.insert(id);
+                mips_.clear();mipBytes_.store(0,std::memory_order_relaxed);
+                mipTrims_.fetch_add(1,std::memory_order_relaxed);
+            }
+            lock.lock();busy_=false;cv_.notify_all();continue;
+        }
+        trimMips_=false;   // work arrived: demand is not low after all
+        if(jobs_.empty() || done_.size()>=8)continue;
         auto job=std::move(jobs_.front());jobs_.pop_front();busy_=true;lock.unlock();
         const uint64_t started=nowNs();
         try {compose(job);}catch(...) {job.pixels.clear();}
-        // The job's pins are released: sections it held past the CPU budget can go now.
+        mipPinnedBytes_.store(0,std::memory_order_relaxed);
+        // The job's pins are released: images it held past the CPU budgets can go now.
         compositor_.trim();
+        if(mipBytes_.load(std::memory_order_relaxed)>mipHigh_.load(std::memory_order_relaxed))
+            evictMips(mipLow_.load(std::memory_order_relaxed));
         composeNs_.fetch_add(nowNs()-started,std::memory_order_relaxed);
         jobsCompleted_.fetch_add(1,std::memory_order_relaxed);
         lock.lock();if(job.epoch==epoch_ && !job.cancelled->load(std::memory_order_relaxed))done_.push_back(std::move(job));
         busy_=false;cv_.notify_all();
     }
 }
-void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,float y,float zoom,int w,int h,bool linear) {
-    ++frame_;visible_.clear();if(map.blocksX<=0 || map.blocksY<=0 || zoom<=0)return;
+void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,float y,float zoom,int w,int h,bool linear,uint64_t nowMs) {
+    ++frame_;visible_.clear();
+    // Mip idle trim (workstream J): terrain work = a job queued or completed. After
+    // mipIdleMs_ and 120 frames without any, ask the worker to drop its mip images
+    // (regenerated on demand; the chunks already composed are unaffected).
+    {
+        const size_t seen=size_t(jobsQueued_+jobsCompleted_.load(std::memory_order_relaxed));
+        if(seen!=lastJobsSeen_ || !lastWorkFrame_) {lastJobsSeen_=seen;lastWorkMs_=nowMs;lastWorkFrame_=frame_;}
+        else if(mipBytes_.load(std::memory_order_relaxed) && nowMs-lastWorkMs_>=mipIdleMs_ && frame_-lastWorkFrame_>=120) {
+            {std::lock_guard lock(mutex_);trimMips_=true;}
+            cv_.notify_all();
+            lastWorkMs_=nowMs;lastWorkFrame_=frame_;   // one request per idle period
+        }
+    }
+    if(map.blocksX<=0 || map.blocksY<=0 || zoom<=0)return;
     float sx=1,sy=1;SDL_RenderGetScale(renderer,&sx,&sy);
     level_=0;
     const float density=zoom*std::max(sx,sy);

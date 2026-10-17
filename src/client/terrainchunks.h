@@ -7,6 +7,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 #include <tuple>
 #include <utility>
@@ -26,6 +27,9 @@ public:
         uint64_t jobsQueued=0,jobsCompleted=0,jobsCancelled=0,jobsDiscarded=0,jobsUsed=0;
         uint64_t uploadBytes=0,uploadNs=0,composeNs=0;
         size_t mipBytes=0;   // worker-owned mip images (CPU), current
+        // Workstream J: the mip cache's CPU budget. Pinned = held by the running job.
+        size_t mipPinnedBytes=0,mipPeakBytes=0;
+        uint64_t mipEvictions=0,mipRegens=0,mipTrims=0;   // cumulative
     };
     explicit TerrainChunks(terrain::Compositor& compositor);
     ~TerrainChunks();
@@ -34,7 +38,15 @@ public:
     void invalidate(int bx0,int by0,int bx1,int by1);
     // Render thread: stop reading the old compositor before its images change.
     void resetSource();
-    void prepare(SDL_Renderer*,const tnt::Map&,float x,float y,float zoom,int w,int h,bool linear);
+    // nowMs: the owner's clock (wall time, or the render study's presentation clock)
+    // for the mip cache's idle trim.
+    void prepare(SDL_Renderer*,const tnt::Map&,float x,float y,float zoom,int w,int h,bool linear,uint64_t nowMs);
+    // CPU budget of the worker's mip images (workstream J): above `high` the least
+    // recently used images no running job holds are evicted down to `low`; after
+    // `idleMs` (and 120 frames) without terrain work the worker drops them all.
+    static constexpr size_t kMipHigh=size_t(64)<<20,kMipLow=size_t(56)<<20;
+    static constexpr uint64_t kMipIdleMs=30000;
+    void setMipBudget(size_t high,size_t low,uint64_t idleMs);
     bool draw(SDL_Renderer*,float x,float y,float zoom);
     // Did the last draw() cover this block, at the wanted level or a cached stand-in?
     bool covers(int blockX,int blockY) const;
@@ -49,6 +61,11 @@ public:
         s.jobsCompleted=jobsCompleted_.load(std::memory_order_relaxed);
         s.composeNs=composeNs_.load(std::memory_order_relaxed);
         s.mipBytes=mipBytes_.load(std::memory_order_relaxed);
+        s.mipPinnedBytes=mipPinnedBytes_.load(std::memory_order_relaxed);
+        s.mipPeakBytes=mipPeakBytes_.load(std::memory_order_relaxed);
+        s.mipEvictions=mipEvictions_.load(std::memory_order_relaxed);
+        s.mipRegens=mipRegens_.load(std::memory_order_relaxed);
+        s.mipTrims=mipTrims_.load(std::memory_order_relaxed);
         return s;
     }
 private:
@@ -68,8 +85,21 @@ private:
     // section). The compose job holds the pins of every image it reads until it ends,
     // so neither cache can drop an input under it (workstream J).
     terrain::SectionRef mip(uint32_t key,int level,bool stockTerrain);
+    // Worker only: evict least recently used, unpinned mips down to `target`.
+    void evictMips(size_t target);
     terrain::Compositor& compositor_;
-    std::map<std::tuple<uint32_t,int,bool>,terrain::SectionRef> mips_; // worker only
+    // Worker only (all fields): the mip cache. A mip is pinned while a SectionRef to it
+    // exists outside this map -- only the running job and mip()'s recursion hold one,
+    // both on the worker, so use_count() is exact here.
+    using MipId=std::tuple<uint32_t,int,bool>;
+    struct Mip {terrain::SectionRef image;size_t bytes=0;uint64_t lastUse=0;};
+    std::map<MipId,Mip> mips_;
+    std::set<MipId> mipsEvicted_;   // evicted/trimmed at least once (regeneration count)
+    uint64_t mipClock_=0;
+    std::atomic<size_t> mipHigh_{kMipHigh},mipLow_{kMipLow};
+    uint64_t mipIdleMs_=kMipIdleMs;   // render thread
+    bool trimMips_=false;             // guarded by mutex_: the render thread asks, the worker trims
+    uint64_t lastWorkMs_=0,lastWorkFrame_=0;size_t lastJobsSeen_=0;   // render thread
     std::thread worker_;
     std::mutex mutex_;
     std::condition_variable cv_;
@@ -80,7 +110,8 @@ private:
     // Telemetry: render-thread counters, plus worker-written atomics.
     uint64_t jobsQueued_=0,jobsCancelled_=0,jobsDiscarded_=0,jobsUsed_=0,uploadBytes_=0,uploadNs_=0;
     std::atomic<uint64_t> jobsCompleted_{0},composeNs_{0};
-    std::atomic<size_t> mipBytes_{0};
+    std::atomic<size_t> mipBytes_{0},mipPinnedBytes_{0},mipPeakBytes_{0};
+    std::atomic<uint64_t> mipEvictions_{0},mipRegens_{0},mipTrims_{0};
     std::map<Key,std::shared_ptr<std::atomic_bool>> pending_;
     std::map<Key,Entry> cache_;
     std::vector<Key> visible_;

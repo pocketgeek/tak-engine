@@ -28,6 +28,17 @@ void applySectionBudget(tak::terrain::Compositor& comp) {
     }
     comp.setBudget(high, low);
 }
+// Debug: TAK_TERRAIN_MIP_BUDGET_MIB=N (low = 7/8 of it), TAK_TERRAIN_MIP_IDLE_MS=N.
+void applyMipBudget(tak::TerrainChunks& chunks) {
+    size_t high = tak::TerrainChunks::kMipHigh, low = tak::TerrainChunks::kMipLow;
+    uint64_t idle = tak::TerrainChunks::kMipIdleMs;
+    if (const char* v = tak::devEnv("TAK_TERRAIN_MIP_BUDGET_MIB")) {
+        high = size_t(std::max(1L, std::atol(v))) << 20;
+        low = high - high / 8;
+    }
+    if (const char* v = tak::devEnv("TAK_TERRAIN_MIP_IDLE_MS")) idle = uint64_t(std::max(0L, std::atol(v)));
+    chunks.setMipBudget(high, low, idle);
+}
 }
 
 tak::tnt::Map MapView::genOrLoad(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
@@ -39,6 +50,7 @@ tak::tnt::Map MapView::genOrLoad(const tak::hpi::Vfs& vfs, const std::string& ma
 MapView::MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& mapPath)
     : ren_(ren), map_(genOrLoad(vfs, mapPath)), comp_(vfs) {
     applySectionBudget(comp_);
+    applyMipBudget(chunks_);
     secWorker_ = std::thread([this] { sectionWorkerLoop(); });
     queueAllSections();
 }
@@ -46,6 +58,7 @@ MapView::MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string&
 MapView::MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, tak::tnt::Map map)
     : ren_(ren), map_(std::move(map)), comp_(vfs) {
     applySectionBudget(comp_);
+    applyMipBudget(chunks_);
     secWorker_ = std::thread([this] { sectionWorkerLoop(); });
     queueAllSections();
 }
@@ -327,7 +340,7 @@ void MapView::draw(int winW, int winH) {
     comp_.trim();   // over the CPU budget only while pins held more (a cheap check otherwise)
     chunksEnabled_=!tak::devFlag("TAK_TERRAIN_CACHE_OFF");
     if(chunksEnabled_) {
-        chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_);
+        chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_,nowMs());
         const auto revision=chunks_.stats().revision;
         if(revision!=chunkRevision_) {tileBatchDirty_=true;chunkRevision_=revision;}
         if(chunks_.draw(ren_,offX_,offY_,zoom_)) {

@@ -3460,6 +3460,11 @@
         // compositor counts them (before J: the section worker's attempts, hits included).
         stats.add(RS::TerrainSectionDecodes, delta(sections.cpu.decodes, cursor.sections.cpu.decodes));
         stats.set(RS::TerrainMipCpuBytes, chunks.mipBytes);
+        stats.set(RS::TerrainMipPinnedBytes, chunks.mipPinnedBytes);
+        stats.set(RS::TerrainMipPeakBytes, chunks.mipPeakBytes);
+        stats.add(RS::TerrainMipEvictions, delta(chunks.mipEvictions, cursor.chunks.mipEvictions));
+        stats.add(RS::TerrainMipRegens, delta(chunks.mipRegens, cursor.chunks.mipRegens));
+        stats.add(RS::TerrainMipTrims, delta(chunks.mipTrims, cursor.chunks.mipTrims));
         stats.set(RS::TerrainSectionCpuBytes, sections.cpu.usedBytes);
         stats.set(RS::TerrainSectionPinnedBytes, sections.cpu.pinnedBytes);
         stats.set(RS::TerrainSectionPeakBytes, sections.cpu.peakBytes);

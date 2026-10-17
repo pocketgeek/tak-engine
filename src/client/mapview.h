@@ -107,6 +107,7 @@ public:
     void tilesEdited() { chunks_.clear(); queueAllSections(); tileBatchDirty_ = true; }
     void tilesEdited(int bx,int by,int width,int height);
     tak::TerrainChunks::Stats chunkStats() const { return chunks_.stats(); }
+    void setMipBudget(size_t high, size_t low, uint64_t idleMs) { chunks_.setMipBudget(high, low, idleMs); }
     size_t sectionBytes() const { return sectionBytes_; }   // resident section textures
     // Render telemetry for the section fallback (cumulative; the reader takes deltas).
     struct SectionStats {

@@ -205,6 +205,9 @@ int main(int argc,char** argv) try {
             reference.compositor().setBudget(SIZE_MAX,SIZE_MAX);
             const size_t high=size_t(4)<<20,low=size_t(3)<<20;
             budgeted.compositor().setBudget(high,low);
+            reference.setMipBudget(SIZE_MAX,SIZE_MAX,UINT64_MAX);
+            const size_t mipHigh=size_t(1)<<20;
+            budgeted.setMipBudget(mipHigh,mipHigh/2,200);
             SDL_RenderSetScale(renderer,1,1);SDL_RenderSetViewport(renderer,nullptr);SDL_RenderSetClipRect(renderer,&terrainClip);
             const auto settled=[&](MapView& view,float x,float y,float zoom) {
                 view.setZoom(zoom);view.setOffset(x,y);
@@ -222,13 +225,37 @@ int main(int argc,char** argv) try {
                 check(settled(budgeted,v[0],v[1],v[2])==settled(reference,v[0],v[1],v[2]),
                       "budgeted sections render the same terrain");
             const auto cpu=budgeted.sectionStats().cpu;
-            check(cpu.evictions>0,"fixture: the budget evicted sections");
+            const auto mips=budgeted.chunkStats();
+            check(mips.mipEvictions>0,"fixture: the mip budget evicted images");
+            check(mips.mipBytes<=mipHigh && mips.mipPinnedBytes==0,"mips settle inside their budget, unpinned");
+            check(reference.chunkStats().mipEvictions==0,"an unbounded mip cache never evicts");
+            // Sustained low demand (200 ms and 120 frames without terrain work): the worker
+            // drops its mips; a view that needs them again regenerates the same pixels.
+            {
+                // New work, then fewer than 120 frames: never a trim, however long they take.
+                budgeted.invalidateRenderTargets();settled(budgeted,9000,9000,.5f);
+                for(int frame=0;frame<100;++frame) {SDL_RenderClear(renderer);budgeted.draw(610,450);}
+                check(budgeted.chunkStats().mipTrims==mips.mipTrims,"no idle trim within 120 frames of terrain work");
+                const auto t=SDL_GetTicks();
+                while(budgeted.chunkStats().mipTrims==mips.mipTrims || budgeted.chunkStats().mipBytes) {
+                    SDL_RenderClear(renderer);budgeted.draw(610,450);SDL_Delay(2);
+                    check(SDL_GetTicks()-t<30000,"idle mip trim did not happen");
+                }
+                check(settled(budgeted,2000,6000,.25f)==settled(reference,2000,6000,.25f),"regenerated mips render the same terrain");
+                budgeted.invalidateRenderTargets();reference.invalidateRenderTargets();
+                check(settled(budgeted,300,300,.05f)==settled(reference,300,300,.05f),"regenerated coarse mips render the same terrain");
+                check(budgeted.chunkStats().mipRegens>0,"fixture: mips were regenerated after the trim");
+            }
             check(cpu.pinnedBytes==0,"no section stays pinned after its jobs");
             check(cpu.usedBytes<=high,"decoded sections settle inside the budget");
             check(reference.sectionStats().cpu.evictions==0,"an unbounded compositor never evicts");
             std::fprintf(stderr,"budgeted sections: decodes=%llu redecodes=%llu evictions=%llu used=%zu peak=%zu\n",
                 (unsigned long long)cpu.decodes,(unsigned long long)cpu.redecodes,
                 (unsigned long long)cpu.evictions,cpu.usedBytes,cpu.peakBytes);
+            const auto end=budgeted.chunkStats();
+            std::fprintf(stderr,"budgeted mips: evictions=%llu regens=%llu trims=%llu peak=%zu\n",
+                (unsigned long long)end.mipEvictions,(unsigned long long)end.mipRegens,
+                (unsigned long long)end.mipTrims,end.mipPeakBytes);
         }
         SDL_SetRenderTarget(renderer,nullptr);SDL_DestroyTexture(target);
     }
