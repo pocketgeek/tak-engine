@@ -74,7 +74,10 @@ struct Params {
     // storm's views are left within a second, and composing + uploading them at level 1
     // made a 7680x2160 jump storm 1.7x slower (measured).
     float fastViewsPerSecond=0.5f;
-    uint64_t calmMs=250,jumpStormMs=1000;
+    // A storm ends only after stormCalmMs without a jump (the storm window itself):
+    // reopening between the storm's jumps (after calmMs) queued work for each view that
+    // the next jump cancelled, and uploaded what had finished (measured).
+    uint64_t calmMs=250,jumpStormMs=1000,stormCalmMs=1000;
     int calmGateMaxLevel=0,stormGateMaxLevel=5;
     bool prioritize=true;       // worker takes the most urgent queued job (else FIFO)
     bool cancel=true;           // obsolete jobs are cancelled (else only clear()/invalidate() cancel)
@@ -162,7 +165,7 @@ public:
     // No fast motion or jump storm within calmMs (see Params): new work may be queued.
     bool calm() const {return motionCalm() && stormCalm();}
     bool motionCalm() const {return !fastSeen_ || nowMs_-fastMs_>=params_.calmMs;}
-    bool stormCalm() const {return !stormSeen_ || nowMs_-stormMs_>=params_.calmMs;}
+    bool stormCalm() const {return !stormSeen_ || nowMs_-stormMs_>=params_.stormCalmMs;}
     // The calm gate holds back new work this frame (Params::calmGate): fast motion up to
     // calmGateMaxLevel, jump storms up to stormGateMaxLevel.
     bool gated() const {

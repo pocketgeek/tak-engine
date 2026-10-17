@@ -138,6 +138,8 @@ int main() try {
         d.update(0,r,12.f*kSpan,cy0,vw,vh,kSpan,32,32,t+=500,++f,p);
         check(!d.calm(),"a second jump within the storm window gates");
         d.update(0,r,12.f*kSpan,cy0,vw,vh,kSpan,32,32,t+=p.calmMs,++f,p);
+        check(!d.calm(),"a storm outlasts calmMs: it ends after stormCalmMs without a jump");
+        d.update(0,r,12.f*kSpan,cy0,vw,vh,kSpan,32,32,t+=p.stormCalmMs-p.calmMs,++f,p);
         check(d.calm(),"calm again after the storm");
         d.update(0,Rect{20,20,23,22},22.f*kSpan,21.5f*kSpan,vw,vh,kSpan,32,32,t+=p.jumpStormMs,++f,p);
         check(d.calm(),"a jump after the storm window is immediate again");
@@ -176,7 +178,7 @@ int main() try {
             check(d.motionCalm() && !d.stormCalm(),"a second jump within the window is a storm, not motion");
             check(d.gated()==(variant!=2 && (level==0 || variant!=3)),
                   "a jump storm gates at every level (level 0 only with stormlevel0; never when off)");
-            d.update(level,r,12.f*kSpan,cy0,vw,vh,kSpan,32,32,t+=p.calmMs,++f,p);
+            d.update(level,r,12.f*kSpan,cy0,vw,vh,kSpan,32,32,t+=p.stormCalmMs,++f,p);
             check(!d.gated(),"calm again after the storm");
         }
     }
