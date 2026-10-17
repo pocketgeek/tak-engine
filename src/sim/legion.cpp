@@ -4845,41 +4845,18 @@ struct LegionNavigator::Impl {
         }
     }
 #endif
-    // Attach chain node `idx` (a transit region, or a halo region a member stepped into): build or find its tile,
-    // compute its offset and read it. False when it stays off the route: nothing to lead into, out of range, or its
-    // geometry relabelled since the plan (counted as an abandon).
-    bool attachNode(Field& f,size_t idx,uint64_t& spent) {
-        auto& p=planes[size_t(f.plane)];
+    // The key of chain node n's tile on plane p (attachNode): its identity, the boundary -- aimed (toward the exit of the
+    // region it leads into) or exact (`est`, the route's own values at the seeds) -- the region's soft levels as the
+    // route's command sees them, and the route's mover corridors that reach the region. `spent` gains the cells read
+    // (the work attachNode charges).
+    void tileKey(Tile& key,const Field& f,const ChainNode& n,const Plane& p,bool aimed,const std::vector<int>& seed,
+                 const std::vector<uint32_t>& est,uint64_t& spent) const {
         const int W=width();
-        const ChainNode& n=f.chain[idx];
-        const int other=n.onA?n.exit.b:n.exit.a;
-        if(!p.hier.built(n.s)||p.hier.gen(n.s)!=n.gen||!p.hier.built(other)||p.hier.gen(other)!=n.ngen) {
-            // Stage 7: the region's sector (or the portal's other one) was relabelled since the plan -- a local
-            // change. Re-resolve the node on the current geometry (the portal run on the same boundary that overlaps
-            // the old one most, still leading into the region the route continues in) and build that tile: only the
-            // dirty tile is rebuilt and the route keeps its topology. Gone (the portal closed, or it leads elsewhere
-            // now): the region stays off the route -- a closure of the route itself, whose group refreshes and
-            // re-plans (staticChanged touched it).
-            if(!resolveChainNode(f.chain,idx,p,spent)) {++acct.chainAbandons;return false;}
-        }
-        if(n.parent>=0&&!f.attached[size_t(n.parent)]) {++acct.chainSkips;return false;}
-        Tile key;
+        const int len=n.exit.len;
         key.plane=p.hier.id();key.sector=n.s;key.region=n.r;key.gen=n.gen;key.ngen=n.ngen;key.exit=n.exit;key.onA=n.onA;
         key.classSig=classSig(p);
-        // The seeds (the portal's other side) and the route's estimate there (its destination field, or the tile
-        // already attached for the region the portal leads into).
-        const int len=n.exit.len;
-        std::vector<int> seed(static_cast<size_t>(len));
-        std::vector<uint32_t> est(static_cast<size_t>(len));
-        bool all=true;
-        for(int i=0;i<len;++i) {
-            seed[size_t(i)]=n.onA?p.hier.farCell(n.exit,i):p.hier.nearCell(n.exit,i);
-            est[size_t(i)]=f.cellAt(seed[size_t(i)]%W,seed[size_t(i)]/W);
-            all&=est[size_t(i)]!=kUnreached;
-        }
-        spent+=uint64_t(len);
         key.boundary.assign(size_t(len),kUnreached);
-        if(n.parent>=0&&all) {
+        if(aimed) {
             // Aimed: toward the exit of the region it leads into, so the tile is that of every route leaving this
             // region by this portal toward that exit, whatever its destination. The boundary cost is LINEAR along
             // the run, falling toward the aim's side: kOrthogonal per cell of the seeds' projection onto the
@@ -4901,9 +4878,13 @@ struct LegionNavigator::Impl {
         } else key.boundary=est;   // exact: the route's own values (kUnreached: no seed there)
         // The region's soft levels as this route's command sees them (the soft rule is part of the key).
         const auto r=p.hier.rect(n.s);
+        // The region's origins, read from the sector's own labels (regionAt's lookup without its sector division).
+        const std::vector<uint16_t>& lab=p.hier.sector(n.s).label;
+        const int sh=p.hier.shift();
+        auto mine=[&](int x,int z) {return !lab.empty()&&lab[size_t(((z-r[1])<<sh)|(x-r[0]))]==n.r;};
         if(softCellCount) {
             for(int z=r[1];z<r[3];++z)for(int x=r[0];x<r[2];++x) {
-                if(p.hier.regionAt(z*W+x)!=n.r)continue;
+                if(!mine(x,z))continue;
                 const int lv=softLevel(x,z,p.footX,p.footZ,f.command,f.softCounts,f.ownArrivals,f.liftAllied);
                 if(lv)key.soft.push_back({uint16_t(((z-r[1])<<p.hier.shift())|(x-r[0])),uint8_t(lv)});
             }
@@ -4914,10 +4895,43 @@ struct LegionNavigator::Impl {
         for(const Corridor& c:f.avoid) {
             bool reaches=false;
             for(int z=r[1];z<r[3]&&!reaches;++z)for(int x=r[0];x<r[2]&&!reaches;++x)
-                reaches=p.hier.regionAt(z*W+x)==n.r&&corridorChargeOf({c},x,z,p.footX,p.footZ,kOrthogonal)>0;
+                reaches=mine(x,z)&&corridorChargeOf({c},x,z,p.footX,p.footZ,kOrthogonal)>0;
             spent+=uint64_t(r[2]-r[0])*uint64_t(r[3]-r[1]);
             if(reaches)key.avoid.push_back(c);
         }
+    }
+    // Attach chain node `idx` (a transit region, or a halo region a member stepped into): build or find its tile,
+    // compute its offset and read it. False when it stays off the route: nothing to lead into, out of range, or its
+    // geometry relabelled since the plan (counted as an abandon).
+    bool attachNode(Field& f,size_t idx,uint64_t& spent) {
+        auto& p=planes[size_t(f.plane)];
+        const int W=width();
+        const ChainNode& n=f.chain[idx];
+        const int other=n.onA?n.exit.b:n.exit.a;
+        if(!p.hier.built(n.s)||p.hier.gen(n.s)!=n.gen||!p.hier.built(other)||p.hier.gen(other)!=n.ngen) {
+            // Stage 7: the region's sector (or the portal's other one) was relabelled since the plan -- a local
+            // change. Re-resolve the node on the current geometry (the portal run on the same boundary that overlaps
+            // the old one most, still leading into the region the route continues in) and build that tile: only the
+            // dirty tile is rebuilt and the route keeps its topology. Gone (the portal closed, or it leads elsewhere
+            // now): the region stays off the route -- a closure of the route itself, whose group refreshes and
+            // re-plans (staticChanged touched it).
+            if(!resolveChainNode(f.chain,idx,p,spent)) {++acct.chainAbandons;return false;}
+        }
+        if(n.parent>=0&&!f.attached[size_t(n.parent)]) {++acct.chainSkips;return false;}
+        // The seeds (the portal's other side) and the route's estimate there (its destination field, or the tile
+        // already attached for the region the portal leads into).
+        const int len=n.exit.len;
+        std::vector<int> seed(static_cast<size_t>(len));
+        std::vector<uint32_t> est(static_cast<size_t>(len));
+        bool all=true;
+        for(int i=0;i<len;++i) {
+            seed[size_t(i)]=n.onA?p.hier.farCell(n.exit,i):p.hier.nearCell(n.exit,i);
+            est[size_t(i)]=f.cellAt(seed[size_t(i)]%W,seed[size_t(i)]/W);
+            all&=est[size_t(i)]!=kUnreached;
+        }
+        spent+=uint64_t(len);
+        Tile key;
+        tileKey(key,f,n,p,n.parent>=0&&all,seed,est,spent);
         uint64_t built=0;
         const std::shared_ptr<Tile> tile=tileFor(std::move(key),p,built,f.seedKey);
         spent+=built;
@@ -5122,7 +5136,10 @@ struct LegionNavigator::Impl {
             seedAt[c]=t.boundary[size_t(i)];
             open.push({t.boundary[size_t(i)],c});
         }
-        auto inRegion=[&](int x,int z) {return x>=r[0]&&z>=r[1]&&x<r[2]&&z<r[3]&&p.hier.regionAt(z*W+x)==t.region;};
+        const std::vector<uint16_t>& lab=p.hier.sector(t.sector).label;   // regionAt within the sector, without its division
+        auto inRegion=[&](int x,int z) {
+            return x>=r[0]&&z>=r[1]&&x<r[2]&&z<r[3]&&!lab.empty()&&lab[size_t(((z-r[1])<<sh)|(x-r[0]))]==t.region;
+        };
         uint64_t work=0;
         while(!open.empty()) {
             const auto [d,c]=open.top();
