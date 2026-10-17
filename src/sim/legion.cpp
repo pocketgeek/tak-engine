@@ -3217,6 +3217,38 @@ struct LegionNavigator::Impl {
         }
         members.erase(found);
     }
+    // Stage 8: shared destination areas across orders. destArea: per (player, 16 px cell of an explicit area's
+    // point), the area key and exact point of the latest explicit area whose point it is. An explicit order sent
+    // within a cell of such a point while that area still gathers there (its point is live, or bodies settled
+    // there as its arrivals) takes that area's key and exact point instead of its own: the same command (its
+    // settled bodies and its queue are no obstacles to the newcomers, as they are none to each other), the same
+    // formation and crowd bound. Until stage 8 a second order to the point where the first was arriving was a
+    // second destination crowd that planned round the first one's arrivals as traffic (churn-1000's re-sent half).
+    // Hashed (its entries); stale entries are dropped when looked up.
+    std::map<std::tuple<int,int32_t,int32_t>,std::pair<uint32_t,std::pair<int32_t,int32_t>>> destArea;
+    void sharedArea(int player,uint32_t& command,Fixed& tx,Fixed& tz) {
+        const int32_t cx=int32_t(tx.v>>20),cz=int32_t(tz.v>>20);
+        const std::tuple<int,int32_t,int32_t>* best=nullptr;int64_t bestD=0;
+        std::vector<std::tuple<int,int32_t,int32_t>> stale;
+        for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx) {
+            const auto at=destArea.find({player,cx+dx,cz+dz});
+            if(at==destArea.end())continue;
+            const auto& [key,pt]=at->second;
+            if(key==command)continue;
+            const std::tuple<int,uint32_t,int32_t,int32_t> full{player,key,pt.first,pt.second};
+            const auto live=points.find(full);
+            const bool settled=anchorsAt.count({player,pt.first,pt.second})>0;
+            if((live==points.end()||live->second.refs<=0)&&!settled) {stale.push_back(at->first);continue;}
+            const int64_t ex=std::abs(int64_t(pt.first)-tx.v),ez=std::abs(int64_t(pt.second)-tz.v),d=std::max(ex,ez);
+            if(d>ConvoyTable::kSharedReach)continue;
+            if(!best||d<bestD||(d==bestD&&key>destArea.at(*best).first)) {best=&at->first;bestD=d;}
+        }
+        if(best) {
+            const auto& [key,pt]=destArea.at(*best);
+            command=key;tx.v=pt.first;tz.v=pt.second;++acct.sharedAreas;
+        }
+        for(const auto& k:stale)if(!best||k!=*best)destArea.erase(k);
+    }
     void registerMove(Unit& u) {
         // A re-registration of the same order keeps its approach clock: the
         // 5-minute retire counts from the first time this goal was found
@@ -3255,12 +3287,15 @@ struct LegionNavigator::Impl {
         if(!hadPrior||priorKey!=legKey(leg,kind)||priorKind!=kind)++stats.missionLegs[size_t(kind)];
         const int planeIndex=planeFor(*u.type);
         auto& p=plane(planeIndex);
-        const auto [tx,tz]=target(leg);
+        auto [tx,tz]=target(leg);
         // The command a member belongs to: the order's convoy (one click,
         // however many ticks the uplink split it over; its issue tick when
         // unstamped); every patrol lap on its own; moving goals on the
-        // shared re-seed grid.
-        const uint32_t command=leg.convoyTick!=ConvoyTable::kNone?leg.convoyTick:leg.issuedTick;
+        // shared re-seed grid. Stage 8: an explicit order sent to the point
+        // where an earlier area of the same player still gathers (sharedArea)
+        // joins that area: one destination crowd, not two.
+        uint32_t command=leg.convoyTick!=ConvoyTable::kNone?leg.convoyTick:leg.issuedTick;
+        if(rule.area&&explicitArea(command))sharedArea(u.player,command,tx,tz);
         int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
         const int sx=footprintOrigin(u.x,u.type->footX),sz=footprintOrigin(u.z,u.type->footZ);
         const int reach=legal(p,sx,sz)?compAt(p,sz*width()+sx):-1;
@@ -3320,7 +3355,12 @@ struct LegionNavigator::Impl {
         // groups inside an order was measured and rejected: the click-heavy
         // fixtures move with the simultaneous start, not with the parts.)
         m.point={rule.area?u.player:-1-u.id,rule.area?command:issue,tx.v,tz.v};m.part=leg.issuedTick;
-        {auto& pt=points[m.point];++pt.refs;m.pt=&pt;}
+        {
+            auto [pit,fresh]=points.try_emplace(m.point);
+            auto& pt=pit->second;++pt.refs;m.pt=&pt;
+            if(fresh&&rule.area&&explicitArea(command))
+                destArea[{u.player,int32_t(tx.v>>20),int32_t(tz.v>>20)}]={command,{tx.v,tz.v}};
+        }
         unpin();
         if(m.goal<0) {putMember(u.id,m);return;}   // trapped on first move
         const int x=m.goal%width(),z=m.goal/width();
@@ -11292,6 +11332,11 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(p.head)<<32|uint32_t(p.nextLabel));
         }
         h=mix(h,uint64_t(nextGroup));
+        // Stage 8: the shared destination areas.
+        for(const auto& [k,v]:destArea) {
+            h=mix(h,0x6465737461ull^uint64_t(uint32_t(std::get<0>(k)))<<40);h=mix(h,uint64_t(uint32_t(std::get<1>(k)))<<32|uint32_t(std::get<2>(k)));
+            h=mix(h,uint64_t(v.first)<<32|uint32_t(v.second.first));h=mix(h,uint32_t(v.second.second));
+        }
         // Stage 8: the openings' queue delays (decision inputs between recounts), while nonzero.
         for(size_t i=0;i<openings.size();++i)
             if(openings[i].delay[0]||openings[i].delay[1]) {h=mix(h,0x6f70656eull^uint64_t(i)<<32);h=mix(h,uint64_t(openings[i].delay[0])<<32|openings[i].delay[1]);}

@@ -163,6 +163,7 @@ struct NavAccounting {
     uint64_t passAdmits = 0, admitWaits = 0, admitTurns = 0, admitClosings = 0;
     // Awareness by streams: movers that were one stream of a point split in several (an army in separate parts).
     uint64_t streamMovers = 0, streamWork = 0;   // ... and the members and buckets the stream split read
+    uint64_t sharedAreas = 0;   // member registrations that joined an earlier order's destination area (one crowd)
 };
 
 // Per-tick budgets (constants: the same on every peer). Units and the reference cost per unit
