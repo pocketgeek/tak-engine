@@ -67,8 +67,10 @@
 //                                              stage 6: corridor fields built, corridors and chains rebuilt round a
 //                                              member outside them, plans the search could not complete (windows)
 //   route.chains, route.tiles_built, route.tile_hits, route.tile_evictions, route.tile_bytes_peak,
-//   route.chain_skips, route.chain_abandons    stage 6: tile chains built; shared tiles built, found, evicted;
-//                                              the tile cache's peak; regions left off; chains a relabel ended
+//   route.chain_skips, route.chain_abandons, route.chain_repairs, route.tile_cross_hits
+//                                              stage 6: tile chains built; shared tiles built, found, evicted;
+//                                              the tile cache's peak; regions left off (nothing to lead into /
+//                                              relabelled); halo repairs; hits by routes to other goals
 // Everything is integer and in body order, so every compiler reports the same numbers.
 #include "legion_observe.h"
 #include "sim/legion.h"
@@ -353,6 +355,7 @@ public:
                 k.emplace_back(p + "route.chain_skips", int64_t(a.chainSkips));
                 k.emplace_back(p + "route.chain_abandons", int64_t(a.chainAbandons));
                 k.emplace_back(p + "route.chain_repairs", int64_t(a.chainRepairs));
+                k.emplace_back(p + "route.tile_cross_hits", int64_t(a.tileCrossHits));
             }
         }
     }

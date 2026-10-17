@@ -137,6 +137,7 @@ struct NavAccounting {
     // their sector was relabelled since the plan.
     uint64_t chains = 0, tilesBuilt = 0, tileHits = 0, tileEvictions = 0, tileBytesPeak = 0, chainSkips = 0, chainAbandons = 0;
     uint64_t chainRepairs = 0;   // halo regions attached because a member stepped into one
+    uint64_t tileCrossHits = 0;  // tile hits by a route to other goals than the route that built the tile
 };
 
 // Per-tick budgets (constants: the same on every peer). Units and the reference cost per unit

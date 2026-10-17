@@ -408,6 +408,7 @@ struct LegionNavigator::Impl {
         // identity already separates classes -- but checked under TAK_LEGION_VERIFY on every attach, so a plane
         // slot reused without a new generation would be caught reading its previous class's tiles.
         uint64_t classSig=0;
+        uint64_t builtFor=0;   // the goals (seedsKey) of the route that built it: observation only (cross-destination hits)
         bool sameKey(const Tile& o) const {
             return plane==o.plane&&sector==o.sector&&region==o.region&&gen==o.gen&&ngen==o.ngen&&onA==o.onA&&aim==o.aim&&
                    exit.a==o.exit.a&&exit.b==o.exit.b&&exit.ra==o.exit.ra&&exit.rb==o.exit.rb&&exit.side==o.exit.side&&
@@ -1948,13 +1949,14 @@ struct LegionNavigator::Impl {
     // ones. Every tick() closes the window the previous one opened (foldWindow): the work of the
     // window -- the tick's own plus what ran between ticks (orders) -- goes into the per-class
     // maxima. No decision reads any of it.
-    struct NavCounters {uint64_t initCells=0,resolveCells=0,planeBuild=0,planeRelabel=0,ringCells=0,connectivity=0,routeSearch=0,tileBuild=0;};
+    // tileBuildServed: the part of tileBuild an advanceChain returned to serveFields (so in Stats::fieldWork too).
+    struct NavCounters {uint64_t initCells=0,resolveCells=0,planeBuild=0,planeRelabel=0,ringCells=0,connectivity=0,routeSearch=0,tileBuild=0,tileBuildServed=0;};
     mutable NavCounters navc;
     mutable NavAccounting acct;
     std::array<uint64_t,size_t(NavWork::Count)> acctMark{};
     std::array<uint64_t,size_t(NavWork::Count)> workTotals() const {
         std::array<uint64_t,size_t(NavWork::Count)> t{};
-        t[size_t(NavWork::FieldRelax)]=stats.fieldWork;
+        t[size_t(NavWork::FieldRelax)]=stats.fieldWork-std::min(stats.fieldWork,navc.tileBuildServed);
         t[size_t(NavWork::FieldInit)]=navc.initCells;
         t[size_t(NavWork::PlaneBuild)]=navc.planeBuild;
         t[size_t(NavWork::PlaneRelabel)]=navc.planeRelabel;
@@ -3644,12 +3646,13 @@ struct LegionNavigator::Impl {
         };
         const auto window=fieldWindow(g);
         if(auto shared=sharedField(g,window,command,own,nullptr))return install(std::move(shared));
-        if(shareOnly)return Start::NoShare;
-        // Stage 6: the window, or a corridor through the hierarchy (planRoute; reused for kPlanReuse ticks of the
-        // same epoch and membership while the start waits for budget or room).
+        // Stage 6: the window, or a corridor or chain through the hierarchy (planRoute; reused for kPlanReuse ticks
+        // of the same epoch and membership while the start waits for budget or room). A share-only start may take
+        // a corridor or chain another group already has too (a share allocates nothing).
         const RoutePlan& plan=routePlan(g,window);
         if(plan.kind!=KindWindow)
             if(auto shared=sharedField(g,plan.box,command,own,&plan))return install(std::move(shared));
+        if(shareOnly)return Start::NoShare;
         const auto box=plan.box;
         const size_t cells=plan.kind!=KindWindow?plan.cells:size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
         if(cells/NavBudget::kInitDiv>initRoom)return Start::NoBudget;
@@ -3718,12 +3721,11 @@ struct LegionNavigator::Impl {
             ++acct.chains;
         } else f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,gSectorShift);
         f->counted=cells;
-        g.plan.reset();g.planTick=kNoTick;   // built: the next build plans afresh
         navc.initCells+=cells;acct.initMax=std::max<uint64_t>(acct.initMax,cells);
         startCharge+=cells/NavBudget::kInitDiv;
         f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;
         f->lastServed=w.tickCounter_;
-        {const auto whole=fieldWindow(g,true);f->bounded=plan.kind!=KindWindow||whole!=box;}
+        {const auto whole=fieldWindow(g,true);f->bounded=f->kind!=KindWindow||whole!=box;}
         if(g.bodyMaxX>=g.bodyMinX) {f->aimed=true;f->tx=(g.bodyMinX+g.bodyMaxX)/2;f->tz=(g.bodyMinZ+g.bodyMaxZ)/2;}
         for(int s:g.seeds) {
             if(!f->inside(s%f->W,s/f->W))continue;
@@ -3732,6 +3734,8 @@ struct LegionNavigator::Impl {
         std::sort(f->seedKeys.begin(),f->seedKeys.end());
         f->current=f->seedKeys.empty()?0:f->seedKeys.front().first;
         f->syncInflight();
+        // Built: the next build plans afresh. (`plan` refers into g.plan: nothing reads it after this.)
+        g.plan.reset();g.planTick=kNoTick;
         if(g.field)g.next=std::move(f);else g.field=std::move(f);
         listGroup(g);
         return Start::Built;
@@ -3821,7 +3825,7 @@ struct LegionNavigator::Impl {
             if(gVerify)verifyDescent(f);
 #endif
         }
-        navc.tileBuild+=spent;
+        navc.tileBuild+=spent;navc.tileBuildServed+=spent;
         f.work+=spent+1;   // the version: estimates changed
         return spent;
     }
@@ -3830,6 +3834,9 @@ struct LegionNavigator::Impl {
     // whose estimate is strictly lower (so every descent strictly lowers the estimate, across tiles too, and ends on
     // a goal: no loop, no false minimum).
     void verifyDescent(const Field& f) const {
+        // A touched chain's tiles were built on older geometry around the change (staticChanged keeps it steering
+        // until its refresh lands): the current plane's steps do not describe them.
+        if(f.touched)return;
         const auto& p=planes[size_t(f.plane)];
         const int W=width();
         for(int z=f.z0;z<f.z0+f.fh;++z)for(int x=f.x0;x<f.x0+f.fw;++x) {
@@ -3915,7 +3922,7 @@ struct LegionNavigator::Impl {
             if(reaches)key.avoid.push_back(c);
         }
         uint64_t built=0;
-        const std::shared_ptr<Tile> tile=tileFor(std::move(key),p,built);
+        const std::shared_ptr<Tile> tile=tileFor(std::move(key),p,built,f.seedKey);
         spent+=built;
         // The offset: the largest (estimate - boundary cost) over the seeds, so a cell beside a seed reads more than
         // the seed itself and every descent step lowers the estimate (an exact tile's is 0).
@@ -3926,10 +3933,15 @@ struct LegionNavigator::Impl {
             const int64_t d=int64_t(est[size_t(i)])-int64_t(tile->boundary[size_t(i)]);
             rem=any?std::max(rem,d):d;any=true;
         }
-        if(!any||int64_t(tile->maxValue)+rem>=int64_t(kUnreached)-1||int64_t(tile->maxValue)+rem<0) {++acct.chainSkips;return false;}
+        if(!any||int64_t(tile->maxValue)+rem>=int64_t(kUnreached)-1||int64_t(tile->maxValue)+rem<0) {
+            ++acct.chainSkips;
+            if(tileBytes>kTileBytes)evictTiles();
+            return false;
+        }
         attachTile(f,n,tile,rem);
         f.attached[idx]=1;
         f.softened|=!tile->soft.empty();
+        if(tileBytes>kTileBytes)evictTiles();   // after the attach: the tile counts this route now
         return true;
     }
     // A member stands in a region of its group's chain's halo that is not attached yet: queue the repair (served in
@@ -3997,6 +4009,8 @@ struct LegionNavigator::Impl {
                     mine[c]=v==kUnreached?kUnreached:uint32_t(int64_t(v)+f.offset[ti]);
                 }
                 f.own[ti]=std::move(mine);f.tiles[ti]=f.own[ti].get();f.offset[ti]=0;++f.ownTiles;
+                // Storage of the route's own: in the field allowance like its destination's tiles.
+                f.counted+=cells;if(f.totals)f.totals->cells+=cells;
             }
             for(size_t c=0;c<cells;++c)
                 if(t->values[c]!=kUnreached&&f.own[ti][c]==kUnreached)f.own[ti][c]=uint32_t(int64_t(t->values[c])+rem);
@@ -4023,11 +4037,12 @@ struct LegionNavigator::Impl {
                                     h=mix(h,uint64_t(c.ux)^uint64_t(c.uz)<<20^uint64_t(c.L)<<40);h=mix(h,uint64_t(c.len)^uint64_t(c.speed)<<24^uint64_t(c.lead)<<48);}
         return h;
     }
-    std::shared_ptr<Tile> tileFor(Tile&& key,const Plane& p,uint64_t& built) {
+    std::shared_ptr<Tile> tileFor(Tile&& key,const Plane& p,uint64_t& built,uint64_t asker) {
         key.hash=tileHash(key);
         auto& bucket=tileCache[key.hash];
         for(const auto& t:bucket)
-            if(t->sameKey(key)) {t->lastUse=w.tickCounter_;++acct.tileHits;return t;}
+            if(t->sameKey(key)) {t->lastUse=w.tickCounter_;++acct.tileHits;acct.tileCrossHits+=t->builtFor!=asker;return t;}
+        key.builtFor=asker;
         auto t=std::make_shared<Tile>(std::move(key));
         built+=buildTile(*t,p);
         t->seq=++tileSeq;t->lastUse=w.tickCounter_;
@@ -4035,8 +4050,7 @@ struct LegionNavigator::Impl {
         tileBytes+=t->bytes();++tileCount;++acct.tilesBuilt;
         tileDigest+=mix(t->hash,t->seq);
         acct.tileBytesPeak=std::max(acct.tileBytesPeak,tileBytes);
-        if(tileBytes>kTileBytes)evictTiles();
-        return t;
+        return t;   // the caller evicts (evictTiles) once it has attached it, so the new tile is never the victim
     }
     uint64_t buildTile(Tile& t,const Plane& p) {
         const int W=width(),sh=p.hier.shift(),K=1<<sh;
