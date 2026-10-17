@@ -204,16 +204,47 @@ replays must not move; nothing in this program may feed the simulation.
   strings. `--mpai` Retail 60 s = `2c39430636a3dbda`. Baseline for later
   comparisons: `~/tak-tmp/render-opt/takclient-J3-candidate` (code of
   `3dc315c4`; the release-build fix only moves a struct declaration).
-- Workstreams K–N: not started.
-- **Next concrete step:** workstream K (camera-prioritized terrain). J left
+- **Workstream K (camera-prioritized terrain) is implemented and verified**
+  (commits `4c7a018d` harness + readiness gauges + terrain scenes, `01cd7a01`
+  policy `client/terrainwork.h` + `terrain_work` test, `85bbb1eb` TerrainChunks
+  integration (priority, cancellation with keep band and level grace,
+  stand-ins last, off-view room, calm gate, upload budget) + `terrain_schedule`
+  test, `61be4a96` sections join the frame budget, `5eebec8b` settle harness,
+  `b98183b1` no per-frame passes when nothing is missing (a measured fix),
+  then the docs commit). Tests: `terrain_work` (718 checks; nine header
+  mutations fail it), `terrain_schedule` (four in-game mutations fail it),
+  `terrain_cache`, TSan on the integration (scenarios 1–7), `ctest -L quick`
+  390/390 on build-o2 at `b98183b1`; the Release `takclient` builds without
+  the K debug or telemetry strings. Captures: settled captures (both builds
+  wait for finished terrain) identical in every scene that can settle;
+  normal captures differ only by terrain readiness, the asynchronous minimap,
+  and the constrained shadow-atlas side effect (Experiment 13). Timing: no
+  material frame-time change in 9 scenes × 2 sizes in Experiment 13; in the
+  13b re-time terrain-zoom-osc 7680×2160 total p95 +31.8% (material; mean
+  +0.6%, p99 −8.8%) and still-view `t_terrain` +6 µs — recorded trade-offs.
+  `--mpai` not run: only `src/client`, `tools/` and CMake changed; every
+  benchmark run checks the world hash (identical A vs B). Baseline for later
+  comparisons: `~/tak-tmp/render-opt/takclient-K5-candidate` (code of
+  `b98183b1`); K0 (`takclient-K0-baseline`, `4c7a018d`) = J + the K harness.
+- Workstreams L–N: not started.
+- **Next concrete step:** workstream L (renderer-owned spatial index for unit
+  candidates). Today every frame scans all of `front().live` with fog and
+  frustum tests (`gameview_render.cpp`, candidate selection); features
+  already use `FeatureIndex` with a `TAK_FEATURE_FULL_SCAN` reference. Start
+  from `total10k-subset` (10,000 units, small visible subset) and keep
+  `total10k-visible` as the case the index cannot help. K follow-ups (not
+  required for L): the driver stall on some chunk uploads (cause unknown;
+  splitting uploads into strips over frames not tried); the level rule that
+  lets a 7680×2160 view at zoom just above 0.5 need more chunks than the
+  256 MiB budget (pixels would change); whether stand-in retention should
+  yield to the shadow atlas under very small GPU caps.
+- (Superseded, kept for the record) Former next step, workstream K: J left
   what K needs: chunk jobs pin their inputs (cancellation is lifetime-safe:
   a cancelled job only drops pins), the decode worker already has demand vs
   speculative requests, and `TerrainChunks::prepare` gets the owner's clock.
-  Still missing (checklist row K): priority order of queued jobs (FIFO now),
-  cancellation of queued jobs outside a guard region with hysteresis, section
-  and chunk upload coordination by byte budget. J follow-ups (not required
-  for K): whether to call `malloc_trim` after large trims (RSS, unmeasured);
-  the possible small positive draw bias in Experiment 12 (inside noise).
+  J follow-ups (still open, not required for L): whether to call
+  `malloc_trim` after large trims (RSS, unmeasured); the possible small
+  positive draw bias in Experiment 12 (inside noise).
 - (Superseded, kept for the record) Former next step, workstream J (CPU cache budgets): fix the
   reference lifetimes of `terrain::Compositor::sectionImage` consumers
   (terrain chunk worker, `MapView`, minimap `renderBlock`, Cartographer
@@ -291,7 +322,7 @@ evidence; nothing below is already fully satisfied.
 | H | Less full-scene vertex copying | **verified** | Workstream H (`97e42721` planner + GL buffer + `drawBuffer`, `8d96905f` ordered commands + arena integration, `37ecd884` staged writes (mapping rejected), `d8744efe` rollover with two storages, `e311cae5` release-build fix; after the verifier's rejection `0cbc4401` bounded `bodyVerts_` growth, double copies counted, write-failure fallback fixed + `render_body_arena_fail`). Vertex journey traced (see "Retained body vertices"): before H every visible body was copied twice per frame (per-unit verts → `bodyVerts_` → driver client-array copy, or SDL's conversion for batches < 512). Now the body pass is ordered commands (texture + ranges of per-unit sources; features, special units and the ground/air boundary as boundaries; order and state as before). On the `opengl` backend, commands of native size draw from a bounded retained arena (`client/vertexarena.h`): sources keyed by entry handle + `revision` (quads by value) keep their range; changed ones are copied whole (staged in `bodyVerts_`' tail, one `glBufferSubData`; their runs in small assembled commands are copied twice, `arena_verts_twice`, 0.4% of copies in a steady dense frame) into storage no pending draw reads; a full storage drains while a new one fills (rollover, budgeted migration of whole commands), so no frame rewrites everything; one native draw per command (`glMultiDrawArrays` over merged ranges). Frames with mostly new content (camera motion) stream exactly as before; the assembled SDL path stays the portable fallback (other backends, fractional scale, texture checks, failures). GL 1.5 buffer objects only; no fences, persistent mapping or unsynchronized writes. Every storage counted in gpuvram incl. 3 frames in flight; ≤ 3/4 of the GPU cap, 64 MiB per storage; released after 2 s idle, under GPU pressure, on resets, on failures (then 120 frames of streaming); context loss forgets the buffers. Tests: `vertex_arena` (simulated buffer, rollover scenario, 12 mutations fail it, ASan/UBSan), `geometrysubmit` (+72 GL arena-vs-client-arrays-vs-SDL comparisons), `render_body_arena` / `_still` / `_fail` (software renderer, simulated storage, every assembled command checked too, injected write failures; a constant-revision mutation fails the first, a gap-leaving fallback the last), GL verifier runs (`TAK_BODY_ARENA_VERIFY`). Captures identical to G2 (Experiments 10, 10b). Measured (Experiment 10; "x/y" = Experiment 10 / 10b): body vertices copied −91% / −94% and bytes handed to GL −91% in the dense / stationary 7680×2160 views; body submit −26% to −37% in total10k-visible (both sizes) and stationary-mixed 7680×2160 (material), only −8.6% / −9.8% in stationary-mixed 1280×960 (most of its body vertices stay in small, assembled commands); stationary-mixed 7680×2160 draw −26/−28%, total −24.5/−25%, GPU timeline −28.5/−31% (material); total10k-visible pipelined 7680×2160 total −7.8/−6.7%, GPU −9.9/−9.1% (material), 1280×960 draw −12.6%, GPU −17.8/−20.9% (material in 10b); pan/moving neutral. Memory: tracked GPU +1.6 to +64 MiB (the arena); `bodyVerts_` capacity +5.9% over the pre-H buffer in the retained scenes (growth slack 1/16; peak need +0.5% from the double copies) and −43% in moving (pre-H doubled there) — H4 had doubled it to 2× the need (Experiment 10b). Limitation: forced-completion total10k-visible 7680×2160 frame total +3.9% (material in Experiment 10, +3.6% not material in 10b; present waits ~1.8 ms longer; pipelined frames −7.8%). |
 | I | Cost-based work scheduling | **verified** | Workstream I (`a5ba14e4` pool + `WorkPlan` + `work_schedule` test, `68021102` planned GameView passes + `TAK_SCHEDULE_VERIFY` + `render_schedule` ctest + telemetry, `590db308` cheaper plans + no copy cap, both measured fixes). Before: `ThreadPool` of `hardware_concurrency` threads, every pass woke every worker (`notify_all`) in fixed 8-item chunks above an item-count threshold and the caller waited for every worker, including those that woke after the work was gone. Now (`client/threadpool.h`): sized by the process's CPU affinity (SimPool's rule); a pass posts only the workers it asks for (one condition variable per worker); participants claim chunks off one atomic word and the caller waits for the CHUNKS, so late wakers never delay it and never touch a finished pass (job fields read only by a thread holding an unfinished chunk). `WorkPlan` (`client/workschedule.h`) cuts contiguous chunks of ~10 µs estimated work, one participant per 40 µs, serial below 30 µs; estimates calibrated on serial per-unit / per-pass timings: geometry from each entry's previous build (key words, stages, body vertices, shadow points; 16-bit `UnitGeom::nextCost`, a dense copy taken at claim), shadow point checks by points, shadow tile transform by points over the page's dirty tiles only, body copy by bytes + per range. Every item writes only its own outputs, so results are independent of the plan and of completion order (deterministic output; captures identical, serial reference identical). Tests: `work_schedule` (ASan/UBSan, TSan; ten mutations fail it), `render_schedule` (four in-game mutations fail it), `render_telemetry`. Measured (Experiment 11, vs H5): pool dispatch −87% to −99%, caller wait −44% to −96%, wake latency −89% to −99%; stationary-mixed 7680×2160 draw −11.4% and total p99 −13.8%, total10k-visible 1280×960 total p95 −19.4% / p99 −13.8% (material); other draw deltas −1.3% to −7.6% inside noise; nothing regressed materially. Planning alone (same binary vs uniform passes) is neutral on frame time at both sizes (−5.4% to +2.1%, inside noise) and halves woken workers on small passes; the gain comes from the pool mechanics. Not measured: competition with a concurrently running simulation (the study runs it inline); non-Linux pool sizing (no affinity query). |
 | J | CPU cache budgets | **verified** | Workstream J (`dac6e399` pinned section handles + consumer audit, `469f743a` section budget, `8cb58b59` mip budget + idle trim, `2cb7cdf5` retained-buffer and worker-scratch trims + CPU accounting, `3dc315c4` working-set rule, a measured fix of pure LRU). **Lifetimes first:** `Compositor::sectionImage` returned a reference valid until `clear()`; it now returns a `SectionRef` (shared, immutable) that pins the image. Every consumer was audited and converted before eviction was enabled: the chunk worker pins per job, MapView per upload, renderBlock (minimap crunch, Cartographer) per copy, validators/tools transiently. The decode runs outside the cache lock with in-flight dedup. **Sections:** 128/112 MiB budget over unpinned sections cold for 10 s; LRU; prefetch only into free budget; the render thread never decodes in play; `trim()` per job and per frame. 97.7% of the 1371 shipped maps stay under budget (median 21 MiB, Ulasem 64, max 402) and behave as before. **Mips:** worker-owned LRU, 64/56 MiB, idle trim after 30 s + 120 frames posted by the render thread and done by the worker. **Buffers:** `TrimTracker` (two half-window buckets, 5 s and 120 frames; capacity > 2× window peak, floor 64 KiB; to peak + 1/16; regrowth backoff up to 8×; never per frame) over the body buffer, frame lists, shadow scratch and F's cell stamps, model scratch, and the per-participant worker scratch (`ThreadPool::participant`; trimmed by the render thread between passes). **Accounting:** used/retained/pinned/evictable/peak per component and totals (`cpu_cache_*`), eviction/redecode/regeneration/trim counts; GPU and RSS separate, exclusions listed. Tests: `terrain_compositor` (ASan/UBSan, TSan; mutations fail it), `terrain_cache` (budgeted = unbounded texel for texel), `cpu_budget`, `work_schedule` (participants; TSan), `render_cpu_budget`. Measured (Experiment 12): no material frame-time change in any timed scene; battle-sparse releases 19 MiB 300 frames after the view empties (the trim frame is not measurably slower); total10k-visible releases 81 MiB of first-frame capacity at frame 450 at 1280×960 (no regrowth); bigmap-zoom ends at 146 vs 259 MiB retained CPU (37 redecodes at 1280×960), the peak unchanged; captures identical except terrain-chunk readiness races right after camera changes, which A/A and B/B pairs reproduce in both builds (Experiment 12). |
-| K | Camera-prioritized terrain | not started (partly present) | Jobs are queued only for chunks visible this frame, ≤64 pending, uploads ≤8 MiB and ≤64 jobs per frame, completed-but-no-longer-visible jobs are dropped at upload, nearest cached level stands in while a level bakes, `finishChunks()` for captures. Missing: priority order (FIFO), cancellation of queued jobs that left the view (only `invalidate`/`clear` cancel), guard/hysteresis region, section/chunk upload coordination. |
+| K | Camera-prioritized terrain | **verified** | Workstream K (`4c7a018d` harness: sweep / zoom-oscillation / jump-list camera paths, `terrain-sweep` / `terrain-zoom-osc` / `terrain-jumps` scenes, readiness gauges, `TAK_TERRAIN_SETTLE`; `01cd7a01` policy `client/terrainwork.h` + `terrain_work` test; `85bbb1eb` TerrainChunks integration + calm gate + `terrain_schedule` test; `61be4a96` sections join the frame budget; `5eebec8b` settle harness; `b98183b1` no per-frame passes when nothing is missing, a measured fix). Before: FIFO queue of ≤64 visible-cell jobs, no cancellation outside clear/invalidate, completed off-view results dropped at upload, separate caps (8 MiB chunks, 32 sections), plain LRU. Now: the worker takes the most urgent queued job (holes > upgrades over a stand-in > kept work; centre first); pending work is re-ranked every frame and obsolete jobs cancelled (outside a 2-cell keep band, or a level the zoom left past a 1 s / 30-frame grace) — cooperative for running jobs, lifetime-safe through J's pins; a full queue gives kept slots to visible work; stand-ins of visible cells are evicted last; off-view results only use free or cold room; one per-frame upload budget for chunk images and fallback sections (holes first, 32 MiB / 6 ms est. urgent, 2 ms est. for the rest, measured CPU submission cost, no GPU sync, first upload always proceeds, finishChunks unlimited); a calm gate queues no new work during fast motion or jump storms (the fallback draws those cells texel-identically; uploading a unique 4 MiB chunk per passing cell cost more — K3a, rejected); leading-edge prefetch implemented but opt-in (GPU +56–80 MiB in pans, no gain). Tests: `terrain_work` (718 checks, nine mutations), `terrain_schedule` (four in-game mutations), `terrain_cache`, TSan on the integration (scenarios 1–7). Settled captures identical in all comparable frames; normal captures differ only by terrain readiness (Experiment 13). Measured (Experiment 13): no material frame-time change in any of 9 scenes × 2 sizes; wasted worker compose −80% to −100% in the terrain scenes, −83% bigmap-zoom 7680×2160; terrain-zoom-osc 7680×2160 hole frames 93% → 37%, `t_terrain` −28% (p99 −68%), total p99 −10%; constrained `t_terrain` −10/−12% (material). Costs (recorded, not hidden): terrain-zoom-osc 7680×2160 total p95 +4.7% (Exp. 13) / +31.8% material in the quieter 13b session — K uploads ~1 chunk per frame where the stale FIFO dropped them; terrain-jumps 1280×960 more fallback frames (+0.025 ms `t_terrain`); still views +6 µs `t_terrain` at 7680×2160 (material for the phase, frame time unchanged); under the debug 128 MiB cap stand-in retention leaves the shadow atlas without its page in 28 more of 600 frames (existing fallback). Calm-gate-less version rejected (K3a); nearby prefetch opt-in. |
 | L | Unit spatial index | not started | Features use `FeatureIndex` (`featureindex.h`) with a `TAK_FEATURE_FULL_SCAN` reference. Units: every frame scans all of `front().live` with fog + frustum tests (`:187`). |
 | M | Indexed palette path | not started | `preparePaletteTexture` (`:2230`) expands each structure palette frame into 20 shade bands of RGBA in 2048² pages (≤16 pages, 256 MiB). Original per-texture SDL textures (`textures_`) also stay resident as atlas sources. |
 | N | Native pass submission | not started | Each native batch (`GeometrySubmit::draw`, `OpaqueShadowSubmit::draw`) primes SDL state with a degenerate draw, flushes, and pushes/pops GL attribute state — once per body run, per shadow page and per mask batch. |
@@ -371,7 +402,7 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 |---|---|---|
 | Snapshot | `GameView::captureFrame` (`gameview_impl.cpp:848`) writes the triple-buffered `Frame` on the sim worker; `presentFrame` (`:2990`) picks the slot; `front()` | `UnitR` mirror of sim fields; render never reads live `World` except documented exceptions |
 | Interpolation | `interpPose` (`gameview_impl.cpp:981`), α from presentation clock (`draw` `:256`) | per unit, worker-safe |
-| Terrain | `MapView::draw` (`mapview.cpp:289`) → `TerrainChunks::prepare/draw` (`terrainchunks.cpp:118`), fallback tile batch, sections uploaded on demand | chunk composition on its own worker thread; section JPEG decode on a second worker; uploads on the render thread |
+| Terrain | `MapView::draw` → `TerrainChunks::prepare/draw`, fallback tile batch, sections uploaded on demand; since K `prepare` re-ranks/cancels pending work by camera demand (`terrainwork.h`), uploads hole fills first under one frame budget shared with the sections, and `uploadDeferred` runs after the fallback | chunk composition on its own worker thread (takes the most urgent job since K); section JPEG decode on a second worker; uploads on the render thread |
 | Visibility / candidates | `draw` `:144`–`:230`: `FeatureIndex::query` broad phase + exact screen/fog cull for features; full scan of `front().live` with fog + frustum cull for units | render thread |
 | Painter list | `paintItems_` stable sort by (layer, z) (`:233`); air units layer 1 | render thread |
 | Entry claim (since C) | `claimGeometryEntries` (`gameview_render.cpp`): each painter-ordered unit claims the entry its identity owns in `geomEntries_` (`StableEntryPool<UnitGeom>`, `client/geometryowners.h`); `visUnits_` / `visGeom_` (ordered entry pointers) / `geomIndex_`; then `reclaim` (destroyed, expired, budget, trim) | render thread, before the parallel pass |
@@ -401,7 +432,7 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 | Model source textures `textures_` | GameView | per texture name, per colour/frame | GPU static | teardown |
 | Shadow mask/coverage pages | `shadowMaskPages_`, `shadowCoverageTextures_` | per texture/frame | GPU | teardown |
 | Feature art, effect anims, icons, fonts, GUI | GameView | by name | GPU static | teardown |
-| Terrain chunks | `TerrainChunks::cache_` | (level, cx, cy); `revision`; LRU of chunks not drawn this frame | GPU static, 256 MiB budget and GPU cap; ≤8 MiB uploads/frame | `invalidate`/`clear`; reset clears |
+| Terrain chunks | `TerrainChunks::cache_` | (level, cx, cy); `revision`; LRU of chunks not drawn this frame; since K eviction ranks (cold first, stand-ins of visible cells last) and off-view uploads only into free/cold room | GPU static, 256 MiB budget and GPU cap; ≤8 MiB chunk uploads/frame, since K inside one frame budget with the sections (urgent 32 MiB / 6 ms est., non-urgent 2 ms est.) | `invalidate`/`clear`; reset clears; pending jobs cancelled when obsolete (K) |
 | Terrain mips | `TerrainChunks::mips_` | (section key, level, stock) | CPU, worker-only; since J LRU of unpinned mips, 64 / 56 MiB, all dropped after 30 s + 120 frames without terrain work | `resetSource` |
 | Terrain sections (GPU) | `MapView::sections_` | section key; idle 3 s, 64 MiB idle budget | GPU | trimmed; reset clears |
 | Decoded sections (CPU) | `terrain::Compositor::cache_` | section key | CPU; since J pinned `SectionRef`s, 128 / 112 MiB budget over unpinned sections cold for 10 s, load-time prefetch only into free budget (whole set on 97.7% of maps) | `clear()` safe with pins (images live until released) |
@@ -1416,6 +1447,68 @@ fragmentation (the numbers are capacities, not malloc usable sizes);
 transient peaks inside a frame, such as old and new storage during a
 reallocation (the peak is sampled at frame end).
 
+### Camera-driven terrain work (workstream K)
+
+**What terrain work is.** Terrain is drawn from 1024-world-px chunk images
+(`TerrainChunks`, one per cell and level; level n has 1/2^n the texels of the
+same world area) composed on one worker thread from decoded sections and
+uploaded on the render thread. Where a visible cell has no image at its
+wanted level, `draw()` shows the nearest cached level (a stand-in); where it
+has none at all, `MapView`'s section fallback draws the cell's 32-px tiles
+from the section textures. The fallback is **texel-identical** to a chunk
+(`terrain_cache` checks it on GL), so a "hole" is invisible as long as its
+sections are resident; only a missing section shows the blurry minimap
+underlay (`terrain_underlay_tiles`). A chunk is therefore a draw-cost cache:
+one copy per cell instead of ~1024 tile quads.
+
+**Before K** (`c2c25707` … `4515fbab`): jobs for the visible cells were queued
+in row order, the worker took them oldest first (FIFO), at most 64 pending;
+nothing cancelled queued work except `clear()` / `invalidate()`; completed
+results for cells no longer visible were composed in full and then dropped
+at upload; uploads were capped separately (chunks 8 MiB per frame, sections
+32 per frame); eviction was LRU over every image not visible at its level,
+stand-ins included. Under fast camera motion the queue filled with stale
+work: in the new `terrain-sweep` scene 82–186 of 83–186 completed jobs per
+run were thrown away (worker time 640–1400 ms per run), and the visible cells
+of the moment were starved (64 stale jobs ahead of them).
+
+**Policy** (`client/terrainwork.h`, pure, unit-tested in `terrain_work`):
+
+| Rule | Value | Why |
+|---|---|---|
+| Tiers | hole (visible, no image of any level) < upgrade (visible, a stand-in exists) < nearby (guard ring, wanted level) < speculative (keep band, or the level a zoom just left) < obsolete | the cells without any image first; the camera's centre first within a tier (squared distance in 1/64 cell²) |
+| Guard / keep band | 1 / 2 cells around the view | spatial hysteresis: work for a cell that leaves the view by one or two cells stays queued (last), so small reversals do not cancel and requeue it |
+| Level grace | the previous level stays speculative until **both** 1000 ms and 30 frames have passed since the change; only one level away | a zoom oscillating across a level boundary keeps both levels' work; ms makes it frame-rate independent, frames make it robust to a stall |
+| Cancellation | pending jobs classified obsolete are cancelled every frame; a queued job is removed, a running one stops at its next row check (cooperative; it drops only its pins, J); completed ones are discarded | lifetime-safe by J's job-scoped pins; nothing is invalidated wholesale on camera motion |
+| Full queue | visible work may displace the worst nearby/speculative job | stale work never blocks the view |
+| Calm gate | no new job while the camera moves faster than half a view per second (owner's clock, measured between frames of the same view size) or jumps again within 1 s of a jump, until 250 ms calm | measured: under fast motion a unique 4 MiB chunk per cell costs the render thread more (upload + driver work) than the fallback that already draws the cell at full detail, and is evicted before reuse on a large map; a single jump (minimap click) is not gated |
+| Eviction ranks | 1 cold (not visible, not a stand-in) < 2 the uploaded cell's own stand-in < 3 another visible cell's stand-in; LRU within a rank | keep useful lower-detail stand-ins while their replacement is prepared |
+| Off-view uploads | nearby / speculative results go only into free room or replace cold images outside the keep band | they never evict anything the view may need; the 256 MiB chunk budget and the GPU cap are unchanged |
+| Upload budget | one per frame, shared by chunk images and fallback sections: urgent (hole fills: chunk images of holes, sections) up to 32 MiB and 6 ms estimated; non-urgent (upgrades, off-view) only while the frame's estimate stays under 2 ms; chunks keep the 8 MiB cap; the first upload of a frame always proceeds; finishChunks frames: sections unlimited | holes first, and upgrades wait for the next frame instead of adding to a hole-filling frame's spike |
+| Cost estimate | CPU submission time of texture create + upload per byte, exponential average per kind (sections, chunks) | measured cost, no GPU synchronization (the estimate prices the render thread's time) |
+| Nearby prefetch | experimental, off (`TAK_TERRAIN_SCHEDULE=nearby`) | +56–80 MiB tracked GPU in ordinary pans with no measured gain |
+
+**Order inside a frame** (`MapView::draw`): `UploadBudget::beginFrame` →
+`TerrainChunks::prepare` (level, visible cells, demand, stand-in marks, cold
+bytes, re-rank / cancel pending, upload hole fills; if no hole remains, the
+rest too; queue new work unless gated) → `draw` → the fallback (its sections
+as urgent uploads of the same budget) → `uploadDeferred` (upgrades and
+off-view results the frame left, shown from the next frame).
+
+**Threading.** The render thread owns every decision; per job it shares a
+`Control` (atomic cancel flag + atomic priority) with the worker. The worker
+picks the queued job with the smallest priority (oldest among equals, so the
+legacy policy is FIFO) under the queue lock, after dropping cancelled jobs.
+Completed results move to the render thread's `ready_` list; the worker
+stops composing while `done_` + `ready_` hold 8 results (`readyHeld_`), so
+deferred results cannot pile up.
+
+**Reference switch.** `TAK_TERRAIN_SCHEDULE=legacy` (debug) restores the pre-K
+policy in the same binary (FIFO, no cancellation, no gate, plain LRU, separate
+caps); `fifo`, `nocancel`, `nogate`, `nostandin`, `nocoord` switch single
+parts off, `nearby` switches the prefetch on. Tests pin the policy with
+`MapView::setScheduleParams`.
+
 ### Telemetry reference (RENDERSTATS keys)
 
 `t_*` = render-thread wall ms (nested: `terrain_upload` in `terrain`;
@@ -1453,6 +1546,7 @@ sampled by the benchmark from `/proc`).
 | Retained body vertices (H) | `arena_append`, `arena_rebuild`, `arena_stream` (0/1 per frame), `arena_verts_retained` (resident, nothing copied), `arena_verts_uploaded` (also in `body_verts_copied` and `bytes_uploaded`), `arena_verts_twice` (of those, vertices also copied into a small assembled command the same frame), `arena_draws`, `arena_ranges`, `arena_fallbacks`, `arena_releases`; gauges `arena_capacity_bytes` (also in `gpu_tracked_bytes`), `arena_inflight_bytes`, `arena_cpu_bytes`. Since H `body_verts_copied` = vertices actually copied (assembled + arena uploads) and DRAWPHASE `body_vertices` = all body vertices drawn |
 | Cost-planned pool passes (I) | `t_schedule_plan` (nested: building the plans), `pool_posted` (workers woken), `pool_idle_wakes` (woken after every chunk was taken), `pool_chunks`, `sched_geometry_threads` (participants of the geometry pass; 1 = render thread alone), `sched_shadow_threads` (check + transform passes, summed), `sched_copy_threads`, `sched_geometry_estimate_us` (the plan's estimate, to compare with `w_geometry_key` + `w_geometry_build`). `w_pool_wake` / `pool_dispatches` keep their meaning; since I a wake is counted only for a worker that ran a chunk |
 | CPU budgets (J) | sections: `terrain_section_cpu_bytes` (used), `_pinned_bytes`, `_young_bytes`, `_peak_bytes`, per frame `terrain_section_decodes` (real decodes by any thread since J), `_evictions`, `_redecodes`, `_prefetch_skipped`; mips: `terrain_mip_cpu_bytes`, `_pinned_bytes`, `_peak_bytes`, per frame `terrain_mip_evictions`, `_regens`, `_trims`; buffers: per frame `cpu_trims`, `cpu_trim_bytes`; gauges `worker_scratch_used/capacity_bytes`, `geom_pinned_bytes`, totals `cpu_cache_used/retained/pinned/evictable/peak_bytes` (see the J accounting table; GPU and RSS are separate). `body_capacity_bytes` is reported after the frame's trim |
+| Camera-driven terrain (K) | gauges of the last terrain draw `terrain_chunk_visible`, `_ready` (wanted level), `_standin` (another level's image), `_holes` (no image: the section fallback draws the cell), `terrain_underlay_tiles` (fallback tiles without a resident section: the blurry underlay shows); per frame `terrain_jobs_obsolete` (cancelled: keep band, level grace, displaced), `terrain_jobs_aborted` (running jobs stopped by any cancel), `terrain_jobs_nearby`, `terrain_jobs_offview` (results uploaded for cells not visible then), `terrain_upload_deferred` (results the frame budget postponed), `terrain_gated_frames` (1 = the calm gate queued nothing); `w_terrain_wasted` (worker time of jobs never uploaded). The benchmark's `report.json` adds per run `terrain.hole_frames` / `underlay_frames` / `standin_frames` (share of measured frames with any) |
 | GPU | render-study `gpu_timeline_ms` / `GPUTIMELINE` (draw timeline, not busy time), `gpu_tracked_bytes` |
 
 Coverage limits (deliberate): `logical_draws`/`flushes`/`target_switches`
@@ -1503,6 +1597,10 @@ Scenes (`--scenes all`; `quick` = small-battle, stationary-mixed, moving, pan):
 | veteran | Ulasem Arena | stationary-mixed with every fifth unit changing veteran level every 30 frames: material-only body changes (added by workstream E) |
 | pan-distant | Ulasem Arena | stationary-mixed (zoom 0.5) under the sinusoidal pan: held distant images re-placed every frame (added by workstream G; 1280×960 only acts — 7680×2160 clamps to zoom 0.73) |
 | distant-sparse | Ulasem Arena | 6000 units at zoom 0.25 (three image pages), then a corner of the army from frame 450: images expire, pages are released (added by workstream G; segments army / corner) |
+| bigmap-zoom | Middle Earth V1 | pan + continuous zoom 0.25–1 on a map whose decoded sections (238 MiB) exceed the CPU budget (added by workstream J) |
+| terrain-sweep | Middle Earth V1 | fast elliptical sweep 9000×6000 px, period 480 frames (up to 118 px/frame), reversals in both axes (added by workstream K) |
+| terrain-zoom-osc | Middle Earth V1 | zoom 0.42–0.6, period 90 frames: the chunk level flips 0↔1; at 7680×2160 both levels exceed the 256 MiB chunk budget (added by workstream K) |
+| terrain-jumps | Middle Earth V1 | jumps between five far-apart views every 20 frames (0.33 s per view: shorter than a view takes to compose; adversarial) (added by workstream K) |
 
 Body-arena tooling (workstream H): ctests `vertex_arena`, `geometrysubmit`
 (run with `TAK_GEOMETRY_TEST_ACCELERATED=1 SDL_VIDEODRIVER=offscreen` for the
@@ -1546,6 +1644,20 @@ Scene `bigmap-zoom` (Middle Earth V1: 255 sections, 238 MiB decoded, above the
 budget). Section sizes of every shipped map: `~/tak-tmp/render-opt/j/secsize.cpp`
 → `secsize.tsv` (size MiB, sections, decode ms, blocks, name). Experiment 12
 script: `~/tak-tmp/render-opt/j/measure.sh`.
+
+Terrain work tooling (workstream K): tests `terrain_work` (policy, no SDL:
+tiers, priority, keep band, level grace, calm gate, eviction ranks, upload
+budget, queue simulations of pan/reversal/zoom oscillation/jumps/large map),
+`terrain_schedule` (real MapView on a generated 512×512-block map, software
+renderer, game data), `terrain_cache` (existing; runs the K policy).
+Harness knobs (debug, `main.cpp`): `TAK_RENDER_SWEEP=cx,cz,ax,az,period`,
+`TAK_RENDER_ZOOM_OSC=lo,hi,period`, `TAK_RENDER_JUMP_AT="x,z;x,z;…"`;
+`TAK_TERRAIN_SETTLE=1` (capture runs: every frame waits until the visible
+chunks are ready, gate lifted; gives up for good after one 10 s wait);
+`TAK_TERRAIN_SCHEDULE=legacy|fifo,nocancel,nogate,nostandin,nocoord,nearby`
+(same-binary reference / ablation). Experiment 13 script:
+`~/tak-tmp/render-opt/k/measure.sh`; summaries `abcmp.py` / `tq.py` (scratch,
+copied to `~/tak-tmp/render-opt/k/`).
 
 Shadow-atlas ctests (workstream F, software renderer, `TAK_SHADOW_CACHE_VERIFY`):
 `render_shadow_atlas` (the render_shadow_cache roster, 288-px pages,
@@ -3494,8 +3606,253 @@ mutation checks: compositor (pins, watermark, redecode count, age rule),
 trim policy (five), participant index (two). Release `takclient` builds (after moving the verifier totals out of a debug-only header section: the first release build failed on it) and contains none of the J debug or telemetry strings.
 `--mpai` Retail 60 s Inner Circle seed 1 = `2c39430636a3dbda` (unchanged; run because `src/terrain` is shared code, although neither the server nor the simulation uses the compositor or the render pool).
 
+### Experiment 13 — workstream K camera-driven terrain work (2026-10-17)
+
+**Binaries.** A = K0 (`takclient-K0-baseline`, code of `4c7a018d`: J plus the
+K harness and readiness gauges, terrain behaviour pre-K); B = K4
+(`takclient-K4-candidate`, code of `5eebec8b`). K5 (`b98183b1`, which only
+skips per-frame passes when no visible chunk is missing; decisions identical)
+was re-timed against A in the scenes where that overhead showed (13b below).
+Build-o2, offscreen EGL, SDL `opengl` on the RTX 5070 Laptop GPU;
+`RENDER_ENV` confirmed the backend and the actual output for every run
+(1280×960 / 7680×2160; Ulasem zoom-0.5/0.25 scenes run at the 0.73 clamp at
+7680×2160). 900 frames, 300 warmup, forced completion, pinned to CPUs 16–23,
+ABBA × 2 per scene and size, `--wait-quiet 120`, nothing built during the
+timing runs. Load: average 6.7–17.2 (1280×960) / 5.3–8.8 (7680×2160), 3–7
+`legion_scenario` processes on CPUs 4–15, pinned-CPU busy 0.18–0.28; no run
+contended. Script `~/tak-tmp/render-opt/k/measure.sh`, tables
+`~/tak-tmp/render-opt/k/ktable.py`, runs `runs/k4-*` (not in Git).
+
+**Scenes** (what K touches): the three new terrain scenes (Middle Earth V1:
+sweep, zoom oscillation across a level boundary, jump storm); `jump`, `zoom`,
+`pan` (camera motion on Ulasem); `bigmap-zoom` (large map above the section
+budget); `battle-sparse` (a jump to an empty view: sections and chunks);
+`constrained` (128 MiB GPU cap: memory pressure, stand-ins). Static unit
+scenes were not timed: their terrain is settled after warmup, so K only adds
+its per-frame bookkeeping, measured in the still scenes below.
+
+**World hashes** identical A vs B in every scene (the tool refuses otherwise).
+
+**Timing** (ms per frame, mean of four runs per label; Δ = B vs A; noise =
+max A/A spread of the two labels; "hole / underlay frames" = share of
+measured frames with any visible cell drawn by the section fallback / with
+any fallback tile left to the blurry underlay):
+
+| scene | size | draw A → B | Δ draw (noise) | Δ total mean (noise) | Δ total p99 (noise) | t_terrain A → B ms | Δ t_terrain p99 | wasted compose ms/run A → B | tracked GPU MiB A → B | hole / underlay frames A → B |
+|---|---|---|---|---|---|---|---|---|---|---|
+| battle-sparse | 1280×960 | 3.128 → 3.066 | -2.0% (6.6%) | -1.9% (6.4%) | -8.1% (26.2%) | 0.062 → 0.065 | +25.1% (29.2%) | 0 → 0 | 150 → 150 | 0.01/0.00 → 0.01/0.00 |
+| bigmap-zoom | 1280×960 | 1.732 → 1.739 | +0.4% (6.3%) | +0.8% (19.5%) | -1.3% (52.8%) | 0.073 → 0.074 | -1.3% (7.2%) | 0 → 0 | 176 → 177 | 0.03/0.00 → 0.02/0.00 |
+| constrained | 1280×960 | 11.646 → 11.841 | +1.7% (3.4%) | +1.4% (4.0%) | -0.3% (19.4%) | 0.106 → 0.095 | -3.9% (12.2%) | 91 → 80 | 126 → 125 | 0.42/0.15 → 0.27/0.14 |
+| jump | 1280×960 | 0.867 → 0.897 | +3.5% (16.3%) | +11.7% (23.2%) | +39.7% (68.4%) | 0.018 → 0.021 | +8.1% (20.0%) | 0 → 0 | 171 → 171 | 0.00/0.00 → 0.00/0.00 |
+| pan | 1280×960 | 8.217 → 8.400 | +2.2% (6.1%) | +2.6% (7.4%) | +4.4% (6.8%) | 0.029 → 0.032 | +10.4% (6.9%) | 0 → 0 | 122 → 122 | 0.00/0.00 → 0.00/0.00 |
+| terrain-jumps | 1280×960 | 0.285 → 0.305 | +7.3% (8.1%) | +2.5% (14.3%) | +5.8% (90.9%) | 0.018 → 0.043 | +241.8% (51.1%) | 0 → 79 | 205 → 156 | 0.00/0.00 → 0.60/0.00 |
+| terrain-sweep | 1280×960 | 0.292 → 0.239 | -18.3% (64.7%) | -21.3% (39.6%) | -46.0% (73.2%) | 0.167 → 0.120 | -14.5% (44.7%) | 601 → 0 | 241 → 108 | 0.90/0.00 → 0.98/0.00 |
+| terrain-zoom-osc | 1280×960 | 2.178 → 2.133 | -2.1% (5.6%) | -1.7% (6.5%) | -5.1% (34.1%) | 0.033 → 0.035 | -7.5% (33.5%) | 0 → 0 | 158 → 158 | 0.00/0.00 → 0.00/0.00 |
+| zoom | 1280×960 | 10.589 → 10.792 | +1.9% (13.6%) | +2.4% (15.8%) | +0.1% (16.9%) | 0.077 → 0.082 | -12.3% (14.3%) | 0 → 0 | 176 → 177 | 0.01/0.00 → 0.01/0.00 |
+| battle-sparse | 7680×2160 | 3.543 → 3.507 | -1.0% (3.8%) | -1.0% (5.9%) | -3.7% (8.6%) | 0.216 → 0.250 | -1.8% (7.2%) | 0 → 0 | 369 → 367 | 0.07/0.00 → 0.09/0.00 |
+| bigmap-zoom | 7680×2160 | 2.969 → 2.946 | -0.8% (5.5%) | -0.1% (4.8%) | +2.8% (14.4%) | 0.661 → 0.644 | +23.5% (45.6%) | 360 → 60 | 397 → 405 | 0.36/0.00 → 0.33/0.00 |
+| constrained | 7680×2160 | 15.824 → 15.713 | -0.7% (3.2%) | -0.3% (3.6%) | +0.5% (2.8%) | 1.532 → 1.354 | -10.5% (7.5%) | 0 → 0 | 128 → 128 | 1.00/1.00 → 1.00/1.00 |
+| jump | 7680×2160 | 3.302 → 3.288 | -0.4% (4.6%) | +0.0% (5.9%) | -0.1% (7.7%) | 0.060 → 0.068 | +13.1% (10.6%) | 0 → 0 | 387 → 388 | 0.00/0.00 → 0.00/0.00 |
+| pan | 7680×2160 | 14.824 → 14.664 | -1.1% (6.6%) | -1.1% (5.9%) | -1.1% (15.8%) | 0.081 → 0.091 | +11.5% (5.2%) | 0 → 0 | 275 → 275 | 0.00/0.00 → 0.00/0.00 |
+| terrain-jumps | 7680×2160 | 1.219 → 1.240 | +1.7% (12.9%) | +1.5% (6.9%) | +15.7% (45.3%) | 0.879 → 0.904 | +13.9% (43.9%) | 1472 → 100 | 303 → 314 | 1.00/0.00 → 1.00/0.00 |
+| terrain-sweep | 7680×2160 | 0.864 → 0.867 | +0.3% (6.4%) | -1.0% (3.1%) | -11.9% (30.3%) | 0.646 → 0.655 | -14.4% (11.8%) | 1377 → 0 | 218 → 205 | 1.00/0.00 → 1.00/0.00 |
+| terrain-zoom-osc | 7680×2160 | 4.141 → 3.901 | -5.8% (9.8%) | -3.3% (9.3%) | -10.4% (16.4%) | 1.284 → 0.925 | -68.1% (43.0%) | 1464 → 293 | 403 → 402 | 0.93/0.00 → 0.37/0.00 |
+| zoom | 7680×2160 | 15.106 → 15.167 | +0.4% (7.8%) | +1.0% (9.2%) | +1.7% (12.8%) | 0.081 → 0.092 | +13.7% (9.6%) | 0 → 0 | 275 → 275 | 0.00/0.00 → 0.00/0.00 |
+
+**Materiality** (the tool's rule, max(2 × A/A spread, 2%)): no frame-level
+metric (total mean, total p99, draw mean, GPU timeline) is material in any
+scene at either size. Material phase/worker deltas: constrained `t_terrain`
+−10.4% / −11.6% (1280×960 / 7680×2160); bigmap-zoom worker compose −11.2% /
+−20.6% and wasted −83%; terrain-sweep worker compose and wasted −100%;
+terrain-jumps 7680×2160 compose −79%, wasted −93%; terrain-zoom-osc
+7680×2160 wasted −80%; and two costs: terrain-jumps 1280×960 `t_terrain`
++140% (0.018 → 0.043 ms: the jump storm leaves 60% of frames to the
+fallback, which draws the same pixels), and pan 7680×2160 `t_terrain` +12.8%
+(+0.010 ms: per-frame bookkeeping, fixed in K5, 13b).
+
+**What K changed, read from the counters:**
+- *Wasted work:* the pre-K build composed 601 / 1377 ms of terrain per
+  terrain-sweep run that it then threw away, 1472 ms in terrain-jumps
+  7680×2160, 1464 ms in terrain-zoom-osc 7680×2160, 360 ms in bigmap-zoom
+  7680×2160; K: 0 / 0 / 100 / 293 / 60 ms. That worker time competes with
+  the simulation and render pool for the same CPUs.
+- *Zoom oscillation at 7680×2160* (both levels exceed the chunk budget):
+  frames with holes 93% → 37%, `t_terrain` 1.28 → 0.93 ms, its p99 −68%
+  (7.2 → 2.3 ms, inside that metric's 43% spread), draw −5.8% (noise 9.8%).
+  The level grace keeps both levels' work; stand-ins survive. The price is
+  upload frames: K uploads ~900 chunks per run vs 365–601, total p95 +4.7%
+  here and +31.8% (material) in the quieter 13b session (below).
+- *Fast sweep:* the calm gate queues nothing while the camera crosses more
+  than half a view per second, so the fallback draws the new cells (as it
+  effectively did before, when every composed chunk arrived too late). At
+  1280×960 the pre-K build uploaded 0–94 late chunks per run (timing
+  dependent): total −21%, p99 −46%, tracked GPU 241 → 108 MiB, all inside that
+  scene's large spread.
+- *Memory pressure (constrained):* hole frames 42% → 27% at 1280×960,
+  `t_terrain` −10% (material), underlay frames 15.3% → 14.2%; at 7680×2160 the
+  128 MiB cap leaves no chunk room in either build (holes and underlay in
+  every frame), `t_terrain` −11.6% (material).
+- *Jump storm (terrain-jumps):* views last 0.33 s. K cancels the previous
+  view's work and gates new work during the storm, so it composes and uploads
+  little: wasted −93%, tracked GPU at 1280×960 205 → 156 MiB. At 1280×960 the
+  pre-K build had every view cached from warmup and K keeps more frames on the
+  fallback (+0.025 ms `t_terrain`); at 7680×2160 total p99 +15.7% (noise 45%).
+- *Ordinary scenes* (jump, pan, zoom, battle-sparse, bigmap-zoom): frame
+  times within noise; the per-frame bookkeeping was visible only in
+  `t_terrain` of still views (+3–10 µs), fixed in K5.
+
+**13b — K5 vs K0 in the still and zoom scenes** (same protocol, quieter
+machine: load 1.2–2.1, no `legion_scenario`; `runs/k5-*`,
+`~/tak-tmp/render-opt/k/measure2.sh`):
+
+| scene | size | draw A → B | Δ draw (noise) | Δ total mean (noise) | Δ total p99 (noise) | t_terrain A → B ms | Δ t_terrain p99 | wasted compose ms/run A → B | tracked GPU MiB A → B | hole / underlay frames A → B |
+|---|---|---|---|---|---|---|---|---|---|---|
+| jump | 1280×960 | 0.744 → 0.737 | -0.9% (2.6%) | -0.1% (22.0%) | +7.3% (74.9%) | 0.014 → 0.014 | +16.0% (9.9%) | 0 → 0 | 171 → 171 | 0.00/0.00 → 0.00/0.00 |
+| pan | 1280×960 | 7.132 → 7.261 | +1.8% (3.5%) | +1.8% (3.1%) | +1.0% (8.8%) | 0.023 → 0.025 | +5.1% (5.8%) | 0 → 0 | 122 → 122 | 0.00/0.00 → 0.00/0.00 |
+| terrain-zoom-osc | 1280×960 | 1.777 → 1.765 | -0.7% (1.2%) | +1.5% (14.2%) | -1.3% (87.9%) | 0.018 → 0.019 | +5.4% (16.0%) | 0 → 0 | 158 → 158 | 0.00/0.00 → 0.00/0.00 |
+| zoom | 1280×960 | 9.282 → 9.233 | -0.5% (13.7%) | -0.6% (15.4%) | -0.4% (8.4%) | 0.066 → 0.064 | -8.2% (15.9%) | 0 → 0 | 176 → 177 | 0.01/0.00 → 0.01/0.00 |
+| jump | 7680×2160 | 2.870 → 2.829 | -1.5% (1.7%) | -0.9% (1.8%) | +0.1% (6.3%) | 0.040 → 0.042 | +6.4% (9.5%) | 0 → 0 | 387 → 389 | 0.00/0.00 → 0.00/0.00 |
+| pan | 7680×2160 | 14.571 → 14.562 | -0.1% (7.2%) | +0.2% (7.3%) | +0.7% (16.4%) | 0.067 → 0.073 | +7.6% (5.0%) | 0 → 0 | 275 → 275 | 0.00/0.00 → 0.00/0.00 |
+| terrain-zoom-osc | 7680×2160 | 3.488 → 3.434 | -1.5% (4.2%) | +0.6% (3.5%) | -8.8% (29.8%) | 1.008 → 0.804 | -55.4% (77.3%) | 1658 → 96 | 399 → 402 | 0.97/0.00 → 0.35/0.00 |
+| zoom | 7680×2160 | 13.426 → 13.225 | -1.5% (2.7%) | -1.5% (3.2%) | -0.9% (4.4%) | 0.065 → 0.070 | +5.5% (16.3%) | 0 → 0 | 275 → 275 | 0.00/0.00 → 0.00/0.00 |
+
+No frame-level metric is material except terrain-zoom-osc 7680×2160 total
+p95 +31.8% and draw p95 +46.8% (tool rule; present +0.08 ms): in this quieter
+session K0 delivered only 365 chunk uploads per run (601 in the busier K4
+session; its FIFO gets fewer jobs done in time when frames are faster), K
+~890 in both. K uploads about one chunk per frame there because it completes
+the visible cells the stale FIFO dropped (hole frames 97% → 35%, `t_terrain`
+−20%, wasted −94%, total mean +0.6%, total p99 −8.8%); a frame that uploads a
+4 MiB chunk is a p95 frame on this driver (Known limitations). A smaller
+non-urgent upload budget (`TAK_TERRAIN_DEFER_US=500`, a removed debug knob;
+`runs/k6-d500-uhd`, `runs/k6-d2000v500-uhd`, ABBA × 2) changed neither the
+upload count (896 vs 901) nor p95: the first upload of a frame always
+proceeds, and these frames upload one. Recorded as a trade-off, not a gain.
+`t_terrain` in still views: pan 7680×2160 +6 µs (67 → 73 µs, +9.5%,
+material for that phase; frame time unchanged); same binary, legacy policy vs
+K (`runs/k6-panlegacy-uhd`): 70.6 vs 72.9 µs, so ~2.3 µs is the policy's
+per-frame work and ~4 µs is present in both modes (larger chunk records,
+the deferred-upload pass and budget calls). K5 removed ~4 µs of the K4
+bookkeeping (K4 session: 80.7 → 91.0 µs).
+
+**Captures.** Two kinds, A vs B, 12 frames per scene (360, 480–489, 720),
+world view and full frame:
+- *Settled* (`TAK_TERRAIN_SETTLE=1`: every frame waits until the visible
+  chunks are ready, so terrain readiness is equal in both builds): at
+  1280×960 0 of 108 frames differ (9 scenes, no settle give-up); at
+  7680×2160 0 differing frames in the 6 scenes that can settle (battle-sparse,
+  jump, pan, terrain-jumps, terrain-sweep, zoom). terrain-zoom-osc, bigmap-zoom
+  (views at zoom just above 0.5 need ~75 level-0 chunks, more than the 256 MiB
+  budget) and constrained (128 MiB cap) cannot settle in either build, so they
+  gave up and raced: 31 differing frames, 30 with different readiness counts
+  at that frame, one (zoom-osc 489) with equal counts and a different set of
+  ready cells. A/A and B/B pairs of the same two scenes differ just as much
+  (K0 vs K0: 19 of 24 frames, one with equal counts; K vs K: 22 of 24). So K
+  changes when terrain becomes ready, never what finished terrain looks
+  like.
+- *Normal* (readiness races included): 1280×960 12 of 108 frames differ:
+  terrain-jumps 11 (K leaves the storm's views to the fallback, which at zoom
+  0.75 resamples slightly differently from a chunk; frame 360 also differs in
+  the minimap, built a few frames later by the asynchronous crunch over the
+  map's ~1M blocks — K0 vs K0 shows exactly that minimap difference in the same
+  frame, world view identical; K vs K differs in 11 terrain-jumps frames),
+  constrained 1 (frame 360: the shadow atlas had fallen back in B, the side
+  effect in Known limitations; identical within each build). 7680×2160 52 of
+  108: battle-sparse 10 (frames 480–489, right after the jump to the empty
+  view), bigmap-zoom 6, constrained 12, terrain-jumps 12, terrain-zoom-osc 12
+  — 50 with different readiness counts, 2 (zoom-osc 488/489) with equal counts
+  as above; jump, pan, zoom and terrain-sweep identical. No unexplained
+  difference remains.
+
+**Ablation (exploratory, one run per variant, same binary K3a = K without
+the calm gate).** `TAK_TERRAIN_SCHEDULE=legacy | full | nonearby | nocancel |
+fifo,nocancel,nonearby` on terrain-sweep, terrain-jumps, pan, zoom at both
+sizes (`runs/k3a-ablate`): the extra chunk uploads that made K3a slower in the
+fast scenes came from prioritization (uploads per run 87–223 with `nocancel`
+or nearby off, 0–5 with `fifo,nocancel,nonearby` at both sizes), and nearby
+prefetch added 56–80 MiB of tracked
+GPU in pan/zoom. Then legacy vs K3a and legacy vs K3b (gate added), ABBA × 1
+(`runs/k3a-legacy-ab`, `runs/k3b-legacy-ab`): see Rejected experiments.
+
+**Tests (final code).** `terrain_work` (718 checks; nine header mutations
+fail it), `terrain_schedule` (4 of 4 stable runs plus repeats; four in-game
+mutations fail it: FIFO worker, no obsolete cancel, stand-ins not marked, no
+nearby; upload order FIFO survives because only one 4 MiB chunk uploads per
+frame and results complete in priority order), `terrain_cache` (the existing
+edits / reset / fallback / budget test runs the K policy), `ctest -L quick`
+390/390 on build-o2 at `b98183b1`. ThreadSanitizer: the test, `mapview.cpp`
+and `terrainchunks.cpp` instrumented (the library uninstrumented): no report
+over scenarios 1–7; scenario 8 cannot run under TSan (its fast pan relies on
+frames under 0.9 s). Release `takclient` builds and contains none of the K
+debug or telemetry strings. `--mpai` not run: only `src/client`, `tools/` and
+CMake changed; every benchmark run checks the world hash.
+
 ## Known limitations and unsupported paths
 
+- **K: "missing terrain" is mostly invisible in this engine.** A visible
+  cell without a chunk image is drawn by the section fallback, texel-identical
+  at zoom 1 (resampled slightly differently at fractional zoom); only a
+  missing section shows the blurry underlay. In every timed scene except
+  `constrained` the underlay never showed in either build. K's benefits are
+  therefore wasted worker time, `t_terrain` where holes were heavy (zoom
+  oscillation, memory pressure), and fewer/cheaper uploads under motion, not
+  a visible quality change. "Missing visible terrain first" is implemented as
+  holes-first ordering of chunk work and of uploads (chunk hole fills, then
+  fallback sections, then upgrades).
+- **K: the zoom-oscillation p95 trade-off.** In terrain-zoom-osc 7680×2160
+  K uploads about one chunk per frame (the visible cells the pre-K FIFO
+  dropped), so total p95 rises (+4.7% in Experiment 13, +31.8% material in
+  13b) while mean is unchanged and p99, holes and `t_terrain` fall. Pacing
+  non-urgent uploads harder did not help (the first upload of a frame always
+  proceeds); a cheaper upload path (strips, or the driver stall understood)
+  would.
+- **K: the jump-storm trade-off.** In `terrain-jumps` (views of 0.33 s) K
+  composes little, so at 1280×960 60% of frames use the fallback where the
+  pre-K build had every view cached from warmup (`t_terrain` +0.025 ms,
+  material by the rule, frame time not), and at 7680×2160 total p99 is +16%
+  (inside its 45% spread). A storm only gates while jumps keep coming within
+  1 s; a single jump is served at once, centre first.
+- **K: view sets larger than the chunk budget.** At 7680×2160 with zoom just
+  above 0.5 the level-0 view needs ~75 chunks (316 MB), more than the 256 MiB
+  chunk budget; the level choice only coarsens for supersampling, so neither
+  build can complete such a view (terrain-zoom-osc, bigmap-zoom), and the
+  fallback draws the rest. K reduces the churn there (wasted −80% / −83%) but
+  does not change the level rule (not in scope; a coarser level would change
+  pixels).
+- **K: driver stalls on some chunk uploads** (5–6 ms, cause not established;
+  see Rejected experiments). They are in both builds; K avoids most uploads
+  that do not pay off, it does not remove the stall.
+- **K: the calm-gate thresholds** (half a view per second, 250 ms, 1 s storm
+  window) were chosen from these scenes on this machine and the owner's clock;
+  under the render study's fixed 1/60 s clock and in play they mean the same
+  wall-clock behaviour. A machine whose uploads are much cheaper relative to
+  the fallback would profit from composing during motion; not measured.
+- **K: section uploads per frame** are now bounded by 32 MiB and 6 ms of
+  estimated CPU submission as well as the count of 32. On this GPU the byte
+  cap binds as before (~0.14 ns/byte); on a machine with slow uploads a large
+  jump fills over more frames (an extra underlay frame is possible). Not
+  measured on other GPUs or backends.
+- **K: ThreadSanitizer** covered `terrainchunks.cpp` / `mapview.cpp` with the
+  library uninstrumented (the compositor itself passed TSan in J); scenario 8
+  (calm gate) cannot run under TSan's slowdown.
+- **K: stand-in retention competes for GPU memory under the debug 128 MiB
+  cap.** In `constrained` (128 MiB, below the 512 MiB Options minimum) K keeps
+  the finer stand-ins that LRU would evict (chunk images 20.6 → 22.2 MiB on
+  average at 1280×960, sections 8.0 → 6.7 MiB), and the optional shadow atlas
+  then finds no room for its page in 28 more of 600 measured frames (86 → 114,
+  deterministic in all eight runs), which draw through the existing
+  direct-shadow fallback (draw +1.7%, noise 3.4%; the one constrained capture
+  difference at 1280×960, frame 360). At 7680×2160 both builds fall back in
+  every frame. Not measured at the Options caps (512 MiB and up). The chunk
+  budget and the cap are unchanged: the effect is on which images are kept.
+- **K: Cartographer** uses the same MapView and policy (calm gate included:
+  terrain after a fast pan is composed once the view rests; edits invalidate
+  as before, covered by `terrain_cache`); the Cartographer application itself
+  was not run.
+- **K: not exercised:** Direct3D/Metal/software timing, other GPUs, visible
+  windows; renderer-reset during heavy terrain work is covered by the tests
+  (software renderer) and the `churn`/`colour-reset` scenes were not re-timed
+  (their terrain is static).
 - **J: the peak on a map above the section budget is unchanged.** The
   working-set rule lets a zoomed-out view that uses every section hold all of
   them (Middle Earth V1: 238 MiB, the same as before J) for as long as it
@@ -3853,6 +4210,56 @@ trim policy (five), participant index (two). Release `takclient` builds (after m
 
 ## Rejected experiments
 
+- **K, rejected after measurement: the policy without the calm gate** (K3a,
+  an uncommitted build of the integration before the gate was added in
+  `85bbb1eb`; binary `takclient-K3a`; Experiment 13, "ablation"). With
+  priority + cancellation alone, chunk jobs finish while their cells are
+  still visible, so they are uploaded, where the pre-K FIFO composed them too
+  late and threw them away. Wasted worker time fell to ~0, but in the fast
+  scenes the render thread paid for uploads that the section fallback did
+  not need (it already draws those cells texel-identically, from sections
+  shared by many cells): same binary, legacy vs K3a, terrain-sweep draw +82%
+  / +14% (1280×960 / 7680×2160), total p99 +62% / +99%, terrain-jumps
+  7680×2160 total +29% (all material except the 1280×960 p99), tracked GPU
+  +192 / +157 MiB (the chunk cache filled to its budget). The ablation
+  (one run each) showed the extra uploads come from prioritization itself
+  (`nocancel` and nearby off still uploaded 87–223 chunks per run, FIFO 0–5). The calm
+  gate replaced it.
+- **K, opt-in (experimental): leading-edge prefetch** (`nearby`). While the
+  camera moves, up to 4 jobs for the guard cells it moves toward, into free
+  or cold room only. Ordinary pans (Ulasem `pan`, `zoom`) never had holes to
+  prevent, and tracked GPU rose 56–80 MiB (prefetched chunks); with the calm
+  gate a fast camera queues nothing anyway. Kept behind the debug token;
+  `terrain_schedule` covers it.
+- **K, fixed during development: upload starvation on slow uploads.** The
+  first version admitted a non-urgent upload only within 2 ms of estimated
+  cost; on the software renderer one 4 MiB upgrade alone exceeded that, so
+  upgrades were refused forever (`terrain_cache` ran 5 min and failed instead
+  of 23 s). The first upload of a frame now always proceeds.
+- **K, fixed during development: prefetch never ran.** Nearby and kept work
+  were first admitted only into free cache room; the cache sits at its
+  256 MiB budget on a large map, full of cold LRU images, so no prefetch was
+  ever queued (`terrain_jobs_nearby` = 0 in terrain-sweep). Off-view work may
+  now replace cold images (not visible, not a stand-in, outside the keep
+  band).
+- **K, investigated, not solved: render-thread stalls of 5–6 ms in some
+  frames that upload a 4 MiB chunk while the fallback draws holes** (about
+  one upload in ten in terrain-sweep 7680×2160; the pre-K build shows them in
+  terrain-zoom-osc too). Ruled out by experiment (each built, measured, and
+  reverted): texture creation (refilling an evicted same-size texture: same
+  spikes), RGBA vs native BGRA channel order (same), the native client-array
+  submit of the fallback (`TAK_TERRAIN_SDL_SUBMIT=1`: same), uploading hole
+  fills after the fallback draw instead of before (same). With a diagnostic
+  `glFinish` after each upload, the GPU work of an upload averaged 0.56 ms
+  (max 4.9 ms) and the spikes still appeared later in the frame. Cause not
+  established (driver-side); no GPU profiler on this machine. The calm gate
+  avoids most of the uploads that trigger it; splitting an upload into
+  strips over several frames was not tried.
+- **K, considered and not done:** composing a coarse level first as a quick
+  stand-in for holes (extra composition; holes already show full detail from
+  the sections); hashing or caching the fallback tile batch differently
+  (outside K); a GPU-synchronized upload timer (the brief forbids it; the
+  estimate prices CPU submission only).
 - **J, rejected after measurement: a pure LRU section budget** (J2,
   `469f743a`, superseded by `3dc315c4`). Evicting the least recently used
   unpinned section whenever the cache passed the budget cycled sections

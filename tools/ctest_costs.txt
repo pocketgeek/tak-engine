@@ -89,6 +89,7 @@ legion_gen1_route_27459_om1 11
 legion_scenario_battle-field-2x250 11
 legion_scenario_island-1x150 11
 legion_scenario_slowturn 11
+terrain_schedule 10
 crusades_history_network 10
 legion_gen1_route_21096_o1 10
 legion_motion_wall_wanderers_on 10
