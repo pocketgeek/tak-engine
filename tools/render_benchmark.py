@@ -106,6 +106,16 @@ SCENES = {
     "veteran": dict(count=2000, zoom=0.5, env={"TAK_RENDER_VETERAN": "30"},
                     notes="dense stationary mixed army; every 30 frames every fifth unit changes "
                           "veteran level (material-only body change, shadow unchanged)"),
+    # Workstream G: distant images under a moving camera (zoom <= 0.6, 1280x960; the
+    # 7680x2160 view of Ulasem Arena clamps to zoom 0.73, above the image limit).
+    "pan-distant": dict(count=2000, zoom=0.5, env={"TAK_RENDER_CAMERA": "1"},
+                        notes="the stationary mixed army at zoom 0.5 under the sinusoidal pan: "
+                              "held distant images re-placed every frame, re-baked every 67 ms"),
+    "distant-sparse": dict(count=6000, zoom=0.25,
+                           env={"TAK_RENDER_SPARSE_AFTER": "450", "TAK_RENDER_SPARSE_OFFSET": "200,200"},
+                           segments={"army": (300, 450), "corner": (450, None)},
+                           notes="6000 units zoomed out (several distant-image pages), then from frame "
+                                 "450 a corner of the army: images expire, pages are released"),
 }
 QUICK = ["small-battle", "stationary-mixed", "moving", "pan"]
 SIZES = {"normal": (1280, 960), "uhd": (7680, 2160)}
