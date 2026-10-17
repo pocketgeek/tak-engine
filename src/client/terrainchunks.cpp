@@ -170,9 +170,12 @@ void TerrainChunks::work() {
         compositor_.trim();
         if(mipBytes_.load(std::memory_order_relaxed)>mipHigh_.load(std::memory_order_relaxed))
             evictMips(mipLow_.load(std::memory_order_relaxed));
-        composeNs_.fetch_add(nowNs()-started,std::memory_order_relaxed);
+        job.composeNs=nowNs()-started;
+        composeNs_.fetch_add(job.composeNs,std::memory_order_relaxed);
         jobsCompleted_.fetch_add(1,std::memory_order_relaxed);
-        lock.lock();if(job.epoch==epoch_ && !job.cancelled->load(std::memory_order_relaxed))done_.push_back(std::move(job));
+        lock.lock();
+        if(job.epoch==epoch_ && !job.cancelled->load(std::memory_order_relaxed))done_.push_back(std::move(job));
+        else wastedAbortNs_.fetch_add(job.composeNs,std::memory_order_relaxed);   // cancelled while it ran
         busy_=false;cv_.notify_all();
     }
 }
@@ -223,7 +226,7 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
             job=std::move(done_.front());done_.pop_front();
         }
         cv_.notify_all();
-        ++jobsDiscarded_;   // until it is actually uploaded below
+        ++jobsDiscarded_;wastedNs_+=job.composeNs;   // until it is actually uploaded below
         if(job.cancelled->load(std::memory_order_relaxed))continue;
         pending_.erase(job.key);
         if(job.pixels.empty() || std::find(visible_.begin(),visible_.end(),job.key)==visible_.end())continue;
@@ -247,7 +250,7 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
         render::countTextureUpload(size);
         cache_.emplace(job.key,Entry{texture,job.w,job.h,frame_});
         bytes_+=size;uploaded+=size;++uploads_;++revision_;
-        --jobsDiscarded_;++jobsUsed_;uploadBytes_+=size;
+        --jobsDiscarded_;wastedNs_-=job.composeNs;++jobsUsed_;uploadBytes_+=size;
     }
     for(const auto& key:visible_) {
         if(cache_.count(key) || pending_.count(key) || pending_.size()>=64 || gpuvram::blocked())continue;
@@ -290,12 +293,12 @@ bool TerrainChunks::covers(int bx,int by) const {
     return std::binary_search(drawn_.begin(),drawn_.end(),std::pair{bx/32,by/32});
 }
 bool TerrainChunks::draw(SDL_Renderer* renderer,float x,float y,float zoom) {
-    bool complete=true;drawn_.clear();
+    bool complete=true;drawn_.clear();drawnStandin_=drawnHoles_=0;
     for(const auto& key:visible_) {
         auto i=cache_.find(key);
         const auto [want,cx,cy]=key;
         if(i==cache_.end()) {
-            complete=false;
+            complete=false;++drawnHoles_;
             // Still baking at this level (a zoom just changed it, or a pan brought it
             // in): stand in with the same map area at the nearest level still cached,
             // a little softer or sharper for a few frames, rather than sending the
@@ -305,6 +308,7 @@ bool TerrainChunks::draw(SDL_Renderer* renderer,float x,float y,float zoom) {
                 for(int level:{want-d,want+d})
                     if(level>=0 && level<=5 && i==cache_.end())i=cache_.find({level,cx,cy});
             if(i==cache_.end())continue;
+            --drawnHoles_;++drawnStandin_;
         }
         const int level=std::get<0>(i->first);const auto& e=i->second;
         // Shared rounded boundaries prevent cracks. The one-texel border lets

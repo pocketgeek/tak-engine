@@ -194,6 +194,7 @@ enum class Work : uint8_t {
     TerrainCompose,  // terrain chunk worker: mip generation + composition
     TerrainUpload,   // render thread: chunk + section texture create/upload
     SectionDecode,   // section JPEG decode worker
+    TerrainWasted,   // terrain chunk worker time on jobs never uploaded (cancelled, discarded)
     Count
 };
 
@@ -391,6 +392,25 @@ enum class Counter : uint8_t {
     CpuCachePinnedBytes,
     CpuCacheEvictableBytes,
     CpuCachePeakBytes,         // highest CpuCacheRetainedBytes seen at a frame end
+    // Workstream K (camera-prioritized terrain). Gauges of the last terrain draw:
+    // visible chunk cells, of which at the wanted level / shown by another level's
+    // image (stand-in) / without any image (holes: the section fallback draws them);
+    // fallback tiles whose section was not resident (the blurry underlay shows).
+    TerrainChunkVisible,
+    TerrainChunkReady,
+    TerrainChunkStandin,
+    TerrainChunkHoles,
+    TerrainUnderlayTiles,
+    // Per frame: queued/running jobs cancelled as obsolete (outside the keep band,
+    // past the level-change grace, or displaced from a full queue by visible work);
+    // running jobs the worker stopped on such a cancel; nearby (leading-edge) jobs
+    // queued; results uploaded for cells not visible at that moment (nearby or kept
+    // speculative work); completed results whose upload the frame budget postponed.
+    TerrainJobsObsolete,
+    TerrainJobsAborted,
+    TerrainJobsNearby,
+    TerrainJobsOffview,
+    TerrainUploadDeferred,
     Count
 };
 
@@ -412,7 +432,7 @@ inline constexpr const char* kPhaseNames[size_t(Phase::Count)] = {
     "fog", "schedule_plan"};
 inline constexpr const char* kWorkNames[size_t(Work::Count)] = {
     "geometry_key", "geometry_build", "pool_busy", "pool_wake", "terrain_compose",
-    "terrain_upload", "section_decode"};
+    "terrain_upload", "section_decode", "terrain_wasted"};
 inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "units_scanned", "unit_candidates", "feature_candidates", "features_painted",
     "painter_items", "visible_units", "special_units", "distant_images", "distant_bakes",
@@ -466,7 +486,10 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "terrain_mip_peak_bytes", "terrain_mip_evictions", "terrain_mip_regens", "terrain_mip_trims",
     "cpu_trims", "cpu_trim_bytes", "worker_scratch_used_bytes", "worker_scratch_capacity_bytes",
     "geom_pinned_bytes", "cpu_cache_used_bytes", "cpu_cache_retained_bytes",
-    "cpu_cache_pinned_bytes", "cpu_cache_evictable_bytes", "cpu_cache_peak_bytes"};
+    "cpu_cache_pinned_bytes", "cpu_cache_evictable_bytes", "cpu_cache_peak_bytes",
+    "terrain_chunk_visible", "terrain_chunk_ready", "terrain_chunk_standin", "terrain_chunk_holes",
+    "terrain_underlay_tiles", "terrain_jobs_obsolete", "terrain_jobs_aborted", "terrain_jobs_nearby",
+    "terrain_jobs_offview", "terrain_upload_deferred"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

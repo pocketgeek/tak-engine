@@ -123,6 +123,22 @@ SCENES = {
                         env={"TAK_RENDER_CAMERA": "1", "TAK_RENDER_ZOOM": "1"},
                         notes="pan + continuous zoom 0.25..1.0 on Middle Earth V1 (255 sections, "
                               "238 MiB decoded: above the CPU section budget)"),
+    # Workstream K: terrain work under camera motion on the largest shipped map
+    # (Middle Earth V1, 1008x1008 blocks = 32x32 chunks; min zoom 0.24 at 7680x2160).
+    "terrain-sweep": dict(map="Middle Earth V1", count=300, zoom=1.0,
+                          env={"TAK_RENDER_CENTER": "16128,16128",
+                               "TAK_RENDER_SWEEP": "16128,16128,9000,6000,480"},
+                          notes="fast elliptical sweep (9000x6000 px, 480 frames: up to 118 px/frame) "
+                                "with reversals in both axes over Middle Earth V1"),
+    "terrain-zoom-osc": dict(map="Middle Earth V1", count=300, zoom=0.5,
+                             env={"TAK_RENDER_CENTER": "16128,16128", "TAK_RENDER_ZOOM_OSC": "0.42,0.6,90"},
+                             notes="zoom oscillating 0.42..0.6 every 90 frames: the chunk level flips "
+                                   "between 0 and 1 (at 7680x2160 both levels exceed the chunk budget)"),
+    "terrain-jumps": dict(map="Middle Earth V1", count=300, zoom=0.75,
+                          env={"TAK_RENDER_CENTER": "16128,16128", "TAK_RENDER_JUMP": "20",
+                               "TAK_RENDER_JUMP_AT": "4000,4000;28000,4000;28000,28000;4000,28000;16000,16000"},
+                          notes="camera jumps between five far-apart views every 20 frames (faster "
+                                "than a view's terrain finishes composing)"),
 }
 QUICK = ["small-battle", "stationary-mixed", "moving", "pan"]
 SIZES = {"normal": (1280, 960), "uhd": (7680, 2160)}
@@ -221,6 +237,13 @@ def summarize(parsed, begin, end):
         out["stats"] = columns(stats)
         last = stats[-1]
         out["stats_last"] = {k: v for k, v in last.items() if k != "frame"}
+        # Workstream K: share of frames whose visible terrain was incomplete (no chunk
+        # image: section fallback; no section either: the blurry underlay).
+        if any("terrain_chunk_holes" in r for r in stats):
+            out["terrain"] = {name: sum(1 for r in stats if r.get(key, 0) > 0) / len(stats)
+                              for name, key in (("hole_frames", "terrain_chunk_holes"),
+                                                ("underlay_frames", "terrain_underlay_tiles"),
+                                                ("standin_frames", "terrain_chunk_standin"))}
     gpu = [ms for f, ms in parsed.get("gpu_timeline", {}).items() if begin <= f < (end if end is not None else 1 << 30)]
     if not gpu:
         gpu = [r["gpu"] for r in phases if "gpu" in r]
@@ -522,7 +545,7 @@ TELEMETRY_PHASES = ["t_candidates", "t_painter_sort", "t_atlas", "t_geometry", "
                     "t_shadow_composite", "t_body_assembly", "t_body_submit", "t_terrain",
                     "t_terrain_upload", "t_effects", "t_fog", "t_pool_dispatch", "t_pool_wait", "t_schedule_plan",
                     "w_geometry_key", "w_geometry_build", "w_pool_busy", "w_pool_wake",
-                    "w_terrain_compose", "w_section_decode"]
+                    "w_terrain_compose", "w_section_decode", "w_terrain_upload", "w_terrain_wasted"]
 TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_cold", "miss_owner",
                     "miss_resource", "miss_pose", "miss_material", "miss_zoom", "miss_placement",
                     "miss_changed", "inval_pose", "inval_material", "inval_placement", "inval_zoom",
@@ -558,7 +581,13 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     # workstream J: CPU budgets (per-frame events)
                     "cpu_trims", "cpu_trim_bytes", "terrain_section_decodes", "terrain_section_evictions",
                     "terrain_section_redecodes", "terrain_section_prefetch_skipped", "terrain_mip_evictions",
-                    "terrain_mip_regens", "terrain_mip_trims"]
+                    "terrain_mip_regens", "terrain_mip_trims",
+                    # workstream K: camera-prioritized terrain
+                    "terrain_chunk_visible", "terrain_chunk_ready", "terrain_chunk_standin",
+                    "terrain_chunk_holes", "terrain_underlay_tiles", "terrain_chunk_pending",
+                    "terrain_jobs_completed", "terrain_section_uploads", "terrain_jobs_obsolete",
+                    "terrain_jobs_aborted", "terrain_jobs_nearby", "terrain_jobs_offview",
+                    "terrain_upload_deferred"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",

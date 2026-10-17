@@ -3622,6 +3622,11 @@
         stats.set(RS::TerrainChunkImages, chunks.images);
         stats.set(RS::TerrainChunkUploads, chunks.uploads);
         stats.set(RS::TerrainChunkPending, chunks.pending);
+        stats.set(RS::TerrainChunkVisible, chunks.visible);
+        stats.set(RS::TerrainChunkReady, chunks.ready);
+        stats.set(RS::TerrainChunkStandin, chunks.standin);
+        stats.set(RS::TerrainChunkHoles, chunks.holes);
+        stats.set(RS::TerrainUnderlayTiles, mapView_.underlayTiles());
         stats.set(RS::TerrainSectionBytes, mapView_.sectionBytes());
         stats.add(RS::TerrainJobsQueued, delta(chunks.jobsQueued, cursor.chunks.jobsQueued));
         stats.add(RS::TerrainJobsCompleted, delta(chunks.jobsCompleted, cursor.chunks.jobsCompleted));
@@ -3650,6 +3655,7 @@
         stats.addMs(RP::TerrainUpload, double(uploadNs) * 1e-6);
         stats.addWorkNs(RW::TerrainUpload, uploadNs);
         stats.addWorkNs(RW::TerrainCompose, delta(chunks.composeNs, cursor.chunks.composeNs));
+        stats.addWorkNs(RW::TerrainWasted, delta(chunks.wastedNs, cursor.chunks.wastedNs));
         stats.addWorkNs(RW::SectionDecode, delta(sections.decodeNs, cursor.sections.decodeNs));
         cursor.chunks = chunks;
         cursor.sections = sections;

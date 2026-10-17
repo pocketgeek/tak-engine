@@ -208,6 +208,7 @@ void MapView::rebuildTileBatch(int winW, int winH) {
     for (auto& [t, v] : apronBatch_) v.clear();
     wanted_.clear();
     batchKeys_.clear();
+    underlayTiles_ = 0;
     const int mapW = map_.blocksX, mapH = map_.blocksY;
     // Visible block range, clamped to the map.
     int b0x = std::max(0, int(std::floor(offX_ / kBlock)));
@@ -225,7 +226,7 @@ void MapView::rebuildTileBatch(int winW, int winH) {
             if(chunksEnabled_ && chunks_.covers(bx,by)) {bx=(bx/32+1)*32-1;continue;}
             size_t b = size_t(by) * mapW + bx;
             auto si = sections_.find(map_.tileKeys[b]);
-            if (si == sections_.end()) { wanted_.push_back(map_.tileKeys[b]); continue; }  // underlay shows
+            if (si == sections_.end()) { wanted_.push_back(map_.tileKeys[b]); ++underlayTiles_; continue; }  // underlay shows
             if (!si->second.tex) continue;   // absent JPG
             const Section& s = si->second;
             batchKeys_.push_back(map_.tileKeys[b]);
@@ -345,10 +346,26 @@ void MapView::draw(int winW, int winH) {
     chunksEnabled_=!tak::devFlag("TAK_TERRAIN_CACHE_OFF");
     if(chunksEnabled_) {
         chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_,nowMs());
+#ifndef NDEBUG
+        // Debug (capture runs): TAK_TERRAIN_SETTLE=1 waits until every visible chunk is
+        // ready at its wanted level, so a capture shows finished terrain whatever order
+        // or speed the work had (bounded: after one 10 s wait it gives up for good).
+        static bool settleGaveUp=false;
+        if(!settleGaveUp && tak::devFlag("TAK_TERRAIN_SETTLE"))
+            for(const uint64_t start=SDL_GetTicks64();;) {
+                const auto settled=chunks_.stats();
+                if(settled.visible && settled.ready==settled.visible)break;
+                if(SDL_GetTicks64()-start>=10000) {
+                    std::fprintf(stderr,"TAK_TERRAIN_SETTLE: terrain did not settle; giving up\n");
+                    settleGaveUp=true;break;
+                }
+                SDL_Delay(1);chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_,nowMs());
+            }
+#endif
         const auto revision=chunks_.stats().revision;
         if(revision!=chunkRevision_) {tileBatchDirty_=true;chunkRevision_=revision;}
         if(chunks_.draw(ren_,offX_,offY_,zoom_)) {
-            tileBatch_.clear();apronBatch_.clear();wanted_.clear();batchKeys_.clear();
+            tileBatch_.clear();apronBatch_.clear();wanted_.clear();batchKeys_.clear();underlayTiles_=0;
             tileBatchDirty_=true;trimSections();return;
         }
     } else {chunks_.clear();tileBatchDirty_=true;}

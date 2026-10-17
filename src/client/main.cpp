@@ -1565,6 +1565,29 @@ int main(int argc, char** argv) {
     const unsigned studySparseAfter=studyPeriod("TAK_RENDER_SPARSE_AFTER");
     float studySparseX=200,studySparseZ=200;
     if(const char* at=tak::devEnv("TAK_RENDER_SPARSE_OFFSET"))std::sscanf(at,"%f,%f",&studySparseX,&studySparseZ);
+    // Workstream K (terrain under camera motion). TAK_RENDER_SWEEP=cx,cz,ax,az,period:
+    // an elliptical sweep around (cx,cz) with amplitudes ax/az world px and the given
+    // period in frames (fast pan with reversals in both axes). TAK_RENDER_ZOOM_OSC=
+    // lo,hi,period: zoom oscillating between lo and hi (across a chunk-level boundary).
+    // TAK_RENDER_JUMP_AT="x,z;x,z;..." replaces the four TAK_RENDER_JUMP points.
+    float studySweep[5]={};
+    const bool studySweepOn=tak::devEnv("TAK_RENDER_SWEEP") &&
+        std::sscanf(tak::devEnv("TAK_RENDER_SWEEP"),"%f,%f,%f,%f,%f",&studySweep[0],&studySweep[1],
+                    &studySweep[2],&studySweep[3],&studySweep[4])==5 && studySweep[4]>0;
+    float studyZoomOsc[3]={};
+    const bool studyZoomOscOn=tak::devEnv("TAK_RENDER_ZOOM_OSC") &&
+        std::sscanf(tak::devEnv("TAK_RENDER_ZOOM_OSC"),"%f,%f,%f",&studyZoomOsc[0],&studyZoomOsc[1],&studyZoomOsc[2])==3 &&
+        studyZoomOsc[2]>0;
+    std::vector<std::pair<float,float>> studyJumpAt={{3800,3800},{6200,3800},{6200,6200},{3800,6200}};
+    if(const char* list=tak::devEnv("TAK_RENDER_JUMP_AT")) {
+        studyJumpAt.clear();
+        for(const char* at=list;at && *at;) {
+            float x=0,z=0;
+            if(std::sscanf(at,"%f,%f",&x,&z)==2)studyJumpAt.push_back({x,z});
+            at=std::strchr(at,';');if(at)++at;
+        }
+        if(studyJumpAt.empty())studyJumpAt.push_back({3800,3800});
+    }
 #endif
     auto windowTarget = [&] {
         SDL_SetRenderTarget(ren, nullptr);
@@ -1787,6 +1810,10 @@ int main(int argc, char** argv) {
                 gameView->benchmarkCamera(dt, w, h);   // benchmark flythrough (no-op otherwise)
 #ifndef NDEBUG
                 if(renderStudy && studyPanSnap)gameView->renderStudyPanSnap(studyFrame,studyPanSnap);
+                else if(renderStudy && studySweepOn) {
+                    const float phase=float(studyFrame)*6.2831853f/studySweep[4];
+                    gameView->lookAt(studySweep[0]+studySweep[2]*std::sin(phase),studySweep[1]+studySweep[3]*std::cos(phase));
+                }
                 else if(renderStudy && tak::devFlag("TAK_RENDER_CAMERA")) {
                     const float phase=float(studyFrame)*.012f;
                     gameView->lookAt(5000+240*std::sin(phase),5000+160*std::cos(phase));
@@ -1794,12 +1821,14 @@ int main(int argc, char** argv) {
                 if(renderStudy && studyVeteran)gameView->renderStudyVeteran(studyFrame,studyVeteran);
                 if(renderStudy && tak::devFlag("TAK_RENDER_ZOOM"))
                     gameView->renderStudyZoom(.25f+.75f*(.5f+.5f*std::sin(float(studyFrame)*.008f)));
+                else if(renderStudy && studyZoomOscOn)
+                    gameView->renderStudyZoom(studyZoomOsc[0]+(studyZoomOsc[1]-studyZoomOsc[0])*
+                        (.5f+.5f*std::sin(float(studyFrame)*6.2831853f/studyZoomOsc[2])));
                 if(renderStudy && tak::devFlag("TAK_RENDER_MOTION"))gameView->renderStudyMotion(studyFrame);
                 if(renderStudy && studyJump && studyFrame%studyJump==0) {
-                    // Camera jumps between four distant points (no shared view).
-                    static const float jumpAt[4][2]={{3800,3800},{6200,3800},{6200,6200},{3800,6200}};
-                    const auto& p=jumpAt[(studyFrame/studyJump)%4];
-                    gameView->lookAt(p[0],p[1]);
+                    // Camera jumps between distant points (no shared view; four by default).
+                    const auto& p=studyJumpAt[(studyFrame/studyJump)%studyJumpAt.size()];
+                    gameView->lookAt(p.first,p.second);
                 }
                 if(renderStudy && studyChurn)gameView->renderStudyChurn(studyFrame,studyChurn);
                 if(renderStudy && studyEpoch && studyFrame && studyFrame%studyEpoch==0)

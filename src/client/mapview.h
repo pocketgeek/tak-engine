@@ -109,6 +109,9 @@ public:
     tak::TerrainChunks::Stats chunkStats() const { return chunks_.stats(); }
     void setMipBudget(size_t high, size_t low, uint64_t idleMs) { chunks_.setMipBudget(high, low, idleMs); }
     size_t sectionBytes() const { return sectionBytes_; }   // resident section textures
+    // Fallback tiles the last draw() left to the underlay (their section was not
+    // resident): visible terrain shown only as the blurry overview (workstream K).
+    size_t underlayTiles() const { return underlayTiles_; }
     // Render telemetry for the section fallback (cumulative; the reader takes deltas).
     struct SectionStats {
         uint64_t uploads = 0, uploadBytes = 0, uploadNs = 0, decodes = 0, decodeNs = 0;
@@ -220,6 +223,7 @@ private:
     float builtOffX_ = 1e30f, builtOffY_ = 1e30f, builtZoom_ = -1;
     int builtW_ = -1, builtH_ = -1;
     bool tileBatchDirty_ = true;   // set when a section uploads / view changes
+    size_t underlayTiles_ = 0;     // see underlayTiles()
     void rebuildTileBatch(int winW, int winH);
     tak::TerrainChunks chunks_{comp_};
     uint64_t chunkRevision_=0;

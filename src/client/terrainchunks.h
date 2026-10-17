@@ -30,6 +30,12 @@ public:
         // Workstream J: the mip cache's CPU budget. Pinned = held by the running job.
         size_t mipPinnedBytes=0,mipPeakBytes=0;
         uint64_t mipEvictions=0,mipRegens=0,mipTrims=0;   // cumulative
+        // Workstream K. What the last draw() showed of the visible cells: `ready` = at
+        // the wanted level, `standin` = another level's image, `holes` = no image (the
+        // section fallback or the underlay shows). wastedNs = worker time spent on jobs
+        // whose result was never uploaded (cumulative).
+        size_t standin=0,holes=0;
+        uint64_t wastedNs=0;
     };
     explicit TerrainChunks(terrain::Compositor& compositor);
     ~TerrainChunks();
@@ -66,6 +72,8 @@ public:
         s.mipEvictions=mipEvictions_.load(std::memory_order_relaxed);
         s.mipRegens=mipRegens_.load(std::memory_order_relaxed);
         s.mipTrims=mipTrims_.load(std::memory_order_relaxed);
+        s.standin=drawnStandin_;s.holes=drawnHoles_;
+        s.wastedNs=wastedNs_+wastedAbortNs_.load(std::memory_order_relaxed);
         return s;
     }
 private:
@@ -77,6 +85,7 @@ private:
         int mapW,mapH,bx,by,bw,bh,w,h;
         std::vector<Tile> tiles;
         std::vector<uint8_t> pixels;
+        uint64_t composeNs=0;   // worker time this job took (wasted if never uploaded)
     };
     struct Entry {SDL_Texture* texture=nullptr;int w=0,h=0;uint64_t used=0;};
     void work();
@@ -116,6 +125,9 @@ private:
     std::map<Key,Entry> cache_;
     std::vector<Key> visible_;
     std::vector<std::pair<int,int>> drawn_;   // chunk cells the last draw() covered (any level), sorted
+    size_t drawnStandin_=0,drawnHoles_=0;     // the last draw(): visible cells shown by another level / not at all
+    uint64_t wastedNs_=0;                     // render thread: compose time of results never uploaded
+    std::atomic<uint64_t> wastedAbortNs_{0};  // worker: compose time of jobs cancelled while they ran
     int level_=0;
     bool linear_=false;
 };
