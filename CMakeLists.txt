@@ -396,9 +396,10 @@ set_tests_properties(legion_pausedemand PROPERTIES LABELS "legion;w4")
 # the registrations waiting for it use it (it failed on the pre-review head: 36 builds for 25 classes).
 add_test(NAME legion_planepin COMMAND legion_world_test planepin)
 set_tests_properties(legion_planepin PROPERTIES LABELS "legion")
-# Legion 10,000 stage 6: tile chains (shared transit tiles, the descent check, serial == workers) and a reused
-# plane slot never reading the previous class's tiles; both under TAK_LEGION_VERIFY.
-foreach(legion_case chains chainplane)
+# Legion 10,000 stage 6: tile chains (transit tiles shared across destinations, the descent check; with a wall
+# dropped and lifted while they build) and a reused plane slot never reading the previous class's tiles; all
+# under TAK_LEGION_VERIFY.
+foreach(legion_case chains chainschurn chainplane)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
   set_tests_properties(legion_${legion_case} PROPERTIES LABELS "legion" ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()

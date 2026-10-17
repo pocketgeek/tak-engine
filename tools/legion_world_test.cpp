@@ -1429,11 +1429,13 @@ void planepin() {
 
 // Legion 10,000 stage 6: small squads sent across a big map take tile chains (hierarchical routes over shared
 // tiles). A wall with three gaps crosses the map; eight squads of six cross it to eight different points. Checked:
-// chains are built, transit tiles are built and shared between squads with different destinations (tile hits),
-// every body arrives, the run is the same serial and with workers, and (TAK_LEGION_VERIFY) every finished chain's
-// estimate strictly falls along some legal step from every cell (no loop, no false minimum) and no chain reads a
-// tile of another mobility class.
-std::array<uint64_t,4> chainsRun(bool serial) {
+// chains are built, transit tiles are shared between squads with DIFFERENT destinations (cross hits: a hit by a
+// route to other goals than the one that built the tile), every body arrives, and (TAK_LEGION_VERIFY) every
+// finished chain's estimate strictly falls along some legal step from every cell (no loop, no false minimum) and no
+// chain reads a tile of another mobility class. (48 bodies run no worker jobs, so serial == workers is not this
+// test's claim: the chain code runs on the sim thread; the gate's both-exec runs and the 2,500-body scale run
+// under --both-exec cover it, docs/legion-10000-progress.md 7.6.)
+std::array<uint64_t,4> chainsRun(bool serial,bool churn=false) {
     Fixture f(512,320,serial);
     for(int z=0;z<320;++z)
         if(!(z>=40&&z<52)&&!(z>=150&&z<170)&&!(z>=262&&z<268)) {f.wall(250,z);f.wall(251,z);}
@@ -1450,21 +1452,29 @@ std::array<uint64_t,4> chainsRun(bool serial) {
     int t=0,done=0,all=0;
     for(const auto& q:squads)all+=int(q.size());
     for(;t<9000&&done<all;++t) {
+        // churn: a wall dropped across the middle of the east half while the chains build, lifted later (the
+        // chains are touched, keep steering and refresh; TAK_LEGION_VERIFY must not take their older tiles for
+        // the current geometry).
+        if(churn&&(t==5||t==400))for(int z=100;z<220;++z)
+            f.world.addFeature(z*512+380,float(380*16+8),float(z*16+8),0,1,1,1,t==5,-1,true);
         f.world.tick(1.f/30);
         done=0;for(const auto& q:squads)for(const int id:q)done+=f.world.unit(id)->orders.empty();
     }
     const auto a=f.world.legionNavigator()->accounting();
-    std::printf("chains %s ticks=%d arrived=%d/%d chains=%llu tiles=%llu hits=%llu repairs=%llu widens=%llu fallbacks=%llu\n",
-                serial?"serial":"workers",t,done,all,(unsigned long long)a.chains,(unsigned long long)a.tilesBuilt,
-                (unsigned long long)a.tileHits,(unsigned long long)a.chainRepairs,(unsigned long long)a.corridorWidens,
-                (unsigned long long)a.routeFallbacks);
+    std::printf("chains%s %s ticks=%d arrived=%d/%d chains=%llu tiles=%llu hits=%llu cross=%llu repairs=%llu widens=%llu fallbacks=%llu\n",
+                churn?"churn":"",serial?"serial":"workers",t,done,all,(unsigned long long)a.chains,(unsigned long long)a.tilesBuilt,
+                (unsigned long long)a.tileHits,(unsigned long long)a.tileCrossHits,(unsigned long long)a.chainRepairs,
+                (unsigned long long)a.corridorWidens,(unsigned long long)a.routeFallbacks);
     check(a.chains>=4,"chains: the squads did not take tile chains");
-    check(a.tilesBuilt>0&&a.tileHits>0,"chains: no transit tile was shared between squads");
+    check(a.tilesBuilt>0&&a.tileCrossHits>0,"chains: no transit tile was shared between squads with different destinations");
     check(done==all,"chains: a body never arrived");
     return {f.world.stateHash(),a.chains,a.tilesBuilt,a.tileHits};
 }
 void chains() {
-    check(chainsRun(true)==chainsRun(false),"chains: serial and workers differ");
+    chainsRun(true);
+}
+void chainschurn() {
+    chainsRun(true,true);
 }
 // Stage 6: a plane slot reused for another mobility class gets a new generation, so its routes never read the old
 // class's cached tiles. 25 classes (maxSlope 10..34) take turns on a 512 x 512 map: each sends one body far (a
@@ -4006,7 +4016,7 @@ int main(int argc,char** argv) {
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
-        {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
+        {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
         {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"entryplanes",entryplanes}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
