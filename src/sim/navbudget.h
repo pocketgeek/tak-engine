@@ -161,6 +161,8 @@ struct NavAccounting {
     // Admission at narrow passages: bodies admitted, member-updates spent waiting, turns of a passage's direction
     // and closings (the other way waited kAdmitGreen ticks).
     uint64_t passAdmits = 0, admitWaits = 0, admitTurns = 0, admitClosings = 0;
+    // Awareness by streams: movers that were one stream of a point split in several (an army in separate parts).
+    uint64_t streamMovers = 0, streamWork = 0;   // ... and the members and buckets the stream split read
 };
 
 // Per-tick budgets (constants: the same on every peer). Units and the reference cost per unit

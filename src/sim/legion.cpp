@@ -3256,6 +3256,11 @@ struct LegionNavigator::Impl {
         const int planeIndex=planeFor(*u.type);
         auto& p=plane(planeIndex);
         const auto [tx,tz]=target(leg);
+        // The command a member belongs to: the order's convoy (one click,
+        // however many ticks the uplink split it over; its issue tick when
+        // unstamped); every patrol lap on its own; moving goals on the
+        // shared re-seed grid.
+        const uint32_t command=leg.convoyTick!=ConvoyTable::kNone?leg.convoyTick:leg.issuedTick;
         int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
         const int sx=footprintOrigin(u.x,u.type->footX),sz=footprintOrigin(u.z,u.type->footZ);
         const int reach=legal(p,sx,sz)?compAt(p,sz*width()+sx):-1;
@@ -3280,11 +3285,6 @@ struct LegionNavigator::Impl {
         }
         Member m;m.controller=legKey(leg,kind);m.state=Waiting;m.windowTick=w.tickCounter_;m.stallTick=w.tickCounter_;m.headTick=w.tickCounter_;
         m.kind=kind;m.seedX=gx;m.seedZ=gz;m.seededAt=w.tickCounter_;
-        // The command a member belongs to: the order's convoy (one click,
-        // however many ticks the uplink split it over; its issue tick when
-        // unstamped); every patrol lap on its own; moving goals on the
-        // shared re-seed grid.
-        const uint32_t command=leg.convoyTick!=ConvoyTable::kNone?leg.convoyTick:leg.issuedTick;
         const uint32_t issue=rule.moving?w.tickCounter_-w.tickCounter_%kReseedTicks:
             rule.perController?uint32_t(leg.controller):command;
         if(resolvedEpoch!=epoch||resolved.size()>=4096) {resolved.clear();resolvedEpoch=epoch;}
@@ -6233,7 +6233,48 @@ struct LegionNavigator::Impl {
     // last scan (px per kAwareScan ticks) and its length L, and its
     // members' extent behind and ahead of the centroid along that heading
     // and across it (px).
-    struct AwareMover {uint64_t command;int player;uint32_t issue;int64_t px,pz,cx,cz,ax,az,r,dx,dz,L,tail,head,half;std::tuple<int,uint32_t,int32_t,int32_t> key;};
+    struct AwareMover {uint64_t command;int player;uint32_t issue;int64_t px,pz,cx,cz,ax,az,r,dx,dz,L,tail,head,half;std::tuple<int,uint32_t,int32_t,int32_t> key;
+                       uint64_t id;   // its identity in a group's plan (Group::avoidCmd): the command, or a stream's own key (stage 8)
+                      };
+    // Stage 8: the streams of a point -- its Moving / Holding members bucketed by kStreamCells-cell squares of their
+    // positions, buckets joined when 8-adjacent -- each with its member ids ascending, in order of their lowest id.
+    // Bounded work: one pass over the members and the occupied buckets. A navigation SUBGROUP for awareness: what
+    // makes members one stream is where they are, not which packet or id range they came in.
+    static constexpr int kStreamCells=16;
+    static constexpr int64_t kStreamMembers=64;   // a point with fewer moving members is one stream
+    struct Stream {std::vector<int> ids;};
+    std::vector<Stream> streamsOf(const Point& pt,uint64_t& work) const {
+        std::map<std::pair<int,int>,int> bucket;   // bucket -> union-find node
+        std::vector<int> parent;std::vector<std::pair<int,int>> of;   // per member: its node
+        std::vector<int> ids;
+        for(const int id:pt.ids) {
+            const Member* mm=member(id);const Unit* v=w.unit(id);
+            if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
+            const int bx=int(v->x.v>>16)/(16*kStreamCells),bz=int(v->z.v>>16)/(16*kStreamCells);
+            auto [it,fresh]=bucket.try_emplace({bx,bz},int(parent.size()));
+            if(fresh)parent.push_back(int(parent.size()));
+            ids.push_back(id);of.push_back({bx,bz});
+            ++work;
+        }
+        auto find=[&](int i) {while(parent[size_t(i)]!=i)i=parent[size_t(i)]=parent[size_t(parent[size_t(i)])];return i;};
+        for(const auto& [b,node]:bucket)
+            for(int ddz=-1;ddz<=1;++ddz)for(int ddx=-1;ddx<=1;++ddx) {
+                const auto o=bucket.find({b.first+ddx,b.second+ddz});
+                if(o==bucket.end())continue;
+                const int a=find(node),c=find(o->second);
+                if(a!=c)parent[size_t(std::max(a,c))]=std::min(a,c);
+                ++work;
+            }
+        std::map<int,size_t> index;   // root -> stream (members visit in ascending id: streams by lowest id)
+        std::vector<Stream> out;
+        for(size_t i=0;i<ids.size();++i) {
+            const int root=find(bucket.at(of[i]));
+            auto [it,fresh]=index.try_emplace(root,out.size());
+            if(fresh)out.push_back({});
+            out[it->second].ids.push_back(ids[i]);
+        }
+        return out;
+    }
     // Each group's centroid, spread, slowest base speed (raw Fixed, px
     // per tick) and the sight of its members.
     struct AwareAcc {int64_t sx=0,sz=0,sq=0,n=0,sight=0,slow=0;};
@@ -6284,18 +6325,41 @@ struct LegionNavigator::Impl {
                 pt.awareX=cx;pt.awareZ=cz;pt.awareSeen=true;pt.awareTick=w.tickCounter_;
                 if(dx*dx+dz*dz<16*16)continue;   // standing: the soft-obstacle scan sees still bodies
                 const int64_t L=std::max<int64_t>(1,isqrtFloor(uint64_t(dx*dx+dz*dz)));
-                int64_t ss=0,tail=0,head=0,half=0;
-                for(const int id:pt.ids) {
-                    const Member* mm=member(id);const Unit* v=w.unit(id);
-                    if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
-                    const int64_t ox=(v->x.v>>16)-cx,oz=(v->z.v>>16)-cz;ss+=ox*ox+oz*oz;
-                    const int64_t along=(ox*dx+oz*dz)/L,across=(ox*dz-oz*dx)/L;
-                    tail=std::max(tail,-along);head=std::max(head,along);half=std::max(half,std::abs(across));
+                const uint64_t command=commandKey(std::get<0>(key),std::get<1>(key));
+                // Stage 8: the point's moving members as STREAMS (streamsOf: spatially separate parts, a gap of a
+                // kStreamCells bucket or more between them); one stream is the point's one mover, as before, keyed
+                // by its command; each of several is a mover of its own (an army round both sides of a mountain is
+                // two obstacles, not one the size of both), keyed by its command and its lowest member id, and
+                // moving with the point's displacement.
+                uint64_t streamWork=0;
+                const auto streams=n>=kStreamMembers?streamsOf(pt,streamWork):std::vector<Stream>{};
+                acct.streamWork+=streamWork;   // observation (the scan's budget counts the members, as before)
+                // A point under kStreamMembers moving members is one stream (a squad strung out is still one body).
+                std::vector<Stream> whole;
+                if(streams.empty()) {
+                    whole.push_back({});
+                    for(const int id:pt.ids) {const Member* mm=member(id);const Unit* v=w.unit(id);if(mm&&v&&(mm->state==Moving||mm->state==Holding))whole.back().ids.push_back(id);}
                 }
-                work+=uint64_t(n);
-                const int64_t r=isqrtFloor(uint64_t(ss/n))*3/2+16;
-                movers.push_back({commandKey(std::get<0>(key),std::get<1>(key)),std::get<0>(key),std::get<1>(key),int64_t(std::get<2>(key))>>16,int64_t(std::get<3>(key))>>16,
-                    cx,cz,cx+dx*kAwareAhead,cz+dz*kAwareAhead,r,dx,dz,L,tail,head,half,key});
+                const auto& parts=streams.empty()?whole:streams;
+                for(const auto& st:parts) {
+                    if(st.ids.size()<size_t(kAwareMembers))continue;
+                    int64_t qx=0,qz=0;
+                    for(const int id:st.ids) {const Unit* v=w.unit(id);qx+=v->x.v>>16;qz+=v->z.v>>16;}
+                    const int64_t sn=int64_t(st.ids.size()),scx=parts.size()==1?cx:qx/sn,scz=parts.size()==1?cz:qz/sn;
+                    int64_t ss=0,tail=0,head=0,half=0;
+                    for(const int id:st.ids) {
+                        const Unit* v=w.unit(id);
+                        const int64_t ox=(v->x.v>>16)-scx,oz=(v->z.v>>16)-scz;ss+=ox*ox+oz*oz;
+                        const int64_t along=(ox*dx+oz*dz)/L,across=(ox*dz-oz*dx)/L;
+                        tail=std::max(tail,-along);head=std::max(head,along);half=std::max(half,std::abs(across));
+                    }
+                    work+=uint64_t(sn);
+                    const int64_t r=isqrtFloor(uint64_t(ss/sn))*3/2+16;
+                    const uint64_t streamId=parts.size()==1?command:(mix(command,uint64_t(uint32_t(st.ids.front())))|1ull<<63);
+                    movers.push_back({command,std::get<0>(key),std::get<1>(key),int64_t(std::get<2>(key))>>16,int64_t(std::get<3>(key))>>16,
+                        scx,scz,scx+dx*kAwareAhead,scz+dz*kAwareAhead,r,dx,dz,L,tail,head,half,key,streamId});
+                    if(parts.size()>1)++acct.streamMovers;
+                }
             }
             for(const auto& [id,m]:members) {
                 if(m.state!=Moving&&m.state!=Holding)continue;
@@ -6339,7 +6403,7 @@ struct LegionNavigator::Impl {
                 const int64_t c0=gridCol(std::min(mv.cx,ex)-grow),c1=gridCol(std::max(mv.cx,ex)+grow);
                 const int64_t r0=gridRow(std::min(mv.cz,ez)-grow),r1=gridRow(std::max(mv.cz,ez)+grow);
                 for(int64_t r=r0;r<=r1;++r)for(int64_t c=c0;c<=c1;++c)grid[size_t(r*gridW+c)].push_back(uint32_t(i));
-                byCommand.push_back({mv.command,uint32_t(i)});
+                byCommand.push_back({mv.id,uint32_t(i)});
             }
             std::sort(byCommand.begin(),byCommand.end());
         }
@@ -6347,7 +6411,7 @@ struct LegionNavigator::Impl {
             awCursor=0;awStarted=w.tickCounter_;
             uint64_t d=mix(0x617761726573ull,movers.size());
             for(const auto& mv:movers) {
-                d=mix(d,mv.command);d=mix(d,uint64_t(mv.cx)<<32^uint64_t(uint32_t(mv.cz)));d=mix(d,uint64_t(mv.dx)<<32^uint64_t(uint32_t(mv.dz)));
+                d=mix(d,mv.command);if(mv.id!=mv.command)d=mix(d,mv.id);d=mix(d,uint64_t(mv.cx)<<32^uint64_t(uint32_t(mv.cz)));d=mix(d,uint64_t(mv.dx)<<32^uint64_t(uint32_t(mv.dz)));
                 d=mix(d,uint64_t(mv.r)^uint64_t(mv.tail)<<20^uint64_t(mv.head)<<40);d=mix(d,uint64_t(mv.half));
             }
             for(const auto& [gid,a]:acc) {d=mix(d,uint64_t(uint32_t(gid)));d=mix(d,uint64_t(a.sx)^uint64_t(a.sz)<<32);d=mix(d,uint64_t(a.n)^uint64_t(a.slow)<<24);}
@@ -6446,7 +6510,7 @@ struct LegionNavigator::Impl {
                         for(size_t i=0,j=0;i<movers.size();++i) {
                             while(j<cand.size()&&cand[j]<i)++j;
                             if(j<cand.size()&&cand[j]==i)continue;
-                            if(std::find(g.avoidCmd.begin(),g.avoidCmd.end(),movers[i].command)!=g.avoidCmd.end())
+                            if(std::find(g.avoidCmd.begin(),g.avoidCmd.end(),movers[i].id)!=g.avoidCmd.end())
                                 verifyFail("awareScan's broad phase dropped a planned mover");
                             if(firstHit(movers[i],nullptr)>=0)verifyFail("awareScan's broad phase dropped a mover with a conflict");
                         }
@@ -6470,7 +6534,7 @@ struct LegionNavigator::Impl {
                             const int64_t ex=mv.cx-cx,ez=mv.cz-cz,see=a->second.sight+mv.r;
                             if(ex*ex+ez*ez>see*see)continue;
                         }
-                        const auto known=std::find(g.avoidCmd.begin(),g.avoidCmd.end(),mv.command);
+                        const auto known=std::find(g.avoidCmd.begin(),g.avoidCmd.end(),mv.id);
                         const bool isKnown=known!=g.avoidCmd.end();
                         const size_t ki=size_t(known-g.avoidCmd.begin());
                         // The group's centroid along and across the mover's heading.
@@ -6500,7 +6564,7 @@ struct LegionNavigator::Impl {
                             const int64_t limit=std::max<int64_t>(32,mv.half/2);
                             const bool move=!was.behind||(drift>limit&&awStarted-g.avoidAt[ki]>=kBehindMove);
                             if(!move)cor=was;
-                            want.push_back(mv.command);seg.push_back(cor);kind.push_back(kAwareCross);side.push_back(g.avoidSide[ki]);
+                            want.push_back(mv.id);seg.push_back(cor);kind.push_back(kAwareCross);side.push_back(g.avoidSide[ki]);
                             placed.push_back(move?awStarted:g.avoidAt[ki]);moved.push_back(move);
                             continue;
                         }
@@ -6538,7 +6602,7 @@ struct LegionNavigator::Impl {
                         // Deterministic either way (both keys are sim state).
                         if(cls==kAwareCross&&mv.command>g.command)continue;
                         if(cls==kAwareCross) {
-                            want.push_back(mv.command);seg.push_back(behind());kind.push_back(kAwareCross);
+                            want.push_back(mv.id);seg.push_back(behind());kind.push_back(kAwareCross);
                             side.push_back(qg<0?-1:1);placed.push_back(awStarted);moved.push_back(true);
                             continue;
                         }
@@ -6549,7 +6613,7 @@ struct LegionNavigator::Impl {
                             const int64_t lx=tz*cor.r/(2*tl),lz=-tx*cor.r/(2*tl);
                             cor.x0+=lx;cor.x1+=lx;cor.z0+=lz;cor.z1+=lz;
                         }
-                        want.push_back(mv.command);seg.push_back(cor);kind.push_back(cls);side.push_back(0);placed.push_back(0);moved.push_back(false);
+                        want.push_back(mv.id);seg.push_back(cor);kind.push_back(cls);side.push_back(0);placed.push_back(0);moved.push_back(false);
                         // C1 seen: a head-on entry of a group of kPivotMembers or more (meetScan latches its point).
                         if(cls==kAwareHeadOn&&g.members>=kPivotMembers&&!engages)awareHeadOn.push_back({g.command,mv.key});
 #ifndef NDEBUG
