@@ -221,7 +221,7 @@ replays must not move; nothing in this program may feed the simulation.
   level 0 and for jump storms at every level. Tests: `terrain_work` (816
   checks), `terrain_schedule` (scenarios 1–9 incl. 8b gate scope, 8c level-1
   storm, 9 holes first; mutations of the gate scope and of holes-first
-  ordering each fail it), `terrain_cache`, TSan on the integration
+  ordering each fail it), `terrain_cache` (re-run at `6cf541b0`), TSan on the integration
   (scenarios 1–7, at `b98183b1`), `ctest -L quick` 389/389 on build-o2 at
   `6cf541b0`; the Release `takclient` builds without the K debug or
   telemetry strings. Captures: settled captures identical (Experiment 13 at
@@ -3975,7 +3975,7 @@ Experiment 13 showed differs between runs of the same build too.
 918300a4 and two at b96fe8fb stable). Mutations, each rebuilt and run
 against both tests: `prepare()` uploads everything (killed by scenario 9),
 storm gate at level 0 only, motion gate at every level, storms counted as
-motion, gate never (each killed by both tests). `ctest -L quick` 389/389 on build-o2 at `6cf541b0` (`terrain_schedule` is no longer in `quick`: `tools/ctest_costs.txt` lists it since `df330946`; run directly). The lost-wakeup
+motion, gate never (each killed by both tests). `terrain_cache` PASS at `6cf541b0`. `ctest -L quick` 389/389 on build-o2 at `6cf541b0` (`terrain_schedule` is no longer in `quick`: `tools/ctest_costs.txt` lists it since `df330946`; run directly). The lost-wakeup
 fix has no deterministic test (the window lies between the worker's
 predicate check and its wait). The Release `takclient` builds and contains none of `TAK_TERRAIN_SCHEDULE`, `TAK_TERRAIN_SETTLE`, `TAK_RENDER_SWEEP`, `terrain_gated_frames`, `gateall`, `stormlevel0`. `--mpai` not run: only
 `src/client` and `tools/` changed; every benchmark run checks the world hash.
