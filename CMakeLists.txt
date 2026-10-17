@@ -1489,7 +1489,8 @@ if(TAK_BUILD_CLIENT)
       # the units each per-unit overlay draws, or draw() throws
       # (TAK_UNIT_INDEX_VERIFY). The base variant is a fogged two-player battle with
       # construction, ghosts, flyers, corpses, self-destruct countdowns, control
-      # squads and production queues (the overlays), moving units (interpolation), a
+      # squads, production queues and queued builds (the overlays and the snapshot's
+      # build-ghost list), moving units (interpolation), a
       # panning and zooming camera with reversals, camera shake, deaths/respawns and
       # world-epoch bumps (id reuse); _jump is a 3000-unit army with squads seen
       # through a camera jumping between distant views (a small visible subset).
@@ -1498,7 +1499,7 @@ if(TAK_BUILD_CLIENT)
           set(_scene TAK_SHADOW_BENCH=300 TAK_RENDER_SPACING=120 TAK_RENDER_BATTLE=1 TAK_RENDER_EXTRAS=1
               TAK_RENDER_OVERLAYS=1 TAK_PROFILE_FOG=1 TAK_RENDER_MOTION=1 TAK_RENDER_CAMERA=1
               TAK_RENDER_ZOOM=1 TAK_RENDER_SHAKE=37 TAK_RENDER_CHURN=40 TAK_RENDER_EPOCH=90 TAK_RENDER_FRAMES=200)
-          set(_expect "health=[1-9][0-9]* selfdestruct=[1-9][0-9]* squads=[1-9][0-9]* production=[1-9]")
+          set(_expect "health=[1-9][0-9]* selfdestruct=[1-9][0-9]* squads=[1-9][0-9]* production=[1-9][0-9]* ghosts=[1-9]")
         else()
           set(_scene TAK_SHADOW_BENCH=3000 TAK_RENDER_OVERLAYS=1 TAK_PROFILE_ZOOM=1 TAK_RENDER_JUMP=15
               TAK_RENDER_SHAKE=23 TAK_RENDER_FRAMES=120)

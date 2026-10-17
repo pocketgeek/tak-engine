@@ -963,7 +963,8 @@
         //   TAK_RENDER_NAVAL=N      N floating units on the water nearest the centre
         //   TAK_RENDER_FOREST=1     centre army + camera on the densest scenery region
         //   TAK_RENDER_ROSTER=a,b   unit types replacing the 6-type roster
-        //   TAK_RENDER_OVERLAYS=1   control squads + factories with production queues
+        //   TAK_RENDER_OVERLAYS=1   control squads, factories with production queues,
+        //                           builders with queued build orders (ghosts)
         // All of them only shape the local harness scene; none run in a real game.
         if (const char* countText=tak::devEnv("TAK_SHADOW_BENCH")) {
             const int count=std::clamp(std::atoi(countText),1,16000);
@@ -1040,11 +1041,12 @@
                 // Corpses: every 9th grid unit dies at once and leaves its body.
                 for(size_t k=0;k<spawnedIds.size();k+=9) {writableWorld().destroy(spawnedIds[k]);++corpses;}
             }
-            int squads=0,factories=0;
+            int squads=0,factories=0,ghostQueues=0;
             if(tak::devFlag("TAK_RENDER_OVERLAYS")) {
                 // Per-unit overlays (workstream L): control squads on every fifth grid unit
-                // (every third of those a formation), and factories across the middle of the
-                // army with long production queues (progress bars).
+                // (every third of those a formation), factories across the middle of the
+                // army with long production queues (progress bars), and builders with
+                // queued build orders (ghosts).
                 for(size_t k=0;k<spawnedIds.size();k+=5) {
                     const int n=int(k/5)%10+1;
                     writableWorld().setSquad(spawnedIds[k],(k/5)%3==2 ? -n : n);++squads;
@@ -1059,6 +1061,18 @@
                     const float fx=centerX+(float(factories)-1.5f)*500,fz=centerZ;   // in the army's middle
                     if(const int factory=spawn(id,fx,fz,0,localPlayer_);factory>0) {
                         writableWorld().train(factory,product,50);++factories;
+                    }
+                }
+                // Builders with queued (shift) build orders: the queued-build ghosts.
+                for(int k=0;k<3;++k) {
+                    const float bx=centerX+float(k-1)*600,bz=centerZ+300;
+                    const int builder=spawn("araking",bx,bz,0,localPlayer_);
+                    if(builder<=0)continue;
+                    for(const auto& option:registry_.buildable("araking")) {
+                        const auto* site=registry_.find(option);
+                        if(!site || !isStructure(site) || site->footX>4 || site->footZ>4)continue;
+                        for(int q=0;q<3;++q)writableWorld().queueBuild(builder,site,bx+float(q)*96,bz+160,true);
+                        ++ghostQueues;break;
                     }
                 }
             }
@@ -1097,8 +1111,8 @@
             }
             std::fprintf(stderr,"shadow benchmark: requested=%d spawned=%d columns=%d zoom=%.3f type=%s\n",
                 count,spawned,columns,zoom,only ? only : "mixed");
-            std::fprintf(stderr,"render scene: sites=%d ghosts=%d flyers=%d corpses=%d boats=%d scenery=%d squads=%d factories=%d center=%.0f,%.0f offset=%.0f,%.0f\n",
-                sites,ghosts,flyers,corpses,boats,forestTrees,squads,factories,centerX,centerZ,mapView_.offX(),mapView_.offY());
+            std::fprintf(stderr,"render scene: sites=%d ghosts=%d flyers=%d corpses=%d boats=%d scenery=%d squads=%d factories=%d build_queues=%d center=%.0f,%.0f offset=%.0f,%.0f\n",
+                sites,ghosts,flyers,corpses,boats,forestTrees,squads,factories,ghostQueues,centerX,centerZ,mapView_.offX(),mapView_.offY());
             return;
         }
         // Capture the reclaim particle fix through the existing local build harness.

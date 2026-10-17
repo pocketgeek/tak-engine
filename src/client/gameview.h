@@ -661,8 +661,9 @@ public:
     // same order, or draw() threw. passes = checked passes (painter list + overlays);
     // live/candidates/accepted are summed over them.
     // overlays[k] = units drawn by overlay k (health bars, self-destruct, squad
-    // markers, production bars) over the checked passes.
-    struct UnitIndexVerifyTotals { uint64_t frames=0, passes=0, live=0, candidates=0, accepted=0, overlays[4]{}; };
+    // markers, production bars) over the checked passes; ghosts = units that drew
+    // queued-build ghosts (taken from Frame::buildGhostUnits).
+    struct UnitIndexVerifyTotals { uint64_t frames=0, passes=0, live=0, candidates=0, accepted=0, overlays[4]{}, ghosts=0; };
     const UnitIndexVerifyTotals& unitIndexVerifyTotals() const { return unitIndexVerifyStats_; }
     // TAK_SCHEDULE_VERIFY (workstream I): every geometry pass built each visible
     // unit exactly once under a well-formed plan; the shadow point checks, shadow
@@ -2579,7 +2580,7 @@ private:
     // Units per pool job. Whole blocks keep each thread's writes to the per-slot side
     // arrays (captureSlots_, transportFlags_) off the other threads' cache lines.
     static constexpr size_t kCaptureBlock = 64;
-    struct CaptureSlot { int32_t id = 0, site = 0; bool typed = false; float x = 0, z = 0; };
+    struct CaptureSlot { int32_t id = 0, site = 0; bool typed = false, buildGhosts = false; float x = 0, z = 0; };
     std::unique_ptr<ThreadPool> capturePool_;
     std::vector<CaptureSlot> captureSlots_;
     // Capture-thread scratch for Frame::unitGrid (workstream L): live positions in live

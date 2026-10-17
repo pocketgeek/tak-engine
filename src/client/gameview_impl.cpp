@@ -844,6 +844,8 @@
             s.seeded = u.alive();   // dead holds its pose (never interpolated)
         }
         captureSlots_[slot].x = s.x; captureSlots_[slot].z = s.z;   // Frame::unitGrid
+        captureSlots_[slot].buildGhosts = std::any_of(s.orders.begin(), s.orders.end(),
+            [](const RenderOrder& o) { return o.buildType && !o.manaBuildArea; });   // Frame::buildGhostUnits
     }
 
     void GameView::captureFrame() {
@@ -873,7 +875,7 @@
         forEachUnitSlot([&](size_t i) {captureUnit(fb, pf, i);});
         // Serial tail, in slot order (the same order as before): the ID table, the compact
         // live list, and the conjure flag for the few units that have a site.
-        captureGridX_.clear(); captureGridZ_.clear();
+        captureGridX_.clear(); captureGridZ_.clear(); fb.buildGhostUnits.clear();
         for (size_t i=0; i<count; ++i) {
             const CaptureSlot& c=captureSlots_[i];
             if(fb.unitSlots.size()<=size_t(c.id))fb.unitSlots.resize(size_t(c.id)+1,-1);
@@ -881,6 +883,7 @@
             if (!c.typed) continue;
             UnitR& s=fb.units[i];
             fb.live.push_back(&s);   // compact live list (mirrors world_.units())
+            if (c.buildGhosts) fb.buildGhostUnits.push_back(uint32_t(captureGridX_.size()));
             captureGridX_.push_back(c.x); captureGridZ_.push_back(c.z);
             // Zero means no site (captureUnit already cleared the flag). Only the few
             // units with one are touched here: a pool thread just wrote every record,

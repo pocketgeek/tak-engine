@@ -267,6 +267,10 @@ struct Frame {
     // copied, indices into `live`. Presentation only -- never read by the simulation.
     tak::render::UnitGrid unitGrid;
     uint64_t unitGridBuildNs = 0;        // capture-thread time of that build (telemetry)
+    // Indices into `live` of the units whose captured orders hold a build order the
+    // queued-build ghosts draw (buildType, not an area job), ascending: every other
+    // unit draws no ghost, so the renderer need not walk the whole list for them.
+    std::vector<uint32_t> buildGhostUnits;
     std::array<PlayerR, 8> players{};
     int numPlayers = 0;
     std::vector<uint8_t> vis;            // fog (empty for a noFog_ spectator)

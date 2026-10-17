@@ -2134,17 +2134,41 @@
         // Tactical Dots stand in for the unit bodies: over the terrain and features
         // (a dot under a tree crown would vanish), under shots and explosions.
         if (dotsFrame_) drawTacticalDots(mvw, winH);
-        // Ghosts of the local player's queued (shift) build orders.
-        for (const UnitR* _up : front().live) {
-            const UnitR& u = *_up;
-            if (!u.alive() || u.player != localPlayer_) continue;
+        // Ghosts of the local player's queued (shift) build orders. Only the units the
+        // snapshot lists as holding such an order (Frame::buildGhostUnits, in live
+        // order) can draw one (workstream L: no walk over every unit).
+        const auto buildGhosts = [&](const UnitR& u, bool draw) {
+            if (!u.alive() || u.player != localPlayer_) return false;
+            bool any = false;
             // Every queued build is an order now; the order sits at the builder's
             // working position, so step back to where the site actually goes.
             for (const auto& o : u.orders)
-                if (o.buildType && !o.manaBuildArea)
-                    drawGhostAt(o.buildType,
+                if (o.buildType && !o.manaBuildArea) {
+                    any = true;
+                    if (draw) drawGhostAt(o.buildType,
                         o.buildRectangle ? o.buildX.toFloat() : o.x.toFloat(),
                         o.buildRectangle ? o.buildZ.toFloat() : o.z.toFloat() - float(o.buildType->footZ) * 8 - 24);
+                }
+            return any;
+        };
+        {
+            const Frame& frame = front();
+#ifndef NDEBUG
+            if (unitIndexVerify_) {
+                overlayIdsIndexed_.clear(); overlayIdsFull_.clear();
+                for (uint32_t i : frame.buildGhostUnits)
+                    if (buildGhosts(*frame.live[i], true)) overlayIdsIndexed_.push_back(frame.live[i]->id);
+                for (const UnitR* up : frame.live) if (buildGhosts(*up, false)) overlayIdsFull_.push_back(up->id);
+                if (overlayIdsIndexed_ != overlayIdsFull_)
+                    throw std::runtime_error("unit index verify: build ghosts differ from a full scan");
+                ++unitIndexVerifyStats_.passes;
+                unitIndexVerifyStats_.live += frame.live.size();
+                unitIndexVerifyStats_.candidates += frame.buildGhostUnits.size();
+                unitIndexVerifyStats_.accepted += overlayIdsFull_.size();
+                unitIndexVerifyStats_.ghosts += overlayIdsFull_.size();
+            } else
+#endif
+            for (uint32_t i : frame.buildGhostUnits) buildGhosts(*frame.live[i], true);
         }
 
         // Projectiles: drawn per weapon family (only where visible).
