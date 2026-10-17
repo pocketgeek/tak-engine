@@ -2422,6 +2422,75 @@ no longer saturate the quota the scheduler tests need), `legion_chainplane` (25 
 25th reuses plane slot 0: no chain reads a tile of the previous class; fails if a reused slot keeps its generation),
 `replay_test` (269 refused).
 
+### Legion 10,000 stage 7: static navigation apart from traffic (protocol 271)
+
+Terrain navigation (planes, the hierarchy, static tiles) is kept apart from what units do on it (soft bodies with
+their own-order and allied-flyer exemptions, standing jams, moving streams, occupancy). A static change reaches only
+the routes it can alter, as a closure or an improvement; traffic enters the coarse route choice as a cost and the
+regions a route keeps as a local correction. The record, with the measurements and the variants rejected, is
+docs/legion-10000-progress.md section 7.7.
+
+* **Static changes per cluster, closures apart from improvements.** `refreshPlane` reports each cluster of changed
+  origins as its own box (`StaticChange`), and whether any origin lost legality (a closure) or gained it (an
+  improvement); `staticChanged` tests every route against each box at tile granularity (`fieldTouched`), so a corpse
+  in one corner and a building in another no longer touch every route between them. A **closure** reaching a route
+  makes it stale at once, as before (the plane and `commitGroundStep` still decide every step). An **improvement**
+  only leaves every step the route describes legal and every estimate the length of a real way: the route keeps
+  steering, its "unreached" stops proving anything (`RouteGrid::touched`: Unknown, never Unreachable), and its refresh
+  waits `kImproveDefer` (150) ticks (`Group::improveTick`, hashed), coalescing churn; a member the touched route does
+  not reach, or a member blocked by B1's rule (an improvement may be its way out, not a shortcut), asks for it at once
+  (`legion_staticidle`'s second gap). A refresh installed after the build began is stale again only if a closure reached it
+  while it built (`Field::closed`; until stage 7 any new epoch did, a change on another island included, so under
+  churn anywhere every refresh was born stale).
+* **Trapped orders and churn.** A trapped member re-registers only after an improvement whose box touches its
+  component's box grown by its footprint (`trappedReopened`, over a per-plane log of recent improvements; a stale
+  plane's rebuild counts as a whole-map improvement): a closure cannot open its way. Under never-ending churn
+  elsewhere the 5-minute grace now runs out (`legion_trapped`; inherited from c2c25707 through stage 6).
+* **Chain repair.** A chain region whose sector was relabelled since the plan is re-resolved on the current geometry
+  (`resolveChainNode`: the portal run on the same boundary overlapping the old one most, still leading into the region
+  the route continues in) and its tile rebuilt, instead of being left off the route -- a member there used to wait for
+  a refresh that the next change abandoned again. A chain refreshed for a closure keeps its route: its plan is
+  repaired (`repairPlan`: regions re-resolved, window and digest kept) and the build rebuilds only the dirty tiles, the
+  clean ones coming from the cache; it is searched again when traffic or an improvement asks (`Group::reroute`:
+  an awareness or MV-05 re-plan, a promoted improvement) or when the repair fails (a transit portal closed: the route
+  itself is cut, a global consequence; or a member stands in a region the plan does not hold). A repaired or
+  re-resolved chain is versioned, not exact: its tiles come from more than one geometry epoch, each descent-valid on
+  its own build, the offsets taken from the values actually attached; it is touched and never proves Unreachable
+  (`legion_chainresolve`).
+* **Standing jams are traffic.** A member held `kRestAfter` (60) ticks on its way (`jamStill`) is stamped soft
+  (kind 2) and owned by its group's command: other orders' routes plan round it, its own order never does (the parts
+  of one selection share the command). It stops being soft the update it steps. Until stage 7 nothing that plans saw
+  a held crowd -- the soft scan skipped every Legion member on its way and awareness skips a standing crowd -- so
+  crossing walkers kept walking into the knots they formed. And a member held 60 updates against another order's jam
+  (`blockedByJam`) may plan the short committed detour that formation members already could (the local correction);
+  a queue of its own order is still waited for. The standing jams of each scan cycle are also MV-05 blocks
+  (`jamBlockList`, rebuilt every cycle: a knot grows a few bodies a cycle and never made a dense tile of newly soft
+  cells), so a group whose way meets another order's jam re-plans round it (at most once per 300 ticks) instead of
+  steering into it on the field it built before the jam. Visibility: a jam is stamped for any player, as any still body is
+  (the soft rule has no sight test); no route learns more of an enemy than the still bodies it already planned round.
+  scatter-400 (400 single walkers to unrelated destinations) checks it (`ctest:legion_traffic`).
+* **Traffic in coarse route selection.** The region search (`Hierarchy::search` with a traffic term) charges the way
+  across each region by the share of its origins soft to the route's command: step x (kSoftFactor - 1) x soft /
+  cells (`trafficPenalty`) -- the same soft rule the field and the tiles charge cell by cell, own-order arrivals and
+  jams exempt, liftable allied flyers left out. The counts are cached per sector, keyed by its generation and the
+  soft serials of it and its east, south and south-east neighbours. The search only picks the regions; the exact
+  local correction inside them is the tiles' (never a sum of two fields). `legion_trafficlane`: the chain avoids the
+  gap whose sector holds 121 idle bodies.
+* **Static tiles apart from corrections.** Tiles with no soft level and no mover corridor in their key are terrain
+  alone, the same for every command and player; those with them are the route's traffic correction of the region.
+  They live in two caches (`staticTiles`, 48 MiB; `corrTiles`, 16 MiB), so traffic never evicts terrain; a correction
+  is shared only by routes whose whole traffic view is identical (its key holds the view), so no route reads another
+  player's view.
+* **Eviction.** Each cache keeps its unreferenced tiles in a set ordered by (last use, insertion): a tile enters it
+  when no chain holds it any more and leaves it when one attaches it; eviction pops the oldest -- the same victims, in
+  the same order, as the whole-cache scan it replaced, which ran after every attach while referenced tiles alone held
+  more than the allowance (half of scatter-10000's run time).
+
+Window fields (high demand, small windows, the fallback) still charge soft bodies and corridors inside their own
+build: a window is the whole route rebuilt, the "tile rebuild" end of the brief's corrections. Tests:
+`legion_trapped` (never-ending churn, and the pocket opened under it), `legion_improvedefer`, `legion_chainresolve`,
+`legion_trafficlane`, `legion_traffic`, each shown to fail on a scratch mutation of its mechanism (the record, 7.7).
+
 ## Instruments
 
 What each tool sees, and what it cannot. A number is only as good as the
