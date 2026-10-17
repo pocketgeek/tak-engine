@@ -86,7 +86,7 @@ bool loadReplayFile(const std::string& path, ReplayFile& out);
 // as the server's --replaydir fills its own (Server::replayBytes) -- the shared
 // builder in net/matchconfig.h -- so the two writers cannot drift. The bundles are
 // the raw payloads the server broadcast. net/replaywriter.h streams header and
-// bundles to disk as the game is played (GameView::openReplayRecording).
+// bundles to disk as the game is played (GameView::beginGameRecording).
 //
 // Every human player and spectator records its own copy, which is what makes a
 // replay survive a server that keeps none -- and a client only ever has the game it

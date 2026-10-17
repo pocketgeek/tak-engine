@@ -163,9 +163,10 @@ public:
     // spectators both record; replay playback and the Benchmark (not a game) never do.
     // A recording a crash or kill left unfinished is completed by
     // tak::net::recoverReplayParts at the next start (main.cpp, the replay picker).
-    void openReplayRecording();
+    void beginGameRecording();
+    void tryOpenReplayRecording(bool first);
     void pumpReplayRecording();
-    void finishReplayRecording();
+    void finishReplayRecording(bool ownLog = true);
 
     GameView(SDL_Renderer* ren, tak::hpi::Vfs vfs, const std::string& mapPath,
              const std::string& installRoot, tak::hpi::OverridePolicy policy,
@@ -1527,10 +1528,12 @@ public:
     int netDelay() const { return netDelay_; }
 private:
     bool replayMode_ = false;                     // playing a recorded .takrep
-    std::unique_ptr<tak::net::ReplayWriter> replayRec_;   // this game's recording (see openReplayRecording)
+    std::unique_ptr<tak::net::ReplayWriter> replayRec_;   // this game's recording (see beginGameRecording)
     uint32_t replayRecGame_ = 0, replayRecSeed_ = 0;      // which game it records
+    tak::net::ReplayHeader replayRecHeader_;             // ... and its header (beginGameRecording)
     uint64_t gameDataHash_ = 0;   // gameDataHash() of the game set up by startMpGame (computed once: it reads every gameplay file)
     uint64_t replayFlushMs_ = 0, replaySyncMs_ = 0;       // last flush to the OS / sync to the disk
+    uint64_t replayRecRetryMs_ = 0;   // when to try opening a recording that could not start (0: none pending)
     std::vector<tak::net::ReplayCheck> replayChecks_;   // recorded (tick, hash) trail
     size_t replayCheckAt_ = 0;                    // next checkpoint to compare
 #ifndef NDEBUG

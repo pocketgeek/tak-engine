@@ -125,9 +125,19 @@ void closeFile(intptr_t f) { CloseHandle(handle(f)); }
 
 // A Windows file cannot be renamed while this process holds it unshared, so the
 // caller closes it first. MOVEFILE_WRITE_THROUGH returns once the rename is on disk;
-// without MOVEFILE_REPLACE_EXISTING it refuses to overwrite.
+// without MOVEFILE_REPLACE_EXISTING it refuses to overwrite. A virus scanner or the
+// search indexer that opened the just-closed file without FILE_SHARE_DELETE makes
+// the rename fail for a moment, so a sharing failure is retried briefly; should it
+// persist, the .part stays and the next recovery pass finishes it.
 bool renameClosed(const std::string& from, const std::string& to) {
-    return MoveFileExW(fsPath(from).wstring().c_str(), fsPath(to).wstring().c_str(), MOVEFILE_WRITE_THROUGH) != 0;
+    const std::wstring f = fsPath(from).wstring(), t = fsPath(to).wstring();
+    for (int attempt = 0;; ++attempt) {
+        if (MoveFileExW(f.c_str(), t.c_str(), MOVEFILE_WRITE_THROUGH)) return true;
+        const DWORD e = GetLastError();
+        if (attempt >= 5 || (e != ERROR_SHARING_VIOLATION && e != ERROR_ACCESS_DENIED && e != ERROR_LOCK_VIOLATION))
+            return false;
+        Sleep(100);
+    }
 }
 #else
 intptr_t createLocked(const std::string& path) {
@@ -378,7 +388,7 @@ bool ReplayWriter::open(const std::string& dir, const ReplayHeader& h, uint32_t 
 }
 
 void ReplayWriter::append(const std::vector<std::vector<uint8_t>>& log, const std::vector<ReplayCheck>& checks) {
-    if (!isOpen() || failed_) return;   // a failed write (disk full) stops the recording where it is
+    if (!isOpen()) return;   // still queued after a failed write: the next flush retries it
     for (size_t i = bundles_; i < log.size(); ++i) {
         const auto& b = log[i];
         uint8_t len[4];
@@ -398,14 +408,17 @@ void ReplayWriter::append(const std::vector<std::vector<uint8_t>>& log, const st
 }
 
 bool ReplayWriter::flush() {
-    if (!isOpen() || failed_) return false;
+    if (!isOpen()) return false;
     if (!buf_.empty()) {
+        // A failed write (disk full) keeps the bytes queued and the end where it was:
+        // the next flush writes them again from there, over whatever part made it.
         if (!writeAt(file_, fileEnd_, buf_.data(), buf_.size())) {
             failed_ = true; error_ = "write failed: " + part_; return false;
         }
         fileEnd_ += buf_.size();
         buf_.clear();
     }
+    failed_ = false;
     if (!chkBuf_.empty()) {
         // The trail only adds checking to a replay; losing it never loses the replay.
         if (writeAt(chk_, chkEnd_, chkBuf_.data(), chkBuf_.size())) chkEnd_ += chkBuf_.size();
@@ -415,7 +428,7 @@ bool ReplayWriter::flush() {
 }
 
 void ReplayWriter::syncAsync() {
-    if (!isOpen() || failed_) return;
+    if (!isOpen()) return;
     {
         std::lock_guard<std::mutex> lock(syncMu_);
         syncWanted_ = true;
@@ -458,7 +471,7 @@ void ReplayWriter::closeFiles() {
 
 std::string ReplayWriter::finish() {
     if (!isOpen()) return {};
-    flush();
+    flush();   // the last retry of anything a failed write left queued
     stopSync();
     if (failed_) {   // keep what reached the disk: the next recovery pass finishes it
         closeFiles();

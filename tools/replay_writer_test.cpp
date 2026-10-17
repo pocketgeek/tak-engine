@@ -12,6 +12,11 @@
 #include <iterator>
 #include <stdexcept>
 
+#ifndef _WIN32
+  #include <csignal>
+  #include <sys/resource.h>
+#endif
+
 using namespace tak::net;
 namespace fs = std::filesystem;
 namespace {
@@ -128,6 +133,56 @@ void run() {
         check(w.finish().empty() && !fs::exists(fs::u8path(part)) && !fs::exists(fs::u8path(part + ".chk")),
               "an empty recording left a file");
     }
+#ifndef _WIN32
+    // 3b. A write that fails (the disk full) keeps its bytes and is written again
+    //     once there is room: the finished replay is still complete. RLIMIT_FSIZE
+    //     stands in for the full disk; the first failing write lands part way.
+    {
+        std::signal(SIGXFSZ, SIG_IGN);   // a write past the limit fails with EFBIG instead
+        rlimit saved{};
+        getrlimit(RLIMIT_FSIZE, &saved);
+        auto limitTo = [&](rlim_t cap) {
+            rlimit l = saved;
+            l.rlim_cur = cap;
+            check(setrlimit(RLIMIT_FSIZE, &l) == 0, "setrlimit");
+        };
+        ReplayWriter w;
+        check(w.open(dir, h, 12, 1000), "open 3b");
+        const fs::path part = fs::u8path(w.partPath());
+        limitTo(rlim_t(fs::file_size(part) + 30));
+        w.append(ticks(60), trail(60));
+        check(!w.flush() && w.failing(), "a write past the limit did not fail");
+        w.append(ticks(100), trail(100));        // the game goes on while the disk is full
+        check(!w.flush() && w.failing(), "the retry should still fail");
+        check(setrlimit(RLIMIT_FSIZE, &saved) == 0, "restore rlimit");
+        check(w.flush() && !w.failing(), "the retry did not recover once there was room");
+        w.append(ticks(150), trail(150));
+        const std::string path = w.finish();
+        check(!path.empty() && bytes(fs::u8path(path)) == oneShot(h, ticks(150), trail(150)),
+              "a write failure lost or duplicated ticks");
+
+        // Still failing at the end: finish keeps what reached the disk as a .part
+        // (complete ticks only once recovered), never a half-file under .takrep.
+        ReplayWriter f;
+        check(f.open(dir, h, 13, 1000), "open 3b-2");
+        f.append(ticks(40), trail(40));
+        check(f.flush(), "flush 3b-2");
+        const fs::path part2 = fs::u8path(f.partPath());
+        limitTo(rlim_t(fs::file_size(part2) + 7));
+        f.append(ticks(80), trail(80));
+        const std::string none = f.finish();
+        check(setrlimit(RLIMIT_FSIZE, &saved) == 0, "restore rlimit 2");
+        check(none.empty() && fs::exists(part2), "a failed finish did not keep its .part");
+        const fs::path keep = root / "full";
+        fs::create_directories(keep);
+        fs::rename(part2, keep / part2.filename());
+        fs::rename(fs::path(part2.native() + fs::path(".chk").native()),
+                   keep / fs::path(part2.filename().native() + fs::path(".chk").native()));
+        const auto rec = recoverReplayParts(u8(keep) + "/");
+        check(rec.size() == 1 && rec[0].bundles == 40 && bytes(fs::u8path(rec[0].path)) == oneShot(h, ticks(40), trail(40)),
+              "the .part of a failed finish did not recover to its complete ticks");
+    }
+#endif
     // 4. A process that died mid-game: the .part and its sidecar, as it left them.
     const fs::path dead = root / "dead";
     fs::create_directories(dead);

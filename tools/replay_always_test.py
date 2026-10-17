@@ -13,7 +13,11 @@ scratch profile, ended in different ways:
   sigterm    SIGTERM mid-game (POSIX): a clean teardown finishes the file itself;
   disconnect the server dies mid-game: the client finishes the replay it has;
   server-sigterm  a --replaydir server stopped with SIGTERM (POSIX) writes the
-             replay of the game still running, and the client keeps its own.
+             replay of the game still running, and the client keeps its own;
+  mission    a campaign mission (--mpmission) played to its time limit: recorded
+             like a skirmish, its header naming the mission and the data hash the
+             client also reports at Loaded;
+  mission-crash  the same mission, the client SIGKILLed mid-game: recovered.
 
 Every replay is then played back (TAK_REPLAY_VERIFY) and must match the recorded
 hash checkpoints. Old-format files loading is replay_file's job; the byte layout of a
@@ -34,6 +38,7 @@ import tempfile
 import time
 
 MAP = 'Inner Circle'
+MISSION = 'takmission01_mt'
 
 
 def free_port():
@@ -56,6 +61,22 @@ def environment(root):
 
 def replays(root, suffix):
     return sorted(p for p in (root / 'data').rglob('*' + suffix) if p.name.endswith(suffix))
+
+
+def header_fields(path):
+    """(mission stem, data hash) from a .takrep header (format 13)."""
+    d = path.read_bytes()
+    pos = 12
+
+    def s():
+        nonlocal pos
+        n = struct.unpack_from('<H', d, pos)[0]
+        v = d[pos + 2:pos + 2 + n].decode('utf-8', 'replace')
+        pos += 2 + n
+        return v
+    s(); pos += 3 + 4 + 2 + 4 + 2       # map, flags, cap, flags, seed, starts+bench
+    mission = s(); s()                  # mission, engine
+    return mission, struct.unpack_from('<Q', d, pos)[0]
 
 
 def complete_ticks(path):
@@ -96,7 +117,7 @@ def complete_ticks(path):
 
 
 class Game:
-    def __init__(self, args, root, client_env=None, time_limit=120, server_args=()):
+    def __init__(self, args, root, client_env=None, time_limit=120, server_args=(), mission=None):
         self.args, self.root = args, root
         self.env = environment(root)
         self.port = free_port()
@@ -113,9 +134,10 @@ class Game:
         env = dict(self.env)
         env.update(client_env or {})
         self.client_log = open(root / 'client.log', 'w')
+        mode = ['--mpmission', mission] if mission else ['--mpai']
         self.client = subprocess.Popen(
-            [args.client, 'game', MAP, '--data', args.data, '--server', '127.0.0.1',
-             '--serverport', str(self.port), '--mpai', '--time', str(time_limit)],
+            [args.client, 'game', mission or MAP, '--data', args.data, '--server', '127.0.0.1',
+             '--serverport', str(self.port), *mode, '--time', str(time_limit)],
             stdout=self.client_log, stderr=subprocess.STDOUT, env=env)
 
     def log(self):
@@ -276,6 +298,44 @@ def case_server_sigterm(args, root):
     return 'server SIGTERM: server kept %d ticks, the client %d' % (server_ticks, client_ticks)
 
 
+def case_mission(args, root):
+    game = Game(args, root, time_limit=20, mission=MISSION)
+    try:
+        assert game.wait_client() == 0, game.log()
+        log = game.log()
+    finally:
+        game.close()
+    assert 'end=timelimit' in log, log
+    wrote = re.search(r'replay: wrote .* \((\d+) ticks\)', log)
+    assert wrote, 'a campaign mission was not recorded:\n' + log
+    path = finished_one(root)
+    mission, data_hash = header_fields(path)
+    # The same member is reported at Loaded: 0 there would skip the server's check.
+    assert mission == MISSION and data_hash != 0, (mission, hex(data_hash))
+    ticks, _ = verify(args, root, path)
+    assert ticks == int(wrote.group(1)) >= 590, (ticks, wrote.group(1))
+    return 'mission %s: replay of %d ticks, data hash %016x' % (mission, ticks, data_hash)
+
+
+def case_mission_crash(args, root):
+    game = Game(args, root, {'TAK_KILL_AT_TICK': '300'}, time_limit=60, mission=MISSION)
+    try:
+        game.wait_client()
+        m = re.search(r'kill-at-tick: killing the client at tick (\d+) with (\d+) ticks received', game.log())
+        assert m, game.log()
+        received = int(m.group(2))
+        parts = replays(root, '.takrep.part')
+        assert len(parts) == 1 and not replays(root, '.takrep'), 'a killed mission client left no recording'
+    finally:
+        game.close()
+    ticks, out = verify(args, root, parts[0].with_name(parts[0].name[:-len('.part')]))
+    assert 'replay: recovered' in out, out
+    path = finished_one(root)
+    assert header_fields(path)[0] == MISSION
+    assert received - 45 <= ticks <= received, 'recovered %d of %d ticks' % (ticks, received)
+    return 'mission crash at tick %s: recovered %d of %d ticks received' % (m.group(1), ticks, received)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--server', required=True)
@@ -284,7 +344,8 @@ def main():
     ap.add_argument('--case', action='append', help='run only these cases')
     args = ap.parse_args()
     cases = {'crash': case_crash, 'kill': case_kill, 'result': case_result,
-             'sigterm': case_sigterm, 'disconnect': case_disconnect, 'server-sigterm': case_server_sigterm}
+             'sigterm': case_sigterm, 'disconnect': case_disconnect, 'server-sigterm': case_server_sigterm,
+             'mission': case_mission, 'mission-crash': case_mission_crash}
     if os.name == 'nt':   # Windows delivers no SIGTERM; a kill is the 'kill' case
         del cases['sigterm'], cases['server-sigterm']
     names = args.case or list(cases)

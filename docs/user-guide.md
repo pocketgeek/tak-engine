@@ -1453,8 +1453,9 @@ may still have problems. See the [campaign notes](campaign-design.md).
 
 ## Replays
 
-Every game you play or watch is **recorded automatically**, including games where
-you only spectate the AI (the Benchmark is not recorded). Replays of games you
+Every game you play or watch is **recorded automatically**, including campaign
+missions and games where you only spectate the AI (the Benchmark is not
+recorded). Replays of games you
 watched carry no checkpoint hashes, since a spectator does not report them.
 
 The replay is written to disk while you play, so it is kept however the game
@@ -1462,7 +1463,9 @@ ends: a win or a loss, quitting, returning to the menu, a lost connection, the
 computer shutting down, or the game being killed or crashing. It runs to the
 moment you left, including anything played or watched after the result. If the
 game was killed or crashed, the recording is finished the next time TAK Engine
-starts and loses at most about the last second.
+starts and loses at most about the last second. If the disk fills up or the
+replay folder cannot be written for a while, the game keeps the recording in
+memory and writes it as soon as it can.
 
 To watch one, open **Settings → Load Replay** on the main menu and choose a
 recording. During playback:

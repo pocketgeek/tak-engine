@@ -51,7 +51,8 @@
         // are still in the log (the hook runs before the log is cleared). The new game
         // opens its own once it is set up (startMpGame).
         if (mp_) mp_->setRecordingRestartHook([this] {
-            if (replayRec_ && (replayRecGame_ != mp_->room().id || replayRecSeed_ != mp_->startSeed()))
+            if ((replayRec_ || replayRecRetryMs_) &&
+                (replayRecGame_ != mp_->room().id || replayRecSeed_ != mp_->startSeed()))
                 finishReplayRecording();
         });
     }
@@ -68,40 +69,50 @@
         gameStartMs_ = SDL_GetTicks64();
     }
 
-    void GameView::openReplayRecording() {
-        if (!mp_ || !mp_->recording() || replayMode_) return;
-        // The Benchmark is a performance run, not a game: it is never recorded.
-        if (benchmarkMode_ || mp_->room().opts.benchmark) return;
-        if (replayRec_ && replayRecGame_ == mp_->room().id && replayRecSeed_ == mp_->startSeed())
-            return;   // a rejoin of the game already being recorded: keep its file
-        finishReplayRecording();
+    // The whole game is kept in memory (mp_->replayLog()), so a recording that cannot
+    // start now -- the folder unwritable or the disk full at this moment -- is tried
+    // again every few seconds (pumpReplayRecording) and a last time when the game
+    // ends (finishReplayRecording); once it opens it still begins at tick 0. Only the
+    // first failure is logged.
+    void GameView::tryOpenReplayRecording(bool first) {
+        const uint64_t now = SDL_GetTicks64();
+        replayRecRetryMs_ = now + 5000;
         const std::string dir = tak::replayDir();
-        if (dir.empty()) return;
+        if (dir.empty()) {
+            if (first) std::fprintf(stderr, "replay: no replay folder yet; will keep trying\n");
+            return;
+        }
         auto rec = std::make_unique<tak::net::ReplayWriter>();
-        if (!rec->open(dir, clientReplayHeader(*mp_, gameDataHash_), mp_->room().id,
-                       uint64_t(std::time(nullptr)))) {
-            std::fprintf(stderr, "replay: cannot record this game: %s\n", rec->error().c_str());
+        if (!rec->open(dir, replayRecHeader_, replayRecGame_, uint64_t(std::time(nullptr)))) {
+            if (first)
+                std::fprintf(stderr, "replay: cannot record yet (%s); will keep trying\n", rec->error().c_str());
             return;
         }
         std::fprintf(stderr, "replay: recording to %s\n", rec->partPath().c_str());
         replayRec_ = std::move(rec);
-        replayRecGame_ = mp_->room().id;
-        replayRecSeed_ = mp_->startSeed();
-        replayFlushMs_ = replaySyncMs_ = SDL_GetTicks64();
-        replayResultSync_.store(false, std::memory_order_relaxed);
+        replayRecRetryMs_ = 0;
+        replayFlushMs_ = replaySyncMs_ = now;
     }
 
     // Main thread, every mpStep. Bundles are handed to the OS about once a second, so
     // a crash or a kill loses at most that much; they reach the disk itself every ten
     // seconds (a power cut), and at once when the result lands.
     void GameView::pumpReplayRecording() {
-        if (!replayRec_ || !mp_) return;
+        if (!mp_) return;
+        if (!replayRec_ && replayRecRetryMs_ && SDL_GetTicks64() >= replayRecRetryMs_) tryOpenReplayRecording(false);
+        if (!replayRec_) return;
         replayRec_->append(mp_->replayLog(), mp_->hashLog());
         const uint64_t now = SDL_GetTicks64();
         const bool result = replayResultSync_.exchange(false, std::memory_order_relaxed);
         if (result || replayRec_->buffered() >= (64u << 10) ||
             (replayRec_->buffered() && now - replayFlushMs_ >= 1000)) {
-            replayRec_->flush();
+            // A failed write (disk full) keeps its bytes and is retried at the next
+            // flush and at finish(); it is logged once per run of failures.
+            const bool wasFailing = replayRec_->failing();
+            if (!replayRec_->flush() && !wasFailing)
+                std::fprintf(stderr, "replay: %s; will keep trying\n", replayRec_->error().c_str());
+            else if (wasFailing && !replayRec_->failing())
+                std::fprintf(stderr, "replay: writing %s again\n", replayRec_->partPath().c_str());
             replayFlushMs_ = now;
         }
         if (result || now - replaySyncMs_ >= 10000) {
@@ -113,13 +124,18 @@
             // whatever is played or watched after it belongs to the replay too.
             std::fprintf(stderr, "replay: result at tick %u, %u ticks recorded; recording continues\n",
                          netTick_, replayRec_->bundles());
-            postNotice("REPLAY SAVED", 5);
+            if (!replayRec_->failing()) postNotice("REPLAY SAVED", 5);
         }
     }
 
-    void GameView::finishReplayRecording() {
+    // ownLog: mp_'s log is still the recorded game's (the destructor, the restart
+    // hook). beginGameRecording passes false: by then the log is the next game's.
+    void GameView::finishReplayRecording(bool ownLog) {
+        ownLog = ownLog && mp_;
+        if (!replayRec_ && replayRecRetryMs_ && ownLog) tryOpenReplayRecording(false);   // a last try
+        replayRecRetryMs_ = 0;   // this game's recording is over, opened or not
         if (!replayRec_) return;
-        if (mp_) replayRec_->append(mp_->replayLog(), mp_->hashLog());
+        if (ownLog) replayRec_->append(mp_->replayLog(), mp_->hashLog());
         const uint32_t ticks = replayRec_->bundles();
         const std::string path = replayRec_->finish();
         if (!path.empty())
@@ -235,6 +251,7 @@
             loadGui(side_);
             loadScreen_->step("WAITING FOR PLAYERS", 100);
             startAtMonarch();
+            beginGameRecording();
             return;
         }
         // Adopt the ROOM's map (the host's / lobby selection), which may differ from
@@ -298,11 +315,29 @@
         loadGui(side_);
         loadScreen_->step("WAITING FOR PLAYERS", 100);
         startAtMonarch();
-        // Record from here: the header needs the data this game runs on (the room's
-        // tier, mounted above) and nothing has been simulated yet. A rejoin or a
-        // spectator gets the backlog first, so its recording starts from tick 0 too.
+        beginGameRecording();
+    }
+
+    // The last step of startMpGame, on BOTH of its paths (a campaign mission returns
+    // early). Record from here: the header needs the data this game runs on (the
+    // room's tier, mounted above) and nothing has been simulated yet. A rejoin or a
+    // spectator gets the backlog first, so its recording starts from tick 0 too.
+    void GameView::beginGameRecording() {
         gameDataHash_ = gameDataHash();   // reported at Loaded and recorded in the replay header
-        openReplayRecording();
+        if (!mp_ || !mp_->recording() || replayMode_) return;
+        // The Benchmark is a performance run, not a game: it is never recorded.
+        if (benchmarkMode_ || mp_->room().opts.benchmark) return;
+        if ((replayRec_ || replayRecRetryMs_) && replayRecGame_ == mp_->room().id &&
+            replayRecSeed_ == mp_->startSeed())
+            return;   // a rejoin of the game already being recorded: keep its file
+        finishReplayRecording(/*ownLog=*/false);   // normally done already, by the restart hook
+        // Everything the file needs about this game, taken now: the restart hook can
+        // run (and try a last open) after the next game's GameStarting replaced it.
+        replayRecHeader_ = clientReplayHeader(*mp_, gameDataHash_);
+        replayRecGame_ = mp_->room().id;
+        replayRecSeed_ = mp_->startSeed();
+        replayResultSync_.store(false, std::memory_order_relaxed);
+        tryOpenReplayRecording(/*first=*/true);
     }
 
     bool GameView::showInitialCampaignBriefing(const std::string& stem) {

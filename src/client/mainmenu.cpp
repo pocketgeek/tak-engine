@@ -1073,7 +1073,7 @@ struct MainMenu::Impl {
     // Benchmark intensity submenu: 5 spawn-rate levels. Records benchBtnRect_ for run().
     // Scan the user's config directory for saved replays, newest first. That is where
     // every human player's and spectator's client records its own .takrep (see
-    // GameView::openReplayRecording) -- beside settings.ini -- so the picker lists
+    // GameView::beginGameRecording) -- beside settings.ini -- so the picker lists
     // exactly what this machine has recorded. A recording another client on this
     // profile left unfinished (it crashed or was killed) is finished first, so it is
     // listed too; one still being recorded is locked and left alone.

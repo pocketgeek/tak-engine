@@ -58,8 +58,11 @@ public:
     // Buffers only; flush() hands the bytes to the OS.
     void append(const std::vector<std::vector<uint8_t>>& log, const std::vector<ReplayCheck>& checks);
     size_t buffered() const { return buf_.size() + chkBuf_.size(); }
-    // After this returns the data survives the process being killed.
+    // After this returns true the data survives the process being killed. On a
+    // failed write (disk full) it returns false and keeps the bytes queued; the next
+    // flush, and finish(), write them again. Nothing is dropped while it fails.
     bool flush();
+    bool failing() const { return failed_; }   // the last flush failed
     // Ask for the flushed data to reach the disk (survives a power cut). Runs on a
     // helper thread: an fsync on a busy disk can take long enough to drop frames.
     void syncAsync();
