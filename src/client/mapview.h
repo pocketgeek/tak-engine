@@ -227,6 +227,7 @@ private:
     int builtW_ = -1, builtH_ = -1;
     bool tileBatchDirty_ = true;   // set when a section uploads / view changes
     size_t underlayTiles_ = 0;     // see underlayTiles()
+    bool settleRestoreGate_ = false;   // debug TAK_TERRAIN_SETTLE lifted the calm gate this frame
     void rebuildTileBatch(int winW, int winH);
     tak::TerrainChunks chunks_{comp_};
     // One terrain upload budget per frame (workstream K): chunk images, and the fallback

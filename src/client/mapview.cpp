@@ -378,9 +378,12 @@ void MapView::draw(int winW, int winH) {
         // Debug (capture runs): TAK_TERRAIN_SETTLE=1 waits until every visible chunk is
         // ready at its wanted level, so a capture shows finished terrain whatever order
         // or speed the work had (bounded: after one 10 s wait it gives up for good).
+        // The calm gate is lifted while settling: this compares finished terrain, and the
+        // loop runs on the owner's (possibly fixed) clock.
         static bool settleGaveUp=false;
         if(!settleGaveUp && tak::devFlag("TAK_TERRAIN_SETTLE"))
             for(const uint64_t start=SDL_GetTicks64();;) {
+                if(chunks_.params().calmGate) {auto p=chunks_.params();p.calmGate=false;chunks_.setParams(p);settleRestoreGate_=true;}
                 const auto settled=chunks_.stats();
                 if(settled.visible && settled.ready==settled.visible)break;
                 if(SDL_GetTicks64()-start>=10000) {
@@ -391,6 +394,7 @@ void MapView::draw(int winW, int winH) {
                 chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_,nowMs(),uploadBudget_);
                 chunks_.uploadDeferred(ren_,uploadBudget_);
             }
+        if(settleRestoreGate_) {auto p=chunks_.params();p.calmGate=true;chunks_.setParams(p);settleRestoreGate_=false;}
 #endif
         const auto revision=chunks_.stats().revision;
         if(revision!=chunkRevision_) {tileBatchDirty_=true;chunkRevision_=revision;}
