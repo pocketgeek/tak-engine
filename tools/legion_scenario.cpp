@@ -169,6 +169,7 @@ struct Options {
     bool pauseAll = false;     // --pause-all: setPauseAllForTest (stage 5: the consumers on paused routes)
     int sector = 0;            // --sector K: setSectorSizeForTest (stage 6: the sector-size experiment; 0: the game's 32)
     bool hierRoutes = true;    // --no-hier-routes: setHierarchicalRoutesForTest(false) (every route the window build)
+    uint32_t dumpUnits = 0;    // --dump-units N: a DUMP line per live unit on stderr every N ticks (observation only)
     std::vector<int> trace; // --trace IDS: decision trace lines on stderr for these members (debug build)
     std::vector<std::string> traceGroups;   // ... and whole groups, by name (a token that is not a number)
     // Gate modes: the JSON lines go to tools/legion_check.py instead of stdout.
@@ -189,7 +190,7 @@ void emit(const std::string& line) {
         "usage: legion_scenario <file.scn|builtin:NAME> [--mode legion|retail|both] [--offsets 0,1,-1|gate]\n"
         "       [--workers|--serial|--both-exec] [--window R] [--data <install>] [--json] [--ticks N]\n"
         "       [--no-observer] [--neutral] [--wanderers on|off] [--w9] [--scale] [--trace ID[,ID...]] [--no-vertex-probe]\n"
-        "       [--budget-div N] [--field-bytes N] [--pause-all] [--sector K] [--no-hier-routes]\n"
+        "       [--budget-div N] [--field-bytes N] [--pause-all] [--sector K] [--no-hier-routes] [--dump-units N]\n"
         "       [--check B.json [--step ID] [--cumulative] [--ratchet REASON]] [--baseline B.json --reason TEXT\n"
         "       [--since ID]] [--exit-table OLD] [--anchor A.json]   (gate modes: tools/legion_check.py)\n", why);
     std::exit(2);
@@ -929,6 +930,19 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         tickMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tickStart).count());
         wholeMs.push_back(tickMs.back() + feed.lastApplyMs());   // the whole sim tick: its commands applied, then World::tick
         nav = w.legionNavigator();
+        if (opt.dumpUnits && t % opt.dumpUnits == opt.dumpUnits - 1)
+            // --dump-units: every live unit's position (px), footprint, Legion state and group, steering site and
+            // first order's point (px, -1 none), for rendering a tick (observation only; reads, never writes).
+            for (const auto& u : w.units()) {
+                if (!u.alive() || !u.type) continue;
+                const bool any = !u.orders.empty();
+                int32_t sx = -1, sz = -1;   // the member's goal footprint centre (its slot), raw Fixed
+                if (!nav || !nav->goalPoint(u.id, sx, sz)) sx = sz = -(1 << 16);
+                std::fprintf(stderr, "DUMP t=%u id=%d p=%d x=%d z=%d f=%d st=%d g=%d site=%d gx=%d gz=%d sx=%d sz=%d\n", t, u.id,
+                             u.player, int(u.x.v >> 16), int(u.z.v >> 16), u.type->footX, nav ? nav->unitState(u.id) : 0,
+                             nav ? nav->unitGroup(u.id) : 0, nav ? nav->steerSite(u.id) : -1,
+                             any ? int(u.orders.front().x.v >> 16) : -1, any ? int(u.orders.front().z.v >> 16) : -1, sx >> 16, sz >> 16);
+            }
         if (o) {
             navWork.sample(*o, w);
             o->sample(w, t);
@@ -1179,6 +1193,7 @@ int main(int argc, char** argv) {
         else if (a == "--pause-all") opt.pauseAll = true;
         else if (a == "--sector") opt.sector = std::atoi(value().c_str());
         else if (a == "--no-hier-routes") opt.hierRoutes = false;
+        else if (a == "--dump-units") opt.dumpUnits = uint32_t(std::max(0L, std::atol(value().c_str())));
         else if (a == "--ticks") {
             const long v = std::atol(value().c_str());
             if (v < 1 || v > 10'000'000) usage("--ticks N takes 1..10000000");
