@@ -183,4 +183,80 @@ inline WorldRect anchorBandToWorld(float left, float top, float right, float bot
             offX + right / zoom + lift.maxX + slack, offY + bottom / zoom + lift.maxY + slack};
 }
 
+// The renderer's per-unit passes that cull a unit's lifted anchor against the map
+// view (GameView::draw): each pass's screen position (the renderer's expression,
+// evaluated here so the renderer and unit_index_test share it), its acceptance test,
+// and the band of lifted-anchor positions sx = (x - offX) * zoom - liftX * zoom,
+// sy = (z - offY) * zoom - liftY * zoom it can accept, for anchorBandToWorld. A pass
+// whose offset depends on the unit type's footprint depth covers [footMin, footMax].
+struct ScreenBand { float left, top, right, bottom; };
+struct ScreenPoint { float x, y; };
+struct AnchorView { float offX, offY, zoom; int viewW, viewH; };
+
+namespace unitpass {
+// Painter list: the frustum cull. The margins are generous and asymmetric (models
+// extend above their anchor); they also stand for interpolation and flyer altitude.
+inline ScreenPoint painter(float x, float z, float liftX, float liftY, const AnchorView& v) {
+    return {(x - v.offX) * v.zoom - liftX * v.zoom, (z - v.offY) * v.zoom - liftY * v.zoom};
+}
+inline bool painterInView(ScreenPoint p, const AnchorView& v) {
+    return !(p.x < -160 || p.x > v.viewW + 160 || p.y < -260 || p.y > v.viewH + 120);
+}
+inline ScreenBand painterBand(const AnchorView& v) {
+    return {-160.0f, -260.0f, float(v.viewW + 160), float(v.viewH + 120)};
+}
+// Health bar: its top-left corner.
+inline ScreenPoint healthBar(float x, float z, float liftX, float liftY, const AnchorView& v) {
+    const float zm = v.zoom, bw = 26 * zm;
+    return {(x - v.offX) * zm - bw / 2 - liftX * zm, (z - v.offY) * zm - 30 * zm - liftY * zm};
+}
+inline bool healthBarInView(ScreenPoint p, const AnchorView& v) {
+    return !(p.x < -40 || p.x > v.viewW + 40 || p.y < -40 || p.y > v.viewH + 40);
+}
+inline ScreenBand healthBarBand(const AnchorView& v) {
+    const float zm = v.zoom;
+    return {-40 + 26 * zm / 2, -40 + 30 * zm, float(v.viewW + 40) + 26 * zm / 2, float(v.viewH + 40) + 30 * zm};
+}
+// Self-destruct countdown: the number's origin.
+inline ScreenPoint selfDestruct(float x, float z, float liftX, float liftY, const AnchorView& v) {
+    const float zm = v.zoom;
+    return {(x - v.offX) * zm - liftX * zm, (z - v.offY) * zm - 44 * zm - liftY * zm};
+}
+inline bool selfDestructInView(ScreenPoint p, const AnchorView& v) {
+    return !(p.x < -20 || p.x > v.viewW + 20 || p.y < -20 || p.y > v.viewH + 20);
+}
+inline ScreenBand selfDestructBand(const AnchorView& v) {
+    const float zm = v.zoom;
+    return {-20.0f, -20 + 44 * zm, float(v.viewW + 20), float(v.viewH + 20) + 44 * zm};
+}
+// Control-squad marker: centred below the unit by its footprint depth.
+inline ScreenPoint squadMarker(float x, float z, float liftX, float liftY, int footZ, const AnchorView& v) {
+    const float zm = v.zoom;
+    return {(x - v.offX) * zm - liftX * zm,
+            (z - v.offY) * zm - liftY * zm + (float(std::max(footZ, 1)) * 8.0f + 7.0f) * zm};
+}
+inline bool squadMarkerInView(ScreenPoint p, const AnchorView& v) {
+    return !(p.x < -20 || p.x > v.viewW + 20 || p.y < -30 || p.y > v.viewH + 30);
+}
+inline ScreenBand squadMarkerBand(const AnchorView& v, int footMin, int footMax) {
+    const float zm = v.zoom;
+    return {-20.0f, -30 - (float(std::max(footMax, 1)) * 8.0f + 7.0f) * zm, float(v.viewW + 20),
+            float(v.viewH + 30) - (float(std::max(footMin, 1)) * 8.0f + 7.0f) * zm};
+}
+// Production bar: its top-left corner, above the building by its footprint depth.
+inline ScreenPoint productionBar(float x, float z, float liftX, float liftY, int footZ, const AnchorView& v) {
+    const float zm = v.zoom, bw = 40 * zm;
+    return {(x - v.offX) * zm - bw / 2 - liftX * zm,
+            (z - v.offY) * zm - float(footZ) * 8 * zm - 14 * zm - liftY * zm};
+}
+inline bool productionBarInView(ScreenPoint p, const AnchorView& v) {
+    return !(p.x < -60 || p.x > v.viewW + 60 || p.y < -60 || p.y > v.viewH + 60);
+}
+inline ScreenBand productionBarBand(const AnchorView& v, int footMin, int footMax) {
+    const float zm = v.zoom;
+    return {-60 + 40 * zm / 2, -60 + (float(footMin) * 8 + 14) * zm,
+            float(v.viewW + 60) + 40 * zm / 2, float(v.viewH + 60) + (float(footMax) * 8 + 14) * zm};
+}
+}  // namespace unitpass
+
 }  // namespace tak::render

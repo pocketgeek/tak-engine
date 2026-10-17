@@ -659,7 +659,9 @@ public:
     // broad phase was re-run over all live units and accepted the same units in the
     // same order, or draw() threw. passes = checked passes (painter list + overlays);
     // live/candidates/accepted are summed over them.
-    struct UnitIndexVerifyTotals { uint64_t frames=0, passes=0, live=0, candidates=0, accepted=0; };
+    // overlays[k] = units drawn by overlay k (health bars, self-destruct, squad
+    // markers, production bars) over the checked passes.
+    struct UnitIndexVerifyTotals { uint64_t frames=0, passes=0, live=0, candidates=0, accepted=0, overlays[4]{}; };
     const UnitIndexVerifyTotals& unitIndexVerifyTotals() const { return unitIndexVerifyStats_; }
     // TAK_SCHEDULE_VERIFY (workstream I): every geometry pass built each visible
     // unit exactly once under a well-formed plan; the shadow point checks, shadow
@@ -2787,13 +2789,17 @@ private:
     bool featureIndexDirty_=true;
     // Unit broad phase (workstream L). Frame::unitGrid holds the snapshot's index;
     // unitCandidates() answers "which live units may have a lifted anchor in this
-    // screen band" from it (indices into front().live, ascending) and the caller keeps
+    // screen band" (unitpass::*Band, client/unitindex.h) from it (indices into front().live, ascending) and the caller keeps
     // its exact test. The lift a unit can carry is bounded per map (unitLiftBounds).
     // TAK_UNIT_FULL_SCAN=1 (debug) is the same-binary pre-L reference: every query
     // returns the whole list. TAK_UNIT_INDEX_VERIFY=1 compares every indexed pass with
     // a full scan and throws at the first difference.
-    std::span<const uint32_t> unitCandidates(float left, float top, float right, float bottom);
+    std::span<const uint32_t> unitCandidates(const tak::render::ScreenBand& band);
     tak::render::LiftBounds unitLiftBounds();
+    std::pair<int, int> unitFootZRange();
+    std::pair<const void*, size_t> unitFootKey_{nullptr, 0};
+    std::pair<int, int> unitFoot_{1, 1};
+    std::vector<int> overlayIdsIndexed_, overlayIdsFull_;   // TAK_UNIT_INDEX_VERIFY scratch
     std::vector<uint64_t> unitQueryBits_;
     std::vector<uint32_t> unitQuery_;
     struct LiftBoundsKey { const void* map = nullptr; const void* heights = nullptr; size_t size = 0;

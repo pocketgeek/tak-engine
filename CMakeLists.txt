@@ -1485,20 +1485,24 @@ if(TAK_BUILD_CLIENT)
           PASS_REGULAR_EXPRESSION "DISTANT_VERIFY frames=[1-9][0-9]* deferred=[1-9][0-9]* checked=[1-9][0-9]* catchup=0 late=0")
       # Unit broad phase (workstream L), on the software renderer: every frame the
       # painter candidates taken from the snapshot's unit grid must equal a full scan
-      # of all live units -- same units, order, depth keys and layers -- or draw()
-      # throws (TAK_UNIT_INDEX_VERIFY). The base variant is a fogged two-player battle
-      # with construction, ghosts, flyers and corpses, moving units (interpolation),
-      # a panning and zooming camera with reversals, camera shake, deaths/respawns and
-      # world-epoch bumps (id reuse); _jump is a 3000-unit army seen through a camera
-      # jumping between distant views (a small visible subset), with shake.
+      # of all live units -- same units, order, depth keys and layers -- and so must
+      # the units each per-unit overlay draws, or draw() throws
+      # (TAK_UNIT_INDEX_VERIFY). The base variant is a fogged two-player battle with
+      # construction, ghosts, flyers, corpses, self-destruct countdowns, control
+      # squads and production queues (the overlays), moving units (interpolation), a
+      # panning and zooming camera with reversals, camera shake, deaths/respawns and
+      # world-epoch bumps (id reuse); _jump is a 3000-unit army with squads seen
+      # through a camera jumping between distant views (a small visible subset).
       foreach(_variant IN ITEMS "" "_jump")
         if(_variant STREQUAL "")
-          set(_scene TAK_SHADOW_BENCH=300 TAK_RENDER_SPACING=120 TAK_RENDER_BATTLE=1 TAK_RENDER_EXTRAS=1 TAK_PROFILE_FOG=1
-              TAK_RENDER_MOTION=1 TAK_RENDER_CAMERA=1 TAK_RENDER_ZOOM=1 TAK_RENDER_SHAKE=37
-              TAK_RENDER_CHURN=40 TAK_RENDER_EPOCH=90 TAK_RENDER_FRAMES=200)
+          set(_scene TAK_SHADOW_BENCH=300 TAK_RENDER_SPACING=120 TAK_RENDER_BATTLE=1 TAK_RENDER_EXTRAS=1
+              TAK_RENDER_OVERLAYS=1 TAK_PROFILE_FOG=1 TAK_RENDER_MOTION=1 TAK_RENDER_CAMERA=1
+              TAK_RENDER_ZOOM=1 TAK_RENDER_SHAKE=37 TAK_RENDER_CHURN=40 TAK_RENDER_EPOCH=90 TAK_RENDER_FRAMES=200)
+          set(_expect "health=[1-9][0-9]* selfdestruct=[1-9][0-9]* squads=[1-9][0-9]* production=[1-9]")
         else()
-          set(_scene TAK_SHADOW_BENCH=3000 TAK_PROFILE_ZOOM=1 TAK_RENDER_JUMP=15 TAK_RENDER_SHAKE=23
-              TAK_RENDER_FRAMES=120)
+          set(_scene TAK_SHADOW_BENCH=3000 TAK_RENDER_OVERLAYS=1 TAK_PROFILE_ZOOM=1 TAK_RENDER_JUMP=15
+              TAK_RENDER_SHAKE=23 TAK_RENDER_FRAMES=120)
+          set(_expect "squads=[1-9]")
         endif()
         add_test(NAME render_unit_index${_variant} COMMAND ${CMAKE_COMMAND} -E env
             SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software ${_scene}
@@ -1508,7 +1512,7 @@ if(TAK_BUILD_CLIENT)
             $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
             --testbuild --winsize 1024 768 --novsync)
         set_tests_properties(render_unit_index${_variant} PROPERTIES TIMEOUT 300
-            PASS_REGULAR_EXPRESSION "UNIT_INDEX_VERIFY frames=[1-9][0-9]* passes=[1-9][0-9]* live=[1-9][0-9]* candidates=[1-9][0-9]* accepted=[1-9]")
+            PASS_REGULAR_EXPRESSION "UNIT_INDEX_VERIFY frames=[1-9][0-9]* passes=[1-9][0-9]* live=[1-9][0-9]* candidates=[1-9][0-9]* accepted=[1-9][0-9]* .*${_expect}")
       endforeach()
       # CPU budgets (workstream J) in a real scene: a battle, then a sustained empty
       # view, with short trim windows and tiny terrain budgets. Retained buffers must

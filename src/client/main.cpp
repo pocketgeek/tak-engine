@@ -2024,8 +2024,10 @@ int main(int argc, char** argv) {
                 // units of a full scan, in the same order, or draw() threw.
                 const auto& t=gameView->unitIndexVerifyTotals();
                 using ull=unsigned long long;
-                std::printf("UNIT_INDEX_VERIFY frames=%llu passes=%llu live=%llu candidates=%llu accepted=%llu\n",
-                    ull(t.frames),ull(t.passes),ull(t.live),ull(t.candidates),ull(t.accepted));
+                std::printf("UNIT_INDEX_VERIFY frames=%llu passes=%llu live=%llu candidates=%llu accepted=%llu "
+                            "health=%llu selfdestruct=%llu squads=%llu production=%llu\n",
+                    ull(t.frames),ull(t.passes),ull(t.live),ull(t.candidates),ull(t.accepted),
+                    ull(t.overlays[0]),ull(t.overlays[1]),ull(t.overlays[2]),ull(t.overlays[3]));
                 if(!t.passes)throw std::runtime_error("unit index verify ran no checks");
             }
             if(tak::devFlag("TAK_DISTANT_VERIFY")) {

@@ -224,9 +224,10 @@
         }
         renderStats_.add(RS::FeatureCandidates, candidates.size());
         renderStats_.add(RS::FeaturesPainted, items.size());
-        // The frustum cull's acceptance band for a unit's lifted anchor (screen px;
-        // see below). The broad phase queries the same band.
-        constexpr int kCullLeft = -160, kCullPadRight = 160, kCullTop = -260, kCullPadBottom = 120;
+        // The frustum cull (unitpass::painter*, client/unitindex.h); the broad phase
+        // queries the band of anchors it can accept.
+        namespace unitpass = tak::render::unitpass;
+        const tak::render::AnchorView anchorView{mapView_.offX(), mapView_.offY(), zm0, mvw, winH};
         const auto unitCandidate = [&](const UnitR& r) {
             if ((r.deadFor >= float(r.corpseAnimationTicks)/30.0f && !r.corpsePhase) || r.embarked()) return;
             if (r.corpsePhase && r.corpseFeat >= 0) {
@@ -250,9 +251,7 @@
             // the top edge can still show its lower body. Cull on the LIFTED anchor
             // (where the unit is actually drawn), else a unit lifted onto the screen
             // from just below the edge on high ground vanishes.
-            float sx = (r.x - mapView_.offX()) * zm0 - uLiftX(r) * zm0;
-            float sy = (r.z - mapView_.offY()) * zm0 - uLiftY(r) * zm0;
-            if (sx < kCullLeft || sx > mvw + kCullPadRight || sy < kCullTop || sy > winH + kCullPadBottom) return;
+            if (!unitpass::painterInView(unitpass::painter(r.x, r.z, uLiftX(r), uLiftY(r), anchorView), anchorView)) return;
             // Airborne units go in the late layer (see PaintItem). A flyer that has
             // LANDED is on the ground and sorts normally -- which is retail's gate
             // too, since its occupancy flips when it puts down.
@@ -275,8 +274,7 @@
             // world_.units()). Interpolation, model extents and flyer altitude are
             // not inputs of this cull (its margins stand for them); the lift is.
             const auto& live = front().live;
-            const auto unitIndices = unitCandidates(float(kCullLeft), float(kCullTop),
-                                                    float(mvw + kCullPadRight), float(winH + kCullPadBottom));
+            const auto unitIndices = unitCandidates(unitpass::painterBand(anchorView));
             renderStats_.add(RS::UnitsScanned, unitIndices.size());
             const size_t indexed = items.size();
             for (uint32_t i : unitIndices) unitCandidate(*live[i]);
@@ -2822,6 +2820,40 @@
             }
         }
 
+        // Workstream L: each per-unit overlay below examines only the units the grid
+        // returns for its own screen band -- the band its exact test accepts for the
+        // lifted anchor, shifted by the overlay's offset -- in live order, so batches
+        // keep their order; every exact test is unchanged. accept(u, draw) is the
+        // overlay: it returns whether u is drawn and draws it when `draw`.
+        // TAK_UNIT_INDEX_VERIFY re-runs each test over every unit without drawing and
+        // compares the accepted ids, in order.
+        namespace unitpass = tak::render::unitpass;
+        const tak::render::AnchorView overlayView{mapView_.offX(), mapView_.offY(), zm, mvw, winH};
+        const auto overlayPass = [&](int kind, const tak::render::ScreenBand& band, auto&& accept) {
+            const auto& live = front().live;
+            const auto indices = unitCandidates(band);
+            (void)kind;
+#ifndef NDEBUG
+            if (unitIndexVerify_) {
+                overlayIdsIndexed_.clear(); overlayIdsFull_.clear();
+                for (uint32_t i : indices) if (accept(*live[i], true)) overlayIdsIndexed_.push_back(live[i]->id);
+                for (const UnitR* up : live) if (accept(*up, false)) overlayIdsFull_.push_back(up->id);
+                if (overlayIdsIndexed_ != overlayIdsFull_)
+                    throw std::runtime_error("unit index verify: an overlay's units differ from a full scan");
+                ++unitIndexVerifyStats_.passes;
+                unitIndexVerifyStats_.live += live.size();
+                unitIndexVerifyStats_.candidates += indices.size();
+                unitIndexVerifyStats_.accepted += overlayIdsFull_.size();
+                unitIndexVerifyStats_.overlays[kind] += overlayIdsFull_.size();
+                return;
+            }
+#endif
+            for (uint32_t i : indices) accept(*live[i], true);
+        };
+        // Squad markers sit below the unit and production bars above it by a
+        // footprint-dependent offset: their bands cover every type's footprint depth.
+        const auto [footMin, footMax] = unitFootZRange();
+
         // Health bars for damaged or selected units -- viewport-culled and batched
         // into one draw call (each was two state-changing FillRects, so a damaged
         // crowd used to break the render batch thousands of times a frame).
@@ -2829,21 +2861,19 @@
 #ifndef NDEBUG
         debugHealthBarIds_.clear();
 #endif
-        for (const UnitR* _up : front().live) {
-            const UnitR& u = *_up;
-            if (dotsFrame_) break;   // Tactical Dots: no per-unit bars
-            if (!u.alive() || u.embarked() || !u.type) continue;
-            if (u.underConstruction && !u.buildBegun) continue;   // ghost: no bar
-            if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) continue;
+        // Tactical Dots: no per-unit bars. Options "HEALTH BARS": 0 = never, 1 = only
+        // damaged units (default, the retail behaviour), 2 = every unit, full HP included.
+        if (!dotsFrame_ && healthBars_ != 0)
+            overlayPass(0, unitpass::healthBarBand(overlayView), [&](const UnitR& u, bool draw) {
+            if (!u.alive() || u.embarked() || !u.type) return false;
+            if (u.underConstruction && !u.buildBegun) return false;   // ghost: no bar
+            if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) return false;
             float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
-            // Options "HEALTH BARS": 0 = never, 1 = only damaged units (default,
-            // the retail behaviour), 2 = every unit, full HP included.
-            if (healthBars_ == 0) break;
-            if (healthBars_ == 1 && frac >= 1.0f) continue;
+            if (healthBars_ == 1 && frac >= 1.0f) return false;
             float bw = 26 * zm, bh = std::max(2.0f, 3 * zm);
-            float bx = (u.x - mapView_.offX()) * zm - bw / 2 - uLiftX(u) * zm;
-            float by = (u.z - mapView_.offY()) * zm - 30 * zm - uLiftY(u) * zm;
-            if (bx < -40 || bx > mvw + 40 || by < -40 || by > winH + 40) continue;
+            const auto [bx, by] = unitpass::healthBar(u.x, u.z, uLiftX(u), uLiftY(u), overlayView);
+            if (!unitpass::healthBarInView({bx, by}, overlayView)) return false;
+            if (!draw) return true;
 #ifndef NDEBUG
             debugHealthBarIds_.push_back(u.id);
 #endif
@@ -2852,7 +2882,8 @@
             pushQuad(overlayBatch_, bx, by, bw * frac, bh,
                      SDL_Color{uint8_t(230 * (1 - frac) + 40 * frac),
                                uint8_t(200 * frac + 40 * (1 - frac)), 40, 255});
-        }
+            return true;
+        });
         if (!overlayBatch_.empty()) {
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
             SDL_RenderGeometry(ren_, nullptr, overlayBatch_.data(),
@@ -2861,19 +2892,19 @@
 
         // Self-destruct countdown: a pulsing red number over each armed unit.
         if (hudFont_.ok())
-            for (const UnitR* _up : front().live) {
-                const UnitR& u = *_up;
-                if (!u.alive() || u.embarked() || !u.type || u.selfDestructT < 0) continue;
-                if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) continue;
-                float sx = (u.x - mapView_.offX()) * zm - uLiftX(u) * zm;
-                float sy = (u.z - mapView_.offY()) * zm - 44 * zm - uLiftY(u) * zm;
-                if (sx < -20 || sx > mvw + 20 || sy < -20 || sy > winH + 20) continue;
+            overlayPass(1, unitpass::selfDestructBand(overlayView), [&](const UnitR& u, bool draw) {
+                if (!u.alive() || u.embarked() || !u.type || u.selfDestructT < 0) return false;
+                if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) return false;
+                const auto [sx, sy] = unitpass::selfDestruct(u.x, u.z, uLiftX(u), uLiftY(u), overlayView);
+                if (!unitpass::selfDestructInView({sx, sy}, overlayView)) return false;
+                if (!draw) return true;
                 char b[8];
                 std::snprintf(b, sizeof b, "%d", int(std::ceil(u.selfDestructT)));
                 bool bright = (u.selfDestructT - std::floor(u.selfDestructT)) > 0.5f;
                 SDL_Color c{255, uint8_t(bright ? 200 : 60), 40, 255};
                 hudFont_.draw(ren_, b, sx - 5, sy, 2.2f, c);
-            }
+                return true;
+            });
 
         // Control-squad marker: retail-style bright-green number centred BELOW the
         // unit (under where the selection ring/bar sits), "<N>F" for a formation.
@@ -2881,49 +2912,47 @@
         // far out so it doesn't clutter the field. Drawn in FLAT green: tinting the
         // shaded tan glyph art gave a dark, mottled outline that was hard to read.
         if (hudFont_.ok() && zm > 0.55f)
-            for (const UnitR* _up : front().live) {
-                const UnitR& u = *_up;
+            overlayPass(2, unitpass::squadMarkerBand(overlayView, footMin, footMax), [&](const UnitR& u, bool draw) {
                 if (!u.alive() || u.embarked() || !u.type || u.player != localPlayer_ ||
                     u.squad == 0)
-                    continue;
-                if (u.underConstruction && !u.buildBegun) continue;
+                    return false;
+                if (u.underConstruction && !u.buildBegun) return false;
+                const auto [cx, cy] = unitpass::squadMarker(u.x, u.z, uLiftX(u), uLiftY(u), u.type->footZ, overlayView);
+                if (!unitpass::squadMarkerInView({cx, cy}, overlayView)) return false;
+                if (!draw) return true;
                 int num = std::abs(int(u.squad));
                 char key = (num == 10) ? '0' : char('0' + num);
                 std::string lbl(1, key);
                 if (u.squad < 0) lbl += 'F';   // formation
-                float cx = (u.x - mapView_.offX()) * zm - uLiftX(u) * zm;
-                float cy = (u.z - mapView_.offY()) * zm - uLiftY(u) * zm
-                           + (float(std::max(u.type->footZ, 1)) * 8.0f + 7.0f) * zm;
-                if (cx < -20 || cx > mvw + 20 || cy < -30 || cy > winH + 30) continue;
                 float sc = std::clamp(1.1f * zm, 0.9f, 1.7f);
                 float tw = float(hudFont_.width(lbl, sc));
                 hudFont_.drawSolid(ren_, lbl, cx - tw / 2, cy, sc,
                                    SDL_Color{70, 240, 90, 255});   // the selection-UI green
-            }
+                return true;
+            });
 
         // Production progress above busy buildings -- viewport-culled and batched
         // into one draw call, same treatment as the health bars above (the two
         // state-changing FillRects per building broke the render batch each time,
         // and map-wide AI production drew bars at off-screen coordinates).
         overlayBatch_.clear();
-        for (const UnitR* _up : front().live) {
-            const UnitR& u = *_up;
-            if (dotsFrame_) break;   // Tactical Dots: no per-unit bars
-            if (!u.alive() || u.buildQueue.empty() || !u.type) continue;
-            if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) continue;
+        if (!dotsFrame_)   // Tactical Dots: no per-unit bars
+            overlayPass(3, unitpass::productionBarBand(overlayView, footMin, footMax), [&](const UnitR& u, bool draw) {
+            if (!u.alive() || u.buildQueue.empty() || !u.type) return false;
+            if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) return false;
             float total = u.buildQueue.front()->buildTime /
                           std::max(u.type->workerTime, 0.01f);
             float frac = std::clamp(u.buildProgress / total, 0.0f, 1.0f);
             float bw = 40 * zm, bh = std::max(3.0f, 4 * zm);
-            float bx = (u.x - mapView_.offX()) * zm - bw / 2 - uLiftX(u) * zm;
-            float by = (u.z - mapView_.offY()) * zm - float(u.type->footZ) * 8 * zm - 14 * zm
-                       - uLiftY(u) * zm;
-            if (bx < -60 || bx > mvw + 60 || by < -60 || by > winH + 60) continue;
+            const auto [bx, by] = unitpass::productionBar(u.x, u.z, uLiftX(u), uLiftY(u), u.type->footZ, overlayView);
+            if (!unitpass::productionBarInView({bx, by}, overlayView)) return false;
+            if (!draw) return true;
             pushQuad(overlayBatch_, bx - 1, by - 1, bw + 2, bh + 2,
                      SDL_Color{10, 10, 10, 220});
             pushQuad(overlayBatch_, bx, by, bw * frac, bh,
                      SDL_Color{90, 170, 255, 255});
-        }
+            return true;
+        });
         if (!overlayBatch_.empty()) {
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
             SDL_RenderGeometry(ren_, nullptr, overlayBatch_.data(),
@@ -3320,9 +3349,27 @@
 
     // Workstream L: indices into front().live (ascending) of every unit whose lifted
     // anchor -- (x - offX) * zoom - liftX * zoom, (z - offY) * zoom - liftY * zoom with
-    // the snapshot position -- may fall inside [left,right] x [top,bottom] (screen px,
-    // inclusive). A superset: callers keep their exact test. Valid until the next call.
-    std::span<const uint32_t> GameView::unitCandidates(float left, float top, float right, float bottom) {
+    // the snapshot position -- may fall inside `band` (screen px, inclusive). A
+    // superset: callers keep their exact test. Valid until the next call.
+    // Workstream L: the smallest and largest footprint depth (footZ) of any unit
+    // type, for the overlays whose offset from the anchor depends on it.
+    std::pair<int, int> GameView::unitFootZRange() {
+        const auto& types = registry_.types();
+        if (unitFootKey_.first != &types || unitFootKey_.second != types.size()) {
+            unitFootKey_ = {&types, types.size()};
+            int lo = 1, hi = 1;
+            bool any = false;
+            for (const auto& [id, type] : types) {
+                lo = any ? std::min(lo, type.footZ) : type.footZ;
+                hi = any ? std::max(hi, type.footZ) : type.footZ;
+                any = true;
+            }
+            unitFoot_ = {lo, hi};
+        }
+        return unitFoot_;
+    }
+
+    std::span<const uint32_t> GameView::unitCandidates(const tak::render::ScreenBand& band) {
         using RS = tak::render::Counter;
         const Frame& f = front();
         renderStats_.add(RS::UnitIndexQueries);
@@ -3333,8 +3380,8 @@
             renderStats_.add(RS::UnitIndexReturned, unitQuery_.size());
             return unitQuery_;
         }
-        const auto rect = tak::render::anchorBandToWorld(left, top, right, bottom, mapView_.offX(), mapView_.offY(),
-                                                         mapView_.zoom(), unitLiftBounds());
+        const auto rect = tak::render::anchorBandToWorld(band.left, band.top, band.right, band.bottom, mapView_.offX(),
+                                                         mapView_.offY(), mapView_.zoom(), unitLiftBounds());
         tak::render::UnitGrid::QueryStats qs;
         f.unitGrid.query(rect.left, rect.top, rect.right, rect.bottom, unitQueryBits_, unitQuery_, &qs);
         renderStats_.add(RS::UnitIndexReturned, unitQuery_.size());

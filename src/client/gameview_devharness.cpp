@@ -963,6 +963,7 @@
         //   TAK_RENDER_NAVAL=N      N floating units on the water nearest the centre
         //   TAK_RENDER_FOREST=1     centre army + camera on the densest scenery region
         //   TAK_RENDER_ROSTER=a,b   unit types replacing the 6-type roster
+        //   TAK_RENDER_OVERLAYS=1   control squads + factories with production queues
         // All of them only shape the local harness scene; none run in a real game.
         if (const char* countText=tak::devEnv("TAK_SHADOW_BENCH")) {
             const int count=std::clamp(std::atoi(countText),1,16000);
@@ -1039,6 +1040,28 @@
                 // Corpses: every 9th grid unit dies at once and leaves its body.
                 for(size_t k=0;k<spawnedIds.size();k+=9) {writableWorld().destroy(spawnedIds[k]);++corpses;}
             }
+            int squads=0,factories=0;
+            if(tak::devFlag("TAK_RENDER_OVERLAYS")) {
+                // Per-unit overlays (workstream L): control squads on every fifth grid unit
+                // (every third of those a formation), and factories across the middle of the
+                // army with long production queues (progress bars).
+                for(size_t k=0;k<spawnedIds.size();k+=5) {
+                    const int n=int(k/5)%10+1;
+                    writableWorld().setSquad(spawnedIds[k],(k/5)%3==2 ? -n : n);++squads;
+                }
+                for(const auto& [id,type]:registry_.types()) {
+                    if(factories>=4)break;
+                    if(!type.producesUnits())continue;
+                    const tak::sim::UnitType* product=nullptr;
+                    for(const auto& option:registry_.buildable(id))
+                        if(const auto* t=registry_.find(option);t && !isStructure(t)) {product=t;break;}
+                    if(!product)continue;
+                    const float fx=centerX+(float(factories)-1.5f)*500,fz=centerZ;   // in the army's middle
+                    if(const int factory=spawn(id,fx,fz,0,localPlayer_);factory>0) {
+                        writableWorld().train(factory,product,50);++factories;
+                    }
+                }
+            }
             if(const char* navalText=tak::devEnv("TAK_RENDER_NAVAL")) {
                 const int wanted=std::clamp(std::atoi(navalText),1,2000);
                 std::vector<const tak::sim::UnitType*> hulls;
@@ -1074,8 +1097,8 @@
             }
             std::fprintf(stderr,"shadow benchmark: requested=%d spawned=%d columns=%d zoom=%.3f type=%s\n",
                 count,spawned,columns,zoom,only ? only : "mixed");
-            std::fprintf(stderr,"render scene: sites=%d ghosts=%d flyers=%d corpses=%d boats=%d scenery=%d center=%.0f,%.0f offset=%.0f,%.0f\n",
-                sites,ghosts,flyers,corpses,boats,forestTrees,centerX,centerZ,mapView_.offX(),mapView_.offY());
+            std::fprintf(stderr,"render scene: sites=%d ghosts=%d flyers=%d corpses=%d boats=%d scenery=%d squads=%d factories=%d center=%.0f,%.0f offset=%.0f,%.0f\n",
+                sites,ghosts,flyers,corpses,boats,forestTrees,squads,factories,centerX,centerZ,mapView_.offX(),mapView_.offY());
             return;
         }
         // Capture the reclaim particle fix through the existing local build harness.

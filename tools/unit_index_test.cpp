@@ -11,12 +11,20 @@
 //     float test `!(sx < L || sx > R || sy < T || sy > B)` are all candidates, and
 //     filtering the candidates gives the full scan's accepted list, in order. Units
 //     are placed ulps either side of each edge.
-//  3. Randomized movement: a population that moves and churns, rebuilt as a new
+//  3. Every unit pass of the renderer (unitpass::*: painter cull, health bar,
+//     self-destruct number, squad marker, production bar): with random views,
+//     lifts and footprint depths, the exact float flip point of each edge of the
+//     pass's test is located by bisection and units a few ulps either side of it
+//     (plus random ones) that pass the test lie inside the rectangle built from
+//     the pass's band, and are grid candidates in full-scan order. The painter
+//     pass is also checked against the renderer's expression written out above.
+//  4. Randomized movement: a population that moves and churns, rebuilt as a new
 //     snapshot every step, against a full scan.
 
 #include "client/unitindex.h"
 
 #include <cmath>
+#include <iterator>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -191,6 +199,126 @@ void testCull(std::mt19937& rng) {
     CHECK(accepted > 10000 && edge > 10000, "cull test exercised too little (%zu accepted, %zu on edges)", accepted, edge);
 }
 
+namespace up = tak::render::unitpass;
+using tak::render::AnchorView;
+using tak::render::ScreenBand;
+using tak::render::ScreenPoint;
+
+struct Pass {
+    const char* name;
+    bool footprint;
+    ScreenPoint (*pos)(float, float, float, float, int, const AnchorView&);
+    bool (*inView)(ScreenPoint, const AnchorView&);
+    ScreenBand (*band)(const AnchorView&, int, int);
+};
+const Pass kPasses[] = {
+    {"painter", false, [](float x, float z, float lx, float ly, int, const AnchorView& v) { return up::painter(x, z, lx, ly, v); },
+     up::painterInView, [](const AnchorView& v, int, int) { return up::painterBand(v); }},
+    {"health", false, [](float x, float z, float lx, float ly, int, const AnchorView& v) { return up::healthBar(x, z, lx, ly, v); },
+     up::healthBarInView, [](const AnchorView& v, int, int) { return up::healthBarBand(v); }},
+    {"selfdestruct", false, [](float x, float z, float lx, float ly, int, const AnchorView& v) { return up::selfDestruct(x, z, lx, ly, v); },
+     up::selfDestructInView, [](const AnchorView& v, int, int) { return up::selfDestructBand(v); }},
+    {"squad", true, up::squadMarker, up::squadMarkerInView, up::squadMarkerBand},
+    {"production", true, up::productionBar, up::productionBarInView, up::productionBarBand},
+};
+
+// The float at which `inside(f)` flips between a (inside) and b (outside): the last
+// inside value walking from a towards b. Bisection in double, then ulp steps.
+template<class F> float flipPoint(float a, float b, F inside) {
+    double lo = a, hi = b;
+    for (int i = 0; i < 80; ++i) {
+        const double mid = 0.5 * (lo + hi);
+        if (inside(float(mid))) lo = mid; else hi = mid;
+    }
+    float f = float(lo);
+    const float dir = b > a ? std::numeric_limits<float>::infinity() : -std::numeric_limits<float>::infinity();
+    while (!inside(f)) f = std::nextafter(f, -dir);
+    for (float n = std::nextafter(f, dir); inside(n); n = std::nextafter(n, dir)) f = n;
+    return f;
+}
+
+void testPasses(std::mt19937& rng) {
+    std::uniform_real_distribution<float> u01(0.0f, 1.0f);
+    std::vector<uint64_t> bits;
+    std::vector<uint32_t> scratch, out;
+    size_t edgeUnits[std::size(kPasses)] = {}, accepted[std::size(kPasses)] = {};
+    for (int trial = 0; trial < 1200; ++trial) {
+        const Pass& pass = kPasses[size_t(trial) % std::size(kPasses)];
+        const AnchorView v{(u01(rng) - 0.1f) * 12000, (u01(rng) - 0.1f) * 12000,
+                           trial % 7 == 0 ? 0.05f + u01(rng) * 0.2f : 0.2f + u01(rng) * 3.8f,
+                           300 + int(rng() % 7400), 200 + int(rng() % 2000)};
+        const float above = float(rng() % 256) + 1.0f;
+        const float sy = trial % 11 == 0 ? -0.5f : trial % 5 == 0 ? 0.0f : 0.5f;
+        const float sx = trial % 3 == 0 ? 0.25f : 0.0f;
+        const LiftBounds lift{std::min(0.0f, above * sx), std::max(0.0f, above * sx),
+                              std::min(0.0f, above * sy), std::max(0.0f, above * sy)};
+        const int footMin = pass.footprint ? int(rng() % 3) : 1, footMax = footMin + (pass.footprint ? int(rng() % 20) : 0);
+        Population p;
+        std::vector<float> lx, ly;
+        std::vector<int> foot;
+        const auto add = [&](float x, float z, float a, float b, int f) {
+            p.x.push_back(x); p.z.push_back(z); lx.push_back(a); ly.push_back(b); foot.push_back(f);
+        };
+        for (int u = 0; u < 120; ++u) {
+            const float a = lift.minX + (lift.maxX - lift.minX) * (u % 4 == 0 ? float(u % 2) : u01(rng));
+            const float b = lift.minY + (lift.maxY - lift.minY) * (u % 6 == 0 ? float(u % 2) : u01(rng));
+            const int f = footMin + int(rng() % unsigned(footMax - footMin + 1));
+            // A point well inside: the band's centre, mapped back through this unit's lift.
+            const ScreenBand band = pass.band(v, f, f);
+            const float cx = v.offX + 0.5f * (band.left + band.right) / v.zoom + a;
+            const float cz = v.offY + 0.5f * (band.top + band.bottom) / v.zoom + b;
+            const auto in = [&](float x, float z) { return pass.inView(pass.pos(x, z, a, b, f, v), v); };
+            if (!in(cx, cz)) { add(cx, cz, a, b, f); continue; }   // still a valid random unit
+            const float far = 1.0e5f / v.zoom;
+            const float edges[4] = {flipPoint(cx, cx - far, [&](float x) { return in(x, cz); }),
+                                    flipPoint(cx, cx + far, [&](float x) { return in(x, cz); }),
+                                    flipPoint(cz, cz - far, [&](float z) { return in(cx, z); }),
+                                    flipPoint(cz, cz + far, [&](float z) { return in(cx, z); })};
+            for (int e = 0; e < 4; ++e)
+                for (int step = -3; step <= 3; ++step) {
+                    float t = edges[e];
+                    for (int k = 0; k < std::abs(step); ++k) t = std::nextafter(t, step > 0 ? 1e30f : -1e30f);
+                    if (e < 2) add(t, cz, a, b, f); else add(cx, t, a, b, f);
+                    ++edgeUnits[size_t(&pass - kPasses)];
+                }
+            add(cx + (u01(rng) - 0.5f) * 3 * (band.right - band.left) / v.zoom,
+                cz + (u01(rng) - 0.5f) * 3 * (band.bottom - band.top) / v.zoom, a, b, f);
+        }
+        UnitGrid g;
+        g.build(p.x, p.z, scratch);
+        const ScreenBand band = pass.band(v, footMin, footMax);
+        const auto rect = anchorBandToWorld(band.left, band.top, band.right, band.bottom, v.offX, v.offY, v.zoom, lift);
+        g.query(rect.left, rect.top, rect.right, rect.bottom, bits, out);
+        std::vector<char> cand(p.x.size(), 0);
+        for (uint32_t i : out) cand[i] = 1;
+        std::vector<uint32_t> full, indexed;
+        for (size_t i = 0; i < p.x.size(); ++i) {
+            if (!pass.inView(pass.pos(p.x[i], p.z[i], lx[i], ly[i], foot[i], v), v)) continue;
+            full.push_back(uint32_t(i));
+            CHECK(p.x[i] >= rect.left && p.x[i] <= rect.right && p.z[i] >= rect.top && p.z[i] <= rect.bottom,
+                  "%s: unit %zu (foot %d of %d..%d) passes its test outside the world rectangle",
+                  pass.name, i, foot[i], footMin, footMax);
+            CHECK(cand[i], "%s: unit %zu passes its test but is no candidate", pass.name, i);
+        }
+        for (uint32_t i : out)
+            if (pass.inView(pass.pos(p.x[i], p.z[i], lx[i], ly[i], foot[i], v), v)) indexed.push_back(i);
+        CHECK(full == indexed, "%s: filtered candidates differ from the full scan", pass.name);
+        accepted[size_t(&pass - kPasses)] += full.size();
+    }
+    for (size_t k = 0; k < std::size(kPasses); ++k)
+        CHECK(edgeUnits[k] > 5000 && accepted[k] > 2000, "%s exercised too little (%zu edge units, %zu accepted)",
+              kPasses[k].name, edgeUnits[k], accepted[k]);
+    // The painter helper is the renderer's former inline expression.
+    for (int i = 0; i < 100000; ++i) {
+        const AnchorView v{u01(rng) * 9000, u01(rng) * 9000, 0.05f + u01(rng) * 4, 100 + int(rng() % 8000), 100 + int(rng() % 3000)};
+        const float x = u01(rng) * 12000, z = u01(rng) * 12000, a = u01(rng) * 128, b = u01(rng) * 128;
+        const ScreenPoint q = up::painter(x, z, a, b, v);
+        CHECK(up::painterInView(q, v) == exactCull(x, z, a, b, v.offX, v.offY, v.zoom, -160, -260,
+                                                   float(v.viewW + 160), float(v.viewH + 120)),
+              "painter helper differs from the renderer's expression");
+    }
+}
+
 void testMovement(std::mt19937& rng) {
     std::uniform_real_distribution<float> u01(0.0f, 1.0f);
     std::vector<uint64_t> bits;
@@ -224,6 +352,7 @@ int main() {
     std::mt19937 rng(20261017);
     testGrid(rng);
     testCull(rng);
+    testPasses(rng);
     testMovement(rng);
     if (failures) { std::printf("unit_index_test: %d failures\n", failures); return 1; }
     std::printf("unit_index_test: PASS\n");
