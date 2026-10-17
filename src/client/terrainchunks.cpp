@@ -334,7 +334,10 @@ void TerrainChunks::uploadReady(SDL_Renderer* renderer,terrainwork::UploadBudget
     size_t kept=0;
     for(size_t i=0;i<ready_.size();++i)if(keep[i]) {if(kept!=i)ready_[kept]=std::move(ready_[i]);++kept;}
     ready_.resize(kept);
-    readyHeld_.store(kept,std::memory_order_relaxed);
+    // Under the lock: the worker reads readyHeld_ in its wait predicate, so a store
+    // between its check and its wait would lose this wakeup (nothing else may notify
+    // while the camera rests).
+    {std::lock_guard lock(mutex_);readyHeld_.store(kept,std::memory_order_relaxed);}
     cv_.notify_all();   // the worker may compose again
 }
 void TerrainChunks::uploadDeferred(SDL_Renderer* renderer,terrainwork::UploadBudget& ub) {
@@ -409,8 +412,9 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
         else uploadReady(renderer,ub,false,true);
     }
     // New work for visible cells, most urgent first (legacy: row order) -- not while the
-    // camera moves fast or jumps repeatedly (the calm gate): the fallback draws them.
-    if(params_.calmGate && !demand_.calm()) {++framesGated_;return;}
+    // camera moves fast or jumps repeatedly at level 0 (the calm gate): the fallback
+    // draws them.
+    if(demand_.gated()) {++framesGated_;return;}
     const auto queue=[&](const Key& key,uint32_t priority,bool nearby) {
         const auto [level,cx,cy]=key;Job job;job.key=key;job.epoch=epoch_;job.seq=++seq_;job.stockTerrain=map.stockTerrain;
         job.mapW=map.blocksX*(32>>level);job.mapH=map.blocksY*(32>>level);

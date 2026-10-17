@@ -44,8 +44,9 @@ void applyMipBudget(tak::TerrainChunks& chunks) {
 }
 // Debug: TAK_TERRAIN_SCHEDULE=legacy restores the pre-K terrain work policy (FIFO, no
 // cancellation, no calm gate, plain LRU, separate upload caps) in the same binary; a
-// comma list of fifo,nocancel,nogate,nostandin,nocoord switches single parts off and
-// nearby switches the experimental leading-edge prefetch on.
+// comma list of fifo,nocancel,nogate,nostandin,nocoord switches single parts off,
+// nearby switches the experimental leading-edge prefetch on, and gateall applies the
+// calm gate at every level (the rejected K5 scope; default: level 0 only).
 tak::terrainwork::Params scheduleParams() {
     tak::terrainwork::Params p;
     const char* v = tak::devEnv("TAK_TERRAIN_SCHEDULE");
@@ -58,6 +59,7 @@ tak::terrainwork::Params scheduleParams() {
         else if (token == "fifo") p.prioritize = false;
         else if (token == "nocancel") p.cancel = false;
         else if (token == "nogate") p.calmGate = false;
+        else if (token == "gateall") p.calmGateMaxLevel = 5;
         else if (token == "nostandin") p.protectStandins = false;
         else if (token == "nocoord") p.coordinate = false;
         else if (token == "nearby") p.nearby = true;

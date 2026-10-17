@@ -62,12 +62,17 @@ struct Params {
     float minSpeed=0.5f;    // world px per frame below which the camera counts as still
     // Calm gate: no new chunk work while the camera moves fast (faster than
     // fastViewsPerSecond view widths/heights per second) or jumps again within
-    // jumpStormMs of the previous jump, until it has been calm for calmMs. The section
-    // fallback draws those cells at full detail meanwhile (texel-identical to a chunk),
-    // and with no reuse ahead a 4 MiB chunk upload per cell costs the render thread more
-    // than the fallback it replaces (measured; see the progress record, workstream K).
+    // jumpStormMs of the previous jump, until it has been calm for calmMs. At level 0 the
+    // section fallback draws those cells at full detail meanwhile (texel-identical to a
+    // chunk), and with no reuse ahead a 4 MiB chunk upload per cell costs the render
+    // thread more than the fallback it replaces (measured; see the progress record,
+    // workstream K). Only up to calmGateMaxLevel: from level 1 a chunk image is 4^level
+    // times smaller while the fallback still draws every 32-px tile (4^level times more
+    // tiles per screen pixel, resampled), so gating there made zoomed-out fast pans
+    // 1.4-3.2x slower (measured).
     float fastViewsPerSecond=0.5f;
     uint64_t calmMs=250,jumpStormMs=1000;
+    int calmGateMaxLevel=0;
     bool prioritize=true;       // worker takes the most urgent queued job (else FIFO)
     bool cancel=true;           // obsolete jobs are cancelled (else only clear()/invalidate() cancel)
     bool calmGate=true;         // pause new work during fast motion / jump storms
@@ -153,6 +158,8 @@ public:
     bool moving() const {return dirX_ || dirY_;}
     // No fast motion or jump storm within calmMs (see Params): new work may be queued.
     bool calm() const {return !fastSeen_ || nowMs_-fastMs_>=params_.calmMs;}
+    // The calm gate holds back new work this frame (Params::calmGate, up to calmGateMaxLevel).
+    bool gated() const {return params_.calmGate && level_<=params_.calmGateMaxLevel && !calm();}
     bool levelInGrace() const {
         return previousLevel_>=0 && (nowMs_-levelChangedMs_<params_.levelGraceMs || frame_-levelChangedFrame_<params_.levelGraceFrames);
     }

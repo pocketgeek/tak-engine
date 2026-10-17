@@ -202,6 +202,53 @@ int main(int argc,char** argv) try {
             check(settle(k,11000,9000,.6f)==settle(legacy,11000,9000,.6f),"after the pan the view is composed, same as legacy");
             check(k.chunkStats().jobsQueued>during.jobsQueued,"work resumed once calm");
         }
+        // 8b. The gate's scope: zoomed out (level 1) the same fast pan keeps queueing work --
+        //     chunk images are small there and the fallback draws many more tiles. The
+        //     debug gateall scope (every level) gates it (fixture discriminates).
+        {
+            const auto pan=[&](const Params& p) {
+                MapView k(renderer,vfs,mapId);k.setScheduleParams(p);
+                settle(k,2000,9000,.45f);
+                const auto before=k.chunkStats();
+                for(int f=1;f<=10;++f)frame(k,2000+float(f)*900,9000,.45f);
+                const auto after=k.chunkStats();
+                return std::pair{after.framesGated-before.framesGated,after.jobsQueued-before.jobsQueued};
+            };
+            const auto [gated,queued]=pan(Params{});
+            check(gated==0 && queued>0,"level 1: a fast pan is not gated and queues work");
+            Params all;all.calmGateMaxLevel=5;
+            const auto [gatedAll,queuedAll]=pan(all);
+            check(gatedAll>=9 && queuedAll==0,"gateall: the same pan is gated (fixture discriminates)");
+        }
+        // 9. Holes first: in a frame that still has holes after prepare(), completed upgrades
+        //    (cells another level's image stands in for) wait until after the fallback has
+        //    drawn (uploadDeferred), so this frame still shows their stand-ins. View P at
+        //    level 0 = cells 4..6 x 4..5, all with level-1 stand-ins; its six upgrade jobs
+        //    complete; then the view moves one cell right, bringing in two cells with no
+        //    image of any level (holes, nothing composed for them yet).
+        {
+            MapView k(renderer,vfs,mapId);k.setScheduleParams(ungated());
+            const float px=4106,py=4106;
+            settle(k,px,py,.45f);                            // level 1: cells 4..6 x 4..5
+            frame(k,px,py,.55f);                             // level 0: six upgrade jobs
+            const auto queued=k.chunkStats();
+            check(queued.visible==6 && queued.standin==6 && queued.holes==0,"fixture: P is six upgrades over stand-ins");
+            const auto start=SDL_GetTicks();
+            while(k.chunkStats().jobsCompleted<queued.jobsCompleted+6) {
+                check(SDL_GetTicks()-start<60000,"the upgrade jobs never completed");SDL_Delay(1);
+            }
+            frame(k,px+1024,py,.55f);                        // cells 5..7: 7 x 4..5 are holes
+            const auto s=k.chunkStats();
+            check(s.visible==6 && s.holes==2,"fixture: the moved view has two holes");
+            check(s.standin==4,"holes remain: the completed upgrades wait for uploadDeferred (stand-ins still drawn)");
+            const auto deferredStart=SDL_GetTicks();
+            for(;;) {   // the deferred upgrades arrive in later frames, holes or not
+                frame(k,px+1024,py,.55f);
+                if(k.chunkStats().standin<4)break;
+                check(SDL_GetTicks()-deferredStart<60000,"the deferred upgrades were never uploaded");SDL_Delay(1);
+            }
+            settle(k,px+1024,py,.55f);
+        }
         SDL_SetRenderTarget(renderer,nullptr);SDL_DestroyTexture(target);
     }
     check(gpuvram::bytes()==baseline,"terrain teardown frees textures");
