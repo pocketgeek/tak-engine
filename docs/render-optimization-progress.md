@@ -148,17 +148,25 @@ replays must not move; nothing in this program may feed the simulation.
   `8d96905f` ordered body commands + arena integration + `render_body_arena`,
   `37ecd884` staged writes instead of a mapped window (measured fix),
   `d8744efe` rollover with two storages + `render_body_arena_still`,
-  `e311cae5` release-build fix, then the docs commit). Tests: `vertex_arena`
+  `e311cae5` release-build fix, then the docs commit; after the verifier's
+  rejection — the record claimed `bodyVerts_` never exceeded its pre-H peak
+  while H4 doubled it — `0cbc4401` bounded growth (need + 1/16), the
+  double copy of runs in small commands counted (`arena_verts_twice`), the
+  write-failure fallback re-assembling in place of the staged uploads,
+  `drawBuffer` SDL errors counted as fallbacks, assembled commands verified,
+  `render_body_arena_fail`; measured in Experiment 10b). Tests: `vertex_arena`
   (also ASan/UBSan; twelve mutations fail it), `geometrysubmit` (software
   and accelerated GL), `render_body_arena`, `render_body_arena_still`, GL
   verifier runs; `ctest -L quick` 384/384 on build-o2 at `d8744efe` (the
-  release fix after it only guards debug counters). Captures identical to G2
+  release fix after it only guards debug counters) and again at `0cbc4401`
+  (384/384; `render_body_arena[_still|_fail]` are costed, not `quick`, and
+  pass). Captures identical to G2
   (Experiment 10). Release `takclient` builds and contains none of the H
   debug strings. `--mpai` not run: only `src/client` (presentation) and
   `tools/` changed; every benchmark run checks the world hash (identical A vs
-  B in every scene). Measurements: Experiment 10. Baseline for later
-  comparisons: `~/tak-tmp/render-opt/takclient-H4-candidate` (code of
-  `d8744efe`; `e311cae5` changes only release compilation).
+  B in every scene). Measurements: Experiments 10 and 10b. Baseline for later
+  comparisons: `~/tak-tmp/render-opt/takclient-H5-candidate` (code of
+  `0cbc4401`; H4 = `d8744efe` superseded).
 - Workstreams I–N: not started.
 - **Next concrete step:** workstream I (cost-based work scheduling): the
   geometry pass still dispatches the whole pool for ≥ 32 visible units
@@ -223,7 +231,7 @@ evidence; nothing below is already fully satisfied.
 | E | Split body/shadow invalidation | **verified** | Workstream E (`0af89d63` vocabulary + `shadow_tiles` test, `1979d413` GameView, `71a71e9b` harness + `render_shadow_cache` ctest, `15da2bff` decision pre-pass with pooled block-wise point checks). A silhouette tile is stamped with the unit's exact shadow coverage (`shadowRevision`) and the exact `ShadowPlacement` its points were placed with (`client/shadowtiles.h`), no longer with `revision` (any stage) and the screen pixel: material changes (veterancy, tint, ghost, conjuring fade), emote bob, occlusion line and body-only local rebuilds keep the tile; a placement change keeps it only when every tile point recomputes bit-identical (`sameTilePoints`: whole-pixel translations within a binade; sub-pixel phase, zoom and altitude-lean changes redraw). A local rebuild whose shadow inputs are unchanged (colour atlas, frames of animated textures WITHOUT shadow masks) keeps the silhouette without collecting it (`shadowInputsEqual`, `PieceMeta::animationFrameMasks`); animated masks, shadow flags, pose, corpse, construction and the shadow toggle still invalidate immediately. Tests: `shadow_tiles` (kept ⇔ raster inputs bit-identical under the pre-E expressions, randomized over every cause; ten mutations fail it), `render_shadow_cache` (software renderer, every kept tile = complete re-bake, pre-E kept ⊆ E kept, skipped silhouette = fresh collection; three in-game mutations fail it), GL verifier runs. Measured (Experiment 7, final code vs D + harness): pan-snap kept tiles 0–4% → 37–41%, dirty raster area −41/−43%, `t_shadow_pack` −20.0% / −9.6%, GPU timeline −11.5% (1280×960, material), draw −7.4% / −3.0% (consistent, inside threshold); point-check cost `t_shadow_alloc` +0.065 / +0.21 ms there, the stamp loop 5–14% cheaper elsewhere; veteran, pan, stationary-mixed draw unchanged; captures identical (108 comparisons in the final run). Limit: in most matrix scenes tiles go dirty because the per-frame repack moves them (`owner`/`relocated`, F), so E's reuse shows mainly where slots stay put (pan-snap, veteran). |
 | F | Persistent shadow allocation | **verified** | Workstream F (`3565f3fe` allocator + `shadow_atlas` test, `5febc00f` GameView integration + `render_shadow_atlas[_zoom]` ctests, `6c7b93df` cheap failure path + page-ordered best fit, `ec3df732` / `fbe21589` / `3fd2c8de` all-redraw frames use the former packer, `ce2a3466` page textures created only after a frame fits — the verifier's churn finding). Each unit's silhouette tile keeps a cell of `ShadowAtlasAllocator` (`client/shadowatlas.h`: logical pages → shelves with free span lists, class-height shelves, exact widths, generational handles, occupancy/fragmentation statistics, `validate()`) across frames; `UnitGeom::shadowTile` holds the handle, validated against the cell's recorded entry handle. E's stamp is kept per cell and carried when a cell is reallocated (verdict `Relocated`, never a stranger's pixels); the stamp gained the page. Policy: keep while the tile fits (cell ≤ 1.5× a fresh one); absent cells retained 2 s / 30 frames, evicted first under pressure; forced repack (the former packer, class heights then exact sizes = former slots, so the atlas falls back only where the former code did) for a failed allocation in a fragmented atlas, ≤ once per 60 frames; free repack when ≥ 90% of tiles are redrawn anyway and the atlas is loose; frames where every tile is redrawn anyway (zoom, sub-pixel pan, new phase) use the former packer with exact sizes (the former slots and pixels); bounded migration (≤ 64 tiles/frame) off a sparse last page; empty pages destroyed after 2 s / 60 frames; page size shrinks after 5 s / 120 frames of low demand; more tile area than four pages falls back at once; new pages are placed logically and their textures created only once every tile of the frame is placed, so a frame that fits four pages by area but not by packing creates no texture (no create/destroy churn while it keeps falling back; Experiment 8b). 4 pages / 2048² / VRAM budget and the whole-frame direct fallback unchanged. Recycled cells cleared with their padding. Captures: identical to E3 in all-redraw scenes (churn, pan, zoom) and whenever slots match (`TAK_SHADOW_REPACK`, 96 comparisons); with persistent cells 1–14 single shadow-edge pixels per frame differ (208 pixels in 49 of 156 frames) — the former packer shows the same differences when only its slots change (raster rounding depends on the cell position; Experiment 8). Measured on the final code (Experiment 8b, vs E3): draw −33% / −50% / −33% in stationary-mixed / total10k-visible / moving at 1280×960 (material), −12% in pan-snap 1280×960 and −18% to −32% in the reuse scenes at 7680×2160 (every ABBA group faster, inside that noisier session's thresholds; material in the F3 session, Experiment 8), shadow packing −66% to −91% (material except pan-snap), p99 −58% / −61% in stationary/dense 1280×960; band fix: 30 → 0 page creations per run, frame time unchanged; all-redraw scenes +0.14–0.20 ms `t_shadow_alloc`, draw −0.3% to +3.0% (not material); dense 7680×2160 fallback −27% shadow phase and 64 MiB released. Memory: tracked GPU equal or lower at the end of every timed scene; one extra page (16 MiB) during the battle-sparse battle, whole atlas freed after the view empties. |
 | G | Distant image lookup before generation | **verified** | Workstream G (`6d56ac8d` cache: retained bounds, decide→bake-by-page→quads, page occupancy + release, same-position migration, `holds()`; `b59cdd8a` GameView: lookup before body generation, deferred body stages, catch-up, verifier, `render_distant_lookup`; `b084644e` scenes; `2d755167` per-frame switch read, no empty catch-up scan). The geometry workers ask the cache whether a unit's image will be shown without a repaint (`DistantModels::holds`: valid, same zoom/output scale, baked < 67 ms ago — the case where `prepare()` reads neither revision nor vertices); then the BODY stages stay pending on the entry (`UnitGeom::bodyPending`) while the shadow stages run and the revision advances; a pending body is generated as soon as anything needs it (next non-held build, a bake via callback, a catch-up). Exact eligibility: deferred only for appearance-only local changes (`bodyVertexCountStable`; the body collector culls back faces, so pose changes the ≥ 96 vertex count). Bounds/opacity retained per identity + revision + source + count, so refused bodies are not rescanned every frame; bakes run grouped by page after painter-order decisions; per-page occupancy, pages released when their last image expires (others live), tile POSITIONS kept in the pre-G order on the lowest live page (pixels and quads depend only on the position), bounded same-position migration. Cadence, 128 bake budget, eligibility, live fallback, 4-page limit unchanged. Tests: `distant_models` (vs the pre-G cache kept verbatim, 900 frames, decisions/quads/tile pixels identical, `validate()` every frame; five mutations fail it), `render_distant_lookup` (6,902 deferred bodies regenerated and matched; shadow-skip mutation fails it), `geometry_stages`, GL verifier runs. Captures identical to F8 (168 comparisons). Measured (Experiment 9): total10k-visible 1280 draw −12.4% and GPU timeline −8.5% (material), `t_distant` −67% / −83% (10k / stationary, material), pan-distant worker build −15% (material); 7680×2160 unchanged (no images there); distant-sparse −32 MiB tracked GPU after the view moves. Investigation of the failed larger-image prototype: today's images differ from live geometry by ~87k px/frame (bilinear resample at fractional phase); a pixel-grid bake cuts that to 44 px (uncommitted experiment). |
-| H | Less full-scene vertex copying | **verified** | Workstream H (`97e42721` planner + GL buffer + `drawBuffer`, `8d96905f` ordered commands + arena integration, `37ecd884` staged writes (mapping rejected), `d8744efe` rollover with two storages, `e311cae5` release-build fix). Vertex journey traced (see "Retained body vertices"): before H every visible body was copied twice per frame (per-unit verts → `bodyVerts_` → driver client-array copy, or SDL's conversion for batches < 512). Now the body pass is ordered commands (texture + ranges of per-unit sources; features, special units and the ground/air boundary as boundaries; order and state as before). On the `opengl` backend, commands of native size draw from a bounded retained arena (`client/vertexarena.h`): sources keyed by entry handle + `revision` (quads by value) keep their range; changed ones are copied once (staged in `bodyVerts_`' tail, one `glBufferSubData`) into storage no pending draw reads; a full storage drains while a new one fills (rollover, budgeted migration of whole commands), so no frame rewrites everything; one native draw per command (`glMultiDrawArrays` over merged ranges). Frames with mostly new content (camera motion) stream exactly as before; the assembled SDL path stays the portable fallback (other backends, fractional scale, texture checks, failures). GL 1.5 buffer objects only; no fences, persistent mapping or unsynchronized writes. Every storage counted in gpuvram incl. 3 frames in flight; ≤ 3/4 of the GPU cap, 64 MiB per storage; released after 2 s idle, under GPU pressure, on resets, on failures (then 120 frames of streaming); context loss forgets the buffers. Tests: `vertex_arena` (simulated buffer, rollover scenario, 12 mutations fail it, ASan/UBSan), `geometrysubmit` (+72 GL arena-vs-client-arrays-vs-SDL comparisons), `render_body_arena` / `_still` (software renderer, simulated storage, a constant-revision mutation fails it), GL verifier runs (`TAK_BODY_ARENA_VERIFY`). Captures identical to G2 (see Experiment 10). Measured (Experiment 10): body vertices copied −91% / −94% and bytes handed to GL −91% in the dense / stationary 7680×2160 views; body submit −28% to −36% wherever retained; stationary-mixed 7680×2160 draw −26%, total −24.5%, GPU timeline −28.5% (material); total10k-visible pipelined 7680×2160 total −7.8%, GPU −9.9% (material), 1280×960 GPU −17.8/−20.5% (material); pan/moving neutral. Limitation: forced-completion total10k-visible 7680×2160 frame total +3.9% (present waits ~1.8 ms longer; pipelined frames −7.8%). |
+| H | Less full-scene vertex copying | **verified** | Workstream H (`97e42721` planner + GL buffer + `drawBuffer`, `8d96905f` ordered commands + arena integration, `37ecd884` staged writes (mapping rejected), `d8744efe` rollover with two storages, `e311cae5` release-build fix; after the verifier's rejection `0cbc4401` bounded `bodyVerts_` growth, double copies counted, write-failure fallback fixed + `render_body_arena_fail`). Vertex journey traced (see "Retained body vertices"): before H every visible body was copied twice per frame (per-unit verts → `bodyVerts_` → driver client-array copy, or SDL's conversion for batches < 512). Now the body pass is ordered commands (texture + ranges of per-unit sources; features, special units and the ground/air boundary as boundaries; order and state as before). On the `opengl` backend, commands of native size draw from a bounded retained arena (`client/vertexarena.h`): sources keyed by entry handle + `revision` (quads by value) keep their range; changed ones are copied whole (staged in `bodyVerts_`' tail, one `glBufferSubData`; their runs in small assembled commands are copied twice, `arena_verts_twice`, 0.4% of copies in a steady dense frame) into storage no pending draw reads; a full storage drains while a new one fills (rollover, budgeted migration of whole commands), so no frame rewrites everything; one native draw per command (`glMultiDrawArrays` over merged ranges). Frames with mostly new content (camera motion) stream exactly as before; the assembled SDL path stays the portable fallback (other backends, fractional scale, texture checks, failures). GL 1.5 buffer objects only; no fences, persistent mapping or unsynchronized writes. Every storage counted in gpuvram incl. 3 frames in flight; ≤ 3/4 of the GPU cap, 64 MiB per storage; released after 2 s idle, under GPU pressure, on resets, on failures (then 120 frames of streaming); context loss forgets the buffers. Tests: `vertex_arena` (simulated buffer, rollover scenario, 12 mutations fail it, ASan/UBSan), `geometrysubmit` (+72 GL arena-vs-client-arrays-vs-SDL comparisons), `render_body_arena` / `_still` / `_fail` (software renderer, simulated storage, every assembled command checked too, injected write failures; a constant-revision mutation fails the first, a gap-leaving fallback the last), GL verifier runs (`TAK_BODY_ARENA_VERIFY`). Captures identical to G2 (Experiments 10, 10b). Measured (Experiment 10; "x/y" = Experiment 10 / 10b): body vertices copied −91% / −94% and bytes handed to GL −91% in the dense / stationary 7680×2160 views; body submit −26% to −37% in total10k-visible (both sizes) and stationary-mixed 7680×2160 (material), only −8.6% / −9.8% in stationary-mixed 1280×960 (most of its body vertices stay in small, assembled commands); stationary-mixed 7680×2160 draw −26/−28%, total −24.5/−25%, GPU timeline −28.5/−31% (material); total10k-visible pipelined 7680×2160 total −7.8/−6.7%, GPU −9.9/−9.1% (material), 1280×960 draw −12.6%, GPU −17.8/−20.9% (material in 10b); pan/moving neutral. Memory: tracked GPU +1.6 to +64 MiB (the arena); `bodyVerts_` capacity +5.9% over the pre-H buffer in the retained scenes (growth slack 1/16; peak need +0.5% from the double copies) and −43% in moving (pre-H doubled there) — H4 had doubled it to 2× the need (Experiment 10b). Limitation: forced-completion total10k-visible 7680×2160 frame total +3.9% (material in Experiment 10, +3.6% not material in 10b; present waits ~1.8 ms longer; pipelined frames −7.8%). |
 | I | Cost-based work scheduling | not started | `ThreadPool::parallelFor` (`threadpool.h`): fixed 8-item chunks, `minParallel` default 32; the geometry pass dispatches the whole pool for ≥32 visible units whether they are cache hits or misses; shadow prep goes parallel at ≥32768 points; body copy parallel at ≥32 tasks. |
 | J | CPU cache budgets | not started | `terrain::Compositor` decodes every referenced section at load (`MapView::queueAllSections`) and keeps it until `clear()` (`terrain.h:40`, reference valid until clear); `TerrainChunks::mips_` (worker-only) is unbounded; `bodyVerts_` and shadow scratch keep peak capacity forever (per-unit geometry entries are bounded and trimmed since C: retention, byte/count budgets, warm-free trim, tail chunks). Consumers of `sectionImage`: `terrainchunks.cpp:64`, `mapview.cpp:361/381/470`, Cartographer `validation.cpp:32`; `renderBlock` users: minimap (`gameview_hud.cpp:614`), Cartographer. |
 | K | Camera-prioritized terrain | not started (partly present) | Jobs are queued only for chunks visible this frame, ≤64 pending, uploads ≤8 MiB and ≤64 jobs per frame, completed-but-no-longer-visible jobs are dropped at upload, nearest cached level stands in while a level bakes, `finishChunks()` for captures. Missing: priority order (FIFO), cancellation of queued jobs that left the view (only `invalidate`/`clear` cancel), guard/hysteresis region, section/chunk upload coordination. |
@@ -1015,8 +1023,10 @@ UnitGeom::verts / distant quad ──► sources (identity + content key)
             ▼
  command ≥ 512 vertices on a capable renderer, frame mostly resident/unchanged
      ├─ resident source: nothing copied, nothing uploaded (keeps its range)
-     ├─ changed/new source: copied ONCE into the tail of bodyVerts_ (capacity it
-     │   already keeps), then one glBufferSubData into arena storage nobody reads
+     ├─ changed/new source: copied WHOLE into the tail of bodyVerts_ (behind the
+     │   assembled commands), then one glBufferSubData into arena storage nobody
+     │   reads; its runs that sit in small (assembled) commands this frame are
+     │   therefore copied twice (`arena_verts_twice`, see below)
      └─ one drawBuffer per command over its merged ranges (glMultiDrawArrays),
          from the ONE storage the command is placed in
  every other command / frame: assembled into bodyVerts_ and streamed (② / ③,
@@ -1083,7 +1093,7 @@ Lifetime and memory (all on the render thread):
 | Idle | no arena frame for 120 frames and 2 s → storage released (cold reclaim); records past the highest live slot trimmed |
 | Low demand | capacity > 4 × the frame's vertices for 300 frames and 5 s → next stable frame rebuilds smaller |
 | Allocation failure (`GL_BUFFER_SIZE` mismatch / `GL_OUT_OF_MEMORY`) | `gpuvram::noteFail`, storage dropped, frame streams, arena off for 120 frames |
-| Write failure (upload error) | both storages dropped, that frame's arena commands re-assembled and streamed, arena off for 120 frames |
+| Write failure (upload error) | both storages dropped, that frame's arena commands re-assembled in place of the staged uploads (no gap; `render_body_arena_fail`) and streamed, arena off for 120 frames |
 | Render-target / device reset, GPU teardown | `invalidateRenderTargets` → storage released, every record non-resident |
 | New GL context | `ready()` sees another context and forgets the old buffer (no delete, accounting dropped) |
 | Texture fails the native check at draw time | that command is drawn from its sources through `draw()` (SDL path) |
@@ -1092,9 +1102,20 @@ CPU memory: planner records (two locations per slot, slots ≤ live handle
 index space; trimmed when no storage drains after an allocation, and on
 release), last-seen quads (120 B per slot that showed an image), the
 planner's per-frame scratch, the debug mirrors; reported as
-`arena_cpu_bytes`. Uploads are staged in `bodyVerts_` (its capacity, counted
-in `body_capacity_bytes`, never above the pre-H peak). Per-frame command
-lists are in `frame_lists_*`.
+`arena_cpu_bytes`. Uploads are staged in `bodyVerts_` behind the assembled
+commands (`body_used_bytes` / `body_capacity_bytes`). A source is uploaded
+whole, because its slot must hold every run for a later frame to draw any of
+them from the arena; the runs it also has in small (< 512-vertex, assembled)
+commands that frame are copied twice (`arena_verts_twice`: about 0.4% of the
+copies in a steady dense frame, ~21k of 2.53 M vertices on a full rebuild
+frame at 7680×2160). Not avoided: removing it needs one upload call per such
+source instead of one per frame. So a rebuild frame's need is the frame's
+vertices plus that overlap — slightly above the pre-H need (50.52 vs 50.28 MB
+peak used at 7680×2160). `bodyVerts_` grows by need + 1/16, never by
+`std::vector` doubling: H4 grew by doubling and held 2× its need from the
+first rebuild frame on (Experiment 10b). Like the pre-H buffer, it is not
+trimmed after demand subsides (workstream J). Per-frame command lists are in
+`frame_lists_*`.
 
 ### Telemetry reference (RENDERSTATS keys)
 
@@ -1130,7 +1151,7 @@ sampled by the benchmark from `/proc`).
 | Geometry entry ownership (C) | `geom_entries` (live), `geom_entry_acquired/replaced/released_destroyed/released_expired/released_budget/trimmed/refused` (per frame), `geom_entries_retained/warm_free/allocated`, `geom_retained_bytes`, `geom_warm_free_bytes` (gauges) |
 | Used vs retained CPU bytes | `geom_used/capacity_bytes`, `body_used/capacity_bytes`, `shadow_scratch_used/capacity_bytes`, `frame_lists_used/capacity_bytes`, `terrain_mip_cpu_bytes`, `terrain_section_cpu_bytes` |
 | Distant-image lookup (G) | `distant_body_deferred` (bodies left pending behind a held image), `distant_body_resumed` (pending bodies generated by the pass), `distant_body_catchup` / `distant_body_late` (missed predictions, generated after/inside `prepare()`), `distant_bounds_reused`, `distant_page_releases`, `distant_migrated`; gauges `distant_pages`, `distant_tiles`, `distant_metadata_bytes`. `verts_generated`/`verts_placed`/`verts_recoloured` count body vertices only for body stages that ran |
-| Retained body vertices (H) | `arena_append`, `arena_rebuild`, `arena_stream` (0/1 per frame), `arena_verts_retained` (resident, nothing copied), `arena_verts_uploaded` (also in `body_verts_copied` and `bytes_uploaded`), `arena_draws`, `arena_ranges`, `arena_fallbacks`, `arena_releases`; gauges `arena_capacity_bytes` (also in `gpu_tracked_bytes`), `arena_inflight_bytes`, `arena_cpu_bytes`. Since H `body_verts_copied` = vertices actually copied (assembled + arena uploads) and DRAWPHASE `body_vertices` = all body vertices drawn |
+| Retained body vertices (H) | `arena_append`, `arena_rebuild`, `arena_stream` (0/1 per frame), `arena_verts_retained` (resident, nothing copied), `arena_verts_uploaded` (also in `body_verts_copied` and `bytes_uploaded`), `arena_verts_twice` (of those, vertices also copied into a small assembled command the same frame), `arena_draws`, `arena_ranges`, `arena_fallbacks`, `arena_releases`; gauges `arena_capacity_bytes` (also in `gpu_tracked_bytes`), `arena_inflight_bytes`, `arena_cpu_bytes`. Since H `body_verts_copied` = vertices actually copied (assembled + arena uploads) and DRAWPHASE `body_vertices` = all body vertices drawn |
 | GPU | render-study `gpu_timeline_ms` / `GPUTIMELINE` (draw timeline, not busy time), `gpu_tracked_bytes` |
 
 Coverage limits (deliberate): `logical_draws`/`flushes`/`target_switches`
@@ -2705,17 +2726,151 @@ Readings:
   (stationary-mixed 7680), +64 MiB (total10k 7680, the 64 MiB per-storage
   ceiling), and during a drain both storages are live (up to 2 × 64 MiB plus
   3 frames of in-flight storage). It is released after 2 s without an arena
-  frame (pan: 0 at the end), under GPU pressure and on resets. The CPU-side
-  copy buffer `bodyVerts_` keeps its pre-H peak capacity (uploads are staged
-  in it); planner records ≤ 0.9 MiB (`arena_cpu_bytes`). Peak RSS +13 to
-  +170 MiB in the dense scenes (driver-side mappings of the GL buffers;
-  RSS includes them).
+  frame (pan: 0 at the end), under GPU pressure and on resets. Planner
+  records ≤ 0.9 MiB (`arena_cpu_bytes`). **Corrected (verifier, see
+  Experiment 10b):** this reading first said the CPU copy buffer
+  `bodyVerts_` stays at its pre-H peak. In H4 it did not: the first full
+  rebuild frame needed slightly more than the buffer held (whole-source
+  uploads re-copy runs that sit in small commands) and `std::vector`
+  doubled it — total10k-visible 7680×2160 47.95 → 95.55 MiB, stationary-mixed
+  7680×2160 10.21 → 20.34 MiB, held to the end of the run (the untouched half
+  is probably not resident, but the retained capacity doubled). Fixed in
+  `0cbc4401`. Peak RSS +13 to +170 MiB in the dense scenes: driver-side
+  mappings of the GL buffers (RSS includes them) and, in H4, possibly part of
+  the doubled `bodyVerts_` (not separated).
+
+### Experiment 10b — workstream H memory-record fix (2026-10-17)
+
+The verifier rejected H4's memory record: the record said uploads are staged
+in `bodyVerts_` "never above the pre-H peak", but H4's own logs show the
+buffer doubling at 7680×2160. Confirmed from the saved runs
+(`~/tak-tmp/render-opt/h/bodycap.py`: first / last `body_capacity_bytes`,
+peak `body_used_bytes` per run):
+
+| Scene, size | Pre-H (G2) capacity | H4 capacity: first frame → rest of run | H4 peak used |
+|---|---:|---:|---:|
+| total10k-visible 7680 | 50,283,000 B | 50,095,080 → **100,190,160 B** | 50,521,200 B |
+| stationary-mixed 7680 | 10,704,360 B | 10,664,400 → **21,328,800 B** | 10,778,280 B |
+| moving (both sizes) | 7,110,000 → 14,220,000 B | 7,110,000 → 14,220,000 B | 7,814,100 B |
+| pan 1280 | 8,563,920 → 17,127,840 B | 8,530,320 → 17,060,640 B | 8,798,700 B |
+
+Cause: an arena upload copies the WHOLE source (all of a unit's
+`UnitGeom::verts`), because its slot must hold every run for a later frame to
+draw any of them from the arena. The runs that source also has in small
+(< 512-vertex) commands are assembled separately that frame, so they are
+copied twice. On the first full rebuild frame (2,526,060 vertices copied
+against 2,504,754 on the streamed frame before it) the need passed the
+capacity and `std::vector` doubled it; nothing trims it. The moving and pan
+rows show the pre-H buffer doubling the same way whenever a frame's vertex
+count rose past the first frame's.
+
+**Fix (`0cbc4401`, H5):**
+
+- `bodyVerts_` grows to need + 1/16 when a frame exceeds its capacity
+  (contents discarded first unless a write failure re-assembles behind kept
+  commands), never by doubling.
+- The double copy is kept and counted (`arena_verts_twice`): avoiding it
+  needs the upload split into one `glBufferSubData` per such source (hundreds
+  of calls on a rebuild frame) instead of one per frame; not measured,
+  rejected on call count. Size: 814 of 222k copied vertices per frame (0.37%)
+  in steady total10k-visible 7680×2160, 117 of 118k at 1280×960, 61 of 30k in
+  stationary-mixed 7680×2160, 0 in moving; ~21k of 2.53 M on a full rebuild
+  frame.
+- Write-failure fallback: the arena commands are re-assembled in place of the
+  staged uploads (H4 placed them behind, leaving a gap and overcounting
+  `body_verts_copied`); a `drawBuffer` SDL error (-1) counts as
+  `arena_fallbacks`, not `arena_draws` (nothing is drawn, exactly as `draw()`
+  fails on the same error).
+- Verification: `TAK_BODY_ARENA_VERIFY` now also checks every assembled
+  command against its sources and that assembled commands + staged uploads
+  fill `bodyVerts_` exactly; new ctest `render_body_arena_fail`
+  (`TAK_BODY_ARENA_FAIL_WRITE=40`: the first write with uploads in every 40
+  frames fails) passes; with the in-place reset removed it fails ("gap or
+  overrun in the copy buffer"). `render_body_arena`, `_still`, `vertex_arena`,
+  `render_telemetry` pass; GL verifier run total10k-visible 7680×2160 (894
+  frames, 42 rollovers, 2.44 M arena commands and 2.54 M assembled commands
+  checked, 0 fallbacks). `ctest -L quick` 384/384. Release `takclient`
+  builds without the new debug strings.
+
+**Measurements** (A = G2, pre-H; B = H5 = `takclient-H5-candidate`, code of
+`0cbc4401`). Build-o2, offscreen EGL, SDL `opengl` on the RTX 5070 Laptop
+GPU, `RENDER_ENV` confirmed the backend and actual output for every run;
+900 frames, 300 warmup, pinned to CPUs 16–23, ABBA × 2, `--wait-quiet 60`,
+nothing built during the runs. Load: average 1.2–15.0 (one moving 7680 group
+at 15), 0–4 `legion_scenario` processes (CPUs 4–15), pinned-CPU busy
+0.17–0.28, no run contended. Scenes: the three H changes most
+(stationary-mixed and total10k-visible = retained; moving = alternating
+append / rollover / stream, where the growth policy matters most); pan
+streams every frame and is untouched by the fix. Script
+`~/tak-tmp/render-opt/h/h5.sh`, output `runs/h5-*` (not in Git; 7680×2160
+PNGs deleted after comparison, JSON kept).
+
+```sh
+A=~/tak-tmp/render-opt/takclient-G2-candidate B=~/tak-tmp/render-opt/takclient-H5-candidate
+T="python3 tools/render_benchmark.py --a $A --b $B --data ~/tak_data --cpus 16-23 --wait-quiet 60"
+$T --capture-only --output runs/h5-captures-normal --scenes stationary-mixed total10k-visible moving
+$T --capture-only --output runs/h5-captures-uhd --sizes uhd --scenes stationary-mixed total10k-visible moving
+$T --repeats 2 --output runs/h5-normal --scenes stationary-mixed total10k-visible moving
+$T --repeats 2 --output runs/h5-uhd --sizes uhd --scenes stationary-mixed total10k-visible moving
+$T --repeats 2 --pipelined --output runs/h5-pipe-uhd --sizes uhd --scenes total10k-visible
+python3 ~/tak-tmp/render-opt/h/htable.py runs/h5-uhd/results.json; python3 ~/tak-tmp/render-opt/h/bodycap.py runs/h5-uhd
+```
+
+Captures H5 vs G2: 0 differing pixels in all 144 comparisons (3 scenes × 2
+sizes × 12 frames, world view and full frame).
+
+CPU body buffer (`body_capacity_bytes` at the end of every run; peak
+`body_used_bytes`; identical in all four runs of a label):
+
+| Scene, size | Pre-H capacity | H4 capacity | H5 capacity | H5 vs pre-H | Peak used pre-H → H5 |
+|---|---:|---:|---:|---:|---:|
+| total10k-visible 7680 | 47.95 MiB | 95.55 MiB | 50.76 MiB | +5.9% | 47.95 → 48.18 MiB |
+| total10k-visible 1280 | 43.78 MiB | 43.62 MiB | 46.35 MiB | +5.9% | 43.78 → 43.62 MiB |
+| stationary-mixed 7680 | 10.21 MiB | 20.34 MiB | 10.81 MiB | +5.9% | 10.21 → 10.28 MiB |
+| stationary-mixed 1280 | 8.41 MiB | 8.38 MiB | 8.90 MiB | +5.9% | 8.41 → 8.38 MiB |
+| moving (both sizes) | 13.56 MiB | 13.56 MiB | 7.67 MiB | −43% | 7.45 → 7.45 MiB |
+
+So H5's retained capacity is the growth slack above the first frame's need
+(+5.9%) in the still scenes and well below the pre-H buffer wherever the
+pre-H buffer doubled (moving). The per-frame used bytes fall from the whole
+scene to the copies actually made (e.g. 47.5 → 2.9 MiB at the end of
+total10k-visible 7680). Peak used exceeds the pre-H buffer only by the
+double copies of a rebuild frame (+0.5% at 7680×2160). `bodyVerts_` is still
+never trimmed after demand subsides — true before H as well (workstream J).
+
+Peak RSS (whole process): total10k-visible 7680 A 1023–1040 / H5 1133–1149
+MiB (H4 1131–1148 in its session: the doubled half was evidently never
+resident), stationary-mixed 7680 A 630–641 / H5 661–663 (H4 677–683),
+moving 7680 A 606–613 / H5 607–645; the H increase is the arena's GL
+buffers mapped by the driver (tracked GPU +64 / +40 / +29 MiB at the end).
+
+Timing (forced completion unless marked; material = beyond
+`max(2 × spread, 2%)`):
+
+| Scene, size | Draw mean A → B | Δ (groups) | Material (thr) | Frame total Δ | GPU timeline Δ | t_body_submit Δ | t_body_assembly Δ |
+|---|---:|---|---|---:|---:|---:|---:|
+| stationary-mixed 1280 | 2.811 → 2.714 | −3.4% (−3.1, −3.8) | no (12.7%) | −1.6% | +3.6% (n.s.) | **−8.6%** | +24% (n.s.; +0.03 ms) |
+| total10k-visible 1280 | 16.835 → 14.713 | **−12.6%** (−12.5, −12.8) | **yes** (4.7%) | **−9.7%** | **−20.9%** | **−25.7%** | **−15.6%** |
+| moving 1280 | 5.638 → 5.621 | −0.3% (+0.6, −1.2) | no | +0.4% | **−6.8%** | −19.7% (n.s.) | **+61%** (+0.23 ms) |
+| stationary-mixed 7680 | 6.048 → 4.381 | **−27.6%** (−26.6, −28.5) | **yes** (8.3%) | **−25.3%** | **−31.1%** | **−36.9%** | **−25.4%** |
+| total10k-visible 7680 | 59.298 → 60.076 | +1.3% (+1.7, +1.0) | no (3.3%) | +3.6% (thr 4.5%, n.s.) | +1.1% | **−36.1%** | −8.0% |
+| moving 7680 | 8.428 → 8.322 | −1.3% (−6.0, +4.1) | no | −0.8% | −6.2% | **−32.4%** | +57% (n.s.) |
+| total10k-visible 7680 pipelined | 58.790 → 54.224 | **−7.8%** (−7.6, −7.9) | **yes** (4.7%) | **−6.7%** | **−9.1%** | **−33.9%** | −6.9% |
+
+Readings: the same picture as Experiment 10, nothing regressed by the fix
+(the fix changes only allocation events, which happen in the first frames,
+and adds one pass over the frame's sources on arena frames). The
+forced-completion total10k-visible 7680×2160 frame total is +3.6% again
+(not material in this session, threshold 4.5%; material +3.9% in Experiment
+10) — the known `present` limitation below. In stationary-mixed 1280×960 body
+submission improves only 8.6% (most body vertices sit in small commands,
+which stay assembled) — the checklist no longer claims −28% to −36% there.
 
 ## Known limitations and unsupported paths
 
 - **H: forced-completion cost in the GPU-bound dense 7680×2160 view.**
   total10k-visible at 7680×2160 with a `glFinish` per frame: frame total
-  +3.9% (material), all of it in `present` (0.66 → 2.42 ms, uniform over
+  +3.9% (material; +3.6%, not material, in Experiment 10b), all of it in `present` (0.66 → 2.42 ms, uniform over
   arena frames; `TAK_BODY_ARENA_OFF=1` restores it; the buffer usage hint
   does not change it). Normal pipelined frames of the same scene are 7.8%
   faster (material). Explanation not proven (Experiment 10). A real game at
