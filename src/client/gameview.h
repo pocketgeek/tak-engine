@@ -32,6 +32,7 @@
 #include "hpi/hpi.h"
 #include "net/client.h"
 #include "client/replayfile.h"   // ReplayCheckTracker
+#include "net/replaywriter.h"    // the replay recording, streamed as the game is played
 #include "client/situation.h"    // TAK_SITUATION (debug builds)
 #include "client/postrail.h"      // TAK_POSTRAIL (debug builds)
 #include "client/pacelog.h"       // TAK_PACELOG (debug builds)
@@ -153,11 +154,18 @@ public:
     // budget and starve terrain-chunk uploads (map stuck at the low-res underlay).
     // Interactive teardown: cancel, do not drain (see simCancel_).
     ~GameView();   // out of line (gameview_impl.cpp): crusadesScreen_ is forward-declared here
-    // Write this client's recorded replay into the user's config directory (beside
-    // settings.ini). Once per game -- called both when the result lands and from the
-    // destructor, whichever happens first. A no-op when nothing was recorded (replay
-    // playback itself) and for the Benchmark; players and spectators both record.
-    void saveNetReplay();
+    // This client's replay of the game, streamed to disk WHILE it is played
+    // (net/replaywriter.h) into the user's config directory, beside settings.ini.
+    // Opened when the game is set up (startMpGame), topped up from mpStep, finished
+    // when the session really ends: the destructor, or the next game's GameStarting.
+    // The result does not end it -- play after the result (a spectator watching on,
+    // a defeated player's last seconds) is part of the replay. Players and
+    // spectators both record; replay playback and the Benchmark (not a game) never do.
+    // A recording a crash or kill left unfinished is completed by
+    // tak::net::recoverReplayParts at the next start (main.cpp, the replay picker).
+    void openReplayRecording();
+    void pumpReplayRecording();
+    void finishReplayRecording();
 
     GameView(SDL_Renderer* ren, tak::hpi::Vfs vfs, const std::string& mapPath,
              const std::string& installRoot, tak::hpi::OverridePolicy policy,
@@ -1519,7 +1527,10 @@ public:
     int netDelay() const { return netDelay_; }
 private:
     bool replayMode_ = false;                     // playing a recorded .takrep
-    bool replaySaved_ = false;                    // this game's replay already written
+    std::unique_ptr<tak::net::ReplayWriter> replayRec_;   // this game's recording (see openReplayRecording)
+    uint32_t replayRecGame_ = 0, replayRecSeed_ = 0;      // which game it records
+    uint64_t gameDataHash_ = 0;   // gameDataHash() of the game set up by startMpGame (computed once: it reads every gameplay file)
+    uint64_t replayFlushMs_ = 0, replaySyncMs_ = 0;       // last flush to the OS / sync to the disk
     std::vector<tak::net::ReplayCheck> replayChecks_;   // recorded (tick, hash) trail
     size_t replayCheckAt_ = 0;                    // next checkpoint to compare
 #ifndef NDEBUG
@@ -1582,10 +1593,10 @@ public:
 private:
 #endif
     ReplayCheckTracker replayTracker_;            // first state divergence + first position divergence
-    // Set by the SIM thread when the result lands; the MAIN thread does the writing.
-    // The net client's recorded bundles and hashes are appended from the main thread,
-    // so serializing them off-thread would read a growing vector.
-    std::atomic<bool> replayWanted_{false};
+    // Set by the SIM thread when the result lands; the MAIN thread (pumpReplayRecording)
+    // makes the recording so far durable. The net client's recorded bundles and hashes
+    // are appended from the main thread, so reading them off-thread would race.
+    std::atomic<bool> replayResultSync_{false};
     std::vector<tak::net::Bundle> replayBundles_;
     size_t replayTick_ = 0;
     float replayAccum_ = 0;

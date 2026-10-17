@@ -61,6 +61,14 @@ std::string settingsPath() {
     return base.empty() ? std::string() : base + "settings.ini";
 }
 
+std::string replayDir() {
+    std::string dir = settingsPath();
+    const size_t cut = dir.find_last_of("/\\");
+    if (cut == std::string::npos) return {};
+    dir.erase(cut + 1);
+    return dir;
+}
+
 Settings loadSettings() {
     Settings s;   // defaults
     std::string path = settingsPath();

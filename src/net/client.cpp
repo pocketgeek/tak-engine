@@ -871,6 +871,7 @@ void MpClient::onFrame(const Frame& f) {
             // immediately after this message -- any later and the recording would be
             // missing its first ticks. A spectator's replay carries no hash
             // checkpoints (see sendHash); the view skips saving for the Benchmark.
+            if (recording_ && recordingRestart_) recordingRestart_();
             startRecording();
             // Any 0xFF start is a spectator (a create-as-spectator host, or spectate()).
             spectator_ = expectingSpectate_ || (r.ok && mySlot == 0xFF);

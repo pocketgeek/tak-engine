@@ -91,40 +91,15 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
     return r.ok && r.p == r.end;
 }
 
-std::string saveReplayFile(const std::string& dir, const tak::net::MpClient& mp,
-                           uint64_t stampMs, uint64_t gameplayHash) {
-    const auto& log = mp.replayLog();
-    if (dir.empty() || log.empty()) return {};
+tak::net::ReplayHeader clientReplayHeader(const tak::net::MpClient& mp, uint64_t gameplayHash) {
     const tak::net::RoomView& room = mp.room();
-    const tak::net::SlotInfo* slots = mp.startSlots();
     // Header shared with the server writer and the loader -- see net/matchconfig.h.
-    tak::net::ReplayHeader h = tak::net::replayHeaderFor(room.opts, room.mapId, room.mission, slots, mp.startSeed());
-    if (mp.overridePackage()) h.overrideDigest=mp.overridePackage()->digest;
+    tak::net::ReplayHeader h = tak::net::replayHeaderFor(room.opts, room.mapId, room.mission, mp.startSlots(), mp.startSeed());
+    if (mp.overridePackage()) h.overrideDigest = mp.overridePackage()->digest;
     if (mp.mapPackage()) h.mapDigest = mp.mapPackage()->digest;
     // The hash of the data this GAME ran on, at its override tier -- not the
     // pure-retail fingerprint the handshake uses. Under a Full-tier game the two
-    // differ, and it is the effective one a replay has to be checked against. The
-    // server's writer already records that; this recorded the handshake hash.
+    // differ, and it is the effective one a replay has to be checked against.
     h.dataHash = gameplayHash;
-    tak::net::Writer w;
-    tak::net::writeReplayHeader(w, h);
-    w.u32(uint32_t(log.size()));
-    for (const auto& b : log) {
-        w.u32(uint32_t(b.size()));
-        w.b.insert(w.b.end(), b.begin(), b.end());
-    }
-    // This client's own hash trail, so a replay can say WHERE playback diverged
-    // from the game as it was actually played -- not merely that two reruns agree.
-    const auto& checks = mp.hashLog();
-    w.u32(uint32_t(checks.size()));
-    for (const auto& c : checks) { w.u32(c.tick); w.u64(c.hash); w.u64(c.posDigest); }
-    // Named by the game and a timestamp, so several replays coexist and a rerun of
-    // the same game does not overwrite the earlier one.
-    std::string path = dir + "game-" + std::to_string(room.id) + "-" +
-                       std::to_string(stampMs) + ".takrep";
-    FILE* f = std::fopen(path.c_str(), "wb");
-    if (!f) return {};
-    const bool ok = std::fwrite(w.b.data(), 1, w.b.size(), f) == w.b.size();
-    std::fclose(f);
-    return ok ? path : std::string();
+    return h;
 }

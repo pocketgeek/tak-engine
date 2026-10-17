@@ -126,9 +126,11 @@
 
     GameView::~GameView() {
         stopSimThread(/*drain=*/false);
-        // Last chance: a player who quit, conceded or was dropped before the game
-        // was decided still gets the replay of what they played.
-        saveNetReplay();
+        // The session is over, however it ended (quit, return to menu, results,
+        // disconnect, desync, kick, SIGTERM): finish the replay with everything
+        // received up to now. The net client outlives the view (main.cpp).
+        finishReplayRecording();
+        if (mp_) mp_->setRecordingRestartHook(nullptr);
         resetMinimap();
         destroyGpuTextures();
         if (gaitLog_) std::fclose(gaitLog_);
@@ -594,12 +596,11 @@
                 outcome_ = -1;
             }
         }
-        // The result just landed: ask for this player's replay to be written. REQUEST,
+        // The result just landed: ask for the replay so far to be made durable. REQUEST,
         // not write -- simStep runs on the sim worker, while the net client appends to
-        // its recorded bundles and hashes from the main thread. Serializing those
-        // vectors from here would read them while they grow. The main thread picks
-        // this up (see cosmeticStep) and does the work.
-        if (previousOutcome == 0 && outcome_ != 0) replayWanted_.store(true, std::memory_order_relaxed);
+        // its recorded bundles and hashes from the main thread. The main thread picks
+        // this up (pumpReplayRecording). The recording itself goes on.
+        if (previousOutcome == 0 && outcome_ != 0) replayResultSync_.store(true, std::memory_order_relaxed);
 #ifndef NDEBUG
         PaceSpan captureSpan(paceCaptureNs_);
 #endif
@@ -1066,10 +1067,6 @@
         // Reads the render SNAPSHOT (front()), never live world_, so it is safe
         // on the main thread while the sim worker ticks. Transient combat events
         // arrive through queues so skipped snapshots cannot discard them.
-        // Deferred replay write, requested by the sim thread when the result landed.
-        // Done HERE because this runs on the main thread, which is the only one that
-        // may read the net client's recorded bundles while it is still connected.
-        if (replayWanted_.exchange(false, std::memory_order_relaxed)) saveNetReplay();
         const bool newTick_ = (front().gen != lastCosmeticGen_);
         lastCosmeticGen_ = front().gen;
         // Weapon impacts this tick: play each weapon's soundhitclass, picking the

@@ -49,6 +49,7 @@
 #include <tuple>
 #include <type_traits>
 #include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -743,12 +744,19 @@ void Server::writeReplay(Room& r) {
     const Writer w=replayBytes(r);
     std::string path = replayDir_ + "/game-" + std::to_string(r.id) + "-" +
                        std::to_string(r.createdMs) + ".takrep";
-    if (FILE* f = std::fopen(path.c_str(), "wb")) {
-        std::fwrite(w.b.data(), 1, w.b.size(), f);
-        std::fclose(f);
-        std::fprintf(stderr, "game %u: wrote replay %s (%zu ticks, %zu bytes)\n",
-                     r.id, path.c_str(), r.log.size(), w.b.size());
-    }
+    // Written under a temporary name and renamed, so a server stopped part way never
+    // leaves a truncated .takrep; u8path, so a non-ASCII --replaydir works on Windows.
+    const auto final = std::filesystem::u8path(path);
+    auto temp = final; temp += ".tmp";
+    std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(w.b.data()), std::streamsize(w.b.size()));
+    out.close();
+    std::error_code ec;
+    if (!out) { std::filesystem::remove(temp, ec); std::fprintf(stderr, "game %u: replay not saved: cannot write %s\n", r.id, path.c_str()); return; }
+    std::filesystem::rename(temp, final, ec);
+    if (ec) { std::filesystem::remove(temp, ec); std::fprintf(stderr, "game %u: replay not saved: cannot rename %s\n", r.id, path.c_str()); return; }
+    std::fprintf(stderr, "game %u: wrote replay %s (%zu ticks, %zu bytes)\n",
+                 r.id, path.c_str(), r.log.size(), w.b.size());
 }
 
 void Server::sendReject(Client& c, const std::string& why) {
@@ -3268,7 +3276,26 @@ int Server::run() {
     // them thousands of times a second is not).
     std::vector<pollfd> pfds;
     std::vector<uint32_t> ids;
+    // With --replaydir, a SIGTERM (systemctl stop) or Ctrl-C writes the replays of the
+    // games still running before the server exits; they used to be lost, being
+    // written only when a room is torn down. Without it nothing is kept, so the
+    // default (exit at once) stays -- a single-player client stops its private server
+    // with SIGTERM and waits for it.
+    static std::atomic<bool> stopRequested{false};
+    if (!replayDir_.empty()) {
+        std::signal(SIGTERM, [](int) { stopRequested.store(true, std::memory_order_relaxed); });
+        std::signal(SIGINT, [](int) { stopRequested.store(true, std::memory_order_relaxed); });
+    }
     for (;;) {
+        if (stopRequested.load(std::memory_order_relaxed)) {
+            for (auto& [rid, r] : rooms_) {
+                (void)rid;
+                if (r.tickJob.valid()) { r.tickJob.wait(); finishTick(r); }
+                if (r.running) writeReplay(r);
+            }
+            std::fprintf(stderr, "takserver: stopped by signal\n");
+            return 0;
+        }
         finishValidations();
         for(auto& [id,room]:rooms_) {(void)id;finishTick(room);}
         // Build the pollfd set: listen + every client (POLLOUT when it has pending writes).

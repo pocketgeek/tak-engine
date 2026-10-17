@@ -1107,7 +1107,10 @@ The connection checks gameplay definitions, scripts, and models. Selected map
 contents are verified separately and transferred automatically when needed.
 
 Clients record matches in their per-user application data directory beside
-`settings.ini`. Replays contain commands and match setup, not game assets.
+`settings.ini`. Replays contain commands and match setup, not game assets. The
+file is written as the game is played (`<name>.takrep.part` until the session
+ends), so a replay survives any ending; one a crash or kill left unfinished is
+completed at the next start.
 [Hosting and accounts](docs/user-guide.md#multiplayer) and
 [replay playback](docs/user-guide.md#replays) are covered in the user guide.
 

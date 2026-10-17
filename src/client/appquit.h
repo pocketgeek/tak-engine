@@ -16,11 +16,17 @@ inline std::atomic<bool> g_termRequested{false};
 
 inline bool termRequested() { return g_termRequested.load(std::memory_order_relaxed); }
 
-// Install SIGTERM/SIGINT handlers. Call once, after SDL_Init, so ours replace SDL's.
+// Install SIGTERM/SIGINT (and SIGHUP: the terminal or SSH session closed) handlers.
+// Call once, after SDL_Init, so ours replace SDL's. A clean teardown is what finishes
+// the game's replay file; a process killed outright leaves it to the next start's
+// recovery (net/replaywriter.h).
 inline void installSignalHandlers() {
     auto handler = [](int) { g_termRequested.store(true, std::memory_order_relaxed); };
     std::signal(SIGTERM, handler);
     std::signal(SIGINT, handler);
+#ifdef SIGHUP
+    std::signal(SIGHUP, handler);
+#endif
 }
 
 }  // namespace tak

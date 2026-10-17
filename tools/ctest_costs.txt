@@ -57,6 +57,7 @@ legion_situation_r9-61930_retail 22
 legion_gen1_route_45941_om1 21
 legion_scenario_wall-4x50 21
 legion_situation_r9-65850_legion 21
+replay_always 21
 legion_gen1_route_54772_om1 20
 cartographer_place_features 20
 crusades_ui_network 19

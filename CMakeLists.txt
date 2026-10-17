@@ -147,6 +147,7 @@ add_library(tak-formats
   src/net/crusades.cpp
   src/net/conn.cpp
   src/net/client.cpp
+  src/net/replaywriter.cpp
   src/net/mappackage.cpp
   src/net/overridepackage.cpp
   src/net/auth.cpp
@@ -2024,6 +2025,10 @@ add_test(NAME pacelog COMMAND pacelog_test)
 add_executable(replay_file_test tools/replay_file_test.cpp src/client/replayfile.cpp)
 target_link_libraries(replay_file_test PRIVATE tak-formats)
 add_test(NAME replay_file COMMAND replay_file_test)
+# The streamed replay writer and the recovery of a recording a crash left unfinished.
+add_executable(replay_writer_test tools/replay_writer_test.cpp src/client/replayfile.cpp)
+target_link_libraries(replay_writer_test PRIVATE tak-formats)
+add_test(NAME replay_writer COMMAND replay_writer_test)
 add_executable(match_codec_test tools/match_codec_test.cpp src/client/replayfile.cpp)
 target_link_libraries(match_codec_test PRIVATE tak-formats)
 add_test(NAME match_codec COMMAND match_codec_test)
@@ -2116,6 +2121,14 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/crusades_matchmaking_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(crusades_matchmaking_network PROPERTIES TIMEOUT 180)
+    if(TARGET takclient AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+      # Replays are saved however a game ends: crash, kill, play on after the result,
+      # SIGTERM, a dead server (the headless harness is debug-only).
+      add_test(NAME replay_always COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/replay_always_test.py"
+        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
+      set_tests_properties(replay_always PROPERTIES TIMEOUT 300)
+    endif()
     if(TARGET takclient AND CMAKE_BUILD_TYPE STREQUAL "Debug" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
       add_test(NAME crusades_ui_network COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/tools/crusades_ui_network_test.py"

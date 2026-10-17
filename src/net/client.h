@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <string>
 #include <thread>
@@ -200,6 +201,11 @@ public:
     const std::vector<ReplayCheck>& hashLog() const { return hashLog_; }
     uint64_t dataHash() const { return dataHash_; }
     void startRecording() { recording_ = true; replayLog_.clear(); hashLog_.clear(); }
+    // Called when a GameStarting is about to restart the recording, BEFORE the log is
+    // cleared: the room and seed are already the new game's, the log still the old
+    // one's. A writer streaming the old game finishes it here (a rejoin of the same
+    // game re-sends the same log from tick 0, so that one it keeps).
+    void setRecordingRestartHook(std::function<void()> hook) { recordingRestart_ = std::move(hook); }
     void stopRecording() { recording_ = false; replayLog_.clear(); hashLog_.clear(); }
     bool recording() const { return recording_; }
     // Slot table as it was when the game STARTED. The live room_.slots mutates as
@@ -339,6 +345,7 @@ private:
     std::vector<std::vector<uint8_t>> replayLog_;   // raw TickBundle payloads (recording)
     std::vector<ReplayCheck> hashLog_;              // (tick, hash) we reported
     bool recording_ = false;
+    std::function<void()> recordingRestart_;
     SlotInfo startSlots_[kMaxSlots] = {};
     uint32_t replayTicks_ = 0;   // history the server replays after a rejoin/spectate
     std::array<bool, kMaxSlots> slotLoaded_{};   // per-slot "reported Loaded"

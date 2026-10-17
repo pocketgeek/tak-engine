@@ -13,6 +13,7 @@
 #include "gui/gui.h"
 #include "net/auth.h"
 #include "net/crypto.h"
+#include "net/replaywriter.h"   // recoverReplayParts
 #include "util/png.h"
 #include "version.h"
 #include "video/bink.h"
@@ -1071,22 +1072,27 @@ struct MainMenu::Impl {
 
     // Benchmark intensity submenu: 5 spawn-rate levels. Records benchBtnRect_ for run().
     // Scan the user's config directory for saved replays, newest first. That is where
-    // every human player's client writes its own .takrep (see saveReplayFile) -- beside
-    // settings.ini -- so the picker lists exactly what this machine has recorded.
+    // every human player's and spectator's client records its own .takrep (see
+    // GameView::openReplayRecording) -- beside settings.ini -- so the picker lists
+    // exactly what this machine has recorded. A recording another client on this
+    // profile left unfinished (it crashed or was killed) is finished first, so it is
+    // listed too; one still being recorded is locked and left alone.
     void scanReplays() {
         replayFiles_.clear();
         replayScroll_ = 0;
-        std::string dir = tak::settingsPath();
-        const size_t cut = dir.find_last_of("/\\");
-        if (cut == std::string::npos) return;
-        dir.erase(cut + 1);
+        const std::string dir = tak::replayDir();
+        if (dir.empty()) return;
+        tak::net::recoverReplayParts(dir);
         std::vector<std::pair<std::filesystem::file_time_type, std::string>> found;
         std::error_code ec;
-        for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+        for (const auto& e : std::filesystem::directory_iterator(std::filesystem::u8path(dir), ec)) {
             if (ec) break;
             if (!e.is_regular_file(ec)) continue;
             if (e.path().extension() != ".takrep") continue;
-            found.push_back({e.last_write_time(ec), e.path().string()});
+            // UTF-8, as loadReplayFile expects: path::string() is the ANSI code page
+            // on Windows, which cannot name a profile folder outside it.
+            const auto u8 = e.path().u8string();
+            found.push_back({e.last_write_time(ec), std::string(u8.begin(), u8.end())});
         }
         // Newest first: the replay you just played is the one you want to watch.
         std::sort(found.begin(), found.end(),
@@ -1122,7 +1128,7 @@ struct MainMenu::Impl {
         if (replayFiles_.empty()) {
             // Say WHERE they would be, so an empty list is an answer rather than a dead end.
             const std::string m1 = "NO REPLAYS SAVED YET";
-            const std::string m2 = "FINISH A GAME AND ITS REPLAY IS SAVED AUTOMATICALLY";
+            const std::string m2 = "EVERY GAME YOU PLAY OR WATCH IS SAVED AUTOMATICALLY";
             blockText(m1, px0 + (pw - tw(m1, 2.2f)) / 2, by + 6, 2.2f, {225, 215, 175, 255});
             blockText(m2, px0 + (pw - tw(m2, 1.5f)) / 2, by + 34, 1.5f, {150, 155, 175, 255});
         }

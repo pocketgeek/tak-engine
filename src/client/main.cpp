@@ -68,6 +68,7 @@
 #include "client/settings.h"
 #include "client/renderdriver.h"
 #include "net/crypto.h"
+#include "net/replaywriter.h"   // recoverReplayParts
 #include "client/dev.h"
 #include "client/appquit.h"
 #include "client/mainmenu.h"
@@ -609,6 +610,10 @@ int main(int argc, char** argv) {
     // Persisted Options (audio/camera/display prefs). CLI flags still win where they
     // apply; the file is the source of truth for anything not passed on the CLI.
     tak::Settings settings = tak::loadSettings();
+    // Finish any replay a crash, kill or power cut left mid-recording, so it is
+    // listed and playable like any other (net/replaywriter.h). Recordings still
+    // live in another running client are locked and skipped.
+    tak::net::recoverReplayParts(tak::replayDir());
 #ifdef _WIN32
     if (tak::dpiIgnoredAtStartup()) {
         // First run (or first run since this option arrived): the old stretched window made
@@ -1408,6 +1413,21 @@ int main(int argc, char** argv) {
             }
             if (!cont || (!defeatProbe && gameView->outcomePublic() != 0)) break;
             if (int(gameView->netTick()) >= limitTicks) break;
+            if (tak::termRequested()) break;   // SIGTERM/SIGINT/SIGHUP: tear down (and finish the replay)
+            // TAK_KILL_AT_TICK=N: die like a crash at tick N -- SIGKILL (TerminateProcess on
+            // Windows), so no handler, destructor or flush runs. tools/replay_always_test.py
+            // checks that the next start recovers nearly every tick received.
+            static const int killAt = tak::devEnv("TAK_KILL_AT_TICK") ? std::atoi(tak::devEnv("TAK_KILL_AT_TICK")) : 0;
+            if (killAt > 0 && int(gameView->netTick()) >= killAt) {
+                std::fprintf(stderr, "kill-at-tick: killing the client at tick %u with %zu ticks received\n",
+                             gameView->netTick(), mp->replayLog().size());
+                std::fflush(stderr);
+#ifdef _WIN32
+                TerminateProcess(GetCurrentProcess(), 9);
+#else
+                std::raise(SIGKILL);
+#endif
+            }
             if (vsyncHz) vsyncPacer.paceAtRefresh(vsyncHz);
             else SDL_Delay(Uint32(frameMs));   // ~60 fps for the benchmark
         }

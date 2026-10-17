@@ -45,7 +45,15 @@
     }
 
     void GameView::setMpClient(tak::net::MpClient* mp) {
+        if (mp_ && mp_ != mp) mp_->setRecordingRestartHook(nullptr);
         mp_ = mp;
+        // A new game on this connection: finish the old game's file while its bundles
+        // are still in the log (the hook runs before the log is cleared). The new game
+        // opens its own once it is set up (startMpGame).
+        if (mp_) mp_->setRecordingRestartHook([this] {
+            if (replayRec_ && (replayRecGame_ != mp_->room().id || replayRecSeed_ != mp_->startSeed()))
+                finishReplayRecording();
+        });
     }
 
     // Watch-only view of a live net game (spectator join or create-as-spectator):
@@ -60,25 +68,66 @@
         gameStartMs_ = SDL_GetTicks64();
     }
 
-    void GameView::saveNetReplay() {
-        if (replaySaved_ || !mp_ || !mp_->recording() || mp_->replayLog().empty()) return;
-        if (benchmarkMode_) return;   // a performance run, not a game worth keeping
-        replaySaved_ = true;
-        // Beside settings.ini: settingsPath() is <prefdir>/settings.ini, so trim the
-        // file name off rather than rebuilding the platform path by hand.
-        std::string dir = tak::settingsPath();
-        const size_t cut = dir.find_last_of("/\\");
-        if (cut == std::string::npos) return;
-        dir.erase(cut + 1);
-        const std::string path = saveReplayFile(dir, *mp_, uint64_t(std::time(nullptr)),
-                                                gameDataHash());
-        if (!path.empty()) {
-            std::fprintf(stderr, "replay: wrote %s (%zu ticks)\n",
-                         path.c_str(), mp_->replayLog().size());
-            postNotice("REPLAY SAVED", 5);
-        } else {
-            std::fprintf(stderr, "replay: could not write into %s\n", dir.c_str());
+    void GameView::openReplayRecording() {
+        if (!mp_ || !mp_->recording() || replayMode_) return;
+        // The Benchmark is a performance run, not a game: it is never recorded.
+        if (benchmarkMode_ || mp_->room().opts.benchmark) return;
+        if (replayRec_ && replayRecGame_ == mp_->room().id && replayRecSeed_ == mp_->startSeed())
+            return;   // a rejoin of the game already being recorded: keep its file
+        finishReplayRecording();
+        const std::string dir = tak::replayDir();
+        if (dir.empty()) return;
+        auto rec = std::make_unique<tak::net::ReplayWriter>();
+        if (!rec->open(dir, clientReplayHeader(*mp_, gameDataHash_), mp_->room().id,
+                       uint64_t(std::time(nullptr)))) {
+            std::fprintf(stderr, "replay: cannot record this game: %s\n", rec->error().c_str());
+            return;
         }
+        std::fprintf(stderr, "replay: recording to %s\n", rec->partPath().c_str());
+        replayRec_ = std::move(rec);
+        replayRecGame_ = mp_->room().id;
+        replayRecSeed_ = mp_->startSeed();
+        replayFlushMs_ = replaySyncMs_ = SDL_GetTicks64();
+        replayResultSync_.store(false, std::memory_order_relaxed);
+    }
+
+    // Main thread, every mpStep. Bundles are handed to the OS about once a second, so
+    // a crash or a kill loses at most that much; they reach the disk itself every ten
+    // seconds (a power cut), and at once when the result lands.
+    void GameView::pumpReplayRecording() {
+        if (!replayRec_ || !mp_) return;
+        replayRec_->append(mp_->replayLog(), mp_->hashLog());
+        const uint64_t now = SDL_GetTicks64();
+        const bool result = replayResultSync_.exchange(false, std::memory_order_relaxed);
+        if (result || replayRec_->buffered() >= (64u << 10) ||
+            (replayRec_->buffered() && now - replayFlushMs_ >= 1000)) {
+            replayRec_->flush();
+            replayFlushMs_ = now;
+        }
+        if (result || now - replaySyncMs_ >= 10000) {
+            replayRec_->syncAsync();
+            replaySyncMs_ = now;
+        }
+        if (result) {
+            // What is on disk now is the game up to its result. Recording goes on:
+            // whatever is played or watched after it belongs to the replay too.
+            std::fprintf(stderr, "replay: result at tick %u, %u ticks recorded; recording continues\n",
+                         netTick_, replayRec_->bundles());
+            postNotice("REPLAY SAVED", 5);
+        }
+    }
+
+    void GameView::finishReplayRecording() {
+        if (!replayRec_) return;
+        if (mp_) replayRec_->append(mp_->replayLog(), mp_->hashLog());
+        const uint32_t ticks = replayRec_->bundles();
+        const std::string path = replayRec_->finish();
+        if (!path.empty())
+            std::fprintf(stderr, "replay: wrote %s (%u ticks)\n", path.c_str(), ticks);
+        else if (ticks)
+            std::fprintf(stderr, "replay: could not finish %s (%s); it is completed at the next start\n",
+                         replayRec_->partPath().c_str(), replayRec_->error().c_str());
+        replayRec_.reset();
     }
 
     void GameView::startMpGame(const tak::net::RoomView& room, uint32_t seed) {
@@ -89,7 +138,6 @@
         }
         chatRecipients_=0xff;requestedManaSharing_.reset();
         giveUnitsMenu_=false;giveUnitsHots_.clear();
-        replaySaved_ = false;   // a fresh game gets a fresh recording
         resultParticipants_.reset();
         if (room.mission.empty()) {
             resultParticipants_=0;
@@ -250,6 +298,11 @@
         loadGui(side_);
         loadScreen_->step("WAITING FOR PLAYERS", 100);
         startAtMonarch();
+        // Record from here: the header needs the data this game runs on (the room's
+        // tier, mounted above) and nothing has been simulated yet. A rejoin or a
+        // spectator gets the backlog first, so its recording starts from tick 0 too.
+        gameDataHash_ = gameDataHash();   // reported at Loaded and recorded in the replay header
+        openReplayRecording();
     }
 
     bool GameView::showInitialCampaignBriefing(const std::string& stem) {
@@ -332,6 +385,7 @@
             if (now - resultStartedMs_ >= 3000) menuRequested_ = true;
         }
 
+        pumpReplayRecording();
         if (!mp_->poll()) { netError_ = mp_->error().empty() ? "disconnected" : mp_->error(); return false; }
         if (mp_->desynced()) { netError_ = mp_->desyncReason(); return false; }
 #ifndef NDEBUG
@@ -1174,7 +1228,7 @@ void GameView::autoplayStep() {
             if (spec) {
                 beginSpectating();   // watch-only: no fog, no control, no resume
             } else {
-                mp_->reportLoaded(gameDataHash());
+                mp_->reportLoaded(gameDataHash_);
                 writeResume(mp_->gameId(), mp_->resumeToken());
             }
             mpSetupDone_ = true;
@@ -1189,7 +1243,7 @@ void GameView::autoplayStep() {
                 // no resume ticket, and nothing to report loaded.
                 beginSpectating();
             } else {
-                mp_->reportLoaded(gameDataHash());
+                mp_->reportLoaded(gameDataHash_);
                 writeResume(mp_->gameId(), mp_->resumeToken());   // reconnect ticket
             }
             mpSetupDone_ = true;

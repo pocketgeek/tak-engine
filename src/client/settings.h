@@ -187,6 +187,9 @@ struct Settings {
 // The config file path: settings.ini in the per-user folder (util/prefpath.h). Empty only
 // if there is no such folder.
 std::string settingsPath();
+// Where replays are recorded and listed: settingsPath()'s folder, ending in a path
+// separator. Empty when there is no per-user folder.
+std::string replayDir();
 // Point settingsPath() at another file for the rest of the process ("" = back to the
 // default). Cartographer's test profile uses it so a UI test of the shared GAME DATA
 // FOLDER setting can never read or write the player's real game settings -- in any

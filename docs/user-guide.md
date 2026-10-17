@@ -1457,6 +1457,13 @@ Every game you play or watch is **recorded automatically**, including games wher
 you only spectate the AI (the Benchmark is not recorded). Replays of games you
 watched carry no checkpoint hashes, since a spectator does not report them.
 
+The replay is written to disk while you play, so it is kept however the game
+ends: a win or a loss, quitting, returning to the menu, a lost connection, the
+computer shutting down, or the game being killed or crashing. It runs to the
+moment you left, including anything played or watched after the result. If the
+game was killed or crashed, the recording is finished the next time TAK Engine
+starts and loses at most about the last second.
+
 To watch one, open **Settings → Load Replay** on the main menu and choose a
 recording. During playback:
 
