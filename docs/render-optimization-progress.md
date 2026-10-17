@@ -167,8 +167,38 @@ replays must not move; nothing in this program may feed the simulation.
   B in every scene). Measurements: Experiments 10 and 10b. Baseline for later
   comparisons: `~/tak-tmp/render-opt/takclient-H5-candidate` (code of
   `0cbc4401`; H4 = `d8744efe` superseded).
-- Workstreams I–N: not started.
-- **Next concrete step:** workstream I (cost-based work scheduling): the
+- **Workstream I (cost-based work scheduling) is implemented and verified**
+  (commits `a5ba14e4` ThreadPool — affinity size, targeted wakes, chunk
+  claiming, the caller waits for chunks not workers — + `WorkPlan` / cost
+  model + `work_schedule` test, `68021102` GameView planned geometry, shadow
+  check, shadow transform and body copy passes + `TAK_RENDER_SCHEDULE=uniform`
+  / `TAK_RENDER_POOL_THREADS` / `TAK_SCHEDULE_*` / `TAK_SCHEDULE_VERIFY` /
+  `TAK_SCHEDULE_SAMPLES` + telemetry + `render_schedule` ctest, `590db308`
+  hit estimate without vector headers, no copy cap, dense cost copy +
+  `addUnits` (both regressions found by measurement), then the docs commit).
+  Tests: `work_schedule` (ASan/UBSan, TSan; ten header mutations fail it),
+  `render_telemetry`, `render_schedule` (four in-game mutations fail it);
+  `ctest -L quick` 386/386 at `68021102` and again at `590db308` (final
+  code, all targets rebuilt). Captures identical (I2: 180 comparisons, I4: 204, each
+  incl. serial vs parallel). Release `takclient` builds without the new
+  debug strings. `--mpai` not run: only `src/client` (presentation) and
+  `tools/` changed; every benchmark run checks the world hash (identical A vs
+  B in every scene). Measurements: Experiment 11. Baseline for later
+  comparisons: `~/tak-tmp/render-opt/takclient-I4-candidate` (code of
+  `590db308`).
+- Workstreams J–N: not started.
+- **Next concrete step:** workstream J (CPU cache budgets): fix the
+  reference lifetimes of `terrain::Compositor::sectionImage` consumers
+  (terrain chunk worker, `MapView`, minimap `renderBlock`, Cartographer
+  `validation.cpp`) before any eviction; then budgets/trimming for decoded
+  sections, `TerrainChunks::mips_`, `bodyVerts_` and the shadow scratch
+  (none is trimmed today; Experiment 10b). I follow-ups (not required for J):
+  measure the pool under a concurrently running simulation (a real game:
+  sim worker + `capturePool_`; the render study runs the sim inline) and
+  decide whether to reserve CPUs for it; the COB VM tick still uses uniform
+  `parallelFor` (minParallel 1500) — planning it by VM count was not
+  measured.
+- (Superseded, kept for the record) Former next step, workstream I: the
   geometry pass still dispatches the whole pool for ≥ 32 visible units
   whether they are hits or misses (Experiment 3: 1.3–2.7 ms dispatch, 40–70 ms
   summed wake latency under the 8-CPU pin), and H's per-frame bookkeeping
@@ -232,7 +262,7 @@ evidence; nothing below is already fully satisfied.
 | F | Persistent shadow allocation | **verified** | Workstream F (`3565f3fe` allocator + `shadow_atlas` test, `5febc00f` GameView integration + `render_shadow_atlas[_zoom]` ctests, `6c7b93df` cheap failure path + page-ordered best fit, `ec3df732` / `fbe21589` / `3fd2c8de` all-redraw frames use the former packer, `ce2a3466` page textures created only after a frame fits — the verifier's churn finding). Each unit's silhouette tile keeps a cell of `ShadowAtlasAllocator` (`client/shadowatlas.h`: logical pages → shelves with free span lists, class-height shelves, exact widths, generational handles, occupancy/fragmentation statistics, `validate()`) across frames; `UnitGeom::shadowTile` holds the handle, validated against the cell's recorded entry handle. E's stamp is kept per cell and carried when a cell is reallocated (verdict `Relocated`, never a stranger's pixels); the stamp gained the page. Policy: keep while the tile fits (cell ≤ 1.5× a fresh one); absent cells retained 2 s / 30 frames, evicted first under pressure; forced repack (the former packer, class heights then exact sizes = former slots, so the atlas falls back only where the former code did) for a failed allocation in a fragmented atlas, ≤ once per 60 frames; free repack when ≥ 90% of tiles are redrawn anyway and the atlas is loose; frames where every tile is redrawn anyway (zoom, sub-pixel pan, new phase) use the former packer with exact sizes (the former slots and pixels); bounded migration (≤ 64 tiles/frame) off a sparse last page; empty pages destroyed after 2 s / 60 frames; page size shrinks after 5 s / 120 frames of low demand; more tile area than four pages falls back at once; new pages are placed logically and their textures created only once every tile of the frame is placed, so a frame that fits four pages by area but not by packing creates no texture (no create/destroy churn while it keeps falling back; Experiment 8b). 4 pages / 2048² / VRAM budget and the whole-frame direct fallback unchanged. Recycled cells cleared with their padding. Captures: identical to E3 in all-redraw scenes (churn, pan, zoom) and whenever slots match (`TAK_SHADOW_REPACK`, 96 comparisons); with persistent cells 1–14 single shadow-edge pixels per frame differ (208 pixels in 49 of 156 frames) — the former packer shows the same differences when only its slots change (raster rounding depends on the cell position; Experiment 8). Measured on the final code (Experiment 8b, vs E3): draw −33% / −50% / −33% in stationary-mixed / total10k-visible / moving at 1280×960 (material), −12% in pan-snap 1280×960 and −18% to −32% in the reuse scenes at 7680×2160 (every ABBA group faster, inside that noisier session's thresholds; material in the F3 session, Experiment 8), shadow packing −66% to −91% (material except pan-snap), p99 −58% / −61% in stationary/dense 1280×960; band fix: 30 → 0 page creations per run, frame time unchanged; all-redraw scenes +0.14–0.20 ms `t_shadow_alloc`, draw −0.3% to +3.0% (not material); dense 7680×2160 fallback −27% shadow phase and 64 MiB released. Memory: tracked GPU equal or lower at the end of every timed scene; one extra page (16 MiB) during the battle-sparse battle, whole atlas freed after the view empties. |
 | G | Distant image lookup before generation | **verified** | Workstream G (`6d56ac8d` cache: retained bounds, decide→bake-by-page→quads, page occupancy + release, same-position migration, `holds()`; `b59cdd8a` GameView: lookup before body generation, deferred body stages, catch-up, verifier, `render_distant_lookup`; `b084644e` scenes; `2d755167` per-frame switch read, no empty catch-up scan). The geometry workers ask the cache whether a unit's image will be shown without a repaint (`DistantModels::holds`: valid, same zoom/output scale, baked < 67 ms ago — the case where `prepare()` reads neither revision nor vertices); then the BODY stages stay pending on the entry (`UnitGeom::bodyPending`) while the shadow stages run and the revision advances; a pending body is generated as soon as anything needs it (next non-held build, a bake via callback, a catch-up). Exact eligibility: deferred only for appearance-only local changes (`bodyVertexCountStable`; the body collector culls back faces, so pose changes the ≥ 96 vertex count). Bounds/opacity retained per identity + revision + source + count, so refused bodies are not rescanned every frame; bakes run grouped by page after painter-order decisions; per-page occupancy, pages released when their last image expires (others live), tile POSITIONS kept in the pre-G order on the lowest live page (pixels and quads depend only on the position), bounded same-position migration. Cadence, 128 bake budget, eligibility, live fallback, 4-page limit unchanged. Tests: `distant_models` (vs the pre-G cache kept verbatim, 900 frames, decisions/quads/tile pixels identical, `validate()` every frame; five mutations fail it), `render_distant_lookup` (6,902 deferred bodies regenerated and matched; shadow-skip mutation fails it), `geometry_stages`, GL verifier runs. Captures identical to F8 (168 comparisons). Measured (Experiment 9): total10k-visible 1280 draw −12.4% and GPU timeline −8.5% (material), `t_distant` −67% / −83% (10k / stationary, material), pan-distant worker build −15% (material); 7680×2160 unchanged (no images there); distant-sparse −32 MiB tracked GPU after the view moves. Investigation of the failed larger-image prototype: today's images differ from live geometry by ~87k px/frame (bilinear resample at fractional phase); a pixel-grid bake cuts that to 44 px (uncommitted experiment). |
 | H | Less full-scene vertex copying | **verified** | Workstream H (`97e42721` planner + GL buffer + `drawBuffer`, `8d96905f` ordered commands + arena integration, `37ecd884` staged writes (mapping rejected), `d8744efe` rollover with two storages, `e311cae5` release-build fix; after the verifier's rejection `0cbc4401` bounded `bodyVerts_` growth, double copies counted, write-failure fallback fixed + `render_body_arena_fail`). Vertex journey traced (see "Retained body vertices"): before H every visible body was copied twice per frame (per-unit verts → `bodyVerts_` → driver client-array copy, or SDL's conversion for batches < 512). Now the body pass is ordered commands (texture + ranges of per-unit sources; features, special units and the ground/air boundary as boundaries; order and state as before). On the `opengl` backend, commands of native size draw from a bounded retained arena (`client/vertexarena.h`): sources keyed by entry handle + `revision` (quads by value) keep their range; changed ones are copied whole (staged in `bodyVerts_`' tail, one `glBufferSubData`; their runs in small assembled commands are copied twice, `arena_verts_twice`, 0.4% of copies in a steady dense frame) into storage no pending draw reads; a full storage drains while a new one fills (rollover, budgeted migration of whole commands), so no frame rewrites everything; one native draw per command (`glMultiDrawArrays` over merged ranges). Frames with mostly new content (camera motion) stream exactly as before; the assembled SDL path stays the portable fallback (other backends, fractional scale, texture checks, failures). GL 1.5 buffer objects only; no fences, persistent mapping or unsynchronized writes. Every storage counted in gpuvram incl. 3 frames in flight; ≤ 3/4 of the GPU cap, 64 MiB per storage; released after 2 s idle, under GPU pressure, on resets, on failures (then 120 frames of streaming); context loss forgets the buffers. Tests: `vertex_arena` (simulated buffer, rollover scenario, 12 mutations fail it, ASan/UBSan), `geometrysubmit` (+72 GL arena-vs-client-arrays-vs-SDL comparisons), `render_body_arena` / `_still` / `_fail` (software renderer, simulated storage, every assembled command checked too, injected write failures; a constant-revision mutation fails the first, a gap-leaving fallback the last), GL verifier runs (`TAK_BODY_ARENA_VERIFY`). Captures identical to G2 (Experiments 10, 10b). Measured (Experiment 10; "x/y" = Experiment 10 / 10b): body vertices copied −91% / −94% and bytes handed to GL −91% in the dense / stationary 7680×2160 views; body submit −26% to −37% in total10k-visible (both sizes) and stationary-mixed 7680×2160 (material), only −8.6% / −9.8% in stationary-mixed 1280×960 (most of its body vertices stay in small, assembled commands); stationary-mixed 7680×2160 draw −26/−28%, total −24.5/−25%, GPU timeline −28.5/−31% (material); total10k-visible pipelined 7680×2160 total −7.8/−6.7%, GPU −9.9/−9.1% (material), 1280×960 draw −12.6%, GPU −17.8/−20.9% (material in 10b); pan/moving neutral. Memory: tracked GPU +1.6 to +64 MiB (the arena); `bodyVerts_` capacity +5.9% over the pre-H buffer in the retained scenes (growth slack 1/16; peak need +0.5% from the double copies) and −43% in moving (pre-H doubled there) — H4 had doubled it to 2× the need (Experiment 10b). Limitation: forced-completion total10k-visible 7680×2160 frame total +3.9% (material in Experiment 10, +3.6% not material in 10b; present waits ~1.8 ms longer; pipelined frames −7.8%). |
-| I | Cost-based work scheduling | not started | `ThreadPool::parallelFor` (`threadpool.h`): fixed 8-item chunks, `minParallel` default 32; the geometry pass dispatches the whole pool for ≥32 visible units whether they are cache hits or misses; shadow prep goes parallel at ≥32768 points; body copy parallel at ≥32 tasks. |
+| I | Cost-based work scheduling | **verified** | Workstream I (`a5ba14e4` pool + `WorkPlan` + `work_schedule` test, `68021102` planned GameView passes + `TAK_SCHEDULE_VERIFY` + `render_schedule` ctest + telemetry, `590db308` cheaper plans + no copy cap, both measured fixes). Before: `ThreadPool` of `hardware_concurrency` threads, every pass woke every worker (`notify_all`) in fixed 8-item chunks above an item-count threshold and the caller waited for every worker, including those that woke after the work was gone. Now (`client/threadpool.h`): sized by the process's CPU affinity (SimPool's rule); a pass posts only the workers it asks for (one condition variable per worker); participants claim chunks off one atomic word and the caller waits for the CHUNKS, so late wakers never delay it and never touch a finished pass (job fields read only by a thread holding an unfinished chunk). `WorkPlan` (`client/workschedule.h`) cuts contiguous chunks of ~10 µs estimated work, one participant per 40 µs, serial below 30 µs; estimates calibrated on serial per-unit / per-pass timings: geometry from each entry's previous build (key words, stages, body vertices, shadow points; 16-bit `UnitGeom::nextCost`, a dense copy taken at claim), shadow point checks by points, shadow tile transform by points over the page's dirty tiles only, body copy by bytes + per range. Every item writes only its own outputs, so results are independent of the plan and of completion order (deterministic output; captures identical, serial reference identical). Tests: `work_schedule` (ASan/UBSan, TSan; ten mutations fail it), `render_schedule` (four in-game mutations fail it), `render_telemetry`. Measured (Experiment 11, vs H5): pool dispatch −87% to −99%, caller wait −44% to −96%, wake latency −89% to −99%; stationary-mixed 7680×2160 draw −11.4% and total p99 −13.8%, total10k-visible 1280×960 total p95 −19.4% / p99 −13.8% (material); other draw deltas −1.3% to −7.6% inside noise; nothing regressed materially. Planning alone (same binary vs uniform passes) is neutral on frame time at both sizes (−5.4% to +2.1%, inside noise) and halves woken workers on small passes; the gain comes from the pool mechanics. Not measured: competition with a concurrently running simulation (the study runs it inline); non-Linux pool sizing (no affinity query). |
 | J | CPU cache budgets | not started | `terrain::Compositor` decodes every referenced section at load (`MapView::queueAllSections`) and keeps it until `clear()` (`terrain.h:40`, reference valid until clear); `TerrainChunks::mips_` (worker-only) is unbounded; `bodyVerts_` and shadow scratch keep peak capacity forever (per-unit geometry entries are bounded and trimmed since C: retention, byte/count budgets, warm-free trim, tail chunks). Consumers of `sectionImage`: `terrainchunks.cpp:64`, `mapview.cpp:361/381/470`, Cartographer `validation.cpp:32`; `renderBlock` users: minimap (`gameview_hud.cpp:614`), Cartographer. |
 | K | Camera-prioritized terrain | not started (partly present) | Jobs are queued only for chunks visible this frame, ≤64 pending, uploads ≤8 MiB and ≤64 jobs per frame, completed-but-no-longer-visible jobs are dropped at upload, nearest cached level stands in while a level bakes, `finishChunks()` for captures. Missing: priority order (FIFO), cancellation of queued jobs that left the view (only `invalidate`/`clear` cancel), guard/hysteresis region, section/chunk upload coordination. |
 | L | Unit spatial index | not started | Features use `FeatureIndex` (`featureindex.h`) with a `TAK_FEATURE_FULL_SCAN` reference. Units: every frame scans all of `front().live` with fog + frustum tests (`:187`). |
@@ -277,7 +307,8 @@ other GPUs, Wayland/X11 visible windows, high-DPI output scales, fullscreen.
   `TAK_TERRAIN_SDL_SUBMIT`, `TAK_TERRAIN_CACHE_OFF`, `TAK_FOG_*`,
   `TAK_DISTANT_MODELS_OFF`, `TAK_FEATURE_FULL_SCAN`, `TAK_NOSHADOW`,
   `TAK_PALETTE_VERIFY`. New workstreams add a reference switch only where it
-  is a cheap branch.
+  is a cheap branch (since I: `TAK_RENDER_SCHEDULE=uniform`,
+  `TAK_RENDER_POOL_THREADS=N`).
 - **Repeatability controls.** Standalone local simulation (no server, no
   network timing); fixed 1/60 s frame clock (`TAK_RENDER_STUDY`); motion
   interpolation fixed at α = 0.5; distant-image refresh on the animation clock;
@@ -318,12 +349,12 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 | Painter list | `paintItems_` stable sort by (layer, z) (`:233`); air units layer 1 | render thread |
 | Entry claim (since C) | `claimGeometryEntries` (`gameview_render.cpp`): each painter-ordered unit claims the entry its identity owns in `geomEntries_` (`StableEntryPool<UnitGeom>`, `client/geometryowners.h`); `visUnits_` / `visGeom_` (ordered entry pointers) / `geomIndex_`; then `reclaim` (destroyed, expired, budget, trim) | render thread, before the parallel pass |
 | Atlas maintenance | `atlasFor` per visible colour slot (`:272`), `preparePaletteTextures` for structures (`:284`), `animateGlowTextures` (`:289`) | render thread, render-target draws |
-| Geometry preparation | `pool_.parallelFor` → `buildUnitGeom`: three exact stage keys (since D), then `runUnitGeomStages` redoes only the changed stages — LOCAL (`preparePiece`, `collect`, index sort, local shadow), PLACEMENT (`placeBody`/shadow placement, bounds), MATERIAL (vertex colours) | `ThreadPool pool_`, thread-local scratch, writes only its unit's entry `*visGeom_[i]` |
+| Geometry preparation | `pool_` pass planned by estimated cost (since I; `parallelFor` before) → `buildUnitGeom`: three exact stage keys (since D), then `runUnitGeomStages` redoes only the changed stages — LOCAL (`preparePiece`, `collect`, index sort, local shadow), PLACEMENT (`placeBody`/shadow placement, bounds), MATERIAL (vertex colours) | `ThreadPool pool_`, thread-local scratch, writes only its unit's entry `*visGeom_[i]` |
 | Shadow preparation | `buildUnitShadow` inside the LOCAL stage (local points retained); the placement stage re-places them | positions-only opaque verts + masked runs |
 | Distant images | lookup `holds()` inside the geometry workers (since G: a held image's body stays pending), then `distantModelCache_.prepare` (`distantmodels.cpp`): decide in painter order, bake grouped by page, quads in painter order; catch-up of deferred bodies not shown | workers read-only; render thread bakes |
-| Shadow atlas | `buildShadowSilhouetteAtlas` (`:377`, called `:656`): pack, dirty tiles, parallel transform, `OpaqueShadowSubmit` + mask batches | render thread + pool for the transform |
+| Shadow atlas | `buildShadowSilhouetteAtlas` (`:377`, called `:656`): pack, dirty tiles, parallel transform, `OpaqueShadowSubmit` + mask batches | render thread + pool for the point checks and the transform (since I planned by points, dirty tiles of the page only) |
 | Shadow composite | ground: `drawShadowBatch` (`:767`, `:2593`); air: drained at the ground→air boundary inside the body replay | render thread |
-| Body assembly | plan `drawOps_`/`copyTasks_` serially (`:782`), parallel copy into `bodyVerts_` | pool |
+| Body assembly | plan `drawOps_`/`copyTasks_` serially (`:782`), parallel copy into `bodyVerts_` | pool (since I planned by bytes + per range) |
 | Submission | replay `drawOps_` (`:875`): features (sprite copies, sway geometry, flames, smoke), `drawUnit` for special units (`:3044`, clip rects + interleaved particles), batched bodies via `bodySubmit_` (`:1037`) | render thread |
 | Effects | dots, build ghosts, flames, storms, beams/shot models (`drawShotModel` runs `collect` live per projectile), projectiles, particles/effects/unit fx (`:1514`), fog (`drawFog`, `:3965`) | render thread |
 | HUD | rings, order trails, bars, squad labels, production bars, minimap, panels, chat, menus, unit info (`:1599`–`:2162`) at native resolution | render thread |
@@ -359,9 +390,11 @@ bytes (`addBuffer`), default cap 1.25 GiB, self-tightening on allocation
 failure. Excludes driver-internal allocations, SDL's own vertex/command
 buffers, the default framebuffer and GL client-array staging.
 
-Worker pools: `GameView::pool_` (hardware_concurrency threads incl. caller,
-used by geometry, shadow transform, body copy and the COB VM pass — never
-called concurrently from two threads); `capturePool_` for the sim worker's
+Worker pools: `GameView::pool_` (hardware_concurrency threads incl. caller
+until workstream I; since I the CPUs in the process's affinity mask; used by
+geometry, shadow checks, shadow transform, body copy and the COB VM pass —
+never called concurrently from two threads; since I each renderer pass is
+planned by estimated cost and wakes only the workers it pays for); `capturePool_` for the sim worker's
 snapshot capture; the sim worker thread; the async fog compute worker; terrain
 chunk worker; section decode worker; minimap crunch.
 
@@ -1117,11 +1150,96 @@ first rebuild frame on (Experiment 10b). Like the pre-H buffer, it is not
 trimmed after demand subsides (workstream J). Per-frame command lists are in
 `frame_lists_*`.
 
+### Cost-planned worker-pool passes (workstream I)
+
+**What was there.** `GameView::pool_` was a `ThreadPool` of
+`std::thread::hardware_concurrency()` threads (24 on the reference machine,
+whatever the process's CPU affinity). Every parallel pass split its items into
+fixed 8-item chunks, woke EVERY worker with one `notify_all`, and the caller
+waited until every worker had checked in — including workers that woke after
+all chunks were gone. Four renderer passes used it, with thresholds on item
+counts, not on work:
+
+| Pass | Before I | Items | Per-item cost |
+|---|---|---|---|
+| Geometry (`buildUnitGeom`) | parallel at ≥ 32 visible units | visible units | key check ~1 µs (hit) … full local rebuild ~10–40 µs |
+| Shadow point checks | parallel at ≥ 32768 points and ≥ 16 tiles | tiles needing the check | ~2 ns per point (stops at the first differing point) |
+| Shadow tile transform | parallel at ≥ 32768 points (per page) | EVERY packed tile, clean or on another page (skipped inside) | ~1.6 ns per opaque point, ~3.2 ns per masked vertex |
+| Body copy | parallel at ≥ 32 copy tasks | copy ranges | ~0.1 ns per byte + ~40 ns per range |
+
+The COB VM tick (`animFrame`, minParallel 1500) shares the pool but is not a
+render pass; the snapshot capture uses its own 4-thread `capturePool_` on the
+sim worker; the simulation's `SimPool` (min(3, CPUs/8) workers, affinity-aware),
+the terrain chunk worker, the section decode worker and the fog worker are
+separate threads. The pool is never called from two threads at once (by
+construction: only the render thread drives `pool_`).
+
+**What changed.**
+
+`ThreadPool` (`client/threadpool.h`):
+
+- Sized by the CPUs the process may run on (`sched_getaffinity` on Linux,
+  `hardware_concurrency` elsewhere) — the rule `SimPool` already follows. A
+  24-thread pool in an 8-CPU process preempts itself and the render thread.
+  Debug `TAK_RENDER_POOL_THREADS=N` overrides it (1 = serial reference).
+- A pass wakes only the workers it asks for: each worker sleeps on its own
+  condition variable; the caller posts `participants − 1` of them.
+- The caller waits for the CHUNKS, not the workers. Participants claim chunk
+  indices from one atomic word (chunk count | next index); the last finished
+  chunk wakes the caller. A worker that wakes after every chunk was claimed
+  finds the index exhausted and goes back to sleep without the caller waiting
+  for it (`pool_idle_wakes`). Lifetime: the job fields and the caller's
+  functor are read only by a thread holding an unfinished chunk, so the pass
+  cannot end under it; the next pass rewrites them only after every chunk of
+  the previous one finished (late claims on the old word read an exhausted
+  index). The caller polls ~20 µs for the last chunks before sleeping.
+- `parallelFor` (uniform 8-item chunks) keeps its contract for the VM tick and
+  tests; it now wakes at most one worker per chunk.
+- `parallelChunks(bounds, participants, f)` runs a planned pass.
+
+`WorkPlan` (`client/workschedule.h`): items are added in pass order with an
+estimated cost in ns; the plan cuts contiguous chunks of ~`chunkNs` and picks
+`participants = clamp(⌈estimate / workerNs⌉, 1, min(pool, chunks, cap))`, or 1
+below `serialBelowNs`. Pure function of the estimates (no clocks), so a run is
+reproducible; it never decides what is computed.
+
+Estimates (fitted to ~950k serial per-unit samples and serial per-pass timings
+over the matrix scenes, Experiment 11):
+
+| Pass | Estimate per item | Policy (serial below / per worker / chunk / cap) |
+|---|---|---|
+| Geometry | `GeometryCostModel::estimateNs` of what the entry's PREVIOUS build redid (key words, local/placement/material stages, body vertices, shadow points; a hit's estimate is the key check alone, so it reads no vector header), stored per entry as a 16-bit `UnitGeom::nextCost` (64 ns units) on its first cache line and copied into the dense `visCost_` at claim time; a cold entry carries a full-build estimate (16 µs); planned with `WorkPlan::addUnits` in integer units | 30 µs / 40 µs / 10 µs / pool |
+| Shadow point checks | 2 ns × points | 30 / 40 / 10 / pool |
+| Shadow transform | only this page's dirty tiles: 1.6 ns × opaque points + 3.2 ns × masked vertices | 30 / 40 / 10 / pool |
+| Body copy | 40 ns + 0.1 ns × bytes per range | 30 / 40 / 10 / pool (a 4-thread cap measured slower) |
+
+The prediction "this unit redoes what it redid last frame" is only a
+load-balance hint: moving units keep rebuilding, still ones stay hits; a
+misprediction costs balance (claiming absorbs it), never correctness.
+
+Determinism and output order: every item writes only its own outputs (its
+geometry entry, its tile's slice of the page batch, its destination range of
+`bodyVerts_`), so a pass's result is independent of which thread ran which
+chunk and of completion order. The plan itself depends only on per-entry
+estimates. Revisions (`geometryRevision_`) are drawn from one atomic counter
+in completion order — their numeric values can differ run to run (as before
+I), but they are only compared for equality. Nothing here reaches the
+simulation.
+
+Reference and verification switches (debug): `TAK_RENDER_SCHEDULE=uniform`
+runs the pre-I uniform passes (8-item chunks, every thread, the former
+thresholds) on the new pool; `TAK_RENDER_POOL_THREADS=N`;
+`TAK_SCHEDULE_<GEOMETRY|SHADOW_CHECK|SHADOW_PREP|COPY>=serialBelowNs,workerNs,chunkNs[,max]`
+(tuning); `TAK_SCHEDULE_VERIFY` (every planned pass well formed, each visible
+unit built exactly once, shadow checks / tile transforms / body copies equal a
+serial re-run bit for bit); `TAK_SCHEDULE_SAMPLES=<file>` (calibration
+samples: per unit and per pass).
+
 ### Telemetry reference (RENDERSTATS keys)
 
 `t_*` = render-thread wall ms (nested: `terrain_upload` in `terrain`;
-`shadow_alloc/prep/raster` in `shadow_pack`; `pool_dispatch/wait` in whichever
-phase ran the pass) — never sum them. `w_*` = CPU ms summed over threads.
+`shadow_alloc/prep/raster` in `shadow_pack`; `pool_dispatch/wait` and (since
+I) `schedule_plan` in whichever phase ran the pass) — never sum them. `w_*` = CPU ms summed over threads.
 Other keys are per-frame counts; `*_bytes` keys are gauges (`gpu_tracked_bytes`
 is gpuvram's tracked textures + buffers, CPU byte gauges are separate and
 exclude allocator overhead, assets and the simulation; whole-process RSS is
@@ -1152,6 +1270,7 @@ sampled by the benchmark from `/proc`).
 | Used vs retained CPU bytes | `geom_used/capacity_bytes`, `body_used/capacity_bytes`, `shadow_scratch_used/capacity_bytes`, `frame_lists_used/capacity_bytes`, `terrain_mip_cpu_bytes`, `terrain_section_cpu_bytes` |
 | Distant-image lookup (G) | `distant_body_deferred` (bodies left pending behind a held image), `distant_body_resumed` (pending bodies generated by the pass), `distant_body_catchup` / `distant_body_late` (missed predictions, generated after/inside `prepare()`), `distant_bounds_reused`, `distant_page_releases`, `distant_migrated`; gauges `distant_pages`, `distant_tiles`, `distant_metadata_bytes`. `verts_generated`/`verts_placed`/`verts_recoloured` count body vertices only for body stages that ran |
 | Retained body vertices (H) | `arena_append`, `arena_rebuild`, `arena_stream` (0/1 per frame), `arena_verts_retained` (resident, nothing copied), `arena_verts_uploaded` (also in `body_verts_copied` and `bytes_uploaded`), `arena_verts_twice` (of those, vertices also copied into a small assembled command the same frame), `arena_draws`, `arena_ranges`, `arena_fallbacks`, `arena_releases`; gauges `arena_capacity_bytes` (also in `gpu_tracked_bytes`), `arena_inflight_bytes`, `arena_cpu_bytes`. Since H `body_verts_copied` = vertices actually copied (assembled + arena uploads) and DRAWPHASE `body_vertices` = all body vertices drawn |
+| Cost-planned pool passes (I) | `t_schedule_plan` (nested: building the plans), `pool_posted` (workers woken), `pool_idle_wakes` (woken after every chunk was taken), `pool_chunks`, `sched_geometry_threads` (participants of the geometry pass; 1 = render thread alone), `sched_shadow_threads` (check + transform passes, summed), `sched_copy_threads`, `sched_geometry_estimate_us` (the plan's estimate, to compare with `w_geometry_key` + `w_geometry_build`). `w_pool_wake` / `pool_dispatches` keep their meaning; since I a wake is counted only for a worker that ran a chunk |
 | GPU | render-study `gpu_timeline_ms` / `GPUTIMELINE` (draw timeline, not busy time), `gpu_tracked_bytes` |
 
 Coverage limits (deliberate): `logical_draws`/`flushes`/`target_switches`
@@ -1211,6 +1330,28 @@ GL comparisons), `render_body_arena`, `render_body_arena_still`; debug knobs
 Per-frame analysis by arena mode: `~/tak-tmp/render-opt/h/permode.py
 <run>/stdout.log` (assembly mean/p99/max, submit, uploads per Append / Rebuild
 / Stream frame).
+
+Schedule tooling (workstream I): ctests `work_schedule`, `render_schedule`;
+debug knobs `TAK_RENDER_SCHEDULE=uniform` (pre-I uniform passes, same
+pool), `TAK_RENDER_POOL_THREADS=N`, `TAK_SCHEDULE_GEOMETRY|SHADOW_CHECK|
+SHADOW_PREP|COPY=serialBelowNs,workerNs,chunkNs[,maxThreads]`,
+`TAK_SCHEDULE_VERIFY`, `TAK_SCHEDULE_SAMPLES=<file>`. Experiment 11
+commands (scripts in `~/tak-tmp/render-opt/i/`: `measure.sh`, `chain.sh`,
+`fit.py` for the per-unit fit, `mdrows.py` for the tables):
+
+```sh
+S="small-battle stationary-mixed moving total10k-visible"
+B="python3 tools/render_benchmark.py --data ~/tak_data --cpus 16-23 --wait-quiet 600 --repeats 2"
+$B --a ~/tak-tmp/render-opt/takclient-H5-candidate --b ~/tak-tmp/render-opt/takclient-I4-candidate \
+   --scenes $S --sizes normal --output ~/tak-tmp/render-opt/runs/i4-normal      # and uhd
+# planning alone (same binary):   --a I4 --b I4 --a-env TAK_RENDER_SCHEDULE=uniform
+# pool size alone (I2):           --a I2 --b I2 --a-env TAK_RENDER_POOL_THREADS=24
+# captures:                       --capture-only (H5 vs I4; I4 serial vs I4: --a-env TAK_RENDER_POOL_THREADS=1)
+# calibration (serial per-unit/per-pass samples):
+python3 tools/render_benchmark.py --a build-o2/takclient --data ~/tak_data --cpus 16-23 --repeats 1 \
+   --scenes moving --sizes normal --frames 420 --warmup 120 --output <dir> \
+   --env TAK_RENDER_POOL_THREADS=1 --env TAK_SCHEDULE_SAMPLES=<file>
+```
 
 Shadow-atlas ctests (workstream F, software renderer, `TAK_SHADOW_CACHE_VERIFY`):
 `render_shadow_atlas` (the render_shadow_cache roster, 288-px pages,
@@ -2866,7 +3007,172 @@ forced-completion total10k-visible 7680×2160 frame total is +3.6% again
 submission improves only 8.6% (most body vertices sit in small commands,
 which stay assembled) — the checklist no longer claims −28% to −36% there.
 
+### Experiment 11 — workstream I cost-planned pool passes (2026-10-17)
+
+**Binaries.** A = H5 (`takclient-H5-candidate`, code of `0cbc4401`, the
+pre-I build); I2 = `68021102` (first planned version); I3 = I2 + the hit
+estimate and copy-cap fixes; **I4 = `590db308`, the final code**
+(`takclient-I4-candidate`). Build-o2, offscreen EGL, SDL `opengl` on the RTX
+5070 Laptop GPU; `RENDER_ENV` confirmed the backend and actual output
+(1280×960 / 7680×2160, world views 1075×888 / 7475×2088; at 7680×2160 the
+zoom-0.5/0.25 scenes run at the map-fills-window clamp 0.73) for every run.
+900 frames, 300 warmup, forced completion (`glFinish` before present),
+pinned to CPUs 16–23, ABBA × 2 per scene and size, `--wait-quiet 600`,
+nothing built during timing runs. Load (whole machine; CPUs 4–15 belong to
+the Legion program): final runs load 2.6–12.4, 0–9 `legion_scenario`
+processes, pinned-CPU busy below the contention threshold in every run (0
+contended). Several groups still show other-process interference (one
+stationary-mixed 1280 A run at 4.40 ms draw against 2.62–2.80 for the
+other seven), so A/A spreads are wide; the materiality rule (max(2 × A/A
+spread, 2%)) is applied as is.
+
+**Scenes** (lean testing, the passes I touches): small-battle (small passes:
+fewer workers), stationary-mixed (hit-dominated geometry, copy-heavy),
+moving (mixed rebuild/hit costs, shadow transform), total10k-visible
+(largest passes, plan cost). Pan/zoom/churn exercise the same passes with
+the costs in between; not timed (captures of churn below).
+
+**Calibration** (`TAK_SCHEDULE_SAMPLES`, serial `TAK_RENDER_POOL_THREADS=1`
+runs, `~/tak-tmp/render-opt/i/cal*`): 952k per-unit samples over
+stationary-mixed, moving, pan, zoom, total10k-visible, effects, churn,
+small-battle (key 580 ns + 2.3 ns/word, local 750 ns + 31.5 ns/vertex +
+5 ns/shadow point, placement 350 + 2.5 ns/vertex + 0.9 ns/point, material
+8 ns/vertex; median relative error 9–21%); per-pass serial timings over six
+scenes at both sizes: the geometry estimate is 0.80–1.28 × the measured
+pass, shadow transform 0.64–1.15 ×, body copy 0.77–1.95 × (small tasks:
+hence the per-range term), shadow checks 0.46 × on full scans (tiles kept)
+and ~0.06 × where the first point differs.
+
+**Final result, A = H5 vs B = I4** (ms per frame, mean of four runs per
+label; Δ = B vs A; noise = max A/A spread of the two labels; bold =
+material):
+
+| scene | size | draw A → B (ms) | Δ draw (noise) | Δ total p99 (noise) | t_geometry | t_shadow_prep | t_body_assembly | t_pool_dispatch | t_pool_wait | w_pool_wake | workers woken / idle (B) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| moving | normal | 6.337 → 5.853 | -7.6% (19.2%) | -2.9% (12.8%) | 1.951 → 1.862 | 0.451 → 0.290 | 0.805 → 0.689 | 1.562 → 0.026 | 0.447 → 0.018 | 43.9 → 4.1 | – → 20.6 / 3.7 |
+| small-battle | normal | 0.703 → 0.655 | -6.9% (7.2%) | +30.6% (157.8%) | 0.117 → 0.103 | 0.012 → 0.011 | 0.073 → 0.055 | 0.055 → 0.006 | 0.056 → 0.025 | 1.6 → 0.1 | – → 7.3 / 0.5 |
+| stationary-mixed | normal | 3.138 → 2.684 | -14.5% (54.8%) | -30.8% (100.4%) | 0.417 → 0.324 | 0.054 → 0.020 | 0.292 → 0.136 | 0.189 → 0.013 | 0.210 → 0.012 | 7.4 → 0.1 | – → 14.6 / 1.0 |
+| total10k-visible | normal | 14.803 → 14.580 | -1.5% (2.1%) | **-13.8%** (5.1%) | 2.122 → 2.251 | 0.143 → 0.115 | 1.191 → 1.085 | 1.399 → 0.175 | 0.201 → 0.037 | 39.4 → 2.9 | – → 17.4 / 2.1 |
+| moving | uhd | 7.312 → 6.991 | -4.4% (3.2%) | +1.0% (14.2%) | 2.039 → 1.946 | 0.436 → 0.334 | 0.864 → 0.775 | 1.672 → 0.024 | 0.325 → 0.021 | 47.3 → 5.2 | – → 20.7 / 2.2 |
+| small-battle | uhd | 1.056 → 0.983 | -6.9% (6.8%) | -8.7% (16.8%) | 0.181 → 0.168 | 0.015 → 0.012 | 0.110 → 0.069 | 0.067 → 0.007 | 0.135 → 0.043 | 2.2 → 0.1 | – → 7.3 / 2.5 |
+| stationary-mixed | uhd | 5.178 → 4.585 | **-11.4%** (1.6%) | **-13.8%** (5.6%) | 0.643 → 0.580 | 0.079 → 0.036 | 0.683 → 0.308 | 0.129 → 0.015 | 0.497 → 0.022 | 14.8 → 1.2 | – → 9.5 / 4.7 |
+| total10k-visible | uhd | 61.665 → 60.846 | -1.3% (1.9%) | -4.5% (5.1%) | 2.542 → 2.737 | 0.000 → 0.000 | 3.517 → 3.384 | 1.634 → 0.183 | 0.178 → 0.099 | 47.5 → 3.6 | – → 14.0 / 3.6 |
+
+- Material at 7680×2160: stationary-mixed draw −11.4%, total p99 −13.8%;
+  at 1280×960 total10k-visible total p95 −19.4% / p99 −13.8% (draw −1.5%,
+  not material). Every other draw delta is a reduction inside its noise
+  (small-battle −6.9% at both sizes, moving −4.4% / −7.6%, stationary-mixed
+  1280 −14.5% with one interfered A run). No metric regressed materially.
+- Pool overhead: dispatch −87% to −99% and caller wait −44% to −96% in
+  every scene and size (material in most), summed worker wake latency
+  −89% to −99%; CPU time inside chunks (`w_pool_busy`) −2% to −35%. The total-frame p95/p99 gains in total10k-visible come
+  from the frames that also run the COB VM tick, which shares the pool.
+- `t_geometry` in total10k-visible: +6.1% (1280) / +7.7% (7680), not
+  material: H5's dispatch time is inside that phase as well; the remaining
+  cost of planning is `t_schedule_plan` 0.017–0.030 ms (0.099 ms in I3,
+  before the dense cost array).
+
+**What gives the gain** (decomposition, same binary, ABBA × 2):
+
+*Planning vs the uniform passes* (A = I4 with `TAK_RENDER_SCHEDULE=uniform`:
+fixed 8-item chunks, every thread, the former thresholds, on the new pool;
+B = I4):
+
+| scene | size | draw A → B (ms) | Δ draw (noise) | Δ total p99 (noise) | t_geometry | t_shadow_prep | t_body_assembly | t_pool_dispatch | t_pool_wait | w_pool_wake | workers woken A → B / idle (B) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| moving | normal | 5.625 → 5.319 | -5.4% (9.7%) | -5.3% (15.4%) | 1.716 → 1.658 | 0.215 → 0.219 | 0.573 → 0.572 | 0.020 → 0.018 | 0.086 → 0.016 | 2.9 → 2.9 | 21.0 → 20.6 / 1.2 |
+| small-battle | normal | 0.663 → 0.675 | +1.8% (6.0%) | +37.8% (140.5%) | 0.104 → 0.112 | 0.011 → 0.011 | 0.054 → 0.059 | 0.010 → 0.007 | 0.036 → 0.031 | 0.1 → 0.1 | 13.9 → 7.3 / 0.5 |
+| stationary-mixed | normal | 3.097 → 2.987 | -3.6% (43.0%) | -19.4% (100.1%) | 0.429 → 0.398 | 0.024 → 0.022 | 0.198 → 0.180 | 0.020 → 0.013 | 0.024 → 0.020 | 0.3 → 0.2 | 15.4 → 14.6 / 2.1 |
+| total10k-visible | normal | 14.999 → 15.237 | +1.6% (12.8%) | +6.0% (39.5%) | 2.261 → 2.341 | 0.129 → 0.123 | 1.136 → 1.140 | 0.180 → 0.193 | 0.030 → 0.053 | 3.2 → 3.1 | 17.5 → 17.4 / 3.0 |
+| moving | uhd | 7.611 → 7.570 | -0.5% (5.4%) | -2.4% (5.2%) | 2.203 → 2.143 | 0.378 → 0.393 | 0.879 → 0.899 | 0.040 → 0.041 | 0.124 → 0.024 | 6.1 → 6.3 | 21.0 → 20.7 / 3.2 |
+| small-battle | uhd | 0.931 → 0.905 | -2.9% (15.8%) | -5.1% (48.2%) | 0.130 → 0.130 | 0.011 → 0.011 | 0.057 → 0.058 | 0.012 → 0.007 | 0.051 → 0.029 | 0.1 → 0.1 | 14.1 → 7.3 / 1.9 |
+| stationary-mixed | uhd | 4.969 → 5.072 | +2.1% (5.5%) | +3.9% (8.3%) | 0.662 → 0.728 | 0.036 → 0.039 | 0.342 → 0.359 | 0.020 → 0.017 | 0.021 → 0.025 | 1.4 → 1.7 | 14.8 → 9.5 / 5.2 |
+| total10k-visible | uhd | 61.287 → 61.329 | +0.1% (1.1%) | -0.1% (6.6%) | 2.788 → 2.797 | 0.000 → 0.000 | 3.430 → 3.440 | 0.171 → 0.175 | 0.126 → 0.118 | 3.7 → 3.4 | 14.0 → 14.0 / 4.1 |
+
+Planning alone changes no draw time materially at either size (−5.4% to
++2.1%, all inside noise). It halves the woken workers where the work is
+small (small-battle 13.9 → 7.3 per frame; stationary-mixed 7680 14.8 → 9.5),
+which these benchmarks cannot turn into frame time: the render study runs
+the simulation inline, so no other thread competes for the CPUs (see Known
+limitations).
+
+*Pool size* (I2; A = `TAK_RENDER_POOL_THREADS=24`, the pre-I size on this
+machine; B = the affinity size, 8 under the pin):
+
+| scene | size | draw A → B (ms) | Δ draw (noise) | Δ total p99 (noise) | t_geometry | t_shadow_prep | t_body_assembly | t_pool_dispatch | t_pool_wait | w_pool_wake | workers woken A → B / idle (B) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| moving | normal | 5.821 → 5.692 | -2.2% (12.0%) | -1.4% (21.6%) | 1.728 → 1.635 | 0.201 → 0.188 | 0.686 → 0.691 | 0.750 → 0.020 | 0.058 → 0.018 | 2.6 → 1.7 | 41.4 → 16.8 / 2.5 |
+| small-battle | normal | 0.720 → 0.712 | -1.0% (7.9%) | +1.6% (102.0%) | 0.134 → 0.130 | 0.011 → 0.011 | 0.064 → 0.063 | 0.020 → 0.007 | 0.050 → 0.052 | 0.1 → 0.1 | 12.5 → 7.3 / 0.6 |
+| stationary-mixed | normal | 3.077 → 2.989 | -2.8% (2.8%) | -8.0% (5.8%) | 0.454 → 0.393 | 0.022 → 0.021 | 0.201 → 0.197 | 0.119 → 0.012 | 0.068 → 0.015 | 0.5 → 0.2 | 26.6 → 10.6 / 1.4 |
+| total10k-visible | normal | 16.352 → 16.308 | -0.3% (11.9%) | -1.7% (12.8%) | 2.518 → 2.510 | 0.115 → 0.113 | 1.259 → 1.245 | 1.051 → 0.153 | 0.098 → 0.060 | 3.2 → 2.3 | 29.9 → 13.4 / 3.7 |
+
+With the new wake/claim scheme an oversubscribed pool costs little (draw
+−0.3% to −2.8%; dispatch drops because fewer threads are posted). So the
+gains against H5 come mostly from the pool mechanics — no `notify_all` of
+every worker, no wait for workers that wake after the work is gone — and
+only partly from the affinity size. **The affinity size is a pinned-benchmark
+artefact for an unpinned desktop**: there the pool is 24 threads before and
+after; the mechanics apply to both.
+
+**Iterations (measured against the same binary's uniform passes, 1280×960,
+`runs/i2-uniform-normal`, `runs/i3-uniform-normal`):**
+
+- I2: a hit's next-build estimate read the entry's vector sizes, cache
+  lines a hit never touches: stationary-mixed `t_geometry` 0.521 → 0.612 ms
+  (+17%), `w_geometry_key` +9%; and a 4-thread cap on the body copy:
+  `t_body_assembly` 0.248 → 0.317 ms (+28%). Both fixed in `590db308`.
+- I3 (both fixed): geometry and copy equal to uniform (stationary-mixed
+  0.312 vs 0.308 ms, 0.128 vs 0.128 ms), but the plan loop walked the
+  entries: `t_schedule_plan` 0.099 ms at 8,752 units.
+- I4 (final): dense cost copy taken at claim + integer `addUnits`:
+  0.030 ms.
+
+**Captures** (separate runs, frames 360, 480–489 and 720; world view and
+full frame): I2 vs H5 — 5 scenes at 1280×960 and 5 at 7680×2160 (small-battle,
+stationary-mixed, moving, total10k-visible, effects), and I2 serial
+(`TAK_RENDER_POOL_THREADS=1`) vs I2 default at 1280×960: 0 differing pixels
+in all 180 comparisons. I4 (final) vs H5 — small-battle, stationary-mixed,
+moving, total10k-visible, effects at both sizes and churn (moving army,
+pan, deaths/respawns, render-target resets) at 1280×960 — and I4 serial
+(`TAK_RENDER_POOL_THREADS=1`) vs I4 default in the same six scenes at
+1280×960: 0 differing pixels in all 204 comparisons (`runs/i4-captures-*`).
+
+**Tests:** `work_schedule` (plans; serial equivalence over 300 random
+plans; targeted wakes; 20,000 back-to-back passes; `addUnits` = per-item
+`add`; ASan/UBSan and TSan clean; ten header mutations fail it),
+`render_telemetry`, `render_schedule` (in game, software renderer, 4-thread
+pool, every pass parallel; four in-game mutations fail it: a geometry
+range, body-copy range, shadow-transform range or point-check range that
+skips its last item), `ctest -L quick` (386/386 at `68021102` and at
+`590db308`). Release
+`takclient` builds without the new debug strings. `--mpai` not run: only
+`src/client` (presentation) and `tools/` changed; every benchmark run checks
+the world hash (identical A vs B in every scene).
+
 ## Known limitations and unsupported paths
+
+- **I: competition with the simulation is not measured.** The render study
+  steps its local simulation inline on the main thread, so no simulation
+  worker, `capturePool_` or server process competes with the pool during the
+  timed frames. Planned passes wake fewer workers where the work is small
+  (small-battle 13.9 → 7.3 per frame), which is what should help a real game,
+  but no frame-matched benchmark exists for that case; no CPUs are reserved
+  for the simulation (would need that measurement).
+- **I: the affinity-sized pool only differs under a CPU restriction.** On an
+  unpinned desktop the pool is `hardware_concurrency` threads before and
+  after I; the benchmark's 8-CPU pin made H5's 24-thread pool oversubscribed.
+  Experiment 11 separates this (pool 24 vs 8 with the new mechanics: draw
+  −0.3% to −2.8%); the mechanics account for most of the gain and apply
+  unpinned too. Windows and macOS use `hardware_concurrency` (no affinity
+  query; unvalidated there).
+- **I: estimates are calibrated on the optimized-Debug build** that every
+  benchmark uses (per-unit key checks there include debug-only environment
+  reads). A release build's per-item costs were not measured; a lower real
+  cost only makes the plans wake slightly more workers than needed.
+- **I: planning alone is neutral on frame time** in the timed scenes (same
+  binary vs the uniform passes, Experiment 11): with 8 CPUs and hundreds of
+  units every large pass still uses every thread; the plan's own cost is
+  0.007–0.030 ms per frame (`t_schedule_plan`).
 
 - **H: forced-completion cost in the GPU-bound dense 7680×2160 view.**
   total10k-visible at 7680×2160 with a `glFinish` per frame: frame total
@@ -3151,6 +3457,27 @@ which stay assembled) — the checklist no longer claims −28% to −36% there.
   `render_shadow_atlas` ctests); Direct3D/Metal/GLES not run.
 
 ## Rejected experiments
+
+- **I, fixed after measurement: a hit's estimate read the entry's vector
+  sizes** (I2 `68021102`). Those headers sit on cache lines a geometry hit
+  never reads otherwise: stationary-mixed 1280×960 `t_geometry` 0.521 →
+  0.612 ms (+17%), worker key time +9% against the same binary's uniform
+  passes. A hit's estimate is now the key check alone (`590db308`).
+- **I, rejected after measurement: capping the body copy at 4 threads**
+  (I2; meant to leave memory bandwidth to others): stationary-mixed
+  `t_body_assembly` 0.248 → 0.317 ms (+28%) against all threads. Removed.
+- **I, superseded: planning the geometry pass by walking the entries** (I3):
+  0.099 ms per frame at 8,752 visible units for the plan loop alone. Now a
+  dense copy of the estimates is taken at claim time, where the entry's
+  first cache line is written anyway, and planned in integer units (0.030
+  ms).
+- **I, considered and not done: tree/chained wake-up of workers, workers
+  spinning before they sleep, CPUs reserved for the simulation.** With up to
+  7 posted workers per pass the dispatch costs 0.006–0.026 ms per frame, and
+  0.18 ms in total10k-visible (cause not established; Experiment 11) — a tree
+  wake could only save part of that; spinning workers would hold CPUs between
+  passes; a reservation needs the unmeasured simulation-concurrent case
+  above.
 
 - **H, rejected after measurement: a mapped write window**
   (`glMapBufferRange` with `GL_MAP_INVALIDATE_RANGE_BIT |
