@@ -150,31 +150,37 @@ int main() try {
             check(d.calm() && !d.moving(),"zoom steps do not gate");
         }
     }
-    // The gate's scope: level 0 only by default. From level 1 the same fast pan (or jump
-    // storm) is not calm but queues work: chunk images are small there and the fallback
-    // draws many more tiles (gating it made zoomed-out fast pans 1.4-3.2x slower).
+    // The gate's scope. Fast motion: level 0 only by default (from level 1 chunk images
+    // are small and the fallback draws many more tiles; gating made zoomed-out fast pans
+    // 1.4-3.2x slower). Jump storms: every level (a storm's views are left within a
+    // second; composing them at level 1 made a 7680x2160 storm 1.7x slower).
     for(int level:{0,1,3}) {
-        for(int variant=0;variant<3;++variant) {
+        for(int variant=0;variant<4;++variant) {
             Params p;
-            if(variant==1)p.calmGateMaxLevel=5;   // debug gateall: every level
+            if(variant==1)p.calmGateMaxLevel=5;    // debug gateall: motion at every level
             if(variant==2)p.calmGate=false;
+            if(variant==3)p.stormGateMaxLevel=0;   // debug stormlevel0
             Demand d;const Rect r{10,10,13,12};const float vw=4096,vh=3072,cy0=11.5f*kSpan;
             float x=12.f*kSpan;uint64_t t=0,f=0;
             const auto step=[&](float dx) {x+=dx;t+=16;d.update(level,r,x,cy0,vw,vh,kSpan,32,32,t,++f,p);};
             step(0);check(!d.gated(),"a fresh view is not gated");
             step(4096*1.0f*16/1000);                     // 1 view/s
-            check(!d.calm(),"a fast pan is not calm at any level");
-            const bool want=variant!=2 && (level==0 || variant==1);
-            check(d.gated()==want,"the gate applies at level 0 only (or every level with gateall; never when off)");
-            // Jump storm at this level.
+            check(!d.motionCalm() && d.stormCalm(),"a fast pan is motion, not a storm, at any level");
+            check(d.gated()==(variant!=2 && (level==0 || variant==1)),
+                  "fast motion gates at level 0 only (every level with gateall; never when off)");
             for(int i=0;i<20;++i)step(0);
-            check(d.calm(),"fixture: calm before the storm");
+            check(d.calm() && !d.gated(),"fixture: calm before the storm");
             d.update(level,Rect{20,20,23,22},22.f*kSpan,21.5f*kSpan,vw,vh,kSpan,32,32,t+=16,++f,p);
+            check(!d.gated(),"a single jump is not gated at any level");
             d.update(level,r,12.f*kSpan,cy0,vw,vh,kSpan,32,32,t+=300,++f,p);
-            check(!d.calm() && d.gated()==want,"a jump storm gates at level 0 only");
+            check(d.motionCalm() && !d.stormCalm(),"a second jump within the window is a storm, not motion");
+            check(d.gated()==(variant!=2 && (level==0 || variant!=3)),
+                  "a jump storm gates at every level (level 0 only with stormlevel0; never when off)");
+            d.update(level,r,12.f*kSpan,cy0,vw,vh,kSpan,32,32,t+=p.calmMs,++f,p);
+            check(!d.gated(),"calm again after the storm");
         }
     }
-    check(Params{}.calmGateMaxLevel==0,"default gate scope: level 0");
+    check(Params{}.calmGateMaxLevel==0 && Params{}.stormGateMaxLevel>=5,"default gate scope: motion level 0, storms every level");
     // Eviction ranks.
     {
         Params p,legacy=Params::legacy();

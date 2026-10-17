@@ -220,6 +220,25 @@ int main(int argc,char** argv) try {
             const auto [gatedAll,queuedAll]=pan(all);
             check(gatedAll>=9 && queuedAll==0,"gateall: the same pan is gated (fixture discriminates)");
         }
+        // 8c. Jump storms are gated at every level: zoomed out (level 1) a second jump within
+        //     the storm window queues nothing (a storm's views are left before their work
+        //     pays off). stormlevel0 (debug) queues them (fixture discriminates).
+        {
+            const auto storm=[&](const Params& p) {
+                MapView k(renderer,vfs,mapId);k.setScheduleParams(p);
+                const float at[4][2]={{1000,1000},{12000,1000},{12000,12000},{1000,12000}};
+                frame(k,at[0][0],at[0][1],.45f);
+                const auto before=k.chunkStats();
+                for(int f=1;f<=12;++f)frame(k,at[f%4][0],at[f%4][1],.45f);   // a jump every frame
+                const auto after=k.chunkStats();
+                return std::pair{after.framesGated-before.framesGated,after.jobsQueued-before.jobsQueued};
+            };
+            const auto [gated,queued]=storm(Params{});
+            check(gated>=11 && queued<=12,"level 1: a jump storm is gated (only the first jump queues: one 4 x 3-cell view)");
+            Params level0;level0.stormGateMaxLevel=0;
+            const auto [gated0,queued0]=storm(level0);
+            check(gated0==0 && queued0>12,"stormlevel0: the storm queues every view (fixture discriminates)");
+        }
         // 9. Holes first: in a frame that still has holes after prepare(), completed upgrades
         //    (cells another level's image stands in for) wait until after the fallback has
         //    drawn (uploadDeferred), so this frame still shows their stand-ins. View P at

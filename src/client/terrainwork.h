@@ -66,13 +66,16 @@ struct Params {
     // section fallback draws those cells at full detail meanwhile (texel-identical to a
     // chunk), and with no reuse ahead a 4 MiB chunk upload per cell costs the render
     // thread more than the fallback it replaces (measured; see the progress record,
-    // workstream K). Only up to calmGateMaxLevel: from level 1 a chunk image is 4^level
-    // times smaller while the fallback still draws every 32-px tile (4^level times more
-    // tiles per screen pixel, resampled), so gating there made zoomed-out fast pans
-    // 1.4-3.2x slower (measured).
+    // workstream K). Fast motion only up to calmGateMaxLevel: from level 1 a chunk image
+    // is 4^level times smaller while the fallback still draws every 32-px tile (4^level
+    // times more tiles per screen pixel, resampled), and a panned-over cell stays in view
+    // long enough for its image to pay off, so gating there made zoomed-out fast pans
+    // 1.4-3.2x slower (measured). Jump storms at every level (stormGateMaxLevel): a
+    // storm's views are left within a second, and composing + uploading them at level 1
+    // made a 7680x2160 jump storm 1.7x slower (measured).
     float fastViewsPerSecond=0.5f;
     uint64_t calmMs=250,jumpStormMs=1000;
-    int calmGateMaxLevel=0;
+    int calmGateMaxLevel=0,stormGateMaxLevel=5;
     bool prioritize=true;       // worker takes the most urgent queued job (else FIFO)
     bool cancel=true;           // obsolete jobs are cancelled (else only clear()/invalidate() cancel)
     bool calmGate=true;         // pause new work during fast motion / jump storms
@@ -121,7 +124,7 @@ public:
                     if(views>p.fastViewsPerSecond) {fastMs_=nowMs;fastSeen_=true;}
                 }
             } else {   // a jump: a second one within the storm window gates new work too
-                if(jumpSeen_ && nowMs-lastJumpMs_<p.jumpStormMs) {fastMs_=nowMs;fastSeen_=true;}
+                if(jumpSeen_ && nowMs-lastJumpMs_<p.jumpStormMs) {stormMs_=nowMs;stormSeen_=true;}
                 lastJumpMs_=nowMs;jumpSeen_=true;
             }
         }
@@ -157,9 +160,15 @@ public:
     }
     bool moving() const {return dirX_ || dirY_;}
     // No fast motion or jump storm within calmMs (see Params): new work may be queued.
-    bool calm() const {return !fastSeen_ || nowMs_-fastMs_>=params_.calmMs;}
-    // The calm gate holds back new work this frame (Params::calmGate, up to calmGateMaxLevel).
-    bool gated() const {return params_.calmGate && level_<=params_.calmGateMaxLevel && !calm();}
+    bool calm() const {return motionCalm() && stormCalm();}
+    bool motionCalm() const {return !fastSeen_ || nowMs_-fastMs_>=params_.calmMs;}
+    bool stormCalm() const {return !stormSeen_ || nowMs_-stormMs_>=params_.calmMs;}
+    // The calm gate holds back new work this frame (Params::calmGate): fast motion up to
+    // calmGateMaxLevel, jump storms up to stormGateMaxLevel.
+    bool gated() const {
+        return params_.calmGate && ((level_<=params_.calmGateMaxLevel && !motionCalm()) ||
+                                    (level_<=params_.stormGateMaxLevel && !stormCalm()));
+    }
     bool levelInGrace() const {
         return previousLevel_>=0 && (nowMs_-levelChangedMs_<params_.levelGraceMs || frame_-levelChangedFrame_<params_.levelGraceFrames);
     }
@@ -173,9 +182,9 @@ public:
 private:
     Params params_;
     int level_=-1,previousLevel_=-1,span_=1,dirX_=0,dirY_=0;
-    uint64_t levelChangedMs_=0,levelChangedFrame_=0,nowMs_=0,frame_=0,speedMs_=0,fastMs_=0,lastJumpMs_=0;
+    uint64_t levelChangedMs_=0,levelChangedFrame_=0,nowMs_=0,frame_=0,speedMs_=0,fastMs_=0,stormMs_=0,lastJumpMs_=0;
     float lastX_=0,lastY_=0,lastW_=0,lastH_=0,centerX_=0,centerY_=0,speedX_=0,speedY_=0;
-    bool hasLast_=false,fastSeen_=false,jumpSeen_=false;
+    bool hasLast_=false,fastSeen_=false,stormSeen_=false,jumpSeen_=false;
     Rect visible_,guard_,keep_;
 };
 

@@ -412,7 +412,7 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
         else uploadReady(renderer,ub,false,true);
     }
     // New work for visible cells, most urgent first (legacy: row order) -- not while the
-    // camera moves fast or jumps repeatedly at level 0 (the calm gate): the fallback
+    // camera moves fast at level 0 or jumps repeatedly (the calm gate): the fallback
     // draws them.
     if(demand_.gated()) {++framesGated_;return;}
     const auto queue=[&](const Key& key,uint32_t priority,bool nearby) {
