@@ -62,11 +62,19 @@ public:
 
     // CPU budget for decoded sections (bytes). Default: unbounded -- the editor's
     // validators, thumbnails and tools decode what they ask for. When an insertion
-    // takes the cache above `high`, the least recently used UNPINNED images are
+    // takes the cache above `high`, the least recently used EVICTABLE images are
     // evicted until it is at or below `low` (hysteresis: one eviction burst per
-    // excursion, not one per insertion). Pinned images are never evicted, so the
-    // cache may exceed `high` while consumers hold more than that.
-    void setBudget(size_t high, size_t low);
+    // excursion, not one per insertion). Evictable = unpinned and, when the owner
+    // supplies a clock (setClockMs) and `minIdleMs` > 0, unused for minIdleMs: the
+    // budget bounds the COLD images, never the working set of the last minIdleMs, so
+    // a camera that keeps revisiting more than the budget does not decode the same
+    // sections over and over; once they go cold, trim() brings the cache back.
+    // Pinned or young images make the cache exceed `high` for as long as that lasts.
+    void setBudget(size_t high, size_t low, uint64_t minIdleMs = 0);
+    // The owner's clock (ms) for the working-set rule: wall time in play, the render
+    // study's presentation clock in benchmarks. Any thread may read it; the owner
+    // updates it (MapView: once per frame). Without it no image counts as young.
+    void setClockMs(uint64_t ms);
 
     // Evict to the low mark if the cache is above the high mark. Insertions do this
     // themselves; consumers call it after releasing pins (a compose job that held
@@ -87,13 +95,16 @@ public:
         uint64_t decodes = 0;      // JPEG decodes performed
         uint64_t redecodes = 0;    // ... of keys this cache had decoded and evicted before
         uint64_t evictions = 0;    // images dropped by the budget
+        size_t youngBytes = 0;     // unpinned images inside the working-set window (not evictable)
         uint64_t evictedBytes = 0;
     };
     Stats stats();
 
 private:
     using Id = std::pair<uint32_t, bool>;
-    struct Entry { SectionRef image; size_t bytes = 0; uint64_t lastUse = 0; };
+    struct Entry { SectionRef image; size_t bytes = 0; uint64_t lastUse = 0, lastUseMs = 0; };
+    bool evictableLocked(const Entry& e) const;
+    void touchLocked(Entry& e);
     // Under mu_: record a use / insert a decoded image, evicting past the budget.
     // Evicted refs are moved into `dropped` so their memory is freed after unlocking.
     void insertLocked(const Id& id, SectionRef image, std::vector<SectionRef>& dropped);
@@ -108,6 +119,8 @@ private:
     std::set<Id> evicted_;                    // keys evicted at least once (redecode count)
     size_t used_ = 0, peak_ = 0;
     size_t high_ = SIZE_MAX, low_ = SIZE_MAX;
+    uint64_t minIdleMs_ = 0, nowMs_ = 0;
+    bool clockSet_ = false;
     uint64_t clock_ = 0;                      // use order for LRU
     uint64_t decodes_ = 0, redecodes_ = 0, evictions_ = 0, evictedBytes_ = 0;
 };

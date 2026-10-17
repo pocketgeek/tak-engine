@@ -38,12 +38,34 @@ void Compositor::clear() {
     // Images freed here (or by their last holder), outside the lock.
 }
 
-void Compositor::setBudget(size_t high, size_t low) {
+void Compositor::setBudget(size_t high, size_t low, uint64_t minIdleMs) {
     std::vector<SectionRef> dropped;
     std::lock_guard<std::mutex> lk(mu_);
     high_ = high;
     low_ = std::min(low, high);
+    minIdleMs_ = minIdleMs;
     if (used_ > high_) evictLocked(low_, dropped);
+}
+
+void Compositor::setClockMs(uint64_t ms) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (clockSet_ && ms < nowMs_)   // the clock restarted: forget the old use times
+        for (auto& [id, e] : cache_) e.lastUseMs = ms;
+    nowMs_ = ms;
+    clockSet_ = true;
+}
+
+void Compositor::touchLocked(Entry& e) {
+    e.lastUse = ++clock_;
+    e.lastUseMs = nowMs_;
+}
+
+bool Compositor::evictableLocked(const Entry& e) const {
+    // use_count() == 1 under the lock is exact: the only other way to obtain a
+    // reference is through this cache, which needs the lock, and copying a
+    // consumer's ref requires one to exist.
+    if (e.image.use_count() != 1) return false;   // pinned
+    return !clockSet_ || !minIdleMs_ || nowMs_ - e.lastUseMs >= minIdleMs_;
 }
 
 void Compositor::trim() {
@@ -63,7 +85,7 @@ SectionRef Compositor::cachedSection(uint32_t key, bool stockTerrain, bool* abse
     if (absent) *absent = absent_.count(id) != 0;
     auto it = cache_.find(id);
     if (it == cache_.end()) return {};
-    it->second.lastUse = ++clock_;
+    touchLocked(it->second);
     return it->second.image;
 }
 
@@ -73,7 +95,7 @@ SectionRef Compositor::sectionImage(uint32_t key, bool stockTerrain) {
         std::unique_lock<std::mutex> lk(mu_);
         for (;;) {
             if (auto it = cache_.find(id); it != cache_.end()) {
-                it->second.lastUse = ++clock_;
+                touchLocked(it->second);
                 return it->second.image;
             }
             if (absent_.count(id)) break;
@@ -117,7 +139,7 @@ void Compositor::insertLocked(const Id& id, SectionRef image, std::vector<Sectio
     Entry e;
     e.bytes = image->rgba.capacity();
     e.image = std::move(image);
-    e.lastUse = ++clock_;
+    touchLocked(e);
     auto [it, added] = cache_.try_emplace(id, std::move(e));
     if (!added) return;   // inserted meanwhile (after a clear() raced a decode): keep the first
     used_ += it->second.bytes;
@@ -126,15 +148,13 @@ void Compositor::insertLocked(const Id& id, SectionRef image, std::vector<Sectio
 }
 
 void Compositor::evictLocked(size_t target, std::vector<SectionRef>& dropped) {
-    // Least recently used first, skipping pinned images. use_count() == 1 under the
-    // lock is exact: the only other way to obtain a reference is through this cache,
-    // which needs the lock, and copying a consumer's ref requires one to exist.
+    // Least recently used first, skipping pinned images and the working set.
     while (used_ > target) {
         auto victim = cache_.end();
         for (auto it = cache_.begin(); it != cache_.end(); ++it)
-            if (it->second.image.use_count() == 1 &&
+            if (evictableLocked(it->second) &&
                 (victim == cache_.end() || it->second.lastUse < victim->second.lastUse)) victim = it;
-        if (victim == cache_.end()) break;   // everything left is pinned
+        if (victim == cache_.end()) break;   // everything left is pinned or in use
         used_ -= victim->second.bytes;
         ++evictions_;
         evictedBytes_ += victim->second.bytes;
@@ -152,8 +172,10 @@ Compositor::Stats Compositor::stats() {
     s.entries = cache_.size();
     s.highBytes = high_;
     s.lowBytes = low_;
-    for (const auto& [id, e] : cache_)
+    for (const auto& [id, e] : cache_) {
         if (e.image.use_count() > 1) s.pinnedBytes += e.bytes;
+        else if (!evictableLocked(e)) s.youngBytes += e.bytes;
+    }
     s.decodes = decodes_;
     s.redecodes = redecodes_;
     s.evictions = evictions_;

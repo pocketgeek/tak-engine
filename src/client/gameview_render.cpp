@@ -3640,6 +3640,7 @@
         stats.add(RS::TerrainMipTrims, delta(chunks.mipTrims, cursor.chunks.mipTrims));
         stats.set(RS::TerrainSectionCpuBytes, sections.cpu.usedBytes);
         stats.set(RS::TerrainSectionPinnedBytes, sections.cpu.pinnedBytes);
+        stats.set(RS::TerrainSectionYoungBytes, sections.cpu.youngBytes);
         stats.set(RS::TerrainSectionPeakBytes, sections.cpu.peakBytes);
         stats.add(RS::TerrainSectionEvictions, delta(sections.cpu.evictions, cursor.sections.cpu.evictions));
         stats.add(RS::TerrainSectionRedecodes, delta(sections.cpu.redecodes, cursor.sections.cpu.redecodes));
@@ -3715,7 +3716,9 @@
         const uint64_t geomUsed = stats.get(RS::GeomPoolUsedBytes), geomCapacity = stats.get(RS::GeomPoolCapacityBytes);
         const uint64_t geomPinned = stats.get(RS::GeomPinnedBytes);
         const uint64_t arenaCpu = stats.get(RS::ArenaCpuBytes), distantMeta = stats.get(RS::DistantMetadataBytes);
-        const uint64_t sectionUsed = sections.cpu.usedBytes, sectionPinned = sections.cpu.pinnedBytes;
+        // Sections a consumer holds or the camera used within the working-set window
+        // are not evictable now.
+        const uint64_t sectionUsed = sections.cpu.usedBytes, sectionPinned = sections.cpu.pinnedBytes + sections.cpu.youngBytes;
         const uint64_t mipUsed = chunks.mipBytes, mipPinned = chunks.mipPinnedBytes;
         // used: bytes holding this frame's data or cached content; retained: allocated.
         const uint64_t frameUsed = bodyUsed + listUsed + scratchUsed + workerUsed + modelUsed;

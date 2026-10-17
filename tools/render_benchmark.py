@@ -116,6 +116,13 @@ SCENES = {
                            segments={"army": (300, 450), "corner": (450, None)},
                            notes="6000 units zoomed out (several distant-image pages), then from frame "
                                  "450 a corner of the army: images expire, pages are released"),
+    # Workstream J: a map whose decoded sections (238 MiB) exceed the 128 MiB CPU
+    # budget, under the pan + continuous zoom path: sections are evicted/re-decoded
+    # and the mip cache fills (pre-J builds keep every section decoded).
+    "bigmap-zoom": dict(map="Middle Earth V1", count=300, zoom=1.0,
+                        env={"TAK_RENDER_CAMERA": "1", "TAK_RENDER_ZOOM": "1"},
+                        notes="pan + continuous zoom 0.25..1.0 on Middle Earth V1 (255 sections, "
+                              "238 MiB decoded: above the CPU section budget)"),
 }
 QUICK = ["small-battle", "stationary-mixed", "moving", "pan"]
 SIZES = {"normal": (1280, 960), "uhd": (7680, 2160)}
@@ -547,12 +554,23 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "shadow_atlas_shelf_free_px",
                     # workstream I: cost-planned pool passes
                     "pool_posted", "pool_idle_wakes", "pool_chunks", "sched_geometry_threads",
-                    "sched_shadow_threads", "sched_copy_threads", "sched_geometry_estimate_us"]
+                    "sched_shadow_threads", "sched_copy_threads", "sched_geometry_estimate_us",
+                    # workstream J: CPU budgets (per-frame events)
+                    "cpu_trims", "cpu_trim_bytes", "terrain_section_decodes", "terrain_section_evictions",
+                    "terrain_section_redecodes", "terrain_section_prefetch_skipped", "terrain_mip_evictions",
+                    "terrain_mip_regens", "terrain_mip_trims"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",
                    "terrain_section_cpu_bytes", "gpu_tracked_bytes", "geom_retained_bytes",
-                   "geom_warm_free_bytes", "shadow_atlas_gpu_bytes"]
+                   "geom_warm_free_bytes", "shadow_atlas_gpu_bytes",
+                   # workstream J: CPU budgets (gauges; totals exclude GPU memory and RSS)
+                   "geom_pinned_bytes", "worker_scratch_used_bytes", "worker_scratch_capacity_bytes",
+                   "terrain_section_pinned_bytes", "terrain_section_young_bytes", "terrain_section_peak_bytes",
+                   "terrain_mip_pinned_bytes",
+                   "terrain_mip_peak_bytes", "arena_cpu_bytes", "distant_metadata_bytes",
+                   "cpu_cache_used_bytes", "cpu_cache_retained_bytes", "cpu_cache_pinned_bytes",
+                   "cpu_cache_evictable_bytes", "cpu_cache_peak_bytes"]
 
 
 def metric(result, path):

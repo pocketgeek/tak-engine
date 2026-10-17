@@ -130,6 +130,10 @@ public:
     // pre-J one: every referenced section decoded at load and kept.
     static constexpr size_t kSectionCpuHigh = size_t(128) << 20;
     static constexpr size_t kSectionCpuLow = size_t(112) << 20;
+    // Sections used within this window are the camera's working set and are never
+    // evicted (no decode/evict cycles while it keeps revisiting more than the
+    // budget); the budget applies once they have been cold this long.
+    static constexpr uint64_t kSectionMinIdleMs = 10000;
     // Every queued section JPG decoded (or skipped) and taken in. Tests only.
     bool sectionsDecoded() {
         std::lock_guard<std::mutex> lk(secMu_);

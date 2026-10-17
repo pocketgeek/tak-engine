@@ -19,14 +19,17 @@ uint64_t steadyNs() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 // Debug: TAK_TERRAIN_SECTION_BUDGET_MIB=N sets the decoded-section budget's high
-// mark (low = 7/8 of it); release builds always use the defaults.
+// mark (low = 7/8 of it), TAK_TERRAIN_SECTION_MIN_IDLE_MS=N the working-set window;
+// release builds always use the defaults.
 void applySectionBudget(tak::terrain::Compositor& comp) {
     size_t high = MapView::kSectionCpuHigh, low = MapView::kSectionCpuLow;
+    uint64_t minIdle = MapView::kSectionMinIdleMs;
     if (const char* v = tak::devEnv("TAK_TERRAIN_SECTION_BUDGET_MIB")) {
         high = size_t(std::max(1L, std::atol(v))) << 20;
         low = high - high / 8;
     }
-    comp.setBudget(high, low);
+    if (const char* v = tak::devEnv("TAK_TERRAIN_SECTION_MIN_IDLE_MS")) minIdle = uint64_t(std::max(0L, std::atol(v)));
+    comp.setBudget(high, low, minIdle);
 }
 // Debug: TAK_TERRAIN_MIP_BUDGET_MIB=N (low = 7/8 of it), TAK_TERRAIN_MIP_IDLE_MS=N.
 void applyMipBudget(tak::TerrainChunks& chunks) {
@@ -337,7 +340,8 @@ void MapView::draw(int winW, int winH) {
     // chunks use the original tile geometry while the worker prepares them.
     ++frame_;
     pinning_=std::exchange(pinNext_,false);
-    comp_.trim();   // over the CPU budget only while pins held more (a cheap check otherwise)
+    comp_.setClockMs(nowMs());
+    comp_.trim();   // over the CPU budget only while pins or the working set held more
     chunksEnabled_=!tak::devFlag("TAK_TERRAIN_CACHE_OFF");
     if(chunksEnabled_) {
         chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_,nowMs());

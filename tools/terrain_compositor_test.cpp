@@ -182,6 +182,37 @@ void budget() {
     check(!c.admitsPrefetch(s), "full to the low watermark: prefetch refused");
 }
 
+void workingSet() {
+    // With an owner clock, images used within minIdleMs are never evicted: the budget
+    // bounds cold images only; trim() brings the cache back once they go cold.
+    Fixture f(8);
+    Compositor c(f.vfs);
+    const size_t s = f.bytes;
+    c.setBudget(s * 3, s * 2, 1000);
+    c.setClockMs(0);
+    for (uint32_t k = 1; k <= 6; ++k) c.sectionImage(k);
+    auto st = c.stats();
+    check(st.evictions == 0 && st.usedBytes == 6 * s, "the working set exceeds the budget, nothing evicted");
+    check(st.youngBytes == 6 * s, "young bytes reported");
+    c.setClockMs(600);
+    c.cachedSection(5); c.cachedSection(6);   // still in use
+    c.setClockMs(1200);                        // 1..4 cold now, 5 and 6 used 600 ms ago
+    c.trim();
+    st = c.stats();
+    check(st.evictions == 4 && st.usedBytes == 2 * s, "cold images evicted down to the low mark");
+    check(c.cachedSection(5) && c.cachedSection(6), "the working set stays");
+    // A decode/evict cycle inside the window does not happen: revisiting keys keeps them.
+    for (int round = 0; round < 20; ++round) {
+        c.setClockMs(1200 + uint64_t(round) * 100);
+        for (uint32_t k = 1; k <= 8; ++k) c.sectionImage(k);
+    }
+    check(c.stats().redecodes == 4, "revisited keys are decoded again once, then kept");
+    // A clock that restarts (new session) does not make everything cold or ancient.
+    c.setClockMs(10);
+    c.trim();
+    check(c.stats().usedBytes == 8 * s, "a restarted clock keeps the working set");
+}
+
 void noThrash() {
     // A cyclic working set inside the low watermark decodes each key once.
     Fixture f(6);
@@ -233,6 +264,7 @@ void concurrent() {
 int main() {
     basics();
     budget();
+    workingSet();
     noThrash();
     concurrent();
     if (failures) { std::fprintf(stderr, "terrain_compositor: %d failure(s)\n", failures); return 1; }

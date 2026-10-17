@@ -375,6 +375,7 @@ enum class Counter : uint8_t {
     TerrainSectionEvictions,   // per frame: decoded sections dropped by the CPU budget
     TerrainSectionRedecodes,   // per frame: decodes of sections evicted earlier
     TerrainSectionPrefetchSkipped, // per frame: load-time prefetches refused (budget full)
+    TerrainSectionYoungBytes,  // unpinned sections used within the working-set window (not evictable)
     TerrainMipPinnedBytes,     // mip images the running compose job holds
     TerrainMipPeakBytes,
     TerrainMipEvictions,       // per frame: mip images dropped by the CPU budget
@@ -460,7 +461,8 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "pool_posted", "pool_idle_wakes", "pool_chunks", "sched_geometry_threads", "sched_shadow_threads",
     "sched_copy_threads", "sched_geometry_estimate_us",
     "terrain_section_pinned_bytes", "terrain_section_peak_bytes", "terrain_section_evictions",
-    "terrain_section_redecodes", "terrain_section_prefetch_skipped", "terrain_mip_pinned_bytes",
+    "terrain_section_redecodes", "terrain_section_prefetch_skipped", "terrain_section_young_bytes",
+    "terrain_mip_pinned_bytes",
     "terrain_mip_peak_bytes", "terrain_mip_evictions", "terrain_mip_regens", "terrain_mip_trims",
     "cpu_trims", "cpu_trim_bytes", "worker_scratch_used_bytes", "worker_scratch_capacity_bytes",
     "geom_pinned_bytes", "cpu_cache_used_bytes", "cpu_cache_retained_bytes",
