@@ -352,7 +352,86 @@ void trapped() {
         check(f.world.legionStats().trapped>=1,"trapped classification not recorded after churn on another island");
         for(const int id:outside)check(f.world.unit(id)->orders.empty(),"free unit did not arrive after churn on another island");
     }
+    // Legion 10,000 stage 7: the same island, churn that never stops (an improvement every other change, all on the
+    // far island). A trapped member re-registers only after an improvement touching its own component's box
+    // (trappedReopened), so its grace runs out and the order retires (until stage 7 every change anywhere restarted
+    // it: c2c25707's island-forever, inherited through stage 6). Then the same churn with the pocket opened at tick
+    // 300: that improvement touches the pocket, the member re-registers and arrives.
+    for(const bool opens:{false,true}) {
+        Fixture f(256,64);
+        f.rect(126,0,4,64);
+        f.rect(18,18,12,2);f.rect(18,28,12,2);f.rect(18,18,2,12);f.rect(28,18,2,12);
+        f.publish();
+        const auto type=mover(2);
+        const int inside=f.spawn(type,23,23);
+        f.start();
+        f.world.order(inside,100*16,32*16,false);
+        int clearedAt=-1;
+        for(int t=0;t<9400&&clearedAt<0;++t) {
+            if(t>=20&&t%10==0)f.world.addFeature(30*256+200,200*16+16.f,30*16+16.f,0,1,2,2,(t/10)%2==0,-1,true);
+            if(opens&&t==300) {f.open(28,22,2,4);f.publish();}
+            f.world.tick(1.f/30);
+            if(f.world.unit(inside)->orders.empty())clearedAt=t;
+        }
+        const auto a=f.world.legionNavigator()->accounting();
+        std::printf("trapped churn=forever opens=%d cleared_at=%d kept=%llu reopened=%llu\n",int(opens),clearedAt,
+                    (unsigned long long)a.trappedKept,(unsigned long long)a.trappedReopened);
+        if(!opens) {
+            check(clearedAt>=8950&&clearedAt<=9200,"trapped order did not retire under never-ending churn on another island");
+            check(a.trappedKept>0&&a.trappedReopened==0,"trapped member re-registered on changes that could not reopen it");
+        } else {
+            const auto& u=*f.world.unit(inside);
+            check(clearedAt>=0&&clearedAt<3000,"trapped member did not resume when its pocket opened under churn");
+            check(std::abs(u.x.toFloat()-1600)<24&&std::abs(u.z.toFloat()-512)<24,"reopened trapped member did not reach its goal");
+            check(a.trappedReopened>0,"the pocket's opening was not seen as a reopening");
+        }
+    }
 }
+
+// Legion 10,000 stage 7: closures apart from improvements. A group walks east on its field; a 2x2 rock off its way
+// (inside the field's window) is lifted at tick 60 -- an improvement only: the route is touched (its "unreached" no
+// longer proves anything) but keeps steering, and its refresh waits kImproveDefer (150) ticks; a rock placed at
+// tick 400 -- a closure -- makes it stale at once. Every body arrives.
+void improvedefer() {
+    Fixture f(160,64);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<4;++i)ids.push_back(f.spawn(type,6+(i%2)*3,30+(i/2)*3));
+    f.start();
+    f.world.addFeature(10*160+80,80*16+16.f,10*16+16.f,0,1,2,2,true,-1,true);   // a rock off the way
+    for(const int id:ids)f.world.order(id,150*16,32*16,false);
+    const auto* nav=f.world.legionNavigator();
+    auto acct=[&] {return nav->accounting();};
+    uint64_t opened=0,closed=0,promoted=0;
+    int done=-1;
+    for(int t=0;t<4000&&done<0;++t) {
+        if(t==60) {
+            f.world.addFeature(10*160+80,80*16+16.f,10*16+16.f,0,1,2,2,false,-1,true);   // lifted: an improvement
+            opened=acct().routesOpened;closed=acct().routesClosed;promoted=acct().improveRefreshes;
+        }
+        if(t==62) {
+            check(acct().routesOpened>opened,"improvedefer: the lifted rock did not reach the route as an improvement");
+            check(acct().routesClosed==closed,"improvedefer: an improvement was taken for a closure");
+        }
+        if(t==60+140)check(acct().improveRefreshes==promoted,"improvedefer: the improvement refresh was not deferred");
+        if(t==60+160)check(acct().improveRefreshes==promoted+1,"improvedefer: the deferred improvement refresh never came");
+        if(t==400) {
+            closed=acct().routesClosed;
+            f.world.addFeature(54*160+100,100*16+16.f,54*16+16.f,0,1,2,2,true,-1,true);   // placed off the way: a closure
+        }
+        if(t==402)check(acct().routesClosed>closed,"improvedefer: the placed rock did not reach the route as a closure");
+        f.world.tick(1.f/30);
+        bool all=true;for(const int id:ids)all&=f.world.unit(id)->orders.empty();
+        if(all)done=t;
+    }
+    const auto a=acct();
+    std::printf("improvedefer done=%d opened=%llu closed=%llu improve_refreshes=%llu improve_demands=%llu\n",done,
+                (unsigned long long)a.routesOpened,(unsigned long long)a.routesClosed,(unsigned long long)a.improveRefreshes,
+                (unsigned long long)a.improveDemands);
+    check(done>=0,"improvedefer: a body did not arrive");
+}
+
 
 void longroute() {
     // A connected route farther than 16-bit potentials reach: the serpentine
@@ -4017,7 +4096,8 @@ int main(int argc,char** argv) {
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
-        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"entryplanes",entryplanes}};
+        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"entryplanes",entryplanes},
+        {"improvedefer",improvedefer}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

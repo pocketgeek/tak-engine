@@ -138,6 +138,19 @@ struct NavAccounting {
     uint64_t chains = 0, tilesBuilt = 0, tileHits = 0, tileEvictions = 0, tileBytesPeak = 0, chainSkips = 0, chainAbandons = 0;
     uint64_t chainRepairs = 0;   // halo regions attached because a member stepped into one
     uint64_t tileCrossHits = 0;  // tile hits by a route to other goals than the route that built the tile
+    // ---- Stage 7 (static navigation apart from traffic; each stays 0 until the step that builds its mechanism) ----
+    // Static changes: routes a closure reached (refreshed at once) and routes only improvements reached (refresh
+    // deferred), deferred refreshes promoted by time and by a member's need, trapped members kept trapped through a
+    // change that could not reopen their component (and re-registered by one that could).
+    uint64_t routesClosed = 0, routesOpened = 0, improveRefreshes = 0, improveDemands = 0, trappedKept = 0, trappedReopened = 0;
+    uint64_t chainResolves = 0;   // chain regions re-resolved on new geometry (their dirty tile rebuilt, the route kept)
+    uint64_t planRepairs = 0;     // chain refreshes that repaired the plan instead of searching again
+    // Traffic: sector traffic counts recomputed and region steps the coarse search charged for traffic; members stamped
+    // as standing jams (soft to other orders); traffic corrections (tiles whose key holds the route's traffic view,
+    // apart from the static terrain tiles) built and found in their own cache.
+    uint64_t trafficSectors = 0, trafficCharges = 0;
+    uint64_t jamStamps = 0;
+    uint64_t correctionsBuilt = 0, correctionHits = 0;
 };
 
 // Per-tick budgets (constants: the same on every peer). Units and the reference cost per unit

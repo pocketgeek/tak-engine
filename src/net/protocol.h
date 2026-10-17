@@ -19,7 +19,14 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 270;      // 270: Legion hierarchical routes (Legion 10,000 stage 6; Retail bit-identical): long routes planned over a
+constexpr uint32_t kNetVersion = 271;      // 271: Legion static navigation apart from traffic (Legion 10,000 stage 7; Retail bit-identical):
+                                           //      static changes reach routes per cluster as closures (refresh at once) or
+                                           //      improvements (refresh deferred), trapped orders re-register only on an improvement
+                                           //      that could reopen them, chains re-resolve relabelled regions and repair their plan,
+                                           //      standing jams are traffic to other orders (soft stamps, jam detours), the region
+                                           //      search charges traffic, static tiles apart from traffic corrections; new hashed
+                                           //      state: deferred improvement refreshes, the reroute flag. 270 replays refused
+                                           // 270: Legion hierarchical routes (Legion 10,000 stage 6; Retail bit-identical): long routes planned over a
                                            //      sector/region/portal hierarchy, built as corridors or (low demand) as tile chains over shared
                                            //      tiles; new hashed state: route kinds and plans, corridor widenings, the demand rule's state, the
                                            //      tile cache digest, chain progress and repairs. 269 replays refused

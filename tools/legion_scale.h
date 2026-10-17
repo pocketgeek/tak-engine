@@ -356,6 +356,19 @@ public:
                 k.emplace_back(p + "route.chain_abandons", int64_t(a.chainAbandons));
                 k.emplace_back(p + "route.chain_repairs", int64_t(a.chainRepairs));
                 k.emplace_back(p + "route.tile_cross_hits", int64_t(a.tileCrossHits));
+                k.emplace_back(p + "static.routes_closed", int64_t(a.routesClosed));
+                k.emplace_back(p + "static.routes_opened", int64_t(a.routesOpened));
+                k.emplace_back(p + "static.improve_refreshes", int64_t(a.improveRefreshes));
+                k.emplace_back(p + "static.improve_demands", int64_t(a.improveDemands));
+                k.emplace_back(p + "static.trapped_kept", int64_t(a.trappedKept));
+                k.emplace_back(p + "static.trapped_reopened", int64_t(a.trappedReopened));
+                k.emplace_back(p + "static.chain_resolves", int64_t(a.chainResolves));
+                k.emplace_back(p + "static.plan_repairs", int64_t(a.planRepairs));
+                k.emplace_back(p + "traffic.sectors", int64_t(a.trafficSectors));
+                k.emplace_back(p + "traffic.charges", int64_t(a.trafficCharges));
+                k.emplace_back(p + "traffic.jam_stamps", int64_t(a.jamStamps));
+                k.emplace_back(p + "traffic.corrections_built", int64_t(a.correctionsBuilt));
+                k.emplace_back(p + "traffic.correction_hits", int64_t(a.correctionHits));
             }
         }
     }

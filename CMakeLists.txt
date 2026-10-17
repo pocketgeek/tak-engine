@@ -403,6 +403,13 @@ foreach(legion_case chains chainschurn chainplane)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
   set_tests_properties(legion_${legion_case} PROPERTIES LABELS "legion" ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()
+# Legion 10,000 stage 7 (static navigation apart from traffic): an improvement defers its route's refresh while a
+# closure refreshes at once (improvedefer); and (trapped) a trapped order retires under never-ending churn elsewhere,
+# all under TAK_LEGION_VERIFY.
+foreach(legion_case improvedefer)
+  add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
+  set_tests_properties(legion_${legion_case} PROPERTIES LABELS "legion" ENVIRONMENT TAK_LEGION_VERIFY=1)
+endforeach()
 foreach(legion_probe pocket deadend tail)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)

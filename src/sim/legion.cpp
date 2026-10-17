@@ -104,6 +104,9 @@ constexpr size_t kMaxChainCount=16384;
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
 constexpr uint32_t kNoTick=~0u;                // an unset tick stamp
 constexpr uint32_t kTrappedRetire=9000;        // ticks (5 min) a trapped order waits for terrain to open
+// Stage 7: an improvement (origins that gained legality, and no closure) on a route defers its refresh this many
+// ticks, coalescing churn; a member the touched route does not reach asks for it at once (move).
+constexpr uint32_t kImproveDefer=150;
 // Ticks an approach member's order (an unreachable goal) is kept once the body
 // reaches its approach point, the nearest reachable spot: none, the order drops
 // there (user decision 2026-10-08, PLAN W2 AR-11). Timed from arrival, so the
@@ -542,6 +545,13 @@ struct LegionNavigator::Impl {
         std::vector<std::shared_ptr<Tile>> held;
         bool usable() const {return done||covered;}
         RouteView view() const {return RouteView(this);}
+        // Stage 7: which kind of static change reached the route after its build began (staticChanged; both also
+        // set RouteGrid::touched). A CLOSURE (some origin it may cover lost legality) makes its steering stale: its
+        // group refreshes at once, as before. An IMPROVEMENT only (origins gained legality) leaves every step it
+        // describes legal and every estimate the length of a real way -- an upper bound of the new distance -- so
+        // it keeps steering and its refresh may wait (Group::improveTick). Derived from the world's static changes
+        // and the window, never hashed (as touched).
+        bool closed=false,opened=false;
     };
     static RouteView view(const Field* f) {return f?f->view():RouteView();}
     struct RoutePlan;
@@ -642,6 +652,11 @@ struct LegionNavigator::Impl {
         // the admissions and promotes it -- and the tick its start was first refused for want of room
         // (NavAdmit::kNever when clear). Both hashed while set.
         uint32_t requestTick=kNoTick,blockedSince=NavAdmit::kNever;
+        // Stage 7: the tick an improvement (and no closure) first reached its route since the route was built: the
+        // refresh it may want is deferred to improveTick + kImproveDefer, or sooner when a member needs it (a body
+        // the touched route does not reach). kNoTick: none pending. Hashed while set. onImprove: listed in
+        // improveIds (derived, never hashed).
+        uint32_t improveTick=kNoTick;bool onImprove=false;
         // Stage 6: the plan of the next build (routePlan: kept while the start waits, up to kPlanReuse ticks on one
         // epoch and membership; hashed while held: its tick, kind and corridor digest), and the corridor widenings
         // so far (a member outside the corridor rebuilds it; past kMaxWiden the whole-component window takes over;
@@ -959,6 +974,7 @@ struct LegionNavigator::Impl {
     //                tick once the build has no demand left or is no longer
     //                paused.
     std::set<int> buildingIds,waitedIds,needFieldIds,staleDoneIds,needIds;
+    std::set<int> improveIds;   // stage 7: groups with a deferred improvement refresh (Group::improveTick)
     std::set<std::pair<uint32_t,int>> byBuilt;
     // Route-key index for sharedField: (group plane, seedsKey of a field's
     // seeds) -> ascending ids of the groups whose field or next has those
@@ -1059,6 +1075,7 @@ struct LegionNavigator::Impl {
         const bool wasRequest=g.onNeedField||g.onStaleDone;
         put(needFieldIds,g.onNeedField,wantsNeedField(g));
         put(staleDoneIds,g.onStaleDone,wantsStaleDone(g));
+        put(improveIds,g.onImprove,g.improveTick!=kNoTick);
         if(g.onNeedField||g.onStaleDone) {if(!wasRequest)g.requestTick=w.tickCounter_;}
         else {g.requestTick=kNoTick;g.blockedSince=NavAdmit::kNever;}
         const bool built=g.field!=nullptr;
@@ -1071,6 +1088,7 @@ struct LegionNavigator::Impl {
         if(g.onBuilding)buildingIds.erase(g.id);
         if(g.onNeedField)needFieldIds.erase(g.id);
         if(g.onStaleDone)staleDoneIds.erase(g.id);
+        if(g.onImprove)improveIds.erase(g.id);
         if(g.onByBuilt)byBuilt.erase({g.byBuiltKey,g.id});
         waitedIds.erase(g.id);needIds.erase(g.id);
     }
@@ -2037,7 +2055,7 @@ struct LegionNavigator::Impl {
         // structure stamps and the per-plane change boxes.
         b.scratch+=refreshScratch.seenGen.size()*S::kCell32+refreshScratch.seenBy.size()*S::kCell32+
             liftGoal.size()*S::kCell32+liftGoalCells.size()*S::kCell32+(stamps.size()+nowStamps.size())*24+
-            structurePtrs.size()*S::kKeyed+touch.size()*S::kBox+refreshList.size()*S::kKeyed+refreshResults.size()*24+
+            structurePtrs.size()*S::kKeyed+touch.size()*S::kKeyed+refreshList.size()*S::kKeyed+refreshResults.size()*24+
             groundedCells.size()*S::kCell32+groundedIds.size()*S::kCell32+liftHomeCells.size()*S::kCell32+
             liftedIds.size()*S::kCell32+passMaskList.size()*S::kCell32+liftBucketList.size()*S::kCell32;
         b.queues+=regQueue.size()*24+regSeq.size()*S::kCell32+regPlane.size()+planeWant.size()*S::kCell32+
@@ -2332,6 +2350,7 @@ struct LegionNavigator::Impl {
                 p.legacy=legacy;p.footX=t.footX;p.footZ=t.footZ;p.maxDepth=maxDepth;p.minDepth=minDepth;
                 p.maxSlope=t.maxSlope;p.maxWaterSlope=t.maxWaterSlope;p.epoch=~0ull;
                 p.id={uint16_t(victim),++planeGeneration};   // the slot holds another class now
+                if(size_t(victim)<improveLog.size())improveLog[size_t(victim)]=ImproveLog{{},epoch};
                 return victim;
             }
         }
@@ -2498,8 +2517,13 @@ struct LegionNavigator::Impl {
     // few dozen changed cells. Clusters are rectangles whose boxes, grown by
     // the relabel margin plus the footprint, overlap; cluster order is the
     // order of each cluster's first rectangle.
+    // Stage 7: one cluster's legality change -- the box of the origins whose legality changed, and whether any lost
+    // it (a closure) or gained it (an improvement). syncStatic hands staticChanged one list per plane: the routes a
+    // change reaches are found per cluster, not by one box round every change of the tick (a corpse in one corner
+    // and a building in another touched every route between them).
+    struct StaticChange {std::array<int,4> box{0,0,-1,-1};bool closes=false,opens=false;};
     uint64_t refreshPlane(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,RefreshScratch& scratch,
-                          std::array<int,4>* box=nullptr) {
+                          std::vector<StaticChange>* out=nullptr) {
         const int grow=kRelabelMargin+std::max(p.footX,p.footZ)+1;
         std::vector<int> cluster(rects.size());
         for(size_t i=0;i<rects.size();++i)cluster[i]=int(i);
@@ -2512,21 +2536,19 @@ struct LegionNavigator::Impl {
             }
         }
         uint64_t work=0;
-        if(box)*box={0,0,-1,-1};
         std::vector<std::array<int,4>> part;
         for(size_t i=0;i<rects.size();++i) {
             if(root(int(i))!=int(i))continue;
             part.clear();
             for(size_t j=i;j<rects.size();++j)if(root(int(j))==int(i))part.push_back(rects[j]);
-            std::array<int,4> b{0,0,-1,-1};
-            work+=refreshCluster(p,part,changedAny,scratch,&b);
-            if(box&&b[2]>=0)*box=(*box)[2]<0?b:std::array<int,4>{std::min((*box)[0],b[0]),std::min((*box)[1],b[1]),
-                std::max((*box)[2],b[2]),std::max((*box)[3],b[3])};
+            StaticChange c;
+            work+=refreshCluster(p,part,changedAny,scratch,&c);
+            if(out&&c.box[2]>=0)out->push_back(c);
         }
         return work;
     }
     uint64_t refreshCluster(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,RefreshScratch& scratch,
-                            std::array<int,4>* box) {
+                            StaticChange* change) {
         const int W=width(),H=height();
         uint64_t work=0;
         for(const auto& r:rects)work+=computeCells(p,r[0],r[1],r[0]+r[2]-1,r[1]+r[3]-1);
@@ -2548,7 +2570,7 @@ struct LegionNavigator::Impl {
         if(added.empty()&&removed.empty())return work;
         changedAny=true;
         p.hier.invalidate({bx0,bz0,bx1,bz1});   // stage 6: the sectors whose regions or portals may differ
-        if(box)*box={bx0,bz0,bx1,bz1};
+        if(change)*change={{bx0,bz0,bx1,bz1},!removed.empty(),!added.empty()};
         return work+relabel(p,added,removed,bx0,bz0,bx1,bz1,scratch);
     }
     static constexpr int kRelabelMargin=8;   // relabel's local window margin (cells)
@@ -2790,6 +2812,8 @@ struct LegionNavigator::Impl {
     // stale rebuild on use, or a test hook -- reported as a synchronous stage; otherwise inside the
     // window's plane budget (planeReady).
     void rebuild(Plane& p,bool sync) {
+        // Stage 7: a stale plane's rebuild may hold any change the per-cluster lists never reported for it.
+        if(p.epoch!=~0ull)logImprovement(size_t(&p-planes.data()),{0,0,width()-1,height()-1});
         p.epoch=epoch;buildPlane(p);labelPlane(p);clearStage(p);
         p.hier.reset(width(),height(),gSectorShift,p.id);
         uint64_t legalCells=0;for(const int n:p.compSize)legalCells+=uint64_t(std::max(n,0));
@@ -3650,6 +3674,7 @@ struct LegionNavigator::Impl {
         const bool own=ownsArrivals(command);
         auto install=[&](std::shared_ptr<Field> shared) {
             g.built=w.tickCounter_;++stats.fieldsShared;
+            if(g.field)g.improveTick=kNoTick;   // a shared replacement is of this epoch (sharedField)
             if(!shared->done)(g.field?g.next:g.field)=std::move(shared);
             else if(g.field) {
                 if(g.next&&!g.next->done)++stats.refreshDiscards;
@@ -3760,7 +3785,8 @@ struct LegionNavigator::Impl {
         f->syncInflight();
         // Built: the next build plans afresh. (`plan` refers into g.plan: nothing reads it after this.)
         g.plan.reset();g.planTick=kNoTick;
-        if(g.field)g.next=std::move(f);else g.field=std::move(f);
+        if(g.field) {g.next=std::move(f);g.improveTick=kNoTick;}   // the refresh is built on the plane as it is now
+        else g.field=std::move(f);
         listGroup(g);
         return Start::Built;
     }
@@ -4331,7 +4357,7 @@ struct LegionNavigator::Impl {
             ++cellGen;
             auto& refreshed=refreshList;
             refreshed.clear();
-            touch.assign(planes.size(),{0,0,-1,-1});
+            touch.assign(planes.size(),{});
             for(auto& p:planes) {
                 // A background build keeps going on what it has read and
                 // applies the changes incrementally once complete (exact:
@@ -4343,7 +4369,7 @@ struct LegionNavigator::Impl {
                 }
                 // Unbuilt planes build fresh; stale ones rebuild on use.
                 if(p.legacy||p.epoch==~0ull||p.epoch!=epoch)continue;
-                if(all) {changed=true;touch[size_t(&p-planes.data())]={0,0,width()-1,height()-1};continue;}
+                if(all) {changed=true;touch[size_t(&p-planes.data())].push_back({{0,0,width()-1,height()-1},true,true});continue;}
                 refreshed.push_back(&p);
             }
             // Each refresh reads the world and structureList and writes only
@@ -4382,35 +4408,44 @@ struct LegionNavigator::Impl {
         touch.clear();
         if(gProbe)probeSync.changedMs=probeMs(probeT1,ProbeClock::now());
     }
-    // Per plane, the bounding box of origins whose legality changed in this
-    // sync ({0,0,-1,-1}: none).
-    std::vector<std::array<int,4>> touch;
+    // Per plane, the clusters of origins whose legality changed in this sync (stage 7: a list of boxes, each a
+    // closure and/or an improvement; empty: none).
+    std::vector<std::vector<StaticChange>> touch;
     // syncStatic's scratch: the planes refreshed incrementally (plane order)
     // and each one's work and whether its legality changed.
     struct RefreshResult {uint64_t work=0;bool any=false;double ms=0;};   // ms: LPROBE only
     std::vector<Plane*> refreshList;
     std::vector<RefreshResult> refreshResults;
-    // Does a static change box (on the group's plane) reach the group's
-    // fields? A field covers its seeds' component box; a change farther
-    // than one cell from every cell of that box cannot alter any step
-    // inside it (a step reads its target and the two orthogonal cells), nor
-    // merge another region into it.
-    bool fieldTouched(const Group& g,const std::array<int,4>& b) const {
+    // Does a static change box (on the field's plane) reach the field? A field covers its seeds' component box; a
+    // change farther than one cell from every cell of that box cannot alter any step inside it (a step reads its
+    // target and the two orthogonal cells), nor merge another region into it.
+    static bool fieldTouched(const Field& f,const std::array<int,4>& b) {
         if(b[2]<0)return false;
-        for(const Field* f:{g.field.get(),g.next.get()}) {
-            if(!f)continue;
-            if(!(b[0]<=f->x0+f->fw&&b[2]>=f->x0-1&&b[1]<=f->z0+f->fh&&b[3]>=f->z0-1))continue;
-            if(f->allow.empty())return true;
-            // Stage 6: a corridor or chain holds only its listed tiles; a change one cell or more from all of them
-            // reaches none of its steps (the same argument as the box), so only those tiles are tested.
-            const int x0=std::max(b[0]-1,f->x0),z0=std::max(b[1]-1,f->z0),x1=std::min(b[2]+1,f->x0+f->fw-1),z1=std::min(b[3]+1,f->z0+f->fh-1);
-            if(x0>x1||z0>z1)continue;
-            for(int sz=z0>>f->shift;sz<=z1>>f->shift;++sz)for(int sx=x0>>f->shift;sx<=x1>>f->shift;++sx)
-                if(f->allow[size_t(sz-f->sz0)*size_t(f->sw)+size_t(sx-f->sx0)])return true;
-        }
+        if(!(b[0]<=f.x0+f.fw&&b[2]>=f.x0-1&&b[1]<=f.z0+f.fh&&b[3]>=f.z0-1))return false;
+        if(f.allow.empty())return true;
+        // Stage 6: a corridor or chain holds only its listed tiles; a change one cell or more from all of them
+        // reaches none of its steps (the same argument as the box), so only those tiles are tested.
+        const int x0=std::max(b[0]-1,f.x0),z0=std::max(b[1]-1,f.z0),x1=std::min(b[2]+1,f.x0+f.fw-1),z1=std::min(b[3]+1,f.z0+f.fh-1);
+        if(x0>x1||z0>z1)return false;
+        for(int sz=z0>>f.shift;sz<=z1>>f.shift;++sz)for(int sx=x0>>f.shift;sx<=x1>>f.shift;++sx)
+            if(f.allow[size_t(sz-f.sz0)*size_t(f.sw)+size_t(sx-f.sx0)])return true;
         return false;
     }
-    void staticChanged(const std::vector<std::array<int,4>>* changes=nullptr) {
+    // Stage 7: per plane, the improvements of the recent epochs (the epoch after the change, its box; whole-map
+    // changes as the whole map): a trapped member re-registers only when one of them could have joined its
+    // component to another (move: trappedReopened), not on every change anywhere. Bounded: past kImproveLog entries
+    // the oldest go, and `floor` (the newest epoch dropped) makes an older trapped member re-register as before.
+    // Derived from the world's static changes, never hashed.
+    struct ImproveLog {std::deque<std::pair<uint64_t,std::array<int,4>>> e;uint64_t floor=0;};
+    static constexpr size_t kImproveLog=1024;
+    std::vector<ImproveLog> improveLog;   // by plane index
+    void logImprovement(size_t plane,const std::array<int,4>& box) {
+        if(improveLog.size()<=plane)improveLog.resize(plane+1);
+        auto& L=improveLog[plane];
+        L.e.push_back({epoch,box});
+        while(L.e.size()>kImproveLog) {L.floor=L.e.front().first;L.e.pop_front();}
+    }
+    void staticChanged(const std::vector<std::vector<StaticChange>>* changes=nullptr) {
         {
             ++epoch;
             // Terrain changed. A finished field keeps steering its group
@@ -4425,17 +4460,56 @@ struct LegionNavigator::Impl {
             // keeps building too, and another follows once it is installed
             // (see finish): refreshes run on a reduced allowance, and
             // restarted on every change in a battle they never finished.
-            // Only the groups a change reaches (all, without per-plane boxes).
+            // Only the groups a change reaches (all, without per-plane boxes),
+            // each against its plane's changes one cluster at a time (stage 7).
+            // A closure reaching a route makes it stale at once (as before);
+            // improvements alone defer its refresh (improveTick) and keep the
+            // arrival slots, whose cells stay legal.
+            if(changes)
+                for(size_t pi=0;pi<changes->size();++pi)
+                    for(const auto& c:(*changes)[pi])if(c.opens)logImprovement(pi,c.box);
+            if(!changes)for(size_t pi=0;pi<planes.size();++pi)logImprovement(pi,{0,0,width()-1,height()-1});
             stats.groupLoopIters+=groups.size();
             for(auto& [id,g]:groups) {
-                if(changes&&(g.plane<0||size_t(g.plane)>=changes->size()||!fieldTouched(g,(*changes)[size_t(g.plane)])))continue;
-                // Its routes' "unreached" no longer proves anything (RouteView::reach) until the refresh lands.
-                for(Field* f:{g.field.get(),g.next.get()})if(f)f->touched=true;
-                g.stale=g.field!=nullptr;
+                bool closes=!changes,opens=false;
+                for(Field* f:{g.field.get(),g.next.get()}) {
+                    if(!f)continue;
+                    bool fc=!changes,fo=false;
+                    if(changes&&g.plane>=0&&size_t(g.plane)<changes->size())
+                        for(const auto& c:(*changes)[size_t(g.plane)])
+                            if((c.closes&&!fc)||(c.opens&&!fo))
+                                if(fieldTouched(*f,c.box)) {fc|=c.closes;fo|=c.opens;}
+                    if(!fc&&!fo)continue;
+                    // Its routes' "unreached" no longer proves anything (RouteView::reach) until the refresh lands.
+                    f->touched=true;f->closed|=fc;f->opened|=fo;
+                    closes|=fc;opens|=fo;
+                }
+                if(closes&&g.field)++acct.routesClosed;
+                else if(opens&&g.field)++acct.routesOpened;
+                if(!g.field||(!closes&&!opens))continue;
+                if(closes) {
+                    g.stale=true;g.improveTick=kNoTick;   // the refresh is built on the new plane: it has the improvements too
+                    restaleSlots(g);
+                } else if(g.improveTick==kNoTick&&!g.stale)g.improveTick=w.tickCounter_;
                 listGroup(g);
-                restaleSlots(g);
             }
         }
+    }
+    // Stage 7: deferred improvement refreshes whose time has come (improveIds, in id order) become stale refreshes.
+    void serveImprovements() {
+        const uint32_t now=w.tickCounter_;
+        for(int id=after(improveIds,0);id;) {
+            const int next=after(improveIds,id);
+            Group& g=groups.find(id)->second;
+            ++stats.groupLoopIters;
+            if(now-g.improveTick>=kImproveDefer)promoteImprovement(g);
+            id=next;
+        }
+    }
+    void promoteImprovement(Group& g) {
+        g.improveTick=kNoTick;
+        if(g.field&&!g.stale) {g.stale=true;++acct.improveRefreshes;}
+        listGroup(g);
     }
     // ---- background first builds ---------------------------------------
     // A class's first plane build is a whole-map pass (15 ms on 768x768,
@@ -4828,7 +4902,14 @@ struct LegionNavigator::Impl {
             }
             if(f.done) {
                 ++stats.fieldsBuilt;noteAwareInstall(g,f);
-                if(g.next) {auto oldField=std::move(g.field);g.field=std::move(g.next);orphan(oldField);++fieldsDone;g.stale=g.field->epoch!=epoch;g.demand=false;g.awareDemand=false;restaleSlots(g);++stats.refreshCompleted;}
+                if(g.next) {
+                    auto oldField=std::move(g.field);g.field=std::move(g.next);orphan(oldField);++fieldsDone;
+                    // Stage 7: stale again only if a closure reached it while it built; improvements alone defer the
+                    // next refresh (until stage 7 any new epoch did, a change on another island included).
+                    g.stale=g.field->closed;
+                    if(!g.stale&&g.field->opened&&g.improveTick==kNoTick)g.improveTick=now;
+                    g.demand=false;g.awareDemand=false;restaleSlots(g);++stats.refreshCompleted;
+                }
                 listGroup(g);
             }
         };
@@ -5102,6 +5183,7 @@ struct LegionNavigator::Impl {
         uint64_t budget=kFieldQuota,visits=0;
         probeListSum+=waitedIds.size()+buildingIds.size()+needFieldIds.size()+staleDoneIds.size();
         probeGroupSum+=groups.size();
+        serveImprovements();    // stage 7: deferred improvement refreshes whose time has come
         serveRepairs(budget);   // stage 6: halo tiles members stepped onto (cheap, and a member waits for each)
         serveFields(budget,visits);
         stats.schedGroupVisits+=visits;stats.groupLoopIters+=visits;
@@ -5237,6 +5319,14 @@ struct LegionNavigator::Impl {
             }
             if(building!=buildingIds.size()||need!=needFieldIds.size()||staleDone!=staleDoneIds.size()||built!=byBuilt.size())
                 fail("a scheduler list holds a group that is not listed");
+            {   // stage 7: improveIds against the groups' pending improvement refreshes
+                size_t pending=0;
+                for(const auto& [id,g]:groups) {
+                    if(g.onImprove!=(g.improveTick!=kNoTick)||g.onImprove!=(improveIds.count(id)>0))fail("improveIds differs from the groups' improveTick");
+                    pending+=g.onImprove;
+                }
+                if(pending!=improveIds.size())fail("improveIds holds a group that is not listed");
+            }
             for(int id:waitedIds)if(!groups.count(id))fail("waitedIds holds a dead group");
             for(int id:needIds)if(!groups.count(id))fail("needIds holds a dead group");
             std::map<std::pair<int,uint64_t>,std::set<int>> routes;
@@ -6435,6 +6525,34 @@ struct LegionNavigator::Impl {
                 if(a!=anchors.end()&&std::get<0>(a->second.point)==std::get<0>(m.point)&&std::get<1>(a->second.point)==std::get<1>(m.point))return;
             }
         ++stats.midrouteCompletions;
+    }
+    // Stage 7: could an improvement since the member was found trapped have opened its way? Any improvement on its
+    // plane when it has no goal (its click may resolve now); else one whose box touches its component's box grown by
+    // its footprint and a cell (a join needs newly legal origins next to both components). True as well when the log
+    // no longer reaches back to the member's epoch.
+    bool trappedReopened(const Unit& u,const Member& m) {
+        const auto g=groups.find(m.group);
+        if(g==groups.end()||g->second.plane<0)return true;
+        const size_t pi=size_t(g->second.plane);
+        if(pi>=improveLog.size())return false;
+        const ImproveLog& L=improveLog[pi];
+        if(m.trappedEpoch<L.floor)return true;
+        std::array<int,4> box{0,0,width()-1,height()-1};
+        if(m.goal>=0&&u.type) {
+            const Plane& p=planes[pi];
+            const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+            const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+            const int c=ox>=0&&oz>=0&&ox<W&&oz<height()?p.comp[size_t(oz)*W+ox]:-1;
+            if(c<0)return true;
+            const auto& b=p.compBox[size_t(c)];
+            const int grow=std::max(fx,fz)+1;
+            box={b[0]-grow,b[1]-grow,b[2]+grow,b[3]+grow};
+        }
+        for(auto it=L.e.rbegin();it!=L.e.rend()&&it->first>m.trappedEpoch;++it) {
+            const auto& b=it->second;
+            if(m.goal<0||(b[0]<=box[2]&&b[2]>=box[0]&&b[1]<=box[3]&&b[3]>=box[1]))return true;
+        }
+        return false;
     }
     void trapped(Unit& u,Member& m) {
         // No legal route exists for this footprint: stop at once (zero speed,
@@ -7791,6 +7909,13 @@ struct LegionNavigator::Impl {
             found->approachEpoch=epoch;
             if(found->state==Trapped)found->trappedEpoch=epoch;
         }
+        // Stage 7: a trapped (terrain-unreachable) member re-registers only after a change that could join its
+        // component to another -- an improvement touching that component's box -- not after every change anywhere
+        // (under endless churn elsewhere it never reached its retirement: c2c25707's island-forever).
+        if(found&&found->controller==key&&!found->approach&&found->state==Trapped&&found->trappedEpoch!=epoch) {
+            if(trappedReopened(u,*found))++acct.trappedReopened;
+            else {found->trappedEpoch=epoch;++acct.trappedKept;}
+        }
         if(!found||found->controller!=key||found->kind!=kind||
            (found->state==Trapped&&found->trappedEpoch!=epoch)||
            (found->approach&&found->approachEpoch!=epoch)) {
@@ -7885,7 +8010,9 @@ struct LegionNavigator::Impl {
             if(g.field->kind==KindChain&&r.complete()&&requestRepair(g,*g.field,here)) {m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;}
             // A corridor or chain a static change touched (its group is stale): the body is unknown to it, not cut
             // off; it waits for the refresh (demanded at once) instead of widening.
-            if(g.field->kind!=KindWindow&&g.field->touched&&g.stale) {
+            if(g.field->kind!=KindWindow&&g.field->touched&&(g.stale||g.improveTick!=kNoTick)) {
+                // Stage 7: a deferred improvement refresh is wanted now (this body may be reachable only by it).
+                if(g.improveTick!=kNoTick) {++acct.improveDemands;promoteImprovement(g);}
                 if(!g.demand) {g.demand=true;listGroup(g);}
                 m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
             }
@@ -8049,6 +8176,10 @@ struct LegionNavigator::Impl {
                 (!freeDescent(u,g,p,f,ox,oz)&&f.known(size_t(here))>areaBound(g,m,fx,fz,int64_t(std::max(fx,fz))*16)))) {
                 if(w.tickCounter_-g.blockedTick>2)++stats.blockedRerequests;
                 g.blockedTick=w.tickCounter_;
+                // Stage 7: an improvement whose refresh was deferred may be this body's way out (it is blocked, not
+                // looking for a shortcut): the refresh is wanted now (staticidle: a second gap opening for a pair
+                // plugged at the first).
+                if(g.improveTick!=kNoTick) {++acct.improveDemands;promoteImprovement(g);}
             }
             // Nothing contactArrival reads changes before drive asks again
             // in this update (no step was taken, no goal or slot changes).
@@ -10276,6 +10407,7 @@ struct LegionNavigator::Impl {
             if(g.routeMode)h=mix(h,0x6d6f6465ull^uint64_t(g.routeMode)<<48);
             // Start requests (stage 4): their age and a refusal stamp, while set.
             if(g.requestTick!=kNoTick) {h=mix(h,0x726571756573ull);h=mix(h,g.requestTick);}
+            if(g.improveTick!=kNoTick) {h=mix(h,0x696d70726f7665ull);h=mix(h,g.improveTick);}
             if(g.blockedSince!=NavAdmit::kNever) {h=mix(h,0x626c6f636bull);h=mix(h,g.blockedSince);}
             // A paused first build (C1), tagged only when set.
             if(g.field&&g.field->runOn)h=mix(h,0x72756e6f6eull);
