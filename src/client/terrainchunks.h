@@ -134,7 +134,7 @@ private:
     // the keep band. Returns whether it fits.
     bool makeRoom(size_t size,const Key& cell,bool coldOnly);
     // Bytes off-view work may use: free cache room plus cold images.
-    size_t offviewRoom() const;
+    size_t offviewRoom();
     size_t imageBytes(const Key&,const tnt::Map&) const;
     // Re-rank pending jobs for this frame's demand; cancel the obsolete ones.
     void rankPending(const tnt::Map&);
@@ -187,6 +187,7 @@ private:
     size_t nearbyPending_=0,holesAfterPrepare_=0;
     bool deferred_=false;   // prepare() left non-urgent results for uploadDeferred()
     size_t coldBytes_=0;    // this frame: images off-view work may evict (see makeRoom)
+    bool coldValid_=false;  // coldBytes_ computed this frame
     uint64_t jobsObsolete_=0,jobsNearby_=0,jobsOffview_=0,uploadsDeferred_=0,framesGated_=0;
     std::atomic<uint64_t> jobsAborted_{0};
     std::map<Key,Entry> cache_;

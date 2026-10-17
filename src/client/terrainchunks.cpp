@@ -241,7 +241,17 @@ void TerrainChunks::discard(Job& job) {
     ++jobsDiscarded_;wastedNs_+=job.composeNs;
     job.pixels=std::vector<uint8_t>();
 }
-size_t TerrainChunks::offviewRoom() const {
+size_t TerrainChunks::offviewRoom() {
+    // Cold images: what off-view work (nearby, kept) may replace. Once per frame, and
+    // only when off-view work asks.
+    if(!coldValid_) {
+        coldBytes_=0;coldValid_=true;
+        for(const auto& [key,e]:cache_) {
+            const auto [level,cx,cy]=key;(void)level;
+            if(terrainwork::evictionRank(e.used==frame_,e.standin==frame_,false,params_)==1 && !demand_.keep().contains(cx,cy))
+                coldBytes_+=size_t(e.w+2)*(e.h+2)*4;
+        }
+    }
     const size_t limit=room(bytes_);
     return (limit>bytes_ ? limit-bytes_ : 0)+coldBytes_;
 }
@@ -362,25 +372,21 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
     while(level_<5 && (1.f/float(2<<level_))>=zoom &&
           size_t(x1-x0+1)*(y1-y0+1)*size_t((span>>level_)+2)*((span>>level_)+2)*4>limit)
         ++level_;
+    size_t missing=0;   // visible cells without their wanted level (the common steady state: none)
     for(int cy=y0;cy<=y1;++cy)for(int cx=x0;cx<=x1;++cx) {
         Key key{level_,cx,cy};visible_.push_back(key);
         if(auto i=cache_.find(key);i!=cache_.end())i->second.used=frame_;
+        else ++missing;
     }
     demand_.update(level_,terrainwork::Rect{x0,y0,x1,y1},x+float(w)/zoom*.5f,y+float(h)/zoom*.5f,float(w)/zoom,float(h)/zoom,
                    span,nx,ny,nowMs,frame_,params_);
     // The images standing in for visible cells whose own level is missing (the same
     // choice draw() makes) are evicted last while their replacements are prepared.
-    if(params_.protectStandins)
+    if(params_.protectStandins && missing)
         for(const auto& key:visible_)
             if(!cache_.count(key))
                 if(auto i=standIn(key);i!=cache_.end())i->second.standin=frame_;
-    // Cold images: what off-view work (nearby, kept) may replace.
-    coldBytes_=0;
-    for(const auto& [key,e]:cache_) {
-        const auto [level,cx,cy]=key;(void)level;
-        if(terrainwork::evictionRank(e.used==frame_,e.standin==frame_,false,params_)==1 && !demand_.keep().contains(cx,cy))
-            coldBytes_+=size_t(e.w+2)*(e.h+2)*4;
-    }
+    coldValid_=false;   // computed on first use this frame (offviewRoom)
     // A lowered GPU limit takes effect now: give back off-screen chunks until the
     // total is under the cap again, rather than waiting for the next upload.
     if(gpuvram::overCap())shed(0);
@@ -397,7 +403,7 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
         done_.clear();readyHeld_.store(ready_.size(),std::memory_order_relaxed);
     }
     uploadReady(renderer,ub,params_.coordinate,!params_.coordinate);
-    for(const auto& key:visible_)holesAfterPrepare_+=!anyImage(std::get<1>(key),std::get<2>(key));
+    if(missing)for(const auto& key:visible_)holesAfterPrepare_+=!anyImage(std::get<1>(key),std::get<2>(key));
     if(params_.coordinate) {
         if(holesAfterPrepare_)deferred_=true;
         else uploadReady(renderer,ub,false,true);
