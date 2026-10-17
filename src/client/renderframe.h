@@ -7,6 +7,7 @@
 // client/main.cpp; kept at global scope so its unqualified use sites there are
 // unchanged.
 
+#include "client/unitindex.h"
 #include "sim/retailanimationqueries.h"
 #include "sim/sim.h"   // tak::sim::UnitType / Order / Projectile / World::HitFx
 
@@ -262,6 +263,10 @@ struct Frame {
         const int index=slot(id);return index<0 ? nullptr : &units[size_t(index)];
     }
     std::vector<const UnitR*> live;      // compact list of units live this tick (points into units)
+    // Broad phase over `live` (workstream L): built by captureFrame from the positions it
+    // copied, indices into `live`. Presentation only -- never read by the simulation.
+    tak::render::UnitGrid unitGrid;
+    uint64_t unitGridBuildNs = 0;        // capture-thread time of that build (telemetry)
     std::array<PlayerR, 8> players{};
     int numPlayers = 0;
     std::vector<uint8_t> vis;            // fog (empty for a noFog_ spectator)

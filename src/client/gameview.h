@@ -56,6 +56,7 @@
 #include "client/distantmodels.h"
 #include "client/tacticaldots.h"   // zoomed-out unit dots (Options > Graphics)
 #include "client/featureindex.h"
+#include "client/unitindex.h"
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
 #include "client/modelpiece.h"
@@ -654,6 +655,12 @@ public:
     // compared), deferred bodies generated after prepare (catch-up) or inside it.
     struct DistantVerifyTotals { uint64_t frames=0, deferred=0, checked=0, catchup=0, late=0; };
     const DistantVerifyTotals& distantVerifyTotals() const { return distantVerify_; }
+    // TAK_UNIT_INDEX_VERIFY (workstream L): every pass that took its units from the
+    // broad phase was re-run over all live units and accepted the same units in the
+    // same order, or draw() threw. passes = checked passes (painter list + overlays);
+    // live/candidates/accepted are summed over them.
+    struct UnitIndexVerifyTotals { uint64_t frames=0, passes=0, live=0, candidates=0, accepted=0; };
+    const UnitIndexVerifyTotals& unitIndexVerifyTotals() const { return unitIndexVerifyStats_; }
     // TAK_SCHEDULE_VERIFY (workstream I): every geometry pass built each visible
     // unit exactly once under a well-formed plan; the shadow point checks, shadow
     // tile transforms and body copies of the planned passes equal a serial re-run,
@@ -689,6 +696,9 @@ public:
     const tak::render::EntryPoolStats& ownershipTotals() const { return ownershipTotals_; }
     // Debug harness: the world-reset epoch bump of a rejoin, without the reset.
     void renderStudyBumpWorldEpoch() { worldEpoch_.fetch_add(1, std::memory_order_release); }
+    // Render study (workstream L): a camera shake of the given magnitude (shakemagnitude
+    // units) and duration, the path a weapon's shake request takes.
+    void renderStudyShake(float magnitude, float seconds) { triggerShake(magnitude, seconds); }
     void renderStudyMotion(unsigned frame) {
         if(!frame || frame%240)return;
         const float direction=(frame/240)%2 ? -1.f : 1.f;
@@ -2566,9 +2576,13 @@ private:
     // Units per pool job. Whole blocks keep each thread's writes to the per-slot side
     // arrays (captureSlots_, transportFlags_) off the other threads' cache lines.
     static constexpr size_t kCaptureBlock = 64;
-    struct CaptureSlot { int32_t id = 0, site = 0; bool typed = false; };
+    struct CaptureSlot { int32_t id = 0, site = 0; bool typed = false; float x = 0, z = 0; };
     std::unique_ptr<ThreadPool> capturePool_;
     std::vector<CaptureSlot> captureSlots_;
+    // Capture-thread scratch for Frame::unitGrid (workstream L): live positions in live
+    // order and the grid builder's cell buffer.
+    std::vector<float> captureGridX_, captureGridZ_;
+    std::vector<uint32_t> captureGridCells_;
     std::vector<uint8_t> transportFlags_;   // captureTransportEffects: per slot, 1 = weapon packet, 2 = flyer
     void captureUnit(Frame& fb, const Frame& pf, size_t slot);
     // perUnit(slot) for every slot of world_.units(): on capturePool_ from kCaptureMinParallel
@@ -2771,6 +2785,25 @@ private:
     std::vector<FeatureInst> features_;
     tak::FeatureIndex featureIndex_;
     bool featureIndexDirty_=true;
+    // Unit broad phase (workstream L). Frame::unitGrid holds the snapshot's index;
+    // unitCandidates() answers "which live units may have a lifted anchor in this
+    // screen band" from it (indices into front().live, ascending) and the caller keeps
+    // its exact test. The lift a unit can carry is bounded per map (unitLiftBounds).
+    // TAK_UNIT_FULL_SCAN=1 (debug) is the same-binary pre-L reference: every query
+    // returns the whole list. TAK_UNIT_INDEX_VERIFY=1 compares every indexed pass with
+    // a full scan and throws at the first difference.
+    std::span<const uint32_t> unitCandidates(float left, float top, float right, float bottom);
+    tak::render::LiftBounds unitLiftBounds();
+    std::vector<uint64_t> unitQueryBits_;
+    std::vector<uint32_t> unitQuery_;
+    struct LiftBoundsKey { const void* map = nullptr; const void* heights = nullptr; size_t size = 0;
+                           int ref = -2; float scale = 0, scaleX = 0; };
+    LiftBoundsKey unitLiftKey_;
+    tak::render::LiftBounds unitLift_;
+    bool unitFullScan_ = false;           // read once per frame
+    uint32_t unitGridShownGen_ = 0;       // snapshot whose grid build time was last tallied
+    bool unitIndexVerify_ = false;
+    UnitIndexVerifyTotals unitIndexVerifyStats_;
     std::unordered_set<int> featInstIds_;   // sim ids with a visual inst (dynamic adds)
     std::vector<std::pair<float, float>> manaSpots_;   // Sacred Stone deposits
 

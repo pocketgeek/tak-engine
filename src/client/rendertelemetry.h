@@ -195,6 +195,7 @@ enum class Work : uint8_t {
     TerrainUpload,   // render thread: chunk + section texture create/upload
     SectionDecode,   // section JPEG decode worker
     TerrainWasted,   // terrain chunk worker time on jobs never uploaded (cancelled, discarded)
+    UnitGridBuild,   // capture thread: Frame::unitGrid build, tallied on the first frame showing it (workstream L)
     Count
 };
 
@@ -412,6 +413,17 @@ enum class Counter : uint8_t {
     TerrainJobsOffview,
     TerrainUploadDeferred,
     TerrainGatedFrames,  // 1 when the calm gate queued no new terrain work this frame (fast motion / jump storm)
+    // Unit broad phase (workstream L): live units in the snapshot; grid queries this
+    // frame (painter candidates + screen overlays); units they returned (summed);
+    // grid rows they visited; queries answered with the whole list (full-scan
+    // reference, or a grid that does not match the live list); grid capacity bytes
+    // of the shown snapshot.
+    UnitsLive,
+    UnitIndexQueries,
+    UnitIndexReturned,
+    UnitIndexRows,
+    UnitIndexFullScans,
+    UnitGridBytes,
     Count
 };
 
@@ -433,7 +445,7 @@ inline constexpr const char* kPhaseNames[size_t(Phase::Count)] = {
     "fog", "schedule_plan"};
 inline constexpr const char* kWorkNames[size_t(Work::Count)] = {
     "geometry_key", "geometry_build", "pool_busy", "pool_wake", "terrain_compose",
-    "terrain_upload", "section_decode", "terrain_wasted"};
+    "terrain_upload", "section_decode", "terrain_wasted", "unit_grid_build"};
 inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "units_scanned", "unit_candidates", "feature_candidates", "features_painted",
     "painter_items", "visible_units", "special_units", "distant_images", "distant_bakes",
@@ -490,7 +502,9 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "cpu_cache_pinned_bytes", "cpu_cache_evictable_bytes", "cpu_cache_peak_bytes",
     "terrain_chunk_visible", "terrain_chunk_ready", "terrain_chunk_standin", "terrain_chunk_holes",
     "terrain_underlay_tiles", "terrain_jobs_obsolete", "terrain_jobs_aborted", "terrain_jobs_nearby",
-    "terrain_jobs_offview", "terrain_upload_deferred", "terrain_gated_frames"};
+    "terrain_jobs_offview", "terrain_upload_deferred", "terrain_gated_frames",
+    "units_live", "unit_index_queries", "unit_index_returned", "unit_index_rows",
+    "unit_index_full_scans", "unit_grid_bytes"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

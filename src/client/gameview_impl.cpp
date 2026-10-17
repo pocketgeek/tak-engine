@@ -843,6 +843,7 @@
             s.turnReqBam = u.turnReqBam;
             s.seeded = u.alive();   // dead holds its pose (never interpolated)
         }
+        captureSlots_[slot].x = s.x; captureSlots_[slot].z = s.z;   // Frame::unitGrid
     }
 
     void GameView::captureFrame() {
@@ -872,6 +873,7 @@
         forEachUnitSlot([&](size_t i) {captureUnit(fb, pf, i);});
         // Serial tail, in slot order (the same order as before): the ID table, the compact
         // live list, and the conjure flag for the few units that have a site.
+        captureGridX_.clear(); captureGridZ_.clear();
         for (size_t i=0; i<count; ++i) {
             const CaptureSlot& c=captureSlots_[i];
             if(fb.unitSlots.size()<=size_t(c.id))fb.unitSlots.resize(size_t(c.id)+1,-1);
@@ -879,12 +881,21 @@
             if (!c.typed) continue;
             UnitR& s=fb.units[i];
             fb.live.push_back(&s);   // compact live list (mirrors world_.units())
+            captureGridX_.push_back(c.x); captureGridZ_.push_back(c.z);
             // Zero means no site (captureUnit already cleared the flag). Only the few
             // units with one are touched here: a pool thread just wrote every record,
             // so a store to each would pull all of them back across cores.
             if (!c.site) continue;
             const auto* conjureSite=world_.unit(c.site);
             s.conjuring=conjureSite && conjureSite->underConstruction && conjureSite->buildBegun;
+        }
+        {
+            // The renderer's unit broad phase (workstream L): built here, once per snapshot,
+            // from the positions just copied (compact, still in this thread's cache).
+            const auto gridStart=std::chrono::steady_clock::now();
+            fb.unitGrid.build(captureGridX_, captureGridZ_, captureGridCells_);
+            fb.unitGridBuildNs=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now()-gridStart).count());
         }
         if (gaitLog_) {
             for (const UnitR* r:fb.live) {

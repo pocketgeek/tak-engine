@@ -1483,6 +1483,33 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 800 600 --novsync)
       set_tests_properties(render_distant_lookup PROPERTIES TIMEOUT 300
           PASS_REGULAR_EXPRESSION "DISTANT_VERIFY frames=[1-9][0-9]* deferred=[1-9][0-9]* checked=[1-9][0-9]* catchup=0 late=0")
+      # Unit broad phase (workstream L), on the software renderer: every frame the
+      # painter candidates taken from the snapshot's unit grid must equal a full scan
+      # of all live units -- same units, order, depth keys and layers -- or draw()
+      # throws (TAK_UNIT_INDEX_VERIFY). The base variant is a fogged two-player battle
+      # with construction, ghosts, flyers and corpses, moving units (interpolation),
+      # a panning and zooming camera with reversals, camera shake, deaths/respawns and
+      # world-epoch bumps (id reuse); _jump is a 3000-unit army seen through a camera
+      # jumping between distant views (a small visible subset), with shake.
+      foreach(_variant IN ITEMS "" "_jump")
+        if(_variant STREQUAL "")
+          set(_scene TAK_SHADOW_BENCH=300 TAK_RENDER_SPACING=120 TAK_RENDER_BATTLE=1 TAK_RENDER_EXTRAS=1 TAK_PROFILE_FOG=1
+              TAK_RENDER_MOTION=1 TAK_RENDER_CAMERA=1 TAK_RENDER_ZOOM=1 TAK_RENDER_SHAKE=37
+              TAK_RENDER_CHURN=40 TAK_RENDER_EPOCH=90 TAK_RENDER_FRAMES=200)
+        else()
+          set(_scene TAK_SHADOW_BENCH=3000 TAK_PROFILE_ZOOM=1 TAK_RENDER_JUMP=15 TAK_RENDER_SHAKE=23
+              TAK_RENDER_FRAMES=120)
+        endif()
+        add_test(NAME render_unit_index${_variant} COMMAND ${CMAKE_COMMAND} -E env
+            SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software ${_scene}
+            TAK_RENDER_STUDY=1 TAK_UNIT_INDEX_VERIFY=1
+            XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/unit-index${_variant}-profile
+            XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/unit-index${_variant}-profile
+            $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+            --testbuild --winsize 1024 768 --novsync)
+        set_tests_properties(render_unit_index${_variant} PROPERTIES TIMEOUT 300
+            PASS_REGULAR_EXPRESSION "UNIT_INDEX_VERIFY frames=[1-9][0-9]* passes=[1-9][0-9]* live=[1-9][0-9]* candidates=[1-9][0-9]* accepted=[1-9]")
+      endforeach()
       # CPU budgets (workstream J) in a real scene: a battle, then a sustained empty
       # view, with short trim windows and tiny terrain budgets. Retained buffers must
       # be trimmed after the demand falls, keep their contents byte for byte, never be
@@ -1647,7 +1674,8 @@ if(TAK_BUILD_CLIENT)
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
-          render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail tactical_dots spectator_health_bars
+          render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail render_unit_index render_unit_index_jump
+          tactical_dots spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()

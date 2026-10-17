@@ -1560,6 +1560,7 @@ int main(int argc, char** argv) {
     const unsigned studyReset=studyPeriod("TAK_RENDER_RESET");
     const unsigned studyChurn=studyPeriod("TAK_RENDER_CHURN");
     const unsigned studyEpoch=studyPeriod("TAK_RENDER_EPOCH");   // world-epoch bump (rejoin id reuse)
+    const unsigned studyShake=studyPeriod("TAK_RENDER_SHAKE");   // camera shake every N frames (workstream L)
     const unsigned studyVeteran=studyPeriod("TAK_RENDER_VETERAN");   // veterancy cycle (material-only)
     const unsigned studyPanSnap=studyPeriod("TAK_RENDER_CAMERA_SNAP");  // whole-pixel pan (1, or N moving/N still)
     const unsigned studySparseAfter=studyPeriod("TAK_RENDER_SPARSE_AFTER");
@@ -1833,6 +1834,8 @@ int main(int argc, char** argv) {
                 if(renderStudy && studyChurn)gameView->renderStudyChurn(studyFrame,studyChurn);
                 if(renderStudy && studyEpoch && studyFrame && studyFrame%studyEpoch==0)
                     gameView->renderStudyBumpWorldEpoch();
+                if(renderStudy && studyShake && studyFrame%studyShake==0)
+                    gameView->renderStudyShake(8.0f,float(studyShake)/90.0f);
                 if(renderStudy && studySparseAfter && studyFrame>=studySparseAfter)
                     gameView->renderStudyOffset(studySparseX,studySparseZ);
                 if(renderStudy && studyReset && studyFrame && studyFrame%studyReset==0) {
@@ -2015,6 +2018,15 @@ int main(int argc, char** argv) {
                     ull(t.frames),ull(t.geometryPasses),ull(t.geometryBuilds),ull(t.parallelPasses),ull(t.checks),
                     ull(t.prepPasses),ull(t.prepPoints),ull(t.copyPasses),ull(t.copyVertices));
                 if(!t.frames)throw std::runtime_error("schedule verify ran no checks");
+            }
+            if(tak::devFlag("TAK_UNIT_INDEX_VERIFY")) {
+                // Unit broad phase (workstream L): every indexed pass accepted exactly the
+                // units of a full scan, in the same order, or draw() threw.
+                const auto& t=gameView->unitIndexVerifyTotals();
+                using ull=unsigned long long;
+                std::printf("UNIT_INDEX_VERIFY frames=%llu passes=%llu live=%llu candidates=%llu accepted=%llu\n",
+                    ull(t.frames),ull(t.passes),ull(t.live),ull(t.candidates),ull(t.accepted));
+                if(!t.passes)throw std::runtime_error("unit index verify ran no checks");
             }
             if(tak::devFlag("TAK_DISTANT_VERIFY")) {
                 // Distant-image lookup before body generation (workstream G): every

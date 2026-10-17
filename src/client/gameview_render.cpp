@@ -178,6 +178,20 @@
         int vw = frameVisW();
         {
         tak::render::ScopedPhase candidatePhase(renderStats_, RP::Candidates);
+        unitFullScan_ = tak::devFlag("TAK_UNIT_FULL_SCAN");
+#ifndef NDEBUG
+        unitIndexVerify_ = tak::devFlag("TAK_UNIT_INDEX_VERIFY");
+        if (unitIndexVerify_) ++unitIndexVerifyStats_.frames;
+#endif
+        if (renderStats_.enabled()) {
+            const Frame& shown = front();
+            renderStats_.set(RS::UnitsLive, shown.live.size());
+            renderStats_.set(RS::UnitGridBytes, shown.unitGrid.capacityBytes());
+            if (shown.gen != unitGridShownGen_) {   // first frame showing this snapshot
+                unitGridShownGen_ = shown.gen;
+                renderStats_.addWorkNs(tak::render::Work::UnitGridBuild, shown.unitGridBuildNs);
+            }
+        }
         if(featureIndexDirty_) {
             featureIndex_.rebuild(features_.size(),[&](size_t i) {
                 const auto& f=features_[i];
@@ -210,14 +224,11 @@
         }
         renderStats_.add(RS::FeatureCandidates, candidates.size());
         renderStats_.add(RS::FeaturesPainted, items.size());
-        if (!dotsFrame_) renderStats_.add(RS::UnitsScanned, front().live.size());
-        for (const UnitR* _up : front().live) {
-            // Tactical Dots replace every unit model (corpses and dying units
-            // included, which the minimap does not show either), so no unit enters
-            // the painter list: no projection, no shadow, no body batch.
-            if (dotsFrame_) break;
-            const UnitR& r = *_up;   // this tick's snapshot (front().live mirrors world_.units())
-            if ((r.deadFor >= float(r.corpseAnimationTicks)/30.0f && !r.corpsePhase) || r.embarked()) continue;
+        // The frustum cull's acceptance band for a unit's lifted anchor (screen px;
+        // see below). The broad phase queries the same band.
+        constexpr int kCullLeft = -160, kCullPadRight = 160, kCullTop = -260, kCullPadBottom = 120;
+        const auto unitCandidate = [&](const UnitR& r) {
+            if ((r.deadFor >= float(r.corpseAnimationTicks)/30.0f && !r.corpsePhase) || r.embarked()) return;
             if (r.corpsePhase && r.corpseFeat >= 0) {
                 static const bool kCorpLog = tak::devEnv("TAK_BURNLOG") != nullptr;
                 static float lastLog = -10;
@@ -231,8 +242,8 @@
             // Unregistered (e.g. a type whose model failed to load): not drawable,
             // and every render path does unitType_.at(u.id) -- skip it here so none
             // of them throw (a throw in the parallel projection aborts the process).
-            if (!unitType_.count(r.id)) continue;
-            if (!noFog_ && !r.alliedToLocal && !cellVisibleR(r.x, r.z)) continue;
+            if (!unitType_.count(r.id)) return;
+            if (!noFog_ && !r.alliedToLocal && !cellVisibleR(r.x, r.z)) return;
             // Frustum cull: only units whose anchor falls in (or just outside) the
             // map viewport are projected and drawn. The margin is generous and
             // asymmetric -- models extend well above their anchor, so a unit above
@@ -241,7 +252,7 @@
             // from just below the edge on high ground vanishes.
             float sx = (r.x - mapView_.offX()) * zm0 - uLiftX(r) * zm0;
             float sy = (r.z - mapView_.offY()) * zm0 - uLiftY(r) * zm0;
-            if (sx < -160 || sx > mvw + 160 || sy < -260 || sy > winH + 120) continue;
+            if (sx < kCullLeft || sx > mvw + kCullPadRight || sy < kCullTop || sy > winH + kCullPadBottom) return;
             // Airborne units go in the late layer (see PaintItem). A flyer that has
             // LANDED is on the ground and sorts normally -- which is retail's gate
             // too, since its occupancy flips when it puts down.
@@ -252,6 +263,44 @@
                 if (aloft) layer = 1;
             }
             items.push_back({r.z, &r, nullptr, layer});
+        };
+        // Tactical Dots replace every unit model (corpses and dying units included,
+        // which the minimap does not show either), so no unit enters the painter
+        // list: no projection, no shadow, no body batch.
+        if (!dotsFrame_) {
+            // Broad phase (workstream L): only the units whose snapshot position can
+            // put the lifted anchor inside the cull band are examined, in live order,
+            // so the painter items -- and the stable sort's equal-depth order -- are
+            // exactly those of a scan over every unit (front().live mirrors
+            // world_.units()). Interpolation, model extents and flyer altitude are
+            // not inputs of this cull (its margins stand for them); the lift is.
+            const auto& live = front().live;
+            const auto unitIndices = unitCandidates(float(kCullLeft), float(kCullTop),
+                                                    float(mvw + kCullPadRight), float(winH + kCullPadBottom));
+            renderStats_.add(RS::UnitsScanned, unitIndices.size());
+            const size_t indexed = items.size();
+            for (uint32_t i : unitIndices) unitCandidate(*live[i]);
+#ifndef NDEBUG
+            if (unitIndexVerify_) {
+                // The same exact test over every unit must accept the same units in
+                // the same order with the same keys.
+                const size_t mark = items.size();
+                for (const UnitR* up : live) unitCandidate(*up);
+                const size_t n = mark - indexed;
+                bool same = items.size() - mark == n;
+                for (size_t k = 0; same && k < n; ++k) {
+                    const Item& a = items[indexed + k];
+                    const Item& b = items[mark + k];
+                    same = a.u == b.u && a.layer == b.layer && std::bit_cast<uint32_t>(a.z) == std::bit_cast<uint32_t>(b.z);
+                }
+                if (!same) throw std::runtime_error("unit index verify: painter candidates differ from a full scan");
+                items.resize(mark);
+                ++unitIndexVerifyStats_.passes;
+                unitIndexVerifyStats_.live += live.size();
+                unitIndexVerifyStats_.candidates += unitIndices.size();
+                unitIndexVerifyStats_.accepted += n;
+            }
+#endif
         }
         renderStats_.add(RS::UnitCandidates, items.size() - renderStats_.get(RS::FeaturesPainted));
         }
@@ -3244,6 +3293,53 @@
         policy("TAK_SCHEDULE_SHADOW_PREP", schedules_.shadowPrep);
         policy("TAK_SCHEDULE_COPY", schedules_.bodyCopy);
 #endif
+    }
+
+    // Workstream L: the lift (world px, subtracted from the position before the zoom)
+    // any unit's anchor can carry. Ground units sample heightAbove (the heightmap above
+    // the modal datum, floored at 0); a flyer rides its smoothed datum, which never
+    // exceeds the dilated sector maximum of the same heights. Both are at most the
+    // map's highest height above the datum. Cached per map and height settings.
+    tak::render::LiftBounds GameView::unitLiftBounds() {
+        const auto& m = mapView_.map();
+        if (heightRef_ < 0) (void)heightAbove(0, 0);   // resolves heightRef_ and the debug scales
+        const LiftBoundsKey key{&m, m.heights.data(), m.heights.size(), heightRef_, kHeightScale_, kHeightScaleX_};
+        if (key.map != unitLiftKey_.map || key.heights != unitLiftKey_.heights || key.size != unitLiftKey_.size ||
+            key.ref != unitLiftKey_.ref || key.scale != unitLiftKey_.scale || key.scaleX != unitLiftKey_.scaleX) {
+            unitLiftKey_ = key;
+            int top = 0;
+            for (uint8_t v : m.heights) top = std::max(top, int(v));
+            // +1: the bilinear sample's float rounding may exceed the largest corner by an ulp.
+            const float above = m.heights.empty() || m.width <= 0 ? 0.0f
+                                : float(std::max(0, top - std::max(heightRef_, 0))) + 1.0f;
+            const float y = above * kHeightScale_, x = above * kHeightScaleX_;
+            unitLift_ = {std::min(0.0f, x), std::max(0.0f, x), std::min(0.0f, y), std::max(0.0f, y)};
+        }
+        return unitLift_;
+    }
+
+    // Workstream L: indices into front().live (ascending) of every unit whose lifted
+    // anchor -- (x - offX) * zoom - liftX * zoom, (z - offY) * zoom - liftY * zoom with
+    // the snapshot position -- may fall inside [left,right] x [top,bottom] (screen px,
+    // inclusive). A superset: callers keep their exact test. Valid until the next call.
+    std::span<const uint32_t> GameView::unitCandidates(float left, float top, float right, float bottom) {
+        using RS = tak::render::Counter;
+        const Frame& f = front();
+        renderStats_.add(RS::UnitIndexQueries);
+        if (unitFullScan_ || f.unitGrid.size() != f.live.size()) {
+            unitQuery_.resize(f.live.size());
+            for (uint32_t i = 0; i < unitQuery_.size(); ++i) unitQuery_[i] = i;
+            renderStats_.add(RS::UnitIndexFullScans);
+            renderStats_.add(RS::UnitIndexReturned, unitQuery_.size());
+            return unitQuery_;
+        }
+        const auto rect = tak::render::anchorBandToWorld(left, top, right, bottom, mapView_.offX(), mapView_.offY(),
+                                                         mapView_.zoom(), unitLiftBounds());
+        tak::render::UnitGrid::QueryStats qs;
+        f.unitGrid.query(rect.left, rect.top, rect.right, rect.bottom, unitQueryBits_, unitQuery_, &qs);
+        renderStats_.add(RS::UnitIndexReturned, unitQuery_.size());
+        renderStats_.add(RS::UnitIndexRows, qs.rows);
+        return unitQuery_;
     }
 
     void GameView::claimGeometryEntries() {

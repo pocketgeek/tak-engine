@@ -11,6 +11,7 @@ crusades_history_ui_network 66
 legion_scenario_corner-8x56 66
 legion_gen1_route_65845_o1 61
 legion_gen1_route_65845_om1 56
+render_unit_index 52
 legion_situation_r10-104540_retail 50
 mapgen_roster 50
 crusades_hardening_network 49
@@ -29,6 +30,7 @@ movement_orders_trolls 40
 cartographer_ui_smoke 40
 render_shadow_atlas_zoom 40
 legion_scenario_battle-assault 36
+render_unit_index_jump 36
 mapgen_mana 35
 legion_scenario_densehead 34
 legion_situation_r9-65850_retail 32
