@@ -243,7 +243,7 @@
             // Unregistered (e.g. a type whose model failed to load): not drawable,
             // and every render path does unitType_.at(u.id) -- skip it here so none
             // of them throw (a throw in the parallel projection aborts the process).
-            if (!unitType_.count(r.id)) return;
+            if (!unitType_.registered(r.id)) return;
             if (!noFog_ && !r.alliedToLocal && !cellVisibleR(r.x, r.z)) return;
             // Frustum cull: only units whose anchor falls in (or just outside) the
             // map viewport are projected and drawn. The margin is generous and
@@ -292,6 +292,9 @@
                     same = a.u == b.u && a.layer == b.layer && std::bit_cast<uint32_t>(a.z) == std::bit_cast<uint32_t>(b.z);
                 }
                 if (!same) throw std::runtime_error("unit index verify: painter candidates differ from a full scan");
+                for (const UnitR* up : live)
+                    if (unitType_.registered(up->id) != (unitType_.count(up->id) != 0))
+                        throw std::runtime_error("unit index verify: registration record differs from the registry");
                 items.resize(mark);
                 ++unitIndexVerifyStats_.passes;
                 unitIndexVerifyStats_.live += live.size();
@@ -3373,15 +3376,21 @@
         using RS = tak::render::Counter;
         const Frame& f = front();
         renderStats_.add(RS::UnitIndexQueries);
+        // The whole list, in order (kept as an identity table, grown as needed).
+        const auto everything = [&] {
+            const size_t n = f.live.size();
+            for (size_t i = unitAll_.size(); i < n; ++i) unitAll_.push_back(uint32_t(i));
+            renderStats_.add(RS::UnitIndexReturned, n);
+            return std::span<const uint32_t>(unitAll_.data(), n);
+        };
         if (unitFullScan_ || f.unitGrid.size() != f.live.size()) {
-            unitQuery_.resize(f.live.size());
-            for (uint32_t i = 0; i < unitQuery_.size(); ++i) unitQuery_[i] = i;
             renderStats_.add(RS::UnitIndexFullScans);
-            renderStats_.add(RS::UnitIndexReturned, unitQuery_.size());
-            return unitQuery_;
+            return everything();
         }
         const auto rect = tak::render::anchorBandToWorld(band.left, band.top, band.right, band.bottom, mapView_.offX(),
                                                          mapView_.offY(), mapView_.zoom(), unitLiftBounds());
+        // A view holding every unit (the 10,000-visible case) needs no gather.
+        if (f.unitGrid.covers(rect.left, rect.top, rect.right, rect.bottom)) return everything();
         tak::render::UnitGrid::QueryStats qs;
         f.unitGrid.query(rect.left, rect.top, rect.right, rect.bottom, unitQueryBits_, unitQuery_, &qs);
         renderStats_.add(RS::UnitIndexReturned, unitQuery_.size());

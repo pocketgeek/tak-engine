@@ -2243,7 +2243,7 @@
             root.vertices={-30,0,0,30,0,0,0,50,0};
             root.primitives={{200,"",{0,1,2}},{200,"",{2,1,0}}};
             visuals_["__debris_fixture"]=std::move(visual);
-            unitType_[-123]="__debris_fixture";
+            unitType_.set(-123,"__debris_fixture");
             UnitR unit;unit.id=-123;unit.x=cx;unit.z=cz;
             unit.worldPosition={int32_t(cx*65536),int32_t((rawHeight(cx,cz)+100)*65536),int32_t(cz*65536)};
             const std::vector<std::string> names={"piece"};

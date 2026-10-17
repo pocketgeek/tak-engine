@@ -94,6 +94,11 @@ public:
     void query(float left, float top, float right, float bottom,
                std::vector<uint64_t>& bits, std::vector<uint32_t>& out, QueryStats* stats = nullptr) const {
         out.clear();
+        if (covers(left, top, right, bottom)) {
+            all(out);
+            if (stats) stats->gathered += count_;
+            return;
+        }
         if (std::isnan(left) || std::isnan(top) || std::isnan(right) || std::isnan(bottom)) {
             all(out);
             if (stats) stats->gathered += count_;
@@ -127,6 +132,12 @@ public:
                 v &= v - 1;
             }
         }
+    }
+
+    // The rectangle holds every unit: no non-finite positions and the stored (exact)
+    // extremes inside it. A caller may then take the whole list without a query.
+    bool covers(float left, float top, float right, float bottom) const {
+        return always_.empty() && (count_ == 0 || (any_ && left <= minX_ && right >= maxX_ && top <= minZ_ && bottom >= maxZ_));
     }
 
     void all(std::vector<uint32_t>& out) const {

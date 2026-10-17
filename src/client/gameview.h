@@ -57,6 +57,7 @@
 #include "client/tacticaldots.h"   // zoomed-out unit dots (Options > Graphics)
 #include "client/featureindex.h"
 #include "client/unitindex.h"
+#include "client/unittypetable.h"
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
 #include "client/modelpiece.h"
@@ -1743,7 +1744,7 @@ private:
     // serial anim loop and the parallel projection, and tree traversals were a
     // measurable slice of the update cost at thousands of units.
     std::unordered_map<std::string, Visual> visuals_;
-    std::unordered_map<int, std::string> unitType_;
+    tak::render::UnitTypeTable unitType_;   // unit id -> visual name (client/unittypetable.h)
     std::unordered_map<int, Anim> anims_;
     // Summon fade-in: unit id -> age (s) since it was conjured from a building. Purely
     // cosmetic and viewer-only (driven by the sim's non-hashed justBuilt hook); it
@@ -2802,6 +2803,7 @@ private:
     std::vector<int> overlayIdsIndexed_, overlayIdsFull_;   // TAK_UNIT_INDEX_VERIFY scratch
     std::vector<uint64_t> unitQueryBits_;
     std::vector<uint32_t> unitQuery_;
+    std::vector<uint32_t> unitAll_;       // 0, 1, 2, ... (whole-list answers)
     struct LiftBoundsKey { const void* map = nullptr; const void* heights = nullptr; size_t size = 0;
                            int ref = -2; float scale = 0, scaleX = 0; };
     LiftBoundsKey unitLiftKey_;

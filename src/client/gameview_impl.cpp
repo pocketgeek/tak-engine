@@ -2117,7 +2117,7 @@
                 loadVisual(obj, false);
             } catch (const std::exception&) { return; }   // no corpse mesh: keep pose
         }
-        it->second = obj;
+        unitType_.set(u.id, obj);   // the corpse mesh from now on (registration unchanged)
     }
 
     void GameView::maybeSwapVeteranModel(const UnitR& u) {
@@ -2130,7 +2130,7 @@
                 loadVisual(vm);   // with its PieceMeta tree -- see loadVisual
             } catch (const std::exception&) { return; }   // no promoted mesh: keep base
         }
-        it->second = vm;   // draw the promoted mesh from now on
+        unitType_.set(u.id, vm);   // draw the promoted mesh from now on
         if(auto anim=anims_.find(u.id);anim!=anims_.end())
             configureExplosionHierarchy(anim->second,visuals_.at(vm).model.root);
     }
@@ -2351,12 +2351,12 @@
                 snapshot.capturedPose=pose;snapshot.effectQueryVm=vm;
                 return explodePiece(*unit,snapshot,piece,flags);
             };
-            unitType_[id]=typeId;
+            unitType_.set(id,typeId);
             // Install effect sinks before immediate retail notifications run.
             st.vm->start("Create");
             st.vm->start("SetMaxReloadTime",{type->maxWeaponReloadMs});
         }
-        unitType_[id] = typeId;
+        unitType_.set(id, typeId);
     }
 
     int GameView::spawn(const std::string& typeId, float x, float z, float heading, int player) {

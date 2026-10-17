@@ -20,8 +20,11 @@
 //     pass is also checked against the renderer's expression written out above.
 //  4. Randomized movement: a population that moves and churns, rebuilt as a new
 //     snapshot every step, against a full scan.
+//  5. UnitTypeTable: registered(id) equals the map's key set through random
+//     sets/erases, negative and large ids, ids past the flag table.
 
 #include "client/unitindex.h"
+#include "client/unittypetable.h"
 
 #include <cmath>
 #include <iterator>
@@ -29,6 +32,8 @@
 #include <cstdlib>
 #include <limits>
 #include <random>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 using tak::render::UnitGrid;
@@ -66,6 +71,12 @@ void checkQuery(const Population& p, const UnitGrid& g, float l, float t, float 
         }
     }
     for (uint64_t w : bits) CHECK(w == 0, "%s: scratch bits not cleared", what);
+    if (g.covers(l, t, r, b)) CHECK(out.size() == p.x.size(), "%s: covers() but not every unit returned", what);
+    bool all = true;
+    for (size_t i = 0; i < p.x.size(); ++i)
+        all = all && std::isfinite(p.x[i]) && std::isfinite(p.z[i]) && p.x[i] >= l && p.x[i] <= r && p.z[i] >= t && p.z[i] <= b;
+    if (g.covers(l, t, r, b)) CHECK(all, "%s: covers() but a unit lies outside", what);
+    if (all && !p.x.empty()) CHECK(g.covers(l, t, r, b), "%s: every unit inside but covers() false", what);
 }
 
 void testGrid(std::mt19937& rng) {
@@ -348,12 +359,29 @@ void testMovement(std::mt19937& rng) {
 
 }  // namespace
 
+void testTypeTable(std::mt19937& rng) {
+    tak::render::UnitTypeTable table;
+    std::unordered_map<int, std::string> reference;
+    for (int step = 0; step < 200000; ++step) {
+        const int id = int(rng() % 5000) - 200 + (step % 1000 == 0 ? 100000 : 0);
+        if (rng() % 4 == 0) { table.erase(id); reference.erase(id); }
+        else { const std::string v = "t" + std::to_string(rng() % 7); table.set(id, v); reference[id] = v; }
+        const int probe = int(rng() % 6000) - 500;
+        CHECK(table.registered(probe) == (reference.count(probe) != 0), "type table: registered(%d) wrong", probe);
+        CHECK(table.count(probe) == reference.count(probe), "type table: count(%d) wrong", probe);
+        if (reference.count(probe)) CHECK(table.at(probe) == reference.at(probe), "type table: at(%d) wrong", probe);
+    }
+    for (const auto& [id, v] : reference) CHECK(table.registered(id) && table.find(id) != table.end(), "type table: %d lost", id);
+    CHECK(!table.registered(1 << 30), "type table: id past the flags");
+}
+
 int main() {
     std::mt19937 rng(20261017);
     testGrid(rng);
     testCull(rng);
     testPasses(rng);
     testMovement(rng);
+    testTypeTable(rng);
     if (failures) { std::printf("unit_index_test: %d failures\n", failures); return 1; }
     std::printf("unit_index_test: PASS\n");
     return 0;
