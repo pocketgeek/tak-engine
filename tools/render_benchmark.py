@@ -513,7 +513,7 @@ KEY_METRICS = [("frame_ms", "total", "mean"), ("frame_ms", "total", "p95"), ("fr
 TELEMETRY_PHASES = ["t_candidates", "t_painter_sort", "t_atlas", "t_geometry", "t_distant",
                     "t_shadow_pack", "t_shadow_alloc", "t_shadow_prep", "t_shadow_raster",
                     "t_shadow_composite", "t_body_assembly", "t_body_submit", "t_terrain",
-                    "t_terrain_upload", "t_effects", "t_fog", "t_pool_dispatch", "t_pool_wait",
+                    "t_terrain_upload", "t_effects", "t_fog", "t_pool_dispatch", "t_pool_wait", "t_schedule_plan",
                     "w_geometry_key", "w_geometry_build", "w_pool_busy", "w_pool_wake",
                     "w_terrain_compose", "w_section_decode"]
 TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_cold", "miss_owner",

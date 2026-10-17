@@ -180,6 +180,7 @@ enum class Phase : uint8_t {
     PoolWait,        // (nested) caller idle after its own chunks, waiting for workers
     Effects,         // particles, effects, unit fx
     Fog,             // fog-of-war overlay
+    SchedulePlan,    // (nested) building the cost plans of the pool passes (workstream I)
     Count
 };
 
@@ -385,7 +386,7 @@ inline constexpr const char* kPhaseNames[size_t(Phase::Count)] = {
     "candidates", "painter_sort", "atlas", "geometry", "distant", "shadow_pack",
     "shadow_composite", "body_assembly", "body_submit", "terrain", "terrain_upload",
     "shadow_alloc", "shadow_prep", "shadow_raster", "pool_dispatch", "pool_wait", "effects",
-    "fog"};
+    "fog", "schedule_plan"};
 inline constexpr const char* kWorkNames[size_t(Work::Count)] = {
     "geometry_key", "geometry_build", "pool_busy", "pool_wake", "terrain_compose",
     "terrain_upload", "section_decode"};

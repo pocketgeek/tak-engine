@@ -1770,6 +1770,9 @@ private:
     // visUnits_[i]'s entry, in painter order: the ordered references the painter
     // passes use. Sorting reorders these pointers, never the ownership.
     std::vector<UnitGeom*> visGeom_;
+    // visGeom_[i]->nextCost, copied at claim (that cache line is written there
+    // anyway), so the geometry pass is planned from a dense array (workstream I).
+    std::vector<uint16_t> visCost_;
     UnitGeom& visGeom(size_t i) { return *visGeom_[i]; }
     const UnitGeom& visGeom(size_t i) const { return *visGeom_[i]; }
     // Geometry revisions from one counter: a rebuilt entry's revision is never

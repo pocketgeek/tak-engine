@@ -10,8 +10,8 @@
 //   - below `serialBelowNs` of estimated work the caller runs the pass alone
 //     (waking a worker costs more than the work);
 //   - otherwise one participant per `workerNs` of estimated work, capped by
-//     the pool, the chunk count and the policy's own cap (e.g. a memory copy
-//     stops scaling at a few threads);
+//     the pool, the chunk count and the policy's own cap (none of the renderer
+//     passes sets one: a 4-thread cap on the body copy measured slower);
 //   - chunks of about `chunkNs` (a fraction of workerNs) so that participants
 //     that wake late, and mispredicted items, still balance through claiming.
 //
@@ -60,6 +60,25 @@ public:
             acc_ = 0;
         }
     }
+    // Many items at once, each estimated as units[i] * unitNs (e.g. the packed
+    // per-entry geometry estimates): the same plan as add() per item, in
+    // integer units, without a floating-point step per item.
+    void addUnits(std::span<const uint16_t> units, double unitNs) {
+        if (unitNs <= 0) { for (size_t i = 0; i < units.size(); ++i) add(0); return; }
+        const double chunkUnits = std::ceil(policy_.chunkNs / unitNs);
+        const uint64_t limit = chunkUnits > 0 ? uint64_t(chunkUnits) : 1;
+        uint64_t acc = uint64_t(std::llround(std::max(acc_, 0.0) / unitNs)), total = 0;
+        for (const uint16_t u : units) {
+            ++count_;
+            acc += u; total += u;
+            if (acc >= limit && bounds_.size() <= kMaxChunks) {
+                bounds_.push_back(uint32_t(count_));
+                acc = 0;
+            }
+        }
+        acc_ = double(acc) * unitNs;
+        total_ += double(total) * unitNs;
+    }
     // Close the plan for a pool of `poolThreads` threads (the caller included).
     void finish(unsigned poolThreads) {
         if (bounds_.back() != count_) bounds_.push_back(uint32_t(count_));
@@ -80,6 +99,8 @@ public:
     unsigned participants() const { return participants_; }
     double estimateNs() const { return total_; }
     const SchedulePolicy& policy() const { return policy_; }
+    size_t usedBytes() const { return bounds_.size() * sizeof(uint32_t); }
+    size_t capacityBytes() const { return bounds_.capacity() * sizeof(uint32_t); }
 
 private:
     SchedulePolicy policy_;
@@ -141,7 +162,7 @@ struct RenderSchedules {
     SchedulePolicy geometry{.serialBelowNs = 30000, .workerNs = 40000, .chunkNs = 10000};
     SchedulePolicy shadowCheck{.serialBelowNs = 30000, .workerNs = 40000, .chunkNs = 10000};
     SchedulePolicy shadowPrep{.serialBelowNs = 30000, .workerNs = 40000, .chunkNs = 10000};
-    SchedulePolicy bodyCopy{.serialBelowNs = 30000, .workerNs = 40000, .chunkNs = 10000, .maxParticipants = 4};
+    SchedulePolicy bodyCopy{.serialBelowNs = 30000, .workerNs = 40000, .chunkNs = 10000};
     // Fitted to serial per-pass timings (Experiment 11): a point check stops at
     // the first differing point, so the rate is the full-scan (kept tile) cost.
     static constexpr double kShadowCheckPerPointNs = 2;     // sameTilePoints, per point

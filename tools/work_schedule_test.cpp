@@ -129,6 +129,28 @@ int main() {
         check(std::vector<uint32_t>(a.bounds().begin(), a.bounds().end()) ==
               std::vector<uint32_t>(b.bounds().begin(), b.bounds().end()) && a.participants() == b.participants(),
               "plan is a pure function of the estimates");
+
+        // Packed units (addUnits) plan exactly like one add() per item.
+        for (int round = 0; round < 50; ++round) {
+            std::vector<uint16_t> units(1 + rng() % 5000);
+            for (auto& u : units) u = uint16_t(rng() % (round % 5 == 0 ? 3 : 700));
+            const double unitNs = 64;
+            SchedulePolicy q{.serialBelowNs = double(rng() % 50000), .workerNs = 1000 + double(rng() % 50000),
+                             .chunkNs = 100 + double(rng() % 20000)};
+            WorkPlan perItem, packed;
+            perItem.begin(q); packed.begin(q);
+            const size_t split = units.size() / 3;   // also mixed with add() before it
+            for (size_t i = 0; i < split; ++i) { perItem.add(units[i] * unitNs); packed.add(units[i] * unitNs); }
+            for (size_t i = split; i < units.size(); ++i) perItem.add(units[i] * unitNs);
+            packed.addUnits(std::span<const uint16_t>(units).subspan(split), unitNs);
+            perItem.finish(8); packed.finish(8);
+            if (std::vector<uint32_t>(perItem.bounds().begin(), perItem.bounds().end()) !=
+                    std::vector<uint32_t>(packed.bounds().begin(), packed.bounds().end()) ||
+                perItem.participants() != packed.participants() || perItem.estimateNs() != packed.estimateNs()) {
+                check(false, "addUnits plans like add() per item");
+                break;
+            }
+        }
     }
     {   // Pool: planned passes equal the serial loop, whatever the order of completion.
         ThreadPool pool(6);

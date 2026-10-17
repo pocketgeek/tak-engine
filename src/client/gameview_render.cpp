@@ -339,9 +339,12 @@
             // entry's previous build redid (UnitGeom::nextCost; cold entries carry
             // a full-build estimate). Only a hint: a misprediction costs balance,
             // never correctness -- every unit still writes only its own entry.
-            geomPlan_.begin(schedules_.geometry);
-            for (const UnitGeom* g : visGeom_) geomPlan_.add(tak::render::GeometryCostModel::unpack(g->nextCost));
-            geomPlan_.finish(pool_.threads());
+            {
+                tak::render::ScopedPhase planPhase(renderStats_, RP::SchedulePlan);
+                geomPlan_.begin(schedules_.geometry);
+                geomPlan_.addUnits(visCost_, tak::render::GeometryCostModel::kUnitNs);
+                geomPlan_.finish(pool_.threads());
+            }
             schedThreadsGeom_ += geomPlan_.participants();
             schedEstimateGeomNs_ += geomPlan_.estimateNs();
 #ifndef NDEBUG
@@ -1036,12 +1039,15 @@
                 } else if (!checks.empty()) {
                     // Workstream I: planned by points to recompute.
                     using RSch=tak::render::RenderSchedules;
-                    shadowPlan_.begin(schedules_.shadowCheck);
-                    for (size_t c:checks) {
-                        const UnitGeom& g=*work[c].geom;
-                        shadowPlan_.add(RSch::kShadowCheckPerPointNs*double(g.shadowLocal.size()+g.maskedShadowLocal.size()));
+                    {
+                        tak::render::ScopedPhase planPhase(renderStats_, RP::SchedulePlan);
+                        shadowPlan_.begin(schedules_.shadowCheck);
+                        for (size_t c:checks) {
+                            const UnitGeom& g=*work[c].geom;
+                            shadowPlan_.add(RSch::kShadowCheckPerPointNs*double(g.shadowLocal.size()+g.maskedShadowLocal.size()));
+                        }
+                        shadowPlan_.finish(pool_.threads());
                     }
-                    shadowPlan_.finish(pool_.threads());
                     schedThreadsShadow_+=shadowPlan_.participants();
 #ifndef NDEBUG
                     std::vector<tak::render::TileVerdict> pre;
@@ -1235,6 +1241,7 @@
                     // points (opaque positions and masked vertices to transform).
                     using RSch=tak::render::RenderSchedules;
                     auto& items=shadowPrepItems_;
+                    std::optional<tak::render::ScopedPhase> planPhase(std::in_place,renderStats_,RP::SchedulePlan);
                     items.clear();
                     shadowPlan_.begin(schedules_.shadowPrep);
                     for(size_t wi=0;wi<work.size();++wi) {
@@ -1247,6 +1254,7 @@
                                         RSch::kShadowPrepPerMaskedNs*double(masked));
                     }
                     shadowPlan_.finish(pool_.threads());
+                    planPhase.reset();
                     schedThreadsShadow_+=shadowPlan_.participants();
                     runPlanned('p',shadowPlan_,[&](size_t b,size_t e) {
                         for(size_t k=b;k<e;++k)transform(items[k],items[k]+1);
@@ -1685,12 +1693,15 @@
             };
             if (scheduleUniform_) pool_.parallelFor(copyTasks_.size(), copyRange);
             else {
-                // Workstream I: planned by bytes; a copy stops scaling at a few threads.
-                copyPlan_.begin(schedules_.bodyCopy);
-                for (const CopyTask& t : copyTasks_)
-                    copyPlan_.add(tak::render::RenderSchedules::kCopyPerTaskNs +
-                                  tak::render::RenderSchedules::kCopyPerByteNs * double(t.count * sizeof(SDL_Vertex)));
-                copyPlan_.finish(pool_.threads());
+                // Workstream I: planned by bytes (plus a per-range cost).
+                {
+                    tak::render::ScopedPhase planPhase(renderStats_, RP::SchedulePlan);
+                    copyPlan_.begin(schedules_.bodyCopy);
+                    for (const CopyTask& t : copyTasks_)
+                        copyPlan_.add(tak::render::RenderSchedules::kCopyPerTaskNs +
+                                      tak::render::RenderSchedules::kCopyPerByteNs * double(t.count * sizeof(SDL_Vertex)));
+                    copyPlan_.finish(pool_.threads());
+                }
                 schedThreadsCopy_ += copyPlan_.participants();
                 runPlanned('c', copyPlan_, copyRange);
 #ifndef NDEBUG
@@ -3236,6 +3247,7 @@
         const Frame& frame = front();
         visUnits_.clear();
         visGeom_.clear();
+        visCost_.clear();
         geomIndex_.assign(frame.units.size(), -1);   // compact frame slot -> visible index
         for (const auto& it : paintItems_) if (it.u) {
             const int slot = frame.slot(it.u->id);
@@ -3247,6 +3259,7 @@
             geomIndex_[size_t(slot)] = int(visUnits_.size());
             visUnits_.push_back(it.u);
             visGeom_.push_back(g);
+            visCost_.push_back(g->nextCost);   // same cache line as handle (workstream I)
         }
         // Alive = still in this snapshot under the same identity. Corpses keep their
         // unit; a unit that switched model or type is a new identity.
@@ -3476,6 +3489,13 @@
         account(paintItems_); account(drawOps_); account(copyTasks_); account(distantModelItems_);
         account(bodySources_); account(bodyRanges_); account(bodyArenaFirsts_); account(bodyArenaCounts_);
         account(visUnits_); account(geomIndex_); account(airShadows_);
+        // Workstream I: the ordered entry references, their cost copies, the
+        // shadow-prep item list and the three plans' chunk bounds.
+        account(visGeom_); account(visCost_); account(shadowPrepItems_);
+        for (const auto* plan : {&geomPlan_, &shadowPlan_, &copyPlan_}) {
+            listUsed += plan->usedBytes();
+            listCapacity += plan->capacityBytes();
+        }
         stats.set(RS::FrameListsUsedBytes, listUsed);
         stats.set(RS::FrameListsCapacityBytes, listCapacity);
         size_t scratchUsed = 0, scratchCapacity = 0;
@@ -4331,12 +4351,18 @@
         g.keyNs=uint32_t(std::min<int64_t>(keyEnd-keyStart,UINT32_MAX));
         // Workstream I: the next build is predicted to redo what this one redoes
         // (moving units keep moving, still ones stay hits); sizes after the build.
+        // A hit's estimate is the key check alone: it must not touch the vector
+        // headers on the entry's later cache lines, which a hit never reads
+        // (measured: reading them cost ~0.1 us per hit, Experiment 11).
+        using CM=tak::render::GeometryCostModel;
         const auto predictNext=[&] {
-            using CM=tak::render::GeometryCostModel;
             g.nextCost=CM::pack(CM::estimateNs(stages,bodyStages,key.size(),g.verts.size(),
                                                g.shadowLocal.size()+g.maskedShadowLocal.size()));
         };
-        if(cacheHit && !bodyStages && !verify) {predictNext();return;}
+        if(cacheHit && !bodyStages && !verify) {
+            g.nextCost=CM::pack(CM::estimateNs(0,0,key.size(),0,0));
+            return;
+        }
 
         UnitGeomInputs in;
         in.visual=&vt->second;in.anim=anim;in.atlas=atlas;in.facing=facing;
