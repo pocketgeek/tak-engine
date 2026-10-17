@@ -67,6 +67,7 @@ uint64_t gFieldBytes=0;         // LegionNavigator::setFieldBytesForTest (proces
 // Stage 6: the routing hierarchy's sector size, K = 1 << gSectorShift origins (LegionNavigator::setSectorSizeForTest;
 // 32 in the game, chosen by measurement: docs/legion-10000-progress.md 7.6).
 int gSectorShift=5;
+bool gHierRoutes=true;   // LegionNavigator::setHierarchicalRoutesForTest (process-wide; true in the game)
 // A per-tick budget of the registration / plane-build / awareness work, divided by the test divisor.
 uint64_t budgetOf(uint64_t units) {return std::max<uint64_t>(1,units/gBudgetDiv);}
 #ifndef NDEBUG
@@ -3356,7 +3357,11 @@ struct LegionNavigator::Impl {
         const int demand=routeDemand(g);
         const bool lowDemand=demand<=(g.routeMode==2?kChainDemandLow:kChainDemand);
         g.routeMode=lowDemand?1:2;
-        if(!lowDemand)return rp;
+        if(!lowDemand||!gHierRoutes)return rp;
+        // An approach group (its goals unreachable: seeds are stand-in points on the members' own region) keeps the
+        // window: churn-1000's sealed-box group on a chain never reached its approach points and was retired as
+        // trapped after kTrappedRetire (arrivals 520 -> 458 over three offsets; back to 520 with the window).
+        if(g.approach)return rp;
         const int W=width();
         std::vector<int> targets;
         targets.reserve(g.ids.size());
@@ -10621,6 +10626,7 @@ void LegionNavigator::setPauseAllForTest(bool on) {gPauseAll=on;}
 void LegionNavigator::setInstrumentProbes(bool on) {gInstrumentProbes=on;}
 void LegionNavigator::setBudgetDivisorForTest(int div) {gBudgetDiv=uint64_t(std::max(div,1));}
 void LegionNavigator::setFieldBytesForTest(uint64_t bytes) {gFieldBytes=bytes;}
+void LegionNavigator::setHierarchicalRoutesForTest(bool on) {gHierRoutes=on;}
 void LegionNavigator::setSectorSizeForTest(int k) {
     int shift=5;
     for(int s=2;s<=8;++s)if((1<<s)==k)shift=s;

@@ -405,6 +405,10 @@ public:
     // planes built after the call (Legion 10,000 stage 6: the sector-size experiment). Changes behaviour and
     // hashes when not 32.
     static void setSectorSizeForTest(int k);
+    // Test hook (process-wide; default on): plan low-demand routes over the routing hierarchy (corridors, tile
+    // chains). Off, every route is the window build, as before stage 6: the scheduler's load tests
+    // (legion_sched_load) keep the continuous quota load they were written for. Changes behaviour and hashes.
+    static void setHierarchicalRoutesForTest(bool on);
     // Debug builds (NDEBUG undefined): check derived indexes and the Stats
     // after every tick() (aborts on a mismatch). A no-op in release. A debug
     // build starts with it on when TAK_LEGION_VERIFY is set (the only

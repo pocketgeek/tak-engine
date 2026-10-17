@@ -705,12 +705,16 @@ if(Python3_Interpreter_FOUND)
   # legion_sched_mix (sched-mix.scn, a two-map field allowance): memory pressure -- the fit scan, the
   # reservation, request promotion and shares behind a stopped scan run in the sim, and every request's
   # wait stays within a bound derived from the allowance, the tenure and the measured queue.
+  # (Stage 6: sched-load's squads take tile chains in the game, and then no longer keep the quota saturated; the
+  # two load tests run it with every route the window build, --no-hier-routes, so they still test the scheduler
+  # under the continuous load they were written for.)
   add_test(NAME legion_sched_load
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
-                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-load.scn)
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-load.scn --no-hier-routes)
   add_test(NAME legion_sched_load_div
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
-                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-load.scn --budget-div 512)
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-load.scn --budget-div 512
+                   --no-hier-routes)
   add_test(NAME legion_sched_mix
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-mix.scn)
