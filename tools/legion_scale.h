@@ -369,6 +369,18 @@ public:
                 k.emplace_back(p + "traffic.jam_stamps", int64_t(a.jamStamps));
                 k.emplace_back(p + "traffic.corrections_built", int64_t(a.correctionsBuilt));
                 k.emplace_back(p + "traffic.correction_hits", int64_t(a.correctionHits));
+                k.emplace_back(p + "choke.openings", int64_t(a.openings));
+                k.emplace_back(p + "choke.scans", int64_t(a.openingScans));
+                k.emplace_back(p + "choke.entrants", int64_t(a.openingEntrants));
+                k.emplace_back(p + "choke.delay_max", int64_t(a.openingDelayMax));
+                k.emplace_back(p + "choke.charged_fields", int64_t(a.chargedFields));
+                k.emplace_back(p + "choke.charges", int64_t(a.openingCharges));
+                k.emplace_back(p + "choke.replans", int64_t(a.openingReplans));
+                k.emplace_back(p + "choke.search_charges", int64_t(a.openingSearchCharges));
+                k.emplace_back(p + "choke.admissions", int64_t(a.passAdmits));
+                k.emplace_back(p + "choke.admit_waits", int64_t(a.admitWaits));
+                k.emplace_back(p + "choke.admit_turns", int64_t(a.admitTurns));
+                k.emplace_back(p + "choke.admit_closings", int64_t(a.admitClosings));
             }
         }
     }

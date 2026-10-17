@@ -33,6 +33,7 @@
 #include <map>
 #include <queue>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -303,7 +304,9 @@ public:
     }
     // The same with a traffic cost (Legion 10,000 stage 7): extra(s, r, step) is added to each step out of region
     // (s, r), `step` being that step's own cost (the way across the region from its entry to the portal). A pure
-    // function of its arguments during one search; 0 everywhere gives the search above exactly.
+    // function of its arguments during one search; 0 everywhere gives the search above exactly. Stage 8: an extra
+    // that also takes (const Portal& q, bool aSide) -- the portal the step crosses and whether (s, r) is its `a`
+    // side -- can charge the crossing itself (a chokepoint's queue, toward the goals: the bodies walk the other way).
     template <class Extra>
     Tree search(const std::vector<int>& goals, const std::vector<int>& targets, const uint8_t* legal, size_t maxExpand,
                 uint64_t& work, Extra&& extra) {
@@ -366,7 +369,12 @@ public:
                 const uint16_t nr = aSide ? p.rb : p.ra;
                 const int here = midCell(p, s), there = midCell(p, ns);
                 const uint64_t step = octile(ex, ez, here % W_, here / W_) + 5;
-                const uint64_t c = cost + step + extra(s, r, step);
+                uint64_t more;
+                if constexpr (std::is_invocable_v<Extra&, int, uint16_t, uint64_t, const Portal&, bool>)
+                    more = extra(s, r, step, p, aSide);
+                else
+                    more = extra(s, r, step);
+                const uint64_t c = cost + step + more;
                 const uint64_t nk = key(ns, nr);
                 Best& n = slot(nk);
                 if (n.seen && (n.done || c > n.cost || (c == n.cost && k >= n.from))) return;

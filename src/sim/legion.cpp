@@ -345,6 +345,10 @@ struct LegionNavigator::Impl {
             std::vector<std::vector<std::pair<uint64_t,uint32_t>>> owned;  // per region: (owner, origins soft to all but it)
         };
         std::vector<SectorTraffic> traffic;
+        // Stage 8: per sector side (s * 2 + which), its openings (see sideOpenings), valid for the generations of
+        // its two sectors. Derived, never hashed.
+        struct SideOpenings {uint32_t genA=0,genB=0;bool valid=false;std::vector<std::array<int32_t,3>> runs;};
+        std::vector<SideOpenings> sideOps;
     };
     // Running totals of the live fields (every Field lives in some group's
     // field or next): startField's cap test reads them instead of walking
@@ -487,8 +491,37 @@ struct LegionNavigator::Impl {
         int plane=-1;
         // Buckets keyed by potential + heuristic (see advance); the key of a
         // relaxed neighbour is at most (kSoftFactor+1)*kDiagonal above the
-        // popped one, plus a mover corridor's charge (see Corridor).
-        std::array<std::vector<int>,128> buckets;
+        // popped one, plus a mover corridor's charge (see Corridor), plus (stage 8)
+        // a chokepoint's queue charge: a field that carries charges has a ring of
+        // mask+1 buckets, a power of two above its largest key rise.
+        std::vector<std::vector<int>> buckets=std::vector<std::vector<int>>(128);
+        uint32_t mask=127;
+        // Stage 8 (chokepoints, see Opening): `labels` -- the build records in `via`, for every cell it reaches,
+        // the first opening its descent crosses (Opening index + 1, shifted, with the direction bit; 0: none),
+        // so a recount reads each member's next chokepoint from its cell; per tile, allocated with the tile.
+        // `charges`: the queue charge (route units) of crossing an opening in a direction, by label, sorted: the
+        // travel-time-plus-queue-delay costs the route was planned with (part of its sharing key). Hashed with
+        // the field (the charges); the labels are a function of the build.
+        bool labels=false;
+        std::vector<std::unique_ptr<uint16_t[]>> via;
+        struct Charge {uint32_t label=0,cost=0;bool operator==(const Charge&) const=default;};
+        std::vector<Charge> charges;
+        uint16_t viaAt(int x,int z) const {
+            if(via.empty()||!inside(x,z))return 0;
+            const auto& t=via[tileOf(x,z)];
+            return t?t[inTile(x,z)]:uint16_t(0);
+        }
+        bool viaTile(int x,int z) const {return !via.empty()&&via[tileOf(x,z)];}
+        uint16_t& viaSlot(int x,int z) {
+            if(via.empty())via.resize(tiles.size());
+            auto& t=via[tileOf(x,z)];
+            if(!t) {t.reset(new uint16_t[tileCells()]);std::fill(t.get(),t.get()+tileCells(),uint16_t(0));}
+            return t[inTile(x,z)];
+        }
+        uint32_t chargeFor(uint32_t label) const {
+            const auto at=std::lower_bound(charges.begin(),charges.end(),label,[](const Charge& c,uint32_t l) {return c.label<l;});
+            return at!=charges.end()&&at->label==label?at->cost:0;
+        }
         // Movers this field plans round (see awareScan): corridor segments
         // (px) and radius; a step inside one costs kSoftFactor times, within
         // two cells of its edge kSoftNear times. With a soft obstacle on top
@@ -704,6 +737,10 @@ struct LegionNavigator::Impl {
         uint32_t softReplanTick=kNoTick;
         uint32_t scanCycle=~0u;int64_t scanSumX=0,scanSumZ=0;int scanCount=0,scanTail=-1;uint32_t scanTailPot=0;
         std::vector<int> reachIds;
+        // Stage 8: this group's own entrants at the last opening recount, (label, queue area), sorted by label: its
+        // own share of each queue, left out of the delays its route is charged (a route never plans round itself).
+        // A function of the recount, whose inputs are hashed; folded with the openings.
+        std::vector<std::pair<uint32_t,uint64_t>> openArea;
         // Two or more members: arrival spots round the target at weapon reach.
         // cells: band 0 (centre distance R-1.5 .. R-0.5 bodies, in the
         // members' static component and in line of sight of the target: the
@@ -895,6 +932,9 @@ struct LegionNavigator::Impl {
         // in the gate, and the travel axis and sign across the line. Hashed
         // only when set (PLAN 3.0, C27).
         int gateCell=-1;int8_t gateLane=0,gateAxis=0,gateSign=0;
+        // Stage 8 (admission, see admissionHold): the label of the narrow opening this member was admitted
+        // through (0: none), kept until it leaves the opening's zone. Hashed while set.
+        uint16_t passLabel=0;
         // C1 (see meetScan): the last tick this member's lane scan (passAhead) found an oncoming body of
         // another command ahead (kNoTick: never). Hashed only when set (PLAN 3.0, C27).
         uint32_t meetSeen=kNoTick;
@@ -2086,12 +2126,18 @@ struct LegionNavigator::Impl {
                 p.pending.size()*S::kBox+p.nearMemo.size()*S::kMemo+p.nearGen.size()*S::kCell32+p.spanMemo.size()*S::kCell32+
                 p.spanGen.size()*S::kCell32+p.loneMemo.size()*S::kCell8+p.loneGen.size()*S::kCell32;
         for(const auto& p:planes)b.portals+=p.hier.bytes();   // stage 6: sectors, region labels, portals
+        // Stage 8: the opening records and their index, and each plane's per-side opening runs.
+        b.portals+=openings.size()*(48+S::kNode+24);
+        for(const auto& p:planes)for(const auto& so:p.sideOps)b.portals+=16+so.runs.size()*12;
         b.tiles+=tileBytes;                                   // stage 6: the shared tile cache
         std::set<const Field*> seen;
         for(const auto& [id,g]:groups) {
             for(const Field* f:{g.field.get(),g.next.get()}) {
                 if(!f||!seen.insert(f).second)continue;
                 b.fields+=S::kField+f->counted*S::kCell32+f->seeds.size()*S::kCell32+f->avoid.size()*S::kCorridor;
+                // Stage 8: its opening labels (2 bytes a cell of each labelled tile) and queue charges.
+                for(const auto& t:f->via)if(t)b.fields+=f->tileCells()*S::kCell16;
+                b.fields+=f->charges.size()*8;
                 if(f->done)continue;
                 for(const auto& q:f->buckets)b.inflight+=q.size()*S::kCell32;
                 b.inflight+=f->seedKeys.size()*S::kKeyed+f->demand.size()*(S::kKeyed+S::kNode+16);   // RouteDemand: entry + index node
@@ -3137,6 +3183,7 @@ struct LegionNavigator::Impl {
     void leave(int id) {
         auto found=members.find(id);
         if(found==members.end())return;
+        if(found->second.passLabel)clearPass(id,found->second);
         if(const auto* u=w.unit(id);u&&u->type&&found->second.slot>=0&&found->second.state!=Arrived)
             slotCells(found->second,u->type->footX,u->type->footZ,false);
         if(auto point=points.find(found->second.point);point!=points.end()) {
@@ -3499,6 +3546,470 @@ struct LegionNavigator::Impl {
         ++acct.trafficCharges;
         return step*uint64_t(kSoftFactor-1)*soft/cells;
     }
+    // ---- stage 8: chokepoints (openings) and their queues ------------------------------------------------------------
+    // An OPENING is a narrow crossing of a sector boundary: a portal run (sim/legion_hier.h) bounded at both ends by a
+    // pair of origins that do not cross the boundary (a wall, a river bank, the map's edge) -- a bridge, a door, a
+    // gap. A run that goes on past its sector's corner into open ground is no opening. Its physical identity is the
+    // run's cells, not its origins: on the boundary line `line` (the last column / row of the west / north sector),
+    // cells lo..hi along it, hi = the last origin + the footprint along the run - 1 (the run followed past sector
+    // corners: the pieces of a door across one are one opening; a run of kOpeningSpan origins or more is no opening). Bounded by the same obstacles,
+    // that span is the same for every movement plane (a footprint f fits origins lo..lo+width-f), so the bodies of
+    // every class that cross one bridge share one record: its queue is one queue. The table is never shrunk (a
+    // record no route reaches any more counts no entrants); at most 32,767 records (a label's 15 bits).
+    //
+    // Entrants: every kOpeningScan ticks, every member of a group whose route records labels (a window or corridor
+    // field of a group of kOpeningMembers or more: Field::via, the first opening along each cell's descent) or that
+    // walks a tile chain (the first opening on its region's way through the chain) adds its footprint's queue area,
+    // (footX + 1) x (footZ + 1) cells, to that opening in its direction (0: toward +x / +z, 1: toward -x / -z).
+    // A member counts only the next opening on its way: once through, its cell names the one after. Its queue DELAY,
+    // in cells of travel, is the length of the queue in front of it, queue area / width: a body waits about that
+    // many of its own steps (one body per lane every footprint + 1 cells at walking speed); see queueDelay for how
+    // an opposing stream counts. Derived from hashed state (members, fields) and recomputed on a fixed cadence:
+    // a decision input, hashed (checksum folds every record's delays while nonzero).
+    struct Opening {
+        uint8_t side=0;int line=0,lo=0,hi=0,width=1;uint64_t area[2]={0,0};uint32_t delay[2]={0,0};
+        // Admission (stage 8, see admissionHold): the narrow strip round the crossing along the axis across the
+        // line (cells stripLo..stripHi, measured on plane stripPlane at its epoch stripEpoch), and the token:
+        // the direction the passage is open to (-1 none), its player (an ally of a member, or the token is not
+        // its concern), the tick it was granted and the last admission, whether it is closing (the other way
+        // has waited kAdmitGreen ticks: no new admission until the passage is clear), and per direction the first
+        // tick of the current run of waiting (kNoTick none) and whether some body waited in the last tick.
+        int stripLo=0,stripHi=-1,stripPlane=-1;uint64_t stripEpoch=~0ull;
+        int8_t tokenDir=-1;int tokenPlayer=-1;bool closing=false;uint32_t granted=0,lastEntry=0;
+        uint32_t waitSince[2]={kNoTick,kNoTick};bool waited[2]={false,false},waiting[2]={false,false};
+        uint32_t occ[2]={0,0};
+        uint32_t active=kNoTick;   // the last tick a member asked for this passage (its strip is then watched)
+    };
+    std::vector<uint32_t> activeOpenings;   // openings asked for in the last two ticks, ascending (derived; never hashed)
+    std::vector<Opening> openings;
+    std::map<std::tuple<uint8_t,int,int,int>,uint32_t> openingIndex;
+    static constexpr uint32_t kOpeningScan=30;          // ticks between recounts (phase kOpeningScan/3)
+    static constexpr uint32_t kOpeningMinCharge=16;     // cells: a shorter queue is no charge
+    static constexpr int kNarrowWidth=16;               // cells: an opening this narrow passes one way at a time (admission)
+    static constexpr int kOpeningMembers=8;             // groups this big record labels and take charges
+    static constexpr uint32_t kOpeningHold=300;         // ticks a route keeps its charges before a re-plan for new ones
+    static constexpr size_t kMaxOpenings=32767;
+    static constexpr int kOpeningSpan=64;               // origins: a longer crossing run is open ground
+    // Does the pair of origins across boundary line `line` (which 0: the column x = line | line+1; 1: the row
+    // z = line | line+1) at position t along it cross it (both origins legal)? Off the map: no.
+    bool crossingPair(const Plane& p,int which,int line,int t) const {
+        const int W=width(),H=height();
+        if(t<0||t>=(which==0?H:W)||line<0||line+1>=(which==0?W:H))return false;
+        return which==0?p.legal[size_t(t)*W+line]&&p.legal[size_t(t)*W+line+1]:p.legal[size_t(line)*W+t]&&p.legal[size_t(line+1)*W+t];
+    }
+    // The openings among sector s's east (which 0) or south (1) portals: (start, len, record) per run, cached per
+    // side by the generations of its two sectors (the plane's SideOpenings; a relabelled sector reclassifies).
+    const std::vector<std::array<int32_t,3>>& sideOpenings(Plane& p,int s,int which,uint64_t& work) {
+        auto& H=p.hier;
+        if(p.sideOps.size()!=size_t(H.sectorCount())*2)p.sideOps.assign(size_t(H.sectorCount())*2,Plane::SideOpenings{});
+        const auto& ports=H.side(s,which,p.legal.data(),work);
+        const int n=which==0?((s%H.sectorsWide())+1<H.sectorsWide()?s+1:-1):((s/H.sectorsWide())+1<H.sectorsHigh()?s+H.sectorsWide():-1);
+        auto& so=p.sideOps[size_t(s)*2+size_t(which)];
+        const uint32_t ga=H.gen(s),gb=n>=0?H.gen(n):0;
+        if(so.valid&&so.genA==ga&&so.genB==gb)return so.runs;
+        so.valid=true;so.genA=ga;so.genB=gb;so.runs.clear();
+        if(n<0)return so.runs;
+        const auto r=H.rect(s);
+        const int line=which==0?r[2]-1:r[3]-1,along=which==0?p.footZ:p.footX;
+        for(const auto& q:ports) {
+            // The whole run along the line: a run that reaches its side's end may go on in the next side (a door
+            // across a sector corner); past kOpeningSpan origins in all it is open ground.
+            int first=q.start,last=q.start+q.len-1;
+            while(last-first<kOpeningSpan&&crossingPair(p,which,line,first-1)) {--first;++work;}
+            while(last-first<kOpeningSpan&&crossingPair(p,which,line,last+1)) {++last;++work;}
+            work+=2;
+            if(last-first>=kOpeningSpan)continue;
+            const int lo=first,hi=last+along-1;
+            const auto key=std::make_tuple(uint8_t(which),line,lo,hi);
+            auto at=openingIndex.find(key);
+            if(at==openingIndex.end()) {
+                if(openings.size()>=kMaxOpenings)continue;
+                Opening o;o.side=uint8_t(which);o.line=line;o.lo=lo;o.hi=hi;o.width=hi-lo+1;
+                at=openingIndex.emplace(key,uint32_t(openings.size())).first;
+                openings.push_back(o);++acct.openings;
+            }
+            so.runs.push_back({q.start,q.len,int32_t(at->second)});
+        }
+        return so.runs;
+    }
+    // The label of a body's step from (nx, nz) into (x, z) across a sector boundary: (record + 1) << 1 | direction
+    // (1: toward -x / -z), or 0 when it crosses no opening. A diagonal step across a boundary crosses it where its
+    // orthogonal half from (x, z) does (the step rule needs that pair legal), so the row / column of (x, z) names it;
+    // across a sector corner the east boundary is read.
+    uint16_t crossLabel(Plane& p,int x,int z,int nx,int nz,uint64_t& work) {
+        const int sh=p.hier.shift();
+        int which,line,t,dir;
+        if((x>>sh)!=(nx>>sh)) {which=0;line=std::min(x,nx);t=z;dir=nx>x?1:0;}
+        else if((z>>sh)!=(nz>>sh)) {which=1;line=std::min(z,nz);t=x;dir=nz>z?1:0;}
+        else return 0;
+        const int s=which==0?p.hier.sectorOf(line,t):p.hier.sectorOf(t,line);
+        for(const auto& r:sideOpenings(p,s,which,work))if(t>=r[0]&&t<r[0]+r[1])return uint16_t((r[2]+1)<<1|dir);
+        return 0;
+    }
+    // The label of portal q crossed from its `a` side (aSide) or its `b` side (a chain's exit, the region search).
+    uint16_t portalLabel(Plane& p,const hier::Portal& q,bool fromA,uint64_t& work) {
+        for(const auto& r:sideOpenings(p,q.a,q.side,work))if(r[0]==q.start)return uint16_t((r[2]+1)<<1|(fromA?0:1));
+        return 0;
+    }
+    // The queue delay (cells) of an opening for a body with `same` cells of queue area ahead its way and `opp` the
+    // other way: a narrow one (kNarrowWidth) is admitted one way at a time, and each turn of its direction costs a
+    // clearing of the passage, so an opposing body counts twice (routes keep opposing streams on different
+    // passages where they can); on a wide one the streams keep to their own halves, an opposing body taking half
+    // the room it would going along.
+    static uint32_t queueDelay(const Opening& o,uint64_t same,uint64_t opp) {
+        const uint64_t load=o.width<=kNarrowWidth?same+2*opp:same+opp/2;
+        return uint32_t(std::min<uint64_t>(1u<<20,load/uint64_t(std::max(o.width,1))));
+    }
+    // The delay (cells) of `label` for group g: the queue without g's own entrants.
+    uint32_t delayFor(const Group& g,uint32_t label) const {
+        const uint32_t idx=(label>>1)-1;
+        if(idx>=openings.size())return 0;
+        const Opening& o=openings[idx];
+        auto own=[&](uint32_t l) {
+            const auto at=std::lower_bound(g.openArea.begin(),g.openArea.end(),std::pair<uint32_t,uint64_t>{l,0});
+            return at!=g.openArea.end()&&at->first==l?at->second:uint64_t(0);
+        };
+        const uint32_t d=label&1;
+        const uint64_t same=o.area[d]-std::min(o.area[d],own(label)),opp=o.area[1-d]-std::min(o.area[1-d],own(label^1));
+        return queueDelay(o,same,opp);
+    }
+    // The queue delay (cells) a body crossing by `label` meets.
+    uint32_t labelDelay(uint32_t label) const {
+        const uint32_t idx=(label>>1)-1;
+        return idx<openings.size()?openings[idx].delay[label&1]:0;
+    }
+    // The recount (every kOpeningScan ticks): every record's entrants and delays from the members' routes as they
+    // stand, then a re-plan for a route whose charges have drifted from the delays it would now be charged
+    // (openingDrift), at most once per kOpeningHold ticks of its build.
+    void openingScan() {
+        if(w.tickCounter_%kOpeningScan!=kOpeningScan/3)return;
+        if(openings.empty())return;
+        ++acct.openingScans;
+        for(auto& o:openings)o.area[0]=o.area[1]=0;
+        uint64_t work=0;
+        const int W=width();
+        for(auto& [gid,g]:groups) {
+            const Field* f=g.field.get();
+            // A route whose replacement is due or building (stale, or a refresh in `next`) keeps the entrants it
+            // had -- or committed to when it was re-planned for a queue (openingDrift) -- until it is installed: its
+            // members still walk the old route, whose labels would undo the commitment.
+            if(f&&(g.stale||g.next)&&!g.openArea.empty()) {
+                for(const auto& [label,a]:g.openArea)if(const uint32_t idx=(label>>1)-1;idx<openings.size())openings[idx].area[label&1]+=a;
+                continue;
+            }
+            g.openArea.clear();
+            if(!f||!f->usable()||g.plane<0)continue;
+            Plane& p=planes[size_t(g.plane)];
+            const bool chain=f->kind==KindChain;
+            if(!f->labels&&!chain)continue;
+            std::map<uint32_t,uint64_t> mine;
+            std::map<uint64_t,int> node;
+            if(chain)for(size_t i=0;i<f->chainTransit;++i)node.emplace(hier::Hierarchy::key(f->chain[i].s,f->chain[i].r),int(i));
+            for(const int id:g.ids) {
+                const Unit* u=w.unit(id);
+                if(!u||!u->type||!u->alive())continue;
+                const int ox=footprintOrigin(u->x,u->type->footX),oz=footprintOrigin(u->z,u->type->footZ);
+                ++work;
+                uint32_t label=0;
+                if(!chain)label=f->viaAt(ox,oz);
+                else if(p.hier.built(p.hier.sectorOf(ox,oz))) {
+                    const int cell=oz*W+ox,sec=p.hier.sectorOfCell(cell);
+                    const uint16_t reg=p.hier.regionAt(cell);
+                    auto at=reg==hier::kNoRegion?node.end():node.find(hier::Hierarchy::key(sec,reg));
+                    for(int i=at==node.end()?-1:at->second,depth=0;i>=0&&depth<256&&!label;i=f->chain[size_t(i)].parent,++depth) {
+                        const ChainNode& c=f->chain[size_t(i)];
+                        if(p.hier.gen(c.s)!=c.gen)break;
+                        label=portalLabel(p,c.exit,c.onA,work);
+                    }
+                }
+                if(!label)continue;
+                const uint32_t idx=(label>>1)-1;
+                if(idx>=openings.size())continue;
+                const uint64_t a=uint64_t(u->type->footX+1)*uint64_t(u->type->footZ+1);
+                openings[idx].area[label&1]+=a;mine[label]+=a;
+                ++acct.openingEntrants;
+            }
+            g.openArea.assign(mine.begin(),mine.end());
+        }
+        navc.connectivity+=work;
+        // Routes whose charges drifted: re-planned (a reroute refresh, as awareness asks for one), one group at a
+        // time in id order, each committing its move in the table before the next is judged (openingDrift), so
+        // that two groups do not both leave one queue for the other and come back together the next time.
+        const uint32_t now=w.tickCounter_;
+        for(auto& [gid,g]:groups) {
+            Field* f=g.field.get();
+            if(!f||!f->done||!f->labels||g.next||g.stale||now-g.built<kOpeningHold)continue;
+            if(!openingDrift(g,*f))continue;
+            ++acct.openingReplans;
+            g.stale=true;g.demand=true;g.reroute=true;
+            listGroup(g);
+        }
+        for(auto& o:openings)
+            for(int d=0;d<2;++d) {
+                o.delay[d]=queueDelay(o,o.area[d],o.area[1-d]);
+                acct.openingDelayMax=std::max<uint64_t>(acct.openingDelayMax,o.delay[d]);
+            }
+    }
+    // The charges a new route for g would carry: for every opening of its window whose delay in a direction is
+    // kOpeningMinCharge cells or more, that delay in route units, halfway from the charge its current route carried
+    // there (a damped step: the route's own members are part of the queue they move away from, and the next
+    // recount sees where they went). Sorted by label.
+    // ---- stage 8: admission at genuinely narrow friendly passages -----------------------------------------------------
+    // Two streams head on in a passage too narrow for them to pass (bridges-1000: three stragglers of one army on a
+    // 12-cell bridge against the head of the other, 600 bodies standing for the rest of the run) never untangle: the
+    // lane rules need room to keep right. An opening at most kNarrowWidth cells wide (four bodies of the
+    // roster's largest common footprint, 3x3) is admitted one direction at a time. Its STRIP is the run of cross-sections along the axis across the line no
+    // wider than the opening + kStripSlack cells (a bridge's length, a door's wall), measured once per plane epoch on
+    // the plane's 1x1 legality. A member whose route's next opening it is (its field's label at its cell) and that
+    // stands in the approach zone -- within kAdmitZone bodies of the strip on its own side, across the opening's
+    // span widened as much -- is admitted when the passage is open its way or free (it takes the token), and holds
+    // otherwise (order kept, stall clock stopped: a wait, not a block). Admitted, it passes (Member::passLabel) until
+    // it leaves the zone on either side. The token changes once no admitted body of its direction is left in the
+    // zone and the other way waits; it closes (admits no more) once the other way has waited kAdmitGreen ticks, so
+    // a stream never starves the other. Only allies defer to each other (no enemy is asked to cooperate); a member
+    // of a group without labels (fewer than kOpeningMembers, or a tile chain) neither waits nor counts.
+    static constexpr int kStripSlack=2,kStripMax=192,kAdmitZone=6;
+    static constexpr uint32_t kAdmitGreen=300;
+    static constexpr uint32_t kAdmitClear=60;   // ticks without a new admission before a clear passage turns
+    std::set<int> passers;   // members with passLabel set, ascending (derived from the members; never hashed)
+    bool narrowFor(const Opening& o,const UnitType&) const {return o.width<=kNarrowWidth;}
+    void ensureStrip(Opening& o,const Plane& p,int planeIndex) {
+        if(o.stripPlane==planeIndex&&o.stripEpoch==p.epoch)return;
+        o.stripPlane=planeIndex;o.stripEpoch=p.epoch;
+        const int W=width(),H=height(),mid=(o.lo+o.hi)/2;
+        auto cellOk=[&](int x,int z) {return x>=0&&z>=0&&x<W&&z<H&&!p.cell.empty()&&p.cell[size_t(z)*W+x];};
+        // The legal run through (a, mid) along the line's direction, a the position across it.
+        auto run=[&](int a) {
+            auto ok=[&](int t) {return o.side==0?cellOk(a,t):cellOk(t,a);};
+            if(!ok(mid))return 0;
+            int lo=mid,hi=mid;
+            while(hi-lo<=o.width+kStripSlack&&ok(lo-1))--lo;
+            while(hi-lo<=o.width+kStripSlack&&ok(hi+1))++hi;
+            return hi-lo+1;
+        };
+        int a0=o.line,a1=o.line+1;
+        auto narrow=[&](int a) {const int r=run(a);return r>0&&r<=o.width+kStripSlack;};
+        while(o.line-a0<kStripMax&&narrow(a0-1))--a0;
+        while(a1-o.line<kStripMax&&narrow(a1+1))++a1;
+        o.stripLo=a0;o.stripHi=a1;
+    }
+    // A member's place relative to opening o: along (across the line) and across (along it), of its footprint's centre cell.
+    void openingFrame(const Opening& o,const Unit& u,int& along,int& across) const {
+        const int cx=int(u.x.v>>20),cz=int(u.z.v>>20);
+        along=o.side==0?cx:cz;across=o.side==0?cz:cx;
+    }
+    int admitZone(const UnitType& t) const {return kAdmitZone*(std::max(t.footX,t.footZ)+1);}
+    bool inStrip(const Opening& o,const Unit& u) const {
+        int a,c;openingFrame(o,u,a,c);
+        const int m=std::max(u.type->footX,u.type->footZ);
+        return a>=o.stripLo&&a<=o.stripHi&&c>=o.lo-m&&c<=o.hi+m;
+    }
+    bool inZone(const Opening& o,const Unit& u) const {
+        int a,c;openingFrame(o,u,a,c);
+        const int z=admitZone(*u.type);
+        return a>=o.stripLo-z&&a<=o.stripHi+z&&c>=o.lo-z&&c<=o.hi+z;
+    }
+    void clearPass(int id,Member& m) {m.passLabel=0;passers.erase(id);}
+    // Should member m hold before the narrow opening its route crosses next? (Admits it when it may go.)
+    bool admissionHold(const Unit& u,Member& m,const Group& g,int ox,int oz) {
+        if(m.passLabel) {
+            const uint32_t idx=(uint32_t(m.passLabel)>>1)-1;
+            if(idx<openings.size()&&inZone(openings[idx],u))return false;
+            clearPass(u.id,m);
+        }
+        const uint16_t label=g.field->viaAt(ox,oz);
+        if(!label)return false;
+        const uint32_t idx=(uint32_t(label)>>1)-1;
+        if(idx>=openings.size())return false;
+        Opening& o=openings[idx];
+        if(!narrowFor(o,*u.type))return false;
+        ensureStrip(o,plane(g.plane),g.plane);
+        if(!inZone(o,u))return false;
+        if(o.active!=w.tickCounter_) {
+            if(o.active==kNoTick||w.tickCounter_-o.active>1)activeOpenings.insert(std::upper_bound(activeOpenings.begin(),activeOpenings.end(),idx),idx);
+            o.active=w.tickCounter_;
+        }
+        const int dir=label&1;
+        auto admit=[&] {
+            o.tokenDir=int8_t(dir);o.tokenPlayer=u.player;o.lastEntry=w.tickCounter_;
+            if(o.waitSince[dir]!=kNoTick)o.waitSince[dir]=kNoTick;
+            m.passLabel=label;passers.insert(u.id);++acct.passAdmits;
+            return false;
+        };
+        // Already in the narrow part (it got there before the passage was asked for): it goes on, an occupant.
+        if(inStrip(o,u)) {m.passLabel=label;passers.insert(u.id);return false;}
+        if(o.tokenDir<0||o.tokenPlayer<0||!w.allied(o.tokenPlayer,u.player)) {
+            // A free passage (or one only enemies use): taken, unless allied bodies the other way still pass in it.
+            if(o.tokenDir<0&&o.occ[1-dir]) {o.waiting[dir]=true;if(o.waitSince[dir]==kNoTick)o.waitSince[dir]=w.tickCounter_;++acct.admitWaits;return true;}
+            o.granted=w.tickCounter_;o.closing=false;return admit();
+        }
+        if(o.tokenDir==dir&&!o.closing&&!o.occ[1-dir])return admit();
+        // The passage is open the other way: wait.
+        o.waiting[dir]=true;
+        if(o.waitSince[dir]==kNoTick)o.waitSince[dir]=w.tickCounter_;
+        ++acct.admitWaits;
+        return true;
+    }
+    // Start of tick: the admitted bodies still in each zone (by direction), the passers that left cleared, and the
+    // tokens moved on: a passage whose direction has no admitted body left in its zone turns to the other way if it
+    // waited (else frees), and one the other way has waited kAdmitGreen ticks for closes.
+    // Any member standing in the strip of a watched passage is an occupant, whatever its route says (a straggler
+    // past the line has the next opening as its label): its direction is the side of the line its goal is on.
+    void watchStrips(const Unit& u,Member& m) {
+        if(m.passLabel||activeOpenings.empty()||m.goal<0)return;
+        for(const uint32_t idx:activeOpenings) {
+            const Opening& o=openings[idx];
+            if(!inStrip(o,u))continue;
+            const int W=width(),gx=m.goal%W,gz=m.goal/W;
+            const int dir=(o.side==0?gx:gz)>o.line?0:1;
+            m.passLabel=uint16_t((idx+1)<<1|uint32_t(dir));passers.insert(u.id);
+            return;
+        }
+    }
+    void admissionTick() {
+        std::set<uint32_t> touched;
+        std::erase_if(activeOpenings,[&](uint32_t idx) {return openings[idx].active==kNoTick||w.tickCounter_-openings[idx].active>1;});
+        for(auto& o:openings)if(o.tokenDir>=0||o.waiting[0]||o.waiting[1]) {o.occ[0]=o.occ[1]=0;}
+        for(auto it=passers.begin();it!=passers.end();) {
+            const int id=*it;
+            Member* m=member(id);const Unit* u=w.unit(id);
+            const uint32_t idx=m?(uint32_t(m->passLabel)>>1)-1:~0u;
+            if(!m||!u||!u->alive()||!u->type||!m->passLabel||idx>=openings.size()||!inZone(openings[idx],*u)) {
+                if(m)m->passLabel=0;
+                it=passers.erase(it);continue;
+            }
+            // Occupants are the bodies in the narrow part itself; an admitted body still before it is committed,
+            // not an occupant (a crowd waiting at the other mouth cannot hold the passage through it).
+            if(inStrip(openings[idx],*u))++openings[idx].occ[m->passLabel&1];
+            touched.insert(idx);
+            ++it;
+        }
+        const uint32_t now=w.tickCounter_;
+        for(auto& o:openings) {
+            if(o.tokenDir<0&&!o.waiting[0]&&!o.waiting[1])continue;
+            for(int d=0;d<2;++d) {o.waited[d]=o.waiting[d];o.waiting[d]=false;if(!o.waited[d])o.waitSince[d]=kNoTick;}
+            if(o.tokenDir<0)continue;
+            const int cur=o.tokenDir,other=1-cur;
+            if(!o.occ[cur]&&now-o.lastEntry>=kAdmitClear) {
+                if(o.waited[other]) {o.tokenDir=int8_t(other);o.granted=now;o.closing=false;o.waitSince[other]=kNoTick;++acct.admitTurns;}
+                else if(!o.waited[cur]) {o.tokenDir=-1;o.closing=false;}
+            }
+            if(o.tokenDir!=cur) {
+                // Turned (or freed): the old direction's admissions still before the narrow part lapse; they ask again.
+                const uint32_t i=uint32_t(&o-openings.data());
+                for(auto it=passers.begin();it!=passers.end();) {
+                    Member* m=member(*it);const Unit* u=w.unit(*it);
+                    if(m&&u&&(uint32_t(m->passLabel)>>1)-1==i&&int(m->passLabel&1)==cur&&!inStrip(o,*u)) {m->passLabel=0;it=passers.erase(it);}
+                    else ++it;
+                }
+            } else if(o.waited[other]&&o.waitSince[other]!=kNoTick&&now-o.waitSince[other]>=kAdmitGreen&&!o.closing) {
+                o.closing=true;++acct.admitClosings;
+            }
+        }
+    }
+    // The charge (route units) a route of g would carry for crossing by `label`: the delay without g's own
+    // entrants, halved where its members already cross (a commitment: a route leaves a queue it stands in only
+    // for twice the gain it would need to join it, so groups that trade places at every recount settle), and none
+    // under kOpeningMinCharge cells.
+    uint32_t chargeWant(const Group& g,uint32_t label) const {
+        uint32_t d=delayFor(g,label);
+        const auto mine=std::lower_bound(g.openArea.begin(),g.openArea.end(),std::pair<uint32_t,uint64_t>{label,0});
+        if(mine!=g.openArea.end()&&mine->first==label&&mine->second)d/=2;
+        return d>=kOpeningMinCharge?std::min<uint32_t>(d,1u<<16)*kOrthogonal:0u;
+    }
+    std::vector<Field::Charge> openingCharges(const Group& g,const std::array<int,4>& box) const {
+        std::vector<Field::Charge> out;
+        if(g.members<kOpeningMembers||!g.soft)return out;
+        for(size_t i=0;i<openings.size();++i) {
+            const Opening& o=openings[i];
+            if(!o.delay[0]&&!o.delay[1])continue;
+            const bool in=o.side==0?(o.line>=box[0]&&o.line<box[2]&&o.hi>=box[1]&&o.lo<=box[3]):
+                                    (o.line>=box[1]&&o.line<box[3]&&o.hi>=box[0]&&o.lo<=box[2]);
+            if(!in)continue;
+            for(uint32_t d=0;d<2;++d) {
+                const uint32_t label=uint32_t((i+1)<<1|d);
+                if(const uint32_t c=chargeWant(g,label))out.push_back({label,c});
+            }
+        }
+        return out;
+    }
+    // The entrants g's members would be at each opening if g planned now: the region search from its goals to its
+    // members' regions with the traffic and queue charges a new route of g would carry (chargeWant: without its own
+    // entrants, halved where it already crosses), each member's region followed down the tree to the first opening
+    // on its way. (label, queue area), sorted; false when the search does not reach every member.
+    bool predictEntrants(Group& g,std::vector<std::pair<uint32_t,uint64_t>>& out) {
+        out.clear();
+        if(g.plane<0)return false;
+        Plane& p=planes[size_t(g.plane)];
+        if(!p.hier.ready()||p.legal.empty()||p.stage>0)return false;
+        const int W=width();
+        std::vector<int> targets;std::vector<uint64_t> area;
+        for(const int id:g.ids) {
+            const Unit* u=w.unit(id);
+            if(!u||!u->type||!u->alive())continue;
+            targets.push_back(footprintOrigin(u->z,u->type->footZ)*W+footprintOrigin(u->x,u->type->footX));
+            area.push_back(uint64_t(u->type->footX+1)*uint64_t(u->type->footZ+1));
+        }
+        uint64_t work=0;
+        const uint64_t command=g.soft?g.command:kNoSoft;
+        const auto tree=p.hier.search(g.seeds,targets,p.legal.data(),kRouteExpand,work,
+            [&](int s,uint16_t r,uint64_t step,const hier::Portal& q,bool aSide) {
+                uint64_t extra=trafficPenalty(p,s,r,step,command,work);
+                if(const uint16_t label=portalLabel(p,q,!aSide,work))extra+=chargeWant(g,label);
+                return extra;
+            });
+        navc.routeSearch+=work;
+        if(!tree.complete)return false;
+        std::map<uint32_t,uint64_t> sum;
+        std::map<int,uint32_t> first;   // node -> first label on its way (0 none)
+        for(size_t k=0;k<targets.size();++k) {
+            const int c=targets[size_t(k)];
+            if(!legal(p,c%W,c/W))continue;
+            const int sec=p.hier.sectorOfCell(c);
+            const uint16_t reg=p.hier.regionAt(c);
+            const auto at=reg==hier::kNoRegion?tree.index.end():tree.index.find(hier::Hierarchy::key(sec,reg));
+            if(at==tree.index.end())continue;
+            uint32_t label=0;
+            if(const auto memo=first.find(at->second);memo!=first.end())label=memo->second;
+            else {
+                for(int i=at->second,depth=0;i>=0&&depth<4096&&!label;i=tree.nodes[size_t(i)].parent,++depth) {
+                    const auto& n=tree.nodes[size_t(i)];
+                    if(n.parent<0)break;
+                    const hier::Portal& q=p.hier.portal(n.exit);
+                    label=portalLabel(p,q,q.a==n.s&&q.ra==n.r,work);
+                }
+                first.emplace(at->second,label);
+            }
+            if(label)sum[label]+=area[k];
+        }
+        out.assign(sum.begin(),sum.end());
+        return true;
+    }
+    // Has g's route drifted from the queues? Its predicted entrants (predictEntrants) moved a quarter or more of its
+    // queue area -- and 64 cells of it or more -- between openings against its own entrants now (a route that would
+    // take another passage, or come back to one that cleared). Then the move is committed at once: its own entrants
+    // in the table become the predicted ones, so the next group judged in this recount sees where it is going.
+    bool openingDrift(Group& g,const Field&) {
+        std::vector<std::pair<uint32_t,uint64_t>> pred;
+        if(!predictEntrants(g,pred))return false;
+        uint64_t total=0,moved=0;
+        size_t i=0,j=0;
+        const auto& cur=g.openArea;
+        while(i<pred.size()||j<cur.size()) {
+            if(j>=cur.size()||(i<pred.size()&&pred[i].first<cur[j].first)) {moved+=pred[i].second;total+=pred[i].second;++i;}
+            else if(i>=pred.size()||cur[j].first<pred[i].first) {moved+=cur[j].second;++j;}
+            else {moved+=pred[i].second>cur[j].second?pred[i].second-cur[j].second:cur[j].second-pred[i].second;total+=pred[i].second;++i;++j;}
+        }
+        moved/=2;
+        uint64_t had=0;
+        for(const auto& [l,a]:cur)had+=a;
+        total=std::max(total,had);
+        if(moved<64||4*moved<total)return false;
+        for(const auto& [label,a]:cur)if(const uint32_t idx=(label>>1)-1;idx<openings.size()) {uint64_t& t=openings[idx].area[label&1];t-=std::min(t,a);}
+        for(const auto& [label,a]:pred)if(const uint32_t idx=(label>>1)-1;idx<openings.size())openings[idx].area[label&1]+=a;
+        g.openArea=std::move(pred);
+        return true;
+    }
     RoutePlan planRoute(Group& g,const std::array<int,4>& box) {
         RoutePlan rp;
         rp.box=box;
@@ -3541,8 +4052,17 @@ struct LegionNavigator::Impl {
         uint64_t work=0;
         // Stage 7: traffic as the route's command sees it in the coarse search (trafficPenalty).
         const uint64_t trafficCommand=g.soft?g.command:kNoSoft;
+        // Stage 8: and a chokepoint's queue (the delay of crossing an opening the way the bodies walk: from the
+        // neighbour toward the goals) for a group whose members are entrants (kOpeningMembers or more).
+        const bool queues=g.members>=kOpeningMembers&&g.soft&&!openings.empty();
         const auto tree=p.hier.search(g.seeds,targets,p.legal.data(),kRouteExpand,work,
-            [&](int s,uint16_t r,uint64_t step) {return trafficPenalty(p,s,r,step,trafficCommand,work);});
+            [&](int s,uint16_t r,uint64_t step,const hier::Portal& q,bool aSide) {
+                uint64_t extra=trafficPenalty(p,s,r,step,trafficCommand,work);
+                if(queues)
+                    if(const uint16_t label=portalLabel(p,q,!aSide,work))
+                        if(const uint32_t d=delayFor(g,label);d>=kOpeningMinCharge) {extra+=uint64_t(d)*kOrthogonal;++acct.openingSearchCharges;}
+                return extra;
+            });
         if(!tree.complete||tree.nodes.empty()) {navc.routeSearch+=work;startCharge+=work;++acct.routeFallbacks;return rp;}
         struct Charge {uint64_t& work;Impl& I;~Charge() {I.navc.routeSearch+=work;I.startCharge+=work;}} charge{work,*this};
         const int K=p.hier.K(),SW=p.hier.sectorsWide(),SH=p.hier.sectorsHigh();
@@ -3735,17 +4255,21 @@ struct LegionNavigator::Impl {
     std::shared_ptr<Field> sharedField(const Group& g,const std::array<int,4>& box,uint64_t command,bool own,const RoutePlan* plan) const {
         std::shared_ptr<Field> hit;
         uint64_t iters=0;
+        // Stage 8: the queue charges this group's own build would carry (and whether it records labels).
+        const bool chainPlan=plan&&plan->kind==KindChain;
+        const auto charges=chainPlan?std::vector<Field::Charge>{}:openingCharges(g,box);
+        const bool labels=!chainPlan&&g.members>=kOpeningMembers&&g.soft;
         if(const auto found=routeIndex.find({g.plane,seedsKey(g.seeds)});found!=routeIndex.end()) {
             for(int pass=0;pass<2&&!hit;++pass)for(int id:found->second) {
                 ++iters;
-                if(sharesWith(g,groups.find(id)->second,pass,box,command,own,plan,hit))break;
+                if(sharesWith(g,groups.find(id)->second,pass,box,command,own,plan,charges,labels,hit))break;
             }
         }
         stats.shareScanIters+=iters;
 #ifndef NDEBUG
         if(gVerify) {
             std::shared_ptr<Field> scan;
-            for(int pass=0;pass<2&&!scan;++pass)for(const auto& [id,o]:groups)if(sharesWith(g,o,pass,box,command,own,plan,scan))break;
+            for(int pass=0;pass<2&&!scan;++pass)for(const auto& [id,o]:groups)if(sharesWith(g,o,pass,box,command,own,plan,charges,labels,scan))break;
             if(scan!=hit)verifyFail("route-key index finds another shared field than the full scan");
         }
 #endif
@@ -3775,7 +4299,7 @@ struct LegionNavigator::Impl {
     }
     // sharedField's test of one group: its field, then its next.
     bool sharesWith(const Group& g,const Group& o,int pass,const std::array<int,4>& box,uint64_t command,bool own,const RoutePlan* plan,
-                    std::shared_ptr<Field>& hit) const {
+                    const std::vector<Field::Charge>& charges,bool labels,std::shared_ptr<Field>& hit) const {
         if(&o==&g||o.plane!=g.plane)return false;
         for(const auto* d:{&o.field,&o.next}) {
             const Field* f=d->get();
@@ -3794,6 +4318,9 @@ struct LegionNavigator::Impl {
             // none (empty == empty). Tested per candidate, never in the
             // route-key index's key (C10).
             if(f->avoid!=g.avoidSeg)continue;
+            // Stage 8: equal queue charges (a route planned round a chokepoint's queue serves no group planned
+            // through it), and labels wherever this group would record them (its members are entrants).
+            if(f->kind!=KindChain&&(f->charges!=charges||(labels&&!f->labels)))continue;
             hit=*d;
             return true;
         }
@@ -3945,6 +4472,19 @@ struct LegionNavigator::Impl {
         ++stats.fieldsStartedByKind[size_t(g.kind)&15];
         f->liftAllied=std::any_of(liftSoftPlayers.begin(),liftSoftPlayers.end(),
             [&](int owner) {return w.allied(owner,int(uint32_t(f->command>>32)));});
+        // Stage 8: a window or corridor of a group of kOpeningMembers or more records each cell's next opening and
+        // carries the queue charges of its window's openings (openingCharges); a ring wide enough for the largest.
+        if(plan.kind!=KindChain&&g.members>=kOpeningMembers&&g.soft) {
+            f->labels=true;f->charges=openingCharges(g,box);
+            if(!f->charges.empty()) {
+                uint32_t top=0;
+                for(const auto& c:f->charges)top=std::max(top,c.cost);
+                uint32_t ring=128;
+                while(ring<top+128)ring<<=1;
+                if(ring!=128) {f->buckets.assign(ring,{});f->mask=ring-1;}
+                ++acct.chargedFields;acct.openingCharges+=f->charges.size();
+            }
+        }
         if(plan.kind==KindCorridor) {
             f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,planes[size_t(g.plane)].hier.shift());
             f->allow=plan.allow;f->kind=KindCorridor;f->corridorSig=plan.sig;++acct.corridors;
@@ -3986,14 +4526,16 @@ struct LegionNavigator::Impl {
     // in key order.
     uint64_t advance(Field& f,uint64_t budget) {
         if(f.kind==KindChain&&f.dDone)return advanceChain(f,budget);
-        const auto& p=planes[size_t(f.plane)];
-        const int W=width();uint64_t spent=0;
+        Plane& p=planes[size_t(f.plane)];
+        const int W=width();uint64_t spent=0,opWork=0;
+        const int shift=p.hier.shift();
+        struct OpCharge {uint64_t& work;Impl& I;~OpCharge() {I.navc.connectivity+=work;}} opCharge{opWork,*this};
         while((f.queued||f.seedNext<f.seedKeys.size())&&spent<budget) {
             if(!f.queued&&f.seedKeys[f.seedNext].first>f.current)f.current=f.seedKeys[f.seedNext].first;
             while(f.seedNext<f.seedKeys.size()&&f.seedKeys[f.seedNext].first==f.current) {
-                f.buckets[f.current&127].push_back(f.seedKeys[f.seedNext].second);++f.queued;++f.seedNext;
+                f.buckets[f.current&f.mask].push_back(f.seedKeys[f.seedNext].second);++f.queued;++f.seedNext;
             }
-            auto& bucket=f.buckets[f.current&127];
+            auto& bucket=f.buckets[f.current&f.mask];
             if(bucket.empty()) {++f.current;continue;}
             const int cell=bucket.back();bucket.pop_back();--f.queued;
             const int x=cell%W,z=cell/W;
@@ -4021,12 +4563,24 @@ struct LegionNavigator::Impl {
 #endif
                 const int level=softLevel(x+d[0],z+d[1],p.footX,p.footZ,f.command,f.softCounts,f.ownArrivals,f.liftAllied);
                 f.softened|=level>0;
+                // Stage 8: a step across a sector boundary may cross an opening (a body at the neighbour walks
+                // into this cell): its label, and the route's queue charge for that crossing.
+                uint16_t label=0;uint32_t queue=0;
+                if(f.labels&&(((x^(x+d[0]))|(z^(z+d[1])))>>shift)) {
+                    label=crossLabel(p,x,z,x+d[0],z+d[1],opWork);
+                    if(label&&!f.charges.empty())queue=f.chargeFor(label);
+                }
                 const uint32_t next=g+(level==2?base*kSoftFactor:level==1?base*kSoftNear:base)+
-                    (f.avoid.empty()?0:f.corridorCharge(x+d[0],z+d[1],p.footX,p.footZ,base));
+                    (f.avoid.empty()?0:f.corridorCharge(x+d[0],z+d[1],p.footX,p.footZ,base))+queue;
                 if(next>=kUnreached)continue;   // out of range (never: over 40M cells even at the highest charge)
                 if(next<slot) {
                     f.slot(x+d[0],z+d[1])=next;
-                    f.buckets[(next+f.heuristic(x+d[0],z+d[1]))&127].push_back((z+d[1])*W+x+d[0]);++f.queued;
+                    if(f.labels) {
+                        // Allocated only where some label is not 0 (an unwritten tile reads 0).
+                        const uint16_t v=label?label:f.viaAt(x,z);
+                        if(v||f.viaTile(x+d[0],z+d[1]))f.viaSlot(x+d[0],z+d[1])=v;
+                    }
+                    f.buckets[(next+f.heuristic(x+d[0],z+d[1]))&f.mask].push_back((z+d[1])*W+x+d[0]);++f.queued;
                 }
             }
         }
@@ -5433,6 +5987,8 @@ struct LegionNavigator::Impl {
         if(w.tickCounter_%kStillScan==kStillScan-1)softBlocks();
         awareScan();
         meetScan();
+        openingScan();
+        admissionTick();
         prebuildStep();
         prune();
         // Yields run even while no Legion member remains (a committed yield
@@ -8341,6 +8897,9 @@ struct LegionNavigator::Impl {
             // nearer the front (C2: kRechoices times, reset by a re-seed).
             if(ringMember(g,m)&&m.state==Holding&&heldFor(m)>=kCrowdWindow&&m.rechoices<kRechoices&&ringRechoose(u,m,g,p))++m.rechoices;
         }
+        // Stage 8: a narrow friendly passage open the other way (admissionHold): wait before it.
+        watchStrips(u,m);
+        if(f&&g.field&&g.field->labels&&m.state!=Arrived&&admissionHold(u,m,g,ox,oz)) {holdStall(m);hold(u,m);return;}
         if(!m.route.empty()) {
             while(!m.route.empty()&&m.route.front()==here)m.route.erase(m.route.begin());
             if(m.route.empty()||++m.routeTicks>240||(m.state==Holding&&heldFor(m)>=30)) {m.route.clear();m.lineCell=-1;}
@@ -10669,6 +11228,14 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(p.head)<<32|uint32_t(p.nextLabel));
         }
         h=mix(h,uint64_t(nextGroup));
+        // Stage 8: the openings' queue delays (decision inputs between recounts), while nonzero.
+        for(size_t i=0;i<openings.size();++i)
+            if(openings[i].delay[0]||openings[i].delay[1]) {h=mix(h,0x6f70656eull^uint64_t(i)<<32);h=mix(h,uint64_t(openings[i].delay[0])<<32|openings[i].delay[1]);}
+        for(size_t i=0;i<openings.size();++i)
+            if(const auto& o=openings[i];o.tokenDir>=0||o.waitSince[0]!=kNoTick||o.waitSince[1]!=kNoTick) {
+                h=mix(h,0x746f6b656eull^uint64_t(i)<<32);h=mix(h,uint64_t(uint8_t(o.tokenDir))|uint64_t(uint32_t(o.tokenPlayer))<<8|uint64_t(o.closing)<<40);
+                h=mix(h,uint64_t(o.granted)<<32|o.lastEntry);h=mix(h,uint64_t(o.waitSince[0])<<32|o.waitSince[1]);
+            }
         // Stage 6: the shared tile cache (which tiles a chain finds decides the work it is charged), and repairs.
         if(tileCount) {h=mix(h,0x74696c6573ull);h=mix(h,uint64_t(tileCount));h=mix(h,tileDigest);}
         for(const auto& r:repairs) {h=mix(h,0x726570616972ull^uint64_t(uint32_t(r.group))<<16);h=mix(h,r.serial);h=mix(h,uint64_t(r.node));}
@@ -10693,6 +11260,12 @@ struct LegionNavigator::Impl {
                                                 for(size_t i=g.field->chainTransit;i<g.field->chain.size();++i)if(g.field->attached[i])h=mix(h,0x68616c6full^i);
                                             }}}
             if(g.next&&g.next->kind) {h=mix(h,0x6e6b696e64ull^uint64_t(g.next->kind)<<56);h=mix(h,g.next->corridorSig);}
+            // Stage 8: the queue charges a route was built with (and whether it records labels), while any.
+            for(const Field* f:{g.field.get(),g.next.get()})
+                if(f&&(f->labels||!f->charges.empty())) {
+                    h=mix(h,0x6368617267ull^uint64_t(f->labels)<<40);
+                    for(const auto& c:f->charges)h=mix(h,uint64_t(c.label)<<32|c.cost);
+                }
             // Stage 6: a plan held for the next build, and corridor widenings.
             if(g.plan&&g.planTick!=kNoTick) {h=mix(h,0x706c616eull);h=mix(h,uint64_t(g.planTick)<<8|g.plan->kind);h=mix(h,g.plan->sig);}
             if(g.widens)h=mix(h,0x7769646e73ull^uint64_t(g.widens)<<48);
@@ -10793,6 +11366,7 @@ struct LegionNavigator::Impl {
             if(m.pivotR||m.pivotCell>=0) {h=mix(h,uint64_t(uint16_t(m.pivotR)));h=mix(h,uint64_t(uint32_t(m.pivotCell))<<32|uint32_t(m.pivotAim));}
             if(m.slideCell>=0) {h=mix(h,0x736c696465ull);h=mix(h,uint64_t(uint32_t(m.slideCell))<<32|uint32_t(m.slideFrom));}
             if(m.meetSeen!=kNoTick) {h=mix(h,0x6d73656eull);h=mix(h,m.meetSeen);}
+            if(m.passLabel) {h=mix(h,0x70617373ull);h=mix(h,m.passLabel);}
             if(m.gateCell>=0) {
                 h=mix(h,0x67617465ull);h=mix(h,uint32_t(m.gateCell));
                 h=mix(h,uint64_t(uint8_t(m.gateLane))|uint64_t(uint8_t(m.gateAxis))<<8|uint64_t(uint8_t(m.gateSign))<<16);

@@ -761,6 +761,13 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_arrival_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
   set_tests_properties(legion_arrival PROPERTIES LABELS legion TIMEOUT 900 SKIP_RETURN_CODE 77)
+  # Legion 10,000 stage 8: chokepoints as queues -- route choice by travel time plus queue delay and admission at
+  # narrow passages (bridges-1000: both bridges used, at least 450 of 1,000 arrive; maze-1000: groups take the other
+  # doors, at least 850 arrive; tools/legion_choke_test.py).
+  add_test(NAME legion_choke
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_choke_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
+  set_tests_properties(legion_choke PROPERTIES LABELS legion TIMEOUT 1200 SKIP_RETURN_CODE 77)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison

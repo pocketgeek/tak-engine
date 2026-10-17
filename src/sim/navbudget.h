@@ -151,6 +151,16 @@ struct NavAccounting {
     uint64_t trafficSectors = 0, trafficCharges = 0;
     uint64_t jamStamps = 0;
     uint64_t correctionsBuilt = 0, correctionHits = 0;
+    // ---- Stage 8 (chokepoints, subgroups, arrivals) ----
+    // Chokepoints: opening records made (a narrow crossing of a sector boundary, bounded on both sides; legion.cpp
+    // Opening), recounts of their entrants and the member-entrants counted, the largest queue delay any opening had
+    // (cells), fields built with queue charges and the charges they carried, re-plans because an opening's delay
+    // moved away from the charge a route was built with, and region-search steps charged for a queue.
+    uint64_t openings = 0, openingScans = 0, openingEntrants = 0, openingDelayMax = 0;
+    uint64_t chargedFields = 0, openingCharges = 0, openingReplans = 0, openingSearchCharges = 0;
+    // Admission at narrow passages: bodies admitted, member-updates spent waiting, turns of a passage's direction
+    // and closings (the other way waited kAdmitGreen ticks).
+    uint64_t passAdmits = 0, admitWaits = 0, admitTurns = 0, admitClosings = 0;
 };
 
 // Per-tick budgets (constants: the same on every peer). Units and the reference cost per unit
