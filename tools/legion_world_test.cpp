@@ -432,6 +432,40 @@ void improvedefer() {
     check(done>=0,"improvedefer: a body did not arrive");
 }
 
+// Legion 10,000 stage 7: a chain whose regions are relabelled while it builds re-resolves them on the new geometry
+// (resolveChainNode: the dirty tile rebuilt, the route kept) instead of leaving them off the route. The stage-6 chains
+// fixture with a 2x2 rock toggled every tick in four open transit sectors east of the wall during the first 300
+// ticks (none of them severs a portal): resolves happen, no region is abandoned, every body arrives.
+void chainresolve() {
+    Fixture f(512,320);
+    for(int z=0;z<320;++z)
+        if(!(z>=40&&z<52)&&!(z>=150&&z<170)&&!(z>=262&&z<268)) {f.wall(250,z);f.wall(251,z);}
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int s=0;s<8;++s)for(int i=0;i<6;++i)ids.push_back(f.spawn(type,10+(i%3)*3,16+s*36+(i/3)*3));
+    f.start();
+    for(size_t i=0;i<ids.size();++i) {
+        const int s=int(i/6);
+        f.world.order(ids[i],float((470-(s%3)*12)*16),float((24+((s*5)%8)*36)*16),false);
+    }
+    const int rocks[4][2]={{300,80},{340,200},{380,120},{420,250}};
+    int t=0,done=0;
+    for(;t<9000&&done<int(ids.size());++t) {
+        if(t>=2&&t<300)for(const auto& r:rocks)
+            f.world.addFeature(r[1]*512+r[0],float(r[0]*16+16),float(r[1]*16+16),0,1,2,2,t%2==0,-1,true);
+        f.world.tick(1.f/30);
+        done=0;for(const int id:ids)done+=f.world.unit(id)->orders.empty();
+    }
+    const auto a=f.world.legionNavigator()->accounting();
+    std::printf("chainresolve ticks=%d arrived=%d/%zu chains=%llu resolves=%llu abandons=%llu repairs=%llu\n",t,done,ids.size(),
+                (unsigned long long)a.chains,(unsigned long long)a.chainResolves,(unsigned long long)a.chainAbandons,
+                (unsigned long long)a.chainRepairs);
+    check(a.chains>=4,"chainresolve: the squads did not take tile chains");
+    check(a.chainResolves>0,"chainresolve: no chain region was re-resolved on the new geometry");
+    check(a.chainAbandons==0,"chainresolve: a chain region was left off its route by a local change");
+    check(done==int(ids.size()),"chainresolve: a body never arrived");
+}
 
 void longroute() {
     // A connected route farther than 16-bit potentials reach: the serpentine
@@ -4097,7 +4131,7 @@ int main(int argc,char** argv) {
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
         {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"entryplanes",entryplanes},
-        {"improvedefer",improvedefer}};
+        {"improvedefer",improvedefer},{"chainresolve",chainresolve}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

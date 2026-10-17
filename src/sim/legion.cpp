@@ -657,6 +657,10 @@ struct LegionNavigator::Impl {
         // the touched route does not reach). kNoTick: none pending. Hashed while set. onImprove: listed in
         // improveIds (derived, never hashed).
         uint32_t improveTick=kNoTick;bool onImprove=false;
+        // Stage 7: the pending refresh wants a new route choice -- traffic changed (an awareness or MV-05 re-plan) or
+        // an improvement may have opened a shortcut -- rather than the repair of its chain (planRoute: repairPlan).
+        // Cleared when a build starts. Hashed when set.
+        bool reroute=false;
         // Stage 6: the plan of the next build (routePlan: kept while the start waits, up to kPlanReuse ticks on one
         // epoch and membership; hashed while held: its tick, kind and corridor digest), and the corridor widenings
         // so far (a member outside the corridor rebuilds it; past kMaxWiden the whole-component window takes over;
@@ -1734,7 +1738,7 @@ struct LegionNavigator::Impl {
             }
             if(unsure) {runOnRoute(g,RouteNeed::SoftBlock);continue;}
             if(!hit)continue;
-            g.softReplanTick=now;g.stale=true;g.demand=true;
+            g.softReplanTick=now;g.stale=true;g.demand=true;g.reroute=true;
             listGroup(g);
             ++stats.softReplans;
         }
@@ -3386,6 +3390,17 @@ struct LegionNavigator::Impl {
         // window: churn-1000's approach group on a chain was re-planned about every 40 ticks (arrivals 520 -> 458
         // over three offsets; back to 520 with the window).
         if(g.approach)return rp;
+        // Stage 7: a chain refreshed for a closure (no new route choice asked for) keeps its route: its plan is
+        // repaired on the current geometry (repairPlan) -- the regions re-resolved, the dirty tiles rebuilt by the
+        // build, the clean ones found in the cache -- so static churn does not re-search, and swing, the way at every
+        // change. Re-searched when traffic or an improvement asks (reroute) or the repair fails.
+        if(!g.reroute&&g.field&&g.field->kind==KindChain&&g.field->seeds==g.seeds&&g.field->plane==g.plane) {
+            uint64_t work=0;
+            const bool ok=repairPlan(g,*g.field,rp,work);
+            navc.routeSearch+=work;startCharge+=work;
+            if(ok) {++acct.planRepairs;return rp;}
+            rp=RoutePlan{};rp.box=box;
+        }
         const int W=width();
         std::vector<int> targets;
         targets.reserve(g.ids.size());
@@ -3515,6 +3530,47 @@ struct LegionNavigator::Impl {
         rp.kind=KindCorridor;rp.box=b;rp.cells=cells;rp.sig=sig;
         rp.allow=tilesOf(mark,b);
         return rp;
+    }
+    // Stage 7: the plan of chain `old` repaired on the current geometry: its transit regions re-resolved
+    // (resolveChainNode; a halo region that does not resolve stays off), its window, tiles and digest kept. False
+    // when a transit region cannot be re-resolved (its portal closed: the route itself is cut, re-search) or a live
+    // member stands in a region the plan does not hold (re-search: the plan no longer describes the group).
+    bool repairPlan(Group& g,const Field& old,RoutePlan& rp,uint64_t& work) {
+        auto& p=planes[size_t(g.plane)];
+        if(!p.hier.ready()||p.legal.empty()||p.stage>0||old.chain.empty())return false;
+        rp.kind=KindChain;rp.box={old.x0,old.z0,old.x0+old.fw-1,old.z0+old.fh-1};
+        rp.allow=old.allow;rp.dAllow=old.dAllow;rp.transit=old.chainTransit;rp.sig=old.corridorSig;rp.nodes=old.chain;
+        rp.cells=0;
+        for(size_t i=0;i<rp.dAllow.size();++i) {
+            if(!rp.dAllow[i])continue;
+            const int sx=old.sx0+int(i%size_t(old.sw)),sz=old.sz0+int(i/size_t(old.sw)),sh=old.shift;
+            const int x0=std::max(sx<<sh,rp.box[0]),z0=std::max(sz<<sh,rp.box[1]);
+            const int x1=std::min(((sx+1)<<sh)-1,rp.box[2]),z1=std::min(((sz+1)<<sh)-1,rp.box[3]);
+            if(x0<=x1&&z0<=z1)rp.cells+=size_t(x1-x0+1)*size_t(z1-z0+1);
+        }
+        for(size_t i=0;i<rp.nodes.size();++i) {
+            ChainNode& n=rp.nodes[i];
+            const int other=n.onA?n.exit.b:n.exit.a;
+            if(p.hier.built(n.s)&&p.hier.gen(n.s)==n.gen&&p.hier.built(other)&&p.hier.gen(other)==n.ngen)continue;
+            if(resolveChainNode(rp.nodes,i,p,work))continue;
+            if(i<rp.transit)return false;
+            n.gen=0;   // a halo region gone: never attached (attachNode finds its generation stale and cannot resolve it)
+        }
+        const int W=width();
+        for(const int id:g.ids) {
+            const Unit* u=w.unit(id);
+            if(!u||!u->type||!u->alive())continue;
+            const int c=footprintOrigin(u->z,u->type->footZ)*W+footprintOrigin(u->x,u->type->footX);
+            const int s=p.hier.sectorOfCell(c);
+            p.hier.ensure(s,p.legal.data(),work);
+            const int sx=s%p.hier.sectorsWide()-old.sx0,sz=s/p.hier.sectorsWide()-old.sz0;
+            if(sx>=0&&sz>=0&&sx<old.sw&&sz<old.sh&&rp.dAllow[size_t(sz)*size_t(old.sw)+size_t(sx)])continue;
+            const uint16_t r=p.hier.regionAt(c);
+            bool on=false;
+            for(const auto& n:rp.nodes)if(n.s==s&&n.r==r&&n.gen==p.hier.gen(s)) {on=true;break;}
+            if(!on)return false;
+        }
+        return true;
     }
     // The group's plan for its next build: planned once and reused while the start waits (for budget or room) up
     // to kPlanReuse ticks, on the same static epoch and membership; the build drops it (startField).
@@ -3675,6 +3731,7 @@ struct LegionNavigator::Impl {
         auto install=[&](std::shared_ptr<Field> shared) {
             g.built=w.tickCounter_;++stats.fieldsShared;
             if(g.field)g.improveTick=kNoTick;   // a shared replacement is of this epoch (sharedField)
+            g.reroute=false;
             if(!shared->done)(g.field?g.next:g.field)=std::move(shared);
             else if(g.field) {
                 if(g.next&&!g.next->done)++stats.refreshDiscards;
@@ -3784,7 +3841,7 @@ struct LegionNavigator::Impl {
         f->current=f->seedKeys.empty()?0:f->seedKeys.front().first;
         f->syncInflight();
         // Built: the next build plans afresh. (`plan` refers into g.plan: nothing reads it after this.)
-        g.plan.reset();g.planTick=kNoTick;
+        g.plan.reset();g.planTick=kNoTick;g.reroute=false;
         if(g.field) {g.next=std::move(f);g.improveTick=kNoTick;}   // the refresh is built on the plane as it is now
         else g.field=std::move(f);
         listGroup(g);
@@ -3913,7 +3970,13 @@ struct LegionNavigator::Impl {
         const ChainNode& n=f.chain[idx];
         const int other=n.onA?n.exit.b:n.exit.a;
         if(!p.hier.built(n.s)||p.hier.gen(n.s)!=n.gen||!p.hier.built(other)||p.hier.gen(other)!=n.ngen) {
-            ++acct.chainAbandons;return false;
+            // Stage 7: the region's sector (or the portal's other one) was relabelled since the plan -- a local
+            // change. Re-resolve the node on the current geometry (the portal run on the same boundary that overlaps
+            // the old one most, still leading into the region the route continues in) and build that tile: only the
+            // dirty tile is rebuilt and the route keeps its topology. Gone (the portal closed, or it leads elsewhere
+            // now): the region stays off the route -- a closure of the route itself, whose group refreshes and
+            // re-plans (staticChanged touched it).
+            if(!resolveChainNode(f.chain,idx,p,spent)) {++acct.chainAbandons;return false;}
         }
         if(n.parent>=0&&!f.attached[size_t(n.parent)]) {++acct.chainSkips;return false;}
         Tile key;
@@ -3992,6 +4055,36 @@ struct LegionNavigator::Impl {
         f.attached[idx]=1;
         f.softened|=!tile->soft.empty();
         if(tileBytes>kTileBytes)evictTiles();   // after the attach: the tile counts this route now
+        return true;
+    }
+    // Stage 7: re-resolve chain node idx after its geometry changed (see attachNode). The boundary keeps its sectors
+    // (a and b, the side); its runs are rescanned and the one overlapping the old run most is taken (ties: the lower
+    // start). Its region on the node's side is the node's region now; the other side must be the region the route
+    // continues in (the parent node as it stands; for a node leading into the destination field, any: attachNode
+    // reads the field's values at the seeds). The node's generations become the current ones. A versioned repair: the
+    // chain's tiles then come from more than one geometry epoch (the route is touched and never proves Unreachable),
+    // each descent-valid on its own build, the offsets taken from the values actually attached.
+    bool resolveChainNode(std::vector<ChainNode>& chain,size_t idx,Plane& p,uint64_t& spent) {
+        ChainNode& n=chain[idx];
+        uint64_t work=0;
+        const auto& list=p.hier.side(n.exit.a,n.exit.side,p.legal.data(),work);
+        spent+=work;navc.connectivity+=work;
+        int best=-1,bestOverlap=0;
+        for(size_t i=0;i<list.size();++i) {
+            const auto& q=list[i];
+            const int overlap=std::min(q.start+q.len,n.exit.start+n.exit.len)-std::max(q.start,n.exit.start);
+            if(overlap>bestOverlap) {bestOverlap=overlap;best=int(i);}
+        }
+        if(best<0)return false;
+        const hier::Portal q=list[size_t(best)];
+        const uint16_t mine=n.onA?q.ra:q.rb,theirs=n.onA?q.rb:q.ra;
+        const int otherSector=n.onA?q.b:q.a;
+        if(n.parent>=0) {
+            const ChainNode& par=chain[size_t(n.parent)];
+            if(par.s!=otherSector||par.r!=theirs)return false;
+        }
+        n.r=mine;n.gen=p.hier.gen(n.s);n.ngen=p.hier.gen(otherSector);n.exit=q;
+        ++acct.chainResolves;
         return true;
     }
     // A member stands in a region of its group's chain's halo that is not attached yet: queue the repair (served in
@@ -4507,7 +4600,7 @@ struct LegionNavigator::Impl {
         }
     }
     void promoteImprovement(Group& g) {
-        g.improveTick=kNoTick;
+        g.improveTick=kNoTick;g.reroute=true;   // a shortcut may have opened: choose the route afresh
         if(g.field&&!g.stale) {g.stale=true;++acct.improveRefreshes;}
         listGroup(g);
     }
@@ -5779,7 +5872,7 @@ struct LegionNavigator::Impl {
             if(replan&&g.route().usable()) {
                 ++stats.awareReplans;if(!g.awareAt)g.awareAt=w.tickCounter_;
                 if(g.next&&!g.next->done)++stats.refreshDiscards;
-                g.next.reset();g.stale=true;g.demand=true;g.awareDemand=true;   // not a static change: refresh even if idle (C6)
+                g.next.reset();g.stale=true;g.demand=true;g.awareDemand=true;g.reroute=true;   // not a static change: refresh even if idle (C6)
                 listGroup(g);
             }
         }
@@ -10408,6 +10501,7 @@ struct LegionNavigator::Impl {
             // Start requests (stage 4): their age and a refusal stamp, while set.
             if(g.requestTick!=kNoTick) {h=mix(h,0x726571756573ull);h=mix(h,g.requestTick);}
             if(g.improveTick!=kNoTick) {h=mix(h,0x696d70726f7665ull);h=mix(h,g.improveTick);}
+            if(g.reroute)h=mix(h,0x7265726f757465ull);
             if(g.blockedSince!=NavAdmit::kNever) {h=mix(h,0x626c6f636bull);h=mix(h,g.blockedSince);}
             // A paused first build (C1), tagged only when set.
             if(g.field&&g.field->runOn)h=mix(h,0x72756e6f6eull);
