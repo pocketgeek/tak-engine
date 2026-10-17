@@ -243,6 +243,7 @@ private:
         float homeX, homeZ, goalX, goalZ;
         bool returning = false;
         int targetId = 0;   // melee defenders chase one attacker with a direct Attack
+        bool ownAttacker = false;   // targetId is the unit that was hitting this one
     };
     // Server-local assignments, not simulation state. Commands still use the
     // ordinary sequencer and movement controllers on every peer.

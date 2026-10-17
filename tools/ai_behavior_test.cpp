@@ -77,6 +77,72 @@ static void defensiveShooters(const sim::TypeRegistry& registry,const ai::Profil
     }
 }
 
+// Each melee defender answers the unit hitting it, keeps after it once it is
+// drawn past the territory, and otherwise takes the threat nearest itself rather
+// than the whole line walking at the one nearest home.
+static void defensiveMeleeTargets(const sim::TypeRegistry& registry,const ai::Profile& profile,
+                                  const sim::UnitType& soldier) {
+    auto base=soldier;base.id="base";base.maxVel={};base.sight=750;
+    base.weapon.damage=0;base.weapons.clear();
+    auto archer=soldier;archer.id="archer";archer.weapon.range=450;archer.weapons={archer.weapon};
+    auto melee=soldier;melee.id="melee";melee.sight=100;melee.weapon.range=30;melee.weapons={melee.weapon};
+    auto attackOf=[](const std::vector<net::Command>& cs,int unit)->int {
+        for (const auto& c:cs) if (c.unitId==unit && c.kind==net::Cmd::Attack) return c.targetId;
+        return 0;
+    };
+    {
+        sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
+        const int intruder=w.spawn(&soldier,600,800,0,1);        // seen, nearest home
+        const int defender=w.spawn(&melee,1000,800,0,0);
+        const int shooter=w.spawn(&archer,1400,800,0,1);         // outside the radius, hitting it
+        w.unit(defender)->lastHitBy=shooter;
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        auto cs=think(defensive,w);
+        check(attackOf(cs,defender)==shooter,"a melee defender attacks the archer hitting it, not the threat nearest home");
+        for (const auto& c:cs) sim::applyCommand(w,registry,c);
+        // Drawn past the 900 home radius after its attacker (no other victim near it).
+        w.unit(intruder)->x=sim::Fixed::fromInt(450);
+        w.unit(defender)->x=sim::Fixed::fromInt(1340);
+        cs=think(defensive,w,30);
+        check(std::none_of(cs.begin(),cs.end(),[&](const auto& c){return c.unitId==defender;}) &&
+              !w.unit(defender)->orders.empty() && w.unit(defender)->orders.front().targetId==shooter,
+              "a melee defender drawn past the territory keeps after the archer still hitting it");
+        // A second archer hitting it does not pull it off the one it is closing on.
+        const int other=w.spawn(&archer,1340,1200,0,1);
+        w.unit(defender)->lastHitBy=other;
+        check(attackOf(think(defensive,w,60),defender)==0,"a melee defender chasing its attacker is not switched to another");
+        // Archers are listed through the last unit each one hit, which changes shot
+        // by shot; the chase holds while the target stays within the pursuit radius.
+        w.unit(defender)->lastHitBy=0;
+        cs=think(defensive,w,90);
+        check(std::none_of(cs.begin(),cs.end(),[&](const auto& c){return c.unitId==defender;}),
+              "a melee defender keeps its chase when its target drops off the threat list inside the pursuit radius");
+    }
+    {
+        sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
+        const int intruder=w.spawn(&soldier,600,800,0,1);
+        const int defender=w.spawn(&melee,1000,800,0,0);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        auto cs=think(defensive,w);
+        check(attackOf(cs,defender)==intruder,"a melee defender with no attacker of its own answers a spotted intruder");
+        for (const auto& c:cs) sim::applyCommand(w,registry,c);
+        const int shooter=w.spawn(&archer,1400,800,0,1);
+        w.unit(defender)->lastHitBy=shooter;
+        check(attackOf(think(defensive,w,30),defender)==shooter,"a melee defender sent at an intruder turns on the archer that starts hitting it");
+    }
+    {
+        sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
+        const int nearHome=w.spawn(&soldier,700,600,0,1);       // ~360 from home
+        const int farther=w.spawn(&soldier,900,1100,0,1);       // ~580 from home
+        const int first=w.spawn(&melee,700,500,0,0);
+        const int second=w.spawn(&melee,950,1150,0,0);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        auto cs=think(defensive,w);
+        check(attackOf(cs,first)==nearHome && attackOf(cs,second)==farther,
+              "melee defenders spread over the threats nearest each of them");
+    }
+}
+
 // The Monarch fights back instead of standing on a build/move order under fire,
 // and the Defensive AI does not site buildings inside a spotted fight.
 static void monarchFightsBack(const sim::TypeRegistry& registry,const ai::Profile& profile,
@@ -512,6 +578,7 @@ int main(int argc,char** argv) {
     fullStore();
     defensiveResponses(empty,profile,soldier);
     defensiveShooters(empty,profile,soldier);
+    defensiveMeleeTargets(empty,profile,soldier);
     monarchFightsBack(empty,profile,soldier);
     {
         sim::World w;terrain(w);w.player(0).income=100;
