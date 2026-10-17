@@ -25,7 +25,7 @@ branch, pushed after the stage (`git push origin task-legion-10000`; never main,
 | 6 | 5 | Hierarchy over the footprint planes (sectors, regions, portals), sparse tiles, intermediate sharing, search vs field by demand | behaviour | implemented and validated (section 7.6) |
 | 7 | 6 | Static navigation apart from dynamic traffic; local dirty tiles; closures vs improvements | behaviour | implemented and validated (section 7.7) |
 | 8 | 7 | Navigation subgroups, shared chokepoint state and admission, multi-entrance mixed-footprint arrivals, local engagement | behaviour | implemented and validated (section 7.8; awareness by streams measured and rejected) |
-| 9 | 8 | Parallel tile builds / per-plane preprocessing with deterministic publication; reassess movement; final 10k report | exact (parallel) + report | not implemented |
+| 9 | 8 | Parallel tile builds / per-plane preprocessing with deterministic publication; reassess movement; final 10k report | exact (parallel) + report | first half (parallel planning, movement profile) implemented and validated (section 7.9); the final integration and measured before/after report: not implemented |
 
 Per stage, the record (section 7) gives: hypothesis, touched code, exact-versus-behaviour classification,
 exact commands and results, baseline comparison, work/memory change, commits, inherited versus new failures,
@@ -404,6 +404,12 @@ tools/legion_identity.sh --base BASE/build-o2 --cand build-o2 --replays ~/tak-tm
 #   dev A/B: scratch stage8/tools/ab.py run BIN OUT FILES --offsets 0,1,-1 / ab.py cmp BASE NEW; licences:
 #   stage8/tools/license8.py CHECK BASE.jsonl NEW.jsonl ATTR_DIR [--apply] (ATTR_DIR: an offset-0 --scale run per fixture,
 #   stage8/tools/attr.py); one scale file against bounds: tools/legion_scale_check.py BIN SCALE_DIR NAME --min K=V --max K=V
+# stage 9: the parallel jobs against --serial at 1/3/7 workers, perturbed, forced inline under verify:
+#   python3 tools/legion_parallel_test.py build-o2/legion_scenario tools/scenarios/scale --data DATA [--quick]
+#   (ctest legion_parallel); one run's jobs: legion_scenario F --navpar [--par-force] [--par-perturb SEED] (NAVPAR on stderr)
+#   wall A/B: scratch stage9/ab/phase.sh OUT SCN TICKS BIN_A BIN_B (TAK_PHASE means, --no-observer --no-vertex-probe,
+#   the arms at once on cores 8-11 / 12-15, then swapped); profiles: gperftools (LD_PRELOAD=libprofiler.so.0) read by
+#   scratch stage9/tools/prof3.py (cumulative under a FOCUS frame) and prof2.py (children of a frame)
 ```
 
 ## 6. Stage 1 record: baselines and acceptance tests
@@ -588,7 +594,8 @@ program's targets). Unmet targets after stage 9 are reported as such, not re-fro
 * Stage 6: section 7.6 (implemented and validated; commits listed there).
 * Stage 7: section 7.7 (implemented and validated; commits listed there).
 * Stage 8: section 7.8 (implemented and validated; commits listed there).
-* Stage 9: not implemented.
+* Stage 9, first half (parallel planning, movement reassessment): section 7.9 (implemented and validated; commits
+  listed there). Second half (final integration and the measured before/after report): not implemented.
 
 ### 7.2 Stage 2 record: exact registration, awareness and profiled micro-work (brief phase 1)
 
@@ -2588,14 +2595,177 @@ spawn (11da1910). A false lead on the way: a bisect of hovershore whose incremen
 binary first pointed at "the same source, different results"; a clean build of each commit placed it at b4849440
 (the free-step rule moving where hovercraft land), not undefined behaviour.
 
+### 7.9 Stage 9, first half: parallel planning and the movement profile (brief phase 8)
+
+**Hypothesis.** Stages 4-8 made route work into units with deterministic keys (fields as jobs, chain tiles keyed by
+everything their values depend on, plane builds in resumable stages). The independent ones can run on the sim's
+SimPool workers without changing a single decision, if their inputs and budgets are fixed before they run and their
+results are consumed by identity in the serial order. Measure first how much of the 10,000-body tick that work is,
+and what the rest -- the serial movement phase -- consists of, before any change to the movement model.
+
+**Classification.** Exact throughout: no hashed state, decision, work count or wire format changes; protocol stays
+**272** (no bump, no new `--mpai` baselines). Retail untouched.
+
+| Commit | Content | Kind |
+|---|---|---|
+| 7b9428f8 | `tileKey` (attachNode's key computation in one function); tile scans and `buildTile` read the sector's own label array instead of `Hierarchy::regionAt` | exact (refactor + serial speed-up) |
+| 73a58474 | `SimPool::start / help / finish / busy` (asynchronous jobs); `simpool_test` cases | exact (new API, existing users unchanged) |
+| 2500dc5b | chain tiles built on the SimPool beside the serial pass (`tilePrefetch`, `TileJob`, `tileCore`, `takePrefetched`, `preparedKey`); `softCell` uses `unitNoRepair`; `parallelStats`, NAVPAR, `setParallelForTest` / `--par-force` / `--par-perturb` / `TAK_LEGION_PAR_PERTURB`; ctest `legion_parallel` | exact (parallel) |
+| 9064aa35 | plane first builds' cell layer in 16-row chunks (`computeRows`) | exact (parallel) |
+| (record commit) | this section, docs/legion-pathfinding.md "Legion 10,000 stage 9", `legion_parallel` in tools/ctest_costs.txt | docs |
+
+**Design (as built).** docs/legion-pathfinding.md "Legion 10,000 stage 9". The rule every job follows: inputs and the
+logical budget chosen from sim state before the job runs; immutable inputs (its own copies, or state nothing writes
+while it runs); output only into its own slot; consumed by exact identity in the serial order, waiting for a job
+still running; nothing a worker computes is published by the worker, and no decision reads whether or when a job
+finished. Chain tiles: before a class's field jobs are served, the regions the class's window will attach next are
+picked while their predicted attach work fits two DRR slices per job and the quota left; their keys are computed (the
+serial pass later reuses a key's soft levels and corridors when route, node and `softSerial` are unchanged); missing
+tiles become asynchronous jobs over copies of the seed cells, the legality of the sector and the ring round it and the
+sector's labels; `tileFor` takes the staged tile with the equal key and charges its recorded work; the batch is joined
+at the pass's end; untaken tiles stay three passes and are dropped (never inserted, never in `NavBytes`). Plane first
+builds: the cell layer in 16-row fork-join chunks, structures resolved once before the fork. With no workers nothing is
+prepared.
+
+**The profile that chose the targets** (gperftools, 500 Hz, the stage-8 head's binaries, three workers; shares of
+samples under `World::tick`; scratch `stage9/prof/`, `stage9/mprof/`).
+
+* scatter-10000 (6,000 ticks, observer on): Legion's tick 45%, its movement (`LegionNavigator::move`) 40%. In the tick,
+  `serveFields` 32%: chain tile builds (`tileFor`, nearly all `buildTile`) 9%, attach key scans ~1%, window/corridor
+  relaxation (`advance` + `serve`) ~5%, start requests (`startField`, `planRoute`) ~7%, the rest bookkeeping (sets,
+  maps, sorting). many-10000 (observer and vertex probe on): movement 67%, Legion's tick 17%, tiles 3.6%, relaxation
+  1.4%. Phase means of the stage-8 scale run: the `nav` phase is large only in scatter-10000 (11.7 ms), many-10000
+  (4.7) and maze-10000 (2.3); `movement` 6-17 ms in every 10,000-body row.
+* So tile builds were the one large independent planning cost; window relaxation is a few percent and cannot run in
+  parallel without fixing per-job budgets before execution (its slices share one quota with carry-over between jobs:
+  a schedule change, i.e. a behaviour change) -- not done for at most about a millisecond a tick in one row.
+
+**How the design was chosen (scratch `stage9/ab/`; A/B = both arms at once on cores 8-11 and 12-15, then swapped;
+scatter-10000, 5,000 ticks, no observer, vertex probe off, TAK_PHASE means; every arm the same state hash).**
+
+* *v1, fork-join, keys on the sim thread* (prefetch for twice the window, 12 regions a job; all jobs of a pass in one
+  fork-join): hash-identical, but whole-run tick mean 25.44 / 27.35 ms -> 25.84 / 27.93 (+1.6%, scale-probe runs):
+  the duplicated key scans and 37% wasted builds outweighed the parallel builds. Rejected.
+* *v2, fork-join, keys on the workers too* (attachNode reusing them; plus the sector-label reads): nav 10.74 -> 10.34 ms,
+  then 10.14 / 10.15 -> 9.52 / 9.55. A probe of the fork-joins found the jobs ran 3.4x parallel but the sim thread spent
+  1.4 ms a tick inside them -- half the keys computed were never attached (jobs beyond what the quota reached).
+* *v3, asynchronous jobs with copied inputs, keys picked within the predicted quota* (as built): nav 10.41 / 10.18 ->
+  9.55 / 9.33; then skipping, not stopping at, a destination-adjacent region whose field was not done raised the
+  prepared share of tile work 68% -> 88%: nav 10.88 / 10.91 -> 9.84 / 9.86.
+* *Rejected knob*: picking a not-done chain's regions for one slice instead of two (fewer wasted keys): picks -10%,
+  serial tile work +17%, no clear gain -- kept the single rule.
+* *Plane rows*: no measurable effect on the steady tick (first builds run in the background before orders); the
+  first-build spikes of mixed-10000 (five classes) fall: tick 3 nav 7.84 -> 4.29 ms, tick 11 9.94 -> 6.98.
+
+**Results.**
+
+*Wall time, final code against the stage-8 head* (`ab/phase.sh`, two swapped pairs each, 5,000 ticks, three workers,
+build-o2 `-O2 -g`, E-cores, game settings: no observer, no vertex probe):
+
+| scenario | tick mean ms (r1 / r2) | nav ms | movement ms |
+|---|---|---|---|
+| scatter-10000 | 26.29 / 27.08 -> 25.34 / 25.81 (-4.3%) | 10.75 / 11.01 -> 9.73 / 9.86 (-10%) | 10.72 / 11.10 -> 10.59 / 10.99 |
+| many-10000 | 28.94 / 28.31 -> 29.00 / 27.95 (-0.5%, within noise) | 5.63 / 5.49 -> 5.27 / 5.11 (-6.6%) | 18.37 / 17.83 -> 18.30 / 17.72 |
+| one-10000 (no chains) | 13.65 / 13.70 -> 13.67 / 13.61 | 0.48 / 0.47 -> 0.49 / 0.47 | 9.51 / 9.52 -> 9.47 / 9.50 |
+
+*Jobs over the full scale runs* (NAVPAR, 21,600 / 14,400 ticks): scatter-10000 86% of tile-build work prepared
+(1,915 M of 2,222 M relaxations), 19% of staged work unused, 53% of prepared keys reused, peak staging 0.7 MB;
+many-10000 66% prepared (408 M of 620 M), 24% unused, peak 0.9 MB. Workers ran 91% / 88% of the jobs.
+
+*Determinism.*
+
+* Legion scenario gate, both modes, final binaries: 270 / 270 (135 fixtures x 2 modes) state hashes and **every key**
+  identical to the stage-8 head's final gate (`stage8/gate2` Legion, `stage8/gate1` Retail); serial == workers in all
+  270; `legion_check check --cumulative`: PASS, 31,859 keys, 0 failed.
+* Scale suite, final binaries: 43 / 43 rows hash-identical and key-identical to the stage-8 scale run; frozen targets
+  met 127, missed 79, report-only missed 6 (stage 8: 128 / 79 / 5): the one change is report-only wall time,
+  churn-10000 `wall.over_budget` 0 -> 18, all from ticks 1,561-1,592 where every phase (movement, separation,
+  exploration, prologue) rose two- to four-fold at once on a shared machine; a rerun of the final binary alone gives
+  0 ticks over budget, max 22.8 ms (the stage-8 binary beside it: 0, max 30.2 ms). churn-10000 has no chains.
+* legion_parallel (full: scatter-2500 2,000 ticks, mixed-1000 1,200, churn-1000 2,000; each against `--serial` at 1, 3
+  and 7 workers, perturbed at 3 and 7, forced inline and perturbed under TAK_LEGION_VERIFY): PASS, every hash and key
+  equal (the verify arm differs only in the verify-only `soft_hash_verify_ticks`, folded into `work.legion_all`, the
+  harness limitation of 7.2). Mutation: publishing the untaken staged tiles into the cache in completion order at the
+  pass's end fails every arm, with a different hash in each.
+* gcc 16.2.1 against clang (build-clang, `-O2`): scatter-2500 2,000 ticks, workers and perturbed, both
+  `a57e87dfa56da04d`, serial == workers. ThreadSanitizer (`build-tsan`, `-O1`): scatter-2500 900 ticks with workers,
+  perturbed and not, mixed-1000 300 ticks, and `simpool_test`: no report, hashes equal to the gcc `-O2` run.
+  AddressSanitizer (`build-asan`): scatter-2500 under TAK_LEGION_VERIFY and perturbed, scatter-2500 forced inline,
+  churn-1000: clean (run because the staging owns jobs through heap pointers and moves them between vectors).
+* `--mpai` Inner Circle seed 1, 60 s: Retail **2c39430636a3dbda**, Legion **f75b2a11410f43b4** (both unchanged).
+
+**The movement phase, reassessed** (gperftools on the final binaries, 4,000 ticks, game settings; shares of the whole
+sim tick; scratch `stage9/mprof/`). Legion's per-unit movement is 80% of the tick in one-10000, 66% in many-10000 and
+77% in swap-10000. Inside it: the authoritative step and collision path (`drive`: `stepFree`, `sweep` / `trace`,
+`World::mobilePlacement`, `searchBodyRect`, occupancy reads) 15-27%; dynamic soft-body queries (`softAt`) 8-14%; the
+route reads and static look-ahead (`aimCell`, `descend`, `RouteView::estimate` / `cellAt`, `pivotAim`, `gateAim`,
+`passageLane`) about 10-20%; the rest the member state machine. So:
+
+* Most of the 10,000-body tick is serial movement, and most of that is the collision-checked step itself and reads of
+  the bodies around it -- exactly what the brief requires to stay serial (a unit observes the commits before it in
+  the tick; a snapshot model is a behaviour change). No movement-model change was made, and none is justified by a
+  measured failure case: the scale rows' failures are arrival and traffic behaviour (sections 7.6-7.8), not tick cost,
+  except many-10000 (tick mean ~28 ms, 3,140 ticks over 33.3 ms in its scale run) and mixed-10000 (the explore phase,
+  outside Legion).
+* The one candidate for an exact gain is the static look-ahead (10-20%): certificates keyed on a member's origin, its
+  route's version and the plane epoch could reuse a descent or gate result -- but `pivotAim`, `passageLane` and
+  `gateAim` read soft bodies too, so the static part must be separated first, and no stale dynamic clearance may ever
+  be reused as collision permission. Not attempted here; an input for the final integration.
+
+**Inherited vs new failures.** New: none (every check above passes; the one moved target is report-only wall time,
+diagnosed as machine load). Inherited: the 79 frozen scale targets that still miss (section 8), mixed-10000's wall
+time, many-10000's over-budget ticks. Found and fixed during the stage: a first form bumped `softSerial` (hashed)
+in the soft grid's reset and changed the hash (caught by the hash check, reverted before any commit).
+
+**Not run** (lean testing): the identity harness (its replay fixtures are older than protocol 272 and are refused;
+its other rows -- the gate, the scale suite, `--mpai`, the navigation golden -- are covered above), crowdbench,
+`tools/check-determinism.sh` (detmath shim only, untouched), the 300 s `--mpai`, Windows (oden-win) and macOS
+(MacBook): not needed for this stage's claim -- the new code is portable C++20 threads and atomics in the existing
+SimPool -- and not run, so that coverage is missing.
+
+**Checks (exact commands; scratch `~/tak-tmp/scratch/legion-10000/stage9/`; `final-bin/` = the binaries of 9064aa35,
+build-o2; cores 4-15).**
+
+| Check | Command | Result |
+|---|---|---|
+| Legion scenario gate, both modes | `python3 ../sweep_both.py final-bin/legion_scenario gate1 4-13`; `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results gate1/scenarios.jsonl` | PASS 31,859 keys; 270 / 270 hash- and key-identical to stage 8 |
+| Scale suite | `legion_scale.py run --bin final-bin/legion_scenario --out scale1 --cores 4-15 --per-job 4 --workers 3`; `check --targets tools/scenarios/scale/targets.json`; `tools/scalecmp.py ../stage8/scale1 scale1` | 43 / 43 identical; met 127, missed 79, report-only 6 |
+| Parallel identity | `ctest --test-dir build-o2 -R legion_parallel` (and `tools/legion_parallel_test.py ... --quick` while iterating) | PASS (257 s) |
+| Mutation | scratch edit of `dropStaged` (insert untaken tiles in completion order), `legion_parallel_test.py --quick` | FAIL in all six arms, as it must |
+| SimPool | `simpool_test`, `simpool_passes_test` (gcc, clang, TSan) | pass |
+| Compilers | `build-clang/legion_scenario scale/scatter-2500.scn --mode legion --offsets 0 --json --ticks 2000 [--par-perturb 99]` | `a57e87dfa56da04d` = gcc |
+| ThreadSanitizer | `build-tsan` (`-O1 -g -fsanitize=thread`): scatter-2500 `--ticks 900 --workers [--par-perturb 5]`, mixed-1000 `--ticks 300` | no reports |
+| AddressSanitizer | `build-asan`: scatter-2500 `--ticks 900` (TAK_LEGION_VERIFY, perturbed; and `--serial --par-force`), churn-1000 `--ticks 1500` | clean |
+| `--mpai` 60 s | `CORES=14-15 bash ../mpai.sh final-bin mpai60 60` | Retail 2c39430636a3dbda, Legion f75b2a11410f43b4 |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j4 --timeout 1800` (scratch XDG, no `TAK_SETTINGS_FILE`) | 392 / 392 |
+| Release build | `cmake --build build` (all targets) | builds |
+| Wall A/B | `ab/phase.sh ab/final-SCN SCN 5000 base-bin/legion_scenario final-bin/legion_scenario` for scatter-10000, many-10000, one-10000 | table above |
+| churn-10000 rerun | final and stage-8 binaries alone, `--scale`, TAK_PHASE | 0 / 0 ticks over budget |
+
 ## 8. Next step
 
-Resume from branch `task-legion-10000` (pushed; stages 1-8 done; stage 8 head = its record commit). Build `build-o2` in
-the worktree (a clean configure takes half a minute with ccache; a build dir whose `.ninja_log` reports "premature end
-of file" should be rebuilt clean), read sections 3 (3.4 as amended at stages 6-8), 7.8 and the stage-8 section of
-docs/legion-pathfinding.md. Stage 9 (brief phase 8): parallelise independent planning (tile builds, per-plane
-preprocessing) with deterministic publication, reassess movement, and the final measured before/after report. Stage 8
-leaves it:
+Resume from branch `task-legion-10000` (pushed; stages 1-8 and the first half of stage 9 done; head = the stage-9
+record commit). Build `build-o2` in the worktree (a clean configure takes half a minute with ccache; a build dir whose
+`.ninja_log` reports "premature end of file" should be rebuilt clean), read sections 3, 7.8, 7.9 and the stage-8 and
+stage-9 sections of docs/legion-pathfinding.md.
+
+**Next: the second half of stage 9 -- final integration and the measured before/after report** (brief "Final
+deliverables"): starting c2c25707 against the final head; implemented phases; exact validation commands (the full gate,
+the scale suite, the 300 s `--mpai`, crowdbench, the cross-compiler script, Windows/macOS where determinism needs
+them); inherited versus new failures; 10,000-unit results by workload with the frozen targets; command latency;
+navigation and arrival tails; memory; whole-tick performance with repeated A/Bs; remaining bottlenecks. Stage 9's first
+half adds to that list:
+
+* **Serial movement is the tick at 10,000 bodies** (66-80%, section 7.9), most of it the collision-checked step and the
+  soft-body reads round it. The only exact candidate left is certificates for the static look-ahead (10-20% of the tick),
+  after separating its static part from its soft-body reads; a snapshot movement model would be a behaviour change and
+  has no measured failure case behind it.
+* **Window relaxation stays serial** (a parallel version needs per-job budgets fixed before execution: a schedule
+  change). Raising the deterministic field quota now that tile builds cost the sim thread less would be a behaviour
+  change too, judged on outcomes, never on the machine's worker count.
+* many-10000's tick (mean ~28 ms, ticks over 33.3 ms) and mixed-10000's explore phase remain the wall-time misses.
+
+Stage 8 left these behaviour items, unchanged by stage 9 (which changes no behaviour):
 
 * **Crowds round static corners and soft blocks.** A big formation rounding an obstacle edge single-files along the
   shortest line and jams at the corner when anything crosses it there (`scn/mountain.scn` in the stage-8 scratch:

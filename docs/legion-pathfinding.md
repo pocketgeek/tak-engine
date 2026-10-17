@@ -2554,6 +2554,45 @@ of a destination area: swap-2500 lost 13% of its arrivals; split only where terr
 lost time on all three offsets); moving an off-slot arrival's claim to the cells it stands on; re-seeding a far
 reach group only for a move of D/8 cells uncapped (the cap of 8 stays).
 
+### Legion 10,000 stage 9: parallel planning (7b9428f8 .. 9064aa35, no protocol change)
+
+Independent planning work runs on the sim's SimPool workers; movement commits stay serial. Everything here is exact:
+the state hash and every observer key are those of the serial run on any worker count and in any job completion
+order (the record, with measurements and the profile of the movement phase, is docs/legion-10000-progress.md
+section 7.9).
+
+* **The rule.** A parallel job's inputs and logical budget are chosen from sim state before it runs; each job reads
+  immutable inputs (copies, or state nothing writes while it runs) and writes only its own slot; the serial pass
+  consumes results by exact identity, in its own order, and waits for a job still running. Nothing a worker computes
+  is published by the worker, no decision reads whether or when a job finished, and a slower machine waits rather than
+  using a different subset. Results that are never consumed are dropped and never counted in `NavBytes`.
+* **Chain tiles beside the serial pass** (`tilePrefetch`, `TileJob`, `takePrefetched`). Before a class's field jobs
+  are served, the chain regions the class's window will attach next are picked in key order while their predicted
+  attach work fits two DRR slices per job and the quota left. Each region's key is computed as `attachNode` does
+  (`tileKey`), and a key neither the tile cache nor the staging holds becomes an asynchronous SimPool job
+  (`SimPool::start`) over its own copies of the seed cells, the legality of the sector and the ring of origins round
+  it, and the sector's region labels; the job and the serial `buildTile` share one body (`tileCore`). The serial pass
+  then: takes a prepared key's soft levels and corridors in `attachNode` when the route, the node and the soft grid
+  (`softSerial`) are unchanged, charging the work the scan would; and, where `tileFor` misses its cache, takes the
+  staged tile with the equal key, charging the work its build counted (`help()`ing with unstarted jobs while it waits
+  for a running one). The batch is joined at the end of the pass (`SimPool::finish`); a staged tile nobody took stays
+  `kStagedTicks` (3) passes, then is dropped. With no workers nothing is prepared.
+* **Plane first builds in row chunks** (`computeRows`). The cell layer of a first plane build (the per-tick budgeted
+  `advanceBuild` stage 1 and `buildPlane`'s whole-map pass) runs in 16-row chunks as a fork-join; the structures are
+  resolved once, in id order, before the fork.
+* **Not parallelised.** Window and corridor field relaxation (`advance`): its slices share one quota with carry-over
+  between jobs, so a parallel version needs per-job budgets fixed before execution -- a schedule change, i.e. a behaviour
+  change, for at most about a millisecond a tick in the most planning-heavy row. Incremental plane refreshes
+  (`refreshPlane`): measured per plane on workers in WE E4.2 -- exact, but the spike is one plane's relabel and the
+  max got worse. Authoritative movement (`move`): serial by design (a unit observes earlier commits in the tick); its
+  profile is in the record.
+* **Instruments and test hooks.** `LegionNavigator::parallelStats()` and legion_scenario's `NAVPAR` stderr line
+  (`--navpar`, and with `--scale`; observation only, and not the same on every worker count). `setParallelForTest` /
+  `--par-force` (jobs inline with no workers) and `--par-perturb SEED` (debug builds also `TAK_LEGION_PAR_PERTURB`):
+  jobs run in a shuffled order with random delays. Under `TAK_LEGION_VERIFY` every reused key is recomputed and every
+  staged tile rebuilt from the plane. ctest `legion_parallel` (tools/legion_parallel_test.py) compares 1, 3 and 7
+  workers, perturbed runs and a forced inline verify run with `--serial`; `simpool_test` covers the asynchronous API.
+
 ## Instruments
 
 What each tool sees, and what it cannot. A number is only as good as the
