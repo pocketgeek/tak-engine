@@ -60,15 +60,26 @@ struct Params {
     size_t maxNearby=4;     // nearby jobs pending at once
     size_t nearbyReserve=8; // pending slots nearby work leaves free for visible work
     float minSpeed=0.5f;    // world px per frame below which the camera counts as still
+    // Calm gate: no new chunk work while the camera moves fast (faster than
+    // fastViewsPerSecond view widths/heights per second) or jumps again within
+    // jumpStormMs of the previous jump, until it has been calm for calmMs. The section
+    // fallback draws those cells at full detail meanwhile (texel-identical to a chunk),
+    // and with no reuse ahead a 4 MiB chunk upload per cell costs the render thread more
+    // than the fallback it replaces (measured; see the progress record, workstream K).
+    float fastViewsPerSecond=0.5f;
+    uint64_t calmMs=250,jumpStormMs=1000;
     bool prioritize=true;       // worker takes the most urgent queued job (else FIFO)
     bool cancel=true;           // obsolete jobs are cancelled (else only clear()/invalidate() cancel)
-    bool nearby=true;           // leading-edge prefetch while the camera moves
+    bool calmGate=true;         // pause new work during fast motion / jump storms
+    // Leading-edge prefetch while the camera moves. Experimental, off by default: it
+    // raised tracked GPU memory 56-80 MiB in ordinary pans with no measured gain.
+    bool nearby=false;
     bool protectStandins=true;  // stand-ins are evicted last
     bool coordinate=true;       // one frame budget for section and chunk uploads, holes first
     // The pre-K behaviour: FIFO, no cancellation outside clear()/invalidate(), no nearby
     // work, plain LRU eviction, separate fixed upload caps (8 MiB chunks, 32 sections).
     static Params legacy() {
-        Params p;p.prioritize=p.cancel=p.nearby=p.protectStandins=p.coordinate=false;return p;
+        Params p;p.prioritize=p.cancel=p.nearby=p.protectStandins=p.coordinate=p.calmGate=false;return p;
     }
 };
 
@@ -77,8 +88,9 @@ struct Params {
 class Demand {
 public:
     // level: the wanted chunk level; visible: the cells in view (empty = no view);
-    // centerX/Y: the view centre in world px; span: world px per cell; nx/ny: grid size.
-    void update(int level,Rect visible,float centerX,float centerY,int span,int nx,int ny,
+    // centerX/Y: the view centre and viewW/H its size, in world px; span: world px per
+    // cell; nx/ny: grid size.
+    void update(int level,Rect visible,float centerX,float centerY,float viewW,float viewH,int span,int nx,int ny,
                 uint64_t nowMs,uint64_t frame,const Params& p) {
         params_=p;span_=std::max(1,span);
         if(level!=level_) {
@@ -86,18 +98,30 @@ public:
             level_=level;
         }
         nowMs_=nowMs;frame_=frame;
-        // Motion: the centre's step since the last frame. A step wider than the view is a
-        // jump, not motion (nothing "leads" after a jump).
+        // Motion: the centre's step since the last frame, between frames of the same view
+        // size (a zoom moves the centre without panning; the level grace covers zooms). A
+        // step wider than the view is a jump, not motion (nothing "leads" after a jump).
         dirX_=dirY_=0;
-        if(hasLast_ && !visible.empty()) {
+        const bool sameSize=std::abs(viewW-lastW_)<=0.01f*viewW && std::abs(viewH-lastH_)<=0.01f*viewH;
+        if(hasLast_ && sameSize && !visible.empty()) {
             const float dx=centerX-lastX_,dy=centerY-lastY_;
             const float width=float(visible.x1-visible.x0+1)*float(span_),height=float(visible.y1-visible.y0+1)*float(span_);
             if(std::abs(dx)<=width && std::abs(dy)<=height) {
                 dirX_=dx>p.minSpeed ? 1 : dx<-p.minSpeed ? -1 : 0;
                 dirY_=dy>p.minSpeed ? 1 : dy<-p.minSpeed ? -1 : 0;
+                // Speed in view sizes per second of the owner's clock, measured from the last
+                // frame the clock advanced (frames within one ms accumulate).
+                if(nowMs>speedMs_ && viewW>0 && viewH>0) {
+                    const double views=std::max(std::abs(centerX-speedX_)/viewW,std::abs(centerY-speedY_)/viewH)*1000./double(nowMs-speedMs_);
+                    if(views>p.fastViewsPerSecond) {fastMs_=nowMs;fastSeen_=true;}
+                }
+            } else {   // a jump: a second one within the storm window gates new work too
+                if(jumpSeen_ && nowMs-lastJumpMs_<p.jumpStormMs) {fastMs_=nowMs;fastSeen_=true;}
+                lastJumpMs_=nowMs;jumpSeen_=true;
             }
         }
-        lastX_=centerX;lastY_=centerY;hasLast_=true;
+        if(!hasLast_ || !sameSize || nowMs>speedMs_) {speedX_=centerX;speedY_=centerY;speedMs_=nowMs;}
+        lastX_=centerX;lastY_=centerY;lastW_=viewW;lastH_=viewH;hasLast_=true;
         centerX_=centerX;centerY_=centerY;
         visible_=visible;
         guard_=visible.grown(p.guard,nx,ny);
@@ -127,6 +151,8 @@ public:
                (dirY_>0 && cy>visible_.y1) || (dirY_<0 && cy<visible_.y0);
     }
     bool moving() const {return dirX_ || dirY_;}
+    // No fast motion or jump storm within calmMs (see Params): new work may be queued.
+    bool calm() const {return !fastSeen_ || nowMs_-fastMs_>=params_.calmMs;}
     bool levelInGrace() const {
         return previousLevel_>=0 && (nowMs_-levelChangedMs_<params_.levelGraceMs || frame_-levelChangedFrame_<params_.levelGraceFrames);
     }
@@ -140,9 +166,9 @@ public:
 private:
     Params params_;
     int level_=-1,previousLevel_=-1,span_=1,dirX_=0,dirY_=0;
-    uint64_t levelChangedMs_=0,levelChangedFrame_=0,nowMs_=0,frame_=0;
-    float lastX_=0,lastY_=0,centerX_=0,centerY_=0;
-    bool hasLast_=false;
+    uint64_t levelChangedMs_=0,levelChangedFrame_=0,nowMs_=0,frame_=0,speedMs_=0,fastMs_=0,lastJumpMs_=0;
+    float lastX_=0,lastY_=0,lastW_=0,lastH_=0,centerX_=0,centerY_=0,speedX_=0,speedY_=0;
+    bool hasLast_=false,fastSeen_=false,jumpSeen_=false;
     Rect visible_,guard_,keep_;
 };
 
@@ -163,12 +189,12 @@ inline int evictionRank(bool usedThisFrame,bool standinThisFrame,bool sameCell,c
 //
 // Urgent uploads fill visible holes (a chunk image for a cell without any image, a
 // section the fallback needs); everything else -- an upgrade over a stand-in, nearby
-// or speculative results -- is not urgent. The first urgent upload of a frame always
-// proceeds (progress); later ones while the frame stays within urgentBytes and the
-// estimated cost within urgentNs. Non-urgent uploads proceed only while the frame's
-// estimated cost stays within deferNs, so on a frame that fills holes they wait for the
-// next frame instead of adding to its spike. Chunk images also keep the pre-K cap of
-// chunkBytes per frame (the first always proceeds).
+// or speculative results -- is not urgent. The first upload of a frame always proceeds
+// (progress, however slow uploads are on this machine); later urgent ones while the
+// frame stays within urgentBytes and the estimated cost within urgentNs, later
+// non-urgent ones only while the estimated cost stays within deferNs, so on a frame
+// that fills holes they wait for the next frame instead of adding to its spike. Chunk
+// images also keep the pre-K cap of chunkBytes per frame (the first always proceeds).
 //
 // Cost is the CPU submission time of texture create + upload, measured by the caller
 // and folded into a per-kind estimate (bytes x ns/byte, an exponential average); no
@@ -190,8 +216,9 @@ struct UploadBudget {
     bool admit(Kind k,bool urgent,size_t b) const {
         if(k==Chunk && chunk && chunk+b>chunkBytes)return false;
         if(!coordinate || (k==Section && unlimitedSections))return true;
+        if(!uploads)return true;   // progress: one upload per frame, however slow uploads are
         const double est=estNs+estimate(k,b);
-        if(urgent)return !uploads || (bytes+b<=urgentBytes && est<=urgentNs);
+        if(urgent)return bytes+b<=urgentBytes && est<=urgentNs;
         return bytes+b<=urgentBytes && est<=deferNs;
     }
     void record(Kind k,size_t b,uint64_t ns) {

@@ -42,6 +42,29 @@ void applyMipBudget(tak::TerrainChunks& chunks) {
     if (const char* v = tak::devEnv("TAK_TERRAIN_MIP_IDLE_MS")) idle = uint64_t(std::max(0L, std::atol(v)));
     chunks.setMipBudget(high, low, idle);
 }
+// Debug: TAK_TERRAIN_SCHEDULE=legacy restores the pre-K terrain work policy (FIFO, no
+// cancellation, no calm gate, plain LRU, separate upload caps) in the same binary; a
+// comma list of fifo,nocancel,nogate,nostandin,nocoord switches single parts off and
+// nearby switches the experimental leading-edge prefetch on.
+tak::terrainwork::Params scheduleParams() {
+    tak::terrainwork::Params p;
+    const char* v = tak::devEnv("TAK_TERRAIN_SCHEDULE");
+    if (!v) return p;
+    std::string list = v;
+    for (size_t at = 0; at <= list.size();) {
+        const size_t end = std::min(list.find(',', at), list.size());
+        const std::string token = list.substr(at, end - at);
+        if (token == "legacy") p = tak::terrainwork::Params::legacy();
+        else if (token == "fifo") p.prioritize = false;
+        else if (token == "nocancel") p.cancel = false;
+        else if (token == "nogate") p.calmGate = false;
+        else if (token == "nostandin") p.protectStandins = false;
+        else if (token == "nocoord") p.coordinate = false;
+        else if (token == "nearby") p.nearby = true;
+        at = end + 1;
+    }
+    return p;
+}
 }
 
 tak::tnt::Map MapView::genOrLoad(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
@@ -54,6 +77,8 @@ MapView::MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string&
     : ren_(ren), map_(genOrLoad(vfs, mapPath)), comp_(vfs) {
     applySectionBudget(comp_);
     applyMipBudget(chunks_);
+    chunks_.setParams(scheduleParams());
+    uploadBudget_.coordinate = chunks_.params().coordinate;
     secWorker_ = std::thread([this] { sectionWorkerLoop(); });
     queueAllSections();
 }
@@ -62,6 +87,8 @@ MapView::MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, tak::tnt::Map map)
     : ren_(ren), map_(std::move(map)), comp_(vfs) {
     applySectionBudget(comp_);
     applyMipBudget(chunks_);
+    chunks_.setParams(scheduleParams());
+    uploadBudget_.coordinate = chunks_.params().coordinate;
     secWorker_ = std::thread([this] { sectionWorkerLoop(); });
     queueAllSections();
 }
@@ -344,8 +371,9 @@ void MapView::draw(int winW, int winH) {
     comp_.setClockMs(nowMs());
     comp_.trim();   // over the CPU budget only while pins or the working set held more
     chunksEnabled_=!tak::devFlag("TAK_TERRAIN_CACHE_OFF");
+    uploadBudget_.beginFrame(pinning_);
     if(chunksEnabled_) {
-        chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_,nowMs());
+        chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_,nowMs(),uploadBudget_);
 #ifndef NDEBUG
         // Debug (capture runs): TAK_TERRAIN_SETTLE=1 waits until every visible chunk is
         // ready at its wanted level, so a capture shows finished terrain whatever order
@@ -359,13 +387,16 @@ void MapView::draw(int winW, int winH) {
                     std::fprintf(stderr,"TAK_TERRAIN_SETTLE: terrain did not settle; giving up\n");
                     settleGaveUp=true;break;
                 }
-                SDL_Delay(1);chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_,nowMs());
+                SDL_Delay(1);uploadBudget_.beginFrame(pinning_);
+                chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_,nowMs(),uploadBudget_);
+                chunks_.uploadDeferred(ren_,uploadBudget_);
             }
 #endif
         const auto revision=chunks_.stats().revision;
         if(revision!=chunkRevision_) {tileBatchDirty_=true;chunkRevision_=revision;}
         if(chunks_.draw(ren_,offX_,offY_,zoom_)) {
             tileBatch_.clear();apronBatch_.clear();wanted_.clear();batchKeys_.clear();underlayTiles_=0;
+            chunks_.uploadDeferred(ren_,uploadBudget_);
             tileBatchDirty_=true;trimSections();return;
         }
     } else {chunks_.clear();tileBatchDirty_=true;}
@@ -392,6 +423,9 @@ void MapView::draw(int winW, int winH) {
             tak::render::countSdlGeometry(verts.size(), verts.size() * sizeof(SDL_Vertex));
             SDL_RenderGeometry(ren_, tex, verts.data(), int(verts.size()), nullptr, 0);
         }
+    // Chunk results that are not hole fills (upgrades over a stand-in, nearby and kept
+    // work) upload after the fallback's sections, within what the frame has left.
+    if (chunksEnabled_) chunks_.uploadDeferred(ren_, uploadBudget_);
     trimSections();
 }
 

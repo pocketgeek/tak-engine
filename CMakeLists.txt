@@ -1757,6 +1757,16 @@ if(TAK_BUILD_CLIENT)
       add_test(NAME terrain_cache COMMAND terrain_cache_test "${TAK_TEST_DATA}")
       set_tests_properties(terrain_cache PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     endif()
+    # Camera-driven terrain work in a real MapView (workstream K): priority, cancellation
+    # with hysteresis, stand-ins under memory pressure, nearby work, edits/resets mid-queue.
+    add_executable(terrain_schedule_test tools/terrain_schedule_test.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
+    target_include_directories(terrain_schedule_test PRIVATE src)
+    target_compile_definitions(terrain_schedule_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(terrain_schedule_test PRIVATE tak-formats ${_tak_sdl2})
+    if(TAK_TEST_DATA)
+      add_test(NAME terrain_schedule COMMAND terrain_schedule_test "${TAK_TEST_DATA}")
+      set_tests_properties(terrain_schedule PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    endif()
     # Decoded terrain sections: pinned lifetimes, LRU budget with watermarks,
     # redecode accounting, concurrent pins (synthetic JPEGs, no game data).
     add_executable(terrain_compositor_test tools/terrain_compositor_test.cpp)

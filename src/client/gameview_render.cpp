@@ -3633,6 +3633,12 @@
         stats.add(RS::TerrainJobsCancelled, delta(chunks.jobsCancelled, cursor.chunks.jobsCancelled));
         stats.add(RS::TerrainJobsDiscarded, delta(chunks.jobsDiscarded, cursor.chunks.jobsDiscarded));
         stats.add(RS::TerrainJobsUsed, delta(chunks.jobsUsed, cursor.chunks.jobsUsed));
+        stats.add(RS::TerrainJobsObsolete, delta(chunks.jobsObsolete, cursor.chunks.jobsObsolete));
+        stats.add(RS::TerrainJobsAborted, delta(chunks.jobsAborted, cursor.chunks.jobsAborted));
+        stats.add(RS::TerrainJobsNearby, delta(chunks.jobsNearby, cursor.chunks.jobsNearby));
+        stats.add(RS::TerrainJobsOffview, delta(chunks.jobsOffview, cursor.chunks.jobsOffview));
+        stats.add(RS::TerrainUploadDeferred, delta(chunks.uploadsDeferred, cursor.chunks.uploadsDeferred));
+        stats.add(RS::TerrainGatedFrames, delta(chunks.framesGated, cursor.chunks.framesGated));
         stats.add(RS::TerrainSectionUploads, delta(sections.uploads, cursor.sections.uploads));
         // Decodes by any thread (section worker, chunk worker, finish frames), as the
         // compositor counts them (before J: the section worker's attempts, hits included).

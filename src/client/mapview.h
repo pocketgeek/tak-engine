@@ -107,7 +107,10 @@ public:
     void tilesEdited() { chunks_.clear(); queueAllSections(); tileBatchDirty_ = true; }
     void tilesEdited(int bx,int by,int width,int height);
     tak::TerrainChunks::Stats chunkStats() const { return chunks_.stats(); }
+    bool chunkCovers(int blockX, int blockY) const { return chunks_.covers(blockX, blockY); }   // tests
     void setMipBudget(size_t high, size_t low, uint64_t idleMs) { chunks_.setMipBudget(high, low, idleMs); }
+    // Terrain work policy (workstream K; tests and debug: Params::legacy() = pre-K).
+    void setScheduleParams(const tak::terrainwork::Params& p) { chunks_.setParams(p); uploadBudget_.coordinate = p.coordinate; }
     size_t sectionBytes() const { return sectionBytes_; }   // resident section textures
     // Fallback tiles the last draw() left to the underlay (their section was not
     // resident): visible terrain shown only as the blurry overview (workstream K).
@@ -226,6 +229,9 @@ private:
     size_t underlayTiles_ = 0;     // see underlayTiles()
     void rebuildTileBatch(int winW, int winH);
     tak::TerrainChunks chunks_{comp_};
+    // One terrain upload budget per frame (workstream K): chunk images, and the fallback
+    // sections that fill visible holes, priced by measured CPU submission cost.
+    tak::terrainwork::UploadBudget uploadBudget_;
     uint64_t chunkRevision_=0;
     bool chunksEnabled_=true;
 

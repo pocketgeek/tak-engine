@@ -411,6 +411,7 @@ enum class Counter : uint8_t {
     TerrainJobsNearby,
     TerrainJobsOffview,
     TerrainUploadDeferred,
+    TerrainGatedFrames,  // 1 when the calm gate queued no new terrain work this frame (fast motion / jump storm)
     Count
 };
 
@@ -489,7 +490,7 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "cpu_cache_pinned_bytes", "cpu_cache_evictable_bytes", "cpu_cache_peak_bytes",
     "terrain_chunk_visible", "terrain_chunk_ready", "terrain_chunk_standin", "terrain_chunk_holes",
     "terrain_underlay_tiles", "terrain_jobs_obsolete", "terrain_jobs_aborted", "terrain_jobs_nearby",
-    "terrain_jobs_offview", "terrain_upload_deferred"};
+    "terrain_jobs_offview", "terrain_upload_deferred", "terrain_gated_frames"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

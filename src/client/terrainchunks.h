@@ -1,6 +1,7 @@
 #pragma once
 #include <SDL.h>
 #include "terrain/terrain.h"
+#include "client/terrainwork.h"
 #include <atomic>
 #include <memory>
 #include <condition_variable>
@@ -16,6 +17,15 @@
 namespace tak {
 // Camera-independent terrain images. The worker owns mip generation/composition;
 // all SDL operations and cache bookkeeping stay on the render thread.
+//
+// Work follows the camera (workstream K, policy in client/terrainwork.h): the worker
+// takes the most urgent queued job (visible cells without any image, then visible cells
+// a stand-in covers, then leading-edge cells while the camera moves, then kept work the
+// camera just left), not the oldest. Every frame the render thread re-ranks pending jobs
+// and cancels obsolete ones (outside the keep band, or of a level the zoom left past its
+// grace); a running job stops cooperatively at its next row check and only drops its
+// pins. Completed results upload most urgent first under the frame's UploadBudget, and
+// stand-ins of visible cells are evicted last.
 class TerrainChunks {
 public:
     static constexpr int span=1024;
@@ -36,6 +46,11 @@ public:
         // whose result was never uploaded (cumulative).
         size_t standin=0,holes=0;
         uint64_t wastedNs=0;
+        // Cumulative: jobs cancelled as obsolete, running jobs stopped by such a cancel,
+        // nearby (leading-edge) jobs queued, results uploaded for cells not visible then,
+        // uploads the frame budget postponed (counted once per job and frame).
+        uint64_t jobsObsolete=0,jobsAborted=0,jobsNearby=0,jobsOffview=0,uploadsDeferred=0;
+        uint64_t framesGated=0;   // frames the calm gate queued no new work
     };
     explicit TerrainChunks(terrain::Compositor& compositor);
     ~TerrainChunks();
@@ -46,7 +61,20 @@ public:
     void resetSource();
     // nowMs: the owner's clock (wall time, or the render study's presentation clock)
     // for the mip cache's idle trim.
-    void prepare(SDL_Renderer*,const tnt::Map&,float x,float y,float zoom,int w,int h,bool linear,uint64_t nowMs);
+    // budget: the frame's terrain upload budget, shared with the owner's section uploads.
+    // Uploads results that fill visible holes, and -- unless holes remain, which the
+    // owner's fallback sections fill first -- the rest; those then wait for
+    // uploadDeferred().
+    void prepare(SDL_Renderer*,const tnt::Map&,float x,float y,float zoom,int w,int h,bool linear,uint64_t nowMs,
+                 terrainwork::UploadBudget& budget);
+    // After the owner's section uploads: completed results prepare() left (upgrades,
+    // nearby, kept work), within what the frame's budget has left. Shown from the next draw.
+    void uploadDeferred(SDL_Renderer*,terrainwork::UploadBudget& budget);
+    // Scheduling policy (debug: Params::legacy() = the pre-K behaviour).
+    void setParams(const terrainwork::Params& p) {params_=p;}
+    const terrainwork::Params& params() const {return params_;}
+    // Visible cells without an image of any level after prepare()'s uploads.
+    size_t holesAfterPrepare() const {return holesAfterPrepare_;}
     // CPU budget of the worker's mip images (workstream J): above `high` the least
     // recently used images no running job holds are evicted down to `low`; after
     // `idleMs` (and 120 frames) without terrain work the worker drops them all.
@@ -56,8 +84,8 @@ public:
     bool draw(SDL_Renderer*,float x,float y,float zoom);
     // Did the last draw() cover this block, at the wanted level or a cached stand-in?
     bool covers(int blockX,int blockY) const;
-    // Evict chunks not drawn this frame, oldest first, until gpuvram::wouldFit(need)
-    // (need 0 = just get under the cap). Returns the bytes freed.
+    // Evict chunks not drawn this frame, oldest first (stand-ins of visible cells last),
+    // until gpuvram::wouldFit(need) (need 0 = just get under the cap). Returns the bytes freed.
     size_t shed(size_t need);
     Stats stats() const {
         size_t ready=0;for(const auto& key:visible_)ready+=cache_.count(key);
@@ -74,20 +102,46 @@ public:
         s.mipTrims=mipTrims_.load(std::memory_order_relaxed);
         s.standin=drawnStandin_;s.holes=drawnHoles_;
         s.wastedNs=wastedNs_+wastedAbortNs_.load(std::memory_order_relaxed);
+        s.jobsObsolete=jobsObsolete_;s.jobsAborted=jobsAborted_.load(std::memory_order_relaxed);
+        s.jobsNearby=jobsNearby_;s.jobsOffview=jobsOffview_;s.uploadsDeferred=uploadsDeferred_;s.framesGated=framesGated_;
         return s;
     }
 private:
     using Key=std::tuple<int,int,int>; // level, chunk x, chunk y
     struct Tile {uint32_t key;uint8_t col,row;};
+    // Shared by the render thread (writes) and the worker (reads): a job's cancel flag
+    // and its current priority (smaller = sooner; see terrainwork::Demand::priority).
+    struct Control {std::atomic_bool cancelled{false};std::atomic<uint32_t> priority{0};};
     struct Job {
-        Key key;uint64_t epoch;bool stockTerrain=false;
-        std::shared_ptr<std::atomic_bool> cancelled;
+        Key key;uint64_t epoch;uint64_t seq=0;bool stockTerrain=false;
+        std::shared_ptr<Control> control;
         int mapW,mapH,bx,by,bw,bh,w,h;
         std::vector<Tile> tiles;
         std::vector<uint8_t> pixels;
         uint64_t composeNs=0;   // worker time this job took (wasted if never uploaded)
     };
-    struct Entry {SDL_Texture* texture=nullptr;int w=0,h=0;uint64_t used=0;};
+    // used: the frame it was last visible at its level; standin: the frame it last stood
+    // in for a visible cell whose own level was missing (both render-thread frames).
+    struct Entry {SDL_Texture* texture=nullptr;int w=0,h=0;uint64_t used=0,standin=0;};
+    struct Pending {std::shared_ptr<Control> control;bool nearby=false;};
+    // The image draw() would show for a visible key that has none at its level: the
+    // nearest cached level, finer first. end() = none.
+    std::map<Key,Entry>::iterator standIn(const Key&);
+    bool anyImage(int cx,int cy) const;
+    // Evict (lowest terrainwork::evictionRank, then least recently used) until `size`
+    // more bytes fit the cache budget and the GPU cap. `cell` = the uploaded key (rank 2
+    // goes to its own stand-ins). coldOnly (off-view uploads): only rank-1 images outside
+    // the keep band. Returns whether it fits.
+    bool makeRoom(size_t size,const Key& cell,bool coldOnly);
+    // Bytes off-view work may use: free cache room plus cold images.
+    size_t offviewRoom() const;
+    size_t imageBytes(const Key&,const tnt::Map&) const;
+    // Re-rank pending jobs for this frame's demand; cancel the obsolete ones.
+    void rankPending(const tnt::Map&);
+    // Upload completed results: urgent ones (holes) only, or everything left.
+    void uploadReady(SDL_Renderer*,terrainwork::UploadBudget&,bool urgentOnly,bool finalPass);
+    void discard(Job&);
+    void releasePending(const Job&);
     void work();
     void compose(Job&);
     // A pinned image of section `key` at mip `level` (0 = the compositor's decoded
@@ -113,6 +167,11 @@ private:
     std::mutex mutex_;
     std::condition_variable cv_;
     std::deque<Job> jobs_,done_;
+    // Render thread: completed results taken from done_ and not uploaded yet (budget,
+    // or deferred to uploadDeferred). readyHeld_ mirrors its size for the worker, which
+    // stops composing while done_ + ready_ hold 8 results.
+    std::vector<Job> ready_;
+    std::atomic<size_t> readyHeld_{0};
     bool stop_=false,busy_=false;
     uint64_t epoch_=0,frame_=0,revision_=0;
     size_t bytes_=0,uploads_=0;
@@ -121,7 +180,15 @@ private:
     std::atomic<uint64_t> jobsCompleted_{0},composeNs_{0};
     std::atomic<size_t> mipBytes_{0},mipPinnedBytes_{0},mipPeakBytes_{0};
     std::atomic<uint64_t> mipEvictions_{0},mipRegens_{0},mipTrims_{0};
-    std::map<Key,std::shared_ptr<std::atomic_bool>> pending_;
+    std::map<Key,Pending> pending_;
+    terrainwork::Params params_;
+    terrainwork::Demand demand_;
+    uint64_t seq_=0;
+    size_t nearbyPending_=0,holesAfterPrepare_=0;
+    bool deferred_=false;   // prepare() left non-urgent results for uploadDeferred()
+    size_t coldBytes_=0;    // this frame: images off-view work may evict (see makeRoom)
+    uint64_t jobsObsolete_=0,jobsNearby_=0,jobsOffview_=0,uploadsDeferred_=0,framesGated_=0;
+    std::atomic<uint64_t> jobsAborted_{0};
     std::map<Key,Entry> cache_;
     std::vector<Key> visible_;
     std::vector<std::pair<int,int>> drawn_;   // chunk cells the last draw() covered (any level), sorted

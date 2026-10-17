@@ -587,7 +587,7 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "terrain_chunk_holes", "terrain_underlay_tiles", "terrain_chunk_pending",
                     "terrain_jobs_completed", "terrain_section_uploads", "terrain_jobs_obsolete",
                     "terrain_jobs_aborted", "terrain_jobs_nearby", "terrain_jobs_offview",
-                    "terrain_upload_deferred"]
+                    "terrain_upload_deferred", "terrain_gated_frames"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",

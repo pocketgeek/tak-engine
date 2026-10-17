@@ -21,7 +21,7 @@ constexpr int kSpan=1024;
 struct View {int level,x,y,w,h;};
 void apply(Demand& d,const View& v,int nx,int ny,uint64_t nowMs,uint64_t frame,const Params& p=Params{}) {
     const Rect r{std::max(0,v.x),std::max(0,v.y),std::min(nx-1,v.x+v.w-1),std::min(ny-1,v.y+v.h-1)};
-    d.update(v.level,r,(float(v.x)+float(v.w)*.5f)*kSpan,(float(v.y)+float(v.h)*.5f)*kSpan,kSpan,nx,ny,nowMs,frame,p);
+    d.update(v.level,r,(float(v.x)+float(v.w)*.5f)*kSpan,(float(v.y)+float(v.h)*.5f)*kSpan,float(v.w)*kSpan,float(v.h)*kSpan,kSpan,nx,ny,nowMs,frame,p);
 }
 
 // A pending-job set driven the way TerrainChunks drives it: every frame each queued job
@@ -101,17 +101,54 @@ int main() try {
         apply(d,{0,10,10,4,3},32,32,0,0,p);
         check(!d.moving() && !d.leading(14,11),"the first frame has no motion");
         Rect r{10,10,13,12};
-        d.update(0,r,12.f*kSpan+3,11.5f*kSpan,kSpan,32,32,16,1,p);   // 3 px right
+        d.update(0,r,12.f*kSpan+3,11.5f*kSpan,4096.f,3072.f,kSpan,32,32,16,1,p);   // 3 px right
         check(d.dirX()==1 && d.dirY()==0,"moving right");
         check(d.leading(14,11) && d.leading(14,9) && d.leading(14,13),"right column (corners included) leads");
         check(!d.leading(9,11) && !d.leading(12,9) && !d.leading(12,11),"left, top and visible cells do not lead");
         check(!d.leading(15,11),"the keep band beyond the guard does not lead");
-        d.update(0,r,12.f*kSpan+3.2f,11.5f*kSpan,kSpan,32,32,32,2,p);   // 0.2 px: still
+        d.update(0,r,12.f*kSpan+3.2f,11.5f*kSpan,4096.f,3072.f,kSpan,32,32,32,2,p);   // 0.2 px: still
         check(!d.moving(),"below minSpeed the camera is still");
-        d.update(0,Rect{20,20,23,22},22.f*kSpan,21.5f*kSpan,kSpan,32,32,48,3,p);   // jump
+        d.update(0,Rect{20,20,23,22},22.f*kSpan,21.5f*kSpan,4096.f,3072.f,kSpan,32,32,48,3,p);   // jump
         check(!d.moving(),"a jump is not motion");
-        d.update(0,Rect{19,20,22,22},21.f*kSpan,21.5f*kSpan-40,kSpan,32,32,64,4,p);
+        d.update(0,Rect{19,20,22,22},21.f*kSpan,21.5f*kSpan-40,4096.f,3072.f,kSpan,32,32,64,4,p);
         check(d.dirX()==-1 && d.dirY()==-1 && d.leading(18,21) && d.leading(20,19),"diagonal motion leads on two sides");
+    }
+    // Calm gate: fast motion (in view sizes per second of the owner's clock) and a second
+    // jump within the storm window pause new work until calmMs have passed.
+    {
+        Params p;Demand d;
+        const Rect r{10,10,13,12};const float vw=4096,vh=3072,cy0=11.5f*kSpan;
+        float x=12.f*kSpan;uint64_t t=0,f=0;
+        const auto step=[&](float dx,uint64_t dt) {x+=dx;t+=dt;d.update(0,r,x,cy0,vw,vh,kSpan,32,32,t,++f,p);};
+        step(0,16);check(d.calm(),"a fresh view is calm");
+        for(int i=0;i<30;++i)step(4096*0.2f*16/1000,16);   // 0.2 views/s
+        check(d.calm(),"a slow pan is calm");
+        step(4096*1.0f*16/1000,16);                         // 1 view/s
+        check(!d.calm(),"a fast pan gates new work");
+        for(int i=0;i<15;++i)step(0,16);                    // 240 ms still
+        check(!d.calm(),"... until calmMs have passed");
+        step(0,16);check(d.calm(),"... then calm again");
+        step(500,0);check(d.calm(),"a frame of 0 ms measures no speed ...");
+        step(0,1);check(!d.calm(),"... its step counts at the next clock tick");
+        for(int i=0;i<16;++i)step(0,16);
+        check(d.calm(),"calm again");
+        // Jumps: the first is immediate, a second within jumpStormMs gates.
+        d.update(0,Rect{20,20,23,22},22.f*kSpan,21.5f*kSpan,vw,vh,kSpan,32,32,t+=16,++f,p);
+        check(d.calm(),"a single jump is not gated (the new view's work starts at once)");
+        d.update(0,r,12.f*kSpan,cy0,vw,vh,kSpan,32,32,t+=500,++f,p);
+        check(!d.calm(),"a second jump within the storm window gates");
+        d.update(0,r,12.f*kSpan,cy0,vw,vh,kSpan,32,32,t+=p.calmMs,++f,p);
+        check(d.calm(),"calm again after the storm");
+        d.update(0,Rect{20,20,23,22},22.f*kSpan,21.5f*kSpan,vw,vh,kSpan,32,32,t+=p.jumpStormMs,++f,p);
+        check(d.calm(),"a jump after the storm window is immediate again");
+        check(!Params::legacy().calmGate && !Params{}.nearby,"legacy has no gate; nearby prefetch is opt-in");
+        // A zoom (the view size changes) is neither motion nor a jump, however far the
+        // centre moves.
+        for(int i=0;i<5;++i) {
+            const float z=i%2 ? 1.f : 20.f;
+            d.update(0,r,12.f*kSpan+z*100,cy0,vw*z,vh*z,kSpan,32,32,t+=16,++f,p);
+            check(d.calm() && !d.moving(),"zoom steps do not gate");
+        }
     }
     // Eviction ranks.
     {
@@ -149,7 +186,9 @@ int main() try {
         // Progress: the first urgent upload proceeds even when it alone exceeds the caps.
         UploadBudget g;g.beginFrame(false);g.nsPerByte[1]=10.0;g.urgentBytes=1024;
         check(g.admit(UploadBudget::Section,true,section),"the first urgent upload always proceeds, however large");
-        check(!g.admit(UploadBudget::Section,false,section),"... a non-urgent one does not");
+        check(g.admit(UploadBudget::Section,false,section),"... and so does a non-urgent one (slow uploads never starve)");
+        g.record(UploadBudget::Section,section,uint64_t(section*10.0));
+        check(!g.admit(UploadBudget::Section,true,section) && !g.admit(UploadBudget::Section,false,section),"... but only one");
         // finishChunks frames: sections unlimited; chunks keep their cap.
         UploadBudget f;f.beginFrame(true);f.nsPerByte[1]=10.0;
         for(int i=0;i<100;++i) {check(f.admit(UploadBudget::Section,true,section),"unlimited sections");f.record(UploadBudget::Section,section,1);}

@@ -3,6 +3,7 @@
 #include "client/rendertelemetry.h"
 #include <algorithm>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <cstring>
 
@@ -28,10 +29,10 @@ TerrainChunks::~TerrainChunks() {
     cv_.notify_all();worker_.join();clear();
 }
 void TerrainChunks::clear() {
-    for(const auto& [key,cancelled]:pending_)cancelled->store(true,std::memory_order_relaxed);
+    for(const auto& [key,p]:pending_)p.control->cancelled.store(true,std::memory_order_relaxed);
     jobsCancelled_+=pending_.size();
-    {std::lock_guard lock(mutex_);++epoch_;jobs_.clear();done_.clear();}
-    cv_.notify_all();pending_.clear();visible_.clear();drawn_.clear();
+    {std::lock_guard lock(mutex_);++epoch_;jobs_.clear();done_.clear();ready_.clear();readyHeld_.store(0,std::memory_order_relaxed);}
+    cv_.notify_all();pending_.clear();nearbyPending_=0;visible_.clear();drawn_.clear();
     for(auto& [key,e]:cache_)gpuvram::destroy(e.texture);
     cache_.clear();bytes_=0;++revision_;
 }
@@ -44,13 +45,17 @@ void TerrainChunks::invalidate(int bx0,int by0,int bx1,int by1) {
     // Jobs own immutable tile snapshots. Cancel only edited chunks (including
     // gutters); continuous painting must not starve unrelated pending images.
     for(auto i=pending_.begin();i!=pending_.end();) {
-        if(affected(i->first)) {i->second->store(true,std::memory_order_relaxed);i=pending_.erase(i);++jobsCancelled_;}
+        if(affected(i->first)) {
+            i->second.control->cancelled.store(true,std::memory_order_relaxed);
+            nearbyPending_-=i->second.nearby;i=pending_.erase(i);++jobsCancelled_;
+        }
         else ++i;
     }
     {
         std::lock_guard lock(mutex_);
-        const auto cancelled=[](const Job& job) {return job.cancelled->load(std::memory_order_relaxed);};
+        const auto cancelled=[](const Job& job) {return job.control->cancelled.load(std::memory_order_relaxed);};
         std::erase_if(jobs_,cancelled);std::erase_if(done_,cancelled);
+        std::erase_if(ready_,cancelled);readyHeld_.store(ready_.size(),std::memory_order_relaxed);
     }
     cv_.notify_all();
     for(auto i=cache_.begin();i!=cache_.end();) {
@@ -115,7 +120,7 @@ void TerrainChunks::compose(Job& j) {
     // Job-scoped ownership: every image this job reads stays pinned until it returns.
     std::map<uint32_t,terrain::SectionRef> decoded;
     for(const auto& t:j.tiles) {
-        if(j.cancelled->load(std::memory_order_relaxed))return;
+        if(j.control->cancelled.load(std::memory_order_relaxed))return;
         auto [entry,added]=decoded.try_emplace(t.key);
         if(added)try {entry->second=mip(t.key,level,j.stockTerrain);}catch(...) {}
         images.push_back(entry->second.get());
@@ -129,7 +134,7 @@ void TerrainChunks::compose(Job& j) {
     // A texel of real neighbouring terrain on every side prevents filtering
     // seams. At the map boundary repeat its edge, rather than wrapping a tile.
     for(int y=-1;y<=j.h;++y) {
-        if(j.cancelled->load(std::memory_order_relaxed))return;
+        if(j.control->cancelled.load(std::memory_order_relaxed))return;
         for(int x=-1;x<=j.w;++x) {
             const int gx=std::clamp((cx*span>>level)+x,0,j.mapW-1);
             const int gy=std::clamp((cy*span>>level)+y,0,j.mapH-1);
@@ -146,8 +151,9 @@ void TerrainChunks::compose(Job& j) {
 }
 void TerrainChunks::work() {
     std::unique_lock lock(mutex_);
+    const auto hasSpace=[&]{return done_.size()+readyHeld_.load(std::memory_order_relaxed)<8;};
     for(;;) {
-        cv_.wait(lock,[&]{return stop_ || trimMips_ || (!jobs_.empty() && done_.size()<8);});
+        cv_.wait(lock,[&]{return stop_ || trimMips_ || (!jobs_.empty() && hasSpace());});
         if(stop_)return;
         if(trimMips_ && jobs_.empty()) {
             // Sustained low demand (the render thread's request): no job runs, so no
@@ -161,8 +167,17 @@ void TerrainChunks::work() {
             lock.lock();busy_=false;cv_.notify_all();continue;
         }
         trimMips_=false;   // work arrived: demand is not low after all
-        if(jobs_.empty() || done_.size()>=8)continue;
-        auto job=std::move(jobs_.front());jobs_.pop_front();busy_=true;lock.unlock();
+        std::erase_if(jobs_,[](const Job& j){return j.control->cancelled.load(std::memory_order_relaxed);});
+        if(jobs_.empty() || !hasSpace())continue;
+        // The most urgent queued job (smallest priority; the oldest among equals, so
+        // without priorities -- the legacy policy -- this is FIFO).
+        auto best=jobs_.begin();
+        uint32_t bestPriority=best->control->priority.load(std::memory_order_relaxed);
+        for(auto i=std::next(best);i!=jobs_.end();++i) {
+            const uint32_t priority=i->control->priority.load(std::memory_order_relaxed);
+            if(priority<bestPriority || (priority==bestPriority && i->seq<best->seq)) {best=i;bestPriority=priority;}
+        }
+        auto job=std::move(*best);jobs_.erase(best);busy_=true;lock.unlock();
         const uint64_t started=nowNs();
         try {compose(job);}catch(...) {job.pixels.clear();}
         mipPinnedBytes_.store(0,std::memory_order_relaxed);
@@ -174,13 +189,153 @@ void TerrainChunks::work() {
         composeNs_.fetch_add(job.composeNs,std::memory_order_relaxed);
         jobsCompleted_.fetch_add(1,std::memory_order_relaxed);
         lock.lock();
-        if(job.epoch==epoch_ && !job.cancelled->load(std::memory_order_relaxed))done_.push_back(std::move(job));
-        else wastedAbortNs_.fetch_add(job.composeNs,std::memory_order_relaxed);   // cancelled while it ran
+        if(job.epoch==epoch_ && !job.control->cancelled.load(std::memory_order_relaxed))done_.push_back(std::move(job));
+        else {   // cancelled while it ran (obsolete, an edit, a reset): its pins are gone, its work wasted
+            wastedAbortNs_.fetch_add(job.composeNs,std::memory_order_relaxed);
+            jobsAborted_.fetch_add(1,std::memory_order_relaxed);
+        }
         busy_=false;cv_.notify_all();
     }
 }
-void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,float y,float zoom,int w,int h,bool linear,uint64_t nowMs) {
-    ++frame_;visible_.clear();
+std::map<TerrainChunks::Key,TerrainChunks::Entry>::iterator TerrainChunks::standIn(const Key& key) {
+    const auto [want,cx,cy]=key;
+    for(int d=1;d<=5;++d)
+        for(int level:{want-d,want+d})
+            if(level>=0 && level<=5)
+                if(auto i=cache_.find({level,cx,cy});i!=cache_.end())return i;
+    return cache_.end();
+}
+bool TerrainChunks::anyImage(int cx,int cy) const {
+    for(int level=0;level<=5;++level)if(cache_.count({level,cx,cy}))return true;
+    return false;
+}
+size_t TerrainChunks::imageBytes(const Key& key,const tnt::Map& map) const {
+    const auto [level,cx,cy]=key;
+    const int mapW=map.blocksX*(32>>level),mapH=map.blocksY*(32>>level);
+    const int w=std::min(span>>level,mapW-(cx*span>>level)),h=std::min(span>>level,mapH-(cy*span>>level));
+    return size_t(std::max(w,0)+2)*(std::max(h,0)+2)*4;
+}
+bool TerrainChunks::makeRoom(size_t size,const Key& cell,bool coldOnly) {
+    const auto [cellLevel,cellX,cellY]=cell;(void)cellLevel;
+    while(bytes_+size>budget || !gpuvram::wouldFit(size)) {
+        auto victim=cache_.end();int victimRank=INT_MAX;
+        for(auto i=cache_.begin();i!=cache_.end();++i) {
+            const auto [level,cx,cy]=i->first;(void)level;
+            const int rank=terrainwork::evictionRank(i->second.used==frame_,i->second.standin==frame_,
+                                                     cx==cellX && cy==cellY,params_);
+            if(coldOnly && (rank!=1 || demand_.keep().contains(cx,cy)))continue;
+            if(rank && (rank<victimRank || (rank==victimRank && i->second.used<victim->second.used))) {victim=i;victimRank=rank;}
+        }
+        if(victim==cache_.end())break;
+        bytes_-=size_t(victim->second.w+2)*(victim->second.h+2)*4;
+        gpuvram::destroy(victim->second.texture);cache_.erase(victim);++revision_;
+    }
+    return bytes_+size<=budget && gpuvram::wouldFit(size);
+}
+void TerrainChunks::releasePending(const Job& job) {
+    if(auto i=pending_.find(job.key);i!=pending_.end() && i->second.control==job.control) {
+        nearbyPending_-=i->second.nearby;pending_.erase(i);
+    }
+}
+void TerrainChunks::discard(Job& job) {
+    ++jobsDiscarded_;wastedNs_+=job.composeNs;
+    job.pixels=std::vector<uint8_t>();
+}
+size_t TerrainChunks::offviewRoom() const {
+    const size_t limit=room(bytes_);
+    return (limit>bytes_ ? limit-bytes_ : 0)+coldBytes_;
+}
+void TerrainChunks::rankPending(const tnt::Map& map) {
+    if(!params_.cancel && !params_.prioritize)return;
+    using terrainwork::Tier;
+    bool purge=false;
+    for(auto i=pending_.begin();i!=pending_.end();) {
+        const auto [level,cx,cy]=i->first;
+        Tier tier=demand_.classify(level,cx,cy,anyImage(cx,cy));
+        // Kept work is worth finishing only while its result could still be uploaded,
+        // which off-view results do into free or cold room only.
+        if(tier==Tier::Speculative && imageBytes(i->first,map)>offviewRoom())tier=Tier::Obsolete;
+        if(params_.cancel && tier==Tier::Obsolete) {
+            i->second.control->cancelled.store(true,std::memory_order_relaxed);
+            nearbyPending_-=i->second.nearby;i=pending_.erase(i);++jobsObsolete_;purge=true;
+            continue;
+        }
+        i->second.control->priority.store(params_.prioritize ? demand_.priority(tier,cx,cy) : 0,std::memory_order_relaxed);
+        ++i;
+    }
+    if(purge) {
+        std::lock_guard lock(mutex_);
+        const auto cancelled=[](const Job& job) {return job.control->cancelled.load(std::memory_order_relaxed);};
+        std::erase_if(jobs_,cancelled);std::erase_if(done_,cancelled);
+    }
+}
+void TerrainChunks::uploadReady(SDL_Renderer* renderer,terrainwork::UploadBudget& ub,bool urgentOnly,bool finalPass) {
+    using terrainwork::Tier;using terrainwork::UploadBudget;
+    if(ready_.empty())return;
+    struct Item {size_t index;Tier tier;uint32_t priority;uint64_t seq;};
+    std::vector<Item> order;order.reserve(ready_.size());
+    for(size_t i=0;i<ready_.size();++i) {
+        const auto [level,cx,cy]=ready_[i].key;
+        const Tier tier=demand_.classify(level,cx,cy,anyImage(cx,cy));
+        order.push_back({i,tier,params_.prioritize ? demand_.priority(tier,cx,cy) : 0,ready_[i].seq});
+    }
+    std::sort(order.begin(),order.end(),[](const Item& a,const Item& b) {
+        return a.priority!=b.priority ? a.priority<b.priority : a.seq<b.seq;
+    });
+    std::vector<char> keep(ready_.size(),0);
+    int handled=0;bool stop=false;
+    for(const auto& item:order) {
+        Job& job=ready_[item.index];
+        if(job.control->cancelled.load(std::memory_order_relaxed)) {discard(job);continue;}
+        const auto [level,cx,cy]=job.key;
+        const bool visible=level==level_ && demand_.visible().contains(cx,cy);
+        // Legacy: anything not visible now is discarded. K: only obsolete results.
+        if(job.pixels.empty() || cache_.count(job.key) || (params_.cancel ? item.tier==Tier::Obsolete : !visible)) {
+            releasePending(job);discard(job);continue;
+        }
+        const bool urgent=!params_.coordinate || item.tier==Tier::Hole;
+        const size_t size=job.pixels.size();
+        if(stop || (urgentOnly && !urgent) || handled>=64) {keep[item.index]=1;continue;}
+        if(!ub.admit(UploadBudget::Chunk,urgent,size)) {
+            keep[item.index]=1;
+            if(finalPass)++uploadsDeferred_;
+            stop=!params_.coordinate;   // legacy: the rest waits behind it (FIFO)
+            continue;
+        }
+        releasePending(job);++handled;
+        // A visible image makes room (stand-ins last); an off-view one only free room or
+        // cold images (not visible, no stand-in, outside the keep band).
+        const bool fits=makeRoom(size,job.key,!visible);
+        if(!fits || gpuvram::blocked()) {discard(job);continue;}
+        const uint64_t uploadStart=nowNs();
+        auto* texture=gpuvram::create(renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,job.w+2,job.h+2);
+        if(!texture){gpuvram::noteFail();discard(job);continue;}
+        if(SDL_UpdateTexture(texture,nullptr,job.pixels.data(),(job.w+2)*4)!=0){gpuvram::destroy(texture);discard(job);continue;}
+        SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(texture,linear_?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
+        const uint64_t uploadNs=nowNs()-uploadStart;   // CPU submission only: no GPU synchronization
+        uploadNs_+=uploadNs;ub.record(UploadBudget::Chunk,size,uploadNs);
+        render::countTextureUpload(size);
+        cache_.emplace(job.key,Entry{texture,job.w,job.h,visible ? frame_ : 0});
+        bytes_+=size;++uploads_;++revision_;
+        ++jobsUsed_;uploadBytes_+=size;jobsOffview_+=!visible;
+        job.pixels=std::vector<uint8_t>();
+    }
+    size_t kept=0;
+    for(size_t i=0;i<ready_.size();++i)if(keep[i]) {if(kept!=i)ready_[kept]=std::move(ready_[i]);++kept;}
+    ready_.resize(kept);
+    readyHeld_.store(kept,std::memory_order_relaxed);
+    cv_.notify_all();   // the worker may compose again
+}
+void TerrainChunks::uploadDeferred(SDL_Renderer* renderer,terrainwork::UploadBudget& ub) {
+    if(!deferred_)return;
+    deferred_=false;
+    uploadReady(renderer,ub,false,true);
+}
+void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,float y,float zoom,int w,int h,bool linear,uint64_t nowMs,
+                            terrainwork::UploadBudget& ub) {
+    using terrainwork::Tier;
+    ++frame_;visible_.clear();holesAfterPrepare_=0;deferred_=false;
     // Mip idle trim (workstream J): terrain work = a job queued or completed. After
     // mipIdleMs_ and 120 frames without any, ask the worker to drop its mip images
     // (regenerated on demand; the chunks already composed are unaffected).
@@ -211,58 +366,50 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
         Key key{level_,cx,cy};visible_.push_back(key);
         if(auto i=cache_.find(key);i!=cache_.end())i->second.used=frame_;
     }
+    demand_.update(level_,terrainwork::Rect{x0,y0,x1,y1},x+float(w)/zoom*.5f,y+float(h)/zoom*.5f,float(w)/zoom,float(h)/zoom,
+                   span,nx,ny,nowMs,frame_,params_);
+    // The images standing in for visible cells whose own level is missing (the same
+    // choice draw() makes) are evicted last while their replacements are prepared.
+    if(params_.protectStandins)
+        for(const auto& key:visible_)
+            if(!cache_.count(key))
+                if(auto i=standIn(key);i!=cache_.end())i->second.standin=frame_;
+    // Cold images: what off-view work (nearby, kept) may replace.
+    coldBytes_=0;
+    for(const auto& [key,e]:cache_) {
+        const auto [level,cx,cy]=key;(void)level;
+        if(terrainwork::evictionRank(e.used==frame_,e.standin==frame_,false,params_)==1 && !demand_.keep().contains(cx,cy))
+            coldBytes_+=size_t(e.w+2)*(e.h+2)*4;
+    }
     // A lowered GPU limit takes effect now: give back off-screen chunks until the
     // total is under the cap again, rather than waiting for the next upload.
     if(gpuvram::overCap())shed(0);
     if(linear!=linear_)for(auto& [key,e]:cache_)
         SDL_SetTextureScaleMode(e.texture,linear?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
     linear_=linear;
-    // Bound render-thread uploads; stale jobs are discarded without SDL work.
-    size_t uploaded=0;
-    for(int n=0;n<64 && uploaded<(size_t(8)<<20);++n) {
-        Job job;
-        {std::lock_guard lock(mutex_);
-            if(done_.empty() || (uploaded && uploaded+done_.front().pixels.size()>(size_t(8)<<20)))break;
-            job=std::move(done_.front());done_.pop_front();
-        }
-        cv_.notify_all();
-        ++jobsDiscarded_;wastedNs_+=job.composeNs;   // until it is actually uploaded below
-        if(job.cancelled->load(std::memory_order_relaxed))continue;
-        pending_.erase(job.key);
-        if(job.pixels.empty() || std::find(visible_.begin(),visible_.end(),job.key)==visible_.end())continue;
-        const size_t size=job.pixels.size();
-        while(bytes_+size>budget || !gpuvram::wouldFit(size)) {
-            auto oldest=cache_.end();
-            for(auto i=cache_.begin();i!=cache_.end();++i)
-                if(i->second.used!=frame_ && (oldest==cache_.end() || i->second.used<oldest->second.used))oldest=i;
-            if(oldest==cache_.end())break;
-            bytes_-=size_t(oldest->second.w+2)*(oldest->second.h+2)*4;
-            gpuvram::destroy(oldest->second.texture);cache_.erase(oldest);++revision_;
-        }
-        if(bytes_+size>budget || !gpuvram::wouldFit(size) || gpuvram::blocked())continue;
-        const uint64_t uploadStart=nowNs();
-        auto* texture=gpuvram::create(renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,job.w+2,job.h+2);
-        if(!texture){gpuvram::noteFail();continue;}
-        if(SDL_UpdateTexture(texture,nullptr,job.pixels.data(),(job.w+2)*4)!=0){gpuvram::destroy(texture);continue;}
-        SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(texture,linear?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
-        uploadNs_+=nowNs()-uploadStart;   // CPU submission only: no GPU synchronization
-        render::countTextureUpload(size);
-        cache_.emplace(job.key,Entry{texture,job.w,job.h,frame_});
-        bytes_+=size;uploaded+=size;++uploads_;++revision_;
-        --jobsDiscarded_;wastedNs_-=job.composeNs;++jobsUsed_;uploadBytes_+=size;
+    // Pending work follows the view: re-rank it, cancel what became obsolete.
+    rankPending(map);
+    // Completed results, most urgent first. Holes first; unless holes remain (the
+    // owner's fallback sections fill them, ahead of upgrades), everything else now too.
+    {
+        std::lock_guard lock(mutex_);
+        for(auto& job:done_)ready_.push_back(std::move(job));
+        done_.clear();readyHeld_.store(ready_.size(),std::memory_order_relaxed);
     }
-    for(const auto& key:visible_) {
-        if(cache_.count(key) || pending_.count(key) || pending_.size()>=64 || gpuvram::blocked())continue;
-        const auto [level,cx,cy]=key;Job job;job.key=key;job.epoch=epoch_;job.stockTerrain=map.stockTerrain;
+    uploadReady(renderer,ub,params_.coordinate,!params_.coordinate);
+    for(const auto& key:visible_)holesAfterPrepare_+=!anyImage(std::get<1>(key),std::get<2>(key));
+    if(params_.coordinate) {
+        if(holesAfterPrepare_)deferred_=true;
+        else uploadReady(renderer,ub,false,true);
+    }
+    // New work for visible cells, most urgent first (legacy: row order) -- not while the
+    // camera moves fast or jumps repeatedly (the calm gate): the fallback draws them.
+    if(params_.calmGate && !demand_.calm()) {++framesGated_;return;}
+    const auto queue=[&](const Key& key,uint32_t priority,bool nearby) {
+        const auto [level,cx,cy]=key;Job job;job.key=key;job.epoch=epoch_;job.seq=++seq_;job.stockTerrain=map.stockTerrain;
         job.mapW=map.blocksX*(32>>level);job.mapH=map.blocksY*(32>>level);
         job.w=std::min(span>>level,job.mapW-(cx*span>>level));
         job.h=std::min(span>>level,job.mapH-(cy*span>>level));
-        const size_t imageBytes=size_t(job.w+2)*(job.h+2)*4;
-        if((bytes_+imageBytes>budget || !gpuvram::wouldFit(imageBytes)) &&
-           std::none_of(cache_.begin(),cache_.end(),[&](const auto& entry){return entry.second.used!=frame_;}))
-            continue; // wait for space instead of repeatedly composing unusable images
-
         job.bx=std::max(0,cx*32-1);job.by=std::max(0,cy*32-1);
         job.bw=std::min(map.blocksX,(cx+1)*32+1)-job.bx;
         job.bh=std::min(map.blocksY,(cy+1)*32+1)-job.by;
@@ -271,17 +418,71 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
             const auto at=size_t(by)*map.blocksX+bx;
             job.tiles.push_back({map.tileKeys[at],map.tileCols[at],map.tileRows[at]});
         }
-        job.cancelled=std::make_shared<std::atomic_bool>(false);
-        pending_.emplace(key,job.cancelled);++jobsQueued_;
+        job.control=std::make_shared<Control>();
+        job.control->priority.store(priority,std::memory_order_relaxed);
+        pending_.emplace(key,Pending{job.control,nearby});++jobsQueued_;
+        if(nearby) {++nearbyPending_;++jobsNearby_;}
         {std::lock_guard lock(mutex_);jobs_.push_back(std::move(job));}cv_.notify_all();
+    };
+    std::vector<std::pair<uint32_t,Key>> wanted;
+    for(const auto& key:visible_) {
+        if(cache_.count(key) || pending_.count(key))continue;
+        const auto [level,cx,cy]=key;
+        const Tier tier=anyImage(cx,cy) ? Tier::Upgrade : Tier::Hole;
+        wanted.push_back({params_.prioritize ? demand_.priority(tier,cx,cy) : 0,key});
+    }
+    if(params_.prioritize)std::stable_sort(wanted.begin(),wanted.end(),[](const auto& a,const auto& b){return a.first<b.first;});
+    bool displaced=false;
+    for(const auto& [priority,key]:wanted) {
+        if(gpuvram::blocked())break;
+        if(pending_.size()>=params_.maxPending) {
+            // A full queue gives a slot of nearby or kept work to visible work.
+            auto worst=pending_.end();uint32_t worstPriority=0;
+            if(params_.cancel)
+                for(auto i=pending_.begin();i!=pending_.end();++i) {
+                    const uint32_t p=i->second.control->priority.load(std::memory_order_relaxed);
+                    if(p>>24>=uint32_t(Tier::Nearby) && p>priority && (worst==pending_.end() || p>worstPriority)) {worst=i;worstPriority=p;}
+                }
+            if(worst==pending_.end())break;
+            worst->second.control->cancelled.store(true,std::memory_order_relaxed);
+            nearbyPending_-=worst->second.nearby;pending_.erase(worst);++jobsObsolete_;displaced=true;
+        }
+        const size_t size=imageBytes(key,map);
+        if((bytes_+size>budget || !gpuvram::wouldFit(size)) &&
+           std::none_of(cache_.begin(),cache_.end(),[&](const auto& entry){return entry.second.used!=frame_;}))
+            continue; // wait for space instead of repeatedly composing unusable images
+        queue(key,priority,false);
+    }
+    if(displaced) {
+        std::lock_guard lock(mutex_);
+        const auto cancelled=[](const Job& job) {return job.control->cancelled.load(std::memory_order_relaxed);};
+        std::erase_if(jobs_,cancelled);
+    }
+    // While the camera moves: the cells about to enter, nearest first, into free room only.
+    if(params_.nearby && demand_.moving() && !gpuvram::blocked()) {
+        std::vector<std::pair<uint32_t,Key>> lead;
+        const auto& g=demand_.guard();
+        for(int cy=g.y0;cy<=g.y1;++cy)for(int cx=g.x0;cx<=g.x1;++cx) {
+            const Key key{level_,cx,cy};
+            if(demand_.leading(cx,cy) && !cache_.count(key) && !pending_.count(key))
+                lead.push_back({demand_.priority(Tier::Nearby,cx,cy),key});
+        }
+        std::sort(lead.begin(),lead.end());
+        for(const auto& [priority,key]:lead) {
+            if(nearbyPending_>=params_.maxNearby || pending_.size()+params_.nearbyReserve>=params_.maxPending)break;
+            if(imageBytes(key,map)*(nearbyPending_+1)>offviewRoom())break;
+            queue(key,priority,true);
+        }
     }
 }
 size_t TerrainChunks::shed(size_t need) {
     size_t freed=0;
     while(!gpuvram::wouldFit(need)) {
-        auto oldest=cache_.end();
-        for(auto i=cache_.begin();i!=cache_.end();++i)
-            if(i->second.used!=frame_ && (oldest==cache_.end() || i->second.used<oldest->second.used))oldest=i;
+        auto oldest=cache_.end();int oldestRank=INT_MAX;
+        for(auto i=cache_.begin();i!=cache_.end();++i) {
+            const int rank=terrainwork::evictionRank(i->second.used==frame_,i->second.standin==frame_,false,params_);
+            if(rank && (rank<oldestRank || (rank==oldestRank && i->second.used<oldest->second.used))) {oldest=i;oldestRank=rank;}
+        }
         if(oldest==cache_.end())break;
         const size_t size=size_t(oldest->second.w+2)*(oldest->second.h+2)*4;
         bytes_-=size;freed+=size;
@@ -298,17 +499,16 @@ bool TerrainChunks::draw(SDL_Renderer* renderer,float x,float y,float zoom) {
         auto i=cache_.find(key);
         const auto [want,cx,cy]=key;
         if(i==cache_.end()) {
-            complete=false;++drawnHoles_;
+            complete=false;
             // Still baking at this level (a zoom just changed it, or a pan brought it
             // in): stand in with the same map area at the nearest level still cached,
             // a little softer or sharper for a few frames, rather than sending the
             // whole view to the section fallback. Not stamped as used, so it never
-            // holds room the real level needs.
-            for(int d=1;d<=5 && i==cache_.end();++d)
-                for(int level:{want-d,want+d})
-                    if(level>=0 && level<=5 && i==cache_.end())i=cache_.find({level,cx,cy});
-            if(i==cache_.end())continue;
-            --drawnHoles_;++drawnStandin_;
+            // holds room the real level needs (prepare() marks it a stand-in: evicted
+            // last while the real level is prepared).
+            i=standIn(key);
+            if(i==cache_.end()) {++drawnHoles_;continue;}
+            ++drawnStandin_;
         }
         const int level=std::get<0>(i->first);const auto& e=i->second;
         // Shared rounded boundaries prevent cracks. The one-texel border lets
