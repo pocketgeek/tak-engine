@@ -655,7 +655,8 @@ public:
     // Workstream H (TAK_BODY_ARENA_VERIFY): every arena command gathered from a
     // CPU mirror of the arena through its ranges equalled the assembled command.
     struct BodyArenaVerifyTotals { uint64_t frames=0, commands=0, vertices=0, retained=0, uploaded=0,
-                                   appends=0, rebuilds=0, streams=0, fallbacks=0;
+                                   appends=0, rebuilds=0, streams=0, fallbacks=0,
+                                   rollovers=0, drains=0, oldCommands=0;
                                    uint64_t streamReasons[6]{};   // by tak::render::ArenaStreamReason
                                  };
     const BodyArenaVerifyTotals& bodyArenaVerifyTotals() const { return bodyArenaVerify_; }
@@ -1192,15 +1193,17 @@ private:
     struct DrawOp { const UnitR* u; const FeatureInst* f;
                     SDL_Texture* tex; int start, count;     // seg if u&&f both null
                     uint32_t firstRange = 0, ranges = 0;
-                    int32_t arenaFirst = -1; uint32_t arenaRanges = 0; };
+                    int32_t arenaFirst = -1; uint32_t arenaRanges = 0;
+                    int32_t arenaCommand = -1; int8_t arenaSlot = -1; };
     std::vector<BodySource> bodySources_;
     std::vector<BodyRange> bodyRanges_;
     std::vector<GLint> bodyArenaFirsts_;
     std::vector<GLsizei> bodyArenaCounts_;
+    std::vector<tak::render::ArenaRange> bodyArenaRanges_;   // one command's ranges (planner input scratch)
     std::vector<SDL_Vertex> bodyArenaGather_;   // fallback / simulated / verify gathers
     tak::render::VertexArenaPlanner bodyArena_;
-    tak::render::VertexArenaBuffer bodyArenaBuffer_;
-    std::vector<SDL_Vertex> bodyArenaMirror_;    // TAK_BODY_ARENA_VERIFY: CPU copy of the GL arena
+    tak::render::VertexArenaBuffer bodyArenaBuffers_[tak::render::kArenaSlots];   // current + draining storage
+    std::vector<SDL_Vertex> bodyArenaMirror_[tak::render::kArenaSlots];   // TAK_BODY_ARENA_VERIFY: CPU copies of the GL storages
     uint64_t bodyArenaFrame_ = 0;
     bool bodyArenaOn_ = true, bodyArenaVerifyOn_ = false;   // read once per frame (debug switches)
     void releaseBodyArena();

@@ -1448,28 +1448,52 @@
         const bool bodyDirect = !tak::devFlag("TAK_BODY_SDL_SUBMIT");
         bodyArenaOn_ = bodyDirect && !tak::devFlag("TAK_BODY_ARENA_OFF");
         bodyArenaVerifyOn_ = tak::devFlag("TAK_BODY_ARENA_VERIFY");
-        bodyArenaBuffer_.setSimulated(tak::devFlag("TAK_BODY_ARENA_SOFTWARE"));
+        for (auto& buffer : bodyArenaBuffers_) {
+            buffer.setSimulated(tak::devFlag("TAK_BODY_ARENA_SOFTWARE"));
+            buffer.endFrame();
+        }
         ++bodyArenaFrame_;
-        bodyArenaBuffer_.endFrame();
         bool arenaPlanned = false, arenaFrame = false;
+        if (const char* v = tak::devEnv("TAK_BODY_ARENA_HEADROOM")) {   // debug: tighter storage (tests)
+            auto policy = bodyArena_.policy();
+            policy.headroom = std::max(1.2, std::atof(v));
+            policy.minHeadroom = std::min(policy.minHeadroom, policy.headroom - 0.05);
+            policy.minCapacity = 1024;
+            policy.granule = 256;
+            policy.migrateMin = 16;
+            policy.migrateFraction = 0.02;
+            bodyArena_.setPolicy(policy);
+        }
         if (bodyArenaOn_) {
             bodyArena_.begin(bodyArenaFrame_, distantNow_);
-            for (const DrawOp& op : drawOps_) {
+            for (DrawOp& op : drawOps_) {
                 if (!op.tex || size_t(op.count) < kNativeMin) continue;
+                bodyArenaRanges_.clear();
                 for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
-                    BodySource& src = bodySources_[bodyRanges_[k].source];
+                    const BodyRange& r = bodyRanges_[k];
+                    BodySource& src = bodySources_[r.source];
                     if (src.arena == UINT32_MAX)
                         src.arena = bodyArena_.add({src.data, src.count, src.slot, src.generation, src.revision});
+                    bodyArenaRanges_.push_back({src.arena, r.offset, r.count});
                 }
+                op.arenaCommand = int32_t(bodyArena_.addCommand(bodyArenaRanges_));
             }
             arenaPlanned = true;
-            const bool capable = bodyArenaBuffer_.simulated() ||
-                                 (bodySubmit_.nativeCapable(ren_) && bodyArenaBuffer_.ready());
+            auto& lead = bodyArenaBuffers_[0];
+            const bool capable = lead.simulated() ||
+                (bodySubmit_.nativeCapable(ren_) && bodyArenaBuffers_[0].ready() && bodyArenaBuffers_[1].ready());
             if (bodyArena_.plan(capable, bodyArenaBudget()) != ArenaMode::Stream) {
-                bool ok = !bodyArena_.reallocate() ||
-                          bodyArenaBuffer_.allocate(bodyArena_.newCapacity() * sizeof(SDL_Vertex));
-                if (ok && bodyArena_.reallocate() && bodyArenaVerifyOn_ && !bodyArenaBuffer_.simulated())
-                    bodyArenaMirror_.assign(bodyArena_.newCapacity(), SDL_Vertex{{-7777, -7777}, {1, 2, 3, 4}, {9, 9}});
+                // Storage actions in order: release a drained (or dropped) storage,
+                // allocate the current one, then write (below).
+                const int cur = bodyArena_.curSlot();
+                if (const int drop = bodyArena_.releaseSlot(); drop >= 0) {
+                    bodyArenaBuffers_[drop].release();
+                    std::vector<SDL_Vertex>().swap(bodyArenaMirror_[drop]);
+                }
+                bool ok = !bodyArena_.allocate() ||
+                          bodyArenaBuffers_[cur].allocate(bodyArena_.newCapacity() * sizeof(SDL_Vertex));
+                if (ok && bodyArena_.allocate() && bodyArenaVerifyOn_ && !lead.simulated())
+                    bodyArenaMirror_[cur].assign(bodyArena_.newCapacity(), SDL_Vertex{{-7777, -7777}, {1, 2, 3, 4}, {9, 9}});
                 if (ok) arenaFrame = true;
                 else {
                     bodyArena_.end(false);
@@ -1477,7 +1501,8 @@
                     releaseBodyArena();
                 }
             }
-        } else if (bodyArena_.capacity() || bodyArenaBuffer_.capacityBytes()) releaseBodyArena();
+        } else if (bodyArena_.capacity() || bodyArenaBuffers_[0].capacityBytes() || bodyArenaBuffers_[1].capacityBytes())
+            releaseBodyArena();
         const auto fromArena = [&](const DrawOp& op) {
             return arenaFrame && op.tex && size_t(op.count) >= kNativeMin;
         };
@@ -1519,24 +1544,28 @@
         runCopies();
         size_t arenaRetained = 0, arenaUploaded = 0;
         if (arenaFrame) {
-            const bool ok = bodyArenaBuffer_.write(bodyArena_.writeBegin(), bodyVerts_.data() + staged, uploaded);
+            const int cur = bodyArena_.curSlot();
+            const bool ok = bodyArenaBuffers_[cur].write(bodyArena_.writeBegin(), bodyVerts_.data() + staged, uploaded);
             const tak::render::ArenaFrameStats arenaStats = bodyArena_.stats();
             if (ok) {
-                if (bodyArenaVerifyOn_ && !bodyArenaBuffer_.simulated())
+                if (bodyArenaVerifyOn_ && !bodyArenaBuffers_[cur].simulated())
                     std::copy(bodyVerts_.begin() + long(staged), bodyVerts_.begin() + long(staged + uploaded),
-                              bodyArenaMirror_.begin() + long(bodyArena_.writeBegin()));
+                              bodyArenaMirror_[cur].begin() + long(bodyArena_.writeBegin()));
                 for (DrawOp& op : drawOps_) {
                     if (!fromArena(op)) continue;
                     const size_t begin = bodyArenaFirsts_.size();
+                    const uint32_t command = uint32_t(op.arenaCommand);
+                    const uint32_t first = bodyArena_.commandFirstRange(command);
                     op.arenaFirst = int32_t(begin);
-                    for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
-                        const BodyRange& r = bodyRanges_[k];
+                    op.arenaSlot = int8_t(bodyArena_.commandSlot(command));
+                    for (uint32_t k = 0; k < op.ranges; ++k) {
+                        const BodyRange& r = bodyRanges_[op.firstRange + k];
                         tak::render::appendArenaRange(bodyArenaFirsts_, bodyArenaCounts_, begin,
-                            bodyArena_.first(bodySources_[r.source].arena) + r.offset, r.count);
+                            bodyArena_.first(command, first + k), r.count);
+                        if (!bodyArena_.written(bodySources_[r.source].arena)) arenaRetained += r.count;
                     }
                     op.arenaRanges = uint32_t(bodyArenaFirsts_.size() - begin);
                 }
-                if (arenaStats.mode == ArenaMode::Append) arenaRetained = arenaStats.residentVerts;
                 arenaUploaded = uploaded;
                 if (bodyArenaVerifyOn_) verifyBodyArena(arenaStats);
             }
@@ -1573,10 +1602,17 @@
         renderStats_.add(RS::ArenaVertsRetained, arenaRetained);
         renderStats_.add(RS::ArenaVertsUploaded, arenaUploaded);
         tak::render::countUploadBytes(arenaUploaded * sizeof(SDL_Vertex));
-        renderStats_.set(RS::ArenaCapacityBytes, bodyArenaBuffer_.simulated() ? 0 : bodyArenaBuffer_.capacityBytes());
-        renderStats_.set(RS::ArenaInflightBytes, bodyArenaBuffer_.inFlightBytes());
+        size_t arenaBytes = 0, arenaInflight = 0, mirrorBytes = 0;
+        for (int k = 0; k < tak::render::kArenaSlots; ++k) {
+            if (!bodyArenaBuffers_[k].simulated()) arenaBytes += bodyArenaBuffers_[k].capacityBytes();
+            arenaInflight += bodyArenaBuffers_[k].inFlightBytes();
+            mirrorBytes += bodyArenaMirror_[k].capacity() * sizeof(SDL_Vertex);
+        }
+        renderStats_.set(RS::ArenaCapacityBytes, arenaBytes);
+        renderStats_.set(RS::ArenaInflightBytes, arenaInflight);
         renderStats_.set(RS::ArenaCpuBytes, bodyArena_.cpuBytes() +
-            bodyArenaMirror_.capacity() * sizeof(SDL_Vertex) + bodyArenaGather_.capacity() * sizeof(SDL_Vertex));
+            mirrorBytes + bodyArenaGather_.capacity() * sizeof(SDL_Vertex) +
+            bodyArenaRanges_.capacity() * sizeof(tak::render::ArenaRange));
         renderStats_.set(RS::BodyBufferCapacityBytes, bodyVerts_.capacity() * sizeof(SDL_Vertex));
         renderStats_.set(RS::BodyBufferUsedBytes, bodyVerts_.size() * sizeof(SDL_Vertex));
         renderStats_.addMs(RP::BodyAssembly, (double(SDL_GetPerformanceCounter()) - _asm0) / _ptFreq);
@@ -1767,8 +1803,9 @@
                 if (op.arenaFirst >= 0) {
                     const std::span<const GLint> firsts(bodyArenaFirsts_.data() + op.arenaFirst, op.arenaRanges);
                     const std::span<const GLsizei> counts(bodyArenaCounts_.data() + op.arenaFirst, op.arenaRanges);
-                    const bool simulated = bodyArenaBuffer_.simulated();
-                    const int drawn = simulated ? 1 : bodySubmit_.drawBuffer(ren_, op.tex, bodyArenaBuffer_.id(),
+                    const auto& arenaBuffer = bodyArenaBuffers_[op.arenaSlot];
+                    const bool simulated = arenaBuffer.simulated();
+                    const int drawn = simulated ? 1 : bodySubmit_.drawBuffer(ren_, op.tex, arenaBuffer.id(),
                                                                              firsts, counts, size_t(op.count));
                     if (drawn != 1) {
                         renderStats_.add(RS::ArenaDraws);
@@ -1782,8 +1819,8 @@
                         if (simulated) {
                             for (size_t k = 0; k < firsts.size(); ++k)
                                 bodyArenaGather_.insert(bodyArenaGather_.end(),
-                                    bodyArenaBuffer_.simulatedData() + firsts[k],
-                                    bodyArenaBuffer_.simulatedData() + firsts[k] + counts[k]);
+                                    arenaBuffer.simulatedData() + firsts[k],
+                                    arenaBuffer.simulatedData() + firsts[k] + counts[k]);
                             renderStats_.add(RS::ArenaDraws);
                             renderStats_.add(RS::ArenaRanges, firsts.size());
                         } else {
@@ -3414,10 +3451,13 @@
 
     // Workstream H: the retained body vertex arena (client/vertexarena.h).
     void GameView::releaseBodyArena() {
-        if (bodyArena_.capacity() || bodyArenaBuffer_.capacityBytes()) renderStats_.add(tak::render::Counter::ArenaReleases);
+        if (bodyArena_.capacity() || bodyArenaBuffers_[0].capacityBytes() || bodyArenaBuffers_[1].capacityBytes())
+            renderStats_.add(tak::render::Counter::ArenaReleases);
         bodyArena_.release();
-        bodyArenaBuffer_.release();
-        std::vector<SDL_Vertex>().swap(bodyArenaMirror_);
+        for (int k = 0; k < tak::render::kArenaSlots; ++k) {
+            bodyArenaBuffers_[k].release();
+            std::vector<SDL_Vertex>().swap(bodyArenaMirror_[k]);
+        }
     }
     // Vertices the arena may (re)allocate now. It is an optimization, so it uses
     // the GPU budget only up to three quarters of the cap (caches that obey the
@@ -3437,18 +3477,19 @@
     // through its merged ranges must equal the command assembled from its
     // sources -- exactly what the streaming path would draw.
     void GameView::verifyBodyArena(const tak::render::ArenaFrameStats& stats) {
-        const SDL_Vertex* storage = bodyArenaBuffer_.simulated() ? bodyArenaBuffer_.simulatedData()
-                                                                 : bodyArenaMirror_.data();
-        const size_t storageVerts = bodyArenaBuffer_.simulated()
-            ? bodyArenaBuffer_.capacityBytes() / sizeof(SDL_Vertex) : bodyArenaMirror_.size();
         std::vector<SDL_Vertex> drawn, expected;
         for (const DrawOp& op : drawOps_) {
             if (op.arenaFirst < 0) continue;
+            const auto& buffer = bodyArenaBuffers_[op.arenaSlot];
+            const SDL_Vertex* storage = buffer.simulated() ? buffer.simulatedData() : bodyArenaMirror_[op.arenaSlot].data();
+            const size_t storageVerts = buffer.simulated() ? buffer.capacityBytes() / sizeof(SDL_Vertex)
+                                                           : bodyArenaMirror_[op.arenaSlot].size();
             drawn.clear(); expected.clear();
             for (uint32_t k = 0; k < op.arenaRanges; ++k) {
                 const size_t first = size_t(bodyArenaFirsts_[size_t(op.arenaFirst) + k]);
                 const size_t count = size_t(bodyArenaCounts_[size_t(op.arenaFirst) + k]);
-                if (first + count > storageVerts || first + count > bodyArena_.writeEnd())
+                if (first + count > storageVerts ||
+                    (op.arenaSlot == bodyArena_.curSlot() && first + count > bodyArena_.writeEnd()))
                     throw std::runtime_error("body arena: range past the written storage");
                 drawn.insert(drawn.end(), storage + first, storage + first + count);
             }
@@ -3469,10 +3510,12 @@
         }
         ++bodyArenaVerify_.frames;
         bodyArenaVerify_.uploaded += stats.uploadedVerts;
-        if (stats.mode == tak::render::ArenaMode::Append) {
-            ++bodyArenaVerify_.appends;
-            bodyArenaVerify_.retained += stats.residentVerts;
-        } else ++bodyArenaVerify_.rebuilds;
+        bodyArenaVerify_.retained += stats.verts - std::min(stats.verts, stats.uploadedVerts);
+        bodyArenaVerify_.oldCommands += stats.oldCommands;
+        if (stats.mode == tak::render::ArenaMode::Append) ++bodyArenaVerify_.appends;
+        else if (stats.rollover) ++bodyArenaVerify_.rollovers;
+        else ++bodyArenaVerify_.rebuilds;
+        bodyArenaVerify_.drains += bodyArena_.releaseSlot() >= 0;
     }
 
     void GameView::invalidateRenderTargets() {

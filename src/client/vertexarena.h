@@ -76,65 +76,108 @@ struct ArenaSource {
 enum class ArenaMode : uint8_t { Stream, Append, Rebuild };
 enum class ArenaStreamReason : uint8_t { None, Disallowed, Empty, Retry, Unstable, Budget };
 
+inline constexpr int kArenaSlots = 2;   // physical storages: the current one, and one draining
+
 struct ArenaPolicy {
     size_t minCapacity = size_t(1) << 16;                                // vertices (1.25 MiB)
-    size_t maxCapacity = (size_t(64) << 20) / sizeof(SDL_Vertex);        // 64 MiB, as GeometrySubmit's retained buffers
+    size_t maxCapacity = (size_t(64) << 20) / sizeof(SDL_Vertex);        // 64 MiB per storage, as GeometrySubmit's retained buffers
     size_t granule = size_t(1) << 14;                                    // capacity rounding (vertices)
-    double headroom = 2.0;          // capacity on (re)allocation = this frame's vertices x headroom
+    double headroom = 2.0;          // capacity on allocation = this frame's vertices x headroom
     double minHeadroom = 1.125;     // a capacity below this frame x minHeadroom is not worth it: stream
     // Retain only when at least this fraction of the frame's vertices is resident
     // or unchanged since the previous frame (otherwise the frame streams).
     double stableFraction = 0.5;
+    // Migration out of a draining storage: unchanged commands move to the
+    // current storage within this many vertices per frame (fraction of the
+    // frame, at least migrateMin), so no frame rewrites everything.
+    double migrateFraction = 0.125;
+    size_t migrateMin = size_t(1) << 15;
     uint64_t idleFrames = 120, idleMs = 2000;      // storage released after no arena frame for both
     uint64_t shrinkFrames = 300, shrinkMs = 5000;  // reallocated smaller after capacity > ratio x demand for both
     double shrinkRatio = 4.0;
     uint64_t retryFrames = 120;                    // after a failed allocation or write
 };
 
+struct ArenaRange { uint32_t source, offset, count; };   // a run of one source (vertex offset/count inside it)
 struct ArenaUpload { uint32_t source; uint32_t dst; };
 
 struct ArenaFrameStats {
     ArenaMode mode = ArenaMode::Stream;
     ArenaStreamReason reason = ArenaStreamReason::None;
-    size_t sources = 0, verts = 0, residentVerts = 0, stableVerts = 0, uploadedVerts = 0;
+    bool rollover = false;          // the current storage became the draining one, a new one was allocated
+    size_t sources = 0, commands = 0, verts = 0, residentVerts = 0, stableVerts = 0, uploadedVerts = 0;
+    size_t migratedVerts = 0;       // unchanged sources copied out of the draining storage (budgeted)
+    size_t oldCommands = 0;         // commands drawn from the draining storage
 };
 
+// Per frame: begin(), add() every source and addCommand() every command (its
+// ranges, in painter order), plan(); then the caller, in this order, releases
+// releaseSlot() (if any), allocates curSlot() at newCapacity() (if allocate()),
+// writes uploads() -- contiguous, [writeBegin, writeEnd) of curSlot() -- and
+// draws command i from commandSlot(i) at first(range); finally end(ok).
+//
+// Storage slots: the CURRENT storage takes every write. When its appended data
+// would not fit, it becomes the DRAINING storage and a new current one is
+// allocated (rollover): a command keeps drawing from the draining storage
+// while all its sources are resident there; it moves to the current storage
+// (all its non-resident sources copied) when one of them changed, or, within
+// the per-frame migration budget, unchanged. When no command draws from the
+// draining storage it is released. A command always draws from ONE storage,
+// so rollover never splits a draw; nothing written is ever overwritten. Only
+// when the current storage fills while another is still draining, or the GPU
+// budget allows no second storage, does a frame rewrite everything into fresh
+// storage (full rebuild).
 class VertexArenaPlanner {
 public:
     explicit VertexArenaPlanner(ArenaPolicy policy = {}) : policy_(policy) {}
     const ArenaPolicy& policy() const { return policy_; }
     void setPolicy(const ArenaPolicy& p) { policy_ = p; }
 
-    // ---- per frame: begin, add every source in painter order, plan, write, end ----
     void begin(uint64_t frame, uint64_t nowMs) {
         frame_ = frame; nowMs_ = nowMs;
-        sources_.clear(); firsts_.clear(); resident_.clear(); uploads_.clear();
+        sources_.clear(); ranges_.clear(); commands_.clear(); uploads_.clear();
         stats_ = {}; mode_ = ArenaMode::Stream; writeBegin_ = writeEnd_ = 0;
-        maxSlot_ = 0; planned_ = false;
+        maxSlot_ = 0; planned_ = false; allocate_ = false; releaseSlot_ = -1;
     }
     uint32_t add(const ArenaSource& s) {
         sources_.push_back(s);
         if (s.slot != kArenaNoSlot) maxSlot_ = std::max<size_t>(maxSlot_, size_t(s.slot) + 1);
         return uint32_t(sources_.size() - 1);
     }
+    // Returns the command's index; its ranges get indices [first, first + n) in
+    // the order given (first() takes those indices).
+    uint32_t addCommand(std::span<const ArenaRange> ranges) {
+        commands_.push_back({uint32_t(ranges_.size()), uint32_t(ranges.size()), 0});
+        ranges_.insert(ranges_.end(), ranges.begin(), ranges.end());
+        return uint32_t(commands_.size() - 1);
+    }
+    uint32_t commandFirstRange(uint32_t command) const { return commands_[command].first; }
+
     // allowed: the caller can draw from the arena this frame. budget: the most
-    // vertices the storage may hold if it is (re)allocated now (GPU budget).
+    // vertices a NEW storage may hold if one is allocated now (GPU budget).
     ArenaMode plan(bool allowed, size_t budget) {
         planned_ = true;
+        const size_t n = sources_.size();
+        res_.assign(n * kArenaSlots, 0);
+        offs_.assign(n * kArenaSlots, 0);
+        sched_.assign(n, kNone);
+        stamp_.assign(n, 0);
+        keys_.assign(n, 0);
         size_t total = 0, resident = 0, stable = 0;
-        resident_.assign(sources_.size(), 0);
-        firsts_.assign(sources_.size(), 0);
-        for (size_t i = 0; i < sources_.size(); ++i) {
+        for (size_t i = 0; i < n; ++i) {
             const ArenaSource& s = sources_[i];
             total += s.count;
-            if (s.slot == kArenaNoSlot || s.slot >= records_.size()) continue;
-            const Record& r = records_[s.slot];
-            if (isResident(r, s)) {
-                resident_[i] = 1; firsts_[i] = r.offset;
-                resident += s.count; stable += s.count;
-            } else if (isStable(r, s)) stable += s.count;
+            if (s.slot == kArenaNoSlot) continue;
+            const Record* r = s.slot < records_.size() ? &records_[s.slot] : nullptr;
+            keys_[i] = contentKey(r, s);
+            if (!r) continue;
+            bool any = false;
+            for (int k = 0; k < kArenaSlots; ++k)
+                if (residentAt(*r, s, keys_[i], k)) { res_[i * kArenaSlots + k] = 1; offs_[i * kArenaSlots + k] = r->loc[k].offset; any = true; }
+            if (any) { resident += s.count; stable += s.count; }
+            else if (isStable(*r, s, keys_[i])) stable += s.count;
         }
-        stats_.sources = sources_.size(); stats_.verts = total;
+        stats_.sources = n; stats_.commands = commands_.size(); stats_.verts = total;
         stats_.residentVerts = resident; stats_.stableVerts = stable;
         auto stream = [&](ArenaStreamReason why) {
             mode_ = ArenaMode::Stream; stats_.mode = mode_; stats_.reason = why;
@@ -144,38 +187,70 @@ public:
         if (total == 0) return stream(ArenaStreamReason::Empty);
         if (frame_ < retryFrame_) return stream(ArenaStreamReason::Retry);
         if (double(stable) < policy_.stableFraction * double(total)) return stream(ArenaStreamReason::Unstable);
-        const size_t dirty = total - resident;
+
+        int cur = cur_;
+        int old = slots_[1 - cur].epoch ? 1 - cur : -1;
+        if (!slots_[cur].epoch && old >= 0) { cur = old; old = -1; }   // only a draining storage left: it is current
+        // Exact forced writes: sources of commands that can draw from neither
+        // storage as they are (a source changed or is new).
+        size_t forced = 0;
+        for (const Command& c : commands_)
+            if (!wholly(c, cur, false) && !(old >= 0 && wholly(c, old, false)))
+                for (uint32_t k = c.first; k < c.first + c.count; ++k) {
+                    const uint32_t src = ranges_[k].source;
+                    if (!res_[src * kArenaSlots + size_t(cur)] && !stamp_[src]) { stamp_[src] = 1; forced += sources_[src].count; }
+                }
+        const size_t migrate = old >= 0 ? std::max(policy_.migrateMin, size_t(std::ceil(double(total) * policy_.migrateFraction))) : 0;
+        const size_t need = size_t(std::ceil(double(total) * policy_.minHeadroom));
         const bool shrink = shrinkDue();
-        if (capacity_ > 0 && top_ + dirty <= capacity_ && !shrink) {
-            mode_ = ArenaMode::Append;
-            uint32_t at = uint32_t(top_);
-            writeBegin_ = top_;
-            for (size_t i = 0; i < sources_.size(); ++i) {
-                if (resident_[i]) continue;
-                uploads_.push_back({uint32_t(i), at});
-                firsts_[i] = at; at += sources_[i].count;
+        if (!slots_[cur].epoch || slots_[cur].top + forced + migrate > slots_[cur].capacity || shrink ||
+            slots_[cur].capacity < need) {
+            const size_t want = std::min(capacityFor(total), budget);
+            if (want < need) return stream(ArenaStreamReason::Budget);
+            if (slots_[cur].epoch && old < 0) {
+                // Rollover: the full storage drains while a new one fills.
+                stats_.rollover = true;
+                old = cur; cur = 1 - cur;
+            } else if (old >= 0) {
+                releaseSlot_ = old; old = -1;   // still draining: rewrite everything (full rebuild)
             }
-            writeEnd_ = at;
-        } else {
-            const size_t need = size_t(std::ceil(double(total) * policy_.minHeadroom));
-            size_t want = size_t(std::ceil(double(total) * policy_.headroom));
-            want = (want + policy_.granule - 1) / policy_.granule * policy_.granule;
-            want = std::clamp(want, policy_.minCapacity, std::max(policy_.minCapacity, policy_.maxCapacity));
-            // Keep the present size when it holds this frame with headroom and is
-            // not oversized: the rebuild then only orphans (no new size).
-            size_t cap = capacity_ >= need && !shrink && capacity_ <= policy_.maxCapacity ? capacity_ : want;
-            cap = std::min(cap, budget);
-            if (cap < need || cap > policy_.maxCapacity) return stream(ArenaStreamReason::Budget);
-            mode_ = ArenaMode::Rebuild;
-            newCapacity_ = cap;
-            writeBegin_ = 0;
-            uint32_t at = 0;
-            for (size_t i = 0; i < sources_.size(); ++i) {
-                uploads_.push_back({uint32_t(i), at});
-                firsts_[i] = at; at += sources_[i].count;
-            }
-            writeEnd_ = at;
+            allocate_ = true; newCapacity_ = want;
+            // The fresh storage holds nothing. (After a full rebuild old < 0, so no
+            // command is assigned to the released storage.)
+            for (size_t i = 0; i < n; ++i) res_[i * kArenaSlots + size_t(cur)] = 0;
         }
+        const size_t capacity = allocate_ ? newCapacity_ : slots_[cur].capacity;
+        size_t at = allocate_ ? 0 : slots_[cur].top;
+        writeBegin_ = at;
+        size_t budgetLeft = migrate;
+        bool oldUsed = false;
+        auto schedule = [&](const Command& c) {
+            for (uint32_t k = c.first; k < c.first + c.count; ++k) {
+                const uint32_t src = ranges_[k].source;
+                if (res_[src * kArenaSlots + size_t(cur)] || sched_[src] != kNone) continue;
+                sched_[src] = uint32_t(at);
+                uploads_.push_back({src, uint32_t(at)});
+                at += sources_[src].count;
+            }
+        };
+        uint32_t command = 0;
+        for (Command& c : commands_) {
+            ++command;
+            if (wholly(c, cur, true)) { c.slot = uint8_t(cur); continue; }
+            if (old >= 0 && wholly(c, old, false)) {
+                const size_t cost = missing(c, cur, command);
+                if (cost <= budgetLeft) { budgetLeft -= cost; stats_.migratedVerts += cost; schedule(c); c.slot = uint8_t(cur); }
+                else { c.slot = uint8_t(old); oldUsed = true; ++stats_.oldCommands; }
+                continue;
+            }
+            schedule(c);
+            c.slot = uint8_t(cur);
+        }
+        writeEnd_ = at;
+        if (writeEnd_ > capacity) return failPlan();   // cannot happen (reservation above); never write past
+        if (old >= 0 && !oldUsed) releaseSlot_ = old;   // drained
+        curPlanned_ = cur;
+        mode_ = allocate_ ? ArenaMode::Rebuild : ArenaMode::Append;
         stats_.mode = mode_;
         stats_.uploadedVerts = writeEnd_ - writeBegin_;
         return mode_;
@@ -183,14 +258,27 @@ public:
     ArenaMode mode() const { return mode_; }
     const ArenaFrameStats& stats() const { return stats_; }
     // Valid after plan() for Append/Rebuild:
-    bool reallocate() const { return mode_ == ArenaMode::Rebuild; }
-    size_t newCapacity() const { return newCapacity_; }      // vertices (Rebuild)
+    int curSlot() const { return curPlanned_; }
+    int releaseSlot() const { return releaseSlot_; }
+    bool allocate() const { return allocate_; }
+    bool reallocate() const { return allocate_; }
+    size_t newCapacity() const { return newCapacity_; }      // vertices (allocate())
     size_t writeBegin() const { return writeBegin_; }
     size_t writeEnd() const { return writeEnd_; }
     std::span<const ArenaUpload> uploads() const { return uploads_; }
     std::span<const ArenaSource> sources() const { return sources_; }
-    uint32_t first(uint32_t source) const { return firsts_[source]; }
-    bool resident(uint32_t source) const { return resident_[source] != 0; }
+    std::span<const ArenaRange> ranges() const { return ranges_; }
+    size_t commandCount() const { return commands_.size(); }
+    int commandSlot(uint32_t command) const { return commands_[command].slot; }
+    bool written(uint32_t source) const { return sched_[source] != kNone; }   // uploaded this frame
+    // Arena vertex of a range of a command, in that command's storage.
+    uint32_t first(uint32_t command, uint32_t range) const {
+        const ArenaRange& r = ranges_[range];
+        const int slot = commands_[command].slot;
+        const uint32_t base = slot == curPlanned_ && sched_[r.source] != kNone
+            ? sched_[r.source] : offs_[r.source * kArenaSlots + size_t(slot)];
+        return base + r.offset;
+    }
 
     // The frame's write succeeded (ok) or failed: storage contents unknown, so
     // nothing is resident and the arena stays off for retryFrames. Records the
@@ -204,19 +292,20 @@ public:
             ++failures_;
         }
         if (wrote) {
-            if (mode_ == ArenaMode::Rebuild) {
-                epoch_ = nextEpoch_++;
-                capacity_ = newCapacity_;
-                ++rebuilds_;
-                trimRecords();
+            const int cur = curPlanned_;
+            if (releaseSlot_ >= 0) { slots_[releaseSlot_] = {}; ++drains_; }
+            if (allocate_) {
+                slots_[cur] = {nextEpoch_++, newCapacity_, 0};
+                if (stats_.rollover) ++rollovers_; else ++rebuilds_;
             }
-            top_ = writeEnd_;
+            cur_ = cur;
+            slots_[cur].top = writeEnd_;
             lastUseFrame_ = frame_; lastUseMs_ = nowMs_;
-            // Shrink tracking: demand well below capacity for a sustained time.
-            if (capacity_ > policy_.minCapacity &&
-                double(capacity_) > policy_.shrinkRatio * double(stats_.verts)) {
+            const size_t held = slots_[0].capacity + slots_[1].capacity;
+            if (held > policy_.minCapacity && double(slots_[cur].capacity) > policy_.shrinkRatio * double(stats_.verts)) {
                 if (!shrinkSince_) { shrinkSince_ = true; shrinkSinceFrame_ = frame_; shrinkSinceMs_ = nowMs_; }
             } else shrinkSince_ = false;
+            if (allocate_ && !slots_[1 - cur].epoch) trimRecords();
         }
         if (maxSlot_ > records_.size()) records_.resize(maxSlot_);
         for (size_t i = 0; i < sources_.size(); ++i) {
@@ -224,19 +313,21 @@ public:
             if (s.slot == kArenaNoSlot) continue;
             Record& r = records_[s.slot];
             const bool byValue = s.revision == 0;
-            const bool uploaded = wrote && (mode_ == ArenaMode::Rebuild || !resident_[i]);
-            if (uploaded) {
-                r.epoch = epoch_; r.offset = uint32_t(firsts_[i]); r.count = s.count;
-                r.generation = s.generation; r.revision = s.revision; r.byValue = byValue;
+            if (byValue && s.count != kArenaValueVerts) {   // not retainable by value
+                r.loc[0] = r.loc[1] = {}; r.seenByValue = false; r.seenFrame = ~uint64_t(0);
+                continue;
+            }
+            if (wrote && sched_[i] != kNone) {
+                const int cur = curPlanned_;
+                r.loc[cur] = {slots_[cur].epoch, sched_[i], s.count, s.generation, keys_[i], byValue};
             }
             if (byValue) {
-                if (s.count != kArenaValueVerts) { r.byValue = false; r.epoch = 0; continue; }
                 if (values_.size() <= s.slot) values_.resize(size_t(s.slot) + 1);
                 auto& v = values_[s.slot];
-                const bool same = r.seenByValue && std::memcmp(v.data(), s.data, sizeof(v)) == 0;
-                if (uploaded) r.valueResident = true;
-                else if (!same) r.valueResident = false;   // the resident range no longer holds this value
-                if (!same) std::memcpy(v.data(), s.data, sizeof(v));
+                if (!(r.seenByValue && std::memcmp(v.data(), s.data, sizeof(v)) == 0)) {
+                    std::memcpy(v.data(), s.data, sizeof(v));
+                    r.valueSerial = keys_[i];   // the serial this value was keyed with
+                }
             }
             r.seenFrame = frame_; r.seenGeneration = s.generation; r.seenRevision = s.revision;
             r.seenCount = s.count; r.seenByValue = byValue;
@@ -244,61 +335,108 @@ public:
         planned_ = false;
     }
 
-    // ---- storage lifetime (the caller owns the GL buffer) ----
-    // No arena frame for idleFrames and idleMs: release the storage.
+    // ---- storage lifetime (the caller owns the GL buffers) ----
+    // No arena frame for idleFrames and idleMs: release every storage.
     bool shouldRelease(uint64_t frame, uint64_t nowMs) const {
-        return capacity_ > 0 && frame >= lastUseFrame_ + policy_.idleFrames &&
+        return capacity() > 0 && frame >= lastUseFrame_ + policy_.idleFrames &&
                nowMs >= lastUseMs_ + policy_.idleMs;
     }
-    // The storage was released or lost (reset, context loss, idle, budget).
+    // Every storage was released or lost (reset, context loss, idle, budget).
     void release() { invalidateStorage(); trimRecords(); }
-    size_t capacity() const { return capacity_; }   // vertices of the current storage (0 = none)
-    size_t top() const { return top_; }             // vertices written since the storage was (re)allocated
-    uint32_t epoch() const { return epoch_; }
+    size_t capacity() const { return slots_[0].capacity + slots_[1].capacity; }   // vertices held (0 = none)
+    size_t slotCapacity(int slot) const { return slots_[slot].capacity; }
+    bool slotLive(int slot) const { return slots_[slot].epoch != 0; }
+    size_t top() const { return slots_[cur_].top; }   // vertices written to the current storage
     uint64_t rebuilds() const { return rebuilds_; }
+    uint64_t rollovers() const { return rollovers_; }
+    uint64_t drains() const { return drains_; }
     uint64_t failures() const { return failures_; }
     size_t cpuBytes() const {
         return records_.capacity() * sizeof(Record) + values_.capacity() * sizeof(values_[0]) +
-               sources_.capacity() * sizeof(ArenaSource) + firsts_.capacity() * sizeof(uint32_t) +
-               resident_.capacity() + uploads_.capacity() * sizeof(ArenaUpload);
+               sources_.capacity() * sizeof(ArenaSource) + ranges_.capacity() * sizeof(ArenaRange) +
+               commands_.capacity() * sizeof(Command) + uploads_.capacity() * sizeof(ArenaUpload) +
+               res_.capacity() + offs_.capacity() * sizeof(uint32_t) +
+               (sched_.capacity() + stamp_.capacity()) * sizeof(uint32_t) +
+               keys_.capacity() * sizeof(uint64_t);
     }
     size_t recordCount() const { return records_.size(); }
 
 private:
-    struct Record {
-        // Resident content (valid while epoch == the storage epoch).
+    static constexpr uint32_t kNone = ~0u;
+    struct Location {
         uint32_t epoch = 0, offset = 0, count = 0, generation = 0;
-        uint64_t revision = 0;
-        bool byValue = false, valueResident = false;
+        uint64_t key = 0;   // revision, or the value serial for by-value sources
+        bool byValue = false;
+    };
+    struct Record {
+        Location loc[kArenaSlots];
+        uint64_t valueSerial = 0;   // advanced whenever the last seen value changes
         // Last observation, resident or not: the stable test.
         bool seenByValue = false;
         uint32_t seenGeneration = 0, seenCount = 0;
         uint64_t seenRevision = 0, seenFrame = ~uint64_t(0);
     };
-    bool isResident(const Record& r, const ArenaSource& s) const {
-        if (epoch_ == 0 || r.epoch != epoch_ || r.count != s.count) return false;
-        if (s.revision == 0)
-            return s.count == kArenaValueVerts && r.byValue && r.valueResident && s.slot < values_.size() &&
-                   std::memcmp(values_[s.slot].data(), s.data, sizeof(values_[0])) == 0;
-        return !r.byValue && r.generation == s.generation && r.revision == s.revision;
+    struct Slot { uint32_t epoch = 0; size_t capacity = 0, top = 0; };
+    struct Command { uint32_t first, count; uint8_t slot; };
+
+    // The content key of a source this frame: its revision, or for a by-value
+    // source the serial of its value (the last seen serial when unchanged).
+    uint64_t contentKey(const Record* r, const ArenaSource& s) const {
+        if (s.revision) return s.revision;
+        if (s.count != kArenaValueVerts) return 0;
+        const bool same = r && r->seenByValue && s.slot < values_.size() &&
+                          std::memcmp(values_[s.slot].data(), s.data, sizeof(values_[0])) == 0;
+        return r ? (same ? r->valueSerial : r->valueSerial + 1) : 1;
     }
-    bool isStable(const Record& r, const ArenaSource& s) const {
+    bool residentAt(const Record& r, const ArenaSource& s, uint64_t key, int k) const {
+        const Location& l = r.loc[k];
+        if (!slots_[k].epoch || l.epoch != slots_[k].epoch || l.count != s.count) return false;
+        if (s.revision == 0) return s.count == kArenaValueVerts && l.byValue && l.key == key;
+        return !l.byValue && l.generation == s.generation && l.key == key;
+    }
+    bool isStable(const Record& r, const ArenaSource& s, uint64_t key) const {
         if (r.seenFrame + 1 != frame_ || r.seenCount != s.count) return false;
-        if (s.revision == 0)
-            return r.seenByValue && s.count == kArenaValueVerts && s.slot < values_.size() &&
-                   std::memcmp(values_[s.slot].data(), s.data, sizeof(values_[0])) == 0;
+        if (s.revision == 0) return r.seenByValue && s.count == kArenaValueVerts && key == r.valueSerial;
         return !r.seenByValue && r.seenGeneration == s.generation && r.seenRevision == s.revision;
+    }
+    // Every source of the command resident in `slot` (with `scheduled`: or
+    // already written there this frame).
+    bool wholly(const Command& c, int slot, bool scheduled) const {
+        for (uint32_t k = c.first; k < c.first + c.count; ++k) {
+            const uint32_t src = ranges_[k].source;
+            if (!res_[src * kArenaSlots + size_t(slot)] && !(scheduled && sched_[src] != kNone)) return false;
+        }
+        return true;
+    }
+    // Vertices the command would copy into `cur` (each source once).
+    size_t missing(const Command& c, int cur, uint32_t command) {
+        size_t n = 0;
+        for (uint32_t k = c.first; k < c.first + c.count; ++k) {
+            const uint32_t src = ranges_[k].source;
+            if (res_[src * kArenaSlots + size_t(cur)] || sched_[src] != kNone || stamp_[src] == command + 1) continue;
+            stamp_[src] = command + 1;
+            n += sources_[src].count;
+        }
+        return n;
+    }
+    size_t capacityFor(size_t total) const {
+        size_t want = size_t(std::ceil(double(total) * policy_.headroom));
+        want = (want + policy_.granule - 1) / policy_.granule * policy_.granule;
+        return std::clamp(want, policy_.minCapacity, std::max(policy_.minCapacity, policy_.maxCapacity));
+    }
+    ArenaMode failPlan() {
+        uploads_.clear(); allocate_ = false; releaseSlot_ = -1;
+        mode_ = ArenaMode::Stream; stats_.mode = mode_; stats_.reason = ArenaStreamReason::Budget;
+        return mode_;
     }
     bool shrinkDue() const {
         return shrinkSince_ && frame_ >= shrinkSinceFrame_ + policy_.shrinkFrames &&
                nowMs_ >= shrinkSinceMs_ + policy_.shrinkMs;
     }
     void invalidateStorage() {
-        epoch_ = 0; capacity_ = 0; top_ = 0; shrinkSince_ = false;
-        for (auto& r : records_) { r.epoch = 0; r.valueResident = false; }
+        slots_[0] = slots_[1] = {}; cur_ = 0; shrinkSince_ = false;
     }
-    // Records past the highest slot of this frame describe entries not drawn
-    // now; after a rebuild or release none of them is resident, so they go.
+    // Records past the highest slot of this frame describe entries not drawn now.
     void trimRecords() {
         if (records_.size() > maxSlot_) records_.resize(maxSlot_);
         if (values_.size() > maxSlot_) values_.resize(maxSlot_);
@@ -307,21 +445,28 @@ private:
     }
 
     ArenaPolicy policy_;
-    std::vector<Record> records_;                                    // by slot
+    std::vector<Record> records_;                                    // by slot (entry handle index)
     std::vector<std::array<SDL_Vertex, kArenaValueVerts>> values_;  // by slot: last seen by-value content
     std::vector<ArenaSource> sources_;
-    std::vector<uint32_t> firsts_;
-    std::vector<uint8_t> resident_;
+    std::vector<ArenaRange> ranges_;
+    std::vector<Command> commands_;
     std::vector<ArenaUpload> uploads_;
+    std::vector<uint8_t> res_;      // per source x storage: resident
+    std::vector<uint32_t> offs_;    // per source x storage: resident offset
+    std::vector<uint32_t> sched_;   // per source: offset written this frame (current storage), kNone if not
+    std::vector<uint32_t> stamp_;   // per source: dedupe marks (forced pre-pass, per-command cost)
+    std::vector<uint64_t> keys_;    // per source: content key this frame
+    Slot slots_[kArenaSlots];
+    int cur_ = 0, curPlanned_ = 0, releaseSlot_ = -1;
     ArenaFrameStats stats_;
     ArenaMode mode_ = ArenaMode::Stream;
     uint64_t frame_ = 0, nowMs_ = 0;
-    size_t capacity_ = 0, top_ = 0, newCapacity_ = 0, writeBegin_ = 0, writeEnd_ = 0, maxSlot_ = 0;
-    uint32_t epoch_ = 0, nextEpoch_ = 1;   // 0 = no storage; epochs are never reused
+    size_t newCapacity_ = 0, writeBegin_ = 0, writeEnd_ = 0, maxSlot_ = 0;
+    uint32_t nextEpoch_ = 1;   // epochs are never reused; 0 = no storage
     uint64_t lastUseFrame_ = 0, lastUseMs_ = 0, retryFrame_ = 0;
-    bool shrinkSince_ = false, planned_ = false;
+    bool shrinkSince_ = false, planned_ = false, allocate_ = false;
     uint64_t shrinkSinceFrame_ = 0, shrinkSinceMs_ = 0;
-    uint64_t rebuilds_ = 0, failures_ = 0;
+    uint64_t rebuilds_ = 0, rollovers_ = 0, drains_ = 0, failures_ = 0;
 };
 
 // The arena's storage: one GL buffer object (or, simulated, CPU memory for
