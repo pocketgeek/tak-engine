@@ -2507,7 +2507,9 @@ void hovershore() {
     // area; boats and hovercraft arrive, ground units stop at the shore.
     auto foot=mover(2);foot.maxWaterDepth=4;
     std::vector<int> walkers;
-    for(int i=0;i<4;++i)walkers.push_back(f.spawn(foot,130+i*3,88));
+    // Spawned clear of the hovercraft that landed up the beach in the phase before (z up to ~88: a walker
+    // spawned at z 88 overlapped one where stage 8's arrivals land them, an illegal origin from its first tick).
+    for(int i=0;i<4;++i)walkers.push_back(f.spawn(foot,130+i*3,94));
     for(int t=0;t<2;++t)f.world.tick(1.f/30);
     std::vector<int> mixed=walkers;mixed.insert(mixed.end(),hovers.begin(),hovers.begin()+4);
     mixed.insert(mixed.end(),boats.begin(),boats.end());
