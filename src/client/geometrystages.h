@@ -98,6 +98,27 @@ inline bool shadowInputsEqual(std::span<const uint64_t> before, LocalKeyLayout b
     return std::equal(before.begin() + afterLayout.poseBegin, before.end(), after.begin() + afterLayout.poseBegin);
 }
 
+// ---- body vertex count (workstream G) ---------------------------------------
+// The body collector emits each piece's triangles minus the ground plate, hidden
+// pieces and faces turned away from the view direction (a backface cull), so the
+// body's vertex count depends on the model and the whole pose (piece poses,
+// facing, pitch/roll, corpse state). What only colours or textures the body --
+// the colour atlas (word 3), player and colour slot (4, 5: texture/frame choice),
+// the shadow toggle (11) and animated texture frames -- does not change it. Two
+// local keys that differ in nothing else produce bodies of equal vertex count:
+// what the distant-image eligibility reads when a held image defers the body.
+// Exact word comparison; any layout difference answers false.
+inline bool bodyVertexCountStable(std::span<const uint64_t> before, LocalKeyLayout beforeLayout,
+                                  std::span<const uint64_t> after, LocalKeyLayout afterLayout) {
+    if (before.size() != after.size() || beforeLayout.poseBegin != afterLayout.poseBegin ||
+        after.size() < kLocalKeyFixedWords || afterLayout.poseBegin < kLocalKeyFixedWords ||
+        afterLayout.poseBegin > after.size())
+        return false;
+    for (size_t i = 0; i < kLocalKeyFixedWords; ++i)
+        if (i != kLocalKeyAtlasWord && i != 4 && i != 5 && i != 11 && before[i] != after[i]) return false;
+    return std::equal(before.begin() + afterLayout.poseBegin, before.end(), after.begin() + afterLayout.poseBegin);
+}
+
 // ---- material stage key ----------------------------------------------------
 enum MaterialWord : size_t {
     kMaterialVeteran, kMaterialGhost, kMaterialConjuring, kMaterialEmote, kMaterialEmoteColour,

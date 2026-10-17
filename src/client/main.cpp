@@ -1945,6 +1945,15 @@ int main(int argc, char** argv) {
                     static_cast<unsigned long long>(gameView->monolithicChecks()),
                     static_cast<unsigned long long>(gameView->shadowSkipChecks()));
             }
+            if(tak::devFlag("TAK_DISTANT_VERIFY")) {
+                // Distant-image lookup before body generation (workstream G): every
+                // deferred body was regenerated in a copy and matched, or draw() threw.
+                const auto& t=gameView->distantVerifyTotals();
+                using ull=unsigned long long;
+                std::printf("DISTANT_VERIFY frames=%llu deferred=%llu checked=%llu catchup=%llu late=%llu\n",
+                    ull(t.frames),ull(t.deferred),ull(t.checked),ull(t.catchup),ull(t.late));
+                if(!t.frames)throw std::runtime_error("distant verify ran no checks");
+            }
             if(tak::devFlag("TAK_SHADOW_CACHE_VERIFY")) {
                 // Shadow tile reuse (workstream E): every kept tile equalled a complete
                 // re-bake of the frame, or draw() threw at the first differing pixel.

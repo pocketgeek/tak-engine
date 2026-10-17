@@ -261,6 +261,32 @@ int main() {
         const auto empty = ShadowBoundsAccumulator{}.bounds();
         check(std::isinf(empty[0]) && empty[0] > 0 && std::isinf(empty[2]) && empty[2] < 0, "empty bounds");
     }
+    {   // Workstream G: which local-key changes keep the body's vertex count (the
+        // body collector culls back faces, so every pose word counts; only the
+        // colour atlas, player, colour slot, shadow toggle and texture frames do not).
+        constexpr size_t kPoseKeyWordsForTest = 10;              // visible..rendered, move[3], rot[3]
+        std::vector<uint64_t> base(kLocalKeyFixedWords, 7);
+        base.push_back(11); base.push_back(12);                  // two animated frames
+        const LocalKeyLayout layout{uint32_t(base.size())};
+        base.push_back(0xabc);                                   // piece table
+        for (int piece = 0; piece < 3; ++piece)
+            for (size_t w = 0; w < kPoseKeyWordsForTest; ++w) base.push_back(100 + piece * 10 + w);
+        check(bodyVertexCountStable(base, layout, base, layout), "identical keys are stable");
+        size_t stable = 0, unstable = 0;
+        for (size_t i = 0; i < base.size(); ++i) {
+            auto changed = base; ++changed[i];
+            const bool keeps = bodyVertexCountStable(base, layout, changed, layout);
+            const bool appearance = i == 3 || i == 4 || i == 5 || i == 11 ||
+                                    (i >= kLocalKeyFixedWords && i < layout.poseBegin);
+            check(keeps == appearance, "only appearance words keep the body vertex count");
+            (keeps ? stable : unstable) += 1;
+        }
+        check(stable == 6 && unstable == base.size() - 6, "stable word census");
+        auto shorter = base; shorter.pop_back();
+        check(!bodyVertexCountStable(base, layout, shorter, layout), "a different pose count is not stable");
+        check(!bodyVertexCountStable(base, layout, base, LocalKeyLayout{layout.poseBegin + 1}),
+              "a different layout is not stable");
+    }
     if (failures) return 1;
     std::puts("PASS: staged geometry equals the former single pass; partial updates equal rebuilds");
     return 0;

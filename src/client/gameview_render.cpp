@@ -315,11 +315,20 @@
         // Resolve the lazy height datum/debug scales on this thread. Worker
         // projection and terrain occlusion then read immutable height state.
         if(heightRef_<0)(void)heightAbove(0,0);
+        // Distant-image lookup inputs (workstream G), fixed before the pass: each
+        // worker asks the cache whether its unit's image will be shown without a
+        // repaint, and if so leaves the body (not the shadow) for later. The cache
+        // is only read during the pass; prepare() below uses the same clock.
+        selSet_.clear();
+        selSet_.insert(selection_.begin(),selection_.end());
+        distantNow_=tak::devFlag("TAK_RENDER_STUDY") ? uint64_t(animClock_*1000) : SDL_GetTicks64();
+        SDL_RenderGetScale(ren_,&distantScaleX_,&distantScaleY_);
+        distantEarly_=!tak::devFlag("TAK_DISTANT_LOOKUP_LATE");
         double _pt0 = double(SDL_GetPerformanceCounter());
         pool_.parallelFor(visUnits_.size(), [this](size_t b, size_t e) {
             thread_local std::vector<Tri> scratch;
             for (size_t i = b; i < e; ++i)
-                buildUnitGeom(*visUnits_[i], *visGeom_[i], scratch);
+                buildUnitGeom(*visUnits_[i], *visGeom_[i], scratch, true);
         });
         double _ptFreq = double(SDL_GetPerformanceFrequency()) / 1000.0;
         profProjMs_ += (double(SDL_GetPerformanceCounter()) - _pt0) / _ptFreq;
@@ -332,37 +341,53 @@
         // Is this unit drawn whole by drawUnit (needs clip rects / interleaved
         // effects) rather than folded into the shared batches?
         auto special = [&](const UnitR& u, const UnitGeom& g) {
-            bool occluded = !g.canFly && g.occY < g.ay - 2.0f;
-            bool conjuring = u.underConstruction && u.type;
-            // Repair targets and completed/cancelled workers can still have
-            // particles even without an active construction/reclaim order.
-            // Interleave those particles with the model through drawUnit.
-            bool working = u.type && (u.buildSiteId != 0 || u.reclaimId != 0);
-            return occluded || conjuring || working || !u.constructionParticles.empty() ||
-                   dancing(u) || headbanging(u);
+            return specialUnit(u, g.canFly, g.occY, g.ay);
         };
 
         // Keep construction, clipped models, translucent bodies and special
         // effects on their original path. Tiny ordinary bodies can submit one
         // cached quad; simulation and animation VMs continue at their normal rate.
         distantModelItems_.resize(visUnits_.size());
-        selSet_.clear();
-        selSet_.insert(selection_.begin(),selection_.end());
         for(size_t i=0;i<visUnits_.size();++i) {
             const auto& u=*visUnits_[i];const auto& g=visGeom(i);
             auto& item=distantModelItems_[i];
             item.id=g.handleKey();item.revision=g.revision;item.x=g.ax;item.y=g.ay;
             item.textureTick=g.animatedTexture?front().gameTick:0;
             item.zoom=zm0;item.source=g.verts;item.runs=g.runs;item.texture=nullptr;
-            item.eligible=!tak::devFlag("TAK_DISTANT_MODELS_OFF") && !special(u,g) &&
-                !u.moving() && !u.walking() && !u.corpsePhase && !u.replacementModel && !(u.type && u.type->ghost) &&
-                !selSet_.contains(u.id);
+            item.eligible=distantEligible(u,g.canFly,g.occY,g.ay);
+            item.bodyDeferred=g.bodyDeferred;
         }
+        size_t distantCatchup=0;
         {
         tak::render::ScopedPhase distantPhase(renderStats_, RP::DistantPrepare);
-        distantModelCache_.prepare(ren_,distantModelItems_,tak::devFlag("TAK_RENDER_STUDY")
-            ? uint64_t(animClock_*1000) : SDL_GetTicks64());
+#ifndef NDEBUG
+        // Debug/tests: sweep (expiry, page release, migration) every frame; run the
+        // cache on SDL's software renderer (pages then composite with plain blending).
+        distantModelCache_.sweepEveryPrepare=tak::devFlag("TAK_DISTANT_SWEEP_EVERY_FRAME");
+        distantModelCache_.allowSoftware=tak::devFlag("TAK_DISTANT_SOFTWARE");
+#endif
+        distantModelCache_.prepare(ren_,distantModelItems_,distantNow_,[](void* self,size_t index) {
+            static_cast<GameView*>(self)->materializeDistantBody(index);
+        },this);
+        // A deferred body whose image was not shown after all (the cache returned
+        // early: unsupported renderer, invalid output scale) is generated now, before
+        // the body pass reads it. Expected never in practice (telemetry counts it).
+        for(size_t i=0;i<visUnits_.size();++i)
+            if(visGeom(i).bodyDeferred && !distantModelItems_[i].texture) {
+                materializeDistantBody(i);++distantCatchup;
+            }
         }
+        renderStats_.add(RS::DistantBodyCatchup, distantCatchup);
+        renderStats_.add(RS::DistantBodyLate, distantModelCache_.lateBodies);
+        renderStats_.add(RS::DistantBoundsReused, distantModelCache_.boundsReused);
+        renderStats_.add(RS::DistantPageReleases, distantModelCache_.pageReleases);
+        renderStats_.add(RS::DistantMigrated, distantModelCache_.migrated);
+        renderStats_.set(RS::DistantPages, distantModelCache_.livePages());
+        renderStats_.set(RS::DistantTiles, distantModelCache_.liveTiles());
+        renderStats_.set(RS::DistantMetadataBytes, distantModelCache_.metadataBytes());
+#ifndef NDEBUG
+        if(tak::devFlag("TAK_DISTANT_VERIFY"))verifyDistantDeferral(distantCatchup);
+#endif
         renderStats_.add(RS::DistantImages, distantModelCache_.used);
         renderStats_.add(RS::DistantBakes, distantModelCache_.refreshed);
         renderStats_.add(RS::TargetSwitches, distantModelCache_.targetSwitches);
@@ -2799,7 +2824,17 @@
         for (size_t i = 0; i < visUnits_.size(); ++i) {
             const UnitGeom& g = visGeom(i);
             keyNs += g.keyNs;
-            if (g.reused) { renderStats_.add(RS::GeometryHits); continue; }
+            // Workstream G: bodies held back behind a held distant image, and
+            // pending bodies generated now (body stages run beyond this frame's).
+            const size_t bodyVerts = g.verts.size();
+            renderStats_.add(RS::DistantBodyDeferred, g.bodyDeferred);
+            renderStats_.add(RS::DistantBodyResumed, (g.bodyRun & ~g.stages) ? 1u : 0u);
+            if (g.reused) {
+                renderStats_.add(RS::GeometryHits);
+                if (g.bodyRun) buildNs += g.buildNs;
+                if (g.bodyRun & tak::render::kStageLocal) renderStats_.add(RS::VertsGenerated, bodyVerts);
+                continue;
+            }
             if (g.localKey.empty()) continue;   // nothing drawable (no model / unbegun site)
             buildNs += g.buildNs;
             renderStats_.add(RS::GeometryMisses);
@@ -2820,16 +2855,18 @@
                 renderStats_.add(RS::GeomLocalBuilds);
                 renderStats_.add(RS::GeomShadowKept, g.shadowKept);
                 renderStats_.add(RS::GeomShadowSkipped, g.shadowSkipped);
-                renderStats_.add(RS::VertsGenerated, g.verts.size());
+                if (g.bodyRun & tak::render::kStageLocal) renderStats_.add(RS::VertsGenerated, bodyVerts);
                 renderStats_.add(RS::ShadowVertsGenerated, shadowVerts);
             } else {
+                if (g.bodyRun & tak::render::kStageLocal) renderStats_.add(RS::VertsGenerated, bodyVerts);
                 if (g.stages & tak::render::kStagePlacement) {
                     renderStats_.add(RS::GeomPlacementOnly);
-                    renderStats_.add(RS::VertsPlaced, g.verts.size() + shadowVerts);
+                    renderStats_.add(RS::VertsPlaced, shadowVerts +
+                        ((g.bodyRun & tak::render::kStagePlacement) ? bodyVerts : 0));
                 }
                 if (g.stages & tak::render::kStageMaterial) {
                     renderStats_.add(RS::GeomMaterialOnly);
-                    renderStats_.add(RS::VertsRecoloured, g.verts.size());
+                    if (g.bodyRun & tak::render::kStageMaterial) renderStats_.add(RS::VertsRecoloured, bodyVerts);
                 }
             }
         }
@@ -3520,9 +3557,9 @@
         flush();
     }
 
-    void GameView::buildUnitGeom(const UnitR& u, UnitGeom& g, std::vector<Tri>& scratch) {
+    void GameView::buildUnitGeom(const UnitR& u, UnitGeom& g, std::vector<Tri>& scratch, bool mayDeferBody) {
         using namespace tak::render;
-        g.reused=false;g.stages=0;
+        g.reused=false;g.stages=0;g.bodyRun=0;g.bodyDeferred=false;
         // Telemetry (worker side): per-entry results the render thread tallies.
         // renderStats_ is not written during the parallel pass.
         const bool timed=renderStats_.enabled();
@@ -3672,6 +3709,21 @@
         g.reused=cacheHit;
         g.animatedTexture=vt->second.meta.animated;
         const bool verify=tak::devFlag("TAK_GEOMETRY_VERIFY");
+        // Distant-image lookup before body generation (workstream G). When this
+        // unit's image is shown without a repaint this frame (the cache reads
+        // neither its revision nor its vertices then), the body stages are left
+        // pending; the shadow stages run as always, and the revision still
+        // advances, so the image's own freshness rule sees every change. The
+        // vertex-count rule is kept exact: the pending body has the vertex count
+        // this frame's body would have (bodyVertexCountStable).
+        bool deferBody=false;
+        if(mayDeferBody && distantEarly_ && !reference && !g.localKey.empty() && (stages|g.bodyPending) &&
+           zm<=tak::DistantModels::kMaxZoom && g.verts.size()>=tak::DistantModels::kMinVertices &&
+           distantEligible(u,flying,occlusion,ay) &&
+           (localValid || bodyVertexCountStable(g.localKey,g.localLayout,key,layout)))
+            deferBody=distantModelCache_.holds(g.handleKey(),zm,distantScaleX_,distantScaleY_,distantNow_);
+        const uint8_t bodyStages=deferBody ? uint8_t(0) : uint8_t(stages|g.bodyPending);
+        g.bodyDeferred=deferBody;
 #ifndef NDEBUG
         if(verify) {
             if(cacheHit && vt->second.meta.animated && g.verifiedTick!=front().gameTick)
@@ -3681,7 +3733,7 @@
 #endif
         const int64_t keyEnd=timed ? clockNs() : 0;
         g.keyNs=uint32_t(std::min<int64_t>(keyEnd-keyStart,UINT32_MAX));
-        if(cacheHit && !verify)return;
+        if(cacheHit && !bodyStages && !verify)return;
 
         UnitGeomInputs in;
         in.visual=&vt->second;in.anim=anim;in.atlas=atlas;in.facing=facing;
@@ -3740,7 +3792,9 @@
             previousShadow.shadowLocal=g.shadowLocal;previousShadow.maskedShadowLocal=g.maskedShadowLocal;
             previousShadow.maskedShadowVerts=g.maskedShadowVerts;previousShadow.maskedShadowRuns=g.maskedShadowRuns;
         }
-        const bool shadowChanged=runUnitGeomStages(u,g,stages,in,scratch);
+        const bool shadowChanged=runUnitGeomStages(u,g,stages,bodyStages,in,scratch);
+        g.bodyRun=bodyStages;
+        g.bodyPending=deferBody ? uint8_t(g.bodyPending|stages) : uint8_t(0);
         g.shadowKept=(stages & kStageLocal) && !shadowChanged && !cold;
         g.shadowSkipped=(stages & kStageLocal) && in.shadowValid;
         if((stages & kStageLocal) && !g.shadowKept)g.shadowRevision=g.localRevision;
@@ -3774,17 +3828,21 @@
             referenceGeom.makeCold();
             UnitGeomInputs complete=in;
             complete.shadowValid=false;   // the reference collects everything
-            runUnitGeomStages(u,referenceGeom,kStageLocal|kStagePlacement|kStageMaterial,complete,scratch);
+            runUnitGeomStages(u,referenceGeom,kStageLocal|kStagePlacement|kStageMaterial,
+                              kStageLocal|kStagePlacement|kStageMaterial,complete,scratch);
             const auto bytes=[](const auto& a,const auto& b) {
                 return a.size()==b.size() && (a.empty() ||
                     std::memcmp(a.data(),b.data(),a.size()*sizeof(a[0]))==0);
             };
-            if(!bytes(g.verts,referenceGeom.verts) || !bytes(g.shadowVerts,referenceGeom.shadowVerts) ||
+            // A body left pending (G) is compared when it is generated; its shadow now.
+            const bool bodyCurrent=!g.bodyPending;
+            if((bodyCurrent && (!bytes(g.verts,referenceGeom.verts) || g.runs!=referenceGeom.runs ||
+                                !bytes(g.localPos,referenceGeom.localPos) || !bytes(g.baseColor,referenceGeom.baseColor))) ||
+               !bytes(g.shadowVerts,referenceGeom.shadowVerts) ||
                !bytes(g.maskedShadowVerts,referenceGeom.maskedShadowVerts) ||
-               g.runs!=referenceGeom.runs || g.maskedShadowRuns!=referenceGeom.maskedShadowRuns ||
+               g.maskedShadowRuns!=referenceGeom.maskedShadowRuns ||
                std::memcmp(g.shadowBounds.data(),referenceGeom.shadowBounds.data(),sizeof g.shadowBounds) ||
                !samePlacement(g.shadowPlacement,referenceGeom.shadowPlacement) ||
-               !bytes(g.localPos,referenceGeom.localPos) || !bytes(g.baseColor,referenceGeom.baseColor) ||
                !bytes(g.shadowLocal,referenceGeom.shadowLocal) ||
                !bytes(g.maskedShadowLocal,referenceGeom.maskedShadowLocal))
                 throw std::runtime_error(cacheHit ? "cached unit geometry mismatch"
@@ -3798,8 +3856,80 @@
         }
     }
 
-    bool GameView::runUnitGeomStages(const UnitR& u, UnitGeom& g, uint8_t stages, const UnitGeomInputs& in,
-                                     std::vector<Tri>& scratch) {
+    // Drawn whole through drawUnit (clip rects, interleaved effects) instead of the
+    // shared batches; never a distant image.
+    bool GameView::specialUnit(const UnitR& u, bool canFly, float occY, float ay) const {
+        bool occluded = !canFly && occY < ay - 2.0f;
+        bool conjuring = u.underConstruction && u.type;
+        // Repair targets and completed/cancelled workers can still have
+        // particles even without an active construction/reclaim order.
+        // Interleave those particles with the model through drawUnit.
+        bool working = u.type && (u.buildSiteId != 0 || u.reclaimId != 0);
+        return occluded || conjuring || working || !u.constructionParticles.empty() ||
+               dancing(u) || headbanging(u);
+    }
+
+    // Keep construction, clipped models, translucent bodies and special effects on
+    // their original path. Tiny ordinary bodies can submit one cached quad;
+    // simulation and animation VMs continue at their normal rate. (Read by the
+    // geometry workers too: selSet_ is filled before the parallel pass.)
+    bool GameView::distantEligible(const UnitR& u, bool canFly, float occY, float ay) const {
+        return !tak::devFlag("TAK_DISTANT_MODELS_OFF") && !specialUnit(u, canFly, occY, ay) &&
+            !u.moving() && !u.walking() && !u.corpsePhase && !u.replacementModel &&
+            !(u.type && u.type->ghost) && !selSet_.contains(u.id);
+    }
+
+    // Workstream G: generate a body that was left pending, on the render thread.
+    // Same frame, same inputs: every stage key matches, so only the pending body
+    // stages run and the revision does not move.
+    void GameView::materializeDistantBody(size_t index) {
+        thread_local std::vector<Tri> scratch;
+        UnitGeom& g = visGeom(index);
+        buildUnitGeom(*visUnits_[index], g, scratch, false);
+        auto& item = distantModelItems_[index];
+        item.source = g.verts; item.runs = g.runs; item.revision = g.revision; item.bodyDeferred = false;
+    }
+
+    void GameView::verifyDistantDeferral(size_t catchup) {
+#ifdef NDEBUG
+        (void)catchup;   // debug verifier only
+#else
+        // Every deferred body, regenerated now in a copy of its entry, must keep
+        // the entry's revision (no stage input changed: the body was what lagged),
+        // its vertex count (the eligibility rule read the pending body's count)
+        // and its shadow output (the shadow stages ran this frame); and its image
+        // must have been shown (or the catch-up above generated it).
+        thread_local std::vector<Tri> scratch;
+        thread_local UnitGeom copy;
+        ++distantVerify_.frames;
+        distantVerify_.catchup += catchup;
+        distantVerify_.late += distantModelCache_.lateBodies;
+        for (size_t i = 0; i < visUnits_.size(); ++i) {
+            const UnitGeom& g = visGeom(i);
+            if (!g.bodyDeferred) continue;
+            ++distantVerify_.deferred;
+            if (!distantModelItems_[i].texture)
+                throw std::runtime_error("deferred body drawn without its distant image");
+            copy = g;
+            buildUnitGeom(*visUnits_[i], copy, scratch, false);
+            const auto bytes = [](const auto& a, const auto& b) {
+                return a.size() == b.size() && (a.empty() ||
+                    std::memcmp(a.data(), b.data(), a.size() * sizeof(a[0])) == 0);
+            };
+            if (copy.revision != g.revision || copy.stages)
+                throw std::runtime_error("deferred body: stage inputs changed within the frame");
+            if (copy.verts.size() != g.verts.size())
+                throw std::runtime_error("deferred body: vertex count differs from the pending body");
+            if (!bytes(copy.shadowVerts, g.shadowVerts) || !bytes(copy.maskedShadowVerts, g.maskedShadowVerts) ||
+                copy.maskedShadowRuns != g.maskedShadowRuns || copy.shadowRevision != g.shadowRevision)
+                throw std::runtime_error("deferred body: shadow output stale");
+            ++distantVerify_.checked;
+        }
+#endif
+    }
+
+    bool GameView::runUnitGeomStages(const UnitR& u, UnitGeom& g, uint8_t stages, uint8_t bodyStages,
+                                     const UnitGeomInputs& in, std::vector<Tri>& scratch) {
         bool shadowChanged=false;
         using namespace tak::render;
         const Visual& visual=*in.visual;
@@ -3809,11 +3939,16 @@
         // single-pass check below.
         thread_local std::vector<size_t> triangleOrder;
         const Xform base=modelBodyTransform(u.bodyPitch,u.bodyRoll);
-        if(stages & kStageLocal) {
+        // The piece transforms serve the body collection and the silhouette; with
+        // the body held back (G) they are prepared only when the silhouette is
+        // collected.
+        if (in.reuse && ((bodyStages & kStageLocal) ||
+                         ((stages & kStageLocal) && shadowsOnFrame_ && (!in.shadowValid || verify))))
+            preparePiece(visual.model.root,visual.meta,base,in.anim,
+                         std::cos(in.facing),std::sin(in.facing),prepared);
+        if(bodyStages & kStageLocal) {
             g.verts.clear();g.runs.clear();g.localPos.clear();g.baseColor.clear();
             scratch.clear();
-            if (in.reuse) preparePiece(visual.model.root,visual.meta,base,in.anim,
-                                       std::cos(in.facing),std::sin(in.facing),prepared);
             collect(scratch, in.atlas, visual.model.root, base, in.anim, in.facing, u.player, false,
                     true, false, nullptr, &visual.meta,false,in.reuse ? &prepared : nullptr,isStructure(u.type));
             if (verify) {
@@ -3866,9 +4001,9 @@
                 for (size_t i=0;i<g.verts.size();++i) g.baseColor[i]=g.verts[i].color;
             }
         }
-        if(stages & kStagePlacement) placeBody(g.localPos,g.verts,in.body);
-        if(stages & kStageMaterial) applyBodyMaterial(g.verts,g.baseColor,in.material);
-        if((stages & kStageLocal) && verify) verifyMonolithicBody(g,scratch,triangleOrder,in);
+        if(bodyStages & kStagePlacement) placeBody(g.localPos,g.verts,in.body);
+        if(bodyStages & kStageMaterial) applyBodyMaterial(g.verts,g.baseColor,in.material);
+        if((bodyStages & kStageLocal) && verify) verifyMonolithicBody(g,scratch,triangleOrder,in);
         if(stages & kStageLocal) {
             // Skip the BUILD too when shadows are off, not just the draw -- otherwise the
             // toggle saves the 3.2ms submit but still pays to walk the model and emit ~700k

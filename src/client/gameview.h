@@ -646,6 +646,11 @@ public:
     uint64_t materialChecks() const { return materialChecks_.load(); }
     uint64_t monolithicChecks() const { return monolithicChecks_.load(); }
     uint64_t shadowSkipChecks() const { return shadowSkipChecks_.load(); }
+    // TAK_DISTANT_VERIFY (workstream G): frames checked, bodies whose generation
+    // was deferred behind a held distant image (each regenerated in a copy and
+    // compared), deferred bodies generated after prepare (catch-up) or inside it.
+    struct DistantVerifyTotals { uint64_t frames=0, deferred=0, checked=0, catchup=0, late=0; };
+    const DistantVerifyTotals& distantVerifyTotals() const { return distantVerify_; }
     struct ShadowCacheVerifyTotals {
         uint64_t frames=0, tiles=0, reused=0, body=0, translated=0, original=0;
         // Workstream F: tiles reused in a cell kept from an earlier frame, cells
@@ -1046,6 +1051,13 @@ private:
         // Telemetry: the last local rebuild left the shadow inputs unchanged, so the
         // silhouette was not collected again (body-only local change).
         bool shadowSkipped=false;
+        // Workstream G: body stages (tak::render::StageBit) whose inputs changed
+        // while this unit's distant image was held, so the body (verts, runs) was
+        // not regenerated; the shadow stages ran as usual. The body is regenerated
+        // before anything reads it (bake, live draw). bodyRun = body stages run this
+        // frame, bodyDeferred = the body was left pending this frame.
+        uint8_t bodyPending=0, bodyRun=0;
+        bool bodyDeferred=false;
         // The silhouette cell this entry's shadow occupies (workstream F,
         // client/shadowatlas.h). Render thread only. Validated against the
         // allocation's recorded owner (handleKey), so an entry that changed owner,
@@ -1060,6 +1072,7 @@ private:
         // is never repeated by another occupant of this entry.
         void makeCold() {
             localKey.clear();localLayout={};owner=-1;reused=false;stages=0;
+            bodyPending=bodyRun=0;bodyDeferred=false;
             verts.clear();runs.clear();shadowVerts.clear();
             maskedShadowVerts.clear();maskedShadowRuns.clear();shadowAtlasPage=nullptr;
             localPos.clear();baseColor.clear();shadowLocal.clear();maskedShadowLocal.clear();
@@ -1191,6 +1204,7 @@ private:
     // body-only and translated), and tiles the pre-E key would have kept.
     std::atomic<uint64_t> shadowSkipChecks_{0};
     ShadowCacheVerifyTotals shadowVerify_;
+    DistantVerifyTotals distantVerify_;
 #endif
     uint64_t profShadowVerts_ = 0;  // shadow vertices copied + submitted, likewise
     // takeProf's own previous values, so it can report per-interval deltas.
@@ -1423,7 +1437,24 @@ private:
     bool buildUnitShadow(const UnitR& u, UnitGeom& g, const tak::tdo::Object& root,
                          const PieceMeta& meta, const Anim* anim, float facing,
                          std::vector<Tri>& scratch, const PreparedPiece* prepared = nullptr);
-    void buildUnitGeom(const UnitR& u, UnitGeom& g, std::vector<Tri>& scratch);
+    // mayDeferBody (workstream G, the frame's parallel pass only): the body may be
+    // left pending when this unit's distant image is shown without a repaint.
+    void buildUnitGeom(const UnitR& u, UnitGeom& g, std::vector<Tri>& scratch, bool mayDeferBody=false);
+    // Workstream G: the distant-image eligibility of a unit (before the vertex
+    // count and zoom rules), from its snapshot and this frame's placement.
+    bool specialUnit(const UnitR& u, bool canFly, float occY, float ay) const;
+    bool distantEligible(const UnitR& u, bool canFly, float occY, float ay) const;
+    // Generates a deferred body now (render thread) and refreshes its distant item.
+    void materializeDistantBody(size_t index);
+    // Debug (TAK_DISTANT_VERIFY): every deferred body regenerated in a copy must
+    // keep the revision, the vertex count and the shadow output of the entry.
+    void verifyDistantDeferral(size_t catchup);
+    // The lookup inputs, fixed before the parallel pass: prepare()'s clock and the
+    // output scale, and whether the early lookup is on (TAK_DISTANT_LOOKUP_LATE=1
+    // restores the pre-G order: every body generated, then the lookup).
+    uint64_t distantNow_=0;
+    float distantScaleX_=1, distantScaleY_=1;
+    bool distantEarly_=false;
     // Everything buildUnitGeom derives from the unit and the frame before the
     // stage keys: what the stages compute from.
     struct UnitGeomInputs {
@@ -1442,8 +1473,10 @@ private:
     };
     // Redo the given stages (tak::render::StageBit) of one unit's geometry.
     // Returns whether the local shadow coverage changed (local stage only).
-    bool runUnitGeomStages(const UnitR& u, UnitGeom& g, uint8_t stages, const UnitGeomInputs& in,
-                           std::vector<Tri>& scratch);
+    // bodyStages: the stages whose BODY half runs (workstream G may hold it back
+    // while the shadow half of `stages` runs).
+    bool runUnitGeomStages(const UnitR& u, UnitGeom& g, uint8_t stages, uint8_t bodyStages,
+                           const UnitGeomInputs& in, std::vector<Tri>& scratch);
     // Debug (TAK_GEOMETRY_VERIFY): the former single-pass body transform from the
     // sorted collector output, compared with the staged result.
     void verifyMonolithicBody(const UnitGeom& g, const std::vector<Tri>& sorted,

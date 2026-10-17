@@ -1441,6 +1441,25 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1024 768 --novsync)
       set_tests_properties(render_shadow_cache PROPERTIES TIMEOUT 300
           PASS_REGULAR_EXPRESSION "shadow_skipped=[1-9][0-9]*\nSHADOW_CACHE_VERIFY frames=[1-9][0-9]* tiles=[0-9]+ reused=[0-9]+ body=[1-9][0-9]* translated=[1-9]")
+      # Distant-image lookup before body generation (workstream G), on the software
+      # renderer (TAK_DISTANT_SOFTWARE runs the image cache there): a mixed roster at
+      # zoom 0.5 under a panning camera (held images re-placed, bodies deferred),
+      # with a veterancy cycle, deaths/respawns and render-target resets. Every
+      # deferred body is regenerated in a copy and must keep the entry's revision,
+      # vertex count and shadow output, and its image must have been shown
+      # (TAK_DISTANT_VERIFY); every generated body equals a complete rebuild
+      # (TAK_GEOMETRY_VERIFY). No prediction may miss (catchup=0 late=0).
+      add_test(NAME render_distant_lookup COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software
+          TAK_DISTANT_SOFTWARE=1 TAK_SHADOW_BENCH=150 TAK_PROFILE_ZOOM=0.5 TAK_RENDER_CAMERA=1
+          TAK_RENDER_VETERAN=25 TAK_RENDER_CHURN=40 TAK_RENDER_RESET=70
+          TAK_RENDER_STUDY=1 TAK_RENDER_FRAMES=120 TAK_DISTANT_VERIFY=1 TAK_GEOMETRY_VERIFY=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/distant-lookup-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/distant-lookup-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 800 600 --novsync)
+      set_tests_properties(render_distant_lookup PROPERTIES TIMEOUT 300
+          PASS_REGULAR_EXPRESSION "DISTANT_VERIFY frames=[1-9][0-9]* deferred=[1-9][0-9]* checked=[1-9][0-9]* catchup=0 late=0")
       # Persistent shadow tile cells (workstream F) under space pressure, on the
       # software renderer: the render_shadow_cache scene with 288-pixel pages, short
       # policy windows and deaths/respawns. render_shadow_atlas then moves the
@@ -1547,7 +1566,7 @@ if(TAK_BUILD_CLIENT)
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
-          render_geometry_stages render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band tactical_dots spectator_health_bars
+          render_geometry_stages render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup tactical_dots spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()
