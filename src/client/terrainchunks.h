@@ -64,9 +64,12 @@ private:
     struct Entry {SDL_Texture* texture=nullptr;int w=0,h=0;uint64_t used=0;};
     void work();
     void compose(Job&);
-    const jpeg::Image& mip(uint32_t key,int level,bool stockTerrain);
+    // A pinned image of section `key` at mip `level` (0 = the compositor's decoded
+    // section). The compose job holds the pins of every image it reads until it ends,
+    // so neither cache can drop an input under it (workstream J).
+    terrain::SectionRef mip(uint32_t key,int level,bool stockTerrain);
     terrain::Compositor& compositor_;
-    std::map<std::tuple<uint32_t,int,bool>,jpeg::Image> mips_; // worker only
+    std::map<std::tuple<uint32_t,int,bool>,terrain::SectionRef> mips_; // worker only
     std::thread worker_;
     std::mutex mutex_;
     std::condition_variable cv_;

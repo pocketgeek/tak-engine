@@ -371,8 +371,8 @@ void MapView::uploadReadySections() {
         ready.swap(decoded_);
     }
     for (uint32_t key : ready) {
-        const tak::jpeg::Image* image = nullptr;
-        try { image = &comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) {
+        tak::terrain::SectionRef image;   // pinned for this use only
+        try { image = comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) {
             if (!sections_.count(key)) sections_[key] = {};   // absent JPG: never retried
             continue;
         }
@@ -392,8 +392,8 @@ bool MapView::uploadWantedSections() {
         if (sections_.count(key)) continue;
         if (!ready_.count({key, map_.stockTerrain})) { decode.push_back(key); continue; }
         if (n >= perFrame) continue;   // the rest next frame; the underlay shows meanwhile
-        const tak::jpeg::Image* img = nullptr;
-        try { img = &comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) {
+        tak::terrain::SectionRef img;   // pinned until its texture upload below
+        try { img = comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) {
             sections_[key] = {};
             continue;
         }

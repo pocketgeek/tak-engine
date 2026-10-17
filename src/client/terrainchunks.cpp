@@ -67,12 +67,14 @@ void TerrainChunks::resetSource() {
     cv_.wait(lock,[&]{return !busy_;});
     mips_.clear();mipBytes_.store(0,std::memory_order_relaxed);
 }
-const jpeg::Image& TerrainChunks::mip(uint32_t key,int level,bool stockTerrain) {
+terrain::SectionRef TerrainChunks::mip(uint32_t key,int level,bool stockTerrain) {
     if(!level)return compositor_.sectionImage(key,stockTerrain);
     const auto id=std::tuple{key,level,stockTerrain};
     if(auto i=mips_.find(id);i!=mips_.end())return i->second;
-    const auto& src=mip(key,level-1,stockTerrain);
-    jpeg::Image out;out.width=std::max(1,src.width/2);out.height=std::max(1,src.height/2);
+    const terrain::SectionRef source=mip(key,level-1,stockTerrain);   // pinned while it is read
+    const auto& src=*source;
+    auto image=std::make_shared<jpeg::Image>();auto& out=*image;
+    out.width=std::max(1,src.width/2);out.height=std::max(1,src.height/2);
     out.rgba.resize(size_t(out.width)*out.height*4);
     for(int y=0;y<out.height;++y)for(int x=0;x<out.width;++x)for(int c=0;c<4;++c) {
         unsigned sum=0;
@@ -81,17 +83,18 @@ const jpeg::Image& TerrainChunks::mip(uint32_t key,int level,bool stockTerrain) 
         out.rgba[(size_t(y)*out.width+x)*4+c]=uint8_t((sum+2)/4);
     }
     mipBytes_.fetch_add(out.rgba.size(),std::memory_order_relaxed);
-    return mips_.emplace(id,std::move(out)).first->second;
+    return mips_.emplace(id,std::move(image)).first->second;
 }
 void TerrainChunks::compose(Job& j) {
     const auto [level,cx,cy]=j.key;const int tile=32>>level;
     std::vector<const jpeg::Image*> images;images.reserve(j.tiles.size());
-    std::map<uint32_t,const jpeg::Image*> decoded;
+    // Job-scoped ownership: every image this job reads stays pinned until it returns.
+    std::map<uint32_t,terrain::SectionRef> decoded;
     for(const auto& t:j.tiles) {
         if(j.cancelled->load(std::memory_order_relaxed))return;
-        auto [entry,added]=decoded.try_emplace(t.key,nullptr);
-        if(added)try {entry->second=&mip(t.key,level,j.stockTerrain);}catch(...) {}
-        images.push_back(entry->second);
+        auto [entry,added]=decoded.try_emplace(t.key);
+        if(added)try {entry->second=mip(t.key,level,j.stockTerrain);}catch(...) {}
+        images.push_back(entry->second.get());
     }
     j.pixels.resize(size_t(j.w+2)*(j.h+2)*4);
     // A texel of real neighbouring terrain on every side prevents filtering

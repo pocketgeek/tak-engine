@@ -1734,6 +1734,12 @@ if(TAK_BUILD_CLIENT)
       add_test(NAME terrain_cache COMMAND terrain_cache_test "${TAK_TEST_DATA}")
       set_tests_properties(terrain_cache PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     endif()
+    # Decoded terrain sections: pinned lifetimes, LRU budget with watermarks,
+    # redecode accounting, concurrent pins (synthetic JPEGs, no game data).
+    add_executable(terrain_compositor_test tools/terrain_compositor_test.cpp)
+    target_include_directories(terrain_compositor_test PRIVATE src)
+    target_link_libraries(terrain_compositor_test PRIVATE tak-formats Threads::Threads)
+    add_test(NAME terrain_compositor COMMAND terrain_compositor_test)
     # Animated colour-atlas regions: incremental repaint == complete repaint ==
     # the previous repaint-everything scheme (frames, gutters, expiry, late atlas,
     # renderer reset). Software renderer under the dummy video driver.
