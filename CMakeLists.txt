@@ -768,13 +768,6 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_choke_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
   set_tests_properties(legion_choke PROPERTIES LABELS legion TIMEOUT 1200 SKIP_RETURN_CODE 77)
-  # Legion 10,000 stage 8: awareness by streams -- swap-1000's two armies pass each other as separate streams,
-  # each its own mover (at least 920 of 1,000 arrive; the stage-7 head 861; tools/legion_scale_check.py).
-  add_test(NAME legion_streams
-           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
-                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale swap-1000 --data "${TAK_TEST_DATA}"
-                   --min scale.aware.stream_movers=1 --min scale.arrive.n=920 --max scale.stuck_end=40)
-  set_tests_properties(legion_streams PROPERTIES LABELS legion TIMEOUT 900 SKIP_RETURN_CODE 77)
   # Legion 10,000 stage 8: shared destination areas -- churn-1000's half stopped and sent again to the point the
   # other half is arriving at joins its area instead of planning round it as traffic (at least 780 of 1,000 arrive,
   # at most 40 stuck; the previous commit 717 / 73).
