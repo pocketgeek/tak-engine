@@ -186,8 +186,35 @@ replays must not move; nothing in this program may feed the simulation.
   B in every scene). Measurements: Experiment 11. Baseline for later
   comparisons: `~/tak-tmp/render-opt/takclient-I4-candidate` (code of
   `590db308`).
-- Workstreams J–N: not started.
-- **Next concrete step:** workstream J (CPU cache budgets): fix the
+- **Workstream J (CPU cache budgets) is implemented and verified** (commits
+  `dac6e399` pinned section handles + consumer audit + `terrain_compositor`
+  test, `469f743a` decoded-section budget, `8cb58b59` mip budget + idle trim,
+  `2cb7cdf5` retained-buffer and worker-scratch trims + CPU accounting +
+  `cpu_budget`/`render_cpu_budget` tests, `3dc315c4` working-set rule (a
+  measured fix of the pure LRU budget) + `bigmap-zoom` scene, then the
+  release-build fix and the docs commit). Lifetimes were fixed and every
+  consumer converted before any eviction was enabled. Tests:
+  `terrain_compositor` (ASan/UBSan, TSan; four mutations fail it),
+  `terrain_cache` (budgeted = unbounded texel for texel), `cpu_budget` (five
+  mutations), `work_schedule` (participant indices; TSan; two mutations),
+  `render_cpu_budget` (in game); `ctest -L quick` 388/388; the J tests
+  re-run on the final code. Captures: identical except terrain-readiness
+  races that A/A and B/B pairs reproduce in both builds. Timing: nothing
+  material (Experiment 12). Release `takclient` builds without the J debug
+  strings. `--mpai` Retail 60 s = `2c39430636a3dbda`. Baseline for later
+  comparisons: `~/tak-tmp/render-opt/takclient-J3-candidate` (code of
+  `3dc315c4`; the release-build fix only moves a struct declaration).
+- Workstreams K–N: not started.
+- **Next concrete step:** workstream K (camera-prioritized terrain). J left
+  what K needs: chunk jobs pin their inputs (cancellation is lifetime-safe:
+  a cancelled job only drops pins), the decode worker already has demand vs
+  speculative requests, and `TerrainChunks::prepare` gets the owner's clock.
+  Still missing (checklist row K): priority order of queued jobs (FIFO now),
+  cancellation of queued jobs outside a guard region with hysteresis, section
+  and chunk upload coordination by byte budget. J follow-ups (not required
+  for K): whether to call `malloc_trim` after large trims (RSS, unmeasured);
+  the possible small positive draw bias in Experiment 12 (inside noise).
+- (Superseded, kept for the record) Former next step, workstream J (CPU cache budgets): fix the
   reference lifetimes of `terrain::Compositor::sectionImage` consumers
   (terrain chunk worker, `MapView`, minimap `renderBlock`, Cartographer
   `validation.cpp`) before any eviction; then budgets/trimming for decoded
@@ -263,7 +290,7 @@ evidence; nothing below is already fully satisfied.
 | G | Distant image lookup before generation | **verified** | Workstream G (`6d56ac8d` cache: retained bounds, decide→bake-by-page→quads, page occupancy + release, same-position migration, `holds()`; `b59cdd8a` GameView: lookup before body generation, deferred body stages, catch-up, verifier, `render_distant_lookup`; `b084644e` scenes; `2d755167` per-frame switch read, no empty catch-up scan). The geometry workers ask the cache whether a unit's image will be shown without a repaint (`DistantModels::holds`: valid, same zoom/output scale, baked < 67 ms ago — the case where `prepare()` reads neither revision nor vertices); then the BODY stages stay pending on the entry (`UnitGeom::bodyPending`) while the shadow stages run and the revision advances; a pending body is generated as soon as anything needs it (next non-held build, a bake via callback, a catch-up). Exact eligibility: deferred only for appearance-only local changes (`bodyVertexCountStable`; the body collector culls back faces, so pose changes the ≥ 96 vertex count). Bounds/opacity retained per identity + revision + source + count, so refused bodies are not rescanned every frame; bakes run grouped by page after painter-order decisions; per-page occupancy, pages released when their last image expires (others live), tile POSITIONS kept in the pre-G order on the lowest live page (pixels and quads depend only on the position), bounded same-position migration. Cadence, 128 bake budget, eligibility, live fallback, 4-page limit unchanged. Tests: `distant_models` (vs the pre-G cache kept verbatim, 900 frames, decisions/quads/tile pixels identical, `validate()` every frame; five mutations fail it), `render_distant_lookup` (6,902 deferred bodies regenerated and matched; shadow-skip mutation fails it), `geometry_stages`, GL verifier runs. Captures identical to F8 (168 comparisons). Measured (Experiment 9): total10k-visible 1280 draw −12.4% and GPU timeline −8.5% (material), `t_distant` −67% / −83% (10k / stationary, material), pan-distant worker build −15% (material); 7680×2160 unchanged (no images there); distant-sparse −32 MiB tracked GPU after the view moves. Investigation of the failed larger-image prototype: today's images differ from live geometry by ~87k px/frame (bilinear resample at fractional phase); a pixel-grid bake cuts that to 44 px (uncommitted experiment). |
 | H | Less full-scene vertex copying | **verified** | Workstream H (`97e42721` planner + GL buffer + `drawBuffer`, `8d96905f` ordered commands + arena integration, `37ecd884` staged writes (mapping rejected), `d8744efe` rollover with two storages, `e311cae5` release-build fix; after the verifier's rejection `0cbc4401` bounded `bodyVerts_` growth, double copies counted, write-failure fallback fixed + `render_body_arena_fail`). Vertex journey traced (see "Retained body vertices"): before H every visible body was copied twice per frame (per-unit verts → `bodyVerts_` → driver client-array copy, or SDL's conversion for batches < 512). Now the body pass is ordered commands (texture + ranges of per-unit sources; features, special units and the ground/air boundary as boundaries; order and state as before). On the `opengl` backend, commands of native size draw from a bounded retained arena (`client/vertexarena.h`): sources keyed by entry handle + `revision` (quads by value) keep their range; changed ones are copied whole (staged in `bodyVerts_`' tail, one `glBufferSubData`; their runs in small assembled commands are copied twice, `arena_verts_twice`, 0.4% of copies in a steady dense frame) into storage no pending draw reads; a full storage drains while a new one fills (rollover, budgeted migration of whole commands), so no frame rewrites everything; one native draw per command (`glMultiDrawArrays` over merged ranges). Frames with mostly new content (camera motion) stream exactly as before; the assembled SDL path stays the portable fallback (other backends, fractional scale, texture checks, failures). GL 1.5 buffer objects only; no fences, persistent mapping or unsynchronized writes. Every storage counted in gpuvram incl. 3 frames in flight; ≤ 3/4 of the GPU cap, 64 MiB per storage; released after 2 s idle, under GPU pressure, on resets, on failures (then 120 frames of streaming); context loss forgets the buffers. Tests: `vertex_arena` (simulated buffer, rollover scenario, 12 mutations fail it, ASan/UBSan), `geometrysubmit` (+72 GL arena-vs-client-arrays-vs-SDL comparisons), `render_body_arena` / `_still` / `_fail` (software renderer, simulated storage, every assembled command checked too, injected write failures; a constant-revision mutation fails the first, a gap-leaving fallback the last), GL verifier runs (`TAK_BODY_ARENA_VERIFY`). Captures identical to G2 (Experiments 10, 10b). Measured (Experiment 10; "x/y" = Experiment 10 / 10b): body vertices copied −91% / −94% and bytes handed to GL −91% in the dense / stationary 7680×2160 views; body submit −26% to −37% in total10k-visible (both sizes) and stationary-mixed 7680×2160 (material), only −8.6% / −9.8% in stationary-mixed 1280×960 (most of its body vertices stay in small, assembled commands); stationary-mixed 7680×2160 draw −26/−28%, total −24.5/−25%, GPU timeline −28.5/−31% (material); total10k-visible pipelined 7680×2160 total −7.8/−6.7%, GPU −9.9/−9.1% (material), 1280×960 draw −12.6%, GPU −17.8/−20.9% (material in 10b); pan/moving neutral. Memory: tracked GPU +1.6 to +64 MiB (the arena); `bodyVerts_` capacity +5.9% over the pre-H buffer in the retained scenes (growth slack 1/16; peak need +0.5% from the double copies) and −43% in moving (pre-H doubled there) — H4 had doubled it to 2× the need (Experiment 10b). Limitation: forced-completion total10k-visible 7680×2160 frame total +3.9% (material in Experiment 10, +3.6% not material in 10b; present waits ~1.8 ms longer; pipelined frames −7.8%). |
 | I | Cost-based work scheduling | **verified** | Workstream I (`a5ba14e4` pool + `WorkPlan` + `work_schedule` test, `68021102` planned GameView passes + `TAK_SCHEDULE_VERIFY` + `render_schedule` ctest + telemetry, `590db308` cheaper plans + no copy cap, both measured fixes). Before: `ThreadPool` of `hardware_concurrency` threads, every pass woke every worker (`notify_all`) in fixed 8-item chunks above an item-count threshold and the caller waited for every worker, including those that woke after the work was gone. Now (`client/threadpool.h`): sized by the process's CPU affinity (SimPool's rule); a pass posts only the workers it asks for (one condition variable per worker); participants claim chunks off one atomic word and the caller waits for the CHUNKS, so late wakers never delay it and never touch a finished pass (job fields read only by a thread holding an unfinished chunk). `WorkPlan` (`client/workschedule.h`) cuts contiguous chunks of ~10 µs estimated work, one participant per 40 µs, serial below 30 µs; estimates calibrated on serial per-unit / per-pass timings: geometry from each entry's previous build (key words, stages, body vertices, shadow points; 16-bit `UnitGeom::nextCost`, a dense copy taken at claim), shadow point checks by points, shadow tile transform by points over the page's dirty tiles only, body copy by bytes + per range. Every item writes only its own outputs, so results are independent of the plan and of completion order (deterministic output; captures identical, serial reference identical). Tests: `work_schedule` (ASan/UBSan, TSan; ten mutations fail it), `render_schedule` (four in-game mutations fail it), `render_telemetry`. Measured (Experiment 11, vs H5): pool dispatch −87% to −99%, caller wait −44% to −96%, wake latency −89% to −99%; stationary-mixed 7680×2160 draw −11.4% and total p99 −13.8%, total10k-visible 1280×960 total p95 −19.4% / p99 −13.8% (material); other draw deltas −1.3% to −7.6% inside noise; nothing regressed materially. Planning alone (same binary vs uniform passes) is neutral on frame time at both sizes (−5.4% to +2.1%, inside noise) and halves woken workers on small passes; the gain comes from the pool mechanics. Not measured: competition with a concurrently running simulation (the study runs it inline); non-Linux pool sizing (no affinity query). |
-| J | CPU cache budgets | not started | `terrain::Compositor` decodes every referenced section at load (`MapView::queueAllSections`) and keeps it until `clear()` (`terrain.h:40`, reference valid until clear); `TerrainChunks::mips_` (worker-only) is unbounded; `bodyVerts_` and shadow scratch keep peak capacity forever (per-unit geometry entries are bounded and trimmed since C: retention, byte/count budgets, warm-free trim, tail chunks). Consumers of `sectionImage`: `terrainchunks.cpp:64`, `mapview.cpp:361/381/470`, Cartographer `validation.cpp:32`; `renderBlock` users: minimap (`gameview_hud.cpp:614`), Cartographer. |
+| J | CPU cache budgets | **verified** | Workstream J (`dac6e399` pinned section handles + consumer audit, `469f743a` section budget, `8cb58b59` mip budget + idle trim, `2cb7cdf5` retained-buffer and worker-scratch trims + CPU accounting, `3dc315c4` working-set rule, a measured fix of pure LRU). **Lifetimes first:** `Compositor::sectionImage` returned a reference valid until `clear()`; it now returns a `SectionRef` (shared, immutable) that pins the image. Every consumer was audited and converted before eviction was enabled: the chunk worker pins per job, MapView per upload, renderBlock (minimap crunch, Cartographer) per copy, validators/tools transiently. The decode runs outside the cache lock with in-flight dedup. **Sections:** 128/112 MiB budget over unpinned sections cold for 10 s; LRU; prefetch only into free budget; the render thread never decodes in play; `trim()` per job and per frame. 97.7% of the 1371 shipped maps stay under budget (median 21 MiB, Ulasem 64, max 402) and behave as before. **Mips:** worker-owned LRU, 64/56 MiB, idle trim after 30 s + 120 frames posted by the render thread and done by the worker. **Buffers:** `TrimTracker` (two half-window buckets, 5 s and 120 frames; capacity > 2× window peak, floor 64 KiB; to peak + 1/16; regrowth backoff up to 8×; never per frame) over the body buffer, frame lists, shadow scratch and F's cell stamps, model scratch, and the per-participant worker scratch (`ThreadPool::participant`; trimmed by the render thread between passes). **Accounting:** used/retained/pinned/evictable/peak per component and totals (`cpu_cache_*`), eviction/redecode/regeneration/trim counts; GPU and RSS separate, exclusions listed. Tests: `terrain_compositor` (ASan/UBSan, TSan; mutations fail it), `terrain_cache` (budgeted = unbounded texel for texel), `cpu_budget`, `work_schedule` (participants; TSan), `render_cpu_budget`. Measured (Experiment 12): no material frame-time change in any timed scene; battle-sparse releases 19 MiB 300 frames after the view empties (the trim frame is not measurably slower); total10k-visible releases 81 MiB of first-frame capacity at frame 450 at 1280×960 (no regrowth); bigmap-zoom ends at 146 vs 259 MiB retained CPU (37 redecodes at 1280×960), the peak unchanged; captures identical except terrain-chunk readiness races right after camera changes, which A/A and B/B pairs reproduce in both builds (Experiment 12). |
 | K | Camera-prioritized terrain | not started (partly present) | Jobs are queued only for chunks visible this frame, ≤64 pending, uploads ≤8 MiB and ≤64 jobs per frame, completed-but-no-longer-visible jobs are dropped at upload, nearest cached level stands in while a level bakes, `finishChunks()` for captures. Missing: priority order (FIFO), cancellation of queued jobs that left the view (only `invalidate`/`clear` cancel), guard/hysteresis region, section/chunk upload coordination. |
 | L | Unit spatial index | not started | Features use `FeatureIndex` (`featureindex.h`) with a `TAK_FEATURE_FULL_SCAN` reference. Units: every frame scans all of `front().live` with fog + frustum tests (`:187`). |
 | M | Indexed palette path | not started | `preparePaletteTexture` (`:2230`) expands each structure palette frame into 20 shade bands of RGBA in 2048² pages (≤16 pages, 256 MiB). Original per-texture SDL textures (`textures_`) also stay resident as atlas sources. |
@@ -364,9 +391,9 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 | Cache / buffer | Owner | Key / invalidation | Storage & budget | Lifetime / reset |
 |---|---|---|---|---|
 | Unit geometry (`geomEntries_`, `UnitGeom`; was `geomPool_` before C) | GameView | ownership: `UnitOwner` = (unit id, world epoch, type, replacement model), generational handle per acquisition; content validity (since D): three exact stage keys — local (id, type, visual, atlas ptr, player, slot, pitch/roll, construction, corpse phase, statue, shadows-on, facing, animated texture frames, piece-name table, piece poses), placement (zoom, anchor x/y, emote bob, altitude, occlusion line), material (veteran, ghost, conjuring, emote, tint colour/mix, opacity, anim clock while conjuring); `revision` and the per-stage revisions from one GameView-wide atomic counter | one 512-byte (64-byte aligned) entry per visible or recently visible unit in 256-entry chunks that never move, plus its vectors (screen output and, since D, retained local positions: 8 B per body and per shadow vertex, base colours only for untextured faces); absent units kept ≤ 2 s and ≥ 30 frames, within 32 MiB / 8192 entries (oldest first); released capacity kept ≤ 8 MiB / 4 s then freed; all-free tail chunks deallocated; id index sized from live entries | `invalidateRenderTargets` → `makeAllCold` (owners kept, content dropped); world reset → new epoch; destroyed units released the frame they leave the snapshot |
-| Body buffer `bodyVerts_`, `copyTasks_`, `drawOps_` | GameView | rebuilt each frame | peak capacity retained | session |
+| Body buffer `bodyVerts_`, `copyTasks_`, `drawOps_` | GameView | rebuilt each frame | peak capacity retained; since J trimmed to peak + 1/16 after a whole window (5 s and 120 frames) below half the capacity | session |
 | Shadow silhouette pages | GameView + `ShadowAtlasAllocator` (since F) | each unit's tile keeps a cell (handle on `UnitGeom::shadowTile`, validated against the cell's entry handle); stamp per cell (entry, owner, coverage = `shadowRevision`, exact `ShadowPlacement`, screen pixel, page, slot, size, scale), carried when the cell moves; a placement change is reused only when every tile point recomputes bit-identical in the same cell | ≤4 GPU target pages up to 2048² (≤64 MiB); class-height shelves, exact widths; absent cells retained 2 s / 30 frames; empty pages destroyed after 2 s; page size shrinks after 5 s of low demand | destroyed on reset/teardown (`resetShadowAtlas`); handles never alias across resets |
-| Shadow scratch (`shadowAtlasOpaqueScratch_`, mask scratch, `shadowCompositeBatch_`) | GameView | per frame | capacity retained | cleared on reset |
+| Shadow scratch (`shadowAtlasOpaqueScratch_`, mask scratch, `shadowCompositeBatch_`) | GameView | per frame | capacity retained; trimmed like the body buffer since J (peaks noted before each per-page refill) | cleared on reset |
 | Distant images | `DistantModels` | geometry-entry handle (index + generation; unit id before C) → entry (revision, texture tick, source ptr, zoom, scale), 67 ms refresh; since G also retained bounds per handle (revision, source ptr, count) and the early lookup `holds()` | ≤4 × 2048² pages (64 MiB), 1024 64-px tiles/page, ≤128 bakes/frame (bakes grouped by page since G); per-page occupancy since G | entries/bounds expire after 120 unseen prepares; since G a page is released when its last image expires (before: only when all expired), bounded same-position migration off a sparse highest page; cleared on reset |
 | Colour atlases `atlasTex_` | GameView | per player-colour slot; layout fixed at first model load; `atlasTracker_` slot record = (renderer generation, asset generation, painted frame per animated region) | GPU target ≈ 2048×atlasH ×4 (≈11 MiB) per slot, ≤10; essential (bypasses cap) | destroyed on reset (tracker cleared); painted completely on creation |
 | Animated texture state | `modelTextureAnimations_`, `animatedTex_`, `animatedRegions_` | frame from game tick, every draw; `animatedRegions_` (rect, frames, frame) rebuilt per update in registry order | CPU | `assetGeneration_` bumped on texture teardown and atlas layout; tracker records from another generation repaint every region |
@@ -375,9 +402,9 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 | Shadow mask/coverage pages | `shadowMaskPages_`, `shadowCoverageTextures_` | per texture/frame | GPU | teardown |
 | Feature art, effect anims, icons, fonts, GUI | GameView | by name | GPU static | teardown |
 | Terrain chunks | `TerrainChunks::cache_` | (level, cx, cy); `revision`; LRU of chunks not drawn this frame | GPU static, 256 MiB budget and GPU cap; ≤8 MiB uploads/frame | `invalidate`/`clear`; reset clears |
-| Terrain mips | `TerrainChunks::mips_` | (section key, level, stock) | CPU, worker-only, **unbounded** | `resetSource` |
+| Terrain mips | `TerrainChunks::mips_` | (section key, level, stock) | CPU, worker-only; since J LRU of unpinned mips, 64 / 56 MiB, all dropped after 30 s + 120 frames without terrain work | `resetSource` |
 | Terrain sections (GPU) | `MapView::sections_` | section key; idle 3 s, 64 MiB idle budget | GPU | trimmed; reset clears |
-| Decoded sections (CPU) | `terrain::Compositor::cache_` | section key | CPU, whole referenced set decoded at load, **unbounded** | `clear()` only after consumers stop |
+| Decoded sections (CPU) | `terrain::Compositor::cache_` | section key | CPU; since J pinned `SectionRef`s, 128 / 112 MiB budget over unpinned sections cold for 10 s, load-time prefetch only into free budget (whole set on 97.7% of maps) | `clear()` safe with pins (images live until released) |
 | Terrain fallback batch | `MapView::tileBatch_/apronBatch_` + `tileSubmit_` | camera/offset/zoom/size/dirty | CPU vectors + retained VBO via revision | rebuilt on change |
 | Fog | `fogTex_`, `fogUpload_`, `fogSubmit_`, fog mesh | vis generation, camera | GPU texture + retained mesh | reset clears |
 | Feature index | `FeatureIndex` | rebuilt when features change (`featureIndexDirty_`) | CPU | session |
@@ -396,7 +423,9 @@ geometry, shadow checks, shadow transform, body copy and the COB VM pass —
 never called concurrently from two threads; since I each renderer pass is
 planned by estimated cost and wakes only the workers it pays for); `capturePool_` for the sim worker's
 snapshot capture; the sim worker thread; the async fog compute worker; terrain
-chunk worker; section decode worker; minimap crunch.
+chunk worker; section decode worker; minimap crunch. Since J the render
+pool's scratch is one `WorkerScratch` slot per participant, trimmed by the
+render thread between passes.
 
 Fallback paths: shadow atlas → direct shadow geometry (`drawUnitShadow`) on
 missing target support, budget, page limit or draw failure (whole frame;
@@ -641,6 +670,34 @@ Added by workstream H:
   throws at the first command that differs from its sources),
   `TAK_BODY_ARENA_SOFTWARE`, `TAK_BODY_ARENA_MIN=N` (arena command threshold),
   `TAK_BODY_ARENA_HEADROOM=x` (tight storage for tests: rollovers).
+
+Added by workstream J:
+
+- `terrain/terrain.h`: `SectionRef` (`shared_ptr<const jpeg::Image>`: holding
+  it pins the image); `Compositor::sectionImage` returns one (decode outside
+  the lock, in-flight dedup); `cachedSection(key, stock, &absent)` (never
+  decodes); `setBudget(high, low, minIdleMs)`, `setClockMs`, `trim()`,
+  `admitsPrefetch`, `Stats` (used, pinned, young, peak, entries, decodes,
+  redecodes, evictions). `clear()` no longer needs stopped readers (VFS swaps
+  still quiesce). Any new consumer must hold a `SectionRef` for as long as it
+  reads the pixels.
+- `TerrainChunks`: `mips_` holds `SectionRef`s with LRU metadata;
+  `setMipBudget(high, low, idleMs)`, `prepare(..., nowMs)`; `Stats::mip*`.
+  `MapView::kSectionCpuHigh/Low`, `kSectionMinIdleMs`, `setMipBudget`,
+  `SectionStats::cpu` / `prefetchSkipped`.
+- `client/cpubudget.h`: `TrimPolicy`, `TrimTracker::observe(need, capacity,
+  frame, nowMs, policy)` → bytes to shrink to (0 = keep), `shrinkVector`. Any
+  later retained per-frame buffer should be added to
+  `GameView::trimRetainedBuffers` (enum `Retained`); if it is refilled more
+  than once per frame, call `noteNeed` before each refill.
+- `ThreadPool::participant(pool)`; `GameView::WorkerScratch` +
+  `workerScratch()` (replaces the geometry/shadow/collector `thread_local`s;
+  `CollectVertex`, `ShadowCollectVertex` hoisted).
+- Debug: `TAK_TERRAIN_SECTION_BUDGET_MIB`, `TAK_TERRAIN_SECTION_MIN_IDLE_MS`,
+  `TAK_TERRAIN_MIP_BUDGET_MIB`, `TAK_TERRAIN_MIP_IDLE_MS`, `TAK_CPU_TRIM_MS`,
+  `TAK_CPU_TRIM_FRAMES`, `TAK_CPU_TRIM_FLOOR_KIB`, `TAK_CPU_TRIM_VERIFY`
+  (prints `CPU_TRIM_VERIFY frames trims worker_trims released content_checks
+  regrowths peak_retained final_retained recovered`).
 
 ### Cache ownership and invalidation (workstream C)
 
@@ -1235,6 +1292,130 @@ unit built exactly once, shadow checks / tile transforms / body copies equal a
 serial re-run bit for bit); `TAK_SCHEDULE_SAMPLES=<file>` (calibration
 samples: per unit and per pass).
 
+### CPU cache budgets and reference lifetimes (workstream J)
+
+**Order of work.** The brief requires reference lifetimes to be fixed before any
+eviction. J1 (`dac6e399`) changed the section contract and converted every
+consumer with no budget active. J2 (`469f743a`) then turned eviction on, and
+J3–J5 added the mip budget, the buffer trims and the working-set rule.
+
+**The old contract.** `terrain::Compositor::sectionImage` returned
+`const jpeg::Image&` into a `std::map`, valid "until clear() or destruction".
+That was safe only because nothing was ever evicted, and because every caller
+of `clear()` stopped the readers first (`MapView::reload` → `quiesce()`, which
+waits for the chunk worker and the decode worker). Any eviction would have
+freed images in use.
+
+**Consumer audit** (every use of a decoded section, at `c2c25707`… `31c5ce79`):
+
+| Consumer | Thread | Held for | Before J | Since J |
+|---|---|---|---|---|
+| `TerrainChunks::compose` | chunk worker | one compose job (the job's tiles × levels) | raw `const Image*` per tile key, from `mip()` (level 0 = a reference into the compositor) | job-scoped pins: `std::map<key, SectionRef>` for the whole job (level-0 sections and mips) |
+| `TerrainChunks::mip` | chunk worker | deriving level n from n−1 | reference to level n−1 | n−1 pinned while it is read; mips are `SectionRef`s too |
+| `MapView::uploadWantedSections` | render thread | one `SDL_UpdateTexture` | reference | pin until the upload returns; `cachedSection` (never decodes) in play; `finishChunks` frames decode in place |
+| `MapView::uploadReadySections` | render thread | reading a byte count | reference | no image access (absent keys only) |
+| `MapView::sectionWorkerLoop` | section decode worker | decode only | reference discarded | transient pin; prefetch admission |
+| `Compositor::renderBlock`: minimap crunch (`GameView::buildMinimap` thread), Cartographer symmetry tools, `newmap` minimap generation/preview, thumbnails (`renderMap`), `tnttool render`, tests | any | one 32×32 copy | cache lock held across decode **and** copy | pin; decode outside the lock; copy without the lock |
+| Cartographer `validateTerrainResources` | UI | decode check | own compositor, `clear()` after each key | unchanged (a discarded pin) |
+| Cartographer thumbnails `clear()` every 8 decodes | UI | — | safe: after the async job finished | safe without that condition: pins outlive `clear()` |
+| `MapView::reload` → `quiesce()` + `clear()` | render thread | — | `clear()` required stopped readers | still quiesces (the decode reads the VFS being swapped); images held elsewhere survive |
+
+**Ownership model.** A decoded image is a `SectionRef =
+std::shared_ptr<const jpeg::Image>`. A consumer pins exactly what it uses for
+as long as it uses it (a compose job, a texture upload, a block copy). The
+cache drops only its own reference: an image the cache evicts or clears stays
+valid until its last holder releases it. So even a wrong eviction decision
+could only cost accounting and a redecode, never memory under a reader.
+"Pinned" (not evictable) is `use_count() > 1` read under the cache lock. That
+read is exact: a new reference can only come from the cache, which needs the
+lock, and copying a consumer's reference requires one to exist. The JPEG
+decode runs outside the lock; a second caller wanting the same key waits for
+the decode in flight rather than repeating it. As a result the render
+thread's `cachedSection` never waits behind a decode (before J,
+`sectionImage` and `renderBlock` held the lock through the decode).
+
+**Decoded sections** (`Compositor`, owned by `MapView`):
+
+| Rule | Value | Why |
+|---|---|---|
+| Budget | 128 MiB high / 112 MiB low (evict to low when an insertion or `trim()` finds the cache above high) | Measured over the 1371 shipped maps: median 21 MiB, p90 72, p99 173, max 402; Ulasem Arena 64, Athri Cay 79. 97.7% never reach the budget and behave exactly as before J (all referenced sections decoded at load and kept) |
+| Evictable | unpinned **and** unused for 10 s of the owner's clock | The budget bounds cold images, never the camera's working set; pure LRU cycled sections on a map whose working set exceeds the budget (rejected below) |
+| Order | least recently used (a use counter, not time) | |
+| Prefetch at load | only into free budget (below low); never evicts | A map larger than the budget is not decoded whole and then trimmed; demand requests (the fallback needs a section now) go first |
+| Render thread | never decodes in normal play; asks the decode worker; `finishChunks` frames decode in place | Captures and the briefing backdrop stay complete |
+| `trim()` | after each compose job, once per frame | Releasing a pin does not reach the cache |
+| Clock | `MapView::nowMs()`: wall time, or the render study's presentation clock | Repeatable study runs; a restarted clock resets use times |
+
+Tools, validators and the Cartographer's own compositors keep the default
+(unbounded). The Cartographer's `MapView` uses the game's budget.
+
+**Mips** (`TerrainChunks::mips_`, the chunk worker's box-filtered levels):
+worker-owned least-recently-used cache, 64 MiB high / 56 MiB low. All levels
+of Ulasem Arena are about 21 MiB and Middle Earth V1's measured use is 34 MiB,
+so the budget is a ceiling, not a working limit. Pins are the running job's.
+**Idle trim:** after 30 s and 120 frames with no terrain job queued or
+completed, the render thread posts a request and the worker drops its mips
+between jobs; a job that arrives first cancels the request. The cache is
+touched only by the worker, so the trim is thread-safe by ownership.
+Composed chunks are unaffected; mips regenerate on demand.
+
+**Retained renderer buffers** (`client/cpubudget.h`, `GameView::trimRetainedBuffers`):
+
+| Buffer group | Members | Need measured |
+|---|---|---|
+| Body buffer | `bodyVerts_` | size at frame end (assembled + staged uploads) |
+| Frame lists | `paintItems_`, `drawOps_`, `copyTasks_`, `distantModelItems_`, `bodySources_`, `bodyRanges_`, arena firsts/counts/ranges, `visUnits_`, `visGeom_`, `visCost_`, `geomIndex_`, `airShadows_` | size at frame end; peak before each refill for `bodyArenaRanges_` (per command) and `airShadows_` |
+| Shadow scratch | opaque page scratch, mask batches (map, trimmed whole), composite batch, prep items, tile decision arrays, F's per-cell stamps (sized by index bound, capacity never released by F) | peak before each per-page / per-texture refill |
+| Render-thread model scratch | `tris_`, `triBatch_` (drawUnit, debris, shot models) | peak before each refill |
+| Worker scratch | one `WorkerScratch` per pool participant: collector triangles, sort order, prepared piece tree, stage key, shadow runs/vertices, collector vertices (were `thread_local`s) | after every unit build |
+
+Policy, per buffer (`TrimTracker`): the frame's peak need is folded into
+half-window buckets (each ≥ 2.5 s **and** ≥ 60 frames by default). Decisions
+happen only at bucket boundaries, over the last two buckets (one whole
+window). A trim happens when capacity > 2 × the window's peak (floor 64 KiB),
+and it shrinks to peak + 1/16, keeping the contents. A buffer that regrows
+within four windows of a trim doubles its window (up to 8×); a trim that
+holds four windows halves it. The shrink runs at the end of the frame, after
+the buffer's last use and with no pool pass running. Its cost is one
+allocation plus a copy of the live contents. Sustained demand never trims, a
+single quiet frame never trims, and oscillation shorter than a window never
+trims (all unit-tested).
+
+**Worker scratch ownership.** `ThreadPool::participant(pool)` is 1..n−1 on
+the pool's workers and 0 on every other thread, i.e. on the pool's caller, the
+render thread. Worker k touches slot k only inside a chunk. The pass protocol
+orders those accesses with the render thread: the caller acquires the chunk
+count before a pass returns and releases the claim word before the next pass
+starts. Between passes the render thread may therefore read, account and
+trim every slot, including the slots of workers that never run again, which a
+`thread_local` could not offer. A debug check throws if slot 0 is used off
+the render thread. The debug verifiers' own `thread_local` copies allocate
+only while a verifier is on and are excluded.
+
+**Accounting** (all CPU, all gauges at frame end; GPU and RSS separate):
+
+| Component | used | retained | pinned (not evictable now) | evictable (what budgets/trims may release) |
+|---|---|---|---|---|
+| Geometry entries (C) | vector sizes | capacity + entry storage + index/metadata | entries of units in view (`geom_pinned_bytes`) | absent retained entries + warm free capacity (C's 2 s / 32 MiB / 8192 and 8 MiB / 4 s rules) |
+| Body buffer, frame lists, shadow scratch, model scratch, worker scratch | size × element | capacity × element (F's allocator records included in shadow scratch) | this frame's contents | capacity above them (J's trims; F's allocator records follow F's policy) |
+| Decoded sections | image bytes | the same | pinned + young (`terrain_section_pinned_bytes`, `_young_bytes`) | the rest (budget) |
+| Mips | image bytes | the same | the running job's (`terrain_mip_pinned_bytes`) | the rest (budget, idle trim) |
+| Arena records (H), distant-image metadata (G) | as reported | as reported | — | their own policies |
+
+`cpu_cache_used/retained/pinned/evictable_bytes` sum these.
+`cpu_cache_peak_bytes` is the highest retained total seen at a frame end.
+**Excluded, and why:** GPU memory (`gpu_tracked_bytes`: tracked textures and
+GL buffers, a separate budget); whole-process RSS (sampled by the benchmark
+from `/proc`, including everything below); assets and their CPU copies
+(model/texture/palette sources, feature and effect art, fonts: static per
+load); the snapshot frames (`Frame` triple buffer: the simulation mirror, not
+a cache); effect batches bounded by effect counts (particles, debris,
+overlays, fog mesh and upload buffer, minimap pixels); the simulation;
+SDL's and the driver's own queues and mappings; allocator overhead and
+fragmentation (the numbers are capacities, not malloc usable sizes);
+transient peaks inside a frame, such as old and new storage during a
+reallocation (the peak is sampled at frame end).
+
 ### Telemetry reference (RENDERSTATS keys)
 
 `t_*` = render-thread wall ms (nested: `terrain_upload` in `terrain`;
@@ -1271,6 +1452,7 @@ sampled by the benchmark from `/proc`).
 | Distant-image lookup (G) | `distant_body_deferred` (bodies left pending behind a held image), `distant_body_resumed` (pending bodies generated by the pass), `distant_body_catchup` / `distant_body_late` (missed predictions, generated after/inside `prepare()`), `distant_bounds_reused`, `distant_page_releases`, `distant_migrated`; gauges `distant_pages`, `distant_tiles`, `distant_metadata_bytes`. `verts_generated`/`verts_placed`/`verts_recoloured` count body vertices only for body stages that ran |
 | Retained body vertices (H) | `arena_append`, `arena_rebuild`, `arena_stream` (0/1 per frame), `arena_verts_retained` (resident, nothing copied), `arena_verts_uploaded` (also in `body_verts_copied` and `bytes_uploaded`), `arena_verts_twice` (of those, vertices also copied into a small assembled command the same frame), `arena_draws`, `arena_ranges`, `arena_fallbacks`, `arena_releases`; gauges `arena_capacity_bytes` (also in `gpu_tracked_bytes`), `arena_inflight_bytes`, `arena_cpu_bytes`. Since H `body_verts_copied` = vertices actually copied (assembled + arena uploads) and DRAWPHASE `body_vertices` = all body vertices drawn |
 | Cost-planned pool passes (I) | `t_schedule_plan` (nested: building the plans), `pool_posted` (workers woken), `pool_idle_wakes` (woken after every chunk was taken), `pool_chunks`, `sched_geometry_threads` (participants of the geometry pass; 1 = render thread alone), `sched_shadow_threads` (check + transform passes, summed), `sched_copy_threads`, `sched_geometry_estimate_us` (the plan's estimate, to compare with `w_geometry_key` + `w_geometry_build`). `w_pool_wake` / `pool_dispatches` keep their meaning; since I a wake is counted only for a worker that ran a chunk |
+| CPU budgets (J) | sections: `terrain_section_cpu_bytes` (used), `_pinned_bytes`, `_young_bytes`, `_peak_bytes`, per frame `terrain_section_decodes` (real decodes by any thread since J), `_evictions`, `_redecodes`, `_prefetch_skipped`; mips: `terrain_mip_cpu_bytes`, `_pinned_bytes`, `_peak_bytes`, per frame `terrain_mip_evictions`, `_regens`, `_trims`; buffers: per frame `cpu_trims`, `cpu_trim_bytes`; gauges `worker_scratch_used/capacity_bytes`, `geom_pinned_bytes`, totals `cpu_cache_used/retained/pinned/evictable/peak_bytes` (see the J accounting table; GPU and RSS are separate). `body_capacity_bytes` is reported after the frame's trim |
 | GPU | render-study `gpu_timeline_ms` / `GPUTIMELINE` (draw timeline, not busy time), `gpu_tracked_bytes` |
 
 Coverage limits (deliberate): `logical_draws`/`flushes`/`target_switches`
@@ -1352,6 +1534,18 @@ python3 tools/render_benchmark.py --a build-o2/takclient --data ~/tak_data --cpu
    --scenes moving --sizes normal --frames 420 --warmup 120 --output <dir> \
    --env TAK_RENDER_POOL_THREADS=1 --env TAK_SCHEDULE_SAMPLES=<file>
 ```
+
+CPU budget tooling (workstream J): tests `terrain_compositor` (synthetic
+JPEGs: pins, LRU + watermarks, working set, redecodes, concurrency),
+`terrain_cache` (retail data: a 4 MiB section / 1 MiB mip budget renders every
+finished frame texel-identical to unbounded caches; idle mip trim and
+regeneration), `cpu_budget` (trim policy), `work_schedule` (participant
+indices), `render_cpu_budget` (in game, software renderer, battle then empty
+view with 400 ms trim windows and 1 s terrain windows, `TAK_CPU_TRIM_VERIFY`).
+Scene `bigmap-zoom` (Middle Earth V1: 255 sections, 238 MiB decoded, above the
+budget). Section sizes of every shipped map: `~/tak-tmp/render-opt/j/secsize.cpp`
+→ `secsize.tsv` (size MiB, sections, decode ms, blocks, name). Experiment 12
+script: `~/tak-tmp/render-opt/j/measure.sh`.
 
 Shadow-atlas ctests (workstream F, software renderer, `TAK_SHADOW_CACHE_VERIFY`):
 `render_shadow_atlas` (the render_shadow_cache roster, 288-px pages,
@@ -3149,7 +3343,208 @@ skips its last item), `ctest -L quick` (386/386 at `68021102` and at
 `src/client` (presentation) and `tools/` changed; every benchmark run checks
 the world hash (identical A vs B in every scene).
 
+### Experiment 12 — workstream J CPU cache budgets (2026-10-17)
+
+**Binaries.** A = I4 (`takclient-I4-candidate`, code of `590db308`, pre-J);
+B = J3 (`takclient-J3-candidate`, code of `3dc315c4`, the final J code).
+Probes on J1 (= `2cb7cdf5`, pure LRU section budget) and J2 (working-set rule,
+an earlier build of the same code) are cited where they matter. Build-o2,
+offscreen EGL, SDL `opengl` on the RTX 5070 Laptop GPU; `RENDER_ENV`
+confirmed the backend and actual output for every run (1280×960 / 7680×2160;
+at 7680×2160 the zoom-0.5/0.25 scenes run at the map-fills-window clamp
+0.73). 900 frames, 300 warmup, forced completion, pinned to CPUs 16–23, ABBA
+× 2 per scene and size, `--wait-quiet 120`, nothing built during the runs.
+Load: average 1.9–14.3, 0–2 `legion_scenario` processes (CPUs 4–15), pinned-CPU busy 0.18–0.30, no run
+contended. Script `~/tak-tmp/render-opt/j/measure.sh`, analysis
+`~/tak-tmp/render-opt/j/jtable.py`, output `runs/j3-*` (not in Git).
+
+**Scenes** (lean testing, what J touches): battle-sparse (buffers trimmed
+after the view empties), total10k-visible (the largest buffers: no thrash,
+per-frame tracker cost), zoom (chunk composition under job pins, the changed
+compositor locking, mips), bigmap-zoom (new; the only scene where the section
+budget evicts: Middle Earth V1, 255 sections, 238 MiB decoded).
+
+```sh
+T="python3 tools/render_benchmark.py --data ~/tak_data --cpus 16-23 --a $I4 --b $J3"
+S="battle-sparse total10k-visible zoom bigmap-zoom"
+$T --capture-only --output runs/j3-captures-normal --scenes $S --sizes normal   # and uhd
+$T --wait-quiet 120 --repeats 2 --output runs/j3-normal --scenes $S --sizes normal   # and uhd
+$T --capture-only --a $I4 --b $I4 ... ; --a $J3 --b $J3 ...   # A/A capture checks (battle-sparse, bigmap-zoom, uhd)
+python3 ~/tak-tmp/render-opt/j/jtable.py runs/j3-normal runs/j3-uhd
+```
+
+**World hashes** identical A vs B in every scene (the tool refuses otherwise).
+
+**Captures** (12 frames per scene: 360, 480–489, 720; world view and full
+frame). 1280×960: 0 differing pixels in all 4 scenes. 7680×2160: 0 in
+total10k-visible and zoom. battle-sparse frame 480 differs by 344,240 px
+(max channel error 85) and bigmap-zoom frames 480–487 by 5,184–301,727 px;
+every other frame is identical. Both are terrain-chunk readiness at a capture
+frame right after a camera change, not J content:
+
+- battle-sparse frame 480 is 30 frames after the jump to the empty view.
+  The differing pixels form one rectangle of 747×739 px, exactly one
+  1024-px chunk at zoom 0.73, with equal mean colour. At that frame A held
+  60 chunk images and B 59: B received that chunk one frame later (one chunk
+  completes per frame). From frame 481 on the two are identical. Across the
+  eight timing runs, the frame by which every chunk of the empty view is
+  ready is 483 in both builds at 7680×2160, and 454 (A) / 453–455 (B) at
+  1280×960, so composition does not lag systematically.
+- bigmap-zoom frames 480–487 fall in a burst of chunk composition (A 34 / B 32
+  chunks pending at frame 480); they are identical from frame 489, when
+  nothing is pending. B had evicted no section yet: all 249 MB of decoded
+  sections were young (the first evictions come at frame 720). So the budget
+  played no part in these frames.
+- A/A and B/B capture pairs of the same two scenes (`runs/j3-aa-captures-I4`,
+  `-J3`): I4 against I4 differs in bigmap-zoom frames 480–489 (up to
+  713,660 px), J3 against J3 in frames 480–486 (up to 293,312 px);
+  battle-sparse is identical in both pairs. So the pre-J build shows the same
+  race, and battle-sparse's frame 480 is an occasional instance of it. No
+  unexplained difference remains.
+
+**Timing** (ms per frame, mean of four runs per label; Δ = B vs A; noise =
+max A/A spread of the two labels; nothing is material):
+
+| scene | size | draw A → B | Δ draw (noise) | Δ total mean | Δ total p99 (noise) | Δ GPU timeline | per-run draw, ABBA order |
+|---|---|---|---|---|---|---|---|
+| battle-sparse | 1280×960 | 2.675 → 2.724 | +1.8% (7.7%) | +0.2% | +0.5% (7.8%) | +4.0% | A2.68 B2.70 B2.66 A2.61 · A2.64 B2.66 B2.87 A2.77 |
+| total10k-visible | 1280×960 | 15.638 → 15.833 | +1.2% (2.2%) | +1.3% | +0.9% (5.1%) | +2.2% | A15.71 B15.69 B15.67 A15.48 · A15.65 B16.02 B15.95 A15.71 |
+| zoom | 1280×960 | 9.350 → 9.298 | −0.6% (12.1%) | −0.5% | −1.4% (13.2%) | +0.2% | A10.00 B9.18 B9.54 A9.32 · A9.21 B9.06 B9.42 A8.87 |
+| bigmap-zoom | 1280×960 | 1.977 → 2.015 | +1.9% (14.8%) | −0.9% | −9.7% (35.9%) | +1.2% | A1.79 B2.02 B2.04 A2.00 · A2.03 B2.00 B2.00 A2.08 |
+| battle-sparse | 7680×2160 | 3.328 → 3.517 | +5.7% (30.6%) | +6.4% | +10.5% (43.1%) | +0.2% | A4.03 B4.17 B3.25 A3.01 · A3.08 B3.43 B3.22 A3.19 |
+| total10k-visible | 7680×2160 | 58.841 → 59.358 | +0.9% (2.7%) | +0.8% | −2.2% (14.0%) | +0.9% | A59.02 B60.19 B59.57 A58.54 · A58.36 B59.06 B58.61 A59.44 |
+| zoom | 7680×2160 | 13.488 → 13.670 | +1.4% (12.6%) | +1.4% | +5.4% (28.3%) | +3.5% | A13.18 B13.28 B13.00 A13.50 · A13.30 B13.68 B14.71 A13.97 |
+| bigmap-zoom | 7680×2160 | 3.392 → 3.500 | +3.2% (6.1%) | +1.3% | +7.7% (19.8%) | +1.9% | A3.37 B3.42 B3.63 A3.42 · A3.31 B3.49 B3.47 A3.46 |
+
+Six of the eight draw deltas are positive (+0.9% to +5.7%), all inside the
+noise threshold, and no scene shows B slower in both ABBA groups at both
+sizes (total10k-visible: B slower in group 2 at 1280×960 and in group 1 at
+7680×2160). The most J-specific per-frame cost, the scratch-slot lookup on
+every unit build, appears as `w_geometry_key` +2.1% (12.91 → 13.18 ms summed
+over workers, about 30 ns per unit) in total10k-visible 1280×960, +0.7% at
+7680×2160, and −1.8% in zoom 1280×960; `t_geometry` moves −7.5% to +15% (the
+largest in bigmap 7680×2160, 0.34 → 0.39 ms) with no consistent sign.
+Recorded as no measurable cost, with a possible small positive bias that this
+session cannot resolve.
+
+**Trim events and their cost** (B; deterministic, identical in all four runs):
+
+| scene | size | trims (frames) | released | buffers |
+|---|---|---|---|---|
+| battle-sparse | 1280×960 | 5 (frame 750) | 19.06 MiB | body 9.9 → 0.1, shadow scratch 9.7 → 1.1, lists 1.1 → 0.5 MiB |
+| battle-sparse | 7680×2160 | 7 (frames 450, 750) | 19.05 MiB | body 10.9 → 0.1, shadow scratch 8.3 → 0.5, lists 1.0 → 0.6 MiB |
+| total10k-visible | 1280×960 | 5 (frame 450) | 81.0 MiB | body 46.3 → 5.2, shadow scratch 45.3 → 42.9, lists 4.6 → 3.9 MiB |
+| total10k-visible | 7680×2160 | 2 (frame 450) | 36.6 MiB | body 50.8 → 14.3 MiB |
+| zoom | both | 0 | — | demand sustained |
+| bigmap-zoom | both | 1 (frame 750) | 0.9 MiB | — |
+
+total10k-visible trims although it is a steady scene. The released capacity
+was the first frames' peak: the initial full rebuild assembles every body,
+and every shadow tile is dirty once. Steady frames need under half of that,
+and nothing regrew in the remaining 450 frames (retained bytes unchanged
+from frame 450 to 899). A later full rebuild, such as a camera jump or a GPU
+reset, regrows the body buffer once. The trim frame is not measurably
+slower: frame 750 in battle-sparse costs 1.07–1.21 ms of draw in B and
+1.03–1.16 ms in A. An unrelated event lands on that frame in both builds;
+it is about 0.45 ms above the neighbouring frames, not caused by the trim.
+
+**Decoded sections and mips** (B):
+
+| scene | size | decodes | evictions | redecodes | sections at end | section peak | mips at end |
+|---|---|---|---|---|---|---|---|
+| battle-sparse, total10k-visible, zoom | both | 118 (= the map's sections) | 0 | 0 | 63.8 MiB | 63.8 MiB | 0–16.9 MiB |
+| bigmap-zoom | 1280×960 | 292 | 170 | 37 | 124.2 MiB (A: 237.8) | 237.8 MiB | 12.3 MiB |
+| bigmap-zoom | 7680×2160 | 292 | 137 | 37 | 136.2 MiB (A: 237.8) | 237.8 MiB | 34.1 MiB |
+
+No mip was evicted or trimmed in any timed scene (the mip budget is a
+ceiling; the 30 s idle window exceeds a 15 s run). The J1 probe (pure LRU,
+same scene) re-decoded 176 / 298 sections (Rejected experiments).
+
+**CPU memory at the last frame**: B's `cpu_cache_*` totals, plus
+"comparable" bytes from keys that both builds report (geometry, body, shadow
+scratch, lists, sections, mips, arena records, distant metadata). MiB:
+
+| scene | size | comparable A → B | B retained / pinned / evictable | B peak (retained) |
+|---|---|---|---|---|
+| battle-sparse | 1280×960 | 96.1 → 77.0 (at frame 449: 129.1 both) | 77.4 / 27.1 / 50.1 | 135.5 |
+| battle-sparse | 7680×2160 | 84.3 → 65.3 (125.4 both) | 65.7 / 49.6 / 15.9 | 125.8 |
+| total10k-visible | 1280×960 | 352.9 → 308.7 | 309.0 / 182.4 / 124.4 | 353.4 |
+| total10k-visible | 7680×2160 | 308.2 → 271.6 | 272.0 / 193.7 / 76.7 | 308.5 |
+| zoom | 1280×960 | 144.5 → 144.5 | 144.9 / 94.1 / 50.2 | 144.9 |
+| bigmap-zoom | 1280×960 | 259.4 → 145.8 | 146.2 / 57.8 / 88.3 | 259.7 |
+| bigmap-zoom | 7680×2160 | 281.4 → 179.9 | 180.3 / 145.1 / 35.1 | 281.8 |
+
+"Evictable" counts unpinned decoded sections that the budget would release
+only under pressure (64 MiB on Ulasem). Tracked GPU memory is identical
+A vs B in every scene. J changes no GPU allocation. Whole-process RSS
+(sampled by the tool): peak equal within a few MiB everywhere except
+bigmap-zoom 1280×960, where B's peak is 940–970 MiB against A's 908–940. A
+plausible cause is two decodes now running at once outside the lock, plus
+heap fragmentation from evict/redecode, but this is not established.
+End-of-run RSS varies by 150–300 MiB run to run (it is sampled during
+teardown) and cannot show the trims. glibc may also keep freed memory in the
+process (dynamic mmap threshold), so released capacity is not necessarily
+returned to the OS (Known limitations).
+
+**Tests (final code).** `terrain_compositor`, `terrain_cache`, `cpu_budget`,
+`work_schedule`, `render_cpu_budget`, `render_telemetry`,
+`render_benchmark_tool` pass; `ctest -L quick` 388/388 (on the code before the release-build fix below; the J tests and `render_schedule`, `render_distant_lookup` re-run after it); sanitizer
+builds: `terrain_compositor` and `work_schedule` under ASan/UBSan and TSan;
+mutation checks: compositor (pins, watermark, redecode count, age rule),
+trim policy (five), participant index (two). Release `takclient` builds (after moving the verifier totals out of a debug-only header section: the first release build failed on it) and contains none of the J debug or telemetry strings.
+`--mpai` Retail 60 s Inner Circle seed 1 = `2c39430636a3dbda` (unchanged; run because `src/terrain` is shared code, although neither the server nor the simulation uses the compositor or the render pool).
+
 ## Known limitations and unsupported paths
+
+- **J: the peak on a map above the section budget is unchanged.** The
+  working-set rule lets a zoomed-out view that uses every section hold all of
+  them (Middle Earth V1: 238 MiB, the same as before J) for as long as it
+  keeps using them. The budget bounds the steady state: sections cold for 10 s
+  are evicted down to 112 MiB. Maps under 128 MiB (97.7%) are unaffected.
+- **J: redecodes remain on maps above the budget.** bigmap-zoom re-decodes
+  37 (1280×960) / 58 (7680×2160) sections in 900 frames (about 1 ms of worker
+  time each), all of them sections that had been cold for over 10 s.
+  Panning back into such an area can show the blurry underlay for a frame or
+  two where the fallback needs an evicted section and the chunk is not
+  composed yet (demand decodes go first). Not observed in the bigmap-zoom
+  captures (their first evictions come at frame 720, after the capture
+  frames 480–489) and not otherwise measured; pre-J builds kept every
+  section decoded.
+- **J: decoded sections are not trimmed below the budget.** An idle trim like
+  the mips' would be cheap in memory terms, but an evicted section costs a
+  visible underlay frame in the fallback; only the budget evicts sections.
+- **J: trims lag.** A buffer shrinks 5–7.5 s (and ≥ 120 frames) after its
+  demand falls; demand that alternates more slowly than the window can trim
+  and regrow once per cycle, and the backoff then widens the window (up to
+  8×). Buffers below 128 KiB of capacity (floor 64 KiB × 2) are never
+  trimmed, which includes each worker slot (~45 KB in the matrix scenes) and
+  the smaller frame lists. A trim costs one allocation plus a copy of the live
+  contents at the end of a frame (measured in battle-sparse, Experiment 12).
+- **J: not trimmed by J.** F's shadow allocator records, H's arena records
+  and G's image metadata follow their own policies (counted in the totals).
+  The `Frame` snapshot triple buffer, effect batches and assets are outside
+  the CPU totals (see the accounting exclusions).
+- **J: process RSS does not necessarily fall.** J releases capacity to the
+  allocator; glibc may keep it (dynamic mmap threshold, heap top only), so
+  whole-process RSS can stay at its peak. End-of-run RSS in the benchmark is
+  too noisy (150–300 MiB run to run) to show the 19–81 MiB released, and
+  bigmap-zoom's peak RSS at 1280×960 is ~30 MiB higher with J (cause not
+  established). `malloc_trim` was not added: its cost on a large heap is a
+  render-thread hitch, and it was not measured.
+- **J: the CPU peak is sampled at frame end**, so a reallocation's transient
+  old-plus-new peak inside a frame is not seen. Byte counts are capacities,
+  not allocator usable sizes.
+- **J: thread-safety evidence.** The compositor's pins, decode dedup and
+  eviction pass TSan in a 8-thread stress (`terrain_compositor`), and the
+  participant-slot protocol passes TSan in `work_schedule`. The TerrainChunks
+  mip trim (a mutex-guarded flag plus a worker-owned map) is covered only
+  functionally (`terrain_cache`, `render_cpu_budget`), because the test needs
+  SDL; it was not run under TSan.
+- **J: not exercised.** A real game with the simulation worker (the study
+  runs the simulation inline); Windows and macOS (`ThreadPool::participant`
+  is a portable `thread_local`; unvalidated there); release-build costs of
+  the trackers (debug-only verifier code compiles out; the trackers run in
+  every build).
 
 - **I: competition with the simulation is not measured.** The render study
   steps its local simulation inline on the main thread, so no simulation
@@ -3458,6 +3853,26 @@ the world hash (identical A vs B in every scene).
 
 ## Rejected experiments
 
+- **J, rejected after measurement: a pure LRU section budget** (J2,
+  `469f743a`, superseded by `3dc315c4`). Evicting the least recently used
+  unpinned section whenever the cache passed the budget cycled sections
+  through decode and eviction once the camera's working set exceeded the
+  budget. On Middle Earth V1 (bigmap-zoom), 553 decodes of 255 sections
+  (298 redecodes) in 900 frames at 7680×2160, and 176 redecodes at 1280×960.
+  Under a deliberately small budget it also left the fallback without its
+  sections: `render_cpu_budget` ran in 9 s instead of 17 s because the
+  terrain was missing (the pre-J build takes 17.2 s on the same scene).
+  Sections used within the last 10 s are now not evictable; redecodes fell to
+  58 / 37.
+- **J, considered and not done:** an idle trim of decoded sections under the
+  budget (an eviction costs a visible underlay frame; see Known limitations);
+  trimming buffers every frame or on every dip (the brief excludes it, and
+  the tests prove it cannot happen); trimming worker slots from their own
+  threads through an epoch flag (a slot whose worker never runs again would
+  keep its memory, whereas the render thread can trim every slot between
+  passes); per-buffer trims of F's allocator, H's arena records and G's
+  metadata (they have their own policies); memory-mapped or compressed
+  sections (would change the decode path and its pixels).
 - **I, fixed after measurement: a hit's estimate read the entry's vector
   sizes** (I2 `68021102`). Those headers sit on cache lines a geometry hit
   never reads otherwise: stationary-mixed 1280×960 `t_geometry` 0.521 →
