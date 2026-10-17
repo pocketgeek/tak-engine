@@ -103,28 +103,37 @@ replays must not move; nothing in this program may feed the simulation.
   ctests, `6c7b93df` cheap failure path + page-ordered best fit, `ec3df732`
   free repack when every tile is redrawn, `fbe21589` sub-pixel phase counts as
   redrawn, `3fd2c8de` all-redraw frames use the former packer with exact
-  sizes, then the docs commit). Tests: `shadow_atlas` (also ASan/UBSan;
+  sizes, `b74f499e` docs; then, after the verifier's rejection, `ce2a3466`
+  page textures created only after a frame's tiles fit — no page
+  create/destroy churn when a frame fits four pages by area but not by
+  packing — + `render_shadow_atlas_band` ctest, and the docs commit with
+  Experiment 8b). Tests: `shadow_atlas` (also ASan/UBSan;
   five header mutations fail it), `shadow_tiles`, `render_shadow_atlas`,
   `render_shadow_atlas_zoom`, `render_shadow_cache` (three in-game mutations
   fail the new ctests), GL verifier runs (`TAK_SHADOW_CACHE_VERIFY`: every kept
   tile vs a full re-bake, allocator validated every frame; + `TAK_GEOMETRY_VERIFY`)
   on effects, churn, colour-reset, zoom, stationary-mixed, pan-snap 7680×2160
   and four small-page stress scenes; `ctest -L quick` 382/382 on build-o2 at
-  `3fd2c8de`; the Release `takclient` builds without the new debug/telemetry
-  strings. Captures: see Experiment 8 — identical to E3 in the all-redraw
+  `3fd2c8de` and again at `ce2a3466`; `render_shadow_atlas_band` (fails with
+  the former immediate page creation: 47 creations / 44 releases, passes with
+  3 / 0); GL verifier on the fix (battle-sparse, stationary-mixed in and out
+  of the band); captures F6 vs F8 identical (60 comparisons); the Release
+  `takclient` builds without the new debug/telemetry strings. Final-code
+  timing of the reuse scenes: Experiment 8b. Captures: see Experiment 8 — identical to E3 in the all-redraw
   scenes, elsewhere 1–14 single shadow-edge pixels per differing frame, every
   difference explained (cell position changes the raster rounding). `--mpai` not run: only `src/client` (presentation) and
   `tools/` changed; every benchmark run checks the world hash (identical A vs
   B in every scene). Baseline for later comparisons:
-  `~/tak-tmp/render-opt/takclient-F6-candidate` (code of `3fd2c8de`).
+  `~/tak-tmp/render-opt/takclient-F8-candidate` (code of `ce2a3466`; F6 =
+  `3fd2c8de` differs only in the band fix).
 - Workstreams G–N: not started.
 - **Next concrete step:** workstream G (distant-image lookup before body
   generation). F is done; its follow-ups (not required for G): the dense
   7680×2160 scene still exceeds four pages and takes the whole-frame direct
   path (Experiment 8), and the raster's sub-pixel dependence on the cell
   position (see Known limitations) means any future relocation must redraw.
-  Measure G against F6 (`~/tak-tmp/render-opt/takclient-F6-candidate`,
-  code of `3fd2c8de`). Captures: compare G only with builds that carry F
+  Measure G against F8 (`~/tak-tmp/render-opt/takclient-F8-candidate`,
+  code of `ce2a3466`). Captures: compare G only with builds that carry F
   (the shadow raster differs from pre-F builds at single edge pixels).
 - (Superseded, kept for the record) Former next step, workstream F: E's
   measurements show what blocks tile reuse now: in pan-snap 868 of 1105
@@ -159,7 +168,7 @@ evidence; nothing below is already fully satisfied.
 | C | Stable geometry ownership | **verified** | Workstream C (`81a29b58` pool + test, `b180e477` GameView integration, `50acac44` index hash). Each drawn unit owns one entry in `geomEntries_` (`StableEntryPool<UnitGeom>`, `client/geometryowners.h`) keyed by `UnitOwner` = (id, world epoch, type, replacement model); the painter passes use `visGeom_`, ordered pointers to those entries, so depth order no longer decides ownership and a unit entering ahead evicts nobody. Destroyed units are released the frame they leave the snapshot; reused ids (rejoin: `Frame::worldEpoch`), replacement models and type changes get a fresh cold entry with a new generation (`HandleSlots`: one table-wide generation counter); renderer reset keeps owners and drops content. Absent units keep their entry ≤ 2 s / ≥ 30 frames within 32 MiB / 8192 entries; released capacity ≤ 8 MiB / 4 s, then freed with all-free tail chunks; id index sized from live entries. Chunks never move (worker-safe growth). Revisions are globally unique; distant images keyed by the entry handle. Tests: `geometry_owners` (unit: reorder, churn/expiry, budgets, destruction, epoch/type/model reuse, reset, growth, parallel writes, memory recovery, randomized; mutation-checked; ASan/UBSan/TSan clean), `render_geometry_ownership` (in game, two verifiers), `distant_models` (new identity never held). Captures identical (648 comparisons). Measured (Experiment 5): `miss_owner` → 0 in every scene; rebuild work −5 to −8% where units move; draw time unchanged within noise; a consistent ~1.5% (≈0.07 ms) residual on a dense stationary army, not material; battle-sparse retained geometry 72.2 → 0.09 MiB after the view empties. |
 | D | Separate preparation from placement | **verified** | Workstream D (`361484d2` vocabulary + test, `08d027d4` GameView stages, `32c5d71a` layout, `ed8e6e2a` shadow-coverage revision, `dc04c856` debug-only verifier, `aae1a9fa` harness clock fix). `buildUnitGeom` keeps three exact stage keys on the unit's stable entry (`client/geometrystages.h`): LOCAL (identity/resources, pose incl. heading/emote spin, pitch/roll, piece poses with hidden/shadow flags, corpse/statue, palette slot, texture frames, construction, shadow toggle) → piece transforms, collection, depth sort, UVs, shadow silhouette in model-projected coordinates; PLACEMENT (zoom, interpolated anchor with lift/sink/altitude, emote bob, flyer altitude, occlusion line) → screen positions; MATERIAL (veterancy, ghost, conjuring progress + clock, tint, opacity) → vertex colours. Only stages whose inputs changed are redone; placement and material use the former single pass's expressions in the same order (bit-identical). Per-stage revisions (`localRevision`, `placementRevision`, `materialRevision`, exact `shadowRevision`); `revision` (the screen output) still advances on any stage, so downstream consumers are unchanged. No hashes; no sim tick as a revision; resets make entries cold. Tests: `geometry_stages` (arithmetic vs the c2c25707 single pass, partial = complete, six header mutations fail it), `render_geometry_stages` (in game, both verifiers), `TAK_GEOMETRY_VERIFY` (every reuse vs a complete rebuild, every local build vs the former single-pass transform, shadow-kept detection vs a copy). Captures identical (168 comparisons). Measured (Experiment 6): in pan/zoom 95% of units are re-placed instead of rebuilt — vertices generated −98%, worker build time −76 to −77%, geometry phase wall −57 to −61%; draw time −17.7% / −16.1% in zoom (material at both sizes), −14 to −20% in pan (every ABBA group, inside pan's spread), −7 to −9% in churn (not material); moving and stationary unchanged within noise. Costs: a local rebuild +7–12% worker time, the key check +28–32% on a pan, geometry memory +18–22% capacity. |
 | E | Split body/shadow invalidation | **verified** | Workstream E (`0af89d63` vocabulary + `shadow_tiles` test, `1979d413` GameView, `71a71e9b` harness + `render_shadow_cache` ctest, `15da2bff` decision pre-pass with pooled block-wise point checks). A silhouette tile is stamped with the unit's exact shadow coverage (`shadowRevision`) and the exact `ShadowPlacement` its points were placed with (`client/shadowtiles.h`), no longer with `revision` (any stage) and the screen pixel: material changes (veterancy, tint, ghost, conjuring fade), emote bob, occlusion line and body-only local rebuilds keep the tile; a placement change keeps it only when every tile point recomputes bit-identical (`sameTilePoints`: whole-pixel translations within a binade; sub-pixel phase, zoom and altitude-lean changes redraw). A local rebuild whose shadow inputs are unchanged (colour atlas, frames of animated textures WITHOUT shadow masks) keeps the silhouette without collecting it (`shadowInputsEqual`, `PieceMeta::animationFrameMasks`); animated masks, shadow flags, pose, corpse, construction and the shadow toggle still invalidate immediately. Tests: `shadow_tiles` (kept ⇔ raster inputs bit-identical under the pre-E expressions, randomized over every cause; ten mutations fail it), `render_shadow_cache` (software renderer, every kept tile = complete re-bake, pre-E kept ⊆ E kept, skipped silhouette = fresh collection; three in-game mutations fail it), GL verifier runs. Measured (Experiment 7, final code vs D + harness): pan-snap kept tiles 0–4% → 37–41%, dirty raster area −41/−43%, `t_shadow_pack` −20.0% / −9.6%, GPU timeline −11.5% (1280×960, material), draw −7.4% / −3.0% (consistent, inside threshold); point-check cost `t_shadow_alloc` +0.065 / +0.21 ms there, the stamp loop 5–14% cheaper elsewhere; veteran, pan, stationary-mixed draw unchanged; captures identical (108 comparisons in the final run). Limit: in most matrix scenes tiles go dirty because the per-frame repack moves them (`owner`/`relocated`, F), so E's reuse shows mainly where slots stay put (pan-snap, veteran). |
-| F | Persistent shadow allocation | **verified** | Workstream F (`3565f3fe` allocator + `shadow_atlas` test, `5febc00f` GameView integration + `render_shadow_atlas[_zoom]` ctests, `6c7b93df` cheap failure path + page-ordered best fit, `ec3df732` / `fbe21589` / `3fd2c8de` all-redraw frames use the former packer). Each unit's silhouette tile keeps a cell of `ShadowAtlasAllocator` (`client/shadowatlas.h`: logical pages → shelves with free span lists, class-height shelves, exact widths, generational handles, occupancy/fragmentation statistics, `validate()`) across frames; `UnitGeom::shadowTile` holds the handle, validated against the cell's recorded entry handle. E's stamp is kept per cell and carried when a cell is reallocated (verdict `Relocated`, never a stranger's pixels); the stamp gained the page. Policy: keep while the tile fits (cell ≤ 1.5× a fresh one); absent cells retained 2 s / 30 frames, evicted first under pressure; forced repack (the former packer, class heights then exact sizes = former slots, so the atlas falls back only where the former code did) for a failed allocation in a fragmented atlas, ≤ once per 60 frames; free repack when ≥ 90% of tiles are redrawn anyway and the atlas is loose; frames where every tile is redrawn anyway (zoom, sub-pixel pan, new phase) use the former packer with exact sizes (the former slots and pixels); bounded migration (≤ 64 tiles/frame) off a sparse last page; empty pages destroyed after 2 s / 60 frames; page size shrinks after 5 s / 120 frames of low demand; more tile area than four pages falls back at once. 4 pages / 2048² / VRAM budget and the whole-frame direct fallback unchanged. Recycled cells cleared with their padding. Captures: identical to E3 in all-redraw scenes (churn, pan, zoom) and whenever slots match (`TAK_SHADOW_REPACK`, 96 comparisons); with persistent cells 1–14 single shadow-edge pixels per frame differ (208 pixels in 49 of 156 frames) — the former packer shows the same differences when only its slots change (raster rounding depends on the cell position; Experiment 8). Measured (Experiment 8): draw −14% to −51% in every reuse scene (stationary-mixed, total10k-visible, moving, pan-snap; both sizes, material), shadow packing −58% to −91%, p99 −50% to −71% in stationary/dense; all-redraw scenes +0.14–0.20 ms `t_shadow_alloc`, draw −0.3% to +3.0% (not material); dense 7680×2160 fallback −27% shadow phase and 64 MiB released. Memory: tracked GPU equal or lower at the end of every timed scene; one extra page (16 MiB) during the battle-sparse battle, whole atlas freed after the view empties. |
+| F | Persistent shadow allocation | **verified** | Workstream F (`3565f3fe` allocator + `shadow_atlas` test, `5febc00f` GameView integration + `render_shadow_atlas[_zoom]` ctests, `6c7b93df` cheap failure path + page-ordered best fit, `ec3df732` / `fbe21589` / `3fd2c8de` all-redraw frames use the former packer, `ce2a3466` page textures created only after a frame fits — the verifier's churn finding). Each unit's silhouette tile keeps a cell of `ShadowAtlasAllocator` (`client/shadowatlas.h`: logical pages → shelves with free span lists, class-height shelves, exact widths, generational handles, occupancy/fragmentation statistics, `validate()`) across frames; `UnitGeom::shadowTile` holds the handle, validated against the cell's recorded entry handle. E's stamp is kept per cell and carried when a cell is reallocated (verdict `Relocated`, never a stranger's pixels); the stamp gained the page. Policy: keep while the tile fits (cell ≤ 1.5× a fresh one); absent cells retained 2 s / 30 frames, evicted first under pressure; forced repack (the former packer, class heights then exact sizes = former slots, so the atlas falls back only where the former code did) for a failed allocation in a fragmented atlas, ≤ once per 60 frames; free repack when ≥ 90% of tiles are redrawn anyway and the atlas is loose; frames where every tile is redrawn anyway (zoom, sub-pixel pan, new phase) use the former packer with exact sizes (the former slots and pixels); bounded migration (≤ 64 tiles/frame) off a sparse last page; empty pages destroyed after 2 s / 60 frames; page size shrinks after 5 s / 120 frames of low demand; more tile area than four pages falls back at once; new pages are placed logically and their textures created only once every tile of the frame is placed, so a frame that fits four pages by area but not by packing creates no texture (no create/destroy churn while it keeps falling back; Experiment 8b). 4 pages / 2048² / VRAM budget and the whole-frame direct fallback unchanged. Recycled cells cleared with their padding. Captures: identical to E3 in all-redraw scenes (churn, pan, zoom) and whenever slots match (`TAK_SHADOW_REPACK`, 96 comparisons); with persistent cells 1–14 single shadow-edge pixels per frame differ (208 pixels in 49 of 156 frames) — the former packer shows the same differences when only its slots change (raster rounding depends on the cell position; Experiment 8). Measured on the final code (Experiment 8b, vs E3): draw −33% / −50% / −33% in stationary-mixed / total10k-visible / moving at 1280×960 (material), −12% in pan-snap 1280×960 and −18% to −32% in the reuse scenes at 7680×2160 (every ABBA group faster, inside that noisier session's thresholds; material in the F3 session, Experiment 8), shadow packing −66% to −91% (material except pan-snap), p99 −58% / −61% in stationary/dense 1280×960; band fix: 30 → 0 page creations per run, frame time unchanged; all-redraw scenes +0.14–0.20 ms `t_shadow_alloc`, draw −0.3% to +3.0% (not material); dense 7680×2160 fallback −27% shadow phase and 64 MiB released. Memory: tracked GPU equal or lower at the end of every timed scene; one extra page (16 MiB) during the battle-sparse battle, whole atlas freed after the view empties. |
 | G | Distant image lookup before generation | not started | `DistantModels::prepare` (`distantmodels.cpp`) runs after `buildUnitGeom` and needs the generated vertices (bounds, source pointer, revision). Entry key: unit id (the geometry entry's generational handle since C), geometry revision, texture tick, source pointer, zoom/scale; 67 ms refresh, 128 bakes/frame, 64-px tiles, 4 × 2048² pages; pages released only when ALL entries expire. Revision changes on every pan (D), so panning re-bakes. |
 | H | Less full-scene vertex copying | not started (partly present) | `GeometrySubmit` (`geometrysubmit.h`) submits batches ≥512 vertices on the `opengl` backend through client arrays, skipping SDL's per-vertex conversion copy, with an optional retained VBO keyed by a caller revision (used by terrain tiles and fog, not bodies). Bodies are still copied every frame: per-unit `UnitGeom::verts` → `bodyVerts_` (`:782`–`:850`) → client-array upload. No ordered command representation. |
 | I | Cost-based work scheduling | not started | `ThreadPool::parallelFor` (`threadpool.h`): fixed 8-item chunks, `minParallel` default 32; the geometry pass dispatches the whole pool for ≥32 visible units whether they are cache hits or misses; shadow prep goes parallel at ≥32768 points; body copy parallel at ≥32 tasks. |
@@ -747,7 +756,8 @@ Policy (presentation clock: the study's fixed clock, wall time in play):
 | Unit not in this frame's atlas | cell retained 2 s and 30 frames, then freed (`shadow_cell_expired`) |
 | Frame's tile area > four full pages | whole-frame direct fallback at once (no packer can fit it); the unused cells expire and their pages go |
 | Allocation fails | absent cells evicted first (`shadow_cell_evicted`); then, if the frame's cells need ≤ 3/4 of the pages (fragmented) and no forced repack in 60 frames: full repack; else a new page (≤ 4, VRAM budget); else full repack |
-| Full repack (`shadow_compactions`) | releaseAll, the former packer with class heights; if that does not fit, the former packer with exact sizes = the former slots, so the atlas falls back to direct shadows only where the former code did; after a failed frame the next goes straight to the exact pass |
+| Full repack (`shadow_compactions`) | releaseAll, the former packer with class heights; if that does not fit, the former packer with exact sizes = the former slots, so the atlas falls back to direct shadows only where the former code did; after a failed frame the next goes straight to the exact pass (the failure mark survives the atlas reset that follows the last page's release) |
+| New page needed (any path) | added to the allocator **logically** (VRAM budget checked for every page added this frame); its GPU target is created only after every tile of the frame is placed (`realizePages`). A frame that does not fit creates no texture and drops its logical pages, so a scene that fits four pages by area but not by packing falls back every frame without creating or destroying a page (pages it held are released once, 2 s after they empty) |
 | EVERY tile of the frame is redrawn anyway (new, other coverage, size, zoom, scale or sub-pixel phase of the placement) | free repack with the former packer and exact sizes (`shadow_compactions_free`): O(1) per tile, the former slots and pixels, one page clear |
 | ≥ 90% are redrawn anyway and the atlas is loose (tiles on more pages than a ~80% pack needs, or ≥ 1/4 of shelf area free) | free repack (class heights first) |
 | Every cell would fit in half of the other pages for 2 s / 60 frames | bounded migration: ≤ 64 tiles per frame from the last page into lower pages (`shadow_migrated`); its absent cells freed |
@@ -1829,6 +1839,8 @@ walking units' pose changes.
 
 **Timing (forced completion; spread = max−min over a label's four run means;
 material = beyond `max(2 × spread, 2%)`; groups = B−A per ABBA group).**
+(The reuse scenes were re-timed on the final code after the verifier's
+review: Experiment 8b. The rows below are kept as history.)
 Reuse scenes from the F3 session (code `6c7b93df`; F4–F6 change only frames
 where every tile is redrawn, and F3 vs F6 counters for these scenes agree
 within 0.1% of dirty tiles); 1280×960 also from the earlier, quieter F2
@@ -1907,6 +1919,107 @@ in most scenes). A 30-frame compaction cooldown was tried against the
 battle's extra page (`takclient-F7-candidate`): average pages in the battle
 1.56 → 1.28 at 1280×960, unchanged at 7680×2160 and in pan-snap — not
 adopted (shelf fragmentation, not the cooldown, decides it).
+
+### Experiment 8b — workstream F verifier fix: no page churn when a frame does not fit (2026-10-16)
+
+The verifier rejected F6 for one defect (page churn in the packing-failure
+band, see Rejected experiments) and noted that the reuse-scene timings came
+from F3, not the final code. Fix: `ce2a3466` (pages placed logically,
+textures created after the frame fits; failure mark kept across the atlas
+reset; verifier totals `page_allocs` / `alloc_failures`; ctest
+`render_shadow_atlas_band`). Clients: **F6** (`takclient-F6-candidate`, code
+of `3fd2c8de` = `b74f499e`), **F8** (`takclient-F8-candidate`, code of
+`ce2a3466`), **E3** (pre-F). Build-o2, offscreen EGL, SDL `opengl`, RTX 5070
+Laptop; `RENDER_ENV` confirmed renderer and output for every run (1280×960 →
+world 1075×888, 7680×2160 → world 7475×2088, zoom clamp 0.73 as before);
+client pinned to CPUs 16–23, 900 frames after 300 warmup, forced completion,
+ABBA × 2, `--wait-quiet 60`. Load per run is in each `results.json`: load
+average 2.2–17.2, 0–12 `legion_scenario` processes (on CPUs 4–15),
+pinned-CPU busy fraction 0.17–0.28, no run contended. A code-review agent ran
+short `build-o2` ctests unpinned at 20:05–20:06 — during the capture runs
+only (captures are deterministic pixel comparisons, not timed); an earlier
+timing attempt that overlapped its first test run was discarded and
+restarted. Output (not in Git): `~/tak-tmp/render-opt/runs/f8-*`, script
+`f/timing8.sh`, log `f/timing8.log`.
+
+```sh
+T="python3 tools/render_benchmark.py --data ~/tak_data --cpus 16-23 --wait-quiet 60"
+# the verifier's repro (counters) and its control
+KEYS="shadow_page_allocs shadow_page_releases shadow_fallback shadow_compactions" VCPUS=16-23 \
+  python3 ~/tak-tmp/render-opt/f/srun.py <client> stationary-mixed normal 400 WARM=0 TAK_SHADOW_PAGE_MAX=720   # and =768
+$T --a $F6 --b $F8 --output runs/f8-band --scenes stationary-mixed --env TAK_SHADOW_PAGE_MAX=720 --repeats 2
+$T --a $F6 --b $F8 --output runs/f8-captures-normal --scenes stationary-mixed pan-snap churn --capture-only
+$T --a $F6 --b $F8 --output runs/f8-captures-uhd --sizes uhd --scenes stationary-mixed pan-snap --capture-only
+$T --a $E3 --b $F8 --output runs/f8-normal --scenes stationary-mixed total10k-visible moving pan-snap --repeats 2
+$T --a $E3 --b $F8 --output runs/f8-uhd --sizes uhd --scenes stationary-mixed total10k-visible moving pan-snap --repeats 2
+python3 ~/tak-tmp/render-opt/f/ftable.py runs/f8-normal/results.json runs/f8-uhd/results.json
+```
+
+**The defect and the fix (counters).**
+
+| Run | Page textures created | Pages released | Fallback frames | Repack attempts per frame | Shadow-atlas GPU bytes |
+|---|---:|---:|---:|---:|---:|
+| verifier repro, F6, `PAGE_MAX=720`, 400 frames | ~16 | ~12 | all | 0.97 | 4 × 2 MiB pages, cycling |
+| same, F8 | **0** | **0** | all | 0.98 | 0 |
+| band benchmark (900 frames per run), F6 | 30 per run (every run) | 30 per run | all | 0.99 | 7.9 MiB at the last frame |
+| band benchmark, F8 | **0** (every run) | **0** | all | 1.00 | 0 (tracked GPU 111.9 → 104.0 MiB) |
+| control `PAGE_MAX=768` (fits), F6 and F8 | 0.01/frame (equal) | 0 | 1% | 0.10 | equal (dirty tiles 255.04 both) |
+
+In the band one former-packer attempt per frame remains, as before F (the
+pre-F code ran the packer every frame too). Band timing F6 → F8: draw mean
+10.849 → 10.842 ms (−0.1%, A/A spread 2.5%), p99 16.83 → 15.93 (−5.4%,
+spread 15%), t_shadow_alloc +1.6% (spread 8.2%): no material difference —
+on this GPU four 720² texture creations every 2 s are not a measurable
+hitch; the fix is about VRAM churn (this machine's flicker history), not
+frame time.
+
+**Correctness of the fix.** `render_shadow_atlas_band` (software renderer,
+288-px pages: a still army in the band for 80 frames, then a sparse view):
+77 failed frames, `page_allocs=3`, `page_releases=0`, every kept tile equal to
+a re-bake; with the old immediate page creation patched back in it reports
+`page_allocs=47 page_releases=44` and fails. `render_shadow_atlas`
+reproduces the verifier's F6 numbers exactly (kept=9493, compactions=6,
+migrated=12, page_releases=1, validated=169). `render_shadow_atlas_zoom`,
+`render_shadow_cache`, `shadow_atlas`, `shadow_tiles` pass. GL verifier
+(`TAK_SHADOW_CACHE_VERIFY`) on F8: battle-sparse 1280×960 700 frames with
+300 ms windows (834,299 tiles, 514,991 kept, 3 page releases, no mismatch)
+and stationary-mixed with `PAGE_MAX=768` (2 failed frames then active,
+538,375 tiles, 470,130 kept, no mismatch). Captures F6 vs F8 identical in all
+60 comparisons (stationary-mixed, pan-snap, churn at 1280×960;
+stationary-mixed, pan-snap at 7680×2160; 12 frames each). World hashes
+identical A vs B in every run. `ctest -L quick` 382/382 on build-o2 at
+`ce2a3466`. Release `takclient` builds without the new debug strings (the
+two fallback reason strings are plain constants, as before).
+
+**Reuse scenes on the final code (F8 vs E3)** — replaces the F3-session
+numbers as the record of the final code (Experiment 8's F2/F3 rows stay as
+history).
+
+| Scene, size | Draw mean ms E3 → F8 | Δ | Groups | Material (thr) | Draw p99 | t_shadow_pack | GPU timeline |
+|---|---:|---:|---|---|---:|---:|---:|
+| stationary-mixed 1280 | 5.966 → 4.012 | **−32.8%** | −32.6, −32.9 | yes (11.5%) | 13.34 → 5.60 (−58%, yes) | −78.6% (yes) | −41.7% (yes) |
+| total10k-visible 1280 | 40.140 → 20.276 | **−49.5%** | −50.0, −49.0 | yes (6.2%) | 67.43 → 26.40 (−61%, yes) | −90.5% (yes) | −49.5% (yes) |
+| moving 1280 | 9.399 → 6.277 | **−33.2%** | −32.9, −33.5 | yes (11.2%) | 13.15 → 12.63 (n.s.) | −66.2% (yes) | −36.5% (yes) |
+| pan-snap 1280 | 4.409 → 3.890 | −11.8% | −13.0, −10.3 | no (28.6%) | 9.82 → 4.94 (n.s., spread 35%) | −34.5% (n.s.) | −11.9% (n.s.) |
+| stationary-mixed 7680×2160 | 8.326 → 6.804 | −18.3% | −19.9, −16.7 | no (25.5%) | 14.60 → 12.56 (n.s.) | −68.3% (yes) | −18.2% (n.s.) |
+| total10k-visible 7680×2160 | 60.619 → 59.785 | −1.4% | −1.4, −1.4 | no (3.2%) | 67.91 → 67.84 | −26.5% (yes; fallback frames) | −1.0% |
+| moving 7680×2160 | 13.193 → 8.915 | −32.4% | −27.2, −37.3 | no (38.2%) | 17.10 → 16.29 (n.s.) | −67.3% (yes) | −37.5% (n.s.) |
+| pan-snap 7680×2160 | 10.973 → 8.495 | −22.6% | −28.1, −16.9 | no (40.1%) | 16.82 → 13.72 (n.s.) | −43.3% (n.s.) | −30.1% (yes) |
+
+Counters equal the Experiment 8 table (kept/dirty tiles per frame within
+0.1%; e.g. stationary-mixed 1280 1742.0 kept / 83.0 dirty, pan-snap 7680×2160
+1714.5 / 226.9); `shadow_page_allocs` 0 in every reuse scene; tracked GPU
+at the last frame equal except total10k-visible 7680×2160 (306.5 → 242.5 MiB,
+as before); peak RSS equal or lower. Readings: every ABBA group of every
+reuse scene is faster on the final code; draw time is material at 1280×960
+in stationary-mixed, total10k-visible and moving; at 7680×2160 this session
+was noisier (A/A spreads 6–20%) and the −18% to −32% draw differences stay
+inside its thresholds, while shadow packing is material in stationary-mixed
+and moving. The earlier F3 session measured the same scenes at 7680×2160 as
+material (−22% to −34%, Experiment 8), on code whose reuse frames match the
+final code's (same counters). Composite cost still rises where tiles spread
+over more pages (pan-snap 7680×2160 +0.14 ms, moving 7680×2160 +0.07 ms,
+stationary-mixed 7680×2160 +0.04 ms; material).
 
 ## Known limitations and unsupported paths
 
@@ -2084,6 +2197,18 @@ adopted (shelf fragmentation, not the cooldown, decides it).
   frame changes appearance (the direct path darkens folds twice), so it was
   not done; a multi-pass atlas (re-using pages between composite batches) is
   the option left.
+- **F: the packing-failure band.** A frame whose tiles fit four pages by
+  area but not by the former packer falls back to direct shadows, as before
+  F, and makes one former-packer attempt per frame (as the pre-F code did:
+  `shadow_compactions` ≈ 1 per frame there). Since `ce2a3466` such a frame
+  creates no page texture; pages held from before are released 2 s after
+  they empty and stay released while the view stays in the band. (Before
+  `ce2a3466` every failed repack created pages up to four, so they were
+  destroyed and recreated every ~2 s — the verifier's finding; Experiment 8b.)
+  At the real 2048² page size this band is dense 7680×2160 views of roughly
+  6–9k visible units; no matrix scene sits in it, so it is reproduced with
+  `TAK_SHADOW_PAGE_MAX=720` on stationary-mixed and covered by the
+  `render_shadow_atlas_band` ctest.
 - F's cell padding is only the shelf height class (≤ 12.5%) and the open
   tail of each shelf: measured cell area 1.11–1.25× the tile area (incl. retained
   cells) and shelf free space 0.17–1.67 M px at 1280×960 (`f/study4.txt`).
@@ -2107,7 +2232,7 @@ adopted (shelf fragmentation, not the cooldown, decides it).
   steps; play: wall time). Not yet part of a CPU/GPU budget beyond the existing
   VRAM cap (J).
 - F has no backend-specific code. Exercised on SDL `opengl` (offscreen EGL,
-  RTX 5070) and the SDL software renderer (static SDL2 2.32, the two
+  RTX 5070) and the SDL software renderer (static SDL2 2.32, the three
   `render_shadow_atlas` ctests); Direct3D/Metal/GLES not run.
 
 ## Rejected experiments
@@ -2213,6 +2338,16 @@ adopted (shelf fragmentation, not the cooldown, decides it).
   the battle-sparse battle): average pages in the battle 1.56 → 1.28 at
   1280×960, unchanged at 7680×2160 and in pan-snap; shelf fragmentation, not
   the cooldown, decides it. Kept at 60.
+- **F, defect found by the verifier and fixed (`ce2a3466`): page churn in
+  the packing-failure band.** Up to F6 a full repack created GPU pages as it
+  went; in a frame that fits four pages by area but not by packing it
+  created pages up to four, failed and released every cell, so 2 s later the
+  empty-page rule destroyed the pages and the next repack created them again
+  (stationary-mixed, `TAK_SHADOW_PAGE_MAX=720`: ~16 page creations and ~12
+  releases in 400 frames, every frame falling back). Fixed by placing on
+  logical pages and creating textures only after the frame fits
+  (Experiment 8b). The matrix scenes never entered that band, so Experiment
+  8 did not see it.
 - **F, invalid control (recorded so it is not repeated):** comparing the
   former packer at 1024-px pages with itself at 2048 px to show slot
   dependence; pan-snap and churn overflow four 1024² pages and fall back to
