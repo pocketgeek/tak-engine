@@ -713,13 +713,14 @@
                 // After a frame whose repack did not fit, go straight to the former
                 // packer (its cost, not three attempts) until a frame fits again.
                 const bool failedLast=pol.failFrame && pol.failFrame+1==frame;
-                bool compact=atlasTimes.repack || failedLast, freeRepack=false;
+                bool compact=atlasTimes.repack || failedLast, freeRepack=false, allRedrawn=false;
                 if (!compact && work.size()>=16 && dirtyAnyway==work.size()) {
                     // Every tile is redrawn wherever it sits (zoom, a sub-pixel pan, a reset):
-                    // the former packer's cursor places them in O(1) each, cheaper than
-                    // best-fitting every outgrown tile, and the clears become one page
-                    // clear. Nothing kept is lost.
-                    compact=freeRepack=true;
+                    // the former packer with exact sizes places them in O(1) each, cheaper
+                    // than best-fitting every outgrown tile, on exactly the former slots
+                    // (same page size: such frames draw the former pixels), and the clears
+                    // become one page clear. Nothing kept is lost.
+                    compact=freeRepack=allRedrawn=true;
                 } else if (!compact && work.size()>=16 && dirtyAnyway*10>=work.size()*9) {
                     // Loose: tiles spread over more pages than a tight pack needs
                     // (former packer ~80% full), or a quarter of the shelf area free.
@@ -833,7 +834,7 @@
                         }
                         return true;
                     };
-                    if (!(!atlasTimes.repack && !failedLast && pass(true)) && !pass(false)) {
+                    if (!(!atlasTimes.repack && !failedLast && !allRedrawn && pass(true)) && !pass(false)) {
                         pol.failFrame=frame;
                         atlas.releaseAll();
                         std::fill(shadowCellStampValid_.begin(),shadowCellStampValid_.end(),uint8_t(0));
