@@ -20,6 +20,7 @@ legion_situation_r10-87332_legion 48
 legion_situation_r10-87332_retail 48
 legion_gen1_route_61923_o1 46
 legion_movement_orders_trolls_maze 46
+legion_chainplane 46
 legion_gen1_route_61923_o0 44
 placement 43
 mapgen_ports 42
@@ -126,6 +127,8 @@ legion_scenario_corner-1x48 6
 legion_scenario_sbend 6
 legion_squadformation 6
 legion_farroom 6
+legion_chains 6
+legion_chainschurn 6
 legion_movement_orders_trolls 5
 legion_scenario_opentangent 5
 legion_scenario_refreshchurn-control 5
