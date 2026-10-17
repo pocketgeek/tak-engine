@@ -5,8 +5,10 @@
 #include "footprint.h"
 #include "idmap.h"
 #include "retailplacement.h"
+#include "simpool.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <climits>
 #include <deque>
@@ -16,6 +18,7 @@
 #include <map>
 #include <queue>
 #include <set>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -68,6 +71,15 @@ uint64_t gFieldBytes=0;         // LegionNavigator::setFieldBytesForTest (proces
 // 32 in the game, chosen by measurement: docs/legion-10000-progress.md 7.6).
 int gSectorShift=5;
 bool gHierRoutes=true;   // LegionNavigator::setHierarchicalRoutesForTest (process-wide; true in the game)
+// Stage 9 (LegionNavigator::setParallelForTest; process-wide, never hashed, never a decision): run the parallel planning
+// jobs even with no SimPool workers (inline), and shuffle their execution order with random delays (seed; 0 off). A debug
+// build also reads the seed from TAK_LEGION_PAR_PERTURB, so whole-game harnesses (--mpai) can perturb too.
+bool gParForce=false;
+#ifndef NDEBUG
+uint64_t gParPerturb=std::getenv("TAK_LEGION_PAR_PERTURB")?std::strtoull(std::getenv("TAK_LEGION_PAR_PERTURB"),nullptr,10):0;
+#else
+uint64_t gParPerturb=0;
+#endif
 // A per-tick budget of the registration / plane-build / awareness work, divided by the test divisor.
 uint64_t budgetOf(uint64_t units) {return std::max<uint64_t>(1,units/gBudgetDiv);}
 #ifndef NDEBUG
@@ -1513,7 +1525,7 @@ struct LegionNavigator::Impl {
         if(k==3) {
             // An idle landed flyer lifts for an allied group (see liftFlyers):
             // no obstacle to its fields, still one to anyone else's.
-            const Unit* f=w.unit(soft[c]);
+            const Unit* f=w.unitNoRepair(soft[c]);   // the same unit as unit(); never writes (stage 9: read on SimPool workers)
             return !f||!w.allied(f->player,int(uint32_t(command>>32)));
         }
         if(k!=2)return k!=0;
@@ -4845,12 +4857,14 @@ struct LegionNavigator::Impl {
         }
     }
 #endif
-    // The key of chain node n's tile on plane p (attachNode): its identity, the boundary -- aimed (toward the exit of the
-    // region it leads into) or exact (`est`, the route's own values at the seeds) -- the region's soft levels as the
-    // route's command sees them, and the route's mover corridors that reach the region. `spent` gains the cells read
-    // (the work attachNode charges).
+    // The key of chain node n's tile on plane p (attachNode; the stage-9 prefetch computes the same key ahead of the
+    // serial pass, tilePrefetch): its identity, the boundary -- aimed (toward the exit of the region it leads into) or
+    // exact (`est`, the route's own values at the seeds) -- the region's soft levels as the route's command sees them,
+    // and the route's mover corridors that reach the region. `spent` gains the cells read (the work attachNode
+    // charges), so both callers count alike. `reuse`: a key prepared for the same route and region on the same soft
+    // grid (preparedKey): its soft levels and corridors are taken instead of scanning the region, with the same work.
     void tileKey(Tile& key,const Field& f,const ChainNode& n,const Plane& p,bool aimed,const std::vector<int>& seed,
-                 const std::vector<uint32_t>& est,uint64_t& spent) const {
+                 const std::vector<uint32_t>& est,uint64_t& spent,const Tile* reuse=nullptr) const {
         const int W=width();
         const int len=n.exit.len;
         key.plane=p.hier.id();key.sector=n.s;key.region=n.r;key.gen=n.gen;key.ngen=n.ngen;key.exit=n.exit;key.onA=n.onA;
@@ -4878,6 +4892,12 @@ struct LegionNavigator::Impl {
         } else key.boundary=est;   // exact: the route's own values (kUnreached: no seed there)
         // The region's soft levels as this route's command sees them (the soft rule is part of the key).
         const auto r=p.hier.rect(n.s);
+        if(reuse) {
+            key.soft=reuse->soft;key.avoid=reuse->avoid;
+            const uint64_t cells=uint64_t(r[2]-r[0])*uint64_t(r[3]-r[1]);
+            spent+=(softCellCount?cells:0)+cells*uint64_t(f.avoid.size());
+            return;
+        }
         // The region's origins, read from the sector's own labels (regionAt's lookup without its sector division).
         const std::vector<uint16_t>& lab=p.hier.sector(n.s).label;
         const int sh=p.hier.shift();
@@ -4931,7 +4951,16 @@ struct LegionNavigator::Impl {
         }
         spent+=uint64_t(len);
         Tile key;
-        tileKey(key,f,n,p,n.parent>=0&&all,seed,est,spent);
+        const Tile* ready=preparedKey(f,idx,n);
+        tileKey(key,f,n,p,n.parent>=0&&all,seed,est,spent,ready);
+#ifndef NDEBUG
+        if(gVerify&&ready) {
+            Tile full;uint64_t work=0;
+            tileKey(full,f,n,p,n.parent>=0&&all,seed,est,work);
+            if(!full.sameKey(key))verifyFail("a prepared chain key differs from the region scan");
+        }
+#endif
+        if(ready)++par.keysReused;
         uint64_t built=0;
         const std::shared_ptr<Tile> tile=tileFor(std::move(key),p,built,f.seedKey);
         spent+=built;
@@ -5111,7 +5140,7 @@ struct LegionNavigator::Impl {
             }
         key.builtFor=asker;
         auto t=std::make_shared<Tile>(std::move(key));
-        built+=buildTile(*t,p);
+        built+=takePrefetched(*t,p);
         t->seq=++tileSeq;t->lastUse=w.tickCounter_;
         t->unref=&C.unref;C.unref.insert({t->lastUse,t->seq,t.get()});   // unreferenced until a chain attaches it
         bucket.push_back(t);
@@ -5121,9 +5150,103 @@ struct LegionNavigator::Impl {
         acct.tileBytesPeak=std::max(acct.tileBytesPeak,tileBytes);
         return t;   // the caller evicts (evictTiles) once it has attached it, so the new tile is never the victim
     }
-    uint64_t buildTile(Tile& t,const Plane& p) {
-        const int W=width(),sh=p.hier.shift(),K=1<<sh;
-        const auto r=p.hier.rect(t.sector);
+    // ---- stage 9: tile builds on the SimPool -------------------------------------------------------------------------
+    // A tile's values are a pure function of its key and of the plane's geometry round its sector (buildTile reads the
+    // legality of the sector's origins and of the ring of origins round it, and the sector's region labels, both of the
+    // generations the key names). So the builds a field pass is about to ask for can run beside it, on the SimPool's
+    // workers, without deciding anything. Before a class's jobs are served (serveFields, ahead of navDrr), tilePrefetch
+    // picks the jobs of the class's window in key order and the chain regions each will attach next, while their
+    // predicted attach work fits a job's two slices and the quota left (a deterministic choice from the sim state,
+    // before any job runs), computes each region's key as attachNode does (tileKey) and, for a key that neither the
+    // cache nor the staging holds, starts a job with IMMUTABLE inputs of its own: the key, the seed cells and a copy
+    // of the legality and labels it reads (TileJob). The jobs run asynchronously while the serial pass goes on; nothing
+    // is published by a worker. The serial pass runs exactly as before and consumes by exact identity:
+    //  * attachNode takes the prepared key's soft levels and corridors instead of scanning the region again when they
+    //    cannot differ -- the same route (serial), node (region, generations, portal) and soft grid (softSerial, bumped by
+    //    every stamp change) -- and charges the same work the scan would;
+    //  * where tileFor misses its cache it takes the staged tile whose whole key is equal (takePrefetched), waiting for
+    //    its job if a worker is still on it (helping with jobs nobody has started meanwhile), and charges the work its
+    //    build counted.
+    // The cache, the budgets, the eviction order and every decision see the same keys and tiles, in the same order,
+    // with the same work, prepared or not, on any number of workers and in any completion order: a slower machine waits
+    // at the consumer (and at the pass's end, where every job is joined before the pool serves anything else); it never
+    // publishes a different subset. A staged tile nobody took stays staged for kStagedTicks passes, then is dropped --
+    // never inserted, never counted in NavBytes; a prepared key is good for its pass only. A speculation that missed (an
+    // aimed region whose seeds turned out unreachable, a node re-resolved on new geometry) costs only the wasted job.
+    // With no workers nothing is prepared (it would only add the serial pass's own work), unless a test forces it
+    // (setParallelForTest). Under TAK_LEGION_VERIFY every reused key is recomputed and every staged tile rebuilt from the
+    // plane, and both compared.
+    static constexpr uint32_t kStagedTicks=3;
+    static constexpr size_t kPrefetchMax=256;   // regions picked per pass at most
+    // A tile build's immutable inputs and its output (one per staged key; heap-held, so a worker's slot never moves).
+    struct TileJob {
+        Tile tile;                          // the key; the job writes values, maxValue
+        std::vector<int> seeds;             // the seed cell of each pair of the run (map cells)
+        std::array<int,4> rect{};           // the sector's cells [x0, x1) x [z0, z1)
+        int bx0=0,bz0=0,bw=0,bh=0;          // the legality copy's box: the rect grown by one origin, clipped to the map
+        std::vector<uint8_t> legal;         // bw x bh
+        std::vector<uint16_t> label;        // the sector's K x K region labels
+        int shift=5,W=0,footX=1,footZ=1;
+        uint64_t work=0;
+        std::atomic<uint8_t> ready{0};
+    };
+    struct Staged {
+        std::unique_ptr<TileJob> job;       // job->tile holds the key
+        size_t plane=0;uint32_t tick=0;
+        bool built=false,taken=false;
+        uint64_t field=0;size_t node=0;uint64_t soft=0;   // the prepared key: route serial, chain node, softSerial
+    };
+    std::vector<Staged> staged;
+    std::map<uint64_t,std::vector<size_t>> stagedIndex;   // staged builds by hash
+    std::map<std::pair<uint64_t,size_t>,size_t> keyIndex; // this pass's prepared keys by (route serial, node)
+    std::vector<TileJob*> running;                        // the open asynchronous batch's jobs (chunk k: running[k])
+    std::function<void(size_t,unsigned)> runJob;          // its chunk function (valid until joinTiles)
+    ParallelStats par;                                    // observation only (LegionNavigator::parallelStats)
+    bool prefetching() {return gParForce||w.simPool().workers()>0;}
+    uint64_t parPerturbSerial=0;
+    // The perturbation hook (tests): chunk k runs job order[k] after a random delay, so jobs complete in a different
+    // order on every run.
+    std::vector<size_t> perturbOrder(size_t n,uint64_t& h) {
+        std::vector<size_t> order(n);
+        for(size_t i=0;i<n;++i)order[i]=i;
+        h=mix(gParPerturb,++parPerturbSerial);
+        for(size_t i=n;i>1;--i) {h=mix(h,i);std::swap(order[i-1],order[size_t(h%i)]);}
+        return order;
+    }
+    static void perturbDelay(uint64_t h,size_t k) {
+        const uint64_t r=mix(h,k);
+        if(r&1)std::this_thread::sleep_for(std::chrono::microseconds(r>>1&255));
+    }
+    // Run job(i) for every i in [0, n) on the SimPool and wait (a fork-join; inline with no workers, or while an
+    // asynchronous batch is open). Each job writes only its own slot; the caller reads the slots after the join.
+    template<class Job> void parallelJobs(size_t n,Job&& job) {
+        if(!n)return;
+        ++par.forks;par.jobs+=n;
+        using Clock=std::chrono::steady_clock;
+        const auto t0=Clock::now();
+        std::atomic<uint64_t> byWorkers{0};
+        if(!gParPerturb)
+            w.simPool().forChunks(n,1,2,[&](size_t k,size_t,size_t,unsigned slot) {
+                job(k);
+                if(slot)byWorkers.fetch_add(1,std::memory_order_relaxed);
+            });
+        else {
+            uint64_t h=0;
+            const auto order=perturbOrder(n,h);
+            w.simPool().forChunks(n,1,0,[&](size_t k,size_t,size_t,unsigned slot) {
+                perturbDelay(h,k);job(order[k]);
+                if(slot)byWorkers.fetch_add(1,std::memory_order_relaxed);
+            });
+        }
+        par.forkNs+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-t0).count());
+        par.workerJobs+=byWorkers.load();
+    }
+    // The tile build itself, over accessors for the legality and the sector's labels: buildTile reads the plane,
+    // runJobs a job's copies. One body, so both give the same values and the same work.
+    template<class Legal,class Label>
+    static uint64_t tileCore(Tile& t,const std::array<int,4>& r,int sh,int W,int footX,int footZ,
+                             const std::vector<int>& seeds,Legal&& legalAt,Label&& labelAt) {
+        const int K=1<<sh;
         t.values.assign(size_t(K)*size_t(K),kUnreached);
         std::vector<uint8_t> level(size_t(K)*size_t(K),0);
         for(const auto& [c,l]:t.soft)level[c]=l;
@@ -5132,13 +5255,16 @@ struct LegionNavigator::Impl {
         std::map<int,uint32_t> seedAt;
         for(int i=0;i<t.exit.len;++i) {
             if(t.boundary[size_t(i)]==kUnreached)continue;
-            const int c=t.onA?p.hier.farCell(t.exit,i):p.hier.nearCell(t.exit,i);
+            const int c=seeds[size_t(i)];
             seedAt[c]=t.boundary[size_t(i)];
             open.push({t.boundary[size_t(i)],c});
         }
-        const std::vector<uint16_t>& lab=p.hier.sector(t.sector).label;   // regionAt within the sector, without its division
         auto inRegion=[&](int x,int z) {
-            return x>=r[0]&&z>=r[1]&&x<r[2]&&z<r[3]&&!lab.empty()&&lab[size_t(((z-r[1])<<sh)|(x-r[0]))]==t.region;
+            return x>=r[0]&&z>=r[1]&&x<r[2]&&z<r[3]&&labelAt(size_t(((z-r[1])<<sh)|(x-r[0])))==t.region;
+        };
+        auto step=[&](int x,int z,int dx,int dz) {   // Impl::step: diagonal steps clear both orthogonal neighbours
+            if(!legalAt(x+dx,z+dz))return false;
+            return !dx||!dz||(legalAt(x+dx,z)&&legalAt(x,z+dz));
         };
         uint64_t work=0;
         while(!open.empty()) {
@@ -5151,18 +5277,218 @@ struct LegionNavigator::Impl {
             for(const auto& dir:kDirections) {
                 ++work;
                 const int nx=x+dir[0],nz=z+dir[1];
-                if(!inRegion(nx,nz)||!step(p,x,z,dir[0],dir[1]))continue;
+                if(!inRegion(nx,nz)||!step(x,z,dir[0],dir[1]))continue;
                 const size_t lc=size_t(((nz-r[1])<<sh)|(nx-r[0]));
                 const uint32_t base=dir[0]&&dir[1]?kDiagonal:kOrthogonal;
                 const uint32_t lv=level[lc];
                 const uint32_t nd=d+(lv==2?base*kSoftFactor:lv==1?base*kSoftNear:base)+
-                    (t.avoid.empty()?0:corridorChargeOf(t.avoid,nx,nz,p.footX,p.footZ,base));
+                    (t.avoid.empty()?0:corridorChargeOf(t.avoid,nx,nz,footX,footZ,base));
                 if(nd<d||nd>=kUnreached)continue;   // out of range (an exact seed near kUnreached)
                 if(nd<t.values[lc]) {t.values[lc]=nd;open.push({nd,nz*W+nx});}
             }
         }
         for(const uint32_t v:t.values)if(v!=kUnreached)t.maxValue=std::max(t.maxValue,v);
         return work;
+    }
+    static void runTileJob(TileJob& j) {
+        j.work=tileCore(j.tile,j.rect,j.shift,j.W,j.footX,j.footZ,j.seeds,
+            [&](int x,int z) {
+                const int lx=x-j.bx0,lz=z-j.bz0;
+                return lx>=0&&lz>=0&&lx<j.bw&&lz<j.bh&&j.legal[size_t(lz)*size_t(j.bw)+size_t(lx)]!=0;
+            },
+            [&](size_t lc) {return j.label.empty()?hier::kNoRegion:j.label[lc];});
+        j.ready.store(1,std::memory_order_release);
+    }
+    // The seed cells of tile key t on plane p (the portal's other side).
+    static std::vector<int> tileSeeds(const Tile& t,const Plane& p) {
+        std::vector<int> seeds(size_t(t.exit.len));
+        for(int i=0;i<t.exit.len;++i)seeds[size_t(i)]=t.onA?p.hier.farCell(t.exit,i):p.hier.nearCell(t.exit,i);
+        return seeds;
+    }
+    // A job for key t on plane p: its inputs copied, so it reads nothing the serial pass may change meanwhile.
+    std::unique_ptr<TileJob> tileJob(Tile&& t,const Plane& p) const {
+        auto j=std::make_unique<TileJob>();
+        j->seeds=tileSeeds(t,p);
+        j->rect=p.hier.rect(t.sector);j->shift=p.hier.shift();j->W=width();j->footX=p.footX;j->footZ=p.footZ;
+        j->label=p.hier.sector(t.sector).label;
+        j->bx0=std::max(0,j->rect[0]-1);j->bz0=std::max(0,j->rect[1]-1);
+        const int bx1=std::min(width(),j->rect[2]+1),bz1=std::min(height(),j->rect[3]+1);
+        j->bw=bx1-j->bx0;j->bh=bz1-j->bz0;
+        j->legal.resize(size_t(j->bw)*size_t(j->bh));
+        for(int z=0;z<j->bh;++z)
+            std::copy_n(p.legal.begin()+ptrdiff_t(size_t(j->bz0+z)*size_t(width())+size_t(j->bx0)),j->bw,
+                        j->legal.begin()+ptrdiff_t(size_t(z)*size_t(j->bw)));
+        j->tile=std::move(t);
+        return j;
+    }
+    // Join the open batch: every job finished, the pool free again.
+    void joinTiles() {
+        if(running.empty())return;
+        using Clock=std::chrono::steady_clock;
+        const auto t0=Clock::now();
+        w.simPool().finish();
+        par.joinNs+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-t0).count());
+        running.clear();runJob=nullptr;
+        par.workerJobs+=asyncByWorkers.exchange(0);
+    }
+    std::atomic<uint64_t> asyncByWorkers{0};   // jobs of the open batch a worker ran (NAVPAR)
+    // The seeds of chain node n and the route's values there (attachNode reads them the same way).
+    void chainSeeds(const Field& f,const ChainNode& n,const Plane& p,std::vector<int>& seed,std::vector<uint32_t>& est,
+                    bool& all) const {
+        const int W=width(),len=n.exit.len;
+        seed.resize(size_t(len));est.resize(size_t(len));all=true;
+        for(int i=0;i<len;++i) {
+            seed[size_t(i)]=n.onA?p.hier.farCell(n.exit,i):p.hier.nearCell(n.exit,i);
+            est[size_t(i)]=f.cellAt(seed[size_t(i)]%W,seed[size_t(i)]/W);
+            all&=est[size_t(i)]!=kUnreached;
+        }
+    }
+    template<class Ref> void tilePrefetch(const std::vector<Ref>& ring,size_t window,uint64_t budget) {
+        if(!prefetching()||ring.empty())return;
+        joinTiles();   // one batch at a time: the previous class's jobs finish first
+        std::vector<TileJob*> fresh;
+        size_t seen=0,picked=0;
+        uint64_t total=0;
+        for(const Ref& ref:ring) {
+            if(seen++>=window||picked>=kPrefetchMax||total>=budget)break;
+            const Field* fp=ref.job->f;
+            if(!fp||fp->kind!=KindChain||fp->done)continue;
+            const Field& f=*fp;
+            const Plane& p=planes[size_t(f.plane)];
+            if(p.epoch!=epoch)continue;   // plane() rebuilds it before the pass serves the job: new generations
+            // The attach work this job's visits can spend: two slices (navDrr's deficit cap) or the quota left.
+            uint64_t mine=0;
+            const uint64_t allow=std::min<uint64_t>(2*uint64_t(NavBudget::kSlice),budget-total);
+            for(size_t idx=f.chainNext;idx<f.chainTransit&&mine<allow&&picked<kPrefetchMax;++idx) {
+                const ChainNode& c=f.chain[idx];
+                const int other=c.onA?c.exit.b:c.exit.a;
+                if(!p.hier.built(c.s)||p.hier.gen(c.s)!=c.gen||!p.hier.built(other)||p.hier.gen(other)!=c.ngen)break;
+                // A region leading into the destination's field is exact, its boundary that field's values: final only
+                // once the field is done. One leading into another region is aimed if its seeds are reached (speculated).
+                if(c.parent<0&&!f.dDone)continue;
+                std::vector<int> seed;std::vector<uint32_t> est;bool all=true;
+                chainSeeds(f,c,p,seed,est,all);
+                uint64_t cost=uint64_t(c.exit.len);
+                Tile key;
+                tileKey(key,f,c,p,c.parent>=0,seed,est,cost);
+                key.hash=tileHash(key);
+                ++picked;
+                Staged st;
+                st.plane=size_t(f.plane);st.tick=w.tickCounter_;st.field=f.serial;st.node=idx;st.soft=softSerial;
+                const auto r=p.hier.rect(c.s);
+                if(!cached(key)&&stagedAt(key)<0) {
+                    cost+=8*uint64_t(r[2]-r[0])*uint64_t(r[3]-r[1]);   // a build's relaxations, at most
+                    st.built=true;
+                    stagedIndex[key.hash].push_back(staged.size());
+                    st.job=tileJob(std::move(key),p);
+                    fresh.push_back(st.job.get());
+                } else {
+                    st.job=std::make_unique<TileJob>();st.job->tile=std::move(key);
+                }
+                keyIndex.insert_or_assign(std::make_pair(st.field,st.node),staged.size());
+                staged.push_back(std::move(st));
+                mine+=cost;
+            }
+            total+=mine;
+        }
+        par.picked+=picked;
+        {
+            uint64_t bytes=0;
+            for(const Staged& st:staged)if(st.built)bytes+=st.job->tile.bytes()+uint64_t(st.job->tile.values.capacity())*4;
+            par.stagedBytesPeak=std::max(par.stagedBytesPeak,bytes);
+        }
+        if(fresh.empty())return;
+        par.staged+=fresh.size();++par.forks;par.jobs+=fresh.size();
+        running=std::move(fresh);
+        if(!gParPerturb) runJob=[this](size_t k,unsigned slot) {runTileJob(*running[k]);if(slot)asyncByWorkers.fetch_add(1,std::memory_order_relaxed);};
+        else {
+            uint64_t h=0;
+            auto order=perturbOrder(running.size(),h);
+            runJob=[this,order=std::move(order),h](size_t k,unsigned slot) {
+                perturbDelay(h,k);runTileJob(*running[order[k]]);
+                if(slot)asyncByWorkers.fetch_add(1,std::memory_order_relaxed);
+            };
+        }
+        w.simPool().start(running.size(),runJob);
+    }
+    bool cached(const Tile& key) const {
+        const TileCache& C=correction(key)?corrTiles:staticTiles;
+        const auto at=C.map.find(key.hash);
+        if(at==C.map.end())return false;
+        for(const auto& t:at->second)if(t->sameKey(key))return true;
+        return false;
+    }
+    long stagedAt(const Tile& key) const {
+        const auto at=stagedIndex.find(key.hash);
+        if(at==stagedIndex.end())return -1;
+        for(const size_t i:at->second)if(staged[i].built&&staged[i].job->tile.sameKey(key))return long(i);
+        return -1;
+    }
+    // attachNode: this pass's prepared key for node idx of route f, if its soft levels and corridors are those the scan
+    // would find now (same route, the node unchanged since, no stamp change since); nullptr otherwise.
+    const Tile* preparedKey(const Field& f,size_t idx,const ChainNode& n) const {
+        const auto at=keyIndex.find({f.serial,idx});
+        if(at==keyIndex.end())return nullptr;
+        const Staged& st=staged[at->second];
+        const Tile& k=st.job->tile;
+        if(st.soft!=softSerial||k.sector!=n.s||k.region!=n.r||k.gen!=n.gen||k.ngen!=n.ngen||k.onA!=n.onA||
+           !(k.exit.a==n.exit.a&&k.exit.b==n.exit.b&&k.exit.start==n.exit.start&&k.exit.len==n.exit.len&&k.exit.side==n.exit.side))
+            return nullptr;
+        return &k;
+    }
+    uint64_t buildTile(Tile& t,const Plane& p) const {
+        const std::vector<uint16_t>& lab=p.hier.sector(t.sector).label;
+        return tileCore(t,p.hier.rect(t.sector),p.hier.shift(),width(),p.footX,p.footZ,tileSeeds(t,p),
+                        [&](int x,int z) {return legal(p,x,z);},
+                        [&](size_t lc) {return lab.empty()?hier::kNoRegion:lab[lc];});
+    }
+    // tileFor's build of a missing tile: the staged build of the same key if there is one (waiting for its job, and
+    // helping with unstarted ones meanwhile), with the work its build counted; else the build here.
+    uint64_t takePrefetched(Tile& t,const Plane& p) {
+        const long i=stagedAt(t);
+        if(i<0||staged[size_t(i)].taken||&planes[staged[size_t(i)].plane]!=&p) {
+            const uint64_t work=buildTile(t,p);
+            if(prefetching())par.serialWork+=work;
+            return work;
+        }
+        Staged& st=staged[size_t(i)];
+        TileJob& j=*st.job;
+        if(!j.ready.load(std::memory_order_acquire)) {
+            using Clock=std::chrono::steady_clock;
+            const auto t0=Clock::now();
+            ++par.waits;
+            for(unsigned spins=0;!j.ready.load(std::memory_order_acquire);++spins)
+                if(!w.simPool().help())spins<4096?(void)0:std::this_thread::yield();
+            par.waitNs+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-t0).count());
+        }
+        st.taken=true;
+        t.values=std::move(j.tile.values);t.maxValue=j.tile.maxValue;
+        ++par.used;par.usedWork+=j.work;
+#ifndef NDEBUG
+        if(gVerify) {
+            Tile check=t;check.values.clear();check.maxValue=0;
+            const uint64_t work=buildTile(check,p);
+            if(work!=j.work||check.values!=t.values||check.maxValue!=t.maxValue)verifyFail("a staged tile differs from its serial build");
+        }
+#endif
+        return j.work;
+    }
+    // The end of a field pass: the batch joined; prepared keys and taken tiles leave the staging, and so do the tiles
+    // nobody took in kStagedTicks passes.
+    void dropStaged() {
+        joinTiles();
+        keyIndex.clear();
+        size_t keep=0;
+        for(size_t i=0;i<staged.size();++i) {
+            Staged& st=staged[i];
+            if(!st.built||st.taken)continue;
+            if(w.tickCounter_-st.tick+1>=kStagedTicks) {++par.unused;par.unusedWork+=st.job->work;continue;}
+            if(keep!=i)staged[keep]=std::move(st);
+            ++keep;
+        }
+        staged.resize(keep);
+        stagedIndex.clear();
+        for(size_t i=0;i<staged.size();++i)stagedIndex[staged[i].job->tile.hash].push_back(i);
     }
     void evictTiles() {
         for(TileCache* C:{&staticTiles,&corrTiles}) {
@@ -5949,7 +6275,7 @@ struct LegionNavigator::Impl {
         // ---- the jobs: every unfinished field a group waits on, by serial ----
         std::map<uint64_t,FieldJob> jobs;
         liveJobs=&jobs;
-        struct Clear {std::map<uint64_t,FieldJob>*& p;~Clear() {p=nullptr;}} clearJobs{liveJobs};
+        struct Clear {std::map<uint64_t,FieldJob>*& p;Impl& I;~Clear() {p=nullptr;I.dropStaged();}} clearJobs{liveJobs,*this};
         auto subscribe=[&](Group& g,const std::shared_ptr<Field>& sp,NavClass c) {
             Field* f=sp.get();
             auto& j=jobs[f->serial];
@@ -6123,6 +6449,10 @@ struct LegionNavigator::Impl {
             }
             if(ring.empty())continue;
             settle();
+            // Stage 9: the tiles this class's chain jobs will attach next, built ahead on the SimPool (exact: see
+            // tilePrefetch). The DRR replaces a job that leaves its window by the next oldest, so twice the window.
+            tilePrefetch(ring,2*(refreshClass(cls)?NavBudget::kRefreshWindow:NavBudget::kWindow),
+                         refreshClass(cls)?std::min(budget,refresh):budget);
             navDrr(ring,refreshClass(cls)?NavBudget::kRefreshWindow:NavBudget::kWindow,navCursor[ci],budget,
                    refreshClass(cls)?&refresh:nullptr,[&](Ref& ref,uint64_t allow)->NavVisit {
                 FieldJob& j=*ref.job;
@@ -11686,6 +12016,8 @@ LegionNavigator::Stats LegionNavigator::stats() const {
     s.livePoints=impl_->points.size();s.liveFields=impl_->liveFields();
     return s;
 }
+LegionNavigator::ParallelStats LegionNavigator::parallelStats() const {return impl_->par;}
+void LegionNavigator::setParallelForTest(bool force,uint64_t perturbSeed) {gParForce=force;gParPerturb=perturbSeed;}
 NavAccounting LegionNavigator::accounting() const {
     NavAccounting a=impl_->acct;
     impl_->windowMax(a);

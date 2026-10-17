@@ -17,6 +17,10 @@
 //                               the stage-6 sector-size experiment; default 32; changes behaviour and hashes)
 //       [--no-hier-routes]     (test: every route the window build, LegionNavigator::setHierarchicalRoutesForTest --
 //                               the scheduler's load tests; changes behaviour and hashes)
+//       [--par-force] [--par-perturb SEED]   (test: stage 9's parallel planning jobs run even with no SimPool workers,
+//                               and in a shuffled order with random delays, LegionNavigator::setParallelForTest --
+//                               never changes behaviour or hashes; a NAVPAR line on stderr reports the jobs)
+//       [--navpar]             (the NAVPAR line without --scale)
 //       [--check <baseline.json> [--step ID] [--cumulative] [--ratchet "reason"]]
 //       [--baseline <baseline.json> --reason "text" [--since ID]]
 //       [--exit-table <old.json|run.jsonl>] [--anchor <anchor.json>]
@@ -169,6 +173,9 @@ struct Options {
     bool pauseAll = false;     // --pause-all: setPauseAllForTest (stage 5: the consumers on paused routes)
     int sector = 0;            // --sector K: setSectorSizeForTest (stage 6: the sector-size experiment; 0: the game's 32)
     bool hierRoutes = true;    // --no-hier-routes: setHierarchicalRoutesForTest(false) (every route the window build)
+    bool parForce = false;     // --par-force: setParallelForTest (stage 9: the parallel jobs inline with no workers)
+    uint64_t parPerturb = 0;   // --par-perturb SEED: ... in a shuffled order with random delays (0 off)
+    bool navpar = false;       // --navpar: the NAVPAR line without --scale (it comes with --scale and the --par-* flags)
     uint32_t dumpUnits = 0;    // --dump-units N: a DUMP line per live unit on stderr every N ticks (observation only)
     std::vector<int> trace; // --trace IDS: decision trace lines on stderr for these members (debug build)
     std::vector<std::string> traceGroups;   // ... and whole groups, by name (a token that is not a number)
@@ -191,6 +198,7 @@ void emit(const std::string& line) {
         "       [--workers|--serial|--both-exec] [--window R] [--data <install>] [--json] [--ticks N]\n"
         "       [--no-observer] [--neutral] [--wanderers on|off] [--w9] [--scale] [--trace ID[,ID...]] [--no-vertex-probe]\n"
         "       [--budget-div N] [--field-bytes N] [--pause-all] [--sector K] [--no-hier-routes] [--dump-units N]\n"
+        "       [--par-force] [--par-perturb SEED] [--navpar]\n"
         "       [--check B.json [--step ID] [--cumulative] [--ratchet REASON]] [--baseline B.json --reason TEXT\n"
         "       [--since ID]] [--exit-table OLD] [--anchor A.json]   (gate modes: tools/legion_check.py)\n", why);
     std::exit(2);
@@ -1005,6 +1013,18 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     }
     r.hash = w.stateHash();
     r.digest = mix(r.digest, r.hash);
+    if (nav && (scale || opt.navpar || opt.parForce || opt.parPerturb)) {   // stage 9's parallel jobs (stderr only: not the same on every worker count)
+        const auto p = nav->parallelStats();
+        std::fprintf(stderr, "NAVPAR %s offset=%d %s picked=%llu staged=%llu forks=%llu jobs=%llu used=%llu unused=%llu "
+                     "used_work=%llu unused_work=%llu keys_reused=%llu serial_work=%llu waits=%llu staged_bytes_peak=%llu "
+                     "plane_rows=%llu worker_jobs=%llu fork_ms=%.1f wait_ms=%.1f join_ms=%.1f\n", s.name.c_str(), offset,
+                     serial ? "serial" : "workers", (unsigned long long)p.picked, (unsigned long long)p.staged,
+                     (unsigned long long)p.forks, (unsigned long long)p.jobs, (unsigned long long)p.used,
+                     (unsigned long long)p.unused, (unsigned long long)p.usedWork, (unsigned long long)p.unusedWork,
+                     (unsigned long long)p.keysReused, (unsigned long long)p.serialWork, (unsigned long long)p.waits,
+                     (unsigned long long)p.stagedBytesPeak, (unsigned long long)p.planeRows, (unsigned long long)p.workerJobs,
+                     double(p.forkNs) / 1e6, double(p.waitNs) / 1e6, double(p.joinNs) / 1e6);
+    }
     if (o) {
         r.keys = o->report();
         if (approach) approach->report(r.keys, mode == PathfindingMode::Legion);
@@ -1193,6 +1213,9 @@ int main(int argc, char** argv) {
         else if (a == "--pause-all") opt.pauseAll = true;
         else if (a == "--sector") opt.sector = std::atoi(value().c_str());
         else if (a == "--no-hier-routes") opt.hierRoutes = false;
+        else if (a == "--par-force") opt.parForce = true;
+        else if (a == "--navpar") opt.navpar = true;
+        else if (a == "--par-perturb") opt.parPerturb = std::strtoull(value().c_str(), nullptr, 10);
         else if (a == "--dump-units") opt.dumpUnits = uint32_t(std::max(0L, std::atol(value().c_str())));
         else if (a == "--ticks") {
             const long v = std::atol(value().c_str());
@@ -1243,6 +1266,7 @@ int main(int argc, char** argv) {
     tak::sim::LegionNavigator::setPauseAllForTest(opt.pauseAll);
     if (opt.sector) tak::sim::LegionNavigator::setSectorSizeForTest(opt.sector);
     tak::sim::LegionNavigator::setHierarchicalRoutesForTest(opt.hierRoutes);
+    if (opt.parForce || opt.parPerturb) tak::sim::LegionNavigator::setParallelForTest(opt.parForce, opt.parPerturb);
     if (gate && opt.neutral) usage("--neutral and a gate mode do not combine");
     for (size_t i = 0; i + 1 < opt.gateArgs.size(); ++i)
         if (opt.gateArgs[i] == "--ratchet" && opt.gate != "check") usage("--ratchet goes with --check");

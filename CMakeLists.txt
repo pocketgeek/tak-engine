@@ -749,6 +749,13 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios --data "${TAK_TEST_DATA}")
   set_tests_properties(legion_route_paused PROPERTIES LABELS legion TIMEOUT 900
                        ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
+  # Legion 10,000 stage 9: the parallel planning jobs (chain tiles built beside the serial pass, plane rows in
+  # chunks) decide nothing: the state hash and every observer key equal the serial run at 1, 3 and 7 workers, with
+  # the jobs' completion order perturbed, and forced inline under TAK_LEGION_VERIFY (tools/legion_parallel_test.py).
+  add_test(NAME legion_parallel
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_parallel_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
+  set_tests_properties(legion_parallel PROPERTIES LABELS legion TIMEOUT 1800 SKIP_RETURN_CODE 77)
   # Legion 10,000 stage 7: crossing walkers no longer stand in the knots they form (scatter-400: 400 single
   # walkers to unrelated destinations, serial and workers; tools/legion_traffic_test.py).
   add_test(NAME legion_traffic

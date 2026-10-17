@@ -287,6 +287,21 @@ public:
     // the most of one navigator tick window), the deterministic NavBytes and the scheduler's service
     // record. See sim/navbudget.h.
     NavAccounting accounting() const;
+    // Legion 10,000 stage 9 (observation only, never hashed, and NOT the same on every worker count: with no
+    // SimPool workers nothing is prepared): the planning work run on the SimPool beside the serial pass. picked: chain
+    // regions whose key was prepared ahead; staged: tile builds started as asynchronous jobs; forks / jobs: batches and
+    // fork-joins started and the jobs in them; used / unused: staged tiles the serial pass took / that were dropped,
+    // with the work (relaxations) of each; keysReused: chain keys attachNode took prepared instead of scanning the
+    // region; serialWork: tile builds the serial pass still ran itself while prefetching was on; waits: takes that
+    // found their job still running; stagedBytesPeak: the most staged tile bytes at once; planeRows: plane
+    // first-build rows built in parallel row chunks. Wall clock (never read by the sim): jobs a worker (not the sim
+    // thread) ran, and the sim thread's time in fork-joins, in waits for a staged tile and in joining a batch (ns).
+    struct ParallelStats {
+        uint64_t picked=0,staged=0,forks=0,jobs=0,used=0,unused=0,usedWork=0,unusedWork=0,keysReused=0,serialWork=0,waits=0;
+        uint64_t stagedBytesPeak=0,planeRows=0;
+        uint64_t workerJobs=0,forkNs=0,waitNs=0,joinNs=0;
+    };
+    ParallelStats parallelStats() const;
     // Test hook: is a footprint origin legal on the static plane Legion plans
     // on (terrain, features, structures; mobile bodies excluded)?
     bool staticLegal(const Unit&,int originX,int originZ);
@@ -409,6 +424,11 @@ public:
     // chains). Off, every route is the window build, as before stage 6: the scheduler's load tests
     // (legion_sched_load) keep the continuous quota load they were written for. Changes behaviour and hashes.
     static void setHierarchicalRoutesForTest(bool on);
+    // Test hook (process-wide; default off, 0): stage 9's parallel planning jobs (tile builds ahead of the serial
+    // pass, plane first-build row chunks) run even with no SimPool workers (`force`, inline), and their execution
+    // order is shuffled with random delays (`perturbSeed`, 0 off; debug builds also read TAK_LEGION_PAR_PERTURB).
+    // Never changes behaviour or hashes: the jobs decide nothing and are consumed in a fixed order.
+    static void setParallelForTest(bool force,uint64_t perturbSeed);
     // Debug builds (NDEBUG undefined): check derived indexes and the Stats
     // after every tick() (aborts on a mismatch). A no-op in release. A debug
     // build starts with it on when TAK_LEGION_VERIFY is set (the only
