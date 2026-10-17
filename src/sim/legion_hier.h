@@ -300,8 +300,21 @@ public:
     Tree search(const std::vector<int>& goals, const std::vector<int>& targets, const uint8_t* legal, size_t maxExpand,
                 uint64_t& work) {
         Tree t;
-        struct Best { uint64_t cost; int entry; uint64_t from; uint32_t via; bool done; };
-        std::map<uint64_t, Best> best;
+        // Per-region search state in a pool, a sector's regions in one run (allocated when the search first meets
+        // the sector, generation-stamped, so nothing is cleared between searches). A reference into the pool is
+        // never held across a call that may add a sector.
+        if (++stamp_ == 0) { std::fill(sStamp_.begin(), sStamp_.end(), 0u); stamp_ = 1; }
+        if (sStamp_.size() != sectors_.size()) { sStamp_.assign(sectors_.size(), 0u); sBase_.assign(sectors_.size(), 0u); }
+        pool_.clear();
+        auto slot = [&](uint64_t k) -> Best& {
+            const int s = int(k >> 16);
+            if (sStamp_[size_t(s)] != stamp_) {
+                sStamp_[size_t(s)] = stamp_;
+                sBase_[size_t(s)] = uint32_t(pool_.size());
+                pool_.resize(pool_.size() + sectors_[size_t(s)].regions.size());
+            }
+            return pool_[sBase_[size_t(s)] + (k & 0xffff)];
+        };
         using Item = std::pair<uint64_t, uint64_t>;   // (cost, key)
         std::priority_queue<Item, std::vector<Item>, std::greater<Item>> open;
         for (const int g : goals) {
@@ -311,9 +324,10 @@ public:
             const uint16_t r = regionAt(g);
             if (r == kNoRegion) continue;
             const uint64_t k = key(s, r);
-            auto [it, fresh] = best.try_emplace(k, Best{0, g, ~0ull, ~0u, false});
-            if (!fresh && g < it->second.entry) it->second.entry = g;   // the lowest goal origin of a region
-            if (fresh) open.push({0, k});
+            Best& b = slot(k);
+            if (b.seen) { if (g < b.entry) b.entry = g; continue; }   // the lowest goal origin of a region
+            b = Best{0, g, ~0ull, ~0u, false, true};
+            open.push({0, k});
         }
         std::vector<uint64_t> want;
         for (const int c : targets) {
@@ -329,7 +343,7 @@ public:
         while (!open.empty() && left > 0 && t.expanded < maxExpand) {
             const auto [cost, k] = open.top();
             open.pop();
-            Best& b = best[k];
+            Best& b = slot(k);
             if (b.done || cost != b.cost) continue;
             b.done = true;
             ++t.expanded;
@@ -345,25 +359,22 @@ public:
                 const int here = midCell(p, s), there = midCell(p, ns);
                 const uint64_t c = cost + octile(ex, ez, here % W_, here / W_) + 5;
                 const uint64_t nk = key(ns, nr);
-                auto [it, fresh] = best.try_emplace(nk, Best{c, there, k, h, false});
-                if (!fresh) {
-                    if (it->second.done || c > it->second.cost || (c == it->second.cost && k >= it->second.from)) return;
-                    it->second = Best{c, there, k, h, false};
-                }
+                Best& n = slot(nk);
+                if (n.seen && (n.done || c > n.cost || (c == n.cost && k >= n.from))) return;
+                n = Best{c, there, k, h, false, true};
                 open.push({c, nk});
             });
         }
         t.complete = left == 0;
         // Each wanted region's chain toward the goals, in key order; a chain stops at a region already in the tree.
         for (const uint64_t k0 : want) {
-            const auto found = best.find(k0);
-            if (found == best.end() || !found->second.done) continue;
+            if (sStamp_[size_t(k0 >> 16)] != stamp_ || !slot(k0).seen || !slot(k0).done) continue;
             std::vector<uint64_t> chain;
-            for (uint64_t k = k0; k != ~0ull && !t.index.count(k); k = best[k].from) chain.push_back(k);
+            for (uint64_t k = k0; k != ~0ull && !t.index.count(k); k = slot(k).from) chain.push_back(k);
             // Add from the goal end so a parent always precedes its children.
             for (size_t i = chain.size(); i-- > 0;) {
                 const uint64_t k = chain[i];
-                const Best& b = best[k];
+                const Best& b = slot(k);
                 Node n;
                 n.s = int(k >> 16);
                 n.r = uint16_t(k & 0xffff);
@@ -457,6 +468,11 @@ private:
         (which == 0 ? S.eastDirty : S.southDirty) = false;
     }
 
+    // The search's scratch (never state): a region's best entry so far.
+    struct Best { uint64_t cost = 0; int entry = -1; uint64_t from = ~0ull; uint32_t via = ~0u; bool done = false, seen = false; };
+    std::vector<Best> pool_;
+    std::vector<uint32_t> sStamp_, sBase_;
+    uint32_t stamp_ = 0;
     int W_ = 0, H_ = 0, shift_ = 5, K_ = 32, SW_ = 0, SH_ = 0;
     PlaneId id_;
     std::vector<Sector> sectors_;
