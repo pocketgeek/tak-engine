@@ -1,0 +1,231 @@
+// Unit broad phase (workstream L, client/unitindex.h).
+//
+//  1. UnitGrid::query against brute force: every unit inside the rectangle is
+//     returned, results are strictly ascending, every finite result lies within one
+//     cell of the rectangle, non-finite positions are always returned -- over
+//     uniform, clustered, coincident, collinear, negative, huge (cell growth),
+//     empty and single-unit populations and degenerate/inverted/outside/cell-edge
+//     rectangles.
+//  2. The GameView cull through anchorBandToWorld: for random zooms, offsets,
+//     viewports and per-unit lifts within LiftBounds, the units passing the exact
+//     float test `!(sx < L || sx > R || sy < T || sy > B)` are all candidates, and
+//     filtering the candidates gives the full scan's accepted list, in order. Units
+//     are placed ulps either side of each edge.
+//  3. Randomized movement: a population that moves and churns, rebuilt as a new
+//     snapshot every step, against a full scan.
+
+#include "client/unitindex.h"
+
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
+#include <random>
+#include <vector>
+
+using tak::render::UnitGrid;
+using tak::render::LiftBounds;
+using tak::render::anchorBandToWorld;
+
+namespace {
+
+int failures = 0;
+#define CHECK(cond, ...) do { if (!(cond)) { ++failures; std::printf("FAIL %s:%d: ", __FILE__, __LINE__); \
+    std::printf(__VA_ARGS__); std::printf("\n"); if (failures > 20) std::exit(1); } } while (0)
+
+struct Population { std::vector<float> x, z; };
+
+void checkQuery(const Population& p, const UnitGrid& g, float l, float t, float r, float b,
+                std::vector<uint64_t>& bits, const char* what) {
+    std::vector<uint32_t> out;
+    g.query(l, t, r, b, bits, out);
+    for (size_t k = 1; k < out.size(); ++k) CHECK(out[k - 1] < out[k], "%s: not ascending", what);
+    std::vector<char> in(p.x.size(), 0);
+    for (uint32_t i : out) { CHECK(i < p.x.size(), "%s: index out of range", what); if (i < in.size()) in[i] = 1; }
+    const bool nanRect = std::isnan(l) || std::isnan(t) || std::isnan(r) || std::isnan(b);
+    for (size_t i = 0; i < p.x.size(); ++i) {
+        const float x = p.x[i], z = p.z[i];
+        const bool finite = std::isfinite(x) && std::isfinite(z);
+        const bool inside = finite && x >= l && x <= r && z >= t && z <= b;
+        if (!finite || nanRect) CHECK(in[i], "%s: unit %zu (non-finite or NaN rect) missing", what, i);
+        if (inside) CHECK(in[i], "%s: unit %zu at %.9g,%.9g inside [%.9g,%.9g]x[%.9g,%.9g] missing",
+                          what, i, double(x), double(z), double(l), double(r), double(t), double(b));
+        // Tight to one cell around the rectangle (whole cells are returned).
+        if (in[i] && finite && !nanRect && l <= r && t <= b) {
+            const float c = g.cell() * 1.0001f;
+            CHECK(x >= l - c && x <= r + c && z >= t - c && z <= b + c,
+                  "%s: unit %zu at %.9g,%.9g more than a cell outside the rectangle", what, i, double(x), double(z));
+        }
+    }
+    for (uint64_t w : bits) CHECK(w == 0, "%s: scratch bits not cleared", what);
+}
+
+void testGrid(std::mt19937& rng) {
+    std::vector<uint64_t> bits;
+    std::vector<uint32_t> scratch;
+    std::uniform_real_distribution<float> u01(0.0f, 1.0f);
+    const float inf = std::numeric_limits<float>::infinity(), nan = std::numeric_limits<float>::quiet_NaN();
+    for (int trial = 0; trial < 400; ++trial) {
+        Population p;
+        const int kind = trial % 9;
+        const size_t n = kind == 7 ? 0 : kind == 8 ? 1 : 1 + rng() % 3000;
+        for (size_t i = 0; i < n; ++i) {
+            float x = 0, z = 0;
+            switch (kind) {
+            case 0: x = u01(rng) * 10240; z = u01(rng) * 10240; break;                       // uniform map
+            case 1: x = 5000 + (u01(rng) - 0.5f) * 300; z = 7000 + (u01(rng) - 0.5f) * 200; break;  // cluster
+            case 2: x = 1234.5f; z = 4321.25f; break;                                       // coincident
+            case 3: x = u01(rng) * 20000; z = 512.0f; break;                                // collinear
+            case 4: x = -3000 + u01(rng) * 2000; z = -50 - u01(rng) * 700; break;             // negative
+            case 5: x = (u01(rng) - 0.5f) * 4.0e6f; z = (u01(rng) - 0.5f) * 3.0e5f; break;    // huge: cell growth
+            case 6: x = float(rng() % 41) * 256.0f; z = float(rng() % 41) * 256.0f; break;   // exact cell edges
+            default: x = u01(rng) * 10240; z = u01(rng) * 10240; break;
+            }
+            if (trial % 13 == 5 && i % 97 == 3) x = (i & 1) ? nan : inf;                   // never produced; still safe
+            p.x.push_back(x); p.z.push_back(z);
+        }
+        UnitGrid g;
+        g.build(p.x, p.z, scratch);
+        CHECK(g.size() == n, "size");
+        CHECK(g.width() <= UnitGrid::kMaxSide && g.height() <= UnitGrid::kMaxSide, "grid too large");
+        for (int q = 0; q < 40; ++q) {
+            float l, t, r, b;
+            const int qk = q % 10;
+            if (qk < 4 && n) {   // around a unit, possibly degenerate
+                const size_t i = rng() % n;
+                const float w = qk == 0 ? 0.0f : u01(rng) * 2000, h = qk == 0 ? 0.0f : u01(rng) * 1500;
+                l = p.x[i] - w * u01(rng); t = p.z[i] - h * u01(rng); r = l + w; b = t + h;
+                if (qk == 1 && std::isfinite(p.x[i])) { l = r = p.x[i]; t = b = p.z[i]; }
+            } else if (qk == 4) {   // cell edges, one ulp either side
+                l = std::nextafter(float(rng() % 40) * 256.0f, (rng() & 1) ? inf : -inf);
+                t = std::nextafter(float(rng() % 40) * 256.0f, (rng() & 1) ? inf : -inf);
+                r = l + 256.0f * float(rng() % 6); b = t + 256.0f * float(rng() % 6);
+            } else if (qk == 5) { l = -1e9f; t = -1e9f; r = 1e9f; b = 1e9f; }              // everything
+            else if (qk == 6) { l = 1e8f; t = 1e8f; r = 2e8f; b = 2e8f; }                  // outside
+            else if (qk == 7) { l = 900; r = 100; t = 0; b = 500; }                        // inverted
+            else if (qk == 8) { l = -inf; t = -inf; r = inf; b = inf; }
+            else if (qk == 9 && q % 20 == 9) { l = nan; t = 0; r = 10; b = 10; }
+            else { l = (u01(rng) - 0.2f) * 12000; t = (u01(rng) - 0.2f) * 12000; r = l + u01(rng) * 4000; b = t + u01(rng) * 3000; }
+            checkQuery(p, g, l, t, r, b, bits, "grid");
+        }
+    }
+}
+
+// GameView's unit cull, in the same float expression order (gameview_render.cpp).
+bool exactCull(float x, float z, float liftX, float liftY, float offX, float offY, float zm,
+               float L, float T, float R, float B) {
+    const float sx = (x - offX) * zm - liftX * zm;
+    const float sy = (z - offY) * zm - liftY * zm;
+    return !(sx < L || sx > R || sy < T || sy > B);
+}
+
+void testCull(std::mt19937& rng) {
+    std::uniform_real_distribution<float> u01(0.0f, 1.0f);
+    std::vector<uint64_t> bits;
+    std::vector<uint32_t> scratch, out;
+    size_t accepted = 0, edge = 0;
+    for (int trial = 0; trial < 1500; ++trial) {
+        const float zm = trial % 7 == 0 ? 0.05f + u01(rng) * 0.2f : 0.2f + u01(rng) * 3.8f;
+        const int mvw = 300 + int(rng() % 7400), winH = 200 + int(rng() % 2000);
+        const float offX = (u01(rng) - 0.1f) * 12000, offY = (u01(rng) - 0.1f) * 12000;
+        const float L = -160, T = -260, R = float(mvw + 160), B = float(winH + 120);
+        // Lift bounds as GameView builds them: [0, (top - datum + 1) * scale], the
+        // scales possibly negative or zero (debug TAK_HSCALE/TAK_HSCALEX).
+        const float above = float(rng() % 256) + 1.0f;
+        const float sy = trial % 11 == 0 ? -0.5f : trial % 5 == 0 ? 0.0f : 0.5f;
+        const float sxs = trial % 3 == 0 ? 0.25f : trial % 17 == 0 ? -0.3f : 0.0f;
+        const LiftBounds lift{std::min(0.0f, above * sxs), std::max(0.0f, above * sxs),
+                              std::min(0.0f, above * sy), std::max(0.0f, above * sy)};
+        Population p;
+        std::vector<float> lx, ly;
+        const size_t n = 200 + rng() % 1500;
+        for (size_t i = 0; i < n; ++i) {
+            const float liftX = lift.minX + (lift.maxX - lift.minX) * ((i % 5 == 0) ? float(i % 2) : u01(rng));
+            const float liftY = lift.minY + (lift.maxY - lift.minY) * ((i % 7 == 0) ? float(i % 2) : u01(rng));
+            float x, z;
+            if (i % 3 == 0) {
+                // On an edge of the band: solve for the edge, then step a few ulps.
+                const float ex = (i % 2 ? L : R) / zm + offX + liftX;
+                const float ez = ((i / 2) % 2 ? T : B) / zm + offY + liftY;
+                x = ex; z = ez;
+                const int steps = int(rng() % 9) - 4;
+                for (int s = 0; s < std::abs(steps); ++s) x = std::nextafter(x, steps > 0 ? 1e30f : -1e30f);
+                if (i % 6 == 0) z = offY + (T + u01(rng) * (B - T)) / zm + liftY;   // on the x edge only
+                ++edge;
+            } else {
+                x = offX + (L - 300 + u01(rng) * (R - L + 600)) / zm;
+                z = offY + (T - 300 + u01(rng) * (B - T + 600)) / zm;
+            }
+            p.x.push_back(x); p.z.push_back(z); lx.push_back(liftX); ly.push_back(liftY);
+        }
+        UnitGrid g;
+        g.build(p.x, p.z, scratch);
+        const auto rect = anchorBandToWorld(L, T, R, B, offX, offY, zm, lift);
+        g.query(rect.left, rect.top, rect.right, rect.bottom, bits, out);
+        std::vector<char> cand(n, 0);
+        for (uint32_t i : out) cand[i] = 1;
+        std::vector<uint32_t> full, indexed;
+        for (size_t i = 0; i < n; ++i)
+            if (exactCull(p.x[i], p.z[i], lx[i], ly[i], offX, offY, zm, L, T, R, B)) {
+                full.push_back(uint32_t(i));
+                // The rectangle itself must hold the unit (not just its grid cell).
+                CHECK(p.x[i] >= rect.left && p.x[i] <= rect.right && p.z[i] >= rect.top && p.z[i] <= rect.bottom,
+                      "cull: unit %zu passes the exact test outside the world rectangle", i);
+                CHECK(cand[i], "cull: unit %zu passes the exact test but is no candidate (zoom %.6g, lift %.6g/%.6g)",
+                      i, double(zm), double(lx[i]), double(ly[i]));
+            }
+        for (uint32_t i : out)
+            if (exactCull(p.x[i], p.z[i], lx[i], ly[i], offX, offY, zm, L, T, R, B)) indexed.push_back(i);
+        CHECK(full == indexed, "cull: filtered candidates differ from the full scan");
+        accepted += full.size();
+    }
+    // A zoom that is not positive and finite: every unit is a candidate.
+    Population p{{1, 2, 3}, {4, 5, 6}};
+    UnitGrid g;
+    g.build(p.x, p.z, scratch);
+    for (float zm : {0.0f, -1.0f, std::numeric_limits<float>::infinity()}) {
+        const auto rect = anchorBandToWorld(-160, -260, 900, 800, 0, 0, zm, LiftBounds{});
+        g.query(rect.left, rect.top, rect.right, rect.bottom, bits, out);
+        CHECK(out.size() == 3, "degenerate zoom must return every unit");
+    }
+    CHECK(accepted > 10000 && edge > 10000, "cull test exercised too little (%zu accepted, %zu on edges)", accepted, edge);
+}
+
+void testMovement(std::mt19937& rng) {
+    std::uniform_real_distribution<float> u01(0.0f, 1.0f);
+    std::vector<uint64_t> bits;
+    std::vector<uint32_t> scratch, out;
+    Population p;
+    for (int i = 0; i < 4000; ++i) { p.x.push_back(u01(rng) * 10240); p.z.push_back(u01(rng) * 10240); }
+    UnitGrid g;   // one grid object reused across snapshots, as a ring slot is
+    for (int step = 0; step < 300; ++step) {
+        for (size_t i = 0; i < p.x.size(); ++i) {
+            p.x[i] += (u01(rng) - 0.5f) * 12.0f; p.z[i] += (u01(rng) - 0.5f) * 12.0f;
+            if (rng() % 500 == 0) { p.x[i] = u01(rng) * 10240; p.z[i] = u01(rng) * 10240; }   // teleport / respawn
+        }
+        if (step % 10 == 0) {   // churn: deaths and spawns change the live list
+            const size_t kill = rng() % 50;
+            for (size_t k = 0; k < kill && !p.x.empty(); ++k) {
+                const size_t i = rng() % p.x.size();
+                p.x.erase(p.x.begin() + long(i)); p.z.erase(p.z.begin() + long(i));
+            }
+            for (size_t k = 0; k < kill; ++k) { p.x.push_back(u01(rng) * 10240); p.z.push_back(u01(rng) * 10240); }
+        }
+        g.build(p.x, p.z, scratch);
+        const float cx = 5120 + 4000 * std::sin(float(step) * 0.05f), cz = 5120 + 3000 * std::cos(float(step) * 0.031f);
+        checkQuery(p, g, cx - 700, cz - 500, cx + 700, cz + 500, bits, "movement");
+        checkQuery(p, g, cx - 4000, cz - 2000, cx + 4000, cz + 2000, bits, "movement wide");
+    }
+}
+
+}  // namespace
+
+int main() {
+    std::mt19937 rng(20261017);
+    testGrid(rng);
+    testCull(rng);
+    testMovement(rng);
+    if (failures) { std::printf("unit_index_test: %d failures\n", failures); return 1; }
+    std::printf("unit_index_test: PASS\n");
+    return 0;
+}

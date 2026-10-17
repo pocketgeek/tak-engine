@@ -1699,6 +1699,12 @@ if(TAK_BUILD_CLIENT)
     add_executable(shadow_atlas_test tools/shadow_atlas_test.cpp)
     target_include_directories(shadow_atlas_test PRIVATE src)
     add_test(NAME shadow_atlas COMMAND shadow_atlas_test)
+    # Unit broad phase (workstream L): grid queries are supersets of brute force, in
+    # ascending order; the band-to-world rectangle keeps every unit the renderer's
+    # exact float cull accepts, edges included; randomized movement and churn.
+    add_executable(unit_index_test tools/unit_index_test.cpp)
+    target_include_directories(unit_index_test PRIVATE src)
+    add_test(NAME unit_index COMMAND unit_index_test)
     add_executable(geometrysubmit_test tools/geometrysubmit_test.cpp)
     target_include_directories(geometrysubmit_test PRIVATE src)
     target_compile_definitions(geometrysubmit_test PRIVATE SDL_MAIN_HANDLED)
