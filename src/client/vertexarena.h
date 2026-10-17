@@ -34,8 +34,10 @@
 // not written since the storage was last (re)allocated, and every draw reads
 // only ranges written in the current storage. So no fence, persistent mapping
 // or unsynchronized overwrite is needed; the only GL used is buffer objects
-// (GL 1.5), with glMapBufferRange (GL 3.0 / ARB_map_buffer_range) optional and
-// glMultiDrawArrays (GL 1.4) optional.
+// (GL 1.5: glBufferData to (re)allocate/orphan, glBufferSubData to write), with
+// glMultiDrawArrays (GL 1.4) optional. (A glMapBufferRange write window was
+// measured and rejected: mapping freshly orphaned storage cost ~23 ms per
+// 14 MB rebuild on the reference driver, see the progress document.)
 //
 // The planner below is pure bookkeeping (no GL), so it is tested on its own
 // (tools/vertex_arena_test.cpp) against a simulated buffer. Everything here is
@@ -323,7 +325,10 @@ private:
 };
 
 // The arena's storage: one GL buffer object (or, simulated, CPU memory for
-// tests and the software renderer). Render thread only.
+// tests and the software renderer). Render thread only. Writes come from a
+// caller-owned CPU copy (GameView stages them in the tail of its assembled
+// body buffer, so they need no memory of their own) and go up with one
+// glBufferSubData per frame.
 //
 // GPU memory: the storage is counted in gpuvram while it lives; when it is
 // orphaned (reallocated) or released, its bytes stay counted for
@@ -334,7 +339,6 @@ private:
 class VertexArenaBuffer {
 public:
     static constexpr uint32_t kInFlightFrames = 3;
-    static constexpr uint32_t kStagingIdleFrames = 120;
     VertexArenaBuffer() = default;
     VertexArenaBuffer(const VertexArenaBuffer&) = delete;
     VertexArenaBuffer& operator=(const VertexArenaBuffer&) = delete;
@@ -344,10 +348,6 @@ public:
     // counted as GPU memory. Changing the mode releases the storage.
     void setSimulated(bool on) { if (on != simulated_) { release(); dropInFlight(); simulated_ = on; } }
     bool simulated() const { return simulated_; }
-    // false: always write through a staging copy + glBufferSubData (the path
-    // for contexts without glMapBufferRange).
-    void setMappingAllowed(bool on) { mappingAllowed_ = on; }
-    bool mapping() const { return !simulated_ && mappingAllowed_ && mapRange_ && unmap_; }
 
     // Can the arena run now? The current GL context has buffer objects. A new
     // context (context loss) forgets the old buffer without touching it.
@@ -385,43 +385,22 @@ public:
         capacity_ = bytes; gpuvram::addBuffer(bytes); ++allocations_;
         return true;
     }
-    // A write window of `bytes` at `offset`. Never overlaps anything a pending
-    // draw reads (the planner only writes past what the storage holds), so a
-    // mapping is unsynchronized; without glMapBufferRange the window is a CPU
-    // staging copy uploaded by unmap(). Workers may fill it; GL calls stay on
-    // the render thread.
-    SDL_Vertex* map(size_t offset, size_t bytes) {
-        mapped_ = false; windowOffset_ = offset; windowBytes_ = bytes;
-        if (simulated_) return offset + bytes <= capacity_ ? storage_.data() + offset / sizeof(SDL_Vertex) : nullptr;
-        if (!buffer_ || offset + bytes > capacity_) return nullptr;
-        if (mapping()) {
-            getInteger_(GL_ARRAY_BUFFER_BINDING, &mapPrevious_);
-            bindBuffer_(GL_ARRAY_BUFFER, buffer_);
-            void* p = mapRange_(GL_ARRAY_BUFFER, GLintptr(offset), GLsizeiptr(bytes),
-                                GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
-            if (p) { mapped_ = true; ++mappedWrites_; return static_cast<SDL_Vertex*>(p); }
-            bindBuffer_(GL_ARRAY_BUFFER, GLuint(mapPrevious_));
-        }
-        staging_.resize(bytes / sizeof(SDL_Vertex));
-        stagingIdleFrames_ = 0;
-        ++stagedWrites_;
-        return staging_.data();
-    }
-    // Finish the write. false: the storage contents are lost (unmap failure,
-    // upload error) -- the caller must not draw from it and releases it.
-    bool unmap() {
-        if (simulated_) return true;
-        if (mapped_) {
-            mapped_ = false;
-            const bool ok = unmap_(GL_ARRAY_BUFFER) == GL_TRUE;
-            bindBuffer_(GL_ARRAY_BUFFER, GLuint(mapPrevious_));
-            return ok;
-        }
+    // Write `count` vertices at vertex `first`. The planner only writes past
+    // what the storage holds since its last (re)allocation, so no pending draw
+    // reads the range and the upload needs no synchronization. false: the
+    // storage contents are lost (upload error) -- the caller must not draw
+    // from it and releases it.
+    bool write(size_t first, const SDL_Vertex* data, size_t count) {
+        const size_t offset = first * sizeof(SDL_Vertex), bytes = count * sizeof(SDL_Vertex);
+        if (offset + bytes > capacity_) return false;
+        if (!count) return true;
+        ++writes_;
+        if (simulated_) { std::memcpy(storage_.data() + first, data, bytes); return true; }
         if (!buffer_) return false;
         while (getError_() != GL_NO_ERROR) {}
         GLint previous = 0; getInteger_(GL_ARRAY_BUFFER_BINDING, &previous);
         bindBuffer_(GL_ARRAY_BUFFER, buffer_);
-        bufferSubData_(GL_ARRAY_BUFFER, GLintptr(windowOffset_), GLsizeiptr(windowBytes_), staging_.data());
+        bufferSubData_(GL_ARRAY_BUFFER, GLintptr(offset), GLsizeiptr(bytes), data);
         const bool ok = getError_() == GL_NO_ERROR;
         bindBuffer_(GL_ARRAY_BUFFER, GLuint(previous));
         return ok;
@@ -447,20 +426,15 @@ public:
             else retired_[kept++] = r;
         }
         retired_.resize(kept);
-        // The staging window is per frame; free it once writes stop needing it.
-        if (++stagingIdleFrames_ > kStagingIdleFrames && staging_.capacity())
-            std::vector<SDL_Vertex>().swap(staging_);
     }
 
     GLuint id() const { return buffer_; }
     const SDL_Vertex* simulatedData() const { return storage_.data(); }
     size_t capacityBytes() const { return capacity_; }
     size_t inFlightBytes() const { size_t b = 0; for (const auto& r : retired_) b += r.bytes; return b; }
-    size_t stagingBytes() const { return staging_.capacity() * sizeof(SDL_Vertex); }
     uint64_t allocations() const { return allocations_; }
     uint64_t allocationFailures() const { return allocationFailures_; }
-    uint64_t mappedWrites() const { return mappedWrites_; }
-    uint64_t stagedWrites() const { return stagedWrites_; }
+    uint64_t writes() const { return writes_; }
 
 private:
     struct Retired { size_t bytes; uint32_t framesLeft; };
@@ -479,27 +453,18 @@ private:
         if (!proc(genBuffers_, "glGenBuffers") || !proc(deleteBuffers_, "glDeleteBuffers") ||
             !proc(bindBuffer_, "glBindBuffer") || !proc(bufferData_, "glBufferData") ||
             !proc(bufferSubData_, "glBufferSubData") || !proc(getBufferParameter_, "glGetBufferParameteriv") ||
-            !proc(getInteger_, "glGetIntegerv") || !proc(getError_, "glGetError") ||
-            !proc(getString_, "glGetString"))
+            !proc(getInteger_, "glGetIntegerv") || !proc(getError_, "glGetError"))
             return false;
-        // Optional: an unsynchronized write window (GL 3.0 / ARB_map_buffer_range).
-        const auto* version = reinterpret_cast<const char*>(getString_(GL_VERSION));
-        const bool mapRange = (version && std::atoi(version) >= 3) || SDL_GL_ExtensionSupported("GL_ARB_map_buffer_range");
-        if (!mapRange || !proc(mapRange_, "glMapBufferRange") || !proc(unmap_, "glUnmapBuffer")) {
-            mapRange_ = nullptr; unmap_ = nullptr;
-        }
         return true;
     }
 
-    bool simulated_ = false, mappingAllowed_ = true, checked_ = false, available_ = false, mapped_ = false;
+    bool simulated_ = false, checked_ = false, available_ = false;
     SDL_GLContext context_ = nullptr;
     GLuint buffer_ = 0;
-    size_t capacity_ = 0, windowOffset_ = 0, windowBytes_ = 0;
-    GLint mapPrevious_ = 0;
-    uint32_t stagingIdleFrames_ = 0;
-    std::vector<SDL_Vertex> staging_, storage_;
+    size_t capacity_ = 0;
+    std::vector<SDL_Vertex> storage_;
     std::vector<Retired> retired_;
-    uint64_t allocations_ = 0, allocationFailures_ = 0, mappedWrites_ = 0, stagedWrites_ = 0;
+    uint64_t allocations_ = 0, allocationFailures_ = 0, writes_ = 0;
     void (APIENTRY* genBuffers_)(GLsizei, GLuint*) = nullptr;
     void (APIENTRY* deleteBuffers_)(GLsizei, const GLuint*) = nullptr;
     void (APIENTRY* bindBuffer_)(GLenum, GLuint) = nullptr;
@@ -508,9 +473,6 @@ private:
     void (APIENTRY* getBufferParameter_)(GLenum, GLenum, GLint*) = nullptr;
     void (APIENTRY* getInteger_)(GLenum, GLint*) = nullptr;
     GLenum (APIENTRY* getError_)() = nullptr;
-    const GLubyte* (APIENTRY* getString_)(GLenum) = nullptr;
-    void* (APIENTRY* mapRange_)(GLenum, GLintptr, GLsizeiptr, GLbitfield) = nullptr;
-    GLboolean (APIENTRY* unmap_)(GLenum) = nullptr;
 };
 
 // Merge a command's arena ranges: consecutive ranges that continue each other

@@ -1449,11 +1449,9 @@
         bodyArenaOn_ = bodyDirect && !tak::devFlag("TAK_BODY_ARENA_OFF");
         bodyArenaVerifyOn_ = tak::devFlag("TAK_BODY_ARENA_VERIFY");
         bodyArenaBuffer_.setSimulated(tak::devFlag("TAK_BODY_ARENA_SOFTWARE"));
-        bodyArenaBuffer_.setMappingAllowed(tak::devFlag("TAK_BODY_ARENA_MAP", true));
         ++bodyArenaFrame_;
         bodyArenaBuffer_.endFrame();
         bool arenaPlanned = false, arenaFrame = false;
-        SDL_Vertex* arenaWindow = nullptr;
         if (bodyArenaOn_) {
             bodyArena_.begin(bodyArenaFrame_, distantNow_);
             for (const DrawOp& op : drawOps_) {
@@ -1472,12 +1470,6 @@
                           bodyArenaBuffer_.allocate(bodyArena_.newCapacity() * sizeof(SDL_Vertex));
                 if (ok && bodyArena_.reallocate() && bodyArenaVerifyOn_ && !bodyArenaBuffer_.simulated())
                     bodyArenaMirror_.assign(bodyArena_.newCapacity(), SDL_Vertex{{-7777, -7777}, {1, 2, 3, 4}, {9, 9}});
-                const size_t windowVerts = bodyArena_.writeEnd() - bodyArena_.writeBegin();
-                if (ok && windowVerts) {
-                    arenaWindow = bodyArenaBuffer_.map(bodyArena_.writeBegin() * sizeof(SDL_Vertex),
-                                                       windowVerts * sizeof(SDL_Vertex));
-                    ok = arenaWindow != nullptr;
-                }
                 if (ok) arenaFrame = true;
                 else {
                     bodyArena_.end(false);
@@ -1490,6 +1482,8 @@
             return arenaFrame && op.tex && size_t(op.count) >= kNativeMin;
         };
         // Assembled commands: their ranges copied into bodyVerts_ (plan serially).
+        // The arena's changed sources are staged right behind them, in arena
+        // order, and go up with one glBufferSubData (no memory of their own).
         int destOff = 0;
         const auto queueAssembled = [&](bool arenaOps) {
             for (DrawOp& op : drawOps_) {
@@ -1497,42 +1491,40 @@
                 op.start = destOff;
                 for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
                     const BodyRange& r = bodyRanges_[k];
-                    copyTasks_.push_back({bodySources_[r.source].data + r.offset, r.count, uint32_t(destOff), false});
+                    copyTasks_.push_back({bodySources_[r.source].data + r.offset, r.count, uint32_t(destOff)});
                     destOff += int(r.count);
                 }
             }
         };
         queueAssembled(false);
         size_t uploaded = 0;
+        const size_t staged = size_t(destOff);
         if (arenaFrame)
             for (const auto& up : bodyArena_.uploads()) {
                 const auto& src = bodyArena_.sources()[up.source];
-                copyTasks_.push_back({src.data, src.count, uint32_t(up.dst - bodyArena_.writeBegin()), true});
+                copyTasks_.push_back({src.data, src.count, uint32_t(staged + (up.dst - bodyArena_.writeBegin()))});
                 uploaded += src.count;
             }
+        destOff += int(uploaded);
         const auto runCopies = [&] {
             bodyVerts_.resize(size_t(destOff));
-            SDL_Vertex* const assembled = bodyVerts_.data();
-            SDL_Vertex* const window = arenaWindow;
-            pool_.parallelFor(copyTasks_.size(), [this, assembled, window](size_t b, size_t e) {
+            SDL_Vertex* const out = bodyVerts_.data();
+            pool_.parallelFor(copyTasks_.size(), [this, out](size_t b, size_t e) {
                 for (size_t i = b; i < e; ++i) {
                     const CopyTask& t = copyTasks_[i];
-                    std::copy(t.src, t.src + t.count, (t.arena ? window : assembled) + t.dst);
+                    std::copy(t.src, t.src + t.count, out + t.dst);
                 }
             });
         };
         runCopies();
-        size_t arenaRetained = 0;
+        size_t arenaRetained = 0, arenaUploaded = 0;
         if (arenaFrame) {
-            const bool ok = !arenaWindow || bodyArenaBuffer_.unmap();
-            arenaWindow = nullptr;
+            const bool ok = bodyArenaBuffer_.write(bodyArena_.writeBegin(), bodyVerts_.data() + staged, uploaded);
             const tak::render::ArenaFrameStats arenaStats = bodyArena_.stats();
             if (ok) {
                 if (bodyArenaVerifyOn_ && !bodyArenaBuffer_.simulated())
-                    for (const auto& up : bodyArena_.uploads()) {
-                        const auto& src = bodyArena_.sources()[up.source];
-                        std::copy(src.data, src.data + src.count, bodyArenaMirror_.begin() + up.dst);
-                    }
+                    std::copy(bodyVerts_.begin() + long(staged), bodyVerts_.begin() + long(staged + uploaded),
+                              bodyArenaMirror_.begin() + long(bodyArena_.writeBegin()));
                 for (DrawOp& op : drawOps_) {
                     if (!fromArena(op)) continue;
                     const size_t begin = bodyArenaFirsts_.size();
@@ -1545,6 +1537,7 @@
                     op.arenaRanges = uint32_t(bodyArenaFirsts_.size() - begin);
                 }
                 if (arenaStats.mode == ArenaMode::Append) arenaRetained = arenaStats.residentVerts;
+                arenaUploaded = uploaded;
                 if (bodyArenaVerifyOn_) verifyBodyArena(arenaStats);
             }
             bodyArena_.end(ok);
@@ -1555,7 +1548,6 @@
                 releaseBodyArena();
                 renderStats_.add(RS::ArenaFallbacks);
                 arenaFrame = false;
-                uploaded = 0;
                 copyTasks_.clear();
                 for (DrawOp& op : drawOps_) op.arenaFirst = -1;
                 queueAssembled(false);
@@ -1576,14 +1568,14 @@
             releaseBodyArena();
         bodyVertexTotal_ = 0;
         for (const DrawOp& op : drawOps_) if (op.tex && op.count > 0) bodyVertexTotal_ += size_t(op.count);
-        renderStats_.add(RS::BodyVertsCopied, size_t(destOff) + uploaded);
-        renderStats_.add(RS::BodyBytesCopied, (size_t(destOff) + uploaded) * sizeof(SDL_Vertex));
+        renderStats_.add(RS::BodyVertsCopied, size_t(destOff));   // assembled + staged arena uploads
+        renderStats_.add(RS::BodyBytesCopied, size_t(destOff) * sizeof(SDL_Vertex));
         renderStats_.add(RS::ArenaVertsRetained, arenaRetained);
-        renderStats_.add(RS::ArenaVertsUploaded, uploaded);
-        tak::render::countUploadBytes(uploaded * sizeof(SDL_Vertex));
+        renderStats_.add(RS::ArenaVertsUploaded, arenaUploaded);
+        tak::render::countUploadBytes(arenaUploaded * sizeof(SDL_Vertex));
         renderStats_.set(RS::ArenaCapacityBytes, bodyArenaBuffer_.simulated() ? 0 : bodyArenaBuffer_.capacityBytes());
         renderStats_.set(RS::ArenaInflightBytes, bodyArenaBuffer_.inFlightBytes());
-        renderStats_.set(RS::ArenaCpuBytes, bodyArena_.cpuBytes() + bodyArenaBuffer_.stagingBytes() +
+        renderStats_.set(RS::ArenaCpuBytes, bodyArena_.cpuBytes() +
             bodyArenaMirror_.capacity() * sizeof(SDL_Vertex) + bodyArenaGather_.capacity() * sizeof(SDL_Vertex));
         renderStats_.set(RS::BodyBufferCapacityBytes, bodyVerts_.capacity() * sizeof(SDL_Vertex));
         renderStats_.set(RS::BodyBufferUsedBytes, bodyVerts_.size() * sizeof(SDL_Vertex));

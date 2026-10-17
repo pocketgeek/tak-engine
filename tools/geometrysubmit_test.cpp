@@ -95,7 +95,7 @@ int main() {
     ok &= submit.uploads()==uploadsBefore && gpuvram::bytes()==baselineBytes;
     // Workstream H: ranges of a retained arena buffer (client/vertexarena.h)
     // drawn with drawBuffer must equal the same vertices through client arrays
-    // and through SDL, for mapped and staged writes, scattered ranges (one
+    // and through SDL, for scattered ranges written in reverse order (one
     // glMultiDrawArrays) and every state combination above; the arena's GPU
     // bytes must leave the accounting once released and out of flight.
     int arenaCases=0,arenaDrawn=0;
@@ -106,9 +106,8 @@ int main() {
         // Seven chunks written in reverse order at scattered offsets; the draw
         // lists them in the original order (non-contiguous ranges).
         const size_t chunks=7,per=big.size()/chunks/3*3;   // whole triangles per range, as body runs
-        for(bool mapped:{true,false}) {
+        for(int pass=0;pass<1;++pass) {
             tak::render::VertexArenaBuffer arena;
-            arena.setMappingAllowed(mapped);
             const size_t arenaBefore=gpuvram::bytes();
             const bool ready=arena.ready();
             if(opengl)ok &= ready;
@@ -120,13 +119,11 @@ int main() {
             size_t at=17;
             for(size_t c=chunks;c-->0;) {
                 const size_t begin=c*per,count=c+1==chunks?big.size()-begin:per;
-                SDL_Vertex* window=arena.map(at*sizeof(SDL_Vertex),count*sizeof(SDL_Vertex));
-                ok &= window!=nullptr;
-                if(window)std::memcpy(window,big.data()+begin,count*sizeof(SDL_Vertex));
-                ok &= arena.unmap();
+                ok &= arena.write(at,big.data()+begin,count);
                 firsts[c]=GLint(at);counts[c]=GLsizei(count);at+=count+5;
             }
-            ok &= mapped ? arena.mappedWrites()==chunks : arena.stagedWrites()==chunks;
+            ok &= arena.writes()==chunks;
+            ok &= !arena.write(capacity-2,big.data(),3);   // past the storage: refused
             for(SDL_FPoint scales:{SDL_FPoint{1,1},SDL_FPoint{2,2},SDL_FPoint{1.25f,.75f}})for(bool textured:{false,true})
             for(bool clipped:{false,true})for(bool offscreen:{false,true})
             for(auto blend:{SDL_BLENDMODE_NONE,SDL_BLENDMODE_BLEND,SDL_BLENDMODE_MOD}) {
@@ -157,7 +154,7 @@ int main() {
                 }
                 if(out[2]!=out[0] || out[1]!=out[0]) {
                     size_t d20=0,d10=0;for(size_t q=0;q<out[0].size();q+=4){d20+=std::memcmp(&out[2][q],&out[0][q],4)!=0;d10+=std::memcmp(&out[1][q],&out[0][q],4)!=0;}
-                    std::printf("FAIL arena mapped=%d scale=%f texture=%d clip=%d target=%d blend=%d (arena %zu px, client arrays %zu px)\n",mapped,scales.x,textured,clipped,offscreen,blend,d20,d10);
+                    std::printf("FAIL arena scale=%f texture=%d clip=%d target=%d blend=%d (arena %zu px, client arrays %zu px)\n",scales.x,textured,clipped,offscreen,blend,d20,d10);
                     ok=false;
                 }
                 ++arenaCases;
@@ -168,8 +165,8 @@ int main() {
             arena.release();
             for(uint32_t f=0;f<tak::render::VertexArenaBuffer::kInFlightFrames;++f)arena.endFrame();
             ok &= gpuvram::bytes()==arenaBefore && arena.inFlightBytes()==0;
-            // No storage: nothing to map, nothing drawn natively.
-            ok &= arena.map(0,64)==nullptr;
+            // No storage: nothing can be written.
+            ok &= !arena.write(0,big.data(),3);
         }
         // Off the opengl backend nothing is drawn from a buffer: the caller falls back.
         if(!opengl) ok &= submit.drawBuffer(renderer,texture,1,std::vector<GLint>{0},std::vector<GLsizei>{3},3)==1;

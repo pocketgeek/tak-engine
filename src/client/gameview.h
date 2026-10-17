@@ -1186,8 +1186,9 @@ private:
     struct BodySource { const SDL_Vertex* data; uint32_t count, slot, generation; uint64_t revision;
                         uint32_t arena = UINT32_MAX; };   // planner index (arena frames)
     struct BodyRange { uint32_t source, offset, count; };
-    // One vertex copy: into bodyVerts_ (arena=false) or the arena write window.
-    struct CopyTask { const SDL_Vertex* src; uint32_t count, dst; bool arena; };
+    // One vertex copy into bodyVerts_ (an assembled command, or a changed arena
+    // source staged behind them for the frame's single upload).
+    struct CopyTask { const SDL_Vertex* src; uint32_t count, dst; };
     struct DrawOp { const UnitR* u; const FeatureInst* f;
                     SDL_Texture* tex; int start, count;     // seg if u&&f both null
                     uint32_t firstRange = 0, ranges = 0;
