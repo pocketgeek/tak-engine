@@ -118,6 +118,8 @@ server_public 7
 legion_scenario_goalblock-200 7
 legion_scenario_goalblock-near-200 7
 cartographer_starts_ui 7
+legion_chainresolve 7
+legion_trafficlane 7
 build_controls 6
 gui_smoothing_game 6
 legion_check_mazeapproach 6
