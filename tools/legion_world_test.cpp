@@ -467,6 +467,39 @@ void chainresolve() {
     check(done==int(ids.size()),"chainresolve: a body never arrived");
 }
 
+// Legion 10,000 stage 7: traffic in coarse route selection. A wall crosses a 640 x 384 map with two gaps; with the
+// map empty the walker's chain takes the north gap (the region search's choice on this geometry), but here 121 idle
+// bodies (another player's) stand in the sector before it. The region search charges the regions by their soft share
+// (trafficPenalty), so the chain goes through the south gap instead and the walker arrives; without the charge (the
+// mutation in docs/legion-10000-progress.md 7.7) it takes the north gap into the idle block.
+void trafficlane() {
+    Fixture f(640,384);
+    for(int z=0;z<384;++z)if(!(z>=2&&z<34)&&!(z>=250&&z<282)) {f.wall(320,z);f.wall(321,z);}
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> idle;
+    for(int z=3;z<=33;z+=3)for(int x=290;x<=317;x+=3)idle.push_back(f.spawn(type,x,z,1));
+    const int walker=f.spawn(type,20,60);
+    f.start();
+    for(int t=0;t<120;++t)f.world.tick(1.f/30);   // the idle bodies become soft (two still scans)
+    f.world.order(walker,620*16,360*16,false);
+    int done=-1,maxZAtWall=-1;
+    for(int t=0;t<9000&&done<0;++t) {
+        f.world.tick(1.f/30);
+        const auto& u=*f.world.unit(walker);
+        const int x=int(u.x.v>>20),z=int(u.z.v>>20);
+        if(x>=300&&x<=340)maxZAtWall=std::max(maxZAtWall,z);
+        if(u.orders.empty())done=t;
+    }
+    const auto a=f.world.legionNavigator()->accounting();
+    std::printf("trafficlane done=%d max_z_at_wall=%d chains=%llu traffic_charges=%llu\n",done,maxZAtWall,
+                (unsigned long long)a.chains,(unsigned long long)a.trafficCharges);
+    check(a.chains>=1,"trafficlane: the walker did not take a chain");
+    check(a.trafficCharges>0,"trafficlane: the search charged no region for traffic");
+    check(maxZAtWall>=240,"trafficlane: the walker's route went through the idle block instead of round it");
+    check(done>=0,"trafficlane: the walker did not arrive");
+}
+
 void longroute() {
     // A connected route farther than 16-bit potentials reach: the serpentine
     // of tools/scenarios/serplong.scn (30 lanes of 600 cells, 14 high, about
@@ -4131,7 +4164,7 @@ int main(int argc,char** argv) {
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
         {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"entryplanes",entryplanes},
-        {"improvedefer",improvedefer},{"chainresolve",chainresolve}};
+        {"improvedefer",improvedefer},{"chainresolve",chainresolve},{"trafficlane",trafficlane}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

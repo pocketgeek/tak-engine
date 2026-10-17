@@ -405,9 +405,9 @@ foreach(legion_case chains chainschurn chainplane)
 endforeach()
 # Legion 10,000 stage 7 (static navigation apart from traffic): an improvement defers its route's refresh while a
 # closure refreshes at once (improvedefer); a chain relabelled while it builds re-resolves its regions instead of
-# leaving them off (chainresolve); and (trapped) a trapped order retires under never-ending churn elsewhere, all under
-# TAK_LEGION_VERIFY.
-foreach(legion_case improvedefer chainresolve)
+# leaving them off (chainresolve); the coarse search routes round a region full of idle bodies (trafficlane); and
+# (trapped) a trapped order retires under never-ending churn elsewhere, all under TAK_LEGION_VERIFY.
+foreach(legion_case improvedefer chainresolve trafficlane)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
   set_tests_properties(legion_${legion_case} PROPERTIES LABELS "legion" ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()

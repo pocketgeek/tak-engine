@@ -337,6 +337,14 @@ struct LegionNavigator::Impl {
         // `legal` and the order of builds; never hashed.
         hier::Hierarchy hier;
         hier::PlaneId id;
+        // Stage 7: coarse traffic per hierarchy sector (see trafficPenalty): each region's soft origins, recomputed
+        // when the sector's generation or the soft stamps round it changed. Derived, never hashed.
+        struct SectorTraffic {
+            uint32_t gen=0;uint64_t serial=~0ull;
+            std::vector<uint32_t> all;                                   // per region: origins soft to every command
+            std::vector<std::vector<std::pair<uint64_t,uint32_t>>> owned;  // per region: (owner, origins soft to all but it)
+        };
+        std::vector<SectorTraffic> traffic;
     };
     // Running totals of the live fields (every Field lives in some group's
     // field or next): startField's cap test reads them instead of walking
@@ -1543,8 +1551,13 @@ struct LegionNavigator::Impl {
     }
     // Cell c's covering stamp becomes `id` of `kind` (0, 0: none). The
     // window counts follow the kind (only a kind change moves them).
+    // Stage 7: per hierarchy sector (K = 1 << gSectorShift cells) of the soft grid, a serial bumped by every stamp
+    // change of a cell in it (trafficPenalty's cache key). Derived, never hashed.
+    std::vector<uint64_t> softSector;
+    int softSectorW=0;
     void cellSet(size_t c,int32_t id,uint8_t kind) {
         const uint8_t k0=softKind[c];const int32_t o=soft[c];
+        if(!softSector.empty())++softSector[size_t((int(c)/w.occW_)>>gSectorShift)*size_t(softSectorW)+size_t((int(c)%w.occW_)>>gSectorShift)];
         if(k0!=kind) {
             if(k0)countAll(int(c),k0,-1);
             if(kind)countAll(int(c),kind,1);
@@ -1777,6 +1790,8 @@ struct LegionNavigator::Impl {
         const size_t n=size_t(w.occW_)*w.occH_;
         if(soft.size()!=n) {
             soft.assign(n,0);softKind.assign(n,0);softCellCount=0;softStack.clear();softCounts.clear();
+            softSectorW=(w.occW_+(1<<gSectorShift)-1)>>gSectorShift;
+            softSector.assign(size_t(softSectorW)*size_t((w.occH_+(1<<gSectorShift)-1)>>gSectorShift),0);
             softOwner.clear();softOwnerCount.clear();liftCells.clear();liftSoftPlayers.clear();softHash=0;
             for(auto& b:softBodies) {b.stamped=false;b.owner=~0ull;}
         }
@@ -2853,7 +2868,7 @@ struct LegionNavigator::Impl {
         // Stage 7: a stale plane's rebuild may hold any change the per-cluster lists never reported for it.
         if(p.epoch!=~0ull)logImprovement(size_t(&p-planes.data()),{0,0,width()-1,height()-1});
         p.epoch=epoch;buildPlane(p);labelPlane(p);clearStage(p);
-        p.hier.reset(width(),height(),gSectorShift,p.id);
+        p.hier.reset(width(),height(),gSectorShift,p.id);p.traffic.clear();
         uint64_t legalCells=0;for(const int n:p.compSize)legalCells+=uint64_t(std::max(n,0));
         const uint64_t units=4*uint64_t(width())*height()+4*legalCells;
         navc.planeBuild+=units;
@@ -3404,6 +3419,71 @@ struct LegionNavigator::Impl {
             for(const int id:found->second)if(id!=g.id) {const auto o=groups.find(id);if(o!=groups.end()&&o->second.seeds==g.seeds)n+=o->second.members;}
         return n;
     }
+    // ---- stage 7: traffic in coarse route selection ------------------------------------------------------------------
+    // The region search charges the way across a region (its step: entry to portal) by the share of the region's
+    // origins that are soft to the route's command -- the same soft rule the field and the tiles charge cell by cell
+    // (kSoftFactor inside a soft footprint): step * (kSoftFactor - 1) * soft / cells, the extra a way through a
+    // region of that density pays on average. So a route is chosen round a region full of a standing jam, settled
+    // bodies or idle units when a way round is cheaper, and the tiles then make the exact local correction inside the
+    // regions it keeps (never a sum of two fields: the search only picks the regions). Soft origins: those whose
+    // footprint covers a stamp of kind 1 (soft to every command), or of kind 2 owned by another command than the
+    // route's (settled arrivals, an approach clot, a jam: never the order's own); a liftable flyer (kind 3) lifts for
+    // the allies of its owner and is left out. The counts are cached per sector, keyed by its generation and the soft
+    // serials of it and its east, south and south-east neighbours (a footprint reaches into them).
+    uint64_t trafficPenalty(Plane& p,int s,uint16_t r,uint64_t step,uint64_t command,uint64_t& work) {
+        if(command==kNoSoft||!softCellCount||softSector.empty())return 0;
+        if(p.traffic.size()!=size_t(p.hier.sectorCount()))p.traffic.assign(size_t(p.hier.sectorCount()),{});
+        auto& T=p.traffic[size_t(s)];
+        const int SW=p.hier.sectorsWide(),SH=p.hier.sectorsHigh(),sx=s%SW,sz=s/SW;
+        uint64_t key=0;
+        for(int dz=0;dz<=1;++dz)for(int dx=0;dx<=1;++dx)
+            if(sx+dx<softSectorW&&sz+dz<SH&&size_t((sz+dz)*softSectorW+sx+dx)<softSector.size())
+                key=mix(key,softSector[size_t((sz+dz)*softSectorW+sx+dx)]);
+        const auto& S=p.hier.sector(s);
+        if(T.gen!=S.gen||T.serial!=key) {
+            T.gen=S.gen;T.serial=key;
+            T.all.assign(S.regions.size(),0);
+            T.owned.assign(S.regions.size(),{});
+            const auto rc=p.hier.rect(s);
+            const int W=width(),fx=p.footX,fz=p.footZ;
+            const int counts=softCountsFor(fx,fz);
+            std::vector<uint64_t> owners;
+            for(int z=rc[1];z<rc[3];++z)for(int x=rc[0];x<rc[2];++x) {
+                ++work;
+                if(counts>=0&&!(softCounts[size_t(counts)].at[size_t(z)*w.occW_+x]&kCoverCount))continue;
+                const uint16_t reg=p.hier.regionAt(z*W+x);
+                if(reg==hier::kNoRegion)continue;
+                bool all=false;owners.clear();
+                for(int j=0;j<fz&&!all;++j)for(int i=0;i<fx&&!all;++i) {
+                    const int cx=x+i,cz=z+j;
+                    if(cx>=w.occW_||cz>=w.occH_)continue;
+                    const size_t c=size_t(cz)*w.occW_+cx;
+                    const uint8_t k=softKind[c];
+                    work+=1;
+                    if(k==1)all=true;
+                    else if(k==2) {const int32_t o=soft[c];owners.push_back(size_t(o)<softOwner.size()?softOwner[size_t(o)]:~0ull);}
+                }
+                if(all) {++T.all[reg];continue;}
+                std::sort(owners.begin(),owners.end());
+                owners.erase(std::unique(owners.begin(),owners.end()),owners.end());
+                for(const uint64_t o:owners) {
+                    auto& v=T.owned[reg];
+                    auto at=std::lower_bound(v.begin(),v.end(),std::pair<uint64_t,uint32_t>{o,0});
+                    if(at==v.end()||at->first!=o)at=v.insert(at,{o,0});
+                    ++at->second;
+                }
+            }
+            ++acct.trafficSectors;
+        }
+        if(r>=T.all.size())return 0;
+        uint64_t soft=T.all[r];
+        for(const auto& [o,n]:T.owned[r])if(o!=command)soft+=n;
+        const uint64_t cells=uint64_t(std::max(S.regions[r].cells,1));
+        if(!soft)return 0;
+        soft=std::min(soft,cells);
+        ++acct.trafficCharges;
+        return step*uint64_t(kSoftFactor-1)*soft/cells;
+    }
     RoutePlan planRoute(Group& g,const std::array<int,4>& box) {
         RoutePlan rp;
         rp.box=box;
@@ -3444,7 +3524,10 @@ struct LegionNavigator::Impl {
             targets.push_back(footprintOrigin(u->z,u->type->footZ)*W+footprintOrigin(u->x,u->type->footX));
         }
         uint64_t work=0;
-        const auto tree=p.hier.search(g.seeds,targets,p.legal.data(),kRouteExpand,work);
+        // Stage 7: traffic as the route's command sees it in the coarse search (trafficPenalty).
+        const uint64_t trafficCommand=g.soft?g.command:kNoSoft;
+        const auto tree=p.hier.search(g.seeds,targets,p.legal.data(),kRouteExpand,work,
+            [&](int s,uint16_t r,uint64_t step) {return trafficPenalty(p,s,r,step,trafficCommand,work);});
         if(!tree.complete||tree.nodes.empty()) {navc.routeSearch+=work;startCharge+=work;++acct.routeFallbacks;return rp;}
         struct Charge {uint64_t& work;Impl& I;~Charge() {I.navc.routeSearch+=work;I.startCharge+=work;}} charge{work,*this};
         const int K=p.hier.K(),SW=p.hier.sectorsWide(),SH=p.hier.sectorsHigh();
@@ -4082,13 +4165,13 @@ struct LegionNavigator::Impl {
         }
         if(!any||int64_t(tile->maxValue)+rem>=int64_t(kUnreached)-1||int64_t(tile->maxValue)+rem<0) {
             ++acct.chainSkips;
-            if(tileBytes>kTileBytes)evictTiles();
+            if(overTileLimit())evictTiles();
             return false;
         }
         attachTile(f,n,tile,rem);
         f.attached[idx]=1;
         f.softened|=!tile->soft.empty();
-        if(tileBytes>kTileBytes)evictTiles();   // after the attach: the tile counts this route now
+        if(overTileLimit())evictTiles();   // after the attach: the tile counts this route now
         return true;
     }
     // Stage 7: re-resolve chain node idx after its geometry changed (see attachNode). The boundary keeps its sectors
@@ -4198,9 +4281,22 @@ struct LegionNavigator::Impl {
     }
     // The cache of shared tiles: a hit is a tile whose whole key equals this one; a miss builds it (Dijkstra over
     // the region from its seeds) and inserts it, then unreferenced tiles are evicted oldest-use first while the cache
-    // holds more than kTileBytes. `built` gains the build's relaxations (0 on a hit).
-    static constexpr uint64_t kTileBytes=uint64_t(64)<<20;
-    std::map<uint64_t,std::vector<std::shared_ptr<Tile>>> tileCache;
+    // holds more than its allowance. `built` gains the build's relaxations (0 on a hit).
+    // Stage 7: two caches. STATIC tiles -- no soft level and no mover corridor in the key -- are terrain navigation
+    // alone: a function of the plane's geometry and the boundary, the same for every command and player, reused by
+    // every route through the region. CORRECTIONS -- a region where the route's command sees soft bodies or plans round
+    // a mover -- are the bounded local traffic correction of the same region (the same Dijkstra, the same boundary,
+    // the traffic charged cell by cell), shared only by routes whose traffic view is identical (the key holds the
+    // whole view: the soft rule with its own-arrival and allied-flyer exemptions, the corridors with awareness's sight
+    // rule), so no route reads more of another player than its own view holds. They come and go with the traffic
+    // and get their own, smaller allowance, so traffic never evicts terrain. tileBytes / tileCount / tileDigest
+    // cover both (the digest is hashed).
+    static constexpr uint64_t kTileBytes=uint64_t(48)<<20,kCorrectionBytes=uint64_t(16)<<20;
+    struct TileCache {std::map<uint64_t,std::vector<std::shared_ptr<Tile>>> map;uint64_t bytes=0;};
+    TileCache staticTiles,corrTiles;
+    static bool correction(const Tile& t) {return !t.soft.empty()||!t.avoid.empty();}
+    TileCache& cacheOf(const Tile& t) {return correction(t)?corrTiles:staticTiles;}
+    bool overTileLimit() const {return staticTiles.bytes>kTileBytes||corrTiles.bytes>kCorrectionBytes;}
     uint64_t tileBytes=0,tileSeq=0,tileDigest=0;
     size_t tileCount=0;
     static uint64_t tileHash(const Tile& t) {
@@ -4216,15 +4312,21 @@ struct LegionNavigator::Impl {
     }
     std::shared_ptr<Tile> tileFor(Tile&& key,const Plane& p,uint64_t& built,uint64_t asker) {
         key.hash=tileHash(key);
-        auto& bucket=tileCache[key.hash];
+        TileCache& C=cacheOf(key);
+        auto& bucket=C.map[key.hash];
         for(const auto& t:bucket)
-            if(t->sameKey(key)) {t->lastUse=w.tickCounter_;++acct.tileHits;acct.tileCrossHits+=t->builtFor!=asker;return t;}
+            if(t->sameKey(key)) {
+                t->lastUse=w.tickCounter_;++acct.tileHits;acct.tileCrossHits+=t->builtFor!=asker;
+                if(&C==&corrTiles)++acct.correctionHits;
+                return t;
+            }
         key.builtFor=asker;
         auto t=std::make_shared<Tile>(std::move(key));
         built+=buildTile(*t,p);
         t->seq=++tileSeq;t->lastUse=w.tickCounter_;
         bucket.push_back(t);
-        tileBytes+=t->bytes();++tileCount;++acct.tilesBuilt;
+        tileBytes+=t->bytes();C.bytes+=t->bytes();++tileCount;++acct.tilesBuilt;
+        if(&C==&corrTiles)++acct.correctionsBuilt;
         tileDigest+=mix(t->hash,t->seq);
         acct.tileBytesPeak=std::max(acct.tileBytesPeak,tileBytes);
         return t;   // the caller evicts (evictTiles) once it has attached it, so the new tile is never the victim
@@ -4270,17 +4372,22 @@ struct LegionNavigator::Impl {
         return work;
     }
     void evictTiles() {
-        std::vector<std::pair<std::pair<uint32_t,uint64_t>,uint64_t>> old;   // ((lastUse, seq), hash)
-        for(const auto& [h,bucket]:tileCache)for(const auto& t:bucket)if(!t->routes)old.push_back({{t->lastUse,t->seq},h});
-        std::sort(old.begin(),old.end());
-        for(const auto& [age,h]:old) {
-            if(tileBytes<=kTileBytes/10*9)break;
-            auto& bucket=tileCache[h];
-            for(size_t i=0;i<bucket.size();++i)if(bucket[i]->seq==age.second) {
-                tileBytes-=bucket[i]->bytes();--tileCount;tileDigest-=mix(bucket[i]->hash,bucket[i]->seq);++acct.tileEvictions;
-                bucket.erase(bucket.begin()+long(i));break;
+        for(TileCache* C:{&staticTiles,&corrTiles}) {
+            const uint64_t limit=C==&staticTiles?kTileBytes:kCorrectionBytes;
+            if(C->bytes<=limit)continue;
+            std::vector<std::pair<std::pair<uint32_t,uint64_t>,uint64_t>> old;   // ((lastUse, seq), hash)
+            for(const auto& [h,bucket]:C->map)for(const auto& t:bucket)if(!t->routes)old.push_back({{t->lastUse,t->seq},h});
+            std::sort(old.begin(),old.end());
+            for(const auto& [age,h]:old) {
+                if(C->bytes<=limit/10*9)break;
+                auto& bucket=C->map[h];
+                for(size_t i=0;i<bucket.size();++i)if(bucket[i]->seq==age.second) {
+                    const uint64_t b=bucket[i]->bytes();
+                    tileBytes-=b;C->bytes-=b;--tileCount;tileDigest-=mix(bucket[i]->hash,bucket[i]->seq);++acct.tileEvictions;
+                    bucket.erase(bucket.begin()+long(i));break;
+                }
+                if(bucket.empty())C->map.erase(h);
             }
-            if(bucket.empty())tileCache.erase(h);
         }
     }
     // ---- paused first builds (T7 C1) ------------------------------------
@@ -4655,7 +4762,7 @@ struct LegionNavigator::Impl {
     void startBuild(Plane& p) {
         const size_t n=size_t(width())*height();
         p.cell.assign(n,0);p.legal.assign(n,0);p.comp.assign(n,-1);
-        p.hier.reset(width(),height(),gSectorShift,p.id);
+        p.hier.reset(width(),height(),gSectorShift,p.id);p.traffic.clear();
         p.compSize.clear();p.compBox.clear();p.liveComps=0;
         p.run.assign(n,0);p.column.assign(size_t(width()),0);
         p.stage=1;p.cursor=0;
