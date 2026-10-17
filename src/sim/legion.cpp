@@ -3359,8 +3359,8 @@ struct LegionNavigator::Impl {
         g.routeMode=lowDemand?1:2;
         if(!lowDemand||!gHierRoutes)return rp;
         // An approach group (its goals unreachable: seeds are stand-in points on the members' own region) keeps the
-        // window: churn-1000's sealed-box group on a chain never reached its approach points and was retired as
-        // trapped after kTrappedRetire (arrivals 520 -> 458 over three offsets; back to 520 with the window).
+        // window: churn-1000's approach group on a chain was re-planned about every 40 ticks (arrivals 520 -> 458
+        // over three offsets; back to 520 with the window).
         if(g.approach)return rp;
         const int W=width();
         std::vector<int> targets;

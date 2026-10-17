@@ -2337,6 +2337,91 @@ docs/legion-10000-progress.md section 7.5.
 Tests: `legion_route_test` (the view and the demand alone), `legion_route_paused` (the consumers on paused routes:
 verify on, serial == workers, every consumer asked for its region, no read uncertain), `replay_test` (268 refused).
 
+### Legion 10,000 stage 6: hierarchical routes and shared tiles (protocol 270)
+
+Long routes no longer have to be one field over a rectangle of the map. A route is planned over a hierarchy built on
+the exact footprint-origin planes and built sparsely; groups whose demand is low read shared tiles. The record, with
+the measurements and the sector-size experiment, is docs/legion-10000-progress.md section 7.6.
+
+* **The hierarchy** (`src/sim/legion_hier.h`). Each plane is cut into K x K sectors (K = 32). A sector's legal origins
+  fall into regions -- the 4-connected parts inside the sector, which under the step rule (8-connected, a diagonal
+  needs both orthogonal cells) is exactly connectivity inside it -- and regions of neighbouring sectors are joined by
+  portals, the maximal runs of boundary rows (or columns) legal on both sides. Portals carry every legal connection
+  (a diagonal crossing needs an orthogonal one beside it), so two origins share a plane component exactly when their
+  regions are joined by portals; clearance stays the plane's rectangle predicate. Sectors are built on first use and
+  rebuilt on next use after a legality change touches them (the plane refresh invalidates them); identities are
+  generation-aware: a relabelled sector gets a new generation, and a plane slot reused for another mobility class a
+  new PlaneId generation. `legion_hier_test` (random planes, corner cases, incremental rebuilds, the search),
+  `planeMatchesRebuild` (legion_planeincremental: the lazily maintained hierarchy joins exactly the plane's
+  components after random churn) and a rotating sector check under `TAK_LEGION_VERIFY`.
+* **Sparse storage** (`RouteGrid`). A route's potentials live in K x K tiles aligned to the sectors, allocated when the
+  builder first writes one; an unwritten tile reads none. Exact for the window builds (78343da5).
+* **Route plans** (`planRoute`, `routePlan`). A low-demand build (below) whose window has 128k cells or more is
+  planned: the hierarchy's region search (Dijkstra over regions, portal midpoints as entries, at most 65,536 regions)
+  links every member's region to the goals' regions. The route is
+  * a **window** (as before): every high-demand route (one exact field the whole crowd shares), an approach group
+    (its goals unreachable: churn-1000's approach group on a chain re-planned every ~40 ticks, -12% arrivals), small windows,
+    a search that does not reach every member (`route.fallbacks`), or a corridor that would hold more than half the
+    window;
+  * a **corridor** (a low-demand group planning round movers while memory has room, a reach ring, a short trip): the
+    same A* field restricted to the sectors round the tree (a 32-cell halo, more for a pinwheel formation) and round
+    the destination (the crowd's packed disc plus the halo). Exact within the corridor, bounded (an origin outside it
+    is Unknown, never Unreachable). Corridors for big crowds were built and dropped: churn-10000's army lost 20% of its
+    arrivals in one;
+  * a **tile chain** (low demand): the destination's own exact field over the sectors its crowd needs (the packed
+    disc plus 8 cells), then one shared **tile** per transit region of the tree. A tile is the exact field of one
+    region toward the far side of the portal it leaves by, each seed starting at a boundary cost, read with the
+    chain's offset (`RouteGrid::offset`) so its value is route-wide (Progress stays a distance to the goals). A tile
+    leading into another transit region is **aimed**: its boundary cost is linear along the portal, falling toward the
+    next region's exit, so its lanes run parallel toward that exit (an octile distance to the exit's middle was tried
+    first and drew every body of a squad into the middle of each portal: many-2500 stuck +16% over three offsets).
+    One leading into the destination's field is **exact** (the field's values at its seeds). The offset is the
+    largest (estimate - boundary cost) over the seeds, so a cell beside a seed reads more than the seed: every legal
+    descent step strictly lowers the estimate, across tiles too, and ends on a goal -- no loop, no false minimum
+    (`verifyDescent` under `TAK_LEGION_VERIFY` on every finished chain and repair). The regions one portal off the
+    transit regions are the chain's halo: their tiles are attached when a member steps into one (a repair, queued
+    and served before the field quota), so a body pushed off its way is back on the route without a rebuild.
+* **The tile cache** (`Tile`, `tileFor`). Keyed by everything a tile's values depend on, compared whole after a hash
+  match: the plane identity, the sector, region and both portal sectors' generations, the portal run, the boundary
+  costs (an aimed tile's aim, an exact tile's list), the soft level of every origin of the region as the route's
+  command sees it, and the route's mover corridors that reach the region (a group planning round movers gets local
+  corrections there and shared tiles elsewhere). A tile leaving region R by portal P toward the same next exit is the
+  same tile for every route, whatever its destination. Unreferenced tiles (an explicit route count, not shared_ptr
+  use counts) are evicted oldest-use first past 64 MiB, after the requesting chain has attached its tile (so a new
+  tile is never its own victim). A sector where a chain reads two regions gets a tile of the route's own, counted in
+  the field allowance. Hashed: the cache's count and an insert/evict digest.
+* **Search or field by demand** (`routeDemand`, `Group::routeMode`). The bodies that would read the route -- the
+  group's members and those of every other group with the same goals -- at most 48 take a chain (or a corridor); a
+  group that took the field keeps the field until that falls to 24 (hysteresis); a high-demand route needs no search.
+  Chains have a count cap of their own (16,384; the byte allowance bounds their storage): under the shared 1,024-field
+  cap, 1,024 one-body routes held every slot in scatter-10000 and no other route could start for the rest of the
+  run (inherited: the stage-5 head starves the same way, request age 14,154 of 14,400 ticks). A group planning round movers (awareness corridors)
+  takes a corridor while memory has room, so its detour has the corridor's width, and a chain with local
+  corrections once more than half the field allowance is in use (stage 4's "memory short"): corridors for every
+  awareness re-plan of 800 squads filled the allowance and evicted their own fields. Big orders (one-10000's 10,000 bodies) keep one exact
+  field; many small ones (many-10000's 400 squads, scatter-10000's 10,000 single bodies) take chains over shared
+  tiles. A route of fewer than two transit regions outside the destination is a short trip: its corridor or window.
+* **Sharing.** A group with the same goals, soft rule and corridors takes another group's corridor that holds all of
+  its plan's sectors, or a finished chain that already gives every one of its members an estimate -- also when its
+  start may only share (a share allocates nothing).
+* **Widening.** A body a corridor or chain does not reach (outside it, or unreached in it) first gets its halo
+  repair (a chain), waits for the refresh its group is due if a static change touched the route (Unknown is not
+  cut off), else the route is rebuilt round it (`Group::widens`, at most three); then the whole component's window
+  takes over, as for any bounded window. The current solver stays the bounded fallback, never the default for a
+  hard request.
+* **Static changes** reach a corridor or chain only through the tiles it holds (`fieldTouched`); a chain refresh
+  re-plans and finds every tile whose sectors did not change in the cache, so only the dirty tiles are rebuilt.
+* `RouteGrid::fin`: an attached tile is final everywhere it reaches, whatever the build's key.
+
+Tests: `legion_hier_test`, `legion_route_test` (sparse reads), `legion_chains` (eight squads cross a wall to eight
+destinations: chains built, transit tiles shared between squads with different destinations -- hits by routes to
+other goals than the tile's builder --, every body arrives, the descent check and the class check on),
+`legion_chainschurn` (the same with a wall dropped across the routes while the chains build and lifted later),
+`legion_sched_load` / `_div` now with `--no-hier-routes` (`setHierarchicalRoutesForTest`: sched-load's squads on chains
+no longer saturate the quota the scheduler tests need), `legion_chainplane` (25 mobility classes take turns, the
+25th reuses plane slot 0: no chain reads a tile of the previous class; fails if a reused slot keeps its generation),
+`replay_test` (269 refused).
+
 ## Instruments
 
 What each tool sees, and what it cannot. A number is only as good as the
