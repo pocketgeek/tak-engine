@@ -1587,6 +1587,7 @@ struct LegionNavigator::Impl {
             if(v.size()==1)softStack.erase(it);
             if(soft[c]==id)cellSet(c,first,softBodies[size_t(first)].kind);
         });
+        jamIds.erase(id);
         if(b.owner!=~0ull) {
             softOwner[size_t(id)]=~0ull;
             if(auto it=softOwnerCount.find(b.owner);--it->second==0)softOwnerCount.erase(it);
@@ -1638,6 +1639,18 @@ struct LegionNavigator::Impl {
     bool trappedStill(const Member& m) const {
         return m.approach&&policy(m.kind).completes&&(m.state==Trapped||(m.state==Holding&&heldFor(m)>=kRestAfter));
     }
+    // Stage 7 (traffic): a member held kRestAfter ticks on its way -- a standing jam -- is traffic to OTHER orders:
+    // stamped soft (kind 2) and owned by its group's command, as an approach member's clot (trappedStill) is, so
+    // the routes of other orders plan round a jam instead of joining it, while its own order never plans round
+    // itself (the parts of one selection keep one command: same-order semantics). Until stage 7 a held crowd was
+    // seen by nothing that plans: the soft scan skipped every Legion member on its way and awareness skips a
+    // standing crowd, so crossing walkers kept walking into the knot they formed (scatter-2500: 1,545 of 2,500 stuck
+    // at the end). A jam of any player is stamped, as any still body is (the soft rule has no sight test; no route
+    // learns more of an enemy than the still bodies it already plans round). It stops being soft the update the
+    // body steps (drive) and at its next sample otherwise.
+    bool jamStill(const Member& m) const {
+        return policy(m.kind).completes&&!m.approach&&m.state==Holding&&heldFor(m)>=kRestAfter;
+    }
     // ---- MV-05: a block that forms on a planned way ---------------------
     // Cells scanStill made soft over the last kStillScan ticks (one stripe
     // cycle; never hashed: a function of the stamps, which are). Every
@@ -1660,25 +1673,40 @@ struct LegionNavigator::Impl {
         const uint32_t now=w.tickCounter_;
         softBlockList.erase(std::remove_if(softBlockList.begin(),softBlockList.end(),
             [&](const auto& b) {return now-b.first>kSoftBlockKeep;}),softBlockList.end());
-        newBlocks();
-        if(softBlockList.empty())return;
+        newBlocks(softAdded,softBlockList);
+        // Stage 7: the standing jams of this cycle are blocks too (jamBlockList, rebuilt every cycle: a jam is a block
+        // while it stands, not only in the cycle its cells were stamped -- a knot grows a few bodies a cycle and never
+        // made a dense tile of newly soft cells), so a group whose way meets a jam of another order re-plans round it
+        // (at most once per kSoftReplanCooldown) instead of steering into it on the field it built before the jam.
+        jamBlockList.clear();
+        if(!jamIds.empty()) {
+            std::vector<int> cells;
+            for(const int id:jamIds)forStampCells(softBodies[size_t(id)],[&](size_t c) {cells.push_back(int(c));});
+            newBlocks(cells,jamBlockList);
+        }
+        if(softBlockList.empty()&&jamBlockList.empty())return;
         replanForBlocks();
     }
-    void newBlocks() {
-        if(softAdded.empty())return;
-        std::sort(softAdded.begin(),softAdded.end());
-        softAdded.erase(std::unique(softAdded.begin(),softAdded.end()),softAdded.end());
+    // Stage 7: the ids stamped as standing jams (jamStill when stamped), ascending; kept by stamp/unstamp. Derived
+    // from the stamps and the member states they were taken from, never hashed.
+    std::set<int> jamIds;
+    std::vector<std::pair<uint32_t,std::array<int,4>>> jamBlockList;
+    // Bin cells into kSoftTile tiles; append the blocks of dense tiles (8-connected) spanning kSoftBlockCells to out.
+    void newBlocks(std::vector<int>& cells,std::vector<std::pair<uint32_t,std::array<int,4>>>& out) {
+        if(cells.empty())return;
+        std::sort(cells.begin(),cells.end());
+        cells.erase(std::unique(cells.begin(),cells.end()),cells.end());
         const int W=w.occW_;
-        if(W<=0) {softAdded.clear();return;}
+        if(W<=0) {cells.clear();return;}
         const int TW=(W+kSoftTile-1)/kSoftTile;
         std::map<int,std::array<int,5>> tiles;   // tile -> count, box
-        for(const int c:softAdded) {
+        for(const int c:cells) {
             const int x=c%W,z=c/W,t=(z/kSoftTile)*TW+x/kSoftTile;
             auto [it,fresh]=tiles.try_emplace(t,std::array<int,5>{0,x,z,x,z});
             auto& v=it->second;++v[0];
             v[1]=std::min(v[1],x);v[2]=std::min(v[2],z);v[3]=std::max(v[3],x);v[4]=std::max(v[4],z);
         }
-        softAdded.clear();
+        cells.clear();
         std::vector<int> dense;
         for(const auto& [t,v]:tiles)if(v[0]>=kSoftTileDense)dense.push_back(t);
         if(dense.empty())return;
@@ -1699,7 +1727,7 @@ struct LegionNavigator::Impl {
             auto& b=it->second;
             b={std::min(b[0],v[1]),std::min(b[1],v[2]),std::max(b[2],v[3]),std::max(b[3],v[4])};
         }
-        for(const auto& [r,b]:blocks)if(std::max(b[2]-b[0],b[3]-b[1])+1>=kSoftBlockCells)softBlockList.push_back({w.tickCounter_,b});
+        for(const auto& [r,b]:blocks)if(std::max(b[2]-b[0],b[3]-b[1])+1>=kSoftBlockCells)out.push_back({w.tickCounter_,b});
     }
     void replanForBlocks() {
         const uint32_t now=w.tickCounter_;
@@ -1729,8 +1757,9 @@ struct LegionNavigator::Impl {
                     if(!certainValue(f,p,comp,size_t(cell),v))break;
                     if(v==kUnreached||v<nearSeed)break;
                     const int x=cell%Wp,z=cell/Wp;
-                    for(const auto& [formed,b]:softBlockList)
-                        if(formed>=g.built&&x+fx>b[0]&&x<=b[2]&&z+fz>b[1]&&z<=b[3]&&softAt(x,z,fx,fz,command,counts)) {hit=true;break;}
+                    for(const auto* list:{&softBlockList,&jamBlockList})
+                        for(const auto& [formed,b]:*list)
+                            if(formed>=g.built&&x+fx>b[0]&&x<=b[2]&&z+fz>b[1]&&z<=b[3]&&softAt(x,z,fx,fz,command,counts)) {hit=true;break;}
                     const int next=descend(p,f,x,z,g.seeds.front(),0,0,true);
                     if(next<0||unsure)break;
                     cell=next;
@@ -1759,7 +1788,7 @@ struct LegionNavigator::Impl {
             const Unit* found=bodyUnit(id);
             const Member* m=found?member(found->id):nullptr;
             if(!found||!found->alive()||found->embarked()||!found->type||(found->type->canFly&&found->flightGroundMode!=1)||
-               found->type->isStructure()||(m&&m->state!=Arrived&&!reachStill(*found,*m)&&!trappedStill(*m))) {
+               found->type->isStructure()||(m&&m->state!=Arrived&&!reachStill(*found,*m)&&!trappedStill(*m)&&!jamStill(*m))) {
                 if(id<softBodies.size()&&softBodies[id].present) {
                     unstamp(int(id));
                     softBodies[id].present=false;softBodies[id].scans=0;
@@ -1793,12 +1822,14 @@ struct LegionNavigator::Impl {
             }
             const uint8_t kind=u.type->canFly&&w.legionLiftable(u,u.player)?3:owner!=~0ull?2:1;
             if(b.stamped&&b.ox==ox&&b.oz==oz&&b.fx==fx&&b.fz==fz&&b.kind==kind&&b.owner==owner&&b.player==u.player)continue;
+            if(m&&jamStill(*m))++acct.jamStamps;
             unstamp(int(id));
             b.ox=ox;b.oz=oz;b.fx=fx;b.fz=fz;b.kind=kind;b.owner=owner;b.player=u.player;
             // MV-05: cells a body standing still makes soft that were not
             // (a liftable flyer and an engaged or ring-held member never).
             if(kind!=3&&!m)forStampCells(b,[&](size_t c) {if(!soft[c])softAdded.push_back(int(c));});
             stamp(int(id));
+            if(m&&jamStill(*m))jamIds.insert(int(id));
         }
         stats.stillUnitsProcessed+=processed;
         stats.stillPerResidueMax=std::max<uint64_t>(stats.stillPerResidueMax,processed);
@@ -1810,6 +1841,8 @@ struct LegionNavigator::Impl {
     template<class Fail> void verifySoft(Fail&& fail) {
         ++stats.softHashVerifyTicks;
         if(softHashFull()!=softHash)fail("softHash differs from its recompute over the stamps");
+        for(const int id:jamIds)
+            if(size_t(id)>=softBodies.size()||!softBodies[size_t(id)].stamped)fail("jamIds holds a body without a stamp");
         if(w.tickCounter_%kStillScan!=0||soft.empty())return;
         std::vector<int32_t> first(soft.size(),0);
         std::map<int,std::vector<int>> stack;
@@ -2066,6 +2099,7 @@ struct LegionNavigator::Impl {
             regAreas.size()*(S::kNode+16)+regAreaOf.size()*S::kMemo;
         b.scratch+=(pbOrder.size()+pbSorted.size())*S::kKeyed+pbCount.size()*S::kCell32;
         b.scratch+=awMovers.size()*S::kMover+awAcc.size()*(S::kNode+48)+awByCommand.size()*16+awGrid.size()*24;
+        b.scratch+=jamIds.size()*S::kNode+jamBlockList.size()*S::kBox;
         for(const auto& cell:awGrid)b.scratch+=cell.size()*S::kCell32;
         return b;
     }
@@ -9649,7 +9683,10 @@ struct LegionNavigator::Impl {
                 // queue, idle units) plans a short committed detour around
                 // them; moving traffic is waited for, not planned around.
                 // A formation member held a long time is in a standing jam of
-                // crossing lanes (nobody ahead will move first): it plans too.
+                // crossing lanes (nobody ahead will move first): it plans too,
+                // and so (stage 7) does any member held as long against another
+                // order's jam (blockedByJam) -- a local correction round traffic;
+                // a queue of its own order is still waited for.
                 // Blocked by settled bodies again with no new record
                 // (Member::nearest) since the last detour: ask them to yield
                 // FIRST. A detour away from them is dropped when blocked and
@@ -9658,7 +9695,7 @@ struct LegionNavigator::Impl {
                 const bool settled=f&&m.detour<0&&m.route.empty()&&blockedBySettled(u,m,nx,nz);
                 if(settled&&int64_t(m.nearest)==m.detourBest&&m.holdUpdates>=6&&yieldLane(u,m,p,nx,nz)) {hold(u,m);restartHold(m);return;}
                 if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=m.nextDetour&&
-                   (settled||(m.holdUpdates>=60&&formationMember(m)))) {
+                   (settled||(m.holdUpdates>=60&&(formationMember(m)||blockedByJam(u,m,nx,nz))))) {
                     // Back off geometrically after each attempt: a crowd that
                     // stays jammed stops re-planning instead of shuffling
                     // (the count restarts on a new record, Member::nearest).
@@ -9686,8 +9723,8 @@ struct LegionNavigator::Impl {
         // A step that does not turn the body requests no turn of its
         // scripts either (TurnDirection walks the zontroll/zongob gait).
         u.turnReqBam=face?diff:0;
-        // A reach member leaving its ring spot is no soft obstacle any more.
-        if(m.state==Holding&&!policy(m.kind).completes)unstamp(u.id);
+        // A reach member leaving its ring spot, or a member leaving a jam (stage 7), is no soft obstacle any more.
+        if(m.state==Holding)unstamp(u.id);
         m.state=Moving;m.heldSince=kNoTick;m.holdUpdates=0;
     }
     // A hold that starts over (a detour planned, a lane asked for): the
@@ -9712,6 +9749,23 @@ struct LegionNavigator::Impl {
             if(!peer||peer->state==Arrived||peer->state==Trapped||peer->state==Engaged)return true;
             if(reach&&peer->state==Holding&&peer->controller==m.controller&&heldFor(*peer)>=kReachPeerHeld)
                 if(const Unit* other=w.unit(o);other&&other->player==u.player)return true;
+        }
+        return false;
+    }
+    // Stage 7: is the wanted footprint held by another order's jam -- a Legion member of another command held
+    // kRestAfter ticks or more (jamStill)? Nobody in a standing knot of crossing traffic moves first.
+    bool blockedByJam(const Unit& u,const Member& m,int nx,int nz) const {
+        const auto mine=groups.find(m.group);
+        if(mine==groups.end())return false;
+        for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
+            const int cx=nx+i,cz=nz+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            if(!o||o==u.id)continue;
+            const Member* peer=member(o);
+            if(!peer||!jamStill(*peer))continue;
+            const auto theirs=groups.find(peer->group);
+            if(theirs!=groups.end()&&theirs->second.command!=mine->second.command)return true;
         }
         return false;
     }

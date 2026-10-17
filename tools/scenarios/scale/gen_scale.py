@@ -412,7 +412,7 @@ if __name__ == "__main__":
         attack(n)
         churn(n)
     idle(10000)
-    for n in (2500, 10000):
+    for n in (400, 2500, 10000):   # 400: the ctest legion_traffic (stage 7)
         scatter(n)
     sched_load()
     sched_mix()

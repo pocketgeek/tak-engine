@@ -749,6 +749,12 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios --data "${TAK_TEST_DATA}")
   set_tests_properties(legion_route_paused PROPERTIES LABELS legion TIMEOUT 900
                        ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
+  # Legion 10,000 stage 7: crossing walkers no longer stand in the knots they form (scatter-400: 400 single
+  # walkers to unrelated destinations, serial and workers; tools/legion_traffic_test.py).
+  add_test(NAME legion_traffic
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_traffic_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
+  set_tests_properties(legion_traffic PROPERTIES LABELS legion TIMEOUT 900 SKIP_RETURN_CODE 77)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison
