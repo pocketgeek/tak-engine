@@ -127,6 +127,7 @@
 
 #include "client/shadowopaque.h"
 #include "client/geometrysubmit.h"
+#include "client/vertexarena.h"
 #include "client/fogupload.h"
 #include "client/shadowmask.h"
 #include "client/appglobals.h"   // kProjY/kProjZ, kSortZ/kSortY
@@ -651,6 +652,13 @@ public:
     // compared), deferred bodies generated after prepare (catch-up) or inside it.
     struct DistantVerifyTotals { uint64_t frames=0, deferred=0, checked=0, catchup=0, late=0; };
     const DistantVerifyTotals& distantVerifyTotals() const { return distantVerify_; }
+    // Workstream H (TAK_BODY_ARENA_VERIFY): every arena command gathered from a
+    // CPU mirror of the arena through its ranges equalled the assembled command.
+    struct BodyArenaVerifyTotals { uint64_t frames=0, commands=0, vertices=0, retained=0, uploaded=0,
+                                   appends=0, rebuilds=0, streams=0, fallbacks=0;
+                                   uint64_t streamReasons[6]{};   // by tak::render::ArenaStreamReason
+                                 };
+    const BodyArenaVerifyTotals& bodyArenaVerifyTotals() const { return bodyArenaVerify_; }
     struct ShadowCacheVerifyTotals {
         uint64_t frames=0, tiles=0, reused=0, body=0, translated=0, original=0;
         // Workstream F: tiles reused in a cell kept from an earlier frame, cells
@@ -702,7 +710,7 @@ public:
     float renderStudyZoomNow() const { return mapView_.zoom(); }
     void renderWork(size_t& vertices,size_t& calls,size_t& images,size_t& bakes,size_t& bakeVertices,
                     size_t& bakeCalls,size_t& switches,size_t& imageBytes) const {
-        vertices=bodyVerts_.size();calls=0;
+        vertices=bodyVertexTotal_;calls=0;
         for(const auto& op:drawOps_)calls+=!op.f && !op.u && op.tex && op.count>0;
         images=distantModelCache_.used;bakes=distantModelCache_.refreshed;
         bakeVertices=distantModelCache_.bakeVertices;bakeCalls=distantModelCache_.bakeDraws;
@@ -1132,7 +1140,10 @@ private:
     std::vector<SDL_Vertex> overlayBatch_;
     // Body pass assembled in parallel: plan offsets serially, scatter the vertex
     // copies across the pool, then replay the draw ops. Keeps depth order exact.
+    // Since workstream H only the commands that are not drawn from the retained
+    // arena are assembled here.
     std::vector<SDL_Vertex> bodyVerts_;
+    size_t bodyVertexTotal_ = 0;   // body vertices drawn this frame (assembled + arena)
     struct FeatureInst;   // defined below; DrawOp only needs the pointer type
     // `layer` puts AIRBORNE units in a pass of their own, after every feature.
     // Retail paints the world as bucketed z rows -- ground units interleaved with
@@ -1162,9 +1173,39 @@ private:
         bool hasTurnDir = false;  // has a TurnDirection script (turn-in-place / steering trim)
     };
     std::unordered_map<std::string, CobCache> cobCache_;
-    struct CopyTask { int geom, src, count, dst; };
+    // The body pass as ordered commands (workstream H, client/vertexarena.h).
+    // A body command (DrawOp with a texture) is `ranges` consecutive entries of
+    // bodyRanges_ in painter order; a range is a run of one source -- a unit's
+    // body vertices (UnitGeom::verts, identity = entry handle, content =
+    // revision) or its distant-image quad (by value). Features, special units
+    // and the ground/air shadow boundary stay command boundaries. A command is
+    // drawn either from bodyVerts_ (assembled: start = its first vertex there)
+    // or from arena ranges [arenaFirst, arenaFirst + arenaRanges) of
+    // bodyArenaFirsts_/Counts_ (placement stays in the screen-space vertices:
+    // D's arithmetic is the CPU's, bit for bit).
+    struct BodySource { const SDL_Vertex* data; uint32_t count, slot, generation; uint64_t revision;
+                        uint32_t arena = UINT32_MAX; };   // planner index (arena frames)
+    struct BodyRange { uint32_t source, offset, count; };
+    // One vertex copy: into bodyVerts_ (arena=false) or the arena write window.
+    struct CopyTask { const SDL_Vertex* src; uint32_t count, dst; bool arena; };
     struct DrawOp { const UnitR* u; const FeatureInst* f;
-                    SDL_Texture* tex; int start, count; };   // seg if u&&f both null
+                    SDL_Texture* tex; int start, count;     // seg if u&&f both null
+                    uint32_t firstRange = 0, ranges = 0;
+                    int32_t arenaFirst = -1; uint32_t arenaRanges = 0; };
+    std::vector<BodySource> bodySources_;
+    std::vector<BodyRange> bodyRanges_;
+    std::vector<GLint> bodyArenaFirsts_;
+    std::vector<GLsizei> bodyArenaCounts_;
+    std::vector<SDL_Vertex> bodyArenaGather_;   // fallback / simulated / verify gathers
+    tak::render::VertexArenaPlanner bodyArena_;
+    tak::render::VertexArenaBuffer bodyArenaBuffer_;
+    std::vector<SDL_Vertex> bodyArenaMirror_;    // TAK_BODY_ARENA_VERIFY: CPU copy of the GL arena
+    uint64_t bodyArenaFrame_ = 0;
+    bool bodyArenaOn_ = true, bodyArenaVerifyOn_ = false;   // read once per frame (debug switches)
+    void releaseBodyArena();
+    size_t bodyArenaBudget() const;
+    bool bodyArenaPressure() const;
+    void verifyBodyArena(const tak::render::ArenaFrameStats& stats);
     // Feature sync: the sim-side state of each visual feature, refreshed only when
     // World::featGeneration() moves. A member rather than a function-static so a new
     // game cannot inherit the previous one's array.
@@ -1205,6 +1246,7 @@ private:
     std::atomic<uint64_t> shadowSkipChecks_{0};
     ShadowCacheVerifyTotals shadowVerify_;
     DistantVerifyTotals distantVerify_;
+    BodyArenaVerifyTotals bodyArenaVerify_;
 #endif
     uint64_t profShadowVerts_ = 0;  // shadow vertices copied + submitted, likewise
     // takeProf's own previous values, so it can report per-interval deltas.
@@ -1231,7 +1273,7 @@ private:
         tak::TerrainChunks::Stats chunks{};
         MapView::SectionStats sections{};
         uint64_t gpuCreates = 0, gpuDestroys = 0;
-        std::array<size_t, 8> capacity{};
+        std::array<size_t, 11> capacity{};
     } telemetryCursor_;
   public:
     const tak::render::FrameStats& renderStats() const { return renderStats_; }

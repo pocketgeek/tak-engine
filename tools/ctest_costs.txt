@@ -66,6 +66,7 @@ cartographer_feature_ops_veruna 17
 legion_movement_orders_maze 16
 structure_combat 16
 cartographer_feature_ops_aramon 16
+render_body_arena 16
 legion_situation_r10-46292_retail 15
 override_transfer 15
 cartographer_feature_ops_zhon 15

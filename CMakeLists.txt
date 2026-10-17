@@ -1460,6 +1460,28 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 800 600 --novsync)
       set_tests_properties(render_distant_lookup PROPERTIES TIMEOUT 300
           PASS_REGULAR_EXPRESSION "DISTANT_VERIFY frames=[1-9][0-9]* deferred=[1-9][0-9]* checked=[1-9][0-9]* catchup=0 late=0")
+      # Retained body vertices (workstream H) on the software renderer: the arena's
+      # storage is simulated in CPU memory (TAK_BODY_ARENA_SOFTWARE) and its commands
+      # are drawn by gathering their ranges, so the planner's bookkeeping runs in the
+      # real body pass; TAK_BODY_ARENA_MIN=1 puts every command in the arena (small
+      # segments and distant-image quads by value included). A mixed roster at zoom 0.5
+      # alternates 20 moving / 20 still camera frames (streamed / retained), with a
+      # veterancy cycle, deaths/respawns and render-target resets. Every arena
+      # command must equal the command assembled from its sources
+      # (TAK_BODY_ARENA_VERIFY); appends, rebuilds and streams must all occur and no
+      # command may fall back.
+      add_test(NAME render_body_arena COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software
+          TAK_BODY_ARENA_SOFTWARE=1 TAK_BODY_ARENA_MIN=1 TAK_DISTANT_SOFTWARE=1 TAK_SHADOW_BENCH=150 TAK_PROFILE_ZOOM=0.5
+          TAK_RENDER_ROSTER=araarch,zonter,versword,aralode TAK_RENDER_CAMERA_SNAP=20
+          TAK_RENDER_VETERAN=25 TAK_RENDER_CHURN=40 TAK_RENDER_RESET=70
+          TAK_RENDER_STUDY=1 TAK_RENDER_FRAMES=140 TAK_BODY_ARENA_VERIFY=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/body-arena-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/body-arena-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 800 600 --novsync)
+      set_tests_properties(render_body_arena PROPERTIES TIMEOUT 300
+          PASS_REGULAR_EXPRESSION "BODY_ARENA_VERIFY frames=[1-9][0-9]* commands=[1-9][0-9]* vertices=[0-9]+ retained=[1-9][0-9]* uploaded=[1-9][0-9]* appends=[1-9][0-9]* rebuilds=[1-9][0-9]* streams=[1-9][0-9]* fallbacks=0")
       # Persistent shadow tile cells (workstream F) under space pressure, on the
       # software renderer: the render_shadow_cache scene with 288-pixel pages, short
       # policy windows and deaths/respawns. render_shadow_atlas then moves the
@@ -1566,7 +1588,7 @@ if(TAK_BUILD_CLIENT)
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
-          render_geometry_stages render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup tactical_dots spectator_health_bars
+          render_geometry_stages render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_body_arena tactical_dots spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()

@@ -1356,20 +1356,33 @@
         const double _asm0 = double(SDL_GetPerformanceCounter());
         copyTasks_.clear();
         drawOps_.clear();
-        int destOff = 0;
+        bodySources_.clear();
+        bodyRanges_.clear();
+        bodyArenaFirsts_.clear();
+        bodyArenaCounts_.clear();
         SDL_Texture* segTex = nullptr;
-        int segStart = 0, segCount = 0;
+        uint32_t segFirst = 0;
+        int segCount = 0;
         auto closeSeg = [&] {
             if (segCount > 0) {
-                drawOps_.push_back({nullptr, nullptr, segTex, segStart, segCount});
+                DrawOp op{nullptr, nullptr, segTex, -1, segCount};
+                op.firstRange = segFirst;
+                op.ranges = uint32_t(bodyRanges_.size()) - segFirst;
+                drawOps_.push_back(op);
                 segCount = 0;
             }
-            // Force the next run to re-anchor segStart to the current destOff. Without
+            // Force the next run to open a new segment at the current range. Without
             // this, a unit whose texture matches segTex but follows a feature/special
-            // unit (which closed the segment) keeps the PREVIOUS segment's segStart and
-            // gets drawn from the wrong vertices -- so it renders an earlier unit's body
-            // and vanishes from its own spot (camera-dependent, as depth order shifts).
+            // unit (which closed the segment) would extend the PREVIOUS segment's
+            // anchor and draw an earlier unit's vertices in its place.
             segTex = nullptr;
+        };
+        auto openSeg = [&](SDL_Texture* tex) {
+            if (tex != segTex || segCount == 0) {
+                closeSeg();
+                segTex = tex;
+                segFirst = uint32_t(bodyRanges_.size());
+            }
         };
         for (const auto& it : items) {
             // The ground -> air boundary is where the held-back flyer shadows go. Close
@@ -1395,35 +1408,183 @@
                 }
                 const auto& distant=distantModelItems_[size_t(gslot)];
                 if(distant.texture) {
-                    if(distant.texture!=segTex) {closeSeg();segTex=distant.texture;segStart=destOff;}
-                    copyTasks_.push_back({gslot,0,6,destOff});
-                    destOff+=6;segCount+=6;
+                    openSeg(distant.texture);
+                    const uint32_t src = uint32_t(bodySources_.size());
+                    bodySources_.push_back({distant.quad.data(), 6, g.handle.index, g.handle.generation, 0});
+                    bodyRanges_.push_back({src, 0, 6});
+                    segCount += 6;
                     continue;
                 }
-                int src = 0;
+                if (g.runs.empty()) continue;
+                // A body left pending behind a held image (G) is never drawn live; if
+                // it were, it gets no retained identity rather than a stale range.
+                const uint32_t src = uint32_t(bodySources_.size());
+                bodySources_.push_back({g.verts.data(), uint32_t(g.verts.size()),
+                                        g.bodyPending ? tak::render::kArenaNoSlot : g.handle.index,
+                                        g.handle.generation, g.revision});
+                uint32_t offset = 0;
                 for (const auto& r : g.runs) {
-                    if (r.first != segTex) { closeSeg(); segTex = r.first; segStart = destOff; }
-                    copyTasks_.push_back({gslot, src, r.second, destOff});
-                    destOff += r.second; segCount += r.second; src += r.second;
+                    openSeg(r.first);
+                    bodyRanges_.push_back({src, offset, uint32_t(r.second)});
+                    segCount += r.second;
+                    offset += uint32_t(r.second);
                 }
             }
         }
         closeSeg();
-        bodyVerts_.resize(size_t(destOff));
-        pool_.parallelFor(copyTasks_.size(), [this](size_t b, size_t e) {
-            for (size_t i = b; i < e; ++i) {
-                const CopyTask& t = copyTasks_[i];
-                const auto& distant=distantModelItems_[size_t(t.geom)];
-                if(distant.texture)std::copy(distant.quad.begin(),distant.quad.end(),bodyVerts_.begin()+t.dst);
-                else {
-                    const auto& gv = visGeom(size_t(t.geom)).verts;
-                    std::copy(gv.begin() + t.src, gv.begin() + t.src + t.count,
-                              bodyVerts_.begin() + t.dst);
+
+        // Workstream H: native-size commands draw from the retained vertex arena
+        // (client/vertexarena.h) when most of their content is resident or
+        // unchanged since the last frame; only changed sources are copied, into
+        // arena storage no pending draw reads. Otherwise (camera motion, a moving
+        // army, no capable renderer, GPU budget) every command is assembled and
+        // streamed exactly as before.
+        using tak::render::ArenaMode;
+        // Commands of at least this many vertices draw from the arena: the native
+        // threshold (smaller batches take SDL's path, where priming costs more than
+        // SDL's conversion). Debug TAK_BODY_ARENA_MIN changes it (tests, experiments).
+        size_t kNativeMin = tak::GeometrySubmit::kNativeMinVertices;
+        if (const char* v = tak::devEnv("TAK_BODY_ARENA_MIN")) kNativeMin = size_t(std::max(1, std::atoi(v)));
+        const bool bodyDirect = !tak::devFlag("TAK_BODY_SDL_SUBMIT");
+        bodyArenaOn_ = bodyDirect && !tak::devFlag("TAK_BODY_ARENA_OFF");
+        bodyArenaVerifyOn_ = tak::devFlag("TAK_BODY_ARENA_VERIFY");
+        bodyArenaBuffer_.setSimulated(tak::devFlag("TAK_BODY_ARENA_SOFTWARE"));
+        bodyArenaBuffer_.setMappingAllowed(tak::devFlag("TAK_BODY_ARENA_MAP", true));
+        ++bodyArenaFrame_;
+        bodyArenaBuffer_.endFrame();
+        bool arenaPlanned = false, arenaFrame = false;
+        SDL_Vertex* arenaWindow = nullptr;
+        if (bodyArenaOn_) {
+            bodyArena_.begin(bodyArenaFrame_, distantNow_);
+            for (const DrawOp& op : drawOps_) {
+                if (!op.tex || size_t(op.count) < kNativeMin) continue;
+                for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
+                    BodySource& src = bodySources_[bodyRanges_[k].source];
+                    if (src.arena == UINT32_MAX)
+                        src.arena = bodyArena_.add({src.data, src.count, src.slot, src.generation, src.revision});
                 }
             }
-        });
-        renderStats_.add(RS::BodyVertsCopied, size_t(destOff));
-        renderStats_.add(RS::BodyBytesCopied, size_t(destOff) * sizeof(SDL_Vertex));
+            arenaPlanned = true;
+            const bool capable = bodyArenaBuffer_.simulated() ||
+                                 (bodySubmit_.nativeCapable(ren_) && bodyArenaBuffer_.ready());
+            if (bodyArena_.plan(capable, bodyArenaBudget()) != ArenaMode::Stream) {
+                bool ok = !bodyArena_.reallocate() ||
+                          bodyArenaBuffer_.allocate(bodyArena_.newCapacity() * sizeof(SDL_Vertex));
+                if (ok && bodyArena_.reallocate() && bodyArenaVerifyOn_ && !bodyArenaBuffer_.simulated())
+                    bodyArenaMirror_.assign(bodyArena_.newCapacity(), SDL_Vertex{{-7777, -7777}, {1, 2, 3, 4}, {9, 9}});
+                const size_t windowVerts = bodyArena_.writeEnd() - bodyArena_.writeBegin();
+                if (ok && windowVerts) {
+                    arenaWindow = bodyArenaBuffer_.map(bodyArena_.writeBegin() * sizeof(SDL_Vertex),
+                                                       windowVerts * sizeof(SDL_Vertex));
+                    ok = arenaWindow != nullptr;
+                }
+                if (ok) arenaFrame = true;
+                else {
+                    bodyArena_.end(false);
+                    arenaPlanned = false;
+                    releaseBodyArena();
+                }
+            }
+        } else if (bodyArena_.capacity() || bodyArenaBuffer_.capacityBytes()) releaseBodyArena();
+        const auto fromArena = [&](const DrawOp& op) {
+            return arenaFrame && op.tex && size_t(op.count) >= kNativeMin;
+        };
+        // Assembled commands: their ranges copied into bodyVerts_ (plan serially).
+        int destOff = 0;
+        const auto queueAssembled = [&](bool arenaOps) {
+            for (DrawOp& op : drawOps_) {
+                if (!op.tex || op.count <= 0 || op.start >= 0 || fromArena(op) != arenaOps) continue;
+                op.start = destOff;
+                for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
+                    const BodyRange& r = bodyRanges_[k];
+                    copyTasks_.push_back({bodySources_[r.source].data + r.offset, r.count, uint32_t(destOff), false});
+                    destOff += int(r.count);
+                }
+            }
+        };
+        queueAssembled(false);
+        size_t uploaded = 0;
+        if (arenaFrame)
+            for (const auto& up : bodyArena_.uploads()) {
+                const auto& src = bodyArena_.sources()[up.source];
+                copyTasks_.push_back({src.data, src.count, uint32_t(up.dst - bodyArena_.writeBegin()), true});
+                uploaded += src.count;
+            }
+        const auto runCopies = [&] {
+            bodyVerts_.resize(size_t(destOff));
+            SDL_Vertex* const assembled = bodyVerts_.data();
+            SDL_Vertex* const window = arenaWindow;
+            pool_.parallelFor(copyTasks_.size(), [this, assembled, window](size_t b, size_t e) {
+                for (size_t i = b; i < e; ++i) {
+                    const CopyTask& t = copyTasks_[i];
+                    std::copy(t.src, t.src + t.count, (t.arena ? window : assembled) + t.dst);
+                }
+            });
+        };
+        runCopies();
+        size_t arenaRetained = 0;
+        if (arenaFrame) {
+            const bool ok = !arenaWindow || bodyArenaBuffer_.unmap();
+            arenaWindow = nullptr;
+            const tak::render::ArenaFrameStats arenaStats = bodyArena_.stats();
+            if (ok) {
+                if (bodyArenaVerifyOn_ && !bodyArenaBuffer_.simulated())
+                    for (const auto& up : bodyArena_.uploads()) {
+                        const auto& src = bodyArena_.sources()[up.source];
+                        std::copy(src.data, src.data + src.count, bodyArenaMirror_.begin() + up.dst);
+                    }
+                for (DrawOp& op : drawOps_) {
+                    if (!fromArena(op)) continue;
+                    const size_t begin = bodyArenaFirsts_.size();
+                    op.arenaFirst = int32_t(begin);
+                    for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
+                        const BodyRange& r = bodyRanges_[k];
+                        tak::render::appendArenaRange(bodyArenaFirsts_, bodyArenaCounts_, begin,
+                            bodyArena_.first(bodySources_[r.source].arena) + r.offset, r.count);
+                    }
+                    op.arenaRanges = uint32_t(bodyArenaFirsts_.size() - begin);
+                }
+                if (arenaStats.mode == ArenaMode::Append) arenaRetained = arenaStats.residentVerts;
+                if (bodyArenaVerifyOn_) verifyBodyArena(arenaStats);
+            }
+            bodyArena_.end(ok);
+            arenaPlanned = false;
+            renderStats_.add(arenaStats.mode == ArenaMode::Append ? RS::ArenaAppend : RS::ArenaRebuild);
+            if (!ok) {
+                // The storage contents are lost: draw these commands assembled.
+                releaseBodyArena();
+                renderStats_.add(RS::ArenaFallbacks);
+                arenaFrame = false;
+                uploaded = 0;
+                copyTasks_.clear();
+                for (DrawOp& op : drawOps_) op.arenaFirst = -1;
+                queueAssembled(false);
+                runCopies();
+                bodyArenaFirsts_.clear();
+                bodyArenaCounts_.clear();
+                ++bodyArenaVerify_.fallbacks;
+            }
+        }
+        if (arenaPlanned) {   // streamed: still record what was seen (the stable test)
+            ++bodyArenaVerify_.streamReasons[size_t(bodyArena_.stats().reason)];
+            bodyArena_.end(true);
+            renderStats_.add(RS::ArenaStream);
+            ++bodyArenaVerify_.streams;
+        }
+        if (bodyArena_.capacity() &&
+            (bodyArena_.shouldRelease(bodyArenaFrame_, distantNow_) || bodyArenaPressure()))
+            releaseBodyArena();
+        bodyVertexTotal_ = 0;
+        for (const DrawOp& op : drawOps_) if (op.tex && op.count > 0) bodyVertexTotal_ += size_t(op.count);
+        renderStats_.add(RS::BodyVertsCopied, size_t(destOff) + uploaded);
+        renderStats_.add(RS::BodyBytesCopied, (size_t(destOff) + uploaded) * sizeof(SDL_Vertex));
+        renderStats_.add(RS::ArenaVertsRetained, arenaRetained);
+        renderStats_.add(RS::ArenaVertsUploaded, uploaded);
+        tak::render::countUploadBytes(uploaded * sizeof(SDL_Vertex));
+        renderStats_.set(RS::ArenaCapacityBytes, bodyArenaBuffer_.simulated() ? 0 : bodyArenaBuffer_.capacityBytes());
+        renderStats_.set(RS::ArenaInflightBytes, bodyArenaBuffer_.inFlightBytes());
+        renderStats_.set(RS::ArenaCpuBytes, bodyArena_.cpuBytes() + bodyArenaBuffer_.stagingBytes() +
+            bodyArenaMirror_.capacity() * sizeof(SDL_Vertex) + bodyArenaGather_.capacity() * sizeof(SDL_Vertex));
         renderStats_.set(RS::BodyBufferCapacityBytes, bodyVerts_.capacity() * sizeof(SDL_Vertex));
         renderStats_.set(RS::BodyBufferUsedBytes, bodyVerts_.size() * sizeof(SDL_Vertex));
         renderStats_.addMs(RP::BodyAssembly, (double(SDL_GetPerformanceCounter()) - _asm0) / _ptFreq);
@@ -1611,8 +1772,42 @@
                 drawUnit(*op.u);
             } else if (op.count > 0 && op.tex) {   // null atlas page: skip, no white
                 renderStats_.add(RS::BodySubmissions);
-                bodySubmit_.draw(ren_,op.tex,std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(op.count)),
-                                 !tak::devFlag("TAK_BODY_SDL_SUBMIT"));
+                if (op.arenaFirst >= 0) {
+                    const std::span<const GLint> firsts(bodyArenaFirsts_.data() + op.arenaFirst, op.arenaRanges);
+                    const std::span<const GLsizei> counts(bodyArenaCounts_.data() + op.arenaFirst, op.arenaRanges);
+                    const bool simulated = bodyArenaBuffer_.simulated();
+                    const int drawn = simulated ? 1 : bodySubmit_.drawBuffer(ren_, op.tex, bodyArenaBuffer_.id(),
+                                                                             firsts, counts, size_t(op.count));
+                    if (drawn != 1) {
+                        renderStats_.add(RS::ArenaDraws);
+                        renderStats_.add(RS::ArenaRanges, firsts.size());
+                    } else {
+                        // Not drawable from the buffer here: the simulated arena (its
+                        // vertices gathered through the ranges -- the software-renderer
+                        // test of the bookkeeping) or a texture this renderer cannot
+                        // sample natively (the same vertices, from the sources).
+                        bodyArenaGather_.clear();
+                        if (simulated) {
+                            for (size_t k = 0; k < firsts.size(); ++k)
+                                bodyArenaGather_.insert(bodyArenaGather_.end(),
+                                    bodyArenaBuffer_.simulatedData() + firsts[k],
+                                    bodyArenaBuffer_.simulatedData() + firsts[k] + counts[k]);
+                            renderStats_.add(RS::ArenaDraws);
+                            renderStats_.add(RS::ArenaRanges, firsts.size());
+                        } else {
+                            for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
+                                const BodyRange& r = bodyRanges_[k];
+                                const SDL_Vertex* data = bodySources_[r.source].data + r.offset;
+                                bodyArenaGather_.insert(bodyArenaGather_.end(), data, data + r.count);
+                            }
+                            renderStats_.add(RS::ArenaFallbacks);
+                        }
+                        bodySubmit_.draw(ren_, op.tex, bodyArenaGather_, bodyDirect);
+                    }
+                } else {
+                    bodySubmit_.draw(ren_,op.tex,std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(op.count)),
+                                     bodyDirect);
+                }
             }
         }
         // Fallback drain: if the air layer produced no draw ops at all (every flyer
@@ -2910,7 +3105,8 @@
         for (const auto& [texture, vertices] : shadowAtlasMaskScratch_) scratch += vertices.capacity();
         telemetryCursor_.capacity = {paintItems_.capacity(), drawOps_.capacity(), copyTasks_.capacity(),
             distantModelItems_.capacity(), visUnits_.capacity(), bodyVerts_.capacity(),
-            shadowAtlasOpaqueScratch_.capacity() + shadowCompositeBatch_.capacity(), scratch};
+            shadowAtlasOpaqueScratch_.capacity() + shadowCompositeBatch_.capacity(), scratch,
+            bodySources_.capacity(), bodyRanges_.capacity(), bodyArenaFirsts_.capacity()};
     }
 
     // Render thread, once per frame when draw() returns: everything that is not
@@ -2987,6 +3183,7 @@
             listCapacity += v.capacity() * sizeof(v[0]);
         };
         account(paintItems_); account(drawOps_); account(copyTasks_); account(distantModelItems_);
+        account(bodySources_); account(bodyRanges_); account(bodyArenaFirsts_); account(bodyArenaCounts_);
         account(visUnits_); account(geomIndex_); account(airShadows_);
         stats.set(RS::FrameListsUsedBytes, listUsed);
         stats.set(RS::FrameListsCapacityBytes, listCapacity);
@@ -3223,6 +3420,69 @@
         shadowAtlasPolicy_.frame=frame;shadowAtlasPolicy_.failFrame=failFrame;
     }
 
+    // Workstream H: the retained body vertex arena (client/vertexarena.h).
+    void GameView::releaseBodyArena() {
+        if (bodyArena_.capacity() || bodyArenaBuffer_.capacityBytes()) renderStats_.add(tak::render::Counter::ArenaReleases);
+        bodyArena_.release();
+        bodyArenaBuffer_.release();
+        std::vector<SDL_Vertex>().swap(bodyArenaMirror_);
+    }
+    // Vertices the arena may (re)allocate now. It is an optimization, so it uses
+    // the GPU budget only up to three quarters of the cap (caches that obey the
+    // cap keep their room) and nothing while the cap is tightened after a
+    // failure. Current and in-flight storage are already in gpuvram::bytes().
+    size_t GameView::bodyArenaBudget() const {
+        if (gpuvram::blocked() || gpuvram::tightened()) return 0;
+        const size_t limit = gpuvram::cap() / 4 * 3, held = gpuvram::bytes();
+        return held < limit ? (limit - held) / sizeof(SDL_Vertex) : 0;
+    }
+    // Yield the arena when the GPU budget comes under pressure.
+    bool GameView::bodyArenaPressure() const {
+        return gpuvram::blocked() || gpuvram::tightened() || gpuvram::bytes() > gpuvram::cap() / 8 * 7;
+    }
+    // Debug (TAK_BODY_ARENA_VERIFY): every arena command gathered from the arena
+    // contents (the simulated storage, or a CPU mirror of every GL upload)
+    // through its merged ranges must equal the command assembled from its
+    // sources -- exactly what the streaming path would draw.
+    void GameView::verifyBodyArena(const tak::render::ArenaFrameStats& stats) {
+        const SDL_Vertex* storage = bodyArenaBuffer_.simulated() ? bodyArenaBuffer_.simulatedData()
+                                                                 : bodyArenaMirror_.data();
+        const size_t storageVerts = bodyArenaBuffer_.simulated()
+            ? bodyArenaBuffer_.capacityBytes() / sizeof(SDL_Vertex) : bodyArenaMirror_.size();
+        std::vector<SDL_Vertex> drawn, expected;
+        for (const DrawOp& op : drawOps_) {
+            if (op.arenaFirst < 0) continue;
+            drawn.clear(); expected.clear();
+            for (uint32_t k = 0; k < op.arenaRanges; ++k) {
+                const size_t first = size_t(bodyArenaFirsts_[size_t(op.arenaFirst) + k]);
+                const size_t count = size_t(bodyArenaCounts_[size_t(op.arenaFirst) + k]);
+                if (first + count > storageVerts || first + count > bodyArena_.writeEnd())
+                    throw std::runtime_error("body arena: range past the written storage");
+                drawn.insert(drawn.end(), storage + first, storage + first + count);
+            }
+            for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
+                const BodyRange& r = bodyRanges_[k];
+                const SDL_Vertex* data = bodySources_[r.source].data + r.offset;
+                expected.insert(expected.end(), data, data + r.count);
+            }
+            if (drawn.size() != size_t(op.count) || expected.size() != drawn.size() ||
+                std::memcmp(drawn.data(), expected.data(), drawn.size() * sizeof(SDL_Vertex)) != 0) {
+                char what[160];
+                std::snprintf(what, sizeof what, "body arena: command of %d vertices (%u ranges) differs from its sources",
+                              op.count, op.arenaRanges);
+                throw std::runtime_error(what);
+            }
+            ++bodyArenaVerify_.commands;
+            bodyArenaVerify_.vertices += drawn.size();
+        }
+        ++bodyArenaVerify_.frames;
+        bodyArenaVerify_.uploaded += stats.uploadedVerts;
+        if (stats.mode == tak::render::ArenaMode::Append) {
+            ++bodyArenaVerify_.appends;
+            bodyArenaVerify_.retained += stats.residentVerts;
+        } else ++bodyArenaVerify_.rebuilds;
+    }
+
     void GameView::invalidateRenderTargets() {
         rendererGeneration_.bump();   // every cached target placement is now stale
         mapView_.invalidateRenderTargets();
@@ -3238,6 +3498,7 @@
         shadowTileStamps_.clear();shadowTileChecks_.clear();
         shadowSilhouetteAtlasActive_=false;
         atlasTracker_.clear();   // whatever was painted died with the atlases
+        releaseBodyArena();      // retained body vertices (H): re-uploaded on the next stable frame
     }
 
     void GameView::destroyGpuTextures() {

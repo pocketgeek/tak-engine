@@ -343,6 +343,20 @@ enum class Counter : uint8_t {
     DistantPages,        // gauge: live image pages
     DistantTiles,        // gauge: live images (tiles in use)
     DistantMetadataBytes,// gauge: CPU bytes of the image cache's maps, page tables and scratch
+    // Workstream H (retained body vertex arena, client/vertexarena.h). The
+    // frame-mode counters are 0/1 per frame in which body commands were planned.
+    ArenaAppend,         // frame drew from the arena, changed sources appended
+    ArenaRebuild,        // frame drew from the arena after rewriting it (orphan + contiguous)
+    ArenaStream,         // frame streamed (assembled) its native-size commands: unstable / budget / off
+    ArenaVertsRetained,  // body vertices drawn from resident arena ranges (nothing copied or uploaded)
+    ArenaVertsUploaded,  // body vertices written into the arena (also in body_verts_copied, bytes_uploaded)
+    ArenaDraws,          // commands drawn from the arena (one native draw each)
+    ArenaRanges,         // merged ranges those draws covered (glMultiDrawArrays entries)
+    ArenaFallbacks,      // arena commands drawn assembled after all (write failure, texture check)
+    ArenaReleases,       // storage released (idle, GPU pressure, failure)
+    ArenaCapacityBytes,  // gauge: arena storage (tracked GPU buffer bytes)
+    ArenaInflightBytes,  // gauge: orphaned/released storage still counted (in flight)
+    ArenaCpuBytes,       // gauge: planner records, per-frame command lists, staging, mirror
     Count
 };
 
@@ -406,7 +420,10 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "shadow_atlas_gpu_bytes",
     "distant_body_deferred", "distant_body_resumed", "distant_body_catchup", "distant_body_late",
     "distant_bounds_reused", "distant_page_releases", "distant_migrated", "distant_pages",
-    "distant_tiles", "distant_metadata_bytes"};
+    "distant_tiles", "distant_metadata_bytes",
+    "arena_append", "arena_rebuild", "arena_stream", "arena_verts_retained", "arena_verts_uploaded",
+    "arena_draws", "arena_ranges", "arena_fallbacks", "arena_releases", "arena_capacity_bytes",
+    "arena_inflight_bytes", "arena_cpu_bytes"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};
