@@ -158,6 +158,7 @@ struct NavAccounting {
     // moved away from the charge a route was built with, and region-search steps charged for a queue.
     uint64_t openings = 0, openingScans = 0, openingEntrants = 0, openingDelayMax = 0;
     uint64_t chargedFields = 0, openingCharges = 0, openingReplans = 0, openingSearchCharges = 0;
+    uint64_t openingSplits = 0, splitMembers = 0;   // subgroups split off a big group for another passage, and their members
     // Admission at narrow passages: bodies admitted, member-updates spent waiting, turns of a passage's direction
     // and closings (the other way waited kAdmitGreen ticks).
     uint64_t passAdmits = 0, admitWaits = 0, admitTurns = 0, admitClosings = 0;

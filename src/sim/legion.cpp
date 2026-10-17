@@ -739,7 +739,7 @@ struct LegionNavigator::Impl {
         std::vector<int> reachIds;
         // Stage 8: this group's own entrants at the last opening recount, (label, queue area), sorted by label: its
         // own share of each queue, left out of the delays its route is charged (a route never plans round itself).
-        // A function of the recount, whose inputs are hashed; folded with the openings.
+        // Set by the recount and by committed moves (openingDrift, allocateQueue): hashed while non-zero.
         std::vector<std::pair<uint32_t,uint64_t>> openArea;
         // Two or more members: arrival spots round the target at weapon reach.
         // cells: band 0 (centre distance R-1.5 .. R-0.5 bodies, in the
@@ -3782,14 +3782,23 @@ struct LegionNavigator::Impl {
         // time in id order, each committing its move in the table before the next is judged (openingDrift), so
         // that two groups do not both leave one queue for the other and come back together the next time.
         const uint32_t now=w.tickCounter_;
+        struct Split {int group;std::vector<int> ids;std::pair<uint32_t,uint64_t> area;};
+        std::vector<Split> splits;   // (group, members to a new subgroup, their queue), done after the walk
         for(auto& [gid,g]:groups) {
             Field* f=g.field.get();
             if(!f||!f->done||!f->labels||g.next||g.stale||now-g.built<kOpeningHold)continue;
+            // Stage 8: a big group whose queue would be shorter shared with another passage gives part of itself to
+            // a subgroup that plans round it (allocateQueue); otherwise the whole group may re-plan (openingDrift).
+            if(g.members>=kAllocMembers) {
+                std::vector<int> moved;
+                if(allocateQueue(g,moved)) {splits.push_back({gid,std::move(moved),splitArea});continue;}
+            }
             if(!openingDrift(g,*f))continue;
             ++acct.openingReplans;
             g.stale=true;g.demand=true;g.reroute=true;
             listGroup(g);
         }
+        for(auto& sp:splits) {splitArea=sp.area;splitGroup(sp.group,sp.ids);}
         for(auto& o:openings)
             for(int d=0;d<2;++d) {
                 o.delay[d]=queueDelay(o,o.area[d],o.area[1-d]);
@@ -3978,6 +3987,143 @@ struct LegionNavigator::Impl {
             }
         }
         return out;
+    }
+    // ---- stage 8: navigation subgroups for route allocation ----------------------------------------------------------
+    // One group is one route, so a big group re-planned for a queue moves whole: its share of the queue all goes
+    // to the other passage (bridges-10000: 2,500-body groups, every one on one bridge). A group of kAllocMembers or
+    // more is cut into SUBGROUPS by position: its members by kAllocCells-cell squares of where they stand
+    // (spatially coherent; never packets or id ranges). For the opening with most of its queue area (L) it compares,
+    // per square, the region search's way to the goals through L and round it (L closed; the traffic charge only,
+    // the queues apart) and moves squares, the cheapest detour first, to the other passage while L's queue after the
+    // move still exceeds the other passage's queue plus the square's detour (cells). Moved squares become one new
+    // group (splitGroup: the same order, seeds, command and kind; its members keep their state, slots and point)
+    // that plans its own route -- its charges see L's queue without itself, so it takes the other passage -- and
+    // the move is committed in the table at once. Each subgroup is judged on its own from then on.
+    static constexpr int kAllocMembers=128,kAllocCells=64,kAllocMin=32;
+    bool allocateQueue(Group& g,std::vector<int>& moved) {
+        moved.clear();
+        if(g.plane<0||g.approach||!policy(g.kind).area||g.reachTarget)return false;
+        uint32_t main=0;uint64_t mainArea=0;
+        for(const auto& [label,a]:g.openArea)if(a>mainArea) {mainArea=a;main=label;}
+        if(!main)return false;
+        const uint32_t mi=(main>>1)-1,md=main&1;
+        if(mi>=openings.size())return false;
+        Plane& p=planes[size_t(g.plane)];
+        if(!p.hier.ready()||p.legal.empty()||p.stage>0)return false;
+        if(queueDelay(openings[mi],openings[mi].area[md],openings[mi].area[1-md])<kOpeningMinCharge)return false;
+        const int W=width();
+        std::vector<int> targets,ids;
+        for(const int id:g.ids) {
+            const Unit* u=w.unit(id);
+            if(!u||!u->type||!u->alive())continue;
+            targets.push_back(footprintOrigin(u->z,u->type->footZ)*W+footprintOrigin(u->x,u->type->footX));ids.push_back(id);
+        }
+        uint64_t work=0;
+        const uint64_t command=g.soft?g.command:kNoSoft;
+        auto searchWith=[&](bool closed) {
+            return p.hier.search(g.seeds,targets,p.legal.data(),kRouteExpand,work,
+                [&](int s,uint16_t r,uint64_t step,const hier::Portal& q,bool aSide) {
+                    uint64_t extra=trafficPenalty(p,s,r,step,command,work);
+                    if(closed&&portalLabel(p,q,!aSide,work)==main)extra+=uint64_t(1)<<32;
+                    return extra;
+                });
+        };
+        const auto open=searchWith(false),shut=searchWith(true);
+        navc.routeSearch+=work;
+        if(!open.complete||!shut.complete)return false;
+        // Per square: members on L now (their label), their queue area, summed detour (route units), alternative.
+        struct Square {std::vector<int> ids;uint64_t area=0;int64_t detour=0;std::map<uint32_t,uint64_t> alt;};
+        std::map<std::pair<int,int>,Square> squares;
+        const Field& f=*g.field;
+        for(size_t k=0;k<ids.size();++k) {
+            const int c=targets[k],cx=c%W,cz=c/W;
+            if(f.viaAt(cx,cz)!=main||!legal(p,cx,cz))continue;
+            const int sec=p.hier.sectorOfCell(c);const uint16_t reg=p.hier.regionAt(c);
+            if(reg==hier::kNoRegion)continue;
+            const auto a=open.index.find(hier::Hierarchy::key(sec,reg)),b=shut.index.find(hier::Hierarchy::key(sec,reg));
+            if(a==open.index.end()||b==shut.index.end())continue;
+            const uint64_t ca=open.nodes[size_t(a->second)].cost,cb=shut.nodes[size_t(b->second)].cost;
+            if(cb>=uint64_t(1)<<32)continue;   // no way round L from here
+            uint32_t label=0;
+            for(int i=b->second,depth=0;i>=0&&depth<4096&&!label;i=shut.nodes[size_t(i)].parent,++depth) {
+                const auto& n=shut.nodes[size_t(i)];
+                if(n.parent<0)break;
+                const hier::Portal& q=p.hier.portal(n.exit);
+                label=portalLabel(p,q,q.a==n.s&&q.ra==n.r,work);
+            }
+            if(!label)continue;
+            const Unit* u=w.unit(ids[k]);
+            const uint64_t ar=uint64_t(u->type->footX+1)*uint64_t(u->type->footZ+1);
+            Square& sq=squares[{cx/kAllocCells,cz/kAllocCells}];
+            sq.ids.push_back(ids[k]);sq.area+=ar;sq.detour+=int64_t(cb)-int64_t(ca);sq.alt[label]+=ar;
+        }
+        // Cheapest detour (per body) first; ties by the square's position.
+        std::vector<std::pair<int64_t,std::pair<int,int>>> order;
+        for(const auto& [key,sq]:squares)order.push_back({sq.detour/int64_t(sq.ids.size()),key});
+        std::sort(order.begin(),order.end());
+        uint64_t mainSame=openings[mi].area[md];
+        std::map<uint32_t,uint64_t> altArea;   // the queue area moved to each alternative so far
+        uint32_t chosen=0;
+        for(const auto& [detour,key]:order) {
+            Square& sq=squares.at(key);
+            uint32_t alt=0;uint64_t best=0;
+            for(const auto& [l,a]:sq.alt)if(a>best) {best=a;alt=l;}
+            if(!alt||(chosen&&alt!=chosen))continue;   // one alternative per split
+            const uint32_t ai=(alt>>1)-1,ad=alt&1;
+            if(ai>=openings.size())continue;
+            const Opening& oa=openings[ai];const Opening& om=openings[mi];
+            const uint64_t nMain=mainSame-std::min(mainSame,sq.area);
+            const uint64_t nAlt=oa.area[ad]+altArea[alt]+sq.area;
+            const int64_t dMain=queueDelay(om,nMain,om.area[1-md]),dAlt=queueDelay(oa,nAlt,oa.area[1-ad]);
+            if(dMain<dAlt+detour/int64_t(kOrthogonal))break;
+            chosen=alt;mainSame=nMain;altArea[alt]+=sq.area;
+            moved.insert(moved.end(),sq.ids.begin(),sq.ids.end());
+        }
+        if(moved.size()<size_t(kAllocMin)||g.members-int(moved.size())<kAllocMin) {moved.clear();return false;}
+        std::sort(moved.begin(),moved.end());
+        // Commit in the table: the moved area leaves L for the alternative.
+        const uint64_t a=altArea[chosen];
+        openings[mi].area[md]-=std::min(openings[mi].area[md],a);
+        openings[(chosen>>1)-1].area[chosen&1]+=a;
+        for(auto& [label,ar]:g.openArea)if(label==main)ar-=std::min(ar,a);
+        splitArea={chosen,a};
+        ++acct.openingSplits;acct.splitMembers+=moved.size();
+        return true;
+    }
+    std::pair<uint32_t,uint64_t> splitArea{0,0};   // the last allocation's alternative and area (splitGroup's own entrants)
+    // Move members `ids` of group gid to a new subgroup of the same order (see allocateQueue). Their member state
+    // (clocks, formation slots, point) is kept; a packed per-goal slot of the old group is given back.
+    void splitGroup(int gid,const std::vector<int>& ids) {
+        Group* old=groups.get(gid);
+        if(!old)return;
+        Group g;g.id=nextGroup++;g.player=old->player;g.plane=old->plane;g.issuedTick=old->issuedTick;g.compCell=old->compCell;
+        g.approach=old->approach;g.kind=old->kind;g.command=old->command;g.soft=old->soft;
+        g.minX=old->minX;g.maxX=old->maxX;g.minZ=old->minZ;g.maxZ=old->maxZ;g.seeds=old->seeds;
+        g.openArea.assign(1,splitArea);
+        Group& n=groups.emplace(g.id,std::move(g)).first->second;
+        old=groups.get(gid);
+        for(const int id:ids) {
+            Member* m=member(id);const Unit* u=w.unit(id);
+            if(!m||!u||!u->type||m->group!=gid)continue;
+            if(m->slot>=0&&!formationMember(*m)) {
+                if(auto sl=old->slots.find(m->requested);sl!=old->slots.end()&&size_t(m->slot)<sl->second.taken.size())sl->second.taken[size_t(m->slot)]=0;
+                slotCells(*m,u->type->footX,u->type->footZ,false);
+                m->slot=-1;m->goal=m->requested;
+            }
+            if(auto sh=old->sharing.find(m->requested);sh!=old->sharing.end()&&--sh->second<=0)old->sharing.erase(sh);
+            if(const auto at=std::lower_bound(old->ids.begin(),old->ids.end(),id);at!=old->ids.end()&&*at==id)old->ids.erase(at);
+            --old->members;
+            {const int k=++n.sharing[m->requested];int& top=n.peak[m->requested];top=std::max(top,k);}
+            n.ids.insert(std::upper_bound(n.ids.begin(),n.ids.end(),id),id);++n.members;
+            const int sx=footprintOrigin(u->x,u->type->footX),sz=footprintOrigin(u->z,u->type->footZ);
+            if(n.bodyMaxX<n.bodyMinX) {n.bodyMinX=n.bodyMaxX=sx;n.bodyMinZ=n.bodyMaxZ=sz;}
+            else {n.bodyMinX=std::min(n.bodyMinX,sx);n.bodyMaxX=std::max(n.bodyMaxX,sx);n.bodyMinZ=std::min(n.bodyMinZ,sz);n.bodyMaxZ=std::max(n.bodyMaxZ,sz);}
+            m->group=n.id;m->lineCell=-1;
+        }
+        n.lastUse=w.tickCounter_;
+        listGroup(n);joinList(n);++stats.groups;
+        if(old->members<=0) {unlistGroup(*old);joinUnlist(*old);groups.erase(gid);}
+        else listGroup(*old);
     }
     // The entrants g's members would be at each opening if g planned now: the region search from its goals to its
     // members' regions with the traffic and queue charges a new route of g would carry (chargeWant: without its own
@@ -11370,6 +11516,7 @@ struct LegionNavigator::Impl {
             if(g.requestTick!=kNoTick) {h=mix(h,0x726571756573ull);h=mix(h,g.requestTick);}
             if(g.improveTick!=kNoTick) {h=mix(h,0x696d70726f7665ull);h=mix(h,g.improveTick);}
             if(g.reroute)h=mix(h,0x7265726f757465ull);
+            for(const auto& [label,a]:g.openArea)if(a) {h=mix(h,0x6f61726561ull^uint64_t(label)<<40);h=mix(h,a);}
             if(g.blockedSince!=NavAdmit::kNever) {h=mix(h,0x626c6f636bull);h=mix(h,g.blockedSince);}
             // A paused first build (C1), tagged only when set.
             if(g.field&&g.field->runOn)h=mix(h,0x72756e6f6eull);

@@ -14,8 +14,9 @@ Two scale files (tools/scenarios/scale/), workers exec, offset 0:
     crossings each (scale.arrive.n, scale.stuck_end, gate.bridge1/2.crossings).
   * maze-1000: 850 bodies to a walled compound's central room through 6-cell doors. Until stage 8 every body queued
     at the west door (632 of 1,000 arrive in 20,000 ticks, 92 stuck); the queue's delay now sends groups round to
-    the other doors. Checked: at least 850 arrive and at most 10 stand stuck at the end; an opening was charged
-    (scale.choke.charged_fields > 0).
+    the other doors, and a big group gives squares of its members to a subgroup for another door. Checked: at
+    least 850 arrive and at most 10 stand stuck at the end; an opening was charged (scale.choke.charged_fields > 0)
+    and a subgroup split off (scale.choke.splits > 0).
 
 Exit 0 pass, 1 fail, 2 tooling, 77 skipped (no data).
 """
@@ -64,13 +65,16 @@ def main():
         print("legion_scenario failed on maze-1000")
         return rc
     arrived, stuck, charged = k.get("scale.arrive.n", -1), k.get("scale.stuck_end", 1 << 30), k.get("scale.choke.charged_fields", 0)
-    print(f"maze-1000 arrive.n={arrived} stuck_end={stuck} charged_fields={charged}")
+    splits = k.get("scale.choke.splits", 0)
+    print(f"maze-1000 arrive.n={arrived} stuck_end={stuck} charged_fields={charged} splits={splits}")
     if arrived < 850:
         bad.append(f"maze-1000: only {arrived} of 1000 arrived (at least 850)")
     if stuck > 10:
         bad.append(f"maze-1000: {stuck} stuck at the end (at most 10)")
     if charged <= 0:
         bad.append("maze-1000: no route was charged for a queue")
+    if splits <= 0:
+        bad.append("maze-1000: no big group gave part of itself to another door (subgroup allocation)")
     for b in bad:
         print("FAIL:", b)
     return 1 if bad else 0

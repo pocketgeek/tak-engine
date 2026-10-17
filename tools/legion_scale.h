@@ -377,6 +377,8 @@ public:
                 k.emplace_back(p + "choke.charges", int64_t(a.openingCharges));
                 k.emplace_back(p + "choke.replans", int64_t(a.openingReplans));
                 k.emplace_back(p + "choke.search_charges", int64_t(a.openingSearchCharges));
+                k.emplace_back(p + "choke.splits", int64_t(a.openingSplits));
+                k.emplace_back(p + "choke.split_members", int64_t(a.splitMembers));
                 k.emplace_back(p + "choke.admissions", int64_t(a.passAdmits));
                 k.emplace_back(p + "choke.admit_waits", int64_t(a.admitWaits));
                 k.emplace_back(p + "choke.admit_turns", int64_t(a.admitTurns));
