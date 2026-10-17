@@ -1620,6 +1620,13 @@ if(TAK_BUILD_CLIENT)
     # ThreadPool telemetry checks; SDL for the vertex types in client/geometrystages.h.
     target_link_libraries(render_telemetry_test PRIVATE Threads::Threads ${_tak_sdl2})
     add_test(NAME render_telemetry COMMAND render_telemetry_test)
+    # Cost-planned worker-pool passes (workstream I): plans follow the estimates and
+    # caps; passes equal the serial loop; only requested workers wake; late workers
+    # never touch a finished pass.
+    add_executable(work_schedule_test tools/work_schedule_test.cpp)
+    target_include_directories(work_schedule_test PRIVATE src)
+    target_link_libraries(work_schedule_test PRIVATE Threads::Threads)
+    add_test(NAME work_schedule COMMAND work_schedule_test)
     # Stable generational ownership of per-unit geometry entries (workstream C).
     add_executable(geometry_owners_test tools/geometry_owners_test.cpp)
     target_include_directories(geometry_owners_test PRIVATE src)

@@ -188,7 +188,11 @@ int main() {
         pool.setStats(&stats);
         check(run(100, 32) && run(10, 32) && run(200, 32), "timed results identical");
         check(stats.dispatches == 2 && stats.serial == 1 && stats.items == 310, "dispatch / serial / item counts");
-        check(stats.wakes == 2 * (pool.threads() - 1), "every worker's wake recorded once per dispatch");
+        // 100 items = 13 chunks: each dispatch wakes min(pool, chunks) - 1 workers; a
+        // worker counts as a wake when it ran a chunk (one that arrives after every
+        // chunk was taken is an idle wake, folded at a later timed pass).
+        check(stats.posted == 2 * (pool.threads() - 1) && stats.chunks == 13 + 25, "workers posted per dispatch");
+        check(stats.wakes <= stats.posted, "a wake is recorded only for a posted worker");
         check(stats.busyNs > 0, "participant busy time recorded");
         pool.setStats(nullptr);
         const ThreadPool::Stats before = stats;
