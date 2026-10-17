@@ -8,7 +8,12 @@ interfaces every stage builds on, the per-stage records, and the next step. Read
 * Branch `task-legion-10000` (worktree `~/tak-tmp/wt/legion-10000`), from `origin/main` **c2c25707**
   (v0.8.3 validation; protocol `kNetVersion` 266).
 * Status words: **implemented and validated**, **implemented, unvalidated**, **not implemented**.
-* The whole program is **not complete** until stage 9's measured before/after report exists.
+* Status (2026-10-17): every stage is implemented and validated. The measured before/after report is
+  [`legion-10000-report.md`](legion-10000-report.md).
+* The program does **not** meet the brief's success criterion in congested workloads. 79 of 212 frozen targets
+  still miss (110 at the start), and the regressions found in the final validation are open. Section 7.10 and the
+  report say which.
+* The branch is not merged; merging is the user's decision.
 
 ## 1. Stages
 
@@ -25,7 +30,7 @@ branch, pushed after the stage (`git push origin task-legion-10000`; never main,
 | 6 | 5 | Hierarchy over the footprint planes (sectors, regions, portals), sparse tiles, intermediate sharing, search vs field by demand | behaviour | implemented and validated (section 7.6) |
 | 7 | 6 | Static navigation apart from dynamic traffic; local dirty tiles; closures vs improvements | behaviour | implemented and validated (section 7.7) |
 | 8 | 7 | Navigation subgroups, shared chokepoint state and admission, multi-entrance mixed-footprint arrivals, local engagement | behaviour | implemented and validated (section 7.8; awareness by streams measured and rejected) |
-| 9 | 8 | Parallel tile builds / per-plane preprocessing with deterministic publication; reassess movement; final 10k report | exact (parallel) + report | first half (parallel planning, movement profile) implemented and validated (section 7.9); the final integration and measured before/after report: not implemented |
+| 9 | 8 | Parallel tile builds / per-plane preprocessing with deterministic publication; reassess movement; final 10k report | exact (parallel) + report | implemented and validated: parallel planning and movement profile (section 7.9); final integration, validation and the measured report (section 7.10, docs/legion-10000-report.md) |
 
 Per stage, the record (section 7) gives: hypothesis, touched code, exact-versus-behaviour classification,
 exact commands and results, baseline comparison, work/memory change, commits, inherited versus new failures,
@@ -410,6 +415,11 @@ tools/legion_identity.sh --base BASE/build-o2 --cand build-o2 --replays ~/tak-tm
 #   wall A/B: scratch stage9/ab/phase.sh OUT SCN TICKS BIN_A BIN_B (TAK_PHASE means, --no-observer --no-vertex-probe,
 #   the arms at once on cores 8-11 / 12-15, then swapped); profiles: gperftools (LD_PRELOAD=libprofiler.so.0) read by
 #   scratch stage9/tools/prof3.py (cumulative under a FOCUS frame) and prof2.py (children of a frame)
+# final (7.10; scratch final/): before/after wall A/B, before-bin (c4233fb9) against after-bin on the same 5,000 ticks:
+#   bash final/ab.sh OUT TICKS SCN...  (arms at once on 8-11 / 12-15, then swapped; summary by final/absum.py)
+#   report tables: python3 final/report.py BEFORE.jsonl[,MORE.jsonl] AFTER.jsonl; frozen targets by kind:
+#   python3 final/targets_cat.py tools/scenarios/scale/targets.json BEFORE_CHECK.txt AFTER_CHECK.txt
+#   crowdbench bisect over the stage heads: bash final/bisect/run.sh (worktree ~/tak-tmp/wt/legion-10000-bisect)
 ```
 
 ## 6. Stage 1 record: baselines and acceptance tests
@@ -595,7 +605,8 @@ program's targets). Unmet targets after stage 9 are reported as such, not re-fro
 * Stage 7: section 7.7 (implemented and validated; commits listed there).
 * Stage 8: section 7.8 (implemented and validated; commits listed there).
 * Stage 9, first half (parallel planning, movement reassessment): section 7.9 (implemented and validated; commits
-  listed there). Second half (final integration and the measured before/after report): not implemented.
+  listed there). Second half (final integration, validation and the measured before/after report): section 7.10
+  (implemented and validated; the report is docs/legion-10000-report.md).
 
 ### 7.2 Stage 2 record: exact registration, awareness and profiled micro-work (brief phase 1)
 
@@ -2742,7 +2753,140 @@ build-o2; cores 4-15).**
 | Wall A/B | `ab/phase.sh ab/final-SCN SCN 5000 base-bin/legion_scenario final-bin/legion_scenario` for scatter-10000, many-10000, one-10000 | table above |
 | churn-10000 rerun | final and stage-8 binaries alone, `--scale`, TAK_PHASE | 0 / 0 ticks over budget |
 
+### 7.10 Stage 9, second half: final integration, validation and the measured report
+
+**Hypothesis.** The program is finished only when the integrated branch has passed every check together, on the
+current origin/main, and has been measured against the starting revision on the 10,000-unit workloads. The run must
+find what the lean per-stage testing missed.
+
+**Classification.** Integration and validation; the report (`docs/legion-10000-report.md`).
+
+* No simulation code changed: protocol stays **272**, and the Legion 60 s `--mpai` hash is unchanged.
+* One test baseline was repaired, with reasons.
+* One new hash was recorded: the Legion 300 s `--mpai` baseline (`47b705a730bbc22f`). The 300 s game was last run at
+  protocol 268.
+
+| Commit | Content | Kind |
+|---|---|---|
+| 29db147d | merge of origin/main `5774601a` (a tools-only change to `tools/desync-hunt-remote.sh`) | merge (no sim change) |
+| 83cf07a8 | `tools/legion_cost_baseline.json`: three `still_units_processed` entries retaken with reasons (below) | test baseline |
+| (record commit) | docs/legion-10000-report.md, this section, section 8, a pointer in docs/legion-pathfinding.md | docs |
+
+**Exact commands and results.** Scratch `~/tak-tmp/scratch/legion-10000/final/`; `after-bin/` = the final head's
+build-o2 binaries; `before-bin/` = c4233fb9's (stage-1 head, sim == c2c25707). The report's section 3 repeats this
+table with more detail.
+
+| Check | Command | Result |
+|---|---|---|
+| Builds | `bash ../stage9/build.sh both` (build-o2 and Release, all targets) | build |
+| Scenario gate, both modes | `python3 ../sweep_both.py after-bin/legion_scenario gate 4-11`; `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results gate/scenarios.jsonl` | PASS 31,859 keys, 0 failed; 270/270 hash- and key-identical to stage 9's gate; serial == workers 270/270; Retail 135/135 hashes and every common key equal to c2c25707's gate |
+| ctest | `ctest --test-dir build-o2 -j12 --timeout 1800 -E "^(legion_motion_\|legion_gen1_route_\|legion_scenario_(<gate files>)$)"` | 494/495; `legion_cost` failed, fixed by 83cf07a8, rerun passes |
+| Determinism script | `sh tools/check-determinism.sh` | OK, dcef618cd2e4d558 |
+| `--mpai` 60 s | `CORES=12-15 bash ../mpai.sh after-bin mpai60 60` | Retail 2c39430636a3dbda, Legion f75b2a11410f43b4 (both unchanged) |
+| `--mpai` 300 s, twice | `mpai.sh after-bin mpai300 300` and `mpai300b` | Retail 7535cb08ee787b75 (= c2c25707) twice; Legion **47b705a730bbc22f** twice (new baseline, see above) |
+| Windows | `~/tak-tmp/tools/wintest.sh task-legion-10000 --no-rel --no-tests --mpai --run "$(cat remote/cmd-win.sh)"` | `--mpai` 300 s both = Linux; scale hashes (scatter-2500 workers / perturbed / serial, mixed-1000, churn-1000, both modes) = Linux |
+| macOS | `~/tak-tmp/tools/macrun.sh task-legion-10000 --mpai --run "$(cat remote/cmd-mac.sh)"` | `--mpai` 300 s both = Linux; scatter-2500 = Linux |
+| Retail vs the starting binary | `remote/cmd-linux-before.sh` (before-bin, Retail) | scatter-2500 / mixed-1000 / churn-1000 Retail hashes = the final head's |
+| Scale suite | `legion_scale.py run --bin after-bin/legion_scenario --out scale --cores 4-15 --per-job 4 --workers 3`; `check` | 43/43 hash- and key-identical to stage 9; met 128, missed 79, report-only 5 (stage 9: 127/79/6, the difference being churn-10000's wall noise) |
+| Before extras | `legion_scale.py run --bin before-bin/legion_scenario --out scale-before-extra --files <scatter-400, scatter-2500, scatter-10000, room2door, sched-load> --modes legion` | the stage-6+ fixtures measured on the starting revision |
+| Wall A/B | `bash ab.sh ab 5000 <ten 10,000-body files>` (before vs after, no observer, three workers, arms at once on 8-11 / 12-15, swapped) | report section 10 |
+| Crowdbench screen | `crowdbench_screen.py --binary build/crowdbench --output screen.jsonl --cpus 4-7 --quiet --baseline ~/.local/share/tak-legion-nightly/2026-10-16T093000Z/screen.jsonl` | Retail 43/43 rows identical to c2c25707; Legion arrivals 29,301 -> 29,512 (9 better, 7 worse) |
+| Crowdbench bisect | `bash bisect/run.sh` (Release crowdbench at each stage head, three cases) | below |
+| Real path, ~9,000 a side | `CORES=4-15 UNITCAP=10000 bash ../stage3/e2e.sh after-bin e2e-10000 120` | Legion: every order (14,214-18,016 members) lands whole in one tick; Retail: 345 ticks for the first order, the next two superseded before they landed |
+| Rejoin | `CORES=4-7 bash ../stage3/rejoin.sh after-bin rejoin` | host = rejoined client: d3fa704568575311; the rejoined client's later orders land whole |
+| Replay verify | `TAK_REPLAY_VERIFY=1 takclient replay <rec> --data D` (rejoin host, e2e Legion, e2e Retail) | no divergence (150 / 120 / 120 checkpoints) |
+
+**Found and fixed: `legion_cost`.** cost-corner N200 / N400 and cost-open N100 `work.still_units_processed` were over
+1.10x the stage-4 baseline: 2,434 / 4,871 / 1,783 against 2,175 / 3,613 / 1,584.
+
+* Bisect with `tools/legion_cost.py --runner` on each stage head (`costbisect/`):
+  * stage 6: within band (2,245 / 3,224 / 1,703);
+  * stage 7: 2,434 / 5,051 / 1,712;
+  * stage 8: 2,434 / 4,871 / 1,783.
+* `legion_cost` was not run at stages 7-8, so nobody saw it.
+* The counter counts bodies `scanStill` samples. Stage 7 added held members with an order (`jamStill`), which is how
+  planning sees knots. Stage 8's arrival rules keep more formation members holding near their slots.
+* Whole-run Legion work on the fixtures moves -0.6 % to +0.8 %, and the scaling gates are unchanged.
+* The three entries were retaken in 83cf07a8 with that reason and their old values, using the tool's own writer; no
+  other entry changed.
+
+**Found, bisected, not diagnosed: three crowdbench regressions** (Legion settled arrivals, per-unit-goal cases):
+
+| Case | c2c25707 | Stage heads (c4233fb9, 54be13b8, feef1b09, c7fade44, 40ae0f08, 15501f03, 68ca5ef5, 16cd026b, 7a23a317) | Introduced by |
+|---|---|---|---|
+| opposingcolumns 500x4 | 1,101 | 1101, 1101, 1101, **952**, 955, 955, 955, 955, 955 | stage 4 (fair scheduling) |
+| jagged 2000x1 | 671 | 671, 671, 671, 670, 670, **532**, 532, 521, 521 | stage 6 (hierarchical routes) |
+| dynamicobstacle 500x4 | 1,782 | 1782, 1782, 1782, 1787, 1785, 1785, 1785, **1540**, 1540 | stage 8 (chokepoints, subgroups, arrivals) |
+
+c4233fb9 reproduces the c2c25707 nightly's values exactly, which validates the method. The same screen improved
+sharedgoal 2000x1 (1,125 -> 1,500), sharedgoal 500x4 (1,674 -> 1,897), jagged 500x4 (1,315 -> 1,402) and
+mixedfootprints 500x4 (1,942 -> 2,000).
+
+**Also found in the A/B, not diagnosed: attack-10000.** Its tick is +23 % (10.2 -> 12.5 ms). Its moving unit-ticks fell
+(14.1 M -> 12.6 M), so the cost per moving body rose (movement 2.35 -> 3.05 µs per moving unit-tick).
+
+**Inherited vs new.**
+
+* *Inherited:*
+  * the Legion nightly's crowdbench screen fails on main every night since 2026-10-12 (2,669 differences at c2c25707:
+    the committed screen baseline is stale on main);
+  * the frozen targets missed at the start;
+  * mixed-10000's wall time (the explore phase).
+* *New and open:*
+  * the three crowdbench cases and attack-10000's per-body cost above;
+  * the earlier stages' recorded regressions: one-100 `arrive.t99`, many-100 `arrive.n` / `complete_outside_n`,
+    many-2500 `complete_outside_n`, churn `livelock_end` / `stuck_end`, mixed-10000's arrivals, and many-10000 /
+    maze-10000's report-only wall time.
+* The report's section 5 has values and causes.
+
+**Not run:**
+
+* a Windows ctest pass of the branch;
+* Windows/macOS scale runs beyond the hash checks;
+* game speeds above 1x;
+* the identity harness (its replay fixtures are protocol 266, refused by 272; the one merge is tools-only and proved by
+  the hash- and key-identical gate and scale runs).
+
 ## 8. Next step
+
+**The program's nine stages are done; the branch waits for the user's decision.** Branch `task-legion-10000` is pushed
+and not merged: head = the stage-9 second-half record commit, protocol 272. To resume:
+
+* build `build-o2` in the worktree;
+* read docs/legion-10000-report.md (verdict, sections 5, 13 and 14) and section 7.10 here.
+
+The work left, in the order the measurements rank it:
+
+1. **The three crowdbench regressions** (7.10). Each is bisected to one stage head:
+   * opposingcolumns 500x4: stage 4;
+   * jagged 2000x1: stage 6;
+   * dynamicobstacle 500x4: stage 8.
+
+   Next action: run each case at its last-good and first-bad head with `--trace` and compare. Then fix, or license
+   with a stated trade.
+2. **attack-10000's per-body movement cost** (+30 % per moving unit-tick). Next action: gperftools on before-bin and
+   after-bin over 5,000 ticks, comparing the children of `LegionNavigator::move`.
+3. **Crowds at static corners and beside idle blocks** (one-N, swap-N, idle-10000 arrival). This is a design item:
+   spread a crowd across the free width beside an obstacle, not only at wall ends.
+4. **Head-on crowds at narrow mouths** (bridges-10000, swap-10000).
+   * Keep an exit lane clear at a mouth, or reserve lanes by direction on passages of two or more lanes.
+   * First build feasible-layout versions of bridges-10000 and maze-10000, so navigation is measured apart from
+     capacity.
+5. **The many-unrelated-destinations queue** (scatter-10000 `wait.max` 2,349; request ages 2,000-2,600). Either a
+   quota change, judged on outcomes and never on the machine, or less work per request: abstract search costs that
+   are not portal midpoints, and more sharing between unrelated routes.
+6. **Serial movement as the tick** (66-80 % at 10,000 bodies). The exact candidate is certificates for the static
+   look-ahead, after separating it from its soft-body reads.
+7. Carried open items:
+   * no sector-to-route reverse index;
+   * windows bake soft costs;
+   * demand per cell;
+   * the pausing extension not re-measured with tiles;
+   * sched-load's scheduler ctests on `--no-hier-routes`;
+   * the stale crowdbench screen baseline on main (inherited, not this program's).
+
+### 8.A The next step as it stood after stage 9's first half (kept for the record)
+
 
 Resume from branch `task-legion-10000` (pushed; stages 1-8 and the first half of stage 9 done; head = the stage-9
 record commit). Build `build-o2` in the worktree (a clean configure takes half a minute with ccache; a build dir whose

@@ -2593,6 +2593,18 @@ section 7.9).
   staged tile rebuilt from the plane. ctest `legion_parallel` (tools/legion_parallel_test.py) compares 1, 3 and 7
   workers, perturbed runs and a forced inline verify run with `--serial`; `simpool_test` covers the asynchronous API.
 
+### Legion 10,000: where the program left it
+
+docs/legion-10000-report.md gives the measured result against the starting revision c2c25707:
+
+* what is met and missed per workload;
+* the regressions found in the final validation;
+* the remaining bottlenecks: crowds at corners and narrow mouths, the queue for many unrelated destinations, and
+  serial movement as the tick.
+
+The stage sections above describe the code as built. The "Known weaknesses" section below predates the program.
+Where it disagrees with the report on a 10,000-body workload, the report's numbers are the current ones.
+
 ## Instruments
 
 What each tool sees, and what it cannot. A number is only as good as the
