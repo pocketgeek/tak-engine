@@ -1455,6 +1455,7 @@ private:
     uint64_t distantNow_=0;
     float distantScaleX_=1, distantScaleY_=1;
     bool distantEarly_=false;
+    bool distantOff_=false;   // TAK_DISTANT_MODELS_OFF, read once per frame (getenv is per call)
     // Everything buildUnitGeom derives from the unit and the frame before the
     // stage keys: what the stages compute from.
     struct UnitGeomInputs {

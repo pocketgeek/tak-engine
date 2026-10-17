@@ -324,6 +324,7 @@
         distantNow_=tak::devFlag("TAK_RENDER_STUDY") ? uint64_t(animClock_*1000) : SDL_GetTicks64();
         SDL_RenderGetScale(ren_,&distantScaleX_,&distantScaleY_);
         distantEarly_=!tak::devFlag("TAK_DISTANT_LOOKUP_LATE");
+        distantOff_=tak::devFlag("TAK_DISTANT_MODELS_OFF");
         double _pt0 = double(SDL_GetPerformanceCounter());
         pool_.parallelFor(visUnits_.size(), [this](size_t b, size_t e) {
             thread_local std::vector<Tri> scratch;
@@ -348,6 +349,7 @@
         // effects on their original path. Tiny ordinary bodies can submit one
         // cached quad; simulation and animation VMs continue at their normal rate.
         distantModelItems_.resize(visUnits_.size());
+        bool anyDeferred=false;
         for(size_t i=0;i<visUnits_.size();++i) {
             const auto& u=*visUnits_[i];const auto& g=visGeom(i);
             auto& item=distantModelItems_[i];
@@ -356,6 +358,7 @@
             item.zoom=zm0;item.source=g.verts;item.runs=g.runs;item.texture=nullptr;
             item.eligible=distantEligible(u,g.canFly,g.occY,g.ay);
             item.bodyDeferred=g.bodyDeferred;
+            anyDeferred=anyDeferred || g.bodyDeferred;
         }
         size_t distantCatchup=0;
         {
@@ -372,8 +375,8 @@
         // A deferred body whose image was not shown after all (the cache returned
         // early: unsupported renderer, invalid output scale) is generated now, before
         // the body pass reads it. Expected never in practice (telemetry counts it).
-        for(size_t i=0;i<visUnits_.size();++i)
-            if(visGeom(i).bodyDeferred && !distantModelItems_[i].texture) {
+        for(size_t i=0;anyDeferred && i<visUnits_.size();++i)
+            if(distantModelItems_[i].bodyDeferred && !distantModelItems_[i].texture) {
                 materializeDistantBody(i);++distantCatchup;
             }
         }
@@ -3874,7 +3877,7 @@
     // simulation and animation VMs continue at their normal rate. (Read by the
     // geometry workers too: selSet_ is filled before the parallel pass.)
     bool GameView::distantEligible(const UnitR& u, bool canFly, float occY, float ay) const {
-        return !tak::devFlag("TAK_DISTANT_MODELS_OFF") && !specialUnit(u, canFly, occY, ay) &&
+        return !distantOff_ && !specialUnit(u, canFly, occY, ay) &&
             !u.moving() && !u.walking() && !u.corpsePhase && !u.replacementModel &&
             !(u.type && u.type->ghost) && !selSet_.contains(u.id);
     }
