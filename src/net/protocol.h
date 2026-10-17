@@ -19,7 +19,12 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 272;      // 272: Legion navigation subgroups, chokepoints and arrivals (Legion 10,000 stage 8;
+constexpr uint32_t kNetVersion = 273;      // 273: construction shares short mana (Retail and Legion): production, mobile construction
+                                           //      and repair each do allocation x a full tick, allocation = pool / last tick's demand
+                                           //      (retail 51d837/429af0), the last pro-rated against what is left, instead of each
+                                           //      paying in full or doing nothing in unit order. New hashed state: per-player demand,
+                                           //      per-producer fractional progress. 272 replays refused
+                                           // 272: Legion navigation subgroups, chokepoints and arrivals (Legion 10,000 stage 8;
                                            //      Retail bit-identical): a formation member gaining on its own slot, or with a
                                            //      free step toward it, is not settled short of it; chokepoints (openings) carry
                                            //      their queues as route charges, groups re-plan and split subgroups off for

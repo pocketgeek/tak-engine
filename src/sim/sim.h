@@ -1162,6 +1162,10 @@ struct alignas(64) Unit {
     // BUILD stage 2's refusal sleep (401df4): the tick a factory whose output
     // site was refused may test it again. 0 = not waiting. Hashed when set.
     uint32_t productionRetryTick = 0;
+    // Factory/conjure progress past buildProgress, in 1/65536 of a tick of work.
+    // Nonzero only when the player's construction share (Player::constructionShare)
+    // bought part of a tick. Hashed when set.
+    uint16_t buildFraction = 0;
     // RALLY orders for a production building: what the units it makes should do once
     // they have walked clear of the exit. Kept OUT of `orders` on purpose -- a
     // structure must never enter the mover (it has no velocity, but the mover still
@@ -1583,6 +1587,27 @@ struct Player {
     // RetailConstructionResources preserves that arithmetic for the pending
     // economy/construction integration.
     double mana = 500;
+    // Construction work shares the pool, as retail does (51d837 sets allocation =
+    // stored / demand; 429af0 scales every worker's work by it and pro-rates the
+    // last one against what is left; see RetailConstructionResources). Without it
+    // each consumer paid its whole per-tick cost or did nothing, in unit order, so
+    // cheap low-id producers took every trickle and a costly later one could sit at
+    // zero progress for minutes while mana income was short.
+    //   constructionDemand: full-rate mana asked for by construction, repair and
+    //     production work this tick (retail records the request before scaling).
+    //     It is the demand the next tick's allocation divides by. Hashed when set.
+    //   constructionAllocation: this tick's share, recomputed after income.
+    // Unused for a player with retailResources, which runs the native object.
+    double constructionDemand = 0;
+    double constructionAllocation = 1;
+    // The fraction of `cost` (one tick of full-rate work) this consumer may do
+    // now. Records the request; the caller debits cost * share, capped at mana.
+    double constructionShare(double cost) {
+        if (cost <= 0) return mana >= cost ? 1.0 : 0.0;
+        if (!retailResources) constructionDemand += cost;
+        if (mana <= 0) return 0.0;
+        return std::min(constructionAllocation, mana / cost);
+    }
     float scenarioResourceLimit = 0; // CRT override: positive values also suppress natural income
     float storage = 0;   // recomputed each tick from alive units
     float income = 0;

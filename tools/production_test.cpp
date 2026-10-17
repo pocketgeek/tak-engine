@@ -133,6 +133,46 @@ static void productionNeedsMana() {
           std::to_string(made2) + " unit(s) for exactly 500 mana");
 }
 
+// SHORT INCOME IS SHARED. Reported from a Zhon game: a Beast Lord conjured a
+// drake for three and a half minutes with zero progress and no conjure effects,
+// because four lower-id producers whose per-tick costs together exceeded the
+// income each paid in full first, in unit order, and the drake (the costliest
+// per tick) never found its whole tick's cost in the pool. Retail divides the
+// pool across all construction (51d837 allocation = stored / demand, 429af0
+// scales every worker by it), so every concurrent build slows down together.
+static void shortIncomeIsShared() {
+    std::printf("short income is shared across concurrent production:\n");
+    auto ownedWorld = makeWorld(128, 128);
+    World& w = *ownedWorld;
+    UnitType fac = factoryType(), cheap = soldierType(), costly = soldierType();
+    fac.workerTime = 1; fac.storage = 10000;
+    cheap.id = "cheap"; cheap.buildTime = 10; cheap.buildCost = 900;     // 300 ticks, 3/tick
+    costly.id = "costly"; costly.buildTime = 10; costly.buildCost = 1200; // 300 ticks, 4/tick
+    UnitType well{}; well.name = well.id = "well"; well.maxHp = 100;
+    well.footX = well.footZ = 2; well.income = 60;                       // 2/tick
+    const int first = w.spawn(&fac, 600, 600, 0, 0);    // lower id: runs first
+    const int second = w.spawn(&fac, 1400, 600, 0, 0);
+    w.spawn(&well, 1000, 1400, 0, 0);
+    w.player(0).mana = 0;
+    w.train(first, &cheap, 1);
+    w.train(second, &costly, 1);
+    run(w, 10.0f);
+    const auto progress = [&](int id) {
+        return double(w.unit(id)->buildProgress) + w.unit(id)->buildFraction / 65536.0;
+    };
+    const double a = progress(first), b = progress(second);
+    char detail[128];
+    std::snprintf(detail, sizeof detail, "cheap %.2f ticks, costly %.2f ticks, mana %.3f",
+                  a, b, w.player(0).mana);
+    check(b > 0, "a costlier later producer is not starved by an earlier one", detail);
+    // Both run at income / demand = 2/7 of full speed: 300 ticks of 2/7, give or
+    // take the first tick, which has no demand to divide by yet.
+    check(std::fabs(a - b) < 1.0 && std::fabs(b - 300.0 * 2.0 / 7.0) < 1.5,
+          "...both advance at the same fraction of full speed", detail);
+    check(w.player(0).mana >= 0 && w.player(0).mana < 0.01,
+          "...and the pool is spent, never overdrawn", detail);
+}
+
 static void outputExistsDuringConstruction() {
     auto ownedWorld = makeWorld(128,128);
     World& w = *ownedWorld;
@@ -558,6 +598,7 @@ int main(int argc,char** argv) {
     repairParticles();
     mobileProducerFacesSite();
     productionNeedsMana();
+    shortIncomeIsShared();
     outputExistsDuringConstruction();
     scriptControlsReadinessAndPosition();
     mobileScriptRandomRunsInWorld();

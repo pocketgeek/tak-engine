@@ -789,7 +789,7 @@
         s.constructionPercentLeft = u.retailSite
             ? int(tak::sim::retailConstructionPercent(u.retailSite->progress.remaining))
             : int(u.underConstruction);
-        s.buildProgress = float(u.buildProgress) / 30.0f;   // ticks -> seconds
+        s.buildProgress = (float(u.buildProgress) + float(u.buildFraction) / 65536.0f) / 30.0f;   // ticks -> seconds
         // Orders/rally/areaVisited are read for the VIEWED player's units only (the order
         // trails, queued-build ghosts and the HUD all gate on localPlayer_; a spectator or
         // replay viewer is seated as localPlayer_ too). Copying them for every unit was the
