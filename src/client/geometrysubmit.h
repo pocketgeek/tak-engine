@@ -39,29 +39,10 @@ public:
             render::countSdlGeometry(source.size(),source.size_bytes());
             return SDL_RenderGeometry(renderer,texture,source.data(),int(source.size()),nullptr,0);
         };
-        if(!direct || vertices.size()<512)return normal();
-        SDL_RendererInfo info{};
-        if(SDL_GetRendererInfo(renderer,&info)!=0 || !info.name || std::strcmp(info.name,"opengl"))return normal();
-        float sx=1,sy=1;SDL_RenderGetScale(renderer,&sx,&sy);
-        // Exact integer output scales share the same projection setup.
-        // Fractional sampling retains the SDL path.
-        if((sx!=1 && sx!=2 && sx!=4) || (sy!=1 && sy!=2 && sy!=4))return normal();
-        const auto context=SDL_GL_GetCurrentContext();
-        if(!checked_ || context!=context_) { clear();checked_=true;context_=context;available_=load(); }
-        if(!available_)return normal();
-        if(texture) {
-            float tw=0,th=0;
-            if(SDL_GL_BindTexture(texture,&tw,&th)!=0)return normal();
-            SDL_GL_UnbindTexture(texture);
-            if(tw!=1 || th!=1)return normal();
-        }
-        // The degenerate SDL draw installs the exact shader, blend, target,
-        // viewport and scissor state without changing any pixels.
-        const SDL_Vertex prime[3]={{{0,0},{255,255,255,255},{0,0}},
-                                  {{0,0},{255,255,255,255},{0,0}},
-                                  {{0,0},{255,255,255,255},{0,0}}};
-        render::countFlush();
-        if(SDL_RenderGeometry(renderer,texture,prime,3,nullptr,0)!=0 || SDL_RenderFlush(renderer)!=0)return -1;
+        if(!direct || vertices.size()<kNativeMinVertices)return normal();
+        float sx=1,sy=1;
+        if(!nativeReady(renderer,texture,sx,sy))return normal();
+        if(!prime(renderer,texture))return -1;
         GLint buffer=0,mode=0;
         getInteger_(GL_ARRAY_BUFFER_BINDING,&buffer);getInteger_(GL_MATRIX_MODE,&mode);
         pushAttrib_(GL_CURRENT_BIT);pushClientAttrib_(GL_CLIENT_VERTEX_ARRAY_BIT);
@@ -99,7 +80,76 @@ public:
         return 0;
     }
     bool active() const { return used_; }
+    // Batches smaller than this take the SDL path: priming the native state
+    // (a degenerate SDL draw + flush) costs more than SDL's conversion.
+    static constexpr size_t kNativeMinVertices=512;
+    // Can this renderer draw natively right now (the opengl backend, an exact
+    // integer output scale, the GL entry points)? Texture checks come per draw.
+    bool nativeCapable(SDL_Renderer* renderer) {
+        float sx=1,sy=1;
+        return nativeReady(renderer,nullptr,sx,sy);
+    }
+    // Draw ranges of a GL buffer of SDL_Vertex records that the caller owns (the
+    // retained body arena, client/vertexarena.h) with exactly the state draw()
+    // installs for client arrays; ranges execute in order (glMultiDrawArrays
+    // behaves as consecutive glDrawArrays). Returns 0 when drawn, 1 when this
+    // renderer, scale or texture cannot draw natively (the caller then draws the
+    // same vertices through draw(), which takes the SDL path for the same
+    // reason), -1 on an SDL error.
+    int drawBuffer(SDL_Renderer* renderer,SDL_Texture* texture,GLuint vertexBuffer,
+                   std::span<const GLint> firsts,std::span<const GLsizei> counts,size_t vertices) {
+        if(firsts.empty() || firsts.size()!=counts.size())return 0;
+        float sx=1,sy=1;
+        if(!vertexBuffer || !nativeReady(renderer,texture,sx,sy))return 1;
+        if(!prime(renderer,texture))return -1;
+        GLint buffer=0,mode=0;
+        getInteger_(GL_ARRAY_BUFFER_BINDING,&buffer);getInteger_(GL_MATRIX_MODE,&mode);
+        pushAttrib_(GL_CURRENT_BIT);pushClientAttrib_(GL_CLIENT_VERTEX_ARRAY_BIT);
+        bindBuffer_(GL_ARRAY_BUFFER,vertexBuffer);
+        matrixMode_(GL_MODELVIEW);pushMatrix_();scale_(sx,sy,1);
+        enable_(GL_VERTEX_ARRAY);enable_(GL_COLOR_ARRAY);
+        if(texture)enable_(GL_TEXTURE_COORD_ARRAY);else disable_(GL_TEXTURE_COORD_ARRAY);
+        vertex_(2,GL_FLOAT,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,position)));
+        color_(4,GL_UNSIGNED_BYTE,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,color)));
+        if(texture)texcoord_(2,GL_FLOAT,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,tex_coord)));
+        if(multiDraw_ && firsts.size()>1)multiDraw_(GL_TRIANGLES,firsts.data(),counts.data(),GLsizei(firsts.size()));
+        else for(size_t i=0;i<firsts.size();++i)draw_(GL_TRIANGLES,firsts[i],counts[i]);
+        render::countNativeDraw(vertices,vertices*sizeof(SDL_Vertex),true);
+        popMatrix_();matrixMode_(GLenum(mode));
+        popClientAttrib_();bindBuffer_(GL_ARRAY_BUFFER,GLuint(buffer));popAttrib_();
+        used_=true;
+        return 0;
+    }
+    bool multiDraw() const { return multiDraw_!=nullptr; }
 private:
+    bool nativeReady(SDL_Renderer* renderer,SDL_Texture* texture,float& sx,float& sy) {
+        SDL_RendererInfo info{};
+        if(SDL_GetRendererInfo(renderer,&info)!=0 || !info.name || std::strcmp(info.name,"opengl"))return false;
+        SDL_RenderGetScale(renderer,&sx,&sy);
+        // Exact integer output scales share the same projection setup.
+        // Fractional sampling retains the SDL path.
+        if((sx!=1 && sx!=2 && sx!=4) || (sy!=1 && sy!=2 && sy!=4))return false;
+        const auto context=SDL_GL_GetCurrentContext();
+        if(!context)return false;
+        if(!checked_ || context!=context_) { clear();checked_=true;context_=context;available_=load(); }
+        if(!available_)return false;
+        if(texture) {
+            float tw=0,th=0;
+            if(SDL_GL_BindTexture(texture,&tw,&th)!=0)return false;
+            SDL_GL_UnbindTexture(texture);
+            if(tw!=1 || th!=1)return false;
+        }
+        return true;
+    }
+    // The degenerate SDL draw installs the exact shader, blend, target,
+    // viewport and scissor state without changing any pixels.
+    static bool prime(SDL_Renderer* renderer,SDL_Texture* texture) {
+        const SDL_Vertex prime[3]={{{0,0},{255,255,255,255},{0,0}},
+                                  {{0,0},{255,255,255,255},{0,0}},
+                                  {{0,0},{255,255,255,255},{0,0}}};
+        render::countFlush();
+        return SDL_RenderGeometry(renderer,texture,prime,3,nullptr,0)==0 && SDL_RenderFlush(renderer)==0;
+    }
     template<class T> static bool proc(T& out,const char* name) {
         out=reinterpret_cast<T>(SDL_GL_GetProcAddress(name));return out!=nullptr;
     }
@@ -115,6 +165,8 @@ private:
         // Optional retained buffers do not affect the existing direct fallback.
         if(!proc(genBuffers_,"glGenBuffers") || !proc(deleteBuffers_,"glDeleteBuffers") ||
            !proc(bufferData_,"glBufferData") || !proc(getBufferParameter_,"glGetBufferParameteriv"))genBuffers_=nullptr;
+        // Optional (GL 1.4): ranges of one buffer in one call; else one draw per range.
+        if(!proc(multiDraw_,"glMultiDrawArrays"))multiDraw_=nullptr;
         const auto* version=reinterpret_cast<const char*>(getString_(GL_VERSION));
         return version && (std::atoi(version)<3 || SDL_GL_ExtensionSupported("GL_ARB_compatibility"));
     }
@@ -146,5 +198,6 @@ private:
     void (APIENTRY *translate_)(GLfloat,GLfloat,GLfloat)=nullptr;
     void (APIENTRY *scale_)(GLfloat,GLfloat,GLfloat)=nullptr;
     void (APIENTRY *draw_)(GLenum,GLint,GLsizei)=nullptr;
+    void (APIENTRY *multiDraw_)(GLenum,const GLint*,const GLsizei*,GLsizei)=nullptr;
 };
 }

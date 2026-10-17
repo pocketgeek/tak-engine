@@ -1,4 +1,5 @@
 #include "client/geometrysubmit.h"
+#include "client/vertexarena.h"
 #include <array>
 #include <vector>
 #include <cstdio>
@@ -92,6 +93,88 @@ int main() {
     // A continuously changing camera must not churn persistent allocations.
     for(uint64_t revision=4;revision<20;++revision)submit.draw(renderer,texture,vertices,true,revision);
     ok &= submit.uploads()==uploadsBefore && gpuvram::bytes()==baselineBytes;
+    // Workstream H: ranges of a retained arena buffer (client/vertexarena.h)
+    // drawn with drawBuffer must equal the same vertices through client arrays
+    // and through SDL, for mapped and staged writes, scattered ranges (one
+    // glMultiDrawArrays) and every state combination above; the arena's GPU
+    // bytes must leave the accounting once released and out of flight.
+    int arenaCases=0,arenaDrawn=0;
+    {
+        const bool opengl=std::strcmp(info.name,"opengl")==0;
+        std::vector<SDL_Vertex> big;
+        for(int k=0;k<6;++k)for(const auto& v:vertices){SDL_Vertex w=v;w.position.x+=float(k%3)*0.31f;w.position.y+=float(k)*0.17f;big.push_back(w);}
+        // Seven chunks written in reverse order at scattered offsets; the draw
+        // lists them in the original order (non-contiguous ranges).
+        const size_t chunks=7,per=big.size()/chunks/3*3;   // whole triangles per range, as body runs
+        for(bool mapped:{true,false}) {
+            tak::render::VertexArenaBuffer arena;
+            arena.setMappingAllowed(mapped);
+            const size_t arenaBefore=gpuvram::bytes();
+            const bool ready=arena.ready();
+            if(opengl)ok &= ready;
+            if(!ready)break;   // no GL context (software renderer)
+            const size_t capacity=big.size()*2+64;
+            ok &= arena.allocate(capacity*sizeof(SDL_Vertex));
+            ok &= gpuvram::bytes()==arenaBefore+capacity*sizeof(SDL_Vertex);
+            std::vector<GLint> firsts(chunks);std::vector<GLsizei> counts(chunks);
+            size_t at=17;
+            for(size_t c=chunks;c-->0;) {
+                const size_t begin=c*per,count=c+1==chunks?big.size()-begin:per;
+                SDL_Vertex* window=arena.map(at*sizeof(SDL_Vertex),count*sizeof(SDL_Vertex));
+                ok &= window!=nullptr;
+                if(window)std::memcpy(window,big.data()+begin,count*sizeof(SDL_Vertex));
+                ok &= arena.unmap();
+                firsts[c]=GLint(at);counts[c]=GLsizei(count);at+=count+5;
+            }
+            ok &= mapped ? arena.mappedWrites()==chunks : arena.stagedWrites()==chunks;
+            for(SDL_FPoint scales:{SDL_FPoint{1,1},SDL_FPoint{2,2},SDL_FPoint{1.25f,.75f}})for(bool textured:{false,true})
+            for(bool clipped:{false,true})for(bool offscreen:{false,true})
+            for(auto blend:{SDL_BLENDMODE_NONE,SDL_BLENDMODE_BLEND,SDL_BLENDMODE_MOD}) {
+                std::array<std::array<uint8_t,128*128*4>,3> out{};
+                SDL_SetTextureBlendMode(texture,blend);
+                for(int path=0;path<3;++path) {   // 0 SDL, 1 client arrays, 2 arena ranges
+                    SDL_SetRenderTarget(renderer,offscreen?target:nullptr);
+                    SDL_RenderSetScale(renderer,1,1);SDL_RenderSetViewport(renderer,nullptr);SDL_RenderSetClipRect(renderer,nullptr);
+                    SDL_SetRenderDrawColor(renderer,45,70,110,255);SDL_RenderClear(renderer);
+                    SDL_RenderSetScale(renderer,scales.x,scales.y);
+                    SDL_Rect viewport{2,3,int(120/scales.x),int(120/scales.y)},clip{3,4,42,39};
+                    SDL_RenderSetViewport(renderer,&viewport);SDL_RenderSetClipRect(renderer,clipped?&clip:nullptr);
+                    SDL_SetRenderDrawBlendMode(renderer,blend);
+                    SDL_Texture* tex=textured?texture:nullptr;
+                    if(path==2) {
+                        const int r=submit.drawBuffer(renderer,tex,arena.id(),firsts,counts,big.size());
+                        const bool native=scales.x!=1.25f;
+                        ok &= r==(native?0:1);
+                        if(r==1)ok &= submit.draw(renderer,tex,big,true)==0;   // the caller's fallback
+                        arenaDrawn+=r==0;
+                    } else ok &= submit.draw(renderer,tex,big,path==1)==0;
+                    SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
+                    SDL_RenderGeometry(renderer,nullptr,vertices.data()+60,6,nullptr,0);
+                    const SDL_FRect follow{53,7,5,6};
+                    SDL_RenderCopyF(renderer,texture,nullptr,&follow);
+                    SDL_RenderSetScale(renderer,1,1);SDL_RenderSetViewport(renderer,nullptr);SDL_RenderSetClipRect(renderer,nullptr);
+                    ok &= SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,out[size_t(path)].data(),128*4)==0;
+                }
+                if(out[2]!=out[0] || out[1]!=out[0]) {
+                    size_t d20=0,d10=0;for(size_t q=0;q<out[0].size();q+=4){d20+=std::memcmp(&out[2][q],&out[0][q],4)!=0;d10+=std::memcmp(&out[1][q],&out[0][q],4)!=0;}
+                    std::printf("FAIL arena mapped=%d scale=%f texture=%d clip=%d target=%d blend=%d (arena %zu px, client arrays %zu px)\n",mapped,scales.x,textured,clipped,offscreen,blend,d20,d10);
+                    ok=false;
+                }
+                ++arenaCases;
+            }
+            // Orphaning keeps the old store counted while it may be in flight.
+            ok &= arena.allocate(capacity*sizeof(SDL_Vertex));
+            ok &= gpuvram::bytes()==arenaBefore+2*capacity*sizeof(SDL_Vertex);
+            arena.release();
+            for(uint32_t f=0;f<tak::render::VertexArenaBuffer::kInFlightFrames;++f)arena.endFrame();
+            ok &= gpuvram::bytes()==arenaBefore && arena.inFlightBytes()==0;
+            // No storage: nothing to map, nothing drawn natively.
+            ok &= arena.map(0,64)==nullptr;
+        }
+        // Off the opengl backend nothing is drawn from a buffer: the caller falls back.
+        if(!opengl) ok &= submit.drawBuffer(renderer,texture,1,std::vector<GLint>{0},std::vector<GLsizei>{3},3)==1;
+    }
+    std::printf("%s: %d arena comparisons (%d drawn from the arena, multidraw=%d)\n",ok?"PASS":"FAIL",arenaCases,arenaDrawn,submit.multiDraw());
     std::printf("%s: %d geometry pixel/state comparisons (%s, direct=%d)\n",ok?"PASS":"FAIL",cases,info.name,submit.active());
     SDL_SetRenderTarget(renderer,nullptr);SDL_DestroyTexture(target);SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);SDL_DestroyWindow(window);SDL_FreeSurface(surface);SDL_Quit();
