@@ -33,6 +33,7 @@ Families (N = bodies; see the progress record for what each one stands for):
              and a rock walking across the map every 10 ticks, so field requests (first routes and stale
              refreshes) arrive faster than the quota serves them for the whole run: service fairness and the
              longest request age under load, not throughput (ctest legion_sched_load)
+  room2door  stage 8: one order of two footprint classes into a walled room through two doors from two sides
   sched-mix  memory pressure (stage 4 fix round): 42 short-hop squads re-clicked every 120 ticks round 6
              squads crossing the map every 4800, under `navbytes` = two whole-map fields: the fit scan, the
              reservation and request promotion in the sim, and a request-age bound derived from that
@@ -398,6 +399,21 @@ def idle(n, w=None, h=None):
     write(f"idle-{n}", L, f"idle-{n}: {m} movers sent through a block of {k} idle bodies (thousands idle, a thousand moving).")
 
 
+def room2door():
+    """Stage 8: one order of two footprint classes (two movement planes, two Legion groups, one destination area)
+    approaching a walled room from two sides through two doors -- 2x2 bodies from the west through the west door,
+    3x3 bodies from the south through the south door: each group's own entrance (multi-entrance, mixed footprints)."""
+    L = ["scn 1", "name room2door", "ticks 9000", "seed 7", "probe scale", "map flat 320 320",
+         "type a mover 2 2500 10 1.8", "type b mover 3 2500 10 1.6"]
+    # The room: x 180..244, z 100..164, walls 2 thick; a west door at z 128..136, a south door at x 208..218.
+    L += ["wall 180 100 64 2", "wall 180 162 28 2", "wall 218 162 26 2", "wall 180 100 2 28", "wall 180 136 2 28",
+          "wall 242 100 2 64",
+          "group A 0 a 60 rect 20 100 80 164", "group B 0 b 40 rect 180 240 244 290",
+          "region room 182 102 242 162", "at 1 move A,B 212 132"]
+    write("room2door", L, "room2door: one order, 2x2 bodies from the west and 3x3 from the south, into a walled room\n"
+          "through two doors (stage 8: an entrance per group, on its own plane and field).")
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for n in (100, 1000, 2500, 5000, 10000):
@@ -416,3 +432,4 @@ if __name__ == "__main__":
         scatter(n)
     sched_load()
     sched_mix()
+    room2door()

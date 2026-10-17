@@ -383,6 +383,7 @@ public:
                 k.emplace_back(p + "choke.admit_closings", int64_t(a.admitClosings));
                 k.emplace_back(p + "aware.stream_movers", int64_t(a.streamMovers));
                 k.emplace_back(p + "arrive.shared_areas", int64_t(a.sharedAreas));
+                k.emplace_back(p + "arrive.group_entrances", int64_t(a.groupEntrances));
             }
         }
     }

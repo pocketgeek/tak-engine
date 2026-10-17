@@ -1989,6 +1989,12 @@ struct LegionNavigator::Impl {
         // paused route; formationSlot computes it once it is, trying at most once a tick (entryTick: the
         // tick of the last try, only ever compared with the current tick, so not hashed, like movedTick).
         int entry=-1;uint32_t entryTick=kNoTick;
+        // Stage 8: one entrance per group of the point (its own movement plane and footprint, its own field: a
+        // room entered by several doors, a crowd of several footprint classes), group id -> (entrance, last try
+        // tick) with the values `entry` takes. `entry` is the entrance assignFormation found for the point's
+        // first group, kept as before; a group without its own entry computes it at its members' next claim.
+        // Hashed while set (the entrances).
+        std::map<int,std::pair<int,uint32_t>> entries;
         // C1 (W9 lane C, see meetScan): a head-on meet latched for this Point. tick: the latch (kNoTick:
         // none); contact: the last tick a member found the other command oncoming or awareness kept its
         // head-on entry; ax,az,L: the travel axis (px, the live centroid to the requested point when it
@@ -7799,7 +7805,7 @@ struct LegionNavigator::Impl {
             if(mm->slot>=0||mm->slot==-2||mm->slot==-3)mm->slot=-1;
             mm->entryState=0;
         }
-        pt.queue.clear();pt.cells.clear();pt.assigned=false;pt.tried=false;pt.entry=-1;
+        pt.queue.clear();pt.cells.clear();pt.assigned=false;pt.tried=false;pt.entry=-1;pt.entries.clear();
         handIds.erase(key);
     }
     void takeFormation(Member& m,const Unit& u,int cell) {
@@ -7892,6 +7898,18 @@ struct LegionNavigator::Impl {
         }
         if(!pt.queue.empty())handIds.insert(key);
         pt.entry=entrance(pt,list,px,pz);
+        // The group of the member the entrance was found from owns it (entrance picks the member nearest the
+        // centroid; the same pick here names its group).
+        pt.entries.clear();
+        if(pt.entry!=-1&&!list.empty()) {
+            size_t pick=0;int64_t nearest=-1;
+            for(size_t i=0;i<list.size();++i) {
+                const Unit* v=w.unit(list[i].first);
+                const int64_t dx=(v->x.v>>16)-pt.centreX,dz=(v->z.v>>16)-pt.centreZ,d=dx*dx+dz*dz;
+                if(nearest<0||d<nearest) {pick=i;nearest=d;}
+            }
+            pt.entries[list[pick].second->group]={pt.entry,kNoTick};
+        }
         slotShape(pt,list,ax,az,px,pz);
     }
     // The entrance of a formation's area (2026-10-14 Legion review, item 4): where the way in passes a
@@ -8019,7 +8037,7 @@ struct LegionNavigator::Impl {
     // footprint and one movement plane exchange (a slot is legal and reachable on the plane and component
     // formationCell found it on: a ground body and a hovercraft of one footprint share the point, not their
     // slots); a body already through when it got its slot keeps it.
-    void enterArea(const Unit& u,Member& m,Group& g,Point& pt) {
+    void enterArea(const Unit& u,Member& m,Group& g,Point& pt,int entry) {
         if(m.entryState==2||!g.route().usable())return;
         const RouteView f=g.route();
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
@@ -8030,7 +8048,7 @@ struct LegionNavigator::Impl {
             const Plane& pl=plane(g.plane);const int comp=groupComp(g,pl);
             uint32_t v=kUnreached;
             unsure=false;
-            bool ok=certainValue(f,pl,comp,size_t(pt.entry),v)&&
+            bool ok=certainValue(f,pl,comp,size_t(entry),v)&&
                 certainValue(f,pl,comp,size_t(footprintOrigin(u.z,fz))*W+footprintOrigin(u.x,fx),v);
             for(size_t i=0;ok&&i<pt.ids.size();++i) {
                 const Member* o=member(pt.ids[i]);const Unit* ov=w.unit(pt.ids[i]);
@@ -8039,7 +8057,7 @@ struct LegionNavigator::Impl {
             }
             if(!ok) {runOnRoute(g,RouteNeed::Entrance);return;}
         }
-        const uint32_t pe=f.estimate(size_t(pt.entry));
+        const uint32_t pe=f.estimate(size_t(entry));
         if(pe==kUnreached)return;
         const uint64_t edge=uint64_t(pe)+uint64_t(kEntryCells*kOrthogonal);
         auto outside=[&](const Unit& v) {
@@ -8050,7 +8068,7 @@ struct LegionNavigator::Impl {
         const bool crossed=m.entryState==1;
         m.entryState=2;
         if(!crossed)return;
-        const int64_t ex=int64_t(pt.entry%W)*16+fx*8,ez=int64_t(pt.entry/W)*16+fz*8;
+        const int64_t ex=int64_t(entry%W)*16+fx*8,ez=int64_t(entry/W)*16+fz*8;
         const int64_t ax=(int64_t(std::get<2>(m.point))>>16)-ex,az=(int64_t(std::get<3>(m.point))>>16)-ez;
         const int64_t len=std::max<int64_t>(1,isqrtFloor(uint64_t(ax*ax+az*az)));
         auto depth=[&](int c) {
@@ -8066,6 +8084,8 @@ struct LegionNavigator::Impl {
         uint64_t work=0;
         auto samePlane=[&](const Member& o) {
             if(o.group==m.group)return true;
+            // Stage 8: with entrances per group, only members that come through the same one exchange.
+            if(const auto oe=pt.entries.find(o.group);oe!=pt.entries.end()&&oe->second.first!=entry)return false;
             const auto og=groups.find(o.group);
             if(og==groups.end()||og->second.plane!=g.plane)return false;
             const Plane& p=plane(g.plane);
@@ -8267,6 +8287,25 @@ struct LegionNavigator::Impl {
         if(m.slot>=0&&laneDue(m))m.lineCell=-1;
         // An entrance pending on a paused route (stage 5): computed once its
         // region is settled (entrance asks for it), over the point's members.
+        // Stage 8: the entrance of this member's own group (see Point::entries).
+        if(!pt.entries.empty()||pt.entry!=-1) {
+            auto at=pt.entries.find(g.id);
+            if(at==pt.entries.end())at=pt.entries.emplace(g.id,std::pair<int,uint32_t>{kEntryPending,kNoTick}).first;
+            auto& [e,tried]=at->second;
+            if(e==kEntryPending&&tried!=w.tickCounter_) {
+                tried=w.tickCounter_;
+                std::vector<std::pair<int,Member*>> list;
+                for(const int id:pt.ids) {
+                    Member* mm=member(id);const Unit* v=w.unit(id);
+                    if(!mm||mm->point!=m.point||mm->group!=g.id||mm->goal<0||mm->approach||!v||!v->type)continue;
+                    list.push_back({id,mm});
+                }
+                e=list.empty()?-1:entrance(pt,list,px,pz);
+                if(e!=kEntryPending)++acct.groupEntrances;
+            }
+            if(e>=0&&m.slot>=0)enterArea(u,m,g,pt,e);
+            if(m.slot>=0||m.slot==-2)return true;
+        }
         if(pt.entry==kEntryPending&&pt.entryTick!=w.tickCounter_) {
             pt.entryTick=w.tickCounter_;
             std::vector<std::pair<int,Member*>> list;
@@ -8277,7 +8316,7 @@ struct LegionNavigator::Impl {
             }
             pt.entry=list.empty()?-1:entrance(pt,list,px,pz);
         }
-        if(pt.entry>=0&&m.slot>=0)enterArea(u,m,g,pt);
+        if(pt.entry>=0&&m.slot>=0)enterArea(u,m,g,pt,pt.entry);
         if(m.slot>=0||m.slot==-2)return true;
         // A member without a slot (it joined or registered again after the
         // formation was taken, or its search in the first burst found no
@@ -11434,6 +11473,7 @@ struct LegionNavigator::Impl {
             if(!point.queue.empty()) {h=mix(h,0x71756575ull);for(const int id:point.queue)h=mix(h,uint64_t(id));}
             if(point.entry>=0) {h=mix(h,0x656e747279ull);h=mix(h,uint64_t(uint32_t(point.entry)));}
             else if(point.entry==kEntryPending)h=mix(h,0x70656e64ull);
+            for(const auto& [gid,e]:point.entries) {h=mix(h,0x656e7472696573ull^uint64_t(uint32_t(gid))<<16);h=mix(h,uint64_t(uint32_t(e.first)));}
             if(const auto& mt=point.meet;mt.tick!=kNoTick) {
                 h=mix(h,0x6d656574ull);h=mix(h,uint64_t(mt.tick)<<32|mt.contact);h=mix(h,uint64_t(mt.ax));h=mix(h,uint64_t(mt.az));h=mix(h,uint64_t(mt.L));
                 h=mix(h,uint64_t(mt.seen));h=mix(h,uint64_t(mt.left0));h=mix(h,uint64_t(mt.width0));h=mix(h,uint64_t(mt.lo));h=mix(h,uint64_t(mt.hi));
