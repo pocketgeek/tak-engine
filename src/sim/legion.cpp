@@ -11164,6 +11164,13 @@ struct LegionNavigator::Impl {
         if(const Point* pt=m.pt;pt&&pt->crowdPeak) {
             const uint64_t cells=uint64_t(std::max(1,fx))*uint64_t(std::max(1,fz));
             n=int(std::max<uint64_t>(uint64_t(n),std::min<uint64_t>((pt->crowdPeak+cells-1)/cells,uint64_t(1)<<24)));
+            // Stage 8: the bodies the area still gathers and those already settled at its point. One order's
+            // arrivals leave the point's crowd as they settle, so for it this is its whole size again (as the
+            // peak is); for an order that joined an earlier order's area (sharedArea) the peak counts only the
+            // members that were on their way together, not the crowd already standing there.
+            const auto settled=anchorsAt.find(destination(m.point));
+            const uint64_t now=(pt->crowdCells+cells-1)/cells+uint64_t(settled==anchorsAt.end()?0:settled->second);
+            n=int(std::max<uint64_t>(uint64_t(n),std::min<uint64_t>(now,uint64_t(1)<<24)));
         }
         // A crowd of this plane's bodies alone is the destination area itself (areaBound's
         // cache): only a crowd of several footprints packs anew.

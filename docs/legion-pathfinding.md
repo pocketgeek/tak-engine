@@ -2491,6 +2491,69 @@ build: a window is the whole route rebuilt, the "tile rebuild" end of the brief'
 `legion_trapped` (never-ending churn, and the pocket opened under it), `legion_improvedefer`, `legion_chainresolve`,
 `legion_trafficlane`, `legion_traffic`, each shown to fail on a scratch mutation of its mechanism (the record, 7.7).
 
+### Legion 10,000 stage 8: chokepoints, subgroups and arrivals (protocol 272)
+
+Narrow passages carry their queues, groups choose and split between passages by travel time plus queue delay, a
+narrow passage is admitted one direction at a time, two orders to one point are one destination crowd, and the
+arrival rules measure a formation member's headway on its own slot. Retail is untouched. The record, with the
+measurements and the variants rejected, is docs/legion-10000-progress.md section 7.8.
+
+* **Openings.** An opening is a narrow crossing of a hierarchy sector boundary: a portal run (sim/legion_hier.h)
+  bounded at both ends by a pair of origins that do not cross the boundary (a wall, a bank, the map's edge), the run
+  followed past sector corners (a door across one is one opening), fewer than `kOpeningSpan` (64) origins long. Its
+  identity is its cells on the boundary line, so every movement class crossing one bridge shares one record
+  (`Opening`, `openingIndex`; per plane, the openings of each sector side are cached by both sectors' generations,
+  `Plane::sideOps`). Nothing is precomputed: records appear the first time a route's build or a chain walk crosses
+  them.
+* **Entrants and queue delay.** A window or corridor field of a group of `kOpeningMembers` (8) or more records, for
+  every cell it reaches, the first opening its descent crosses and the direction (`Field::via`, 2 bytes a cell of a
+  labelled tile, allocated only where a label is not 0; a tile chain's members read theirs from the chain's nodes).
+  Every `kOpeningScan` (30) ticks each such member adds its queue area, (footX + 1) x (footZ + 1), to its next opening
+  in its direction (`openingScan`). The delay of a crossing is the queue in front of it in cells of travel, area /
+  width (`queueDelay`): on a narrow opening (`kNarrowWidth`, 16 cells) an opposing body counts twice (the direction
+  turns, each turn clears the passage), on a wide one half (the streams keep to their halves). A group's own entrants
+  (`Group::openArea`) are left out of the delays it is charged: a route never plans round itself.
+* **Route choice.** A new window or corridor route carries the delays of its window's openings as charges on the
+  crossing steps (`Field::charges`, route units, halved where the group already crosses -- a commitment), part of its
+  sharing key; the build's bucket ring grows to a power of two above the largest charge. The region search charges
+  them too (chains and corridors). Every scan, a group whose route is `kOpeningHold` (300) ticks old asks the region
+  search where its members would go with today's queues (`predictEntrants`); if a quarter or more of its queue area
+  would move (64 cells or more), it re-plans (`openingDrift`), and the move is committed in the table before the next
+  group is judged -- one group at a time in id order -- and kept while its replacement builds. Without the
+  commitment two groups traded places at every recount.
+* **Subgroups for allocation.** A group of `kAllocMembers` (128) or more is cut by position into `kAllocCells` (64)
+  squares of its members. For the opening with most of its queue it compares, per square, the region search's way
+  through it and round it (closed), and moves squares, the cheapest detour first, to one other passage while the
+  queue left behind still exceeds the other one plus the square's detour (`allocateQueue`). The moved members become
+  a new group of the same order (`splitGroup`: seeds, command and kind copied; member state, formation slots and point
+  kept), which plans its own route; each subgroup is judged on its own afterwards.
+* **Admission at narrow passages.** An opening at most `kNarrowWidth` cells wide is admitted one direction at a time
+  (`admissionHold`). Its strip is the run of cross-sections along the axis across the line no wider than the opening
+  + 2 cells (a bridge's length, a door's wall; `ensureStrip`, per plane epoch). A member whose next opening it is and
+  that stands within `kAdmitZone` bodies of the strip takes the token when the passage is free or open its way and no
+  allied body the other way is in the strip, and otherwise waits (order kept, stall clock stopped). Admitted, it
+  passes until it leaves the zone. Any member standing in a watched strip is an occupant whatever its route says
+  (`watchStrips`). The token turns once the strip has no occupant its way and nothing was admitted for `kAdmitClear`
+  (60) ticks; it closes after the other way waited `kAdmitGreen` (300) ticks. Only allies defer to each other; a group
+  without labels neither waits nor counts. Open ground is never an opening, so nothing waits there.
+* **Shared destination areas.** An explicit order sent within a cell of the point where an earlier explicit area of
+  the same player still gathers (its point live, or its arrivals settled there) takes that area's key and exact point
+  (`sharedArea` over `destArea`, hashed): one command, one formation and crowd bound, and the first order's settled
+  bodies and held queue are not obstacles or traffic to the second.
+* **Arrivals.** A formation member's crowd window also measures its distance to its own slot against its best so far
+  (`Member::windowSlotDist`): gaining half a body or more is not still. And a member with a free step that brings its
+  origin nearer its slot is not pressed (`freeTowardSlot`). Both keep the front of a crowd going to the far side of its
+  area, beyond the click, where every step climbs the field toward the click: before, it settled 20-60 cells short and
+  the area filled from the click backwards.
+* **An entrance per group.** Each group of a destination area finds its own entrance on its own plane and field from
+  its own members (`Point::entries`); members exchange slots only with members coming through the same entrance (a
+  room entered by several doors, a crowd of several footprints). The point's first entrance is computed as before.
+
+Not changed (measured and rejected, section 7.8): awareness by streams (separate movers for spatially separate parts
+of a destination area: swap-2500 lost 13% of its arrivals; split only where terrain separates the parts, a crosser
+lost time on all three offsets); moving an off-slot arrival's claim to the cells it stands on; re-seeding a far
+reach group only for a move of D/8 cells uncapped (the cap of 8 stays).
+
 ## Instruments
 
 What each tool sees, and what it cannot. A number is only as good as the

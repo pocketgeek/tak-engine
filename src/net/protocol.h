@@ -20,8 +20,14 @@
 namespace tak::net {
 
 constexpr uint32_t kNetVersion = 272;      // 272: Legion navigation subgroups, chokepoints and arrivals (Legion 10,000 stage 8;
-                                           //      Retail bit-identical): a formation member gaining on its own slot is not
-                                           //      still (new hashed member state: its slot record). 271 replays refused
+                                           //      Retail bit-identical): a formation member gaining on its own slot, or with a
+                                           //      free step toward it, is not settled short of it; chokepoints (openings) carry
+                                           //      their queues as route charges, groups re-plan and split subgroups off for
+                                           //      other passages, narrow passages admit one direction at a time; orders to a
+                                           //      point another order still gathers at share its area; an entrance per group.
+                                           //      New hashed state: slot records, opening delays and tokens, route charges and
+                                           //      labels, groups' own entrants, admitted members, shared areas, per-group
+                                           //      entrances. 271 replays refused
                                            // 271: Legion static navigation apart from traffic (Legion 10,000 stage 7; Retail bit-identical):
                                            //      static changes reach routes per cluster as closures (refresh at once) or
                                            //      improvements (refresh deferred), trapped orders re-register only on an improvement
