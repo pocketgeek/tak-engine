@@ -83,6 +83,39 @@ void SimPool::run(size_t chunks,Job job,void* ctx) {
     for (unsigned spins=0;inflight_.load(std::memory_order_seq_cst);++spins) relax(spins);
 }
 
+void SimPool::open(size_t chunks,Job job,void* ctx) {
+    // As run() opens a job, without draining or waiting: finish() closes it.
+    job_=job;ctx_=ctx;chunks_=chunks;
+    next_.store(0,std::memory_order_relaxed);
+    done_.store(0,std::memory_order_relaxed);
+    async_=true;
+    if (threads_.empty() || !chunks) return;   // the caller runs every chunk (help / finish)
+    gen_.fetch_add(1,std::memory_order_seq_cst);   // open
+    std::lock_guard lock(sleepMutex_);
+    if (sleeping_) sleepCv_.notify_all();
+}
+
+bool SimPool::help() {
+    if (!async_) return false;
+    const size_t k=next_.fetch_add(1,std::memory_order_relaxed);
+    if (k>=chunks_) return false;
+    job_(ctx_,k,0);
+    done_.fetch_add(1,std::memory_order_release);
+    return true;
+}
+
+void SimPool::finish() {
+    if (!async_) return;
+    drain(0);
+    auto relax=[](unsigned spins) { if (spins<4096) cpuRelax(); else std::this_thread::yield(); };
+    for (unsigned spins=0;done_.load(std::memory_order_acquire)<chunks_;++spins) relax(spins);
+    if (!threads_.empty() && chunks_) {
+        gen_.fetch_add(1,std::memory_order_seq_cst);   // close, then wait out the workers inside (see run)
+        for (unsigned spins=0;inflight_.load(std::memory_order_seq_cst);++spins) relax(spins);
+    }
+    async_=false;
+}
+
 void SimPool::work(unsigned slot) {
     uint64_t seen=0;
     for (;;) {

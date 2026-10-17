@@ -57,7 +57,7 @@ public:
         if (!count) return;
         if (!chunk) chunk=kUnitChunk;
         const size_t chunks=(count+chunk-1)/chunk;
-        if (threads_.empty() || chunks<2 || count<minParallel) {
+        if (threads_.empty() || chunks<2 || count<minParallel || async_) {
             for (size_t k=0;k<chunks;++k) fn(k,k*chunk,std::min(count,(k+1)*chunk),0u);
             return;
         }
@@ -69,8 +69,24 @@ public:
         },&ctx);
     }
 
+    // Asynchronous jobs (Legion 10,000 stage 9): start() opens a job of `chunks` chunks that the workers begin at
+    // once and returns without waiting; the caller goes on with its own work, may run unclaimed chunks itself
+    // (help(), e.g. while it waits for one chunk's result), and must call finish() -- which runs what is left and
+    // waits for every chunk and every worker to leave -- before any other job on this pool. While one is open,
+    // forChunks runs inline (busy()). fn(chunkIndex, slot) must stay valid until finish() returns, and each chunk
+    // must write only its own slots. With no workers nothing runs until help()/finish(), on the caller.
+    template<class Fn>
+    void start(size_t chunks,Fn& fn) {
+        open(chunks,[](void* p,size_t k,unsigned slot) {(*static_cast<Fn*>(p))(k,slot);},&fn);
+    }
+    bool help();
+    void finish();
+    bool busy() const { return async_; }
+
 private:
     using Job=void(*)(void*,size_t,unsigned);
+    void open(size_t chunks,Job job,void* ctx);
+    bool async_=false;
     void run(size_t chunks,Job job,void* ctx);
     void work(unsigned slot);
     void drain(unsigned slot);
