@@ -2516,7 +2516,7 @@ struct LegionNavigator::Impl {
         }
         p.cell.assign(size_t(W)*H,0);
         auto& cell=p.cell;
-        computeCells(p,0,0,W-1,H-1);
+        computeRows(p,0,H);
         // Separable rectangle test: run of legal cells to the right >= footX
         // on footZ consecutive rows, and the footprint's bounds (x+fx<W).
         std::vector<uint16_t> run(size_t(W)*H,0);
@@ -2591,6 +2591,31 @@ struct LegionNavigator::Impl {
             for(const int id:lists.structures)if(const Unit* u=w.unit(id))stampStructure(*u);
         }
         return work;
+    }
+    // Stage 9: the cell layer of rows [z0, z1) (computeCells over whole rows), in chunks of kPlaneRowChunk rows on the
+    // SimPool: a row's cells depend only on the world and the structures over them, and each chunk writes only its own
+    // rows of p.cell, so the layer is the same whatever the chunks' order (the structures are resolved once, in id
+    // order, before the fork: computeCells' own lookup may repair World's id table, a write). The rows a call covers
+    // are the caller's (a first build's per-tick budget, or the whole map): chosen before the fork, never by it.
+    static constexpr int kPlaneRowChunk=16;
+    void computeRows(Plane& p,int z0,int z1) {
+        const int W=width();
+        if(z1<=z0)return;
+        if(!prefetching()||z1-z0<2*kPlaneRowChunk) {computeCells(p,0,z0,W-1,z1-1);return;}
+        const std::vector<const Unit*>* outer=structureList;
+        std::vector<const Unit*> list;
+        if(!outer) {
+            syncUnitLists();
+            for(const int id:lists.structures)if(const Unit* u=w.unit(id))list.push_back(u);
+            structureList=&list;
+        }
+        const size_t chunks=size_t(z1-z0+kPlaneRowChunk-1)/kPlaneRowChunk;
+        par.planeRows+=uint64_t(z1-z0);
+        parallelJobs(chunks,[&](size_t k) {
+            const int a=z0+int(k)*kPlaneRowChunk;
+            computeCells(p,0,a,W-1,std::min(z1,a+kPlaneRowChunk)-1);
+        });
+        structureList=outer;
     }
     // (World::unitScript: the dense mirror of unitScripts_, kept by every
     // insert and erase of it.)
@@ -5923,7 +5948,7 @@ struct LegionNavigator::Impl {
             if(p.stage==1) {   // cell layer, rows ascending
                 const int rows=std::max(1,int(budget/uint64_t(W)));
                 const int z1=std::min(H,p.cursor+rows);
-                computeCells(p,0,p.cursor,W-1,z1-1);
+                computeRows(p,p.cursor,z1);
                 budget-=std::min(budget,uint64_t(z1-p.cursor)*W);
                 p.cursor=z1;
                 if(p.cursor>=H) {p.stage=2;p.cursor=0;}

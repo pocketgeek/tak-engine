@@ -106,6 +106,8 @@ def main(argv):
             return 2
     if staged == 0 or used == 0:
         failures.append(f"no tile was staged and taken over the set (staged {staged}, used {used}): the prefetch never ran")
+    if rows == 0:
+        failures.append("no plane rows were built in chunks over the set: the row split never ran")
     for f in failures:
         print("FAIL:", f)
     print("PASS" if not failures else "FAIL")
