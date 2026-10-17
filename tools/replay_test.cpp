@@ -153,8 +153,10 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 271, "replay format 11 is kept under protocol 271");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 271");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 272, "replay format 11 is kept under protocol 272");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 272");
+    // 272 adds Legion's stage-8 navigation (arrival headway on the own slot, chokepoints, subgroups).
+    check(!supportedReplayProtocol(13, 271), "previous static/traffic protocol is refused");
     // 271 separates Legion's static navigation from traffic (closures vs improvements, chain repair, jams as traffic).
     check(!supportedReplayProtocol(13, 270), "previous hierarchical-route protocol is refused");
     // 270 changes Legion's long routes (hierarchy, corridors, tile chains over shared tiles).

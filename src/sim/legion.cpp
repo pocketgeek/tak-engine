@@ -931,6 +931,10 @@ struct LegionNavigator::Impl {
         // the start of the run of still windows that ends there (kNoTick:
         // the last window was not still; read by production exits).
         uint32_t windowTick=0;int64_t windowDist=-1;uint32_t stillSince=kNoTick;
+        // Stage 8: a formation member's least distance (px) to its own slot at a window's start so far and that
+        // slot (windowGoal; -1: no slot then). A body that gained half a body or more on that record over the
+        // window is not still, whatever its distance to the click does (a slot beyond the click). Hashed while set.
+        int64_t windowSlotDist=-1;int windowGoal=-1;
         // The settle rule (settleWindow): the potential bound (0 not yet
         // set), whether the last window found this body queued back to its
         // destination's settled crowd, and the slot re-choices it has made.
@@ -8313,10 +8317,24 @@ struct LegionNavigator::Impl {
             const int64_t dx=(int64_t(u.x.v)-std::get<2>(m.point))>>16,dz=(int64_t(u.z.v)-std::get<3>(m.point))>>16;
             const int64_t dist=isqrtFloor(uint64_t(dx*dx+dz*dz));
             const int64_t body=int64_t(std::max(fx,fz))*16;
-            const bool still=m.windowDist>=0&&m.windowDist-dist<body/2;
+            // Stage 8: a formation member's headway is also measured on its own slot. The front of a crowd
+            // takes the far side of its area, beyond the click: walking there it gains nothing on the click,
+            // and was found still, queued back to its own crowd behind it and pressed, and settled 20-60 cells
+            // short of its slot (one-1000: 766 of 854 completions off their slot, the last ~10% of the army
+            // outside the area). Gaining on the slot is measured against the best distance so far (a body
+            // stepping to and fro gains nothing).
+            int64_t slotDist=-1;
+            if(m.slot>=0&&m.goal>=0) {
+                const int64_t sx=(int64_t(u.x.v)>>16)-(int64_t(m.goal%W)*16+fx*8),sz=(int64_t(u.z.v)>>16)-(int64_t(m.goal/W)*16+fz*8);
+                slotDist=isqrtFloor(uint64_t(sx*sx+sz*sz));
+            }
+            const bool same=slotDist>=0&&m.windowGoal==m.goal;
+            const bool gaining=same&&m.windowSlotDist-slotDist>=body/2;
+            const bool still=m.windowDist>=0&&m.windowDist-dist<body/2&&!gaining;
             if(!still)m.stillSince=kNoTick;
             else if(m.stillSince==kNoTick)m.stillSince=m.windowTick;
             m.windowTick=w.tickCounter_;m.windowDist=dist;
+            m.windowSlotDist=same?std::min(m.windowSlotDist,slotDist):slotDist;m.windowGoal=slotDist>=0?m.goal:-1;
             if(!still)m.queued=false;
             else if(settleWindow(u,m,g,p,ox,oz,dist)) {complete(u,m,true);return;}
             // A reach member held a whole window re-chooses a free ring spot
@@ -10765,6 +10783,7 @@ struct LegionNavigator::Impl {
             h=mix(h,m.rest);if(m.rest) {h=mix(h,uint32_t(m.restX));h=mix(h,uint32_t(m.restZ));h=mix(h,uint32_t(m.restHp));h=mix(h,m.restEpoch);h=mix(h,m.restRing);}
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillSince);
+            if(m.windowGoal>=0) {h=mix(h,0x77736c6f74ull);h=mix(h,uint64_t(m.windowSlotDist));h=mix(h,uint64_t(uint32_t(m.windowGoal)));}
             if(m.settleP||m.queued||m.rechoices) {h=mix(h,0x736574746c65ull);h=mix(h,m.settleP);h=mix(h,uint64_t(m.queued)|uint64_t(m.rechoices)<<8);}
             h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);h=mix(h,uint64_t(m.real));
             if(m.gainTick) {h=mix(h,0x6761696eull);h=mix(h,m.gainTick);h=mix(h,m.gainBest);h=mix(h,m.gainSeen);}

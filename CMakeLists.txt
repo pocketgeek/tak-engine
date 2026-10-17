@@ -755,6 +755,12 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_traffic_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
   set_tests_properties(legion_traffic PROPERTIES LABELS legion TIMEOUT 900 SKIP_RETURN_CODE 77)
+  # Legion 10,000 stage 8: a formation member gaining on its own slot beyond the click is not settled short of
+  # it (one-1000: at least 960 of 1,000 arrive; tools/legion_arrival_test.py).
+  add_test(NAME legion_arrival
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_arrival_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
+  set_tests_properties(legion_arrival PROPERTIES LABELS legion TIMEOUT 900 SKIP_RETURN_CODE 77)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison

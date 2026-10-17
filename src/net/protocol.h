@@ -19,7 +19,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 271;      // 271: Legion static navigation apart from traffic (Legion 10,000 stage 7; Retail bit-identical):
+constexpr uint32_t kNetVersion = 272;      // 272: Legion navigation subgroups, chokepoints and arrivals (Legion 10,000 stage 8;
+                                           //      Retail bit-identical): a formation member gaining on its own slot is not
+                                           //      still (new hashed member state: its slot record). 271 replays refused
+                                           // 271: Legion static navigation apart from traffic (Legion 10,000 stage 7; Retail bit-identical):
                                            //      static changes reach routes per cluster as closures (refresh at once) or
                                            //      improvements (refresh deferred), trapped orders re-register only on an improvement
                                            //      that could reopen them, chains re-resolve relabelled regions and repair their plan,
