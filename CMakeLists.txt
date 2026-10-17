@@ -1763,6 +1763,11 @@ if(TAK_BUILD_CLIENT)
     target_include_directories(terrain_compositor_test PRIVATE src)
     target_link_libraries(terrain_compositor_test PRIVATE tak-formats Threads::Threads)
     add_test(NAME terrain_compositor COMMAND terrain_compositor_test)
+    # Camera-driven terrain work policy (workstream K): tiers, priority, keep band and
+    # level grace, stand-in eviction ranks, the shared upload budget, queue simulations.
+    add_executable(terrain_work_test tools/terrain_work_test.cpp)
+    target_include_directories(terrain_work_test PRIVATE src)
+    add_test(NAME terrain_work COMMAND terrain_work_test)
     # Animated colour-atlas regions: incremental repaint == complete repaint ==
     # the previous repaint-everything scheme (frames, gutters, expiry, late atlas,
     # renderer reset). Software renderer under the dummy video driver.
