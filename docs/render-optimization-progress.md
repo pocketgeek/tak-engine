@@ -126,9 +126,35 @@ replays must not move; nothing in this program may feed the simulation.
   B in every scene). Baseline for later comparisons:
   `~/tak-tmp/render-opt/takclient-F8-candidate` (code of `ce2a3466`; F6 =
   `3fd2c8de` differs only in the band fix).
-- Workstreams G–N: not started.
-- **Next concrete step:** workstream G (distant-image lookup before body
-  generation). F is done; its follow-ups (not required for G): the dense
+- **Workstream G (distant-image lookup before body generation) is
+  implemented and verified** (commits `6d56ac8d` cache side + differential
+  test vs the pre-G cache (`tools/distant_models_legacy.h`), `b59cdd8a`
+  GameView lookup before body generation + `render_distant_lookup` ctest,
+  `b084644e` pan-distant / distant-sparse scenes, `2d755167` per-frame switch
+  read and no empty catch-up scan (fixes a measured 7680×2160 guard cost of
+  G1), then the docs commit). Tests: `distant_models` (software and offscreen
+  GL; five mutations fail it), `render_distant_lookup` (an in-game mutation
+  fails it), `geometry_stages`, GL verifier runs (`TAK_DISTANT_VERIFY` +
+  `TAK_GEOMETRY_VERIFY`) on stationary-mixed, total10k-visible, pan-distant,
+  veteran; `ctest -L quick` 383/383 on build-o2 at `2d755167`. Captures
+  identical to F8 in all 168 comparisons (world view and full frame). Release
+  `takclient` builds without the G debug strings. `--mpai` not run: only
+  `src/client` (presentation) and `tools/` changed; every benchmark run checks
+  the world hash (identical A vs B in every scene). Measurements: Experiment
+  9. Baseline for later comparisons: `~/tak-tmp/render-opt/takclient-G2-candidate`
+  (code of `2d755167`).
+- Workstreams H–N: not started.
+- **Next concrete step:** workstream H (less full-scene vertex copying):
+  trace `UnitGeom::verts` → `bodyVerts_` → GeometrySubmit client arrays,
+  introduce ordered commands (geometry range + material + placement + clip /
+  layer) with the assembled SDL path as fallback. Measure H against G2
+  (`~/tak-tmp/render-opt/takclient-G2-candidate`). G's follow-ups (not
+  required for H): a pixel-grid bake would make distant images equal to live
+  geometry (Experiment 9 investigation; changes appearance, needs a decision);
+  ~1700 bodies per frame stay live in the 10k view because four image pages
+  are full (limit unchanged by design).
+- (Superseded, kept for the record) Former next step, workstream G: F is
+  done; its follow-ups (not required for G): the dense
   7680×2160 scene still exceeds four pages and takes the whole-frame direct
   path (Experiment 8), and the raster's sub-pixel dependence on the cell
   position (see Known limitations) means any future relocation must redraw.
@@ -169,7 +195,7 @@ evidence; nothing below is already fully satisfied.
 | D | Separate preparation from placement | **verified** | Workstream D (`361484d2` vocabulary + test, `08d027d4` GameView stages, `32c5d71a` layout, `ed8e6e2a` shadow-coverage revision, `dc04c856` debug-only verifier, `aae1a9fa` harness clock fix). `buildUnitGeom` keeps three exact stage keys on the unit's stable entry (`client/geometrystages.h`): LOCAL (identity/resources, pose incl. heading/emote spin, pitch/roll, piece poses with hidden/shadow flags, corpse/statue, palette slot, texture frames, construction, shadow toggle) → piece transforms, collection, depth sort, UVs, shadow silhouette in model-projected coordinates; PLACEMENT (zoom, interpolated anchor with lift/sink/altitude, emote bob, flyer altitude, occlusion line) → screen positions; MATERIAL (veterancy, ghost, conjuring progress + clock, tint, opacity) → vertex colours. Only stages whose inputs changed are redone; placement and material use the former single pass's expressions in the same order (bit-identical). Per-stage revisions (`localRevision`, `placementRevision`, `materialRevision`, exact `shadowRevision`); `revision` (the screen output) still advances on any stage, so downstream consumers are unchanged. No hashes; no sim tick as a revision; resets make entries cold. Tests: `geometry_stages` (arithmetic vs the c2c25707 single pass, partial = complete, six header mutations fail it), `render_geometry_stages` (in game, both verifiers), `TAK_GEOMETRY_VERIFY` (every reuse vs a complete rebuild, every local build vs the former single-pass transform, shadow-kept detection vs a copy). Captures identical (168 comparisons). Measured (Experiment 6): in pan/zoom 95% of units are re-placed instead of rebuilt — vertices generated −98%, worker build time −76 to −77%, geometry phase wall −57 to −61%; draw time −17.7% / −16.1% in zoom (material at both sizes), −14 to −20% in pan (every ABBA group, inside pan's spread), −7 to −9% in churn (not material); moving and stationary unchanged within noise. Costs: a local rebuild +7–12% worker time, the key check +28–32% on a pan, geometry memory +18–22% capacity. |
 | E | Split body/shadow invalidation | **verified** | Workstream E (`0af89d63` vocabulary + `shadow_tiles` test, `1979d413` GameView, `71a71e9b` harness + `render_shadow_cache` ctest, `15da2bff` decision pre-pass with pooled block-wise point checks). A silhouette tile is stamped with the unit's exact shadow coverage (`shadowRevision`) and the exact `ShadowPlacement` its points were placed with (`client/shadowtiles.h`), no longer with `revision` (any stage) and the screen pixel: material changes (veterancy, tint, ghost, conjuring fade), emote bob, occlusion line and body-only local rebuilds keep the tile; a placement change keeps it only when every tile point recomputes bit-identical (`sameTilePoints`: whole-pixel translations within a binade; sub-pixel phase, zoom and altitude-lean changes redraw). A local rebuild whose shadow inputs are unchanged (colour atlas, frames of animated textures WITHOUT shadow masks) keeps the silhouette without collecting it (`shadowInputsEqual`, `PieceMeta::animationFrameMasks`); animated masks, shadow flags, pose, corpse, construction and the shadow toggle still invalidate immediately. Tests: `shadow_tiles` (kept ⇔ raster inputs bit-identical under the pre-E expressions, randomized over every cause; ten mutations fail it), `render_shadow_cache` (software renderer, every kept tile = complete re-bake, pre-E kept ⊆ E kept, skipped silhouette = fresh collection; three in-game mutations fail it), GL verifier runs. Measured (Experiment 7, final code vs D + harness): pan-snap kept tiles 0–4% → 37–41%, dirty raster area −41/−43%, `t_shadow_pack` −20.0% / −9.6%, GPU timeline −11.5% (1280×960, material), draw −7.4% / −3.0% (consistent, inside threshold); point-check cost `t_shadow_alloc` +0.065 / +0.21 ms there, the stamp loop 5–14% cheaper elsewhere; veteran, pan, stationary-mixed draw unchanged; captures identical (108 comparisons in the final run). Limit: in most matrix scenes tiles go dirty because the per-frame repack moves them (`owner`/`relocated`, F), so E's reuse shows mainly where slots stay put (pan-snap, veteran). |
 | F | Persistent shadow allocation | **verified** | Workstream F (`3565f3fe` allocator + `shadow_atlas` test, `5febc00f` GameView integration + `render_shadow_atlas[_zoom]` ctests, `6c7b93df` cheap failure path + page-ordered best fit, `ec3df732` / `fbe21589` / `3fd2c8de` all-redraw frames use the former packer, `ce2a3466` page textures created only after a frame fits — the verifier's churn finding). Each unit's silhouette tile keeps a cell of `ShadowAtlasAllocator` (`client/shadowatlas.h`: logical pages → shelves with free span lists, class-height shelves, exact widths, generational handles, occupancy/fragmentation statistics, `validate()`) across frames; `UnitGeom::shadowTile` holds the handle, validated against the cell's recorded entry handle. E's stamp is kept per cell and carried when a cell is reallocated (verdict `Relocated`, never a stranger's pixels); the stamp gained the page. Policy: keep while the tile fits (cell ≤ 1.5× a fresh one); absent cells retained 2 s / 30 frames, evicted first under pressure; forced repack (the former packer, class heights then exact sizes = former slots, so the atlas falls back only where the former code did) for a failed allocation in a fragmented atlas, ≤ once per 60 frames; free repack when ≥ 90% of tiles are redrawn anyway and the atlas is loose; frames where every tile is redrawn anyway (zoom, sub-pixel pan, new phase) use the former packer with exact sizes (the former slots and pixels); bounded migration (≤ 64 tiles/frame) off a sparse last page; empty pages destroyed after 2 s / 60 frames; page size shrinks after 5 s / 120 frames of low demand; more tile area than four pages falls back at once; new pages are placed logically and their textures created only once every tile of the frame is placed, so a frame that fits four pages by area but not by packing creates no texture (no create/destroy churn while it keeps falling back; Experiment 8b). 4 pages / 2048² / VRAM budget and the whole-frame direct fallback unchanged. Recycled cells cleared with their padding. Captures: identical to E3 in all-redraw scenes (churn, pan, zoom) and whenever slots match (`TAK_SHADOW_REPACK`, 96 comparisons); with persistent cells 1–14 single shadow-edge pixels per frame differ (208 pixels in 49 of 156 frames) — the former packer shows the same differences when only its slots change (raster rounding depends on the cell position; Experiment 8). Measured on the final code (Experiment 8b, vs E3): draw −33% / −50% / −33% in stationary-mixed / total10k-visible / moving at 1280×960 (material), −12% in pan-snap 1280×960 and −18% to −32% in the reuse scenes at 7680×2160 (every ABBA group faster, inside that noisier session's thresholds; material in the F3 session, Experiment 8), shadow packing −66% to −91% (material except pan-snap), p99 −58% / −61% in stationary/dense 1280×960; band fix: 30 → 0 page creations per run, frame time unchanged; all-redraw scenes +0.14–0.20 ms `t_shadow_alloc`, draw −0.3% to +3.0% (not material); dense 7680×2160 fallback −27% shadow phase and 64 MiB released. Memory: tracked GPU equal or lower at the end of every timed scene; one extra page (16 MiB) during the battle-sparse battle, whole atlas freed after the view empties. |
-| G | Distant image lookup before generation | not started | `DistantModels::prepare` (`distantmodels.cpp`) runs after `buildUnitGeom` and needs the generated vertices (bounds, source pointer, revision). Entry key: unit id (the geometry entry's generational handle since C), geometry revision, texture tick, source pointer, zoom/scale; 67 ms refresh, 128 bakes/frame, 64-px tiles, 4 × 2048² pages; pages released only when ALL entries expire. Revision changes on every pan (D), so panning re-bakes. |
+| G | Distant image lookup before generation | **verified** | Workstream G (`6d56ac8d` cache: retained bounds, decide→bake-by-page→quads, page occupancy + release, same-position migration, `holds()`; `b59cdd8a` GameView: lookup before body generation, deferred body stages, catch-up, verifier, `render_distant_lookup`; `b084644e` scenes; `2d755167` per-frame switch read, no empty catch-up scan). The geometry workers ask the cache whether a unit's image will be shown without a repaint (`DistantModels::holds`: valid, same zoom/output scale, baked < 67 ms ago — the case where `prepare()` reads neither revision nor vertices); then the BODY stages stay pending on the entry (`UnitGeom::bodyPending`) while the shadow stages run and the revision advances; a pending body is generated as soon as anything needs it (next non-held build, a bake via callback, a catch-up). Exact eligibility: deferred only for appearance-only local changes (`bodyVertexCountStable`; the body collector culls back faces, so pose changes the ≥ 96 vertex count). Bounds/opacity retained per identity + revision + source + count, so refused bodies are not rescanned every frame; bakes run grouped by page after painter-order decisions; per-page occupancy, pages released when their last image expires (others live), tile POSITIONS kept in the pre-G order on the lowest live page (pixels and quads depend only on the position), bounded same-position migration. Cadence, 128 bake budget, eligibility, live fallback, 4-page limit unchanged. Tests: `distant_models` (vs the pre-G cache kept verbatim, 900 frames, decisions/quads/tile pixels identical, `validate()` every frame; five mutations fail it), `render_distant_lookup` (6,902 deferred bodies regenerated and matched; shadow-skip mutation fails it), `geometry_stages`, GL verifier runs. Captures identical to F8 (168 comparisons). Measured (Experiment 9): total10k-visible 1280 draw −12.4% and GPU timeline −8.5% (material), `t_distant` −67% / −83% (10k / stationary, material), pan-distant worker build −15% (material); 7680×2160 unchanged (no images there); distant-sparse −32 MiB tracked GPU after the view moves. Investigation of the failed larger-image prototype: today's images differ from live geometry by ~87k px/frame (bilinear resample at fractional phase); a pixel-grid bake cuts that to 44 px (uncommitted experiment). |
 | H | Less full-scene vertex copying | not started (partly present) | `GeometrySubmit` (`geometrysubmit.h`) submits batches ≥512 vertices on the `opengl` backend through client arrays, skipping SDL's per-vertex conversion copy, with an optional retained VBO keyed by a caller revision (used by terrain tiles and fog, not bodies). Bodies are still copied every frame: per-unit `UnitGeom::verts` → `bodyVerts_` (`:782`–`:850`) → client-array upload. No ordered command representation. |
 | I | Cost-based work scheduling | not started | `ThreadPool::parallelFor` (`threadpool.h`): fixed 8-item chunks, `minParallel` default 32; the geometry pass dispatches the whole pool for ≥32 visible units whether they are cache hits or misses; shadow prep goes parallel at ≥32768 points; body copy parallel at ≥32 tasks. |
 | J | CPU cache budgets | not started | `terrain::Compositor` decodes every referenced section at load (`MapView::queueAllSections`) and keeps it until `clear()` (`terrain.h:40`, reference valid until clear); `TerrainChunks::mips_` (worker-only) is unbounded; `bodyVerts_` and shadow scratch keep peak capacity forever (per-unit geometry entries are bounded and trimmed since C: retention, byte/count budgets, warm-free trim, tail chunks). Consumers of `sectionImage`: `terrainchunks.cpp:64`, `mapview.cpp:361/381/470`, Cartographer `validation.cpp:32`; `renderBlock` users: minimap (`gameview_hud.cpp:614`), Cartographer. |
@@ -259,7 +285,7 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 | Atlas maintenance | `atlasFor` per visible colour slot (`:272`), `preparePaletteTextures` for structures (`:284`), `animateGlowTextures` (`:289`) | render thread, render-target draws |
 | Geometry preparation | `pool_.parallelFor` → `buildUnitGeom`: three exact stage keys (since D), then `runUnitGeomStages` redoes only the changed stages — LOCAL (`preparePiece`, `collect`, index sort, local shadow), PLACEMENT (`placeBody`/shadow placement, bounds), MATERIAL (vertex colours) | `ThreadPool pool_`, thread-local scratch, writes only its unit's entry `*visGeom_[i]` |
 | Shadow preparation | `buildUnitShadow` inside the LOCAL stage (local points retained); the placement stage re-places them | positions-only opaque verts + masked runs |
-| Distant images | `distantModelCache_.prepare` (`:350`, `distantmodels.cpp`) | render thread, offscreen bakes |
+| Distant images | lookup `holds()` inside the geometry workers (since G: a held image's body stays pending), then `distantModelCache_.prepare` (`distantmodels.cpp`): decide in painter order, bake grouped by page, quads in painter order; catch-up of deferred bodies not shown | workers read-only; render thread bakes |
 | Shadow atlas | `buildShadowSilhouetteAtlas` (`:377`, called `:656`): pack, dirty tiles, parallel transform, `OpaqueShadowSubmit` + mask batches | render thread + pool for the transform |
 | Shadow composite | ground: `drawShadowBatch` (`:767`, `:2593`); air: drained at the ground→air boundary inside the body replay | render thread |
 | Body assembly | plan `drawOps_`/`copyTasks_` serially (`:782`), parallel copy into `bodyVerts_` | pool |
@@ -275,7 +301,7 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 | Body buffer `bodyVerts_`, `copyTasks_`, `drawOps_` | GameView | rebuilt each frame | peak capacity retained | session |
 | Shadow silhouette pages | GameView + `ShadowAtlasAllocator` (since F) | each unit's tile keeps a cell (handle on `UnitGeom::shadowTile`, validated against the cell's entry handle); stamp per cell (entry, owner, coverage = `shadowRevision`, exact `ShadowPlacement`, screen pixel, page, slot, size, scale), carried when the cell moves; a placement change is reused only when every tile point recomputes bit-identical in the same cell | ≤4 GPU target pages up to 2048² (≤64 MiB); class-height shelves, exact widths; absent cells retained 2 s / 30 frames; empty pages destroyed after 2 s; page size shrinks after 5 s of low demand | destroyed on reset/teardown (`resetShadowAtlas`); handles never alias across resets |
 | Shadow scratch (`shadowAtlasOpaqueScratch_`, mask scratch, `shadowCompositeBatch_`) | GameView | per frame | capacity retained | cleared on reset |
-| Distant images | `DistantModels` | geometry-entry handle (index + generation; unit id before C) → entry (revision, texture tick, source ptr, zoom, scale), 67 ms refresh | ≤4 × 2048² pages (64 MiB), 1024 64-px tiles/page, ≤128 bakes/frame | entries expire after 120 unseen prepares; pages freed only when all expire; cleared on reset |
+| Distant images | `DistantModels` | geometry-entry handle (index + generation; unit id before C) → entry (revision, texture tick, source ptr, zoom, scale), 67 ms refresh; since G also retained bounds per handle (revision, source ptr, count) and the early lookup `holds()` | ≤4 × 2048² pages (64 MiB), 1024 64-px tiles/page, ≤128 bakes/frame (bakes grouped by page since G); per-page occupancy since G | entries/bounds expire after 120 unseen prepares; since G a page is released when its last image expires (before: only when all expired), bounded same-position migration off a sparse highest page; cleared on reset |
 | Colour atlases `atlasTex_` | GameView | per player-colour slot; layout fixed at first model load; `atlasTracker_` slot record = (renderer generation, asset generation, painted frame per animated region) | GPU target ≈ 2048×atlasH ×4 (≈11 MiB) per slot, ≤10; essential (bypasses cap) | destroyed on reset (tracker cleared); painted completely on creation |
 | Animated texture state | `modelTextureAnimations_`, `animatedTex_`, `animatedRegions_` | frame from game tick, every draw; `animatedRegions_` (rect, frames, frame) rebuilt per update in registry order | CPU | `assetGeneration_` bumped on texture teardown and atlas layout; tracker records from another generation repaint every region |
 | Palette pages | `paletteTextureSheets_/Pages_` | per texture name, 20 shade bands | ≤16 × 2048² static pages (256 MiB) | destroyed in `destroyGpuTextures` (not on target reset) |
@@ -486,6 +512,29 @@ Added by workstream F:
   `TAK_SHADOW_CACHE_VERIFY` also runs `ShadowAtlasAllocator::validate()` and
   checks every tile fits its cell each frame, and its summary line appends
   `kept allocs compactions migrated evicted page_releases shrinks validated`.
+
+Added by workstream G:
+
+- `client/distantmodels.h`: the rules as constants (`kMaxZoom` 0.6,
+  `kMinVertices` 96, `kRefreshMs` 67, `kBakeBudget` 128) and `candidate(item)`;
+  `holds(id, zoom, sx, sy, now)` (read-only, called by the geometry workers);
+  `Item::bodyDeferred` and the `Materialize` callback of `prepare()`;
+  `validate()`, `livePages()`, `liveTiles()`, `metadataBytes()`; telemetry
+  fields `boundsReused`, `lateBodies`, `pageReleases`, `migrated`; test/debug
+  switches `allowSoftware`, `sweepEveryPrepare`.
+- `geometrystages.h`: `bodyVertexCountStable(before, layout, after, layout)`.
+- `UnitGeom::bodyPending` / `bodyRun` / `bodyDeferred` (entry still 512 bytes:
+  the three bytes fill the padding after `shadowSkipped`);
+  `buildUnitGeom(u, g, scratch, mayDeferBody)`;
+  `runUnitGeomStages(u, g, stages, bodyStages, in, scratch)`;
+  `GameView::specialUnit`, `distantEligible` (one eligibility function for the
+  workers and the item fill), `materializeDistantBody`, `distantNow_`,
+  `distantScaleX_/Y_`, `distantEarly_`.
+- Debug: `TAK_DISTANT_LOOKUP_LATE=1` (pre-G order: every body generated before
+  the lookup — the same-binary reference), `TAK_DISTANT_VERIFY` (prints
+  `DISTANT_VERIFY frames deferred checked catchup late`), `TAK_DISTANT_SOFTWARE`,
+  `TAK_DISTANT_SWEEP_EVERY_FRAME`.
+- `tools/distant_models_legacy.h`: the pre-G cache verbatim (test reference).
 
 ### Cache ownership and invalidation (workstream C)
 
@@ -782,6 +831,94 @@ unmasked cutouts (unchanged raster path), the existing 4-page / 2048² /
 VRAM budget and the all-or-nothing direct fallback. Never one shared army
 mask.
 
+### Distant-image lookup before body generation (workstream G)
+
+Before G, every visible unit's body was generated (collection, sort,
+placement, colours) and only then did `DistantModels::prepare` decide whether
+the unit would be drawn from its cached image at all; bodies the cache refused
+(too large, translucent, no page room) were rescanned vertex by vertex every
+frame to find that out again. G moves what can be decided early to before the
+generation and keeps what was decided:
+
+```
+render thread, before the parallel pass:  lookup inputs fixed (clock, output scale),
+                                           selSet_ filled
+worker (buildUnitGeom, per unit):          keys -> stages  (D, unchanged)
+   eligible (distantEligible: not special/moving/walking/corpse/replacement/ghost/selected)
+   && zoom <= 0.6 && pending body >= 96 vertices
+   && local key changed only in appearance words (bodyVertexCountStable)
+   && cache.holds(handle, zoom, sx, sy, now)      <- image valid, same zoom/scale, baked < 67 ms ago
+      yes: body stages left pending (bodyPending |= stages); shadow stages run; revision advances
+      no : body stages = this frame's stages | pending
+render thread:  prepare(items)            decide in painter order (unchanged rules)
+                                          -> bakes grouped by page -> quads in painter order
+                materialize callback       a deferred body needed for a bake (prediction missed)
+                catch-up                   a deferred body whose image was not shown
+```
+
+Why a held image needs no body: `prepare()` reads an item's revision and
+vertices only when it repaints. When `holds()` is true the decision is "show
+the existing image" whatever the content (`!valid || scaleChanged ||
+(contentChanged && age >= 67 ms)` is false), so the body would be generated
+only to rediscover that. The revision still advances with every stage change
+(D's rule, unchanged), so the image's own 67 ms freshness rule sees every
+change and repaints on the same frame as before; the bake then needs the body,
+which is generated in that frame's build because `holds()` is false by then.
+
+What stays exact:
+
+- **Eligibility.** The one rule that reads the body is the vertex count
+  (≥ 96). The body collector culls back faces against the view direction, so
+  every pose word can change the count; a body is deferred only when the local
+  key changed in appearance words alone (colour atlas, player and colour slot,
+  shadow toggle, texture frames), so the pending body has exactly this frame's
+  count. In practice G defers placement-only changes (a pan at zoom ≤ 0.6) and
+  material-only changes inside a held window; pose changes generate the body
+  as before. (The first version also deferred pose changes; the verifier
+  rejected it at once — see Rejected experiments.)
+- **Shadow and picking.** The shadow stages run every frame as before (the
+  piece transforms are prepared for the silhouette alone when the body is
+  held back); picking (`pickWorld`/`unitScreen`) reads no geometry.
+  `TAK_GEOMETRY_VERIFY` compares a pending entry's shadow output with a
+  complete rebuild every frame and its body when it is generated.
+- **Decisions.** `prepare()` makes every decision in painter order as before;
+  a missed prediction (scale changed between the pass and `prepare()`, an
+  early return) is caught by the callback or the catch-up. Measured: 0 misses
+  in every scene and test.
+- **Retained bounds.** A body's bounds and opacity are kept per identity with
+  the revision, source address and vertex count they were measured on; the
+  revision changes whenever the vertices do, so a refused body is not rescanned
+  until its content changes. The map is separate from the image entries so
+  their insertion/erase history — and the order expired tiles are reused in —
+  is the pre-G one.
+- **Grouped bakes.** Each bake clears and fills only its own 64-px tile, so
+  baking page by page changes no pixel; target switches fall.
+- **Pages.** A tile's pixels (bake positions `(v - minX)*sx + tx + 2`) and its
+  composite texture coordinates (`(tx + 1)/2048`) depend on its position in
+  the page, never on the page. The free list keeps the pre-G order of tile
+  positions; a new image takes that position on the lowest live page where it
+  is free, a page whose last image expired is released at the next sweep
+  (every 60 frames; images expire after 120 unseen) even while other pages are
+  live, and migration moves the images of a highest page with ≤ 256 images to
+  the SAME position on a lower page by a 1:1 texel copy, blending off, all or
+  none, then releases it. Every bake and quad is therefore the pre-G one, on
+  at most the pre-G number of pages (`validate()`: for every position the free
+  list plus the images there equal the pages the pre-G code would hold).
+  Same-position migration is exact by construction and bounded, but applies
+  only when those positions are free below; in the matrix scenes the
+  survivors' positions overlap, so the release of emptied pages does the work.
+
+| Event | Body | Shadow | Image |
+|---|---|---|---|
+| Pan at zoom ≤ 0.6, image baked < 67 ms ago | pending (re-placement skipped) | re-placed | shown, moved with the anchor (pre-G: same) |
+| Same, ≥ 67 ms | generated (pending stages + this frame's) | re-placed | re-baked within the 128 budget, else live (pre-G: same) |
+| Veterancy/tint change inside a held window | pending | kept (E) | held (pre-G: same) |
+| Texture frame / palette change inside a held window | pending (collection, sort skipped) | collected if a masked frame changed | held (pre-G: same) |
+| Pose / facing / pitch / corpse change | generated | as D/E | held or re-baked (pre-G: same) |
+| Unit selected / starts moving / special | generated (not eligible) | as before | live |
+| Refused for shape or pages, content unchanged | as before | as before | bounds from metadata, no vertex scan |
+| Renderer reset | entry cold (C) | cold | cache cleared |
+
 ### Telemetry reference (RENDERSTATS keys)
 
 `t_*` = render-thread wall ms (nested: `terrain_upload` in `terrain`;
@@ -815,6 +952,7 @@ sampled by the benchmark from `/proc`).
 | Staged geometry (D) | `geom_local_builds`, `geom_placement_only`, `geom_material_only`, `verts_placed`, `verts_recoloured`, `geom_shadow_kept`; `verts_generated` counts local rebuilds only since D |
 | Geometry entry ownership (C) | `geom_entries` (live), `geom_entry_acquired/replaced/released_destroyed/released_expired/released_budget/trimmed/refused` (per frame), `geom_entries_retained/warm_free/allocated`, `geom_retained_bytes`, `geom_warm_free_bytes` (gauges) |
 | Used vs retained CPU bytes | `geom_used/capacity_bytes`, `body_used/capacity_bytes`, `shadow_scratch_used/capacity_bytes`, `frame_lists_used/capacity_bytes`, `terrain_mip_cpu_bytes`, `terrain_section_cpu_bytes` |
+| Distant-image lookup (G) | `distant_body_deferred` (bodies left pending behind a held image), `distant_body_resumed` (pending bodies generated by the pass), `distant_body_catchup` / `distant_body_late` (missed predictions, generated after/inside `prepare()`), `distant_bounds_reused`, `distant_page_releases`, `distant_migrated`; gauges `distant_pages`, `distant_tiles`, `distant_metadata_bytes`. `verts_generated`/`verts_placed`/`verts_recoloured` count body vertices only for body stages that ran |
 | GPU | render-study `gpu_timeline_ms` / `GPUTIMELINE` (draw timeline, not busy time), `gpu_tracked_bytes` |
 
 Coverage limits (deliberate): `logical_draws`/`flushes`/`target_switches`
@@ -863,6 +1001,8 @@ Scenes (`--scenes all`; `quick` = small-battle, stationary-mixed, moving, pan):
 | constrained | Ulasem Arena | pan + zoom scene under a 128 MiB tracked-GPU cap (debug `TAK_GPU_CAP_MIB`) |
 | pan-snap | Ulasem Arena | 2000 units, zoom 1, the pan's path rounded to whole world units: every camera step is a whole-pixel translation (added by workstream E) |
 | veteran | Ulasem Arena | stationary-mixed with every fifth unit changing veteran level every 30 frames: material-only body changes (added by workstream E) |
+| pan-distant | Ulasem Arena | stationary-mixed (zoom 0.5) under the sinusoidal pan: held distant images re-placed every frame (added by workstream G; 1280×960 only acts — 7680×2160 clamps to zoom 0.73) |
+| distant-sparse | Ulasem Arena | 6000 units at zoom 0.25 (three image pages), then a corner of the army from frame 450: images expire, pages are released (added by workstream G; segments army / corner) |
 
 Shadow-atlas ctests (workstream F, software renderer, `TAK_SHADOW_CACHE_VERIFY`):
 `render_shadow_atlas` (the render_shadow_cache roster, 288-px pages,
@@ -2021,7 +2161,224 @@ final code's (same counters). Composite cost still rises where tiles spread
 over more pages (pan-snap 7680×2160 +0.14 ms, moving 7680×2160 +0.07 ms,
 stationary-mixed 7680×2160 +0.04 ms; material).
 
+### Experiment 9 — workstream G distant-image lookup before body generation (2026-10-16)
+
+Clients: **A** = F8 (`~/tak-tmp/render-opt/takclient-F8-candidate`, code of
+`ce2a3466` = workstream F, the pre-G build), **B** = G2
+(`takclient-G2-candidate`, code of `2d755167`, the final G code); G1
+(`takclient-G1-candidate`, code of `b084644e`) was measured first and differs
+only in the two costs `2d755167` removed (a catch-up scan of every entry and a
+per-unit `getenv`). Build-o2 (`-O2` Debug), offscreen EGL, SDL `opengl` on the
+RTX 5070 Laptop GPU; `RENDER_ENV` confirmed renderer and output (1280×960 →
+world 1075×888; 7680×2160 → world 7475×2088, zoom clamp 0.73) for every run.
+900 frames, 300 warmup, forced-completion frames, client pinned to CPUs 16–23,
+ABBA × 2 per scene and size, `--wait-quiet 60`. Load per run in each
+`results.json`: G2 session load average 1.5–6.6, 0 `legion_scenario`
+processes, pinned-CPU busy 0.18–0.26; G1 session load 2.2–10.7, 0–10
+processes (on CPUs 4–15), busy 0.18–0.26; no run contended. Lean testing:
+timed only the scenes G changes — stationary-mixed (913 images, 298
+shape-refused bodies per frame: retained bounds), total10k-visible (4019
+images, ~1800 shape/page-refused bodies per frame), pan-distant (new: held
+images under a pan, deferred bodies), zoom (every image re-baked: guard) and
+distant-sparse (new: page release) at 1280×960; stationary-mixed and
+total10k-visible at 7680×2160 as guards (no distant image exists there: the
+zoom clamp is above the 0.6 limit). Pipelined frames not measured. Output (not
+in Git): `~/tak-tmp/render-opt/runs/g1-*`, `g2-*`; scripts
+`~/tak-tmp/render-opt/g/timing{,2}.sh`, summary `g/gtable.py`, counter runs
+`f/srun.py`.
+
+```sh
+T="python3 tools/render_benchmark.py --data ~/tak_data --cpus 16-23"
+$T --a $F8 --b $G1 --output runs/g1-captures-normal --scenes stationary-mixed total10k-visible pan-distant zoom distant-sparse battle-sparse veteran effects --capture-only
+$T --a $F8 --b $G1 --output runs/g1-captures-uhd --sizes uhd --scenes stationary-mixed total10k-visible pan-distant --capture-only
+$T --a $F8 --b $G2 --output runs/g2-captures-normal --scenes pan-distant total10k-visible stationary-mixed --capture-only
+$T --a $F8 --b $G2 --output runs/g2-normal --scenes stationary-mixed total10k-visible pan-distant --repeats 2 --wait-quiet 60
+$T --a $F8 --b $G2 --output runs/g2-uhd --sizes uhd --scenes stationary-mixed total10k-visible --repeats 2 --wait-quiet 60
+$T --a $F8 --b $G1 --output runs/g1-normal --scenes stationary-mixed total10k-visible pan-distant zoom distant-sparse --repeats 2 --wait-quiet 60
+$T --a $G1 --b $G1 --a-env TAK_DISTANT_LOOKUP_LATE=1 --output runs/g1-late --scenes pan-distant total10k-visible --repeats 2 --wait-quiet 60
+python3 ~/tak-tmp/render-opt/g/gtable.py runs/g2-normal/results.json runs/g2-uhd/results.json
+VCPUS=16-23 python3 ~/tak-tmp/render-opt/f/srun.py $G pan-distant normal 400 WARM=200 TAK_DISTANT_VERIFY=1 TAK_GEOMETRY_VERIFY=1
+```
+
+**Correctness.**
+
+- Captures: 0 differing pixels in the world view AND the full frame in all
+  132 G1-vs-F8 comparisons (stationary-mixed, total10k-visible, pan-distant,
+  zoom, distant-sparse — incl. frame 720 after its page releases —,
+  battle-sparse, veteran, effects at 1280×960; stationary-mixed,
+  total10k-visible, pan-distant at 7680×2160; 12 frames each) and in all 36
+  G2-vs-F8 comparisons (pan-distant, total10k-visible, stationary-mixed at
+  1280×960). World hashes identical A vs B in every run. Pixel-identical
+  output was expected (every decision is the pre-G one) and is what was
+  measured.
+- `distant_models` (software renderer and offscreen GL): the cache against the
+  pre-G cache kept verbatim (`tools/distant_models_legacy.h`) over 900 scripted
+  frames: 688,281 shown images, 10,007 tile pixel comparisons, 124,906
+  early-lookup predictions (their vertices poisoned), 187,045 reused bounds, a
+  page release, 76 migrated images — identical decisions, quads and tile
+  pixels; page bookkeeping `validate()` every frame. Five mutations fail it
+  (position ignored when a page is chosen, bounds kept across revisions,
+  `holds()` ignoring the image age, migration without the copy, released
+  page's tiles dropped from the free list).
+- `render_distant_lookup` (new ctest, software renderer): 120 frames, 6,902
+  deferred bodies each regenerated in a copy (same revision, vertex count and
+  shadow output, image shown), every generated body equal to a complete
+  rebuild, 0 missed predictions. A mutation that also skips the shadow stages
+  of a deferred unit fails it. GL verifier runs (`TAK_DISTANT_VERIFY` +
+  `TAK_GEOMETRY_VERIFY`): stationary-mixed, total10k-visible, pan-distant
+  (426 deferred bodies per frame), veteran — no mismatch, 0 catch-ups, 0 late
+  bodies. `geometry_stages` covers `bodyVertexCountStable` (word census).
+- `ctest -L quick` 383/383 on build-o2 at `2d755167` (incl. `render_distant_lookup`, `distant_models`, `geometry_stages`). Release
+  `takclient` builds and contains none of the G debug strings.
+
+**What changed in the counters (exact, mean per frame, frames 300–899, 1280×960).**
+
+| Scene | Visible | Images (hits / held / bakes) | Refused: shape / pages / budget | Bounds reused (B) | Bodies deferred (B) | Verts placed A → B | Image pages (B, last frame) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| stationary-mixed | 1825 | 913 / 0 / 0 | 298 / 0 / 0 | 276 | 0 | 0 → 0 | 1 |
+| total10k-visible | 8752 | 3893 / 79 / 46 | 111 / 1702 / 3 | 1763 | 0 | 0 → 0 | 4 |
+| pan-distant | 1944 | 0 / 427 / 128 | 150 / 0 / 592 | 0 | 427 | 1.294 M → 1.142 M | 1 |
+| zoom | 1814 | 0 / 0 / 80 | 22 / 0 / 723 | 0 | 0 | 1.206 M → 1.206 M | 1 |
+| distant-sparse (corner segment) | 1024 | — | — | — | 0.1 | — | 2 (A: 4 held to the end) |
+
+Every image, bake and refusal count is identical A vs B (the decisions are
+unchanged); what G removes is the work around them. In the stationary scenes
+no held image has a deferrable change (their held images change pose, and
+lodestone texture frames belong to bodies too large for an image), so they
+gain only from retained bounds; in pan-distant every held image defers its
+body's re-placement.
+
+**Timing, final code (G2 vs F8; spread = max−min over a label's four run
+means; material = beyond `max(2 × spread, 2%)`; groups = B−A per ABBA group).**
+
+| Scene, size | Draw mean ms A → B | Δ | Groups | Material (thr) | Draw p99 A → B | t_distant A → B | t_geometry | w_geometry_build | w_geometry_key | GPU timeline |
+|---|---:|---:|---|---|---:|---:|---:|---:|---:|---:|
+| total10k-visible 1280 | 19.127 → 16.761 | **−12.4%** | −11.9, −12.8 | **yes** (5.6%) | 24.87 → 22.66 (−8.9%, n.s.) | 2.724 → 0.906 (**−66.7%**, yes) | +2.1% | +0.9% | +0.9% | −8.5% (yes) |
+| stationary-mixed 1280 | 3.959 → 2.878 | −27.3% | −30.6, −23.9 | no (74.8%: one noisy A run) | 5.20 → 3.45 | 0.461 → 0.080 (**−82.7%**, yes) | −31% (n.s.) | +2.9% | +10.8% (n.s.) | −4.9% |
+| pan-distant 1280 | 8.589 → 8.477 | −1.3% | −2.0, −0.6 | no (5.6%) | 14.50 → 15.00 (n.s.) | 1.283 → 1.237 (−3.6%, yes) | **−6.0%** (yes) | **−15.0%** (yes) | +5.3% (n.s., both groups) | −1.2% |
+| stationary-mixed 7680×2160 | 6.155 → 6.031 | −2.0% | −2.4, −1.7 | no (7.9%) | 8.70 → 8.48 | 0.003 → 0.004 (+0.001 ms) | +0.9% | −0.1% | +0.4% | +0.2% |
+| total10k-visible 7680×2160 | 59.462 → 58.811 | −1.1% | −0.9, −1.3 | no (8.1%) | 66.57 → 65.76 | 0.057 → 0.068 (+0.011 ms) | −0.7% | +0.8% | −0.4% | −0.4% |
+
+G1 session (first measured build; also F8 vs G): stationary-mixed draw
+3.449 → 2.927 (−15.1%, groups −13.2 / −17.0, threshold 20.3%), `t_distant`
+−82.2% (material); total10k-visible draw 19.846 → 17.784 (−10.4%, groups −5.2
+/ −15.4, threshold 24.9%), `t_distant` −64.9% (material); pan-distant draw
+−1.5%, `w_geometry_build` −14.7% (groups −16.3 / −13.2); zoom draw −1.6%
+(groups +2.7 / −5.7), `w_geometry_key` +3.9% (groups +3.6 / +4.2, threshold
+6.4%); distant-sparse draw +1.6% (groups +3.7 / −0.6, threshold 28.3%),
+army segment 8.6 vs 8.7 ms, corner segment 2.9 vs 3.0 ms. At 7680×2160 G1
+measured `t_distant` +0.002 / +0.04 ms, which `2d755167` reduced to the
++0.001 / +0.011 ms above. The deferral alone (same G1 binary,
+`TAK_DISTANT_LOOKUP_LATE=1` vs default, pan-distant): `w_geometry_build`
+5.609 → 4.746 (−15.4%, material), `t_geometry` −6.4% (material),
+`w_geometry_key` +6.3% (material: the eligibility check and the cache lookup
+for every unit whose stages changed), draw −4.1% (groups −6.1 / −1.9, not
+material), p99 −8.4% (threshold 8.5%); total10k-visible unchanged (no
+deferrable body: −0.8%).
+
+Readings:
+
+- **Retained bounds remove the rediscovery cost.** In the 10k view the cache
+  scanned ~1800 refused bodies per frame (1702 refused for page room alone,
+  every frame, because four pages hold 4096 images); with their bounds kept
+  `t_distant` falls 2.72 → 0.91 ms and draw time 12.4% (material). In the
+  stationary army 298 shape-refused bodies per frame cost 0.38 ms. The
+  remaining `t_distant` is the per-item lookup, hits and quads.
+- **Deferring held bodies works but is narrow.** Where it applies (a pan at
+  zoom ≤ 0.6) it removes 15% of the worker build time — the body
+  re-placement of the ~430 held images per frame — at +5–6% key-check cost;
+  draw time does not move measurably because the pass is dispatch-bound at
+  this size (Experiment 3). It never applies to pose changes (the vertex-count
+  rule) and only inside the 67 ms window, so in stationary scenes it is idle.
+- **Grouped bakes** cannot show in these scenes: their bakes go to one page
+  (target switches 1.8 / 5.7 / 4.2 / 3.6 per frame, equal A vs B — mostly the
+  enter/leave switches). The differential test shows fewer switches in 159 of
+  900 frames of its multi-page scene.
+- **Memory.** Image pages: distant-sparse holds 4 pages during the army view
+  in both builds and 2 in G after the images of the left view expire (2
+  pages released at the frame-600 sweep); tracked GPU at the last frame
+  160.1 → 128.1 MiB in all four B runs (−32 MiB). Every other scene: tracked
+  GPU equal at the last frame (no page empties). Same-position migration did
+  not fire in the matrix (the survivors' positions overlap on the lower
+  pages). CPU: `distant_metadata_bytes` 0.18 MiB (stationary-mixed), 0.81 MiB
+  (total10k-visible); `UnitGeom` stays 512 bytes; peak RSS within run ranges.
+- **Unchanged:** zoom (every image re-baked on a scale change, budget-bound)
+  and every 7680×2160 scene (no image eligible) — draw within ±2%.
+
+**Investigation: why the earlier larger-image experiments failed full-scene
+comparisons** (the brief: investigate that evidence; G did not enlarge the
+images). The prototype itself (`/tmp/tak-model-reuse-study/image-prototype.patch`,
+2026-10-04) no longer exists — `/tmp` has been cleared since — so it could not
+be re-run; the question was instead asked of the shipped 28-px image path,
+which the prototype extended. Same G2 binary, captures over the 1280×960 world
+view, 12 frames per scene (`runs/g-invest-*`, histogram `g/diffhist.py`):
+
+| Comparison | stationary-mixed differing px per frame (max channel error 1–2 / 3–16 / 17–64 / 65–255) | total10k-visible |
+|---|---|---|
+| live geometry (`TAK_DISTANT_MODELS_OFF=1`) vs the current images | 87,101 (4% / 31% / 50% / 14%) | 253,148 (5% / 27% / 51% / 17%) |
+| live geometry vs images baked on the screen pixel grid (uncommitted experiment, `g/experiment-pixel-align.patch`) | 44 (0 / 34% / 39% / 27%) | 3,712 (0 / 22% / 52% / 27%) |
+
+- **The current images are not pixel-equal to the geometry they stand for, by
+  construction.** A body is baked at its fractional screen phase
+  (`(v − minX)·sx + tx + 2`) and composited from a LINEAR page whose texel
+  grid is offset by that fraction, so every image pixel is a bilinear
+  resample: ~95 differing pixels per image, errors up to 255 at silhouette
+  edges. The isolated sprite test (`distant_models`) places its body at
+  integer coordinates, where the resample is exact — which is why it passes
+  with "max channel error 0–2" while a scene does not.
+- **Baking on the pixel grid removes 99.95% / 98.5% of the difference** (bake
+  origin `floor(minX·sx)/sx`, composite at that integer origin, so the
+  composite samples texel centres). The remainder is consistent with the
+  intentional freshness rule: total10k-visible holds 79 images per frame whose
+  pose changed less than 67 ms ago (shown stale by design; 3,712 px ≈ 47 per
+  held image); stationary-mixed holds none, and its 44 residual pixels per
+  frame were not traced (frames 360–720 only; candidates: a held image after a
+  texture-frame change, an edge texel of the 1-px border). Errors 1–2
+  (premultiplied rounding) are absent.
+- **Consequence for larger images:** a larger image resamples more pixels the
+  same way, so a crowded frame differs by thousands of pixels with errors up
+  to 255 — the recorded failure of the 64/128/256-px prototype (4,916 pixels,
+  max error 255, edge differences) has the profile this mechanism predicts,
+  though without the patch that cannot be confirmed. Any future larger-image
+  work must bake on the pixel grid and re-bake (not translate) whenever the
+  anchor's sub-pixel phase changes, and must state its policy for held stale
+  poses, before full-scene equality can be expected. Not pursued here: it
+  would change the appearance of today's distant images (sharper, equal to the
+  live geometry), which G was required to preserve, and the brief excludes
+  expanding into full-size building sprites. Recorded under Rejected
+  experiments as an uncommitted experiment.
+
 ## Known limitations and unsupported paths
+
+- **G: deferral covers placement- and material-only changes of held images.**
+  Pose changes (idle animations, facing) and texture-frame changes of bodies
+  that are not images still generate the body; in the stationary matrix
+  scenes no held image has a deferrable change (`distant_body_deferred` 0), so
+  G's gain there is the retained bounds. The deferral shows where a distant
+  view pans (pan-distant: 427 bodies per frame).
+- **G: distant images exist only at zoom ≤ 0.6.** On Ulasem Arena the
+  7680×2160 view clamps to zoom 0.73, so G changes nothing there (guard runs:
+  draw −1% to −2%, `t_distant` +0.001 / +0.011 ms — the per-frame debug-switch
+  reads and the counters); measured at 1280×960 only. Other maps or larger
+  windows were not measured.
+- **G: the four-page image limit still refuses ~1700 bodies per frame in the
+  10k view** (they stay on live geometry, as before; only the per-frame
+  rescan is gone). The limit was not raised (the brief: no larger ceilings).
+- **G: the distant images are not pixel-equal to live geometry** (they never
+  were; Experiment 9, investigation): bilinear resampling at a fractional phase
+  and the 67 ms freshness rule. G preserves that output exactly.
+- **G: page release is per sweep** (every 60 prepares; images expire after 120
+  unseen), so pages go ~2–3 s after their last image left the view, as images
+  did before. Same-position migration rarely applies (Rejected experiments).
+- **G: error-path accounting.** The bake budget now counts a bake when it is
+  decided, before its target switch and tile clear run; if `SDL_SetRenderTarget`
+  or the clear fails, the pre-G code did not count it. Only renderer errors
+  reach that path.
+- G has no backend-specific code. Exercised on SDL `opengl` (offscreen EGL,
+  RTX 5070) and the SDL software renderer (`distant_models` with
+  `allowSoftware`, `render_distant_lookup`; on the software renderer, which
+  has no custom blend modes, pages composite with plain blending — tests
+  only); Direct3D/Metal/GLES not run.
 
 - Only Linux / NVIDIA / SDL `opengl` (offscreen EGL) is measured. Direct3D,
   Metal, `opengles2`, software and other GPUs are unvalidated; Windows
@@ -2236,6 +2593,30 @@ stationary-mixed 7680×2160 +0.04 ms; material).
   `render_shadow_atlas` ctests); Direct3D/Metal/GLES not run.
 
 ## Rejected experiments
+
+- **G, rejected by its own verifier: deferring bodies after pose changes.** The
+  first G build deferred any held body whose local key kept the pieces'
+  visibility flags (assuming the body's vertex count depends only on hidden
+  pieces). `TAK_DISTANT_VERIFY` failed on the first deferred unit ("vertex
+  count differs from the pending body"): the body collector culls back faces
+  against the view direction, so rotations change the count — and the count
+  decides the ≥ 96-vertex eligibility. The rule now allows only appearance
+  changes (`bodyVertexCountStable`); pose changes generate the body as before.
+- **G, investigation only (uncommitted): baking distant images on the screen
+  pixel grid** (`~/tak-tmp/render-opt/g/experiment-pixel-align.patch`,
+  binary `takclient-G1-align-experiment`). Brings the image path within 44 /
+  3,712 pixels per frame of live geometry (from 87,101 / 253,148; Experiment 9)
+  but changes today's appearance; not adopted. Evidence for a future
+  larger-image design, not a change G could make.
+- **G, kept but rarely applicable: same-position migration.** Exact by
+  construction (the image keeps its tile position, so pixels and texture
+  coordinates are unchanged; 1:1 copy, blending off), bounded (≤ 256 images,
+  all or none, one page per sweep), exercised by `distant_models` (76 images,
+  identical pixels). In the matrix it never fires: after a view change the
+  survivors' tile positions overlap on the lower pages. Moving an image to
+  another POSITION would make the composite's texture-coordinate interpolation
+  and every later bake position differ from the pre-G cache, so it was not
+  done; releasing pages that empty does the reclamation in practice.
 
 - (Historical, 2026-10-04) Native-resolution 64/128/256-px building images:
   faster in isolated scenes but failed a crowded full-scene comparison (4,916
