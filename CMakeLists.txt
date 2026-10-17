@@ -1450,14 +1450,21 @@ if(TAK_BUILD_CLIENT)
       # retained cells evicted under pressure). Every kept tile must equal a
       # complete re-bake and the allocator must pass its consistency check every
       # frame (TAK_SHADOW_CACHE_VERIFY).
-      foreach(_variant IN ITEMS "" "_zoom")
+      # The _band variant holds a still army whose tiles fit four pages by area but
+      # not by packing (every frame falls back), then goes sparse: a frame that does
+      # not fit must create no page texture, so nothing is created and released over
+      # and over while the view stays in that band (at most the sparse view's pages).
+      foreach(_variant IN ITEMS "" "_zoom" "_band")
         if(_variant STREQUAL "")
           set(_scene TAK_RENDER_CAMERA_SNAP=20 TAK_PROFILE_ZOOM=1 TAK_RENDER_SPARSE_AFTER=100
               TAK_RENDER_SPARSE_OFFSET=5200,5000 TAK_RENDER_FRAMES=170)
-          set(_expect "kept=[1-9][0-9]* allocs=[1-9][0-9]* compactions=[1-9][0-9]* migrated=[1-9][0-9]* evicted=[0-9]+ page_releases=[1-9]")
-        else()
+          set(_expect "kept=[1-9][0-9]* allocs=[1-9][0-9]* compactions=[1-9][0-9]* migrated=[1-9][0-9]* evicted=[0-9]+ page_releases=[1-9].* validated=[1-9]")
+        elseif(_variant STREQUAL "_zoom")
           set(_scene TAK_RENDER_ZOOM=1 TAK_RENDER_CAMERA=1 TAK_RENDER_FRAMES=120)
-          set(_expect "kept=[0-9]+ allocs=[1-9][0-9]* compactions=[1-9][0-9]* migrated=[0-9]+ evicted=[1-9][0-9]*")
+          set(_expect "kept=[0-9]+ allocs=[1-9][0-9]* compactions=[1-9][0-9]* migrated=[0-9]+ evicted=[1-9][0-9]*.* validated=[1-9]")
+        else()
+          set(_scene TAK_RENDER_SPARSE_AFTER=80 TAK_RENDER_SPARSE_OFFSET=5200,5000 TAK_RENDER_FRAMES=130)
+          set(_expect "page_releases=[0-2] shrinks=[0-9]+ validated=[1-9][0-9]* page_allocs=[1-4] alloc_failures=[1-9][0-9]")
         endif()
         add_test(NAME render_shadow_atlas${_variant} COMMAND ${CMAKE_COMMAND} -E env
             SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software
@@ -1471,7 +1478,7 @@ if(TAK_BUILD_CLIENT)
             $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
             --testbuild --winsize 1024 768 --novsync)
         set_tests_properties(render_shadow_atlas${_variant} PROPERTIES TIMEOUT 300
-            PASS_REGULAR_EXPRESSION "SHADOW_CACHE_VERIFY frames=[1-9][0-9]* .* ${_expect}.* validated=[1-9]")
+            PASS_REGULAR_EXPRESSION "SHADOW_CACHE_VERIFY frames=[1-9][0-9]* .* ${_expect}")
       endforeach()
       add_test(NAME tactical_dots COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_TACTICAL_DOTS_TEST=1
@@ -1540,7 +1547,7 @@ if(TAK_BUILD_CLIENT)
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
-          render_geometry_stages render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom tactical_dots spectator_health_bars
+          render_geometry_stages render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band tactical_dots spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()

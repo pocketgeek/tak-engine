@@ -1954,10 +1954,11 @@ int main(int argc, char** argv) {
                 using ull=unsigned long long;
                 std::printf("SHADOW_CACHE_VERIFY frames=%llu tiles=%llu reused=%llu body=%llu translated=%llu "
                             "original_reused=%llu kept=%llu allocs=%llu compactions=%llu migrated=%llu "
-                            "evicted=%llu page_releases=%llu shrinks=%llu validated=%llu\n",
+                            "evicted=%llu page_releases=%llu shrinks=%llu validated=%llu page_allocs=%llu "
+                            "alloc_failures=%llu\n",
                     ull(t.frames),ull(t.tiles),ull(t.reused),ull(t.body),ull(t.translated),ull(t.original),
                     ull(t.kept),ull(t.allocs),ull(t.compactions),ull(t.migrated),ull(t.evicted),
-                    ull(t.pageReleases),ull(t.shrinks),ull(t.validated));
+                    ull(t.pageReleases),ull(t.shrinks),ull(t.validated),ull(t.pageAllocs),ull(t.failures));
                 if(!t.frames)throw std::runtime_error("shadow cache verify ran no checks");
             }
             if(tak::devFlag("TAK_GEOMETRY_OWNERSHIP_VERIFY")) {

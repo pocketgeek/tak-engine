@@ -5,6 +5,7 @@ legion_situation_r10-104540_legion 83
 retailgap 81
 legion_gen1_route_65845_o0 73
 mapgen_naval 72
+render_shadow_atlas_band 70
 legion_scenario_corner-1x448 67
 crusades_history_ui_network 66
 legion_scenario_corner-8x56 66

@@ -650,9 +650,10 @@ public:
         uint64_t frames=0, tiles=0, reused=0, body=0, translated=0, original=0;
         // Workstream F: tiles reused in a cell kept from an earlier frame, cells
         // allocated, full repacks, migrated tiles, cells freed under pressure, page
-        // releases and shrinks, allocator consistency checks.
+        // releases and shrinks, allocator consistency checks, page textures created,
+        // frames whose tiles did not fit (whole-frame direct fallback).
         uint64_t kept=0, allocs=0, compactions=0, migrated=0, evicted=0, pageReleases=0,
-                 shrinks=0, validated=0;
+                 shrinks=0, validated=0, pageAllocs=0, failures=0;
     };
     const ShadowCacheVerifyTotals& shadowVerifyTotals() const { return shadowVerify_; }
     uint64_t ownershipChecks() const { return ownershipChecks_; }

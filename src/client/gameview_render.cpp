@@ -436,7 +436,7 @@
         const uint64_t atlasNowMs=tak::devFlag("TAK_RENDER_STUDY") ? uint64_t(animClock_*1000) : SDL_GetTicks64();
         struct AtlasFrameCounts {
             uint64_t allocs=0,kept=0,freed=0,expired=0,evicted=0,compactions=0,freeCompactions=0,migrated=0,
-                     releases=0,shrinks=0;
+                     releases=0,shrinks=0,pageAllocs=0,failures=0;
         } atlasCounts;
         auto& atlas=shadowAtlas_;
         using tak::render::RenderHandle;
@@ -635,22 +635,61 @@
                 fitCellStamps();
                 shadowCellStampValid_[h.index]=0;
             };
+            // Pages are added to the allocator LOGICALLY while cells are placed; the
+            // GPU targets are created only once the whole frame has been placed
+            // (realizePages below). A frame that does not fit -- the allocator's own
+            // or the former packer's attempt -- therefore creates no texture, and
+            // the logical pages it added go with it (dropPendingPages). Otherwise a
+            // scene whose tiles fit four pages by area but not by packing would
+            // create pages, empty them on the failed repack, destroy them 2 s later
+            // and create them again (VRAM churn while every frame falls back). A
+            // pending page is a live allocator page whose texture is still null.
             bool budgetRefused=false;
+            size_t pendingPages=0;
             const auto createPage=[&]() -> bool {
                 if (atlas.livePages()>=kMaxPages) return false;
-                if (gpuAllocBlocked() || !gpuvram::wouldFit(pageBytes)) { budgetRefused=true; return false; }
-                SDL_Texture* texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
-                    SDL_TEXTUREACCESS_TARGET,pageW,pageH);
-                if (!texture) { noteGpuAllocFail(); budgetRefused=true; return false; }
-                renderStats_.add(RS::ShadowPageAllocs);
-                SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
-                SDL_SetTextureColorMod(texture,0,0,0);
-                SDL_SetTextureAlphaMod(texture,255-kShadowLevel);
-                SDL_SetTextureScaleMode(texture,unitScaleMode());
+                if (gpuAllocBlocked() || !gpuvram::wouldFit((pendingPages+1)*pageBytes)) { budgetRefused=true; return false; }
                 const size_t p=size_t(atlas.addPage());
                 if (p>=shadowSilhouettePages_.size()) shadowSilhouettePages_.resize(p+1);
-                shadowSilhouettePages_[p]={texture,0,0};
+                shadowSilhouettePages_[p]={};
+                ++pendingPages;
                 return true;
+            };
+            const auto dropPendingPages=[&] {
+                for (size_t p=0;p<atlas.pageSlots();++p)
+                    if (atlas.pageLive(p) && !shadowSilhouettePages_[p].texture) atlas.releasePage(p);
+                shadowSilhouettePages_.resize(atlas.pageSlots());
+                pendingPages=0;
+            };
+            const auto realizePages=[&]() -> bool {
+                for (size_t p=0;p<atlas.pageSlots() && pendingPages;++p) {
+                    if (!atlas.pageLive(p) || shadowSilhouettePages_[p].texture) continue;
+                    if (!atlas.pageCells(p)) { atlas.releasePage(p); --pendingPages; continue; }
+                    SDL_Texture* texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
+                        SDL_TEXTUREACCESS_TARGET,pageW,pageH);
+                    if (!texture) { noteGpuAllocFail(); budgetRefused=true; return false; }
+                    renderStats_.add(RS::ShadowPageAllocs);
+                    ++atlasCounts.pageAllocs;
+                    SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+                    SDL_SetTextureColorMod(texture,0,0,0);
+                    SDL_SetTextureAlphaMod(texture,255-kShadowLevel);
+                    SDL_SetTextureScaleMode(texture,unitScaleMode());
+                    shadowSilhouettePages_[p].texture=texture;
+                    --pendingPages;
+                }
+                shadowSilhouettePages_.resize(atlas.pageSlots());
+                return true;
+            };
+            // Nothing of this frame fits: no cell survives, every stamp goes, and the
+            // logical pages added this frame are dropped (no texture was created).
+            const auto failAllocation=[&](const char* why) {
+                pol.failFrame=frame;
+                ++atlasCounts.failures;
+                atlas.releaseAll();
+                std::fill(shadowCellStampValid_.begin(),shadowCellStampValid_.end(),uint8_t(0));
+                for (Work& w:work) w.geom->shadowTile={};
+                dropPendingPages();
+                return fail(why);
             };
             if (force) {
                 // The verification re-bake redraws this frame's tiles in the cells
@@ -709,7 +748,7 @@
                 // left unused expire and their pages go (the former code kept them).
                 // (Pages are already at the largest size here: they grow first
                 // whenever the frame's tiles exceed 3/4 of one page.)
-                if (tilePx>uint64_t(kMaxPages)*pageArea) return fail("page limit reached");
+                if (tilePx>uint64_t(kMaxPages)*pageArea) return fail("tile area exceeds page limit");
                 // After a frame whose repack did not fit, go straight to the former
                 // packer (its cost, not three attempts) until a frame fits again.
                 const bool failedLast=pol.failFrame && pol.failFrame+1==frame;
@@ -834,14 +873,13 @@
                         }
                         return true;
                     };
-                    if (!(!atlasTimes.repack && !failedLast && !allRedrawn && pass(true)) && !pass(false)) {
-                        pol.failFrame=frame;
-                        atlas.releaseAll();
-                        std::fill(shadowCellStampValid_.begin(),shadowCellStampValid_.end(),uint8_t(0));
-                        for (Work& w:work) w.geom->shadowTile={};
-                        return fail(budgetRefused ? "VRAM budget reached" : "page limit reached");
-                    }
+                    if (!(!atlasTimes.repack && !failedLast && !allRedrawn && pass(true)) && !pass(false))
+                        return failAllocation(budgetRefused ? "VRAM budget reached" : "page limit reached");
                 }
+                // Every cell is placed: create the GPU targets of the pages added this
+                // frame. (A creation failure is rare -- the budget was checked as pages
+                // were added -- and backs off through noteGpuAllocFail.)
+                if (!realizePages()) return failAllocation("VRAM budget reached");
                 for (const Work& w:work) {
                     if (w.fresh) ++atlasCounts.allocs; else ++atlasCounts.kept;
                 }
@@ -1159,6 +1197,7 @@
             shadowVerify_.compactions+=atlasCounts.compactions+atlasCounts.freeCompactions;
             shadowVerify_.migrated+=atlasCounts.migrated;shadowVerify_.evicted+=atlasCounts.evicted;
             shadowVerify_.pageReleases+=atlasCounts.releases;shadowVerify_.shrinks+=atlasCounts.shrinks;
+            shadowVerify_.pageAllocs+=atlasCounts.pageAllocs;shadowVerify_.failures+=atlasCounts.failures;
 #endif
             if(shadowSilhouetteAtlasActive_ && tak::devFlag("TAK_SHADOW_CACHE_VERIFY")) {
                 const auto readPages=[&] {
@@ -3136,9 +3175,12 @@
         shadowAtlas_.reset(0,0);
         shadowAtlas_.trimHandles();
         shadowCellStamps_.clear();shadowCellStampValid_.clear();
-        const uint64_t frame=shadowAtlasPolicy_.frame;
+        // The frame counter and the failure mark survive: while frames keep falling
+        // back (their pages released, so the atlas resets), the next one still goes
+        // straight to the former packer -- one attempt, as before F.
+        const uint64_t frame=shadowAtlasPolicy_.frame,failFrame=shadowAtlasPolicy_.failFrame;
         shadowAtlasPolicy_={};
-        shadowAtlasPolicy_.frame=frame;
+        shadowAtlasPolicy_.frame=frame;shadowAtlasPolicy_.failFrame=failFrame;
     }
 
     void GameView::invalidateRenderTargets() {
