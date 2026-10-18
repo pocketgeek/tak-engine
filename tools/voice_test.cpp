@@ -278,7 +278,11 @@ static void testEngine(const fs::path& dir) {
         pump(800, true, true);
         pump(60, true, false);
         std::vector<VoiceEngine::Frame> frames = sent;
-        const auto before = fs::exists(out) ? fs::file_size(out) : 0;
+        // The disk driver truncates its file when the output opens and (on Windows) keeps
+        // it unreadable until it closes: leave the room and come back for a fresh file,
+        // play, then leave again before reading it.
+        pump(30, false, false);
+        pump(60, true, false);
         // Delivered at the talker's own pace, one frame every 20 ms, as the server relays it.
         for (size_t k = 0; k < frames.size(); ++k) {
             const auto& f = frames[k];
@@ -290,10 +294,10 @@ static void testEngine(const fs::path& dir) {
             pump(20, true, false);
         }
         pump(500, true, false);
+        pump(30, false, false);   // closes the output, and with it the file
         std::vector<float> got;
         {
             std::ifstream f(out, std::ios::binary);
-            f.seekg(std::streamoff(before));
             float x;
             while (f.read(reinterpret_cast<char*>(&x), sizeof x)) got.push_back(x);
         }
