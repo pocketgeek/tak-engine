@@ -153,17 +153,33 @@ public:
     // program and textures the caller installed (it owns and restores those);
     // endPass() restores the vertex-array, matrix and buffer state. Nothing SDL
     // queues may run in between: the caller issues no SDL calls inside a pass.
+    // Workstream N splits the opening in two so the pass owner (NativePassGL) can
+    // check and snapshot the primed state before anything changes it:
+    // primePass() = readiness + SDL priming (GL state is then exactly SDL's),
+    // openPass() = save and set the vertex-array/matrix state.
     bool beginPass(SDL_Renderer* renderer,SDL_Texture* prime) {
-        float sx=1,sy=1;
-        if(inPass_ || !prime || !nativeReady(renderer,prime,sx,sy))return false;
+        return primePass(renderer,prime) && openPass();
+    }
+    bool primePass(SDL_Renderer* renderer,SDL_Texture* prime) {
+        if(inPass_ || primed_ || !prime || !nativeReady(renderer,prime,passScaleX_,passScaleY_))return false;
         if(!GeometrySubmit::prime(renderer,prime))return false;
+        primed_=true;
+        return true;
+    }
+    bool openPass() {
+        if(!primed_)return false;
+        primed_=false;
         getInteger_(GL_ARRAY_BUFFER_BINDING,&passBuffer_);getInteger_(GL_MATRIX_MODE,&passMode_);
         pushAttrib_(GL_CURRENT_BIT);pushClientAttrib_(GL_CLIENT_VERTEX_ARRAY_BIT);
-        matrixMode_(GL_MODELVIEW);pushMatrix_();scale_(sx,sy,1);
+        matrixMode_(GL_MODELVIEW);pushMatrix_();scale_(passScaleX_,passScaleY_,1);
         enable_(GL_VERTEX_ARRAY);enable_(GL_COLOR_ARRAY);enable_(GL_TEXTURE_COORD_ARRAY);
         inPass_=true;used_=true;
         return true;
     }
+    // A primed pass the owner decided not to open: nothing was changed after SDL's
+    // priming, so there is nothing to restore.
+    void cancelPass() { primed_=false; }
+    bool inPass() const { return inPass_; }
     void passDraw(std::span<const SDL_Vertex> vertices) {
         if(!inPass_ || vertices.empty())return;
         bindBuffer_(GL_ARRAY_BUFFER,0);
@@ -194,7 +210,7 @@ public:
     // binding cache consistent (the next SDL draw rebinds). Not inside a pass.
     GLuint textureName(SDL_Renderer* renderer,SDL_Texture* texture) {
         float sx=1,sy=1;
-        if(inPass_ || !texture || !nativeReady(renderer,nullptr,sx,sy))return 0;
+        if(inPass_ || primed_ || !texture || !nativeReady(renderer,nullptr,sx,sy))return 0;
         float tw=0,th=0;
         if(SDL_GL_BindTexture(texture,&tw,&th)!=0)return 0;
         GLint name=0;
@@ -203,8 +219,9 @@ public:
         return tw==1 && th==1 ? GLuint(name) : 0;
     }
 private:
-    bool inPass_=false;
+    bool inPass_=false,primed_=false;
     GLint passBuffer_=0,passMode_=0;
+    float passScaleX_=1,passScaleY_=1;
     bool nativeReady(SDL_Renderer* renderer,SDL_Texture* texture,float& sx,float& sy) {
         SDL_RendererInfo info{};
         if(SDL_GetRendererInfo(renderer,&info)!=0 || !info.name || std::strcmp(info.name,"opengl"))return false;
@@ -230,7 +247,7 @@ private:
         const SDL_Vertex prime[3]={{{0,0},{255,255,255,255},{0,0}},
                                   {{0,0},{255,255,255,255},{0,0}},
                                   {{0,0},{255,255,255,255},{0,0}}};
-        render::countFlush();
+        render::countPrime();
         return SDL_RenderGeometry(renderer,texture,prime,3,nullptr,0)==0 && SDL_RenderFlush(renderer)==0;
     }
     template<class T> static bool proc(T& out,const char* name) {

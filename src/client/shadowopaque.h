@@ -36,7 +36,7 @@ public:
         // viewport, projection, clipping, blend and solid shader state. Flush is
         // required before mixing SDL rendering with native API calls.
         static constexpr SDL_FPoint prime[3]={{0,0},{0,0},{0,0}};
-        render::countFlush();
+        render::countPrime();
         if (SDL_RenderGeometryRaw(renderer,nullptr,&prime[0].x,sizeof(SDL_FPoint),
                 &black,0,uv,0,3,nullptr,0,0)!=0 || SDL_RenderFlush(renderer)!=0) return -1;
         const auto context=SDL_GL_GetCurrentContext();

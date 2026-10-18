@@ -1765,6 +1765,14 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(palette_indexed_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(palette_indexed_test PRIVATE ${_tak_sdl2})
     add_test(NAME palette_indexed COMMAND palette_indexed_test)
+    # Workstream N: native passes against SDL drawing the same commands, with the GL
+    # state checked after every pass; GL runs need TAK_GEOMETRY_TEST_ACCELERATED=1, the
+    # ctest checks the software refusal.
+    add_executable(native_pass_test tools/native_pass_test.cpp)
+    target_include_directories(native_pass_test PRIVATE src)
+    target_compile_definitions(native_pass_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(native_pass_test PRIVATE ${_tak_sdl2})
+    add_test(NAME native_pass COMMAND native_pass_test)
     add_executable(geometrysubmit_test tools/geometrysubmit_test.cpp)
     target_include_directories(geometrysubmit_test PRIVATE src)
     target_compile_definitions(geometrysubmit_test PRIVATE SDL_MAIN_HANDLED)

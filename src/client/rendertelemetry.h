@@ -438,8 +438,17 @@ enum class Counter : uint8_t {
     PaletteIndexedDraws,
     PaletteFallbacks,
     PaletteSwitches,
-    PaletteSpans,        // native body spans opened by indexed palette runs (one priming each)
-    PaletteSpanCommands, // body commands drawn inside those spans (palette + plain)
+    PaletteSpans,        // native body passes holding indexed palette runs (one priming each)
+    PaletteSpanCommands, // body commands drawn inside those passes (palette + plain)
+    // Workstream N (client/nativepass.h): native passes opened in the body replay,
+    // body commands drawn inside them, passes refused (SDL priming failed, or the
+    // primed state was not the expected one: the commands drew one by one), and
+    // every SDL priming (degenerate draw + flush) on the counted native paths --
+    // the state transition N reduces; a subset of `flushes`.
+    NativePasses,
+    NativePassCommands,
+    NativePassRefused,
+    NativePrimes,
     Count
 };
 
@@ -523,7 +532,8 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "unit_index_full_scans", "unit_grid_bytes",
     "palette_mode", "palette_pages", "palette_gpu_bytes", "palette_cpu_bytes", "palette_upload_bytes",
     "palette_indexed_draws", "palette_fallbacks", "palette_switches", "palette_spans",
-    "palette_span_commands"};
+    "palette_span_commands", "native_passes", "native_pass_commands", "native_pass_refused",
+    "native_primes"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};
@@ -542,7 +552,7 @@ static_assert(kMissNames[size_t(MissCause::Count) - 1] != nullptr);
 // these are lower bounds on the frame's SDL work.
 struct SubmitCounters {
     uint64_t logical = 0, native = 0, sdl = 0, retained = 0, flushes = 0, targetSwitches = 0,
-             verts = 0, bytes = 0, textureBytes = 0;
+             verts = 0, bytes = 0, textureBytes = 0, primes = 0;
 };
 inline SubmitCounters gSubmit;
 inline void countLogicalDraw(uint64_t n = 1) { if constexpr (kTelemetryCompiled) gSubmit.logical += n; }
@@ -557,6 +567,8 @@ inline void countSdlGeometry(uint64_t verts, uint64_t bytes) {
 }
 inline void countUploadBytes(uint64_t bytes) { if constexpr (kTelemetryCompiled) gSubmit.bytes += bytes; }
 inline void countFlush() { if constexpr (kTelemetryCompiled) ++gSubmit.flushes; }
+// One SDL priming of native GL state (a degenerate draw + flush; counts the flush too).
+inline void countPrime() { if constexpr (kTelemetryCompiled) { ++gSubmit.flushes; ++gSubmit.primes; } }
 inline void countTargetSwitch() { if constexpr (kTelemetryCompiled) ++gSubmit.targetSwitches; }
 inline void countTextureUpload(uint64_t bytes) { if constexpr (kTelemetryCompiled) gSubmit.textureBytes += bytes; }
 
