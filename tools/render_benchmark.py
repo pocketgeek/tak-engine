@@ -496,7 +496,7 @@ def read_png(path):
     for y in range(h):
         f = raw[y * (stride + 1)]
         line = bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
-        for i in range(stride):
+        for i in range(stride if f else 0):   # filter 0 (what tak::png writes): bytes as stored
             a = line[i - bpp] if i >= bpp else 0
             b = prev[i]
             c = prev[i - bpp] if i >= bpp else 0
