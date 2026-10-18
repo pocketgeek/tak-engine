@@ -38,6 +38,7 @@ enum class Act {
     SelectBallistic, SelectTroops, SelectArmed, SelectOnScreenType, SelectFlying,
     SelfDestruct,
     GiveUnits, ToggleCounts, UnitInfo, FullScreenRadar, Disco, Headbang, RetailZoom,
+    PushToTalk,
     Count
 };
 
@@ -68,6 +69,15 @@ public:
     KeyChord chord(Act a) const { return chords_[size_t(a)]; }
     // The action bound to this pressed key+mod, or Act::Count if none.
     Act match(int32_t key, uint16_t sdlMod) const;
+    // Push-to-talk is held, not pressed, so it matches more loosely than match(): its
+    // key with AT LEAST its modifiers (Shift-clicking while talking still talks),
+    // unless another action is bound to exactly the chord being pressed. Releases match
+    // on the key alone, whatever modifiers are down by then.
+    bool pushToTalkPress(int32_t key, uint16_t sdlMod) const;
+    bool pushToTalkRelease(int32_t key) const {
+        const KeyChord c = chord(Act::PushToTalk);
+        return c.bound() && c.key == key;
+    }
 
 private:
     KeyChord chords_[size_t(Act::Count)] = {};

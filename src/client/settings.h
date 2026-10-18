@@ -84,6 +84,16 @@ struct Settings {
     std::string audioDevice;       // output device NAME; "" = system default. Falls back
                                    // to system default if the saved name is gone at startup.
 
+    // ---- voice chat (client/voice.h; separate from the game's audio above) ----
+    // Off by default. The push-to-talk key is an ordinary rebindable action (CONTROLS,
+    // Act::PushToTalk, Space), stored with the other hotkeys.
+    bool  voiceEnabled = false;
+    std::string voiceMicDevice;    // capture device NAME; "" = system default
+    bool  voiceOutputSameAsGame = true;   // play voice on whatever device the game uses
+    std::string voiceOutputDevice; // when not same as game: device NAME, "" = system default
+    int   voiceMicVolume = 100;    // microphone gain, 0..100 (100 = as captured)
+    int   voiceOutputVolume = 100; // voice playback volume, 0..100, one value for all speakers
+
     // ---- camera / input ----
     float mouseZoomSpeed  = 1.0f;  // wheel-zoom sensitivity; 0.25..4.0
     float edgeScrollSpeed = 1.0f;  // edge-scroll rate;       0.25..4.0
@@ -177,6 +187,9 @@ struct Settings {
             && a.dataDir == b.dataDir && a.dataManifest == b.dataManifest
             && a.knownServers == b.knownServers
             && a.audioDevice == b.audioDevice && a.renderer == b.renderer
+            && a.voiceEnabled == b.voiceEnabled && a.voiceMicDevice == b.voiceMicDevice
+            && a.voiceOutputSameAsGame == b.voiceOutputSameAsGame && a.voiceOutputDevice == b.voiceOutputDevice
+            && a.voiceMicVolume == b.voiceMicVolume && a.voiceOutputVolume == b.voiceOutputVolume
             && a.ignoreDpiScaling == b.ignoreDpiScaling && a.dpiMigrated == b.dpiMigrated
             && a.hotkeys == b.hotkeys
             && a.campaignCompleted == b.campaignCompleted;
@@ -244,6 +257,28 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.campaignCompleted = cur.campaignCompleted;
     d.knownServers = cur.knownServers;
     d.dpiMigrated = cur.dpiMigrated;              // bookkeeping, not a preference
+    // Voice chat has its own screen and its own DEFAULTS (voiceDefaults below).
+    d.voiceEnabled = cur.voiceEnabled;
+    d.voiceMicDevice = cur.voiceMicDevice;
+    d.voiceOutputSameAsGame = cur.voiceOutputSameAsGame;
+    d.voiceOutputDevice = cur.voiceOutputDevice;
+    d.voiceMicVolume = cur.voiceMicVolume;
+    d.voiceOutputVolume = cur.voiceOutputVolume;
+    return d;
+}
+
+// What the VOICE CHAT screen's DEFAULTS means: the current settings with only the voice
+// fields reset (voice off, system devices, full volumes). The push-to-talk key is reset
+// from CONTROLS, like every other binding.
+inline Settings voiceDefaults(const Settings& cur) {
+    Settings d = cur;
+    const Settings fresh;
+    d.voiceEnabled = fresh.voiceEnabled;
+    d.voiceMicDevice = fresh.voiceMicDevice;
+    d.voiceOutputSameAsGame = fresh.voiceOutputSameAsGame;
+    d.voiceOutputDevice = fresh.voiceOutputDevice;
+    d.voiceMicVolume = fresh.voiceMicVolume;
+    d.voiceOutputVolume = fresh.voiceOutputVolume;
     return d;
 }
 

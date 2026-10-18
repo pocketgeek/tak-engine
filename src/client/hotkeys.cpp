@@ -55,6 +55,9 @@ const std::vector<HotkeyDef>& hotkeyDefs() {
         {Act::UnitInfo,       "view.unitinfo",      "UNIT INFO",       "VIEW",      {SDLK_F1, 0}},
         {Act::Disco,          "emote.disco",        "DISCO",           "EMOTES",    {SDLK_d, HK_SHIFT}},
         {Act::Headbang,       "emote.headbang",     "HEADBANG",        "EMOTES",    {SDLK_h, HK_SHIFT}},
+        // Voice chat, held while talking (client/voice.h). Space is free in the game:
+        // retail binds nothing to it (gamedata/keys.tdf) and nothing else here does.
+        {Act::PushToTalk,     "voice.ptt",          "PUSH TO TALK",    "VOICE",     {SDLK_SPACE, 0}},
     };
     return defs;
 }
@@ -110,6 +113,14 @@ Act Hotkeys::match(int32_t key, uint16_t sdlMod) const {
         if (c.bound() && c.key == key && c.mod == m) return d.act;
     }
     return Act::Count;
+}
+
+bool Hotkeys::pushToTalkPress(int32_t key, uint16_t sdlMod) const {
+    const KeyChord c = chord(Act::PushToTalk);
+    const uint16_t m = normMod(sdlMod);
+    if (!c.bound() || c.key != key || (m & c.mod) != c.mod) return false;
+    const Act exact = match(key, sdlMod);
+    return exact == Act::Count || exact == Act::PushToTalk;
 }
 
 // --- override map helpers ---------------------------------------------------

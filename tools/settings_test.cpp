@@ -72,6 +72,12 @@ int main() {
     flips("chanGain[0]",     [](Settings& s) { s.chanGain[0] = 0.5f; });
     flips("chanGain[7]",     [](Settings& s) { s.chanGain[7] = 0.5f; });
     flips("audioDevice",     [](Settings& s) { s.audioDevice = "some-device"; });
+    flips("voiceEnabled",    [](Settings& s) { s.voiceEnabled = !s.voiceEnabled; });
+    flips("voiceMicDevice",  [](Settings& s) { s.voiceMicDevice = "a-mic"; });
+    flips("voiceOutputSameAsGame", [](Settings& s) { s.voiceOutputSameAsGame = !s.voiceOutputSameAsGame; });
+    flips("voiceOutputDevice", [](Settings& s) { s.voiceOutputDevice = "headset"; });
+    flips("voiceMicVolume",  [](Settings& s) { s.voiceMicVolume -= 11; });
+    flips("voiceOutputVolume", [](Settings& s) { s.voiceOutputVolume -= 11; });
 
     // camera / input
     flips("mouseZoomSpeed",  [](Settings& s) { s.mouseZoomSpeed += 0.5f; });
@@ -156,6 +162,13 @@ int main() {
         cur.gameCreate.crusades = true;
         cur.gameCreate.generator = "saved recipe";
         cur.hotkeys["selectAll"] = "ctrl+a";
+        // Voice chat has its own screen and DEFAULTS: the Options reset leaves it alone.
+        cur.voiceEnabled = true;
+        cur.voiceMicDevice = "a-mic";
+        cur.voiceOutputSameAsGame = false;
+        cur.voiceOutputDevice = "headset";
+        cur.voiceMicVolume = 40;
+        cur.voiceOutputVolume = 60;
         // Preferences that must be RESET.
         cur.unitShadows = false;
         cur.smoothArt = true;
@@ -187,6 +200,19 @@ int main() {
         keep("streamRememberKey", d.streamRememberKey);
         keep("lastMap",           d.lastMap == cur.lastMap);
         keep("hotkeys",           d.hotkeys == cur.hotkeys);
+        keep("voice chat",        d.voiceEnabled && d.voiceMicDevice == "a-mic" && !d.voiceOutputSameAsGame &&
+                                  d.voiceOutputDevice == "headset" && d.voiceMicVolume == 40 &&
+                                  d.voiceOutputVolume == 60);
+
+        // ...and the VOICE CHAT screen's DEFAULTS resets exactly the voice fields: voice
+        // off (the default), system devices, full volumes; everything else untouched.
+        const Settings v = tak::voiceDefaults(cur);
+        const Settings fresh0{};
+        reset("voice (own page)", !v.voiceEnabled && !fresh0.voiceEnabled && v.voiceMicDevice.empty() &&
+                                  v.voiceOutputSameAsGame && v.voiceOutputDevice.empty() &&
+                                  v.voiceMicVolume == 100 && v.voiceOutputVolume == 100);
+        keep("non-voice on voice DEFAULTS", v.masterVol == cur.masterVol && v.uiScale == cur.uiScale &&
+                                  v.hotkeys == cur.hotkeys && v.campaignCompleted == cur.campaignCompleted);
 
         const Settings fresh{};
         reset("unitShadows",      d.unitShadows == fresh.unitShadows);
