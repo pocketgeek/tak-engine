@@ -220,6 +220,8 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         case Cmd::SetSquad:
             if (owns(c.unitId)) world.setSquad(c.unitId, c.targetId);
             break;
+        case Cmd::Order:   // applied by applySelectionOrder() above
+            break;
     }
 }
 

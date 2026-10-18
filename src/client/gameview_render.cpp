@@ -277,7 +277,7 @@
             const auto& live = front().live;
             const auto unitIndices = unitCandidates(unitpass::painterBand(anchorView));
             renderStats_.add(RS::UnitsScanned, unitIndices.size());
-            const size_t indexed = items.size();
+            [[maybe_unused]] const size_t indexed = items.size();   // read by the index verify below
             for (uint32_t i : unitIndices) unitCandidate(*live[i]);
 #ifndef NDEBUG
             if (unitIndexVerify_) {
