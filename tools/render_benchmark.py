@@ -116,6 +116,19 @@ SCENES = {
                            segments={"army": (300, 450), "corner": (450, None)},
                            notes="6000 units zoomed out (several distant-image pages), then from frame "
                                  "450 a corner of the army: images expire, pages are released"),
+    # Workstream M: every structure type (palette-lit models on all nine palette
+    # pages), live geometry (zoom 0.75 is above the distant-image limit). The roster
+    # is spelled out so builds without the harness's "structures" keyword run it too.
+    "structures": dict(count=800, zoom=0.75,
+                       env={"TAK_RENDER_SPACING": "96", "TAK_RENDER_ROSTER":
+                            "araat,aracastl,arakeep,aralode,aramana,arangate,aranull,arassh,aratre,arawall,"
+                            "creacad,crebomb,cregate,cregatl,crelode,cremana,crenavy,crepris,cresmit,crewall,"
+                            "npcflag,npctemp,npctemp2,npcthesh,tarcage,tarcastl,tardung,tarhell,tarlode,tarmana,"
+                            "tarngate,tarsh,tarwall,verasy,verat,vercastl,verfltwr,verkeep,verlight,verlode,"
+                            "vermana,vermort,verngate,verpill,vertower,verwall,zonfire,zonglyph,zonlode,zonmana,"
+                            "zonspide"},
+                       notes="800 structures of all 51 types (all nine palette pages), zoom 0.75: "
+                             "palette-lit bodies drawn live"),
     # Workstream J: a map whose decoded sections (238 MiB) exceed the 128 MiB CPU
     # budget, under the pan + continuous zoom path: sections are evicted/re-decoded
     # and the mip cache fills (pre-J builds keep every section decoded).
