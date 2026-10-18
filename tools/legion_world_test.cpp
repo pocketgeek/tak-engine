@@ -10,6 +10,7 @@
 #include "sim/matchsetup.h"
 #include "sim/footprint.h"
 #include "legion_observe.h"
+#include "net/orderpack.h"
 #include <array>
 #include <climits>
 #include <cmath>
@@ -2932,8 +2933,13 @@ void mixedformation() {
 // orders, as before) land at their own points.
 struct FrontPhase {double top=0,all=0,row=0,span=0;float depth=0;int n=0;};
 struct FrontRun {FrontPhase east,south;int landed=0,behind=0;int done=-1;uint64_t hash=0;};
-FrontRun flyerfrontRun(bool serial=true) {
-    Fixture f(260,220,serial);f.publish();
+// cold: the click as a real match's first one -- on a map over 131k cells (400 x 400: a plane's first build is an
+// incremental job the registrations wait for, as on Ulasem), on the spawn tick (no settle, so nothing prebuilt the
+// plane), and as the client sends it (one explicit selection order, Cmd::Order). The ground waits in the
+// registration FIFO for a few ticks; its flyers must still keep station (0.8.4 regression: release A read the
+// waiting ground as stalled and freed every flyer, which flew straight to the goal).
+FrontRun flyerfrontRun(bool serial=true,bool cold=false) {
+    Fixture f(cold?400:260,cold?400:220,serial);f.publish();
     const auto type=mover(2);
     UnitType flyer{};flyer.id=flyer.name="legion-flyer";
     flyer.canFly=flyer.canMove=true;flyer.maxHp=100;flyer.footX=flyer.footZ=3;flyer.sight=4096;
@@ -2950,19 +2956,25 @@ FrontRun flyerfrontRun(bool serial=true) {
         applyCommand(f.world,registry,c);
     };
     // As the move UI does: flyers keep their offset from the selection's centre (clamped to 60 px per axis);
-    // Legion surface movers share the point.
+    // Legion surface movers share the point. Cold, the commands go packed as the client's explicit order.
+    uint32_t orderSerial=1;
     auto click=[&](float px,float pz) {
         float sx=0,sz=0;
         for(int id:all){sx+=f.world.unit(id)->x.toFloat();sz+=f.world.unit(id)->z.toFloat();}
         sx/=float(all.size());sz/=float(all.size());
+        std::vector<tak::net::Command> cmds;
         for(int id:all) {
             const auto& u=*f.world.unit(id);
-            command(tak::net::Cmd::Move,id,u.type->canFly?px+std::clamp(u.x.toFloat()-sx,-60.f,60.f):px,
-                    u.type->canFly?pz+std::clamp(u.z.toFloat()-sz,-60.f,60.f):pz);
+            tak::net::Command c;c.kind=tak::net::Cmd::Move;c.player=0;c.unitId=id;c.queue=0;
+            c.x=u.type->canFly?px+std::clamp(u.x.toFloat()-sx,-60.f,60.f):px;
+            c.z=u.type->canFly?pz+std::clamp(u.z.toFloat()-sz,-60.f,60.f):pz;
+            cmds.push_back(c);
         }
+        if(cold)cmds=tak::net::packClick(cmds,{true,px,pz},orderSerial);
+        for(const auto& c:cmds)applyCommand(f.world,registry,c);
     };
     for(int id:all)command(tak::net::Cmd::SetSquad,id,0,0,-1);
-    for(int t=0;t<300;++t)f.world.tick(1.f/30);
+    for(int t=0;t<(cold?0:300);++t)f.world.tick(1.f/30);
     click(190*16,74*16);
     FrontRun r;float wx=0,wz=0;
     auto centroid=[&](float& cx,float& cz) {
@@ -3009,8 +3021,8 @@ FrontRun flyerfrontRun(bool serial=true) {
     }
     for(auto* ph:{&r.east,&r.south})if(ph->n){ph->top/=ph->n;ph->all/=ph->n;ph->row/=ph->n;ph->span/=ph->n;}
     r.hash=f.world.stateHash();
-    std::printf("flyerfront east lead_top=%.0f lead_all=%.0f front_row=%.1f span=%.2f depth=%.0f windows=%d | south lead_top=%.0f lead_all=%.0f "
-        "front_row=%.1f span=%.2f depth=%.0f windows=%d | done=%d landed=%d landed_behind=%d hash=%016llx\n",r.east.top,r.east.all,r.east.row,
+    std::printf("flyerfront%s east lead_top=%.0f lead_all=%.0f front_row=%.1f span=%.2f depth=%.0f windows=%d | south lead_top=%.0f lead_all=%.0f "
+        "front_row=%.1f span=%.2f depth=%.0f windows=%d | done=%d landed=%d landed_behind=%d hash=%016llx\n",cold?" cold":"",r.east.top,r.east.all,r.east.row,
         r.east.span,r.east.depth,r.east.n,r.south.top,r.south.all,r.south.row,r.south.span,r.south.depth,r.south.n,r.done,r.landed,r.behind,
         (unsigned long long)r.hash);
     return r;
@@ -3126,6 +3138,18 @@ void flyerfront() {
         if(rows>1)check(n.behind<=0.5,"flyerfront narrow: flyers sat behind the middle of a column");
     }
     check(flyerfrontRun(false).hash==r.hash,"flyerfront: serial and workers differ");
+    // Cold (the first click of a match on a big map, as the client sends it): the same rows over the front while the
+    // ground's registrations wait for the plane's first build (measured: east -1, south -1; with the waiting ground
+    // read as stalled, every flyer was released on the first tick and the leading ones were 1154 px ahead of the
+    // ground's front east; the south click, with the plane built, kept station).
+    const auto c=flyerfrontRun(true,true);
+    for(const auto* ph:{&c.east,&c.south}) {
+        check(ph->n>0,"flyerfront cold: no window measured");
+        check(ph->top>=-80&&ph->top<=60,"flyerfront cold: the leading flyers were not over the ground's leading body");
+    }
+    check(c.east.depth<=200,"flyerfront cold: flyers sat deeper than the second row");
+    check(c.done>=0&&c.landed==12&&c.behind==0,"flyerfront cold: the formation did not finish and land in front of the ground");
+    check(flyerfrontRun(false,true).hash==c.hash,"flyerfront cold: serial and workers differ");
 }
 
 

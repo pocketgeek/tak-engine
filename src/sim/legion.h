@@ -340,7 +340,8 @@ public:
     // W6 (PLAN 3.6): is the unit a Legion member still making headway, its
     // headway clock (the last tick it reached a new best potential on its
     // group's field) under `limit` ticks?
-    // Moving, Holding and Waiting members count; Arrived, Trapped and
+    // Moving, Holding and Waiting members count, as does a unit waiting in the
+    // registration FIFO (unitState's Waiting); Arrived, Trapped and
     // non-members do not. The flyer rules read it with kLiftStall (lift area)
     // and kStationStall (formation stations). Reads hashed member state only.
     static constexpr uint32_t kLiftStall=120,kStationStall=450;

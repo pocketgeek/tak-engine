@@ -12219,6 +12219,12 @@ void LegionNavigator::noteFlyerEvent(FlyerEvent e) {
     }
 }
 bool LegionNavigator::advancing(int id,uint32_t limit) const {
+    // A unit waiting for its registration (stage 4's FIFO: the budget, or its plane's first build) is
+    // delayed by the navigation service, not stalled: unitState reads it as Waiting, and so does this.
+    // Read as stalled, the formation stations' release A freed every flyer of a click whose ground all
+    // waited on the click's first tick (a fresh plane on a map over 131k cells: Ulasem), and the
+    // flyers flew straight to the goal instead of over the front.
+    if(impl_->queued(id))return true;
     const auto found=impl_->members.find(id);
     if(found==impl_->members.end())return false;
     const auto& m=found->second;

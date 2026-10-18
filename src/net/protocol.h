@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 276;      // 276: voice chat (Msg::VoiceListen/VoiceUp/VoiceDown, relayed by the server
+constexpr uint32_t kNetVersion = 277;      // 277: Legion formation flyers keep station while their ground waits in the
+                                           //      registration FIFO (LegionNavigator::advancing reads a queued unit as
+                                           //      Waiting; release A had freed them on a big map's first click). Hashed
+                                           //      Legion state changes. 276 replays refused
+                                           // 276: voice chat (Msg::VoiceListen/VoiceUp/VoiceDown, relayed by the server
                                            //      beside the game, never in a tick bundle or a replay). Sim unchanged;
                                            //      a 275 peer would not know the messages. 275 replays refused
                                            // 275: AI level 5, Absurdly Defensive (SlotInfo.aiLevel): Defensive play with
