@@ -2389,6 +2389,9 @@
             catch (const std::exception&) {}
         }
         if (!pals.count("ara")) return;   // no palettes available
+        // Palette lighting banks (workstream M): one palette + shade table per faction
+        // bank, shared by every texture of the bank.
+        std::map<std::string, uint8_t> bankIndex;
         for (const std::string& path : vfs_.list("textures")) {
             if (tak::vpath::extension(path) != ".gaf") continue;
             std::string stem = tak::vpath::stem(path);
@@ -2408,9 +2411,23 @@
                 }
                 auto indexed=tak::gaf::load(bytes,indexPalette,5,path);
                 const std::string bank=pit!=pals.end() ? pit->first : "ara";
-                std::vector<uint8_t> shades;
-                const std::string shadePath="palettes/"+bank+"_textures.shd";
-                if(vfs_.has(shadePath)) shades=vread(shadePath);
+                auto bankSlot=bankIndex.find(bank);
+                if(bankSlot==bankIndex.end()) {
+                    // A bank without its shade table gets no palette lighting (as before).
+                    const std::string shadePath="palettes/"+bank+"_textures.shd";
+                    std::vector<uint8_t> shades;
+                    if(vfs_.has(shadePath)) shades=vread(shadePath);
+                    uint8_t slot=0xff;
+                    if(shades.size()==tak::render::palette::kShadeTableBytes &&
+                       paletteBanks_.size()<size_t(tak::render::palette::kMaxBanks)) {
+                        tak::render::palette::Bank entry;
+                        std::memcpy(entry.palette,pal->rgba,sizeof entry.palette);
+                        entry.shades=std::move(shades);
+                        slot=uint8_t(paletteBanks_.size());
+                        paletteBanks_.push_back(std::move(entry));
+                    }
+                    bankSlot=bankIndex.emplace(bank,slot).first;
+                }
                 size_t sequenceIndex=0;
                 for (auto& seq : tak::gaf::load(bytes, *pal, 5, path)) {
                     auto& indexSequence=indexed.at(sequenceIndex++);
@@ -2418,10 +2435,22 @@
                     std::string name = seq.name;
                     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
                     if (textures_.count(name)) continue;
-                    if(shades.size()==32*256 && std::all_of(seq.frames.begin(),seq.frames.end(),
+                    if(bankSlot->second!=0xff && std::all_of(seq.frames.begin(),seq.frames.end(),
                         [](const auto& frame){return frame.encoding==0 || frame.encoding==1;})) {
-                        paletteTextureSources_.emplace(name,PaletteTextureSource{
-                            *pal,shades,std::move(indexSequence.frames)});
+                        PaletteTextureSource source;
+                        source.bank=bankSlot->second;
+                        for(const auto& frame:indexSequence.frames) {
+                            // Index-identity decode: R = palette index, A = coverage.
+                            tak::render::palette::Frame la;
+                            la.width=frame.width;la.height=frame.height;
+                            la.la.resize(size_t(frame.width)*size_t(frame.height)*2);
+                            for(size_t pixel=0;pixel*4+3<frame.rgba.size() && pixel*2+1<la.la.size();++pixel) {
+                                la.la[pixel*2]=frame.rgba[pixel*4];
+                                la.la[pixel*2+1]=frame.rgba[pixel*4+3];
+                            }
+                            source.frames.push_back(std::move(la));
+                        }
+                        paletteTextureSources_.emplace(name,std::move(source));
                     }
                     // Retail 4be8e3..4be978 retains every multi-frame sequence.
                     // Only ten-frame names containing "logo" select player colours;

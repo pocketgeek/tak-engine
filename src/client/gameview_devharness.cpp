@@ -962,7 +962,7 @@
         //   TAK_RENDER_EXTRAS=1     add construction sites, ghosts, flyers, corpses
         //   TAK_RENDER_NAVAL=N      N floating units on the water nearest the centre
         //   TAK_RENDER_FOREST=1     centre army + camera on the densest scenery region
-        //   TAK_RENDER_ROSTER=a,b   unit types replacing the 6-type roster
+        //   TAK_RENDER_ROSTER=a,b   unit types replacing the 6-type roster ("structures": all of them)
         //   TAK_RENDER_OVERLAYS=1   control squads, factories with production queues,
         //                           builders with queued build orders (ghosts)
         // All of them only shape the local harness scene; none run in a real game.
@@ -991,6 +991,15 @@
                     const size_t comma=std::min(list.find(',',at),list.size());
                     if(comma>at)roster.push_back(list.substr(at,comma-at));
                     at=comma+1;
+                }
+                if(roster.size()==1 && roster[0]=="structures") {
+                    // Every structure type, by id (workstream M: palette-lit models).
+                    roster.clear();
+                    for(const auto& [id,type]:registry_.types())if(type.isStructure())roster.push_back(id);
+                    std::sort(roster.begin(),roster.end());
+                    std::string list;
+                    for(const auto& id:roster)list+=(list.empty() ? "" : ",")+id;
+                    std::fprintf(stderr,"render roster: %s\n",list.c_str());
                 }
                 if(roster.empty())roster.push_back("araarch");
             }
@@ -1313,7 +1322,7 @@
             for(const auto& name:names) {
                 auto source=paletteTextureSources_.find(name);
                 if(source==paletteTextureSources_.end())continue;
-                for(const auto& frame:source->second.indexed) {
+                for(const auto& frame:source->second.frames) {
                     pixels+=size_t(frame.width)*frame.height;++frames;
                 }
             }
@@ -1325,7 +1334,23 @@
                 if(sheet!=paletteTextureSheets_.end())for(const auto& frame:sheet->second)
                     missing+=!frame.texture;
             }
-            std::fprintf(stderr,"PALETTE_ROSTER pages=%zu missing=%zu\n",paletteTexturePages_.size(),missing);
+            // The pre-M source record held a palette copy, a shade-table copy and RGBA
+            // frames per texture: its byte count for the same sources (excluding names
+            // and sheet records, which are unchanged).
+            size_t before=0,after=0;
+            for(const auto& [n,source]:paletteTextureSources_) {
+                before+=sizeof(tak::gaf::Palette)+tak::render::palette::kShadeTableBytes+
+                        source.frames.size()*sizeof(tak::gaf::Frame);
+                after+=source.frames.capacity()*sizeof(tak::render::palette::Frame);
+                for(const auto& frame:source.frames) {before+=size_t(frame.width)*frame.height*4;after+=frame.la.capacity();}
+            }
+            for(const auto& bank:paletteBanks_)after+=sizeof(bank)+bank.shades.capacity();
+            std::fprintf(stderr,"PALETTE_ROSTER pages=%zu missing=%zu mode=%s gpuMiB=%.2f cpuMiB=%.2f uploadMiB=%.2f "
+                "sources=%zu sourceMiB=%.2f preMSourceMiB=%.2f\n",
+                palettePages_.size(),missing,paletteMode_==PaletteMode::Indexed ? "indexed" : "baked",
+                double(paletteGpuBytes())/(1024*1024),double(paletteCpuBytes())/(1024*1024),
+                double(paletteUploadBytes_)/(1024*1024),paletteTextureSources_.size(),
+                double(after)/(1024*1024),double(before)/(1024*1024));
             if(missing)throw std::runtime_error("shipped structure palette sheets exceed capacity");
             std::fprintf(stderr,"PASS: full structure palette texture roster fits bounded pages\n");
             return;
@@ -2449,7 +2474,7 @@
                     throw std::runtime_error("palette lighting fixture geometry missing");
                 bool usesPalette=false,changed=false;
                 for(size_t i=0;i<shaded.size();++i) {
-                    for(const auto& page:paletteTexturePages_)
+                    for(const auto& page:palettePages_)
                         usesPalette|=shaded[i].tex==page.texture;
                     if(shaded[i].tex!=preparedGeometry[i].tex)
                         throw std::runtime_error("palette prepared texture mismatch");

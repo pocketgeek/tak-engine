@@ -36,6 +36,7 @@ SDL_BlendMode compositeBlend() {
         SDL_BLENDFACTOR_ONE,SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,SDL_BLENDOPERATION_ADD);
 }
 }
+SDL_BlendMode DistantModels::pageBlendMode() { return compositeBlend(); }
 void DistantModels::clear() {
     for(auto* page:pages_)if(page)gpuvram::destroy(page);
     pages_.clear();pageLive_.clear();pageUsed_.clear();entries_.clear();bounds_.clear();free_.clear();
@@ -318,8 +319,13 @@ void DistantModels::prepare(SDL_Renderer* r,std::span<Item> items,uint64_t now,M
         int offset=0;bool ok=true;
         for(const auto& run:item.runs) {
             if(run.second<0 || size_t(offset)+size_t(run.second)>scratch_.size()) {ok=false;break;}
-            render::countSdlGeometry(size_t(run.second),size_t(run.second)*sizeof(SDL_Vertex));
-            if(SDL_RenderGeometry(r,run.first,scratch_.data()+offset,run.second,nullptr,0)!=0) {ok=false;break;}
+            int drawn=0;
+            if(drawRun_)drawn=drawRun_(drawRunContext_,r,run.first,scratch_.data()+offset,run.second);
+            else {
+                render::countSdlGeometry(size_t(run.second),size_t(run.second)*sizeof(SDL_Vertex));
+                drawn=SDL_RenderGeometry(r,run.first,scratch_.data()+offset,run.second,nullptr,0);
+            }
+            if(drawn!=0) {ok=false;break;}
             offset+=run.second;++bakeDraws;
         }
         if(!ok)continue;

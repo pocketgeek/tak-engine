@@ -1562,6 +1562,7 @@ int main(int argc, char** argv) {
     const unsigned studyEpoch=studyPeriod("TAK_RENDER_EPOCH");   // world-epoch bump (rejoin id reuse)
     const unsigned studyShake=studyPeriod("TAK_RENDER_SHAKE");   // camera shake every N frames (workstream L)
     const unsigned studyVeteran=studyPeriod("TAK_RENDER_VETERAN");   // veterancy cycle (material-only)
+    const unsigned studyFilter=studyPeriod("TAK_RENDER_FILTER");     // Texture Filtering Off<->Units (workstream M)
     const unsigned studyPanSnap=studyPeriod("TAK_RENDER_CAMERA_SNAP");  // whole-pixel pan (1, or N moving/N still)
     const unsigned studySparseAfter=studyPeriod("TAK_RENDER_SPARSE_AFTER");
     float studySparseX=200,studySparseZ=200;
@@ -1838,6 +1839,8 @@ int main(int argc, char** argv) {
                     gameView->renderStudyShake(8.0f,float(studyShake)/90.0f);
                 if(renderStudy && studySparseAfter && studyFrame>=studySparseAfter)
                     gameView->renderStudyOffset(studySparseX,studySparseZ);
+                if(renderStudy && studyFilter && studyFrame && studyFrame%studyFilter==0)
+                    gameView->renderStudyToggleFilter();
                 if(renderStudy && studyReset && studyFrame && studyFrame%studyReset==0) {
                     // The SDL_RENDER_TARGETS_RESET path, on a fixed schedule.
                     windowTarget();
@@ -1960,6 +1963,25 @@ int main(int argc, char** argv) {
             std::printf("RENDER_STUDY frames=%u hash=%016llx gpu_textures=%.2fMiB\n",studyFrame,
                 static_cast<unsigned long long>(gameView->worldHashPublic()),
                 double(gpuvram::bytes())/(1<<20));
+            if(tak::devFlag("TAK_REQUIRE_PALETTE")) {
+                // Workstream M: on OpenGL the structures draw from the indexed form (and,
+                // with TAK_RENDER_FILTER, switch to the baked pages and back) without a
+                // failed indexed draw; elsewhere they stay on the baked pages.
+                const auto& t=gameView->paletteTotals();
+                using ull=unsigned long long;
+                SDL_RendererInfo info{};
+                SDL_GetRendererInfo(ren,&info);
+                const bool gl=info.name && std::strcmp(info.name,"opengl")==0;
+                std::printf("PALETTE_STUDY renderer=%s indexed_frames=%llu baked_frames=%llu indexed_draws=%llu spans=%llu "
+                            "fallbacks=%llu switches=%llu upload_bytes=%llu\n",info.name ? info.name : "?",
+                    ull(t.indexedFrames),ull(t.bakedFrames),ull(t.indexedDraws),ull(t.spans),ull(t.fallbacks),
+                    ull(t.switches),ull(t.uploadBytes));
+                if(t.fallbacks)throw std::runtime_error("an indexed palette draw failed");
+                if(gl && (!t.indexedDraws || !t.indexedFrames))throw std::runtime_error("OpenGL study drew no indexed palette runs");
+                if(!gl && t.indexedFrames)throw std::runtime_error("indexed palette form on a renderer without it");
+                if(gl && studyFilter && (t.switches<2 || !t.bakedFrames))
+                    throw std::runtime_error("texture-filter toggles did not switch the palette form both ways");
+            }
             if(tak::devFlag("TAK_REQUIRE_GEOMETRY_REUSE")) {
                 std::printf("GEOMETRY_VERIFY checks=%llu animated_cross_tick=%llu\n",
                     static_cast<unsigned long long>(gameView->geometryChecks()),

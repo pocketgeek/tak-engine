@@ -424,6 +424,22 @@ enum class Counter : uint8_t {
     UnitIndexRows,
     UnitIndexFullScans,
     UnitGridBytes,
+    // Structure palette sheets (workstream M, client/palettesheets.h): the form held
+    // (gauge 0 none / 1 baked / 2 indexed), layout pages, tracked GPU bytes of the
+    // form (baked pages, or key textures + index pages + identity + LUT), CPU bytes
+    // of the sources, banks and sheet records; per frame: texture bytes uploaded for
+    // sheets, runs drawn by the indexed program, indexed runs that failed to draw,
+    // form switches.
+    PaletteMode,
+    PalettePages,
+    PaletteGpuBytes,
+    PaletteCpuBytes,
+    PaletteUploadBytes,
+    PaletteIndexedDraws,
+    PaletteFallbacks,
+    PaletteSwitches,
+    PaletteSpans,        // native body spans opened by indexed palette runs (one priming each)
+    PaletteSpanCommands, // body commands drawn inside those spans (palette + plain)
     Count
 };
 
@@ -504,7 +520,10 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "terrain_underlay_tiles", "terrain_jobs_obsolete", "terrain_jobs_aborted", "terrain_jobs_nearby",
     "terrain_jobs_offview", "terrain_upload_deferred", "terrain_gated_frames",
     "units_live", "unit_index_queries", "unit_index_returned", "unit_index_rows",
-    "unit_index_full_scans", "unit_grid_bytes"};
+    "unit_index_full_scans", "unit_grid_bytes",
+    "palette_mode", "palette_pages", "palette_gpu_bytes", "palette_cpu_bytes", "palette_upload_bytes",
+    "palette_indexed_draws", "palette_fallbacks", "palette_switches", "palette_spans",
+    "palette_span_commands"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

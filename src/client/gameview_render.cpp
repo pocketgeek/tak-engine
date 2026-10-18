@@ -343,6 +343,17 @@
             uint32_t bit = (slot >= 0 && slot < 32) ? (1u << slot) : 0u;
             if (!bit || !(atlasSeen & bit)) { atlasFor(slot); atlasSeen |= bit; }
         }
+        // Workstream M: last frame's palette counters into the session totals (the
+        // telemetry fold read them first), then baked or indexed palette sheets.
+        paletteTotals_.indexedDraws += paletteIndexedDraws_;
+        paletteTotals_.spans += paletteSpans_;
+        paletteTotals_.fallbacks += paletteFallbacks_;
+        paletteTotals_.switches += paletteSwitches_;
+        paletteTotals_.uploadBytes += paletteUploadBytes_;
+        paletteUploadBytes_ = paletteIndexedDraws_ = paletteFallbacks_ = paletteSwitches_ = 0;
+        paletteSpans_ = paletteSpanCommands_ = 0;
+        updatePaletteMode();
+        ++(paletteMode_ == PaletteMode::Indexed ? paletteTotals_.indexedFrames : paletteTotals_.bakedFrames);
         thread_local std::vector<const PieceMeta*> palettePrepared;
         palettePrepared.clear();
         for(const auto* u:visUnits_) {
@@ -478,6 +489,7 @@
         // cache on SDL's software renderer (pages then composite with plain blending).
         distantModelCache_.sweepEveryPrepare=tak::devFlag("TAK_DISTANT_SWEEP_EVERY_FRAME");
         distantModelCache_.allowSoftware=tak::devFlag("TAK_DISTANT_SOFTWARE");
+        distantModelCache_.setRunDrawer(&GameView::drawModelRunThunk,this);   // indexed palette runs (M)
 #endif
         distantModelCache_.prepare(ren_,distantModelItems_,distantNow_,[](void* self,size_t index) {
             static_cast<GameView*>(self)->materializeDistantBody(index);
@@ -1909,9 +1921,15 @@
         debugFeatureFlameDrawCount_ = 0;
         debugFeatureSmokeDrawCount_ = 0;
 #endif
+        spanTextures_.clear();
         for (size_t opi = 0; opi < drawOps_.size(); ++opi) {
             if (opi == airShadowOp_) drainAirShadows();
             const DrawOp& op = drawOps_[opi];
+            if (paletteMode_ == PaletteMode::Indexed && !op.f && !op.u && op.count > 0 && op.tex &&
+                palettePage(op.tex) >= 0) {
+                // Workstream M: an indexed palette run opens a native span.
+                if (const size_t end = drawPaletteSpan(opi); end > opi) { opi = end - 1; continue; }
+            }
             if (op.f) {
                 const auto& f = *op.f;
                 tak::render::countLogicalDraw();   // the feature body (its shadow/flames/smoke not counted)
@@ -2078,8 +2096,10 @@
                     const std::span<const GLsizei> counts(bodyArenaCounts_.data() + op.arenaFirst, op.arenaRanges);
                     const auto& arenaBuffer = bodyArenaBuffers_[op.arenaSlot];
                     const bool simulated = arenaBuffer.simulated();
+                    tak::NativeProgram* program = paletteProgram(op.tex);
                     const int drawn = simulated ? 1 : bodySubmit_.drawBuffer(ren_, op.tex, arenaBuffer.id(),
-                                                                             firsts, counts, size_t(op.count));
+                                                                             firsts, counts, size_t(op.count), program);
+                    if (program && drawn == 0) ++paletteIndexedDraws_;
                     if (drawn == 0) {
                         renderStats_.add(RS::ArenaDraws);
                         renderStats_.add(RS::ArenaRanges, firsts.size());
@@ -2087,6 +2107,10 @@
                         // SDL error while priming: nothing drawn, as draw() would
                         // have failed the same way. Not an arena draw.
                         renderStats_.add(RS::ArenaFallbacks);
+                        if (program) {   // an indexed run went undrawn: baked from the next frame
+                            ++paletteFallbacks_;
+                            paletteIndexedFailed_ = true;
+                        }
                     } else {
                         // Not drawable from the buffer here: the simulated arena (its
                         // vertices gathered through the ranges -- the software-renderer
@@ -2108,8 +2132,12 @@
                             }
                             renderStats_.add(RS::ArenaFallbacks);
                         }
-                        bodySubmit_.draw(ren_, op.tex, bodyArenaGather_, bodyDirect);
+                        if (program) drawModelRun(op.tex, bodyArenaGather_.data(), int(bodyArenaGather_.size()), false);
+                        else bodySubmit_.draw(ren_, op.tex, bodyArenaGather_, bodyDirect);
                     }
+                } else if (paletteProgram(op.tex)) {
+                    // Indexed palette runs always draw natively, whatever their size.
+                    drawModelRun(op.tex, bodyVerts_.data() + op.start, op.count, false);
                 } else {
                     bodySubmit_.draw(ren_,op.tex,std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(op.count)),
                                      bodyDirect);
@@ -3843,6 +3871,18 @@
         cursor.sections = sections;
 
         stats.set(RS::GpuTrackedBytes, gpuvram::bytes());
+        stats.set(RS::PaletteMode, uint64_t(paletteMode_));
+        stats.set(RS::PalettePages, palettePages_.size());
+        stats.set(RS::PaletteGpuBytes, paletteGpuBytes());
+        if (const size_t key = paletteTextureSources_.size() * 65537 + paletteTextureSheets_.size();
+            key != paletteCpuKey_) { paletteCpuKey_ = key; paletteCpuCache_ = paletteCpuBytes(); }
+        stats.set(RS::PaletteCpuBytes, paletteCpuCache_);
+        stats.add(RS::PaletteUploadBytes, paletteUploadBytes_);
+        stats.add(RS::PaletteIndexedDraws, paletteIndexedDraws_);
+        stats.add(RS::PaletteFallbacks, paletteFallbacks_);
+        stats.add(RS::PaletteSwitches, paletteSwitches_);
+        stats.add(RS::PaletteSpans, paletteSpans_);
+        stats.add(RS::PaletteSpanCommands, paletteSpanCommands_);
         stats.add(RS::GpuTextureCreates, delta(gpuvram::g_creates, cursor.gpuCreates));
         stats.add(RS::GpuTextureDestroys, delta(gpuvram::g_destroys, cursor.gpuDestroys));
         cursor.gpuCreates = gpuvram::g_creates;
@@ -3958,7 +3998,7 @@
             const auto source=paletteTextureSources_.find(name);
             if(source==paletteTextureSources_.end())continue;
             size_t area=0;
-            for(const auto& frame:source->second.indexed)
+            for(const auto& frame:source->second.frames)
                 area=std::max(area,size_t(frame.width)*frame.height);
             ordered.push_back({area,&name});
         }
@@ -3968,80 +4008,242 @@
     }
 
     void GameView::preparePaletteTexture(const std::string& name) {
+        namespace pal = tak::render::palette;
         if(paletteTextureSheets_.count(name))return;
         const auto source=paletteTextureSources_.find(name);
         if(source==paletteTextureSources_.end())return;
+        if(paletteMode_==PaletteMode::Unset)updatePaletteMode();
+        const bool indexed=paletteMode_==PaletteMode::Indexed;
+        const pal::Bank& bank=paletteBanks_[source->second.bank];
         auto& sheets=paletteTextureSheets_[name];
-        sheets.resize(source->second.indexed.size());
-        constexpr int side=2048;
-        constexpr size_t maxPages=16; // 256 MiB ceiling; shipped structure roster uses nine pages.
+        sheets.resize(source->second.frames.size());
+        constexpr int side=pal::kPageSide;
+        thread_local std::vector<uint8_t> pixels;
         for(size_t frame=0;frame<sheets.size();++frame) {
-            const auto& input=source->second.indexed[frame];
+            const auto& input=source->second.frames[frame];
             const int w=input.width,h=input.height;
-            if(w<=0 || h<=0 || w*4>side || h*5>side)continue;
-            PaletteTexturePage* page=nullptr;
-            size_t freeIndex=0;
-            int bestArea=std::numeric_limits<int>::max();
-            for(auto& candidate:paletteTexturePages_)for(size_t i=0;i<candidate.free.size();++i) {
-                const auto& rect=candidate.free[i];
-                if(rect.w>=w*4 && rect.h>=h*5 && rect.w*rect.h<bestArea) {
-                    page=&candidate;freeIndex=i;bestArea=rect.w*rect.h;
+            if(!pal::PageLayout::fitsPage(w,h))continue;
+            // The pre-M packer (palettesheets.h): best free rectangle, else a new page
+            // while the form's budget allows one.
+            auto slot=paletteLayout_.find(w,h);
+            if(!slot) {
+                if(palettePages_.size()>=pal::kMaxPages || gpuAllocBlocked())continue;
+                SDL_Texture* texture=nullptr;
+                if(indexed) {
+                    // Key texture (the runs' texture: priming, batching) + index page.
+                    if(!gpuvram::wouldFit(pal::kIndexPageBytes+4))continue;
+                    texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,1,1);
+                    if(!texture) {noteGpuAllocFail();continue;}
+                    const uint8_t white[4]={255,255,255,255};
+                    SDL_UpdateTexture(texture,nullptr,white,4);
+                    if(!paletteIndexed_.createPage()) {gpuvram::destroy(texture);noteGpuAllocFail();continue;}
+                } else {
+                    if(!gpuvram::wouldFit(pal::kBakedPageBytes))continue;
+                    texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,side,side);
+                    if(!texture) {noteGpuAllocFail();continue;}
+                    SDL_SetTextureScaleMode(texture,unitScaleMode());
+                }
+                SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+                palettePages_.push_back({texture,0});
+                slot=paletteLayout_.addPage();
+            }
+            PalettePage& page=palettePages_[slot->page];
+            const pal::Rect rect=paletteLayout_.sheetRect(*slot,w,h);
+            uint32_t sheetId=pal::kNoSheet;
+            if(indexed) {
+                if(page.sheets>=pal::kMaxSheetsPerPage)continue;
+                const uint8_t bankId=source->second.bank;
+                if(paletteBanksUploaded_.size()<=bankId)paletteBanksUploaded_.resize(size_t(bankId)+1,false);
+                if(!paletteBanksUploaded_[bankId]) {
+                    if(!paletteIndexed_.setBank(bankId,bank))continue;
+                    paletteBanksUploaded_[bankId]=true;
+                    paletteUploadBytes_+=size_t(pal::kShadeLevels)*256*4;
+                }
+                sheetId=page.sheets;
+                if(!paletteIndexed_.upload(slot->page,rect.x/pal::kBandColumns,rect.y/pal::kBandRows,w,h,input.la.data()) ||
+                   !paletteIndexed_.uploadEntry(slot->page,sheetId,pal::entryFor(rect,w,h,bankId)))continue;
+                ++page.sheets;
+                paletteUploadBytes_+=input.la.size()+8;
+            } else {
+                pal::expandSheet(input,bank,pixels);
+                SDL_Rect area{rect.x,rect.y,rect.w,rect.h};
+                if(SDL_UpdateTexture(page.texture,&area,pixels.data(),w*16)!=0)continue;
+                paletteUploadBytes_+=pixels.size();
+                if(tak::devFlag("TAK_PALETTE_VERIFY")) {
+                    // Exercise the actual uploaded subrect, including the four-column
+                    // band layout, on software and accelerated SDL backends alike.
+                    auto* check=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
+                        SDL_TEXTUREACCESS_TARGET,area.w,area.h);
+                    if(!check)throw std::runtime_error("palette verification target allocation failed");
+                    auto* previous=SDL_GetRenderTarget(ren_);
+                    SDL_BlendMode blend;SDL_GetTextureBlendMode(page.texture,&blend);
+                    SDL_SetTextureBlendMode(page.texture,SDL_BLENDMODE_NONE);
+                    SDL_SetRenderTarget(ren_,check);
+                    const int copied=SDL_RenderCopy(ren_,page.texture,&area,nullptr);
+                    std::vector<uint8_t> readback(pixels.size());
+                    const int read=SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,
+                        readback.data(),w*16);
+                    SDL_SetRenderTarget(ren_,previous);
+                    SDL_SetTextureBlendMode(page.texture,blend);
+                    gpuvram::destroy(check);
+                    if(copied || read || readback!=pixels)
+                        throw std::runtime_error("palette texture upload mismatch: "+name);
+                    std::fprintf(stderr,"PALETTE_VERIFY %s frame=%zu levels=20 pixels=%zu pages=%zu\n",
+                        name.c_str(),frame,size_t(w)*h,palettePages_.size());
                 }
             }
-            if(!page) {
-                if(paletteTexturePages_.size()>=maxPages || gpuAllocBlocked() ||
-                   !gpuvram::wouldFit(size_t(side)*side*4))continue;
-                auto* texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
-                    SDL_TEXTUREACCESS_STATIC,side,side);
-                if(!texture) {noteGpuAllocFail();continue;}
-                SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
-                SDL_SetTextureScaleMode(texture,unitScaleMode());
-                paletteTexturePages_.push_back({texture});page=&paletteTexturePages_.back();
-                freeIndex=0;
-            }
-            const auto available=page->free[freeIndex];
-            std::vector<uint8_t> pixels(size_t(w)*h*20*4);
-            for(int level=0;level<20;++level)for(size_t pixel=0;pixel<size_t(w)*h;++pixel) {
-                const auto index=input.rgba[pixel*4];
-                const auto remapped=source->second.shades[size_t(level+5)*256+index];
-                const size_t row=size_t(level/4)*h+pixel/size_t(w);
-                const size_t col=size_t(level%4)*w+pixel%size_t(w);
-                auto* output=pixels.data()+(row*size_t(w)*4+col)*4;
-                std::memcpy(output,source->second.palette.rgba[remapped],3);
-                output[3]=input.rgba[pixel*4+3];
-            }
-            SDL_Rect rect{available.x,available.y,w*4,h*5};
-            if(SDL_UpdateTexture(page->texture,&rect,pixels.data(),w*16)!=0)continue;
-            if(tak::devFlag("TAK_PALETTE_VERIFY")) {
-                // Exercise the actual uploaded subrect, including the four-column
-                // band layout, on software and accelerated SDL backends alike.
-                auto* check=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
-                    SDL_TEXTUREACCESS_TARGET,rect.w,rect.h);
-                if(!check)throw std::runtime_error("palette verification target allocation failed");
-                auto* previous=SDL_GetRenderTarget(ren_);
-                SDL_BlendMode blend;SDL_GetTextureBlendMode(page->texture,&blend);
-                SDL_SetTextureBlendMode(page->texture,SDL_BLENDMODE_NONE);
-                SDL_SetRenderTarget(ren_,check);
-                const int copied=SDL_RenderCopy(ren_,page->texture,&rect,nullptr);
-                std::vector<uint8_t> readback(pixels.size());
-                const int read=SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,
-                    readback.data(),w*16);
-                SDL_SetRenderTarget(ren_,previous);
-                SDL_SetTextureBlendMode(page->texture,blend);
-                gpuvram::destroy(check);
-                if(copied || read || readback!=pixels)
-                    throw std::runtime_error("palette texture upload mismatch: "+name);
-                std::fprintf(stderr,"PALETTE_VERIFY %s frame=%zu levels=20 pixels=%zu pages=%zu\n",
-                    name.c_str(),frame,size_t(w)*h,paletteTexturePages_.size());
-            }
-            sheets[frame]={page->texture,{float(rect.x)/side,float(rect.y)/side,
-                                         float(w)/side,float(h)/side}};
-            page->free.erase(page->free.begin()+std::ptrdiff_t(freeIndex));
-            if(available.w>rect.w)page->free.push_back({rect.x+rect.w,rect.y,
-                available.w-rect.w,rect.h});
-            if(available.h>rect.h)page->free.push_back({rect.x,rect.y+rect.h,
-                available.w,available.h-rect.h});
+            sheets[frame]={page.texture,{float(rect.x)/side,float(rect.y)/side,
+                                        float(w)/side,float(h)/side},sheetId};
+            paletteLayout_.commit(*slot,w,h);
         }
+    }
+
+    // Which palette form to hold: indexed on the OpenGL backend when the program
+    // builds, native draws are possible (opengl, integer output scale), units are
+    // point-sampled (bilinear is not bit-identical; TAK_PALETTE_INDEXED_LINEAR
+    // tries it) and no indexed draw has failed; baked otherwise (debug
+    // TAK_PALETTE_BAKED forces it: the same-binary reference). A change releases
+    // the held form and rebuilds everything that captured its textures.
+    void GameView::updatePaletteMode() {
+        const bool linear=tak::texturefilter::unitsLinear(textureFilter_);
+        paletteIndexed_.setMarkOutside(tak::devFlag("TAK_PALETTE_MARK_EDGES"));
+        bool indexed=!paletteIndexedFailed_ && !tak::devFlag("TAK_PALETTE_BAKED") &&
+                     (!linear || tak::devFlag("TAK_PALETTE_INDEXED_LINEAR")) &&
+                     paletteIndexed_.ready(ren_) && bodySubmit_.nativeCapable(ren_);
+        const PaletteMode wanted=indexed ? PaletteMode::Indexed : PaletteMode::Baked;
+        paletteLinear_=indexed && linear;
+        // A new GL context forgets the index pages (paletteindexed.h): the keys that
+        // still name them are rebuilt like a switch, never drawn without their page.
+        const bool lost=paletteMode_==PaletteMode::Indexed && paletteIndexed_.pages()!=palettePages_.size();
+        if(wanted==paletteMode_ && !lost)return;
+        if(paletteMode_!=PaletteMode::Unset) {
+            ++paletteSwitches_;
+            releasePaletteSheets();
+            geomEntries_.makeAllCold();   // geometry captured the old form's textures and coordinates
+            distantModelCache_.clear();   // ... and so did the images baked from it
+            releaseBodyArena();
+        }
+        paletteMode_=wanted;
+    }
+
+    // Release both forms' pages and the layout; sources and banks stay (CPU).
+    void GameView::releasePaletteSheets() {
+        for(auto& page:palettePages_)gpuvram::destroy(page.texture);
+        palettePages_.clear();
+        paletteTextureSheets_.clear();
+        palettePreparedModels_.clear();
+        paletteLayout_.clear();
+        paletteIndexed_.releasePages();
+        paletteBanksUploaded_.clear();
+    }
+
+    size_t GameView::paletteGpuBytes() const {
+        return paletteIndexed_.gpuBytes()+palettePages_.size()*
+            (paletteMode_==PaletteMode::Indexed ? size_t(4) : tak::render::palette::kBakedPageBytes);
+    }
+
+    // Sources (index + alpha per texel), banks, sheet records (capacities).
+    size_t GameView::paletteCpuBytes() const {
+        size_t bytes=paletteBanks_.capacity()*sizeof(tak::render::palette::Bank);
+        for(const auto& bank:paletteBanks_)bytes+=bank.shades.capacity();
+        for(const auto& [name,source]:paletteTextureSources_) {
+            bytes+=sizeof(source)+name.capacity()+source.frames.capacity()*sizeof(tak::render::palette::Frame);
+            for(const auto& frame:source.frames)bytes+=frame.la.capacity();
+        }
+        for(const auto& [name,sheets]:paletteTextureSheets_)
+            bytes+=name.capacity()+sheets.capacity()*sizeof(PaletteTextureSheet);
+        return bytes;
+    }
+
+    int GameView::palettePage(SDL_Texture* texture) const {
+        if(paletteMode_!=PaletteMode::Indexed || !texture)return -1;
+        for(size_t page=0;page<palettePages_.size();++page)
+            if(palettePages_[page].texture==texture)return int(page);
+        return -1;
+    }
+    tak::NativeProgram* GameView::paletteProgram(SDL_Texture* texture) {
+        const int page=palettePage(texture);
+        return page<0 ? nullptr : paletteIndexed_.program(size_t(page),paletteLinear_);
+    }
+
+    // Can this run's texture join a native span? BLEND (the primed mode: palette keys
+    // are BLEND) or the distant-image pages' premultiplied mode, no colour/alpha mod
+    // (SDL folds those into vertex colours; the native draw would not), normalized
+    // coordinates. Cached for the frame's replay.
+    const GameView::SpanTexture& GameView::spanTexture(SDL_Texture* texture) {
+        for(const auto& entry:spanTextures_)if(entry.texture==texture)return entry;
+        SpanTexture entry{texture,0,false};
+        SDL_BlendMode blend=SDL_BLENDMODE_INVALID;
+        Uint8 r=0,g=0,b=0,a=0;
+        if(SDL_GetTextureBlendMode(texture,&blend)==0 &&
+           (blend==SDL_BLENDMODE_BLEND || blend==tak::DistantModels::pageBlendMode()) &&
+           SDL_GetTextureColorMod(texture,&r,&g,&b)==0 && r==255 && g==255 && b==255 &&
+           SDL_GetTextureAlphaMod(texture,&a)==0 && a==255) {
+            entry.name=bodySubmit_.textureName(ren_,texture);
+            entry.premultiplied=blend!=SDL_BLENDMODE_BLEND;
+        }
+        spanTextures_.push_back(entry);
+        return spanTextures_.back();
+    }
+
+    size_t GameView::drawPaletteSpan(size_t first) {
+        using RS = tak::render::Counter;
+        size_t end=first;
+        for(;end<drawOps_.size();++end) {
+            if(end>first && end==airShadowOp_)break;
+            const DrawOp& op=drawOps_[end];
+            if(op.f || op.u)break;
+            if(op.count<=0 || !op.tex)continue;   // skipped by the replay anyway (null atlas page)
+            if(op.arenaFirst>=0 && bodyArenaBuffers_[op.arenaSlot].simulated())break;
+            if(palettePage(op.tex)<0 && !spanTexture(op.tex).name)break;
+        }
+        if(end==first || !bodySubmit_.beginPass(ren_,drawOps_[first].tex))return first;
+        paletteIndexed_.beginPass();
+        for(size_t i=first;i<end;++i) {
+            const DrawOp& op=drawOps_[i];
+            if(op.count<=0 || !op.tex)continue;
+            if(const int page=palettePage(op.tex);page>=0) {
+                paletteIndexed_.usePremultiplied(false);
+                paletteIndexed_.usePage(size_t(page),paletteLinear_);
+                ++paletteIndexedDraws_;
+            } else {
+                const SpanTexture& texture=spanTexture(op.tex);
+                paletteIndexed_.usePremultiplied(texture.premultiplied);
+                paletteIndexed_.usePlain(texture.name);
+            }
+            renderStats_.add(RS::BodySubmissions);
+            ++paletteSpanCommands_;
+            if(op.arenaFirst>=0) {
+                const std::span<const GLint> firsts(bodyArenaFirsts_.data()+op.arenaFirst,op.arenaRanges);
+                const std::span<const GLsizei> counts(bodyArenaCounts_.data()+op.arenaFirst,op.arenaRanges);
+                bodySubmit_.passDrawBuffer(bodyArenaBuffers_[op.arenaSlot].id(),firsts,counts,size_t(op.count));
+                renderStats_.add(RS::ArenaDraws);
+                renderStats_.add(RS::ArenaRanges,firsts.size());
+            } else {
+                bodySubmit_.passDraw(std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(op.count)));
+            }
+        }
+        paletteIndexed_.endPass();
+        bodySubmit_.endPass();
+        ++paletteSpans_;
+        return end;
+    }
+
+    int GameView::drawModelRun(SDL_Texture* texture, const SDL_Vertex* vertices, int count, bool countSdl) {
+        if(tak::NativeProgram* program=paletteProgram(texture)) {
+            const int drawn=bodySubmit_.draw(ren_,texture,std::span<const SDL_Vertex>(vertices,size_t(count)),
+                                             true,0,{0,0},program);
+            if(drawn==0) {++paletteIndexedDraws_;return 0;}
+            ++paletteFallbacks_;
+            if(!paletteIndexedFailed_)std::fprintf(stderr,"palette: indexed draw failed; using baked pages\n");
+            paletteIndexedFailed_=true;
+            return 1;
+        }
+        if(countSdl)tak::render::countSdlGeometry(size_t(count),size_t(count)*sizeof(SDL_Vertex));
+        return SDL_RenderGeometry(ren_,texture,vertices,count,nullptr,0);
+    }
+    int GameView::drawModelRunThunk(void* self, SDL_Renderer*, SDL_Texture* texture, const SDL_Vertex* vertices, int count) {
+        return static_cast<GameView*>(self)->drawModelRun(texture,vertices,count,true);
     }
 
     // The animated model textures that have an atlas rect, in registry order, with
@@ -4279,9 +4481,10 @@
         for (auto& [n, frames] : textures_)
             for (SDL_Texture* t : frames) if (t) gpuvram::destroy(t);
         textures_.clear();
-        for(auto& page:paletteTexturePages_)gpuvram::destroy(page.texture);
-        paletteTexturePages_.clear();paletteTextureSheets_.clear();palettePreparedModels_.clear();
-        paletteTextureSources_.clear();
+        releasePaletteSheets();
+        paletteIndexed_.release();
+        paletteTextureSources_.clear();paletteBanks_.clear();
+        paletteMode_=PaletteMode::Unset;
         for (auto& page:shadowMaskPages_) {
             if(page.texture)gpuvram::destroy(page.texture);
             if(page.coverage)gpuvram::destroy(page.coverage);
@@ -4355,7 +4558,8 @@
             SDL_RenderFlush(ren_);   // queued draws must not pick up the new mode
             const SDL_ScaleMode mode = unitScaleMode();
             for (SDL_Texture* t : atlasTex_) if (t) SDL_SetTextureScaleMode(t, mode);
-            for (auto& page : paletteTexturePages_) if (page.texture) SDL_SetTextureScaleMode(page.texture, mode);
+            if (paletteMode_ == PaletteMode::Baked)   // indexed keys are never sampled; the form follows next frame
+                for (auto& page : palettePages_) if (page.texture) SDL_SetTextureScaleMode(page.texture, mode);
             for (auto& page : shadowSilhouettePages_) if (page.texture) SDL_SetTextureScaleMode(page.texture, mode);
         }
         updateWorldFilter();
@@ -5481,8 +5685,7 @@
             // VRAM pressure -- corpse meshes load mid-game) must be SKIPPED:
             // SDL_RenderGeometry(nullptr,..) paints the raw vertex colours as a
             // solid white shape. Invisible-until-retry beats a white flash.
-            if (r.first)
-                SDL_RenderGeometry(ren_, r.first, g.verts.data() + off, r.second, nullptr, 0);
+            if (r.first) drawModelRun(r.first, g.verts.data() + off, r.second, false);
             off += r.second;
         }
 
@@ -7582,6 +7785,11 @@
                                 const auto c=uv[idx[k]&3];
                                 tri.v[k].tex_coord={sheet.uv.x+(float((level-5)%4)+c.x)*sheet.uv.w,
                                     sheet.uv.y+(float((level-5)/4)+c.y)*sheet.uv.h};
+                                // Indexed form: the sheet id as an exact integer offset
+                                // (palettesheets.h); the program recovers both.
+                                if(sheet.sheet!=tak::render::palette::kNoSheet)
+                                    tak::render::palette::encodeSheet(tri.v[k].tex_coord.x,
+                                        tri.v[k].tex_coord.y,sheet.sheet);
                             }
                         }
                     }

@@ -70,6 +70,8 @@
 #include "client/geometrystages.h"    // staged unit geometry: local / placement / material (workstream D)
 #include "client/geometryowners.h"    // stable per-unit geometry entries (workstream C)
 #include "client/shadowtiles.h"       // shadow silhouette tile keys and reuse (workstream E)
+#include "client/palettesheets.h"     // structure palette sheet layout + indexed form (workstream M)
+#include "client/paletteindexed.h"    // indexed palette program on the OpenGL backend (workstream M)
 #include "client/shadowatlas.h"       // persistent shadow tile cells (workstream F)
 #include "client/cpubudget.h"         // retained CPU buffer trimming (workstream J)
 #include "client/ordertrail.h"
@@ -700,6 +702,13 @@ public:
     const tak::render::EntryPoolStats& ownershipTotals() const { return ownershipTotals_; }
     // Debug harness: the world-reset epoch bump of a rejoin, without the reset.
     void renderStudyBumpWorldEpoch() { worldEpoch_.fetch_add(1, std::memory_order_release); }
+    // Render study (workstream M): toggle Texture Filtering Off <-> Units (the palette
+    // form follows: indexed for point-sampled units, baked for bilinear ones).
+    void renderStudyToggleFilter() { setTextureFilter(textureFilter_ ? 0 : 1); }
+    // Workstream M totals since the session began (study requirement checks).
+    struct PaletteTotals { uint64_t indexedDraws = 0, spans = 0, fallbacks = 0, switches = 0, uploadBytes = 0,
+                                    indexedFrames = 0, bakedFrames = 0; };
+    const PaletteTotals& paletteTotals() const { return paletteTotals_; }
     // Render study (workstream L): a camera shake of the given magnitude (shakemagnitude
     // units) and duration, the path a weapon's shake request takes.
     void renderStudyShake(float magnitude, float seconds) { triggerShake(magnitude, seconds); }
@@ -1421,19 +1430,68 @@ private:
 #endif
     // Authored palette lookup sheets: each frame has the 20 reachable shade bands (5–24)
     // arranged in a four-column sheet. Shared pages preserve batching across polygon light levels.
+    // Workstream M (client/palettesheets.h, paletteindexed.h): the layout is computed once
+    // (paletteLayout_) and held in ONE of two forms. Baked: 2048² RGBA pages, each frame
+    // expanded into its 20 bands (the pre-M form; every renderer). Indexed: per page a 1x1
+    // key texture (the run's texture, so batching is unchanged) and a 512² (index, alpha)
+    // page drawn by the indexed program; sheet ids ride in the texture coordinates. The
+    // form switches as a whole (paletteMode_): the other form's pages are released, the
+    // layout restarts and geometry, distant images and the body arena are rebuilt.
     struct PaletteTextureSource {
-        tak::gaf::Palette palette;
-        std::vector<uint8_t> shades;
-        std::vector<tak::gaf::Frame> indexed;
+        uint8_t bank = 0;                               // paletteBanks_ (palette + shade table)
+        std::vector<tak::render::palette::Frame> frames;  // (index, alpha) per texel
     };
-    struct PaletteTextureSheet { SDL_Texture* texture=nullptr; SDL_FRect uv{}; };
-    struct PaletteTexturePage { SDL_Texture* texture=nullptr; std::vector<SDL_Rect> free{{0,0,2048,2048}}; };
+    struct PaletteTextureSheet {
+        SDL_Texture* texture=nullptr;   // baked page, or the indexed page's key texture
+        SDL_FRect uv{};                 // the frame's band-0 rectangle on the 2048² layout page
+        uint32_t sheet=tak::render::palette::kNoSheet;   // indexed: sheet id within the page
+    };
+    struct PalettePage {
+        SDL_Texture* texture=nullptr;   // baked page (16 MiB) or key texture (1x1)
+        uint32_t sheets=0;              // indexed: sheet ids handed out
+    };
+    enum class PaletteMode : uint8_t { Unset, Baked, Indexed };
+    std::vector<tak::render::palette::Bank> paletteBanks_;
     std::map<std::string,PaletteTextureSource> paletteTextureSources_;
     std::map<std::string,std::vector<PaletteTextureSheet>> paletteTextureSheets_;
-    std::vector<PaletteTexturePage> paletteTexturePages_;
+    std::vector<PalettePage> palettePages_;
+    tak::render::palette::PageLayout paletteLayout_;
     std::set<const PieceMeta*> palettePreparedModels_;
+    tak::PaletteIndexedGL paletteIndexed_;
+    std::vector<bool> paletteBanksUploaded_;
+    PaletteMode paletteMode_ = PaletteMode::Unset;
+    bool paletteIndexedFailed_ = false;   // an indexed draw failed: baked for the rest of the session
+    bool paletteLinear_ = false;          // indexed program variant in use (experimental)
+    uint64_t paletteUploadBytes_ = 0;     // texture bytes uploaded for sheets this frame (telemetry)
+    uint64_t paletteSwitches_ = 0, paletteIndexedDraws_ = 0, paletteFallbacks_ = 0;   // per frame
+    size_t paletteCpuKey_ = 0, paletteCpuCache_ = 0;   // telemetry: CPU bytes, recounted when the maps change size
+    PaletteTotals paletteTotals_;
     void preparePaletteTextures(const PieceMeta& meta);
     void preparePaletteTexture(const std::string& name);
+    void updatePaletteMode();
+    void releasePaletteSheets();
+    size_t paletteGpuBytes() const;
+    size_t paletteCpuBytes() const;
+    // The indexed program for a run whose texture is an indexed page's key, else
+    // nullptr (atlas pages, baked palette pages, other renderers).
+    tak::NativeProgram* paletteProgram(SDL_Texture* texture);
+    // One model run: SDL_RenderGeometry, or the indexed program for indexed keys
+    // (special units, distant-image bakes). Returns SDL's result, or 1 when an
+    // indexed run could not be drawn (counted; the form falls back next frame).
+    int drawModelRun(SDL_Texture* texture, const SDL_Vertex* vertices, int count, bool countSdl);
+    static int drawModelRunThunk(void* self, SDL_Renderer*, SDL_Texture* texture, const SDL_Vertex* vertices, int count);
+    // Body replay (workstream M): from an indexed palette command, the following body
+    // commands up to the next feature, special unit, air-shadow boundary or a texture
+    // that cannot join (blend other than BLEND, colour/alpha mod, unnormalized) are
+    // drawn natively under ONE priming -- palette runs by the indexed program, the
+    // others by an SDL-identical RGBA program. Returns one past the last command drawn
+    // (== first when the pass could not start: the caller draws `first` as usual).
+    size_t drawPaletteSpan(size_t first);
+    int palettePage(SDL_Texture* texture) const;
+    struct SpanTexture { SDL_Texture* texture = nullptr; GLuint name = 0; bool premultiplied = false; };
+    const SpanTexture& spanTexture(SDL_Texture* texture);   // name 0 = cannot join a native span
+    std::vector<SpanTexture> spanTextures_;   // per frame (body replay)
+    uint64_t paletteSpans_ = 0, paletteSpanCommands_ = 0;   // per frame (telemetry)
 
     // Per-type on-screen sprite box (offset from the draw anchor, px @ zoom 1), the
     // union over facings of the projected model bounds. Drives click-selection so a

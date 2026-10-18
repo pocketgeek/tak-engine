@@ -34,6 +34,13 @@ public:
     // Generates the deferred body of items[index] and refreshes its source, runs
     // and revision (render thread). Only reached when a prediction was wrong.
     using Materialize=void(*)(void* context,size_t index);
+    // Draws one run of a bake in place of SDL_RenderGeometry (and counts it);
+    // GameView routes indexed palette runs (workstream M) through it.
+    using DrawRun=int(*)(void* context,SDL_Renderer*,SDL_Texture*,const SDL_Vertex*,int count);
+    void setRunDrawer(DrawRun draw,void* context) { drawRun_=draw; drawRunContext_=context; }
+    // The image pages' blend mode: premultiplied colour (ONE, ONE_MINUS_SRC_ALPHA, ADD
+    // for colour and alpha).
+    static SDL_BlendMode pageBlendMode();
     // The rules, shared with GameView's lookup before body generation.
     static constexpr float kMaxZoom=0.6f;          // eligible at this zoom or below
     static constexpr size_t kMinVertices=96;       // smaller bodies stay live
@@ -84,6 +91,8 @@ public:
     // remain and each can keep its tile position (bounded per sweep).
     static constexpr int kMigrateMax=256;
 private:
+    DrawRun drawRun_=nullptr;
+    void* drawRunContext_=nullptr;
     struct Entry {
         int slot=-1;
         uint64_t seen=0,painted=0,revision=0;

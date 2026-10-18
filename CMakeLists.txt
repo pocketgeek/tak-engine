@@ -1368,6 +1368,21 @@ if(TAK_BUILD_CLIENT)
           $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
           --testbuild --winsize 1280 960 --novsync)
       set_tests_properties(render_texture_reuse PROPERTIES TIMEOUT 90)
+      # Workstream M: every structure type at zoom 0.5 (distant-image bakes), construction
+      # sites (special units), Texture Filtering toggled every 70 frames and render-target
+      # resets: no failed indexed draw; on OpenGL indexed draws and switches both ways,
+      # elsewhere the baked pages only (the ctest's dummy driver; run it with
+      # SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=opengl for the GL form).
+      add_test(NAME render_palette_indexed COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+          TAK_SHADOW_BENCH=160 TAK_RENDER_ROSTER=structures TAK_RENDER_SPACING=96 TAK_PROFILE_ZOOM=0.5
+          TAK_RENDER_EXTRAS=1 TAK_RENDER_CAMERA=1 TAK_RENDER_FILTER=70 TAK_RENDER_RESET=110
+          TAK_RENDER_STUDY=1 TAK_RENDER_FRAMES=300 TAK_REQUIRE_PALETTE=1 TAK_GEOMETRY_VERIFY=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/render-test-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/render-test-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1280 960 --novsync)
+      set_tests_properties(render_palette_indexed PROPERTIES TIMEOUT 120)
       # Animated colour atlases in a real scene (two player colours, simulated
       # render-target resets): after every update each atlas must equal a complete
       # repaint byte for byte (TAK_ATLAS_VERIFY; throws on the first mismatch).
