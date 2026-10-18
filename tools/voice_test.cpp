@@ -347,6 +347,36 @@ static void testEngine(const fs::path& dir) {
     pump(30, false, false);
     check(v.micState() == VoiceEngine::Device::Off, "and closes it again");
 
+    // Device loss: both devices vanish (closed behind the engine's back, as an unplug stops
+    // them) while the key is held. The re-opened microphone usually has the SAME device id,
+    // and it starts paused: the engine must start it again without a fresh key press.
+    auto unplug = [] { for (SDL_AudioDeviceID id = 1; id < 64; ++id) SDL_CloseAudioDevice(id); };
+    sent.clear();
+    pump(200, true, true);
+    check(!sent.empty(), "talking before the unplug");
+    unplug();
+    pump(2300, true, true);   // the re-open waits out kRetryMs
+    const size_t beforeTail = sent.size();
+    pump(500, true, true);
+    check(v.micState() == VoiceEngine::Device::Lost && v.outState() == VoiceEngine::Device::Lost,
+          "a lost device re-opens and says DEVICE LOST");
+    check(sent.size() - beforeTail >= 15, "the re-opened mic sends with the key still held: " +
+                                              std::to_string(sent.size() - beforeTail) + " frames in 0.5 s");
+    pump(60, true, false);
+    pump(30, false, false);
+    // The same on the VOICE CHAT page: the meter comes back without reopening the page.
+    v.setMonitoring(true);
+    pump(200, false, false);
+    unplug();
+    pump(2400, false, false);
+    s.voiceMicVolume = 50;    // a level that moves proves frames arrive (a stuck meter keeps 0.5)
+    pump(300, false, false);
+    check(v.micState() == VoiceEngine::Device::Lost && v.micLevel() > 0.2f && v.micLevel() < 0.3f,
+          "the page's meter runs again after a lost mic re-opens: " + std::to_string(v.micLevel()));
+    s.voiceMicVolume = 100;
+    v.setMonitoring(false);
+    pump(30, false, false);
+
     // A chosen device that is not there falls back to the system default, and says so.
     s.voiceMicDevice = "No Such Microphone";
     s.voiceOutputSameAsGame = false; s.voiceOutputDevice = "No Such Speaker";

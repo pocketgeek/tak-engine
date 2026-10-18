@@ -48,6 +48,10 @@ struct Endpoint {
     std::string wanted;            // the chosen device ("" = system default)
     VoiceEngine::Device state = VoiceEngine::Device::Off;
     uint64_t retryAt = 0;
+    // Counts open() calls. A re-open usually gets the SAME device id back (SDL hands out the
+    // lowest free one, and open() closes the old device first), so this, not the id, says the
+    // device is new -- a new capture device starts paused and has to be started again.
+    unsigned opens = 0;
 
     void close() {
         if (dev) SDL_CloseAudioDevice(dev);
@@ -58,6 +62,7 @@ struct Endpoint {
     // marks a re-open after the device went away (shown as DEVICE LOST).
     void open(bool lost, uint64_t now) {
         close();
+        ++opens;
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) { state = VoiceEngine::Device::Failed; return; }
         SDL_AudioSpec want{}, got{};
         want.freq = voice::kRate;
@@ -190,7 +195,7 @@ void VoiceEngine::update(bool inRoom, bool transmit, const Sender& send) {
     if (!wantCap && p.cap.state != Device::Off) { p.cap.close(); p.capRunning = false; p.pending.clear(); p.level = 0; }
     if (wantOut && !p.out.dev && p.out.state == Device::Off) p.out.open(false, now);
     if (!wantOut && p.out.state != Device::Off) p.out.close();
-    if (wantCap) { const SDL_AudioDeviceID was = p.cap.dev; p.cap.maintain(now); if (p.cap.dev != was) p.capRunning = false; }
+    if (wantCap) { const unsigned was = p.cap.opens; p.cap.maintain(now); if (p.cap.opens != was) p.capRunning = false; }
     if (wantOut) p.out.maintain(now);
 
     // ---- microphone: record only while talking or metering ----
