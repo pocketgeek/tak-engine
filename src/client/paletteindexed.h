@@ -124,61 +124,18 @@ public:
         pages_[page]->linear = linear;
         return pages_[page].get();
     }
-    // ---- pass use (GeometrySubmit::beginPass .. endPass) ------------------------
-    // beginPass() saves the program, the active unit and units 1-4; usePage()
-    // selects a page's indexed program, usePlain() an SDL-identical RGBA program
-    // sampling `texture` from unit 4 (atlas and other plain runs of the pass:
-    // SDL's TEXTURE_VERTEX_SHADER and texture2D(tex, uv) * colour, so the result
-    // is SDL's); endPass() restores what beginPass() saved. Unit 0 -- SDL's -- is
-    // never touched.
-    void beginPass() {
-        // The primed blend factors (SDL's, for the prime texture's mode): restored
-        // by endPass() if usePremultiplied() changed them.
-        getInteger_(GL_BLEND_SRC_RGB, &pass_.blend[0]);
-        getInteger_(GL_BLEND_DST_RGB, &pass_.blend[1]);
-        getInteger_(GL_BLEND_SRC_ALPHA, &pass_.blend[2]);
-        getInteger_(GL_BLEND_DST_ALPHA, &pass_.blend[3]);
-        pass_.premultiplied = false;
-        getInteger_(GL_CURRENT_PROGRAM, &pass_.program);
-        getInteger_(GL_ACTIVE_TEXTURE, &pass_.active);
-        for (int i = 0; i < 4; ++i) {
-            activeTexture_(kPassUnits[i]);
-            getInteger_(GL_TEXTURE_BINDING_2D, &pass_.binding[i]);
-            pass_.bound[i] = GLuint(pass_.binding[i]);
-        }
-        pass_.current = 0;
-        pass_.open = true;
-    }
-    void usePage(size_t page, bool linear) {
-        if (!pass_.open || page >= pages_.size()) return;
-        bindPass(0, pages_[page]->texture);
-        bindPass(1, identity_);
-        bindPass(2, lut_);
-        useInPass(linear ? linear_ : nearest_);
+    // ---- pass use (NativePassGL, workstream N) -----------------------------------
+    // The program and the textures (units 1-3: index page, identity, LUT) for one
+    // page's runs inside a native pass; NativePassGL binds them and restores the
+    // state SDL primed when the pass ends. False for an unknown page.
+    bool passBinding(size_t page, bool linear, GLuint& program, GLuint (&textures)[3]) {
+        if (page >= pages_.size() || !usable_) return false;
+        program = linear ? linear_ : nearest_;
+        textures[0] = pages_[page]->texture;
+        textures[1] = identity_;
+        textures[2] = lut_;
         ++draws_;
-    }
-    void usePlain(GLuint texture) {
-        if (!pass_.open) return;
-        bindPass(3, texture);
-        useInPass(plain_);
-    }
-    // Blending for the next draw of the pass: the primed mode, or premultiplied
-    // colour (ONE, ONE_MINUS_SRC_ALPHA for colour and alpha, ADD -- the distant-image
-    // pages' custom SDL mode; the equation is ADD in both).
-    void usePremultiplied(bool premultiplied) {
-        if (!pass_.open || premultiplied == pass_.premultiplied) return;
-        if (premultiplied) blendFuncSeparate_(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-        else blendFuncSeparate_(GLenum(pass_.blend[0]), GLenum(pass_.blend[1]), GLenum(pass_.blend[2]), GLenum(pass_.blend[3]));
-        pass_.premultiplied = premultiplied;
-    }
-    void endPass() {
-        if (!pass_.open) return;
-        usePremultiplied(false);
-        useProgram_(GLuint(pass_.program));
-        for (int i = 0; i < 4; ++i)
-            if (pass_.bound[i] != GLuint(pass_.binding[i])) { activeTexture_(kPassUnits[i]); bindTexture_(GL_TEXTURE_2D, GLuint(pass_.binding[i])); }
-        activeTexture_(GLenum(pass_.active));
-        pass_.open = false;
+        return true;
     }
 
     // Tracked GPU bytes: index pages + identity + LUT.
@@ -192,7 +149,7 @@ public:
             for (auto& page : pages_) deleteTextures_(1, &page->texture);
             if (identity_) deleteTextures_(1, &identity_);
             if (lut_) deleteTextures_(1, &lut_);
-            for (GLuint program : {nearest_, linear_, plain_}) if (program && deleteProgram_) deleteProgram_(program);
+            for (GLuint program : {nearest_, linear_}) if (program && deleteProgram_) deleteProgram_(program);
         }
         forget();
     }
@@ -215,26 +172,6 @@ private:
         void restore() override { owner->restore(*this); }
     };
     static constexpr GLenum kUnits[3] = {GL_TEXTURE1, GL_TEXTURE2, GL_TEXTURE3};
-    static constexpr GLenum kPassUnits[4] = {GL_TEXTURE1, GL_TEXTURE2, GL_TEXTURE3, GL_TEXTURE4};
-    struct PassState {
-        GLint program = 0, active = 0, binding[4] = {0, 0, 0, 0}, blend[4] = {0, 0, 0, 0};
-        bool premultiplied = false;
-        GLuint bound[4] = {0, 0, 0, 0}, current = 0;
-        bool open = false;
-    } pass_;
-    void bindPass(int unit, GLuint texture) {
-        if (pass_.bound[unit] == texture) return;
-        activeTexture_(kPassUnits[unit]);
-        bindTexture_(GL_TEXTURE_2D, texture);
-        activeTexture_(GLenum(pass_.active));
-        pass_.bound[unit] = texture;
-    }
-    void useInPass(GLuint program) {
-        if (pass_.current == program) return;
-        useProgram_(program);
-        pass_.current = program;
-    }
-
     bool install(Page& page) {
         getInteger_(GL_CURRENT_PROGRAM, &page.savedProgram);
         getInteger_(GL_ACTIVE_TEXTURE, &page.savedActive);
@@ -261,8 +198,7 @@ private:
         if (lut_) gpuvram::removeBuffer(size_t(256) * 256 * 4);
         pages_.clear();
         identity_ = lut_ = 0;
-        nearest_ = linear_ = plain_ = 0;
-        pass_ = {};
+        nearest_ = linear_ = 0;
         bytes_ = 0;
         context_ = nullptr;
         usable_ = false;
@@ -328,7 +264,8 @@ private:
         }
         return shader;
     }
-    GLuint link(const char* fragment, const char* vertex = kVertexShader) {
+    GLuint link(const char* fragment) {
+        const char* vertex = kVertexShader;
         const GLuint vs = compile(GL_VERTEX_SHADER, vertex), fs = compile(GL_FRAGMENT_SHADER, fragment);
         GLuint program = 0;
         if (vs && fs) {
@@ -356,7 +293,6 @@ private:
             uniform1i_(getUniformLocation_(program, "indexPage"), 1);
             uniform1i_(getUniformLocation_(program, "identity"), 2);
             uniform1i_(getUniformLocation_(program, "lut"), 3);
-            uniform1i_(getUniformLocation_(program, "plainTex"), 4);
             useProgram_(GLuint(previous));
         }
         return program;
@@ -365,8 +301,7 @@ private:
         while (getError_() != GL_NO_ERROR) {}
         nearest_ = link(kNearestShader);
         linear_ = nearest_ ? link(kLinearShader) : 0;
-        plain_ = linear_ ? link(kPlainFragmentShader, kPlainVertexShader) : 0;
-        if (!nearest_ || !linear_ || !plain_) {
+        if (!nearest_ || !linear_) {
             std::fprintf(stderr, "palette: indexed program unavailable (%s)\n", error_.c_str());
             return false;
         }
@@ -410,7 +345,7 @@ private:
             proc(linkProgram_, "glLinkProgram") && proc(getProgramiv_, "glGetProgramiv") &&
             proc(getProgramInfoLog_, "glGetProgramInfoLog") && proc(deleteProgram_, "glDeleteProgram") &&
             proc(useProgram_, "glUseProgram") && proc(getUniformLocation_, "glGetUniformLocation") &&
-            proc(uniform1i_, "glUniform1i") && proc(blendFuncSeparate_, "glBlendFuncSeparate");
+            proc(uniform1i_, "glUniform1i");
         if (!proc(bindBuffer_, "glBindBuffer")) bindBuffer_ = nullptr;
         if (!ok) { error_ = "GL 2.0 entry points"; return false; }
         const auto* version = reinterpret_cast<const char*>(getString_(GL_VERSION));
@@ -518,31 +453,9 @@ private:
         "    gl_FragColor = mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y) * v_color;\n"
         "}";
 #undef TAK_PALETTE_SHADER_COMMON
-    // SDL's TEXTURE_VERTEX_SHADER and SHADER_RGBA (render/opengl/SDL_shaders_gl.c,
-    // SDL 2.32), the sampler on unit 4: plain runs inside a pass.
-    static constexpr const char* kPlainVertexShader =
-        "varying vec4 v_color;\n"
-        "varying vec2 v_texCoord;\n"
-        "\n"
-        "void main()\n"
-        "{\n"
-        "    gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;\n"
-        "    v_color = gl_Color;\n"
-        "    v_texCoord = vec2(gl_MultiTexCoord0);\n"
-        "}";
-    static constexpr const char* kPlainFragmentShader =
-        "varying vec4 v_color;\n"
-        "varying vec2 v_texCoord;\n"
-        "uniform sampler2D plainTex;\n"
-        "\n"
-        "void main()\n"
-        "{\n"
-        "    gl_FragColor = texture2D(plainTex, v_texCoord) * v_color;\n"
-        "}";
-
     std::vector<std::unique_ptr<Page>> pages_;
     std::vector<uint8_t> scratch_;   // one frame's RGBA index texels (upload)
-    GLuint identity_ = 0, lut_ = 0, nearest_ = 0, linear_ = 0, plain_ = 0;
+    GLuint identity_ = 0, lut_ = 0, nearest_ = 0, linear_ = 0;
     size_t bytes_ = 0;
     uint64_t draws_ = 0;
     SDL_GLContext context_ = nullptr;
@@ -576,7 +489,6 @@ private:
     void (APIENTRY* useProgram_)(GLuint) = nullptr;
     GLint (APIENTRY* getUniformLocation_)(GLuint, const GLchar*) = nullptr;
     void (APIENTRY* uniform1i_)(GLint, GLint) = nullptr;
-    void (APIENTRY* blendFuncSeparate_)(GLenum, GLenum, GLenum, GLenum) = nullptr;
 };
 
 }  // namespace tak

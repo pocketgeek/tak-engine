@@ -1987,6 +1987,24 @@ int main(int argc, char** argv) {
                 if(gl && require && !std::strcmp(require,"bakes") && !t.bakeRuns)
                     throw std::runtime_error("OpenGL study baked no indexed palette run through drawModelRun");
             }
+            if(tak::devFlag("TAK_NATIVE_PASS_VERIFY") || tak::devFlag("TAK_REQUIRE_NATIVE_PASS")) {
+                // Workstream N: native passes in the body replay. With the verifier every
+                // pass's GL state was compared with SDL's priming (a mismatch threw at the
+                // frame); TAK_REQUIRE_NATIVE_PASS on OpenGL requires passes to have opened.
+                const auto& t=gameView->nativePassTotals();
+                using ull=unsigned long long;
+                SDL_RendererInfo info{};
+                SDL_GetRendererInfo(ren,&info);
+                const bool gl=info.name && std::strcmp(info.name,"opengl")==0;
+                std::printf("NATIVE_PASS_STUDY renderer=%s passes=%llu commands=%llu refused=%llu verified=%llu failures=%llu\n",
+                    info.name ? info.name : "?",ull(t.passes),ull(t.commands),ull(t.refused),ull(t.verified),ull(t.verifyFailures));
+                if(t.verifyFailures)throw std::runtime_error("a native pass left GL state different from SDL's");
+                if(tak::devFlag("TAK_REQUIRE_NATIVE_PASS") && gl && !t.passes)
+                    throw std::runtime_error("OpenGL study opened no native pass");
+                if(!gl && t.passes)throw std::runtime_error("native passes on a renderer without them");
+                if(tak::devFlag("TAK_NATIVE_PASS_VERIFY") && t.passes && t.verified<t.passes)
+                    throw std::runtime_error("native passes went unverified");
+            }
             if(tak::devFlag("TAK_REQUIRE_GEOMETRY_REUSE")) {
                 std::printf("GEOMETRY_VERIFY checks=%llu animated_cross_tick=%llu\n",
                     static_cast<unsigned long long>(gameView->geometryChecks()),

@@ -20,6 +20,7 @@
 // Accelerated runs need TAK_GEOMETRY_TEST_ACCELERATED=1 (SDL_VIDEODRIVER=offscreen
 // is fine); without it the test checks the software refusal only.
 #include "client/paletteindexed.h"
+#include "client/nativepass.h"
 
 #include <array>
 #include <cstdio>
@@ -305,6 +306,9 @@ int main() {
         auto glDeleteBuffers = reinterpret_cast<void (APIENTRY*)(GLsizei, const GLuint*)>(SDL_GL_GetProcAddress("glDeleteBuffers"));
         struct Command { int kind; size_t page; std::vector<SDL_Vertex> baked, drawn; };   // 0 palette, 1 plain, 2 premul
         int passCases = 0;
+        tak::NativePassGL pass;   // workstream N: the pass owner (was PaletteIndexedGL's pass state)
+        CHECK(pass.ready(renderer));
+        pass.setVerify(true);
         for (float scale : {1.0f, 2.0f})
         for (bool offscreen : {false, true})
         for (bool clipped : {false, true})
@@ -382,20 +386,20 @@ int main() {
                 } else {
                     const GLuint plainName = submit.textureName(renderer, plain), premulName = submit.textureName(renderer, premul);
                     CHECK(plainName && premulName);
-                    CHECK(submit.beginPass(renderer, keys[commands[0].page]));
-                    indexed.beginPass();
+                    CHECK(pass.begin(submit, renderer, keys[commands[0].page], false));
                     for (size_t c = 0; c < commands.size(); ++c) {
                         const auto& cmd = commands[c];
-                        indexed.usePremultiplied(cmd.kind == 2);
-                        if (cmd.kind == 0) indexed.usePage(cmd.page, false);
-                        else indexed.usePlain(cmd.kind == 1 ? plainName : premulName);
+                        if (cmd.kind == 0) {
+                            GLuint program = 0, textures[3] = {0, 0, 0};
+                            CHECK(indexed.passBinding(cmd.page, false, program, textures));
+                            pass.useProgram(program, textures);
+                        } else pass.useTexture(cmd.kind == 1 ? plainName : premulName, cmd.kind == 2);
                         if (buffer) {
                             const GLsizei count = GLsizei(cmd.drawn.size());
                             submit.passDrawBuffer(vbo, std::span(&first[c], 1), std::span(&count, 1), cmd.drawn.size());
                         } else submit.passDraw(cmd.drawn);
                     }
-                    indexed.endPass();
-                    submit.endPass();
+                    pass.end(submit);
                 }
                 // SDL draws after the pass: leaked program, bindings, blend, arrays, buffer.
                 const SDL_FRect after1{40, 30, 13, 11}, after2{60, 50, 17, 9};
@@ -422,6 +426,10 @@ int main() {
             CHECK(differing == 0);
             ++passCases;
         }
+        CHECK(pass.verifyFailures() == 0);
+        if (pass.verifyFailures()) std::printf("  pass state: %s\n", pass.lastFailure().c_str());
+        CHECK(pass.verified() == uint64_t(passCases));
+        pass.release();
         SDL_DestroyTexture(premul);
         std::printf("pass: %d cases identical (palette + plain + premultiplied commands, one priming each)\n", passCases);
     }

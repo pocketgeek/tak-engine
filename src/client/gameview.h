@@ -72,6 +72,7 @@
 #include "client/shadowtiles.h"       // shadow silhouette tile keys and reuse (workstream E)
 #include "client/palettesheets.h"     // structure palette sheet layout + indexed form (workstream M)
 #include "client/paletteindexed.h"    // indexed palette program on the OpenGL backend (workstream M)
+#include "client/nativepass.h"        // explicitly owned native passes (workstream N)
 #include "client/shadowatlas.h"       // persistent shadow tile cells (workstream F)
 #include "client/cpubudget.h"         // retained CPU buffer trimming (workstream J)
 #include "client/ordertrail.h"
@@ -1483,21 +1484,41 @@ private:
     // indexed run could not be drawn (counted; the form falls back next frame).
     int drawModelRun(SDL_Texture* texture, const SDL_Vertex* vertices, int count, bool countSdl);
     static int drawModelRunThunk(void* self, SDL_Renderer*, SDL_Texture* texture, const SDL_Vertex* vertices, int count);
-    // Body replay (workstream M): from an indexed palette command, the following body
-    // commands up to the next feature, special unit, air-shadow boundary or a texture
-    // that cannot join (blend other than BLEND, colour/alpha mod, unnormalized) are
-    // drawn natively under ONE priming -- palette runs by the indexed program, the
-    // others by an SDL-identical RGBA program. Returns one past the last command drawn
-    // (== first when the pass could not start: the caller draws `first` as usual).
-    size_t drawPaletteSpan(size_t first);
+    // Native passes (workstream N, client/nativepass.h). In the body replay a run of
+    // body commands up to the next feature, special unit, air-shadow boundary or a
+    // texture that cannot join is drawn natively under ONE priming -- palette runs by
+    // the indexed program, the others by an SDL-identical RGBA program -- when the run
+    // holds a command that would be drawn natively anyway (an indexed run, an arena
+    // command, a batch of kNativeMinVertices or more), so a pass never adds a priming
+    // where SDL's own batching drew the run before. Returns one past the last command
+    // drawn (== first when no pass opened: the caller draws `first` as usual).
+    // Mode (debug TAK_NATIVE_PASS): All (default), Palette (the workstream-M rule:
+    // passes start only at an indexed run -- the same-binary pre-N reference), Off
+    // (no passes; indexed runs draw one by one with their own priming).
+    enum class NativePassMode : uint8_t { Off, Palette, All };
+    NativePassMode nativePassMode_ = NativePassMode::All;
+    bool nativePassesOn_ = false;    // this frame: mode != Off and the renderer can open passes
+    size_t nativeMin_ = 512;         // this frame's native batch threshold (TAK_BODY_ARENA_MIN)
+    size_t nativeScanEnd_ = 0;       // body replay: commands below this were scanned and need no pass
+    tak::NativePassGL nativePass_;
+    size_t drawNativeSpan(size_t first);
     int palettePage(SDL_Texture* texture) const;
     // A unit's runs in one native pass (special units): false when the form is baked,
     // no run is indexed or a run texture cannot join -- the caller draws run by run.
     bool drawRunsNative(const std::vector<std::pair<SDL_Texture*, int>>& runs, const SDL_Vertex* vertices);
+    // Select a span command's program/texture inside an open pass; counts indexed runs.
+    void useSpanTexture(SDL_Texture* texture);
     struct SpanTexture { SDL_Texture* texture = nullptr; GLuint name = 0; bool premultiplied = false; };
-    const SpanTexture& spanTexture(SDL_Texture* texture);   // name 0 = cannot join a native span
+    const SpanTexture& spanTexture(SDL_Texture* texture);   // name 0 = cannot join a native pass
     std::vector<SpanTexture> spanTextures_;   // per frame (body replay)
-    uint64_t paletteSpans_ = 0, paletteSpanCommands_ = 0;   // per frame (telemetry)
+    uint64_t paletteSpans_ = 0, paletteSpanCommands_ = 0;   // per frame (telemetry): passes holding indexed runs
+    uint64_t nativePasses_ = 0, nativePassCommands_ = 0, nativePassRefused_ = 0;   // per frame (telemetry)
+public:
+    // Workstream N verifier totals (TAK_NATIVE_PASS_VERIFY): passes checked, failures.
+    struct NativePassTotals { uint64_t passes = 0, commands = 0, refused = 0, verified = 0, verifyFailures = 0; };
+    const NativePassTotals& nativePassTotals() const { return nativePassTotals_; }
+private:
+    NativePassTotals nativePassTotals_;
 
     // Per-type on-screen sprite box (offset from the draw anchor, px @ zoom 1), the
     // union over facings of the projected model bounds. Drives click-selection so a

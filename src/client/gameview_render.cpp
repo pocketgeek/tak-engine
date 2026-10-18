@@ -352,6 +352,12 @@
         paletteTotals_.uploadBytes += paletteUploadBytes_;
         paletteUploadBytes_ = paletteIndexedDraws_ = paletteFallbacks_ = paletteSwitches_ = 0;
         paletteSpans_ = paletteSpanCommands_ = 0;
+        nativePassTotals_.passes += nativePasses_;
+        nativePassTotals_.commands += nativePassCommands_;
+        nativePassTotals_.refused += nativePassRefused_;
+        nativePassTotals_.verified = nativePass_.verified();
+        nativePassTotals_.verifyFailures = nativePass_.verifyFailures();
+        nativePasses_ = nativePassCommands_ = nativePassRefused_ = 0;
         updatePaletteMode();
         ++(paletteMode_ == PaletteMode::Indexed ? paletteTotals_.indexedFrames : paletteTotals_.bakedFrames);
         thread_local std::vector<const PieceMeta*> palettePrepared;
@@ -1657,6 +1663,19 @@
         size_t kNativeMin = tak::GeometrySubmit::kNativeMinVertices;
         if (const char* v = tak::devEnv("TAK_BODY_ARENA_MIN")) kNativeMin = size_t(std::max(1, std::atoi(v)));
         const bool bodyDirect = !tak::devFlag("TAK_BODY_SDL_SUBMIT");
+        // Workstream N: native passes in the body replay (debug TAK_NATIVE_PASS=off|
+        // palette|all; TAK_NATIVE_PASS_VERIFY compares the GL state after every pass
+        // with the state SDL primed it with). The pure-SDL reference opens none.
+        nativeMin_ = kNativeMin;
+        nativePassMode_ = NativePassMode::All;
+        if (const char* v = tak::devEnv("TAK_NATIVE_PASS")) {
+            if (!std::strcmp(v, "off")) nativePassMode_ = NativePassMode::Off;
+            else if (!std::strcmp(v, "palette")) nativePassMode_ = NativePassMode::Palette;
+        }
+        nativePass_.setVerify(tak::devFlag("TAK_NATIVE_PASS_VERIFY"));
+        nativePassesOn_ = bodyDirect && nativePassMode_ != NativePassMode::Off &&
+                          nativePass_.ready(ren_) && bodySubmit_.nativeCapable(ren_);
+        nativeScanEnd_ = 0;
         bodyArenaOn_ = bodyDirect && !tak::devFlag("TAK_BODY_ARENA_OFF");
         bodyArenaVerifyOn_ = tak::devFlag("TAK_BODY_ARENA_VERIFY");
         for (auto& buffer : bodyArenaBuffers_) {
@@ -1924,10 +1943,10 @@
         for (size_t opi = 0; opi < drawOps_.size(); ++opi) {
             if (opi == airShadowOp_) drainAirShadows();
             const DrawOp& op = drawOps_[opi];
-            if (paletteMode_ == PaletteMode::Indexed && !op.f && !op.u && op.count > 0 && op.tex &&
-                palettePage(op.tex) >= 0) {
-                // Workstream M: an indexed palette run opens a native span.
-                if (const size_t end = drawPaletteSpan(opi); end > opi) { opi = end - 1; continue; }
+            if (nativePassesOn_ && opi >= nativeScanEnd_ && !op.f && !op.u && op.count > 0 && op.tex) {
+                // Workstream N: a run of body commands in one native pass (M: from an
+                // indexed palette run only).
+                if (const size_t end = drawNativeSpan(opi); end > opi) { opi = end - 1; continue; }
             }
             if (op.f) {
                 const auto& f = *op.f;
@@ -2151,6 +2170,10 @@
         // every air-shadow draw falls inside the same phase as the rest of them.
         drainAirShadows();
         spanTextures_.clear();   // GL names are valid for this replay only
+#ifndef NDEBUG
+        if (nativePass_.verifyFailures())
+            throw std::runtime_error("native pass verify: " + nativePass_.lastFailure());
+#endif
         profSubmitMs_ += (double(SDL_GetPerformanceCounter()) - _st0) / _ptFreq;
         renderStats_.addMs(RP::BodySubmit, -airShadowMs + (double(SDL_GetPerformanceCounter()) - _bsub0) / _ptFreq);
         renderStats_.addMs(RP::ShadowComposite, airShadowMs);
@@ -3813,6 +3836,7 @@
         stats.add(RS::SdlGeometryDraws, submit.sdl);
         stats.add(RS::RetainedDraws, submit.retained);
         stats.add(RS::Flushes, submit.flushes);
+        stats.add(RS::NativePrimes, submit.primes);
         stats.add(RS::TargetSwitches, submit.targetSwitches);
         stats.add(RS::VertsSubmitted, submit.verts);
         stats.add(RS::BytesUploaded, submit.bytes);
@@ -3883,6 +3907,9 @@
         stats.add(RS::PaletteSwitches, paletteSwitches_);
         stats.add(RS::PaletteSpans, paletteSpans_);
         stats.add(RS::PaletteSpanCommands, paletteSpanCommands_);
+        stats.add(RS::NativePasses, nativePasses_);
+        stats.add(RS::NativePassCommands, nativePassCommands_);
+        stats.add(RS::NativePassRefused, nativePassRefused_);
         stats.add(RS::GpuTextureCreates, delta(gpuvram::g_creates, cursor.gpuCreates));
         stats.add(RS::GpuTextureDestroys, delta(gpuvram::g_destroys, cursor.gpuDestroys));
         cursor.gpuCreates = gpuvram::g_creates;
@@ -4174,85 +4201,101 @@
         return page<0 ? nullptr : paletteIndexed_.program(size_t(page),paletteLinear_);
     }
 
-    // Can this run's texture join a native span? BLEND (the primed mode: palette keys
-    // are BLEND) or the distant-image pages' premultiplied mode, no colour/alpha mod
-    // (SDL folds those into vertex colours; the native draw would not), normalized
-    // coordinates. Cached for the frame's replay.
+    // Can this run's texture join a native pass (NativePassGL::joinable: SDL's RGBA
+    // program, BLEND or the distant-image pages' premultiplied mode, no colour/alpha
+    // mod, normalized coordinates)? Cached for the frame's replay.
     const GameView::SpanTexture& GameView::spanTexture(SDL_Texture* texture) {
         for(const auto& entry:spanTextures_)if(entry.texture==texture)return entry;
-        SpanTexture entry{texture,0,false};
-        SDL_BlendMode blend=SDL_BLENDMODE_INVALID;
-        Uint8 r=0,g=0,b=0,a=0;
-        if(SDL_GetTextureBlendMode(texture,&blend)==0 &&
-           (blend==SDL_BLENDMODE_BLEND || blend==tak::DistantModels::pageBlendMode()) &&
-           SDL_GetTextureColorMod(texture,&r,&g,&b)==0 && r==255 && g==255 && b==255 &&
-           SDL_GetTextureAlphaMod(texture,&a)==0 && a==255) {
-            entry.name=bodySubmit_.textureName(ren_,texture);
-            entry.premultiplied=blend!=SDL_BLENDMODE_BLEND;
-        }
-        spanTextures_.push_back(entry);
+        const auto joinable=nativePass_.joinable(bodySubmit_,ren_,texture,tak::DistantModels::pageBlendMode());
+        spanTextures_.push_back({texture,joinable.name,joinable.premultiplied});
         return spanTextures_.back();
     }
 
+    void GameView::useSpanTexture(SDL_Texture* texture) {
+        if(const int page=palettePage(texture);page>=0) {
+            GLuint program=0,textures[3]={0,0,0};
+            if(paletteIndexed_.passBinding(size_t(page),paletteLinear_,program,textures)) {
+                nativePass_.useProgram(program,textures);
+                ++paletteIndexedDraws_;
+            }
+        } else {
+            const SpanTexture& entry=spanTexture(texture);
+            nativePass_.useTexture(entry.name,entry.premultiplied);
+        }
+    }
+
     bool GameView::drawRunsNative(const std::vector<std::pair<SDL_Texture*, int>>& runs, const SDL_Vertex* vertices) {
-        if(paletteMode_!=PaletteMode::Indexed)return false;
+        if(!nativePassesOn_ || paletteMode_!=PaletteMode::Indexed)return false;
         SDL_Texture* prime=nullptr;
         for(const auto& [texture,count]:runs) {
             if(!texture || count<=0)continue;
             if(palettePage(texture)>=0) { if(!prime)prime=texture; }
             else if(!spanTexture(texture).name)return false;
         }
-        if(!prime || !bodySubmit_.beginPass(ren_,prime))return false;
-        paletteIndexed_.beginPass();
+        if(!prime)return false;
+        if(!nativePass_.begin(bodySubmit_,ren_,prime,false)) {++nativePassRefused_;return false;}
         int offset=0;
+        uint64_t commands=0;
         for(const auto& [texture,count]:runs) {
             if(texture && count>0) {
-                if(const int page=palettePage(texture);page>=0) {
-                    paletteIndexed_.usePremultiplied(false);
-                    paletteIndexed_.usePage(size_t(page),paletteLinear_);
-                    ++paletteIndexedDraws_;
-                } else {
-                    const SpanTexture& entry=spanTexture(texture);
-                    paletteIndexed_.usePremultiplied(entry.premultiplied);
-                    paletteIndexed_.usePlain(entry.name);
-                }
+                useSpanTexture(texture);
                 bodySubmit_.passDraw(std::span<const SDL_Vertex>(vertices+offset,size_t(count)));
+                ++commands;
             }
             offset+=count;
         }
-        paletteIndexed_.endPass();
-        bodySubmit_.endPass();
+        nativePass_.end(bodySubmit_);
         ++paletteSpans_;
+        ++nativePasses_;
+        nativePassCommands_+=commands;
         return true;
     }
 
-    size_t GameView::drawPaletteSpan(size_t first) {
+    size_t GameView::drawNativeSpan(size_t first) {
         using RS = tak::render::Counter;
+        if(nativePassMode_==NativePassMode::Palette && palettePage(drawOps_[first].tex)<0)return first;
+        // Scan the run: every command up to the next boundary or a texture that
+        // cannot join. The prime is the first BLEND texture (palette keys are BLEND),
+        // else the first premultiplied one (then no BLEND texture is in the run).
         size_t end=first;
+        bool nativeAnyway=false,palette=false;
+        SDL_Texture *prime=nullptr,*premultipliedPrime=nullptr;
         for(;end<drawOps_.size();++end) {
             if(end>first && end==airShadowOp_)break;
             const DrawOp& op=drawOps_[end];
             if(op.f || op.u)break;
             if(op.count<=0 || !op.tex)continue;   // skipped by the replay anyway (null atlas page)
             if(op.arenaFirst>=0 && bodyArenaBuffers_[op.arenaSlot].simulated())break;
-            if(palettePage(op.tex)<0 && !spanTexture(op.tex).name)break;
+            if(palettePage(op.tex)>=0) {
+                nativeAnyway=palette=true;
+                if(!prime)prime=op.tex;
+                continue;
+            }
+            const SpanTexture& texture=spanTexture(op.tex);
+            if(!texture.name)break;
+            if(op.arenaFirst>=0 || size_t(op.count)>=nativeMin_)nativeAnyway=true;
+            if(!texture.premultiplied) { if(!prime)prime=op.tex; }
+            else if(!premultipliedPrime)premultipliedPrime=op.tex;
         }
-        if(end==first || !bodySubmit_.beginPass(ren_,drawOps_[first].tex))return first;
-        paletteIndexed_.beginPass();
+        // Commands of this run need no second scan, whether a pass opens or not:
+        // without a natively drawn command SDL batches the run with no priming at all,
+        // and a refused pass would only be refused again.
+        nativeScanEnd_=std::max(nativeScanEnd_,end);
+        if(end==first || !nativeAnyway)return first;
+        const bool primePremultiplied=!prime;
+        if(!prime)prime=premultipliedPrime;
+        if(!nativePass_.begin(bodySubmit_,ren_,prime,primePremultiplied)) {
+            ++nativePassRefused_;
+            if(!nativePass_.usable())nativePassesOn_=false;   // refused by the state check: not this context
+            return first;
+        }
+        uint64_t commands=0;
         for(size_t i=first;i<end;++i) {
             const DrawOp& op=drawOps_[i];
             if(op.count<=0 || !op.tex)continue;
-            if(const int page=palettePage(op.tex);page>=0) {
-                paletteIndexed_.usePremultiplied(false);
-                paletteIndexed_.usePage(size_t(page),paletteLinear_);
-                ++paletteIndexedDraws_;
-            } else {
-                const SpanTexture& texture=spanTexture(op.tex);
-                paletteIndexed_.usePremultiplied(texture.premultiplied);
-                paletteIndexed_.usePlain(texture.name);
-            }
+            useSpanTexture(op.tex);
             renderStats_.add(RS::BodySubmissions);
-            ++paletteSpanCommands_;
+            ++commands;
             if(op.arenaFirst>=0) {
                 const std::span<const GLint> firsts(bodyArenaFirsts_.data()+op.arenaFirst,op.arenaRanges);
                 const std::span<const GLsizei> counts(bodyArenaCounts_.data()+op.arenaFirst,op.arenaRanges);
@@ -4263,9 +4306,10 @@
                 bodySubmit_.passDraw(std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(op.count)));
             }
         }
-        paletteIndexed_.endPass();
-        bodySubmit_.endPass();
-        ++paletteSpans_;
+        nativePass_.end(bodySubmit_);
+        ++nativePasses_;
+        nativePassCommands_+=commands;
+        if(palette) {++paletteSpans_;paletteSpanCommands_+=commands;}
         return end;
     }
 

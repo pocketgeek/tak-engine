@@ -604,7 +604,12 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "terrain_upload_deferred", "terrain_gated_frames",
                     # workstream L: unit broad phase
                     "units_live", "units_scanned", "unit_candidates", "unit_index_queries",
-                    "unit_index_returned", "unit_index_rows", "unit_index_full_scans"]
+                    "unit_index_returned", "unit_index_rows", "unit_index_full_scans",
+                    # workstream M: indexed structure palette
+                    "palette_indexed_draws", "palette_spans", "palette_span_commands",
+                    # workstream N: native passes (primes = SDL state primings, a subset of flushes)
+                    "body_submissions", "arena_draws", "native_passes", "native_pass_commands",
+                    "native_pass_refused", "native_primes"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",
