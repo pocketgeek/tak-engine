@@ -153,8 +153,10 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 273, "replay format 11 is kept under protocol 273");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 273");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 274, "replay format 11 is kept under protocol 274");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 274");
+    // 274 finishes a lodestone upgrade under a short share (scale the tick of work, then clamp).
+    check(!supportedReplayProtocol(13, 273), "previous stalling lodestone-upgrade protocol is refused");
     // 273 shares short mana across concurrent construction (retail allocation) instead of first-come.
     check(!supportedReplayProtocol(13, 272), "previous all-or-nothing construction protocol is refused");
     // 272 adds Legion's stage-8 navigation (arrival headway on the own slot, chokepoints, subgroups).

@@ -9506,13 +9506,27 @@ void World::tickConstruction(Unit& b, float dt) {
         if (site->lodestoneReplacement) site->lodestoneReplacement->completedWork=1;
     } else if (site->lodestoneReplacement) {
         auto& progress=site->lodestoneReplacement->completedWork;
-        double work=std::min(1.0-progress,double(dt)/std::max(total,0.01f));
+        // Scale one tick of work by the share FIRST, then clamp it to what is
+        // left (retail 429af0 subtracts allocation * work and completes at
+        // remaining <= 0). Clamping first and scaling after made the last tick
+        // cover only share * gap: the gap shrank geometrically, and once it was
+        // one ulp a share <= 0.5 rounded away, so the site sat at full hp and
+        // completedWork 1-2^-53 until the allocation rose above one half.
+        // The request is the full tick (retail records it before scaling).
+        double work=double(dt)/std::max(total,0.01f);
         const double cost=site->type->buildCost*work;
         const double share=tm.constructionShare(cost);
         if (share<=0) return;
-        tm.debitMana(std::min(tm.mana,cost*share));
         if (share<1) work*=share;
-        progress=std::min(1.0,progress+work);
+        const double gap=1.0-progress;
+        if (work>=gap) {
+            work=gap;
+            tm.debitMana(std::min(tm.mana,site->type->buildCost*gap));
+            progress=1.0;
+        } else {
+            tm.debitMana(std::min(tm.mana,cost*share));
+            progress=std::min(1.0,progress+work);
+        }
         site->hp=fxMin(Fixed::fromInt(site->type->maxHp),site->hp+
             Fixed::fromFloat(float(site->type->maxHp*0.95*work)));
     } else {

@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 273;      // 273: construction shares short mana (Retail and Legion): production, mobile construction
+constexpr uint32_t kNetVersion = 274;      // 274: a lodestone upgrade scales its tick of work by the construction share BEFORE
+                                           //      clamping it to what is left (retail 429af0), so a short share no longer leaves the
+                                           //      site one ulp from done at full hp until the allocation rises above one half.
+                                           //      273 replays refused
+                                           // 273: construction shares short mana (Retail and Legion): production, mobile construction
                                            //      and repair each do allocation x a full tick, allocation = pool / last tick's demand
                                            //      (retail 51d837/429af0), the last pro-rated against what is left, instead of each
                                            //      paying in full or doing nothing in unit order. New hashed state: per-player demand,

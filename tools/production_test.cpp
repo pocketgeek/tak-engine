@@ -173,6 +173,68 @@ static void shortIncomeIsShared() {
           "...and the pool is spent, never overdrawn", detail);
 }
 
+// A LODESTONE UPGRADE FINISHES UNDER A SHORT SHARE. Playtest (protocol 273):
+// a Zhon Shaman's divine lodestone sat at full hp, completedWork 1-2^-53, for
+// 3.5 minutes, and finished the tick after the player stopped one producer.
+// The replacement path clamped the tick's work to what was left and THEN scaled
+// it by the share, so the last stretch shrank geometrically and, one ulp from
+// done, a share <= 0.5 rounded the step away. Retail (429af0) scales first and
+// completes at remaining <= 0.
+static void lodestoneUpgradeFinishesUnderShortShare() {
+    std::printf("a lodestone upgrade finishes while income is short:\n");
+    auto ownedWorld = makeWorld(128, 128);
+    World& w = *ownedWorld;
+    w.setManaSpots({{512, 512}});
+    UnitType lode{}, upgrade{};
+    lode.name = lode.id = "zonlode"; lode.side = "ZON"; lode.maxHp = 1000;
+    lode.footX = lode.footZ = 2; lode.onMana = true; lode.buildTime = 1; lode.buildCost = 1;
+    lode.maxVel = tak::sim::Fixed();                                     // a structure
+    upgrade = lode; upgrade.name = upgrade.id = "zonmana";
+    upgrade.buildTime = 10; upgrade.buildCost = 1200;                      // 300 ticks, 4/tick
+    UnitType shaman = soldierType(); shaman.id = "shaman";
+    shaman.isBuilder = true; shaman.workerTime = 1; shaman.buildDist = 64;
+    // A long, costly second build keeps the other demand at twice the income,
+    // so the allocation stays below one half even when the upgrade asks for
+    // nothing -- the playtest's shape (other demand 8.2/tick on 3.5 of income).
+    UnitType hall{}; hall.name = hall.id = "hall"; hall.maxVel = tak::sim::Fixed();
+    hall.maxHp = 1000; hall.footX = hall.footZ = 2;
+    hall.buildTime = 200; hall.buildCost = 48000;                        // 6000 ticks, 8/tick
+    UnitType well{}; well.name = well.id = "well"; well.maxHp = 100;
+    well.footX = well.footZ = 2; well.income = 96;                       // 3.2/tick
+    well.storage = 10000;
+    const int bid = w.spawn(&shaman, 512, 560, 0, 0);
+    const int helper = w.spawn(&shaman, 1000, 1048, 0, 0);
+    w.spawn(&well, 1400, 1400, 0, 0);
+    const int old = w.startBuild(bid, &lode, 512, 512, World::Approach::None);
+    check(old != 0, "the base lodestone is placed");
+    if (!old) return;
+    w.unit(old)->underConstruction = false;
+    w.unit(old)->hp = tak::sim::Fixed::fromInt(lode.maxHp);
+    w.cancelBuilds(bid); w.stop(bid);
+    w.player(0).mana = 0;
+    check(w.startBuild(helper, &hall, 1000, 1000, World::Approach::None) != 0,
+          "a second builder starts a costly building");
+    const int site = w.startBuild(bid, &upgrade, 512, 512, World::Approach::None);
+    check(site != 0 && w.unit(site)->lodestoneReplacement,
+          "the upgrade replaces the base lodestone");
+    if (!site || !w.unit(site)->lodestoneReplacement) return;
+    // Demand 12/tick on 3.2/tick of income: allocation 0.267, so 300 / 0.267 =
+    // 1125 ticks, give or take the first tick, which has no demand to divide by.
+    const int expected = 1125;
+    int ticks = 0;
+    for (; ticks < 3 * expected && w.unit(site)->underConstruction; ++ticks) w.tick(1.0f / 30.0f);
+    char detail[160];
+    std::snprintf(detail, sizeof detail, "%d ticks (expected ~%d), completedWork %.17g, allocation %.3f",
+                  ticks, expected, w.unit(site)->lodestoneReplacement ?
+                  w.unit(site)->lodestoneReplacement->completedWork : -1.0,
+                  w.player(0).constructionAllocation);
+    check(w.unit(site)->alive() && !w.unit(site)->underConstruction &&
+          w.unit(site)->lodestoneReplacement->completedWork == 1.0,
+          "the upgrade completes at allocation 0.27", detail);
+    check(ticks <= expected + 10, "...at the shared rate, with no stalled last tick", detail);
+    check(w.player(0).mana >= 0, "...and the pool is never overdrawn", detail);
+}
+
 static void outputExistsDuringConstruction() {
     auto ownedWorld = makeWorld(128,128);
     World& w = *ownedWorld;
@@ -599,6 +661,7 @@ int main(int argc,char** argv) {
     mobileProducerFacesSite();
     productionNeedsMana();
     shortIncomeIsShared();
+    lodestoneUpgradeFinishesUnderShortShare();
     outputExistsDuringConstruction();
     scriptControlsReadinessAndPosition();
     mobileScriptRandomRunsInWorld();
