@@ -1738,6 +1738,18 @@ if(TAK_BUILD_CLIENT)
     add_executable(unit_index_test tools/unit_index_test.cpp)
     target_include_directories(unit_index_test PRIVATE src)
     add_test(NAME unit_index COMMAND unit_index_test)
+    # Workstream M: structure palette sheet layout, sheet-id coordinates and the
+    # indexed decode against the baked expansion (pure, no SDL).
+    add_executable(palette_sheets_test tools/palette_sheets_test.cpp)
+    target_include_directories(palette_sheets_test PRIVATE src)
+    add_test(NAME palette_sheets COMMAND palette_sheets_test)
+    # ... and the indexed GL program against the baked pages (pixel-identical NEAREST);
+    # GL runs need TAK_GEOMETRY_TEST_ACCELERATED=1, the ctest checks the software refusal.
+    add_executable(palette_indexed_test tools/palette_indexed_test.cpp)
+    target_include_directories(palette_indexed_test PRIVATE src)
+    target_compile_definitions(palette_indexed_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(palette_indexed_test PRIVATE ${_tak_sdl2})
+    add_test(NAME palette_indexed COMMAND palette_indexed_test)
     add_executable(geometrysubmit_test tools/geometrysubmit_test.cpp)
     target_include_directories(geometrysubmit_test PRIVATE src)
     target_compile_definitions(geometrysubmit_test PRIVATE SDL_MAIN_HANDLED)

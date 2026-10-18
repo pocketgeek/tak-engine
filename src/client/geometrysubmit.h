@@ -11,6 +11,20 @@
 #include "client/rendertelemetry.h"
 
 namespace tak {
+// A program the caller owns that replaces SDL's for one native draw (workstream
+// M: the indexed palette program, client/paletteindexed.h). GeometrySubmit primes
+// SDL's state as usual (target, viewport, scissor, projection, blend), then
+// install() saves whatever GL state it is about to change and binds its program
+// and textures; restore() puts exactly that state back, so SDL's cached program
+// and texture bindings are true again before SDL draws anything else. A draw
+// with a program always runs natively (it has no SDL equivalent): when this
+// renderer cannot, draw()/drawBuffer() return 1 without drawing.
+struct NativeProgram {
+    virtual bool install() = 0;
+    virtual void restore() = 0;
+protected:
+    ~NativeProgram() = default;
+};
 // SDL's compatibility OpenGL backend copies/reformats every geometry vertex.
 // Large already-packed batches can use client arrays directly. Other renderers,
 // non-normalized textures and fractional output scales retain the SDL path.
@@ -27,7 +41,7 @@ public:
     uint64_t uploads() const { return uploads_; }
     // A nonzero revision retains this mesh on compatible OpenGL backends.
     // Callers increment it whenever any vertex changes; zero keeps streaming.
-    int draw(SDL_Renderer* renderer,SDL_Texture* texture,std::span<const SDL_Vertex> vertices,bool direct=true,uint64_t revision=0,SDL_FPoint offset={0,0}) {
+    int draw(SDL_Renderer* renderer,SDL_Texture* texture,std::span<const SDL_Vertex> vertices,bool direct=true,uint64_t revision=0,SDL_FPoint offset={0,0},NativeProgram* program=nullptr) {
         if(vertices.empty())return 0;
         auto normal=[&] {
             auto source=vertices;
@@ -39,9 +53,9 @@ public:
             render::countSdlGeometry(source.size(),source.size_bytes());
             return SDL_RenderGeometry(renderer,texture,source.data(),int(source.size()),nullptr,0);
         };
-        if(!direct || vertices.size()<kNativeMinVertices)return normal();
+        if(!program && (!direct || vertices.size()<kNativeMinVertices))return normal();
         float sx=1,sy=1;
-        if(!nativeReady(renderer,texture,sx,sy))return normal();
+        if(!nativeReady(renderer,texture,sx,sy))return program ? 1 : normal();
         if(!prime(renderer,texture))return -1;
         GLint buffer=0,mode=0;
         getInteger_(GL_ARRAY_BUFFER_BINDING,&buffer);getInteger_(GL_MATRIX_MODE,&mode);
@@ -72,12 +86,16 @@ public:
         vertex_(2,GL_FLOAT,sizeof(SDL_Vertex),retained?reinterpret_cast<const void*>(offsetof(SDL_Vertex,position)):&vertices[0].position);
         color_(4,GL_UNSIGNED_BYTE,sizeof(SDL_Vertex),retained?reinterpret_cast<const void*>(offsetof(SDL_Vertex,color)):&vertices[0].color);
         if(texture)texcoord_(2,GL_FLOAT,sizeof(SDL_Vertex),retained?reinterpret_cast<const void*>(offsetof(SDL_Vertex,tex_coord)):&vertices[0].tex_coord);
-        draw_(GL_TRIANGLES,0,GLsizei(vertices.size()));
-        render::countNativeDraw(vertices.size(),bytes,retained);
+        const bool installed=!program || program->install();
+        if(installed) {
+            draw_(GL_TRIANGLES,0,GLsizei(vertices.size()));
+            if(program)program->restore();
+            render::countNativeDraw(vertices.size(),bytes,retained);
+        }
         popMatrix_();matrixMode_(GLenum(mode));
         popClientAttrib_();bindBuffer_(GL_ARRAY_BUFFER,GLuint(buffer));popAttrib_();
         used_=true;
-        return 0;
+        return installed ? 0 : 1;
     }
     bool active() const { return used_; }
     // Batches smaller than this take the SDL path: priming the native state
@@ -97,7 +115,8 @@ public:
     // same vertices through draw(), which takes the SDL path for the same
     // reason), -1 on an SDL error.
     int drawBuffer(SDL_Renderer* renderer,SDL_Texture* texture,GLuint vertexBuffer,
-                   std::span<const GLint> firsts,std::span<const GLsizei> counts,size_t vertices) {
+                   std::span<const GLint> firsts,std::span<const GLsizei> counts,size_t vertices,
+                   NativeProgram* program=nullptr) {
         if(firsts.empty() || firsts.size()!=counts.size())return 0;
         float sx=1,sy=1;
         if(!vertexBuffer || !nativeReady(renderer,texture,sx,sy))return 1;
@@ -112,16 +131,80 @@ public:
         vertex_(2,GL_FLOAT,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,position)));
         color_(4,GL_UNSIGNED_BYTE,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,color)));
         if(texture)texcoord_(2,GL_FLOAT,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,tex_coord)));
-        if(multiDraw_ && firsts.size()>1)multiDraw_(GL_TRIANGLES,firsts.data(),counts.data(),GLsizei(firsts.size()));
-        else for(size_t i=0;i<firsts.size();++i)draw_(GL_TRIANGLES,firsts[i],counts[i]);
-        render::countNativeDraw(vertices,vertices*sizeof(SDL_Vertex),true);
+        const bool installed=!program || program->install();
+        if(installed) {
+            if(multiDraw_ && firsts.size()>1)multiDraw_(GL_TRIANGLES,firsts.data(),counts.data(),GLsizei(firsts.size()));
+            else for(size_t i=0;i<firsts.size();++i)draw_(GL_TRIANGLES,firsts[i],counts[i]);
+            if(program)program->restore();
+            render::countNativeDraw(vertices,vertices*sizeof(SDL_Vertex),true);
+        }
         popMatrix_();matrixMode_(GLenum(mode));
         popClientAttrib_();bindBuffer_(GL_ARRAY_BUFFER,GLuint(buffer));popAttrib_();
         used_=true;
-        return 0;
+        return installed ? 0 : 1;
     }
     bool multiDraw() const { return multiDraw_!=nullptr; }
+
+    // ---- native pass (workstream M) ------------------------------------------
+    // Several consecutive commands drawn natively under ONE priming: beginPass()
+    // primes SDL's state with `prime` (target, viewport, scissor, projection, the
+    // prime texture's blend mode -- every command of the pass must share it) and
+    // saves the vertex-array state; passDraw()/passDrawBuffer() draw with whatever
+    // program and textures the caller installed (it owns and restores those);
+    // endPass() restores the vertex-array, matrix and buffer state. Nothing SDL
+    // queues may run in between: the caller issues no SDL calls inside a pass.
+    bool beginPass(SDL_Renderer* renderer,SDL_Texture* prime) {
+        float sx=1,sy=1;
+        if(inPass_ || !prime || !nativeReady(renderer,prime,sx,sy))return false;
+        if(!GeometrySubmit::prime(renderer,prime))return false;
+        getInteger_(GL_ARRAY_BUFFER_BINDING,&passBuffer_);getInteger_(GL_MATRIX_MODE,&passMode_);
+        pushAttrib_(GL_CURRENT_BIT);pushClientAttrib_(GL_CLIENT_VERTEX_ARRAY_BIT);
+        matrixMode_(GL_MODELVIEW);pushMatrix_();scale_(sx,sy,1);
+        enable_(GL_VERTEX_ARRAY);enable_(GL_COLOR_ARRAY);enable_(GL_TEXTURE_COORD_ARRAY);
+        inPass_=true;used_=true;
+        return true;
+    }
+    void passDraw(std::span<const SDL_Vertex> vertices) {
+        if(!inPass_ || vertices.empty())return;
+        bindBuffer_(GL_ARRAY_BUFFER,0);
+        vertex_(2,GL_FLOAT,sizeof(SDL_Vertex),&vertices[0].position);
+        color_(4,GL_UNSIGNED_BYTE,sizeof(SDL_Vertex),&vertices[0].color);
+        texcoord_(2,GL_FLOAT,sizeof(SDL_Vertex),&vertices[0].tex_coord);
+        draw_(GL_TRIANGLES,0,GLsizei(vertices.size()));
+        render::countNativeDraw(vertices.size(),vertices.size_bytes(),false);
+    }
+    void passDrawBuffer(GLuint vertexBuffer,std::span<const GLint> firsts,std::span<const GLsizei> counts,size_t vertices) {
+        if(!inPass_ || firsts.empty() || firsts.size()!=counts.size())return;
+        bindBuffer_(GL_ARRAY_BUFFER,vertexBuffer);
+        vertex_(2,GL_FLOAT,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,position)));
+        color_(4,GL_UNSIGNED_BYTE,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,color)));
+        texcoord_(2,GL_FLOAT,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,tex_coord)));
+        if(multiDraw_ && firsts.size()>1)multiDraw_(GL_TRIANGLES,firsts.data(),counts.data(),GLsizei(firsts.size()));
+        else for(size_t i=0;i<firsts.size();++i)draw_(GL_TRIANGLES,firsts[i],counts[i]);
+        render::countNativeDraw(vertices,vertices*sizeof(SDL_Vertex),true);
+    }
+    void endPass() {
+        if(!inPass_)return;
+        popMatrix_();matrixMode_(GLenum(passMode_));
+        popClientAttrib_();bindBuffer_(GL_ARRAY_BUFFER,GLuint(passBuffer_));popAttrib_();
+        inPass_=false;
+    }
+    // The GL name of an SDL texture this renderer can sample natively (normalized
+    // coordinates), else 0. SDL_GL_BindTexture/UnbindTexture leave SDL's own
+    // binding cache consistent (the next SDL draw rebinds). Not inside a pass.
+    GLuint textureName(SDL_Renderer* renderer,SDL_Texture* texture) {
+        float sx=1,sy=1;
+        if(inPass_ || !texture || !nativeReady(renderer,nullptr,sx,sy))return 0;
+        float tw=0,th=0;
+        if(SDL_GL_BindTexture(texture,&tw,&th)!=0)return 0;
+        GLint name=0;
+        getInteger_(GL_TEXTURE_BINDING_2D,&name);
+        SDL_GL_UnbindTexture(texture);
+        return tw==1 && th==1 ? GLuint(name) : 0;
+    }
 private:
+    bool inPass_=false;
+    GLint passBuffer_=0,passMode_=0;
     bool nativeReady(SDL_Renderer* renderer,SDL_Texture* texture,float& sx,float& sy) {
         SDL_RendererInfo info{};
         if(SDL_GetRendererInfo(renderer,&info)!=0 || !info.name || std::strcmp(info.name,"opengl"))return false;
