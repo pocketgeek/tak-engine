@@ -60,6 +60,12 @@ uint16_t normMod(uint16_t sdlMod);
 std::string chordName(const KeyChord& c);
 bool parseChord(const std::string& s, KeyChord& out);
 
+// Keys the game reads itself, outside the rebindable actions, that PUSH TO TALK may not
+// take: it is checked before them and swallows its key in a voice room, so on Enter the
+// chat composer could never open, on a digit a squad could never be recalled, and on an
+// arrow the camera could not pan. (Esc cancels a capture and is never bound.)
+bool pushToTalkReserved(int32_t key);
+
 // The effective binding set: defaults overlaid with the user's overrides. Built from
 // Settings::hotkeys and consulted by the input handler.
 class Hotkeys {

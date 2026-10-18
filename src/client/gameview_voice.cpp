@@ -17,7 +17,10 @@
         // Every text field in the client starts SDL text input when it takes focus and
         // stops it when it lets go (main() stops the input SDL starts by default), so that
         // is the one signal that covers all of them; the composers we own are checked too.
-        return SDL_IsTextInputActive() || chatTyping_ || lbField_ != 0 || (options_ && options_->editingText());
+        // A lobby field only counts in the lobby: one still marked when the game starts is
+        // not being typed in (startMpGame lets go of it as well).
+        return SDL_IsTextInputActive() || chatTyping_ || (lbField_ != 0 && inLobbyPhase()) ||
+               (options_ && options_->editingText());
     }
 
     bool GameView::voiceKey(const SDL_Event& e) {
@@ -72,6 +75,7 @@
             hooks.monitor = [this](bool on) { voice_->setMonitoring(on); };
         }
         // pumpVoice() applies every change on the next frame; only SAVE persists.
+        voiceFromOptions_ = false;   // the GAME MENU's button; Options' row sets it after this
         options_ = std::make_unique<tak::OptionsScreen>(ren_, *settings_, [] {},
             [this] { tak::saveSettings(*settings_); }, std::move(hooks), [this] { openHotkeys(); });
     }

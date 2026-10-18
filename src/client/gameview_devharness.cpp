@@ -686,6 +686,7 @@
             check(!textEntryActive(),"no text field focused");
             chatTyping_=true;check(textEntryActive(),"the chat composer counts as typing");chatTyping_=false;
             SDL_StartTextInput();check(textEntryActive(),"any focused text field counts as typing");SDL_StopTextInput();
+            lbField_=4;check(!textEntryActive(),"a lobby field still marked once the game runs is not typing");lbField_=0;
             click(DiplomacyAction::Mana,1);check(!(world_.player(0).manaShareMask & 2),"mana checkbox issues command");
             selection_={monarch};drawGiveUnitsMenu(1000,700);
             check(!has(DiplomacyAction::Give,1),"ineligible monarch must disable gifts");

@@ -42,6 +42,7 @@ float limit(float x) {
 
 // One audio device (capture or output) and how it came to be open.
 struct Endpoint {
+    explicit Endpoint(int capture) : iscapture(capture) {}
     int iscapture = 0;
     SDL_AudioDeviceID dev = 0;
     std::string wanted;            // the chosen device ("" = system default)

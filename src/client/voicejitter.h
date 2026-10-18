@@ -40,6 +40,7 @@ public:
     static constexpr int kMaxTarget = 8;    // 160 ms
     static constexpr int kMaxDepth = 15;    // deeper than this: drop the oldest down to target
     static constexpr int kMaxWait = 10;     // frames of concealment for a late frame (200 ms)
+    static constexpr int kCalmFrames = 500; // frames played without a stall to take back a bump (10 s)
 
     struct Stats { uint64_t received = 0, decoded = 0, fec = 0, concealed = 0, late = 0, trimmed = 0; };
 
@@ -85,6 +86,12 @@ public:
             current_ = std::move(it->second);
             q_.erase(it);
             ++next_; waits_ = 0; ++stats_.decoded;
+            // A stall's extra depth is not for ever: give one frame back per stretch of
+            // calm playing, so a long game does not leave this talker at the maximum.
+            if (bump_ > 0 && ++calm_ >= kCalmFrames) {
+                calm_ = 0; --bump_;
+                target_ = std::clamp(kMinTarget + int(jitterMs_ / 20.0 + 0.5) + bump_, kMinTarget, kMaxTarget);
+            }
             return {Playout::Decode, &current_};
         }
         if (ended_ && next_ > endSeq_) { reset(); return {}; }   // played to the END marker
@@ -95,7 +102,7 @@ public:
             if (ended_) { reset(); return {}; }
             if (++waits_ > kMaxWait) {
                 playing_ = false; waits_ = 0;
-                bump_ = std::min(bump_ + 1, kMaxTarget);
+                bump_ = std::min(bump_ + 1, kMaxTarget - kMinTarget); calm_ = 0;
                 target_ = std::clamp(target_ + 1, kMinTarget, kMaxTarget);
                 return {};
             }
@@ -117,6 +124,7 @@ public:
     bool playing() const { return playing_; }
     bool idle() const { return !playing_ && q_.empty(); }
     int target() const { return target_; }
+    int bump() const { return bump_; }
     size_t depth() const { return q_.size(); }
     const Stats& stats() const { return stats_; }
 
@@ -139,7 +147,7 @@ private:
     std::vector<uint8_t> current_;
     int64_t next_ = 0, highest_ = 0, floor_ = INT64_MIN, endSeq_ = 0;
     bool haveHighest_ = false, playing_ = false, ended_ = false;
-    int waits_ = 0, target_ = kMinTarget, bump_ = 0;
+    int waits_ = 0, target_ = kMinTarget, bump_ = 0, calm_ = 0;
     uint64_t lastArrivalMs_ = 0;
     double jitterMs_ = 0;
     Stats stats_;

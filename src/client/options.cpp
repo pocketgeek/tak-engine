@@ -298,7 +298,9 @@ void OptionsScreen::buildVoice() {
     ctls_.back().help = [] {
         return std::vector<std::string>{"ONE VOLUME FOR EVERY SPEAKER, STEREO OR SURROUND. SEPARATE FROM THE GAME'S VOLUMES."};
     };
-
+    voiceLabelChars_ = 0;
+    for (const auto& c : ctls_)
+        if (c.kind == Control::Dropdown || c.kind == Control::Meter) voiceLabelChars_ = std::max(voiceLabelChars_, c.label.size());
 }
 
 void OptionsScreen::build(int channels) {
@@ -746,7 +748,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
         float mx = float(e.button.x), my = float(e.button.y);
         if (in(backRect_, mx, my)) return true;                     // close, no save
         if (in(saveRect_, mx, my)) {                                // persist (if dirty)
-            if (dirty_ && onSave_) { onSave_(); dirty_ = false; }
+            if (dirty_ && onSave_) { onSave_(); dirty_ = false; saved_ = true; }
             return false;
         }
         if (in(defaultsRect_, mx, my)) {                            // reset to defaults
@@ -1214,7 +1216,7 @@ bool OptionsScreen::restartPromptInput(const SDL_Event& e) {
     if (later) restartPrompt_ = false;   // the row keeps saying RESTART TO USE
     if (!now) return false;
     restartPrompt_ = false;
-    if (dirty_ && onSave_) { onSave_(); dirty_ = false; }   // as the prompt said
+    if (dirty_ && onSave_) { onSave_(); dirty_ = false; saved_ = true; }   // as the prompt said
     restartRequested_ = true;
     return true;
 }

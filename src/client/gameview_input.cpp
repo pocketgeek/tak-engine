@@ -83,9 +83,17 @@
             // motion events here froze it for as long as Options was open.
             if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
             if (options_->input(e, winW, winH)) {   // BACK / Esc (SAVE is explicit)
-                const bool voice = options_->voiceRequested();
-                options_.reset();
-                if (voice) openVoiceOptions();   // Options > VOICE CHAT
+                if (options_->voiceRequested()) {   // Options > VOICE CHAT
+                    const bool dirty = options_->dirty();
+                    openVoiceOptions();
+                    voiceFromOptions_ = true; optionsDirtyCarry_ = dirty;
+                } else if (voiceFromOptions_ && options_->page() == tak::OptionsPage::Voice) {
+                    const bool dirty = optionsDirtyCarry_ && !options_->saved();
+                    openOptions();                  // BACK -> Options, where it came from
+                    if (dirty) options_->markDirty();
+                } else {
+                    options_.reset();
+                }
             }
             return;
         }

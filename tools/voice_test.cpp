@@ -144,6 +144,22 @@ static void testJitter() {
         auto p = jb.next();
         check(p.kind == Playout::Decode && (*p.data)[0] == 1 && jb.stats().late == 1, "pre-START frames are dropped");
     }
+    {   // A long stall holds a frame more from then on -- but calm playing gives it back.
+        JitterBuffer jb;
+        uint64_t t = 0;
+        uint16_t seq = 0;
+        jb.push(seq++, voice::kFlagStart, pkt(0), t);
+        jb.push(seq++, 0, pkt(0), t += 20);
+        for (int i = 0; i < 2 + JitterBuffer::kMaxWait + 1; ++i) jb.next();   // play 2, then stall out
+        check(jb.bump() == 1, "a stall past kMaxWait holds one frame more");
+        // Steady 20 ms arrivals, one frame played per frame pushed, for longer than kCalmFrames.
+        for (int i = 0; i < JitterBuffer::kCalmFrames + 50; ++i) {
+            jb.push(seq++, 0, pkt(1), t += 20);
+            jb.next();
+        }
+        check(jb.bump() == 0 && jb.target() == JitterBuffer::kMinTarget,
+              "the extra depth is given back after calm playing: target " + std::to_string(jb.target()));
+    }
 }
 
 static void testPtt() {
@@ -186,6 +202,12 @@ static void testPtt() {
           "the rebound key replaces Space and needs its modifier");
     setChordOverride(o, Act::PushToTalk, KeyChord{SDLK_SPACE, 0});
     check(o.empty(), "back to Space stores nothing");
+    // CONTROLS refuses the keys the game reads itself for push to talk.
+    check(pushToTalkReserved(SDLK_RETURN) && pushToTalkReserved(SDLK_KP_ENTER) && pushToTalkReserved(SDLK_0) &&
+          pushToTalkReserved(SDLK_9) && pushToTalkReserved(SDLK_LEFT) && pushToTalkReserved(SDLK_DOWN),
+          "Enter, digits and arrows are not push-to-talk keys");
+    check(!pushToTalkReserved(SDLK_SPACE) && !pushToTalkReserved(SDLK_v) && !pushToTalkReserved(SDLK_CAPSLOCK),
+          "Space and ordinary keys are");
 }
 
 static void testSettings(const fs::path& dir) {
@@ -410,9 +432,15 @@ static void testPage() {
         shot("voice-on.png");
         // VOICE OUTPUT: open the list, pick System Default (index 1), not same as game.
         const SDL_FRect* out = page.rowRect("OUTPUT DEVICE");
+        float micChipX = -1;
+        click("MIC DEVICE", 0.9f);
+        micChipX = page.dropItemRect(0).x;
+        click("MIC DEVICE", 0.9f);   // its own chip closes the list
         click("OUTPUT DEVICE", 0.9f);
         {
             const SDL_FRect item = page.dropItemRect(1);   // [0] SAME AS GAME, [1] System Default
+            check(micChipX > 0 && std::fabs(item.x - micChipX) < 0.5f,
+                  "the two device lists start on one column: " + std::to_string(micChipX) + " vs " + std::to_string(item.x));
             check(item.w > 0 && out != nullptr, "the OUTPUT DEVICE list opens");
             SDL_Event e{}; e.type = SDL_MOUSEBUTTONDOWN; e.button.button = SDL_BUTTON_LEFT;
             e.button.x = int(item.x + item.w / 2); e.button.y = int(item.y + item.h / 2);
@@ -430,6 +458,10 @@ static void testPage() {
         opts.render(W, H);
         const SDL_FRect* r = opts.rowRect("VOICE CHAT");
         check(r != nullptr && opts.page() == OptionsPage::General, "Options has a VOICE CHAT row");
+        // What a host carries across the voice page so its BACK lands on Options as it was.
+        check(!opts.dirty() && !opts.saved(), "a fresh Options has nothing unsaved");
+        opts.markDirty();
+        check(opts.dirty() && !opts.saved(), "a carried unsaved change re-enables SAVE");
         if (r) {
             // It may sit below the fold of the long page: scroll it to the middle.
             for (int i = 0; i < 60 && r->y + r->h / 2 > H * 0.6f; ++i) {

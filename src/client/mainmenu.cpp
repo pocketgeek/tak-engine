@@ -1379,6 +1379,38 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     }
     SDL_ShowCursor(d_->cursors_.ok() ? SDL_DISABLE : SDL_ENABLE);
 
+    // The general OPTIONS screen (SETTINGS > OPTIONS, and the VOICE CHAT page's BACK when
+    // that page was opened from Options' own VOICE CHAT row).
+    bool voiceFromOptions = false, optionsDirtyCarry = false;
+    auto openGeneralOptions = [&] {
+        d_->options_ = std::make_unique<OptionsScreen>(d_->ren, *settings,
+            [this, ren = d_->ren, music, settings, fsWas = settings->fullscreen,
+             vsWas = settings->vsync]() mutable {
+                if (music) music->setVolume(settings->masterVol, settings->bgmVol);
+                d_->applyArtSettings(*settings);   // incl. DEFAULTS
+                // onChange fires on EVERY control tweak (a volume-slider drag
+                // fires it many times a second). ANY window/renderer reconfigure
+                // here re-commits the Wayland surface -- which rescales it and
+                // drops pointer-button events, so later clicks miss or die. Touch
+                // the surface ONLY when that display setting actually changed since
+                // this Options screen opened. (Compare the VALUE, not
+                // SDL_GetWindowFlags, which is unreliable on Wayland.)
+                if (settings->fullscreen != fsWas) {
+                    if (SDL_Window* wnd = SDL_RenderGetWindow(ren))
+                        SDL_SetWindowFullscreen(wnd, settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                    fsWas = settings->fullscreen;
+                }
+                if (settings->vsync != vsWas) {
+                    SDL_RenderSetVSync(ren, settings->vsync ? 1 : 0);
+                    vsWas = settings->vsync;
+                }
+            },
+            [settings] { saveSettings(*settings); }, 0, [] {},
+            [music] { if (music) music->reopen(); },   // live output-device switch
+            d_->dataFolder_);
+        d_->options_->offerVoicePage();
+    };
+
     PresentationPacer streamPacer;
     Uint64 prev = SDL_GetPerformanceCounter();
     const double freq = double(SDL_GetPerformanceFrequency());
@@ -1502,11 +1534,18 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             }
             if (d_->options_) {   // Options overlay is up: route everything to it
                 if (d_->options_->input(e, w, h)) {   // BACK / Esc (SAVE is explicit), or RESTART NOW
-                    const bool restart = d_->options_->restartRequested();
-                    const bool voice = d_->options_->voiceRequested();
-                    d_->options_.reset();
-                    if (restart) return Choice::Restart;
-                    if (voice && settings) d_->openVoicePage(settings);   // Options > VOICE CHAT
+                    if (d_->options_->restartRequested()) { d_->options_.reset(); return Choice::Restart; }
+                    if (d_->options_->voiceRequested() && settings) {   // Options > VOICE CHAT
+                        const bool dirty = d_->options_->dirty();
+                        d_->openVoicePage(settings);
+                        voiceFromOptions = true; optionsDirtyCarry = dirty;
+                    } else if (voiceFromOptions && settings && d_->options_->page() == OptionsPage::Voice) {
+                        const bool dirty = optionsDirtyCarry && !d_->options_->saved();
+                        openGeneralOptions();       // BACK -> Options, where it came from
+                        if (dirty) d_->options_->markDirty();
+                    } else {
+                        d_->options_.reset();
+                    }
                 }
                 continue;
             }
@@ -1524,35 +1563,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                             settings->dataDir = disk.dataDir;
                             settings->dataManifest = disk.dataManifest;
                         }
-                        d_->options_ = std::make_unique<OptionsScreen>(ren, *settings,
-                            [this, ren, music, settings, fsWas = settings->fullscreen,
-                             vsWas = settings->vsync]() mutable {
-                                if (music) music->setVolume(settings->masterVol, settings->bgmVol);
-                                d_->applyArtSettings(*settings);   // incl. DEFAULTS
-                                // onChange fires on EVERY control tweak (a volume-slider drag
-                                // fires it many times a second). ANY window/renderer reconfigure
-                                // here re-commits the Wayland surface -- which rescales it and
-                                // drops pointer-button events, so later clicks miss or die. Touch
-                                // the surface ONLY when that display setting actually changed since
-                                // this Options screen opened. (Compare the VALUE, not
-                                // SDL_GetWindowFlags, which is unreliable on Wayland.)
-                                if (settings->fullscreen != fsWas) {
-                                    if (SDL_Window* wnd = SDL_RenderGetWindow(ren))
-                                        SDL_SetWindowFullscreen(wnd, settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-                                    fsWas = settings->fullscreen;
-                                }
-                                if (settings->vsync != vsWas) {
-                                    SDL_RenderSetVSync(ren, settings->vsync ? 1 : 0);
-                                    vsWas = settings->vsync;
-                                }
-                            },
-                            [settings] { saveSettings(*settings); }, 0, [] {},
-                            [music] { if (music) music->reopen(); },   // live output-device switch
-                            d_->dataFolder_);
-                        d_->options_->offerVoicePage();
+                        openGeneralOptions();
                     } else if (hit(d_->setBtnRect_[2])) {   // VOICE CHAT -> its own page of Options
                         d_->settingsMenu_ = false;
                         d_->openVoicePage(settings);
+                        voiceFromOptions = false;           // BACK -> the menu
                     } else if (hit(d_->setBtnRect_[5]) && streaming) {
                         d_->settingsMenu_ = false;
                         SDL_Event event{};event.type=SDL_USEREVENT;event.user.code=kStreamingEvent;

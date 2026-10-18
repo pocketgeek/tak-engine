@@ -120,6 +120,13 @@ public:
     // host then closes this screen and opens the voice page in its place.
     void offerVoicePage() { showVoice_ = true; build(channels_); }
     bool voiceRequested() const { return voiceRequested_; }
+    // Unsaved changes, and whether SAVE wrote the settings file while this screen was up.
+    // A host leaving the general page for VOICE CHAT carries the first across, so the
+    // general page it reopens on the voice page's BACK still offers SAVE -- unless the
+    // voice page's own SAVE (which writes every setting) already did.
+    bool dirty() const { return dirty_; }
+    bool saved() const { return saved_; }
+    void markDirty() { dirty_ = true; }
 
     // For the in-process UI tests: a row's rectangle as last laid out (nullptr if no row
     // has that label), the data-folder row's status line, and the restart prompt's
@@ -180,8 +187,12 @@ private:
     // LIMIT so the chip never covers it), clamped, so long device names aren't truncated.
     // One source of truth shared by the closed chip, the open list, and hit-testing so
     // they line up.
+    // The VOICE CHAT page lines its two device chips and the level meter up on one column,
+    // clear of its longest label (voiceLabelChars_, set by buildVoice()).
     float dropWidth(const Control& c) const {
-        const float label = std::max(150.0f, float(c.label.size()) * 6 * 2.0f + 6) * u_;   // labels draw at 2.0u
+        float label = std::max(150.0f, float(c.label.size()) * 6 * 2.0f + 6);   // labels draw at 2.0u
+        if (page_ == OptionsPage::Voice) label = std::max(label, float(voiceLabelChars_) * 6 * 2.0f + 24);
+        label *= u_;
         return std::clamp(c.row.w - label, 220.0f * u_, 560.0f * u_);
     }
 
@@ -212,6 +223,7 @@ private:
     bool nameEditing_ = false, nameSelectAll_ = false;
     void appendPlayerName(const std::string& text);
     bool dirty_ = false;    // unsaved changes since the last save/open -> SAVE enabled
+    bool saved_ = false;    // SAVE has written the settings since this screen opened
     float scroll_ = 0;      // content scroll offset (px)
     float contentH_ = 0;    // total laid-out content height
     int drag_ = -1;         // index of the slider being dragged, or -1
@@ -240,6 +252,7 @@ private:
     VoicePageHooks voice_;
     int channels_ = 2;                  // the speaker count build() last laid out
     bool showVoice_ = false, voiceRequested_ = false;
+    size_t voiceLabelChars_ = 0;   // longest chip/meter row label on the VOICE CHAT page
     float u_ = 1.0f;        // layout unit (scaled to window)
     SDL_FRect panel_{};     // the panel rect (for scroll clamping)
     SDL_FRect defaultsRect_{}, saveRect_{}, backRect_{};   // footer buttons (filled by layout())

@@ -115,6 +115,11 @@ Act Hotkeys::match(int32_t key, uint16_t sdlMod) const {
     return Act::Count;
 }
 
+bool pushToTalkReserved(int32_t key) {
+    return key == SDLK_RETURN || key == SDLK_KP_ENTER || (key >= SDLK_0 && key <= SDLK_9) ||
+           key == SDLK_LEFT || key == SDLK_RIGHT || key == SDLK_UP || key == SDLK_DOWN;
+}
+
 bool Hotkeys::pushToTalkPress(int32_t key, uint16_t sdlMod) const {
     const KeyChord c = chord(Act::PushToTalk);
     const uint16_t m = normMod(sdlMod);

@@ -153,6 +153,9 @@
             unitSoundQueue_.clear();
         }
         chatRecipients_=0xff;voiceRecipients_=0xff;requestedManaSharing_.reset();
+        // A room field (SAY, a password) focused when the host started is let go: the game
+        // has no such field, and its text input would otherwise hold push to talk off.
+        if (lbField_) { lbField_ = 0; SDL_StopTextInput(); }
         giveUnitsMenu_=false;giveUnitsHots_.clear();
         resultParticipants_.reset();
         if (room.mission.empty()) {
