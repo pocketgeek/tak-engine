@@ -1,0 +1,315 @@
+#include "client/voice.h"
+
+#include "client/voicecodec.h"
+#include "client/voicejitter.h"
+#include "net/protocol.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <map>
+
+namespace tak {
+
+static_assert(voice::kMaxPacket == net::kVoiceMaxOpus, "codec packet cap matches the wire cap");
+static_assert(voice::kFlagStart == net::kVoiceStart && voice::kFlagEnd == net::kVoiceEnd, "voice flags match the wire");
+
+namespace {
+
+constexpr int kRetryMs = 2000;                 // how often a fallen-back device looks for the chosen one
+constexpr int kMaxBacklog = 10;                // captured frames kept (200 ms); older audio is dropped
+constexpr Uint32 kOutTargetBytes = 3 * voice::kFrame * sizeof(float);   // 60 ms queued ahead
+constexpr int kSpeakingMs = 300;               // a talker counts as speaking this long after a frame
+constexpr int kForgetMs = 10000;               // a silent talker's decoder is freed after this
+
+bool devicePresent(const std::string& name, int iscapture) {
+    const int n = SDL_GetNumAudioDevices(iscapture);
+    for (int i = 0; i < n; ++i)
+        if (const char* d = SDL_GetAudioDeviceName(i, iscapture); d && name == d) return true;
+    return false;
+}
+
+// Soft limiter: unity below the knee, a smooth approach to full scale above it, so
+// several talkers at once never clip hard.
+float limit(float x) {
+    constexpr float knee = 0.9f, room = 1.0f - knee;
+    const float a = std::fabs(x);
+    if (a <= knee) return x;
+    const float y = knee + room * std::tanh((a - knee) / room);
+    return x < 0 ? -y : y;
+}
+
+// One audio device (capture or output) and how it came to be open.
+struct Endpoint {
+    int iscapture = 0;
+    SDL_AudioDeviceID dev = 0;
+    std::string wanted;            // the chosen device ("" = system default)
+    VoiceEngine::Device state = VoiceEngine::Device::Off;
+    uint64_t retryAt = 0;
+
+    void close() {
+        if (dev) SDL_CloseAudioDevice(dev);
+        dev = 0;
+        state = VoiceEngine::Device::Off;
+    }
+    // Open `wanted`, or the system default when it is absent or will not open. `lost`
+    // marks a re-open after the device went away (shown as DEVICE LOST).
+    void open(bool lost, uint64_t now) {
+        close();
+        if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) { state = VoiceEngine::Device::Failed; return; }
+        SDL_AudioSpec want{}, got{};
+        want.freq = voice::kRate;
+        want.format = AUDIO_F32SYS;
+        want.channels = 1;              // mono either way: SDL converts to the device's layout,
+        want.samples = voice::kFrame;   // so ONE output volume covers stereo or surround alike
+        want.callback = nullptr;        // queue API: no audio thread of ours
+        const bool chosen = !wanted.empty();
+        if (chosen && devicePresent(wanted, iscapture)) {
+            dev = SDL_OpenAudioDevice(wanted.c_str(), iscapture, &want, &got, 0);
+            if (dev) state = VoiceEngine::Device::Ok;
+        }
+        if (!dev) {
+            // SDL_GetNumAudioDevices can be 0 or -1 on backends that only offer a default.
+            dev = SDL_OpenAudioDevice(nullptr, iscapture, &want, &got, 0);
+            if (!dev) state = VoiceEngine::Device::Failed;
+            else if (!chosen) state = lost ? VoiceEngine::Device::Lost : VoiceEngine::Device::Ok;
+            else state = lost ? VoiceEngine::Device::Lost : VoiceEngine::Device::NotFound;
+        }
+        if (!dev)
+            std::fprintf(stderr, "voice: cannot open the %s: %s\n", iscapture ? "microphone" : "voice output",
+                         SDL_GetError());
+        else if (state != VoiceEngine::Device::Ok)
+            std::fprintf(stderr, "voice: %s '%s' %s -- using the system default\n",
+                         iscapture ? "microphone" : "voice output", wanted.c_str(),
+                         lost ? "was lost" : "is not present");
+        retryAt = now + kRetryMs;
+        if (dev && !iscapture) SDL_PauseAudioDevice(dev, 0);   // output plays (silence) from the start
+    }
+    // Device lost (unplugged) or a fallback that can now return to the chosen device.
+    void maintain(uint64_t now) {
+        if (!dev) {
+            if (state == VoiceEngine::Device::Failed && now >= retryAt) open(false, now);
+            return;
+        }
+        if (SDL_GetAudioDeviceStatus(dev) == SDL_AUDIO_STOPPED) {   // disconnected
+            std::fprintf(stderr, "voice: %s disconnected\n", iscapture ? "microphone" : "voice output");
+            open(true, now);
+            return;
+        }
+        if ((state == VoiceEngine::Device::NotFound || state == VoiceEngine::Device::Lost) &&
+            !wanted.empty() && now >= retryAt) {
+            retryAt = now + kRetryMs;
+            if (devicePresent(wanted, iscapture)) open(false, now);   // it came back
+        }
+    }
+};
+
+}  // namespace
+
+struct VoiceEngine::Impl {
+    struct Config {
+        bool enabled = false;
+        std::string mic, out;          // effective names ("" = system default)
+        int micVol = 100, outVol = 100;
+        bool operator==(const Config&) const = default;
+    } cfg;
+    bool configured = false;
+    bool monitoring = false;
+    bool inRoom = false;
+
+    Endpoint cap{1}, out{0};
+    bool capRunning = false;
+    std::vector<float> pending;        // captured samples not yet framed
+    voice::Encoder encoder;
+    uint16_t seq = 0;
+    bool sending = false;              // a transmission is open (START sent, END not yet)
+    float level = 0;
+
+    struct Talker {
+        voice::JitterBuffer jb;
+        std::unique_ptr<voice::Decoder> dec;
+        std::string name;
+        uint8_t slot = 0xFF;
+        uint64_t lastMs = 0;
+    };
+    std::map<uint32_t, Talker> talkers;
+    Stats stats;
+
+    uint64_t now() const { return SDL_GetTicks64(); }
+
+    void closeAll() {
+        cap.close(); out.close();
+        capRunning = false; pending.clear(); sending = false; level = 0;
+        talkers.clear();
+    }
+};
+
+VoiceEngine::VoiceEngine() : p_(std::make_unique<Impl>()) {}
+VoiceEngine::~VoiceEngine() { p_->closeAll(); }
+
+void VoiceEngine::configure(const Settings& s, const std::string& gameOutput) {
+    Impl::Config c;
+    c.enabled = s.voiceEnabled;
+    c.mic = s.voiceMicDevice;
+    c.out = s.voiceOutputSameAsGame ? gameOutput : s.voiceOutputDevice;
+    c.micVol = std::clamp(s.voiceMicVolume, 0, 100);
+    c.outVol = std::clamp(s.voiceOutputVolume, 0, 100);
+    if (p_->configured && c == p_->cfg) return;
+    const bool devicesChanged = !p_->configured || c.enabled != p_->cfg.enabled ||
+                                c.mic != p_->cfg.mic || c.out != p_->cfg.out;
+    p_->cfg = c;
+    p_->configured = true;
+    if (!devicesChanged) return;               // just a volume
+    // Re-open on the next update() whatever is open now on the old choice.
+    const bool capWasOpen = p_->cap.dev != 0, outWasOpen = p_->out.dev != 0;
+    p_->cap.wanted = c.mic;
+    p_->out.wanted = c.out;
+    if (!c.enabled) { p_->closeAll(); return; }
+    const uint64_t now = p_->now();
+    if (capWasOpen) { p_->cap.open(false, now); p_->capRunning = false; p_->pending.clear(); }
+    if (outWasOpen) p_->out.open(false, now);
+}
+
+void VoiceEngine::setMonitoring(bool on) { p_->monitoring = on; }
+
+void VoiceEngine::update(bool inRoom, bool transmit, const Sender& send) {
+    Impl& p = *p_;
+    const uint64_t now = p.now();
+    if (inRoom != p.inRoom) { p.inRoom = inRoom; if (!inRoom) p.talkers.clear(); }
+    const bool on = p.cfg.enabled;
+    const bool wantCap = on && (inRoom || p.monitoring);
+    const bool wantOut = on && inRoom;
+    transmit = transmit && on && inRoom;
+
+    // ---- devices: open what is needed, close what is not, follow loss and return ----
+    if (wantCap && !p.cap.dev && p.cap.state == Device::Off) { p.cap.open(false, now); p.capRunning = false; }
+    if (!wantCap && p.cap.state != Device::Off) { p.cap.close(); p.capRunning = false; p.pending.clear(); p.level = 0; }
+    if (wantOut && !p.out.dev && p.out.state == Device::Off) p.out.open(false, now);
+    if (!wantOut && p.out.state != Device::Off) p.out.close();
+    if (wantCap) { const SDL_AudioDeviceID was = p.cap.dev; p.cap.maintain(now); if (p.cap.dev != was) p.capRunning = false; }
+    if (wantOut) p.out.maintain(now);
+
+    // ---- microphone: record only while talking or metering ----
+    const bool record = p.cap.dev && (transmit || p.monitoring);
+    if (p.cap.dev && record != p.capRunning) {
+        if (record) { SDL_ClearQueuedAudio(p.cap.dev); p.pending.clear(); }
+        SDL_PauseAudioDevice(p.cap.dev, record ? 0 : 1);
+        p.capRunning = record;
+    }
+    if (p.capRunning) {
+        float buf[4096];
+        Uint32 got;
+        while ((got = SDL_DequeueAudio(p.cap.dev, buf, sizeof buf)) > 0)
+            p.pending.insert(p.pending.end(), buf, buf + got / sizeof(float));
+    }
+    // Keep latency bounded after a stalled frame: the newest 200 ms, whole frames.
+    if (p.pending.size() > size_t(kMaxBacklog * voice::kFrame)) {
+        const size_t drop = (p.pending.size() / voice::kFrame - kMaxBacklog) * voice::kFrame;
+        p.pending.erase(p.pending.begin(), p.pending.begin() + long(drop));
+        p.stats.dropped += drop / voice::kFrame;
+    }
+    if (!p.capRunning) p.level *= 0.85f;
+    const float gain = float(p.cfg.micVol) / 100.0f;
+    while (p.pending.size() >= size_t(voice::kFrame)) {
+        float frame[voice::kFrame];
+        float peak = 0;
+        for (int i = 0; i < voice::kFrame; ++i) {
+            frame[i] = std::clamp(p.pending[size_t(i)] * gain, -1.0f, 1.0f);
+            peak = std::max(peak, std::fabs(frame[i]));
+        }
+        p.pending.erase(p.pending.begin(), p.pending.begin() + voice::kFrame);
+        p.level = std::max(peak, p.level * 0.85f);
+        if (!transmit || !send) continue;
+        if (!p.sending) p.encoder.reset();
+        Frame f;
+        f.opus = p.encoder.encode(frame);
+        if (f.opus.empty()) continue;
+        f.seq = p.seq++;
+        f.flags = p.sending ? 0 : net::kVoiceStart;
+        p.sending = true;
+        send(f);
+        ++p.stats.sent;
+    }
+    if (p.sending && !transmit) {   // released (or no longer allowed): close the transmission
+        Frame end;
+        end.seq = p.seq++;
+        end.flags = net::kVoiceEnd;
+        if (send) send(end);
+        p.sending = false;
+    }
+
+    // ---- output: mix every talker, keep ~60 ms queued ahead of the device ----
+    if (p.out.dev) {
+        const float vol = float(p.cfg.outVol) / 100.0f;
+        for (int guard = 0; guard < 8 && SDL_GetQueuedAudioSize(p.out.dev) < kOutTargetBytes; ++guard) {
+            float mix[voice::kFrame] = {};
+            float pcm[voice::kFrame];
+            bool any = false;
+            for (auto& [id, t] : p.talkers) {
+                (void)id;
+                const voice::Playout play = t.jb.next();
+                if (play.kind == voice::Playout::Idle) continue;
+                if (!t.dec) t.dec = std::make_unique<voice::Decoder>();
+                bool ok = false;
+                switch (play.kind) {
+                    case voice::Playout::Decode: ok = t.dec->decode(play.data->data(), play.data->size(), pcm); ++p.stats.decoded; break;
+                    case voice::Playout::Fec: ok = t.dec->decodeFec(play.data->data(), play.data->size(), pcm); ++p.stats.fec; break;
+                    case voice::Playout::Conceal: ok = t.dec->conceal(pcm); ++p.stats.concealed; break;
+                    case voice::Playout::Idle: break;
+                }
+                if (!ok) continue;
+                for (int i = 0; i < voice::kFrame; ++i) mix[i] += pcm[i];
+                any = true;
+            }
+            if (!any) break;   // nobody talking: let the device drain to silence
+            for (float& s : mix) s = limit(s * vol);
+            SDL_QueueAudio(p.out.dev, mix, sizeof mix);
+        }
+    }
+    for (auto it = p.talkers.begin(); it != p.talkers.end();)
+        if (it->second.jb.idle() && now - it->second.lastMs > uint64_t(kForgetMs)) it = p.talkers.erase(it);
+        else ++it;
+}
+
+void VoiceEngine::push(Incoming in) {
+    Impl& p = *p_;
+    if (!p.cfg.enabled || !p.inRoom) return;
+    if (p.talkers.size() >= 32 && !p.talkers.count(in.talker)) return;   // more than any room holds
+    auto& t = p.talkers[in.talker];
+    if (!in.name.empty()) t.name = in.name;
+    t.slot = in.slot;
+    t.lastMs = p.now();
+    if ((in.flags & net::kVoiceStart) && t.dec) t.dec->reset();
+    t.jb.push(in.seq, in.flags, std::move(in.opus), t.lastMs);
+    ++p.stats.received;
+}
+
+void VoiceEngine::clearTalkers() { p_->talkers.clear(); }
+
+bool VoiceEngine::enabled() const { return p_->cfg.enabled; }
+bool VoiceEngine::transmitting() const { return p_->sending; }
+
+std::vector<VoiceEngine::Talker> VoiceEngine::speaking() const {
+    std::vector<Talker> out;
+    const uint64_t now = p_->now();
+    for (const auto& [id, t] : p_->talkers)
+        if (t.jb.playing() || now - t.lastMs < uint64_t(kSpeakingMs)) out.push_back({id, t.slot, t.name});
+    return out;
+}
+
+float VoiceEngine::micLevel() const { return p_->level; }
+VoiceEngine::Device VoiceEngine::micState() const { return p_->cap.state; }
+VoiceEngine::Device VoiceEngine::outState() const { return p_->out.state; }
+const VoiceEngine::Stats& VoiceEngine::stats() const { return p_->stats; }
+
+std::string VoiceEngine::note(Device d) {
+    switch (d) {
+        case Device::NotFound: return "NOT FOUND - USING DEFAULT";
+        case Device::Lost: return "DEVICE LOST - USING DEFAULT";
+        case Device::Failed: return "UNAVAILABLE";
+        default: return "";
+    }
+}
+
+}  // namespace tak

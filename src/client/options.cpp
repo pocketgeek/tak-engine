@@ -3,6 +3,7 @@
 #include "client/blockfont.h"
 #include "client/datafolder.h"
 #include "client/gpuvram.h"
+#include "client/hotkeys.h"
 #include "client/renderdriver.h"
 
 #include <algorithm>
@@ -109,12 +110,12 @@ int detectOutputChannels() {
     return g_channelCache;
 }
 
-std::vector<std::string> listAudioDevices() {
+std::vector<std::string> listAudioDevices(int iscapture) {
     std::vector<std::string> out;
     if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return out;
-    int n = SDL_GetNumAudioDevices(0);
+    int n = SDL_GetNumAudioDevices(iscapture);
     for (int i = 0; i < n; ++i)
-        if (const char* dn = SDL_GetAudioDeviceName(i, 0)) out.emplace_back(dn);
+        if (const char* dn = SDL_GetAudioDeviceName(i, iscapture)) out.emplace_back(dn);
     return out;
 }
 
@@ -166,6 +167,15 @@ OptionsScreen::OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void(
     build(audioChannels > 0 ? audioChannels : detectOutputChannels());
 }
 
+OptionsScreen::OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
+                             std::function<void()> onSave, VoicePageHooks voice,
+                             std::function<void()> onHotkeys)
+    : ren_(ren), s_(s), onChange_(std::move(onChange)), onSave_(std::move(onSave)),
+      onHotkeys_(std::move(onHotkeys)), page_(OptionsPage::Voice), voice_(std::move(voice)) {
+    build(0);
+    if (voice_.monitor) voice_.monitor(true);   // the MIC LEVEL meter runs while this is open
+}
+
 // Rebuild the speaker sliders (etc.) after a device change. Deferred to input()/render()
 // so it never runs while a caller still holds a reference into ctls_.
 void OptionsScreen::applyPendingRebuild() {
@@ -175,8 +185,125 @@ void OptionsScreen::applyPendingRebuild() {
     build(detectOutputChannels());
 }
 
+// VOICE CHAT: a page of its own, separate from the game's audio. One switch, then the
+// microphone (device, volume, a live level meter), the voice output (SAME AS GAME OUTPUT,
+// the system default or any device, and ONE volume whatever its channel count), and the
+// push-to-talk key, which lives in CONTROLS with the other bindings. With voice chat off
+// every row but the switch is greyed and ignores input.
+void OptionsScreen::buildVoice() {
+    refreshDevices();
+    auto section = [&](const char* label) { ctls_.push_back({Control::Section, label, 0, 0, {}, {}, {}, {}, {}}); };
+    auto on = [this] { return s_.voiceEnabled; };
+
+    section("GENERAL");
+    ctls_.push_back({Control::Toggle, "VOICE CHAT", 0, 1, [this] { return s_.voiceEnabled ? 1.0f : 0.0f; },
+                     [this](float v) { s_.voiceEnabled = v > 0.5f; }, {}, {}, {}});
+    ctls_.back().help = [] {
+        return std::vector<std::string>{
+            "TALK TO THE OTHER PLAYERS WHILE YOU HOLD THE PUSH-TO-TALK KEY. OFF BY DEFAULT.",
+            "WHO HEARS YOU IS SET PER PLAYER IN THE DIPLOMACY SCREEN'S VOICE COLUMN, LIKE CHAT."};
+    };
+
+    ctls_.push_back({Control::Button, "PUSH TO TALK", 0, 0, {}, {}, {}, [this] { if (onHotkeys_) onHotkeys_(); }, {}});
+    ctls_.back().enabled = on;
+    ctls_.back().note = [this] {
+        const KeyChord c = effectiveChord(s_.hotkeys, Act::PushToTalk);
+        std::string t = chordName(c);
+        for (char& ch : t) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+        return t + " >";
+    };
+    ctls_.back().help = [] {
+        return std::vector<std::string>{
+            "HOLD IT TO TALK. CHANGE IT IN CONTROLS (CLICK HERE). NEVER WHILE TYPING IN A TEXT BOX."};
+    };
+    section("MICROPHONE");
+    // A saved device that is not plugged in stays in the list (so the choice still shows)
+    // and is noted; the engine meanwhile uses the system default.
+    auto micValues = [this] {
+        auto v = capSnapshot_;
+        if (std::find(v.begin(), v.end(), s_.voiceMicDevice) == v.end()) v.push_back(s_.voiceMicDevice);
+        return v;
+    };
+    ctls_.push_back({Control::Dropdown, "MIC DEVICE", 0, 1,
+        [this, micValues] {
+            auto v = micValues();
+            return float(std::find(v.begin(), v.end(), s_.voiceMicDevice) - v.begin());
+        },
+        [this, micValues](float idx) {
+            auto v = micValues();
+            const size_t i = size_t(std::max(0.0f, idx));
+            if (i < v.size()) s_.voiceMicDevice = v[i];
+        }, {}, {},
+        [micValues] {
+            std::vector<std::string> labels;
+            for (auto& v : micValues()) labels.push_back(v.empty() ? "System Default" : v);
+            return labels;
+        }});
+    ctls_.back().enabled = on;
+    ctls_.back().note = [this] {
+        if (!s_.voiceMicDevice.empty() &&
+            std::find(capSnapshot_.begin(), capSnapshot_.end(), s_.voiceMicDevice) == capSnapshot_.end())
+            return std::string("NOT FOUND - USING DEFAULT");
+        return voice_.micNote ? voice_.micNote() : std::string();
+    };
+    ctls_.push_back({Control::Slider, "MIC VOLUME", 0, 100, [this] { return float(s_.voiceMicVolume); },
+                     [this](float v) { s_.voiceMicVolume = std::clamp(int(v + 0.5f), 0, 100); },
+                     [](float v) { return std::to_string(int(v + 0.5f)); }, {}, {}});
+    ctls_.back().enabled = on;
+    ctls_.push_back({Control::Meter, "MIC LEVEL", 0, 1, [this] { return voice_.micLevel ? voice_.micLevel() : 0.0f; },
+                     {}, {}, {}, {}});
+    ctls_.back().enabled = on;
+    ctls_.back().help = [] {
+        return std::vector<std::string>{"WHAT THE MICROPHONE HEARS NOW, AFTER MIC VOLUME. SPEAK TO TEST IT."};
+    };
+
+    section("OUTPUT");
+    // [0] = SAME AS GAME OUTPUT (follows the game's SOUND DEVICE, the default),
+    // [1] = System Default, then the output devices A-Z.
+    auto outValues = [this] {
+        auto v = devSnapshot_;   // [0] = "" = system default
+        if (std::find(v.begin(), v.end(), s_.voiceOutputDevice) == v.end()) v.push_back(s_.voiceOutputDevice);
+        return v;
+    };
+    ctls_.push_back({Control::Dropdown, "OUTPUT DEVICE", 0, 1,
+        [this, outValues] {
+            if (s_.voiceOutputSameAsGame) return 0.0f;
+            auto v = outValues();
+            return float(1 + (std::find(v.begin(), v.end(), s_.voiceOutputDevice) - v.begin()));
+        },
+        [this, outValues](float idx) {
+            const int i = std::max(0, int(idx));
+            if (i == 0) { s_.voiceOutputSameAsGame = true; return; }
+            auto v = outValues();
+            if (size_t(i - 1) >= v.size()) return;
+            s_.voiceOutputSameAsGame = false;
+            s_.voiceOutputDevice = v[size_t(i - 1)];
+        }, {}, {},
+        [outValues] {
+            std::vector<std::string> labels{"Same as Game Output"};
+            for (auto& v : outValues()) labels.push_back(v.empty() ? "System Default" : v);
+            return labels;
+        }});
+    ctls_.back().enabled = on;
+    ctls_.back().note = [this] {
+        if (!s_.voiceOutputSameAsGame && !s_.voiceOutputDevice.empty() &&
+            std::find(devSnapshot_.begin(), devSnapshot_.end(), s_.voiceOutputDevice) == devSnapshot_.end())
+            return std::string("NOT FOUND - USING DEFAULT");
+        return voice_.outNote ? voice_.outNote() : std::string();
+    };
+    ctls_.push_back({Control::Slider, "OUTPUT VOLUME", 0, 100, [this] { return float(s_.voiceOutputVolume); },
+                     [this](float v) { s_.voiceOutputVolume = std::clamp(int(v + 0.5f), 0, 100); },
+                     [](float v) { return std::to_string(int(v + 0.5f)); }, {}, {}});
+    ctls_.back().enabled = on;
+    ctls_.back().help = [] {
+        return std::vector<std::string>{"ONE VOLUME FOR EVERY SPEAKER, STEREO OR SURROUND. SEPARATE FROM THE GAME'S VOLUMES."};
+    };
+
+}
+
 void OptionsScreen::build(int channels) {
     ctls_.clear();   // rebuildable: a live device switch re-runs this with a new channel count
+    if (page_ == OptionsPage::Voice) { buildVoice(); return; }
     std::fprintf(stderr, "Options: %d speaker sliders\n", channels);
     auto section = [&](const char* label) { ctls_.push_back({Control::Section, label, 0, 0, {}, {}, {}, {}, {}}); };
     auto slider = [&](const char* label, float lo, float hi, std::function<float()> get,
@@ -479,6 +606,14 @@ void OptionsScreen::refreshDevices() {
               });
     devSnapshot_.assign(1, std::string());               // [0] = "" = system default (always first)
     for (auto& d : devs) devSnapshot_.push_back(d);
+    if (page_ != OptionsPage::Voice) return;
+    auto caps = listAudioDevices(1);
+    std::sort(caps.begin(), caps.end(), [](const std::string& a, const std::string& b) {
+        return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(),
+            [](unsigned char x, unsigned char y) { return std::tolower(x) < std::tolower(y); });
+    });
+    capSnapshot_.assign(1, std::string());
+    for (auto& d : caps) capSnapshot_.push_back(d);
 }
 
 void OptionsScreen::dropViewport(const Control& c, int nOpts, float& y0, float& itemH,
@@ -569,6 +704,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
         if (my < panel_.y + titleH || my > panel_.y + panel_.h - footerH) return false;
         for (auto& c : ctls_) {
             if (!in(c.row, mx, my) || c.kind != Control::Toggle) continue;
+            if (c.enabled && !c.enabled()) break;   // greyed out: ignore
             c.set(c.get() > 0.5f ? 0.0f : 1.0f);
             dirty_ = true;
             if (onChange_) onChange_();
@@ -609,7 +745,8 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
         }
         if (in(defaultsRect_, mx, my)) {                            // reset to defaults
             if (atDefaults()) return false;         // already default -> disabled, ignore
-            s_ = tak::preferenceDefaults(s_);   // one definition, shared with atDefaults()
+            // One definition per page, shared with atDefaults().
+            s_ = page_ == OptionsPage::Voice ? tak::voiceDefaults(s_) : tak::preferenceDefaults(s_);
             dirty_ = true;
             if (onChange_) onChange_();
             return false;
@@ -619,6 +756,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
         for (size_t i = 0; i < ctls_.size(); ++i) {
             Control& c = ctls_[i];
             if (!in(c.row, mx, my)) continue;
+            if (c.enabled && !c.enabled() && c.kind != Control::Folder) return false;   // greyed out: ignore
             if (c.kind == Control::PlayerName) {
                 nameEditing_ = true; nameSelectAll_ = true; SDL_StartTextInput();
                 SDL_Rect caret{int(c.row.x),int(c.row.y),int(c.row.w),int(c.row.h)};
@@ -628,10 +766,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
             if (c.kind == Control::Toggle) {
                 c.set(c.get() > 0.5f ? 0.0f : 1.0f); dirty_ = true; if (onChange_) onChange_(); return false;
             }
-            if (c.kind == Control::Slider) {
-                if (c.enabled && !c.enabled()) return false;   // greyed out: ignore
-                drag_ = int(i); commit(c, mx); return false;
-            }
+            if (c.kind == Control::Slider) { drag_ = int(i); commit(c, mx); return false; }
             if (c.kind == Control::Button) { if (c.action) c.action(); return false; }
             if (c.kind == Control::Folder) { clickFolder(); return false; }
             if (c.kind == Control::Dropdown) { refreshDevices(); openDrop_ = int(i); dropScroll_ = 0; return false; }   // fresh A-Z list
@@ -641,7 +776,8 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
     if (e.type == SDL_MOUSEMOTION) { hoverX_ = float(e.motion.x); hoverY_ = float(e.motion.y); }
     if (e.type == SDL_MOUSEMOTION && drag_ >= 0 && (e.motion.state & SDL_BUTTON_LMASK)) {
         layout(winW, winH);   // rows may have shifted if window resized mid-drag
-        if (drag_ < int(ctls_.size())) commit(ctls_[size_t(drag_)], float(e.motion.x));
+        if (drag_ < int(ctls_.size()) && (!ctls_[size_t(drag_)].enabled || ctls_[size_t(drag_)].enabled()))
+            commit(ctls_[size_t(drag_)], float(e.motion.x));
         return false;
     }
     if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) drag_ = -1;
@@ -701,7 +837,7 @@ void OptionsScreen::render(int winW, int winH) {
     SDL_SetRenderDrawColor(ren_, 24, 26, 34, 245); SDL_RenderFillRectF(ren_, &panel_);
     SDL_SetRenderDrawColor(ren_, 120, 130, 160, 255); SDL_RenderDrawRectF(ren_, &panel_);
 
-    const char* title = "OPTIONS";
+    const char* title = page_ == OptionsPage::Voice ? "VOICE CHAT" : "OPTIONS";
     float tpx = 3.4f * u_;
     drawBlockText(ren_, title, panel_.x + (panel_.w - blockTextWidth(title, tpx)) / 2,
                   panel_.y + 13 * u_, tpx, {235, 225, 180, 255});
@@ -723,15 +859,40 @@ void OptionsScreen::render(int winW, int winH) {
             SDL_RenderFillRectF(ren_, &ln);
         } else if (c.kind == Control::Toggle) {
             bool on = c.get() > 0.5f;
-            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx, {225, 230, 240, 255});
+            const bool live = !c.enabled || c.enabled();   // greyed when its master switch is off
+            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
+                          live ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
             SDL_FRect pill{c.row.x + c.row.w - 78 * u_, c.row.y + 7 * u_, 78 * u_, 20 * u_};
-            SDL_SetRenderDrawColor(ren_, on ? 60 : 44, on ? 120 : 48, on ? 90 : 58, 255);
+            if (live) SDL_SetRenderDrawColor(ren_, on ? 60 : 44, on ? 120 : 48, on ? 90 : 58, 255);
+            else SDL_SetRenderDrawColor(ren_, 34, 37, 45, 255);
             SDL_RenderFillRectF(ren_, &pill);
-            SDL_SetRenderDrawColor(ren_, 130, 140, 170, 255); SDL_RenderDrawRectF(ren_, &pill);
+            if (live) SDL_SetRenderDrawColor(ren_, 130, 140, 170, 255);
+            else SDL_SetRenderDrawColor(ren_, 70, 76, 92, 255);
+            SDL_RenderDrawRectF(ren_, &pill);
             const char* t = on ? "ON" : "OFF";
             drawBlockText(ren_, t, pill.x + (pill.w - blockTextWidth(t, 2.0f * u_)) / 2,
                           pill.y + (pill.h - 7 * 2.0f * u_) / 2, 2.0f * u_,
-                          on ? SDL_Color{210, 240, 215, 255} : SDL_Color{170, 175, 185, 255});
+                          !live ? SDL_Color{105, 110, 122, 255}
+                          : on ? SDL_Color{210, 240, 215, 255} : SDL_Color{170, 175, 185, 255});
+        } else if (c.kind == Control::Meter) {
+            // A live level bar (the VOICE CHAT microphone): green, amber near the top.
+            const bool live = !c.enabled || c.enabled();
+            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
+                          live ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
+            const float cw = dropWidth(c);
+            SDL_FRect track{c.row.x + c.row.w - cw, c.row.y + 11 * u_, cw, 12 * u_};
+            SDL_SetRenderDrawColor(ren_, live ? 40 : 30, live ? 44 : 33, live ? 58 : 42, 255);
+            SDL_RenderFillRectF(ren_, &track);
+            if (live) {
+                const float level = std::clamp(c.get ? c.get() : 0.0f, 0.0f, 1.0f);
+                SDL_FRect fill{track.x, track.y, track.w * level, track.h};
+                if (level > 0.9f) SDL_SetRenderDrawColor(ren_, 225, 120, 80, 255);
+                else if (level > 0.6f) SDL_SetRenderDrawColor(ren_, 225, 195, 90, 255);
+                else SDL_SetRenderDrawColor(ren_, 90, 190, 120, 255);
+                SDL_RenderFillRectF(ren_, &fill);
+            }
+            SDL_SetRenderDrawColor(ren_, live ? 130 : 70, live ? 140 : 76, live ? 170 : 92, 255);
+            SDL_RenderDrawRectF(ren_, &track);
         } else if (c.kind == Control::PlayerName) {
             drawBlockText(ren_, c.label, c.row.x, c.row.y + 12*u_, fpx, {225,230,240,255});
             const float cw = dropWidth(c);
@@ -747,24 +908,34 @@ void OptionsScreen::render(int winW, int winH) {
         } else if (c.kind == Control::Folder) {
             drawFolderRow(c);
         } else if (c.kind == Control::Button) {
-            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx, {225, 230, 240, 255});
-            SDL_FRect chip{c.row.x + c.row.w - 96 * u_, c.row.y + 5 * u_, 96 * u_, 24 * u_};
-            SDL_SetRenderDrawColor(ren_, 52, 60, 82, 255);
+            const bool live = !c.enabled || c.enabled();
+            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
+                          live ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
+            const std::string t = c.note ? c.note() : std::string("OPEN >");
+            const float tw = blockTextWidth(t, 2.0f * u_);
+            const float bw = std::max(96 * u_, tw + 20 * u_);
+            SDL_FRect chip{c.row.x + c.row.w - bw, c.row.y + 5 * u_, bw, 24 * u_};
+            SDL_SetRenderDrawColor(ren_, live ? 52 : 34, live ? 60 : 38, live ? 82 : 46, 255);
             SDL_RenderFillRectF(ren_, &chip);
-            SDL_SetRenderDrawColor(ren_, 130, 140, 170, 255); SDL_RenderDrawRectF(ren_, &chip);
-            const char* t = "OPEN >";
-            drawBlockText(ren_, t, chip.x + (chip.w - blockTextWidth(t, 2.0f * u_)) / 2,
-                          chip.y + (chip.h - 7 * 2.0f * u_) / 2, 2.0f * u_, {215, 225, 245, 255});
+            SDL_SetRenderDrawColor(ren_, live ? 130 : 70, live ? 140 : 76, live ? 170 : 92, 255);
+            SDL_RenderDrawRectF(ren_, &chip);
+            drawBlockText(ren_, t, chip.x + (chip.w - tw) / 2,
+                          chip.y + (chip.h - 7 * 2.0f * u_) / 2, 2.0f * u_,
+                          live ? SDL_Color{215, 225, 245, 255} : SDL_Color{110, 115, 125, 255});
         } else if (c.kind == Control::Dropdown) {
             // Closed state: label on the left, a wide chip with the current value and a
             // downward arrow on the right. The open pop-up list is drawn in a second
             // pass below (un-clipped, on top of everything).
-            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx, {225, 230, 240, 255});
+            const bool live = !c.enabled || c.enabled();
+            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
+                          live ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
             float cw = dropWidth(c);
             SDL_FRect chip{c.row.x + c.row.w - cw, c.row.y + 5 * u_, cw, 24 * u_};
 
-            SDL_SetRenderDrawColor(ren_, 52, 60, 82, 255); SDL_RenderFillRectF(ren_, &chip);
-            SDL_SetRenderDrawColor(ren_, 130, 140, 170, 255); SDL_RenderDrawRectF(ren_, &chip);
+            SDL_SetRenderDrawColor(ren_, live ? 52 : 34, live ? 60 : 38, live ? 82 : 46, 255);
+            SDL_RenderFillRectF(ren_, &chip);
+            SDL_SetRenderDrawColor(ren_, live ? 130 : 70, live ? 140 : 76, live ? 170 : 92, 255);
+            SDL_RenderDrawRectF(ren_, &chip);
             auto opts = c.options ? c.options() : std::vector<std::string>{};
             int sel = int(c.get ? c.get() : 0.0f);
             std::string t = (sel >= 0 && sel < int(opts.size())) ? opts[size_t(sel)] : std::string();
@@ -772,8 +943,8 @@ void OptionsScreen::render(int winW, int winH) {
             int maxCh = int((chip.w - 30 * u_) / (6 * dpx));   // block glyph = 6px; leave room for the arrow
             if (int(t.size()) > maxCh && maxCh > 0) t = t.substr(0, size_t(maxCh));
             drawBlockText(ren_, t, chip.x + 6 * u_, chip.y + (chip.h - 7 * dpx) / 2, dpx,
-                          {215, 225, 245, 255});
-            if (c.note) {   // e.g. RESTART REQUIRED: small, amber, right-aligned before the caret
+                          live ? SDL_Color{215, 225, 245, 255} : SDL_Color{110, 115, 125, 255});
+            if (c.note && live) {   // e.g. RESTART REQUIRED: small, amber, right-aligned before the caret
                 std::string n = c.note();
                 float npx = 1.3f * u_, nw = blockTextWidth(n, npx);
                 float nx = chip.x + chip.w - 26 * u_ - nw;

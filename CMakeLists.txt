@@ -1474,6 +1474,22 @@ if(TAK_BUILD_CLIENT)
     else()
       set(_tak_sdl2 SDL2::SDL2)
     endif()
+    # Voice chat (client/voice.h): the engine and the Opus codec, built from a pinned
+    # source release (cmake/Opus.cmake). Client only -- takserver relays voice frames as
+    # opaque bytes and never links Opus.
+    include(cmake/Opus.cmake)
+    add_library(tak-voice STATIC src/client/voice.cpp src/client/voicecodec.cpp)
+    target_include_directories(tak-voice PUBLIC src)
+    target_compile_definitions(tak-voice PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(tak-voice PUBLIC tak-formats ${_tak_sdl2} PRIVATE opus)
+    # The codec, jitter buffer, push-to-talk rules, the engine on SDL's disk/dummy audio
+    # drivers with synthetic PCM, the VOICE CHAT page (greyed while off) and the settings.
+    add_executable(voice_test tools/voice_test.cpp src/client/options.cpp src/client/settings.cpp
+      src/client/hotkeys.cpp)
+    target_compile_definitions(voice_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(voice_test PRIVATE tak-voice tak-formats ${_tak_sdl2})
+    add_test(NAME voice COMMAND voice_test)
+    set_tests_properties(voice PROPERTIES TIMEOUT 60 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     if(UNIX AND NOT APPLE)
       add_executable(override_settings_test tools/override_settings_test.cpp src/client/settings.cpp)
       target_link_libraries(override_settings_test PRIVATE tak-formats ${_tak_sdl2})
@@ -1614,7 +1630,8 @@ if(TAK_BUILD_CLIENT)
     target_link_libraries(fogupload_test PRIVATE ${_tak_sdl2})
     add_test(NAME fogupload COMMAND fogupload_test)
     set_tests_properties(fogupload PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
-    add_executable(audio_device_test tools/audio_device_test.cpp src/client/options.cpp src/client/settings.cpp)
+    add_executable(audio_device_test tools/audio_device_test.cpp src/client/options.cpp src/client/settings.cpp
+      src/client/hotkeys.cpp)
     target_compile_definitions(audio_device_test PRIVATE SDL_MAIN_HANDLED
       SDL_GetNumAudioDevices=TAK_Test_GetNumAudioDevices
       SDL_OpenAudioDevice=TAK_Test_OpenAudioDevice)
@@ -1782,7 +1799,7 @@ if(TAK_BUILD_CLIENT)
       endif()
     endif()
 
-    target_link_libraries(takclient PRIVATE tak-crusades-map tak-formats tak-gpustats tak-credstore ${_tak_sdl2})
+    target_link_libraries(takclient PRIVATE tak-crusades-map tak-formats tak-gpustats tak-credstore tak-voice ${_tak_sdl2})
     # We provide our own main() and call SDL_SetMainReady(). Define SDL_MAIN_HANDLED for
     # the WHOLE target (not just main.cpp) so it applies before ANY header pulls in
     # <SDL.h> -- otherwise, on Windows, SDL_main.h renames our main to SDL_main via a
@@ -2176,7 +2193,7 @@ if(UNIX AND NOT APPLE)
   install(FILES packaging/systemd/takserver-acme.conf packaging/systemd/takserver-settings.conf
                 packaging/systemd/README.md
           DESTINATION share/doc/tak-engine/systemd)
-  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt DESTINATION share/licenses/tak-engine)
+  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt DESTINATION share/licenses/tak-engine)
   install(TARGETS takserver crusades_admin RUNTIME DESTINATION bin)
   if(TARGET takclient)
     install(TARGETS takclient RUNTIME DESTINATION bin)
@@ -2230,7 +2247,7 @@ if(UNIX AND NOT APPLE)
 
   include(CPack)
 elseif(WIN32)
-  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt DESTINATION .)
+  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt DESTINATION .)
   # Windows installer (NSIS via CPack; the CI's MSYS2 job runs `cpack -G NSIS`).
   # Binaries install into the chosen folder root (no bin/), with Start-menu
   # shortcuts and an uninstaller. The static build has no DLLs to carry.

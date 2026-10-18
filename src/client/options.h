@@ -37,9 +37,9 @@ int detectOutputChannels();
 void initAudioCaps();
 
 // --- Output device selection -------------------------------------------------------
-// Names of the current output devices (for the Options picker); [] entry is implicitly
-// "System Default".
-std::vector<std::string> listAudioDevices();
+// Names of the current output (iscapture=0) or capture (iscapture=1) devices, for the
+// pickers; "System Default" is implicit and not in the list.
+std::vector<std::string> listAudioDevices(int iscapture = 0);
 // Choose the output device by name ("" = system default). Validated: an absent name
 // falls back to system default. Call once at startup from Settings::audioDevice, before
 // any audio is opened.
@@ -52,6 +52,19 @@ const std::string& currentAudioDevice();
 // SDL_OpenAudioDevice's (iscapture, want, got, allowed_changes) signature.
 SDL_AudioDeviceID openAudioDevice(int iscapture, const SDL_AudioSpec* want,
                                   SDL_AudioSpec* got, int allowed);
+
+// Which screen an OptionsScreen shows: the general OPTIONS, or VOICE CHAT (its own page
+// in the same overlay, with its own DEFAULTS; see buildVoice()).
+enum class OptionsPage { General, Voice };
+
+// What the VOICE CHAT page reads from the host's voice engine (client/voice.h), so the
+// screen itself needs no engine. Every hook is optional.
+struct VoicePageHooks {
+    std::function<float()> micLevel;          // 0..1, for the MIC LEVEL meter
+    std::function<std::string()> micNote;     // device status beside MICROPHONE ("" = fine)
+    std::function<std::string()> outNote;     // ... and beside VOICE OUTPUT
+    std::function<void(bool)> monitor;        // the page opened (true) / closed (false)
+};
 
 class OptionsScreen {
 public:
@@ -69,7 +82,26 @@ public:
                   std::function<void()> onHotkeys = {}, std::function<void()> onAudioDevice = {},
                   DataFolderRow dataFolder = {});
 
-    ~OptionsScreen() { if (nameEditing_) SDL_StopTextInput(); }
+    // The VOICE CHAT page. Its rows edit only the voice fields, and every one of them but
+    // the VOICE CHAT switch is greyed out and ignores input while voice chat is off.
+    // onHotkeys: the PUSH TO TALK row opens the CONTROLS screen, where the key is bound.
+    OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
+                  std::function<void()> onSave, VoicePageHooks voice,
+                  std::function<void()> onHotkeys = {});
+
+    ~OptionsScreen() {
+        if (nameEditing_) SDL_StopTextInput();
+        if (voice_.monitor) voice_.monitor(false);
+    }
+
+    OptionsPage page() const { return page_; }
+    // A text field here has keyboard focus (the player name): push to talk stays off.
+    bool editingText() const { return nameEditing_; }
+    // For the UI tests: whether the row labelled `label` currently takes input.
+    bool rowEnabled(const std::string& label) const {
+        for (auto& c : ctls_) if (c.label == label && c.kind != Control::Section) return !c.enabled || c.enabled();
+        return false;
+    }
 
     // Feed one SDL event. Returns true when the user leaves (Esc / BACK); the host
     // should then stop showing the screen. Persisting is explicit (the SAVE button
@@ -87,8 +119,18 @@ public:
     // has that label), the data-folder row's status line, and the restart prompt's
     // buttons (empty rects while it is closed).
     const SDL_FRect* rowRect(const std::string& label) const {
-        for (auto& c : ctls_) if (c.label == label) return &c.row;
+        for (auto& c : ctls_) if (c.label == label && c.kind != Control::Section) return &c.row;
         return nullptr;
+    }
+    // Option `index` of the open dropdown, where a click selects it (empty when closed).
+    SDL_FRect dropItemRect(int index) {
+        if (openDrop_ < 0 || openDrop_ >= int(ctls_.size())) return {};
+        const Control& c = ctls_[size_t(openDrop_)];
+        const int n = c.options ? int(c.options().size()) : 0;
+        float y0, itemH, viewH;
+        dropViewport(c, n, y0, itemH, viewH);
+        const float w = dropWidth(c);
+        return {c.row.x + c.row.w - w, y0 + float(index) * itemH - dropScroll_, w, itemH};
     }
     std::string folderStatus() const { return folderStatusText(); }
     bool folderPicking() const { return folderPick_.busy(); }
@@ -97,7 +139,7 @@ public:
 
 private:
     struct Control {
-        enum Kind { Section, Slider, Toggle, Button, Dropdown, PlayerName, Folder } kind;
+        enum Kind { Section, Slider, Toggle, Button, Dropdown, PlayerName, Folder, Meter } kind;
         std::string label;
         float lo = 0, hi = 1;
         std::function<float()> get;              // Dropdown: the selected option index
@@ -105,13 +147,15 @@ private:
         std::function<std::string(float)> fmt;   // value -> display text
         std::function<void()> action;            // Button: click handler
         std::function<std::vector<std::string>()> options;   // Dropdown: the choices
-        std::function<std::string()> note;       // Dropdown: optional status beside the label
-        std::function<bool()> enabled;           // Slider: unset = always; false = greyed, ignores input
+        std::function<std::string()> note;       // Dropdown: optional status beside the label;
+                                                 // Button: the chip text (default "OPEN >")
+        std::function<bool()> enabled;           // unset = always; false = greyed, ignores input
         std::function<std::vector<std::string>()> help;   // optional lines shown while hovered
         SDL_FRect row{};                          // filled by layout()
     };
 
     void build(int audioChannels);
+    void buildVoice();                            // the VOICE CHAT page's rows
     void layout(int winW, int winH);
     void commit(Control& c, float mx);            // set a slider from a mouse x
 
@@ -147,7 +191,9 @@ private:
     // "At defaults" and "what DEFAULTS does" are the same question, so they share one
     // definition -- see tak::preferenceDefaults. They used to be two hand-maintained
     // lists that kept drifting apart.
-    bool atDefaults() const { return s_ == tak::preferenceDefaults(s_); }
+    bool atDefaults() const {
+        return page_ == OptionsPage::Voice ? s_ == tak::voiceDefaults(s_) : s_ == tak::preferenceDefaults(s_);
+    }
 
     SDL_Renderer* ren_;
     Settings& s_;
@@ -183,6 +229,9 @@ private:
     int openDrop_ = -1;     // index of the open Dropdown control (-1 = none)
     float dropScroll_ = 0;  // scroll offset (px) INSIDE the open dropdown's option list
     std::vector<std::string> devSnapshot_;   // output devices ([0]="" system default, rest A-Z)
+    std::vector<std::string> capSnapshot_;   // capture devices, the same way (VOICE CHAT page)
+    OptionsPage page_ = OptionsPage::General;
+    VoicePageHooks voice_;
     float u_ = 1.0f;        // layout unit (scaled to window)
     SDL_FRect panel_{};     // the panel rect (for scroll clamping)
     SDL_FRect defaultsRect_{}, saveRect_{}, backRect_{};   // footer buttons (filled by layout())
