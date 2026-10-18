@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.4** (network protocol **276**, replay format
+This guide covers **TAK Engine 0.8.4** (network protocol **277**, replay format
 **13**). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -1415,7 +1415,7 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.4 uses network protocol **276**. It cannot play with 0.8.3 (protocol
+Version 0.8.4 uses network protocol **277**. It cannot play with 0.8.3 (protocol
 266) or any earlier version: the server turns away a client whose protocol
 differs from its own, so a server and all of its players must update to 0.8.4
 together.
@@ -1641,7 +1641,7 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.4 plays protocol-276 recordings only, so replays recorded by
+  recorded it (0.8.4 plays protocol-277 recordings only, so replays recorded by
   0.8.3 or earlier need the version that recorded them);
 - the same game data and map.
 
@@ -1786,7 +1786,7 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together.** A server only accepts clients of
-the same protocol version (0.8.4 uses protocol 276; 0.8.3 uses 266).
+the same protocol version (0.8.4 uses protocol 277; 0.8.3 uses 266).
 
 ---
 
@@ -1891,7 +1891,7 @@ the system's permission to use the microphone.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.4 uses protocol 276, 0.8.3 uses 266). See
+one that recorded them (0.8.4 uses protocol 277, 0.8.3 uses 266). See
 [Replays](#replays).
 
 ### Where files are kept

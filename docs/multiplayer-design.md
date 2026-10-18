@@ -721,7 +721,9 @@ the replay notes below), 265 the 2026-10-15 retail path-search fidelity fixes
 needed (all modes); 0.8.3 ships protocol 266. Protocols 267 to 272 carry the
 Legion 10,000 program (Legion only), 273 shares short mana across construction
 (all modes), 274 lets a lodestone upgrade finish under a short share, 275 adds
-the Absurdly Defensive AI level and 276 voice chat; 0.8.4 ships protocol 276.
+the Absurdly Defensive AI level, 276 voice chat, and 277 keeps a Legion
+formation's flyers over the front while its ground waits to register (Legion
+only); 0.8.4 ships protocol 277.
 Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
@@ -884,7 +886,12 @@ simulation is otherwise unchanged and 274 recordings no longer play. Protocol
 [Voice chat](#voice-chat-protocol-276)), relayed beside the game and never in a
 tick bundle or replay; the simulation is unchanged, but a 275 peer would not
 know the messages, and 275 recordings no longer play. The `--mpai` hashes stand
-as under 273.
+as under 273. Protocol 277 (Legion only) counts a unit waiting in the Legion
+registration queue as delayed, not stalled, so a formation's flyers keep their
+stations over the front while the ground waits for its first navigation plane
+(on big maps since stage 4) instead of flying straight to the goal; Retail is
+bit-identical, 276 recordings no longer play, and the `--mpai` hashes stand as
+under 273 (the AI never forms formations).
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
@@ -940,6 +947,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.8.4 (peers and server) requires protocol 276; 0.8.3 required 266,
+227. Version 0.8.4 (peers and server) requires protocol 277; 0.8.3 required 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

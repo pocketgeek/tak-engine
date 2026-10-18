@@ -55,7 +55,7 @@ the GOG edition, supplies the game data.
 ## New in 0.8.4
 
 0.8.4 changes the simulation in both pathfinding modes, so the protocol moves
-to **276**: **0.8.4 cannot play with 0.8.3 or earlier, and cannot play their
+to **277**: **0.8.4 cannot play with 0.8.3 or earlier, and cannot play their
 replays**. Update the server and every player together.
 
 - **Voice chat.** Hold **Space** to talk to the other players in a multiplayer
@@ -863,7 +863,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.8.4 uses protocol **276** and generator version 8; generated-map recipes from 0.8.0 to 0.8.3 still work.
+Version 0.8.4 uses protocol **277** and generator version 8; generated-map recipes from 0.8.0 to 0.8.3 still work.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -1149,7 +1149,7 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same network protocol and compatible game data** on every participant.
-Version **0.8.4 uses protocol 276**, including authoritative pathfinding
+Version **0.8.4 uses protocol 277**, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
 0.8.3 (protocol 266) and earlier clients cannot join 0.8.4 matches, and
 0.8.4 clients cannot join older servers: update the server and all players together.
@@ -1357,7 +1357,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.8.4 uses protocol **276**; servers and clients must all run 0.8.4 (0.8.3 uses 266).
+Version 0.8.4 uses protocol **277**; servers and clients must all run 0.8.4 (0.8.3 uses 266).
 
 
 ## License

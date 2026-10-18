@@ -6,7 +6,7 @@ one tick, long routes, shared passages), a new AI difficulty, Absurdly
 Defensive, beside an uncapped Defensive, replays that are kept however a game
 ends, the original game's sharing of short mana across construction, and a
 faster renderer, above all for large armies. The simulation changed in both
-pathfinding modes, so the network protocol moves from 266 to **276**: **0.8.4
+pathfinding modes, so the network protocol moves from 266 to **277**: **0.8.4
 cannot play with 0.8.3 or earlier, and cannot play their replays.** A server
 and all of its players must update to 0.8.4 together. As in 0.8.3, Retail
 pathfinding does **not** play exactly as before: the shared mana changes Retail
@@ -235,6 +235,15 @@ design is in the [Legion notes](legion-pathfinding.md).
 - **Parallel planning** (no protocol change): independent planning work runs on
   the simulation's worker threads, with every hash identical on any number of
   workers.
+- **Formation flyers hold over the front while their ground waits** (protocol
+  277, Legion only). On maps over about 131,000 cells, a click's ground units
+  can wait a few ticks for their navigation plane to be built (268), and the
+  flyers of the formation took that wait for a stalled army and flew straight
+  to the goal. A unit waiting in that queue now counts as delayed, not stalled,
+  so the flyers keep their rows over the front of the ground as in 0.8.3 (a
+  regression found while preparing this release, never in a published build;
+  `legion_flyerfront` now also runs a 400 × 400 map with the click on the spawn
+  tick). Retail is bit-identical.
 
 128 of the program's 212 frozen targets are met (99 at the start). Not done:
 very large crowds still jam at static corners, at the mouths of narrow passages
@@ -243,7 +252,10 @@ many different places. Three of the ten 10,000-unit workloads run over the
 33 ms tick budget: many-10000 and scatter-10000 in 13% and 2% of ticks, because
 four to eight times as many units now actually move, and mixed-10000, whose
 overrun comes from its flyers' exploration phase, outside Legion, and was there
-before. See the report's sections 13 and 14.
+before. Since 277, mixed-10000's flyers hold station over a ground army that
+crawls and do not land within the test's 19,400 ticks (444 landed before), and
+its mean tick rose from 56.8 to 74.1 ms; 2,335 units arrive instead of 2,265.
+See the report's sections 13 and 14.
 
 ## For contributors
 
@@ -271,22 +283,32 @@ before. See the report's sections 13 and 14.
   step failed on every platform).
 - The remote desync sweep's `h-cramped` case runs with Monarch Expendable
   (`5774601a`): since 0.8.3's air combat, the Zhon god's storms killed the idle
-  seat's Monarch at tick 1,303, leaving the case checking almost nothing.
+  seat's Monarch at tick 1,303, leaving the case checking almost nothing. In
+  Retail it still ends early (tick 1,307), because an idle seat starts with
+  only its Monarch and a seat with no living units is out whatever that option
+  says; Legion's runs the full ten minutes.
+- Test robustness: `terrain_schedule` and `terrain_cache` run on simulated
+  frame clocks instead of wall time (they failed under load and, for
+  `terrain_schedule`, in every unoptimized build), `voice_uplink` no longer
+  indexes past the end of its buffer (GCC 16 aborted it at `-O0`), and
+  `legion_route_paused`, `legion_parallel`, `legion_scale_neutral` and
+  `legion_sched_inflight` get longer limits in unoptimized and sanitizer
+  builds (`TAK_SLOW_TEST_BUILD`), as `movement_orders_trolls` did in 0.8.3.
 - The `--mpai` Inner Circle seed 1 hashes are now: Retail 300 s
   `a3d953803a064191`, 60 s `b353410003e98dd5`; Legion 300 s
   `ce5c4ba7562e53b9`, 60 s `0825aeb9e8139203`, unchanged by the rendering
-  merge.
+  merge and by 277 (the AI never forms formations).
 
 ## Compatibility
 
-Protocol **276** (0.8.3: 266), replay format **13** (unchanged), generator
+Protocol **277** (0.8.3: 266), replay format **13** (unchanged), generator
 version **8**, campaign payload **4** and Crusades SQL schema **9**. Checked in
 source against `v0.8.3`: `kNetVersion` in `src/net/protocol.h`, `kReplayFormat`
 in `src/net/replayhdr.h`, the map generator's `formatVer` (`src/tnt/mapgen.h`,
 no change under `src/tnt/`), the campaign payload's `kVersion`
 (`src/net/crusades.h`, unchanged) and `kSchemaVersion`
 (`src/server/crusades/store.cpp`, unchanged).
-<!-- LEAD: re-check kNetVersion right before tagging; update 276 everywhere if it moved. -->
+<!-- LEAD: re-check kNetVersion right before tagging; update 277 everywhere if it moved. -->
 
 - **Multiplayer.** A server rejects a client whose protocol differs from its
   own, so **0.8.4 clients cannot join 0.8.3 or older servers, and 0.8.3 or
