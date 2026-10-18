@@ -4060,10 +4060,10 @@
                     paletteUploadBytes_+=size_t(pal::kShadeLevels)*256*4;
                 }
                 sheetId=page.sheets;
-                if(!paletteIndexed_.upload(slot->page,rect.x/pal::kBandColumns,rect.y/pal::kBandRows,w,h,input.la.data()) ||
-                   !paletteIndexed_.uploadEntry(slot->page,sheetId,pal::entryFor(rect,w,h,bankId)))continue;
+                if(!paletteIndexed_.uploadEntry(slot->page,sheetId,pal::entryFor(rect,w,h,bankId)) ||
+                   !paletteIndexed_.upload(slot->page,rect.x/pal::kBandColumns,rect.y/pal::kBandRows,input,sheetId))continue;
                 ++page.sheets;
-                paletteUploadBytes_+=input.la.size()+8;
+                paletteUploadBytes_+=size_t(w)*size_t(h)*pal::kIndexTexelBytes+pal::kTableTexelsPerSheet*pal::kIndexTexelBytes;
             } else {
                 pal::expandSheet(input,bank,pixels);
                 SDL_Rect area{rect.x,rect.y,rect.w,rect.h};

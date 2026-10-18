@@ -19,18 +19,23 @@
 //     pages and the indexed pages both use it, so a polygon's texture
 //     coordinates are the same numbers in both forms and the texel either form
 //     samples is the same texel.
-//   * The indexed form stores each frame ONCE as (palette index, alpha) pairs in
-//     a 512x512 two-channel page: sheet (x0, y0) goes to (x0/4, y0/5). The packer
-//     only ever advances x by multiples of 4 (sheet widths are 4w) and y by
-//     multiples of 5 (heights 5h), so these are exact and two sheets never
-//     overlap; rows [0, 410) hold index data, rows [kTableRow, 512) a sheet table.
+//   * The indexed form stores each frame ONCE in a 512x512 RGBA page: sheet
+//     (x0, y0) goes to (x0/4, y0/5), each texel (palette index, owner sheet,
+//     alpha). The packer only ever advances x by multiples of 4 (sheet widths
+//     are 4w) and y by multiples of 5 (heights 5h), so these are exact and two
+//     sheets never overlap; rows [0, 410) hold index data, rows [kTableRow, 512)
+//     a sheet table. The same arithmetic maps ANY baked page texel (X, Y) to
+//     index texel (X/4, Y/5), and that texel's owner names the sheet whose baked
+//     rectangle holds (X, Y) -- so a sample outside the polygon's own sheet is
+//     resolved exactly like the baked page's neighbouring texel (IndexPageModel).
 //   * A polygon names its sheet through the integer part of its texture
 //     coordinates (encodeSheetCoord): the baked coordinates are exact multiples
 //     of 1/2048 in [0, 1], so u + 2*s is exact in float for s < 4096 and the
 //     shader recovers both the original u and s exactly.
-//   * resolveTexel is the decode the indexed shader performs, on the CPU: for a
-//     page texel inside a sheet it returns exactly the baked texel
-//     (tools/palette_sheets_test.cpp checks every texel of random sheets).
+//   * resolveTexel is the decode the indexed shader performs inside a sheet, on
+//     the CPU; IndexPageModel::resolve is the whole decode, neighbours included:
+//     at every texel of a page it returns exactly the baked page's texel
+//     (tools/palette_sheets_test.cpp checks every texel of random pages).
 //
 // Pure: no SDL, no GL. GameView owns the instances (render thread only).
 
@@ -54,13 +59,16 @@ inline constexpr int kBandColumns = 4, kBandRows = 5;
 inline constexpr int kShadeLevels = 32;          // rows of a .shd table
 inline constexpr size_t kShadeTableBytes = size_t(kShadeLevels) * 256;
 
-// Indexed page: index data at (x0/4, y0/5), sheet table above it.
+// Indexed page: index data at (x0/4, y0/5), sheet table above it. RGBA texels:
+// R = palette index, G/B = owner (sheet id + 1, low byte in G; 0 = no sheet),
+// A = alpha. Table texels use R and A only.
 inline constexpr int kIndexPageSide = 512;
+inline constexpr size_t kIndexTexelBytes = 4;
 inline constexpr int kTableRow = 410;            // y0/5 + h <= 2048/5 < 410
 inline constexpr int kTableTexelsPerSheet = 4;
 inline constexpr uint32_t kMaxSheetsPerPage =
     uint32_t((kIndexPageSide - kTableRow) * kIndexPageSide / kTableTexelsPerSheet);
-inline constexpr size_t kIndexPageBytes = size_t(kIndexPageSide) * kIndexPageSide * 2;
+inline constexpr size_t kIndexPageBytes = size_t(kIndexPageSide) * kIndexPageSide * kIndexTexelBytes;
 inline constexpr size_t kBakedPageBytes = size_t(kPageSide) * kPageSide * 4;
 inline constexpr int kMaxBanks = 8;              // LUT rows: kMaxBanks * kShadeLevels
 inline constexpr uint32_t kSheetCoordBase = 4096;   // s = su + 4096 * sv
@@ -158,8 +166,9 @@ inline void bankLut(const Bank& bank, uint8_t out[kShadeLevels][256][4]) {
 }
 
 // ---- sheet table (indexed page rows [kTableRow, 512)) ------------------------
-// Four (L, A) texels per sheet, each a 16-bit value low byte in L: x0/4, y0/5,
-// w, then h with the bank in A's upper bits (h <= 409 needs one high bit).
+// Four texels per sheet, each a 16-bit value low byte in R, high byte in A
+// (encodeEntry gives the (R, A) pairs): x0/4, y0/5, w, then h with the bank in
+// A's upper bits (h <= 409 needs one high bit).
 struct SheetEntry { int x0q = 0, y0q = 0, w = 0, h = 0, bank = 0; };
 
 inline std::array<uint8_t, 8> encodeEntry(const SheetEntry& e) {
@@ -177,6 +186,29 @@ inline Rect tableTexels(uint32_t sheet) {
 }
 inline SheetEntry entryFor(const Rect& sheetRect, int w, int h, int bank) {
     return SheetEntry{sheetRect.x / kBandColumns, sheetRect.y / kBandRows, w, h, bank};
+}
+// The entry's four RGBA table texels.
+inline std::array<uint8_t, kTableTexelsPerSheet * kIndexTexelBytes> entryTexels(const SheetEntry& e) {
+    const auto pairs = encodeEntry(e);
+    std::array<uint8_t, kTableTexelsPerSheet * kIndexTexelBytes> out{};
+    for (int k = 0; k < kTableTexelsPerSheet; ++k) {
+        out[size_t(k) * 4] = pairs[size_t(k) * 2];
+        out[size_t(k) * 4 + 3] = pairs[size_t(k) * 2 + 1];
+    }
+    return out;
+}
+// One frame's index texels (R index, G/B owner = sheet + 1, A alpha), row-major.
+inline void indexTexels(const Frame& frame, uint32_t sheet, std::vector<uint8_t>& out) {
+    const size_t texels = size_t(frame.width) * size_t(frame.height);
+    const uint32_t owner = sheet + 1;
+    out.resize(texels * kIndexTexelBytes);
+    for (size_t i = 0; i < texels; ++i) {
+        uint8_t* t = out.data() + i * kIndexTexelBytes;
+        t[0] = frame.la[i * 2];
+        t[1] = uint8_t(owner & 255);
+        t[2] = uint8_t(owner >> 8);
+        t[3] = frame.la[i * 2 + 1];
+    }
 }
 
 // ---- sheet id in texture coordinates ---------------------------------------
@@ -196,11 +228,10 @@ inline void decodeSheet(float& u, float& v, uint32_t& sheet) {
 }
 
 // ---- the shader's decode, on the CPU ----------------------------------------
-// The texel the indexed shader shows for baked-page texel (X, Y) of sheet e:
-// the band containing it (clamped to the sheet: a sample outside the sheet
-// would read a NEIGHBOURING sheet on the baked page, which the indexed form
-// does not hold -- it repeats the sheet's edge texel instead), the texel within
-// the band, and colour = LUT[bank][5 + band][index], alpha from the index page.
+// The band of sheet e containing baked-page texel (X, Y) (clamped to the sheet;
+// `inside` false when (X, Y) is outside it -- the shader then decodes with the
+// owner's entry instead, IndexPageModel::resolve), the texel within the band,
+// and colour = LUT[bank][5 + band][index], alpha from the index page.
 struct Decoded { int ix = 0, iy = 0, level = 0; bool inside = true; };
 inline Decoded decodeTexel(const SheetEntry& e, int X, int Y) {
     const int dx = X - e.x0q * kBandColumns, dy = Y - e.y0q * kBandRows;
@@ -223,5 +254,64 @@ inline std::array<uint8_t, 4> resolveTexel(const SheetEntry& e, const Frame& fra
     return {bank.palette[remapped][0], bank.palette[remapped][1], bank.palette[remapped][2],
             frame.la[texel * 2 + 1]};
 }
+
+// The indexed page as the shader reads it, on the CPU (tests): the RGBA texels
+// and the decode -- own sheet's entry; for a texel outside it, the owner named
+// at (X/4, Y/5) and ITS entry (the baked page's neighbouring sheet); no owner:
+// transparent black (page memory no sheet was written to).
+class IndexPageModel {
+public:
+    IndexPageModel() : texels_(kIndexPageBytes, 0) {}
+    void place(const Frame& frame, const Rect& sheetRect, uint32_t sheet, int bank) {
+        std::vector<uint8_t> t;
+        indexTexels(frame, sheet, t);
+        const int x0 = sheetRect.x / kBandColumns, y0 = sheetRect.y / kBandRows;
+        for (int y = 0; y < frame.height; ++y)
+            std::memcpy(at(x0, y0 + y), t.data() + size_t(y) * frame.width * kIndexTexelBytes,
+                        size_t(frame.width) * kIndexTexelBytes);
+        const auto table = entryTexels(entryFor(sheetRect, frame.width, frame.height, bank));
+        const Rect r = tableTexels(sheet);
+        std::memcpy(at(r.x, r.y), table.data(), table.size());
+    }
+    SheetEntry entry(uint32_t sheet) const {
+        const Rect r = tableTexels(sheet);
+        std::array<uint8_t, 8> pairs{};
+        for (int k = 0; k < kTableTexelsPerSheet; ++k) {
+            pairs[size_t(k) * 2] = at(r.x + k, r.y)[0];
+            pairs[size_t(k) * 2 + 1] = at(r.x + k, r.y)[3];
+        }
+        return decodeEntry(pairs);
+    }
+    // Owner of baked texel (X, Y): sheet id + 1, 0 = none.
+    uint32_t owner(int X, int Y) const {
+        const uint8_t* t = at(X / kBandColumns, Y / kBandRows);
+        return uint32_t(t[1]) | (uint32_t(t[2]) << 8);
+    }
+    // What the NEAREST program shows for baked texel (X, Y) sampled by a polygon
+    // of `sheet` (banks: LUT rows).
+    std::array<uint8_t, 4> resolve(uint32_t sheet, int X, int Y, const std::vector<Bank>& banks,
+                                   bool* outside = nullptr) const {
+        SheetEntry e = entry(sheet);
+        Decoded d = decodeTexel(e, X, Y);
+        if (outside) *outside = !d.inside;
+        if (!d.inside) {
+            const uint32_t o = owner(X, Y);
+            if (!o) return {0, 0, 0, 0};
+            e = entry(o - 1);
+            d = decodeTexel(e, X, Y);
+        }
+        const uint8_t* t = at(e.x0q + d.ix, e.y0q + d.iy);
+        const Bank& bank = banks[size_t(e.bank)];
+        const uint8_t remapped = bank.shades[size_t(d.level) * 256 + t[0]];
+        return {bank.palette[remapped][0], bank.palette[remapped][1], bank.palette[remapped][2], t[3]};
+    }
+    const std::vector<uint8_t>& texels() const { return texels_; }
+private:
+    uint8_t* at(int x, int y) { return texels_.data() + (size_t(y) * kIndexPageSide + size_t(x)) * kIndexTexelBytes; }
+    const uint8_t* at(int x, int y) const {
+        return texels_.data() + (size_t(y) * kIndexPageSide + size_t(x)) * kIndexTexelBytes;
+    }
+    std::vector<uint8_t> texels_;
+};
 
 }  // namespace tak::render::palette

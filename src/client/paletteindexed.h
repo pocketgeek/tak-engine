@@ -4,8 +4,8 @@
 //
 // The baked palette pages (client/palettesheets.h) hold every frame expanded
 // into its 20 shade bands as RGBA. This draws the same polygons from the
-// frame's indices instead: one 512x512 (index, alpha) page per layout page, a
-// LUT of palette[shade[level][index]] per bank, and a GLSL program that
+// frame's indices instead: one 512x512 (index, owner, alpha) page per layout
+// page, a LUT of palette[shade[level][index]] per bank, and a GLSL program that
 // replaces SDL's texture program for those draws only (GeometrySubmit's
 // NativeProgram hook: SDL primes target/viewport/scissor/projection/blend,
 // the program draws, SDL's program and bindings are restored).
@@ -21,7 +21,12 @@
 // texel inside it (the CPU version is tested against the baked expansion),
 // and the colour is fetched from the LUT: RGB from an RGBA8 texel, alpha from
 // the index page's alpha byte -- the same normalized values the baked texel
-// holds. Output = colour * vertex colour, SDL's exact expression. Bilinear
+// holds. A texel outside the polygon's own sheet (a coordinate on, or by float
+// overshoot just past, the sheet's outer edge) is what the baked page holds
+// there: the owner recorded at index texel (X/4, Y/5) names the neighbouring
+// sheet and the decode uses its entry; no owner reads transparent black (page
+// memory no sheet was written to; palette::IndexPageModel is the CPU version).
+// Output = colour * vertex colour, SDL's exact expression. Bilinear
 // (Texture Filtering Units/Everything) filters resolved COLOURS of the four
 // texels, never indices; its weights cannot be bit-identical to the texture
 // unit's, so the linear program is experimental (GameView keeps the baked
@@ -68,20 +73,19 @@ public:
     }
     bool usable() const { return usable_; }
     // Debug classification (TAK_PALETTE_MARK_EDGES): the programs paint a decode
-    // outside its sheet magenta, the only place the indexed form may differ from
-    // the baked page. Takes effect when the programs are next built.
+    // outside its sheet magenta (the owner-lookup path; shows where it runs).
+    // Takes effect when the programs are next built.
     void setMarkOutside(bool mark) { markOutside_ = mark; }
     const std::string& error() const { return error_; }
 
-    // Index pages, one per layout page. create() makes a zeroed 512x512 page
-    // (out-of-range reads are defined); false on budget or GL failure.
+    // Index pages, one per layout page. create() makes a zeroed 512x512 RGBA page
+    // (no owner anywhere until a frame is uploaded); false on budget or GL failure.
     size_t pages() const { return pages_.size(); }
     bool createPage() {
         if (!usable_) return false;
         if (gpuvram::blocked() || !gpuvram::wouldFit(palette::kIndexPageBytes)) return false;
         const std::vector<uint8_t> zero(palette::kIndexPageBytes, 0);
-        GLuint name = makeTexture(palette::kIndexPageSide, palette::kIndexPageSide, GL_LUMINANCE8_ALPHA8,
-                                  GL_LUMINANCE_ALPHA, zero.data());
+        GLuint name = makeTexture(palette::kIndexPageSide, palette::kIndexPageSide, GL_RGBA8, GL_RGBA, zero.data());
         if (!name) { gpuvram::noteFail(); return false; }
         gpuvram::addBuffer(palette::kIndexPageBytes);
         bytes_ += palette::kIndexPageBytes;
@@ -91,18 +95,21 @@ public:
         pages_.push_back(std::move(page));
         return true;
     }
-    // (index, alpha) texels of one frame at its indexed rectangle, and its
-    // sheet-table entry. False on GL error (nothing to undo: the rectangle
-    // simply stays unused).
-    bool upload(size_t page, int x, int y, int w, int h, const uint8_t* la) {
-        if (page >= pages_.size()) return false;
-        return subImage(pages_[page]->texture, x, y, w, h, GL_LUMINANCE_ALPHA, la);
+    // One frame's texels (palette::indexTexels: index, owner = sheet + 1, alpha)
+    // at its indexed rectangle (x, y), and its sheet-table entry. Upload the
+    // entry first: a frame's owner texels name it. False on GL error (nothing to
+    // undo: the caller does not commit the rectangle, and a later frame placed
+    // there overwrites any texels written).
+    bool upload(size_t page, int x, int y, const palette::Frame& frame, uint32_t sheet) {
+        if (page >= pages_.size() || sheet >= palette::kMaxSheetsPerPage) return false;
+        palette::indexTexels(frame, sheet, scratch_);
+        return subImage(pages_[page]->texture, x, y, frame.width, frame.height, GL_RGBA, scratch_.data());
     }
     bool uploadEntry(size_t page, uint32_t sheet, const palette::SheetEntry& entry) {
         if (page >= pages_.size() || sheet >= palette::kMaxSheetsPerPage) return false;
-        const auto bytes = palette::encodeEntry(entry);
+        const auto texels = palette::entryTexels(entry);
         const palette::Rect t = palette::tableTexels(sheet);
-        return subImage(pages_[page]->texture, t.x, t.y, t.w, t.h, GL_LUMINANCE_ALPHA, bytes.data());
+        return subImage(pages_[page]->texture, t.x, t.y, t.w, t.h, GL_RGBA, texels.data());
     }
     // LUT rows of one bank (bank < kMaxBanks).
     bool setBank(int bank, const palette::Bank& source) {
@@ -438,8 +445,7 @@ private:
         "vec4 pageTexel(float x, float y) { return texture2D(indexPage, (vec2(x, y) + 0.5) * (1.0 / 512.0)); }\n" \
         "float word(vec4 t) { return byteOf(t.r) + 256.0 * byteOf(t.a); }\n" \
         "/* sheet table: four texels per sheet from row 410 (palette::tableTexels) */\n" \
-        "void sheetEntry(out float x0q, out float y0q, out float w, out float h, out float bank) {\n" \
-        "    float sheet = floor(v_sheet.x + 0.5) + 4096.0 * floor(v_sheet.y + 0.5);\n" \
+        "void entryOf(float sheet, out float x0q, out float y0q, out float w, out float h, out float bank) {\n" \
         "    float base = sheet * 4.0;\n" \
         "    float row = 410.0 + floor(base * (1.0 / 512.0));\n" \
         "    float col = base - 512.0 * floor(base * (1.0 / 512.0));\n" \
@@ -451,12 +457,24 @@ private:
         "    bank = floor(a * 0.5);\n" \
         "    h = byteOf(t.r) + 256.0 * (a - 2.0 * bank);\n" \
         "}\n" \
-        "/* palette::resolveTexel: baked page texel (X, Y) of the sheet */\n" \
+        "void sheetEntry(out float x0q, out float y0q, out float w, out float h, out float bank) {\n" \
+        "    entryOf(floor(v_sheet.x + 0.5) + 4096.0 * floor(v_sheet.y + 0.5), x0q, y0q, w, h, bank);\n" \
+        "}\n" \
+        "/* palette::IndexPageModel::resolve: baked page texel (X, Y) sampled by a polygon of the sheet */\n" \
         "vec4 resolve(float X, float Y, float x0q, float y0q, float w, float h, float bank) {\n" \
         "    float dx = X - x0q * 4.0, dy = Y - y0q * 5.0;\n" \
+        "    if (dx < 0.0 || dy < 0.0 || dx >= 4.0 * w || dy >= 5.0 * h) {\n" \
         "#ifdef TAK_MARK_OUTSIDE\n" \
-        "    if (dx < 0.0 || dy < 0.0 || dx >= 4.0 * w || dy >= 5.0 * h) return vec4(1.0, 0.0, 1.0, 1.0);\n" \
+        "        return vec4(1.0, 0.0, 1.0, 1.0);\n" \
         "#endif\n" \
+        "        /* outside the own sheet: the sheet the baked page holds there (owner + 1 at (X/4, Y/5)) */\n" \
+        "        vec4 o = pageTexel(floor(X * 0.25), floor((Y + 0.5) / 5.0));\n" \
+        "        float owner = byteOf(o.g) + 256.0 * byteOf(o.b);\n" \
+        "        if (owner < 0.5) return vec4(0.0);\n" \
+        "        entryOf(owner - 1.0, x0q, y0q, w, h, bank);\n" \
+        "        dx = X - x0q * 4.0;\n" \
+        "        dy = Y - y0q * 5.0;\n" \
+        "    }\n" \
         "    float col = clamp(floor((dx + 0.5) / w), 0.0, 3.0);\n" \
         "    float row = clamp(floor((dy + 0.5) / h), 0.0, 4.0);\n" \
         "    float ix = clamp(dx - col * w, 0.0, w - 1.0);\n" \
@@ -480,8 +498,9 @@ private:
         "    float Y = byteOf(cy.r) + 256.0 * byteOf(cy.g);\n"
         "    gl_FragColor = resolve(X, Y, x0q, y0q, w, h, bank) * v_color;\n"
         "}";
-    // LINEAR (experimental): four resolved colours, 8-bit sub-texel weights,
-    // page-edge clamp; sheet edges clamp (the baked page bleeds a neighbour).
+    // LINEAR (experimental): four resolved colours (neighbouring sheets
+    // included, as the baked page bleeds them), 8-bit sub-texel weights,
+    // page-edge clamp.
     static constexpr const char* kLinearShader =
         TAK_PALETTE_SHADER_COMMON
         "void main()\n"
@@ -522,6 +541,7 @@ private:
         "}";
 
     std::vector<std::unique_ptr<Page>> pages_;
+    std::vector<uint8_t> scratch_;   // one frame's RGBA index texels (upload)
     GLuint identity_ = 0, lut_ = 0, nearest_ = 0, linear_ = 0, plain_ = 0;
     size_t bytes_ = 0;
     uint64_t draws_ = 0;

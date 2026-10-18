@@ -9,7 +9,11 @@
 // and once through GeometrySubmit with the indexed program, followed by plain
 // SDL draws that would show leaked GL state. NEAREST must be pixel-identical in
 // every case (scales 1/2/4, window and target, clip on/off, client arrays and a
-// GL buffer). LINEAR (experimental) is reported, not required. Also: rebuild
+// GL buffer) -- including samples outside the triangle's own sheet, which read
+// the neighbouring sheet (or the zeroed unused page area) exactly as the baked
+// page does; a second program set with the outside decodes marked counts them,
+// so the test shows that path ran. LINEAR (experimental) is reported, not
+// required. Also: rebuild
 // after release(), page creation refused under the GPU budget, no tracked-byte
 // leak, and ready() refuses the software renderer.
 //
@@ -93,10 +97,9 @@ int main() {
     for (size_t p = 0; p < layout.pages(); ++p) {
         auto* t = gpuvram::create(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, 2048, 2048);
         CHECK(t);
-        // Unused page area: something the indexed form cannot reproduce, so an
-        // out-of-sheet read on either side would show.
-        std::vector<uint8_t> fill(size_t(2048) * 2048 * 4);
-        for (size_t i = 0; i < fill.size(); ++i) fill[i] = uint8_t(i * 37 + p * 11);
+        // Unused page area: zero, what the game's never-written page memory reads on
+        // this driver and what the indexed form defines for a texel no sheet owns.
+        const std::vector<uint8_t> fill(size_t(2048) * 2048 * 4, 0);
         SDL_UpdateTexture(t, nullptr, fill.data(), 2048 * 4);
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
         baked.push_back(t);
@@ -107,14 +110,16 @@ int main() {
         SDL_Rect r{s.rect.x, s.rect.y, s.rect.w, s.rect.h};
         CHECK(SDL_UpdateTexture(baked[s.page], &r, expanded.data(), s.rect.w * 4) == 0);
     }
-    // ---- indexed pages ----
-    tak::PaletteIndexedGL indexed;
+    // ---- indexed pages (and a marked copy: outside decodes magenta) ----
+    tak::PaletteIndexedGL indexed, marked;
+    marked.setMarkOutside(true);
     CHECK(indexed.ready(renderer));
     if (!indexed.ready(renderer)) { std::printf("indexed unavailable: %s\n", indexed.error().c_str()); return 1; }
-    for (int b = 0; b < 3; ++b) CHECK(indexed.setBank(b, banks[size_t(b)]));
+    CHECK(marked.ready(renderer));
+    for (int b = 0; b < 3; ++b) CHECK(indexed.setBank(b, banks[size_t(b)]) && marked.setBank(b, banks[size_t(b)]));
     std::vector<SDL_Texture*> keys;
     for (size_t p = 0; p < layout.pages(); ++p) {
-        CHECK(indexed.createPage());
+        CHECK(indexed.createPage() && marked.createPage());
         auto* key = gpuvram::create(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, 1, 1);
         const uint8_t white[4] = {255, 255, 255, 255};
         SDL_UpdateTexture(key, nullptr, white, 4);
@@ -123,8 +128,10 @@ int main() {
     }
     for (const auto& s : sheets) {
         const auto& f = frames[s.frame];
-        CHECK(indexed.upload(s.page, s.rect.x / 4, s.rect.y / 5, f.width, f.height, f.la.data()));
-        CHECK(indexed.uploadEntry(s.page, s.id, palette::entryFor(s.rect, f.width, f.height, s.bank)));
+        for (auto* form : {&indexed, &marked}) {
+            CHECK(form->uploadEntry(s.page, s.id, palette::entryFor(s.rect, f.width, f.height, s.bank)));
+            CHECK(form->upload(s.page, s.rect.x / 4, s.rect.y / 5, f, s.id));
+        }
     }
 
     // ---- triangles, grouped by page ----
@@ -178,20 +185,7 @@ int main() {
     SDL_Texture* plain = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, 2, 2);
     const uint8_t plainPixels[16] = {200, 10, 10, 255, 10, 200, 10, 128, 10, 10, 200, 255, 250, 250, 10, 64};
     SDL_UpdateTexture(plain, nullptr, plainPixels, 8);
-    // Probe page: texel (X, Y) holds its own coordinates, so drawing a triangle
-    // with it (NEAREST, no blending) shows which baked texel the hardware read.
-    SDL_Texture* probe = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, 2048, 2048);
-    {
-        std::vector<uint8_t> code(size_t(2048) * 2048 * 4);
-        for (int y = 0; y < 2048; ++y) for (int x = 0; x < 2048; ++x) {
-            uint8_t* t = code.data() + (size_t(y) * 2048 + x) * 4;
-            t[0] = uint8_t(x & 255); t[1] = uint8_t((x >> 8) | ((y >> 8) << 3)); t[2] = uint8_t(y & 255); t[3] = 255;
-        }
-        SDL_UpdateTexture(probe, nullptr, code.data(), 2048 * 4);
-        SDL_SetTextureBlendMode(probe, SDL_BLENDMODE_NONE);
-        SDL_SetTextureScaleMode(probe, SDL_ScaleModeNearest);
-    }
-    int explained = 0;
+    int outsidePixels = 0;
     int linearHistogram[5] = {};   // max channel diff 1, 2, 3..4, 5..16, >16
     tak::GeometrySubmit submit;
     int cases = 0, linearDiffPixels = 0, linearMax = 0;
@@ -204,8 +198,8 @@ int main() {
     for (int path = 0; path < 2; ++path) {
         const auto batches = makeBatches(variant);
         for (auto* t : baked) SDL_SetTextureScaleMode(t, linear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
-        std::array<std::vector<uint8_t>, 2> image;
-        for (int form = 0; form < 2; ++form) {
+        std::array<std::vector<uint8_t>, 3> image;
+        for (int form = 0; form < (linear ? 2 : 3); ++form) {
             SDL_SetRenderTarget(renderer, offscreen ? target : nullptr);
             SDL_RenderSetScale(renderer, 1, 1);
             SDL_RenderSetViewport(renderer, nullptr);
@@ -218,14 +212,15 @@ int main() {
             for (size_t p = 0; p < batches.size(); ++p) {
                 const auto& b = batches[p];
                 if (b.baked.empty()) continue;
+                tak::PaletteIndexedGL& programs = form == 2 ? marked : indexed;
                 if (form == 0) {
                     CHECK(SDL_RenderGeometry(renderer, baked[p], b.baked.data(), int(b.baked.size()), nullptr, 0) == 0);
                 } else if (path == 0) {
-                    CHECK(submit.draw(renderer, keys[p], b.indexed, true, 0, {0, 0}, indexed.program(p, linear)) == 0);
+                    CHECK(submit.draw(renderer, keys[p], b.indexed, true, 0, {0, 0}, programs.program(p, linear)) == 0);
                 } else {
                     // A retained GL buffer (the body arena's drawBuffer path).
-                    CHECK(submit.draw(renderer, keys[p], b.indexed, true, 77 + uint64_t(p) + uint64_t(cases) * 64, {0, 0},
-                                      indexed.program(p, linear)) == 0);
+                    CHECK(submit.draw(renderer, keys[p], b.indexed, true, 77 + uint64_t(p) + uint64_t(cases) * 64 + uint64_t(form) * 32,
+                                      {0, 0}, programs.program(p, linear)) == 0);
                 }
                 // Plain SDL draws right after: leaked program, bindings, arrays.
                 const SDL_FRect follow{float(10 + p * 7), 3, 6, 5};
@@ -246,65 +241,26 @@ int main() {
             maxDiff = std::max(maxDiff, d);
         }
         comparedPixels += image[0].size() / 4;
-        if (!linear && differing) {
-            // Classify per triangle: draw each one alone in both forms and with the
-            // probe page (no blending); every pixel where the forms differ must be
-            // a baked sample outside the triangle's own sheet.
-            auto drawAlone = [&](int form, size_t p, size_t t, std::vector<uint8_t>& out) {
-                SDL_SetRenderTarget(renderer, offscreen ? target : nullptr);
-                SDL_RenderSetScale(renderer, 1, 1);
-                SDL_RenderSetClipRect(renderer, nullptr);
-                SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-                SDL_RenderClear(renderer);
-                SDL_RenderSetScale(renderer, scale, scale);
-                const SDL_Rect clip{5, 7, 91, 63};
-                SDL_RenderSetClipRect(renderer, clipped ? &clip : nullptr);
-                const auto& b = batches[p];
-                if (form == 0) SDL_RenderGeometry(renderer, baked[p], b.baked.data() + t * 3, 3, nullptr, 0);
-                else if (form == 1) submit.draw(renderer, keys[p], std::span(b.indexed.data() + t * 3, 3), true, 0, {0, 0},
-                                                indexed.program(p, false));
-                else {
-                    SDL_Vertex v[3] = {b.baked[t * 3], b.baked[t * 3 + 1], b.baked[t * 3 + 2]};
-                    for (auto& x : v) x.color = {255, 255, 255, 255};
-                    SDL_RenderGeometry(renderer, probe, v, 3, nullptr, 0);
-                }
-                SDL_RenderSetScale(renderer, 1, 1);
-                SDL_RenderSetClipRect(renderer, nullptr);
-                out.resize(size_t(W) * H * 4);
-                SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_RGBA32, out.data(), W * 4);
-            };
-            int unexplained = 0, triangleDiffs = 0;
-            std::vector<uint8_t> a, b, c;
-            for (size_t p = 0; p < batches.size(); ++p)
-                for (size_t t = 0; t < batches[p].sheetOf.size(); ++t) {
-                    drawAlone(0, p, t, a);
-                    drawAlone(1, p, t, b);
-                    if (a == b) continue;
-                    drawAlone(2, p, t, c);
-                    const Sheet& sh = sheets[batches[p].sheetOf[t]];
-                    for (size_t i = 0; i < a.size(); i += 4) {
-                        if (!std::memcmp(&a[i], &b[i], 4)) continue;
-                        ++triangleDiffs;
-                        const int X = c[i] | ((c[i + 1] & 7) << 8), Y = c[i + 2] | ((c[i + 1] >> 3) << 8);
-                        if (X < sh.rect.x || X >= sh.rect.x + sh.rect.w || Y < sh.rect.y || Y >= sh.rect.y + sh.rect.h) {
-                            ++explained;
-                            continue;
-                        }
-                        if (++unexplained <= 8)
-                            std::printf("  unexplained pixel %zu,%zu texel %d,%d sheet %d,%d %dx%d baked %d,%d,%d,%d indexed %d,%d,%d,%d\n",
-                                        (i / 4) % W, (i / 4) / W, X, Y, sh.rect.x, sh.rect.y, sh.rect.w, sh.rect.h,
-                                        a[i], a[i + 1], a[i + 2], a[i + 3], b[i], b[i + 1], b[i + 2], b[i + 3]);
+        if (!linear) {
+            // Identical everywhere, outside decodes included; the marked image shows
+            // how many pixels took the owner path.
+            int outside = 0;
+            for (size_t i = 0; i < image[1].size(); i += 4) outside += std::memcmp(&image[1][i], &image[2][i], 4) != 0;
+            outsidePixels += outside;
+            if (differing) {
+                int shown = 0;
+                for (size_t i = 0; i < image[0].size() && shown < 6; i += 4)
+                    if (std::memcmp(&image[0][i], &image[1][i], 4)) {
+                        ++shown;
+                        std::printf("  pixel %zu,%zu baked %d,%d,%d,%d indexed %d,%d,%d,%d%s\n", (i / 4) % W, (i / 4) / W,
+                                    image[0][i], image[0][i + 1], image[0][i + 2], image[0][i + 3], image[1][i],
+                                    image[1][i + 1], image[1][i + 2], image[1][i + 3],
+                                    std::memcmp(&image[1][i], &image[2][i], 4) ? " (outside its sheet)" : "");
                     }
-                }
-            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-            (void)triangleDiffs;
-            if (unexplained)
-                std::printf("FAIL nearest variant=%d scale=%g target=%d clip=%d path=%d: %d pixels (%d unexplained), max %d\n",
-                            variant, scale, offscreen, clipped, path, differing, unexplained, maxDiff);
-            CHECK(unexplained == 0);
-            // The collector only emits band corners; there a sample on a sheet's
-            // outer edge needs a fragment centre exactly on a triangle edge.
-            if (variant == 0) std::printf("note: corner-only case with %d outer-edge samples\n", differing);
+                std::printf("FAIL nearest variant=%d scale=%g target=%d clip=%d path=%d: %d pixels differ, max %d\n",
+                            variant, scale, offscreen, clipped, path, differing, maxDiff);
+            }
+            CHECK(differing == 0);
         } else if (linear) {
             for (size_t i = 0; i < image[0].size(); i += 4) {
                 int d = 0;
@@ -316,8 +272,9 @@ int main() {
         }
         ++cases;
     }
-    std::printf("nearest: identical except %d pixels whose baked sample lies outside its sheet (neighbouring sheet on the baked page)\n",
-                explained);
+    std::printf("nearest: identical in every case; %d pixels decoded outside their own sheet (neighbouring sheet or unused page area)\n",
+                outsidePixels);
+    CHECK(outsidePixels > 0);   // the owner path ran
     std::printf("linear (experimental): %d differing pixels over %d cases, max channel diff %d; by max diff 1:%d 2:%d 3-4:%d 5-16:%d >16:%d\n",
                 linearDiffPixels, cases / 2, linearMax, linearHistogram[0], linearHistogram[1], linearHistogram[2],
                 linearHistogram[3], linearHistogram[4]);
@@ -326,10 +283,8 @@ int main() {
 
     // ---- native pass: indexed, plain BLEND and premultiplied commands under ONE
     //      priming (GeometrySubmit::beginPass + PaletteIndexedGL pass state), client
-    //      arrays and a GL buffer, against SDL drawing the same commands. Palette
-    //      triangles use interior bands only (columns 1-2, rows 1-3), so no sample --
-    //      not even an interpolation overshoot past a vertex coordinate -- can leave
-    //      its sheet, and the result must be identical. ----
+    //      arrays and a GL buffer, against SDL drawing the same commands (any band:
+    //      outside samples resolve like the baked page). ----
     {
         const SDL_BlendMode premulMode = SDL_ComposeCustomBlendMode(SDL_BLENDFACTOR_ONE,
             SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD,
@@ -367,9 +322,7 @@ int main() {
                         const Sheet* s = nullptr;
                         do { s = &sheets[rng() % sheets.size()]; } while (s->page != cmd.page);
                         const auto& f = frames[s->frame];
-                        // Interior bands: interpolation overshoot past a vertex
-                        // coordinate stays inside the sheet.
-                        const int col = 1 + int(rng() % 2), row = 1 + int(rng() % 3);
+                        const int col = int(rng() % 4), row = int(rng() % 5);
                         const int bx = s->rect.x + col * f.width, by = s->rect.y + row * f.height;
                         for (int k = 0; k < 3; ++k) {
                             const int corner = int(rng() % 4);
@@ -476,6 +429,7 @@ int main() {
     // ---- release / rebuild, budget refusal, accounting ----
     const size_t indexedBytes = indexed.gpuBytes();
     CHECK(indexedBytes == layout.pages() * palette::kIndexPageBytes + 2048 * 4 + 256 * 256 * 4);
+    marked.release();
     indexed.release();
     CHECK(!indexed.usable());
     CHECK(indexed.ready(renderer));
@@ -496,7 +450,6 @@ int main() {
     for (auto* t : baked) gpuvram::destroy(t);
     for (auto* t : keys) gpuvram::destroy(t);
     CHECK(gpuvram::bytes() == baseline);
-    SDL_DestroyTexture(probe);
     SDL_DestroyTexture(target);
     SDL_DestroyTexture(plain);
     SDL_DestroyRenderer(renderer);

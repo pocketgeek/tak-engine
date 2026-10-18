@@ -9,6 +9,10 @@
 //  4. Sheet-table entries round-trip.
 //  5. resolveTexel (the shader's decode) equals the baked expansion at every
 //     texel of every sheet of a random roster; outside a sheet it clamps.
+//  6. IndexPageModel::resolve (the whole decode, owner lookup included) equals
+//     the baked page at EVERY texel of random full pages, whichever sheet the
+//     sampling polygon belongs to: inside its own sheet, in a neighbouring
+//     sheet, and in page memory no sheet covers.
 #include "client/palettesheets.h"
 
 #include <cstdio>
@@ -187,6 +191,67 @@ int main() {
                 CHECK(std::memcmp(lut[level][index], banks[1].palette[m], 3) == 0 && lut[level][index][3] == 255);
             }
         std::printf("decode: %zu sheet texels equal the baked expansion, %zu outside clamped\n", texels, outside);
+    }
+    // ---- 6: whole pages, neighbours included ----
+    {
+        std::vector<Bank> banks(kMaxBanks);
+        for (auto& bank : banks) {
+            for (int i = 0; i < 256; ++i) for (int c = 0; c < 4; ++c) bank.palette[i][c] = uint8_t(rng());
+            bank.shades.resize(kShadeTableBytes);
+            for (auto& s : bank.shades) s = uint8_t(rng());
+        }
+        PageLayout layout;
+        std::vector<std::vector<uint8_t>> baked;
+        std::vector<IndexPageModel> models;
+        std::vector<std::vector<uint32_t>> ids;
+        std::vector<uint8_t> expanded;
+        for (int f = 0; f < 900; ++f) {
+            Frame frame;
+            static const int sizes[] = {1, 2, 3, 5, 8, 13, 16, 31, 32, 47, 64, 80, 128};
+            frame.width = sizes[rng() % 13];
+            frame.height = sizes[rng() % 13];
+            frame.la.resize(size_t(frame.width) * frame.height * 2);
+            for (size_t i = 0; i < frame.la.size(); i += 2) {
+                frame.la[i] = uint8_t(rng());
+                frame.la[i + 1] = rng() % 4 ? 255 : uint8_t(rng());
+            }
+            auto slot = layout.find(frame.width, frame.height);
+            if (!slot) {
+                if (layout.pages() == 2) continue;   // two pages: full ones and a partly used one
+                slot = layout.addPage();
+                baked.emplace_back(size_t(kPageSide) * kPageSide * 4, 0);   // never-written memory reads zero
+                models.emplace_back();
+                ids.emplace_back();
+            }
+            const Rect rect = layout.commit(*slot, frame.width, frame.height);
+            const int bank = int(rng() % kMaxBanks);
+            const uint32_t id = uint32_t(ids[slot->page].size());
+            expandSheet(frame, banks[size_t(bank)], expanded);
+            for (int y = 0; y < rect.h; ++y)
+                std::memcpy(baked[slot->page].data() + (size_t(rect.y + y) * kPageSide + size_t(rect.x)) * 4,
+                            expanded.data() + size_t(y) * rect.w * 4, size_t(rect.w) * 4);
+            models[slot->page].place(frame, rect, id, bank);
+            ids[slot->page].push_back(id);
+        }
+        size_t own = 0, neighbour = 0, empty = 0, mismatches = 0;
+        for (size_t p = 0; p < models.size(); ++p)
+            for (int Y = 0; Y < kPageSide; ++Y)
+                for (int X = 0; X < kPageSide; ++X) {
+                    const uint32_t o = models[p].owner(X, Y);
+                    // The sampling polygon: the texel's own sheet half the time, else any sheet of the page.
+                    const uint32_t sheet = o && rng() % 2 ? o - 1 : ids[p][rng() % ids[p].size()];
+                    bool outside = false;
+                    const auto got = models[p].resolve(sheet, X, Y, banks, &outside);
+                    if (outside && o) CHECK(decodeTexel(models[p].entry(o - 1), X, Y).inside);
+                    if (std::memcmp(got.data(), baked[p].data() + (size_t(Y) * kPageSide + size_t(X)) * 4, 4) != 0 &&
+                        ++mismatches <= 8)
+                        std::printf("  page %zu texel %d,%d sheet %u owner %u\n", p, X, Y, sheet, o);
+                    (outside ? (o ? neighbour : empty) : own)++;
+                }
+        CHECK(mismatches == 0);
+        CHECK(neighbour > 0 && empty > 0);
+        std::printf("pages: %zu texels on %zu pages equal the baked pages (%zu own sheet, %zu neighbouring sheet, %zu unused)\n",
+                    own + neighbour + empty, models.size(), own, neighbour, empty);
     }
     if (failures) { std::printf("%d failures\n", failures); return 1; }
     std::printf("PASS: palette sheets\n");
