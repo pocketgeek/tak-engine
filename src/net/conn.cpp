@@ -52,6 +52,7 @@ Conn& Conn::operator=(Conn&& o) noexcept {
         fd_ = o.fd_; err_ = std::move(o.err_);
         rxBuf_ = std::move(o.rxBuf_); rxOff_ = o.rxOff_;
         txBuf_ = std::move(o.txBuf_); txOff_ = o.txOff_;
+        low_ = std::move(o.low_); lowDropped_ = o.lowDropped_; o.low_.clear(); o.lowDropped_ = 0;
         peerClosed_ = o.peerClosed_;   // part of the socket's state, like err_
         o.fd_ = -1; o.rxOff_ = o.txOff_ = 0; o.peerClosed_ = false;
     }
@@ -140,8 +141,36 @@ void Conn::send(Msg kind, const std::vector<uint8_t>& payload) {
     txBuf_.insert(txBuf_.end(), payload.begin(), payload.end());
 }
 
+bool Conn::sendLow(Msg kind, const std::vector<uint8_t>& payload) {
+    if (!err_.empty() || payload.size() >= kMaxFrame) return false;
+    if (txPending() > kLowBackpressure) { ++lowDropped_; return false; }
+    if (low_.size() >= kLowMaxFrames) { low_.pop_front(); ++lowDropped_; }   // newest audio wins
+    std::vector<uint8_t> frame;
+    frame.reserve(payload.size() + 5);
+    const uint32_t len = uint32_t(payload.size() + 1);
+    for (int i = 0; i < 4; ++i) frame.push_back(uint8_t(len >> (8 * i)));
+    frame.push_back(uint8_t(kind));
+    frame.insert(frame.end(), payload.begin(), payload.end());
+    low_.push_back(std::move(frame));
+    return true;
+}
+
+// Move queued low-priority frames into the byte stream, but only once it is empty (and
+// no TLS record is half written), and only a few KiB at a time: whatever is queued after
+// them can wait at most that long.
+void Conn::promoteLow() {
+    if (low_.empty() || txOff_ != txBuf_.size() || tlsWriteSize_) return;
+    txBuf_.clear(); txOff_ = 0;
+    constexpr size_t kPromoteBytes = 4096;
+    while (!low_.empty() && txBuf_.size() < kPromoteBytes) {
+        txBuf_.insert(txBuf_.end(), low_.front().begin(), low_.front().end());
+        low_.pop_front();
+    }
+}
+
 bool Conn::flushWrite() {
     if(!tlsHandshake())return err_.empty();
+    promoteLow();
     // Drop the part already on the wire rather than carrying it until the buffer
     // happens to empty. A peer that drains partially and is topped up again --
     // exactly what the paced replay stream does -- never reaches the empty state
@@ -172,6 +201,8 @@ bool Conn::flushWrite() {
         return false;
     }
     if (txOff_ == txBuf_.size()) { txBuf_.clear(); txOff_ = 0; }
+    // Everything ordinary went out: let the voice queue follow on the next flush (the
+    // caller polls for writability while lowPending(), see wantWrite()).
     return true;
 }
 

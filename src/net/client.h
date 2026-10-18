@@ -179,6 +179,29 @@ public:
     // Drain chat lines received since the last call (sender, text).
     std::vector<std::pair<std::string, std::string>> takeChat() { auto c = std::move(chat_); chat_.clear(); return c; }
 
+    // ---- voice chat (protocol 276; presentation only, see net/protocol.h) ----------
+    // Whether this connection wants voice relayed to it (voice chat switched on). Sent
+    // only when it changes, and again after every new connection; the server sends no
+    // voice to a connection that never said yes.
+    void setVoiceListen(bool on);
+    // One captured frame, as a LOW-PRIORITY message (Conn::sendLow): it never delays game
+    // traffic and is dropped when the link is backed up. Ignored outside a room.
+    // recipients: the diplomacy VOICE mask (0xff = everyone, as for chat).
+    void sendVoice(uint16_t seq, uint8_t recipients, uint8_t flags, const std::vector<uint8_t>& opus);
+    struct VoiceFrame {
+        uint32_t talker = 0;      // the talker's connection id
+        uint8_t slot = 0xFF;      // their player slot, 0xFF = spectator
+        uint16_t seq = 0;
+        uint8_t flags = 0;
+        std::string name;         // only on frames that carry it (kVoiceHasName)
+        std::vector<uint8_t> opus;
+    };
+    // Drain the voice frames received since the last call. Bounded: past kVoiceInbox
+    // frames the oldest are dropped, so a host that stops draining holds no backlog.
+    static constexpr size_t kVoiceInbox = 512;
+    std::vector<VoiceFrame> takeVoice() { auto v = std::move(voice_); voice_.clear(); return v; }
+    uint64_t voiceDropped() const { return voiceDropped_; }
+
     // ---- game start / play -------------------------------------------------
     // After GameStarting the viewer reads these, loads the map, then calls
     // reportLoaded(). The server begins ticking once every human has loaded.
@@ -339,6 +362,10 @@ private:
     uint8_t gameSpeed_ = 10;   // live game speed (from opts + in-game SpeedUpdate)
     int missionOutcome_ = 0;   // campaign mission result (0 running / +1 win / -1 loss)
     std::vector<std::pair<std::string, std::string>> chat_;
+    std::vector<VoiceFrame> voice_;
+    uint64_t voiceDropped_ = 0;
+    bool voiceListen_ = false;       // what the host wants
+    int voiceListenSent_ = 0;        // what this connection last told the server (0 = its default, off)
 
     uint64_t dataHash_ = 0;      // local gameplay-data fingerprint (sent in Hello)
     uint32_t startSeed_ = 0;

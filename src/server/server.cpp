@@ -271,7 +271,24 @@ struct Client {
     uint64_t mapReceiveStarted=0,mapReceiveProgress=0;
     bool replaying = false;
     size_t replayPos = 0;        // next index into Room::log to send
+    // Voice chat (protocol 276): relayed beside the game, never into a bundle, the log or
+    // the referee. voiceListen is the client's own VoiceListen (off until it says so).
+    // Its frames are budgeted per second: past kVoiceFramesPerSec / kVoiceBytesPerSec
+    // they are dropped (a frame stall followed by catch-up is normal), past
+    // kVoiceAbusePerSec the connection is failed. voiceOut counts frames relayed, to
+    // repeat the talker's name every kVoiceNameEvery of them.
+    bool voiceListen = false;
+    WorkBudget voiceFrames, voiceBytes, voiceAbuse;
+    uint64_t voiceDropped = 0, voiceLogAt = 0;
+    uint32_t voiceOut = 0;
 };
+
+// Voice relay budgets (per talking connection; voice is 50 frames a second of ~60 bytes).
+constexpr unsigned kVoiceFramesPerSec = 60;
+constexpr unsigned kVoiceBytesPerSec = 16000;
+constexpr unsigned kVoiceAbusePerSec = 300;
+constexpr unsigned kVoiceGlobalFramesPerSec = 4000;   // all talkers on this server
+constexpr uint32_t kVoiceNameEvery = 25;
 
 // pausePlayer sentinel for a player-REQUESTED pause: distinct from any real slot,
 // so the disconnect budget sweep and the rejoin-resume path both ignore it.
@@ -499,6 +516,9 @@ private:
     WorkBudget acceptWork_,commandBytes_,commandCount_,commandLogs_;
     SharedWorkBudget commandByteKeys_,commandCountKeys_;
     WorkBudget lobbyGlobalWork_, uploadGlobalWork_, accountWriteWork_;
+    WorkBudget voiceGlobal_;                // kVoiceGlobalFramesPerSec, all rooms together
+    uint64_t voiceGlobalDropped_ = 0;
+    void relayVoice(Client& c, Room& r, const Frame& f);
     bool allowLobbyWork(Client& c,const Frame& f);
     bool canRead(const Client& c,uint64_t now) const {return c.commandBytes.available(now,4u<<20) && commandBytes_.available(now,32u<<20) && ((!c.mapReceive.size && !c.overrideReceive.size) || (c.uploadWork.available(now,4096,64) && uploadGlobalWork_.available(now,16384,64)));}
     size_t mapMemory() const;
@@ -1793,6 +1813,58 @@ void Server::broadcastRoom(Room& r, Msg kind, const Writer& w, uint32_t exceptCl
     }
 }
 
+// Voice chat: one frame from a talker in room r, to the recipients its VOICE mask picks
+// with exactly the Chat rules -- the whole room (spectators included) while the room is
+// not running or for 0xff, otherwise the seated players whose bit is set -- minus the
+// talker, minus anyone who has not asked for voice or is still catching up. Sent as
+// low-priority frames (Conn::sendLow), which a backed-up recipient drops.
+void Server::relayVoice(Client& c, Room& r, const Frame& f) {
+    Reader rd(f.payload.data(), f.payload.size());
+    const uint16_t seq = rd.u16();
+    const uint8_t recipients = rd.u8(), flags = rd.u8();
+    const uint16_t len = rd.u16();
+    if (!rd.ok || len > kVoiceMaxOpus || size_t(rd.end - rd.p) != len || (flags & ~(kVoiceStart | kVoiceEnd)) ||
+        (len == 0 && !(flags & kVoiceEnd))) {
+        c.conn.fail("invalid voice message");
+        return;
+    }
+    const uint64_t now = nowMs();
+    if (!c.voiceAbuse.take(now, kVoiceAbusePerSec)) { c.conn.fail("voice rate exceeded"); return; }
+    // Budgets drop, they do not disconnect: a talker whose client stalled sends a burst.
+    // An END marker is never dropped, so a cut-off transmission still closes.
+    const bool end = flags & kVoiceEnd;
+    if (!end && (!c.voiceFrames.take(now, kVoiceFramesPerSec) || !c.voiceBytes.take(now, kVoiceBytesPerSec, len))) {
+        ++c.voiceDropped;
+        if (now - c.voiceLogAt >= 5000 && commandLogs_.take(now, 4)) {
+            c.voiceLogAt = now;
+            std::fprintf(stderr, "game %u: client %u voice over budget (%llu frames dropped)\n", r.id, c.id,
+                         (unsigned long long)c.voiceDropped);
+        }
+        return;
+    }
+    if (!end && !voiceGlobal_.take(now, kVoiceGlobalFramesPerSec)) { ++voiceGlobalDropped_; return; }
+    const bool named = (flags & kVoiceStart) || c.voiceOut % kVoiceNameEvery == 0;
+    ++c.voiceOut;
+    Writer w;
+    w.u32(c.id); w.u8(c.slot >= 0 ? uint8_t(c.slot) : uint8_t(0xFF)); w.u16(seq);
+    w.u8(uint8_t(flags | (named ? kVoiceHasName : 0))); w.u16(len);
+    w.b.insert(w.b.end(), rd.p, rd.p + len);
+    if (named) w.str(c.name);
+    auto deliver = [&](uint32_t cid) {
+        if (cid == c.id) return;
+        auto it = clients_.find(cid);
+        if (it == clients_.end() || !it->second->voiceListen || it->second->replaying) return;
+        it->second->conn.sendLow(Msg::VoiceDown, w.b);
+    };
+    if (!r.running || recipients == 0xff) {
+        for (int i = 0; i < kMaxSlots; ++i) if (r.slotClient[i] >= 0) deliver(uint32_t(r.slotClient[i]));
+        for (uint32_t cid : r.spectators) deliver(cid);
+    } else {
+        for (int slot = 0; slot < kMaxSlots; ++slot)
+            if ((recipients & (1u << slot)) && r.slotClient[slot] >= 0) deliver(uint32_t(r.slotClient[slot]));
+    }
+}
+
 void Server::lobbyMsg(Client& c, const Frame& f) {
     switch (f.kind) {
         case Msg::ListGames: sendGameList(c); break;
@@ -2752,6 +2824,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             }
             break;
         }
+        case Msg::VoiceUp: relayVoice(c, *r, f); break;
         case Msg::PlayerCommands: {
             if (!r->running) return;
             if (c.slot < 0) { c.conn.fail("spectators cannot issue commands"); return; }
@@ -3162,7 +3235,8 @@ bool Server::allowLobbyWork(Client& c,const Frame& f) {
         case Msg::OverrideRequest: case Msg::OverrideReady: case Msg::OverrideError:
         case Msg::Chat: case Msg::MapRequest: case Msg::MapReady: case Msg::MapError:
         case Msg::Ping: case Msg::Pong: case Msg::SlotUpdate: case Msg::SetGameOptions:
-        case Msg::LeaveGame: case Msg::Rejoin: case Msg::Kick: case Msg::SetPause: break;
+        case Msg::LeaveGame: case Msg::Rejoin: case Msg::Kick: case Msg::SetPause:
+        case Msg::VoiceListen: break;
         default:return true; // Login, campaign and command queues have their own budgets.
     }
     auto& keys=lobbyWorkKeys_;
@@ -3195,6 +3269,14 @@ void Server::onFrame(Client& c, const Frame& f) {
     if (f.kind == Msg::Ping) { c.conn.send(Msg::Pong); return; }
     if (f.kind == Msg::Pong) return;
     if (f.kind == Msg::Bye) { c.conn.fail("bye"); return; }
+    // Voice preference: connection state, kept across lobby and rooms.
+    if (f.kind == Msg::VoiceListen) {
+        if (c.state != Client::Lobby && c.state != Client::InGame) return;
+        if (f.payload.size() != 1 || f.payload[0] > 1) { c.conn.fail("invalid voice message"); return; }
+        c.voiceListen = f.payload[0] == 1;
+        return;
+    }
+    if (f.kind == Msg::VoiceDown) { c.conn.fail("invalid voice message"); return; }   // server-to-client only
     switch(f.kind) {
         case Msg::CrusadesListCampaigns: case Msg::CrusadesGetSnapshot:
         case Msg::CrusadesGetPlayerStatus: case Msg::CrusadesGetBattleStatus:

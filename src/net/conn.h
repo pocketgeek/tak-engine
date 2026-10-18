@@ -4,6 +4,7 @@
 // framing. Shared by takserver and the takclient client. One Conn per socket.
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include "net/tls.h"
 #include <string>
@@ -43,6 +44,18 @@ public:
     void send(Msg kind, const std::vector<uint8_t>& payload);
     void send(Msg kind, const Writer& w) { send(kind, w.b); }
     void send(Msg kind) { send(kind, std::vector<uint8_t>{}); }
+    // Queue a LOW-PRIORITY frame (voice). It waits in its own small queue and joins the
+    // byte stream only when every ordinary frame queued so far has left, so it never
+    // delays a tick bundle or a command; and it is dropped, never buffered without
+    // bound, when this peer is not keeping up: the newest kLowMaxFrames survive, and
+    // nothing is queued while kLowBackpressure bytes of ordinary frames wait. Returns
+    // false when the frame was dropped on arrival.
+    static constexpr size_t kLowMaxFrames = 16;          // 320 ms of voice frames
+    static constexpr size_t kLowBackpressure = 64u << 10;
+    bool sendLow(Msg kind, const std::vector<uint8_t>& payload);
+    // Low-priority frames dropped so far (on arrival or as the oldest of a full queue).
+    uint64_t lowDropped() const { return lowDropped_; }
+    size_t lowPending() const { return low_.size(); }
 
     // Non-blocking I/O against the ready socket:
     //  recv(): read available bytes into rxBuf_; false on ERROR only -- a clean peer
@@ -58,7 +71,7 @@ public:
     bool peerClosed() const { return peerClosed_; }
     bool poll(Frame& out);
     bool flushWrite();
-    bool wantWrite() const { return tlsWantWrite_ || txOff_ < txBuf_.size(); }
+    bool wantWrite() const { return tlsWantWrite_ || txOff_ < txBuf_.size() || !low_.empty(); }
     bool bufferedInput() const;
     // Bytes still queued for this peer. Callers feeding a large backlog (the
     // resume/spectate replay) use this to pace themselves instead of pushing the
@@ -78,7 +91,10 @@ private:
     size_t rxOff_ = 0;
     std::vector<uint8_t> txBuf_;
     size_t txOff_ = 0;
+    std::deque<std::vector<uint8_t>> low_;   // framed low-priority messages, oldest first
+    uint64_t lowDropped_ = 0;
     void compactRx();
+    void promoteLow();
 };
 
 // Bind + listen on a port (IPv4+IPv6 via a dual-stack v6 socket where possible).

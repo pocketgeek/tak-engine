@@ -19,7 +19,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 275;      // 275: AI level 5, Absurdly Defensive (SlotInfo.aiLevel): Defensive play with
+constexpr uint32_t kNetVersion = 276;      // 276: voice chat (Msg::VoiceListen/VoiceUp/VoiceDown, relayed by the server
+                                           //      beside the game, never in a tick bundle or a replay). Sim unchanged;
+                                           //      a 275 peer would not know the messages. 275 replays refused
+                                           // 275: AI level 5, Absurdly Defensive (SlotInfo.aiLevel): Defensive play with
                                            //      Absurd's double income. Peers derive the income multiplier and the
                                            //      defensive stance from the level, so an older peer would clamp 5 to Normal
                                            //      and desync. Sim unchanged. 274 replays refused
@@ -671,9 +674,26 @@ enum class Msg : uint8_t {
                         // Commit): it will never come back in a bundle, so the sender
                         // releases it from its send windows (cmdInFlight, OrderWindow)
                         // instead of waiting for an acknowledgement that cannot come.
-
-
+    // Voice chat (protocol 276; constants below). Presentation only: the server relays
+    // these beside the game and never puts them in a tick bundle, a replay or the
+    // referee, and drops them rather than let them delay game traffic.
+    VoiceListen,        // C->S: u8 on. Whether this connection wants voice at all (voice chat
+                        // switched on). Off by default, so a client that never asks -- the
+                        // headless harness, an old build -- is sent no voice.
+    VoiceUp,            // C->S: u16 seq | u8 recipients | u8 flags | u16 len | len bytes Opus.
+                        // recipients is the talker's diplomacy VOICE mask, with the same rules
+                        // as Chat's: 0xff (or a room not yet running) is the whole room,
+                        // spectators included; otherwise the seated players whose bit is set.
+                        // Never echoed to the talker. len <= kVoiceMaxOpus; 0 only with END.
+    VoiceDown,          // S->C: u32 talker client id | u8 talker slot (0xFF = spectator) | u16 seq |
+                        // u8 flags | u16 len | len bytes | str name (only with kVoiceHasName).
 };
+
+// Voice chat (Msg::VoiceUp / VoiceDown): Opus, 48 kHz mono, one 20 ms frame per message.
+constexpr size_t kVoiceMaxOpus = 400;      // bytes of one frame's packet (24 kbit/s is ~60)
+constexpr uint8_t kVoiceStart = 1;         // first frame of a transmission (resets the receiver)
+constexpr uint8_t kVoiceEnd = 2;           // the talker released push-to-talk; carries no audio
+constexpr uint8_t kVoiceHasName = 4;       // VoiceDown: the talker's display name follows
 
 // The outcome of a login, as carried by Msg::AuthResult.
 enum class AuthStatus : uint8_t {
@@ -807,6 +827,7 @@ struct Event {
 struct Writer {
     std::vector<uint8_t> b;
     void u8(uint8_t v) { b.push_back(v); }
+    void u16(uint16_t v) { b.push_back(uint8_t(v)); b.push_back(uint8_t(v >> 8)); }
     void u32(uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(uint8_t(v >> (8 * i))); }
     void u64(uint64_t v) { for (int i = 0; i < 8; ++i) b.push_back(uint8_t(v >> (8 * i))); }
     void f32(float v) { uint32_t x; std::memcpy(&x, &v, 4); u32(x); }
@@ -841,6 +862,10 @@ struct Reader {
     Reader(const uint8_t* d, size_t n) : p(d), end(d + n) {}
     bool avail(size_t n) const { return size_t(end - p) >= n; }
     uint8_t u8() { if (!avail(1)) { ok = false; return 0; } return *p++; }
+    uint16_t u16() {
+        if (!avail(2)) { ok = false; return 0; }
+        const uint16_t v = uint16_t(p[0] | (p[1] << 8)); p += 2; return v;
+    }
     uint32_t u32() {
         if (!avail(4)) { ok = false; return 0; }
         uint32_t v = 0;

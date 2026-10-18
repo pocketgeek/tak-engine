@@ -2017,6 +2017,9 @@ set_tests_properties(crusades_client_network PROPERTIES TIMEOUT 60)
 add_executable(spectator_client_test tools/spectator_client_test.cpp)
 target_link_libraries(spectator_client_test PRIVATE tak-formats)
 add_test(NAME spectator_client COMMAND spectator_client_test)
+add_executable(voice_client_test tools/voice_client_test.cpp)
+target_link_libraries(voice_client_test PRIVATE tak-formats)
+add_test(NAME voice_client COMMAND voice_client_test)
 set_tests_properties(spectator_client PROPERTIES TIMEOUT 60)
 # TAK_PACELOG's summary (src/client/pacelog.h, header-only).
 add_executable(pacelog_test tools/pacelog_test.cpp)
@@ -2089,6 +2092,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_spectators_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_spectators PROPERTIES TIMEOUT 120)
+    add_test(NAME server_voice COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_voice_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(server_voice PROPERTIES TIMEOUT 120)
     add_test(NAME server_map_scenario COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_map_scenario_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --map-tool "$<TARGET_FILE:map_transfer_test>")

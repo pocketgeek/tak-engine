@@ -192,6 +192,64 @@ int main() {
         for(int i=0;i<600;++i)c.send(Msg::Chat,payload);
         check(c.txPending()<=(32u<<20),"backlog cannot overshoot its limit on append");
     }
+    // Low-priority (voice) frames: behind every ordinary frame, bounded, droppable.
+    {
+        std::printf("low-priority frames (voice):\n");
+        Pair p = makePair({}, /*closePeer=*/false);
+        int fl = ::fcntl(p.peer, F_GETFL, 0);
+        ::fcntl(p.peer, F_SETFL, fl | O_NONBLOCK);
+        auto readFrames = [&] {
+            std::vector<std::pair<Msg, std::string>> out;
+            std::vector<uint8_t> buf(1 << 16);
+            std::vector<uint8_t> all;
+            for (;;) {
+                ssize_t n = ::read(p.peer, buf.data(), buf.size());
+                if (n <= 0) break;
+                all.insert(all.end(), buf.begin(), buf.begin() + n);
+            }
+            size_t at = 0;
+            while (all.size() - at >= 5) {
+                uint32_t len = uint32_t(all[at]) | uint32_t(all[at + 1]) << 8 | uint32_t(all[at + 2]) << 16 | uint32_t(all[at + 3]) << 24;
+                if (all.size() - at - 4 < len) break;
+                out.push_back({Msg(all[at + 4]), std::string(all.begin() + long(at) + 5, all.begin() + long(at) + 4 + len)});
+                at += 4 + len;
+            }
+            return out;
+        };
+        auto bytes = [](const std::string& t) { return std::vector<uint8_t>(t.begin(), t.end()); };
+        p.conn.send(Msg::TickBundle, bytes("tick1"));
+        check(p.conn.sendLow(Msg::VoiceDown, bytes("voice1")), "a voice frame is queued");
+        p.conn.send(Msg::TickBundle, bytes("tick2"));
+        check(p.conn.wantWrite() && p.conn.lowPending() == 1, "it waits in its own queue");
+        p.conn.flushWrite();
+        auto got = readFrames();
+        check(got.size() == 2 && got[0].second == "tick1" && got[1].second == "tick2",
+              "ordinary frames queued after it still go first");
+        check(p.conn.wantWrite(), "the writer still wants to write while voice waits");
+        p.conn.flushWrite();
+        got = readFrames();
+        check(got.size() == 1 && got[0].first == Msg::VoiceDown && got[0].second == "voice1",
+              "then the voice frame follows, intact");
+        check(!p.conn.wantWrite(), "and nothing is left");
+
+        // A full queue keeps the newest frames.
+        for (int i = 0; i < 20; ++i) p.conn.sendLow(Msg::VoiceDown, bytes("v" + std::to_string(i)));
+        check(p.conn.lowPending() == Conn::kLowMaxFrames && p.conn.lowDropped() == 20 - Conn::kLowMaxFrames,
+              "the queue is bounded; the oldest are dropped");
+        p.conn.flushWrite();
+        got = readFrames();
+        check(!got.empty() && got[0].second == "v" + std::to_string(20 - Conn::kLowMaxFrames),
+              "the newest frames survive");
+        while (p.conn.lowPending()) { p.conn.flushWrite(); readFrames(); }
+
+        // Backed-up ordinary traffic: voice is refused rather than queued behind it.
+        Conn c;   // never flushed
+        c.send(Msg::TickBundle, std::vector<uint8_t>(Conn::kLowBackpressure + 1));
+        check(!c.sendLow(Msg::VoiceDown, bytes("late")) && c.lowPending() == 0 && c.lowDropped() == 1,
+              "voice is dropped while game traffic is backed up");
+        ::close(p.peer);
+    }
+
     std::printf(g_fail ? "conn_test: %d FAILURE(S)\n" : "conn_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

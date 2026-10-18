@@ -30,6 +30,7 @@ bool MpClient::connect(const std::string& host, uint16_t port, const std::string
     conn_ = Conn{}; err_.clear();
     resetOverrideTransfer();resetMapTransfer();
     room_=RoomView{};roomRequestPending_=false;
+    voice_.clear(); voiceListenSent_ = 0;   // a new connection starts unheard: the server default is off
     name_ = name;
     if (!conn_.connect(host, port)) { err_ = conn_.error(); state_ = State::Done; return false; }
     state_ = State::Connecting;
@@ -105,6 +106,10 @@ bool MpClient::poll() {
         send(Msg::StartGame); startRequested_ = false; startSent_ = true;
     }
     pumpDerive();          // the login's PBKDF2 finished on its worker: send the proof
+    if (state_ != State::Connecting && int(voiceListen_) != voiceListenSent_) {
+        Writer w; w.u8(voiceListen_ ? 1 : 0); send(Msg::VoiceListen, w);
+        voiceListenSent_ = int(voiceListen_);
+    }
     uint64_t now = nowMs();
     if (campaignReplayNextPullMs_ && now >= campaignReplayNextPullMs_ && campaignReplayDownload_.state == CampaignReplayState::Downloading) {
         campaignReplayNextPullMs_ = 0;
@@ -829,6 +834,18 @@ void MpClient::onFrame(const Frame& f) {
             if (r.ok) chat_.push_back({who, text});
             break;
         }
+        case Msg::VoiceDown: {
+            VoiceFrame v;
+            v.talker = r.u32(); v.slot = r.u8(); v.seq = r.u16(); v.flags = r.u8();
+            const uint16_t len = r.u16();
+            if (!r.ok || len > kVoiceMaxOpus || size_t(r.end - r.p) < len) break;
+            v.opus.assign(r.p, r.p + len); r.p += len;
+            if (v.flags & kVoiceHasName) v.name = r.str();
+            if (!r.ok || !voiceListen_) break;
+            if (voice_.size() >= kVoiceInbox) { voice_.erase(voice_.begin()); ++voiceDropped_; }
+            voice_.push_back(std::move(v));
+            break;
+        }
         case Msg::GameStarting: {
             roomRequestPending_=false;
             RoomView check; Reader header(f.payload.data(), f.payload.size()); readSlots(header, check);
@@ -992,6 +1009,21 @@ void MpClient::kick(int slot) { Writer w; w.u8(uint8_t(slot)); send(Msg::Kick, w
 
 void MpClient::chat(const std::string& text, uint8_t recipients) {
     Writer w; w.str(text); w.u8(recipients); send(Msg::Chat, w);
+}
+
+void MpClient::setVoiceListen(bool on) {
+    voiceListen_ = on;
+    if (!on) voice_.clear();
+}
+
+void MpClient::sendVoice(uint16_t seq, uint8_t recipients, uint8_t flags, const std::vector<uint8_t>& opus) {
+    if (state_ != State::InRoom && state_ != State::Starting && state_ != State::InGame) return;
+    if (opus.size() > kVoiceMaxOpus || (opus.empty() && !(flags & kVoiceEnd))) return;
+    Writer w;
+    w.u16(seq); w.u8(recipients); w.u8(flags); w.u16(uint16_t(opus.size()));
+    w.b.insert(w.b.end(), opus.begin(), opus.end());
+    conn_.sendLow(Msg::VoiceUp, w.b);
+    if (!conn_.flushWrite() && err_.empty()) err_ = conn_.error();   // out now, not a frame later
 }
 
 void MpClient::startGame() { startRequested_ = true; startError_.clear(); }
