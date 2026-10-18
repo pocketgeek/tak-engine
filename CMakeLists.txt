@@ -14,6 +14,18 @@ endif()
 
 add_compile_options(-Wall -Wextra)
 
+# Unoptimized builds (no -O1..-O3/-Os/-Oz/-Ofast in the configuration's C++ flags, as in a
+# plain Debug build) and sanitizer builds run the simulation many times slower. A few long
+# tests get a larger TIMEOUT there (TAK_SLOW_TEST_BUILD); optimized builds keep the tighter
+# limits, which still catch a test that slows down.
+string(TOUPPER "${CMAKE_BUILD_TYPE}" _tak_build_type_upper)
+set(_tak_test_flags " ${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${_tak_build_type_upper}} ")
+if(_tak_test_flags MATCHES "-fsanitize" OR NOT _tak_test_flags MATCHES " -O([1-3sz]|fast) ")
+  set(TAK_SLOW_TEST_BUILD ON)
+else()
+  set(TAK_SLOW_TEST_BUILD OFF)
+endif()
+
 # Build speed (developer machines only; neither tool changes the code generated).
 # ccache: many worktrees build the same sources, so a shared compiler cache turns a
 # fresh build into mostly cache hits. Worktrees only share entries when ccache's
@@ -487,6 +499,10 @@ add_test(NAME legion_scale_one100
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/one-100.scn --mode legion --offsets 0
                  --serial --json)
 set_tests_properties(legion_scale_neutral legion_scale_one100 PROPERTIES LABELS legion TIMEOUT 600)
+if(TAK_SLOW_TEST_BUILD)
+  # Unoptimized, run alone (2026-10-18): 609 s Clang Debug, 486 s GCC -O0, 365 s ASan.
+  set_tests_properties(legion_scale_neutral PROPERTIES TIMEOUT 1800)
+endif()
 set_tests_properties(legion_scale_one100 PROPERTIES
                      PASS_REGULAR_EXPRESSION "\"scale\\.arrive\\.n\":100,.*\"scale\\.stuck_end\":0,"
                      FAIL_REGULAR_EXPRESSION "MISMATCH|serial != workers|legion_scenario:")
@@ -740,6 +756,10 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/many-2500.scn)
   set_tests_properties(legion_sched_load legion_sched_load_div legion_sched_mix legion_sched_pin legion_sched_inflight
                        PROPERTIES LABELS legion TIMEOUT 900)
+  if(TAK_SLOW_TEST_BUILD)
+    # Unoptimized: 613 s alone in Clang Debug, 862 s of its 900 s in a parallel Clang Debug suite (2026-10-18).
+    set_tests_properties(legion_sched_inflight PROPERTIES TIMEOUT 1800)
+  endif()
   set_tests_properties(legion_sched_load_div PROPERTIES ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
   # Legion 10,000 stage 5: the route consumers that state their region (lanes, slots, rings, the formation
   # entrance, awareness) on paused routes, every first build pausable (--pause-all), under TAK_LEGION_VERIFY,
@@ -750,6 +770,11 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios --data "${TAK_TEST_DATA}")
   set_tests_properties(legion_route_paused PROPERTIES LABELS legion TIMEOUT 900
                        ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
+  if(TAK_SLOW_TEST_BUILD)
+    # Unoptimized: 1266 s alone in Clang Debug (2026-10-18); it timed out at 900 s in every unoptimized suite
+    # of the 0.8.4 sweep (GCC -O0, Clang Debug, ASan). Optimized: 43 s Release, 197 s -O2 -g in a parallel suite.
+    set_tests_properties(legion_route_paused PROPERTIES TIMEOUT 3600)
+  endif()
   # Legion 10,000 stage 9: the parallel planning jobs (chain tiles built beside the serial pass, plane rows in
   # chunks) decide nothing: the state hash and every observer key equal the serial run at 1, 3 and 7 workers, with
   # the jobs' completion order perturbed, and forced inline under TAK_LEGION_VERIFY (tools/legion_parallel_test.py).
@@ -757,6 +782,11 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_parallel_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
   set_tests_properties(legion_parallel PROPERTIES LABELS legion TIMEOUT 1800 SKIP_RETURN_CODE 77)
+  if(TAK_SLOW_TEST_BUILD)
+    # Unoptimized: 1605 s alone at GCC -O0 (8 cores, 2026-10-18); it timed out at 1800 s in every unoptimized
+    # suite of the 0.8.4 sweep. Optimized: ~750 s in a parallel Release or -O2 -g suite.
+    set_tests_properties(legion_parallel PROPERTIES TIMEOUT 5400)
+  endif()
   # Legion 10,000 stage 7: crossing walkers no longer stand in the knots they form (scatter-400: 400 single
   # walkers to unrelated destinations, serial and workers; tools/legion_traffic_test.py).
   add_test(NAME legion_traffic
