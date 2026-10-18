@@ -1383,6 +1383,22 @@ if(TAK_BUILD_CLIENT)
           $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
           --testbuild --winsize 1280 960 --novsync)
       set_tests_properties(render_palette_indexed PROPERTIES TIMEOUT 120)
+      # Workstream N: the same scene with native passes required and every pass's GL
+      # state checked against SDL's priming. The ctest's dummy driver has no native
+      # passes (the study requires none to open: the runtime fallback); run it with
+      # SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=opengl for the GL form, where
+      # passes must open across palette-form switches and render-target resets.
+      add_test(NAME render_native_pass COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+          TAK_SHADOW_BENCH=160 TAK_RENDER_ROSTER=structures TAK_RENDER_SPACING=96 TAK_PROFILE_ZOOM=0.5
+          TAK_RENDER_EXTRAS=1 TAK_RENDER_CAMERA=1 TAK_RENDER_FILTER=70 TAK_RENDER_RESET=110
+          TAK_RENDER_STUDY=1 TAK_RENDER_FRAMES=300 TAK_REQUIRE_NATIVE_PASS=1 TAK_NATIVE_PASS_VERIFY=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/native-pass-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/native-pass-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1280 960 --novsync)
+      set_tests_properties(render_native_pass PROPERTIES TIMEOUT 120
+          PASS_REGULAR_EXPRESSION "NATIVE_PASS_OK")
       # Animated colour atlases in a real scene (two player colours, simulated
       # render-target resets): after every update each atlas must equal a complete
       # repaint byte for byte (TAK_ATLAS_VERIFY; throws on the first mismatch).

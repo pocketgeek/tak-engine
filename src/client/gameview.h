@@ -1259,7 +1259,16 @@ private:
                     SDL_Texture* tex; int start, count;     // seg if u&&f both null
                     uint32_t firstRange = 0, ranges = 0;
                     int32_t arenaFirst = -1; uint32_t arenaRanges = 0;
-                    int32_t arenaCommand = -1; int8_t arenaSlot = -1; };
+                    int32_t arenaCommand = -1; int8_t arenaSlot = -1;
+                    bool inPass = false;      // N2: planned into a native pass, arena-eligible at any size
+                    // N (planned once per frame, planNativePasses): on the first command of
+                    // a pass, one past its last command and its prime; on every command of
+                    // a pass, its resolved texture (indexed page, or GL name + blend).
+                    bool passPremultipliedPrime = false, passPalette = false, premultiplied = false;
+                    int16_t page = -1;
+                    int32_t passEnd = -1;
+                    GLuint spanName = 0;
+                    SDL_Texture* passPrime = nullptr; };
     std::vector<BodySource> bodySources_;
     std::vector<BodyRange> bodyRanges_;
     std::vector<GLint> bodyArenaFirsts_;
@@ -1499,15 +1508,33 @@ private:
     NativePassMode nativePassMode_ = NativePassMode::All;
     bool nativePassesOn_ = false;    // this frame: mode != Off and the renderer can open passes
     size_t nativeMin_ = 512;         // this frame's native batch threshold (TAK_BODY_ARENA_MIN)
-    size_t nativeScanEnd_ = 0;       // body replay: commands below this were scanned and need no pass
     tak::NativePassGL nativePass_;
+    // Draws the pass planned at drawOps_[first] (passEnd > first); returns passEnd, or
+    // `first` when the pass was refused (the caller then draws command by command).
     size_t drawNativeSpan(size_t first);
+    // One run of body commands from `first`: one past its last command, whether a
+    // command in it is drawn natively anyway, whether it holds indexed runs, and the
+    // texture that primes it. Resolves each scanned command's texture into its DrawOp.
+    struct SpanScan { size_t end = 0; bool nativeAnyway = false, palette = false, primePremultiplied = false;
+                      SDL_Texture* prime = nullptr; };
+    SpanScan scanNativeSpan(size_t first);
+    // Plans the frame's passes ONCE, before H's arena planning (so the arena knows
+    // which commands a pass will draw -- N2's DrawOp::inPass) and for the replay
+    // (DrawOp::passEnd and the resolved textures: no second scan, no lookups).
+    void planNativePasses();
+    bool nativePassArena_ = true;    // this frame: N2 on (debug TAK_NATIVE_PASS_ARENA=0 = off)
+    // N2's smallest command (vertices) for the arena inside a pass: every command.
+    // A 64-vertex minimum measured 7-15% slower draw once passes were planned once
+    // (Experiment 16); debug TAK_NATIVE_PASS_ARENA_MIN changes it.
+    static constexpr size_t kNativePassArenaMin = 1;
+    size_t nativePassArenaMin_ = kNativePassArenaMin;
     int palettePage(SDL_Texture* texture) const;
     // A unit's runs in one native pass (special units): false when the form is baked,
     // no run is indexed or a run texture cannot join -- the caller draws run by run.
     bool drawRunsNative(const std::vector<std::pair<SDL_Texture*, int>>& runs, const SDL_Vertex* vertices);
     // Select a span command's program/texture inside an open pass; counts indexed runs.
     void useSpanTexture(SDL_Texture* texture);
+    void useSpanTexture(int page, GLuint name, bool premultiplied);
     struct SpanTexture { SDL_Texture* texture = nullptr; GLuint name = 0; bool premultiplied = false; };
     const SpanTexture& spanTexture(SDL_Texture* texture);   // name 0 = cannot join a native pass
     std::vector<SpanTexture> spanTextures_;   // per frame (body replay)

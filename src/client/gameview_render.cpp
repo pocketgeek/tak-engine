@@ -1673,9 +1673,14 @@
             else if (!std::strcmp(v, "palette")) nativePassMode_ = NativePassMode::Palette;
         }
         nativePass_.setVerify(tak::devFlag("TAK_NATIVE_PASS_VERIFY"));
+        nativePassArena_ = true;
+        if (const char* v = tak::devEnv("TAK_NATIVE_PASS_ARENA")) nativePassArena_ = std::atoi(v) != 0;
+        nativePassArenaMin_ = kNativePassArenaMin;
+        if (const char* v = tak::devEnv("TAK_NATIVE_PASS_ARENA_MIN")) nativePassArenaMin_ = size_t(std::max(1, std::atoi(v)));
+        // (A simulated arena -- debug TAK_BODY_ARENA_SOFTWARE -- has no GL buffer to draw from.)
         nativePassesOn_ = bodyDirect && nativePassMode_ != NativePassMode::Off &&
+                          !tak::devFlag("TAK_BODY_ARENA_SOFTWARE") &&
                           nativePass_.ready(ren_) && bodySubmit_.nativeCapable(ren_);
-        nativeScanEnd_ = 0;
         bodyArenaOn_ = bodyDirect && !tak::devFlag("TAK_BODY_ARENA_OFF");
         bodyArenaVerifyOn_ = tak::devFlag("TAK_BODY_ARENA_VERIFY");
         for (auto& buffer : bodyArenaBuffers_) {
@@ -1694,10 +1699,17 @@
             policy.migrateFraction = 0.02;
             bodyArena_.setPolicy(policy);
         }
+        // The frame's span-texture cache starts here: the N2 planning below and the
+        // replay share it (GL names are valid for this frame only).
+        spanTextures_.clear();
+        // Workstream N: the frame's native passes, planned once (N2: commands a pass
+        // draws take the arena at any size -- no priming of their own there; others
+        // need 512+).
+        if (nativePassesOn_) planNativePasses();
         if (bodyArenaOn_) {
             bodyArena_.begin(bodyArenaFrame_, distantNow_);
             for (DrawOp& op : drawOps_) {
-                if (!op.tex || size_t(op.count) < kNativeMin) continue;
+                if (!op.tex || (size_t(op.count) < kNativeMin && !op.inPass)) continue;
                 noteNeed(Retained::ArenaRanges, bodyArenaRanges_);
                 bodyArenaRanges_.clear();
                 for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
@@ -1735,7 +1747,7 @@
         } else if (bodyArena_.capacity() || bodyArenaBuffers_[0].capacityBytes() || bodyArenaBuffers_[1].capacityBytes())
             releaseBodyArena();
         const auto fromArena = [&](const DrawOp& op) {
-            return arenaFrame && op.tex && size_t(op.count) >= kNativeMin;
+            return arenaFrame && op.tex && (size_t(op.count) >= kNativeMin || op.inPass);
         };
         // Assembled commands: their ranges copied into bodyVerts_ (plan serially).
         // The arena's changed sources are staged right behind them, in arena
@@ -1939,13 +1951,12 @@
         debugFeatureFlameDrawCount_ = 0;
         debugFeatureSmokeDrawCount_ = 0;
 #endif
-        spanTextures_.clear();
         for (size_t opi = 0; opi < drawOps_.size(); ++opi) {
             if (opi == airShadowOp_) drainAirShadows();
             const DrawOp& op = drawOps_[opi];
-            if (nativePassesOn_ && opi >= nativeScanEnd_ && !op.f && !op.u && op.count > 0 && op.tex) {
+            if (nativePassesOn_ && op.passEnd > int32_t(opi)) {
                 // Workstream N: a run of body commands in one native pass (M: from an
-                // indexed palette run only).
+                // indexed palette run only), as planned before the arena.
                 if (const size_t end = drawNativeSpan(opi); end > opi) { opi = end - 1; continue; }
             }
             if (op.f) {
@@ -4212,16 +4223,18 @@
     }
 
     void GameView::useSpanTexture(SDL_Texture* texture) {
-        if(const int page=palettePage(texture);page>=0) {
+        const int page=palettePage(texture);
+        const SpanTexture& entry=page>=0 ? SpanTexture{} : spanTexture(texture);
+        useSpanTexture(page,entry.name,entry.premultiplied);
+    }
+    void GameView::useSpanTexture(int page, GLuint name, bool premultiplied) {
+        if(page>=0) {
             GLuint program=0,textures[3]={0,0,0};
             if(paletteIndexed_.passBinding(size_t(page),paletteLinear_,program,textures)) {
                 nativePass_.useProgram(program,textures);
                 ++paletteIndexedDraws_;
             }
-        } else {
-            const SpanTexture& entry=spanTexture(texture);
-            nativePass_.useTexture(entry.name,entry.premultiplied);
-        }
+        } else nativePass_.useTexture(name,premultiplied);
     }
 
     bool GameView::drawRunsNative(const std::vector<std::pair<SDL_Texture*, int>>& runs, const SDL_Vertex* vertices) {
@@ -4251,40 +4264,68 @@
         return true;
     }
 
-    size_t GameView::drawNativeSpan(size_t first) {
-        using RS = tak::render::Counter;
-        if(nativePassMode_==NativePassMode::Palette && palettePage(drawOps_[first].tex)<0)return first;
-        // Scan the run: every command up to the next boundary or a texture that
-        // cannot join. The prime is the first BLEND texture (palette keys are BLEND),
-        // else the first premultiplied one (then no BLEND texture is in the run).
+    GameView::SpanScan GameView::scanNativeSpan(size_t first) {
+        // Every command up to the next boundary or a texture that cannot join. The
+        // prime is the first BLEND texture (palette keys are BLEND), else the first
+        // premultiplied one (then no BLEND texture is in the run).
+        SpanScan scan;
+        SDL_Texture* premultipliedPrime=nullptr;
         size_t end=first;
-        bool nativeAnyway=false,palette=false;
-        SDL_Texture *prime=nullptr,*premultipliedPrime=nullptr;
         for(;end<drawOps_.size();++end) {
             if(end>first && end==airShadowOp_)break;
-            const DrawOp& op=drawOps_[end];
+            DrawOp& op=drawOps_[end];
             if(op.f || op.u)break;
             if(op.count<=0 || !op.tex)continue;   // skipped by the replay anyway (null atlas page)
-            if(op.arenaFirst>=0 && bodyArenaBuffers_[op.arenaSlot].simulated())break;
-            if(palettePage(op.tex)>=0) {
-                nativeAnyway=palette=true;
-                if(!prime)prime=op.tex;
+            op.page=int16_t(palettePage(op.tex));
+            if(op.page>=0) {
+                scan.nativeAnyway=scan.palette=true;
+                if(!scan.prime)scan.prime=op.tex;
                 continue;
             }
             const SpanTexture& texture=spanTexture(op.tex);
+            op.spanName=texture.name;
+            op.premultiplied=texture.premultiplied;
             if(!texture.name)break;
-            if(op.arenaFirst>=0 || size_t(op.count)>=nativeMin_)nativeAnyway=true;
-            if(!texture.premultiplied) { if(!prime)prime=op.tex; }
+            if(size_t(op.count)>=nativeMin_)scan.nativeAnyway=true;
+            if(!texture.premultiplied) { if(!scan.prime)scan.prime=op.tex; }
             else if(!premultipliedPrime)premultipliedPrime=op.tex;
         }
-        // Commands of this run need no second scan, whether a pass opens or not:
-        // without a natively drawn command SDL batches the run with no priming at all,
-        // and a refused pass would only be refused again.
-        nativeScanEnd_=std::max(nativeScanEnd_,end);
-        if(end==first || !nativeAnyway)return first;
-        const bool primePremultiplied=!prime;
-        if(!prime)prime=premultipliedPrime;
-        if(!nativePass_.begin(bodySubmit_,ren_,prime,primePremultiplied)) {
+        scan.end=end;
+        scan.primePremultiplied=!scan.prime;
+        if(!scan.prime)scan.prime=premultipliedPrime;
+        return scan;
+    }
+
+    void GameView::planNativePasses() {
+        // Arena commands are native-size or (N2) planned here, so this segmentation is
+        // the one the replay draws. Palette mode keeps the workstream-M rule: a pass
+        // starts only at an indexed run.
+        const bool arena=nativePassArena_ && nativePassMode_==NativePassMode::All;
+        for(size_t i=0;i<drawOps_.size();) {
+            DrawOp& head=drawOps_[i];
+            if(head.f || head.u || head.count<=0 || !head.tex ||
+               (nativePassMode_==NativePassMode::Palette && palettePage(head.tex)<0)) {++i;continue;}
+            const SpanScan scan=scanNativeSpan(i);
+            if(scan.nativeAnyway && scan.end>i) {
+                head.passEnd=int32_t(scan.end);
+                head.passPrime=scan.prime;
+                head.passPremultipliedPrime=scan.primePremultiplied;
+                head.passPalette=scan.palette;
+                // N2: every command of the pass may draw from the arena (a minimum size,
+                // debug TAK_NATIVE_PASS_ARENA_MIN, measured slower: Experiment 16).
+                if(arena)
+                    for(size_t k=i;k<scan.end;++k)
+                        drawOps_[k].inPass=drawOps_[k].tex && size_t(std::max(0,drawOps_[k].count))>=nativePassArenaMin_;
+            }
+            i=std::max(scan.end,i+1);
+        }
+    }
+
+    size_t GameView::drawNativeSpan(size_t first) {
+        using RS = tak::render::Counter;
+        const DrawOp& head=drawOps_[first];
+        const size_t end=size_t(head.passEnd);
+        if(!nativePass_.begin(bodySubmit_,ren_,head.passPrime,head.passPremultipliedPrime)) {
             ++nativePassRefused_;
             if(!nativePass_.usable())nativePassesOn_=false;   // refused by the state check: not this context
             return first;
@@ -4293,7 +4334,7 @@
         for(size_t i=first;i<end;++i) {
             const DrawOp& op=drawOps_[i];
             if(op.count<=0 || !op.tex)continue;
-            useSpanTexture(op.tex);
+            useSpanTexture(op.page,op.spanName,op.premultiplied);
             renderStats_.add(RS::BodySubmissions);
             ++commands;
             if(op.arenaFirst>=0) {
@@ -4309,7 +4350,7 @@
         nativePass_.end(bodySubmit_);
         ++nativePasses_;
         nativePassCommands_+=commands;
-        if(palette) {++paletteSpans_;paletteSpanCommands_+=commands;}
+        if(head.passPalette) {++paletteSpans_;paletteSpanCommands_+=commands;}
         return end;
     }
 

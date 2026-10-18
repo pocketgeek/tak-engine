@@ -609,7 +609,10 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "palette_indexed_draws", "palette_spans", "palette_span_commands",
                     # workstream N: native passes (primes = SDL state primings, a subset of flushes)
                     "body_submissions", "arena_draws", "native_passes", "native_pass_commands",
-                    "native_pass_refused", "native_primes"]
+                    "native_pass_refused", "native_primes",
+                    # workstream H: retained body arena (per frame)
+                    "arena_append", "arena_rebuild", "arena_stream", "arena_verts_retained",
+                    "arena_verts_uploaded", "arena_verts_twice", "arena_fallbacks"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",
@@ -623,7 +626,9 @@ TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", 
                    "cpu_cache_used_bytes", "cpu_cache_retained_bytes", "cpu_cache_pinned_bytes",
                    "cpu_cache_evictable_bytes", "cpu_cache_peak_bytes",
                    # workstream L: the shown snapshot's unit grid
-                   "unit_grid_bytes"]
+                   "unit_grid_bytes",
+                   # workstream H: arena storage (GPU, counted in gpuvram) and its in-flight estimate
+                   "arena_capacity_bytes", "arena_inflight_bytes"]
 
 
 def metric(result, path):

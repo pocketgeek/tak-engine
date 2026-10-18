@@ -34,6 +34,7 @@ render_unit_index_jump 36
 mapgen_mana 35
 legion_scenario_densehead 34
 render_palette_indexed 33
+render_native_pass 33
 legion_situation_r9-65850_retail 32
 cartographer_place_terrain_zhon 31
 naval_ai 30

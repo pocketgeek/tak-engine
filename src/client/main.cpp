@@ -2004,6 +2004,7 @@ int main(int argc, char** argv) {
                 if(!gl && t.passes)throw std::runtime_error("native passes on a renderer without them");
                 if(tak::devFlag("TAK_NATIVE_PASS_VERIFY") && t.passes && t.verified<t.passes)
                     throw std::runtime_error("native passes went unverified");
+                std::printf("NATIVE_PASS_OK\n");   // every check above held (the ctest requires this line)
             }
             if(tak::devFlag("TAK_REQUIRE_GEOMETRY_REUSE")) {
                 std::printf("GEOMETRY_VERIFY checks=%llu animated_cross_tick=%llu\n",
