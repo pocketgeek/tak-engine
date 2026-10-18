@@ -318,6 +318,186 @@ void trapped() {
         const auto& u=*f.world.unit(inside);
         check(std::abs(u.x.toFloat()-800)<20&&std::abs(u.z.toFloat()-800)<20,"resumed unit did not reach its goal");
     }
+    // Legion 10,000 stage 5 (the trapped rule on RouteView::reach): static
+    // churn on another island after the route is complete must not hold the
+    // verdict off for ever. The churn bumps the shared static epoch without
+    // touching the route, so nothing refreshes the route; an epoch test
+    // ("built on older geometry: unknown") left the body Waiting for the
+    // whole run and its order never retired (the verifier's pocket.scn,
+    // 2026-10-16). The churn stops at tick 60: a trapped body re-registers
+    // on every static change anywhere (trappedEpoch), so under churn that
+    // never stops its grace restarts and no order retires -- inherited from
+    // the starting revision, docs/legion-10000-progress.md 7.5 fix round.
+    {
+        Fixture f(256,64);
+        f.rect(126,0,4,64);
+        f.rect(18,18,12,2);f.rect(18,28,12,2);f.rect(18,18,2,12);f.rect(28,18,2,12);
+        f.publish();
+        const auto type=mover(2);
+        std::vector<int> outside;
+        for(int i=0;i<10;++i)outside.push_back(f.spawn(type,40+3*i,40));
+        const int inside=f.spawn(type,23,23);
+        f.start();
+        for(const int id:outside)f.world.order(id,100*16,32*16,false);
+        f.world.order(inside,100*16,32*16,false);
+        int clearedAt=-1;
+        for(int t=0;t<9300&&clearedAt<0;++t) {
+            if(t>=20&&t<60&&t%10==0)   // a blocking feature placed and lifted on the far island (churn ... toggle)
+                f.world.addFeature(30*256+200,200*16+16.f,30*16+16.f,0,1,2,2,(t/10)%2==0,-1,true);
+            f.world.tick(1.f/30);
+            if(f.world.unit(inside)->orders.empty())clearedAt=t;
+        }
+        std::printf("trapped churn=island cleared_at=%d trapped=%llu\n",clearedAt,(unsigned long long)f.world.legionStats().trapped);
+        check(clearedAt>=0,"trapped order never retired after churn on another island");
+        check(f.world.legionStats().trapped>=1,"trapped classification not recorded after churn on another island");
+        for(const int id:outside)check(f.world.unit(id)->orders.empty(),"free unit did not arrive after churn on another island");
+    }
+    // Legion 10,000 stage 7: the same island, churn that never stops (an improvement every other change, all on the
+    // far island). A trapped member re-registers only after an improvement touching its own component's box
+    // (trappedReopened), so its grace runs out and the order retires (until stage 7 every change anywhere restarted
+    // it: c2c25707's island-forever, inherited through stage 6). Then the same churn with the pocket opened at tick
+    // 300: that improvement touches the pocket, the member re-registers and arrives.
+    for(const bool opens:{false,true}) {
+        Fixture f(256,64);
+        f.rect(126,0,4,64);
+        f.rect(18,18,12,2);f.rect(18,28,12,2);f.rect(18,18,2,12);f.rect(28,18,2,12);
+        f.publish();
+        const auto type=mover(2);
+        const int inside=f.spawn(type,23,23);
+        f.start();
+        f.world.order(inside,100*16,32*16,false);
+        int clearedAt=-1;
+        for(int t=0;t<9400&&clearedAt<0;++t) {
+            if(t>=20&&t%10==0)f.world.addFeature(30*256+200,200*16+16.f,30*16+16.f,0,1,2,2,(t/10)%2==0,-1,true);
+            if(opens&&t==300) {f.open(28,22,2,4);f.publish();}
+            f.world.tick(1.f/30);
+            if(f.world.unit(inside)->orders.empty())clearedAt=t;
+        }
+        const auto a=f.world.legionNavigator()->accounting();
+        std::printf("trapped churn=forever opens=%d cleared_at=%d kept=%llu reopened=%llu\n",int(opens),clearedAt,
+                    (unsigned long long)a.trappedKept,(unsigned long long)a.trappedReopened);
+        if(!opens) {
+            check(clearedAt>=8950&&clearedAt<=9200,"trapped order did not retire under never-ending churn on another island");
+            check(a.trappedKept>0&&a.trappedReopened==0,"trapped member re-registered on changes that could not reopen it");
+        } else {
+            const auto& u=*f.world.unit(inside);
+            check(clearedAt>=0&&clearedAt<3000,"trapped member did not resume when its pocket opened under churn");
+            check(std::abs(u.x.toFloat()-1600)<24&&std::abs(u.z.toFloat()-512)<24,"reopened trapped member did not reach its goal");
+            check(a.trappedReopened>0,"the pocket's opening was not seen as a reopening");
+        }
+    }
+}
+
+// Legion 10,000 stage 7: closures apart from improvements. A group walks east on its field; a 2x2 rock off its way
+// (inside the field's window) is lifted at tick 60 -- an improvement only: the route is touched (its "unreached" no
+// longer proves anything) but keeps steering, and its refresh waits kImproveDefer (150) ticks; a rock placed at
+// tick 400 -- a closure -- makes it stale at once. Every body arrives.
+void improvedefer() {
+    Fixture f(160,64);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<4;++i)ids.push_back(f.spawn(type,6+(i%2)*3,30+(i/2)*3));
+    f.start();
+    f.world.addFeature(10*160+80,80*16+16.f,10*16+16.f,0,1,2,2,true,-1,true);   // a rock off the way
+    for(const int id:ids)f.world.order(id,150*16,32*16,false);
+    const auto* nav=f.world.legionNavigator();
+    auto acct=[&] {return nav->accounting();};
+    uint64_t opened=0,closed=0,promoted=0;
+    int done=-1;
+    for(int t=0;t<4000&&done<0;++t) {
+        if(t==60) {
+            f.world.addFeature(10*160+80,80*16+16.f,10*16+16.f,0,1,2,2,false,-1,true);   // lifted: an improvement
+            opened=acct().routesOpened;closed=acct().routesClosed;promoted=acct().improveRefreshes;
+        }
+        if(t==62) {
+            check(acct().routesOpened>opened,"improvedefer: the lifted rock did not reach the route as an improvement");
+            check(acct().routesClosed==closed,"improvedefer: an improvement was taken for a closure");
+        }
+        if(t==60+140)check(acct().improveRefreshes==promoted,"improvedefer: the improvement refresh was not deferred");
+        if(t==60+160)check(acct().improveRefreshes==promoted+1,"improvedefer: the deferred improvement refresh never came");
+        if(t==400) {
+            closed=acct().routesClosed;
+            f.world.addFeature(54*160+100,100*16+16.f,54*16+16.f,0,1,2,2,true,-1,true);   // placed off the way: a closure
+        }
+        if(t==402)check(acct().routesClosed>closed,"improvedefer: the placed rock did not reach the route as a closure");
+        f.world.tick(1.f/30);
+        bool all=true;for(const int id:ids)all&=f.world.unit(id)->orders.empty();
+        if(all)done=t;
+    }
+    const auto a=acct();
+    std::printf("improvedefer done=%d opened=%llu closed=%llu improve_refreshes=%llu improve_demands=%llu\n",done,
+                (unsigned long long)a.routesOpened,(unsigned long long)a.routesClosed,(unsigned long long)a.improveRefreshes,
+                (unsigned long long)a.improveDemands);
+    check(done>=0,"improvedefer: a body did not arrive");
+}
+
+// Legion 10,000 stage 7: a chain whose regions are relabelled while it builds re-resolves them on the new geometry
+// (resolveChainNode: the dirty tile rebuilt, the route kept) instead of leaving them off the route. The stage-6 chains
+// fixture with a 2x2 rock toggled every tick in four open transit sectors east of the wall during the first 300
+// ticks (none of them severs a portal): resolves happen, no region is abandoned, every body arrives.
+void chainresolve() {
+    Fixture f(512,320);
+    for(int z=0;z<320;++z)
+        if(!(z>=40&&z<52)&&!(z>=150&&z<170)&&!(z>=262&&z<268)) {f.wall(250,z);f.wall(251,z);}
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int s=0;s<8;++s)for(int i=0;i<6;++i)ids.push_back(f.spawn(type,10+(i%3)*3,16+s*36+(i/3)*3));
+    f.start();
+    for(size_t i=0;i<ids.size();++i) {
+        const int s=int(i/6);
+        f.world.order(ids[i],float((470-(s%3)*12)*16),float((24+((s*5)%8)*36)*16),false);
+    }
+    const int rocks[4][2]={{300,80},{340,200},{380,120},{420,250}};
+    int t=0,done=0;
+    for(;t<9000&&done<int(ids.size());++t) {
+        if(t>=2&&t<300)for(const auto& r:rocks)
+            f.world.addFeature(r[1]*512+r[0],float(r[0]*16+16),float(r[1]*16+16),0,1,2,2,t%2==0,-1,true);
+        f.world.tick(1.f/30);
+        done=0;for(const int id:ids)done+=f.world.unit(id)->orders.empty();
+    }
+    const auto a=f.world.legionNavigator()->accounting();
+    std::printf("chainresolve ticks=%d arrived=%d/%zu chains=%llu resolves=%llu abandons=%llu repairs=%llu\n",t,done,ids.size(),
+                (unsigned long long)a.chains,(unsigned long long)a.chainResolves,(unsigned long long)a.chainAbandons,
+                (unsigned long long)a.chainRepairs);
+    check(a.chains>=4,"chainresolve: the squads did not take tile chains");
+    check(a.chainResolves>0,"chainresolve: no chain region was re-resolved on the new geometry");
+    check(a.chainAbandons==0,"chainresolve: a chain region was left off its route by a local change");
+    check(done==int(ids.size()),"chainresolve: a body never arrived");
+}
+
+// Legion 10,000 stage 7: traffic in coarse route selection. A wall crosses a 640 x 384 map with two gaps; with the
+// map empty the walker's chain takes the north gap (the region search's choice on this geometry), but here 121 idle
+// bodies (another player's) stand in the sector before it. The region search charges the regions by their soft share
+// (trafficPenalty), so the chain goes through the south gap instead and the walker arrives; without the charge (the
+// mutation in docs/legion-10000-progress.md 7.7) it takes the north gap into the idle block.
+void trafficlane() {
+    Fixture f(640,384);
+    for(int z=0;z<384;++z)if(!(z>=2&&z<34)&&!(z>=250&&z<282)) {f.wall(320,z);f.wall(321,z);}
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> idle;
+    for(int z=3;z<=33;z+=3)for(int x=290;x<=317;x+=3)idle.push_back(f.spawn(type,x,z,1));
+    const int walker=f.spawn(type,20,60);
+    f.start();
+    for(int t=0;t<120;++t)f.world.tick(1.f/30);   // the idle bodies become soft (two still scans)
+    f.world.order(walker,620*16,360*16,false);
+    int done=-1,maxZAtWall=-1;
+    for(int t=0;t<9000&&done<0;++t) {
+        f.world.tick(1.f/30);
+        const auto& u=*f.world.unit(walker);
+        const int x=int(u.x.v>>20),z=int(u.z.v>>20);
+        if(x>=300&&x<=340)maxZAtWall=std::max(maxZAtWall,z);
+        if(u.orders.empty())done=t;
+    }
+    const auto a=f.world.legionNavigator()->accounting();
+    std::printf("trafficlane done=%d max_z_at_wall=%d chains=%llu traffic_charges=%llu\n",done,maxZAtWall,
+                (unsigned long long)a.chains,(unsigned long long)a.trafficCharges);
+    check(a.chains>=1,"trafficlane: the walker did not take a chain");
+    check(a.trafficCharges>0,"trafficlane: the search charged no region for traffic");
+    check(maxZAtWall>=240,"trafficlane: the walker's route went through the idle block instead of round it");
+    check(done>=0,"trafficlane: the walker did not arrive");
 }
 
 void longroute() {
@@ -923,6 +1103,12 @@ void slotblock() {
 void quota() {
     // Many independent single-unit orders on a large map exceed the field
     // cap: evicted fields rebuild deterministically and nobody starves.
+    // Since Legion 10,000 stage 4 the cap is a fixed byte allowance (128 MiB,
+    // far above 64 fields of this map); the fixture sets it to what the old
+    // cap of 48 whole maps of cells was here, so it still exercises eviction,
+    // now through the byte allowance.
+    LegionNavigator::setFieldBytesForTest(48ull*320*320*4);
+    struct Reset {~Reset() {LegionNavigator::setFieldBytesForTest(0);}} reset;
     Fixture f(320,320);
     f.rect(150,0,4,150);f.rect(150,170,4,150);
     f.publish();
@@ -1360,6 +1546,110 @@ void pausedemand() {
     check(s.pausedResumes>=1,"pausedemand: the paused field never resumed for a demand");
     check(longest[lead]<=10&&longest[late]<=10,"pausedemand: a member waited more than 10 ticks for its field");
     check(f.world.unit(lead)->orders.empty()&&f.world.unit(late)->orders.empty(),"pausedemand: a body did not arrive");
+}
+
+// Legion 10,000 stage 4 (review of b052597e / d487d65d): more mobility classes than kMaxPlanes (24) ask for
+// their first route together. A plane a waiting registration still needs is never an eviction victim, so
+// each class's registration consumes its plane: every body arrives and each plane is built once. (Before
+// the fix a queued plane could be evicted and rebuilt: 36 builds here, and with other timings two classes
+// evicting each other's plane every tick, leaving their bodies Waiting for good.)
+void planepin() {
+    Fixture f(400,400);   // over 131k cells: first plane builds are incremental jobs the registrations wait for
+    f.publish();
+    std::vector<UnitType> types;
+    for(int i=0;i<25;++i) {auto t=mover(1);t.id=t.name="legion-slope-"+std::to_string(i);t.maxSlope=10+i;types.push_back(t);}
+    std::vector<int> ids;
+    for(int i=0;i<25;++i)ids.push_back(f.spawn(types[size_t(i)],4+(i%5)*3,4+(i/5)*3));
+    f.start();
+    for(size_t i=0;i<ids.size();++i)f.world.order(ids[i],float((60+int(i)%5*2)*16),float((60+int(i)/5*2)*16),false);
+    int t=0,done=0;
+    for(;t<3000&&done<int(ids.size());++t) {
+        f.world.tick(1.f/30);
+        done=0;for(int id:ids)done+=f.world.unit(id)->orders.empty();
+    }
+    std::printf("planepin ticks=%d arrived=%d/%zu plane_builds=%llu\n",t,done,ids.size(),(unsigned long long)f.world.legionStats().planeBuilds);
+    check(done==int(ids.size()),"planepin: a body of one of 25 mobility classes never arrived");
+    // One build per class: a plane evicted before its registrations used it is built again (36 before the fix).
+    check(f.world.legionStats().planeBuilds==ids.size(),"planepin: a plane was evicted before its waiting registrations used it");
+}
+
+// Legion 10,000 stage 6: small squads sent across a big map take tile chains (hierarchical routes over shared
+// tiles). A wall with three gaps crosses the map; eight squads of six cross it to eight different points. Checked:
+// chains are built, transit tiles are shared between squads with DIFFERENT destinations (cross hits: a hit by a
+// route to other goals than the one that built the tile), every body arrives, and (TAK_LEGION_VERIFY) every
+// finished chain's estimate strictly falls along some legal step from every cell (no loop, no false minimum) and no
+// chain reads a tile of another mobility class. (48 bodies run no worker jobs, so serial == workers is not this
+// test's claim: the chain code runs on the sim thread; the gate's both-exec runs and the 2,500-body scale run
+// under --both-exec cover it, docs/legion-10000-progress.md 7.6.)
+std::array<uint64_t,4> chainsRun(bool serial,bool churn=false) {
+    Fixture f(512,320,serial);
+    for(int z=0;z<320;++z)
+        if(!(z>=40&&z<52)&&!(z>=150&&z<170)&&!(z>=262&&z<268)) {f.wall(250,z);f.wall(251,z);}
+    f.publish();
+    const auto type=mover(2);
+    std::vector<std::vector<int>> squads;
+    for(int s=0;s<8;++s) {
+        squads.emplace_back();
+        for(int i=0;i<6;++i)squads.back().push_back(f.spawn(type,10+(i%3)*3,16+s*36+(i/3)*3));
+    }
+    f.start();
+    for(int s=0;s<8;++s)
+        for(const int id:squads[size_t(s)])f.world.order(id,float((470-(s%3)*12)*16),float((24+((s*5)%8)*36)*16),false);
+    int t=0,done=0,all=0;
+    for(const auto& q:squads)all+=int(q.size());
+    for(;t<9000&&done<all;++t) {
+        // churn: a wall dropped across the middle of the east half while the chains build, lifted later (the
+        // chains are touched, keep steering and refresh; TAK_LEGION_VERIFY must not take their older tiles for
+        // the current geometry).
+        if(churn&&(t==5||t==400))for(int z=100;z<220;++z)
+            f.world.addFeature(z*512+380,float(380*16+8),float(z*16+8),0,1,1,1,t==5,-1,true);
+        f.world.tick(1.f/30);
+        done=0;for(const auto& q:squads)for(const int id:q)done+=f.world.unit(id)->orders.empty();
+    }
+    const auto a=f.world.legionNavigator()->accounting();
+    std::printf("chains%s %s ticks=%d arrived=%d/%d chains=%llu tiles=%llu hits=%llu cross=%llu repairs=%llu widens=%llu fallbacks=%llu\n",
+                churn?"churn":"",serial?"serial":"workers",t,done,all,(unsigned long long)a.chains,(unsigned long long)a.tilesBuilt,
+                (unsigned long long)a.tileHits,(unsigned long long)a.tileCrossHits,(unsigned long long)a.chainRepairs,
+                (unsigned long long)a.corridorWidens,(unsigned long long)a.routeFallbacks);
+    check(a.chains>=4,"chains: the squads did not take tile chains");
+    check(a.tilesBuilt>0&&a.tileCrossHits>0,"chains: no transit tile was shared between squads with different destinations");
+    check(done==all,"chains: a body never arrived");
+    return {f.world.stateHash(),a.chains,a.tilesBuilt,a.tileHits};
+}
+void chains() {
+    chainsRun(true);
+}
+void chainschurn() {
+    chainsRun(true,true);
+}
+// Stage 6: a plane slot reused for another mobility class gets a new generation, so its routes never read the old
+// class's cached tiles. 25 classes (maxSlope 10..34) take turns on a 512 x 512 map: each sends one body far (a
+// chain), runs until the chain is built, and stops it, so its plane becomes the least recently used one nobody
+// refers to; the 25th class takes slot 0 over. Under TAK_LEGION_VERIFY every attach checks the tile's class.
+void chainplane() {
+    Fixture f(512,512);
+    for(int z=100;z<400;++z)f.wall(256,z);
+    f.publish();
+    std::vector<UnitType> types;
+    for(int i=0;i<25;++i) {auto t=mover(1);t.id=t.name="legion-slope-"+std::to_string(i);t.maxSlope=10+i;types.push_back(t);}
+    std::vector<int> ids;
+    for(int i=0;i<25;++i)ids.push_back(f.spawn(types[size_t(i)],8+(i%5)*3,240+(i/5)*3));
+    f.start();
+    uint64_t chainsBefore=0;
+    for(size_t i=0;i<ids.size();++i) {
+        f.world.order(ids[i],float(480*16),float(250*16),false);
+        for(int t=0;t<240;++t)f.world.tick(1.f/30);
+        f.world.stop(ids[i]);
+        f.world.tick(1.f/30);
+        if(i==23)chainsBefore=f.world.legionNavigator()->accounting().chains;
+    }
+    const auto a=f.world.legionNavigator()->accounting();
+    std::printf("chainplane chains=%llu (after 24 classes %llu) tiles=%llu hits=%llu plane_builds=%llu\n",(unsigned long long)a.chains,
+                (unsigned long long)chainsBefore,(unsigned long long)a.tilesBuilt,(unsigned long long)a.tileHits,
+                (unsigned long long)f.world.legionStats().planeBuilds);
+    check(a.chains>=25,"chainplane: every class should have taken a chain");
+    check(a.chains>chainsBefore,"chainplane: the 25th class (the reused slot) took no chain");
+    check(f.world.legionStats().planeBuilds>=25,"chainplane: no plane slot was reused");
 }
 
 void b3events() {
@@ -2217,7 +2507,9 @@ void hovershore() {
     // area; boats and hovercraft arrive, ground units stop at the shore.
     auto foot=mover(2);foot.maxWaterDepth=4;
     std::vector<int> walkers;
-    for(int i=0;i<4;++i)walkers.push_back(f.spawn(foot,130+i*3,88));
+    // Spawned clear of the hovercraft that landed up the beach in the phase before (z up to ~88: a walker
+    // spawned at z 88 overlapped one where stage 8's arrivals land them, an illegal origin from its first tick).
+    for(int i=0;i<4;++i)walkers.push_back(f.spawn(foot,130+i*3,94));
     for(int t=0;t<2;++t)f.world.tick(1.f/30);
     std::vector<int> mixed=walkers;mixed.insert(mixed.end(),hovers.begin(),hovers.begin()+4);
     mixed.insert(mixed.end(),boats.begin(),boats.end());
@@ -3861,6 +4153,7 @@ void entryplanes() {
 }
 
 int main(int argc,char** argv) {
+    LegionNavigator::setInstrumentProbes(true);   // lanegeom reads the vertex probe's counters
     const std::map<std::string_view,std::function<void()>> cases{
         {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},{"longroute",longroute},
         {"crowdhold",crowdhold},{"replace",replace},{"unreachable",unreachable},{"quota",quota},{"pens",pens},
@@ -3871,8 +4164,9 @@ int main(int argc,char** argv) {
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
-        {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
-        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"entryplanes",entryplanes}};
+        {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
+        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"entryplanes",entryplanes},
+        {"improvedefer",improvedefer},{"chainresolve",chainresolve},{"trafficlane",trafficlane}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

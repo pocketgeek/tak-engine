@@ -225,7 +225,7 @@ jobs:
         env:
           CTEST_PARALLEL_LEVEL: 4
         run: |
-          cmake --build build --target legion_world_test legion_idmap_test legion_flyers_test legion_still_test crowdbench legion_observe_selftest issue_selection_test legion_scenario legion_acceptance_test
+          cmake --build build --target legion_world_test legion_idmap_test legion_flyers_test legion_still_test crowdbench legion_observe_selftest issue_selection_test legion_scenario legion_acceptance_test legion_hier_test legion_route_test
           bash tools/run-ctest-selection.sh --exclude-labels 'nightly|data' --selection tools/legion_ci_selection.txt build
 
       - name: Verify fully static (only system DLL imports)
@@ -233,7 +233,7 @@ jobs:
           for binary in takclient takserver cartographer crusades_admin; do
             imports=$("$OBJDUMP" -p "build/$binary.exe" | awk '/DLL Name:/{print tolower($3)}')
             echo "$binary DLL imports: $imports"
-            if echo "$imports" | grep -qE 'sdl2|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil|x264|libssl|libcrypto|libvpl|nvml|sqlite|libstdc|libgcc|winpthread|libc\+\+|libunwind|msys-|cygwin'; then
+            if echo "$imports" | grep -qE 'sdl2|opus|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil|x264|libssl|libcrypto|libvpl|nvml|sqlite|libstdc|libgcc|winpthread|libc\+\+|libunwind|msys-|cygwin'; then
               echo "::error::$binary imports a non-static dependency"; exit 1
             fi
           done
@@ -272,7 +272,7 @@ jobs:
         run: |
           mkdir -p dist-win
           cp build/takclient.exe build/takserver.exe build/cartographer.exe build/crusades_admin.exe dist-win/
-          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt dist-win/
+          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-win/
 
       - name: ZIP unsigned CI build
         if: github.repository != 'pocketgeek/tak-engine' || !startsWith(github.ref, 'refs/tags/v')
@@ -325,7 +325,7 @@ jobs:
             header=$("$OBJDUMP" -f "build-debug/$binary.exe")
             [[ "$header" == *"architecture: ${{ matrix.machine }}"* ]]
             imports=$("$OBJDUMP" -p "build-debug/$binary.exe" | awk '/DLL Name:/{print tolower($3)}')
-            if echo "$imports" | grep -qE 'sdl2|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil|x264|libssl|libcrypto|libvpl|nvml|sqlite|libstdc|libgcc|winpthread|libc\+\+|libunwind|msys-|cygwin'; then
+            if echo "$imports" | grep -qE 'sdl2|opus|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil|x264|libssl|libcrypto|libvpl|nvml|sqlite|libstdc|libgcc|winpthread|libc\+\+|libunwind|msys-|cygwin'; then
               echo "::error::$binary imports a non-static dependency"; exit 1
             fi
           done
@@ -334,7 +334,7 @@ jobs:
         run: |
           mkdir -p dist-win-debug
           cp build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe build-debug/crusades_admin.exe dist-win-debug/
-          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt dist-win-debug/
+          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-win-debug/
 
       - name: ZIP unsigned CI build (debug)
         if: github.repository != 'pocketgeek/tak-engine' || !startsWith(github.ref, 'refs/tags/v')

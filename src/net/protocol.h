@@ -19,7 +19,57 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 266;      // 266: entity pools grow as needed (all modes, hashed pool sizes): each starts at retail's maxunits for
+constexpr uint32_t kNetVersion = 276;      // 276: voice chat (Msg::VoiceListen/VoiceUp/VoiceDown, relayed by the server
+                                           //      beside the game, never in a tick bundle or a replay). Sim unchanged;
+                                           //      a 275 peer would not know the messages. 275 replays refused
+                                           // 275: AI level 5, Absurdly Defensive (SlotInfo.aiLevel): Defensive play with
+                                           //      Absurd's double income. Peers derive the income multiplier and the
+                                           //      defensive stance from the level, so an older peer would clamp 5 to Normal
+                                           //      and desync. Sim unchanged. 274 replays refused
+                                           // 274: a lodestone upgrade scales its tick of work by the construction share BEFORE
+                                           //      clamping it to what is left (retail 429af0), so a short share no longer leaves the
+                                           //      site one ulp from done at full hp until the allocation rises above one half.
+                                           //      273 replays refused
+                                           // 273: construction shares short mana (Retail and Legion): production, mobile construction
+                                           //      and repair each do allocation x a full tick, allocation = pool / last tick's demand
+                                           //      (retail 51d837/429af0), the last pro-rated against what is left, instead of each
+                                           //      paying in full or doing nothing in unit order. New hashed state: per-player demand,
+                                           //      per-producer fractional progress. 272 replays refused
+                                           // 272: Legion navigation subgroups, chokepoints and arrivals (Legion 10,000 stage 8;
+                                           //      Retail bit-identical): a formation member gaining on its own slot, or with a
+                                           //      free step toward it, is not settled short of it; chokepoints (openings) carry
+                                           //      their queues as route charges, groups re-plan and split subgroups off for
+                                           //      other passages, narrow passages admit one direction at a time; orders to a
+                                           //      point another order still gathers at share its area; an entrance per group.
+                                           //      New hashed state: slot records, opening delays and tokens, route charges and
+                                           //      labels, groups' own entrants, admitted members, shared areas, per-group
+                                           //      entrances. 271 replays refused
+                                           // 271: Legion static navigation apart from traffic (Legion 10,000 stage 7; Retail bit-identical):
+                                           //      static changes reach routes per cluster as closures (refresh at once) or
+                                           //      improvements (refresh deferred), trapped orders re-register only on an improvement
+                                           //      that could reopen them, chains re-resolve relabelled regions and repair their plan,
+                                           //      standing jams are traffic to other orders (soft stamps, jam detours), the region
+                                           //      search charges traffic, static tiles apart from traffic corrections; new hashed
+                                           //      state: deferred improvement refreshes, the reroute flag. 270 replays refused
+                                           // 270: Legion hierarchical routes (Legion 10,000 stage 6; Retail bit-identical): long routes planned over a
+                                           //      sector/region/portal hierarchy, built as corridors or (low demand) as tile chains over shared
+                                           //      tiles; new hashed state: route kinds and plans, corridor widenings, the demand rule's state, the
+                                           //      tile cache digest, chain progress and repairs. 269 replays refused
+                                           // 269: Legion route queries (Legion 10,000 stage 5; Retail bit-identical): the consumers that read a route
+                                           //      past their own cell state the region they need on a paused build and read it through certainty
+                                           //      checks (new hashed state: a route's run-on flag, a formation's pending entrance), demand on a paused
+                                           //      build is never dropped, and the detour record and the approach gain compare within one route metric
+                                           //      (the gain's clock stops while the route gives no value). 268 replays refused
+                                           // 268: Legion navigation scheduling and budgets (Legion 10,000 stage 4; Retail bit-identical): registration
+                                           //      budgeted per window (a hashed FIFO past it), first plane builds incremental, awareness resumable,
+                                           //      field service by unique jobs in classes with deficit round robin, age promotion and a bounded
+                                           //      fit scan, field initialisation charged, a fixed byte allowance for fields. 267 replays refused
+                                           // 267: explicit selection orders (Legion 10,000 stage 3): Cmd::Order carries one player intent over a
+                                           //      selection; the uplink sends it as an OrderBegin/OrderMembers/OrderCommit transaction, the server
+                                           //      puts it whole into one tick bundle (its activation tick) and the sim applies every member there.
+                                           //      Legion clients send their selection orders this way (Retail clients keep per-unit commands, so
+                                           //      Retail is bit-identical); hashed Order::orderSerial, the convoy table's area key. 266 replays refused
+                                           // 266: entity pools grow as needed (all modes, hashed pool sizes): each starts at retail's maxunits for
                                            //      the unit cap (499590 clamps to 20..500; uncapped 250) and gains a slot only when full. 265 replays refused
                                            // 265: retail path-search fidelity (all modes, hashed): production entity pools per player, scanned
                                            //      slot by slot with holes (511570/5121d8, 416430; hashed CRT stream, pool sizes, unit slots); the
@@ -434,6 +484,62 @@ inline int cmdSendWindow(int credit, int inFlight) {
     return n > 0 ? n : 0;
 }
 
+// Explicit selection orders (Cmd::Order, protocol 267). One click of the player's
+// over a selection travels as ONE order whatever its size, instead of one command
+// per unit through the 64-a-tick drain above: a 10,000-unit Move used to need 157
+// ticks of drain at best (308 with the uplink window), so its members started out
+// over several seconds and became several crowds.
+//
+// Uplink: a transaction, in one client's FIFO stream --
+//   OrderBegin   u32 serial, template command (Writer::cmd), u8 shape, u32 members
+//   OrderMembers u32 serial, u32 count, count member ids (putMembers: varint deltas,
+//                continuing from the previous chunk's last id) -- at most
+//                kOrderChunkMembers per message, so a frame stays far under kMaxFrame
+//   OrderCommit  u32 serial, u32 members, u64 orderDigest(members)
+//   OrderAbort   u32 serial
+// The server checks the framing (one open transaction per client, serials strictly
+// increasing per player per game, counts, digest, the template) and the limits
+// below; a committed order joins that client's FIFO behind the commands sent before
+// it and is drained whole into one tick, which is its ACTIVATION tick, by a byte
+// budget per tick (kTickOrderBytes) shared by the room's clients in rotation. The
+// sim checks ownership and existence per member at activation (applyCommand), where
+// that state is. Chunks never reach the sim, so no partial order is ever visible.
+//
+// Limits (an honest client keeps them through orderSendWindow): members per
+// order, orders and record bytes outstanding per client (staged at the server,
+// queued there, or sent and not yet seen back). The server can still drop an
+// order the window allowed -- over the per-second byte budgets, which several
+// connections of one account (or one address, without accounts) and the whole
+// server share -- and then says so (Msg::InputDropped), which is what releases
+// it from the client's window: an order the server drops never comes back in a
+// bundle, and without the notice it would hold its place in the window for the
+// rest of the game, and with enough of them the outbox, Stop included, for good.
+constexpr uint32_t kOrderMaxSerial = 0x7ffffffeu;  // the top bit tags an explicit area key (sim/convoy.h); 0 = none
+constexpr uint32_t kOrderMaxMembers = 16384;
+constexpr uint32_t kOrderChunkMembers = 2048;
+constexpr size_t kOrderMaxBytes = 96 * 1024;       // one order's bundle record (16384 ids of 5 bytes fit)
+constexpr size_t kTickOrderBytes = kOrderMaxBytes; // order records in one tick bundle: any order fits an empty tick
+// An order's bundle record before its members: kind, player, serial, template, shape,
+// count (orderVerb never appends x2/z2). Each member then adds its varint delta.
+constexpr size_t kOrderRecordHeader = 2 + 4 + 35 + 1 + 4;
+// The window is mostly bytes (the server's memory per client); the order count is
+// generous so that many small clicks are never throttled by it: at 8 orders a
+// 16-tick round trip carried only half an order a tick, and the scale suite's
+// many-10000 (400 squads clicked over 600 ticks) waited up to 196 ticks for it.
+constexpr int kOrderWindow = 64;
+constexpr size_t kOrderWindowBytes = 4 * kOrderMaxBytes;
+// May another order of `bytes` record bytes go out with `inFlight` orders of
+// `inFlightBytes` outstanding?
+inline bool orderSendWindow(int inFlight, size_t inFlightBytes, size_t bytes) {
+    return inFlight < kOrderWindow && inFlightBytes + bytes <= kOrderWindowBytes;
+}
+// The verbs an order may carry: the per-unit commands the client gives a whole
+// selection. Each member gets exactly that command (Offsets: Move only).
+bool orderVerb(Cmd c);
+// A command coordinate the sim can take: finite and inside signed 16.16 (the
+// server's check for PlayerCommands and order templates alike).
+inline bool commandCoordinate(float v) { return v == v && v >= -32768.0f && v < 32768.0f; }
+
 // Flow control (WE S3). A client reports the tick it has PROCESSED every
 // kProgressPeriod ticks with Msg::Progress, and the server runs at most
 // flowLeadTicks() past that report instead of a flat kMaxLeadTicks past a hash
@@ -552,14 +658,46 @@ enum class Msg : uint8_t {
     CrusadesGetReplayChunk,      // C->S: battle ID + bounded offset/limit
     CrusadesReplayChunk,         // S->C: request-bound immutable replay bytes
     OverrideOffer, OverrideRequest, OverrideChunk, OverrideReady, OverrideError,
-    Progress,           // C->S: u32 tick (last tick PROCESSED), u32 rttMs (the client's smoothed ping).
-                        // Flow control only (WE S3), every kProgressPeriod processed ticks: it
-                        // moves the sender's ack tick and its lead (flowLeadTicks), is never
-                        // hash-checked and never recorded. A tick the server has not closed is
-                        // ignored, as for StateHash.
-
-
+    Progress,           // C->S: u32 tick (last tick PROCESSED), u32 rttMs (the client's smoothed ping)
+                        // [, u32 received: the newest tick whose bundle has ARRIVED, >= tick;
+                        // protocol 276, optional]. Flow control only (WE S3), every
+                        // kProgressPeriod processed ticks: it moves the sender's ack tick and its
+                        // lead (flowLeadTicks), is never hash-checked and never recorded. A tick
+                        // the server has not closed is ignored, as for StateHash. `received`
+                        // tells a slow link (bundles late to arrive) from a slow machine
+                        // (bundles waiting to run): voice is paused only for the first.
+    // Selection-order transaction (protocol 267; formats beside kOrderMaxMembers).
+    OrderBegin,         // C->S
+    OrderMembers,       // C->S
+    OrderCommit,        // C->S
+    OrderAbort,         // C->S
+    InputDropped,       // S->C: u32 commands, u32 order serial (0 = none). Input of this
+                        // connection the server dropped over a budget or a window (a
+                        // PlayerCommands message, or an order transaction at its
+                        // Commit): it will never come back in a bundle, so the sender
+                        // releases it from its send windows (cmdInFlight, OrderWindow)
+                        // instead of waiting for an acknowledgement that cannot come.
+    // Voice chat (protocol 276; constants below). Presentation only: the server relays
+    // these beside the game and never puts them in a tick bundle, a replay or the
+    // referee, and drops them rather than let them delay game traffic.
+    VoiceListen,        // C->S: u8 on. Whether this connection wants voice at all (voice chat
+                        // switched on). Off by default, so a client that never asks -- the
+                        // headless harness, an old build -- is sent no voice.
+    VoiceUp,            // C->S: u16 seq | u8 recipients | u8 flags | u16 len | len bytes Opus.
+                        // recipients is the talker's diplomacy VOICE mask, with the same rules
+                        // as Chat's: 0xff (or a room not yet running) is the whole room,
+                        // spectators included; otherwise the seated players whose bit is set.
+                        // Never echoed to the talker. len <= kVoiceMaxOpus; 0 exactly with END
+                        // (which is never combined with START).
+    VoiceDown,          // S->C: u32 talker client id | u8 talker slot (0xFF = spectator) | u16 seq |
+                        // u8 flags | u16 len | len bytes | str name (only with kVoiceHasName).
 };
+
+// Voice chat (Msg::VoiceUp / VoiceDown): Opus, 48 kHz mono, one 20 ms frame per message.
+constexpr size_t kVoiceMaxOpus = 400;      // bytes of one frame's packet (24 kbit/s is ~60)
+constexpr uint8_t kVoiceStart = 1;         // first frame of a transmission (resets the receiver)
+constexpr uint8_t kVoiceEnd = 2;           // the talker released push-to-talk; carries no audio
+constexpr uint8_t kVoiceHasName = 4;       // VoiceDown: the talker's display name follows
 
 // The outcome of a login, as carried by Msg::AuthResult.
 enum class AuthStatus : uint8_t {
@@ -579,7 +717,8 @@ struct SlotInfo {
     uint8_t color = 0;     // 0..9 palette slot
     uint8_t team = 0;      // 0..kMaxSlots-1
     uint8_t ready = 0;
-    uint8_t aiLevel = 2;   // AI difficulty: 0=passive 1=easy 2=normal 3=hard 4=absurd
+    uint8_t aiLevel = 2;   // AI difficulty: 0=passive (Defensive) 1=easy 2=normal 3=hard 4=absurd
+                           // 5=absurdly defensive (ai::Difficulty)
     std::string name;      // player display name ("" for open/ai)
 };
 
@@ -692,9 +831,11 @@ struct Event {
 struct Writer {
     std::vector<uint8_t> b;
     void u8(uint8_t v) { b.push_back(v); }
+    void u16(uint16_t v) { b.push_back(uint8_t(v)); b.push_back(uint8_t(v >> 8)); }
     void u32(uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(uint8_t(v >> (8 * i))); }
     void u64(uint64_t v) { for (int i = 0; i < 8; ++i) b.push_back(uint8_t(v >> (8 * i))); }
     void f32(float v) { uint32_t x; std::memcpy(&x, &v, 4); u32(x); }
+    void varint(uint32_t v) { while (v >= 0x80) { u8(uint8_t(v | 0x80)); v >>= 7; } u8(uint8_t(v)); }
     void str(const std::string& s) {              // u16 length + bytes (capped)
         uint32_t n = uint32_t(s.size() > 4096 ? 4096 : s.size());
         u8(uint8_t(n)); u8(uint8_t(n >> 8));
@@ -725,6 +866,10 @@ struct Reader {
     Reader(const uint8_t* d, size_t n) : p(d), end(d + n) {}
     bool avail(size_t n) const { return size_t(end - p) >= n; }
     uint8_t u8() { if (!avail(1)) { ok = false; return 0; } return *p++; }
+    uint16_t u16() {
+        if (!avail(2)) { ok = false; return 0; }
+        const uint16_t v = uint16_t(p[0] | (p[1] << 8)); p += 2; return v;
+    }
     uint32_t u32() {
         if (!avail(4)) { ok = false; return 0; }
         uint32_t v = 0;
@@ -738,6 +883,18 @@ struct Reader {
         return v;
     }
     float f32() { uint32_t x = u32(); float v; std::memcpy(&v, &x, 4); return v; }
+    // LEB128, at most 5 bytes; an overlong or out-of-range encoding fails.
+    uint32_t varint() {
+        uint32_t v = 0;
+        for (int i = 0; i < 5; ++i) {
+            if (!avail(1)) { ok = false; return 0; }
+            const uint8_t b = *p++;
+            if (i == 4 && b > 0x0f) { ok = false; return 0; }
+            v |= uint32_t(b & 0x7f) << (7 * i);
+            if (!(b & 0x80)) return v;
+        }
+        ok = false; return 0;
+    }
     std::string str() {
         if (!avail(2)) { ok = false; return {}; }
         uint32_t n = uint32_t(p[0]) | (uint32_t(p[1]) << 8); p += 2;
@@ -782,6 +939,26 @@ void get(Reader& r, SlotInfo& s);
 // so this byte order is frozen (match_codec_test pins it).
 Writer crusadesRulesPreimage(uint32_t seed, const GameOptions& o, const SlotInfo* slots);
 
+// ------- selection orders (protocol 267) -------------------------------------
+//
+// Member ids travel as varint deltas: the first from `prev` (-1 for an order's
+// first member), every one at least 1, so the ids are strictly increasing and a
+// duplicate cannot be encoded. putMembers writes u32 count then the deltas;
+// getMembers appends `count` ids continuing from `prev` (updated), failing on a
+// zero delta, an id past INT32_MAX or a truncated stream.
+void putMembers(Writer& w, const int32_t* ids, size_t n, int32_t& prev);
+bool getMembers(Reader& r, uint32_t count, int32_t& prev, std::vector<int32_t>& out);
+// FNV-1a over the member ids (u32 LE): OrderCommit's integrity check.
+uint64_t orderDigest(const std::vector<int32_t>& members);
+// The template an order may carry: an order verb, unit id 0, finite in-range
+// coordinates, Offsets only on Move.
+bool validOrderTemplate(const Command& t, OrderShape shape);
+// A whole order is valid to activate: serial 1..kOrderMaxSerial, a valid template,
+// 1..kOrderMaxMembers strictly increasing non-negative ids, record within kOrderMaxBytes.
+bool validOrder(const SelectionOrder& o);
+// Bytes of the order's bundle record (Writer::cmd of its Cmd::Order command).
+size_t orderRecordBytes(const SelectionOrder& o);
+
 // The commands + sequenced events the server assigned to one tick.
 struct Bundle {
     std::vector<Command> cmds;
@@ -794,7 +971,7 @@ struct Bundle {
 // command kind or player out of range, a non-finite coordinate, an unknown event or a
 // trailing byte. The live stream is NOT strict: the referee has already applied that
 // bundle, so a client must too -- dropping it would stall the client at that tick.
-// `proto` is the protocol the bundle was recorded under (area commands are 221+).
+// `proto` is the protocol the bundle was recorded under (area commands are 221+, orders 267+; a strict read also validates every order whole).
 void putBundle(Writer& w, uint32_t tick, const std::vector<Command>& cmds, const std::vector<Event>& events);
 bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict, uint32_t proto = kNetVersion);
 

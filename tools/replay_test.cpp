@@ -153,8 +153,28 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 266, "replay format 11 is kept under protocol 266");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 266");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 276, "replay format 11 is kept under protocol 276");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 276");
+    // 276 adds voice chat messages (never in a replay); a 275 peer cannot speak them.
+    check(!supportedReplayProtocol(13, 275), "previous protocol without voice chat is refused");
+    // 275 adds AI level 5 (Absurdly Defensive), whose double income every peer derives from the level.
+    check(!supportedReplayProtocol(13, 274), "previous protocol without Absurdly Defensive is refused");
+    // 274 finishes a lodestone upgrade under a short share (scale the tick of work, then clamp).
+    check(!supportedReplayProtocol(13, 273), "previous stalling lodestone-upgrade protocol is refused");
+    // 273 shares short mana across concurrent construction (retail allocation) instead of first-come.
+    check(!supportedReplayProtocol(13, 272), "previous all-or-nothing construction protocol is refused");
+    // 272 adds Legion's stage-8 navigation (arrival headway on the own slot, chokepoints, subgroups).
+    check(!supportedReplayProtocol(13, 271), "previous static/traffic protocol is refused");
+    // 271 separates Legion's static navigation from traffic (closures vs improvements, chain repair, jams as traffic).
+    check(!supportedReplayProtocol(13, 270), "previous hierarchical-route protocol is refused");
+    // 270 changes Legion's long routes (hierarchy, corridors, tile chains over shared tiles).
+    check(!supportedReplayProtocol(13, 269), "previous route-query protocol is refused");
+    // 269 changes Legion's route consumers (stated regions on paused builds, metric-versioned progress).
+    check(!supportedReplayProtocol(13, 268), "previous scheduling protocol is refused");
+    // 268 changes Legion's navigation schedule (budgeted registration, incremental plane builds, fair field service).
+    check(!supportedReplayProtocol(13, 267), "previous explicit-order protocol is refused");
+    // 267 adds explicit selection orders (Cmd::Order in tick bundles; Legion clicks apply whole in one tick).
+    check(!supportedReplayProtocol(13, 266), "previous per-unit-click protocol is refused");
     // 266 sizes entity pools from retail's maxunits and grows them as needed (path admission scan costs).
     check(!supportedReplayProtocol(13, 265), "previous entity-pool protocol is refused");
     // 265 changes path search (production entity pools, ground-word ownership, pending re-requests).

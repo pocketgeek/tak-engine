@@ -3,7 +3,9 @@
 
 Parser, world builder and order feed: tools/legion_scn.h. Orders go through
 tools/legion_issue_selection.h, which mirrors the client's HUD commands and its
-64-per-tick uplink. Checked by the issue_selection_test ctest.
+uplink: in Legion each click is one explicit selection order (protocol 267),
+landing whole in its tick; in Retail one command per unit, 64 a tick. Checked by
+the issue_selection_test ctest.
 
 One directive per line. '#' starts a comment (not inside an ascii map block).
 Coordinates are map cells (16 px), x then z; points may be fractional. A file
@@ -26,7 +28,14 @@ never names a pathfinding mode: the runner builds it once per mode.
                                 (default off)
   uplink R                      command window: at most 512 commands
                                 outstanding, round trip R ticks (default: none,
-                                only the server's 64-per-tick drain)
+                                only the server's 64-per-tick drain); explicit
+                                orders (Legion clicks) have their own window of 8
+                                orders and do not wait for it
+  navbytes N                    Legion only, tests: the navigator's field byte allowance
+                                (LegionNavigator::setFieldBytesForTest; never below two
+                                whole-map fields; default NavBudget::kFieldBytes): memory
+                                pressure on a small map (legion_scenario --field-bytes
+                                overrides)
   gateoffsets O,O,...           the start offsets legion_scenario --check / --baseline
                                 run by default when the gate's eleven (0,+-1..+-5)
                                 put a spawn off the map; at least nine, the core
@@ -53,6 +62,14 @@ never names a pathfinding mode: the runner builds it once per mode.
                                 WOULD fire, definitions in legion.cpp's struct Census). `legion_scenario --w9`
                                 turns it on for any file; `--trace ID[,ID...]` prints one stderr line per
                                 decision of those members (debug build).
+  probe scale                   the runner also reports the scale.* keys (tools/legion_scale.h; the
+                                Legion 10,000 scale suite in tools/scenarios/scale/): per body, from its
+                                last click, command delivery, first movement, physical arrival in the
+                                click's packed disc vs order completion (t50/t90/t99/last), path length,
+                                stuck/livelocked bodies at the end, and (Legion) the longest wait for a
+                                field and the navigator's live containers. `legion_scenario --scale` turns
+                                it on for any file; the wall line SCALE_WALL (stderr) adds tick mean/p50/
+                                p99/max, ticks over 33.3 ms, peak RSS and malloc heap.
   probe claims                  Legion only: every 10 ticks the navigator audits
                                 its arrival-slot claims (the claims invariant);
                                 keys claims.bad_max (overlapping + lost +

@@ -62,12 +62,14 @@
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
+#include "client/voice.h"
 #include "client/datafolder.h"
 #include "util/relaunch.h"
 #include "util/prefpath.h"
 #include "client/settings.h"
 #include "client/renderdriver.h"
 #include "net/crypto.h"
+#include "net/replaywriter.h"   // recoverReplayParts
 #include "client/dev.h"
 #include "client/appquit.h"
 #include "client/mainmenu.h"
@@ -609,6 +611,10 @@ int main(int argc, char** argv) {
     // Persisted Options (audio/camera/display prefs). CLI flags still win where they
     // apply; the file is the source of truth for anything not passed on the CLI.
     tak::Settings settings = tak::loadSettings();
+    // Finish any replay a crash, kill or power cut left mid-recording, so it is
+    // listed and playable like any other (net/replaywriter.h). Recordings still
+    // live in another running client are locked and skipped.
+    tak::net::recoverReplayParts(tak::replayDir());
 #ifdef _WIN32
     if (tak::dpiIgnoredAtStartup()) {
         // First run (or first run since this option arrived): the old stretched window made
@@ -681,6 +687,11 @@ int main(int argc, char** argv) {
     }
     if (win && settings.fullscreen)
         SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    // SDL starts text input with the video subsystem. Every text field here starts it
+    // when it takes focus and stops it when it lets go, so stop it now: then "is a text
+    // field focused?" is SDL_IsTextInputActive(), which push to talk relies on (Space
+    // typed into a field is text, never voice).
+    SDL_StopTextInput();
     Uint32 renFlags = SDL_RENDERER_SOFTWARE;
     if (shot.empty()) renFlags = noVsync ? SDL_RENDERER_ACCELERATED
                                          : SDL_RENDERER_PRESENTVSYNC;
@@ -822,6 +833,11 @@ int main(int argc, char** argv) {
     if (fromMenu && shot.empty()) tak::MainMenu::playIntro(ren, dataRoot);
     auto streamingOwner = std::make_unique<tak::Streaming>(ren, &settings, [&settings] { tak::saveSettings(settings); });
     auto& streaming = *streamingOwner;
+    // Voice chat (client/voice.h). Only for a real interactive window: the headless
+    // harnesses and screenshot runs never construct it, so they never open a device.
+    // Built for every interactive launch, it still opens nothing while voice chat is off.
+    std::unique_ptr<tak::VoiceEngine> voiceOwner;
+    if (mpHeadless == 0 && shot.empty() && applyRenderer) voiceOwner = std::make_unique<tak::VoiceEngine>();
     menuMusic.setAudioTap(&streaming.stream(),
         [](void* context, const int16_t* pcm, int frames, int channels) {
             static_cast<tak::video::Stream*>(context)->audio(pcm,frames,channels);
@@ -899,6 +915,7 @@ int main(int argc, char** argv) {
 #endif
                 menu.setDataFolder(std::move(row));
             }
+            menu.setVoice(voiceOwner.get());
             choice = menu.run(shot, &menuServer, &menuMusic, &settings, &streaming);
             tak::renderdriver::active().noticeShown = true;   // the menu showed it (if any)
             if (choice == tak::MainMenu::Choice::Campaign) {
@@ -1229,6 +1246,7 @@ int main(int argc, char** argv) {
 #endif
             gameView->applySettings(settings);   // audio / camera / UI-scale prefs
             gameView->setSettings(&settings);     // in-game Options edits + persists these
+            gameView->setVoice(voiceOwner.get()); // voice chat in multiplayer rooms (none for replays/benchmarks)
             if (std::string n = tak::renderdriver::pendingNotice(); !n.empty()) {
                 gameView->showNotice(n, 10);   // launched straight into a game: say it here
                 tak::renderdriver::active().noticeShown = true;
@@ -1408,6 +1426,21 @@ int main(int argc, char** argv) {
             }
             if (!cont || (!defeatProbe && gameView->outcomePublic() != 0)) break;
             if (int(gameView->netTick()) >= limitTicks) break;
+            if (tak::termRequested()) break;   // SIGTERM/SIGINT/SIGHUP: tear down (and finish the replay)
+            // TAK_KILL_AT_TICK=N: die like a crash at tick N -- SIGKILL (TerminateProcess on
+            // Windows), so no handler, destructor or flush runs. tools/replay_always_test.py
+            // checks that the next start recovers nearly every tick received.
+            static const int killAt = tak::devEnv("TAK_KILL_AT_TICK") ? std::atoi(tak::devEnv("TAK_KILL_AT_TICK")) : 0;
+            if (killAt > 0 && int(gameView->netTick()) >= killAt) {
+                std::fprintf(stderr, "kill-at-tick: killing the client at tick %u with %zu ticks received\n",
+                             gameView->netTick(), mp->replayLog().size());
+                std::fflush(stderr);
+#ifdef _WIN32
+                TerminateProcess(GetCurrentProcess(), 9);
+#else
+                std::raise(SIGKILL);
+#endif
+            }
             if (vsyncHz) vsyncPacer.paceAtRefresh(vsyncHz);
             else SDL_Delay(Uint32(frameMs));   // ~60 fps for the benchmark
         }
@@ -1865,6 +1898,7 @@ int main(int argc, char** argv) {
                 studyQueryFrame[slot]=studyFrame;studyQueryPending[slot]=true;
             }
 #endif
+            gameView->pumpVoice();   // voice chat: frames in and out, push-to-talk upkeep
             gameView->draw(w, h);
 #ifndef NDEBUG
             if(studyQuery) {
@@ -2590,6 +2624,7 @@ int main(int argc, char** argv) {
     menuMusic.stop();
     menuMusic.setAudioTap(nullptr,nullptr);
     streamingOwner.reset();
+    voiceOwner.reset();   // closes the voice devices before SDL goes
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();

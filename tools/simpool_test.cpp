@@ -1,8 +1,10 @@
 // SimPool: every chunk runs exactly once with the fixed boundaries at any
 // width, per-chunk results merged in chunk order equal the serial run, and the
-// pool survives many back-to-back jobs (the per-tick pattern) at 0/1/3/7 workers.
+// pool survives many back-to-back jobs (the per-tick pattern) at 0/1/3/7 workers; asynchronous jobs
+// (start/help/finish) run every chunk exactly once.
 #include "sim/simpool.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstdint>
 #include <vector>
@@ -57,6 +59,31 @@ int main() {
             order.push_back(k);check(slot==0,"inline below minParallel",workers);
         });
         check(order==std::vector<size_t>{0,1,2,3},"inline chunk order",workers);
+        // Asynchronous jobs (Legion stage 9): the caller keeps working while the workers run the chunks, may help,
+        // waits for one chunk by helping, and finish() leaves every chunk run exactly once; while a job is open
+        // forChunks runs inline on the caller; and many start/finish rounds back to back.
+        for (int rep=0;rep<500;++rep) {
+            const size_t n=size_t(1+rep%37);
+            std::vector<std::atomic<uint32_t>> runs(n);
+            auto fn=[&](size_t k,unsigned slot) {
+                runs[k].fetch_add(1,std::memory_order_relaxed);
+                if (slot>workers) check(false,"async slot in range",workers);
+            };
+            pool.start(n,fn);
+            check(pool.busy(),"busy while open",workers);
+            if (rep%3==0) {
+                std::vector<size_t> inl;
+                pool.forChunks(1000,SimPool::kUnitChunk,0,[&](size_t k,size_t,size_t,unsigned slot) {
+                    inl.push_back(k);check(slot==0,"forChunks inline while an async job is open",workers);
+                });
+                check(inl==std::vector<size_t>{0,1,2,3},"inline order while open",workers);
+            }
+            if (rep%2==0) while (pool.help()) {}
+            pool.finish();
+            check(!pool.busy(),"not busy after finish",workers);
+            bool once=true;for (auto& r:runs) once&=r.load()==1;
+            check(once,"async: every chunk exactly once",workers);
+        }
     }
     if (failures) return 1;
     std::puts("simpool ok");

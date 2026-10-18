@@ -2,6 +2,7 @@
 // Legion: group-planned, clearance-exact ground navigation (PathfindingMode 4).
 // Design and guarantees: docs/legion-pathfinding.md.
 #include "sim/fixed.h"
+#include "sim/navbudget.h"
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -266,6 +267,10 @@ public:
     // Which mission goal Legion would route for this unit (None: Retail).
     LegionMission mission(const Unit&) const;
     // A supported leg became current (order, queued leg, controller reset).
+    // Registration is budgeted (Legion 10,000 stage 4, NavBudget::kRegBudget a
+    // window): it runs at once while the window's budget lasts and nothing
+    // waits; otherwise the unit waits (braking, order kept) in a FIFO that the
+    // next tick() drains first. cancel() runs at once and drops a waiting one.
     void registerMove(Unit&);
     void cancel(int id);
     // The unit's orders changed (a leg gained or retired, a mission step, its
@@ -278,6 +283,25 @@ public:
     void move(Unit&,Fixed maximum);
     uint64_t checksum() const;
     Stats stats() const;
+    // Legion 10,000 stage 4 (observation only, never hashed): work per NavWork class (cumulative and
+    // the most of one navigator tick window), the deterministic NavBytes and the scheduler's service
+    // record. See sim/navbudget.h.
+    NavAccounting accounting() const;
+    // Legion 10,000 stage 9 (observation only, never hashed, and NOT the same on every worker count: with no
+    // SimPool workers nothing is prepared): the planning work run on the SimPool beside the serial pass. picked: chain
+    // regions whose key was prepared ahead; staged: tile builds started as asynchronous jobs; forks / jobs: batches and
+    // fork-joins started and the jobs in them; used / unused: staged tiles the serial pass took / that were dropped,
+    // with the work (relaxations) of each; keysReused: chain keys attachNode took prepared instead of scanning the
+    // region; serialWork: tile builds the serial pass still ran itself while prefetching was on; waits: takes that
+    // found their job still running; stagedBytesPeak: the most staged tile bytes at once; planeRows: plane
+    // first-build rows built in parallel row chunks. Wall clock (never read by the sim): jobs a worker (not the sim
+    // thread) ran, and the sim thread's time in fork-joins, in waits for a staged tile and in joining a batch (ns).
+    struct ParallelStats {
+        uint64_t picked=0,staged=0,forks=0,jobs=0,used=0,unused=0,usedWork=0,unusedWork=0,keysReused=0,serialWork=0,waits=0;
+        uint64_t stagedBytesPeak=0,planeRows=0;
+        uint64_t workerJobs=0,forkNs=0,waitNs=0,joinNs=0;
+    };
+    ParallelStats parallelStats() const;
     // Test hook: is a footprint origin legal on the static plane Legion plans
     // on (terrain, features, structures; mobile bodies excluded)?
     bool staticLegal(const Unit&,int originX,int originZ);
@@ -291,7 +315,8 @@ public:
     // its chain. Returns the mismatches; `report` gets the counts.
     int laneGeometryCheck(const Unit&,int queries,uint64_t seed,std::string* report);
     // Test hook: the unit's movement state (0 none, 1 moving, 2 holding,
-    // 3 waiting for its field, 4 arrived, 5 trapped, 6 engaged) and its group's identity.
+    // 3 waiting for its field -- or for its registration, stage 4 -- 4 arrived,
+    // 5 trapped, 6 engaged) and its group's identity.
     int unitState(int id) const;
     int unitGroup(int id) const;
     // Test hook: the unit's settled-arrival records, as bits: 1 anchor,
@@ -371,6 +396,39 @@ public:
     // Test hook (process-wide; the awareness fixtures' OFF arm): awareScan does
     // nothing while set. Changes behaviour and hashes when set; default off.
     static void setAwareOffForTest(bool off);
+    // Test hook (process-wide; default off): every first build may pause
+    // (Legion 10,000 stage 5), so the consumers that state their region --
+    // the lanes, packed slots, reach rings, the formation entrance -- run on
+    // paused routes in small fixtures. Changes behaviour and hashes when set.
+    static void setPauseAllForTest(bool on);
+    // Instrument probes (process-wide; default off): the W8 step 1 vertex
+    // probe behind Stats' vertex_* counters, which no decision reads. The
+    // tools that report those counters (legion_scenario, legion_world_test)
+    // turn it on; the game leaves it off and skips the probe's descents and
+    // sweeps. Never changes behaviour or hashes, only those counters.
+    static void setInstrumentProbes(bool on);
+    // Test hook (process-wide; default 1): divide the per-tick registration,
+    // first-plane-build and awareness budgets (NavBudget) so that small
+    // fixtures exercise their resumable, over-budget paths. Changes behaviour
+    // and hashes when above 1.
+    static void setBudgetDivisorForTest(int div);
+    // Test hook (process-wide; 0 = NavBudget::kFieldBytes): the field byte
+    // allowance (never below two whole-map fields), so a small fixture can
+    // exercise eviction at the cap. Changes behaviour and hashes when set.
+    static void setFieldBytesForTest(uint64_t bytes);
+    // Test hook (process-wide; default 32): the routing hierarchy's sector size K (a power of two, 4..256) for
+    // planes built after the call (Legion 10,000 stage 6: the sector-size experiment). Changes behaviour and
+    // hashes when not 32.
+    static void setSectorSizeForTest(int k);
+    // Test hook (process-wide; default on): plan low-demand routes over the routing hierarchy (corridors, tile
+    // chains). Off, every route is the window build, as before stage 6: the scheduler's load tests
+    // (legion_sched_load) keep the continuous quota load they were written for. Changes behaviour and hashes.
+    static void setHierarchicalRoutesForTest(bool on);
+    // Test hook (process-wide; default off, 0): stage 9's parallel planning jobs (tile builds ahead of the serial
+    // pass, plane first-build row chunks) run even with no SimPool workers (`force`, inline), and their execution
+    // order is shuffled with random delays (`perturbSeed`, 0 off; debug builds also read TAK_LEGION_PAR_PERTURB).
+    // Never changes behaviour or hashes: the jobs decide nothing and are consumed in a fixed order.
+    static void setParallelForTest(bool force,uint64_t perturbSeed);
     // Debug builds (NDEBUG undefined): check derived indexes and the Stats
     // after every tick() (aborts on a mismatch). A no-op in release. A debug
     // build starts with it on when TAK_LEGION_VERIFY is set (the only

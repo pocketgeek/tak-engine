@@ -32,12 +32,14 @@
 #include "hpi/hpi.h"
 #include "net/client.h"
 #include "client/replayfile.h"   // ReplayCheckTracker
+#include "net/replaywriter.h"    // the replay recording, streamed as the game is played
 #include "client/situation.h"    // TAK_SITUATION (debug builds)
 #include "client/postrail.h"      // TAK_POSTRAIL (debug builds)
 #include "client/pacelog.h"       // TAK_PACELOG (debug builds)
 #include <future>
 #include "util/procmetrics.h"   // benchmark: cross-platform CPU/RSS sampling
 #include "net/lockstep.h"
+#include "net/orderpack.h"
 #include "ai/ai.h"          // Difficulty <-> aiLevel + incomeMultFor (header-only helpers)
 #include "sim/matchsetup.h"
 #include "sim/scenario.h"
@@ -88,6 +90,8 @@
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
+#include "client/voice.h"
+#include "client/voiceptt.h"
 #include "client/settings.h"
 #include "client/artscale.h"
 #include "client/dev.h"
@@ -166,11 +170,19 @@ public:
     // budget and starve terrain-chunk uploads (map stuck at the low-res underlay).
     // Interactive teardown: cancel, do not drain (see simCancel_).
     ~GameView();   // out of line (gameview_impl.cpp): crusadesScreen_ is forward-declared here
-    // Write this client's recorded replay into the user's config directory (beside
-    // settings.ini). Once per game -- called both when the result lands and from the
-    // destructor, whichever happens first. A no-op when nothing was recorded (replay
-    // playback itself) and for the Benchmark; players and spectators both record.
-    void saveNetReplay();
+    // This client's replay of the game, streamed to disk WHILE it is played
+    // (net/replaywriter.h) into the user's config directory, beside settings.ini.
+    // Opened when the game is set up (startMpGame), topped up from mpStep, finished
+    // when the session really ends: the destructor, or the next game's GameStarting.
+    // The result does not end it -- play after the result (a spectator watching on,
+    // a defeated player's last seconds) is part of the replay. Players and
+    // spectators both record; replay playback and the Benchmark (not a game) never do.
+    // A recording a crash or kill left unfinished is completed by
+    // tak::net::recoverReplayParts at the next start (main.cpp, the replay picker).
+    void beginGameRecording();
+    void tryOpenReplayRecording(bool first);
+    void pumpReplayRecording();
+    void finishReplayRecording(bool ownLog = true);
 
     GameView(SDL_Renderer* ren, tak::hpi::Vfs vfs, const std::string& mapPath,
              const std::string& installRoot, tak::hpi::OverridePolicy policy,
@@ -236,6 +248,13 @@ public:
     void openOptions();
     // Open the hotkey-config overlay (from the Options screen's CONTROLS button).
     void openHotkeys();
+    // Voice chat (client/voice.h): main()'s engine, or null (headless, benchmark, no
+    // voice). pumpVoice() runs once per frame: it applies the settings, relays frames
+    // between the engine and the server, and keeps push to talk honest.
+    void setVoice(tak::VoiceEngine* v) { voice_ = v; }
+    void pumpVoice();
+    // The VOICE CHAT screen, in the same overlay as Options (Esc menu > VOICE CHAT).
+    void openVoiceOptions();
     // Persist / read the resume ticket (gameId + rotating token) so a killed
     // client can rejoin its held slot on restart.
     void writeResume(uint32_t gid, uint64_t tok) const;
@@ -332,7 +351,33 @@ public:
 
     // Route a command: offline it applies immediately; in a net game it is queued
     // for the server, which stamps ownership and sequences it into a tick bundle.
+    // Inside a ClickScope it is held until the scope closes (see below).
     void issue(tak::net::Command c);
+    // One player click (protocol 267): the commands issued while a ClickScope is
+    // open are one click. When the outermost scope closes, a Legion net game packs
+    // them (net/orderpack.h) into explicit selection orders -- one order per
+    // selection verb, applied to every member in one tick -- and everything else
+    // (Retail, offline) gets them exactly as before, one command per unit. Scopes
+    // nest; only the outermost flushes. setClickMove declares the right-click move
+    // (its Move run is sent as OrderShape::Offsets at click (wx, wz)).
+    struct ClickBuffer {
+        std::vector<tak::net::Command> cmds;
+        tak::net::ClickShape shape;
+    };
+    class ClickScope {
+    public:
+        explicit ClickScope(GameView& v) : v_(v), owner_(!v.click_) { if (owner_) v_.click_.emplace(); }
+        ~ClickScope() { if (owner_) v_.flushClick(); }
+        ClickScope(const ClickScope&) = delete;
+        ClickScope& operator=(const ClickScope&) = delete;
+    private:
+        GameView& v_;
+        bool owner_;
+    };
+    void setClickMove(float wx, float wz) {
+        if (click_) { click_->shape.moveOffsets = true; click_->shape.x = wx; click_->shape.z = wz; }
+    }
+    void flushClick();
 
     // Set up the world for a multiplayer match from the server's final slot
     // table: one player per used slot (sim player index == slot), teams/colours
@@ -417,12 +462,12 @@ public:
     // auto-drive the lobby (a real UI will), 1 = auto-host (create + start at 2+
     // ready), 2 = auto-join the first game. Returns false when the session ends.
     // (M3 uses the auto modes; the interactive lobby UI is follow-on work.)
-    // AI difficulty for the headless / auto seat paths: TAK_AI_LEVEL (0/1/2), default
+    // AI difficulty for the headless / auto seat paths: TAK_AI_LEVEL (0-5), default
     // Normal. The interactive lobby sets it per-slot via the Room UI instead.
     static uint8_t aiLevelEnv() {
         const char* e = tak::devEnv("TAK_AI_LEVEL");
-        int v = e ? std::atoi(e) : 2;   // default normal (0=passive..4=absurd)
-        return uint8_t(v < 0 ? 0 : v > 4 ? 4 : v);
+        int v = e ? std::atoi(e) : 2;   // default normal (0=passive..4=absurd, 5=absurdly defensive)
+        return uint8_t(std::clamp(v, 0, int(tak::ai::kAiLevels) - 1));
     }
 
     bool mpAutoStep(int autoMode, const std::string& mapId, bool crusades);
@@ -1972,6 +2017,9 @@ private:
     float uiScale_ = 1.0f;
     tak::Settings* settings_ = nullptr;               // main()'s settings (for the in-game Options)
     std::unique_ptr<tak::OptionsScreen> options_;     // in-game Options overlay
+    // The VOICE CHAT page in options_ was opened from Options' own VOICE CHAT row: its
+    // BACK returns to Options (with Options' unsaved-changes state), as CONTROLS' does.
+    bool voiceFromOptions_ = false, optionsDirtyCarry_ = false;
     std::unique_ptr<tak::HotkeysScreen> hotkeysScreen_;   // opened from Options -> CONTROLS
     tak::Hotkeys hotkeys_;                             // effective bindings (from settings)
     int gameSpeed_ = 0;         // retail game-speed level -9..+10 (+/- keys, (d+10)/10 x); 0 = normal
@@ -1980,10 +2028,35 @@ private:
     // the sim in lockstep at a fixed step, so scaling one peer's dt would desync.
     float speedMult() const;
     bool giveUnitsMenu_ = false;
-    enum class DiplomacyAction { Give, Mana, Chat, Close };
+    enum class DiplomacyAction { Give, Mana, Chat, Voice, Volume, Close };
     struct DiplomacyHot { SDL_FRect rect; int player; DiplomacyAction action; };
     std::vector<DiplomacyHot> giveUnitsHots_;
     uint8_t chatRecipients_ = 0xff;
+    // Who hears this player's voice: the diplomacy VOICE column, with chat's defaults and
+    // rules (everyone; reset each game; sent with every frame, enforced by the server).
+    uint8_t voiceRecipients_ = 0xff;
+    // How loud each player's voice plays here: the diplomacy VOLUME sliders, 0..100 by
+    // slot, 100 by default. Local only (never sent, hashed or recorded); reset each game
+    // like the columns above. Only human players other than you get a slider.
+    std::array<uint8_t, 8> voiceVolume_{100, 100, 100, 100, 100, 100, 100, 100};
+    uint8_t humanSlots_ = 0;      // this game's human players (room slot type 1), by slot
+    int voiceVolumeDrag_ = -1;    // the player whose VOLUME slider is being dragged
+    bool voiceVolumeSlider(int p) const;   // does player p's row get a VOLUME slider?
+    // The diplomacy screen's choices as a new game starts: chat and voice to everyone, the
+    // usual mana sharing, every VOLUME at 100, and which slots are human.
+    void resetDiplomacy(const tak::net::RoomView& room);
+    void setVoiceVolumeAt(const SDL_FRect& track, int p, float mx);
+    tak::VoiceEngine* voice_ = nullptr;
+    tak::voice::PushToTalk ptt_;
+    // A room that carries voice: connected and in a room or game, never a replay or a
+    // benchmark run (which never open the microphone).
+    bool voiceRoomActive() const;
+    // A text field has keyboard focus (chat composer, lobby fields, Options' name, the
+    // streaming key...): push to talk is off, and a held key is released.
+    bool textEntryActive() const;
+    // Push to talk for one key event; true when it consumed the event.
+    bool voiceKey(const SDL_Event& e);
+    void drawVoiceIndicator(int winW, int winH);
     std::optional<uint8_t> requestedManaSharing_;
     std::array<bool,8> eligibleGiftRecipients();
     std::array<bool,8> giftEligibleLast_{};   // its answer when the worker held the world
@@ -1998,7 +2071,13 @@ private:
     float fps_ = 0;             // smoothed render FPS, shown on the F4 overlay
     int winW_ = 0, winH_ = 0;   // last-known window size (for centering/culling)
     tak::net::MpClient* mp_ = nullptr;
-    std::vector<tak::net::Command> outbox_;   // local orders to send to the server
+    std::vector<tak::net::Command> outbox_;   // local orders to send to the server (commands and Cmd::Order items, FIFO)
+    std::optional<ClickBuffer> click_;        // the open click (ClickScope), if any
+    // Explicit orders (protocol 267): the next serial (continues above every own
+    // order seen in a bundle, so a rejoin never reuses one that activated), and the
+    // orders sent but neither seen back nor dropped by the server (OrderWindow).
+    uint32_t nextOrderSerial_ = 1;
+    tak::net::OrderWindow orderWindow_;
     // Index of the first UNSENT command in outbox_. The send path is rate- and
     // window-limited, so it usually ships a prefix and keeps the rest; erasing that
     // prefix shifted every survivor down, making a full drain O(B^2/b) for B queued
@@ -2027,7 +2106,12 @@ public:
     int netDelay() const { return netDelay_; }
 private:
     bool replayMode_ = false;                     // playing a recorded .takrep
-    bool replaySaved_ = false;                    // this game's replay already written
+    std::unique_ptr<tak::net::ReplayWriter> replayRec_;   // this game's recording (see beginGameRecording)
+    uint32_t replayRecGame_ = 0, replayRecSeed_ = 0;      // which game it records
+    tak::net::ReplayHeader replayRecHeader_;             // ... and its header (beginGameRecording)
+    uint64_t gameDataHash_ = 0;   // gameDataHash() of the game set up by startMpGame (computed once: it reads every gameplay file)
+    uint64_t replayFlushMs_ = 0, replaySyncMs_ = 0;       // last flush to the OS / sync to the disk
+    uint64_t replayRecRetryMs_ = 0;   // when to try opening a recording that could not start (0: none pending)
     std::vector<tak::net::ReplayCheck> replayChecks_;   // recorded (tick, hash) trail
     size_t replayCheckAt_ = 0;                    // next checkpoint to compare
 #ifndef NDEBUG
@@ -2090,10 +2174,10 @@ public:
 private:
 #endif
     ReplayCheckTracker replayTracker_;            // first state divergence + first position divergence
-    // Set by the SIM thread when the result lands; the MAIN thread does the writing.
-    // The net client's recorded bundles and hashes are appended from the main thread,
-    // so serializing them off-thread would read a growing vector.
-    std::atomic<bool> replayWanted_{false};
+    // Set by the SIM thread when the result lands; the MAIN thread (pumpReplayRecording)
+    // makes the recording so far durable. The net client's recorded bundles and hashes
+    // are appended from the main thread, so reading them off-thread would race.
+    std::atomic<bool> replayResultSync_{false};
     std::vector<tak::net::Bundle> replayBundles_;
     size_t replayTick_ = 0;
     float replayAccum_ = 0;
@@ -2432,6 +2516,11 @@ private:
 #ifndef NDEBUG
     uint32_t autoplayNext_ = 0;    // next sim tick an autoplay order is due
     uint32_t autoplayRng_ = 0;     // per-player stream; seeded from slot + game seed
+    // TAK_AUTOPLAY_FORMATION delivery probe (Legion 10,000 phase 0; stderr only, never read by the
+    // sim): the tick the formation order was issued, its command count, and how many of them and on
+    // which ticks have come back in a bundle (the tick the server applied them).
+    uint32_t formIssueTick_ = 0, formFirstTick_ = 0;
+    int formPending_ = 0, formLanded_ = 0;
 #endif
     uint32_t lastSendTick_ = 0;     // tick the send credit was last accrued for
     int cmdCredit_ = tak::net::kCmdCapPerTick;   // rate: commands we may send now

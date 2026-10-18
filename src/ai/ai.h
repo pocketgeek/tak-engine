@@ -41,25 +41,35 @@ Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name = "default
 // AI plays (economy pace, army size before it commits, aggression, reaction rate)
 // rather than cheating its economy -- so all three respect the same rules the human
 // does. See paramsFor().
-// Ordered weakest -> strongest; the value is the wire aiLevel (SlotInfo.aiLevel).
+// The value is the wire aiLevel (SlotInfo.aiLevel); 0-4 run weakest -> strongest.
 // Passive (displayed as Defensive) builds a home force and intercepts nearby
-// threats, without scouting or attacking enemy bases. Absurd = Hard with a mana-income
-// cheat (see incomeMultFor). Renumbering is versioned by kNetVersion.
+// threats, without scouting or attacking enemy bases, and keeps building in step
+// with its income with no AI-imposed limit on how much. Absurd = Hard with a
+// mana-income cheat (see incomeMultFor). AbsurdlyDefensive (5, added under protocol
+// 273) = Defensive with Absurd's cheat. Renumbering is versioned by kNetVersion.
 enum class Difficulty : uint8_t {
-    Passive = 0, Easy = 1, Normal = 2, Hard = 3, Absurd = 4
+    Passive = 0, Easy = 1, Normal = 2, Hard = 3, Absurd = 4, AbsurdlyDefensive = 5
 };
+inline constexpr uint8_t kAiLevels = 6;
 
 // Map a wire aiLevel to a Difficulty, clamping anything out of range to Normal.
 inline Difficulty difficultyFromLevel(uint8_t lvl) {
-    return lvl <= uint8_t(Difficulty::Absurd) ? Difficulty(lvl) : Difficulty::Normal;
+    return lvl < kAiLevels ? Difficulty(lvl) : Difficulty::Normal;
+}
+
+// The defensive levels: no offensive waves, a non-pursuing stance from birth
+// (MatchSlot::defensiveAi), and production that follows income without caps.
+inline constexpr bool defensiveLevel(Difficulty d) {
+    return d == Difficulty::Passive || d == Difficulty::AbsurdlyDefensive;
 }
 
 // Per-player mana-income multiplier for a difficulty. This is the ONE economy cheat:
-// Absurd earns double from every income source. It scales HASHED sim state (mana), so
-// every peer must apply the same factor to the same player -- it is derived from the
-// broadcast aiLevel and set on the sim player at match setup, never AI-local.
+// Absurd and Absurdly Defensive earn double from every income source. It scales
+// HASHED sim state (mana), so every peer must apply the same factor to the same
+// player -- it is derived from the broadcast aiLevel and set on the sim player at
+// match setup, never AI-local.
 inline constexpr float incomeMultFor(Difficulty d) {
-    return d == Difficulty::Absurd ? 2.0f : 1.0f;
+    return d == Difficulty::Absurd || d == Difficulty::AbsurdlyDefensive ? 2.0f : 1.0f;
 }
 
 // Behaviour knobs derived from Difficulty (paramsFor).
@@ -74,6 +84,9 @@ struct DiffParams {
     bool attack;           // commit offensive waves (Defensive only intercepts local threats)
     int  raidSize;         // fighters peeled off for a small harassing raid while the main
                            // army musters (0 = no raiding; gated on `scout` difficulties)
+    bool unbounded;        // no AI-imposed caps: the planner's targets scale with income
+                           // without ceilings, profile limits do not apply, and spending
+                           // is paced by mana alone (the defensive levels)
 };
 DiffParams paramsFor(Difficulty d);
 
@@ -112,6 +125,8 @@ struct Needs {
                                // Monarch, those unfinished and those queued or ordered
     int   mobileBuilderCap = 2;// builderCap; a side with no factory buildings adds its factories
     bool  storeFull = false;   // mana at 90% of capacity or more: income goes unspent
+    float committed = 0;       // unbounded levels: build cost ordered this think, held
+                               // against mana by the affordability gate
 };
 
 // Sink for the commands a Controller decides to issue this tick. Offline this
@@ -135,6 +150,16 @@ public:
 private:
     friend struct PlacementProbe;
     std::vector<std::pair<float,float>> plannedManaSites_; // reservations until emitted orders reach the world
+    // Unbounded levels: building sites already spoken for -- ordered this think
+    // (plannedSites_), or ordered earlier and refused when the builder got there
+    // (refusedSites_, held for kRefusedSiteTicks; issuedBuilds_ watches each order).
+    struct PlannedSite { const tak::sim::UnitType* type; float x, z; };
+    std::vector<PlannedSite> plannedSites_;
+    struct IssuedBuild { int unit; const tak::sim::UnitType* type; float x, z; uint32_t tick; };
+    std::vector<IssuedBuild> issuedBuilds_;
+    struct RefusedSite { float x, z; uint32_t until; };
+    std::vector<RefusedSite> refusedSites_;
+    void updateIssuedBuilds(const tak::sim::World&, uint32_t simTick);
     // --- deterministic RNG (retail-style LCG) --------------------------------
     int rand(int n) {
         rng_ = rng_ * 1103515245u + 12345u;
@@ -183,12 +208,16 @@ private:
     bool nearestVisibleEnemy(const tak::sim::World&, float cx, float cz,
                              const tak::sim::UnitType* atype, float& tx, float& tz) const;
     bool nearestEnemyStart(float cx, float cz, float& tx, float& tz) const;
+    // (x,z) lies nearer some enemy start than home (hx,hz): the enemy's side of the map.
+    bool enemySide(float x, float z, float hx, float hz) const;
     bool reachablePoint(const tak::sim::World&, const tak::sim::UnitType*,
                         float fx, float fz, float tx, float tz, float& x, float& z) const;
     int terrainWeight(const tak::sim::World&, const tak::sim::Unit&,
                       const tak::sim::UnitType*, int weight) const;
     void sendWaves(const tak::sim::World&, uint32_t simTick, const CommandSink&);
     void sendDefenders(const tak::sim::World&, const CommandSink&);
+    // Unbounded levels: walk idle fighters out of the base to a ring around it.
+    void stationArmy(const tak::sim::World&, std::vector<int>& assigned, const CommandSink&);
     // The initial base anchor stays fixed as expansion adds remote buildings.
     // The Monarch and defensive AI use it to remain near home.
     std::pair<float, float> homeOf(const tak::sim::World&) const;
@@ -243,11 +272,20 @@ private:
         float homeX, homeZ, goalX, goalZ;
         bool returning = false;
         int targetId = 0;   // melee defenders chase one attacker with a direct Attack
+        bool ownAttacker = false;   // targetId is the unit that was hitting this one
     };
     // Server-local assignments, not simulation state. Commands still use the
     // ordinary sequencer and movement controllers on every peer.
     std::unordered_map<int, DefenseResponse> defenders_;
     mutable std::unordered_map<const tak::sim::UnitType*,std::vector<std::pair<float,float>>> navalOffsets_;
+    // Unbounded levels: a factory whose queue head has waited kQueueStallTicks
+    // without a site (its output pad blocked, say) has it unqueued, and that factory
+    // trains anything but that type for kRefusedTicks (refused_).
+    struct QueueWait { const tak::sim::UnitType* type; uint32_t since; };
+    std::unordered_map<int, QueueWait> queueWait_;
+    std::unordered_map<int, QueueWait> refused_;   // since = the tick it may try again
+    void unqueueStalled(const tak::sim::World&, uint32_t simTick, const CommandSink&);
+    uint32_t now_ = 0;
     int raidersSincePush_ = 0;
     bool scouted_ = false;        // one-shot early scout sent
     uint32_t lastRaidTick_ = 0;   // last tick a harassing raid was sent (raid cooldown)

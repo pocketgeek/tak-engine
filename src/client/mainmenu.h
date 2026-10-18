@@ -16,6 +16,8 @@
 
 namespace tak {
 
+class VoiceEngine;
+
 class MenuMusic;
 class Streaming;
 struct Settings;
@@ -52,6 +54,10 @@ public:
     // The Options screen's GAME DATA FOLDER row: the folder this launch mounted, and why
     // it cannot be changed (a --data or launch-folder override), if it cannot.
     void setDataFolder(DataFolderRow row);
+
+    // Voice chat (client/voice.h): main()'s engine, so the SETTINGS menu's VOICE CHAT
+    // screen can show the microphone level. Pumped every frame while the menu runs.
+    void setVoice(VoiceEngine* voice);
 
     Choice run(const std::string& shotPath = "", std::string* serverOut = nullptr,
                MenuMusic* music = nullptr, Settings* settings = nullptr, Streaming* streaming = nullptr);

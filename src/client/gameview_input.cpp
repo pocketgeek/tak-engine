@@ -13,6 +13,7 @@
     }
 
     void GameView::input(const SDL_Event& e, int winW, int winH) {
+        ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         winW_ = winW;
         winH_ = winH;
         // Placement mode and the selected builder are separate. Only disarm an
@@ -49,6 +50,9 @@
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) stopBenchmark();
             return;
         }
+        // Push to talk, ahead of the lobby and every overlay but CONTROLS (which may be
+        // capturing that very key): talking is allowed with a menu open, typing is not.
+        if (voiceKey(e)) return;
         if (inLobbyPhase()) {
             if (!missionStem_.empty()) {
                 // Hidden lobby controls must not react behind the loading plate.
@@ -78,7 +82,19 @@
             // below): the custom cursor renders from mouseX_/mouseY_, so swallowing
             // motion events here froze it for as long as Options was open.
             if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
-            if (options_->input(e, winW, winH)) options_.reset();   // BACK / Esc (SAVE is explicit)
+            if (options_->input(e, winW, winH)) {   // BACK / Esc (SAVE is explicit)
+                if (options_->voiceRequested()) {   // Options > VOICE CHAT
+                    const bool dirty = options_->dirty();
+                    openVoiceOptions();
+                    voiceFromOptions_ = true; optionsDirtyCarry_ = dirty;
+                } else if (voiceFromOptions_ && options_->page() == tak::OptionsPage::Voice) {
+                    const bool dirty = optionsDirtyCarry_ && !options_->saved();
+                    openOptions();                  // BACK -> Options, where it came from
+                    if (dirty) options_->markDirty();
+                } else {
+                    options_.reset();
+                }
+            }
             return;
         }
         // In-game exit menu (opened with Esc). While it's up, all game input is
@@ -101,6 +117,32 @@
             if (e.type == SDL_KEYDOWN && (e.key.keysym.sym == SDLK_ESCAPE ||
                 hotkeys_.match(e.key.keysym.sym, e.key.keysym.mod) == tak::Act::GiveUnits))
                 giveUnitsMenu_ = false;
+            // VOLUME sliders: press on one to set it and drag along it (as the Options
+            // sliders do). A slider only has a hot area while it is live.
+            const auto volumeHot = [&](int p) -> const DiplomacyHot* {
+                for (const auto& hot : giveUnitsHots_)
+                    if (hot.action == DiplomacyAction::Volume && hot.player == p) return &hot;
+                return nullptr;
+            };
+            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                for (const auto& hot : giveUnitsHots_) {
+                    const auto& r=hot.rect;
+                    if (hot.action != DiplomacyAction::Volume || e.button.x < r.x || e.button.x >= r.x+r.w ||
+                        e.button.y < r.y || e.button.y >= r.y+r.h) continue;
+                    voiceVolumeDrag_ = hot.player;
+                    setVoiceVolumeAt(r, hot.player, float(e.button.x));
+                    break;
+                }
+            }
+            if (e.type == SDL_MOUSEMOTION && voiceVolumeDrag_ >= 0) {
+                const DiplomacyHot* hot = volumeHot(voiceVolumeDrag_);
+                if (hot && (e.motion.state & SDL_BUTTON_LMASK)) setVoiceVolumeAt(hot->rect, voiceVolumeDrag_, float(e.motion.x));
+                else voiceVolumeDrag_ = -1;   // released unseen, or the slider went grey
+            }
+            if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT && voiceVolumeDrag_ >= 0) {
+                voiceVolumeDrag_ = -1;   // the end of a drag, not a click on whatever it ended over
+                return;
+            }
             if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                 for (const auto& hot : giveUnitsHots_) {
                     const auto& r=hot.rect;
@@ -109,6 +151,8 @@
                     switch (hot.action) {
                         case DiplomacyAction::Give: giveSelectedUnits(hot.player); break;
                         case DiplomacyAction::Chat: chatRecipients_ ^= uint8_t(1u<<hot.player); break;
+                        case DiplomacyAction::Voice: voiceRecipients_ ^= uint8_t(1u<<hot.player); break;
+                        case DiplomacyAction::Volume: break;   // set on the press (above)
                         case DiplomacyAction::Mana: {
                             uint8_t mask=requestedManaSharing_.value_or(framePlayer(localPlayer_).manaShareMask);
                             mask ^= uint8_t(1u<<hot.player);

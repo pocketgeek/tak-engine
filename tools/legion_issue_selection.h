@@ -21,20 +21,28 @@
 //     current-tick pose, renderframe.h:65); here they come from the World at
 //     the issue tick, which is the same value.
 //
+//     In a Legion game the client then packs the click (GameView::flushClick,
+//     net/orderpack.h's packClick, called here too): one explicit selection
+//     order (Cmd::Order, protocol 267) per verb run, the right-click Move as
+//     OrderShape::Offsets at the click. Retail keeps the per-unit commands.
+//
 //  2. Uplink -- the path from the client's outbox to the tick a command is
 //     applied in: the client's rate credit and outstanding window
-//     (gameview_net.cpp:337-368, retired by its own commands coming back at
-//     gameview_net.cpp:393-397; cmdSendCredit/cmdSendWindow are protocol.h's own)
-//     and the server's FIFO, drained kCmdCapPerTick per client per tick
-//     (server.cpp:2819-2823). A selection over 64 therefore lands over
-//     consecutive ticks. With a round trip R set, at most kCmdQueueCap (512)
-//     commands are outstanding, so a selection over 512 arrives with the gap a
-//     real uplink makes (R - 8 ticks per 512 once the window fills).
+//     (gameview_net.cpp mpStep, retired by its own commands coming back in a
+//     bundle; cmdSendCredit/cmdSendWindow are protocol.h's own) and the server's
+//     FIFO, drained kCmdCapPerTick per client per tick (server.cpp closeTick). A
+//     selection over 64 per-unit commands therefore lands over consecutive ticks.
+//     With a round trip R set, at most kCmdQueueCap (512) commands are
+//     outstanding, so a selection over 512 arrives with the gap a real uplink
+//     makes (R - 8 ticks per 512 once the window fills). An explicit order is one
+//     FIFO item under its own window (orderSendWindow) and the server's per-tick
+//     order budget (kTickOrderBytes): it lands whole, in one tick.
 //
 // Nothing here is hashed or read by the sim; a fixture applies the drained
 // commands with tak::sim::applyCommand exactly as the client does.
 #include "net/lockstep.h"
 #include "net/protocol.h"
+#include "net/orderpack.h"
 #include "sim/pathmode.h"
 #include "sim/sim.h"
 
@@ -59,7 +67,8 @@ struct SelectionOrder {
     bool append = false;   // Squad: Shift held (append instead of replace)
 };
 
-// The commands one click builds, in the order the client puts them in its outbox.
+// The commands one click builds, in the order the client issues them (before
+// GameView::flushClick packs them; hudItems below is what reaches the outbox).
 inline std::vector<tak::net::Command> hudCommands(const tak::sim::World& world,
                                                   const std::vector<int>& selection,
                                                   const SelectionOrder& order, int player = 0) {
@@ -152,9 +161,20 @@ inline std::vector<tak::net::Command> hudCommands(const tak::sim::World& world,
     return out;
 }
 
+// What one click puts in the client's outbox: in a Legion game the packed
+// explicit orders (serials from `serial`, the player's next), else hudCommands.
+inline std::vector<tak::net::Command> hudItems(const tak::sim::World& world, const std::vector<int>& selection,
+                                               const SelectionOrder& order, int player, uint32_t& serial) {
+    auto cmds = hudCommands(world, selection, order, player);
+    if (!tak::sim::isLegionPathfinding(world.pathfindingMode())) return cmds;
+    tak::net::ClickShape shape;
+    if (order.verb == Verb::Move) { shape.moveOffsets = true; shape.x = order.x; shape.z = order.z; }
+    return tak::net::packClick(cmds, shape, serial);
+}
+
 // Client outbox -> server FIFO -> sim tick. Call issue() for every click made at
 // tick t, then land(t) once per tick in increasing order; land(t) returns the
-// commands applied at the start of tick t.
+// commands (and explicit orders) applied at the start of tick t.
 class Uplink {
 public:
     // roundTrip < 0: no outstanding window (an ideal uplink: the stream is the
@@ -170,37 +190,83 @@ public:
     size_t pending() const { return outbox_.size() + server_.size(); }
 
     std::vector<tak::net::Command> land(uint32_t tick) {
+        using tak::net::Cmd;
+        auto bytesOf = [](const tak::net::Command& c) { return c.order ? tak::net::orderRecordBytes(*c.order) : 0; };
         if (roundTrip_ < 0) {
             server_.insert(server_.end(), outbox_.begin(), outbox_.end());
             outbox_.clear();
         } else {
-            for (auto it = acks_.begin(); it != acks_.end() && it->first <= tick; it = acks_.erase(it))
-                inFlight_ -= std::min(inFlight_, it->second);
+            for (auto it = acks_.begin(); it != acks_.end() && it->first <= tick; it = acks_.erase(it)) {
+                inFlight_ -= std::min(inFlight_, it->second.cmds);
+                orderInFlight_ -= std::min(orderInFlight_, it->second.orders);
+                orderBytes_ -= std::min(orderBytes_, it->second.bytes);
+            }
             if (tick != lastSendTick_) {
                 credit_ = tak::net::cmdSendCredit(credit_, tick - lastSendTick_);
                 lastSendTick_ = tick;
             }
-            const int n = std::min(int(outbox_.size()), tak::net::cmdSendWindow(credit_, inFlight_));
-            credit_ -= n;
-            inFlight_ += n;
-            server_.insert(server_.end(), outbox_.begin(), outbox_.begin() + n);
-            outbox_.erase(outbox_.begin(), outbox_.begin() + n);
+            // The client's send loop (gameview_net.cpp mpStep): FIFO; commands under the
+            // credit and window, an order whole under the order window.
+            int sendable = tak::net::cmdSendWindow(credit_, inFlight_);
+            while (!outbox_.empty()) {
+                const auto& c = outbox_.front();
+                if (c.kind == Cmd::Order) {
+                    const size_t b = bytesOf(c);
+                    if (!tak::net::orderSendWindow(orderInFlight_, orderBytes_, b)) break;
+                    ++orderInFlight_;
+                    orderBytes_ += b;
+                } else {
+                    if (sendable <= 0) break;
+                    --sendable;
+                    --credit_;
+                    ++inFlight_;
+                }
+                server_.push_back(c);
+                outbox_.pop_front();
+            }
         }
-        const size_t take = std::min(server_.size(), size_t(tak::net::kCmdCapPerTick));
-        std::vector<tak::net::Command> out(server_.begin(), server_.begin() + ptrdiff_t(take));
-        server_.erase(server_.begin(), server_.begin() + ptrdiff_t(take));
-        if (roundTrip_ >= 0 && take)
-            acks_[tick + uint32_t(std::max(roundTrip_, 1))] += int(take);
+        // The server's drain (server.cpp closeTick): kCmdCapPerTick commands, orders
+        // within the tick's order budget, stopping at the first item that does not fit.
+        std::vector<tak::net::Command> out;
+        Ack ack;
+        size_t orderBudget = 0;
+        while (!server_.empty()) {
+            const auto& c = server_.front();
+            if (c.kind == Cmd::Order) {
+                const size_t b = bytesOf(c);
+                if (orderBudget + b > tak::net::kTickOrderBytes) break;
+                orderBudget += b;
+                ++ack.orders;
+                ack.bytes += b;
+            } else {
+                if (ack.cmds >= tak::net::kCmdCapPerTick) break;
+                ++ack.cmds;
+            }
+            out.push_back(c);
+            server_.pop_front();
+        }
+        if (roundTrip_ >= 0 && !out.empty()) {
+            Ack& a = acks_[tick + uint32_t(std::max(roundTrip_, 1))];
+            a.cmds += ack.cmds;
+            a.orders += ack.orders;
+            a.bytes += ack.bytes;
+        }
         return out;
     }
 
 private:
+    struct Ack {
+        int cmds = 0, orders = 0;
+        size_t bytes = 0;
+    };
     int roundTrip_;
     std::deque<tak::net::Command> outbox_, server_;
-    // The client's credit starts at one tick's worth (gameview.h:2495).
+    // The client's credit starts at one tick's worth (gameview.h cmdCredit_).
     int credit_ = tak::net::kCmdCapPerTick, inFlight_ = 0;
+    int orderInFlight_ = 0;
+    size_t orderBytes_ = 0;
     uint32_t lastSendTick_ = 0;
-    std::map<uint32_t, int> acks_;
+    std::map<uint32_t, Ack> acks_;
 };
 
 struct CmdBatch {
@@ -210,12 +276,14 @@ struct CmdBatch {
 
 // One click at `tick` on an otherwise idle uplink: the batches it lands as,
 // one per tick from `tick` until the last command (empty ticks inside a
-// window gap are kept, so batch i is tick + i).
+// window gap are kept, so batch i is tick + i). `serial` is the player's next
+// explicit-order serial (Legion; see hudItems).
 inline std::vector<CmdBatch> issueSelection(const tak::sim::World& world, const std::vector<int>& selection,
                                             const SelectionOrder& order, uint32_t tick, int player = 0,
-                                            int roundTrip = -1) {
+                                            int roundTrip = -1, uint32_t serial = 0) {
+    if (!serial) serial = tick + 1;   // the default numbers a click by its tick: unique for one click a tick
     Uplink link(roundTrip);   // idle since tick 0: its credit accrues to `tick`
-    link.issue(hudCommands(world, selection, order, player));
+    link.issue(hudItems(world, selection, order, player, serial));
     std::vector<CmdBatch> out;
     for (uint32_t t = tick; !link.idle(); ++t) out.push_back({t, link.land(t)});
     return out;

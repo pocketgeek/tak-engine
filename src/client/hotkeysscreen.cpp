@@ -61,11 +61,16 @@ bool HotkeysScreen::input(const SDL_Event& e, int winW, int winH) {
     // and then hit the real key.
     if (capture_ >= 0 && e.type == SDL_KEYDOWN) {
         SDL_Keycode k = e.key.keysym.sym;
-        if (k == SDLK_ESCAPE) { capture_ = -1; return false; }   // cancel this capture
+        if (k == SDLK_ESCAPE) { capture_ = -1; refused_.clear(); return false; }   // cancel this capture
         if (k == SDLK_LCTRL || k == SDLK_RCTRL || k == SDLK_LSHIFT || k == SDLK_RSHIFT ||
             k == SDLK_LALT || k == SDLK_RALT || k == SDLK_LGUI || k == SDLK_RGUI)
             return false;   // wait for the non-modifier key
         Act a = rows_[size_t(capture_)].act;
+        if (a == Act::PushToTalk && pushToTalkReserved(int32_t(k))) {   // stay armed, say why
+            refused_ = "ENTER, 0-9 AND THE ARROWS ARE GAME KEYS - CHOOSE ANOTHER FOR PUSH TO TALK";
+            return false;
+        }
+        refused_.clear();
         KeyChord c{int32_t(k), normMod(e.key.keysym.mod)};
         // No two actions share a chord: if this chord is already bound elsewhere, unbind
         // that one (it shows as UNBOUND, ready to reassign) rather than double-firing.
@@ -101,7 +106,7 @@ bool HotkeysScreen::input(const SDL_Event& e, int winW, int winH) {
         if (my < panel_.y + titleH || my > panel_.y + panel_.h - footerH) return false;
         for (size_t i = 0; i < rows_.size(); ++i) {
             if (rows_[i].section || !in(rows_[i].rect, mx, my)) continue;
-            capture_ = int(i);
+            capture_ = int(i); refused_.clear();
             return false;
         }
         return false;
@@ -180,12 +185,13 @@ void HotkeysScreen::render(int winW, int winH) {
         SDL_FRect bar{panel_.x + panel_.w - 5 * u_, ty, 3 * u_, th}; SDL_RenderFillRectF(ren_, &bar);
     }
 
-    // A hint line above the footer: how to unbind.
+    // A hint line above the footer: how to unbind -- or why the last key was refused.
     {
-        const char* hint = "CLICK TO REBIND   RIGHT-CLICK TO CLEAR";
-        float hpx = 1.5f * u_;
+        const std::string hint = !refused_.empty() ? refused_ : "CLICK TO REBIND   RIGHT-CLICK TO CLEAR";
+        float hpx = std::min(1.5f * u_, (panel_.w - 20 * u_) / std::max(1.0f, blockTextWidth(hint, 1)));
         drawBlockText(ren_, hint, panel_.x + (panel_.w - blockTextWidth(hint, hpx)) / 2,
-                      panel_.y + panel_.h - footerH - 16 * u_, hpx, {130, 140, 160, 255});
+                      panel_.y + panel_.h - footerH - 16 * u_, hpx,
+                      !refused_.empty() ? SDL_Color{235, 190, 110, 255} : SDL_Color{130, 140, 160, 255});
     }
 
     auto button = [&](const SDL_FRect& r, const char* label, bool on) {

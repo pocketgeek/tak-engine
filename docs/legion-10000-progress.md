@@ -1,0 +1,3030 @@
+# Legion 10,000: plan, shared interfaces and progress record
+
+The resumable record of the Legion 10,000 program: navigation for about 10,000 individually simulated units
+moving at once, built by extending Legion (`src/sim/legion.{h,cpp}`), with Retail unchanged. The brief is
+the user's `LEGION-10000-CLAUDE-PROMPT.md` (copy: `~/tak-tmp/briefs/`); this file is the plan, the shared
+interfaces every stage builds on, the per-stage records, and the next step. Read it first when resuming.
+
+* Branch `task-legion-10000` (worktree `~/tak-tmp/wt/legion-10000`), from `origin/main` **c2c25707**
+  (v0.8.3 validation; protocol `kNetVersion` 266).
+* Status words: **implemented and validated**, **implemented, unvalidated**, **not implemented**.
+* Status (2026-10-17): every stage is implemented and validated. The measured before/after report is
+  [`legion-10000-report.md`](legion-10000-report.md).
+* The program does **not** meet the brief's success criterion in congested workloads. 79 of 212 frozen targets
+  still miss (110 at the start), and the regressions found in the final validation are open. Section 7.10 and the
+  report say which.
+* The branch is not merged; merging is the user's decision.
+
+## 1. Stages
+
+The user's nine stages map onto the brief's phases 0-8. Each stage lands as its own commits on the
+branch, pushed after the stage (`git push origin task-legion-10000`; never main, never forced).
+
+| Stage | Brief phase | Content | Kind | Status |
+|---|---|---|---|---|
+| 1 | 0 | Representative baselines and acceptance tests: scale suite, real-path delivery probe, frozen targets | tools/tests/docs only | implemented and validated (this record, section 6) |
+| 2 | 1 | Indexed `registerMove` group matching; swept-bounds broad phase for `awareScan`; profiled micro-work | exact (hash-identical) | implemented and validated (section 7) |
+| 3 | 2 | Explicit logical orders: client intent identity, bounded selection-order transaction, server sequencing, activation tick, every identity consumer | behaviour + protocol + replay | implemented and validated (section 7.3) |
+| 4 | 3 | Deterministic fair scheduling (classes, deficit round robin, aging, unique jobs), complete work budgets, byte accounting | behaviour (schedule) + exact parts | implemented and validated (section 7.4) |
+| 5 | 4 | Route-query interface; consumers migrated; Unknown / Reachable / Unreachable kept apart; metric versions | exact first, then behaviour where stated | implemented and validated (section 7.5) |
+| 6 | 5 | Hierarchy over the footprint planes (sectors, regions, portals), sparse tiles, intermediate sharing, search vs field by demand | behaviour | implemented and validated (section 7.6) |
+| 7 | 6 | Static navigation apart from dynamic traffic; local dirty tiles; closures vs improvements | behaviour | implemented and validated (section 7.7) |
+| 8 | 7 | Navigation subgroups, shared chokepoint state and admission, multi-entrance mixed-footprint arrivals, local engagement | behaviour | implemented and validated (section 7.8; awareness by streams measured and rejected) |
+| 9 | 8 | Parallel tile builds / per-plane preprocessing with deterministic publication; reassess movement; final 10k report | exact (parallel) + report | implemented and validated: parallel planning and movement profile (section 7.9); final integration, validation and the measured report (section 7.10, docs/legion-10000-report.md) |
+
+Per stage, the record (section 7) gives: hypothesis, touched code, exact-versus-behaviour classification,
+exact commands and results, baseline comparison, work/memory change, commits, inherited versus new failures,
+open issues. A behaviour or wire change bumps `kNetVersion` once for the stage (`replay_test` must refuse the
+previous protocol) and records new `--mpai` baselines; Retail `--mpai` and Retail scenario hashes must stay
+equal to the starting revision's unless a protocol-only field forces otherwise, and then the reason is written
+here.
+
+### Order of work and dependencies
+
+* Stage 2 is independent of the rest and exact; it lands first (identity harness, `legion_check --cumulative`
+  hash-equal).
+* Stage 3 changes the wire and the sim's order identity. Stages 4-8 key on its identities, so it lands before
+  them. Its transport part (client/server) and its sim part (activation, identity consumers) are separable
+  sub-steps under one protocol bump.
+* Stage 5 (the query interface) is the seam stage 6 needs: storage cannot change while consumers read
+  `Field::potential` directly. Stage 5's migration is exact; anything that is not (for example reading a
+  paused build's settled region where `done` was required) is split out and classified.
+* Stage 6 and 7 share the tile/portal identities fixed in section 3.4; stage 7 can start once stage 6's
+  connectivity layer is in, before its sparse tiles are.
+* Stage 8 needs stage 3 (one logical order = one destination crowd) and stage 6 (portals as chokepoint keys).
+* Stage 9 parallelises only work that stages 4-6 made into independent jobs with immutable inputs.
+
+### Rules every stage follows (from the brief and the repo)
+
+* Every movement goes through `commitGroundStep`; no position is written to resolve congestion.
+* Missing cache data never retires an order; Unknown is never Unreachable.
+* No simulation decision reads wall time, worker completion order, camera, free memory or a profiling counter.
+  Stats stay observation-only; adaptive policy uses modelled, hashed state.
+* Exact steps are proved with `tools/legion_identity.sh` and hash-equal `legion_check`; behaviour steps never
+  silently retake a baseline (each licensed key gets its reason in `baseline.json`).
+* Builds: `build-o2` (Debug `-O2`) for tests and harnesses, Release `build` for release checks; after a
+  `src/sim`, `src/net` or `src/ai` change rebuild ALL targets. Heavy work on cores 4-23, timing on 0-3.
+
+## 2. Assessment of the starting revision (c2c25707)
+
+What the brief lists, against the code at the start (read from `legion.{h,cpp}`, `convoy.{h,cpp}`,
+`sim.cpp`'s hooks, `net/{protocol,lockstep}.h`, `client/gameview_net.cpp`, `server/server.cpp`, the tools).
+"Present" items are not to be rebuilt.
+
+### Present (keep)
+
+* **Footprint-origin legality planes** per mobility class (`Plane`: `legal`, `comp`, exact rectangle
+  clearance by run lengths; `legion_clearance` test). At most 24 planes, LRU by use.
+* **Incremental plane repair** (`refreshPlane`, clustered windows `refreshCluster`, local split proof
+  `splitSearch`, `relabel`); background first builds (`prebuildStep`, staged, `kPrebuildCells` a tick).
+  Labels are compared through `Group::compCell`, never stored raw.
+* **Fields**: one integer field per group, A* toward the bodies with a consistent octile heuristic run to
+  exhaustion (exact distances), 32-bit potentials (`kUnreached`), bounded windows (`fieldWindow`), widened when
+  a member is uncovered. One 384k-relaxation quota a tick (`kFieldQuota`), a quarter for refreshes.
+* **Shared fields** (`sharedField` over `routeIndex`): only for equal seeds, equal soft rule, window holding
+  the asker's, started within one soft scan period. No sharing of intermediate route segments.
+* **Demand-paused first builds** (C1, `Field::covered`, `demand`, `known()`): solo groups only (no shared
+  goals, no pinwheel parts), never reach kinds. `demand` is a fixed 32-cell list that drops the oldest.
+* **Scheduler indexes** (`buildingIds`, `waitedIds`, `needFieldIds`, `staleDoneIds`, `byBuilt`) checked under
+  `TAK_LEGION_VERIFY`.
+* **Spatial occupancy**: the soft-body grid (`soft`, striped `scanStill`, `softHash`), World's own occupancy.
+* **Formation slots** (`Point`, `assignFormation`, hand-out budget `kHandOutCells`), per-goal packed slots,
+  **reach rings** (`buildRing`), **passage behaviour** (gate, passage lanes, pinwheel, head-on meets),
+  settle rule, lift areas for flyers, approach members for unreachable goals.
+* **Deterministic checksums** (`checksum()`, folded in `World::stateHash` in mode 4) and the instruments:
+  the shared observer `tools/legion_observe.h`, `legion_scenario` (+ `baseline.json`, `legion_check.py`),
+  `legion_cost`, `legion_identity.sh`, crowdbench, the nightly (`tools/legion_nightly.sh`).
+
+### Partial
+
+* **Order identity is inferred, not explicit.** `net::Command` is one unit, one verb; the client sends one
+  command per selected unit (`gameview_hud.cpp`, mirrored by `tools/legion_issue_selection.h`). The sim
+  infers the click with `ConvoyTable` (`sim/convoy.h`) from point proximity and timing: a convoy stays open at
+  most `kSpanTicks` = 32 ticks after its first order and `kGapTicks` = 9 after its last. At 64 commands a tick,
+  33 ticks carry at most about 2,100 orders, so **a 10,000-unit click becomes several convoys** (several
+  points, several formations, several destination crowds; the probe below saw 20 Legion groups for one click).
+* **Command delivery is per unit and rate-limited.** `kCmdCapPerTick` = 64 per client per tick, server queue
+  `kCmdQueueCap` = 512 (excess discarded), client window by acks. One 10,000-unit Move needs at least 157
+  ticks; with the uplink window over a 16-tick round trip the last command lands 308 ticks (10.3 s) after the
+  click (section 6). A Stop issued behind it waits in the same FIFO.
+* **Budgets count field relaxations only.** Plane debt is charged after synchronous work (`planeDebt`);
+  `registerMove`, `awareScan`, ring/slot searches (the slot hand-out has its own `kHandOutCells`), pruning
+  and destination assignment are unbudgeted. When `startField` cannot fit a group the scheduler `break`s:
+  every later admission that tick waits behind the first that does not fit (head-of-line).
+* **Memory accounting** is an observation estimate (`Stats::bytes`, capacities); policy caps are cell counts
+  (48 whole maps, 1,024 fields). No deterministic byte accounting of queues, scratch, metadata.
+* **Group partitioning**: by player, plane, kind, issue/convoy, component, 16-cell goal clustering and the
+  256-seed cap, in registration order; nothing spatial about the bodies (`split-450-open`).
+
+### Missing
+
+* Explicit logical orders (identity from client intent; transaction; activation tick; arrival-area,
+  subgroup and route identities as separate things).
+* Indexed group matching: `registerMove` scans every group (`joinIterations`); `awareScan` pairs every group
+  with every mover every 30 ticks. (Done in stage 2: join index, awareness broad phase.)
+* A route-query interface: steering, pinwheel, awareness, packing and rings read `Field::at` /
+  `known` / `done` directly from the monolithic window.
+* Any hierarchy (sectors, regions, portals), sparse tiles, intermediate-route sharing, search-versus-field
+  choice by demand. Every route is a field over a window of the map.
+* Static/dynamic separation: soft bodies and mover corridors are costs inside the same field build, so a
+  traffic change is a field rebuild.
+* Navigation subgroups, shared chokepoint traffic state and admission, multi-entrance arrival.
+* Parallel planning: all Legion work runs on the sim thread inside the serial unit loop / `tick()`.
+
+### Instruments' blind spots relevant here
+
+* The `.scn` suite tops out around 1,000 bodies (`battle-field-2x500`); crowdbench at 2,000 with per-unit
+  goals; `--mpai` Inner Circle moves a handful of units. Before this stage nothing measured 10,000 movers,
+  command latency, first movement, queue age, t99, or memory per workload.
+* `.scn` has no production, economy or AI; factory exits and logistics are covered only by `--mpai`, the
+  Ulasem benchmark and the remote sweep's stress runs.
+
+## 3. Shared interfaces (fixed by the lead)
+
+These are the contracts later stages implement. A stage may refine a field or add one with a recorded reason,
+but must not invent a parallel concept. Sketches are C++-shaped; names are binding, layouts are not.
+
+### 3.1 Logical-order identity (stage 3)
+
+```cpp
+// sim/order_id.h (new), included by net and sim.
+struct OrderId {            // identity of one player intent; hashed wherever stored
+    uint8_t player = 0;
+    uint32_t serial = 0;    // client-assigned, strictly increasing per player per game (0 = none)
+    auto operator<=>(const OrderId&) const = default;
+};
+struct ArrivalAreaId {      // one shared destination area of an order (a queued leg is its own area)
+    OrderId order; uint16_t leg = 0;
+};
+struct NavSubgroupId { uint32_t value = 0; };   // navigator-allocated, deterministic, never a packet chunk
+struct RouteId { uint64_t key = 0; uint32_t planeGen = 0; };  // a route/tile cache identity (3.4)
+```
+
+* `Order` gains `OrderId order` (and its leg index). `convoyTick` stays as the compatibility key for
+  commands that carry no `OrderId` (AI, scripts, old per-unit commands); everything Legion keys on a click
+  (points, groups, soft-arrival ownership, formations, flight stations, patrol legs, awareness `command`,
+  cancellation, hashing, observers) moves to `OrderId` when present, falling back to `(player, convoyTick)`.
+* Wire (stage 3 owns the details; the shape is fixed): a bounded **selection-order transaction**
+  `OrderBegin{OrderId, verb, queue, point/target, shape, memberCount}`, one or more
+  `OrderMembers{OrderId, chunk, unit ids[, per-unit offsets for non-shared members]}`, `OrderCommit{OrderId,
+  memberCount, membersDigest}` or `OrderAbort{OrderId}`. Chunks never form separate formations or crowds.
+  The server validates framing, limits (members per order, open orders and bytes per sender) and sequence,
+  and gives a committed order one **activation tick**; ownership/existence checks run in the sim, where that
+  state is, deterministically, at activation. Ordinary commands are never starved behind a transaction.
+* Limits are constants in `net/protocol.h` next to `kCmdCapPerTick`.
+
+**Amended at stage 3 (as implemented; reasons).**
+
+* `OrderId` is not a separate struct in `Order`: the issuing player is the member's owner at activation (the
+  sim refuses any other player's unit), so a leg stores only `Order::orderSerial` (cold tail; line 1 is full),
+  and the wire carries `net::SelectionOrder{serial, tmpl, shape, members}` inside `net::Cmd::Order`.
+* **The arrival area is the key the click consumers use, not the order.** The A1 decision (wall-4x50's four
+  selections to one point on ticks 1-4 are one destination) makes an area something several orders can share,
+  so `ArrivalAreaId = {OrderId, leg}` would have split those crowds. The area is the convoy table's convoy, now
+  joined ONCE per explicit order (per class) at its click, and keyed `kExplicitArea | serial` when an explicit
+  order opens it (`ConvoyTable::Convoy::key`, `Order::convoyTick`). Points, groups, soft-arrival ownership,
+  formation slots, the A2 wait, flight stations and patrol legs keep keying on that value, which every member of
+  an order now gets in its activation tick; the order serial is used where "the same order" is meant (the
+  pinwheel part, hashing, observers). A queued leg is its own order, so its own area.
+* No per-member coordinates travel: the right-click move is `OrderShape::Offsets`, and the sim recomputes the
+  clamped offsets from the members' positions at activation (integer Fixed arithmetic).
+* `NavSubgroupId` and `RouteId` are not used yet (stages 6 and 8).
+
+### 3.2 Work and byte accounting (stage 4)
+
+```cpp
+// sim/navbudget.h (new). Deterministic units only: cells touched, relaxations, members scanned.
+enum class NavWork : uint8_t { FieldRelax, FieldInit, PlaneBuild, PlaneRelabel, Registration, Awareness,
+                               SlotSearch, RingBuild, Connectivity, TileBuild, RouteSearch, Count };
+enum class NavClass : uint8_t { Waiting, FirstRoute, AwareRepair, StaleRefresh, Count };  // service classes
+struct NavJobKey { uint8_t kind; uint32_t planeGen; uint64_t inputKey; };   // ONE job per key, shared
+struct NavJob { NavJobKey key; NavClass cls; uint32_t enqueued; uint64_t estimate, deficit; };
+struct NavBudget { uint64_t perTick[size_t(NavClass::Count)]; uint64_t maintenance; };  // constants
+struct NavBytes {           // element counts x fixed element sizes: platform-independent, hashed when a
+    uint64_t planes, fields, tiles, portals, queues, scratch, metadata, inflight;   // policy reads it
+};
+```
+
+* The scheduler serves jobs, not groups: several groups sharing a field share its job and its allocation.
+* Within a class: bounded slices, deterministic deficit round robin, age-based promotion; a job that does not
+  fit does not stop the scan (bounded look-ahead, aging guarantees the big job's turn).
+* `NavBytes` drives cache admission/eviction; heap/allocator overhead is measured separately (the scale
+  suite's `rss_peak_kb` / `heap_kb`, stderr only) and never read by the sim.
+
+**Amended at stage 4 (as implemented; reasons).**
+
+* `sim/navbudget.h` holds `NavWork`, `NavClass`, `NavBytes` (with `NavSize`, the fixed element sizes),
+  `NavAccounting` (observation), `NavBudget` (constants) and the service policy (`navDrr` with `NavCursor`,
+  `navPromote`, `NavAdmit`), header-only so that `navbudget_test` drives the scheduler's own code.
+* **A job is a Field** (one per field serial, however many groups share it); no separate `NavJobKey`/`NavJob`
+  structs: the field already is the unique key, and its scheduler state (`deficit`, `lastServed`) lives in it and is
+  hashed with it. Stage 6's tiles will be jobs the same way (the key then is the tile key of 3.4).
+* **Budgets are per subsystem, each in its own deterministic unit**, not one `perTick[class]` array: the field quota
+  (relaxations + initialisation + ring cells, with the refresh allowance capping the two refresh classes),
+  registration (`kRegBudget`), first plane builds (`kPlaneBuildBudget`) and awareness (`kAwareBudget`), each per
+  window (a tick, or a command batch between ticks). Class shares inside the field quota come from the class order,
+  the refresh allowance and the windows, not from fixed per-class amounts (a fixed share idles when its class is empty).
+* **Round robin over a window**: `navDrr` serves a class's oldest `kWindow` (12; refresh classes `kRefreshWindow` 3)
+  jobs by deficit round robin and admits the next oldest as one leaves. Plain round robin over every job was built
+  first and measured worse: every in-flight awareness refresh progressed slowly at once, outlived the 30-tick
+  awareness cadence and was discarded by the next re-plan (many-1000: discards 41 -> 1,960, arrivals -5%); the
+  window keeps concurrency low enough for jobs to finish, and age promotion bounds the wait behind it.
+* `NavBytes` drives one policy, the field cap (`fieldAllowance`: the potentials plus the unfinished builds' frontiers,
+  kept incrementally in `FieldTotals`); the other categories are observation. Heap and capacity are measured beside
+  it by the tools (SCALE_WALL `heap_kb`, `nav_capacity_bytes`), never read by the sim.
+
+### 3.3 Route-query interface (stage 4/5 seam, stage 5 owns it)
+
+```cpp
+// sim/legion_route.h (new). Consumers state what they need; the provider may be a field window today,
+// sparse tiles tomorrow.
+enum class Reach : uint8_t { Unknown, Reachable, Unreachable };   // Unknown never retires an order
+struct Progress { uint32_t value; uint16_t metric; };              // compare only within one metric
+class RouteView {
+public:
+    Reach reach(int cell) const;                         // proven, from settled data only
+    bool covered(int cell, uint32_t margin) const;       // neighbourhood settled with margin
+    std::optional<Progress> progress(int cell) const;    // nullopt: not settled here
+    int descend(int cell, int goal, int fx, int fz) const;   // next legal step, -1 none known
+    uint64_t geometryEpoch() const;                      // freshness, separate from reach
+};
+// Demand is per subscriber (member id), deduplicated, unbounded in count but bounded in work per tick;
+// a full list never silently drops a subscriber (the current 32-cell `demand` does).
+```
+
+* Metric transitions re-baseline progress explicitly (`Progress::metric`); a tile-local zero never means
+  arrival; changing metric never manufactures headway.
+
+**Amended at stage 5 (as implemented; reasons).**
+
+* `sim/legion_route.h` holds `Reach`, `Progress`, `RouteGrid` (today's storage: the field window, its potentials,
+  build state, serial, geometry epoch and work count) and `RouteView`. A `Field` is a `RouteGrid` plus the builder's
+  state; only the builder reads the cells. View queries: `estimate` (direction guidance: exact where settled, a real
+  way's length where reached; replaces the sketch's tentative-free `descend` input), `known`, `settled`,
+  `covered(cell, margin)`, `reach(cell)` (Unreachable only on a complete, unbounded route that no static change has
+  touched since its build: `RouteGrid::touched`, 7.5 fix round), `progress(cell)`, `metric()` (the route serial),
+  `version()` (the work count: any estimate may change when it does), `geometryEpoch()`, `complete()`, `paused()`,
+  `usable()`, `bounded()`, `softened()`. `descend` stays a navigator function taking a view (it needs the plane's
+  step rule and lane grid); its `check` flag reports a step that a later slice could change.
+* `Progress::metric` is the route serial (64-bit), not a 16-bit counter: serials are already unique per route.
+* **Demand is per cell, not per member id** (`RouteDemand`): one entry per cell with the widest margin, in arrival
+  order, indexed, no cap. Every subscriber's need is an entry until it is met, which is what the sketch asked for;
+  keying by cell keeps the old semantics exactly where the old list never filled (the exact commit 5f60ce54), and a
+  member's entry for a cell it left is still a cell of the route's region (met within the window). Work per tick is
+  bounded by the field quota (the build that meets the entries) and the incremental cover scan.
+* **Consumer needs** (`need`) are demand entries served in the FirstRoute class (`needIds`), apart from a standing
+  member's demand (Waiting class, `setWaited`): served as Waiting they held refreshes back (7.5).
+* Consumers read through `certainValue` / `certainReach`; an uncertain read sets the route's `runOn` (it runs on to
+  done): the "unbounded in count, bounded in work" escalation is the build finishing, never a guess.
+
+### 3.4 Hierarchy identities (stages 6-8)
+
+```cpp
+struct PlaneId  { uint16_t slot; uint32_t generation; };          // a reused slot gets a new generation
+struct SectorId { PlaneId plane; uint16_t sx, sz; };               // kSector cells square (32 to start; measure 16/64)
+struct RegionId { SectorId sector; uint16_t local; uint32_t geometryGen; };   // one connected region in a sector
+struct PortalId { RegionId a, b; uint16_t index; };                // a maximal legal boundary run, per class
+struct TileKey  { PlaneId plane; SectorId sector; uint32_t geometryGen; uint64_t exits, boundaryCost, policy; };
+```
+
+* Regions and portals come from the exact footprint-origin plane and the mover's step rule (diagonal corners
+  included); never circular clearance, never one node per sector.
+* Tile caches compare the full key after a hash match; downstream boundary costs are part of the key.
+* Chokepoint state (stage 8) hangs off `PortalId`: usable width per class, pressure, direction, committed
+  entrants, estimated delay.
+
+**Amended at stage 6 (as implemented; reasons).**
+
+* `sim/legion_hier.h` holds `PlaneId`, `SectorId`, `RegionId`, `PortalId` as sketched (`RegionId::geometryGen` is
+  the sector's generation; `PortalId::index` the run's index on its side), plus `hier::Portal` (the run by value:
+  sectors, regions, side, start, length) and the lazily built `Hierarchy`. Sector size K = 32, chosen by the
+  measurement in 7.6 (16 and 64 measured).
+* There is no separate `TileKey` struct: the key is `Tile` itself (legion.cpp), compared whole (`sameKey`) after a
+  64-bit hash (`tileHash`). Its fields are what the sketch's `exits, boundaryCost, policy` stood for, spelled out:
+  the plane id, sector, region, the generations of both sectors of the exit portal (`gen`, `ngen`), the portal run
+  and side, the boundary costs (`aim` for an aimed tile -- its costs are a function of the run and the aim -- or the
+  exact list), the region's soft levels as the route's command sees them, and the route's mover corridors that
+  reach the region. A tile serves one region, not a whole sector: a sector is never one node.
+* `NavSubgroupId` and `RouteId` stay unused (stage 8 and the stage-7 route dependencies).
+
+**Amended at stage 8 (as implemented; reasons).**
+
+* **Chokepoint state does not hang off `PortalId`**: a portal is per movement plane (its run is in that plane's
+  origins), but one bridge is one queue for every class crossing it. An opening is identified by its cells on the
+  boundary line, `(side, line, lo, hi)`, the same for every plane when the same obstacles bound it (`Opening`,
+  `openingIndex`); per plane, each sector side's openings are cached by both sectors' generations. Width is the
+  physical one (cells); a class's lanes follow from it.
+* **A navigation subgroup is a group**: no `NavSubgroupId` type. A big group's squares moved to another passage become
+  a new Legion group of the same order (`splitGroup`), with a navigator-allocated id (deterministic, never a packet
+  chunk), its own route and field, judged on its own afterwards; the order's other per-order state (its point, its
+  formation, its crowd bound) is shared through the point as before. Awareness by streams (one mover per separate part)
+  was built and rejected (7.8), so awareness keeps one mover per destination area.
+* **A destination area can span orders**: an explicit order to a point an earlier explicit area of the same player
+  still gathers at takes that area's key (`sharedArea`); `ArrivalAreaId` stays the convoy key as amended at stage 3.
+
+**Amended at stage 7 (as implemented; reasons).**
+
+* A route's static dependencies are its own tiles (`RouteGrid::allow`; a window: its box), tested per changed cluster
+  (`StaticChange`: box, closes, opens) -- no separate `RouteId` index: `staticChanged` already walks the groups once
+  per change, and the per-cluster test against each route's tiles is the dependency check the brief asks for. A
+  sector -> routes reverse index would make that walk O(affected); not needed at the measured group counts (many-10000:
+  ~800 groups, a change every 10 ticks in the churn rows).
+* Tiles are split by what their key holds: **static tiles** (no soft level, no corridor: geometry and boundary only,
+  the same for every command and player) and **traffic corrections** (the route's traffic view in the key), in two
+  caches with their own allowances (48 + 16 MiB, the stage-6 total of 64). The `TileKey` of the sketch is still
+  `Tile` itself.
+* Chain nodes are versioned: a node re-resolved on newer geometry (`resolveChainNode`) takes the current generations;
+  a chain whose nodes span geometry epochs is touched (never proves Unreachable) -- the "versioned repair rule" of
+  the brief.
+
+## 4. The scale suite (stage 1)
+
+`tools/scenarios/scale/` (generated by `gen_scale.py`, committed) and the driver `tools/legion_scale.py`.
+The files are NOT in the nightly or the `baseline.json` gate (they are too large for every commit); they are
+run at each stage's end and at the final report. Every file says `probe scale` and `uplink 16`.
+
+| Family | Sizes | What it stands for |
+|---|---|---|
+| `one-N` | 100, 1000, 2500, 5000, 10000 | one large selection through the uplink mirror; map grows with N, fixed 160-cell gap (constant-density scaling) |
+| `many-N` | 100, 1000, 2500, 5000, 10000 | N/25 squads clicked to distinct distant tiles over 600 ticks, two allied players: many selections, independent destinations, low sharing |
+| `swap-N` | 1000, 2500, 5000, 10000 | constant 768x768 map, two allied armies exchange sides head on: crowd-density stress at a constant map, opposing streams |
+| `bridges-N` | 1000, 10000 | river with bridges 4/12/32 cells wide, armies crossing both ways: multiple passages, narrow bridge, crossings |
+| `maze-N` | 1000, 10000 | walled compound, doors, central room (85%), island behind one bridge (10%), sealed box (5%, unreachable) |
+| `mixed-N` | 1000, 10000 | one Alt+1 formation: footprints 1..4, speeds 1.4..2.6, hovers and flyers, across a lake |
+| `attack-N` | 1000, 10000 | armed army attacks a smaller armed force walking away: moving target, rings, deaths |
+| `churn-N` | 1000, 10000 | four re-clicks (replacement), half stopped and re-clicked (cancellation), a rock placed/lifted every 10 ticks on the route (static churn), a tenth sent into a sealed box |
+| `idle-10000` | 10000 | 1,000 movers through 9,000 idle bodies (moving vs idle) |
+| `sched-load` | 480 | (added at stage 4) 48 squads re-clicked to far tiles every 160 ticks and a rock walking across the map: field requests faster than the quota serves them for the whole run (service fairness and request age under load; ctest `legion_sched_load`) |
+
+Metrics (`tools/legion_scale.h`, keys `scale.*`, deterministic, integer): command delivery (`deliver.*`),
+first useful movement and the last member to start (`start.*`), navigation service delay as the longest run
+a body spent Waiting for a usable field (`wait.max`, `wait.p99`), physical arrival t50/t90/t99/last
+(`arrive.*`) apart from order completion (`complete.*`, `complete_outside_n`, `open_inside_end`), path
+length against the straight line to the disc edge (`path_x1000.*`), moving bodies (`moving.*`), deadlock and
+livelock at the end (`stuck_end`, `livelock_end`), throughput (`throughput.peak300`), navigator containers
+and bytes (`nav.*`). The observer's own keys (gate crossings, reversals, contact, work counters) are in the
+same JSON line. Wall time per run (stderr `SCALE_WALL`): tick mean/p50/p99/max, ticks over 33.3 ms, peak RSS,
+malloc heap; with `TAK_PHASE` the per-phase breakdown (combat, sep, vis, scripts, movement, nav, ...).
+
+The **real client/server path** is measured separately: `takserver --local` plus a headless `takclient
+--mpai` with `TAK_STRESS` (every slot filled to ~95% of the 2,000-unit cap) and `TAK_AUTOPLAY_FORMATION` (the
+human seat sends its whole army as one Alt+1 AttackMove every 600 ticks, one command per unit through
+`GameView::issue`); the debug-only `FORMATION_DELIVERY` line gives the issue tick and the ticks the first and
+last of its commands came back applied. It is limited to one player's 2,000-unit cap; the 10,000-unit case
+goes through the scale suite's uplink mirror (the same constants, `issue_selection_test`). Stage 3 adds a
+10,000-unit real-path case (a cap override for the harness) when it changes the transport.
+
+## 5. Commands
+
+```sh
+# builds (worktree): build-o2 = Debug -O2 (harness CLI kept), build = Release
+cmake -S . -B build-o2 -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS=-O2 -DCMAKE_C_FLAGS=-O2 \
+  -DTAK_STATIC_DEPS_PREFIX=$HOME/TAK/third_party/static-deps -DTAK_FFMPEG_PREFIX=$HOME/TAK/third_party/ffmpeg-bink \
+  -DTAK_TEST_DATA=$HOME/TAK/assets/game
+taskset -c 4-23 cmake --build build-o2 -j20
+# scale suite (one run per job, workers=3, TAK_PHASE on)
+python3 tools/legion_scale.py run --bin build-o2/legion_scenario --out OUT --cores 4-23 --per-job 4
+python3 tools/legion_scale.py report --results OUT/results.jsonl --markdown
+python3 tools/legion_scale.py check --results OUT/results.jsonl --targets tools/scenarios/scale/targets.json
+# Legion scenario gate (every tools/scenarios/*.scn, both modes, gate offsets), then
+python3 tools/legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results RUN.jsonl
+# --mpai (scratch XDG dirs; Legion with TAK_LEGION=1): takserver --port P --data D --no-auth --local --seed 1,
+# then TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy takclient game "Inner Circle" --data D --server 127.0.0.1
+#   --serverport P --mpai --time 300   (and --time 60)
+sh tools/check-determinism.sh
+ctest --test-dir build-o2 -L quick -j20      # scratch XDG_DATA_HOME, no TAK_SETTINGS_FILE export
+# exact stages (stage 2 on): identity against a build of the previous head (base cache under ~/.cache/tak-identity)
+tools/legion_identity.sh --base BASE/build-o2 --cand build-o2 --replays ~/tak-tmp/scratch/land-we3/rp \
+  --data ~/TAK/assets/game --cores 4-23 -j 20 [--verify]   # --verify: rerun the ctest section without it (7.2)
+# the brute-force references: TAK_LEGION_VERIFY=1 legion_scenario F --mode legion --workers --offsets 0 (debug builds)
+# stage 5: the route consumers on paused routes (every first build pausable), and the paused-route ctest's script
+#   legion_scenario F --mode legion --offsets 0 --scale --pause-all     (scale keys route.needs.*, route.run_on.*)
+#   TAK_LEGION_VERIFY=1 TAK_SIM_WORKERS=3 python3 tools/legion_route_paused_test.py build-o2/legion_scenario tools/scenarios --data DATA
+# wall-time A/B: compare arms on the SAME core set (0-7 P-cores, 8-23 E-cores), from copied binaries
+# stage 7: the new tests and their mutations (each must fail; scratch stage7/tools/mutants.py edits legion.cpp, rebuilds,
+#   runs the test, restores); licences from the gate's check output plus an offset-0 --scale run per moved fixture
+#   (scratch stage7/license7.py CHECK BASE.jsonl NEW.jsonl ATTR_DIR [--apply]); AddressSanitizer: build-asan (-O1)
+#   legion_world_test / legion_scenario on the lifetime-sensitive cases (7.7)
+# stage 8: rendered frames: legion_scenario F --dump-units N (DUMP lines; scratch stage8/tools/crop.py renders a tick);
+#   dev A/B: scratch stage8/tools/ab.py run BIN OUT FILES --offsets 0,1,-1 / ab.py cmp BASE NEW; licences:
+#   stage8/tools/license8.py CHECK BASE.jsonl NEW.jsonl ATTR_DIR [--apply] (ATTR_DIR: an offset-0 --scale run per fixture,
+#   stage8/tools/attr.py); one scale file against bounds: tools/legion_scale_check.py BIN SCALE_DIR NAME --min K=V --max K=V
+# stage 9: the parallel jobs against --serial at 1/3/7 workers, perturbed, forced inline under verify:
+#   python3 tools/legion_parallel_test.py build-o2/legion_scenario tools/scenarios/scale --data DATA [--quick]
+#   (ctest legion_parallel); one run's jobs: legion_scenario F --navpar [--par-force] [--par-perturb SEED] (NAVPAR on stderr)
+#   wall A/B: scratch stage9/ab/phase.sh OUT SCN TICKS BIN_A BIN_B (TAK_PHASE means, --no-observer --no-vertex-probe,
+#   the arms at once on cores 8-11 / 12-15, then swapped); profiles: gperftools (LD_PRELOAD=libprofiler.so.0) read by
+#   scratch stage9/tools/prof3.py (cumulative under a FOCUS frame) and prof2.py (children of a frame)
+# final (7.10; scratch final/): before/after wall A/B, before-bin (c4233fb9) against after-bin on the same 5,000 ticks:
+#   bash final/ab.sh OUT TICKS SCN...  (arms at once on 8-11 / 12-15, then swapped; summary by final/absum.py)
+#   report tables: python3 final/report.py BEFORE.jsonl[,MORE.jsonl] AFTER.jsonl; frozen targets by kind:
+#   python3 final/targets_cat.py tools/scenarios/scale/targets.json BEFORE_CHECK.txt AFTER_CHECK.txt
+#   crowdbench bisect over the stage heads: bash final/bisect/run.sh (worktree ~/tak-tmp/wt/legion-10000-bisect)
+```
+
+## 6. Stage 1 record: baselines and acceptance tests
+
+**Hypothesis.** Nothing measured Legion at thousands of simultaneously moving bodies; before any change,
+build workloads and metrics that can tell responsive, correct large armies from bodies standing still, and
+freeze numerical targets for them.
+
+**Classification.** Tools, tests and docs only. No simulation change: the scale probe is observation-only
+(`legion_scale_neutral`), the client probe is debug-only stderr, and every hash below equals the starting
+revision's recorded value.
+
+**Touched code.** `tools/legion_scale.{h,py}`, `tools/legion_scenario.cpp` (`probe scale`, `--scale`,
+`SCALE_WALL`), `tools/legion_scn.h` (directive, per-unit issued-command counts and per-click delivery marks
+in `OrderFeed`), `tools/scenarios/scale/` (`gen_scale.py`, 25 `.scn`, `targets.json`,
+`baseline-c2c25707.jsonl`), `tools/scenarios/README.scn-format.txt`, `CMakeLists.txt` (two ctests),
+`tools/ctest_costs.txt`, `src/client/gameview{.h,_net.cpp}` (debug-only `FORMATION_DELIVERY`).
+
+**Commits.** aa91fb2f (suite and probe), dc772126 (fixes from its codex review: per-click delivery,
+quantile populations, checker exit on missing rows, runner slot/marker handling, ctest exit status), and
+the commit carrying this record (second review's fixes: delivery marks per click within a tick, report-only
+targets with missing metrics; `targets.json`; the baseline file; this section).
+
+### Machine and build
+
+Intel Core Ultra 9 275HX (24 cores, no SMT, governor `performance`), 125 GB RAM, Fedora (Linux 7.2.9),
+GCC 16.2.1, `build-o2` = Debug with `-O2` (ccache + mold). Scale runs: one run per (file, mode), offset 0,
+workers exec with `TAK_SIM_WORKERS=3` (what `SimPool::defaultWorkers` picks on a 24-thread machine), each job
+pinned to its own 4 cores of 4-23, five jobs at once, `TAK_PHASE=1 TAK_PHASE_MS=0` (per-phase wall time, which
+itself costs a little). Game speed 1x (30 Hz, 33.3 ms a tick). Wall numbers are single runs under that load:
+indicative, never gated; stage 9 repeats the ones it compares as A/B pairs.
+
+### Checks on the starting revision (c2c25707; exact commands)
+
+| Check | Command | Result |
+|---|---|---|
+| Legion scenario gate, every `tools/scenarios/*.scn` (135), both modes, gate offsets, serial and workers | `sweep_both.py build-o2/legion_scenario OUT 4-19` (the nightly's `legion_scenario FILE --mode M --json --offsets gate --data ~/TAK/assets/game` per file and mode), then `python3 tools/legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results OUT/scenarios.jsonl` | **PASS**: 31,753 keys, 0 failed (1,563 ratchets, 2,265 licensed, 216 floor exceptions, 864 report-only); no runner problems; every `hash@` equal |
+| `--mpai` Inner Circle seed 1, 300 s | `takserver --port P --data ~/TAK/assets/game --no-auth --local --seed 1`; `TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy takclient game "Inner Circle" --data ... --server 127.0.0.1 --serverport P --mpai --time 300` (Legion: `TAK_LEGION=1`), scratch XDG dirs | Retail **7535cb08ee787b75**, Legion **c707e1a8063bc0c7** (= the protocol-266 record) |
+| `--mpai` 60 s | as above, `--time 60` | Retail **2c39430636a3dbda**, Legion **532539f51d70840b** (equal again with the stage-1 client) |
+| Cross-build determinism | `sh tools/check-determinism.sh` | OK, golden **dcef618cd2e4d558** |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j20 --timeout 900` (scratch `XDG_DATA_HOME`/`XDG_CONFIG_HOME`, no `TAK_SETTINGS_FILE`) | **375/375 passed** (with the stage-1 tools built) |
+| New ctests | `ctest --test-dir build-o2 -R legion_scale_` | `legion_scale_neutral` (66 s, cost-listed so not `quick`) and `legion_scale_one100` pass |
+
+**Inherited failures.** None in the checks above. Not run at this stage: the non-quick ctests (the
+`nightly` label and cost-listed tests), crowdbench, `legion_cost`, the identity harness, Windows/macOS.
+The last nightly logs were not read here; a later stage that needs them reads
+`~/tak-tmp/nightly-win/latest.log` and the Linux nightly's output first.
+
+### Real client/server delivery (1,900 bodies)
+
+`CORES=20-23 e2e.sh build-o2 OUT 120` (scratch script: the `--mpai` pair on **Ulasem Arena**, seed 1, client
+`TAK_STRESS=1 TAK_MONARCH_EXPENDABLE=1 TAK_AUTOPLAY_FORMATION=1`; Inner Circle ended at tick ~160 when a
+monarch died in the stress fight, so it cannot carry the probe). The human seat's army (1,900 bodies, 3,800
+commands: SetSquad + AttackMove per body) every 600 ticks:
+
+| order issued at | Legion first / last command applied | Retail first / last |
+|---|---|---|
+| 600 (3,800 commands) | 603 / 662 | 603 / 662 |
+| 1200 (3,762) | 1204 / 1262 | 1203 / 1261 |
+| 1800 (3,590) | 1804 / 1860 | 1803 / 1859 |
+| 2400 (3,320) | 2403 / 2454 | 2403 / 2454 |
+| 3000 (3,150) | 3004 / 3053 | 3003 / 3052 |
+
+So the real path delivers exactly 64 commands a tick per client after a 3-4 tick start: about 2 s for a
+1,900-body order (two commands each). The uplink mirror's 10,000-body click (one command each, 16-tick round
+trip) takes 308 ticks (10.3 s). Run hashes: Legion dd5f2845da084390, Retail 625643300260e8cc (3600 ticks).
+
+### Scale suite baseline (c2c25707)
+
+`python3 tools/legion_scale.py run --bin build-o2/legion_scenario --out OUT --cores 4-23 --per-job 4`
+(37 jobs: 25 Legion, 12 Retail, 21 minutes). Every job exited 0; a second full run with the reviewed probe
+gave the same 37 state hashes (the probe cannot touch the sim). Trimmed results:
+`tools/scenarios/scale/baseline-c2c25707.jsonl` (the `--base` for later stages); full results with every
+observer key: `~/tak-tmp/scratch/legion-10000/base/scale2/results.jsonl`.
+
+Times are ticks from each body's click (-1: fewer than the quantile ever arrived). "arrived" is physical
+arrival in the click's packed disc; "completed" is order completion (in brackets, completions outside the
+disc). Phase columns are per-tick p99.
+
+| scenario | mode | bodies | deliver max | start last | wait max | arrived | arrive t50/t90/t99 | completed (outside disc) | stuck / livelock | groups | nav MB | tick mean / p99 / max ms | over 33 ms | RSS MB | movement / nav / explore p99 ms |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| one-100 | legion | 100 | 1 | 9 | 0 | 100/100 | 1661/2235/2465 | 100 (0) | 0 / 0 | 2 | 0 | 0.1 / 0.1 / 1.9 | 0 | 13 | 0.05 / 0.01 / 0.05 |
+| one-100 | retail | 100 | 1 | 4 |  | 100/100 | 2037/2553/2704 | 100 (0) | 0 / 0 |  |  | 0.1 / 0.2 / 0.8 | 0 | 9 | 0.06 / 0.0 / 0.05 |
+| one-1000 | legion | 1000 | 23 | 65 | 0 | 809/1000 | 2879/-1/-1 | 999 (191) | 1 / 1 | 2 | 2 | 0.6 / 1.1 / 3.2 | 0 | 27 | 0.63 / 0.05 / 0.27 |
+| one-1000 | retail | 1000 | 23 | 26 |  | 261/1000 | -1/-1/-1 | 121 (0) | 94 / 5 |  |  | 1.0 / 1.1 / 2.4 | 0 | 32 | 0.65 / 0.0 / 0.18 |
+| one-2500 | legion | 2500 | 71 | 90 | 0 | 808/2500 | -1/-1/-1 | 2317 (1519) | 60 / 17 | 6 | 7 | 2.1 / 3.6 / 5.6 | 0 | 55 | 2.6 / 0.11 / 0.43 |
+| one-5000 | legion | 5000 | 150 | 219 | 0 | 1532/5000 | -1/-1/-1 | 4316 (2790) | 449 / 34 | 10 | 18 | 5.9 / 10.0 / 10.8 | 0 | 92 | 7.85 / 0.32 / 0.45 |
+| one-10000 | legion | 10000 | 308 | 652 | 0 | 1866/10000 | -1/-1/-1 | 6257 (4394) | 1741 / 95 | 20 | 61 | 12.5 / 18.6 / 27.7 | 0 | 180 | 14.71 / 1.65 / 0.95 |
+| one-10000 | retail | 10000 | 308 | 310 |  | 595/10000 | -1/-1/-1 | 71 (0) | 8387 / 0 |  |  | 8.4 / 9.4 / 15.1 | 0 | 123 | 6.14 / 0.0 / 0.89 |
+| many-100 | legion | 100 | 0 | 9 | 0 | 98/100 | 475/1616/-1 | 98 (2) | 1 / 0 | 8 | 0 | 0.1 / 0.2 / 0.9 | 0 | 10 | 0.11 / 0.01 / 0.03 |
+| many-100 | retail | 100 | 0 | 3 |  | 92/100 | 689/1144/-1 | 100 (8) | 0 / 0 |  |  | 0.1 / 0.2 / 0.4 | 0 | 7 | 0.07 / 0.0 / 0.03 |
+| many-1000 | legion | 1000 | 0 | 19 | 0 | 794/1000 | 3149/-1/-1 | 786 (25) | 92 / 22 | 80 | 14 | 1.4 / 3.0 / 4.0 | 0 | 40 | 1.46 / 1.5 / 0.2 |
+| many-1000 | retail | 1000 | 0 | 4 |  | 813/1000 | 3030/-1/-1 | 993 (185) | 0 / 0 |  |  | 0.8 / 1.2 / 1.5 | 0 | 20 | 0.65 / 0.0 / 0.2 |
+| many-2500 | legion | 2500 | 0 | 217 | 13 | 785/2500 | -1/-1/-1 | 647 (10) | 1395 / 48 | 200 | 39 | 3.9 / 7.2 / 12.5 | 0 | 88 | 2.97 / 3.88 / 0.5 |
+| many-5000 | legion | 5000 | 0 | 67 | 73 | 470/5000 | -1/-1/-1 | 275 (13) | 3819 / 72 | 400 | 110 | 6.8 / 9.0 / 15.5 | 0 | 196 | 4.13 / 3.77 / 0.65 |
+| many-10000 | legion | 10000 | 0 | 248 | 25 | 546/10000 | -1/-1/-1 | 267 (15) | 9164 / 100 | 800 | 180 | 13.2 / 15.3 / 16.9 | 0 | 353 | 8.16 / 4.05 / 0.86 |
+| many-10000 | retail | 10000 | 0 | 4 |  | 587/10000 | -1/-1/-1 | 313 (0) | 8695 / 2 |  |  | 12.7 / 15.4 / 19.7 | 0 | 173 | 10.61 / 0.0 / 0.85 |
+| swap-1000 | legion | 1000 | 23 | 45 | 0 | 824/1000 | 8074/-1/-1 | 990 (171) | 2 / 2 | 4 | 12 | 1.1 / 2.7 / 5.6 | 0 | 83 | 1.95 / 0.46 / 0.28 |
+| swap-1000 | retail | 1000 | 23 | 26 |  | 0/1000 | -1/-1/-1 | 0 (0) | 461 / 1 |  |  | 1.2 / 1.5 / 5.9 | 0 | 66 | 0.86 / 0.0 / 0.23 |
+| swap-2500 | legion | 2500 | 71 | 145 | 0 | 1721/2500 | 8809/-1/-1 | 2027 (396) | 5 / 4 | 8 | 19 | 4.1 / 7.8 / 9.6 | 0 | 114 | 5.9 / 0.85 / 0.69 |
+| swap-5000 | legion | 5000 | 150 | 243 | 0 | 1308/5000 | -1/-1/-1 | 1474 (195) | 2521 / 46 | 12 | 29 | 7.8 / 13.6 / 15.7 | 0 | 136 | 10.39 / 1.54 / 0.71 |
+| swap-10000 | legion | 10000 | 308 | 437 | 0 | 915/10000 | -1/-1/-1 | 378 (0) | 8037 / 86 | 20 | 47 | 12.1 / 16.7 / 20.5 | 0 | 167 | 12.1 / 1.76 / 0.96 |
+| bridges-1000 | legion | 1000 | 23 | 45 | 0 | 10/1000 | -1/-1/-1 | 8 (0) | 537 / 34 | 4 | 12 | 1.4 / 2.5 / 5.6 | 0 | 102 | 1.53 / 0.55 / 0.22 |
+| bridges-1000 | retail | 1000 | 23 | 26 |  | 2/1000 | -1/-1/-1 | 0 (0) | 883 / 0 |  |  | 1.1 / 1.4 / 6.0 | 0 | 61 | 0.77 / 0.0 / 0.22 |
+| bridges-10000 | legion | 10000 | 308 | 526 | 0 | 0/10000 | -1/-1/-1 | 0 (0) | 9020 / 79 | 20 | 47 | 15.2 / 20.5 / 26.7 | 0 | 164 | 15.21 / 1.74 / 0.85 |
+| maze-1000 | legion | 1000 | 23 | 32 | 0 | 365/1000 | -1/-1/-1 | 655 (291) | 29 / 15 | 6 | 18 | 1.5 / 2.6 / 7.7 | 0 | 167 | 1.79 / 0.49 / 0.26 |
+| maze-1000 | retail | 1000 | 23 | 25 |  | 140/1000 | -1/-1/-1 | 116 (44) | 414 / 1 |  |  | 1.1 / 1.4 / 10.5 | 0 | 88 | 0.75 / 0.0 / 0.26 |
+| maze-10000 | legion | 10000 | 308 | 546 | 0 | 1468/10000 | -1/-1/-1 | 1142 (289) | 6139 / 127 | 20 | 67 | 17.2 / 20.4 / 26.5 | 0 | 236 | 15.85 / 1.88 / 0.89 |
+| mixed-1000 | legion | 1000 | 53 | 60 | 0 | 636/1000 | 7515/-1/-1 | 448 (0) | 52 / 16 | 5 | 5 | 4.8 / 10.7 / 19.7 | 0 | 62 | 1.86 / 0.05 / 8.36 |
+| mixed-1000 | retail | 1000 | 53 | 54 |  | 100/1000 | -1/-1/-1 | 0 (0) | 371 / 5 |  |  | 3.8 / 9.1 / 16.0 | 0 | 35 | 0.72 / 0.0 / 8.12 |
+| mixed-10000 | legion | 10000 | 622 | 623 | 0 | 2430/10000 | -1/-1/-1 | 1978 (0) | 4769 / 174 | 13 | 65 | 61.9 / 103.4 / 198.9 | 19013 | 355 | 16.28 / 1.9 / 85.26 |
+| attack-1000 | legion | 1100 | 33 | 61 | 0 | 99/99 | 3182/4264/5741 | 98 (0) | 0 / 0 | 8 | 12 | 0.9 / 2.0 / 3.5 | 0 | 76 | 0.97 / 0.58 / 0.19 |
+| attack-1000 | retail | 1100 | 33 | 35 |  | 100/100 | 3584/4487/4708 | 97 (0) | 0 / 0 |  |  | 1.1 / 1.2 / 6.7 | 0 | 45 | 0.6 / 0.0 / 0.26 |
+| attack-10000 | legion | 11000 | 339 | 1084 | 1 | 895/996 | 3033/-1/-1 | 971 (90) | 5 / 3 | 29 | 66 | 10.1 / 17.3 / 19.3 | 0 | 188 | 11.16 / 2.39 / 0.96 |
+| churn-1000 | legion | 1000 | 23 | 117 | 0 | 465/1000 | -1/-1/-1 | 1000 (539) | 0 / 0 | 6 | 5 | 0.7 / 1.6 / 3.7 | 0 | 40 | 0.87 / 0.44 / 0.27 |
+| churn-1000 | retail | 1000 | 23 | 726 |  | 351/1000 | -1/-1/-1 | 272 (29) | 38 / 13 |  |  | 1.1 / 1.3 / 3.2 | 0 | 35 | 0.73 / 0.0 / 0.23 |
+| churn-10000 | legion | 10000 | 498 | 1637 | 0 | 2174/10000 | -1/-1/-1 | 9999 (7828) | 0 / 0 | 22 | 96 | 10.7 / 22.4 / 33.6 | 1 | 249 | 16.5 / 2.44 / 1.32 |
+| idle-10000 | legion | 10000 | 23 | 68 | 0 | 32/1000 | -1/-1/-1 | 28 (0) | 685 / 25 | 2 | 5 | 4.1 / 4.9 / 9.1 | 0 | 94 | 2.39 / 0.13 / 0.23 |
+
+What the baseline says:
+
+1. **Command delivery dominates responsiveness at scale.** A 10,000-body click is delivered over 308 ticks
+   (10.3 s); its last member starts moving after 652 ticks (21.7 s; churn's re-clicks 1,637). `wait.max` (the
+   longest a body waited for a usable field) is 0-73 ticks: field service is not the bottleneck in these
+   workloads, delivery and activation are.
+2. **One click becomes many crowds.** The 33-tick convoy limit splits a 10,000-body click into 20 Legion
+   groups (`groups` = 20), several points and formations.
+3. **Arrival collapses with population.** One selection: physical arrival 100% at 100 bodies, 81% at 1,000,
+   32% at 2,500, 31% at 5,000, 19% at 10,000, while most orders still complete (outside the disc: 191 at
+   1,000, 4,394 at 10,000 settle short behind their own crowd). Many independent selections: 98%, 79%, 31%,
+   9%, 5% (Retail 92%, 81%, -, -, 6%), with 9,164 bodies stuck at 10,000. Head-on exchange on one map: 82% at
+   1,000 down to 9% at 10,000. Bridges: both armies take the nearest (12-cell) bridge, the 4- and 32-cell
+   bridges carry nothing, and the crossing jams (1% and 0% arrive; Retail 0%). Idle obstacles: 3% of 1,000
+   movers get past 9,000 idle bodies.
+4. **Whole-tick cost is not yet the binding limit, except one non-navigation phase.** Legion at 10,000 bodies:
+   tick mean 10-17 ms, p99 15-22 ms with three workers; `movement` (per-unit steering, serial for Legion) is the
+   largest phase (p99 8-17 ms), `nav` (Legion's tick) p99 about 4 ms at most. `mixed-10000` blows the budget (mean
+   62 ms, 19,013 of 19,400 ticks over 33.3 ms) in the `explore` phase (p99 87 ms) driven by its 1,000 flyers,
+   outside Legion: recorded as a remaining non-navigation bottleneck for stage 9's report.
+5. **Memory.** Peak RSS 94-356 MB per 10,000-body run; the navigator's own estimate 5-180 MB (`many-10000`:
+   800 live groups, 180 MB).
+
+### Frozen acceptance targets
+
+`tools/scenarios/scale/targets.json` (212 targets, frozen 2026-10-15 from this baseline; change only with a
+recorded reason; the one change so far, before any stage was evaluated, came from the review of a8cfc974:
+unreachable orders get an allowance in the outside-completion cap, and `attack-*`'s point bodies, the fleeing
+enemies, carry no arrival targets because their arrival is their survival). Checked with `legion_scale.py check`:
+
+* Retail: every Retail row's state hash equal to the starting revision's.
+* Legion, every file of 1,000+ bodies: a whole click delivered within 30 ticks; its last member moving within
+  90 ticks; no body waiting more than 60 ticks for navigation; no livelock at the end.
+* Legion physical arrival of at least 99% of the reachable bodies (one, swap, idle) or 97% (many, bridges,
+  maze, mixed, churn), no reachable body stuck at the end, at most 2% of the reachable orders completing
+  outside their disc (plus the unreachable ones, which retire outside it by design);
+  `one-N` t99 within 1.5x the slowest body's straight run, `swap-N` within 2x; bridges using both alternative
+  bridges; the attack ring at least as many shooters as at the start.
+* Small populations (100 and 1,000): arrival count and t90/t99 no worse than the starting revision (5%).
+* Report only: tick p99 within 33.3 ms and no tick over budget at 10,000 bodies on this machine.
+
+At the starting revision: **99 met, 110 missed, 3 report-only missed** (`check` exit 1, as expected: the
+program's targets). Unmet targets after stage 9 are reported as such, not re-frozen.
+
+### Open issues from stage 1
+
+* The 10,000-body real-path case needs a unit-cap override for the harness (one player's cap is 2,000);
+  stage 3 adds it with the transport.
+* `.scn` cannot express production, factory exits or logistics; those stay with `--mpai`, the Ulasem
+  benchmark and the remote sweep.
+* The `idle-10000` and `bridges-*` failures are behaviour limits (idle bodies never step aside; no
+  congestion-aware passage choice) that stages 6-8 address; they are not capacity-infeasible layouts (open
+  64-cell detours exist round the idle block, and two of three bridges stay empty).
+
+## 7. Stage records
+
+* Stage 1: section 6 (implemented and validated; branch commits aa91fb2f, dc772126 and the record commit).
+* Stage 2: section 7.2 (implemented and validated; fd34151a, 1b8cc086, 946d6972, e290f0ed, 5b6daa11 and the
+  record commit).
+* Stage 3: section 7.3 (implemented and validated; commits listed there).
+* Stage 4: section 7.4 (implemented and validated; commits listed there).
+* Stage 5: section 7.5 (implemented and validated; commits listed there).
+* Stage 6: section 7.6 (implemented and validated; commits listed there).
+* Stage 7: section 7.7 (implemented and validated; commits listed there).
+* Stage 8: section 7.8 (implemented and validated; commits listed there).
+* Stage 9, first half (parallel planning, movement reassessment): section 7.9 (implemented and validated; commits
+  listed there). Second half (final integration, validation and the measured before/after report): section 7.10
+  (implemented and validated; the report is docs/legion-10000-report.md).
+
+### 7.2 Stage 2 record: exact registration, awareness and profiled micro-work (brief phase 1)
+
+**Hypothesis.** `registerMove`'s walk of every group and `awareScan`'s every-group-with-every-mover sampling grow
+with the number of groups and become a per-tick cost with hundreds of groups; both can be narrowed without changing
+a decision. Then profile the 10,000-body workloads and remove demonstrated costs the same way.
+
+**Classification.** Exact. No hashed state, no decision, no wire format changes; no protocol bump (still 266).
+Only work counters (`join_iterations`, `group_loop_iters`, `aware_pairs`, `lane_work`, `legion_total`), the
+in-game `vertex_*` Stats (now zero in the game) and the navigator's memory estimate move.
+
+**Touched code.** `src/sim/legion.{h,cpp}` (join index, broad phase, `setInstrumentProbes`, `Member::gateMemo`),
+`tools/legion_scenario.cpp` (`--no-vertex-probe`; turns the probe on otherwise), `tools/legion_world_test.cpp`
+(probe on), `tools/legion_scale.py` (`run --no-vertex-probe`), `CMakeLists.txt` + `tools/ctest_costs.txt`
+(three verify ctests), `docs/legion-pathfinding.md` (section "Legion 10,000 stage 2").
+
+**What landed (commits).**
+
+| Commit | Change | Reference kept under `TAK_LEGION_VERIFY` |
+|---|---|---|
+| fd34151a | `registerMove` join index: groups keyed by (player, plane, kind, approach, ring target + bucket for a reach kind, else issue key), all fixed at creation; the member walks its entry in id order with the whole predicate unchanged | brute-force walk of all groups on every join (same winner or abort); index against a scan of the groups each tick |
+| 1b8cc086 | `awareScan` broad phase: movers in a 1,024 px grid over their swept boxes grown by `half + max(tail, head) + 66`; a group reads the cells of its descent-chain box grown by `2 rG`; planned movers (`avoidCmd`) always candidates; candidates in mover order | every dropped mover's 31 conflict samples are run; a hit aborts |
+| 946d6972 | the W8 vertex probe (Stats only, read by no decision) runs only under `LegionNavigator::setInstrumentProbes`; on in `legion_scenario` (unless `--no-vertex-probe`) and `legion_world_test`, off in the game | hashes compared probe on / off |
+| e290f0ed | `gateCommit` memo: a static decline (inputs: origin, goal, footprint, field serial, navigator and plane epochs, lane band) is remembered; the same inputs decline again without the walk | every memo hit is recomputed; passing the static checks aborts |
+| 5b6daa11 | ctests `legion_verify_{battle-assault,crosslong,gap8}` (references on) | - |
+
+**Why the broad phase cannot drop an accepted conflict.** A mover outside the plan is accepted only through a
+conflict sample `t`: `|q| <= A = half + rG + 32` and `-(tail + rG + 32) <= s <= head + rG + 32`, where `s`, `q`
+are the offset `P - Q` (group way point minus mover box centre) dotted with `(dx, dz)` and divided, truncated, by
+`L = isqrtFloor(dx^2 + dz^2) <= |(dx, dz)|`. So the true components along and across the heading are under `B + 1`
+and `A + 1` (`B = max(tail, head) + rG + 32`), `|P - Q| < (A + 1) + (B + 1)`, and each coordinate differs by less
+than `(half + max(tail, head) + 66) + 2 rG`. `P` is an interpolation between consecutive chain cell centres
+(`at`), inside the chain's box; `Q = (cx + trunc(dx t / 30), ...)`, `0 <= t <= 450`, inside the box from the
+centroid to `centroid + 15 (dx, dz)`. Overlap of the two grown boxes is necessary; the grid lists a mover in
+every cell its grown box covers and a group reads every cell its grown box covers, with the same monotone
+clamped cell function, so overlapping boxes share a cell. Movers already in the plan are added explicitly
+(a planned crossing stays planned off its box), and the candidate list is sorted, so decisions and the plan's
+order are those of the full walk. The join index is exact because the keyed fields are set only at group
+creation (`g.plane` cannot change while the group lives: a plane slot is reused only when no group uses it)
+and every non-keyed condition is still evaluated, in the same id order.
+
+**Mutation checks (each reference can fail).** A scratch build (`~/tak-tmp/wt/legion-10000-mut`, `TAK_MUT=...`)
+walking each join entry in reverse fails `TAK_LEGION_VERIFY` on battle-assault (tick 260), battle-field-2x250
+(701) and battle-field-2x500 (744) and nowhere else in the 143 files; zero broad-phase margins fail on crosslong
+(tick 435); a memo key without the origin fails on gap8 (466), gapsweep (439) and corner-1x448 (872).
+
+**Profile (gperftools CPU profiler, `LD_PRELOAD=libprofiler.so.0`, 200 Hz, 6,000 ticks, three workers; reader
+`~/tak-tmp/scratch/legion-10000/stage2/prof/pprof.py`).** At the starting revision `registerMove` and `awareScan`
+were each under 0.2% of samples on one-, many- and churn-10000: the two mandated optimisations remove growth,
+not a present cost (counters below). The demonstrated costs were elsewhere: `gateCommit` (about 10% of
+one-10000's samples: the descent walk and cross-sections of uncommitted lane members every tick) and the
+vertex probe (3.8% one-10000, 5.0% churn-10000; 5-7% of the tick). After e290f0ed `gateAim` / `gateCommit`
+left the top of the profile; what remains is flat per-unit steering (`drive` 11-24%: `stepFree`, `yieldLane`,
+occupancy reads), field relaxation (`advance`, 6% of many-10000), and outside Legion `updateNavigationExploration`
+(6-16%, sight/exploration, shared with Retail) and `rebuildSpatial` (3-5%). Investigated and left: World::unit
+self time is cache misses on its fast path (the slow scan never showed); `ringSignature` (3.5% of many-10000) is
+a cheap hash bound by occupancy reads; `descend` takes the member's goal for tie-breaks, so a per-field memo of
+it would not be shared; loops over id high-water marks run only in `checksum()` and verify code, absent from
+the profiles; awareness allocations are per scan (every 30 ticks) and below 0.2%.
+
+**Work counters (scale suite, full runs, starting revision -> stage 2).**
+
+| scenario | join_iterations total (max/tick) | group_loop_iters total | aware_pairs total (max/scan) |
+|---|---|---|---|
+| many-10000 (800 groups) | 8,008,800 (39,972) -> 19,200 (48) | 14,808,992 -> 6,819,392 | 513,064 (6,754) -> 186,608 (1,182) |
+| many-5000 | 2,004,400 (19,972) -> 9,600 (48) | 2,957,970 -> 963,170 | 587,751 (8,200) -> 369,051 (2,255) |
+| many-2500 | 502,200 (9,972) -> 4,800 (48) | 709,364 -> 211,964 | 456,259 (7,626) -> 310,495 (3,202) |
+| churn-10000 | 1,892,810 (2,826) -> 100,898 (128) | 1,926,832 -> 134,920 | 40,976 -> 40,976 |
+| one-10000 | 194,136 (2,500) -> 19,980 (128) | 206,216 -> 32,060 | 18,385 -> 18,385 |
+| bridges-10000 | 203,060 (2,500) -> 19,980 (128) | 228,296 -> 45,216 | 1,867 -> 1,867 |
+
+(`aware_pairs` now counts broad-phase candidates; where every mover was already near every group it is unchanged.)
+
+**Wall time A/B** (`~/tak-tmp/scratch/legion-10000/stage2/ab2/run.sh`: 6,000 ticks, three workers, observer on,
+no `TAK_PHASE`; the three arms of a scenario run at once on cores 4-7, 8-11 and 12-15, rotated over three
+repetitions; each arm compared with the base on the SAME core set, because cores 0-7 are P-cores (5.3-5.4 GHz)
+and 8-23 E-cores (4.7 GHz): a P/E difference of about 20% swamps a single unpaired run). Tick mean, base ->
+stage 2 with the probe on (as the gate runs) / probe off (as the game):
+
+| scenario | cores 4-7 | cores 8-11 | cores 12-15 |
+|---|---|---|---|
+| one-10000 | 13.24 -> 11.37 (-14%) / 10.59 (-20%) | 15.15 -> 13.83 (-9%) / 12.88 (-15%) | 15.29 -> 13.46 (-12%) / 13.20 (-14%) |
+| churn-10000 | 13.74 -> 12.62 (-8%) / 11.34 (-17%) | 16.09 -> 15.10 (-6%) / 14.08 (-13%) | 16.25 -> 14.84 (-9%) / 14.21 (-13%) |
+| swap-10000 | 11.88 -> 11.00 (-7%) / 10.62 (-11%) | 14.24 -> 13.17 (-8%) / 12.45 (-13%) | 13.35 -> 13.86 (+4%) / 12.89 (-3%) |
+| many-10000 | 9.90 -> 9.64 (-3%) / 9.51 (-4%) | 12.04 -> 12.07 (0%) / 11.89 (-1%) | 12.17 -> 12.02 (-1%) / 12.05 (-1%) |
+
+Every run of a scenario gave the same state hash. The full scale-suite runs (five jobs at once, mixed P/E slots)
+are single runs and only indicative; their tick numbers are in `~/tak-tmp/scratch/legion-10000/stage2/scale/`.
+
+**Memory.** `Member::gateMemo` adds 56 bytes a member: the navigator estimate (`scale.nav.bytes_peak`) rises by
+exactly that (one-1000 +56,000 B, +3.3%; 10,000 members +560 kB; +0.07% to +1.9% elsewhere). The join index holds
+one int per group plus one map node per key; the broad-phase grid is per scan.
+
+**Checks (exact commands; base = `~/tak-tmp/wt/legion-10000-s2base` at c4233fb9, build-o2).**
+
+| Check | Command | Result |
+|---|---|---|
+| Identity harness, full, references on | `tools/legion_identity.sh --base <s2base>/build-o2 --cand build-o2 --replays ~/tak-tmp/scratch/land-we3/rp --data ~/TAK/assets/game --cores 4-23 -j 20 --verify --out .../identity/run1` | mpai Legion 300 s **c707e1a8063bc0c7** x2 both builds, Retail **7535cb08ee787b75** x2; replays L/R-bench and L/R-2h final and checkpoint hashes SAME; golden legion/retail SAME; determinism dcef618cd2e4d558 SAME; crowdbench 504 rows SAME; ctest: 68 legion_check_* / legion_cost FAIL only on `work.soft_hash_verify_ticks`, a counter that exists only under `--verify` (an inherited harness limitation: `--verify` cannot be combined with the work-counter gates), plus the three new tests "missing in base" |
+| Identity ctest section without references | same, `--skip mpai,replays,golden,crowdbench,determinism`, no `--verify`, `--out .../identity/run2-ctest` | 355 SAME, the only FAIL rows the three new `legion_verify_*` tests (absent from the base) |
+| `TAK_LEGION_VERIFY` sweep | every `tools/scenarios/*.scn` (135) plus scale `{one,many,churn,swap,maze,bridges,mixed}-1000` and many-2500: `TAK_LEGION_VERIFY=1 TAK_SIM_WORKERS=3 legion_scenario F --mode legion --workers --offsets 0 --json --data ~/TAK/assets/game` | 144/144 exit 0 (join and broad-phase references at fd34151a+1b8cc086, all four at e290f0ed) |
+| Legion scenario gate | `sweep_both.py build-o2/legion_scenario OUT 4-23` then `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results OUT/scenarios.jsonl` | **PASS** 31,753 keys, 0 failed, 1,670 ratchets (1,563 at the start: the new ones are all work counters: join_iterations, group_loop_iters, aware_pairs, legion_total, lane_work, churn.bin0), 2,261 licensed (2,265: four licensed work keys now ratchet), 216 floor exceptions, 864 report-only; every `hash@` equal |
+| `--mpai` 60 s | `CORES=16-23 mpai.sh build-o2 OUT 60` | Retail **2c39430636a3dbda**, Legion **532539f51d70840b** (equal) |
+| Scale suite | `legion_scale.py run --bin build-o2/legion_scenario --out .../stage2/scale --cores 4-23 --per-job 4`; `check --targets tools/scenarios/scale/targets.json --base tools/scenarios/scale/baseline-c2c25707.jsonl` | 37/37 exit 0; every state hash equal to the baseline's; targets **99 met, 110 missed, 3 report-only missed** (identical to the start: an exact stage moves no behaviour key); keys that moved: only `work.legion_total.*`, `work.legion_all.*` and `scale.nav.bytes_peak` |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j20 --timeout 900` (scratch XDG, no `TAK_SETTINGS_FILE`) | **377/377** passed (375 + the two quick verify tests) |
+| New ctests | `ctest -R legion_verify_` | 3/3 pass (battle-assault 11 s, cost-listed) |
+| Release build | `cmake --build build` (all targets) | builds (the references compile out) |
+| Automated commit reviews | `.git/worktrees/legion-10000/codex-reviews/{fd34151a,1b8cc086,946d6972,e290f0ed,5b6daa11}.md` | no actionable findings |
+
+**Inherited versus new failures.** New: none. Inherited: none in these checks; the identity harness's `--verify`
+mode fails the work-counter gates on a verify-only counter (above), a tool limitation recorded here, not fixed
+(changing the harness is out of this stage's scope; run its ctest section without `--verify`, as done).
+Not run: non-quick nightly ctests outside the identity selection, Windows/macOS, the nightly logs.
+
+**Traps met.** The automated reviewer builds in the worktree's `build-o2` while it reviews, so a binary can be
+replaced under a running profile (seen as "(deleted)" in the profile's maps): profile and A/B from a copied
+binary. A `pkill -f` pattern that matched the shell's own command line killed it (memory note
+`pkill-self-match`): kill by exact pid.
+
+**Outstanding.** The two mandated optimisations remove growth that the present scale workloads barely exercise
+(under 0.2% of samples at the start). The 10,000-body tick is now dominated by flat per-unit steering and, outside
+Legion, sight/exploration; neither has an exact structural fix in reach here. Stage 4's budgets and stage 9's
+parallel planning are where the per-tick movement cost is next addressed; stage 9's report also carries
+`updateNavigationExploration` and `mixed-10000`'s `explore` phase.
+
+### 7.3 Stage 3 record: explicit selection orders and scalable command delivery (brief phase 2)
+
+**Hypothesis.** The 10,000-body click is slow and split because the client sends one command per unit through a
+64-a-tick drain (157-308 ticks) and the sim re-infers the click from proximity and timing (20 groups for one
+click). Carrying the click as ONE explicit order with its exact membership, sequenced whole into one tick by the
+server, removes both: command latency becomes one tick whatever the size, and the click's identity is exact.
+
+**Classification.** Behaviour + protocol + replay (protocol 267; `replay_test` refuses 266). Retail is
+bit-identical: Retail clients keep per-unit commands, the sim stamps nothing outside Legion, and the hash folds
+the new fields only when set (convoy key only when it differs from its first tick, `orderSerial` only when
+non-zero). The AI's and scripts' per-unit commands go through the unchanged inference (`ConvoyTable`), so an
+AI-only Legion game is bit-identical too (`--mpai` below).
+
+**Design (as built).** docs/legion-pathfinding.md "Legion 10,000 stage 3" and section 3.1's amendment. In short:
+`net::Cmd::Order` + `net::SelectionOrder{serial, tmpl, shape, members}`; uplink `OrderBegin` / `OrderMembers`
+(varint deltas, at most 2,048 a frame, strictly increasing) / `OrderCommit` (count + FNV digest) / `OrderAbort`;
+server `server/orders.h` (`OrderInbox`) validates framing, template, serials (per connection and above the slot's
+highest activated serial), counts, digest; malformed -- or an order in a Retail game -- fails the connection,
+over the byte budget or the window drops the transaction (logged, and the sender told: `Msg::InputDropped`, fix
+round below); a committed order is ONE FIFO item drained
+whole by a per-tick order budget (96 KiB of records per room, first pick rotating) once the client's per-second
+command budget has room for its members (it waits for it, never dropped), that tick being the activation tick;
+the sim (`applySelectionOrder`) applies every member in increasing id order (so Load and GiveUnit, whose outcome
+depends on that order, stay per-unit commands: fix round, R6) with the ordinary per-unit
+ownership/existence checks, inside a `World::beginOrder` scope that stamps the member's own legs with the
+order's serial and, for Move/Fight/Patrol, the arrival area the order joins once per class at its click.
+Client: `GameView::ClickScope` + `packClick`; one outbox FIFO; orders under their own window (`OrderWindow`, by
+serial, released by the order's bundle or by the server's drop notice), serials assigned
+when an order leaves (a click held through a rejoin's catch-up still gets a fresh serial).
+
+**Limits (per sender).** One open transaction; 16,384 members an order; 64 orders and 384 KiB of records
+queued at the server or in flight from the client; the existing per-second byte budgets (charged at receipt)
+and the command budget (an order's members count as commands, charged when the order is drained: over it the
+order waits); 512 queued ordinary commands, 64 a tick. All budgets are taken all-or-nothing now (a refused
+frame no longer spends part of them, PlayerCommands included). Server memory per sender is
+bounded by one staging buffer (16,384 ids) and 384 KiB of queued records (at most about 390,000 ids, 1.6 MB, with
+the densest encoding); decode work per frame by 2,048 members. (The window was 8 orders until the scale suite
+showed many-10000 -- 400 squads clicked over 600 ticks through one 16-tick round trip -- waiting up to 196 ticks
+for it: the count is generous now and the bytes bound the memory.) No head-of-line starvation: an order never takes command credit and a command never takes order
+window, a big order of one sender never holds another sender's commands, and within a sender nothing overtakes
+what was sent before it (a Stop behind a Move stays behind it, in the same tick when both fit).
+
+**Worst case one sender can force into one tick** (verifier, non-blocking (a)). Before this stage a sender put at
+most 64 unit commands into a tick. Now the bound is the room's order budget (`kTickOrderBytes`, 96 KiB of records a
+tick, about 98,000 members at the densest encoding) and the per-second member budget (65,536 per client and per
+account, 524,288 for the server): one sender can land 65,536 members in one tick (four 16,384-member orders of
+consecutive ids), several senders together up to the 96 KiB. At the measured registration cost (one-10000: about
+39 ms for 10,000 members in `World::order`) that is about 250 ms of `applyCommand` for one sender's 65,536 members,
+and about 380 ms for a tick filled to 96 KiB by several. Stage 4's resumable, budgeted registration (section 8)
+must bound it; nothing in stage 3 does.
+
+**Edge cases and where they are tested.**
+
+| Case | Behaviour | Test |
+|---|---|---|
+| Incomplete transaction (disconnect mid-stream) | discarded with the connection (`Client::clearCommands`); nothing reaches a bundle | `server_orders_test` (clear), rejoin run |
+| Malformed (second Begin, foreign serial, zero delta = duplicate, decreasing across chunks, too many members, bad digest/count, old serial, serial under the floor, forbidden verb, Offsets on a non-Move, unit id in the template, off-range coordinate, truncated/trailing, nested order, unknown shape, id past INT32_MAX) | connection failed, as for invalid PlayerCommands; other accounts unaffected | `server_orders_test`, `server_orders_network` |
+| Abort | discarded; the serial is not reused | `server_orders_test`, `server_orders_network` |
+| Over the byte budget or the window | transaction dropped and logged; the rest activate in serial order; the sender is told (`Msg::InputDropped`, serial) and its window releases the order, so a drop never holds the outbox (the windows are tested before the byte budget is charged) | `server_orders_test` (dropsReleaseTheWindow, the uncharged refusals), `server_orders_network` (200-order burst: every cut serial named once) |
+| Ordinary commands dropped (queue or byte budget) | dropped whole and logged; the sender is told the count and its command window releases them (before this fix round the same leak existed for commands: inherited from c2c25707, fixed here with the same notice) | `server_orders_network` (600 commands past the 512 queue) |
+| Over the per-second member budget | the order waits at the head of its client's FIFO (so does what the client sent after it) until the budget's second turns; never dropped, so the client's window never leaks | `server_orders_network` (7 x 10,000 members) |
+| An order in a Retail game | connection failed (a modified client cannot dodge the 64-a-tick drain) | `server_orders_network` |
+| Legs a member's command gives another unit, or a verb without a click point (Assist's approach move) | per-unit identity, no shared area at the template's (0, 0) | `selection_order_test` (membership) |
+| Dead, gone or given-away member | skipped by the sim's per-unit check at activation | `selection_order_test` (membership) |
+| Order-dependent verbs (Load, GiveUnit) | not order verbs: sent per unit in issue order, as before (an order applies members in id order) | `selection_order_test` (issueOrder) |
+| Several orders in one tick | applied in bundle order: a Stop behind a Move wins, a second Move replaces, a queued (Shift) order appends its own leg and area | `selection_order_test` (sameTick) |
+| Two orders to one point within the area window | one arrival area (decision A1), separate serials | `selection_order_test`, `convoy_test` (sharedArea) |
+| Patrol | outbound and return legs (ground and flyer) carry the order's identity | `selection_order_test`, `convoy_test` |
+| Replay | orders recorded whole in the bundles; strict read validates every order; 266 refused | `selection_order_test` (codec), `replay_test`, replay verify of a recorded Legion game (below) |
+| Rejoin | the bundle log replays the orders; serials continue above the slot's activated floor; a click made during catch-up is sent afterwards with a fresh serial | rejoin run (below) |
+
+**Commits.** 3312368f (wire + server), 2920bd1c (sim application and identity), 887fd663 (client, tools mirror,
+tests, debug harness unit cap), 3b70aea1 (scenario and cost baselines), 956d8dce (order window 8 -> 64 orders, found
+by the scale suite's many-10000), and the commit carrying this record and the docs.
+
+**Review.** An automated high-effort review of the uncommitted diff (read-only) found six bugs and four cleanups;
+all were fixed before the measurements below except one kept by decision: (1) an order the server dropped over the
+per-second member budget never came back, so the client's order window leaked and could lock the outbox -- the
+member budget is now charged at the drain and the order waits instead; (2) explicit Assist/Repair orders opened an
+area at the template's (0, 0) -- only Move/Fight/Patrol orders join an area now; (3) the situation recorder skipped
+`Cmd::Order`; (4) the server accepted orders in Retail rooms -- refused now; (5) legs a member's command gave other
+units got the order's identity -- only the member's own now; (6) members apply in id order rather than selection
+order -- kept and documented (the selection order was incidental). **Both (1) and (6) were reopened by a later
+review and are resolved in the fix round below**: (1) covered only the member budget, and the byte budgets and the
+windows could still drop an order the client never heard of; (6) the order matters for Load and GiveUnit. Cleanups: the record size is cached, the serial is
+set in place at send, `orderSerial` has its line assertion, the budget chain and coordinate check are shared.
+
+### Checks (exact commands; base = stage 2 head 54be13b8, its binaries in `~/tak-tmp/scratch/legion-10000/stage3/base-bin`)
+
+Scratch scripts are in `~/tak-tmp/scratch/legion-10000/` (`mpai.sh`, `sweep_both.py`, `sweep_legion.py`,
+`stage3/e2e.sh` = `e2e.sh` with `TAK_UNITCAP=${UNITCAP}`, `stage3/rejoin.sh`, `stage3/outcome_ab.py`,
+`stage3/license.py`).
+
+| Check | Command | Result |
+|---|---|---|
+| ctest quick | `ctest --test-dir build-o2 -L quick -j4 --timeout 900` (scratch XDG, no `TAK_SETTINGS_FILE`), after rebuilding every target | **380/380** passed (377 + `server_orders`, `selection_order`, `server_orders_network`) |
+| Intermediate commits | each of 3312368f and 2920bd1c checked out in a scratch worktree and built (takserver, takclient, legion_scenario and the order tests) | both build; `server_orders_test`, `replay_test`, `convoy_test`, `issue_selection_test` and `server_orders_network` pass at both |
+| Unit and transaction tests | `selection_order_test`, `server_orders_test`, `convoy_test`, `issue_selection_test DATA`, `replay_test`, `server_commands_test`, `python3 tools/server_orders_network_test.py --server build-o2/takserver --data DATA` | all pass |
+| `--mpai` Inner Circle seed 1 | `CORES=16-19 mpai.sh <bin> OUT 60` and `300` | 60 s Retail **2c39430636a3dbda**, Legion **532539f51d70840b**; 300 s Retail **7535cb08ee787b75**, Legion **c707e1a8063bc0c7**: all four equal to the starting revision (an AI-only game issues no orders, the per-unit path is unchanged) |
+| Cross-build determinism | `sh tools/check-determinism.sh` | OK, golden **dcef618cd2e4d558** (g++/clang++ x O0/O2/O3; aarch64 skipped: no toolchain) |
+| Real path, 1,900 bodies | `CORES=20-23 UNITCAP=2000 stage3/e2e.sh <bin> OUT 120` (Ulasem Arena, seed 1, `TAK_STRESS`, `TAK_AUTOPLAY_FORMATION`) | Retail hash **625643300260e8cc** (= stage 1) and delivery unchanged (603/662, 1203/1261, ...); Legion: each formation order (SetSquad + AttackMove, 3,052-3,800 unit commands) lands whole: first = last = 603, 1203, 1804, 2404, 3003 (was 603/662, 1204/1262, 1804/1860, 2403/2454, 3004/3053) |
+| Real path, about 9,000 bodies a side | `CORES=4-15 UNITCAP=10000 stage3/e2e.sh <bin> OUT 120` (debug harness cap; final binaries) | Legion: each order pair (SetSquad + AttackMove, 14,590-18,036 unit commands) lands whole, first = last every time: issue 600 -> 605, 1201 -> 1237, 1806 -> 1846, 2410 -> 2452, 3015 -> 3055 (the gap is the client's playout lead under an 18,000-body sim; the server activates an order in the first tick it closes after receiving it). Retail: the first order lands over 605..950 (345 ticks), the next two are still landing when the following click is issued (superseded with 11,392 of 17,632 and 16,320 of 16,910 landed), the last two take 480 and 271 ticks. No desync either way (`err=none`). At this load the run is not reproducible run to run in either mode -- the autoplay client's issue ticks follow its wall-clock lag, so its inputs differ (an earlier run: Legion lands at 628, 1258, 1861, 2466, 3074; Retail's first order over 604..1116) |
+| Rejoin | `CORES=20-23 stage3/rejoin.sh <bin> OUT` (host + joiner + AI, joiner killed after its second order, rejoins with the ticket) | the rejoined client's orders keep activating (serials above the floor; a click made during catch-up goes out afterwards with a fresh serial), host and rejoined client end on the same hash (**f7675ae2b1c7964b**), the server refuses nothing. (Before serials were given at send time, the click made during catch-up would have reused serial 1 and failed the connection: found by this run.) |
+| Replay | `TAK_REPLAY_VERIFY=1 takclient replay <the Legion e2e recording> --data DATA` | 3,603 ticks, 120 hash checkpoints, no divergence |
+| Legion scenario gate | `sweep_both.py` (gate1, both modes) then, after the review fixes, `sweep_legion.py <bin> gate2 4-19 gate1` (Legion jobs again, Retail lines reused: the fixes cannot reach Retail); `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results gate2/scenarios.jsonl` | before the baseline edits: Retail 0 failures, every Retail hash@ equal; Legion 2,011 failures (742 hash@, the rest in the 46 click-heavy fixtures and motion-cross). After 3b70aea1: **PASS**, 31,768 keys, 0 failed, 2,160 ratchets, 3,053 licensed, 218 floor exceptions; `validate` 0 problems |
+| Identity of the per-unit paths (AI, Retail) | `tools/legion_identity.sh --base ~/tak-tmp/wt/legion-10000-s2base/build-o2 --cand build-o2 --replays ~/tak-tmp/scratch/land-we3/rp --data DATA --cores 20-23 -j 4 --skip mpai,ctest` (base cached) | replays L-bench, L-2h, R-bench, R-2h (protocol byte patched to 267): final hashes and all 61 checkpoint section hashes identical to the stage-2 base (3c0b297f441dde75, b14d12d4cc0ac939, 346cf77e91fe3ec7, fe702dcac891b13d); golden legion and retail SAME. The crowdbench matrix was interrupted (1,008 jobs on four shared cores, 100 done in 22 minutes) and is not reported |
+| legion_cost and the battle windows | `ctest -R '^legion_cost$|^legion_scenario_battle-'` | pass after 3b70aea1 (34 cost-corner/cost-open and 4 battle counters retaken with reasons); the scaling gates hold unchanged (W(4N0)/W(N0) 0.41 / 0.72, slot cells per slot 0.67 / 0.48, upkeep 1.00) |
+| Scale suite | `legion_scale.py run --bin <bin> --out .../stage3/scale --cores 4-19 --per-job 4` (37 jobs; many-10000 and many-5000 rerun on 956d8dce with `--files`, merged into `scale/results-final.jsonl`); `check --targets tools/scenarios/scale/targets.json --base tools/scenarios/scale/baseline-c2c25707.jsonl`; `stage3/scale_ab.py stage2/scale/results.jsonl stage3/scale/results-final.jsonl` | 37/37 exit 0; every Retail state hash equal to stage 2's; targets **118 met, 86 missed, 8 report-only missed** (stage 2: 99 / 110 / 3; the report-only misses are wall-clock `over_budget` / p99 rows, see below). Table below |
+
+**What moved in the Legion fixtures, and why.** 88 of the 89 fixtures whose clicks fit one uplink tick are
+behaviour-identical (every key equal but the convoy lookup counters, which an order now costs once instead of per
+unit, and the hash). motion-cross changes for a reason of its own: its two crossing streams (24 one-body clicks each,
+all on tick 1) opened two convoys with the same first tick, so the per-unit key made them ONE command that never
+planned round itself; explicit areas are keyed per order, so they are two commands and awareness plans the crossing
+(offset 0: fields built 4 -> 10, backward 469 -> 85, flips 48 -> 13, u09 now arrives). The 46 fixtures that issue more
+than 64 unit commands in one tick change because their clicks now start at once instead of in 64-body waves. That is
+proven, not assumed: a scratch build that splits each explicit order into 64-member orders landing one a tick
+reproduces every stage-2 behaviour key on 14 of them (attackring-mob-100, corner-1x448, cost-corner,
+deadend-w4-n120-closed-squad/-room-plain, deadend-w6-n120-room-squad, gen1-route-36057, goalblock-200, liftstream,
+split-450-pocket, strait-3x80, tail-open304, tail-wave, unreach-200; battle-field-2x250 cannot be reproduced exactly,
+because the old mirror sent both players through one FIFO), and splitting into 64-member orders landing in the SAME
+tick reproduces this stage's values (deadend-w4/w6-n120). Keeping 64-body pinwheel parts inside an order changed
+nothing that mattered and was rejected. Over the 46 fixtures, against the stage-2 run (keys moved more than 10%,
+`outcome_ab.py`): 304 keys better, 359 worse; 17 fixtures mostly better (tail-wave 23 better / 5 worse, cost-corner
+22 / 3, liftstream 21 / 4, battle-assault 17 / 21, island-1x150 15 / 9, strait-2x150 11 / 2), 25 mostly worse, the
+worst in narrow dead ends and long routes where a whole column now starts into the bottleneck at once:
+deadend-w4-n120-room-plain arrivals 50 -> 29 (below Retail's 34: a Retail-floor exception), -closed-squad parked_held
+13,732 -> 52,272, corner-1x448 group B never finishing (8,958 -> never), gen1-route-36057 two groups' t90 -> never,
+pocket-615-open 14 keys worse. These are licensed as the cost of the simultaneous start the brief requires, and
+recorded as stage 7-8 inputs (chokepoint admission for genuinely narrow friendly passages, coherent subgroups), not
+fixed here by re-introducing a per-unit release queue (which phase 2 forbids).
+
+**Scale suite, Legion rows, stage 2 -> stage 3** (`a -> b` where the value moved, one value where it did not;
+`deliver.max` = ticks from a click's issue tick to its last member's command, `start.last` = ticks to the last
+member moving, `apply max ms` = the longest single tick spent applying commands, new in this stage; wall columns are
+reported only and were measured on a shared machine).
+
+| scenario | deliver.max | start.last | arrived | completed | stuck | livelock | tick mean ms | tick p99 ms | apply max ms |
+|---|---|---|---|---|---|---|---|---|---|
+| attack-1000 | 33 -> 0 | 61 -> 23 | 99 | 98 -> 99 | 0 | 0 | 0.818 -> 1.161 | 1.778 -> 1.791 | 21.77 |
+| attack-10000 | 339 -> 0 | 1084 -> 42 | 895 -> 882 | 971 -> 954 | 5 -> 8 | 3 -> 7 | 10.038 -> 13.113 | 17.361 -> 28.286 | 36.598 |
+| bridges-1000 | 23 -> 0 | 45 -> 15 | 10 -> 12 | 8 -> 11 | 537 -> 539 | 34 -> 44 | 1.114 -> 1.206 | 1.988 -> 2.079 | 29.89 |
+| bridges-10000 | 308 -> 0 | 526 -> 45 | 0 | 0 | 9020 -> 9053 | 79 -> 88 | 12.463 -> 12.747 | 17.906 -> 22.381 | 35.343 |
+| churn-1000 | 23 -> 0 | 117 -> 46 | 465 -> 436 | 1000 | 0 | 0 | 0.668 -> 0.646 | 1.623 -> 1.632 | 8.319 |
+| churn-10000 | 498 -> 0 | 1637 -> 1230 | 2174 -> 3587 | 9999 -> 9968 | 0 -> 5 | 0 -> 4 | 10.59 -> 8.114 | 22.29 -> 16.646 | 42.836 |
+| idle-10000 | 23 -> 0 | 68 -> 22 | 32 -> 33 | 28 -> 27 | 685 -> 666 | 25 -> 31 | 3.95 -> 5.944 | 5.01 -> 9.123 | 26.854 |
+| many-100 | 0 | 9 | 98 | 98 | 1 | 0 | 0.057 -> 0.049 | 0.152 -> 0.132 | 0.513 |
+| many-1000 | 0 | 19 | 794 | 786 | 92 | 22 | 1.631 -> 1.561 | 3.439 -> 3.161 | 4.851 |
+| many-10000 | 0 | 248 | 546 | 267 | 9164 | 100 | 13.706 -> 12.337 | 16.667 -> 16.398 | 32.933 |
+| many-2500 | 0 | 217 | 785 | 647 | 1395 | 48 | 4.295 -> 3.808 | 7.842 -> 7.049 | 8.222 |
+| many-5000 | 0 | 67 | 470 | 275 | 3819 | 72 | 8.072 -> 6.784 | 10.559 -> 8.911 | 18.613 |
+| maze-1000 | 23 -> 0 | 32 -> 10 | 365 -> 335 | 655 -> 627 | 29 -> 42 | 15 -> 19 | 1.299 -> 1.302 | 2.303 -> 2.279 | 53.91 |
+| maze-10000 (misread: see the fix round) | 308 -> 0 | 546 -> 15 | 1468 -> 1070 | 1142 -> 8947 | 6139 -> 843 | 127 -> 25 | 15.051 -> 10.516 | 18.136 -> 21.818 | 56.281 |
+| mixed-1000 | 53 -> 0 | 60 -> 11 | 636 -> 667 | 448 -> 515 | 52 -> 32 | 16 -> 20 | 4.676 -> 4.818 | 10.351 -> 11.812 | 21.731 |
+| mixed-10000 | 622 -> 0 | 623 -> 11 | 2430 -> 2254 | 1978 -> 868 | 4769 -> 6227 | 174 -> 154 | 60.661 -> 88.642 | 112.142 -> 177.118 | 145.941 |
+| one-100 | 1 -> 0 | 9 -> 8 | 100 | 100 | 0 | 0 | 0.059 -> 0.054 | 0.12 -> 0.11 | 2.039 |
+| one-1000 | 23 -> 0 | 65 -> 39 | 809 -> 847 | 999 | 1 -> 0 | 1 -> 0 | 0.551 -> 0.601 | 0.992 -> 1.107 | 6.231 |
+| one-10000 | 308 -> 0 | 652 -> 15 | 1866 -> 6973 | 6257 -> 9964 | 1741 -> 13 | 95 -> 9 | 12.322 -> 9.549 | 18.138 -> 15.861 | 38.906 |
+| one-2500 | 71 -> 0 | 90 -> 29 | 808 -> 1970 | 2317 -> 2495 | 60 -> 2 | 17 -> 2 | 2.078 -> 1.78 | 3.543 -> 3.287 | 12.197 |
+| one-5000 | 150 -> 0 | 219 -> 49 | 1532 -> 3684 | 4316 -> 4988 | 449 -> 0 | 34 -> 0 | 5.481 -> 4.823 | 9.49 -> 9.573 | 23.086 |
+| swap-1000 | 23 -> 0 | 45 -> 20 | 824 -> 781 | 990 -> 965 | 2 -> 5 | 2 -> 5 | 1.191 -> 1.063 | 2.825 -> 2.587 | 29.694 |
+| swap-10000 | 308 -> 0 | 437 -> 15 | 915 -> 1405 | 378 -> 1294 | 8037 -> 5841 | 86 -> 103 | 11.722 -> 17.972 | 15.35 -> 29.125 | 44.31 |
+| swap-2500 | 71 -> 0 | 145 -> 48 | 1721 -> 1859 | 2027 -> 1929 | 5 -> 11 | 4 -> 7 | 3.319 -> 3.463 | 5.977 -> 6.276 | 32.312 |
+| swap-5000 | 150 -> 0 | 243 -> 15 | 1308 -> 2319 | 1474 -> 3181 | 2521 -> 907 | 46 -> 41 | 6.96 -> 6.312 | 11.779 -> 12.841 | 43.713 |
+
+* **The 10,000-body one-selection case** (one-10000): command latency for the whole selection (`deliver.max`) 308 -> **0**
+  ticks, last member moving (`start.last`) 652 -> **15** ticks; with every member starting at once the outcome moves
+  with it: arrived 1,866 -> 6,973, completed 6,257 -> 9,964, stuck 1,741 -> 13, livelock 95 -> 9, groups 20 -> 2,
+  nav memory 62 -> 13 MB, tick mean 12.3 -> 9.5 ms. The cost is the activation tick: **38.9 ms** applying the order
+  at tick 2 (the 10,000 registrations inside `World::order`), the run's only tick over the 33.3 ms budget. That is
+  stage 4's budget work, recorded in section 8.
+* Every single-selection 10,000 row now delivers in 0 ticks (was 308-622) and starts its last member within 11-45
+  ticks (was 437-1,637; churn-10000, whose eight re-clicks keep cancelling members, 1,230).
+* many-* (selections of 25 bodies, one order each) keep every behaviour key of stage 2 (only the hash moves: the order
+  serial is hashed). many-10000 was first run with a window of 8 orders: 400 squads clicked over 600 ticks through a
+  16-tick round trip waited for it (`deliver.max` 196, `start.last` 348); 956d8dce makes the window 64 orders (the
+  384 KiB still bounds the server's memory) and the rerun restores 0 / 248. No gate fixture enables the uplink
+  window (`uplink` appears only in the scale files) and no other scale file has more than three orders inside a
+  round trip, so the window change reaches only this row (and many-5000, rerun with it: identical keys).
+* Outcomes that moved the wrong way: mixed-10000 completed 1,978 -> 868 and stuck 4,769 -> 6,227 (its 13
+  convoys of mixed classes now start at once), attack-10000 arrived 895 -> 882, bridges-10000 stuck 9,020 -> 9,053 (no
+  body arrives either way: the bridges are the stage 7 chokepoint input), churn-1000 arrived 465 -> 436, maze-10000
+  arrived 1,468 -> 1,070 and its room held 218 -> 54 bodies at the end. **Correction (fix round):** maze-10000's
+  "completed 1,142 -> 8,947, stuck 6,139 -> 843" is not an improvement: 7,595 of group A's 8,500 orders were retired
+  far outside the arrival disc (median 469 cells from the click, at the starting rect; `complete_outside_n` 289 ->
+  7,878, frozen max 690), so "stuck" fell because orders were retired where the bodies stood, not because bodies
+  arrived. Same cause as the gate fixtures above; licensed on the same
+  basis and listed as stage 7-8 inputs.
+* Wall clock (report only): mixed-10000's tick mean rose 60.7 -> 88.6 ms and its p99 112 -> 177 ms; its job ran
+  next to the 10k real-path run, so the size of the rise is not established by this run. The other 10,000 rows hold
+  within the noise of the shared machine except swap-10000 (p99 15.4 -> 29.1 ms, 75 ticks over budget) and
+  attack-10000 (17.4 -> 28.3 ms): both now plan their whole crowd in the first ticks. Re-measure on a quiet machine
+  in stage 4.
+
+
+### 7.3 fix round: verifier rejection and review R1 / R6 (2026-10-16)
+
+The verifier rejected the first stage-3 record (head 2711702e) for a records gap: one red-line regression was misread
+and three frozen targets that stage 2 met were missed without being named. A separate code review left two findings
+open (R1, R6). Everything below is on the branch after 2711702e.
+
+**Findings and what was done.**
+
+1. **maze-10000: orders retired far outside the arrival disc (the verifier's blocking item).** At 2711702e group A's
+   `complete_outside_radius` was 0 -> 7,595, `complete_dist_median` 117 -> 469 cells, `work.outside_area_completions`
+   445 -> 8,183, `region.room.inside` 218 -> 54, `scale.complete_outside_n` 289 -> 7,878 (frozen max 690). Mechanism
+   (confirmed): the queue-settle rule (C29: a body one row behind a settled arrival of its own command may settle, so
+   a queue settles back row by row) is bounded only by the reach of everyone settled at the destination. Explicit
+   orders made all 8,500 bodies one area, so the queue ran back out through the compound doors to the starting rect;
+   at stage 2 the same bodies were 20 convoys. That is the forbidden pattern (distant stationary units declared
+   arrived), so it is **fixed, not licensed** (f611b163, 1a74fbb0): an explicit area's settle bound never grows past
+   the packed bound of the point's whole crowd (`Point::crowdCells` / `crowdPeak`: every footprint plane's bodies,
+   packed in this body's footprint along the field, so a dead end's strip is its length), widened to AR-08's arrival
+   disc (9(foot+1)/(8 foot): the disc's 20(foot+1) px against the packed bound's 16 foot px per sqrt(1.25 n/pi)), plus
+   the usual slack. Beyond it a queued body keeps its order and waits. Per-unit areas (AI, scripts, Retail-mode tools)
+   keep the old rule, so `--mpai` and Retail are unchanged. `crowdPeak` is hashed for explicit-area points. Tried and
+   rejected: a 3/2 factor (same scale-suite result, tighter than the disc), and a straight-line test against the
+   disc itself (a dead end's queue is a strip longer than any disc: 1,174 gate keys failed against 380).
+2. **Three targets met at stage 2 and missed at 2711702e, now named as new regressions** (`legion_scale.py check`
+   on stage 2's and 2711702e's results, MISS lists diffed):
+
+   | target (Legion) | frozen | stage 2 | 2711702e | fix round | status |
+   |---|---|---|---|---|---|
+   | maze-10000 `scale.complete_outside_n` | max 690 | 289 | 7,878 | 295 | fixed (item 1) |
+   | churn-10000 `scale.livelock_end` | max 0 | 0 | 4 | 106 | **open**, new regression (section 8) |
+   | one-100 `scale.arrive.t99` | max 2588 | 2465 | 2608 | 2608 | **open**, new regression: the 100-body click now starts at once instead of 64 + 36 (section 8) |
+
+3. **R1 (serious): a dropped order could wedge the client's outbox for good** (6fbce6bd). The member budget waited at
+   the drain already, but the per-second byte budgets (shared with the account's other connections -- or the
+   address's, without accounts -- and the whole server), the order window and the record-byte window could still drop
+   an order the client never heard of: it never came back in a bundle, so it held its place in the client's window,
+   and after 64 of them the order at the outbox head never went and every command behind it (Stop, Build, Train)
+   waited for the rest of the game. Now the server tells the sender (`Msg::InputDropped`: a dropped transaction's
+   serial at its Commit, or the count of a dropped `PlayerCommands` message -- the same leak existed for ordinary
+   commands since before the program, fixed by the same notice), and the client's `OrderWindow` (`net/orderpack.h`,
+   per serial) and command window release it, so both always recover. The inbox now tests the order window before
+   charging a Begin, and the record-byte window per chunk before charging it, so a frame refused for a window spends
+   none of the byte budget. Tests: `server_orders_network` gains "every cut serial named once" and the 600-command
+   drop -- it **fails on the 2711702e server** (`AssertionError: ('drop notices', [], 0, 64)`) and passes now;
+   `server_orders_test` `dropsReleaseTheWindow` drives the real `OrderInbox` and `OrderWindow` with a spent budget
+   (192 orders, all dropped): a client that hears of each drop keeps sending and recovers; one that does not wedges
+   after `kOrderWindow` drops; plus the uncharged-refusal checks. `issue_selection_test`'s transcribed client uses
+   `OrderWindow`. The wire change stays inside protocol 267 (unreleased; `InputDropped` is appended to `Msg`).
+4. **R6: members apply in id order, not selection order** (6fbce6bd). Decision: the order is not carried (it would
+   cost a second list as large as the members); the verbs whose outcome depends on it are taken out of `orderVerb`
+   and keep the per-unit path in issue order -- **Load** (the transport's pickup list is built in application order:
+   who boards a short-capacity transport first) and **GiveUnit** (which gifts a recipient near its unit cap takes).
+   Every remaining order verb sets only its member's own state; the id order decides only the order of the members'
+   path requests (registrations), part of the stage's licensed behaviour change. `selection_order_test` `issueOrder`:
+   Load/GiveUnit pass through `packClick` per unit in issue order; a shuffled Squad click (evict + assign, and the
+   append form) plus Stop/Stance/SetActive/Cloak/Destroy over a shuffled selection give, packed, exactly the state
+   hash of the per-unit commands in issue order, in Retail and in Legion, and after 90 ticks. No scenario issues Load
+   or GiveUnit, so no gate key moved for R6.
+5. **Non-blocking items.** (a) the per-tick worst case one sender can force is now written under "Limits" above
+   (about 250 ms of registration for 65,536 members in one tick; stage 4 must bound it). (b) the awareness crossing
+   tie-break across key kinds is documented at legion.cpp's crossing rule (an explicit key always has the top bit
+   set, so for one player an explicit order gives way to an AI or script per-unit command whichever came first;
+   deterministic) -- kept, not reordered, since no fixture exercises the mixed case and reordering would move
+   hashes for nothing measured. (c) `tools/check-determinism.sh` covers only the detmath shim (g++/clang++ x
+   O0/O2/O3); its pass says nothing about `Cmd::Order` across compilers. The explicit-order path is covered only by
+   same-binary runs at different worker counts (`serial_eq_workers` on every gate line; one-10000 equal at 1 and 3
+   workers). **Missing:** a gcc-vs-clang run of an explicit-order fixture (open, section 8). (d) the verifier's dry
+   run truncated build-o2's ninja state; this round rebuilt every target there from scratch (369 steps).
+6. **Review cleanups** (cached `orderRecordBytes`, no deep copy for provisional serials, `orderSerial`'s line
+   assertion) were already in 2711702e (`SelectionOrder::bytes`, the serial set in place at send, `TAK_ORDER_LINE(
+   orderSerial, 4)`); nothing further.
+
+**The trade the settle bound makes, read honestly.** Bodies that 2711702e retired outside the disc now keep their
+order and stand waiting, so `stuck_end` (and, where the waiting bodies keep pressing, `livelock_end`) rise exactly
+where `complete_outside_n` falls; arrivals inside the disc rise a little everywhere. Summed, the bodies that are not
+honestly arrived (stuck + completed outside) fall in every row against 2711702e (scale suite, Legion,
+stage 2 -> 2711702e -> fix round):
+
+| scenario | arrived | completed | outside disc | stuck | livelock | stuck + outside |
+|---|---|---|---|---|---|---|
+| one-1000 | 809 -> 847 -> 875 | 999 -> 999 -> 831 | 191 -> 156 -> 4 | 1 -> 0 -> 90 | 1 -> 0 -> 15 | 192 -> 156 -> 94 |
+| one-2500 | 808 -> 1970 -> 2008 | 2317 -> 2495 -> 1851 | 1519 -> 526 -> 4 | 60 -> 2 -> 407 | 17 -> 2 -> 19 | 1579 -> 528 -> 411 |
+| one-5000 | 1532 -> 3684 -> 3735 | 4316 -> 4988 -> 3418 | 2790 -> 1306 -> 6 | 449 -> 0 -> 1097 | 34 -> 0 -> 29 | 3239 -> 1306 -> 1103 |
+| one-10000 | 1866 -> 6973 -> 7050 | 6257 -> 9964 -> 6347 | 4394 -> 2999 -> 5 | 1741 -> 13 -> 2665 | 95 -> 9 -> 38 | 6135 -> 3012 -> 2670 |
+| swap-1000 | 824 -> 781 -> 798 | 990 -> 965 -> 785 | 171 -> 192 -> 9 | 2 -> 5 -> 71 | 2 -> 5 -> 13 | 173 -> 197 -> 80 |
+| swap-2500 | 1721 -> 1859 -> 1914 | 2027 -> 1929 -> 1715 | 396 -> 177 -> 0 | 5 -> 11 -> 57 | 4 -> 7 -> 9 | 401 -> 188 -> 57 |
+| swap-5000 | 1308 -> 2319 -> 2329 | 1474 -> 3181 -> 2162 | 195 -> 874 -> 3 | 2521 -> 907 -> 1610 | 46 -> 41 -> 61 | 2716 -> 1781 -> 1613 |
+| swap-10000 | 915 -> 1405 -> 1420 | 378 -> 1294 -> 1186 | 0 -> 29 -> 0 | 8037 -> 5841 -> 5782 | 86 -> 103 -> 105 | 8037 -> 5870 -> 5782 |
+| churn-1000 | 465 -> 436 -> 488 | 1000 -> 1000 -> 574 | 539 -> 567 -> 111 | 0 -> 0 -> 219 | 0 -> 0 -> 14 | 539 -> 567 -> 330 |
+| churn-10000 | 2174 -> 3587 -> 3702 | 9999 -> 9968 -> 4500 | 7828 -> 6390 -> 1045 | 0 -> 5 -> 4402 | 0 -> 4 -> 106 | 7828 -> 6395 -> 5447 |
+| maze-1000 | 365 -> 335 -> 392 | 655 -> 627 -> 433 | 291 -> 296 -> 57 | 29 -> 42 -> 123 | 15 -> 19 -> 32 | 320 -> 338 -> 180 |
+| maze-10000 | 1468 -> 1070 -> 1109 | 1142 -> 8947 -> 1189 | 289 -> 7878 -> 295 | 6139 -> 843 -> 7695 | 127 -> 25 -> 82 | 6428 -> 8721 -> 7990 |
+| attack-10000 | 895 -> 882 -> 884 | 971 -> 954 -> 869 | 90 -> 87 -> 18 | 5 -> 8 -> 40 | 3 -> 7 -> 9 | 95 -> 95 -> 58 |
+
+maze-10000 stays worse than stage 2 in arrivals (1,468 -> 1,109) and room occupancy (218 -> 54): that is the
+simultaneous start into the compound doors, the stage 7-8 chokepoint input recorded above, no longer hidden by
+retired orders.
+
+**Frozen targets, fix round** (`legion_scale.py check`): **124 met, 82 missed, 6 report-only missed** (2711702e:
+118 / 86 / 8; stage 2: 99 / 110 / 3). Against 2711702e, 12 met now: `complete_outside_n` on churn-1000/-10000,
+maze-1000/-10000, one-1000/-2500/-5000/-10000, swap-1000/-2500/-5000, and many-5000 `wait.max`. **New misses
+against 2711702e (new regressions of this round, recorded, not fixed):** `stuck_end` on churn-10000 (max 1,000:
+4,402), churn-1000 (max 100: 219), maze-1000 (max 50: 123), one-1000 (max 0: 90), one-5000 (max 0: 1,097);
+`livelock_end` on churn-1000 (14), one-1000 (15), one-5000 (29). Every one is a body that 2711702e retired outside
+its disc and that now waits; the `livelock_end` ones are waiting bodies that keep pressing the crowd (walking in
+place) rather than standing. Against stage 2 the new misses are churn-10000 `livelock_end` and `stuck_end`,
+churn-1000 `livelock_end` and `stuck_end`, maze-1000 `stuck_end` and one-100 `arrive.t99`; one-1000's and
+one-5000's `stuck_end`/`livelock_end` were missed at stage 2 too (one-1000 1 / 1, one-5000 449 / 34), met at
+2711702e only because those bodies were retired outside the disc. Retail: every Retail row's state hash equal to stage 2's.
+
+**Gate licences (fix round, `tools/scenarios/baseline.json`).** Run on the final scenario binary (byte-identical to
+the one swept): 380 failures before the edits -- 270 `hash@` (41 fixtures), 105 bands, 5 offset spreads. By
+fixture: 18 hash-only (the hash folds `crowdPeak`; no behaviour or work key moved: chase-*, deadend-w2-n120-*,
+deadend-w2-n40-closed-*, corner-8x30, deadend-multi-4x120, fight-retarget, goalblock-200/-fight-200, mazeapproach,
+mixed-spacing-04x/-05x, ringcross), 3 work-only (motion-cross/-open/-wall: the crowd bound of a crowd of several
+footprints is its own packed-bound search, `slot_search_cells`; `work.legion_total` moves by at most 0.3%), 20 behaviour
+(corner-4x50, deadend-w2/w4/w6-n40-room-*, doorplug-112, gen1-route-45941/-54772/-65845, goalblock-near-200,
+pocket-304/-615-open/-wall, strait, strait-3x80, tail-corner380, tail-open570, tail-wave, wall-4x50). The
+behaviour fixtures move the same way as the scale suite: completions outside the disc fall (tail-wave 147 -> 131,
+pocket-304-wall 60 -> 20, wall-4x50 C 13 -> 9), arrivals rise a little (tail-open570 525 -> 534, wall-4x50 C 37 ->
+41, D 36 -> 39), and the waiting rises (`parked_held` tail-wave 9,631 -> 22,534, strait 6,603 -> 53,117;
+`still900_ever`, reversals and the held-recheck/detour work of the waiting bodies). strait's B loses 6 of 48
+completions that were inside the observer's disc (its potential runs along the walls, so the packed bound is
+tighter than the disc there): the one place the bound is stricter than the acceptance disc. Each key carries its
+reason (scratch `fix3/license.py`; cluster S3F-267 for the five spreads); a stage-3 licence on the same key was
+updated, not stacked. After the edits: `legion_check check --cumulative` **PASS** (31,768 keys, 0 failed, 2,184
+ratchets, 3,082 licensed, 218 floor exceptions), `validate` 0 problems.
+
+**Fix-round checks** (scratch `~/tak-tmp/scratch/legion-10000/fix3/`; final binaries in `fix3/final`; `build-o2`
+rebuilt for every target after the last src change):
+
+| Check | Command | Result |
+|---|---|---|
+| Unit and transaction tests | `selection_order_test`, `server_orders_test`, `convoy_test`, `replay_test`, `server_commands_test`, `issue_selection_test DATA` | all pass |
+| Drop notices, real server | `python3 tools/server_orders_network_test.py --server build-o2/takserver --data DATA`; the same test against the 2711702e server (`~/tak-tmp/wt/legion-10000-verify3/build-o2/takserver`) | PASS; the 2711702e server FAILS at the drop notices (none sent) |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j12 --timeout 900` (scratch XDG, no `TAK_SETTINGS_FILE`) | **380/380** passed |
+| legion_cost, battle windows | `ctest --test-dir build-o2 -R '^legion_cost$|^legion_scenario_battle-'` | pass |
+| `--mpai` Inner Circle seed 1 | `CORES=20-23 mpai.sh fix3/final OUT 60` and `300` | 60 s Retail **2c39430636a3dbda**, Legion **532539f51d70840b** (both unchanged); 300 s Retail **7535cb08ee787b75**, Legion **c707e1a8063bc0c7** (both unchanged) |
+| Legion verifier | `TAK_LEGION_VERIFY=1 legion_scenario F --mode legion --workers --offsets 0 [--data DATA]` for wall-4x50, motion-cross, deadend-w4-n120-room-plain, corner-1x448 (behaviour-identical build `bin2`) | no failure |
+| Legion scenario gate | `sweep_legion.py fix3/bin3/legion_scenario fix3/gate3 4-15 stage3/gate2` (Legion jobs; Retail lines reused: the change cannot reach Retail, and the verifier re-ran all 135 Retail fixtures on 2711702e), `fix3/license.py ... --apply`, `legion_check.py check --cumulative` | PASS as above |
+| Scale suite | `legion_scale.py run --bin fix3/final/legion_scenario --out fix3/scale-final --cores 4-23 --per-job 4`; `check --targets tools/scenarios/scale/targets.json` | 37/37 exit 0; 124 / 82 / 6; Retail hashes equal; one-10000 Legion `deliver.max` 0, `start.last` 15, apply max 36.9 ms (the activation tick, 2 ticks over budget in the run) |
+| Rejoin | `CORES=20-23 stage3/rejoin.sh fix3/final fix3/rejoin` | host and rejoined client end on the same hash (**5b62dfb66c61a1fc**), server refuses nothing, the rejoined client's orders keep landing whole |
+| Replay | `TAK_REPLAY_VERIFY=1 takclient replay <the rejoin host's recording> --data DATA` | 4,518 ticks, 150 checkpoints, no divergence |
+| Cross-build determinism | `sh tools/check-determinism.sh` | OK, golden **dcef618cd2e4d558** (g++/clang++ x O0/O2/O3; aarch64 skipped, no toolchain; the detmath shim only, see (c) above) |
+
+**Commits (fix round).** f611b163 (explicit-area settle bound), 6fbce6bd (drop notices + `OrderWindow`; Load and
+GiveUnit per-unit), 1a74fbb0 (a one-footprint crowd reuses `areaBound`), 4e97d133 (scenario baseline) and the
+commit carrying this record.
+
+### 7.4 Stage 4 record: fair scheduling and complete budgets (brief phase 3)
+
+**Hypothesis.** After stage 3 a click lands whole, so the navigator's own per-tick work became the next bound on
+responsiveness and on the tick: a 10,000-body order's activation tick spent 39 ms (30 ms of it a synchronous first
+plane build), the 10,000-body area's bound a 20 ms sort, registration had no bound at all (one sender could land
+65,536 members in a tick: about 250 ms), and the field quota went to groups in id order, so under continuous load
+the lowest ids took it and one start that did not fit stopped every admission behind it (`break`). Budget every
+resumable stage in deterministic units, serve fields by job with classes, round robin and age promotion, account
+bytes deterministically, and report what stays synchronous.
+
+**Classification.** e74a2794 (accounting), d190169c (counting sort) and a77536e8 (resumable awareness) are exact;
+d487d65d (registration budget) is exact under budget -- all 135 gate fixtures hash- and key-identical -- and a
+behaviour change past it; b052597e + 2635d913 (incremental first plane builds) change behaviour only on maps over
+131k cells (22 gate fixtures); 80599fdc (the scheduler, the byte allowance) changes behaviour wherever two field
+jobs compete, a start's initialisation does not fit, or the allowance differs from the old 48-map cap. Protocol
+268 (in d487d65d), the stage's one bump; replay_test refuses 267. Retail is untouched: no Retail code path reads
+any of it (World::inTick_ is read by Legion only).
+
+**Design (as built).** docs/legion-pathfinding.md "Legion 10,000 stage 4" and section 3.2's amendment.
+
+**Budgets (per window: one tick, or one batch of commands between two ticks; constants in sim/navbudget.h).**
+
+| Work | Unit | Budget a window | Over budget |
+|---|---|---|---|
+| Field service | relaxation (neighbour test); a field cell initialised = 1/16; a ring cell = 1 | `kFieldQuota` 384,000 (refresh classes at most `kRefreshQuota` 96,000; plane debt at most half) | the rest waits, served next tick by class / window / round robin |
+| Registration | `kRegBase` 64 + join candidates + goal-resolution cells | `kRegBudget` 262,144 (4,096 plain registrations) | FIFO, drained first next tick; the unit brakes, order kept |
+| First plane builds | advanceBuild cell units (3 W H passes + 1 per cell scanned + 4 per cell flooded) | `kPlaneBuildBudget` 1,048,576; a plane whose whole build fits (8 W H, maps <= 131k cells) is built at once while any is left | resumes next tick; its registrations wait |
+| Awareness | candidate pairs + conflict samples + descent cells | `kAwareBudget` 262,144 (always at least one group) | resumes next tick on the same snapshot |
+| Slot hand-out | formation ring cells | `kHandOutCells` 131,072 (2026-10-14 review, unchanged) | members wait a tick, steering by the field |
+
+**Still synchronous (reported, not hidden).** Each is bounded by something other than the army's size or is
+rare, and `accounting()` counts the whole-plane ones (`syncPlaneCalls`, `syncPlaneMax`):
+
+* the incremental plane refresh after a static change (`refreshPlane`): bounded by the changed rectangles
+  (clustered), charged to the quota afterwards as plane debt;
+* its fallback to a whole-plane relabel when dead labels dominate (rare; `syncPlaneCalls`);
+* a stale plane's rebuild on use: legacy nav-grid worlds (no placement map) after every static change, and a
+  placement map after a whole-map change (`placementDirtyAll_`, the map load);
+* `staticChanged`'s walk of every group (one pass, per static change);
+* the awareness snapshot (one pass over the points' members and the members, every 30 ticks);
+* a formation's slot ranking when its area closes (`assignFormation`: a sort of its members) and the
+  destination-area bound (`packedBound`, now linear: d190169c);
+* one field's initialisation (`potential.assign`, at most one whole map: 1.0M cells on refreshchurn's 1024 x 1024
+  map), charged to the quota;
+* `scanStill`'s striped soft-body sampling and `prune`'s 256-id cursor (unchanged, bounded per tick).
+
+**Commits.**
+
+| Commit | Content | Kind |
+|---|---|---|
+| e74a2794 | `sim/navbudget.h`; `LegionNavigator::accounting()` (work per NavWork class, per-window maxima, NavBytes, synchronous stages); scale probe keys; SCALE_WALL whole-tick and bytes | exact (hashes and every key unchanged) |
+| d487d65d | budgeted registration, FIFO, `World::inTick_`; review fixes to e74a2794's accounting; protocol 268 | exact under budget (gate 135/135 identical); behaviour past it |
+| b052597e | first plane builds as incremental jobs (`planeReady`, `buildPlanes`) | behaviour |
+| d190169c | stable counting sort in `packedBound` / `slotsFor` | exact |
+| a77536e8 | resumable awareness scan; `setBudgetDivisorForTest` / `--budget-div` | exact under budget (gate unchanged against b052597e) |
+| 2635d913 | a plane whose whole build fits one window is still built at once (per-window plane budget) | behaviour on maps over 131k cells only (22 fixtures) |
+| 80599fdc | the field scheduler (jobs, classes, windowed DRR, promotion, fit scan, init charge, byte allowance); navbudget_test, sched-load + ctests | behaviour |
+| 44d08559 | scenario and cost baselines (protocol 268) | baselines |
+| 86b409bd | legion_quota keeps exercising eviction through the byte allowance (`setFieldBytesForTest`); the Legion navigation golden retaken (gcc = clang) | tests |
+| f5f7ea3b | admission under memory pressure: class-aware fit scan, strict reservation, new builds only into free window slots | behaviour |
+| 2ca032e9 | scenario baseline for f5f7ea3b (battle-assault only) | baselines |
+| 136ab4a1 | review fixes: jobs hold their fields through `serveFields`; planes queued registrations need are never evicted; plane-ready refreshes the FIFO's marks; areas stay open while members wait to register; pause and window count over every subscriber; aged reservation when the window is full; refresh initialisation charged to the refresh allowance; open waits counted; awareness snapshot timing; sort buffers in NavBytes | behaviour (the refresh charge only: 4 fixtures) |
+| e3e85716 | a field dropped mid-call leaves the totals at once and its job is retired (follow-up to 136ab4a1); chase-50's two work licences | behaviour-neutral against 136ab4a1 (gate identical); baselines |
+| bc5b23c2 | `legion_planepin` (fails on 2ca032e9: 36 plane builds for 25 classes; 25 now) | tests |
+| bfa36fd9 | this record (first version) | docs |
+| 1117fa31, d31ee31a, ba919843, ad1db07e, f932937f | fix round 2 (verifier rejection): shares behind a stopped scan, shared fields as victims, the per-kind in-flight cap while memory is short, the queued area recheck; sched-mix and legion_sched_mix / _pin / _inflight; see "7.4 fix round 2" | behaviour under memory pressure only (gate identical to e3e85716) |
+
+**Measured costs per unit** (this machine, build-o2, single runs; reported, never read by the sim): one plane-build
+window (1 Mi units) about 5.8 ms; one registration window (4,096 plain registrations) about 2 ms (0.48 ms per 1,000
+measured at the start); the field quota (384k relaxations) 1.5-4 ms at the nav phase's p99 under load.
+
+**The activation tick of a 10,000-body order (one-10000, offset 0, single runs on a shared machine).**
+
+| state | apply (commands) max | whole sim tick max (apply + tick) | last member moving | longest wait |
+|---|---|---|---|---|
+| stage-3 head feef1b09 | 35-39 ms (tick 2) | 51.6 ms (tick 2) | tick 15 | 0 |
+| d487d65d (registration budget) | 39 ms | 51.6 ms | 18 | 3 |
+| b052597e (incremental plane builds) | 2 ms | 27.7 ms (tick 102: the area bound) | 21 | 11 |
+| d190169c (linear area bound) | 2 ms | 15.7 ms (tick 35) | 21 | 11 |
+
+The registration budget alone barely moves the activation tick because 30 ms of it was the plane build inside the
+first registration; with the plane an incremental job (one-10000 needs two planes, 11.7M units) the tick is bounded
+and the order's members start moving over ticks 14-21 instead of 3-15.
+
+**The scheduler: how the window was chosen (5 gate offsets 0, +-1, +-2, median; scale files at offset 0..+-2).**
+Arms against 2635d913 (the plane fix, the old scheduler): plain deficit round robin over every job ("drr"), the
+window 12 / refresh 3 (chosen), 12 / 1.
+
+| file | key | base | drr | 12 / 3 | 12 / 1 |
+|---|---|---|---|---|---|
+| many-1000 | arrive.n / stuck_end | 776 / 84 | 715 / 140 | 758 / 82 | 755 / 108 |
+| many-2500 | arrive.n / stuck_end / wait.max | 652 / 1,495 / 24 | 1,223 / 836 / 21 | 1,242 / 835 / 7 | 1,233 / 844 / 8 |
+| sched-load | stuck_end | 126 | 96 | 118 | 118 |
+| swap-1000 | arrive.n / stuck_end | 818 / 72 | 850 / 63 | 860 / 62 | 839 / 71 |
+| churn-1000 | arrive.n / stuck_end | 482 / 191 | 600 / 144 | 600 / 144 | 615 / 159 |
+
+Plain round robin lost many-1000 (every in-flight awareness refresh progressed slowly, outlived the 30-tick cadence
+and was discarded: refresh_discards 41 -> 1,960, refreshes completed 1,021 -> 675) and was rejected. Slice sizes
+(32k, 128k, 384k at one offset) moved many-1000 arrivals non-monotonically (749 / 762 / 718): kept 32k, the
+smallest that keeps paused builds' slice boundaries.
+
+**Admission under memory pressure (found by the scale suite, fixed in f5f7ea3b).** The first full scale run
+of 80599fdc showed many-5000's longest field wait at 982 ticks (stage 3: 2; frozen max 60) and start requests waiting
+up to 1,206 ticks (many-10000: 5,613). Diagnosis, by variants (`stage4/exp/`):
+
+* the Waiting class stopped scanning after `kFitScan` (8) capacity refusals, so waiting groups behind eight refused
+  ones were never tried even when they fit (an unbounded scan: many-5000 982 -> 5 ticks; but then every fitting
+  non-waiting request started too and filled memory first: many-10000 10 -> 1,377);
+* a new build was admitted even when its class's round-robin window was full: it allocated its whole potential
+  array and then got no service, and an unfinished field is never an eviction victim -- memory filled with idle,
+  unevictable builds.
+
+Fix: the Waiting class scans up to `kWaitFitScan` (256) refusals, the others `kFitScan` (8); a request refused for
+`kReserveAge` reserves -- every later class stops, and outside the Waiting class the rest of its own class; and a
+new build is admitted only while its class's window has a free slot (beyond it a request may only take a field
+another group already has). Results, offset 0 against 80599fdc: many-1000 arrivals 766 -> 830, stuck 80 -> 39;
+many-2500 1,184 -> 1,288, stuck 871 -> 785, evictions 629 -> 0; many-5000 1,575 -> 1,605; many-10000 1,024 ->
+1,194. **The request ages were not fixed by this** (the paragraph above reports only arrivals and stuck counts): at
+e3e85716 the longest start-request wait was still 5,641 ticks in many-10000 (first route 5,569) and 1,183 in
+many-5000. Fix round 2 (below) says what those numbers are and gives the final values.
+
+**The longest field wait in the overloaded rows is a lottery, also for the old scheduler.** At offsets 0, 1, -1, 2
+the stage-3 scheduler's many-5000 `wait.max` is 2 / 449 / 41 / 5 and many-10000's 25 / 10 / 114 / 265: its pass of
+the 60-tick target at offset 0 is luck. In those rows the demand is far beyond the quota and the byte allowance (800
+squads each wanting a whole-map field: 4.4G relaxation units against 384k a tick) and a few groups that cannot head
+straight for their goal stand until their field comes; which ones is decided by small differences.
+
+Variants measured (`stage4/exp/`, offset 0 unless stated): an unbounded scan (many-5000 wait.max 982 -> 5, many-10000
+10 -> 1,377); window-slot admission alone (many-1000 766 -> 830, many-2500 1,184 -> 1,288, many-10000 wait.max ->
+3,177); Waiting windows 2 / 4 / 12 (non-monotone in wait.max); backfill round a Waiting reservation against a strict
+one, at offsets 0, 1, -1, 2:
+
+| policy | many-5000 wait.max | arrivals (median) | many-10000 wait.max | arrivals (median) |
+|---|---|---|---|---|
+| stage-3 scheduler (2635d913) | 2 / 449 / 41 / 5 | ~595 | 25 / 10 / 114 / 265 | ~700 |
+| backfill in the Waiting class | 560 / 233 / 449 / 519 | 1,599 | 3,177 / 3,181 / 10 / 2,972 | 1,191 |
+| strict reservation (chosen) | 5 / 5 / 991 / 949 | 1,531 | 10 / 10 / 4,156 / 10 | 1,051 |
+
+The strict reservation was chosen as the starvation-free one (with backfill a large waiting request can be overtaken
+without end); its tail in these rows remains worse than the stage-3 scheduler's at some offsets, while arrivals more
+than double. Recorded as an open item (section 8): the overloaded many-squad rows need stage 6's memory.
+
+**Review round (136ab4a1, e3e85716, bc5b23c2).** The automated reviews of d487d65d .. f5f7ea3b
+(`.git/worktrees/legion-10000/codex-reviews/<sha>.md`) raised 15 findings; every one was checked against the code
+and all were fixed except the eviction fixture, already fixed in 86b409bd:
+
+| Finding (review) | Verdict | Fix |
+|---|---|---|
+| P1 field freed during its DRR visit: an install or an eviction drops a field the ring still points into (80599fdc, 2635d913; ASan-confirmed by the reviewer) | real (a focused reproduction; none of the 135 gate fixtures reaches it: ASan sweeps of the pre-fix binary at `--budget-div` 1 and 64, `stage4/asan/`, are clean) | the job holds the field (shared_ptr) until `serveFields` returns; a dropped field is retired at once (`orphan`: out of the totals, no visit, no window slot) |
+| P1 plane eviction loop with more than 24 classes (b052597e, d487d65d) | real (`legion_planepin`: 36 builds for 25 classes before, 25 after) | `queuedNeeds`: a plane a waiting registration needs is no victim |
+| plane-ready leaves waiters marked plane-blocked, so a new registration bypasses them (b052597e) | real | `planesFinished` clears their marks (also after a background prebuild) |
+| formation sized before deferred members register (d487d65d) | plausible (not reproduced at the current head, where small planes are built at once; gate-neutral) | an area stays open while members of it wait (`regAreas`) |
+| shared paused job paused by one subscriber's rule (80599fdc); idle shared fields take window slots (f5f7ea3b) | real | `jobPausable` over every subscriber; `jobIdle` jobs take no slot |
+| aged reservation lost when the class window is full (f5f7ea3b) | real | reserve on the window-full path too |
+| refresh initialisation not charged to the refresh allowance (2635d913) | real: a documented cap not kept | debit both budgets -- **the round's one behaviour change** |
+| starvation not measured until it ends (2635d913) | real (accounting only) | open waits counted at the end of every tick |
+| resumed awareness mixes snapshot and processing times (a77536e8) | real past the budget only | snapshot-relative stamps; displacement scaled to `kAwareScan` |
+| sort buffers missing from NavBytes (b052597e) | real | counted |
+| eviction fixture under the byte cap (80599fdc, 2635d913) | already fixed | 86b409bd |
+
+Attribution: the gate at e3e85716 equals 136ab4a1's on every fixture; against 2ca032e9 aware-cross and
+aware-cross-behind (offset -4), battle-assault (offset 2) and refreshchurn (every offset, no behaviour key) moved,
+and chase-50's visit counters rose by 2 with every hash equal. Each review fix was toggled separately in a
+diagnostic build (`stage4/c8/ls_xv*`): turning off only the refresh-allowance debit restores 2ca032e9's hashes on
+all of them; no other toggle moves anything. The four fixtures stay inside their bands; chase-50's two work
+licences moved (464 -> 466, 573 -> 575) with that reason.
+
+**Checks (exact commands; scratch `~/tak-tmp/scratch/legion-10000/stage4/`; binaries `c6f/` = 80599fdc, `c7/` =
+f5f7ea3b, `c9/` = e3e85716, the final code).**
+
+| Check | Command | Result |
+|---|---|---|
+| Unit test of the policy | `build-o2/navbudget_test` | all 7 sections pass (fair share within one slice over 1,000 ticks; oldest first across windows; bursty load: longest gap 218 <= 456; waiting flood: the stale job served at 450 ticks; shared job; fit scan: 8 refusals a tick at most, no later request past a reservation). Mutations (cursor ignored, promotion off, reservation off; `stage4/mut/`) each fail it |
+| Continuous load in the sim | `ctest -R legion_sched_load` (`tools/legion_sched_load_test.py`) | pass (c7): quota saturated 3,918 consecutive ticks; longest service gaps waiting 1 / first route 138 / refreshes 0 (bound 539); request ages waiting 104 / first route 150 (bound 900: requests now wait for a window slot, bounded by promotion); field wait 0; serial == workers. (Fix round 2: this file never runs short of memory, so promotion, the fit scan and the reservation never ran in it; legion_sched_mix now covers them) |
+| Over-budget paths under the verifier | `ctest -R legion_sched_load_div` (budgets / 64, `TAK_LEGION_VERIFY=1`), and many-1000 at `--budget-div 64` and `4096` | pass; serial == workers. (Fix round 2: at / 64 no registration was deferred; the ctest now divides by 512 and asserts deferrals) |
+| Exactness of the exact commits | gates at d487d65d, b052597e, a77536e8 (`sweep_legion.py <bin> gate-cN 4-19 ../fix3/gate3`) | d487d65d: 135/135 Legion fixtures hash- and key-identical to feef1b09; a77536e8 = b052597e on all 135; d190169c: one-10000, many-1000, swap-1000, maze-1000 identical |
+| Legion scenario gate | `sweep_legion.py c6f/ls_gate gate-c6f 4-19 ../fix3/gate3`; `license.py ... --apply`; `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results gate-c6f/scenarios.jsonl`; `validate`; again for c7 (`gate-c7`), c8 (136ab4a1) and c9 (`gate-c9`) | PASS at c9: 31,772 keys, 0 failed, 2,273 ratchets, 3,410 licensed, 218 floor exceptions; validate 0 problems |
+| AddressSanitizer | `build-asan` (Debug, -O1 -fsanitize=address); `stage4/asan/sweep.py` over all 135 fixtures at `--budget-div` 1 and 64 with the pre-fix binary; ten workloads (refreshchurn, sched-load at 1 and 64, battle-assault, battle-field-2x250, many-1000, many-2500, churn-1000, staticblock-own, aware-cross) with c9 | all clean |
+| Gate ctests, cost, battle windows | `ctest -R 'legion_sched_load|^legion_cost$|^legion_scenario_battle-|legion_baseline_reasons|legion_check'` | 75/75 pass at c6f (after the 7 cost entries in 44d08559); 77/77 at c9 |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j12 --timeout 900` (scratch XDG, no `TAK_SETTINGS_FILE`) | **381/381** at c7 and at c9, plus `legion_planepin` (bc5b23c2); the first run at c6f failed legion_quota and navigation_determinism, fixed in 86b409bd (above) |
+| Rejoin | `CORES=20-23 stage3/rejoin.sh c6f rejoin` | host and rejoined client end on the same hash (**08d104c5c8f0991d**), the rejoined client's orders keep landing whole, the server refuses nothing |
+| Replay | `TAK_REPLAY_VERIFY=1 takclient replay <the rejoin host's recording> --data DATA` | 4,517 ticks, 150 checkpoints, no divergence |
+| `--mpai` Inner Circle seed 1 | `CORES=20-23 mpai.sh c6f OUT 60` (twice) and `300`; again with c7 and c9 (`CORES=16-23`) | 60 s Retail **2c39430636a3dbda** (unchanged), Legion **f75b2a11410f43b4** (three runs at c6f, again at c7 and c9; was 532539f51d70840b); 300 s Retail **7535cb08ee787b75** (unchanged), Legion **b25e18fe6f015862** (twice at c6f, again at c9; was c707e1a8063bc0c7): the new Legion baselines |
+| gcc vs clang | clang 22 build of `legion_scenario` (`build-clang`, Debug -O2) against gcc 16's, `--mode both --offsets 0 --ticks 2000` | one-1000, wall-4x50, motion-cross, sched-load: every hash and key equal in both modes (closes the stage-3 coverage item: explicit orders and the scheduler under load agree across compilers) |
+| replay_test | `build-o2/replay_test` | pass (268 kept, 267 refused) |
+| Release build | `cmake --build build` (all targets) | builds |
+
+**Scale suite (final code, e3e85716).** `python3 tools/legion_scale.py run --bin stage4/c9/legion_scenario --out
+stage4/scale3 --cores 4-23 --per-job 4`; `python3 tools/legion_scale.py check --results stage4/scale3/results.jsonl
+--targets tools/scenarios/scale/targets.json`; `stage4/scale_ab4.py fix3/scale-final/results.jsonl
+stage4/scale3/results.jsonl`. 38/38 jobs exit 0; every Retail state hash equal to stage 3's. Targets **117 met, 87
+missed, 8 report-only missed** (stage 3: 124 / 82 / 6). Stage 3 -> stage 4, Legion rows, offset 0:
+
+| file | start.last | wait.max | arrived | completed | outside | stuck | livelock | fields peak | nav bytes peak (MB, deterministic) |
+|---|---|---|---|---|---|---|---|---|---|
+| attack-1000 | 23 -> 30 | 0 -> 6 | 99 | 99 | 0 | 0 | 0 | 15 -> 6 | 31 |
+| attack-10000 | 42 -> 131 | 1 -> 9 | 884 | 869 -> 889 | 18 -> 28 | 40 -> 50 | 9 -> 14 | 31 -> 17 | 65 |
+| bridges-1000 | 15 -> 25 | 0 -> 8 | 12 -> 4 | 11 -> 4 | 0 | 539 -> 535 | 44 -> 35 | 5 -> 7 | 63 |
+| bridges-10000 | 45 -> 84 | 0 -> 9 | 0 | 0 | 0 | 9053 -> 9029 | 88 -> 117 | 5 -> 7 | 72 |
+| churn-1000 | 46 -> 93 | 0 -> 2 | 488 -> 600 | 574 -> 735 | 111 -> 168 | 219 -> 144 | 14 -> 13 | 6 -> 7 | 18 |
+| churn-10000 | 1230 -> 795 | 10 -> 13 | 3702 -> 5013 | 4500 -> 5916 | 1045 -> 1327 | 4402 -> 2626 | 106 -> 102 | 7 -> 11 | 112 |
+| idle-10000 | 22 -> 41 | 0 -> 6 | 33 -> 27 | 27 -> 21 | 0 | 666 -> 654 | 31 -> 23 | 2 | 37 |
+| many-100 | 9 | 0 | 98 | 98 | 2 | 1 | 0 | 8 | 1 |
+| many-1000 | 19 | 0 | 788 -> 822 | 780 -> 812 | 21 -> 13 | 84 -> 54 | 13 -> 19 | 81 -> 97 | 25 |
+| many-10000 | 248 | 25 -> 10 | 546 -> 944 | 267 -> 645 | 15 -> 40 | 9164 -> 7300 | 100 -> 89 | 150 -> 100 | 186 |
+| many-2500 | 217 -> 18 | 13 -> 2 | 786 -> 1278 | 646 -> 1266 | 9 -> 49 | 1400 -> 703 | 50 -> 86 | 92 -> 274 | 125 |
+| many-5000 | 67 | 2 -> 5 | 469 -> 1523 | 271 -> 1258 | 11 -> 44 | 3802 -> 2675 | 67 -> 107 | 99 -> 172 | 161 |
+| maze-1000 | 10 -> 24 | 0 -> 15 | 392 -> 405 | 433 -> 455 | 57 -> 60 | 123 -> 95 | 32 -> 29 | 6 | 102 |
+| maze-10000 | 15 -> 42 | 0 -> 16 | 1109 -> 1135 | 1189 -> 1367 | 295 -> 435 | 7695 -> 7291 | 82 -> 74 | 6 | 108 |
+| mixed-1000 | 11 -> 15 | 0 -> 6 | 667 -> 640 | 514 -> 460 | 0 | 32 -> 39 | 20 -> 19 | 5 | 39 |
+| mixed-10000 | 11 -> 49 | 0 -> 41 | 2254 -> 2256 | 868 -> 1910 | 0 | 6227 -> 6307 | 154 -> 97 | 5 | 232 |
+| one-100 | 8 | 0 | 100 | 100 | 0 | 0 | 0 | 2 | 2 |
+| one-1000 | 39 -> 41 | 0 | 875 -> 893 | 831 -> 854 | 4 -> 2 | 90 -> 80 | 15 | 2 | 8 |
+| one-10000 | 15 -> 92 | 0 -> 11 | 7050 -> 7081 | 6347 -> 6377 | 5 -> 10 | 2665 -> 2657 | 38 -> 61 | 2 | 54 |
+| one-2500 | 29 -> 38 | 0 -> 3 | 2008 -> 1983 | 1851 -> 1830 | 4 -> 5 | 407 -> 410 | 19 -> 20 | 2 | 17 |
+| one-5000 | 49 -> 106 | 0 -> 6 | 3735 -> 3744 | 3418 -> 3389 | 6 -> 1 | 1097 -> 1087 | 29 | 2 | 30 |
+| sched-load | -1 | 0 | 29 | 22 | 0 | 101 | 22 | 96 | 56 |
+| swap-1000 | 20 -> 25 | 0 -> 8 | 798 -> 854 | 785 -> 833 | 9 -> 13 | 71 -> 66 | 13 -> 15 | 5 -> 7 | 44 |
+| swap-10000 | 15 -> 164 | 0 -> 9 | 1420 -> 1476 | 1186 -> 1276 | 0 | 5782 -> 5893 | 105 -> 98 | 5 -> 7 | 61 |
+| swap-2500 | 48 -> 72 | 0 -> 8 | 1914 -> 2032 | 1715 -> 1836 | 0 -> 6 | 57 -> 86 | 9 -> 16 | 5 -> 6 | 43 |
+| swap-5000 | 15 -> 38 | 0 -> 8 | 2329 -> 2330 | 2162 -> 2133 | 3 -> 1 | 1610 -> 1542 | 61 | 5 -> 7 | 54 |
+
+**Targets.** Newly met: many-1000 `complete_outside_n` (21 -> 13), many-2500 `start.last` (217 -> 18). Newly
+missed: `start.last` in attack-10000 (131, max 90), one-10000 (92), one-5000 (106), swap-10000 (164), churn-1000
+(93), and `complete_outside_n` in churn-1000 (168, max 118) and churn-10000 (1,327, max 1,180); report-only:
+many-10000 `over_budget` and `tick_p99_ms` (this run's wall columns, see below). many-5000 `wait.max` (982 at
+80599fdc) meets its target again at offset 0 (5), but is a lottery at other offsets (above).
+
+* **start.last** (the last member of a click to start moving): concurrent first fields of one class now start
+  together instead of one after another, and the members of a 10,000-body order, released over the same few
+  ticks, crowd each other at the start (one-10000 members moving over ticks 14-21 and a long tail behind the
+  front). A window of 1 restores it but serves fields first-come-first-served, the starvation this stage removes;
+  building planes concurrently was measured and did not help. It is a crowd-start problem for stages 7-8
+  (subgroups, admission into the moving crowd), recorded as a must-fix below.
+* **complete_outside_n** in the churn rows: more orders complete (churn-1000 735 vs 574, churn-10000 5,916 vs
+  4,500) and the share outside the disc is close to stage 3's (23% vs 19%, 22% vs 23%); the count crosses the
+  frozen max because there are more completions. Recorded, not licensed.
+* Outcomes improve where fields compete: arrivals many-2500 786 -> 1,278, many-5000 469 -> 1,523, many-10000 546
+  -> 944, churn-10000 3,702 -> 5,013; stuck at the end many-2500 1,400 -> 703, churn-10000 4,402 -> 2,626.
+
+**Wall time (report only).** The suite's wall columns are not comparable run to run (five jobs share the machine;
+this run overlapped a 300 s `--mpai` and builds on cores 0-3 for part of its length, and one-10000's World::tick
+showed 152 ticks over 33 ms where the same binary alone shows 0-1). The instrument for wall time is the same-core
+A/B (`stage4/ab/run3.sh`: stage-3 head against e3e85716, 6,000 ticks, three workers, the arms on cores 4-7 and
+8-11 at once and swapped between the two repetitions; rep0 / rep1):
+
+| file | arm | tick mean ms | p99 ms | max ms | ticks over 33 ms |
+|---|---|---|---|---|---|
+| one-10000 | stage 3 | 10.41 / 11.53 | 14.05 / 15.37 | 35.5 / 40.0 | 2 / 2 |
+| one-10000 | stage 4 | 11.31 / 10.14 | 14.55 / 12.79 | 19.5 / 16.6 | 0 / 0 |
+| many-10000 | stage 3 | 9.85 / 12.12 | 12.04 / 14.54 | 13.6 / 15.8 | 0 / 0 |
+| many-10000 | stage 4 | 13.27 / 10.19 | 20.50 / 12.42 | 22.4 / 16.4 | 0 / 0 |
+| churn-10000 | stage 3 | 11.43 / 13.03 | 17.25 / 20.54 | 36.0 / 37.9 | 3 / 3 |
+| churn-10000 | stage 4 | 12.62 / 11.00 | 20.20 / 17.03 | 24.6 / 21.1 | 0 / 0 |
+| swap-10000 | stage 3 | 9.29 / 11.44 | 16.02 / 19.93 | 29.7 / 33.8 | 0 / 1 |
+| swap-10000 | stage 4 | 10.86 / 10.58 | 14.94 / 14.41 | 18.0 / 17.1 | 0 / 0 |
+| sched-load | stage 3 | 1.22 / 1.49 | 1.86 / 2.31 | 4.1 / 2.8 | 0 / 0 |
+| sched-load | stage 4 | 1.60 / 1.32 | 2.49 / 2.09 | 5.6 / 5.3 | 0 / 0 |
+
+On the same cores (stage 3's rep0 against stage 4's rep1, and the reverse) the mean moves -3% to +9% (many-10000
++3% / +9%: it admits and serves more fields and moves more bodies; swap-10000 +14% / -5%), and the worst tick
+falls everywhere a big order lands (one-10000 35-40 ms -> 17-19 ms, churn-10000 36-38 -> 21-25): no tick over
+33 ms in stage 4's arms, 1-3 per run in stage 3's. The whole-tick columns (commands applied + `World::tick`)
+equal the tick columns in stage 4: applying a 10,000-body order now costs 2.6 ms (35-39 ms at stage 3). A
+same-core check of f5f7ea3b against e3e85716 (one-10000 and many-10000, 3,000 ticks, `stage4/ab79/`) shows the
+review fixes cost nothing measurable (means within 1 ms, 0-2 ticks over 33 ms in either).
+
+**What moved in the gate fixtures, and why** (gates at each commit against feef1b09; outcome balance = keys moved
+more than 10%, direction from legion_check, `stage3/outcome_ab.py --all`).
+
+* d487d65d (registration budget) and a77536e8 (resumable awareness): nothing (no fixture exceeds either budget).
+* b052597e + 2635d913 (incremental plane builds): exactly the 22 fixtures whose maps exceed 131k cells (gapsweep,
+  gen1-route-*, pocket-*, refreshchurn*, serplong*, split-450-*, tail-*). b052597e alone moved 43 (attack rings,
+  battles): every registration that found its plane unbuilt ran at tick T instead of at command time T-1, and every
+  stamp moved; 2635d913 builds a plane whose whole build fits one window at once, as before. Balance over the 22:
+  81 better / 57 worse (pocket-615-open 15 / 1, tail-open570 12 / 2, split-450-pocket 5 / 0; tail-wave 2 / 13,
+  pocket-304-open 2 / 7, pocket-615-wall 3 / 7). **Diagnosis of the worse ones**: not a time shift -- the stage-3
+  binary with the order issued one tick later (`shift/*.scn`) shifts every time by exactly one tick, at all 11
+  offsets -- but a change of initial conditions: the order's members now register once, in the tick their plane is
+  ready, after the Retail mission's first stage, instead of twice (at command time and again in that stage), and
+  some offsets then crowd differently (pocket-304-open offset 0: t90 4,457 -> 6,978, left behind 6 -> 30; core-5
+  median 4,664 -> 5,493; median of all 11 4,664 -> 4,683; tail-wave W.done core-5 median 2,479 -> 2,838, 8 of 11
+  offsets slower). Accepted as the cost of not building a whole plane inside one call, with the numbers here; the
+  crowd sensitivity is a stage 7-8 input (subgroups, admission), not hidden by building the plane synchronously again.
+* 80599fdc (scheduler): every Legion fixture's hash (its state is hashed; a start's initialisation is charged, so
+  field timing shifts by a little everywhere). 21 fixtures moved keys more than 10%: 90 better / 88 worse --
+  the gate's fixtures rarely have competing field jobs, so the scheduler mostly perturbs them (its systematic effect
+  is under contention: the scale table). The ones outside the stage-3 base's own core-offset spread:
+  battle-field-2x250 (the symmetric battle's winner flips: B used to win at most offsets, now A does -- g.B.arrived
+  median 36 -> 0, g.A.arrived 0 -> 19 -- with reversals 240 -> 269), battle-field-2x500 (spins +1.4%, B left behind
+  0 -> 3), gen1-route-61923 (zongob completions 77 -> 71) and -54772 (reversals 57 -> 63).
+* Retail: no line moved (every Retail `hash@` equal; 0 Retail failures).
+
+Every failing key was judged against the stage-3 base's own core-offset spread (`stage4/judge.py`) before its
+licence; `stage4/license.py` wrote 854 `hash@` retakes, 638 band licences, 7 offset-spread exceptions (S4-268), 2
+bounds moved inside the base's spread (aware-seen `contact_other_permille` 622 -> 632, split-450-pocket
+`g.A.arrived` 27 -> 26; both looser, both with the reason) and 4 new work entries, each with the reason of its
+cause(s), in 44d08559.
+
+### 7.4 fix round 2: verifier rejection (2026-10-16)
+
+The verifier reproduced most of the stage at bfa36fd9 (tests, the legion_planepin failure before its fix, the
+`--mpai` hashes, the gate, the 10,000-body runs with serial == workers) and rejected it on three findings. Each is
+answered below; writing the memory-pressure test the second finding asked for exposed two further scheduler
+defects, fixed in the same round. Scratch: `~/tak-tmp/scratch/legion-10000/stage4/r2/` (binaries `f0`..`f11`; `f11`
+/ `c11` = the final code; mutants of it `m6_*`, `m5_nocap`; earlier variants and toggles `f*`, `m2_*`..`m4_*`,
+`n_*`).
+
+**Finding 1 -- a reservation blocked requests that need no new room. Real; fixed (1117fa31).** Once a request
+reserved, `serveFields` left the admission loop (`if(budget==0||admit.stopped())break;`) and `nextClass()` stopped
+every later class, so nothing could start for the rest of the tick -- not a share of an existing field
+(`Start::Shared` allocates nothing) and not a refresh that could share. Now, once the room scan has stopped (a
+reservation or the class's fit-scan bound), the remaining requests are still tried, but share-only: a share takes
+no room, so the reserved request loses nothing it waits for (a share lands within kStillScan of a field's start,
+so it can delay that field's eviction by at most kStillScan; a refresh that shares even drops its stale field). A refresh that
+needs a new build still waits: it needs room. `NavAdmit::stopped()` now means "the room scan ended", with
+`reserve()`; the window-full reservation no longer breaks out of the class either. Counted as
+`scale.sched.stopped_shares`. The verifier's measurement stands for the old code: the reservation was active in
+13,240 of many-10000's 14,400 ticks and 9,533 of many-5000's 11,300, and in those ticks no admission of any kind
+could happen; the fix-round values are in the scale table below.
+
+**Finding 2 -- the longest request wait under load was misreported and the load ctests did not exercise the
+anti-starvation mechanisms. Real; answered with a new fixture, three ctests and two fixes.**
+
+* *Misreporting.* 7.4 cited "start requests waiting up to 1,206 ticks (many-10000: 5,613)" at 80599fdc and its
+  "Fix:" paragraph reported only arrivals and stuck counts, so a reader took the request age as fixed. It was not:
+  at e3e85716 `scale.sched.age_max.waiting` was 5,641 in many-10000 (first route 5,569) and 1,183 in many-5000;
+  neither 7.4, section 8 nor the stage report gave them. A note now says so at that paragraph; the final values and
+  what they mean are below and in section 8.
+* *Coverage.* `legion_sched_load` and `_div` ran with promotions 0, fit_skips 0, reservations 0 and (in _div)
+  reg_deferred 0: sched-load never runs short of memory, so the fit scan and the reservation never ran in the sim,
+  and the 900-tick bound it asserted would fail in many-5000/10000. New: `tools/scenarios/scale/sched-mix.scn`
+  (gen_scale.py) -- 42 short-hop squads re-clicked every 120 ticks round 6 squads crossing the map, one footprint,
+  under a field allowance of two whole-map fields (the new scn directive `navbytes`, or `legion_scenario
+  --field-bytes`), so large requests compete with a stream of small ones for memory. `legion_sched_mix` checks:
+  serial == workers; the mechanisms ran (fit skips 27,648, reservations 5,686 ticks, request promotions 47,375
+  request-ticks, shares behind a stopped scan 12); builds in flight within their windows (13 / 1); admission liveness
+  (200 <= 563 ticks, below); and every class's longest request wait within a bound DERIVED FROM CAPACITY:
+  `steps(class) x kAgeStep + kReserveAge + rounds x (kFieldTenure + kStillScan)`, `rounds = ceil(4 x
+  request_cells_max / (A - 4WH))`. Why: requests are served oldest first (a lower class rises one class per
+  kAgeStep); one refused for room reserves after kReserveAge and nothing takes new room before it; every finished
+  field is a victim kFieldTenure after it starts (a share lands within kStillScan of a field's start, so sharing
+  extends that by no more), so in one round of kFieldTenure + kStillScan ticks all the memory held at its start can
+  be freed, which admits at least A - 4WH (one largest request short of the allowance) of the queue's cells. The
+  queue is measured (`request_cells_max`: the most cells the requests listed in one tick need together); the test
+  also checks from the file that every build finishes within its tenure (kFirstInflight whole-map builds at half
+  the quota: 233 <= 300 ticks). Values: waiting 889 <= 2,790, first route 983 <= 2,940, aware repair 289 <= 3,090,
+  stale refresh 0 (queue peak 7.92 whole-map fields, 8 rounds).
+* *The test can fail* (mutants of the final code, `r2/mut6/`): the reservation removed -- first route 4,497 >
+  3,930 (and reservations 0, shares 0); requests by id instead of age -- waiting 4,604 > 2,790; request promotion
+  removed -- fails only its counter (the ages stay inside the bound: promotion is not what bounds them in this
+  file; navbudget_test's promotion section fails); head-of-line blocking (scan bound 1) -- passes (navbudget_test
+  section 6 catches it); shares behind a stopped scan removed -- shares 0. The two defects below each have their own
+  test that fails without the fix.
+* *Defect A, found by the new fixture: shared fields were never eviction victims* (fixed in 1117fa31). A victim had
+  to be a group's exclusive field (`ownRefs==1`: "dropping a shared one frees nothing"). Fields shared by groups
+  that never finish therefore pinned memory for good, and a reservation waiting for that memory stopped every
+  admission: many-1000 under a two-map allowance (`--field-bytes 778752`) made 15 admissions in 6,300 ticks, none
+  after tick ~1,600 (two shared fields held 617 KB of 779 KB; the reserved request needed ~300 KB). Now a shared
+  field is a victim once every holder (the groups under its route key whose field is it) is past its tenure, and it
+  is dropped from all of them (`evictionHolders`; `TAK_LEGION_VERIFY` compares the holders with a walk of every
+  group). `legion_sched_pin` (many-1000, two-map allowance, 3,000 ticks) checks admission liveness -- no run of
+  ticks with a refusal for room and no new build longer than kFieldTenure + kStillScan + the longest build (429):
+  299 with the fix, 1,797 without (fails).
+* *Defect B: builds piled up past the windows* (1117fa31, refined in f932937f). f5f7ea3b admitted a new build only
+  while "its class's window has a free slot", counted per class. A first build admitted as a first route is a
+  Waiting job the next tick (its members stand still for it), and a refresh promoted out of its class leaves its
+  slot, so the windows looked free again and admitted more every tick while each served only its oldest: 151
+  unfinished, unserved builds held many-5000's whole 128 MiB at tick 525 (memory dump, `r2/exp/dbg-many5000.err`),
+  so its reservations waited for builds nobody was serving; many-2500 had 78 refreshes in flight, battle-assault
+  40 first builds. Fix: a new build is also admitted only while its kind has room over every class --
+  kFirstInflight = 2 kWindow first builds, kRefreshInflight = 2 kRefreshWindow refreshes, the two windows each kind
+  can be served in -- but only while more than half the byte allowance is in use. The unconditional cap (1117fa31)
+  was measured first and cost outcomes where memory is plentiful: sched-load stuck 101 -> 162 (consistently, 9
+  offsets), many-1000 arrivals -9% (5 offsets, the refresh cap) -- an early-admitted build costs nobody room
+  there, and refreshes promoted out of their class are served from the main quota; capping first builds only kept
+  the sched-load cost. Gated on memory (f932937f) it changes no gate fixture (battle-assault never reaches it) and
+  many-1000 and sched-load equal the head, while many-2500's refreshes in flight at such admissions fall 78 -> 6
+  and its arrivals rise 1,278 -> 1,456 (offset 0; offsets 1 / -1: 1,250 / 1,355 against 1,259 / 1,234, stuck 911
+  / 699 against 824 / 823: better at two of three). `legion_sched_inflight` (many-2500) checks that no build
+  admitted while memory is short takes its kind past the cap: 6 with the fix, 78 without (fails).
+* *Deferred registration* (also finding 3): `legion_sched_load_div` now divides the budgets by 512 (64 never
+  deferred a registration in sched-load: its 480 bodies arrive as small clicks) and asserts it: reg_deferred 6,986,
+  plane waits 580, longest registration wait 135 ticks, under `TAK_LEGION_VERIFY`, serial == workers.
+
+**Finding 3 -- smaller record items.**
+
+* The two `bound` rules moved inside the stage-3 base's own core-offset spread are now named in 7.4's licence
+  paragraph: aware-seen `contact_other_permille` 622 -> 632, split-450-pocket `g.A.arrived` 27 -> 26.
+* A queued unit asked to register again kept its first `RegEntry` area: real (deterministic, minor); fixed in
+  1117fa31 -- `requestRegister` rechecks the area against the current leg (`legArea`) and moves the `regAreas`
+  count when it changed. No gate fixture reaches it (no gate fixture defers a registration).
+* The _div ctest now reaches deferred registration (above). The verifier's own run, many-1000 at `--budget-div
+  4096` under `TAK_LEGION_VERIFY`, at the final code: 1,815 deferred registrations (as the verifier measured at
+  bfa36fd9), serial == workers.
+
+**Classification and attribution.** All four fixes are behaviour changes, but only where memory runs short or a
+registration is deferred; the accounting added with them is observation only (never read by the sim). Protocol
+stays 268: the branch is unreleased and the stage-3 fix round set the precedent of staying inside the stage's
+protocol; replay_test still refuses 267. The 135-fixture Legion gate at the final code equals the stage-4 head's on
+every fixture, hashes AND keys (`r2/gate-f11` against `stage4/gate-c9`): no gate fixture runs short of memory or
+defers a registration. (The unconditional cap of 1117fa31 moved battle-assault -- five work counters licensed in
+ba919843 -- and those licences were reverted in ad1db07e once the cap was gated; `baseline.json` equals
+bfa36fd9's.) The four `--mpai` hashes are unchanged, so no new baselines. Where the fixes act (memory pressure,
+the overloaded rows), each was toggled alone on the affected fixtures: shares behind a stopped scan (`m6_noshare`:
+sched-mix shares 0), shared victims (`m6_noshareevict`: pin liveness 1,797), the gated cap (`m5_nocap`: many-2500
+refreshes 78). Retail is untouched: every sim change is in `LegionNavigator` (the rest is test tooling); every
+Retail state hash in the scale suite and both Retail `--mpai` hashes are unchanged.
+
+**Commits.** 1117fa31 (the four fixes, accounting, `--field-bytes`, `navbytes`), d31ee31a (sched-mix,
+legion_sched_mix / _pin / _inflight, _div at 512, navbudget_test section 6), ba919843 (battle-assault licences for
+the unconditional cap) and ad1db07e (their revert), f932937f (the cap gated on memory; legion_sched_inflight on
+many-2500), the record commit at the branch head (this section, section 8, docs/legion-pathfinding.md).
+
+**Checks (final code = f932937f; binaries `r2/c11`, `r2/f11`).**
+
+| Check | Command | Result |
+|---|---|---|
+| Policy unit test | `build-o2/navbudget_test` | all pass, incl. "shares behind the reservation still start, at once" |
+| Scheduler ctests | `ctest -R 'legion_sched\|navbudget'` | legion_sched_load, _div (budgets / 512, VERIFY), _mix, _pin, _inflight, navbudget_test: pass |
+| Mutation proofs | `tools/legion_sched_load_test.py r2/<mutant>/legion_scenario <file> [args]` (`r2/mut6/`) | each fix's test fails without it: no reservation (mix: 4,497 > 3,930), by id (mix: 4,604 > 2,790), no promotion (mix: counter 0), no shares behind a stop (mix: 0), no shared victims (pin: 1,797 > 429), no cap (inflight: 78 > 6); head-of-line (scan bound 1) passes the sim tests, navbudget_test catches it |
+| Verifier mode | `TAK_LEGION_VERIFY=1 TAK_SIM_WORKERS=3 legion_scenario <file> --both-exec --scale` (`r2/verify2/`): many-1000 `--field-bytes 778752 --ticks 3000`, sched-mix, many-2500, many-1000 `--budget-div 4096` | no verify failure, serial == workers in all four (hashes 2213ac5991c7b9d6, 5b9b80cddfd9f177, 9653bb97b4493ceb, f092e707fd6dffe6); shared evictions 2 / 1; deferred registrations 1,815 in the div-4096 run |
+| Legion gate | `sweep_legion.py r2/f11/legion_scenario r2/gate-f11 4-19 ../gate-c9`; `legion_check.py check --cumulative`; `validate` | every Legion fixture's hashes and keys equal gate-c9's; PASS: 31,772 keys, 0 failed, 2,273 ratchets, 3,410 licensed; validate 0 problems |
+| `--mpai` Inner Circle seed 1 | `CORES=20-23 mpai.sh r2/c11 OUT 60` and `300` | 60 s Legion **f75b2a11410f43b4**, Retail **2c39430636a3dbda**; 300 s Legion **b25e18fe6f015862**, Retail **7535cb08ee787b75**: all four unchanged (no new baselines) |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j12 --timeout 900` (scratch XDG, no `TAK_SETTINGS_FILE`) | **383/383** (381 + legion_planepin + legion_sched_pin) |
+| Legion ctests | `ctest -R 'legion_sched\|^legion_cost$\|^legion_scenario_battle-\|legion_baseline_reasons\|legion_check\|legion_planepin\|replay_test\|navbudget\|legion_doc_links\|legion_quota\|navigation_determinism'` | **86/86** (every per-fixture gate check, cost, battle windows, replay_test 268 kept / 267 refused) |
+| AddressSanitizer | `build-asan` legion_scenario `--workers`: sched-mix, many-1000 `--field-bytes 778752 --ticks 3000`, many-2500, battle-assault, sched-load, sched-load `--budget-div 512` (`r2/asan/`) | no report; hashes equal the -O2 build's |
+| Release build | `cmake --build build` (all targets) | builds (all targets, f932937f) |
+| Scale suite | `legion_scale.py run --bin r2/c11/legion_scenario --out r2/scale5 --cores 4-23 --per-job 4`; `legion_scale.py check --results r2/scale5/results.jsonl --targets tools/scenarios/scale/targets.json`; `stage4/scale_ab4.py stage4/scale3/results.jsonl r2/scale5/results.jsonl` | 39/39 jobs exit 0; Retail hashes equal; targets 120 met / 90 missed / 2 report-only (below) |
+
+**Scale suite (final code, offset 0, `r2/scale5`).** 39/39 jobs exit 0; every Retail state hash equals the stage-4
+head's; every Legion row except the three overloaded many-squad rows is identical to the head's (all keys). Targets
+**120 met, 90 missed, 2 report-only missed** (stage-4 head: 117 / 87 / 8). Newly met: six report-only wall targets
+(the head run's wall columns were contaminated, 7.4); no target the head met is lost except three new misses:
+many-10000 and many-5000 `wait.max` and many-2500 `complete_outside_n` (below). The changed rows (head -> final):
+
+| file | wait.max | arrived | completed | outside | stuck | livelock | fields peak | request age waiting / first route / aware repair | reservations (ticks) | fit skips | quota spent on relaxations |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| many-2500 | 2 | 1,278 -> 1,456 | 1,266 -> 1,459 | 49 -> 61 | 703 -> 589 | 86 -> 57 | 274 -> 205 | 2 / 2 / 154 -> 2 / 1 / 957 | 0 | 0 | 33% -> 37% |
+| many-5000 | 5 -> 1,234 | 1,523 -> 1,639 | 1,258 -> 1,615 | 44 -> 86 | 2,675 -> 2,572 | 107 -> 89 | 172 -> 186 | 1,183 / 1,173 / 1,149 -> 1,578 / 1,576 / 630 | 9,533 -> 0 | 325,043 -> 0 | 99% |
+| many-10000 | 10 -> 5,203 | 944 -> 1,226 | 645 -> 985 | 40 -> 73 | 7,300 -> 6,859 | 89 -> 69 | 100 -> 119 | 5,641 / 5,569 / 5,542 -> 5,895 / 5,894 / 632 | 13,240 -> 0 | 266,551 -> 0 | 99% |
+
+* Memory is no longer the limit in these rows: with no unserved builds holding the allowance, no start is refused for
+  room (reservations and fit skips 0); what remains is the quota, saturated 99% of the run in many-5000 and
+  many-10000. Arrivals and completions rise (many-10000 completions +53%, many-5000 +28%, many-2500 +15%), stuck
+  and livelocked bodies fall.
+* Aware repairs wait far less where the quota is saturated (5,542 -> 632 in many-10000): their refresh builds are
+  no longer queued behind piles of unserved first builds. In many-2500, where memory is short but the quota is not,
+  they wait longer (154 -> 957): the per-kind cap keeps refreshes to 6 in flight, and an aware repair's stale field
+  steers meanwhile; arrivals there still rise 14%.
+* First routes' request ages rise in the saturated rows (many-5000 1,173 -> 1,576, many-10000 5,569 -> 5,894). Part
+  of that is measurement: the age runs from the request to the build's admission, and at the head most builds were
+  admitted at once and then waited unserved past the windows, so the head's ages stopped counting long before
+  service began; now admission is close to service. What the age is, is below.
+* `wait.max` (the longest run of ticks a body stood in the navigator's Waiting state -- no field reaches it and the
+  straight heading is blocked) is a new miss at offset 0 in many-5000 and many-10000. A group whose request waits
+  in the drain queue heads straight for its goal while it can; a body blocked meanwhile waits as long as its
+  group's request. At the head the same rows already reached 949-991 (many-5000) and 4,156 (many-10000) at other
+  offsets (7.4); at the final code, offsets 1 / -1 / 2: many-5000 1,193 / 1,189 / 1,173 and many-10000 5,169 / 5,233 / 5,314 (`r2/offs/`) -- no longer a lottery: within
+  5% of the offset-0 value at every offset, as is the request age (many-5000 1,578-1,603, many-10000 5,822-5,895);
+  arrivals many-5000 1,533 / 1,638 / 1,686, many-10000 1,117 / 1,290 / 1,209 (head medians ~1,531 and ~1,051, 7.4).
+  It is the drain time below seen by the
+  unluckiest body, not a scheduling stall: the fix that removes it is less work per request (stage 6's tiles and
+  shared routes), not a different order.
+* many-2500 `complete_outside_n` 61 (max 50): more completions (1,459 vs 1,266) at about the same share outside the
+  disc (4.2% vs 3.9%); recorded, not licensed (the churn rows' item of 7.4 is the same pattern).
+
+**Request ages under continuous load: what the overloaded rows' numbers mean.** Measured at the final code (offset 0):
+
+* many-10000: the queue at its peak held 761 start requests needing 283M field cells -- 408 whole-map fields of
+  692k cells. At the run's measured 6.92 relaxations per initialised cell that is 5,098 ticks of the whole quota
+  (kFieldQuota 384,000), and the quota was spent on relaxations in 14,264 of the run's 14,400 ticks. The oldest
+  request waited 5,895 ticks: the drain time of the peak queue plus the requests that arrived while it drained (aware
+  re-plans, groups whose field was evicted). Service inside the scheduler stayed fair meanwhile: no job that asked
+  for work waited more than 148 ticks for a slice in its class (`gap_max`), requests are admitted oldest first, and
+  nothing was refused for room. In a work-conserving FIFO the last of N equal requests on a saturated server waits
+  N x (work per request) / capacity whatever the order; that is what 5,895 is -- about 400 whole-map fields of about
+  14 quota-ticks each, as the verifier estimated -- not starvation.
+* many-5000: 366 requests, 196 whole-map fields, 1,439 quota-ticks at 7.04 relaxations a cell; quota saturated 99%;
+  oldest request 1,578 ticks; longest slice gap 159.
+* The service-age bound that holds there is the drain bound, `(work queued ahead) / kFieldQuota` plus promotion,
+  which grows with the army and the map, not a constant. sched-load's 900-tick constant holds only because its queue
+  is small (47 requests, 87 quota-ticks); legion_sched_mix checks the capacity-derived bound where memory is the
+  limit, and section 8 carries the overloaded rows as stage-6 work (less work per request).
+
+### 7.5 Stage 5 record: the route-query interface (brief phase 4)
+
+**Hypothesis.** Stage 6 cannot replace the monolithic field window while every consumer reads `Field::potential`
+and waits for `done`. Put an explicit query interface between them that keeps reachability knowledge (Unknown /
+Reachable / Unreachable), direction guidance, distance with a metric and coverage of a region apart, with geometry
+freshness separate; move every consumer onto it exactly; then let the consumers state the region they need instead
+of the whole field, never acting on a tentative or unknown value; represent every demand on a paused build; and
+audit the progress measures for comparisons across metrics.
+
+**Classification.**
+
+| Commit | Content | Kind |
+|---|---|---|
+| 8c6efbff | `sim/legion_route.h` (`RouteGrid`, `RouteView`, `Reach`, `Progress`); `Field : RouteGrid`; every consumer reads through a view; demand gauges in NavAccounting (`route.demand_peak`, `route.demand_dropped`); `legion_route_test` | exact |
+| 5f60ce54 | `RouteDemand`: one entry per cell, widest margin, arrival order, indexed, no cap | exact wherever the old 32-cell list never filled (every gate and scale workload: `route.demand_dropped` 0, peak <= 1) |
+| 662574f1 | consumers state their region (`need`, `needIds`), certainty checks (`certainValue`, `certainReach`, `descend` check), `runOn`, `laneTrigger`, ring spots in a reach group's first pause, pending entrance, incremental cover scan; `setPauseAllForTest` / `--pause-all`; route need / run-on accounting; protocol 269 | behaviour (the 4 battle gate fixtures) |
+| 35cac631 | progress measures within one metric: detour record re-baselined per metric, approach gain per route with a stopped clock on missing data, trapped only on proven unreachability (fresh geometry; the epoch test replaced by 1905d086, 7.5 fix round) | behaviour (17 gate fixtures; the detour part superseded by 9bd3f5c3) |
+| 1de75fda | a pending entrance is retried at most once a tick (O(members^2) a tick otherwise) | behaviour only with pending entrances (none in the gate outside `--pause-all`) |
+| 9bd3f5c3 | a metric transition is never a detour record, instead of re-basing the record per metric | behaviour (the final gate: 10 fixtures moved in all, below) |
+| cc684793 | `legion_route_paused` ctest (`tools/legion_route_paused_test.py`) | tests |
+| 949ec7d1 | scenario licences and hash retakes, the Legion navigation golden (gcc = clang) | baselines |
+
+Retail is untouched: no Retail code path calls the navigator; every Retail gate line and the Retail `--mpai` hash
+are unchanged.
+
+**The interface (as built: section 3.3's amendment).** Consumers: steering's descent and aim (`descend`, `aimCell`,
+the drive, side-steps, detours, passing, the meet aim), the pinwheel (`pivotAim`), the passage gate and lanes
+(`gateCommit`, `gateAim`, `passageLane`), the vertex probe (instrument), awareness (`awareScan` and its replan),
+MV-05 (`replanForBlocks` and its probe in `move`), packed slots (`slotsFor`, `claimSlot`), formation hand-out and
+entrance (`formationSlot`, `assignFormation`, `entrance`, `enterArea`), reach rings (`ringFree`, `ringClaim`,
+`ringRechoose`, a ring member's walk), the settle rule (`settleWindow`, `pressed`, `areaBound`, `crowdBound`,
+`packedBound`, `rechoose`, `freeDescent`), the lift walk and the test hooks. The builder (`startField`, `advance`,
+`serve`, `coveredFor`, the scheduler, eviction, sharing, accounting, the checksum) is the provider and keeps
+reading its own cells. The exact commit was proved hash- and key-identical on all 135 gate fixtures (Legion, gate
+offsets, serial and workers) and on 11 scale files.
+
+**Stated regions and certainty.** A usable route (complete, or paused once it covered its group) now serves the
+consumers that used to wait for `done`. Each states its region: the lanes `kLaneCover` (2 x 7 x 82 = 1,148 of key:
+the gate's chain to kGateCommit + kGateRun + 3 cells, the passage lane's strip, the pinwheel's 48-cell chain and
+32-cell arc), asked for only when `laneTrigger` finds a wall end or a passage on the way; awareness `kAwareCover`
+(2 x 7 x 50) ahead of the centroid; the entrance its open-ground test's radius round the point; a reach group its
+ring's spots, as part of its first pause. It reads through `certainValue` / `certainReach` / `descend`'s check:
+final only where settled, or proven unreachable (illegal; outside the route's component on the geometry it was
+built on). Otherwise it does nothing this time and the route runs on to done (`runOn`). How the lanes ask for their
+region was settled by measurement (`stage5/x*`, scale files, offset 0; the first two rows rejected):
+
+| variant | many-1000 arrivals / stuck | many-2500 | maze-1000 |
+|---|---|---|---|
+| lane needs served as Waiting, asked at every lane member's cell | 701 / 183 | 1,192 | 519 |
+| ... served as FirstRoute (`needIds`) | 701 / 183 | 1,212 | 630 |
+| ... asked only when a wall end or passage is on the way (chosen) | 834 / 25 | 1,303 | 407 |
+| no lane needs at all (lanes only where already covered) | 834 / 25 | 1,364 | 407 |
+
+(Those rows are under the extended pausing below; under the kept pausing policy no lane member's route pauses, so
+none of them is in the shipped behaviour.) Asking every lane member's region settled about 80 cells round every
+formation member for nothing on open ground; served at any priority it cost many-1000 16% of its arrivals. The
+mechanism was not isolated further (the lanes themselves did not run there: with the lanes switched off on paused
+routes and the needs kept, many-1000 read 701 again); the trigger removes the cost where there is nothing to react
+to.
+
+**Pausing extended to slot groups, pinwheel parts and reach groups: measured, not taken.** Built (the same code
+with `pausable()` allowing every first build; kept as `setPauseAllForTest`), scale files at offsets 0, 1, -1
+(`stage5/mo1/`):
+
+| file | arrivals (old policy -> every build pausable), offsets 0 / 1 / -1 | other |
+|---|---|---|
+| many-1000 | 822 / 797 / 819 -> 834 / 788 / 795 | |
+| many-2500 | 1,456 / 1,250 / 1,355 -> 1,303 / 1,279 / 1,237 (mean -6%) | |
+| many-5000 | 1,639 / 1,533 / 1,638 -> 1,833 / 1,696 / 1,679 (mean +8%) | wait.max 1,234 / 1,193 / 1,189 -> 627 / 637 / 660 |
+| maze-1000 | 539 / 521 / 550 -> 407 / 586 / 609 | |
+| swap-1000 | 854 / 838 / 851 -> 898 / 805 / 820 | |
+| sched-load | 29 / 36 / 29 -> 28 / 30 / 29 | stuck 101 / 100 / 102 -> 211 / 182 / 181 |
+| attack-1000 | 99 (all) -> 99 (all) | field work -10% |
+| one-1000, churn-1000, mixed-1000 | identical | |
+
+Single toggles at offset 0 (`stage5/xD/`): with awareness off on paused routes, many-2500's field work falls from
+1.15G to 0.10G relaxations and many-5000's longest field wait to 5 ticks -- awareness on a paused route asks for a
+whole-window refresh (a refresh still runs to done), and those refreshes are most of the work in the many-squad
+rows -- but stuck bodies rise (many-2500 620 -> 793). sched-load's stuck bodies stay above the old policy's with the
+entrance or awareness switched off (140-178). On the gate fixtures `--pause-all` changes little in outcome and
+spends a third less field work on the battles (battle-assault 147M -> 70M relaxations, attack rings 239k -> 78-82k).
+Not taken: the gains are where the quota is saturated, the losses (many-2500, sched-load) were not diagnosed to the
+end, and stage 6's sparse tiles change what a paused build costs (today it holds its whole window and is an
+eviction victim like a finished field). What the consumers need to run on partial routes is in place and tested
+(`legion_route_paused`); stage 6 decides with tiles.
+
+**Progress across metrics: the audit (brief "audit the existing detour/backoff progress measures").**
+
+| measure | metric | finding | change |
+|---|---|---|---|
+| `progress` / `stallTick` (stall clock: contact arrival, B1's blocked re-request, the settle rule) | potential x64 on one field, else squared cells to the own goal | already per (kind, serial): a new metric re-baselines without a gain; the stall clock is never reset by a transition | none |
+| `headBest` / `headTick` (headway clock, flyer rules) | potential on the group's field | already per serial | none |
+| `nearest` (detour record: back-off restart, yield-first) | the least of both measures, never re-based | a lost field (eviction, a seed, a bounded window) read squared cells far below potential x64 as a record and restarted the back-off; a cheaper refresh did too | a metric transition is never a record: a new low also needs a gain within the current metric (`nearestHere`) |
+| `gainBest` / `gainTick` (approach holder, AR-11) | potential, across fields | a new field's other charges counted as gain or hid one; missing data restarted the window, so a group whose field kept going missing never settled | per route serial; the clock stops while the route gives no value (missing data neither retires the order nor restarts a genuine stall) |
+| trapped (`trapped()` on an unreached cell) | a complete route's kNone | read as proof even when built on older geometry | only on `Reach::Unreachable` (a route no static change has touched since its build, 1905d086); otherwise the body waits for the refresh its group is then due |
+| hold clock (`heldSince`, `holdUpdates`) | steps | metric-free | none |
+| crowd window (`windowDist`) | pixels to the point | metric-free | none |
+| `settleP` (settle bound) | potential, across refreshes | a tolerance that grows per window; re-basing it per route would restart its growth on every refresh under churn | none, on purpose |
+
+Measured against the recorded detour-versus-standing trade-off (the one on `Member::nearest`, 2026-10-14: restarting
+the back-off on every progress gain cost battle-assault +11% detours, +5% reversals for 2.3% less standing). The
+first fix (35cac631) re-based `nearest` itself on every new metric; that counted every gain made after a refresh as a
+record -- the rules were tuned on the cross-metric record, which suppressed those until the potential fell below a
+minimum read on another route -- and over three offsets (`stage5/abD/`, against 662574f1):
+
+| file | arrivals: 662574f1 / re-based (35cac631) / transition never a record (9bd3f5c3), offsets 0, 1, -1 means | stuck | other |
+|---|---|---|---|
+| many-1000 | 813 / 777 / 807 | 73 / 108 / 77 | |
+| many-2500 | 1,354 / 1,303 / 1,308 | 733 / 693 / 715 | livelock 54 / 81 / 71 |
+| many-5000 | 1,603 / 1,594 / 1,586 | 2,593 / 2,597 / 2,580 | wait.max 1,205 / 1,303 / 1,145 |
+| mixed-1000 | 649 / 631 / 649 | 43 / 46 / 43 | |
+| maze-1000 | 537 / 528 / 537 | 44 / 31 / 44 | |
+
+and in the gate battle-assault planned 9.7% more detours (core median 7,105 -> 7,796). Rejected; 9bd3f5c3 keeps the
+cross-metric least value and makes the transition itself never a record (a new low also needs a gain within the
+current metric). That is the manufactured headway the audit found, and nothing else changes: gains within one
+metric after a transition count as before. Its cost: many-2500 -3.4% arrivals (lower at all three offsets: -89,
+-22, -27) with 2.5% fewer stuck and more livelock (54 -> 71); a toggle build (`stage5/x8/`) shows it is this rule
+alone (the gain clock and the trapped rule move nothing there). The likely mechanism, not isolated: many-2500 installs
+an awareness refresh every few hundred ticks per squad, a refresh that drops a corridor reads lower, and the old
+record took that as a new low and restarted the back-off, which helped its crowds. Taken as the brief's requirement (a metric change must
+not manufacture headway); stage 6's tile metrics make transitions frequent, so the back-off is re-measured there.
+In the gate battle-assault's detours are back at the stage-4 head's level (below).
+
+**What moved in the gate, and why** (the final gate against the stage-4 head's, `stage5/gate-g7` against
+`stage4/r2/gate-f11`; attribution by where each fixture's hash moved, `stage5/gate-c4` = 662574f1 alone).
+
+* Retail: all 135 fixtures identical (hashes and keys; final both-mode sweep `stage5/gate-f5`, Retail lines reused
+  in `gate-g7`: no Retail code path changed after it).
+* Legion: 125 of 135 identical (corrected in the fix round: the first version of this record said 124 and named
+  crosslong, which is identical at every offset in `gate-g7`). 662574f1 moved the four battle fixtures (battle-assault, battle-field-2x60, -2x250,
+  -2x500: their solo groups' paused builds now serve every member's claim, awareness and MV-05); the progress
+  commits moved battle-assault again, densehead, lateblock-late-16, and attackring-river-64, attackring-wall-64,
+  mixed2, unreach-200 hash-only or only at non-core offsets. (crosslong moved only in the superseded 35cac631 gate,
+  `gate-f5`.)
+* Outcome keys moved more than 10% (regated medians, `stage3/outcome_ab.py --all`): 13 better, 8 worse, all 8 inside
+  the stage-4 head's own core-offset range (`stage5/judge5.py`): battle-assault deaths and left-behind of single
+  squads (A1 16 -> 21, A4 20 -> 24, B5 27 -> 32, A6 7 -> 9, B9 31 -> 39), its walk_net 0 -> 30 (range 0..75),
+  battle-field-2x250 A's farthest completion 27 -> 36 (range 10..36).
+* Licensed with their reasons (`stage5/license5.py`, 949ec7d1): 19 `hash@` retakes, 4 band licences
+  (battle-assault's crowd-window cells p99 and attack first builds max; densehead's line sweeps and completion
+  distance bucket), 1 offset-spread exception (densehead `g.A.done`, cluster S5-269). After the edits
+  `legion_check check --cumulative` passes: 31,772 keys, 0 failed, 2,277 ratchets, 3,411 licensed, 218 floor
+  exceptions; `validate` 0 problems. (The superseded 35cac631 gate, `stage5/gate-f5`: 21 fixtures moved, 27 better
+  / 19 worse, 96 failures before licences.)
+
+**Scale suite (final code, offset 0).** `python3 tools/legion_scale.py run --bin stage5/final/legion_scenario --out
+stage5/scale --cores 4-15 --per-job 4` (all 39 jobs, at 1de75fda's code) and, after 9bd3f5c3, the Legion rows again
+(`--modes legion`, `stage5/scale2`), merged in `stage5/scale-final.jsonl` (Retail rows from the first run: no Retail
+path changed); `python3 tools/legion_scale.py check --results stage5/scale-final.jsonl --targets
+tools/scenarios/scale/targets.json`. Every job exited 0; every Retail state hash equals the stage-4 head's (12 of
+12); 12 Legion rows are identical (attack-1000, churn-1000, idle-10000, many-100, mixed-1000, mixed-10000, one-100,
+one-1000, one-2500, one-5000, one-10000, sched-load). Targets **120 met, 90 missed, 2 report-only missed** (stage 4:
+120 / 90 / 2): newly met maze-1000 `stuck_end` (95 -> 34); newly missed many-1000 `complete_outside_n` 23 (max 20;
+13 at the stage-4 head's offset 0, 13 / 20 / 30 over offsets 0 / 1 / -1 at 662574f1: at the threshold either way).
+The rows that moved (stage-4 head -> stage 5):
+
+| file | arrived | completed | outside | stuck | livelock | wait.max | start.last | field work (G relax.) |
+|---|---|---|---|---|---|---|---|---|
+| attack-10000 | 884 | 889 | 28 | 50 | 14 | 9 | 131 | 0.42 |
+| bridges-1000 | 4 -> 10 | 4 -> 10 | 0 | 535 -> 541 | 35 -> 30 | 8 | 25 | 0.05 |
+| bridges-10000 | 0 | 0 | 0 | 9029 -> 9010 | 117 -> 110 | 9 | 84 | 0.05 |
+| churn-10000 | 5013 -> 5051 | 5916 -> 5957 | 1327 -> 1353 | 2626 -> 2658 | 102 -> 104 | 13 | 795 | 0.28 |
+| many-1000 | 822 -> 825 | 812 -> 815 | 13 -> 23 | 54 -> 71 | 19 -> 16 | 0 | 19 | 0.53 -> 0.47 |
+| many-10000 | 1226 -> 1199 | 985 -> 972 | 73 -> 62 | 6859 -> 7150 | 69 -> 101 | 5203 -> 5233 | 248 | 5.48 |
+| many-2500 | 1456 -> 1367 | 1459 -> 1369 | 61 -> 52 | 589 -> 637 | 57 -> 75 | 2 | 18 | 1.17 -> 1.18 |
+| many-5000 | 1639 -> 1552 | 1615 -> 1523 | 86 -> 78 | 2572 -> 2612 | 89 -> 100 | 1234 -> 1044 | 67 | 4.30 |
+| maze-1000 | 405 -> 539 | 455 -> 565 | 60 -> 52 | 95 -> 34 | 29 -> 17 | 15 | 24 | 0.06 -> 0.08 |
+| maze-10000 | 1135 -> 1137 | 1367 | 435 -> 433 | 7291 | 74 | 16 | 42 | 0.03 |
+| sched-mix | 242 | 115 | 0 | 69 | 0 | 0 | -1 | 0.11 |
+| swap-1000 | 854 -> 867 | 833 -> 844 | 13 -> 9 | 66 -> 64 | 15 -> 12 | 8 | 25 | 0.06 |
+| swap-10000 | 1476 -> 1466 | 1276 | 0 | 5893 -> 6032 | 98 -> 120 | 9 | 164 | 0.04 |
+| swap-2500 | 2032 -> 1995 | 1836 -> 1806 | 6 -> 1 | 86 -> 76 | 16 -> 13 | 8 | 72 | 0.05 |
+| swap-5000 | 2330 -> 2362 | 2133 -> 2172 | 1 -> 0 | 1542 -> 1646 | 61 -> 48 | 8 | 38 | 0.05 |
+
+* maze-1000: arrivals +33%, stuck 95 -> 34, livelock 29 -> 17 at offset 0 (537 vs 405 mean over three offsets at
+  662574f1 against 405 at the head's offset 0): the island and box groups' paused builds now serve every member's
+  claim, awareness and MV-05 (662574f1 alone gives it; the progress commits leave maze-1000 identical).
+* many-2500 / many-5000 / many-10000 at offset 0: 1,456 -> 1,367, 1,639 -> 1,552, 1,226 -> 1,199. Over three offsets
+  the many-2500 loss is 3.4% and comes from 9bd3f5c3 alone (above); many-5000's mean moves 1,603 -> 1,586 and its
+  longest field wait falls (1,234 -> 1,044 at offset 0).
+* Wall clock (report only; single runs on 12 shared cores): one-10000 tick mean 10.0 ms, p99 15.9 ms, max 20.7 ms, no
+  tick over 33.3 ms; many-10000 mean 12.8 ms, p99 15.5 ms, max 24.2 ms, none over. mixed-10000 stays over budget
+  (inherited, `explore` phase).
+* Memory: `route.demand_peak` <= 1 in every game-policy row (unchanged); deterministic NavBytes per row as at stage 4
+  within the noise of the moved rows.
+
+**Checks (exact commands; scratch `~/tak-tmp/scratch/legion-10000/stage5/`; `final/` = the binaries of 9bd3f5c3).**
+
+| Check | Command | Result |
+|---|---|---|
+| Exactness of 8c6efbff + 5f60ce54 | `sweep_legion.py stage5/a2_ls stage5/gate-a2 4-15 stage4/r2/gate-f11`, compared line by line | 135/135 Legion fixtures hash- and key-identical to the stage-4 head; `quickeq.py` on 12 fixtures for 8c6efbff alone and 11 scale files (`stage5/scaleA1`): identical, `route.demand_dropped` 0, peak <= 1 |
+| Unit tests | `build-o2/legion_route_test`, `replay_test`, `navbudget_test` | pass (269 kept, 268 refused) |
+| Consumers on paused routes | `ctest -R legion_route_paused` (`TAK_LEGION_VERIFY=1 TAK_SIM_WORKERS=3`) | pass: 9 fixtures, serial == workers, needs lanes 121 / awareness 7 / entrance 12, run-ons 0, arrivals within 10% of the normal run (wall-4x50 183 vs 181, motion-cross 41 vs 40, the rest equal). Mutant (no consumer states its region, `mut_noneed_ls`): fails ("the lanes / awareness / entrance never asked") |
+| Legion gate, attribution | `sweep_legion.py stage5/c4_ls stage5/gate-c4 4-15 stage4/r2/gate-f11` | 662574f1 alone: 131/135 identical, the four battles moved |
+| Gate, final, both modes | `stage5/sweep_both5.py stage5/f5_ls stage5/gate-f5 4-15 ...` (both modes), then after 9bd3f5c3 `sweep_legion.py stage5/final/legion_scenario stage5/gate-g7 4-15 stage5/gate-f5`; `stage5/license5.py ... --apply`; `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results stage5/gate-g7/scenarios.jsonl`; `validate` | Retail 135/135 identical; PASS 31,772 keys, 0 failed, 2,277 ratchets, 3,411 licensed, 218 floor exceptions; validate 0 problems |
+| `--mpai` Inner Circle seed 1, 60 s | `CORES=4-15 mpai.sh stage5/final stage5/mpai60 60` (scratch XDG; `takserver --local --no-auth --seed 1`) | Retail **2c39430636a3dbda**, Legion **f75b2a11410f43b4**: both unchanged (an AI-only game reaches none of the changed paths in 60 s; no new baselines) |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j12 --timeout 900` (scratch XDG, no `TAK_SETTINGS_FILE`) | 384/385: `navigation_determinism` failed on its Legion golden (16 of 24 checkpoints moved); retaken in 949ec7d1 (gcc 16 and clang 22 builds agree, serial and workers), then `navigation_determinism` passes (and in the Legion run below) |
+| Legion ctests outside quick | `ctest -R 'legion_route\|^legion_cost$\|legion_sched\|^legion_scenario_battle-\|legion_baseline_reasons\|legion_check\|legion_doc_links\|legion_quota\|legion_planepin\|replay_test\|navbudget\|navigation_determinism\|legion_pausedemand\|legion_verify' -j12` | **92/92** (legion_cost unchanged: no cost entry moved) |
+| Scale suite | above | 39/39 + 27/27 jobs exit 0; 120 / 90 / 2 |
+| Release build | `cmake --build build -j12` (all targets, at 949ec7d1) | builds (exit 0) |
+
+**Inherited versus new failures.** Inherited: none in these checks. New: none failing. New target miss: many-1000
+`complete_outside_n` (23, max 20; at the threshold over offsets). Regressions recorded, not fixed: many-2500 -3.4%
+arrivals over three offsets from 9bd3f5c3 (the transition records it no longer counts helped there).
+
+**Not run (lean testing, user directive 2026-10-16).** ASan (no memory ownership changed: a view is a non-owning
+pointer like the `const Field*` it replaces, used within the same scopes; `RouteDemand` and `needIds` are value
+containers); cross-compiler determinism (`check-determinism.sh`; the navigation golden was compared gcc vs clang
+because it was retaken); the crowdbench matrix; repeated wall-time A/Bs; the 300 s `--mpai`;
+rejoin and replay runs (no wire change; the new hashed state is rebuilt by replaying the bundle log from tick 0 like
+the rest); Windows/macOS.
+
+**Open items.**
+* The certainty checks are exercised (`legion_route_paused`: no uncertain read on those fixtures) but no test fails
+  when they are removed: on the gate fixtures the stated regions are settled before the consumers read them. A
+  fixture where a consumer reads into an unsettled region (soft bodies inflating a region past its margin) would
+  prove them; stage 6's partial routes make that common.
+* The extended pausing (above) and its sched-load / many-2500 losses: not diagnosed to the end.
+* The lane-need cost on open ground (many-1000 834 -> 701 when every lane member asked for its region) was removed by
+  `laneTrigger`, not explained: a paused build resumed to cover regions nobody reads should cost work, not arrivals.
+* `needIds` membership is not hashed (like `waitedIds`; the demand entries and `waited` stamps are): it follows from
+  hashed state and the same tick sequence on a peer replaying from tick 0.
+
+### 7.5 fix round: verifier rejection (2026-10-16)
+
+The verifier rejected stage 5 for one confirmed liveness regression and noted two minor items. All three are
+addressed; scratch `~/tak-tmp/scratch/legion-10000/stage5/` (`fixA/` = binaries of 1905d086, `fixB/` = 701094eb),
+the verifier's repro in `~/tak-tmp/scratch/verify-s5/`.
+
+| Commit | Content | Kind |
+|---|---|---|
+| 1905d086 | `RouteGrid::touched`; `RouteView::reach(cell)` proves Unreachable on a complete, unbounded route no static change has touched since its build (was: route epoch == navigator epoch); `legion_world_test trapped` gains the verifier's geometry; `legion_route_test` updated | behaviour (a liveness fix; no gate fixture or scale row moves) |
+| 701094eb | `laneTrigger`'s memo keyed on the goal and the unit type too | behaviour in principle (stale memo answers); no gate fixture or scale row moves |
+
+**Problem 1 (confirmed, fixed): a body never trapped after an unrelated static change.** `reach` returned
+Unreachable only when `RouteGrid::epoch == epoch`. `epoch` is the navigator's single static epoch: `staticChanged`
+bumps it on every static change on any island or plane but marks stale (and so refreshes) only the groups whose
+field window the change touches (`fieldTouched`). An untouched group kept its complete route with an older epoch and
+nothing ever refreshed it (the waited-group service also skips done fields), so a body that route does not reach
+read Unknown for ever: it stood Waiting and its order never reached the trapped / retire path. The record's "the
+body waits for the refresh" was false for untouched routes.
+
+Fix: `RouteGrid::touched` is set in `staticChanged` on the group's field and next for exactly the groups it marks
+stale (every group when a change comes without boxes); `reach` proves Unreachable on `done && !bounded &&
+!touched`. A touched route's group is stale, so its refresh (built on the newer geometry) decides; an untouched route
+stays proven, which is sound because `fieldTouched`'s box test already guarantees a change farther than one cell
+from the window cannot alter a step inside it or join another region to it (the same argument the staleness rule
+relies on). `touched` is not hashed: it is a function of hashed state (the field epochs and windows and the world's
+static changes); the field epoch stays in the checksum.
+
+Verifier's repro (`legion_scenario pocket.scn --mode legion --offsets 0 --ticks 25000 --json`):
+
+| binary | g.P.complete_n | trapped (work.trapped.total) | hash |
+|---|---|---|---|
+| stage-4 head (`stage5/base`) | 1 | 5 | f0f53275e711b9e5 |
+| 9bd3f5c3 (`stage5/final`) | 0 | 1 (24,980 waiting member ticks) | 3d4e59b142e02bed |
+| 1905d086 (`stage5/fixA`) | 1 | 5 | 095ee1a9c2663cee |
+
+`calm.scn` (no churn): 4e2cbd60dbbc371b on all three at the default ticks, 096347cc56e3232d on 9bd3f5c3 and
+1905d086 at 25,000 ticks (the hashes differ from the verifier's calm figure only by run length).
+
+Test: `legion_world_test trapped` now also builds the verifier's geometry (a sealed 8x8 pocket on a 256x64 map split
+by a wall, ten free bodies, churn on the far island from tick 20 to 60, as `addFeature` toggles like the scenario
+`churn`): the pocket's order must retire, the free bodies arrive. Passes on 1905d086 (cleared at tick 9,050, 5
+trapped events). Mutant check (`stage5/mutant.sh 2`: every static change touches every route, which is the old
+epoch rule's behaviour): fails with "trapped order never retired after churn on another island" (1 trapped event,
+never retired). A first draft of the test used `blockCells`, which goes through the boxless world-epoch path (every
+group touched and refreshed), and passed under the mutant too; it was replaced. `legion_route_test` checks that an
+untouched route with an older epoch still proves Unreachable and a touched one reads Unknown.
+
+Considered and not taken: letting a refresh started after a touch "answer" the doubt even when touched again (a
+bound for never-ending churn inside the window). Built and tried on the world test's churn cases (`mutant.sh 1`
+removes it): no case distinguished it, because under never-ending churn the inherited re-registration below
+already restarts the trapped grace on every change; it would only add a tolerance of older geometry. Left out; the bound belongs with the fix of the inherited issue.
+
+**Inherited, not fixed (recorded for stage 6+): under never-ending static churn anywhere, no trapped order retires.**
+`move` re-registers a Trapped member whenever `trappedEpoch != epoch` (any static change on any island or plane),
+which restarts its grace period (`kTrappedRetire`). Proof that it is inherited: `verify-s5/island-forever.scn`
+(pocket.scn without `until=60`) never retires P on the starting revision's build (`~/TAK/build-o2`, built from
+c2c25707: complete_n 0, 1,199 trapped events), on the stage-4 head, or on 701094eb (same hash as the stage-4 head,
+3001d8162d07fe11); `window.scn` / `window10.scn` (churn inside the route's window every 1 / 10 ticks) are
+identical on the stage-4 head, 9bd3f5c3 and 1905d086 (complete_n 0). In a battle, corpses are static changes, so a
+trapped body's order may never retire while fighting goes on anywhere. A fix would re-register only when a change
+touches the member's region or its route (the `touched` flag gives the route half); it changes trapped behaviour in
+every battle fixture and is a behaviour change of its own, so it is not folded into this fix round.
+
+Related precision note (no liveness effect): `provenUnreached` (the paused-route certainty check) still requires
+`geometryEpoch() == epoch`. After an untouched change it reports "not proven", the consumer's read is uncertain and
+the route runs on to done (`runOn`): the worst case is the old wait for done, never a stall. Switching it to the
+touched flag would let paused routes serve more reads after unrelated churn; left for stage 6 with the tiles.
+
+**Problem 2 (minor, fixed): `laneTrigger`'s memo.** The memoised walk also depends on `m.goal` (`descend`'s
+tie-break) and the unit's footprint; the key now includes the goal and the unit type (701094eb). The comment's
+"pure function of those" is now true.
+
+**Problem 3 (minor, corrected): fixtures moved.** The final stage-5 gate (`gate-g7` against `stage4/r2/gate-f11`)
+moved 10 Legion fixtures, not 11: attackring-river-64, attackring-wall-64, battle-assault, battle-field-2x60,
+-2x250, -2x500, densehead, lateblock-late-16, mixed2, unreach-200. crosslong is identical at every offset (it moved
+only in the superseded 35cac631 gate). Corrected in 7.5 above (`stage5/cmpgate.py`).
+
+**Checks (fix round; exact commands).**
+
+| Check | Command | Result |
+|---|---|---|
+| Unit / world tests | `build-o2/legion_route_test`; `TAK_LEGION_VERIFY=1 build-o2/legion_world_test trapped` | pass; the trapped case fails under mutant 2 (above) |
+| Legion gate, 1905d086 | `python3 sweep_legion.py stage5/fixA/legion_scenario stage5/gate-h1 4-15 stage5/gate-g7`; `python3 stage5/cmpgate.py stage5/gate-g7/scenarios.jsonl stage5/gate-h1/scenarios.jsonl` | 135/135 Legion fixtures identical to 9bd3f5c3 (hashes at every offset and exec, every key); serial == workers everywhere |
+| Legion gate, 701094eb | same with `stage5/fixB`, `stage5/gate-h2` | 135/135 identical; `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results stage5/gate-h2/scenarios.jsonl`: PASS, 31,772 keys, 0 failed (no baseline edit: nothing moved) |
+| Scale suite, Legion rows, 701094eb | `python3 tools/legion_scale.py run --bin stage5/fixB/legion_scenario --out stage5/scale3 --modes legion --cores 4-15 --per-job 4`; merged with the Retail rows of `scale-final.jsonl` into `stage5/scale-final2.jsonl`; `legion_scale.py check` | all 27 jobs exit 0; all 27 Legion state hashes identical to the stage-5 final run; targets 118 met / 90 missed / 4 report-only missed. The two extra report-only misses are attack-10000's wall time (p99 36.4 ms, 117 ticks over budget) in that one run on a loaded machine; rerun alone on cores 4-7, alternating 9bd3f5c3 and 701094eb twice: p99 13.9 / 13.7 ms, 0 over budget for both (`stage5/wt-*`), so no wall-time change. Sim targets: 120 / 90 as before |
+| `--mpai` Inner Circle seed 1, 60 s | `CORES=4-15 bash mpai.sh stage5/fixB stage5/mpai60-fix 60` | Retail **2c39430636a3dbda**, Legion **f75b2a11410f43b4**: unchanged |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j12 --timeout 900` (scratch XDG, no `TAK_SETTINGS_FILE`) | **385/385** (`stage5/ctest-quick-fix.log`) |
+| Legion ctests outside quick | `ctest -R 'legion_trapped\|legion_route\|legion_unreachable\|legion_churn\|legion_penstale\|legion_approach\|^legion_cost$\|legion_sched\|^legion_scenario_battle-\|legion_baseline_reasons\|legion_check\|legion_doc_links\|legion_quota\|legion_planepin\|replay_test\|navbudget\|navigation_determinism\|legion_pausedemand\|legion_verify' -j12 --timeout 1200` | **101/101** (`stage5/ctest-legion-fix.log`; navigation golden unchanged, replay_test refuses 268) |
+
+Retail: no Retail code path changed (only the navigator and its tests); the Retail `--mpai` hash is unchanged and the
+Retail gate lines are those of `gate-f5` (unchanged since). kNetVersion stays 269: no wire change, and stage 5's
+protocol bump already covers its behaviour (the fix changes no gate, scale or `--mpai` hash).
+
+Not run (lean testing): ASan (no ownership or lifetime change: a bool on the field and three memo fields on the
+member), cross-compiler determinism (no golden moved), crowdbench, 300 s `--mpai`, rejoin/replay runs, Windows/macOS.
+
+### 7.6 Stage 6 record: hierarchical routes, sparse tiles, shared intermediate navigation (brief phase 5)
+
+**Hypothesis.** After stage 5 the overloaded many-squad rows waited thousands of ticks for navigation because every
+request was a field over a rectangle of the map run to done (many-10000: 400 squads, two footprint classes, each a
+whole-map field: about 5,100 quota-ticks of queue at the peak, request age 5,906 ticks, `wait.max` 5,233). A hierarchy
+over the exact footprint planes lets a long route be built as a corridor of sectors, and a low-demand route out of
+shared region tiles toward intermediate exits, so the work per request falls by an order of magnitude without
+changing how bodies step, collide or finish -- and the same shared tiles serve the brief's other extreme, many
+unrelated destinations.
+
+**Classification.**
+
+| Commit | Content | Kind |
+|---|---|---|
+| a5257c02 | `sim/legion_hier.h` (sectors, regions, portals, generation-aware ids, lazy builds, invalidation, the region search); planes carry it; `legion_hier_test`; `planeMatchesRebuild` checks it; `--sector K` | exact (nothing reads it) |
+| 78343da5 | sparse tile storage behind `RouteGrid` (tiles allocated on first write); accounting still by window | exact |
+| ee295d0e | scale fixtures `scatter-2500`, `scatter-10000`; route probe keys; the stage-6 NavAccounting counters | tools |
+| ca157c28 | route plans: window / corridor / tile chain; the tile cache; halo repairs; the demand rule; widening; tile-granular `fieldTouched`; protocol 270 | behaviour |
+| 88b248d4 | `legion_chains`, `legion_chainplane` | tests |
+| 6eb3b2d3 | `RouteGrid` hot reads through bound pointers | exact |
+| 09a03548 | scenario licences and hash retakes for the first policy (superseded by 0a7cb06c) | baselines |
+| 1e2c8172 | review findings: a use after free in `startField` (P1), a new tile evictable before its attach, merged tiles outside the allowance, share-only starts never taking a corridor or chain, tile work counted twice, the descent check on touched chains | fix (gate identical to 09a03548's binaries: 135/135 Legion fixtures) |
+| 7ce7d97a | `legion_chainschurn`; `legion_chains` asserts cross-destination hits | tests |
+| e8c59d45 | the region search's state in a stamped pool instead of a `std::map` | exact (6 gate fixtures, scatter-2500, many-2500 identical) |
+| 874769ec | high-demand routes keep the window (no search); chains get a count cap of their own; a share-only start shares only by its held plan | behaviour (found by the scale suite, below) |
+| 0a7cb06c | scenario baseline relicensed on the final gate (replaces 09a03548's edits) | baselines |
+| f59e5d9e | approach groups keep the window; `setHierarchicalRoutesForTest` / `--no-hier-routes`; legion_sched_load and _div run with it | behaviour (no gate fixture moves: `gate-f4` = `gate-f3`, 135/135) + tests |
+| 52c3e32e | ctest costs for the three chain tests | tests |
+
+Retail is untouched: no Retail code path reads the hierarchy, the planner or the tile cache.
+
+**Design (as built).** docs/legion-pathfinding.md "Legion 10,000 stage 6", section 3.4's amendment. In short: a
+high-demand route (more than 48 bodies would read it; back to low below 24) keeps one exact window field with no
+search. A low-demand build whose window has 128k cells or more runs the hierarchy's region search from the goals to
+every member's region and becomes a tile chain (the destination's own exact field, then one shared tile per transit
+region read with a route-wide offset; the halo one portal off it attached on demand) or, for a group planning round
+movers while memory has room, a reach ring or a short trip, a corridor (the A* field restricted to the sectors round
+the tree and the destination: exact within it, bounded). An approach group, an incomplete search or a corridor over
+half the window keeps the window. Tiles are cached by their whole key (plane identity, region and both
+generations, the portal, the boundary costs, the region's soft levels for the route's command, the route's mover
+corridors that reach the region) and shared by every route that leaves a region by the same portal toward the same
+next exit, whatever its destination. A body a route does not reach gets its halo tile, or waits for the refresh a
+static change made due, or the route is rebuilt round it (three times at most), then the whole-component window --
+the current solver, kept as the bounded fallback. Missing tiles are Unknown, never Unreachable.
+
+**How the policy was chosen (scale files, offsets 0 / 1 / -1 unless stated; arrivals / stuck at the end; base =
+the stage-5 head 701094eb; scratch `stage6/o*`, binaries `stage6/vbin*`).**
+
+* *Corridors alone* (before chains existed; offset 0): many-5000 arrivals 1,552 -> 2,398, `wait.max` 1,044 -> 5;
+  many-10000 1,199 -> 3,612, `wait.max` 5,233 -> 893, request age 5,906 -> 1,093. The many-10000 quota stayed
+  saturated: corridors cut each request ~13x, but awareness refreshes now got served and filled it.
+* *Aimed tile boundary* (many-2500 means over three offsets, chains on): an octile distance to the next exit's middle
+  (radial lanes) 1,287 / 832 against base 1,308 / 715; a linear boundary cost along the portal (parallel lanes)
+  1,354 / 737 -- kept.
+* *A chain's counted cells.* The first chains counted their whole window box in the field byte allowance (a
+  diagonal chain counted most of the map), so many-10000 evicted 12,137 fields; counting the destination's own
+  tiles (the shared tiles are the cache's) removed the evictions. A found bug, not a tuning.
+* *Awareness re-plans of chain groups* (the decisive choice):
+
+  | variant | many-1000 | many-2500 | many-5000 | many-10000 | many-10000 request age (first route) |
+  |---|---|---|---|---|---|
+  | base (stage 5) | 807 / 77 | 1,308 / 715 | 1,552 / 2,612 (offset 0) | 1,199 / 7,150 (offset 0) | 5,906 |
+  | c6: a chain with local-correction tiles always | 783 / 84 | 1,223 / 946 | 2,444 / 2,213 | 4,314 / 4,428 | 150 |
+  | v6: a corridor always | 768 / 119 | 1,366 / 730 | -- | -- | -- |
+  | v7: a corridor while memory has room, a chain once it is short; plan only windows >= 128k cells (**kept**) | 807 / 77 | 1,321 / 671 | 2,422 / 2,172 (offset 0) | 4,523 / 4,176 | 1,357 |
+  | v8: v7, and a chain also when more than 24 start requests wait | -- | 1,293 / 786 | 2,325 / 2,244 | 4,278 / 4,342 | 391 |
+
+  A chain's detour round a crossing stream has only its own regions; a corridor has its width (c6 lost many-2500's
+  arrivals, v6 kept them). Corridors for every awareness re-plan of 800 squads fill the field allowance, so v7 takes
+  chains when memory is short (the stage-4 definition of "short", already a policy input); planning only windows of
+  128k cells or more leaves many-1000 (97k-cell map) exactly as at stage 5. v7's cost is the request age in
+  many-10000 (1,357 against c6's 150; base 5,906): awareness corridors keep the quota busy while memory lasts. v8
+  bounds that with a queue-length rule at -5% arrivals; rejected as a second knob for a measure no frozen target
+  gates (`wait.max`, the gated one, is 10 in all three).
+* *Sector size* (`--sector`, final policy; many-2500 three offsets, the rest offset 0):
+
+  | K | many-2500 | many-5000 | many-10000 | scatter-2500 | maze-1000 | many-10000 `wait.max` / scatter-2500 `wait.max` | many-10000 tiles built / hits |
+  |---|---|---|---|---|---|---|---|
+  | 16 | 1,284 / 825 | 2,312 / 2,180 | 3,878 / 5,017 | 888 / 1,608 | 601 / 25 | 230 / 503 | 174,524 / 314,094 |
+  | 32 (**kept**) | 1,321 / 671 | 2,422 / 2,172 | 4,434 / 4,252 | 948 / 1,543 | 608 / 51 | 10 / 391 | 63,491 / 59,411 |
+  | 64 | 1,339 / 758 | 2,372 / 2,116 | 4,643 / 4,073 | 1,010 / 1,478 | 490 / 16 | 10 / 602 | 29,226 / 13,009 |
+
+  16 loses everywhere (4x the abstract-search work, a tail of 230 ticks in many-10000). 64 gains on the open-ground
+  rows and loses maze-1000's arrivals (-19%: a 64-cell sector is one region round several doors, so a chain's
+  regions are coarse) and scatter-2500's tail (602); its tiles are 4x larger and shared 5x less. 32 is kept.
+* *Corridors for big crowds* (found by the stage's first scale suite, `stage6/scale`; three offsets, `stage6/o12`-`o15`):
+  churn-10000 (one 10,000-body selection, re-clicks, rocks dropped on its way every 10 ticks) lost a fifth of its
+  arrivals with corridors for every planned route (4,603 / 3,249 stuck -> 3,664 / 4,342). Not the touched-route wait
+  (without it 3,574); a corridor halo as wide as the crowd still 4,219; no corridors 5,183 at offset 0. Fix
+  (874769ec): a high-demand route keeps the window and skips the search -- final 4,606 / 3,205 (= base). swap-5000
+  (two 2,500-body armies) moved the same way and is back too (2,043 -> 1,909 -> 2,029).
+* *The count cap and 10,000 unrelated routes* (scatter-10000: 10,000 one-body selections to 10,000 destinations).
+  The stage-5 head delivers 79 bodies in 14,400 ticks, its oldest request waiting 14,154 ticks; the first stage-6
+  code 72 and 14,362. Diagnosis (instrumented admission, `stage6/dbg`): every start after tick ~290 was refused for
+  "no room" with the byte allowance under half used -- the 1,024-field count cap was full of one-body routes and no
+  victim was past its tenure; inherited from stage 4. Chains got a count cap of their own (16,384; the byte
+  allowance still bounds their storage): arrivals 79 -> 1,594 / 1,562 (offsets 0 / -1), request age 1,204 / 1,387,
+  87,000 chains reading 52,000 tiles through 1.19 million cache hits, 1.10 million of them by routes to other
+  destinations than the tile's builder. Most bodies still stand at the end (8,400): 10,000 crossing single walkers
+  are the brief's hardest case and a stage 7-8 input (traffic in coarse route choice, admission).
+* *Approach groups* (churn-1000, three offsets, `stage6/o16`): with the final policy churn-1000 still lost 12% of
+  its arrivals (520 -> 458) and 66 completions. Its ten chains were all one group of 48, an approach group (its
+  goals unreachable; its seeds are stand-in points on its own region), re-planned as a chain about every 40 ticks
+  from tick 301 on (instrumented, `stage6/dbg/ch.err`). Approach groups keep the window (f59e5d9e): 520 / 183 stuck,
+  equal to the base. (f59e5d9e's message says the group "was retired as trapped"; the trapped counter is 100 in
+  every variant, so that explanation is not borne out -- the measured part is the re-plan cycle and the outcome.)
+* *sched-load, not fixed* (48 squads of 10 re-clicked to far tiles every 160 ticks, a rock walking across the map;
+  three offsets): stuck at the end 101 -> 195, completions 24 -> 17, bodies that never start after a click 6 -> 28.
+  Every planned-route variant loses (corridors only: 163 stuck; every refresh a window: 207; static-change refreshes a
+  window: 208; a destination margin of 32 or 64 cells: 195 / 188; no touched-route wait: 212); without planning it is
+  the base exactly. A dump of the bodies standing 140+ ticks (`stage6/dbg/sl*`) counts 909 such samples against the
+  base's 520, and most of them on window-routed squads (795), about 200 cells from their goals. The working hypothesis
+  (not proven to the end): the chain-routed squads (a tenth of the bodies at a time) take the same aimed lanes through
+  each region and jam the crossing traffic that the window-routed squads then stand in -- a traffic problem of shared
+  static lanes, the brief's stage-7 subject (static navigation apart from traffic). Recorded as a new regression and a
+  must-fix input for stage 7. sched-load's ctests (scheduler fairness under continuous load) no longer saturate the
+  quota with chains, so they run with `--no-hier-routes` (f59e5d9e).
+
+**What moved in the gate, and why** (final sweep `stage6/gate-f3`: the binaries of 874769ec, Legion fixtures, gate
+offsets, serial and workers; Retail lines from `gate-f1`, the both-mode sweep of 6eb3b2d3, after which no Retail
+code changed; compared with the stage-5 head's `stage5/gate-h2` by `stage5/cmpgate.py` and `stage5/judge5.py`).
+
+* Retail: 135/135 fixtures identical (hashes and keys).
+* Legion: 122 of 135 identical. 11 are hash-only -- every behaviour and work key identical -- because the demand
+  rule's hysteresis state (`Group::routeMode`) is hashed and set for their high-demand groups, which keep the window:
+  gen1-route-36057, -45941, -54772, -61923, -65845, pocket-304-open, -304-wall, -615-open, -615-wall, split-450-open,
+  split-450-pocket. serplong (the long-serpentine regression) and serplong-control are identical, and
+  legion_longroute passes.
+* Two move: refreshchurn and refreshchurn-control, a lone walker crossing a 1,024 x 1,024 map under static churn
+  every tick, now on a tile chain. stop_go 1 -> 16, detour_permille 5 -> 60, follow_chain_max 1 -> 4, sideways 0 ->
+  8, refresh_completed 10 -> 404 (8 keys worse outside the stage-5 head's own core-offset range, 4 better; none an
+  arrival): under churn every tick its chain is touched and re-planned (its untouched tiles found in the cache), and
+  the walker waits for the refresh where the old chain no longer reaches it instead of steering on a stale window
+  field. Licensed as the cost of chains on long trips under constant churn and recorded for stage 7 (repair the
+  dirty tiles in place instead of re-planning a touched route).
+* The first policy's gate (`gate-f1`, corridors for every planned route) had moved 16 fixtures with 25 outcome keys
+  worse outside the base's range (gen1-route-45941 completion distance 10 -> 19 cells, split-450-open left behind
+  127 -> 152, ...); those were licensed in 09a03548 and are reverted with that policy: 0a7cb06c restores the baseline
+  to 09a03548's parent and relicenses the final gate (`stage6/license6.py`): 34 hash@ retakes, 21 band licences, 1
+  offset-spread exception (S6-270), 6 new work entries, each with its reason. `legion_check check --cumulative`
+  passes (31,778 keys, 0 failed, 2,309 ratchets, 3,424 licensed, 218 floor exceptions); `validate` 0 problems.
+* f59e5d9e (approach groups keep the window) moves no gate fixture: `gate-f4` (its binaries) equals `gate-f3` on all
+  135 Legion fixtures, hashes and keys.
+
+**The scale suite on the final code** (`legion_scale.py run --bin final4/legion_scenario --out scale4 --cores 4-15
+--per-job 4 --workers 3`, one run per file at offset 0; against the stage-5 head's final run `stage5/scale3` by
+`stage4/scale_ab4.py`; base -> stage 6 where a value moved; wall columns single runs on a shared machine, report
+only; the scatter files did not exist at stage 5: their base numbers below are the stage-5 head's own runs in
+`stage6/scat`).
+
+Retail rows with a different state hash: none
+| scenario | start.last | wait.max | arrived | t90 | completed | outside | stuck | livelock | fields | navbytes MB (det) | tick mean ms | whole max ms | over 33 ms |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| attack-1000 | 30 | 6 | 99 | 4296 -> 4142 | 99 -> 98 | 0 | 0 | 0 | 6 | 30 | 0.829 -> 0.849 | 6.499 | 0 -> 0 |
+| attack-10000 | 131 | 9 | 884 | -1 | 889 | 28 | 50 | 14 | 17 | 65 | 13.634 -> 14.217 | 46.239 | 117 -> 19 |
+| bridges-1000 | 25 | 8 | 10 | -1 | 10 | 0 | 541 | 30 | 7 | 63 | 1.22 -> 1.071 | 6.768 | 0 -> 0 |
+| bridges-10000 | 84 | 9 | 0 | -1 | 0 | 0 | 9010 | 110 | 7 | 72 | 9.534 -> 10.757 | 22.599 | 0 -> 0 |
+| churn-1000 | 93 | 2 | 600 | -1 | 735 | 168 | 144 | 13 | 7 | 18 | 0.626 -> 0.629 | 5.204 | 0 -> 0 |
+| churn-10000 | 795 | 13 | 5051 | -1 | 5957 | 1353 | 2658 | 104 | 11 | 112 | 10.409 -> 10.092 | 26.077 | 0 -> 0 |
+| idle-10000 | 41 | 6 | 27 | -1 | 21 | 0 | 654 | 23 | 2 | 37 | 3.756 -> 3.715 | 10.561 | 0 -> 0 |
+| many-100 | 9 | 0 | 98 | 1616 | 98 | 2 | 1 | 0 | 8 | 1 | 0.055 -> 0.056 | 1.585 | 0 -> 0 |
+| many-1000 | 19 | 0 | 825 | -1 | 815 | 23 | 71 | 16 | 94 | 25 | 1.449 -> 1.549 | 6.841 | 0 -> 0 |
+| many-10000 | 248 -> 25 | 5233 -> 10 | 1199 -> 4434 | -1 | 972 -> 4453 | 62 -> 146 | 7150 -> 4252 | 101 -> 229 | 119 -> 824 | 199 | 12.797 -> 25.537 | 50.319 | 0 -> 2767 |
+| many-2500 | 18 -> 17 | 2 | 1367 -> 1287 | -1 | 1369 -> 1320 | 52 -> 78 | 637 -> 596 | 75 -> 73 | 205 -> 271 | 84 | 4.421 -> 5.252 | 16.226 | 0 -> 0 |
+| many-5000 | 67 -> 22 | 1044 -> 5 | 1552 -> 2422 | -1 | 1523 -> 2454 | 78 -> 81 | 2612 -> 2172 | 100 -> 79 | 187 -> 450 | 161 | 9.581 -> 9.676 | 50.742 | 0 -> 35 |
+| maze-1000 | 24 | 15 | 539 -> 627 | -1 | 565 -> 647 | 52 -> 50 | 34 -> 26 | 17 -> 13 | 6 | 98 | 1.327 -> 1.294 | 10.029 | 0 -> 0 |
+| maze-10000 | 42 | 16 | 1137 | -1 | 1367 | 433 | 7291 | 74 | 7 | 109 | 10.928 -> 12.193 | 23.129 | 0 -> 0 |
+| mixed-1000 | 15 | 6 | 640 | -1 | 460 | 0 | 39 | 19 | 5 | 39 | 3.927 -> 3.95 | 22.901 | 0 -> 0 |
+| mixed-10000 | 49 | 41 | 2256 | -1 | 1910 | 0 | 6307 | 97 | 5 | 233 | 56.37 -> 52.532 | 212.434 | 19300 -> 18870 |
+| one-100 | 8 | 0 | 100 | 2186 | 100 | 0 | 0 | 0 | 2 | 2 | 0.06 -> 0.06 | 4.328 | 0 -> 0 |
+| one-1000 | 41 | 0 | 893 | -1 | 854 | 2 | 80 | 15 | 2 | 8 | 0.56 -> 0.548 | 8.916 | 0 -> 0 |
+| one-10000 | 92 | 11 | 7081 | -1 | 6377 | 10 | 2657 | 61 | 2 | 55 | 9.894 -> 9.692 | 19.939 | 0 -> 0 |
+| one-2500 | 38 | 3 | 1983 | -1 | 1830 | 5 | 410 | 20 | 2 | 17 | 1.802 -> 1.821 | 7.7 | 0 -> 0 |
+| one-5000 | 106 | 6 | 3744 | -1 | 3389 | 1 | 1087 | 29 | 2 | 30 | 4.761 -> 3.484 | 9.247 | 14 -> 0 |
+| scatter-10000 | 17 | 395 | 1562 | -1 | 1563 | 1 | 8426 | 33 | 4766 | 238 |  -> 22.914 | 59.28 |  -> 18 |
+| scatter-2500 | 17 | 557 | 945 | -1 | 945 | 0 | 1545 | 14 | 896 | 185 |  -> 4.173 | 8.876 |  -> 0 |
+| sched-load | -1 | 0 -> 1 | 29 | -1 | 22 -> 19 | 0 -> 1 | 101 -> 190 | 22 -> 37 | 96 -> 102 | 47 | 1.937 -> 1.864 | 6.33 | 0 -> 0 |
+| sched-mix | -1 -> 15 | 0 -> 200 | 242 -> 416 | -1 | 115 -> 411 | 0 -> 1 | 69 -> 0 | 0 | 39 -> 48 | 11 | 2.632 -> 2.98 | 7.861 | 0 -> 0 |
+| swap-1000 | 25 | 8 | 867 | -1 | 844 | 9 | 64 | 12 | 7 | 44 | 1.003 -> 1.188 | 7.998 | 0 -> 0 |
+| swap-10000 | 164 | 9 | 1466 | -1 | 1276 | 0 | 6032 | 120 | 7 | 61 | 12.71 -> 11.836 | 20.318 | 0 -> 0 |
+| swap-2500 | 72 | 8 | 1995 | -1 | 1806 | 1 | 76 | 13 | 6 | 44 | 2.996 -> 3.617 | 8.852 | 0 -> 0 |
+| swap-5000 | 38 | 8 | 2362 | -1 | 2172 | 0 | 1646 | 48 | 7 | 55 | 6.588 -> 5.45 | 12.579 | 0 -> 0 |
+
+* **Both extremes.** 10,000 bodies on one objective (one-10000) keep one exact window field: no search, no tile,
+  every key identical to stage 5. 10,000 unrelated destinations (scatter-10000): arrivals 79 -> 1,562, stuck 9,309 -> 8,426,
+  request age 14,154 -> 1,387 ticks (`wait.max` 5 -> 395; the scatter files are new and carry no frozen target. The base admitted almost no route after tick ~290, so few
+  bodies waited at all; the 395-tick waits are not diagnosed further -- a stage-8 admission input); 86,147 chains read 51,911 built tiles through 1,182,274 cache hits,
+  1,092,461 of them by routes to other destinations than the tile's builder (the cache stays inside its 64 MiB:
+  38,016 evictions). scatter-2500: arrivals 681 -> 945, stuck 1,642 -> 1,545, `wait.max` 1,641 -> 557, request
+  age 2,017 -> 853; 8,979 chains, 67,750 hits (57,615 cross-destination), no eviction.
+* **The quota-saturated rows** (the stage-4 must-fix): many-10000 request age 5,906 -> 1,443, `wait.max` 5,233 -> 10,
+  `start.last` 248 -> 25, arrivals 1,199 -> 4,434, stuck 7,150 -> 4,252; many-5000 `wait.max` 1,044 -> 5, arrivals
+  1,552 -> 2,422. Three frozen targets now met (many-10000 `start.last` and `wait.max`, many-5000 `wait.max`), none
+  newly missed (`legion_scale.py check`: met 120, missed 87 -- every remaining miss is a stage-5 miss; stage 5 met
+  106 with 12 not run). maze-1000 arrivals 539 -> 627.
+* **Moved against.** many-2500 at offset 0: arrivals 1,367 -> 1,287, completions outside 52 -> 78 (the three-offset
+  means in the policy table: 1,308 -> 1,321 arrivals, 715 -> 671 stuck; the offset-0 run is the worst of the
+  three). sched-load: stuck 101 -> 190 (below). churn-1000 is back to stage 5 exactly after f59e5d9e.
+* **Wall time** (report only). many-10000's tick mean 12.7 -> 25.5 ms (TAK_PHASE means), 2,767 ticks over 33.3 ms
+  (0 at stage 5). The movement phase is 10.5 ms of the 12.7 ms rise (5.9 -> 16.4 ms), navigation 1.0 ms (3.6 -> 4.6;
+  route search 0.5% and tile builds 27% of the counted navigation work): the bodies that stood in the queue now walk
+  (moving unit-ticks 23.5 M -> 54.1 M) and their line traces grow with them (trace cells 1.64 G -> 4.96 G).
+  many-5000's tick mean is unchanged (9.6 ms), scatter-10000 22.9 ms, mixed-10000 still ~53 ms (inherited). The
+  movement cost of a crowd that now moves is stage 9's subject (reassess movement), recorded as the bottleneck
+  stage 6 leaves.
+
+**Checks (exact commands; scratch `~/tak-tmp/scratch/legion-10000/stage6/`; `final4/` = the binaries of f59e5d9e, the
+final code; `final3/` = 874769ec; `final2/` = 1e2c8172; `final/` = 6eb3b2d3; all `build-o2`, `-O2 -g`, cores 4-15).**
+
+| Check | Command | Result |
+|---|---|---|
+| Hierarchy, route storage, replay | `build-o2/legion_hier_test`, `legion_route_test`, `replay_test` | pass (replay_test: 270 kept, 269 refused) |
+| Chains under the verifier | `TAK_LEGION_VERIFY=1 build-o2/legion_world_test chains / chainschurn / chainplane / planeincremental` | pass: chains 48/48 arrive, 10 chains, 141 tiles, 47 hits of which 28 by routes to other goals; chainschurn 48/48, 22 chains, 212 hits; chainplane 36 chains, the 25th class on a reused slot |
+| Mutations (each must fail) | scratch edits of `build-o2`, reverted (`git diff` clean after each) | no invalidation in refreshCluster: planeincremental fails at step 3; a reused plane slot keeping its generation: chainplane aborts ("another mobility class"); offsets lowered by 12: chains aborts (descent check, tick 6); no cache lookup: chains fails (no hits); reuse only for the builder's goals: chains fails (cross 0); the descent check on touched chains restored: chainschurn aborts at tick 7 |
+| Verifier on large fixtures | `TAK_LEGION_VERIFY=1 TAK_SIM_WORKERS=3 legion_scenario F --mode legion --offsets 0 --both-exec` for serplong-control, tail-wave, pocket-304-open, split-450-open, gen1-route-36057, refreshchurn, tail-corner380, slowturn, and scale many-2500 | all exit 0 (serial == workers; many-2500's 2,500 bodies cross the worker-pool thresholds) |
+| AddressSanitizer (ownership changed: shared tiles, raw tile pointers, merged tiles) | `build-asan` (`-O1 -fsanitize=address`) of 1e2c8172: legion_world_test chains, chainplane, groupreuse (verify on); legion_scenario scatter-2500 (`--workers --ticks 3000`), many-2500 (`--ticks 3000`), pocket-304-open, refreshchurn, gen1-route-45941, split-450-pocket | no report (the reviewer's use after free in startField reproduced on ca157c28 and is gone) |
+| Legion scenario gate, both modes | `sweep_both.py final/legion_scenario gate-f1 4-15` (both modes); `sweep_legion.py final3/legion_scenario gate-f3 4-15 gate-f1` and `sweep_legion.py final4/legion_scenario gate-f4 4-15 gate-f1` (Legion; Retail lines from gate-f1, no Retail code changed after it); `stage5/cmpgate.py`; `legion_check.py check --cumulative`; `license6.py ... --apply`; `validate` | Retail 135/135 identical to the stage-5 head; Legion as above (gate-f3); gate-f4 = gate-f3 on all 135 Legion fixtures (`moved 0 of 135`); `check --cumulative` PASS (31,778 keys, 0 failed, 2,309 ratchets, 3,424 licensed, 218 floor exceptions) |
+| `--mpai` Inner Circle seed 1, 60 s | `CORES=12-15 bash mpai.sh final4 mpai60b 60` (scratch XDG; `takserver --local --no-auth --seed 1`) | Retail **2c39430636a3dbda**, Legion **f75b2a11410f43b4**: both unchanged (Inner Circle's windows stay under the planning size; no new baselines); the same on `final/` (`mpai60`) |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j4 --timeout 1800` (scratch XDG, no `TAK_SETTINGS_FILE`) | 389/389 on 0a7cb06c (`ctest-quick2.log`); on 6eb3b2d3 387/388 with `crusades_client_network` failing once in 0.04 s under the parallel load (passed on rerun and 5/5 alone; touches no Legion code: flaky, not a stage-6 regression) |
+| ctest Legion (non-quick) | `ctest --test-dir build-o2 -R 'legion_trapped\|legion_route\|...\|legion_chain\|legion_hier' -j4` (105 tests, `ctest-legion.log`), then `-R '^legion_sched'` on f59e5d9e | 103/105 on 0a7cb06c: legion_sched_load and _div failed "the field quota was saturated (longest fully spent run 56 ticks >= 100)" -- with chains sched-load no longer saturates the quota the test exists to load; f59e5d9e runs them with `--no-hier-routes`: `legion_sched*` 5/5 pass |
+
+**Inherited vs new failures.**
+
+* *Inherited* (present on the stage-5 head, unchanged in kind): every frozen scale target still missed (87; the list
+  in section 8), the bridges rows' gate samples, trapped orders under never-ending static churn (7.5 fix round),
+  mixed-10000's wall time, `crusades_client_network`'s single parallel-load flake. The 1,024-field count cap's
+  starvation of many one-body routes (scatter-10000 on the stage-5 head) is inherited and fixed for chains here.
+* *New, recorded and not fixed* (each a stage-7/8 input):
+  * sched-load (48 squads of 10 re-clicked to far tiles every 160 ticks, a rock walking across the map): stuck at
+    the end 101 -> 190 (three-offset means 101 -> 195), completions 22 -> 19, bodies never started after a click
+    6 -> 28 (means). Diagnosis and the variants tried are under "How the policy was chosen"; the cause is lane
+    traffic on shared aimed tiles, which stage 7's traffic separation addresses. Its two scheduler ctests run with
+    `--no-hier-routes` (f59e5d9e), so the scheduler stays tested under the load it was written for; the outcome
+    regression itself is not hidden by that -- it is this item.
+  * many-2500 at offset 0: arrivals -6%, completions outside the disc 52 -> 78 (target 50 already missed at 52);
+    over three offsets arrivals +1%, stuck -6%.
+  * refreshchurn / -control's lone walker under per-tick static churn: stop_go 1 -> 16, detour_permille 5 -> 60
+    (licensed; a touched chain is re-planned and its walker waits for the refresh).
+  * many-10000's wall time (report only): tick mean 12.7 -> 25.5 ms, the movement of the bodies that now walk.
+* *Fixed regressions found during the stage*: churn-10000 / swap-5000 under corridors for big crowds (874769ec),
+  churn-1000's approach group on a chain (f59e5d9e), the first policy's 25 worse-outside gate keys (reverted with
+  that policy), the reviewer's findings on ca157c28 (1e2c8172).
+
+**Not run at this stage** (lean testing, user directive 2026-10-16): the cross-compiler determinism runs, the
+crowdbench matrix, repeated wall-time A/Bs, the 300 s `--mpai`, Windows/macOS, the pausing extension's re-measure
+with tiles. ASan was run (ownership changed: shared tiles, raw tile pointers, merged tiles) on 1e2c8172; the later
+commits change policy only (no ownership).
+
+### 7.7 Stage 7 record: static navigation apart from traffic (brief phase 6)
+
+**Hypothesis.** Two things kept large crowds standing after stage 6, and neither was a question of terrain. (1) Static
+changes reached routes too broadly and too bluntly: one box round every change of a tick, any new epoch making a
+finished refresh stale, a trapped order re-registering on any change anywhere, a chain abandoning every region whose
+sector was relabelled while it built. (2) Dynamic traffic was invisible to planning: the soft scan skipped every
+Legion member on its way and awareness skipped a standing crowd, so crossing walkers kept walking into the knots they
+formed (stage-6 scatter-2500: 1,545 of 2,500 stuck at the end; sched-load's central knot of ~270 holding bodies,
+mostly on window routes; many-2500 and many-10000 the same picture -- rendered dumps in `stage7/dbg`). Keeping terrain
+navigation apart from traffic -- closures apart from improvements, local chain repair, jams as traffic, traffic in the
+coarse search, static tiles apart from corrections -- should fix both without changing how bodies step or collide.
+
+**Classification.**
+
+| Commit | Content | Kind |
+|---|---|---|
+| eebef946 | static changes per cluster (`StaticChange`); closures refresh at once, improvements defer (`improveTick`, `kImproveDefer` 150); a refresh is stale again only if a closure reached it; trapped members re-register only on an improvement that could reopen them (`trappedReopened`, improvement log); NavAccounting stage-7 counters; `legion_improvedefer`, the trapped subcases; protocol 271 | behaviour |
+| 7cd1e626 | chains re-resolve relabelled regions (`resolveChainNode`) and repair their plan for closures (`repairPlan`, `Group::reroute`); `legion_chainresolve` | behaviour |
+| ed093ebf | standing jams are traffic: soft to other orders (`jamStill`), MV-05 blocks every cycle (`jamBlockList`), jam detours (`blockedByJam`); scatter-400 and `legion_traffic` | behaviour |
+| 37a794b2 | traffic in the region search (`trafficPenalty`, `Hierarchy::search` with a traffic term); static tiles apart from traffic corrections (two caches); `legion_trafficlane` | behaviour |
+| 1c3aa4f0 | the tile caches' eviction queue (unreferenced tiles by last use and insertion: the same victims in the same order as the old whole-cache scan) | exact (gate and five scale files hash-equal) |
+| 5a23ab10 | scenario licences and hash retakes (`license7.py`); the Legion navigation golden | baselines |
+| 706a4282 | ctest costs | tests |
+
+Retail is untouched: no Retail code path reads any of it (gate: 135/135 Retail fixtures identical to the stage-6 head).
+
+**Design (as built).** docs/legion-pathfinding.md "Legion 10,000 stage 7"; section 3.4's stage-7 amendment. In short:
+
+* *Static changes per cluster.* `refreshPlane` reports each cluster of changed origins as a `StaticChange` (its box,
+  whether some origin lost legality -- a closure -- and whether some gained it -- an improvement). `staticChanged`
+  tests each route against each box at tile granularity. A closure makes the route stale at once (as before); an
+  improvement alone marks it touched (Unknown, never Unreachable) and defers its refresh 150 ticks (`improveTick`),
+  promoted at once when a member the touched route does not reach needs it, or a member is blocked by B1's rule (found
+  by `legion_staticidle`'s second gap: a pair plugged at one gap waited the deferral out, 700 ticks against the bound of
+  669; 550 with the promotion, 549 at the stage-6 head). An installed refresh is stale again only
+  if a closure reached it while it built (`Field::closed`) -- until stage 7 any new epoch did. A trapped member
+  re-registers only after an improvement touching its component's box (`trappedReopened` over a per-plane log of the
+  last 1,024 improvements; a stale plane's rebuild logs a whole-map improvement; a member older than the log
+  re-registers as before).
+* *Chain repair.* A chain region whose sector was relabelled is re-resolved on the current geometry
+  (`resolveChainNode`) and its tile rebuilt instead of left off the route; a chain refreshed for a closure repairs its
+  plan (`repairPlan`) instead of searching again, unless traffic or an improvement asked for a new choice
+  (`Group::reroute`) or the repair fails (a transit portal closed, or a member stands outside the plan's regions).
+* *Jams as traffic.* A member held 60 ticks on its way is stamped soft to other orders (`jamStill`; its own order
+  never plans round it), the standing jams of each scan cycle are MV-05 blocks (`jamBlockList`), and a member held 60
+  updates against another order's jam may plan the short committed detour formation members already could
+  (`blockedByJam`).
+* *Traffic in the region search.* `trafficPenalty`: step x 3 x (soft origins / region cells), the soft rule as the
+  route's command sees it, cached per sector by generation and soft serials.
+* *Static tiles apart from corrections.* Two caches (48 MiB static, 16 MiB corrections).
+
+**How the design was chosen (scale files, offsets 0 / 1 / -1 unless stated; base = the stage-6 head; scratch
+`~/tak-tmp/scratch/legion-10000/stage7/`).**
+
+* *Diagnosis first* (`dbg/`, rendered unit dumps from a scratch `TAK_DUMP_UNITS` hook in legion_scenario, never
+  committed): sched-load, scatter-2500 and many-2500 all end in knots of Holding bodies -- sched-load one central knot of
+  ~270 bodies (rendered `sl-on-4799.png` / `sl-off-4799.png`: the same knot with and without hierarchical routes, a bit
+  tighter with them), scatter-2500 a dozen knots of crossing single walkers (1,542 Holding at tick 5,999), many-2500
+  knots of crossing squads. Nothing that plans sees a held crowd.
+* *Jam stamps and jam detours* (`e1/`, offset 0): stamps alone (E1) took scatter-2500 from 945 to 1,595 arrivals and
+  1,545 to 784 stuck; detours alone (E1b, then for any long-held member) 1,594 / 660; both 1,626 / 403. many-2500 and
+  sched-load: E1b changes nothing (their squads are formation members, which already detour); E1 many-2500 stuck 596 ->
+  542, sched-load 190 -> 218. The kept detour rule asks for a blocker of another order held 60+ ticks (`blockedByJam`),
+  not any long hold.
+* *Aware groups on the window* (V2, rejected): a low-demand group planning round movers keeps the window instead of a
+  corridor or chain -- sched-load stuck 190 -> 172 but many-2500 arrivals 1,375 -> 1,309 and stuck 361 -> 398.
+* *Jam blocks for MV-05* (E3): the first form (jam cells added to the cycle's newly-soft cells) was identical to E1
+  (`e1/m2` = `e1/m1`): a knot grows a few bodies a cycle and never makes a dense tile of newly soft cells. Jam blocks
+  rebuilt every cycle from the standing jams (kept): sched-load stuck 190 -> 99 over three offsets (the stage-5 level:
+  101) and bodies never started after a click 16 -> 3; scatter-2500 stuck 317 -> 217 (five offsets) at arrivals
+  1,713 -> 1,681; many-2500 arrivals 1,343 = 1,343, stuck 375 -> 391 (five offsets); churn-1000 arrivals 571 -> 546,
+  stuck 162 -> 166, completions outside 151 -> 179 (five offsets). The churn-1000 cost: B, stopped at tick 1,200 and sent
+  again at 1,500 to the point A is arriving at, is another order than A, so A's held arrivals are a jam to it and B
+  re-plans round them (7-17 MV-05 re-plans a run against 2-3) -- two orders to one point are two destination crowds, the
+  stage-8 arrival-area subject. Kept for sched-load, the stage-7 must-fix, and scatter's stuck bodies; churn-1000's move
+  is recorded below as a new regression against the stage-6 head.
+* *Chain repair under churn* (`ab1/`, `t3/`): refreshchurn's walkers under a rock placed every tick: stop_go 16 -> 0
+  (the stage-5 value was 1) with re-resolution; the plan repair then re-plans 403 refreshes without a single new region
+  search; detour_permille (travelled / straight - 1) stays 59-61 against refreshchurn-control's 2 -- presumably the
+  walkers going round rocks that land on their way; not measured further.
+* *Traffic in the region search* (`legion_trafficlane`): without the charge the walker's chain takes the gap behind the
+  idle block (max z at the wall 51); with it the other gap (250). On the scale rows the search charged 3.1 million
+  (many-10000) to 37 million (scatter-10000) region steps for traffic in a run.
+* *The tile cache's eviction scan* (found by profiling scatter-10000 after the first scale run, `prof/`): `evictTiles`
+  walked and sorted the whole cache after every attach while the referenced tiles alone held more than the allowance
+  (the correction cache's 16 MiB sat permanently over it), half of scatter-10000's run time (tick mean 56.8 ms, 13,092
+  ticks over 33.3 ms). An eviction queue of the unreferenced tiles, keyed (last use, insertion), gives the same
+  victims in the same order: hash-identical on scatter-2500 (33,987 evictions), many-2500, sched-load, scatter-400 and
+  churn-1000, and on the whole Legion gate (`gate3` = `gate2`, 135/135); scatter-10000's tick mean 56.8 -> 22.2 ms (the
+  stage-6 head: 22.9), over-budget ticks 13,092 -> 399. The scan dates from stage 6 (whose 64 MiB cache sat just over
+  its allowance in many-10000), so the fix also speeds the stage-6 code paths.
+* *Jams kept out of tile corrections* (E4, rejected): tiles that ignore jam stamps (jams then only in the coarse search,
+  the jam blocks and the detours) build a third of the corrections in scatter-10000 but lose outcomes everywhere
+  (scatter-2500 arrivals 1,676 -> 1,619 and stuck 205 -> 363 over three offsets; many-2500 1,368 -> 1,349 and 382 -> 483;
+  scatter-10000 5,109 -> 4,793 and 967 -> 2,021) and were slower in wall time (28.4 against 22.2 ms).
+* *Re-plan round jams only for formations* (E3c, groups of at least kAwareMembers): identical to no jam blocks on the
+  single-walker rows (scatter-10000 5,337 arrivals, 1,239 stuck: the same keys as the build before jam blocks). So on
+  those rows the jam blocks trade arrivals for stuck bodies (scatter-10000 5,337 -> 5,109 arrivals, 1,239 -> 967
+  stuck; scatter-2500 above); E3c keeps the formation rows' gain and drops that trade -- a rule by group size for a
+  measure the frozen targets do not settle; not taken.
+
+**What moved in the gate, and why** (final sweep: `gate2` both modes on the binaries before the exact eviction-queue
+commit, `gate3` and `gate5` Legion on `final3` and the final binaries, Retail lines reused from `gate2` -- no Retail
+code changed after it;
+compared with the stage-6 head's `stage6/gate-f4` by `stage5/cmpgate.py` and `stage5/judge5.py`).
+
+* Retail: 135/135 fixtures identical (hashes and keys) to the stage-6 head (`gate2`).
+* Legion: `gate5` = `gate3` = `gate2` on all 135 fixtures (the eviction queue is exact). Against the stage-6 head: 25 identical, 2
+  hash-only (mixed-spacing-04x, motion-open: every key identical, the hashed stage-7 state differs), 102 with only work
+  counters moved, 6 with outcome keys moved. The work counters are the soft scan sampling and stamping held members as
+  jams (`work.still_units_processed` up to 28x in 103 fixtures, the trace work of probes reading those stamps, `lanes.vertex_work` +1-59% in 7
+  on the corner fixtures and sbend: the vertex probe's line traces walk the footprint cells of a stamped body), never a
+  decision in a single-order fixture (a jam is soft to other orders only).
+* The 6 with outcomes: battle-field-2x500 arrivals 42 -> 54; refreshchurn stop_go 16 -> 0 (stage 5: 1);
+  battle-field-2x250 arrivals 14 -> 13, deaths +10 / -4; battle-assault deaths and stops +-3%; doorplug-112
+  contact_settled_permille 48,283 -> 53,120; ringcross aim_reversals 346 -> 351, statue_ticks +0.8%, arrivals 38 -> 39.
+  `judge5.py` over the five core offsets: 17 keys better, 9 worse inside the stage-6 head's own offset range, 7 worse
+  outside it -- battle-assault `g.B6.dead` 20 -> 23 (range 15..22), `still900_ever` 0 -> 2 (0..1), and five
+  `lanes.vertex_work` (instrument work, above).
+* `legion_check check --cumulative`: before the licences 441 failures (332 hash@, 107 band -- all work counters except
+  the 8 ringcross keys a stage-6 licence capped at the stage-6 values, now a little above them --, 1 offset spread on
+  gap8's vertex work, 1 new work class); after `license7.py --apply` (each fixture's reason from which stage-7
+  counters fired in its offset-0 `--scale` run, `attr/`): PASS, 31,779 keys, 0 failed, 3,464 licensed, 218 floor
+  exceptions; `validate` 0 problems. Cluster S7-271 holds the offset-spread exception.
+
+**The scale suite on the final code** (`legion_scale.py run --bin final3/legion_scenario --out scale3 --cores 4-15
+--per-job 4 --workers 3`, one run per file at offset 0; against the stage-6 head's `stage6/scale4` by
+`stage4/scale_ab4.py`; base -> stage 7 where a value moved; wall columns single runs, report only).
+
+Retail rows with a different state hash: none
+| scenario | start.last | wait.max | arrived | t90 | completed | outside | stuck | livelock | fields | navbytes MB (det) | tick mean ms | whole max ms | over 33 ms |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| attack-1000 | 30 | 6 | 99 | 4142 | 98 | 0 | 0 | 0 | 6 | 30 | 0.849 -> 0.899 | 6.893 | 0 -> 0 |
+| attack-10000 | 131 | 9 | 884 -> 882 | -1 | 889 -> 912 | 28 -> 51 | 50 -> 48 | 14 -> 15 | 17 | 62 | 14.217 -> 14.38 | 20.51 | 19 -> 0 |
+| bridges-1000 | 25 | 8 | 10 -> 5 | -1 | 10 -> 4 | 0 | 541 -> 547 | 30 -> 38 | 7 -> 6 | 61 | 1.071 -> 1.156 | 7.212 | 0 -> 0 |
+| bridges-10000 | 84 | 9 | 0 -> 1 | -1 | 0 | 0 | 9010 -> 9047 | 110 -> 92 | 7 | 72 | 10.757 -> 11.707 | 23.881 | 0 -> 0 |
+| churn-1000 | 93 | 2 | 600 -> 608 | -1 | 735 -> 723 | 168 -> 133 | 144 -> 168 | 13 -> 16 | 7 -> 8 | 19 | 0.629 -> 0.67 | 5.42 | 0 -> 0 |
+| churn-10000 | 795 -> 1387 | 13 | 5051 -> 5109 | -1 | 5957 -> 6366 | 1353 -> 1425 | 2658 -> 2809 | 104 -> 77 | 11 | 112 | 10.092 -> 10.631 | 26.035 | 0 -> 0 |
+| idle-10000 | 41 | 6 | 27 -> 39 | -1 | 21 -> 25 | 0 | 654 -> 192 | 23 -> 8 | 2 -> 4 | 40 | 3.715 -> 3.86 | 13.184 | 0 -> 0 |
+| many-100 | 9 | 0 | 98 | 1616 -> 2006 | 98 -> 99 | 2 -> 3 | 1 -> 0 | 0 | 8 | 1 | 0.056 -> 0.058 | 1.63 | 0 -> 0 |
+| many-1000 | 19 | 0 | 825 -> 776 | -1 | 815 -> 775 | 23 -> 24 | 71 -> 64 | 16 -> 21 | 94 -> 93 | 24 | 1.549 -> 1.755 | 7.146 | 0 -> 0 |
+| many-10000 | 25 | 10 | 4434 -> 4900 | -1 | 4453 -> 4900 | 146 -> 125 | 4252 -> 2473 | 229 -> 346 | 824 -> 820 | 212 | 25.537 -> 26.861 | 54.602 | 2767 -> 3615 |
+| many-2500 | 17 | 2 | 1287 -> 1315 | -1 | 1320 -> 1355 | 78 -> 84 | 596 -> 469 | 73 -> 95 | 271 -> 260 | 82 | 5.252 -> 4.918 | 14.863 | 0 -> 0 |
+| many-5000 | 22 | 5 | 2422 -> 2567 | -1 | 2454 -> 2566 | 81 -> 60 | 2172 -> 1073 | 79 -> 163 | 450 -> 443 | 133 | 9.676 -> 10.549 | 26.036 | 35 -> 0 |
+| maze-1000 | 24 | 15 | 627 -> 618 | -1 | 647 -> 643 | 50 | 26 -> 20 | 13 -> 7 | 6 | 99 | 1.294 -> 1.155 | 9.53 | 0 -> 0 |
+| maze-10000 | 42 | 16 | 1137 -> 1186 | -1 | 1367 -> 1387 | 433 -> 440 | 7291 -> 5206 | 74 -> 65 | 7 | 111 | 12.193 -> 13.173 | 23.341 | 0 -> 0 |
+| mixed-1000 | 15 | 6 | 640 | -1 | 460 | 0 | 39 | 19 | 5 | 39 | 3.95 -> 4.019 | 22.945 | 0 -> 0 |
+| mixed-10000 | 49 | 41 | 2256 | -1 | 1910 | 0 | 6307 | 97 | 5 | 233 | 52.532 -> 54.902 | 215.524 | 18870 -> 19218 |
+| one-100 | 8 | 0 | 100 | 2186 | 100 | 0 | 0 | 0 | 2 | 2 | 0.06 -> 0.061 | 4.493 | 0 -> 0 |
+| one-1000 | 41 | 0 | 893 | -1 | 854 | 2 | 80 | 15 | 2 | 8 | 0.548 -> 0.57 | 9.035 | 0 -> 0 |
+| one-10000 | 92 | 11 | 7081 | -1 | 6377 | 10 | 2657 | 61 | 2 | 55 | 9.692 -> 10.417 | 20.724 | 0 -> 0 |
+| one-2500 | 38 | 3 | 1983 | -1 | 1830 | 5 | 410 | 20 | 2 | 17 | 1.821 -> 1.875 | 7.181 | 0 -> 0 |
+| one-5000 | 106 | 6 | 3744 | -1 | 3389 | 1 | 1087 | 29 | 2 | 30 | 3.484 -> 4.002 | 15.588 | 0 -> 0 |
+| scatter-10000 | 17 | 395 -> 2318 | 1562 -> 5109 | -1 | 1563 -> 5112 | 1 -> 20 | 8426 -> 967 | 33 -> 228 | 4766 -> 5284 | 372 | 22.914 -> 27.917 | 57.546 | 18 -> 577 |
+| scatter-2500 | 17 | 557 -> 816 | 945 -> 1669 | -1 | 945 -> 1667 | 0 -> 4 | 1545 -> 212 | 14 -> 54 | 896 -> 1100 | 162 | 4.173 -> 7.157 | 18.717 | 0 -> 0 |
+| scatter-400 | 17 | 0 | 392 | 3073 | 394 | 2 | 0 | 0 | 396 | 31 |  -> 0.307 | 1.853 |  -> 0 |
+| sched-load | -1 | 1 | 29 -> 30 | -1 | 19 -> 18 | 1 -> 2 | 190 -> 99 | 37 -> 34 | 102 -> 153 | 57 | 1.864 -> 2.08 | 6.421 | 0 -> 0 |
+| sched-mix | 15 | 200 | 416 -> 414 | -1 | 411 -> 414 | 1 -> 2 | 0 | 0 | 48 | 11 | 2.98 -> 3.164 | 8.225 | 0 -> 0 |
+| swap-1000 | 25 | 8 | 867 -> 866 | -1 | 844 -> 843 | 9 -> 5 | 64 -> 39 | 12 -> 16 | 7 | 44 | 1.188 -> 1.298 | 8.141 | 0 -> 0 |
+| swap-10000 | 164 | 9 | 1466 -> 1572 | -1 | 1276 -> 1296 | 0 | 6032 -> 5996 | 120 -> 113 | 7 | 61 | 11.836 -> 14.12 | 24.92 | 0 -> 0 |
+| swap-2500 | 72 | 8 | 1995 -> 1981 | -1 | 1806 -> 1736 | 1 -> 0 | 76 -> 50 | 13 -> 14 | 6 | 44 | 3.617 -> 3.775 | 8.932 | 0 -> 0 |
+| swap-5000 | 38 | 8 | 2362 -> 1931 | -1 | 2172 -> 1756 | 0 -> 1 | 1646 -> 2017 | 48 -> 77 | 7 -> 6 | 60 | 5.45 -> 6.298 | 15.302 | 0 -> 0 |
+
+* **Crossing traffic.** scatter-10000 (10,000 single walkers to unrelated destinations, the brief's hardest case):
+  arrivals 1,562 -> 5,109, stuck at the end 8,426 -> 967. scatter-2500 945 -> 1,669 and 1,545 -> 212. many-10000
+  (400 squads) 4,434 -> 4,900 and 4,252 -> 2,473; many-5000 2,422 -> 2,567 and 2,172 -> 1,073; idle-10000 (1,000 movers
+  through 9,000 idle bodies) stuck 654 -> 192; maze-10000 stuck 7,291 -> 5,206; sched-load stuck 190 -> 99 (the stage-6
+  regression undone: stage 5 had 101).
+* **Moved against, and how each was checked** (offset 0 is one sample; the three-offset reruns are `t9/`):
+  * many-1000 arrivals 825 -> 776 at offset 0; over offsets 0 / 1 / -1 807 -> 779 (-3.5%) while stuck 77 -> 49.
+  * swap-5000 arrivals 2,362 -> 1,931 at offset 0, but over three offsets 2,043 -> 2,020 and stuck 1,875 -> 1,493: the
+    offset-0 row is the outlier of both.
+  * many-100: t90 1,616 -> 2,006 at offset 0 (offsets -1: 2,055 -> 2,116; 1: never in both), completions outside the
+    disc 2 -> 3 -- two newly missed frozen targets (below). Its four 25-body squads cross; a squad re-planned round
+    another's jam walks the longer way.
+  * churn-10000: last member to start 795 -> 1,387, completions outside 1,353 -> 1,425, stuck 2,658 -> 2,809; churn-1000
+    (five offsets) arrivals 571 -> 546, outside 151 -> 179 -- the two-orders-to-one-point cost of the jam blocks
+    (B re-plans round A's held arrivals at their common point; "How the design was chosen").
+  * attack-10000 completions outside 28 -> 51; bridges-1000 arrivals 10 -> 5 (both bridges rows remain at 0-1%).
+  * livelock_end rises where stuck falls (scatter-10000 33 -> 228, many-10000 229 -> 346, many-5000 79 -> 163): bodies
+    walking round a knot without getting anywhere, the jam detours' price.
+  * scatter-10000's longest navigation wait 395 -> 2,318 ticks (request age 1,387 -> 2,447): three times as many walkers
+    now move and need routes, and corrections for the regions where jams stand are built per traffic view (246,691
+    corrections, 273,473 hits; tile builds 1.68 -> 2.81 G units); the scatter files carry no frozen targets.
+* **Frozen targets** (`legion_scale.py check`): met 120, missed 88, report-only missed 4 (stage 6: 120 / 87 / 5). Newly
+  missed: many-100 `arrive.t90` (2,006) and `complete_outside_n` (3); newly met: many-100 `stuck_end`. Every other miss is
+  a stage-6 miss.
+* **Wall time** (report only). scatter-10000's tick mean 22.9 -> 27.8 ms (TAK_PHASE means: movement 9.3 -> 11.1, navigation 9.0 -> 11.9; p99 29.5 -> 47.7), 577 ticks over 33.3 ms (18 at stage 6) -- three times the walkers move (moving unit-ticks 22.8 M -> 51.5 M); before the eviction-queue commit it was 56.8 ms. many-10000 25.5 -> 26.8 ms (3,615 ticks over budget, 2,767 at stage 6), scatter-2500 4.1 -> 7.1 ms, one-10000 9.6 -> 10.3 ms with identical outcomes (its navigation p99 0.6 -> 2.1 ms: the scan now samples and stamps its held members), mixed-10000 ~55 ms (inherited). Peak RSS scatter-10000 387 -> 531 MB (the tile caches peaked at 211 MB against their 64 MiB allowance: a tile a chain holds is never evicted, and three times the walkers hold chains).
+
+**Checks (exact commands; scratch `~/tak-tmp/scratch/legion-10000/stage7/`; `final5/` = the binaries of the final code;
+`final3/` = before the blocked-member promotion and the use-after-free fix (both below; `final5` is hash-equal to it on
+the gate and on every scale row with static changes); `final2/` = before the exact eviction-queue commit; all
+`build-o2`, `-O2 -g`, cores 4-15).**
+
+| Check | Command | Result |
+|---|---|---|
+| New tests under the verifier | `TAK_LEGION_VERIFY=1 build-o2/legion_world_test trapped / improvedefer / chainresolve / trafficlane / chains / chainschurn / chainplane`; `tools/legion_traffic_test.py build-o2/legion_scenario tools/scenarios/scale --data DATA` | pass: trapped retires at 9,001 under never-ending churn (kept 899, reopened 0) and the pocket opened under churn arrives at 1,051; improvedefer deferred 140 ticks, refreshed by 160, the closure at once; chainresolve 48/48, 1,318 resolves, 0 abandons; trafficlane through the far gap (max z at the wall 250), arrives at 5,784; scatter-400 392 of 400 arrive, 0 stuck |
+| Mutations (each must fail) | `tools/mutants.py` (scratch edits of `src/sim/legion.cpp`, restored and diffed after each) | always reopen trapped: trapped fails (cleared -1); improvements as closures: improvedefer fails; no re-resolution: chainresolve fails (0 resolves, 486 abandons); no traffic charge: trafficlane fails (max z at the wall 51: through the idle block); no jam stamps: legion_traffic fails (304 of 400, 95 stuck) |
+| Intermediate commits | each stage-7 commit's tree built (`legion_scenario`, `legion_world_test`) and its own new test run | pass: eebef946 trapped, improvedefer, staticidle, replay_test; 7cd1e626 chainresolve, chainschurn; ed093ebf legion_traffic (scatter-400: 392 of 400 arrive, 0 stuck); 37a794b2 trafficlane, legion_hier_test; 1c3aa4f0 the whole build, chains, trafficlane |
+| Legion scenario gate, both modes | `sweep_both.py final2/legion_scenario gate2 4-15`; `sweep_legion.py final3/legion_scenario gate3 4-15 gate2`; `stage5/cmpgate.py`, `stage5/judge5.py`; `license7.py gate2-check.txt stage6/gate-f4/scenarios.jsonl gate2/scenarios.jsonl attr --apply`; `legion_check.py check --cumulative`, `validate` | Retail 135/135 identical to the stage-6 head; Legion as above; gate3 = gate2 (135/135); PASS 31,779 keys, 0 failed |
+| Scale suite | `legion_scale.py run --bin final3/legion_scenario --out scale3 --cores 4-15 --per-job 4 --workers 3`; `check --targets` | above; final3 = final2 on every row's state hash; targets met 120, missed 88 |
+| `--mpai` Inner Circle seed 1, 60 s | `CORES=12-15 bash ../mpai.sh final3 mpai60 60` (scratch XDG; `takserver --local --no-auth --seed 1`) | Retail **2c39430636a3dbda**, Legion **f75b2a11410f43b4**: both unchanged (Inner Circle moves a handful of units, no standing jams; no new baselines), on `final3` and again on the final binaries `final5` (`mpai60b`) |
+| Replay protocol | `build-o2/replay_test` | pass: 271 kept, 270 refused |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j8 --timeout 1800` (scratch XDG, no `TAK_SETTINGS_FILE`) | on `final3`'s code 388/390: `legion_staticidle` (a real stage-7 regression: the improvement deferral held a blocked pair behind a gap that opened, fixed by the blocked-member promotion) and `navigation_determinism` (the Legion golden, retaken: `tools/navigation_checkpoints.json`, Retail lines unchanged, gcc build == clang build `build-clang`); on the final code 390/390 (`ctest-quick2.log`) |
+| ctest Legion (non-quick, the stage's) | `ctest --test-dir build-o2 -R 'legion_(trapped|improvedefer|chainresolve|trafficlane|traffic|chains|chainschurn|chainplane|sched|route_paused|scale_)'` | 24/24 on the final code (`ctest-legion.log`), plus `legion_hier_test`, `legion_route_test`, `navbudget_test`, `replay`, `replay_file` |
+
+**Inherited vs new failures.**
+
+* *Inherited* (present on the stage-6 head, unchanged in kind): 86 of the frozen scale targets (section 8); the bridges
+  rows' gate samples; mixed-10000's wall time; `crusades_client_network`'s single parallel-load flake (not seen here).
+* *Fixed here*: trapped orders under never-ending static churn (inherited from c2c25707); sched-load's stage-6 regression
+  (stuck 190 -> 99); refreshchurn's stage-6 licensed stop_go (16 -> 0); the eviction scan's cost (stage 6).
+* *New, recorded and not fixed* (stage-8 inputs): many-100 `arrive.t90` 1,616 -> 2,006 and `complete_outside_n` 2 -> 3
+  (two newly missed frozen targets: four crossing squads re-planned round each other's jams); churn-1000 / churn-10000
+  (two orders to one point: completions outside the disc and churn-10000's last start 795 -> 1,387); many-1000 arrivals
+  -3.5% over three offsets (stuck -36%); livelock_end up where stuck falls; scatter-10000's navigation tail (wait.max
+  395 -> 2,318) and memory (peak RSS +37%).
+
+**Not run at this stage** (lean testing, user directive 2026-10-16): the cross-compiler determinism script (only the
+navigation golden was compared, gcc against clang), the crowdbench matrix, repeated wall-time A/Bs, the 300 s `--mpai`,
+Windows/macOS, the identity harness (the one exact commit, the eviction queue, was proved hash-equal on the whole gate
+and five scale files instead), `legion_cost`. ASan was run once on the final code (above).
+
+**Found by the checks and fixed before the record** (each re-verified as above):
+
+* `legion_staticidle` (ctest quick): the improvement deferral held a pair plugged at one gap behind the second gap that
+  opened (an improvement) for the whole deferral -- 700 ticks against the test's bound of 669; a member blocked by B1's
+  rule now promotes the deferred refresh (550; the stage-6 head 549). No gate fixture and no scale row moved (`gate5`
+  = `gate3`; churn-1000 / churn-10000 / sched-load / scatter-2500 hash-equal to `scale3`).
+* AddressSanitizer (`build-asan`, `-O1`), run because the eviction queue holds tiles by raw pointer: a heap use after
+  free in `evictTiles` -- the victim's hash was read after the erase that freed it (scatter-2500, 3,000 ticks). Fixed
+  (the hash is read first); the freed memory had still held the value, so no run had diverged: `gate5` = `gate3`, the
+  four rows above hash-equal. The rerun is clean: legion_world_test chainresolve, trafficlane, chains, chainschurn,
+  trapped, improvedefer (verify on), legion_scenario scatter-2500 and many-2500 (4,000 ticks), refreshchurn.
+
+### 7.8 Stage 8 record: chokepoints, subgroups and arrivals (brief phase 7)
+
+**Hypothesis.** After stage 7 the big rows still lost most of their bodies in three places nothing navigated for:
+(1) narrow passages -- every group took the nearest one whatever its queue (bridges-1000: both armies on the
+12-cell bridge, head on, 5 of 1,000 arrived; maze-1000: all 850 queued at one 6-cell door, 632 arrived in 20,000
+ticks); (2) destination areas -- rendered dumps showed the front of every formation settling 20-60 cells short of
+its slot (one-1000: 766 of 854 completions off their slot; the area filled from the click backwards and the last
+tenth stood outside it); (3) two orders to one point were two crowds (churn-1000's re-sent half planned round the
+other half's arrivals). Queue-aware route choice with commitment and admission at narrow passages, arrival rules
+that measure headway on a member's own slot, and one destination area per point should recover them without
+changing how bodies step or collide.
+
+**Classification.**
+
+| Commit | Content | Kind |
+|---|---|---|
+| 8118d9d6 | `legion_scenario --dump-units N` (the stage-7 scratch hook as a tool flag) | tools |
+| 4f30f19e | a formation member gaining on its own slot is not still (`Member::windowSlotDist`); `legion_arrival`; protocol 272 | behaviour |
+| 6de86025 | openings (narrow sector-boundary crossings) with queue areas and delays, route charges (`Field::via`, `Field::charges`), queue-aware region search, re-plans with commitment (`predictEntrants`, `openingDrift`), admission at narrow passages (`admissionHold`); `legion_choke` | behaviour |
+| ca418eca | awareness by streams | behaviour (reverted by 45d4e097) |
+| 924c43ba | shared destination areas across orders (`sharedArea`, `destArea`); `legion_sharedarea` | behaviour |
+| b4849440 | a formation member with a free step toward its own slot is not pressed (`freeTowardSlot`); `legion_arrival_press` | behaviour |
+| e9d2e8fb | an entrance per group of a destination area (`Point::entries`); scale fixture room2door; `legion_entrances` | behaviour |
+| 45d4e097 | revert of the stream split (measured, rejected) | behaviour |
+| 4ed220d1 | navigation subgroups for route allocation (`allocateQueue`, `splitGroup`); groups' own entrants hashed | behaviour |
+| 1bb377c3, 456ffb6f | the explicit crowd bound counts the cells settled at its point (`anchorCellsAt`): the fix of a shared-area regression found by the gate (tail-wave); 1bb377c3 counted bodies and failed `legion_arrival_press`, 456ffb6f counts cells | behaviour (fix) |
+| 11da1910 | `legion_hovershore`: walkers spawned clear of the landed hovercraft | test fixture |
+| 8c2bb90b | scenario licences and hash retakes (`license8.py`); the Legion navigation golden | baselines |
+
+Retail is untouched: no Retail code path reads any of it (gate: 135/135 Retail fixtures identical to the stage-7 head,
+hashes and keys; the Retail navigation golden and Retail `--mpai` unchanged).
+
+**Design (as built).** docs/legion-pathfinding.md "Legion 10,000 stage 8". In short: an OPENING is a portal run of the
+hierarchy bounded at both ends by obstacles (followed past sector corners; fewer than 64 origins), identified by its
+cells so every movement class crossing one bridge shares one queue. Window and corridor fields of groups of 8 or more
+record each cell's next opening; every 30 ticks the members' queue areas are summed per opening and direction, and
+the delay is area / width (an opposing body counts twice on a narrow opening, half on a wide one). New routes carry
+the delays as charges on the crossing steps (without the group's own entrants, halved where it already crosses);
+groups re-plan when the region search with today's queues would move a quarter of their queue area, one at a time
+with the move committed before the next is judged; a group of 128 or more splits squares of its members off as a
+subgroup for another passage when that shortens its queue by more than the detour; narrow passages (16 cells or less)
+admit one direction at a time. An explicit order to the point an earlier explicit area of the same player still
+gathers at joins that area. A formation member's headway is also measured on its own slot (gaining, or a free step
+toward it). Each group of an area finds its own entrance.
+
+**How the design was chosen (dev set: one-100, many-100, one-1000, swap-1000, maze-1000, many-1000, churn-1000,
+bridges-1000, mixed-1000, attack-1000, scatter-400; offsets 0 / 1 / -1 unless stated; scratch
+`~/tak-tmp/scratch/legion-10000/stage8/`).**
+
+* *Diagnosis first* (`dbg/`, rendered `--dump-units` frames and a temporary completion trace, never committed): the
+  three failures above; at bridges-1000 the two armies formed one single file from bank to bank through the 12-cell
+  bridge and met in its middle; at maze-1000 the crowd flattened against the compound's west wall.
+* *Arrival headway on the own slot* (4f30f19e): one-1000 arrivals 2,615 -> 2,951, stuck 268 -> 26 (record-based
+  gain; a first form that compared with the last window only made many-1000's stuck rise 147 -> 197, the record form
+  157). *Free step toward the slot* (b4849440): one-1000 2,951 -> 2,995 (t99 reached on all three offsets), one-2500
+  6,556 -> 6,708, swap-1000 2,724 -> 2,826, churn-1000 2,398 -> 2,476.
+* *Rejected: moving an off-slot arrival's claim to the cells it stands on* (`settleSwap`): the displaced members
+  taking its freed (deeper) slot gave one-1000 2,951 -> 2,836; searching again 2,737.
+* *Chokepoints, the iterations that failed first* (offset 0, bridges / maze arrivals of 1,000): one damped charge per
+  opening for a whole group including its own entrants made every group swing between doors at each re-plan (maze
+  498 against 632; replans every 300 ticks, `OPREPLAN` traces); leaving a group's own entrants out stopped the self-
+  induced swing but two groups traded places (maze 498); committing each re-plan in the table before the next group
+  is judged, and keeping the commitment while the replacement builds, settled it (maze 929, stuck 0); re-planning only
+  for a change that can move the choice cut bridges' re-plans 185 -> 84; deciding re-plans by the region search's
+  prediction (a quarter of the queue area moving) took them to 7 and 1 (bridges 596, maze 916). An opposing body
+  counted once on a narrow passage (with admission alternating) collapsed bridges to 151 (both armies on one bridge,
+  their waiting crowds sealing each other's exits); twice, as kept, 487-674 depending on the other rules.
+* *Admission* (kept for stragglers): without it bridges-1000 over three offsets 1,854 -> 1,846 arrivals and stuck 61 ->
+  211 (opposing stragglers left on a narrow bridge). Its first forms deadlocked: a body already in the strip taking the
+  token (no waits at all), admitted bodies still before the strip counted as occupants (each army waiting at its own
+  mouth), and turning the token without a clearing time (333 turns, 142 arrivals).
+* *Chokepoints, final, against the previous commit*: bridges-1000 22 -> 1,854 of 3,000 arrivals, stuck 1,585 -> 61;
+  maze-1000 1,938 -> 2,740, stuck 131 -> 1; rows without openings identical.
+* *Shared areas* (924c43ba): churn-1000 1,801 -> 2,398, stuck 389 -> 69.
+* *Rejected: awareness by streams* (ca418eca, reverted by 45d4e097): one mover per spatially separate part of a
+  destination area. swap-1000 gained (2,573 -> 2,724) but swap-2500 lost (offsets 0 / 1 / -1: 2,016 / 1,929 / 1,860 ->
+  1,728 / 1,608 / 1,668, stuck 33 / 32 / 26 -> 240 / 130 / 286): two armies passing through each other split each other
+  into lanes, each a mover with an identity of its own, and the 1,250-body window fields were re-planned under the
+  crowd. A variant splitting only parts that terrain separates (the line between their centroids crosses an illegal
+  origin) moved neither swap row, and on a fixture built for it (`scn/mountain2.scn`: 400 bodies round both sides of an
+  obstacle, 60 crossing behind it) the crossers' t90 was worse on all three offsets (7,056 / 6,427 / 6,307 -> 8,046 /
+  6,831 / 6,696). (The commit message of 45d4e097 quotes swap-2500 as 5,805 -> 5,076 / stuck 416; the exact figures are
+  these.)
+* *An entrance per group* (e9d2e8fb): room2door over five offsets t90 mean 2,975 -> 3,023 (within its spread; all 100
+  arrive both ways), no dev row moved: kept as the correct generalisation (each group's entrance on its own plane and
+  field), not as a measured gain.
+* *Rejected: local engagement by an uncapped re-seed distance* (a far reach group re-seeds after D/8 cells of target
+  movement instead of min(D/8, 8)): attack-1000 g.A.arrived 213 -> 170, still900_ever 36 -> 122, parked_held +44%,
+  against field work -14% and fewer reversals. The capped rule stays: it already keeps a far group's route unless the
+  target has moved a distance that grows with the group's distance (up to 8 cells); the brief's "local engagement
+  placement" is that rule plus the ring kept in place (reseedGroup), unchanged by this stage.
+* *Subgroups for allocation* (4ed220d1): bridges-10000 (offset 0) 226 -> 284 arrivals, stuck 8,551 -> 4,738 (12
+  splits, 4,801 members moved); bridges-1000 1,904 -> 1,930 (stuck 53 -> 80), maze-1000 2,756 -> 2,753, churn-1000
+  unchanged (three offsets).
+* *The gate found two regressions*, both fixed before the record: tail-wave (304 bodies sent 4,030 ticks after 150 to
+  the same point now share its area; the explicit crowd bound counted only the second order's members, completions
+  280 -> 260, still900_ever 9 -> 38; with the settled cells counted 297-302 on all gate offsets, still900_ever 2), and
+  `legion_hovershore` (a test fixture spawning walkers on a landed hovercraft's cells; 11da1910).
+
+**What moved in the gate, and why** (final sweep: `gate1` both modes on the binaries of 4ed220d1, `gate2` Legion on the
+final binaries (456ffb6f's code), Retail lines from `gate1` -- no Retail code changed after it; compared with the
+stage-7 head's `stage7/gate5` / `gate2` by `stage5/cmpgate.py` and `stage5/judge5.py`).
+
+* Retail: 135/135 fixtures identical (hashes and keys) to the stage-7 head.
+* Legion: 26 hash-only (the new hashed state: slot records, the label flag of routes of 8 or more members), 5 with
+  only work counters moved, 104 with outcome keys moved -- most through the arrival rules, which act wherever a
+  formation's slots lie beyond the click; the offset-0 `--scale` run of each fixture (`attr/`) shows openings admitted
+  in 33, queue re-plans in 15, a shared area in 1 and a per-group entrance in 2. `judge5.py` over the five core
+  offsets: 644 keys better, 226 worse inside the stage-7 head's own offset range, 37 worse outside it:
+  * completion distance from the click (`complete_dist_median/max`) in the corner, motion, gen1-route, split-450 and
+    mixed-spacing fixtures (e.g. corner-8x56 group C 14 -> 19 cells): bodies now complete on their slots, farther from
+    the click than where they used to settle short -- the intended effect, read by a key that measures the click;
+  * gap14's last body: done 2,299 -> 3,017 ticks and statue_ticks 1,649 -> 2,807 (one offset of eleven leaves one body
+    completing outside the area): in a 48-body formation through a 14-cell gap the last bodies keep stepping toward
+    their slots (a free step toward the slot) and spend their re-choices before settling; a recorded cost of the
+    arrival rule (new regression, below);
+  * corner-1x448 group D completions 47 -> 42 and left_behind 9 -> 14 (core medians; c1 already): a 448-body crowd into
+    a pocket between a wall and the map edge, where the rear group now queues for slots instead of settling short;
+  * aware-cross b00.done 1,767 -> 1,992 (the free-step rule); motion-cross's one body u43 now arrives on 3 of 11
+    offsets (7 of 11 before);
+  * follow_chain_mean (an instrument of files following one another) up in five fixtures; crosslong sideways +16%;
+    mazeform back +14%; tail-wave contact_settled_permille 228 -> 1,723 (the second order now packs against the first
+    one's settled crowd as one crowd: contact with settled bodies is the point); deadend-w6-n40-closed-squad
+    statue_ticks +17%; corner-4x50 still900_ever 33 -> 42.
+* `legion_check check --cumulative`: before the licences 1,500 failures (854 hash@ retakes, 528 bands, 32 offset spreads,
+  4 bounds, 80 new work entries, 2 Retail floors); after `license8.py --apply` (each fixture's reason from the arrival
+  rule plus the stage-8 counters that fired in its `attr/` run): PASS, 31,859 keys, 0 failed, 3,333 licensed, 220
+  floor exceptions; `validate` 0 problems. Cluster S8-272 holds the offset-spread exceptions.
+
+**The scale suite on the final code** (`legion_scale.py run --bin final3/legion_scenario --out scale1 --cores 4-15
+--per-job 4 --workers 3`, one run per file at offset 0, against the stage-7 head's `stage7/scale3` by
+`tools/scale_ab8.py`; wall columns single runs on a machine shared with ctest, report only). Retail rows: every state
+hash equal.
+
+| scenario | start.last | wait.max | arrived | t90 | completed | outside | stuck | livelock | fields | navbytes MB (det) | tick mean ms | whole max ms | over 33 ms |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| attack-1000 | 30 | 6 | 99 | 4142 -> 4055 | 98 -> 99 | 0 | 0 | 0 | 6 | 32 | 0.899 -> 1.056 | 8.488 | 0 -> 0 |
+| attack-10000 | 131 | 9 | 882 -> 946 | -1 -> 4630 | 912 -> 932 | 51 -> 10 | 48 -> 18 | 15 -> 9 | 17 -> 29 | 61 | 14.38 -> 11.931 | 21.953 | 0 -> 0 |
+| bridges-1000 | 25 | 8 | 5 -> 653 | -1 | 4 -> 587 | 0 | 547 -> 32 | 38 -> 2 | 6 -> 7 | 68 | 1.156 -> 1.408 | 7.916 | 0 -> 0 |
+| bridges-10000 | 84 | 9 | 1 -> 284 | -1 | 0 -> 204 | 0 | 9047 -> 4738 | 92 -> 76 | 7 -> 18 | 100 | 11.707 -> 15.426 | 27.854 | 0 -> 0 |
+| churn-1000 | 93 | 2 | 608 -> 833 | -1 | 723 -> 979 | 133 -> 200 | 168 -> 5 | 16 -> 3 | 8 -> 7 | 20 | 0.67 -> 0.653 | 7.435 | 0 -> 0 |
+| churn-10000 | 1387 -> 1039 | 13 | 5109 -> 5984 | -1 | 6366 -> 7407 | 1425 -> 1847 | 2809 -> 1766 | 77 -> 75 | 11 -> 8 | 104 | 10.631 -> 10.01 | 27.105 | 0 -> 0 |
+| idle-10000 | 41 | 6 | 39 -> 38 | -1 | 25 | 0 | 192 -> 60 | 8 -> 3 | 4 -> 3 | 40 | 3.86 -> 3.883 | 14.517 | 0 -> 0 |
+| many-100 | 9 | 0 | 98 -> 96 | 2006 -> 1616 | 99 -> 100 | 3 -> 5 | 0 | 0 | 8 | 1 | 0.058 -> 0.045 | 1.675 | 0 -> 0 |
+| many-1000 | 19 | 0 | 776 -> 803 | -1 | 775 -> 797 | 24 -> 23 | 64 -> 30 | 21 -> 12 | 93 -> 99 | 25 | 1.755 -> 1.764 | 7.473 | 0 -> 0 |
+| many-10000 | 25 -> 80 | 10 | 4900 -> 4875 | -1 | 4900 -> 4864 | 125 -> 131 | 2473 -> 2363 | 346 -> 284 | 820 -> 758 | 220 | 26.861 -> 26.672 | 61.429 | 3615 -> 3142 |
+| many-2500 | 17 -> 18 | 2 | 1315 -> 1425 | -1 | 1355 -> 1434 | 84 -> 64 | 469 -> 310 | 95 -> 92 | 260 -> 261 | 81 | 4.918 -> 5.888 | 17.721 | 0 -> 0 |
+| many-5000 | 22 -> 27 | 5 | 2567 -> 2575 | -1 | 2566 -> 2573 | 60 -> 70 | 1073 -> 1153 | 163 -> 182 | 443 -> 402 | 130 | 10.549 -> 10.287 | 28.653 | 0 -> 0 |
+| maze-1000 | 24 | 15 | 618 -> 950 | -1 -> 17394 | 643 -> 979 | 50 | 20 -> 0 | 7 -> 0 | 6 -> 10 | 121 | 1.155 -> 1.801 | 12.858 | 0 -> 0 |
+| maze-10000 | 42 | 16 | 1186 -> 2395 | -1 | 1387 -> 1798 | 440 -> 312 | 5206 -> 4594 | 65 -> 173 | 7 -> 21 | 175 | 13.173 -> 18.154 | 44.527 | 0 -> 5 |
+| mixed-1000 | 15 | 6 | 640 -> 630 | -1 | 460 -> 468 | 0 | 39 | 19 | 5 | 40 | 4.019 -> 3.968 | 23.388 | 0 -> 0 |
+| mixed-10000 | 49 | 41 | 2256 -> 2265 | -1 | 1910 -> 1911 | 0 | 6307 -> 6459 | 97 -> 112 | 5 | 244 | 54.902 -> 61.171 | 303.378 | 19218 -> 19178 |
+| one-100 | 8 | 0 | 100 | 2186 | 100 | 0 | 0 | 0 | 2 | 2 | 0.061 -> 0.06 | 5.511 | 0 -> 0 |
+| one-1000 | 41 | 0 | 893 -> 999 | -1 -> 4041 | 854 -> 971 | 2 -> 0 | 80 -> 1 | 15 -> 0 | 2 | 9 | 0.57 -> 0.534 | 9.885 | 0 -> 0 |
+| one-10000 | 92 | 11 | 7081 -> 7468 | -1 | 6377 -> 6773 | 10 -> 11 | 2657 -> 2291 | 61 -> 31 | 2 | 58 | 10.417 -> 10.492 | 20.313 | 0 -> 0 |
+| one-2500 | 38 | 3 | 1983 -> 2209 | -1 | 1830 -> 2061 | 5 | 410 -> 226 | 20 -> 14 | 2 | 18 | 1.875 -> 1.775 | 8.155 | 0 -> 0 |
+| one-5000 | 106 | 6 | 3744 -> 4075 | -1 | 3389 -> 3755 | 1 -> 9 | 1087 -> 777 | 29 -> 26 | 2 | 31 | 4.002 -> 3.883 | 10.035 | 0 -> 0 |
+| room2door | 11 | 0 | 100 | 2154 | 100 | 0 | 0 | 0 | 2 | 8 |  -> 0.093 | 10.828 |  -> 0 |
+| scatter-10000 | 17 -> 18 | 2318 -> 2349 | 5109 -> 5068 | -1 | 5112 -> 5061 | 20 -> 14 | 967 -> 1373 | 228 -> 194 | 5284 -> 4717 | 368 | 27.917 -> 27.929 | 53.252 | 577 -> 544 |
+| scatter-2500 | 17 | 816 -> 688 | 1669 -> 1714 | -1 | 1667 -> 1711 | 4 | 212 -> 206 | 54 | 1100 -> 988 | 163 | 7.157 -> 6.06 | 14.073 | 0 -> 0 |
+| scatter-400 | 17 | 0 -> 1 | 392 -> 398 | 3073 -> 3006 | 394 -> 399 | 2 | 0 | 0 | 396 -> 367 | 30 | 0.307 -> 0.266 | 2.372 | 0 -> 0 |
+| sched-load | -1 | 1 | 30 | -1 | 18 -> 26 | 2 -> 1 | 99 -> 121 | 34 -> 36 | 153 -> 119 | 53 | 2.08 -> 1.926 | 5.845 | 0 -> 0 |
+| sched-mix | 15 -> 23 | 200 -> 207 | 414 -> 416 | -1 | 414 -> 412 | 2 -> 1 | 0 | 0 | 48 -> 50 | 11 | 3.164 -> 3.591 | 8.216 | 0 -> 0 |
+| swap-1000 | 25 | 8 | 866 -> 863 | -1 | 843 -> 845 | 5 -> 8 | 39 -> 50 | 16 -> 14 | 7 | 47 | 1.298 -> 1.258 | 8.306 | 0 -> 0 |
+| swap-10000 | 164 | 9 | 1572 -> 1644 | -1 | 1296 | 0 | 5996 -> 5919 | 113 -> 136 | 7 | 63 | 14.12 -> 14.483 | 28.865 | 0 -> 0 |
+| swap-2500 | 72 | 8 | 1981 -> 2052 | -1 | 1736 -> 1741 | 0 | 50 -> 26 | 14 -> 10 | 6 | 46 | 3.775 -> 3.247 | 14.415 | 0 -> 0 |
+| swap-5000 | 38 | 8 | 1931 -> 2115 | -1 | 1756 -> 1876 | 1 | 2017 -> 1637 | 77 -> 51 | 6 | 62 | 6.298 -> 6.414 | 16.909 | 0 -> 0 |
+
+* **Chokepoints.** bridges-1000 5 -> 653 arrivals, stuck 547 -> 32, both alternative bridges used (the frozen
+  `gate.bridge0/2.samples` targets met for the first time, 1,000 and 10,000); maze-1000 618 -> 950, stuck 20 -> 0
+  (t90 reached: 17,394); bridges-10000 1 -> 284, stuck 9,047 -> 4,738; maze-10000 1,186 -> 2,395.
+* **Capacity, stated.** bridges-10000 and maze-10000 cannot meet their frozen arrival targets inside their run
+  length on any route policy: bridges-10000's three bridges take about 12 lanes of 3x3 bodies (one body per lane
+  every ~40 ticks at the roster's slowest speed) -- after ~6,000 ticks of walking, at most ~2,800 of 10,000 can cross
+  in 15,300 ticks; maze-10000's four 6-cell outer doors take ~7 lanes, ~2,450 bodies in its 20,000 ticks. maze-10000
+  is at that capacity (2,395 arrive); bridges-10000 is not (284; a waiting army at each mouth and a straggler line on
+  the 12-cell bridge, below). The targets stay frozen and are reported as missed (section 6: unmet targets are never
+  re-frozen); a feasible-layout version of these two rows is an input for the final report.
+* **Arrivals.** one-1000 893 -> 999 (t90 4,041; stuck 80 -> 1), one-2500 1,983 -> 2,209, one-5000 3,744 -> 4,075,
+  one-10000 7,081 -> 7,468 (stuck 2,657 -> 2,291); swap-2500 1,981 -> 2,052, swap-5000 1,931 -> 2,115 (stuck 2,017 ->
+  1,637), swap-10000 1,572 -> 1,644; attack-10000 882 -> 946 (t90 reached: 4,630; completions outside the disc 51 ->
+  10).
+* **Shared areas.** churn-1000 608 -> 833, stuck 168 -> 5; churn-10000 5,109 -> 5,984, stuck 2,809 -> 1,766, last member
+  to start 1,387 -> 1,039 (the stage-7 regression of its last start partly undone).
+* **Moved against** (offset-0 samples; three-offset reruns where stated): scatter-10000 stuck at the end 967 -> 1,373
+  (arrivals 5,109 -> 5,068); sched-load stuck 99 -> 121 (completions 18 -> 26); many-10000 last member to start 25 ->
+  80 (within its target of 90) and arrivals 4,900 -> 4,875; many-100 98 -> 96 at offset 0, but over five offsets 462 ->
+  461 arrivals and completions outside the disc 40 -> 33; swap-1000 866 -> 863 (stuck 39 -> 50); mixed-10000 stuck
+  6,307 -> 6,459.
+* **Frozen targets** (`legion_scale.py check`): met 128, missed 79, report-only missed 5 (stage 7: 120 / 88 / 4).
+  Newly met: bridges-1000 and bridges-10000 `gate.bridge0.samples` and `gate.bridge2.samples` (four), churn-1000
+  `stuck_end`, many-100 `arrive.t90`, maze-1000 `arrive.n` and `livelock_end`, one-1000 `arrive.n` and `livelock_end`.
+  Newly missed: many-100 `arrive.n` (96 against 98; the five-offset sum is unchanged), maze-10000 wall.over_budget
+  (report only: 5 ticks over 33.3 ms).
+* **Wall time** (report only). Where bodies now move instead of standing the movement phase pays for them: maze-10000
+  tick mean 13.2 -> 18.2 ms (moving unit-ticks 26.0 M -> 63.3 M), bridges-10000 11.7 -> 15.4 ms (16.0 M -> 48.4 M);
+  one-10000 10.4 -> 10.5 ms, many-10000 26.9 -> 26.7 ms (3,142 ticks over budget, 3,615 at stage 7), scatter-10000 27.9
+  -> 27.9 ms. Peak RSS at 10,000 bodies 142-515 MB (scatter-10000 515, stage 7 531).
+
+**Checks (exact commands; scratch `~/tak-tmp/scratch/legion-10000/stage8/`; `final3/` = the binaries of the final code
+(456ffb6f + the test fixture, from a clean `build-o2`: `final2/` is byte-identical); all `build-o2`, `-O2 -g`, cores
+4-15).**
+
+| Check | Command | Result |
+|---|---|---|
+| New tests | `ctest --test-dir build-o2 -R 'legion_(arrival|arrival_press|choke|sharedarea|entrances)'`; each new test against the code before its mechanism (mutation by history) | pass on the final code; each fails without its mechanism (legion_arrival 893 arrive; legion_choke 5; legion_sharedarea 717; legion_arrival_press 978 / t99 never; legion_entrances has no per-group entrance) |
+| Legion scenario gate, both modes | `sweep_both.py final1/legion_scenario gate1 4-15`; `sweep_legion.py final2/legion_scenario gate2 4-15 gate1`; `cmpgate.py`, `judge5.py`; `license8.py gate2-check.txt stage7/gate5/scenarios.jsonl gate2/scenarios.jsonl attr --apply`; `legion_check.py check --cumulative`, `validate` | Retail 135/135 identical to the stage-7 head; Legion as above; PASS 31,859 keys, 0 failed |
+| Scale suite | `legion_scale.py run --bin final3/legion_scenario --out scale1 --cores 4-15 --per-job 4 --workers 3`; `check --targets` | above; every job rc 0; Retail rows hash-equal; targets met 128, missed 79 |
+| `--mpai` Inner Circle seed 1, 60 s | `CORES=12-15 bash ../mpai.sh final3 mpai60 60` (scratch XDG; `takserver --local --no-auth --seed 1`) | Retail **2c39430636a3dbda**, Legion **f75b2a11410f43b4**: both unchanged (Inner Circle moves four units through no opening, no formation beyond its click; no new baselines) |
+| Replay protocol | `build-o2/replay_test` | pass: 272 kept, 271 refused |
+| Navigation golden | `navigation_checkpoint_test {retail,legion} {serial,workers}` on build-o2 (gcc) and build-clang | serial == workers in both; Retail lines unchanged; Legion lines retaken, gcc == clang |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j10 --timeout 1800` (scratch XDG, no `TAK_SETTINGS_FILE`) | 392/392 on the final code (before the fixture fix and the golden: `legion_hovershore` and `navigation_determinism` failed, both explained above) |
+| ctest Legion (non-quick, the stage's) | `ctest --test-dir build-o2 -R 'legion_(trapped|improvedefer|chainresolve|trafficlane|traffic|chains|chainschurn|chainplane|sched|route_paused|scale_|choke|entrances|sharedarea|arrival)' -LE quick` | 13/13 |
+| AddressSanitizer + verify | `build-asan` (`-O1`), `TAK_LEGION_VERIFY=1`: legion_scenario bridges-1000, maze-1000, churn-1000, room2door (6,000 ticks; splits, re-plans, admissions, shared areas and a per-group entrance all exercised), legion_world_test hovershore, chainresolve, trafficlane, trapped, improvedefer | clean (run because subgroups move members between groups, admitted members live in a set, and fields own label tiles) |
+
+**Inherited vs new failures.**
+
+* *Inherited* (present at the stage-7 head, unchanged in kind): 79 of the frozen scale targets (section 8) -- among
+  them the two capacity-bound rows; mixed-10000's wall time (the explore phase); many-10000's over-budget ticks.
+* *Fixed here*: bridges-* both alternatives unused (the frozen bridge targets), maze-1000's single door, one-1000's
+  arrivals, churn-1000's two-crowds cost (the stage-7 regression: stuck 168 -> 5), many-100's t90 (the stage-7
+  regression, back to 1,616).
+* *New, recorded and not fixed*: gap14's last body (done +31%) and the other worse-outside-range keys listed in the
+  gate section (the arrival rules' cost in small formations through gaps and into cramped pockets); scatter-10000
+  stuck at the end 967 -> 1,373 and sched-load 99 -> 121 (offset-0 samples, not rerun over offsets and not diagnosed
+  to the end: neither has an opening; both join orders to shared destination areas -- scatter-10000 1,718 member
+  registrations, sched-load 6,640, unrelated squads clicked to a tile another squad of the player still gathers at.
+  Measured with the shared areas switched off on the final code (offsets 0 / 1 / -1): sched-load arrivals 85 -> 100 and
+  completions 56 -> 88 with them, but stuck at the end 297 -> 358 and livelock 97 -> 137; scatter-2500 arrivals 5,028 ->
+  5,127, stuck 614 -> 609. So the shared areas trade sched-load's end state for its throughput; the stuck bodies of a
+  merged area (a squad whose area another squad's crowd already fills) are the stage-9 input); many-100 `arrive.n` at
+  offset 0.
+
+**Not run at this stage** (lean testing): the cross-compiler determinism script (the navigation golden was compared
+gcc against clang), the crowdbench matrix, repeated wall-time A/Bs, the 300 s `--mpai`, Windows/macOS, the identity
+harness and `legion_cost` (no commit of this stage is exact).
+
+**Found by the checks and fixed before the record**: the shared-area crowd bound (tail-wave; 1bb377c3, then 456ffb6f
+when 1bb377c3 failed `legion_arrival_press` -- it counted settled bodies, not their cells); `legion_hovershore`'s
+spawn (11da1910). A false lead on the way: a bisect of hovershore whose incremental builds silently kept an old
+binary first pointed at "the same source, different results"; a clean build of each commit placed it at b4849440
+(the free-step rule moving where hovercraft land), not undefined behaviour.
+
+### 7.9 Stage 9, first half: parallel planning and the movement profile (brief phase 8)
+
+**Hypothesis.** Stages 4-8 made route work into units with deterministic keys (fields as jobs, chain tiles keyed by
+everything their values depend on, plane builds in resumable stages). The independent ones can run on the sim's
+SimPool workers without changing a single decision, if their inputs and budgets are fixed before they run and their
+results are consumed by identity in the serial order. Measure first how much of the 10,000-body tick that work is,
+and what the rest -- the serial movement phase -- consists of, before any change to the movement model.
+
+**Classification.** Exact throughout: no hashed state, decision, work count or wire format changes; protocol stays
+**272** (no bump, no new `--mpai` baselines). Retail untouched.
+
+| Commit | Content | Kind |
+|---|---|---|
+| 7b9428f8 | `tileKey` (attachNode's key computation in one function); tile scans and `buildTile` read the sector's own label array instead of `Hierarchy::regionAt` | exact (refactor + serial speed-up) |
+| 73a58474 | `SimPool::start / help / finish / busy` (asynchronous jobs); `simpool_test` cases | exact (new API, existing users unchanged) |
+| 2500dc5b | chain tiles built on the SimPool beside the serial pass (`tilePrefetch`, `TileJob`, `tileCore`, `takePrefetched`, `preparedKey`); `softCell` uses `unitNoRepair`; `parallelStats`, NAVPAR, `setParallelForTest` / `--par-force` / `--par-perturb` / `TAK_LEGION_PAR_PERTURB`; ctest `legion_parallel` | exact (parallel) |
+| 9064aa35 | plane first builds' cell layer in 16-row chunks (`computeRows`) | exact (parallel) |
+| (record commit) | this section, docs/legion-pathfinding.md "Legion 10,000 stage 9", `legion_parallel` in tools/ctest_costs.txt | docs |
+
+**Design (as built).** docs/legion-pathfinding.md "Legion 10,000 stage 9". The rule every job follows: inputs and the
+logical budget chosen from sim state before the job runs; immutable inputs (its own copies, or state nothing writes
+while it runs); output only into its own slot; consumed by exact identity in the serial order, waiting for a job
+still running; nothing a worker computes is published by the worker, and no decision reads whether or when a job
+finished. Chain tiles: before a class's field jobs are served, the regions the class's window will attach next are
+picked while their predicted attach work fits two DRR slices per job and the quota left; their keys are computed (the
+serial pass later reuses a key's soft levels and corridors when route, node and `softSerial` are unchanged); missing
+tiles become asynchronous jobs over copies of the seed cells, the legality of the sector and the ring round it and the
+sector's labels; `tileFor` takes the staged tile with the equal key and charges its recorded work; the batch is joined
+at the pass's end; untaken tiles stay three passes and are dropped (never inserted, never in `NavBytes`). Plane first
+builds: the cell layer in 16-row fork-join chunks, structures resolved once before the fork. With no workers nothing is
+prepared.
+
+**The profile that chose the targets** (gperftools, 500 Hz, the stage-8 head's binaries, three workers; shares of
+samples under `World::tick`; scratch `stage9/prof/`, `stage9/mprof/`).
+
+* scatter-10000 (6,000 ticks, observer on): Legion's tick 45%, its movement (`LegionNavigator::move`) 40%. In the tick,
+  `serveFields` 32%: chain tile builds (`tileFor`, nearly all `buildTile`) 9%, attach key scans ~1%, window/corridor
+  relaxation (`advance` + `serve`) ~5%, start requests (`startField`, `planRoute`) ~7%, the rest bookkeeping (sets,
+  maps, sorting). many-10000 (observer and vertex probe on): movement 67%, Legion's tick 17%, tiles 3.6%, relaxation
+  1.4%. Phase means of the stage-8 scale run: the `nav` phase is large only in scatter-10000 (11.7 ms), many-10000
+  (4.7) and maze-10000 (2.3); `movement` 6-17 ms in every 10,000-body row.
+* So tile builds were the one large independent planning cost; window relaxation is a few percent and cannot run in
+  parallel without fixing per-job budgets before execution (its slices share one quota with carry-over between jobs:
+  a schedule change, i.e. a behaviour change) -- not done for at most about a millisecond a tick in one row.
+
+**How the design was chosen (scratch `stage9/ab/`; A/B = both arms at once on cores 8-11 and 12-15, then swapped;
+scatter-10000, 5,000 ticks, no observer, vertex probe off, TAK_PHASE means; every arm the same state hash).**
+
+* *v1, fork-join, keys on the sim thread* (prefetch for twice the window, 12 regions a job; all jobs of a pass in one
+  fork-join): hash-identical, but whole-run tick mean 25.44 / 27.35 ms -> 25.84 / 27.93 (+1.6%, scale-probe runs):
+  the duplicated key scans and 37% wasted builds outweighed the parallel builds. Rejected.
+* *v2, fork-join, keys on the workers too* (attachNode reusing them; plus the sector-label reads): nav 10.74 -> 10.34 ms,
+  then 10.14 / 10.15 -> 9.52 / 9.55. A probe of the fork-joins found the jobs ran 3.4x parallel but the sim thread spent
+  1.4 ms a tick inside them -- half the keys computed were never attached (jobs beyond what the quota reached).
+* *v3, asynchronous jobs with copied inputs, keys picked within the predicted quota* (as built): nav 10.41 / 10.18 ->
+  9.55 / 9.33; then skipping, not stopping at, a destination-adjacent region whose field was not done raised the
+  prepared share of tile work 68% -> 88%: nav 10.88 / 10.91 -> 9.84 / 9.86.
+* *Rejected knob*: picking a not-done chain's regions for one slice instead of two (fewer wasted keys): picks -10%,
+  serial tile work +17%, no clear gain -- kept the single rule.
+* *Plane rows*: no measurable effect on the steady tick (first builds run in the background before orders); the
+  first-build spikes of mixed-10000 (five classes) fall: tick 3 nav 7.84 -> 4.29 ms, tick 11 9.94 -> 6.98.
+
+**Results.**
+
+*Wall time, final code against the stage-8 head* (`ab/phase.sh`, two swapped pairs each, 5,000 ticks, three workers,
+build-o2 `-O2 -g`, E-cores, game settings: no observer, no vertex probe):
+
+| scenario | tick mean ms (r1 / r2) | nav ms | movement ms |
+|---|---|---|---|
+| scatter-10000 | 26.29 / 27.08 -> 25.34 / 25.81 (-4.3%) | 10.75 / 11.01 -> 9.73 / 9.86 (-10%) | 10.72 / 11.10 -> 10.59 / 10.99 |
+| many-10000 | 28.94 / 28.31 -> 29.00 / 27.95 (-0.5%, within noise) | 5.63 / 5.49 -> 5.27 / 5.11 (-6.6%) | 18.37 / 17.83 -> 18.30 / 17.72 |
+| one-10000 (no chains) | 13.65 / 13.70 -> 13.67 / 13.61 | 0.48 / 0.47 -> 0.49 / 0.47 | 9.51 / 9.52 -> 9.47 / 9.50 |
+
+*Jobs over the full scale runs* (NAVPAR, 21,600 / 14,400 ticks): scatter-10000 86% of tile-build work prepared
+(1,915 M of 2,222 M relaxations), 19% of staged work unused, 53% of prepared keys reused, peak staging 0.7 MB;
+many-10000 66% prepared (408 M of 620 M), 24% unused, peak 0.9 MB. Workers ran 91% / 88% of the jobs.
+
+*Determinism.*
+
+* Legion scenario gate, both modes, final binaries: 270 / 270 (135 fixtures x 2 modes) state hashes and **every key**
+  identical to the stage-8 head's final gate (`stage8/gate2` Legion, `stage8/gate1` Retail); serial == workers in all
+  270; `legion_check check --cumulative`: PASS, 31,859 keys, 0 failed.
+* Scale suite, final binaries: 43 / 43 rows hash-identical and key-identical to the stage-8 scale run; frozen targets
+  met 127, missed 79, report-only missed 6 (stage 8: 128 / 79 / 5): the one change is report-only wall time,
+  churn-10000 `wall.over_budget` 0 -> 18, all from ticks 1,561-1,592 where every phase (movement, separation,
+  exploration, prologue) rose two- to four-fold at once on a shared machine; a rerun of the final binary alone gives
+  0 ticks over budget, max 22.8 ms (the stage-8 binary beside it: 0, max 30.2 ms). churn-10000 has no chains.
+* legion_parallel (full: scatter-2500 2,000 ticks, mixed-1000 1,200, churn-1000 2,000; each against `--serial` at 1, 3
+  and 7 workers, perturbed at 3 and 7, forced inline and perturbed under TAK_LEGION_VERIFY): PASS, every hash and key
+  equal (the verify arm differs only in the verify-only `soft_hash_verify_ticks`, folded into `work.legion_all`, the
+  harness limitation of 7.2). Mutation: publishing the untaken staged tiles into the cache in completion order at the
+  pass's end fails every arm, with a different hash in each.
+* gcc 16.2.1 against clang (build-clang, `-O2`): scatter-2500 2,000 ticks, workers and perturbed, both
+  `a57e87dfa56da04d`, serial == workers. ThreadSanitizer (`build-tsan`, `-O1`): scatter-2500 900 ticks with workers,
+  perturbed and not, mixed-1000 300 ticks, and `simpool_test`: no report, hashes equal to the gcc `-O2` run.
+  AddressSanitizer (`build-asan`): scatter-2500 under TAK_LEGION_VERIFY and perturbed, scatter-2500 forced inline,
+  churn-1000: clean (run because the staging owns jobs through heap pointers and moves them between vectors).
+* `--mpai` Inner Circle seed 1, 60 s: Retail **2c39430636a3dbda**, Legion **f75b2a11410f43b4** (both unchanged).
+
+**The movement phase, reassessed** (gperftools on the final binaries, 4,000 ticks, game settings; shares of the whole
+sim tick; scratch `stage9/mprof/`). Legion's per-unit movement is 80% of the tick in one-10000, 66% in many-10000 and
+77% in swap-10000. Inside it: the authoritative step and collision path (`drive`: `stepFree`, `sweep` / `trace`,
+`World::mobilePlacement`, `searchBodyRect`, occupancy reads) 15-27%; dynamic soft-body queries (`softAt`) 8-14%; the
+route reads and static look-ahead (`aimCell`, `descend`, `RouteView::estimate` / `cellAt`, `pivotAim`, `gateAim`,
+`passageLane`) about 10-20%; the rest the member state machine. So:
+
+* Most of the 10,000-body tick is serial movement, and most of that is the collision-checked step itself and reads of
+  the bodies around it -- exactly what the brief requires to stay serial (a unit observes the commits before it in
+  the tick; a snapshot model is a behaviour change). No movement-model change was made, and none is justified by a
+  measured failure case: the scale rows' failures are arrival and traffic behaviour (sections 7.6-7.8), not tick cost,
+  except many-10000 (tick mean ~28 ms, 3,140 ticks over 33.3 ms in its scale run) and mixed-10000 (the explore phase,
+  outside Legion).
+* The one candidate for an exact gain is the static look-ahead (10-20%): certificates keyed on a member's origin, its
+  route's version and the plane epoch could reuse a descent or gate result -- but `pivotAim`, `passageLane` and
+  `gateAim` read soft bodies too, so the static part must be separated first, and no stale dynamic clearance may ever
+  be reused as collision permission. Not attempted here; an input for the final integration.
+
+**Inherited vs new failures.** New: none (every check above passes; the one moved target is report-only wall time,
+diagnosed as machine load). Inherited: the 79 frozen scale targets that still miss (section 8), mixed-10000's wall
+time, many-10000's over-budget ticks. Found and fixed during the stage: a first form bumped `softSerial` (hashed)
+in the soft grid's reset and changed the hash (caught by the hash check, reverted before any commit).
+
+**Not run** (lean testing): the identity harness (its replay fixtures are older than protocol 272 and are refused;
+its other rows -- the gate, the scale suite, `--mpai`, the navigation golden -- are covered above), crowdbench,
+`tools/check-determinism.sh` (detmath shim only, untouched), the 300 s `--mpai`, Windows (oden-win) and macOS
+(MacBook): not needed for this stage's claim -- the new code is portable C++20 threads and atomics in the existing
+SimPool -- and not run, so that coverage is missing.
+
+**Checks (exact commands; scratch `~/tak-tmp/scratch/legion-10000/stage9/`; `final-bin/` = the binaries of 9064aa35,
+build-o2; cores 4-15).**
+
+| Check | Command | Result |
+|---|---|---|
+| Legion scenario gate, both modes | `python3 ../sweep_both.py final-bin/legion_scenario gate1 4-13`; `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results gate1/scenarios.jsonl` | PASS 31,859 keys; 270 / 270 hash- and key-identical to stage 8 |
+| Scale suite | `legion_scale.py run --bin final-bin/legion_scenario --out scale1 --cores 4-15 --per-job 4 --workers 3`; `check --targets tools/scenarios/scale/targets.json`; `tools/scalecmp.py ../stage8/scale1 scale1` | 43 / 43 identical; met 127, missed 79, report-only 6 |
+| Parallel identity | `ctest --test-dir build-o2 -R legion_parallel` (and `tools/legion_parallel_test.py ... --quick` while iterating) | PASS (257 s) |
+| Mutation | scratch edit of `dropStaged` (insert untaken tiles in completion order), `legion_parallel_test.py --quick` | FAIL in all six arms, as it must |
+| SimPool | `simpool_test`, `simpool_passes_test` (gcc, clang, TSan) | pass |
+| Compilers | `build-clang/legion_scenario scale/scatter-2500.scn --mode legion --offsets 0 --json --ticks 2000 [--par-perturb 99]` | `a57e87dfa56da04d` = gcc |
+| ThreadSanitizer | `build-tsan` (`-O1 -g -fsanitize=thread`): scatter-2500 `--ticks 900 --workers [--par-perturb 5]`, mixed-1000 `--ticks 300` | no reports |
+| AddressSanitizer | `build-asan`: scatter-2500 `--ticks 900` (TAK_LEGION_VERIFY, perturbed; and `--serial --par-force`), churn-1000 `--ticks 1500` | clean |
+| `--mpai` 60 s | `CORES=14-15 bash ../mpai.sh final-bin mpai60 60` | Retail 2c39430636a3dbda, Legion f75b2a11410f43b4 |
+| ctest quick | `ctest --test-dir build-o2 -L quick -j4 --timeout 1800` (scratch XDG, no `TAK_SETTINGS_FILE`) | 392 / 392 |
+| Release build | `cmake --build build` (all targets) | builds |
+| Wall A/B | `ab/phase.sh ab/final-SCN SCN 5000 base-bin/legion_scenario final-bin/legion_scenario` for scatter-10000, many-10000, one-10000 | table above |
+| churn-10000 rerun | final and stage-8 binaries alone, `--scale`, TAK_PHASE | 0 / 0 ticks over budget |
+
+### 7.10 Stage 9, second half: final integration, validation and the measured report
+
+**Hypothesis.** The program is finished only when the integrated branch has passed every check together, on the
+current origin/main, and has been measured against the starting revision on the 10,000-unit workloads. The run must
+find what the lean per-stage testing missed.
+
+**Classification.** Integration and validation; the report (`docs/legion-10000-report.md`).
+
+* No simulation code changed: protocol stays **272**, and the Legion 60 s `--mpai` hash is unchanged.
+* One test baseline was repaired, with reasons.
+* One new hash was recorded: the Legion 300 s `--mpai` baseline (`47b705a730bbc22f`). The 300 s game was last run at
+  protocol 268.
+
+| Commit | Content | Kind |
+|---|---|---|
+| 29db147d | merge of origin/main `5774601a` (a tools-only change to `tools/desync-hunt-remote.sh`) | merge (no sim change) |
+| 83cf07a8 | `tools/legion_cost_baseline.json`: three `still_units_processed` entries retaken with reasons (below) | test baseline |
+| (record commit) | docs/legion-10000-report.md, this section, section 8, a pointer in docs/legion-pathfinding.md | docs |
+
+**Exact commands and results.** Scratch `~/tak-tmp/scratch/legion-10000/final/`; `after-bin/` = the final head's
+build-o2 binaries; `before-bin/` = c4233fb9's (stage-1 head, sim == c2c25707). The report's section 3 repeats this
+table with more detail.
+
+| Check | Command | Result |
+|---|---|---|
+| Builds | `bash ../stage9/build.sh both` (build-o2 and Release, all targets) | build |
+| Scenario gate, both modes | `python3 ../sweep_both.py after-bin/legion_scenario gate 4-11`; `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json --results gate/scenarios.jsonl` | PASS 31,859 keys, 0 failed; 270/270 hash- and key-identical to stage 9's gate; serial == workers 270/270; Retail 135/135 hashes and every common key equal to c2c25707's gate |
+| ctest | `ctest --test-dir build-o2 -j12 --timeout 1800 -E "^(legion_motion_\|legion_gen1_route_\|legion_scenario_(<gate files>)$)"` | 494/495; `legion_cost` failed, fixed by 83cf07a8, rerun passes |
+| Determinism script | `sh tools/check-determinism.sh` | OK, dcef618cd2e4d558 |
+| `--mpai` 60 s | `CORES=12-15 bash ../mpai.sh after-bin mpai60 60` | Retail 2c39430636a3dbda, Legion f75b2a11410f43b4 (both unchanged) |
+| `--mpai` 300 s, twice | `mpai.sh after-bin mpai300 300` and `mpai300b` | Retail 7535cb08ee787b75 (= c2c25707) twice; Legion **47b705a730bbc22f** twice (new baseline, see above) |
+| Windows | `~/tak-tmp/tools/wintest.sh task-legion-10000 --no-rel --no-tests --mpai --run "$(cat remote/cmd-win.sh)"` | `--mpai` 300 s both = Linux; scale hashes (scatter-2500 workers / perturbed / serial, mixed-1000, churn-1000, both modes) = Linux |
+| macOS | `~/tak-tmp/tools/macrun.sh task-legion-10000 --mpai --run "$(cat remote/cmd-mac.sh)"` | `--mpai` 300 s both = Linux; scatter-2500 = Linux |
+| Retail vs the starting binary | `remote/cmd-linux-before.sh` (before-bin, Retail) | scatter-2500 / mixed-1000 / churn-1000 Retail hashes = the final head's |
+| Scale suite | `legion_scale.py run --bin after-bin/legion_scenario --out scale --cores 4-15 --per-job 4 --workers 3`; `check` | 43/43 hash- and key-identical to stage 9; met 128, missed 79, report-only 5 (stage 9: 127/79/6, the difference being churn-10000's wall noise) |
+| Before extras | `legion_scale.py run --bin before-bin/legion_scenario --out scale-before-extra --files <scatter-400, scatter-2500, scatter-10000, room2door, sched-load> --modes legion` | the stage-6+ fixtures measured on the starting revision |
+| Wall A/B | `bash ab.sh ab 5000 <ten 10,000-body files>` (before vs after, no observer, three workers, arms at once on 8-11 / 12-15, swapped) | report section 10 |
+| Crowdbench screen | `crowdbench_screen.py --binary build/crowdbench --output screen.jsonl --cpus 4-7 --quiet --baseline ~/.local/share/tak-legion-nightly/2026-10-16T093000Z/screen.jsonl` | Retail 43/43 rows identical to c2c25707; Legion arrivals 29,301 -> 29,512 (9 better, 7 worse) |
+| Crowdbench bisect | `bash bisect/run.sh` (Release crowdbench at each stage head, three cases) | below |
+| Real path, ~9,000 a side | `CORES=4-15 UNITCAP=10000 bash ../stage3/e2e.sh after-bin e2e-10000 120` | Legion: every order (14,214-18,016 members) lands whole in one tick; Retail: 345 ticks for the first order, the next two superseded before they landed |
+| Rejoin | `CORES=4-7 bash ../stage3/rejoin.sh after-bin rejoin` | host = rejoined client: d3fa704568575311; the rejoined client's later orders land whole |
+| Replay verify | `TAK_REPLAY_VERIFY=1 takclient replay <rec> --data D` (rejoin host, e2e Legion, e2e Retail) | no divergence (150 / 120 / 120 checkpoints) |
+
+**Found and fixed: `legion_cost`.** cost-corner N200 / N400 and cost-open N100 `work.still_units_processed` were over
+1.10x the stage-4 baseline: 2,434 / 4,871 / 1,783 against 2,175 / 3,613 / 1,584.
+
+* Bisect with `tools/legion_cost.py --runner` on each stage head (`costbisect/`):
+  * stage 6: within band (2,245 / 3,224 / 1,703);
+  * stage 7: 2,434 / 5,051 / 1,712;
+  * stage 8: 2,434 / 4,871 / 1,783.
+* `legion_cost` was not run at stages 7-8, so nobody saw it.
+* The counter counts bodies `scanStill` samples. Stage 7 added held members with an order (`jamStill`), which is how
+  planning sees knots. Stage 8's arrival rules keep more formation members holding near their slots.
+* Whole-run Legion work on the fixtures moves -0.6 % to +0.8 %, and the scaling gates are unchanged.
+* The three entries were retaken in 83cf07a8 with that reason and their old values, using the tool's own writer; no
+  other entry changed.
+
+**Found, bisected, not diagnosed: three crowdbench regressions** (Legion settled arrivals, per-unit-goal cases):
+
+| Case | c2c25707 | Stage heads (c4233fb9, 54be13b8, feef1b09, c7fade44, 40ae0f08, 15501f03, 68ca5ef5, 16cd026b, 7a23a317) | Introduced by |
+|---|---|---|---|
+| opposingcolumns 500x4 | 1,101 | 1101, 1101, 1101, **952**, 955, 955, 955, 955, 955 | stage 4 (fair scheduling) |
+| jagged 2000x1 | 671 | 671, 671, 671, 670, 670, **532**, 532, 521, 521 | stage 6 (hierarchical routes) |
+| dynamicobstacle 500x4 | 1,782 | 1782, 1782, 1782, 1787, 1785, 1785, 1785, **1540**, 1540 | stage 8 (chokepoints, subgroups, arrivals) |
+
+c4233fb9 reproduces the c2c25707 nightly's values exactly, which validates the method. The same screen improved
+sharedgoal 2000x1 (1,125 -> 1,500), sharedgoal 500x4 (1,674 -> 1,897), jagged 500x4 (1,315 -> 1,402) and
+mixedfootprints 500x4 (1,942 -> 2,000).
+
+**Also found in the A/B, not diagnosed: attack-10000.** Its tick is +23 % (10.2 -> 12.5 ms). Its moving unit-ticks fell
+(14.1 M -> 12.6 M), so the cost per moving body rose (movement 2.35 -> 3.05 µs per moving unit-tick).
+
+**Inherited vs new.**
+
+* *Inherited:*
+  * the Legion nightly's crowdbench screen fails on main every night since 2026-10-12 (2,669 differences at c2c25707:
+    the committed screen baseline is stale on main);
+  * the frozen targets missed at the start;
+  * mixed-10000's wall time (the explore phase).
+* *New and open:*
+  * the three crowdbench cases and attack-10000's per-body cost above;
+  * the earlier stages' recorded regressions: one-100 `arrive.t99`, many-100 `arrive.n` / `complete_outside_n`,
+    many-2500 `complete_outside_n`, churn `livelock_end` / `stuck_end`, mixed-10000's arrivals, and many-10000 /
+    maze-10000's report-only wall time.
+* The report's section 5 has values and causes.
+
+**Not run:**
+
+* a Windows ctest pass of the branch;
+* Windows/macOS scale runs beyond the hash checks;
+* game speeds above 1x;
+* the identity harness (its replay fixtures are protocol 266, refused by 272; the one merge is tools-only and proved by
+  the hash- and key-identical gate and scale runs).
+
+## 8. Next step
+
+**The program's nine stages are done; the branch waits for the user's decision.** Branch `task-legion-10000` is pushed
+and not merged: head = the stage-9 second-half record commit, protocol 272. To resume:
+
+* build `build-o2` in the worktree;
+* read docs/legion-10000-report.md (verdict, sections 5, 13 and 14) and section 7.10 here.
+
+The work left, in the order the measurements rank it:
+
+1. **The three crowdbench regressions** (7.10). Each is bisected to one stage head:
+   * opposingcolumns 500x4: stage 4;
+   * jagged 2000x1: stage 6;
+   * dynamicobstacle 500x4: stage 8.
+
+   Next action: run each case at its last-good and first-bad head with `--trace` and compare. Then fix, or license
+   with a stated trade.
+2. **attack-10000's per-body movement cost** (+30 % per moving unit-tick). Next action: gperftools on before-bin and
+   after-bin over 5,000 ticks, comparing the children of `LegionNavigator::move`.
+3. **Crowds at static corners and beside idle blocks** (one-N, swap-N, idle-10000 arrival). This is a design item:
+   spread a crowd across the free width beside an obstacle, not only at wall ends.
+4. **Head-on crowds at narrow mouths** (bridges-10000, swap-10000).
+   * Keep an exit lane clear at a mouth, or reserve lanes by direction on passages of two or more lanes.
+   * First build feasible-layout versions of bridges-10000 and maze-10000, so navigation is measured apart from
+     capacity.
+5. **The many-unrelated-destinations queue** (scatter-10000 `wait.max` 2,349; request ages 2,000-2,600). Either a
+   quota change, judged on outcomes and never on the machine, or less work per request: abstract search costs that
+   are not portal midpoints, and more sharing between unrelated routes.
+6. **Serial movement as the tick** (66-80 % at 10,000 bodies). The exact candidate is certificates for the static
+   look-ahead, after separating it from its soft-body reads.
+7. Carried open items:
+   * no sector-to-route reverse index;
+   * windows bake soft costs;
+   * demand per cell;
+   * the pausing extension not re-measured with tiles;
+   * sched-load's scheduler ctests on `--no-hier-routes`;
+   * the stale crowdbench screen baseline on main (inherited, not this program's).
+
+### 8.A The next step as it stood after stage 9's first half (kept for the record)
+
+
+Resume from branch `task-legion-10000` (pushed; stages 1-8 and the first half of stage 9 done; head = the stage-9
+record commit). Build `build-o2` in the worktree (a clean configure takes half a minute with ccache; a build dir whose
+`.ninja_log` reports "premature end of file" should be rebuilt clean), read sections 3, 7.8, 7.9 and the stage-8 and
+stage-9 sections of docs/legion-pathfinding.md.
+
+**Next: the second half of stage 9 -- final integration and the measured before/after report** (brief "Final
+deliverables"): starting c2c25707 against the final head; implemented phases; exact validation commands (the full gate,
+the scale suite, the 300 s `--mpai`, crowdbench, the cross-compiler script, Windows/macOS where determinism needs
+them); inherited versus new failures; 10,000-unit results by workload with the frozen targets; command latency;
+navigation and arrival tails; memory; whole-tick performance with repeated A/Bs; remaining bottlenecks. Stage 9's first
+half adds to that list:
+
+* **Serial movement is the tick at 10,000 bodies** (66-80%, section 7.9), most of it the collision-checked step and the
+  soft-body reads round it. The only exact candidate left is certificates for the static look-ahead (10-20% of the tick),
+  after separating its static part from its soft-body reads; a snapshot movement model would be a behaviour change and
+  has no measured failure case behind it.
+* **Window relaxation stays serial** (a parallel version needs per-job budgets fixed before execution: a schedule
+  change). Raising the deterministic field quota now that tile builds cost the sim thread less would be a behaviour
+  change too, judged on outcomes, never on the machine's worker count.
+* many-10000's tick (mean ~28 ms, ticks over 33.3 ms) and mixed-10000's explore phase remain the wall-time misses.
+
+Stage 8 left these behaviour items, unchanged by stage 9 (which changes no behaviour):
+
+* **Crowds round static corners and soft blocks.** A big formation rounding an obstacle edge single-files along the
+  shortest line and jams at the corner when anything crosses it there (`scn/mountain.scn` in the stage-8 scratch:
+  400 bodies, 32 arrive, inherited from c2c25707, Retail 59); idle-10000's 1,000 movers hug the bottom edge of the
+  9,000-body idle block in one file (38 of 1,000 arrive; the soft charge keeps one cell off the block, not a stream's
+  width). Nothing spreads a crowd across the free width beside an obstacle; the pinwheel acts only at static wall ends.
+* **Head-on crowds at a narrow passage's mouths.** bridges-10000: each army waits massed at its mouth of the 12-cell
+  bridge, a line of the other army's stragglers stands on the bridge itself, and the passage never turns (admission
+  counts occupants, but the stragglers cannot leave into the waiting crowd). Keeping an exit lane clear at a mouth, or
+  lane reservation by direction on a passage of two lanes or more, is the open item; the row is capacity-bound in any
+  case (section 7.8).
+* **The arrival rules' cost.** Small formations through gaps and into cramped pockets finish their last bodies later
+  (gap14 +31%, corner-1x448's rear group); bodies with a free step toward their slot spend their re-choices first.
+* **Shared areas and unrelated squads.** sched-load's and scatter's unrelated squads clicked to a tile another squad
+  still gathers at share its area: more completions, more bodies stuck at the end (7.8).
+* **Awareness by streams** was rejected (7.8); the giant-obstacle case it was for showed no cost in the fixtures built
+  for it. Revisit only with a fixture where one mover the size of two separate streams makes a crosser wait.
+* **For the final report:** the two capacity-bound rows (bridges-10000, maze-10000) need a feasible-layout version to
+  measure navigation rather than capacity; the frozen targets stay as frozen.
+
+**Must-fix inputs (frozen targets that still miss; final stage-8 scale run, `stage8/scale1-check.txt`: met 128, missed
+79, report-only 5).** `start.last` for big single clicks (attack-10000 131, one-10000 92, one-5000 106, swap-10000 164,
+churn-1000 93, churn-10000 1,039); `arrive.n` in the rows that still fall short (one-2500 2,209, one-5000 4,075,
+one-10000 7,468, swap-* , many-1000 803 and up, maze-10000 2,395, bridges-* 653 / 284, idle-10000 38, mixed-*);
+`stuck_end` and `livelock_end` in most 1,000-plus rows; `complete_outside_n` in churn-1000 (200), churn-10000 (1,847),
+many-2500 (64), many-1000 (23); many-100 `arrive.n` at offset 0; the wall-time report-only misses (mixed-10000,
+many-10000, maze-10000).
+
+### 8.0 The stage-7 next step, as it stands after stage 8
+
+* Two orders to one point: done (shared destination areas, 7.8; churn-1000 stuck 168 -> 5).
+* Crossing traffic still knots: unchanged in kind (awareness by streams rejected; crossings are not openings).
+  many-10000 stuck 2,473 -> 2,363, scatter-10000 967 -> 1,373 (shared areas, 7.8).
+* Bridges: done in kind (openings with queues, re-plans with commitment, subgroups, admission; both alternatives used
+  at 1,000 and 10,000); bridges-10000 is capacity-bound and stalls at the mouths (above).
+* Open stage-7 items: unchanged (no sector -> route reverse index; windows bake soft costs; a live chain's corrections
+  refresh only through a re-plan; `kImproveDefer` a judgement; the improvement log's floor; demand per cell; the
+  pausing extension not re-measured with tiles).
+* sched-load: stuck 99 -> 121 at offset 0 (shared areas, 7.8); its scheduler ctests still run with `--no-hier-routes`.
+
+### 8.0.1 The stage-7 next step as it was written (kept for the record)
+
+* **Two orders to one point are two destination crowds.** churn-1000's B (stopped, then sent again to the point A is
+  arriving at) is another order: A's held arrivals are a jam to it, B re-plans round them (jam blocks), and its
+  completions outside the disc rose (five offsets 151 -> 179). Shared arrival areas across orders, or a jam rule that
+  knows the destination crowd, is the stage-8 arrival-area subject.
+* **Crossing traffic still knots, less.** (see 8.0)
+* **Bridges.** The coarse search now charges a region's standing traffic, but both armies still take the nearest
+  bridge: the charge comes from bodies already standing, not from the approach pressure and committed entrants a
+  chokepoint needs (stage 8's portal traffic state).
+
+### 8.1 The stage-6 next step, as it stands after stage 7
+
+* Local repair of touched chains: done (re-resolution, plan repair; 7.7).
+* Static tiles apart from traffic: done (two caches; jams are traffic; the region search charges traffic).
+* Abstract search costs (portal midpoints, an underestimate inside serpentine regions): not done.
+* sched-load: back to the stage-5 level (stuck 99); its scheduler ctests still run with `--no-hier-routes`.
+* churn-1000's approach group keeps the window: unchanged (an approach group is never a jam either: `jamStill`
+  excludes approach members, which keep their own clot rule).
+* Demand per cell (stage-5 item) and the pausing extension's re-measure with tiles: open.
+* Trapped orders under never-ending static churn: fixed (7.7).
+* The detour back-off under frequent metric transitions: unchanged; chain plan repair brings fewer transitions (a
+  repaired chain keeps its regions), not measured separately.
+
+The stage-6 record's must-fix list, as it stood then (numbers of the stage-6 run; section 7.7 has the stage-7 ones):
+
+*Must-fix inputs for stages 7-8 (frozen targets that still miss; final stage-6 scale run).* Unchanged in kind
+from stage 5 except three now met (many-10000 `start.last` 25 and `wait.max` 10, many-5000
+`wait.max` 5; `stage6/scale4-check.txt`: met 120, missed 87, report-only 5): `start.last` for big single clicks
+(attack-10000 131, one-10000 92, one-5000 106, swap-10000 164, churn-1000 93, churn-10000 795); `complete_outside_n`
+in churn-1000 (168), churn-10000 (1,353), many-2500 (78, was 52) and many-1000 (23); `stuck_end` and `livelock_end`
+in every 1,000-plus row; `arrive.n` in 21 rows (many-10000 4,434 of 9,700, many-5000 2,422 of 4,850, maze-10000
+1,137, swap-10000 1,466); `arrive.t99` in the one-* and swap-* rows and one-100 (2,684 against 2,588, unchanged since
+stage 5); the bridges rows' gate samples; mixed-10000's and now many-10000's wall time (report only). New fixtures
+without frozen targets: scatter-2500 (945 of 2,500 arrive) and scatter-10000 (1,562 of 10,000; `wait.max` 395) --
+the many-unrelated-destinations extreme, a stage 7-8 input (traffic in coarse route choice, admission). The stage-4
+list with its causes follows (8.2).
+
+### 8.2 Carried over from stage 4 (the stage-4 record's next-step lists, unchanged)
+
+**Must-fix inputs for stages 6-8 (frozen targets that still miss; numbers from the final stage-4 scale run, 7.4 fix
+round 2, `r2/scale5`).**
+* `start.last` within 90 ticks for big single clicks: attack-10000 131, one-10000 92, one-5000 106, swap-10000
+  164, churn-1000 93 (and churn-10000 795, many-10000 248, misses since stage 1). Cause (7.4): simultaneous starts
+  of a big order crowd each other; stage 7-8's subgroups and admission into the moving crowd.
+* `complete_outside_n` in churn-1000 (168, max 118), churn-10000 (1,327, max 1,180) and many-2500 (61, max 50):
+  more completions at about the same share outside the disc; stage 8 (arrival areas).
+* **Request age and `wait.max` in the quota-saturated rows** -- many-5000: request age 1,578-1,603, `wait.max`
+  1,173-1,234; many-10000: request age 5,822-5,895, `wait.max` 5,169-5,314 (offsets 0, 1, -1, 2; frozen `wait.max`
+  max 60). Not starvation: the quota is spent on relaxations 99% of these runs and the age is the drain time of the
+  queue ahead (many-10000: 408 whole-map fields, ~5,100 quota-ticks at the peak), with service inside each class
+  fair (longest slice gap 148-159 ticks). The fix is less work per request -- stage 6's sparse tiles and shared
+  intermediate routes -- not another order; the scheduler keeps it a FIFO drain (legion_sched_mix proves the bound
+  where memory is the limit).
+* `stuck_end` and `livelock_end` in every 1,000-plus row, `arrive.n` in 21 rows, `arrive.t99` in the one-* and
+  swap-* rows, the bridges rows' gate samples (0): inherited from stage 1 (frozen targets that never passed);
+  stages 6-8.
+* Wall time: mixed-10000 stays far over budget (tick mean ~60 ms, inherited). The fix round's wall columns are
+  single runs on a shared machine (report only).
+
+**Open items the fix round leaves (recorded, not hidden).**
+* The per-kind in-flight cap applies only while more than half the field allowance is in use; with memory to spare
+  builds may still pile up past the windows (sched-load 90 first builds in flight, many-1000 ~20 refreshes) because
+  capping them there cost outcomes (sched-load stuck 101 -> 162, many-1000 arrivals -9%: early-admitted refreshes
+  are promoted out of their class and served from the main quota). The half threshold is a judgement, not a tuned
+  value; stage 6's tile jobs should revisit it (a build past its window holding a whole potential array is the
+  thing tiles remove).
+* Under that cap many-2500's aware repairs wait up to 957 ticks (head 154) while its arrivals rise 14%: the stale
+  field steers meanwhile. A per-class refresh window for aware repairs separate from stale refreshes would shorten
+  it; not done here.
+* The queued-area recheck (finding 3) has no in-sim test: no gate or scale fixture defers a registration whose leg
+  then changes without a cancel. It is covered by review and by the verifier-mode runs (`--budget-div 4096`).
+* Head-of-line blocking (fit-scan bound 1) is caught by navbudget_test only; the sim fixtures pass with it.
+* Request promotion is not what bounds the ages in sched-mix (its mutant fails only the promotion counter there);
+  navbudget_test section 4 is the test that fails without it.
+
+**Coverage.** The gcc-vs-clang check of explicit orders and the scheduler under load is now done (7.4); a
+Windows/macOS run of the scale files has not been made (remote hosts: memory note `remote-test-hosts`).

@@ -9,13 +9,17 @@
 //    crowdbench shape) stay within the declared convoy_tests bound (per
 //    order p99 <= 16, max <= 64), and a linear scan of the open convoys --
 //    the fault this bound exists to catch -- trips it.
-// 3. Selections through issueSelection (the client's HUD and uplink) in a
-//    Legion world, each requiring every unit to carry one convoyTick:
-//    flyers listed first with saturated offsets, flyers at opposite corners,
-//    an all-air selection over 64, 974 units through the 512-command window
-//    (round trip 0, 8 and 16 one convoy; 24 splits, no 64-unit part split),
-//    a patrol (outbound and return legs), a fight beside a patrol (separate
-//    classes), and two clicks 48 px apart 4 ticks apart (two convoys).
+// 3. Selections in a Legion world, each requiring every unit to carry one
+//    convoyTick, twice: as the client sends them since protocol 267 (one
+//    explicit order per click, issueSelection: the order joins the table once
+//    and keys its area kExplicitArea | serial) and as per-unit commands (the
+//    AI's and scripts' path, the client's before 267: hudCommands through the
+//    uplink, inferred per unit): flyers listed first with saturated offsets,
+//    flyers at opposite corners, an all-air selection over 64, 974 units
+//    through the 512-command window (explicit: one tick at every round trip;
+//    per unit: round trip 0, 8 and 16 one convoy, 24 splits, no 64-unit part
+//    split), a patrol (outbound and return legs), a fight beside a patrol
+//    (separate classes), and two clicks 48 px apart 4 ticks apart (two convoys).
 // The World runs with TAK_LEGION_VERIFY's hook on, so every join is also
 // checked against the scan and the indexes against a rebuild.
 #include "legion_issue_selection.h"
@@ -180,13 +184,38 @@ struct Field {
             for (const auto& c : b.cmds) applyCommand(world, reg, c);
         }
     }
+    // perUnit: the per-unit command stream (hudCommands through the uplink),
+    // else the client's explicit order (issueSelection, serials from 1 up).
+    bool perUnit = false;
+    uint32_t serial = 1;
     std::vector<CmdBatch> click(const std::vector<int>& sel, Verb verb, float x, float z, int roundTrip = -1) {
         SelectionOrder o;
         o.verb = verb; o.x = x; o.z = z;
-        auto b = tak::scn::issueSelection(world, sel, o, world.tickCount(), 0, roundTrip);
+        std::vector<CmdBatch> b;
+        if (perUnit) {
+            tak::scn::Uplink link(roundTrip);
+            link.issue(tak::scn::hudCommands(world, sel, o));
+            for (uint32_t t = world.tickCount(); !link.idle(); ++t) b.push_back({t, link.land(t)});
+        } else {
+            b = tak::scn::issueSelection(world, sel, o, world.tickCount(), 0, roundTrip, serial);
+            for (const auto& x : b) for (const auto& c : x.cmds) if (c.order) serial = c.order->serial + 1;
+        }
         land(b);
+        given.clear();
+        for (const auto& x : b)
+            for (const auto& c : x.cmds)
+                if (!c.order) given[c.unitId] = {c.x, c.z};
+                else for (const int id : c.order->members) {
+                    const auto& o = world.unit(id)->orders.back();
+                    given[id] = {o.x.toFloat(), o.z.toFloat()};
+                }
         return b;
     }
+    // The point each unit was given: its command's (per unit), else its last
+    // order's as the sim gave it in the activation tick (OrderShape::Offsets;
+    // read before any tick, a flyer's mission snaps it later).
+    std::map<int, std::pair<float, float>> given;
+    std::pair<float, float> goalOf(int id) const { return given.at(id); }
     // Every stamped convoyTick on the unit's orders (one per leg).
     std::set<uint32_t> ticksOf(int id) const {
         std::set<uint32_t> out;
@@ -230,51 +259,63 @@ bool oneConvoy(const std::map<uint32_t, int>& c, size_t n, const std::string& wh
     return ok;
 }
 
-void selections() {
+void selections(bool perUnit) {
     const float kX = 300 * 16, kZ = 300 * 16;
+    const std::string how = perUnit ? "per-unit " : "explicit ";
+    auto check = [&](bool ok, const std::string& what) { ::check(ok, how + what); };
+    // An explicit order's area key is kExplicitArea | its serial; per-unit commands key by tick.
+    auto keyed = [&](const std::map<uint32_t, int>& c) {
+        return c.size() == 1 && explicitArea(c.begin()->first) == !perUnit;
+    };
     // Flyers listed first, more than 60 px from the centroid on both axes:
     // every flyer's point is the click + (60, 60).
     {
         Field f;
+        f.perUnit = perUnit;
         const auto fly = f.block(kFlyer, 24, 200, 200, 6, 3);
         const auto sel = join(fly, f.block(kGround, 276, 20, 20, 23, 3));
         const auto b = f.click(sel, Verb::Move, kX, kZ);
         bool saturated = true;
-        for (const auto& c : b.front().cmds)
-            if (f.world.unit(c.unitId)->type->canFly) saturated &= c.x == kX + 60 && c.z == kZ + 60;
-        check(saturated && ticksSpanned(b) == 5, "flyers first: saturated offsets, over 5 ticks");
-        check(oneConvoy(f.convoysOf(sel), sel.size(), "flyers first"), "flyers first (saturated): one convoy");
+        for (int id : fly) saturated &= f.goalOf(id) == std::pair<float, float>{kX + 60, kZ + 60};
+        check(saturated && ticksSpanned(b) == (perUnit ? 5 : 1), "flyers first: saturated offsets, over 5 ticks (explicit: 1)");
+        check(oneConvoy(f.convoysOf(sel), sel.size(), "flyers first") && keyed(f.convoysOf(sel)),
+              "flyers first (saturated): one convoy");
     }
     // Half the flyers at +60/+60, half at -60/-60, listed first.
     {
         Field f;
+        f.perUnit = perUnit;
         const auto a = f.block(kFlyer, 12, 200, 200, 4, 3);
         const auto c = f.block(kFlyer, 12, 4, 4, 4, 3);
         const auto sel = join(join(a, c), f.block(kGround, 276, 80, 80, 23, 3));
-        const auto b = f.click(sel, Verb::Move, kX, kZ);
+        f.click(sel, Verb::Move, kX, kZ);
         std::set<std::pair<float, float>> offsets;
-        for (const auto& x : b)
-            for (const auto& cmd : x.cmds)
-                if (f.world.unit(cmd.unitId)->type->canFly) offsets.insert({cmd.x - kX, cmd.z - kZ});
+        for (int id : join(a, c)) offsets.insert({f.goalOf(id).first - kX, f.goalOf(id).second - kZ});
         check(offsets == std::set<std::pair<float, float>>{{-60.f, -60.f}, {60.f, 60.f}},
               "opposite corners: flyers at +60/+60 and -60/-60");
         check(oneConvoy(f.convoysOf(sel), sel.size(), "opposite corners"), "opposite corners: one convoy");
     }
-    // An all-air selection over 64 (no anchor ever).
+    // An all-air selection over 64 (no anchor ever per unit; an explicit order anchors on its click).
     {
         Field f;
+        f.perUnit = perUnit;
         const auto sel = join(f.block(kFlyer, 50, 20, 20, 10, 3), f.block(kFlyer, 50, 120, 120, 10, 3));
         const auto b = f.click(sel, Verb::Move, kX, kZ);
-        check(ticksSpanned(b) == 2, "all-air: over 2 ticks");
+        check(ticksSpanned(b) == (perUnit ? 2 : 1), "all-air: over 2 ticks (explicit: 1)");
         check(oneConvoy(f.convoysOf(sel), sel.size(), "all-air"), "all-air 100 flyers: one convoy");
     }
-    // 974 units through the 512-command window.
+    // 974 units through the 512-command window (an explicit order: one tick at any round trip).
     for (int rt : {-1, 0, 8, 16, 24}) {
         Field f;
+        f.perUnit = perUnit;
         const auto sel = f.block(kSmall, 974, 10, 10, 60, 2);
         const auto b = f.click(sel, Verb::Move, 400 * 16, 400 * 16, rt);
         const auto c = f.convoysOf(sel);
         const std::string what = "974 round trip " + std::to_string(rt);
+        if (!perUnit) {
+            check(oneConvoy(c, sel.size(), what) && ticksSpanned(b) == 1, what + ": one convoy, one tick");
+            continue;
+        }
         if (rt < 24) {
             check(oneConvoy(c, sel.size(), what), what + ": one convoy");
             continue;
@@ -293,6 +334,7 @@ void selections() {
     // outbound legs included, every return leg carries the outbound tick.
     {
         Field f;
+        f.perUnit = perUnit;
         const auto sel = join(f.block(kFlyer, 24, 200, 200, 6, 3), f.block(kGround, 100, 20, 20, 10, 3));
         f.click(sel, Verb::Patrol, kX, kZ);
         check(oneConvoy(f.convoysOf(sel), sel.size(), "patrol"), "patrol: one convoy");
@@ -300,7 +342,10 @@ void selections() {
         for (int id : sel) {
             int patrolLegs = 0, stamped = 0;
             for (const auto& o : f.world.unit(id)->orders)
-                if (o.patrol && o.goal) { ++patrolLegs; stamped += o.convoyTick != ConvoyTable::kNone; }
+                if (o.patrol && o.goal) {
+                    ++patrolLegs;
+                    stamped += o.convoyTick != ConvoyTable::kNone && (perUnit ? o.orderSerial == 0 : o.orderSerial != 0);
+                }
             // A flyer's patrol mission appends its own return anchor when it
             // starts: three legs, all stamped.
             if (legs && !(patrolLegs >= 2 && stamped == patrolLegs)) {
@@ -332,9 +377,13 @@ void selections() {
         oa.verb = oc.verb = Verb::Move;
         oa.x = kX; oa.z = kZ; oc.x = kX + 48; oc.z = kZ;
         const uint32_t t0 = f.world.tickCount();
-        link.issue(tak::scn::hudCommands(f.world, a, oa));
+        uint32_t serial = 1;
+        auto items = [&](const std::vector<int>& sel, const SelectionOrder& o) {
+            return perUnit ? tak::scn::hudCommands(f.world, sel, o) : tak::scn::hudItems(f.world, sel, o, 0, serial);
+        };
+        link.issue(items(a, oa));
         for (uint32_t t = t0; !link.idle() || t <= t0 + 4; ++t) {
-            if (t == t0 + 4) link.issue(tak::scn::hudCommands(f.world, c, oc));
+            if (t == t0 + 4) link.issue(items(c, oc));
             while (f.world.tickCount() < t) f.world.tick(1.f / 30);
             for (const auto& cmd : link.land(t)) applyCommand(f.world, f.reg, cmd);
         }
@@ -345,6 +394,7 @@ void selections() {
     // A convoy closes: 41 ticks after the last click the table is empty.
     {
         Field f;
+        f.perUnit = perUnit;
         const auto sel = f.block(kGround, 10, 20, 20, 10, 3);
         f.click(sel, Verb::Move, kX, kZ);
         check(!f.world.convoys().empty(), "an open convoy after the click");
@@ -366,6 +416,27 @@ void selections() {
         check(none, "Retail: no convoys, no stamps");
     }
 }
+
+// Several explicit orders at one point within the window share one area (decision
+// A1: wall-4x50's selections on ticks 1-4), each keeping its own serial; the area
+// takes the first order's key.
+void sharedArea() {
+    Field f;
+    std::vector<std::vector<int>> sels;
+    for (int k = 0; k < 4; ++k) sels.push_back(f.block(kGround, 50, 20 + 40 * k, 20, 10, 3));
+    std::set<uint32_t> areas, serials;
+    for (int k = 0; k < 4; ++k) {
+        f.click(sels[size_t(k)], Verb::Move, 300 * 16, 300 * 16);
+        f.world.tick(1.f / 30);
+    }
+    for (const auto& s : sels)
+        for (int id : s) {
+            areas.insert(f.world.unit(id)->orders.back().convoyTick);
+            serials.insert(f.world.unit(id)->orders.back().orderSerial);
+        }
+    check(areas.size() == 1 && *areas.begin() == (kExplicitArea | 1u) && serials == std::set<uint32_t>{1, 2, 3, 4},
+          "four explicit orders at one point, ticks apart: one area keyed by the first, four serials");
+}
 }  // namespace
 
 int main() {
@@ -373,7 +444,9 @@ int main() {
     try {
         indexVsScan();
         cost();
-        selections();
+        selections(false);
+        selections(true);
+        sharedArea();
     } catch (const std::exception& e) {
         std::fprintf(stderr, "FAIL %s\n", e.what());
         return 1;

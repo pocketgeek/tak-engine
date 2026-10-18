@@ -4,6 +4,7 @@
 #include "net/matchconfig.h"
 #include "client/startmarkers.h"
 #include <cctype>
+#include <cstring>
 #include <cmath>
 
 // Out-of-line GameView method definitions (lobby concern), split from the
@@ -969,20 +970,29 @@ std::string startLocationsLabel(uint8_t mode) {
             else if (s.type == 2) {
                 blockText(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f,
                           {210, 200, 150, 255});
-                // AI difficulty (host cycles DEFENSIVE -> EASY -> NORMAL -> HARD -> ABSURD).
-                static const char* diffName[5] = {"DEFENSIVE", "EASY", "NORMAL", "HARD", "ABSURD"};
-                static const SDL_Color diffCol[5] = {
+                // AI difficulty (host cycles DEFENSIVE -> EASY -> NORMAL -> HARD -> ABSURD
+                // -> ABSURDLY DEFENSIVE, the wire aiLevel order).
+                constexpr int kLevels = tak::ai::kAiLevels;
+                static const char* diffName[kLevels] = {"DEFENSIVE", "EASY", "NORMAL", "HARD", "ABSURD",
+                                                        "ABSURDLY DEFENSIVE"};
+                static const SDL_Color diffCol[kLevels] = {
                     {150, 180, 210, 255},   // passive  (calm blue)
                     {150, 200, 150, 255},   // easy     (green)
                     {210, 200, 150, 255},   // normal   (neutral gold)
                     {225, 150, 140, 255},   // hard     (red)
-                    {230, 120, 220, 255}};  // absurd   (magenta)
-                uint8_t lvl = s.aiLevel % 5;
-                blockText(diffName[lvl], x + 178, y + 9, 1.4f, diffCol[lvl]);
-                if (host && !campaign) { SDL_FRect db{x + 176, y + 6, 92, 18};
+                    {230, 120, 220, 255},   // absurd   (magenta)
+                    {165, 140, 245, 255}};  // absurdly defensive (violet)
+                const uint8_t lvl = uint8_t(s.aiLevel % kLevels);
+                // Two words that overrun the 82 px column stack in two smaller lines.
+                if (const char* gap = std::strchr(diffName[lvl], ' ')) {
+                    blockText(std::string(diffName[lvl], gap), x + 178, y + 3, 1.1f, diffCol[lvl]);
+                    blockText(gap + 1, x + 178, y + 13, 1.1f, diffCol[lvl]);
+                } else
+                    blockText(diffName[lvl], x + 178, y + 9, 1.4f, diffCol[lvl]);
+                if (host && !campaign) { SDL_FRect db{x + 176, y + 2, 82, 26};
                     lobbyHots_.push_back({db, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
                         mp_->setSlot(i, s2.type, s2.faction, s2.color, s2.team, s2.ready,
-                                     uint8_t((s2.aiLevel + direction + 5) % 5)); }}); }
+                                     uint8_t((s2.aiLevel + direction + kLevels) % kLevels)); }}); }
             }
             if (i >= startCount && size_t(i) < bySlotSpot.size() && bySlotSpot[size_t(i)] >= 0) {
                 const int spot = bySlotSpot[size_t(i)];

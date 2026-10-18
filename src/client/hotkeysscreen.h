@@ -46,6 +46,7 @@ private:
     std::function<void()> onSave_;
     std::vector<Row> rows_;
     int capture_ = -1;      // index of the row awaiting a key press, or -1
+    std::string refused_;   // why the armed row refused the last key (shown in the hint line)
     bool dirty_ = false;
     float scroll_ = 0;
     float contentH_ = 0;

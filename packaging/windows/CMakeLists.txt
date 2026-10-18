@@ -10,7 +10,7 @@ if(NOT IS_DIRECTORY "${TAK_SIGNED_PAYLOAD}")
   message(FATAL_ERROR "TAK_SIGNED_PAYLOAD must point at the verified x64 release payload")
 endif()
 foreach(name takclient.exe takserver.exe cartographer.exe crusades_admin.exe
-             STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt)
+             STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt)
   if(NOT EXISTS "${TAK_SIGNED_PAYLOAD}/${name}")
     message(FATAL_ERROR "Missing installer payload: ${name}")
   endif()

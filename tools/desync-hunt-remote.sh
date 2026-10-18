@@ -414,7 +414,10 @@ RUNS=(
   "h-fog-explored|Ulasem Arena|TAK_FOG=1||human|light"
   "h-fog-full|Ulasem Arena|TAK_FOG=2||human|light"
   "h-unitcap|Ulasem Arena|TAK_UNITCAP=2000||human|light"
-  "h-cramped|Inner Circle|TAK_GODS=1||human|light"
+  # h-cramped keeps the Monarch expendable: since the 263 air-combat work the Zhon god's
+  # storms land on the idle seat's Monarch and end the Retail game at tick ~1,300 (retail-
+  # faithful, not a desync), which left this entry testing almost nothing.
+  "h-cramped|Inner Circle|TAK_GODS=1 TAK_MONARCH_EXPENDABLE=1||human|light"
   "h-naval|Aibel's Seaport|||human|light"
   "h-naval-crus|Aibel's Seaport||--crusades|human|light"
   "h-lake|Lake Lokken|TAK_STRESS=1||human|heavy"

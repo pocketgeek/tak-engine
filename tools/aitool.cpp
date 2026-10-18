@@ -2,7 +2,8 @@
 // how its economy + army develop and whether it marches on the enemy. A dev harness
 // for tuning the AI -- not shipped in a game.
 //
-//   aitool <retail-install-dir> [map] [defensive|easy|normal|hard|absurd] [seconds] [standard|crusades]
+//   aitool <retail-install-dir> [map] [defensive|easy|normal|hard|absurd|absurdly-defensive] [seconds]
+//          [standard|crusades]
 
 #include <cstdlib>
 #include "ai/ai.h"
@@ -20,7 +21,7 @@
 using namespace tak;
 
 int main(int argc, char** argv) {
-    if (argc < 2) { std::fprintf(stderr, "usage: aitool <install> [map] [defensive|easy|normal|hard|absurd] [seconds] [standard|crusades]\n"); return 2; }
+    if (argc < 2) { std::fprintf(stderr, "usage: aitool <install> [map] [defensive|easy|normal|hard|absurd|absurdly-defensive] [seconds] [standard|crusades]\n"); return 2; }
     std::string dataRoot = argv[1];
     std::string map = argc >= 3 ? argv[2] : "Inner Circle";
     std::string dstr = argc >= 4 ? argv[3] : "normal";
@@ -29,6 +30,7 @@ int main(int argc, char** argv) {
                         : dstr == "easy"    ? ai::Difficulty::Easy
                         : dstr == "hard"    ? ai::Difficulty::Hard
                         : dstr == "absurd"  ? ai::Difficulty::Absurd
+                        : dstr == "absurdly-defensive" ? ai::Difficulty::AbsurdlyDefensive
                                             : ai::Difficulty::Normal;
 
     hpi::Vfs vfs = hpi::mountRetailRoot(dataRoot);
@@ -42,6 +44,8 @@ int main(int argc, char** argv) {
     sim::MatchConfig cfg;
     cfg.vfs = &vfs;
     cfg.mapPath = hpi::findMap(vfs, map);
+    // The lobby's default per-player unit cap; TAK_UNIT_CAP overrides (0 = none).
+    cfg.unitCap = std::getenv("TAK_UNIT_CAP") ? std::atoi(std::getenv("TAK_UNIT_CAP")) : 2000;
     if (cfg.mapPath.empty()) { std::fprintf(stderr, "aitool: map '%s' not found\n", map.c_str()); return 1; }
     // Slot 0 = opponent (idle, or a 2nd AI under TAK_2AI), slot 1 = the AI under test.
     // Only AI slots receive the difficulty income multiplier.
@@ -50,9 +54,9 @@ int main(int argc, char** argv) {
     float mm = ai::incomeMultFor(diff);
     int fac = 1;
     if (const char* fe = std::getenv("TAK_FACTION")) fac = std::clamp(std::atoi(fe), 0, 4);
-    cfg.slots = {{true, 0, 0, 1.0f}, {true, fac, 1, mm, true, diff==ai::Difficulty::Passive}};
+    cfg.slots = {{true, 0, 0, 1.0f}, {true, fac, 1, mm, true, ai::defensiveLevel(diff)}};
     if (std::getenv("TAK_2AI")) { cfg.slots[0].manaMult=mm;cfg.slots[0].automaticGates=true;
-        cfg.slots[0].defensiveAi=diff==ai::Difficulty::Passive; }
+        cfg.slots[0].defensiveAi=ai::defensiveLevel(diff); }
     auto spots = sim::setupMatch(w, reg, cfg);
     std::vector<std::pair<float, float>> enemyStarts;
     if (!spots.empty()) enemyStarts.push_back(spots[0]);   // the human's start
@@ -105,6 +109,7 @@ int main(int argc, char** argv) {
     bool twoAi = std::getenv("TAK_2AI") != nullptr;
     ai::Controller ctl0(0, reg, profile, 0x5678, diff, starts0);
     std::map<int, int> cmdCount;   // Cmd kind -> count
+    int fullSeconds = 0;           // seconds the AI's store sat at 90% or more
     std::map<std::string,std::set<int>> completedWater,completedAmphibious;
     int navalAttacks=0,amphibiousAttacks=0;
     auto sink = [&](const net::Command& c) {
@@ -117,6 +122,11 @@ int main(int argc, char** argv) {
         if (std::getenv("TAK_AI_PICK") && c.kind==net::Cmd::Build)
             std::fprintf(stderr,"    BUILD %s by #%d at (%.2f,%.2f)\n",c.type,c.unitId,c.x,c.z);
         sim::applyCommand(w, reg, c);
+        // Did the sim take the order? A Build it refuses leaves the builder idle,
+        // and the AI re-issues the same pick next think.
+        if (std::getenv("TAK_AI_PICK") && c.kind==net::Cmd::Build)
+            if (const auto* u=w.unit(c.unitId))
+                std::fprintf(stderr,"      -> orders=%zu site=%d\n",u->orders.size(),u->buildSiteId);
     };
 
     auto report = [&](int t) {
@@ -139,6 +149,19 @@ int main(int argc, char** argv) {
         // CAP problem, and the two want opposite fixes.
         std::printf("t=%3ds  income=%.0f mana=%.0f/%.0f  army=%d closest-to-enemy=%.0f  | %s\n",
                     t, income, mana, w.player(1).storage, army, army ? minDist : -1, s.c_str());
+        // One machine-readable line per report: the empire's size against its income.
+        int units = 0, structs = 0, builders = 0, unfinished = 0;
+        for (const auto& u : w.units())
+            if (u.alive() && u.player == 1 && u.type) {
+                ++units;
+                if (u.type->isStructure()) ++structs;
+                else if (u.type->isBuilder) ++builders;
+                if (u.underConstruction) ++unfinished;
+            }
+        std::printf("SUM t=%d income=%.1f mana=%.0f capacity=%.0f units=%d structs=%d mobile=%d builders=%d "
+                    "unfinished=%d fullsecs=%d cap=%d\n",
+                    t, income, mana, w.player(1).manaCapacity(), units, structs, units - structs, builders,
+                    unfinished, fullSeconds, w.unitCap());
         if (std::getenv("TAK_AI_ECON")) {
             // Where is the income going? Dump every under-construction site and every
             // builder's job so we can see a stalled/over-expensive build freezing the economy.
@@ -183,19 +206,22 @@ int main(int argc, char** argv) {
     };
 
     const float dt = 1.0f / 30.0f;
+    const int reportEvery = std::getenv("TAK_AI_EVERY") ? std::max(1, std::atoi(std::getenv("TAK_AI_EVERY"))) : 30;
     int totalTicks = seconds * 30;
     std::printf("=== AI %s on '%s' (enemy start %.0f,%.0f) ===\n", dstr.c_str(), map.c_str(), ex, ez);
     for (int t = 0; t < totalTicks; ++t) {
         ctl.tick(w, uint32_t(t), sink);
         if (twoAi) ctl0.tick(w, uint32_t(t), sink);
         w.tick(dt);
+        if (t%30==0 && w.player(1).manaCapacity() > 0.01f &&
+            w.player(1).mana >= w.player(1).manaCapacity() * 0.9f) ++fullSeconds;
         if (t%30==0) for (const auto& u:w.units()) {
             if (!u.alive() || u.player!=1 || !u.type || u.underConstruction ||
                 u.type->isStructure() || u.type->canFly || u.type->isBuilder) continue;
             if (u.type->domain==sim::UnitType::Domain::Water) completedWater[u.type->id].insert(u.id);
             if (u.type->domain==sim::UnitType::Domain::Hover) completedAmphibious[u.type->id].insert(u.id);
         }
-        if (t % (30 * 30) == 0) {
+        if (t % (30 * reportEvery) == 0) {
             report(t / 30);
             if (twoAi)
                 std::printf("      [2AI] player0 kills=%d units=%d | player1 kills=%d\n",

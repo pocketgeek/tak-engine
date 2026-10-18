@@ -79,6 +79,7 @@ namespace {
     }
 
     void GameView::rightClickOrder(float wx, float wz, bool queue) {
+        ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         if (selection_.empty()) return;
         const auto* first = frameUnitP(selection_.front());
         // Selected transport with cargo: right-click = sail + disembark.
@@ -220,6 +221,10 @@ namespace {
                 voice(selection_.front(), "attack");
             } else {
                 voice(selection_.front(), "move");
+                // In a Legion net game the selection goes as ONE explicit order,
+                // OrderShape::Offsets at the click: the sim gives the members the
+                // same goals as the loop below, from their positions at activation.
+                setClickMove(wx, wz);
                 // Legion packs one shared destination into arrival slots for the
                 // surface movers it plans (ground units, boats, hovercraft).
                 const bool legion=tak::sim::isLegionPathfinding(worldTables().pathfindingMode());
@@ -870,6 +875,7 @@ namespace {
     }
 
     void GameView::issueArmedOrder(char cmd, float wx, float wz, bool queue, bool precise) {
+        ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         if (selection_.empty()) return;
         if (cmd == 'c') {   // clear/reclaim: reclaim the feature under the cursor
             if (!haveReclaimer()) return;
@@ -2409,8 +2415,8 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         if (!resultParticipants_ || (*resultParticipants_ & (1u<<p))) players.push_back(p);
     const auto eligible=eligibleGiftRecipients();
     const auto manaMask=requestedManaSharing_.value_or(framePlayer(localPlayer_).manaShareMask);
-    const float scale=std::min({1.0f,float(winW)/820.0f,float(winH)/550.0f});
-    const float width=780*scale,rowH=38*scale;
+    const float scale=std::min({1.0f,float(winW)/1080.0f,float(winH)/550.0f});
+    const float width=1040*scale,rowH=38*scale;
     const float height=(172+44*players.size())*scale;
     const float x=(winW-width)/2,y=(winH-height)/2;
     SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_BLEND);
@@ -2423,6 +2429,8 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
     blockText("PLAYER",x+24*scale,y+66*scale,1.6f*scale,{190,190,200,255});
     blockText("SHARE MANA",x+252*scale,y+66*scale,1.6f*scale,{190,190,200,255});
     blockText("CHAT",x+394*scale,y+66*scale,1.6f*scale,{190,190,200,255});
+    blockText("VOICE",x+456*scale,y+66*scale,1.6f*scale,{190,190,200,255});
+    blockText("VOLUME",x+524*scale,y+66*scale,1.6f*scale,{190,190,200,255});
     auto button=[&](const std::string& label,SDL_FRect r,int p,DiplomacyAction action,bool enabled) {
         const bool hover=enabled && mouseX_>=r.x && mouseX_<r.x+r.w && mouseY_>=r.y && mouseY_<r.y+r.h;
         SDL_SetRenderDrawColor(ren_,enabled?(hover?90:60):37,enabled?(hover?110:66):39,enabled?(hover?150:86):46,255);
@@ -2444,6 +2452,29 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         }
         if(enabled)giveUnitsHots_.push_back({r,p,action});
     };
+    // VOLUME: how loud that player's voice plays here, drawn as the VOICE CHAT page's
+    // sliders are (track, fill, handle, value) and greyed like that page while voice chat
+    // is off. A greyed slider shows its value but takes no input.
+    const bool voiceOn=voice_ && voice_->enabled();
+    auto volumeSlider=[&](float by,int p) {
+        const float tx=x+524*scale,tw=140*scale,th=7*scale,ty=by+(rowH-th)/2;
+        const float frac=float(voiceVolume_[size_t(p)])/100.0f;
+        SDL_FRect track{tx,ty,tw,th};
+        SDL_SetRenderDrawColor(ren_,48,52,66,255);SDL_RenderFillRectF(ren_,&track);
+        SDL_FRect fill{tx,ty,tw*frac,th};
+        if(voiceOn)SDL_SetRenderDrawColor(ren_,80,140,225,255);
+        else SDL_SetRenderDrawColor(ren_,70,76,92,255);
+        SDL_RenderFillRectF(ren_,&fill);
+        SDL_FRect handle{tx+tw*frac-4*scale,ty-4*scale,8*scale,th+8*scale};
+        if(voiceOn)SDL_SetRenderDrawColor(ren_,205,215,240,255);
+        else SDL_SetRenderDrawColor(ren_,95,100,115,255);
+        SDL_RenderFillRectF(ren_,&handle);
+        const std::string pct=std::to_string(int(voiceVolume_[size_t(p)]))+"%";
+        blockText(pct,tx+tw+14*scale,by+(rowH-7*1.6f*scale)/2,1.6f*scale,
+            voiceOn?SDL_Color{150,195,235,255}:SDL_Color{90,100,115,255});
+        // The hot area is the row's height over the track: a value is where along it.
+        if(voiceOn)giveUnitsHots_.push_back({{tx,by,tw,rowH},p,DiplomacyAction::Volume});
+    };
     float by=y+92*scale;
     for(int p:players) {
         std::string name=playerName_[p];
@@ -2455,7 +2486,11 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         const bool sharing=ally && !framePlayer(p).defeated && !framePlayer(localPlayer_).defeated;
         if(ally)checkbox(294,by,p,DiplomacyAction::Mana,manaMask & (1u<<p),sharing);
         checkbox(402,by,p,DiplomacyAction::Chat,chatRecipients_ & (1u<<p),true);
-        if(ally)button("GIVE SELECTED UNITS",{x+478*scale,by,278*scale,rowH},p,DiplomacyAction::Give,eligible[size_t(p)]);
+        // VOICE: chat's column again, for voice chat. Your own voice never comes back to
+        // you, so your own box is shown as it stands but cannot be changed.
+        checkbox(468,by,p,DiplomacyAction::Voice,voiceRecipients_ & (1u<<p),p!=localPlayer_);
+        if(voiceVolumeSlider(p))volumeSlider(by,p);
+        if(ally)button("GIVE SELECTED UNITS",{x+738*scale,by,278*scale,rowH},p,DiplomacyAction::Give,eligible[size_t(p)]);
         by+=44*scale;
     }
     button("CLOSE",{x+width-164*scale,y+height-56*scale,140*scale,rowH},-1,DiplomacyAction::Close,true);

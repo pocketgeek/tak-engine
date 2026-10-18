@@ -1703,7 +1703,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
         o.autoTarget = tmpl.autoTarget;
         o.chaseLeashed = tmpl.chaseLeashed; o.chaseLeash = tmpl.chaseLeash; o.chaseOrigin = tmpl.chaseOrigin;
         o.issuedTick = tmpl.issuedTick;
-        o.convoyTick = tmpl.convoyTick;
+        o.setIdentity(tmpl.identity());
         o.goal = (i + 1 == path.size());
         o.navigationExhausted=false;
         o.navigationConsumed=false;
@@ -1820,17 +1820,20 @@ static bool retainGroundRoute(const Unit& u,const Order& goal) {
 // own, offset or not, and the test that applies to it follows the shared
 // predicate the client used to build it.
 uint32_t World::joinConvoy(const Unit& u, ConvoyClass cls, Fixed x, Fixed z) {
-    const bool shared=legionSharedClick(u.type->canFly,u.type->footX,u.type->footZ);
+    return joinArea(u.player, cls, x, z, legionSharedClick(u.type->canFly,u.type->footX,u.type->footZ), ConvoyTable::kNone);
+}
+
+uint32_t World::joinArea(int player, ConvoyClass cls, Fixed x, Fixed z, bool shared, uint32_t key) {
 #ifndef NDEBUG
     // TAK_LEGION_VERIFY: the indexed lookup picks the convoy a scan of the
     // whole table picks.
     const ConvoyTable::Convoy* brute=nullptr;
     const bool verify=LegionNavigator::verifying();
-    if(verify) {convoys_.prune(tickCounter_);brute=convoys_.bruteMatch(u.player,cls,x.v,z.v,shared,tickCounter_);}
+    if(verify) {convoys_.prune(tickCounter_);brute=convoys_.bruteMatch(player,cls,x.v,z.v,shared,tickCounter_);}
     const uint32_t bruteId=brute?brute->id:0;
     const size_t open=convoys_.size();
 #endif
-    const auto& convoy=convoys_.join(u.player,cls,x.v,z.v,shared,tickCounter_);
+    const auto& convoy=convoys_.join(player,cls,x.v,z.v,shared,tickCounter_,key);
 #ifndef NDEBUG
     if(verify&&bruteId&&convoy.id!=bruteId) {
         std::fprintf(stderr,"TAK_LEGION_VERIFY tick %u: convoy index picked %u, a scan picks %u\n",
@@ -1842,10 +1845,35 @@ uint32_t World::joinConvoy(const Unit& u, ConvoyClass cls, Fixed x, Fixed z) {
         std::abort();
     }
 #endif
-    return convoy.first;
+    return convoy.key;
 }
 
-void World::order(int unitId, float x, float z, bool queue, ConvoyClass cls, std::optional<uint32_t> convoyCopy) {
+void World::beginOrder(uint32_t serial, int player, bool point, Fixed x, Fixed z) {
+    activeOrder_ = ActiveOrder{};
+    activeOrder_->serial = serial;
+    activeOrder_->player = player;
+    activeOrder_->point = point;
+    activeOrder_->x = x;
+    activeOrder_->z = z;
+}
+
+// An explicit order's members share its identity: the order joins the area
+// table once per class, as one shared order at its own click, on the first leg
+// of that class any member gets. Only the member being applied (orderMember)
+// gets it, and only for an order with a click point; anything else -- a leg the
+// command gives another unit, an Assist's approach move toward its site -- joins
+// per unit, as before 267. (A changed owner is refused before this by
+// applyCommand's ownership check.)
+OrderIdentity World::stampIdentity(const Unit& u, ConvoyClass cls, Fixed x, Fixed z) {
+    if (!activeOrder_ || !activeOrder_->point || activeOrder_->member != u.id || activeOrder_->player != u.player)
+        return {joinConvoy(u, cls, x, z), 0};
+    uint32_t& area = activeOrder_->area[size_t(cls)];
+    if (area == ConvoyTable::kNone)
+        area = joinArea(u.player, cls, activeOrder_->x, activeOrder_->z, true, kExplicitArea | activeOrder_->serial);
+    return {area, activeOrder_->serial};
+}
+
+void World::order(int unitId, float x, float z, bool queue, ConvoyClass cls, std::optional<OrderIdentity> identityCopy) {
     OrdersNote note{*this,unitId};
     Unit* u = unit(unitId);
     // isStructure(), NOT canMove: the Keep and both Taros/Veruna walls declare
@@ -1866,7 +1894,7 @@ void World::order(int unitId, float x, float z, bool queue, ConvoyClass cls, std
         u->orders.back().issuedTick = tickCounter_;
         if (isLegionPathfinding(pathfindingMode_)) {
             Order& o = u->orders.back();
-            o.convoyTick = convoyCopy ? *convoyCopy : joinConvoy(*u, cls, o.x, o.z);
+            o.setIdentity(identityCopy ? *identityCopy : stampIdentity(*u, cls, o.x, o.z));
         }
     };
     if (u->type->canFly) {
@@ -2106,8 +2134,8 @@ void World::tickFlightPatrol(Unit& u) {
                 if (!anchored) {
                     Order anchor;anchor.x=u.x;anchor.z=u.z;anchor.goal=anchor.patrol=true;
                     anchor.mission.flags=0x1000412u;anchor.issuedTick=w.tickCounter_;
-                    // A return leg: it belongs to the outbound leg's convoy.
-                    anchor.convoyTick=u.orders.front().convoyTick;
+                    // A return leg: it belongs to the outbound leg's convoy (and order).
+                    anchor.setIdentity(u.orders.front().identity());
                     u.orders.push_back(anchor);
                 }
                 m.flags|=0x4000u;
@@ -3072,7 +3100,7 @@ void World::tickGroundMission(Unit& u) {
         uint64_t replaceController=0;
         bool completeUnloadApproach=false,abortUnloadApproach=false;
         std::optional<std::pair<Fixed,Fixed>> patrolReturn; // appended after dispatch
-        uint32_t patrolReturnConvoy=ConvoyTable::kNone;      // ... with the outbound leg's convoy
+        OrderIdentity patrolReturnIdentity;                  // ... with the outbound leg's convoy and order
         bool enabled() const { return u.alive() && !u.underConstruction && !u.embarked(); }
         bool canStandby() const { return w.standbyEligible(u); }
         RetailMissionState* head() {
@@ -3269,7 +3297,7 @@ void World::tickGroundMission(Unit& u) {
                         bool loop=false;
                         for (size_t i=current+1;i<u.orders.size();++i)
                             loop|=u.orders[i].goal && u.orders[i].patrol && !u.orders[i].patrolOpen;
-                        if (!loop) {patrolReturn=std::pair{u.x,u.z};patrolReturnConvoy=goal.convoyTick;}
+                        if (!loop) {patrolReturn=std::pair{u.x,u.z};patrolReturnIdentity=goal.identity();}
                     },resetGoal,[]{return 0;});
             // Retail relaxes the goal radius after failed searches. Legion
             // waits/retries the same plain Move instead: a blocked army must
@@ -3355,7 +3383,7 @@ void World::tickGroundMission(Unit& u) {
     } host{*this,u};
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if(host.patrolReturn) patrolTo(u.id,host.patrolReturn->first.toFloat(),host.patrolReturn->second.toFloat(),true,
-                                   host.patrolReturnConvoy);
+                                   host.patrolReturnIdentity);
     if(host.abortUnloadApproach) {
         dropLeg(u);
         if(!u.orders.empty() && u.orders.front().unload)
@@ -4401,17 +4429,17 @@ void World::patrol(int unitId, float x, float z) {
         b.goal=b.patrol=b.attackMove=true;
         // The outbound leg joins the click's Patrol convoy; the return leg (the
         // flyer's own position) copies it rather than open a convoy of its own.
-        if(isLegionPathfinding(pathfindingMode_))a.convoyTick=b.convoyTick=joinConvoy(*u,ConvoyClass::Patrol,b.x,b.z);
+        if(isLegionPathfinding(pathfindingMode_)) {const auto id=stampIdentity(*u,ConvoyClass::Patrol,b.x,b.z);a.setIdentity(id);b.setIdentity(id);}
         u->orders.push_back(b);u->orders.push_back(a);
         return;
     }
     const float rx=u->x.toFloat(),rz=u->z.toFloat();
     patrolTo(unitId,x,z,false);
-    const uint32_t outbound=u->orders.empty()?ConvoyTable::kNone:u->orders.back().convoyTick;
+    const OrderIdentity outbound=u->orders.empty()?OrderIdentity{}:u->orders.back().identity();
     patrolTo(unitId,rx,rz,true,outbound);
 }
 
-void World::patrolTo(int unitId, float x, float z, bool queue, std::optional<uint32_t> convoyCopy) {
+void World::patrolTo(int unitId, float x, float z, bool queue, std::optional<OrderIdentity> identityCopy) {
     Unit* u = unit(unitId);
     // isStructure(), NOT canMove: the Keep and both Taros/Veruna walls declare
     // canmove=1 with no velocity (the CLAUDE.md gotcha). Gating on canMove let a
@@ -4426,7 +4454,7 @@ void World::patrolTo(int unitId, float x, float z, bool queue, std::optional<uin
         return;
     }
     size_t before = queue ? u->orders.size() : 0;
-    order(unitId, x, z, queue, ConvoyClass::Patrol, convoyCopy);
+    order(unitId, x, z, queue, ConvoyClass::Patrol, identityCopy);
     // Mark every waypoint of this move as a looping, engage-en-route patrol leg; a
     // chain of patrolTo calls then cycles the unit through all of them.
     for (size_t i = before; i < u->orders.size(); ++i) {
@@ -4506,7 +4534,7 @@ void World::stop(int unitId) {
     // Stop also halts a conjurer: cancel the infinite loop and drain the queue.
     u->repeatType = nullptr;
     u->buildQueue.clear();
-    u->buildProgress = 0;
+    u->buildProgress = 0; u->buildFraction = 0;
     u->productionSiteId = 0;
 }
 
@@ -6477,7 +6505,7 @@ void World::captureUnit(Unit& t, int newPlayer) {
     t.lastHitBy = 0; t.lastHitPlayer = -1;
     t.squad = 0;             // no longer in its old owner's control group
     t.buildQueue.clear();    // and not still producing for them
-    t.buildProgress = 0;
+    t.buildProgress = 0; t.buildFraction = 0;
     t.productionSiteId = 0;
 }
 
@@ -9000,10 +9028,12 @@ void World::tickRepair(Unit& b, float dt) {
     float total = t->type->buildTime / std::max(b.type->workerTime, 0.01f);
     Player& tm = players_[size_t(b.player)];
     float cost = t->type->buildCost * dt / std::max(total, 0.01f);
-    if (tm.mana < cost) return;   // can't afford: pause the repair
-    tm.debitMana(cost);
-    t->hp = fxMin(Fixed::fromFloat(t->type->maxHp),
-                  t->hp + Fixed::fromFloat(t->type->maxHp * dt / std::max(total, 0.01f)));
+    const double share = tm.constructionShare(cost);
+    if (share <= 0) return;   // can't afford: pause the repair
+    tm.debitMana(std::min(tm.mana, double(cost) * share));
+    float mend = t->type->maxHp * dt / std::max(total, 0.01f);
+    if (share < 1) mend = float(double(mend) * share);
+    t->hp = fxMin(Fixed::fromFloat(t->type->maxHp), t->hp + Fixed::fromFloat(mend));
     // Native RepairUnit 4076d0..4076f0 emits only after successful repair:
     // falling particles at the worker and rising particles at the target.
     emitConstruction(b, false);
@@ -9476,17 +9506,37 @@ void World::tickConstruction(Unit& b, float dt) {
         if (site->lodestoneReplacement) site->lodestoneReplacement->completedWork=1;
     } else if (site->lodestoneReplacement) {
         auto& progress=site->lodestoneReplacement->completedWork;
-        const double work=std::min(1.0-progress,double(dt)/std::max(total,0.01f));
+        // Scale one tick of work by the share FIRST, then clamp it to what is
+        // left (retail 429af0 subtracts allocation * work and completes at
+        // remaining <= 0). Clamping first and scaling after made the last tick
+        // cover only share * gap: the gap shrank geometrically, and once it was
+        // one ulp a share <= 0.5 rounded away, so the site sat at full hp and
+        // completedWork 1-2^-53 until the allocation rose above one half.
+        // The request is the full tick (retail records it before scaling).
+        double work=double(dt)/std::max(total,0.01f);
         const double cost=site->type->buildCost*work;
-        if (tm.mana<cost) return;
-        tm.debitMana(cost);progress=std::min(1.0,progress+work);
+        const double share=tm.constructionShare(cost);
+        if (share<=0) return;
+        if (share<1) work*=share;
+        const double gap=1.0-progress;
+        if (work>=gap) {
+            work=gap;
+            tm.debitMana(std::min(tm.mana,site->type->buildCost*gap));
+            progress=1.0;
+        } else {
+            tm.debitMana(std::min(tm.mana,cost*share));
+            progress=std::min(1.0,progress+work);
+        }
         site->hp=fxMin(Fixed::fromInt(site->type->maxHp),site->hp+
             Fixed::fromFloat(float(site->type->maxHp*0.95*work)));
     } else {
         float cost = site->type->buildCost * dt / std::max(total, 0.01f);
-        if (tm.mana < cost) return;
-        tm.debitMana(cost);
-        site->hp += Fixed::fromFloat(site->type->maxHp * 0.95f * dt / std::max(total, 0.01f));
+        const double share = tm.constructionShare(cost);
+        if (share <= 0) return;
+        tm.debitMana(std::min(tm.mana, double(cost) * share));
+        float grow = site->type->maxHp * 0.95f * dt / std::max(total, 0.01f);
+        if (share < 1) grow = float(double(grow) * share);
+        site->hp += Fixed::fromFloat(grow);
     }
     emitConstruction(b,false);
     emitConstruction(*site,true);
@@ -9779,7 +9829,7 @@ void World::dequeue(int builderId, const UnitType* type, int count) {
         for (int i = int(b->buildQueue.size()) - 1; i >= 0; --i)
             if (b->buildQueue[size_t(i)] == type) { idx = i; break; }
         if (idx < 0) break;
-        if (idx == 0) { b->buildProgress = 0; b->productionSiteId = 0; }   // canceling the in-progress front
+        if (idx == 0) { b->buildProgress = 0; b->buildFraction = 0; b->productionSiteId = 0; }   // canceling the in-progress front
         retireProductionItem(*b,size_t(idx));
     }
     // If the queue no longer holds a type set to infinite-repeat, stop repeating it
@@ -9800,7 +9850,7 @@ void World::setRepeat(int builderId, const UnitType* type) {
         b->repeatType = nullptr;
         b->buildQueue.clear();
         for(auto& order:b->orders)order.transportProductionAhead=0;
-        b->buildProgress = 0;
+        b->buildProgress = 0; b->buildFraction = 0;
         b->productionSiteId = 0;
     } else {
         if (b->type && !b->type->isStructure()) {
@@ -11623,7 +11673,7 @@ void World::tickProduction(Unit& u, float dt) {
     const int32_t total=std::max(1,truncSat32(t->buildTime/std::max(u.type->workerTime,0.01f)*kTick+0.5f));
     Unit* site=u.productionSiteId ? unit(u.productionSiteId) : nullptr;
     if (u.productionSiteId && (!site || !site->alive() || (site->hp<=Fixed() && !site->retailSite) || site->player!=player)) {
-        u.productionSiteId=0; u.buildProgress=0;
+        u.productionSiteId=0; u.buildProgress=0; u.buildFraction=0;
         return;
     }
     if (!site) {
@@ -11679,7 +11729,7 @@ void World::tickProduction(Unit& u, float dt) {
             emitConstruction(*site,true);
         if (result==RetailConstructionResult::Completed) {
             notifyUnitScript(*producer,"StopBuilding");
-            producer->productionSiteId=0;producer->buildProgress=0;
+            producer->productionSiteId=0;producer->buildProgress=0;producer->buildFraction=0;
             retireProductionItem(*producer,0);
             if (producer->buildQueue.empty()) {
                 if (auto it=unitScripts_.find(producerId);it!=unitScripts_.end()) it->second.activated=false;
@@ -11694,10 +11744,25 @@ void World::tickProduction(Unit& u, float dt) {
         emitConstruction(*site,true);
     } else {
         const double cost=double(t->buildCost)/double(total);
-        if (tm.mana<cost) return;
-        tm.debitMana(cost);
-        ++producer->buildProgress;
-        site->hp=fxMin(Fixed::fromFloat(t->maxHp),site->hp+work);
+        const double share=tm.constructionShare(cost);
+        // Work in 1/65536 of a tick; a full share is exactly one tick, as before.
+        uint32_t step=share>=1 ? 65536u : uint32_t(share*65536.0);
+        // Never buy past the end of the build.
+        if (total-producer->buildProgress==1) step=std::min(step,65536u-producer->buildFraction);
+        if (!step) return;
+        tm.debitMana(std::min(tm.mana,step==65536u ? cost : cost*double(step)/65536.0));
+        // Grow the site by what the cumulative work says it should have, so a run
+        // of partial ticks adds exactly `work` per whole tick and the completion
+        // rounding below still holds.
+        const auto grown=[&](int64_t ticks,uint32_t fraction) {
+            return int64_t(work.v)*ticks+((int64_t(work.v)*fraction)>>16);
+        };
+        const int64_t before=grown(producer->buildProgress,producer->buildFraction);
+        const uint32_t fraction=producer->buildFraction+step;
+        producer->buildProgress+=int32_t(fraction>>16);
+        producer->buildFraction=uint16_t(fraction&0xffffu);
+        const int64_t after=grown(producer->buildProgress,producer->buildFraction);
+        site->hp=fxMin(Fixed::fromFloat(t->maxHp),site->hp+Fixed::raw(int32_t(after-before)));
         emitConstruction(*site,true);
         if (producer->buildProgress<total) return;
         // Correct accumulated fixed-point rounding without undoing combat damage.
@@ -11709,7 +11774,7 @@ void World::tickProduction(Unit& u, float dt) {
     const float sx=site->x.toFloat(),sz=site->z.toFloat();
     site->underConstruction=false;
     producer->productionSiteId=0;
-    producer->buildProgress=0;
+    producer->buildProgress=0;producer->buildFraction=0;
     retireProductionItem(*producer,0);
     if (auto it=unitScripts_.find(producerId);it!=unitScripts_.end()) {
         const auto& file=*producer->type->script();
@@ -12213,6 +12278,8 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
 void World::tick(float dt) {
     bodyIndexEnabled_=true;bodyIndexValid_=false;
     struct BodyIndexScope { bool& enabled; ~BodyIndexScope(){enabled=false;} } bodyIndexScope{bodyIndexEnabled_};
+    inTick_=true;
+    struct TickScope { bool& in; ~TickScope(){in=false;} } tickScope{inTick_};
     if (retailAllocation_)
         std::sort(units_.begin(),units_.end(),[](const auto& a,const auto& b){return a.id<b.id;});
     // The profiled tick starts here, so navigator upkeep (Legion
@@ -12553,6 +12620,16 @@ void World::tick(float dt) {
             }
             // Any pool left (every allowed recipient capped) is wasted, as before.
         }
+    }
+    // Construction allocation for the tick (51d837's allocation, computed after
+    // income and the allied share): the stored pool over last tick's full-rate
+    // demand, so every consumer advances at the same fraction instead of the first
+    // in unit order taking it all. See Player::constructionShare.
+    // A retailResources player runs the native object's allocation instead.
+    for (auto& tm : players_) {
+        const double demand=tm.retailResources ? 0.0 : tm.constructionDemand;
+        tm.constructionAllocation=demand>tm.mana ? (tm.mana>0 ? tm.mana/demand : 0.0) : 1.0;
+        tm.constructionDemand=0;
     }
     // ...and once it has filled, the god manifests. This has to happen HERE, in the
     // shared sim, and used to happen in the client instead (GameView::simStep polled
@@ -14451,6 +14528,7 @@ uint64_t World::stateHash() const {
                 } else mix(0);
             }
             if (order.convoyTick != ConvoyTable::kNone) {mix(0x434f4e5654494bull);mix(order.convoyTick);}
+            if (order.orderSerial) {mix(0x4f52444552534e00ull);mix(order.orderSerial);}
             if (order.placementFailures) {mix(0x504c4143454dull);mix(order.placementFailures);mix(order.placementRetryTick);}
             if (order.chaseLeashed) {
                 mix(0x434841534555ull);mix(order.chaseLeash);
@@ -14547,6 +14625,7 @@ uint64_t World::stateHash() const {
             }
         }
         mix(uint32_t(u.productionSiteId)); mix(uint32_t(u.buildProgress));
+        if (u.buildFraction) {mix(0x46524143u);mix(u.buildFraction);}
         if (u.productionRetryTick) {mix(0x52455452u);mix(u.productionRetryTick);}
         mix(u.underConstruction); mix(u.buildBegun); mix(uint32_t(u.conjureRate.v));
         if (u.lodestoneReplacement) {
@@ -14676,6 +14755,7 @@ uint64_t World::stateHash() const {
         mix(uint32_t(t.automaticGates) | (uint32_t(t.defensiveAi)<<1));
         if (t.manaShareMask != 0xff) { mix(0x53484152454d414eull); mix(t.manaShareMask); }
         { uint64_t b; std::memcpy(&b, &t.mana, 8); mix(b); }   // double: fold all 8 bytes
+        if (t.constructionDemand != 0) { mix(0x434f4e5344454d44ull); mix(std::bit_cast<uint64_t>(t.constructionDemand)); }
         if (t.scenarioResourceLimit != 0) { mix(0x4352544c494d4954ull); mixf(t.scenarioResourceLimit); }
         mix(t.cacheClock.enabled); mix(t.cacheClock.lastRefresh);
         mix(uint32_t(t.sweepCursor));

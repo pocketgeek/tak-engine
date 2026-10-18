@@ -13,6 +13,7 @@
 #include "gui/gui.h"
 #include "net/auth.h"
 #include "net/crypto.h"
+#include "net/replaywriter.h"   // recoverReplayParts
 #include "util/png.h"
 #include "version.h"
 #include "video/bink.h"
@@ -24,6 +25,7 @@
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
 #include "client/settings.h"
+#include "client/voice.h"
 #include "client/dev.h"
 #include "client/appquit.h"
 
@@ -148,7 +150,26 @@ struct MainMenu::Impl {
     // The SETTINGS menu overlay -- the lower-right menu button opens THIS (OPTIONS / CONTROLS)
     // instead of jumping straight into Options, mirroring the in-game Esc GAME MENU.
     bool settingsMenu_ = false;
-    SDL_FRect setBtnRect_[5]{};        // OPTIONS / CONTROLS / BENCHMARK / LOAD REPLAY / STREAMING
+    SDL_FRect setBtnRect_[6]{};        // OPTIONS / CONTROLS / VOICE CHAT / BENCHMARK / LOAD REPLAY / STREAMING
+    VoiceEngine* voice_ = nullptr;     // main()'s voice engine (MainMenu::setVoice)
+
+    // The VOICE CHAT page (SETTINGS > VOICE CHAT, or Options > VOICE CHAT), in options_.
+    void openVoicePage(Settings* settings) {
+        VoicePageHooks hooks;
+        if (VoiceEngine* v = voice_) {
+            hooks.micLevel = [v] { return v->micLevel(); };
+            hooks.micNote = [v] { return VoiceEngine::note(v->micState()); };
+            hooks.outNote = [v] { return VoiceEngine::note(v->outState()); };
+            hooks.monitor = [v](bool on) { v->setMonitoring(on); };
+        }
+        // The engine reads the settings every frame (run()); only SAVE persists.
+        options_ = std::make_unique<OptionsScreen>(ren, *settings, [] {},
+            [settings] { saveSettings(*settings); }, std::move(hooks),
+            [this, settings] {   // PUSH TO TALK -> CONTROLS, over this page
+                hotkeys_ = std::make_unique<HotkeysScreen>(ren, *settings,
+                    [] {}, [settings] { saveSettings(*settings); });
+            });
+    }
     bool benchMenu_ = false;          // benchmark intensity submenu (opened from SETTINGS)
     bool replayMenu_ = false;         // replay picker (opened from SETTINGS)
     int replayScroll_ = 0;            // first listed row
@@ -1038,9 +1059,11 @@ struct MainMenu::Impl {
         SDL_FRect dim{0, 0, float(winW), float(winH)};
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 150);
         SDL_RenderFillRectF(ren, &dim);
-        const int nBtn = 5;
-        const float bw = 320, bh = 54, gap = 16, pad = 34, titlePx = 3.2f;
+        const int nBtn = 6;
+        const float bw = 320, gap = 16, pad = 34, titlePx = 3.2f;
         const float titleH = 7 * titlePx + 22;
+        // Buttons shrink on a short window rather than run off it.
+        const float bh = std::clamp((float(winH) - 2 * pad - titleH - 28 - 24 - (nBtn - 1) * gap) / float(nBtn), 30.0f, 54.0f);
         const float pw = bw + pad * 2;
         const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap + 28;
         const float px0 = (winW - pw) / 2, py0 = (winH - ph) / 2;
@@ -1052,7 +1075,7 @@ struct MainMenu::Impl {
         shadowText("SETTINGS", px0 + (pw - tw("SETTINGS", titlePx)) / 2, py0 + pad, titlePx, {235, 225, 180, 255});
         int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
         { float lx, ly; SDL_RenderWindowToLogical(ren, mx, my, &lx, &ly); mx = int(lx); my = int(ly); }
-        const char* labels[nBtn] = {"OPTIONS", "CONTROLS", "BENCHMARK", "LOAD REPLAY", "YOUTUBE STREAMING"};
+        const char* labels[nBtn] = {"OPTIONS", "CONTROLS", "VOICE CHAT", "BENCHMARK", "LOAD REPLAY", "YOUTUBE STREAMING"};
         float by = py0 + pad + titleH;
         for (int i = 0; i < nBtn; ++i) {
             SDL_FRect r{px0 + pad, by, bw, bh};
@@ -1071,22 +1094,27 @@ struct MainMenu::Impl {
 
     // Benchmark intensity submenu: 5 spawn-rate levels. Records benchBtnRect_ for run().
     // Scan the user's config directory for saved replays, newest first. That is where
-    // every human player's client writes its own .takrep (see saveReplayFile) -- beside
-    // settings.ini -- so the picker lists exactly what this machine has recorded.
+    // every human player's and spectator's client records its own .takrep (see
+    // GameView::beginGameRecording) -- beside settings.ini -- so the picker lists
+    // exactly what this machine has recorded. A recording another client on this
+    // profile left unfinished (it crashed or was killed) is finished first, so it is
+    // listed too; one still being recorded is locked and left alone.
     void scanReplays() {
         replayFiles_.clear();
         replayScroll_ = 0;
-        std::string dir = tak::settingsPath();
-        const size_t cut = dir.find_last_of("/\\");
-        if (cut == std::string::npos) return;
-        dir.erase(cut + 1);
+        const std::string dir = tak::replayDir();
+        if (dir.empty()) return;
+        tak::net::recoverReplayParts(dir);
         std::vector<std::pair<std::filesystem::file_time_type, std::string>> found;
         std::error_code ec;
-        for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+        for (const auto& e : std::filesystem::directory_iterator(std::filesystem::u8path(dir), ec)) {
             if (ec) break;
             if (!e.is_regular_file(ec)) continue;
             if (e.path().extension() != ".takrep") continue;
-            found.push_back({e.last_write_time(ec), e.path().string()});
+            // UTF-8, as loadReplayFile expects: path::string() is the ANSI code page
+            // on Windows, which cannot name a profile folder outside it.
+            const auto u8 = e.path().u8string();
+            found.push_back({e.last_write_time(ec), std::string(u8.begin(), u8.end())});
         }
         // Newest first: the replay you just played is the one you want to watch.
         std::sort(found.begin(), found.end(),
@@ -1122,7 +1150,7 @@ struct MainMenu::Impl {
         if (replayFiles_.empty()) {
             // Say WHERE they would be, so an empty list is an answer rather than a dead end.
             const std::string m1 = "NO REPLAYS SAVED YET";
-            const std::string m2 = "FINISH A GAME AND ITS REPLAY IS SAVED AUTOMATICALLY";
+            const std::string m2 = "EVERY GAME YOU PLAY OR WATCH IS SAVED AUTOMATICALLY";
             blockText(m1, px0 + (pw - tw(m1, 2.2f)) / 2, by + 6, 2.2f, {225, 215, 175, 255});
             blockText(m2, px0 + (pw - tw(m2, 1.5f)) / 2, by + 34, 1.5f, {150, 155, 175, 255});
         }
@@ -1229,6 +1257,7 @@ MainMenu::~MainMenu() { delete d_; }
 
 void MainMenu::setFailure(const SessionFailure& failure) { d_->pendingFailure = failure; }
 void MainMenu::setDataFolder(DataFolderRow row) { d_->dataFolder_ = std::move(row); }
+void MainMenu::setVoice(VoiceEngine* voice) { d_->voice_ = voice; }
 
 MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverOut,
                                MenuMusic* music, Settings* settings, Streaming* streaming) {
@@ -1349,6 +1378,38 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         d_->cursors_.load(d_->ren, d_->vfs, settings);
     }
     SDL_ShowCursor(d_->cursors_.ok() ? SDL_DISABLE : SDL_ENABLE);
+
+    // The general OPTIONS screen (SETTINGS > OPTIONS, and the VOICE CHAT page's BACK when
+    // that page was opened from Options' own VOICE CHAT row).
+    bool voiceFromOptions = false, optionsDirtyCarry = false;
+    auto openGeneralOptions = [&] {
+        d_->options_ = std::make_unique<OptionsScreen>(d_->ren, *settings,
+            [this, ren = d_->ren, music, settings, fsWas = settings->fullscreen,
+             vsWas = settings->vsync]() mutable {
+                if (music) music->setVolume(settings->masterVol, settings->bgmVol);
+                d_->applyArtSettings(*settings);   // incl. DEFAULTS
+                // onChange fires on EVERY control tweak (a volume-slider drag
+                // fires it many times a second). ANY window/renderer reconfigure
+                // here re-commits the Wayland surface -- which rescales it and
+                // drops pointer-button events, so later clicks miss or die. Touch
+                // the surface ONLY when that display setting actually changed since
+                // this Options screen opened. (Compare the VALUE, not
+                // SDL_GetWindowFlags, which is unreliable on Wayland.)
+                if (settings->fullscreen != fsWas) {
+                    if (SDL_Window* wnd = SDL_RenderGetWindow(ren))
+                        SDL_SetWindowFullscreen(wnd, settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                    fsWas = settings->fullscreen;
+                }
+                if (settings->vsync != vsWas) {
+                    SDL_RenderSetVSync(ren, settings->vsync ? 1 : 0);
+                    vsWas = settings->vsync;
+                }
+            },
+            [settings] { saveSettings(*settings); }, 0, [] {},
+            [music] { if (music) music->reopen(); },   // live output-device switch
+            d_->dataFolder_);
+        d_->options_->offerVoicePage();
+    };
 
     PresentationPacer streamPacer;
     Uint64 prev = SDL_GetPerformanceCounter();
@@ -1473,9 +1534,18 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             }
             if (d_->options_) {   // Options overlay is up: route everything to it
                 if (d_->options_->input(e, w, h)) {   // BACK / Esc (SAVE is explicit), or RESTART NOW
-                    const bool restart = d_->options_->restartRequested();
-                    d_->options_.reset();
-                    if (restart) return Choice::Restart;
+                    if (d_->options_->restartRequested()) { d_->options_.reset(); return Choice::Restart; }
+                    if (d_->options_->voiceRequested() && settings) {   // Options > VOICE CHAT
+                        const bool dirty = d_->options_->dirty();
+                        d_->openVoicePage(settings);
+                        voiceFromOptions = true; optionsDirtyCarry = dirty;
+                    } else if (voiceFromOptions && settings && d_->options_->page() == OptionsPage::Voice) {
+                        const bool dirty = optionsDirtyCarry && !d_->options_->saved();
+                        openGeneralOptions();       // BACK -> Options, where it came from
+                        if (dirty) d_->options_->markDirty();
+                    } else {
+                        d_->options_.reset();
+                    }
                 }
                 continue;
             }
@@ -1493,32 +1563,12 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                             settings->dataDir = disk.dataDir;
                             settings->dataManifest = disk.dataManifest;
                         }
-                        d_->options_ = std::make_unique<OptionsScreen>(ren, *settings,
-                            [this, ren, music, settings, fsWas = settings->fullscreen,
-                             vsWas = settings->vsync]() mutable {
-                                if (music) music->setVolume(settings->masterVol, settings->bgmVol);
-                                d_->applyArtSettings(*settings);   // incl. DEFAULTS
-                                // onChange fires on EVERY control tweak (a volume-slider drag
-                                // fires it many times a second). ANY window/renderer reconfigure
-                                // here re-commits the Wayland surface -- which rescales it and
-                                // drops pointer-button events, so later clicks miss or die. Touch
-                                // the surface ONLY when that display setting actually changed since
-                                // this Options screen opened. (Compare the VALUE, not
-                                // SDL_GetWindowFlags, which is unreliable on Wayland.)
-                                if (settings->fullscreen != fsWas) {
-                                    if (SDL_Window* wnd = SDL_RenderGetWindow(ren))
-                                        SDL_SetWindowFullscreen(wnd, settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-                                    fsWas = settings->fullscreen;
-                                }
-                                if (settings->vsync != vsWas) {
-                                    SDL_RenderSetVSync(ren, settings->vsync ? 1 : 0);
-                                    vsWas = settings->vsync;
-                                }
-                            },
-                            [settings] { saveSettings(*settings); }, 0, [] {},
-                            [music] { if (music) music->reopen(); },   // live output-device switch
-                            d_->dataFolder_);
-                    } else if (hit(d_->setBtnRect_[4]) && streaming) {
+                        openGeneralOptions();
+                    } else if (hit(d_->setBtnRect_[2])) {   // VOICE CHAT -> its own page of Options
+                        d_->settingsMenu_ = false;
+                        d_->openVoicePage(settings);
+                        voiceFromOptions = false;           // BACK -> the menu
+                    } else if (hit(d_->setBtnRect_[5]) && streaming) {
                         d_->settingsMenu_ = false;
                         SDL_Event event{};event.type=SDL_USEREVENT;event.user.code=kStreamingEvent;
                         streaming->input(event,w,h);
@@ -1526,11 +1576,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         d_->settingsMenu_ = false;
                         d_->hotkeys_ = std::make_unique<HotkeysScreen>(ren, *settings,
                             [] {}, [settings] { saveSettings(*settings); });
-                    } else if (hit(d_->setBtnRect_[3])) {   // LOAD REPLAY -> the picker
+                    } else if (hit(d_->setBtnRect_[4])) {   // LOAD REPLAY -> the picker
                         d_->settingsMenu_ = false;
                         d_->scanReplays();                 // rescan on every open
                         d_->replayMenu_ = true;
-                    } else if (hit(d_->setBtnRect_[2])) {   // BENCHMARK -> intensity submenu
+                    } else if (hit(d_->setBtnRect_[3])) {   // BENCHMARK -> intensity submenu
                         d_->settingsMenu_ = false;
                         d_->benchMenu_ = true;
                     }
@@ -1647,6 +1697,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         prev = now;
         for (auto& dr : d_->doors) d_->updateDoor(dr, dt);
         if (music) music->poll();
+        // Voice chat: never in a room here, but the VOICE CHAT screen meters the mic.
+        if (d_->voice_ && settings) {
+            d_->voice_->configure(*settings, currentAudioDevice());
+            d_->voice_->update(false, false, {});
+        }
         d_->render(w, h);
         // Capture only the title artwork: account entry and other private
         // overlays are drawn afterward and never enter the broadcast.

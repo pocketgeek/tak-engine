@@ -1581,6 +1581,10 @@ Measured by `aware-headon:pair.contacts.permille_x100` and the `aware-*` fixture
 
 ### Convoys: one order per click (W3 A1)
 
+(Since protocol 267 a Legion client's click is an explicit selection order that joins this table once for all
+its members -- see "Legion 10,000 stage 3" below; the per-unit inference described here remains for the AI's
+and scripts' commands, and the table is the arrival-area table for both.)
+
 The client lands a selection over 64 units over several ticks (64 commands
 per tick, and at most 512 outstanding), so each tick's part used to be an
 order of its own. In Legion mode `World::order()` now stamps every order with
@@ -1806,7 +1810,9 @@ lift walk, the aim memo (keyed on the field's work count, so a resumed build
 invalidates it), eviction, `sharedField`, and a formation's slot hand-out
 (`claimSlot` for a member whose only slot is its formation's: it reads no
 potential). The pinwheel, `awareScan` and the aware replan keep `done`: a
-paused group plans round no crossing traffic until its field finishes. Field
+paused group plans round no crossing traffic until its field finishes. (Since
+Legion 10,000 stage 5 none of them waits for `done`: they state the region they
+need and read it through certainty checks; see that section below.) Field
 descent (`aimCell`, the drive and detour code) may read a tentative potential
 beyond the margin; descent stays sound on it, as on a half-built field.
 
@@ -2056,6 +2062,548 @@ work and gate-instrument keys licensed and the offset spreads the review
 opened excepted (cluster `LR-264`); the behaviour losses and the new fixtures'
 floor failures in a commit of their own; the Legion navigation golden
 regenerated (Retail's unchanged).
+
+### Legion 10,000 stage 2: exact join index, awareness broad phase (fd34151a .. e290f0ed, no protocol change)
+
+Four hash-identical optimisations (docs/legion-10000-progress.md, stage 2, has the proof runs and numbers):
+
+* **Join index.** `registerMove` used to walk every live group for the first one a member may join. Groups are
+  now indexed by the equality part of the join predicate, all fixed at creation: player, plane, kind, approach,
+  and the ring target and bucket for a reach kind or the issue key otherwise (`joinIndex`). The member walks its
+  entry in ascending id order and applies the whole predicate unchanged (component through `groupComp`, goal
+  box, seeds, field), so the first group to pass is the first of all groups. `TAK_LEGION_VERIFY` runs the
+  brute-force walk on every join and checks the index against a scan of the groups.
+* **Awareness broad phase.** `awareScan` used to run its 31 conflict samples for every (group, mover) pair. A
+  mover not yet planned round enters a plan only through a sample where the group's way point (on its descent
+  chain, inside the chain's box of cell centres) and the mover's box centre (inside its swept box over the
+  450-tick horizon) are within `(half + max(tail, head) + 66) + 2 rG` px in each coordinate: `s` and `q` divide
+  by `L`, which is at most the heading's length, so the offset along and across the heading is under `B+1` and
+  `A+1`. Movers are listed in a 1,024 px grid over their grown swept boxes; a group reads the cells its chain
+  box grown by `2 rG` covers, and every mover already in its plan is a candidate whatever its place (a crossing
+  stays planned off its box). Candidates are visited in the original mover order, so the plan and its order are
+  unchanged. `TAK_LEGION_VERIFY` samples every dropped mover and fails on a conflict.
+* **The vertex probe is a tool instrument.** The W8 step 1 vertex probe (`vertexInstrument`), which no decision
+  reads, runs only while `LegionNavigator::setInstrumentProbes` is on: `legion_scenario` (unless
+  `--no-vertex-probe`) and `legion_world_test` turn it on, the game does not. It was 5-7% of a 10,000-body tick.
+* **Gate memo.** `gateCommit`, asked every tick for every uncommitted lane member, declines in open ground
+  before it reads any soft body. Those checks read only the static plane, the finished field, the member's goal,
+  origin, footprint and lane band; `Member::gateMemo` keeps them when a call declines there and the same inputs
+  decline again without walking the chain (never hashed; `TAK_LEGION_VERIFY` recomputes every hit).
+
+The ctests `legion_verify_{battle-assault,crosslong,gap8}` run the references; each file is one that a
+deliberate mutation of the matching optimisation trips.
+
+### Legion 10,000 stage 3: explicit selection orders (protocol 267)
+
+A click is now one explicit **selection order** (`net::Cmd::Order`, `net/lockstep.h`): the player's intent over a
+whole selection, with an identity (issuing player, serial), a template command (verb, target, point, queue flag),
+a shape and the exact membership. Before, the client sent one command per unit through the 64-a-tick drain and the
+sim inferred the click from proximity and timing (convoys, below); a 10,000-unit click took 157-308 ticks to land
+and became up to 20 groups and several crowds. The record of the stage, with its measurements, is
+docs/legion-10000-progress.md section 7.3.
+
+* **Client** (`GameView::ClickScope`, `flushClick`). The commands one input event (or one autoplay step) issues
+  are one click. In a Legion net game `net/orderpack.h`'s `packClick` turns each run of commands that differ only
+  in their unit into one order; the right-click move is `OrderShape::Offsets` at the click (the sim recomputes the
+  per-unit offsets, so no coordinates travel per member). Retail and offline play send the commands exactly as
+  before, so Retail is bit-identical. The outbox is one FIFO of commands and orders: commands go under the rate
+  credit and the 512 window, an order goes whole as its transaction under its own window (64 orders / 384 KiB
+  outstanding, `orderSendWindow`), and nothing overtakes what was issued before it.
+* **Transport** (`net/protocol.h`, `server/orders.h`). `OrderBegin` / `OrderMembers` (member ids as varint
+  deltas, at most 2,048 a message, strictly increasing, so a duplicate cannot be encoded) / `OrderCommit`
+  (count + FNV digest) / `OrderAbort`. The server validates the framing, the template, serials (increasing per
+  connection and above the slot's highest activated serial, which a reconnect keeps), counts and the digest;
+  malformed fails the connection, as does an order in a Retail game (its clients keep per-unit commands); over
+  the byte budget or the window the transaction is dropped with a log line and the sender is told
+  (`Msg::InputDropped`, which also counts dropped `PlayerCommands`): the byte budgets are shared with the
+  account's other connections and the whole server, so an honest client can be dropped, and a dropped order
+  never comes back in a bundle -- without the notice it held its place in the client's window (`OrderWindow`,
+  by serial) for good, and enough of them closed the outbox, Stop included (review R1). The windows are
+  tested before the budget is charged. A committed order is ONE item of its client's command FIFO; `closeTick` takes it whole while the
+  tick's order budget (96 KiB of records, shared by the room, first pick rotating) holds it and the client's
+  per-second command budget has room for its members (otherwise it WAITS, never dropped, so the client's
+  window cannot leak), and that tick is its activation tick. An ordinary command behind it keeps its place and
+  its own 64-a-tick budget, so a big order never makes it wait for command credit. Chunks never reach a
+  bundle, so no partial order is ever visible; a disconnect drops the open transaction and the queue with the
+  connection.
+* **Sim** (`sim/matchsetup.cpp` `applySelectionOrder`). At activation every member gets the template command in
+  increasing id order, not the player's selection order (the order is not carried: it would cost a second list
+  as large as the members). The verbs whose outcome depends on that order -- Load (the transport's pickup list
+  is built in application order) and GiveUnit (a recipient near its unit cap) -- are therefore not order verbs
+  and keep the per-unit path in issue order (review R6); every order verb sets only its member's own state, so
+  only the order of the members' path requests (registrations) follows id order; ownership
+  and existence are checked per member by the ordinary path (a dead, gone or given-away member is skipped).
+  Inside `World::beginOrder` / `endOrder` every leg the member being applied gets for itself carries the
+  order's identity: `Order::orderSerial` (hashed when set) and, for an order with a click point (Move, Fight,
+  Patrol), its arrival area, which the order joins ONCE per class at its own click (`World::stampIdentity`);
+  a leg of another verb (an Assist's approach move) or of another unit keeps the per-unit identity. The convoy
+  table is now the arrival-area table: several orders of one player and class to one point within its window
+  (`kGapTicks`/`kSpanTicks`) still share one area
+  -- the A1 decision, wall-4x50's four selections -- while one order is never split; an area an order opens is
+  keyed `kExplicitArea | serial` (unique; per-unit commands, the AI's and scripts', still key by first tick).
+* **Identity consumers.** Points, groups (issue key), soft-arrival ownership, formation slots, the A2 slot wait
+  (`commandOpen`, now by area key), flight stations (bucket key), patrol return legs (copy the identity) and the
+  hash key on the area key, which an order now gives all its members at once. The pinwheel's part (`Member::part`)
+  stays the tick a leg's command was applied in, so an order (applied whole) is one part however big, and
+  orders applied in one tick share one, as per-unit commands of one tick always did (making the part the order
+  itself split 24 one-unit clicks of one tick into 24 parts and moved the motion-* fixtures; keeping 64-body rank
+  groups inside an order changed nothing that mattered; both rejected). The awareness same-selection rule (one
+  player, within `kConvoyTicks`, within `kConvoyCells`) is kept only between per-unit commands; two explicit
+  areas are one selection exactly when they are the same area. The first-part provisional formation keeps its
+  under-64 rule (taking it at once for any order size was measured and rejected, see `formationSlot`).
+* **Settle bound of an explicit area** (`settleWindow`, `crowdBound`). One order is a whole selection, so the
+  queue-settle rule (a body one row behind a settled arrival of its own command may settle, C29) let a
+  10,000-body order's queue run back to where its bodies started: at the first stage-3 head maze-10000 retired
+  7,595 of 8,500 orders far outside the arrival disc, at their starting rect. An explicit area's settle bound
+  now never grows past the packed bound of the point's whole crowd (`Point::crowdCells`/`crowdPeak`: every
+  footprint plane's bodies, packed in this body's footprint along the field, so a dead end's strip is its
+  length) widened to AR-08's arrival disc (`kExplicitSettleNum`(foot+1) / (`kExplicitSettleDen` foot), the
+  ratio of the disc's 20(foot+1) px to the packed bound's 16 foot px per sqrt(1.25 n/pi)), plus the slack;
+  beyond it a queued body keeps its order and waits, an unarrived body. A crowd of one footprint reuses the
+  destination area's own bound (`areaBound`'s cache). Per-unit areas keep the old rule. (A straight-line test
+  against the disc itself was tried too and rejected: a dead end's queue is a strip longer than any disc, and
+  it stopped those queues' bodies -- 1,174 gate keys failed against 380.)
+* **Kept as inference** (`ConvoyTable`, unchanged for them): the AI's commands (server-run, all landing in one
+  tick, so the table already gives one area per AI click at one point) and mission scripts' orders.
+
+Tests: `selection_order_test` (codec, packing, Retail equivalence, Legion identity, membership, same-tick
+replacement / Stop / queue / patrol, delivery), `server_orders_test` (the transaction state machine),
+`server_orders_network` (a real server: whole activation, FIFO without starvation, abort, window, drop notices,
+member-budget delay, malformed, Retail refusal),
+`convoy_test` (each click shape both as an order and per unit), `issue_selection_test` (the mirror against the
+transcribed client), `replay_test` (266 refused).
+
+### Legion 10,000 stage 4: fair scheduling and complete budgets (protocol 268)
+
+Every piece of navigation work that can grow with the army now has a deterministic per-tick budget in its own
+units (`sim/navbudget.h`: `NavWork`, `NavBudget`), and the field quota is served by job, class and round robin
+instead of group id order. The record, with the measurements, is docs/legion-10000-progress.md section 7.4.
+
+* **Registration** (`requestRegister`, `drainRegistrations`). `registerMove` costs `kRegBase` units plus its join
+  candidates and its goal-resolution cells; a window -- one batch of commands between two ticks, or one tick --
+  may spend `kRegBudget` (4,096 plain registrations). While the budget lasts and nothing waits, a registration
+  runs at once, exactly as before (every gate fixture is unchanged by this). Past it, registrations wait in a FIFO
+  that the next `tick()` drains first; while any waits, later ones queue behind it; a waiting unit brakes with its
+  order kept and reads as Waiting to the observers; a cancel runs at once and drops a waiting registration. The
+  FIFO is hashed while not empty; the budgets never outlive their window, so they are not state.
+* **First plane builds** (`planeReady`, `buildPlanes`). A plane whose whole build can never exceed one window's
+  plane budget (`kPlaneBuildBudget`, 1 Mi units: maps up to 131k cells) is built at once inside the call, as
+  before. A larger one is no longer built inside the registration that first needs it (one-10000: two planes,
+  11.7M units, 30 ms of a 39 ms tick): the registration waits, and the same resumable build the background
+  prebuild uses runs `kPlaneBuildBudget` units a tick for the wanted planes, in demand order, right after
+  `syncStatic`; a plane finished there takes its waiting registrations in the same tick. The FIFO steps over
+  entries that wait only for a plane (planes are per mobility class); when a plane is ready, its waiters' marks
+  clear (they wait for the budget now, so nothing bypasses them). Neither a building plane nor one a waiting
+  registration needs is evicted (`queuedNeeds`; with more classes than `kMaxPlanes` two queued classes used to
+  evict each other's plane: `legion_planepin`). A destination area stays open while members of it wait to
+  register (`commandOpen`, `regAreas`), so its formation is not sized without them; a waiting unit asked to
+  register again keeps its place, and the area it holds open follows its current leg.
+* **Awareness** (`awareScan`). The snapshot (movers, groups' accumulators, broad-phase grid) is taken on the scan
+  tick as before; the groups are then judged in id order against it, `kAwareBudget` units a tick and at least one
+  group, resuming on the next tick when a scan needs more. Under the budget (every measured workload) a scan ends
+  in its own tick, exactly as before. A resumed scan judges every group at the snapshot's time: corridor ages and
+  stamps use the scan tick, and a mover's displacement is scaled to `kAwareScan` ticks when its two samples are
+  farther apart (a scan that ran past the next scan tick).
+* **Field service** (`serveFields`). One quota a tick pays relaxations, field initialisation (cells /
+  `kInitDiv`, charged when a build starts; a start whose initialisation does not fit the budget left waits for
+  the next tick, the first start of a tick always fits) and reach-ring cells. Work is served by JOB -- a field being
+  built, however many groups share it -- in four classes, most urgent first: Waiting (a member stands for want of
+  it), FirstRoute, AwareRepair, StaleRefresh (the last two inside the refresh allowance, as before; a refresh's
+  initialisation is charged to that allowance too). A job holds its field for the whole `serveFields` call: a
+  field an install or an eviction drops mid-call is retired at once (out of the totals, no further visit) but
+  freed only when the call ends, so no pointer the rings hold is left dangling. A shared paused build pauses only
+  if every subscriber holding it may pause (`jobPausable`); an idle paused build takes no window slot. Within a
+  class the jobs share the quota by deficit round robin over a window of the class's oldest jobs (`navDrr`:
+  `kWindow` 12, the refresh classes `kRefreshWindow` 3; `kSlice` a visit; the cursor kept across ticks, a visit
+  the budget cut short resuming first without a new slice, so no job of the window is always last); the next
+  oldest enters as one leaves. A job that has gone `kAgeStep` ticks without work moves up a class (`navPromote`),
+  so no class starves another for more than three steps. (Round robin over every job at once was built first
+  and rejected: every in-flight awareness refresh progressed slowly, outlived the 30-tick awareness cadence and
+  was discarded by the next re-plan -- many-1000 discards 41 -> 1,960, arrivals -5%.) Start requests are admitted at the head
+  of their class, oldest first, and a new build only while the class's window has a free slot -- and, while more
+  than half the byte allowance is in use, only while its kind has room over every class (`kFirstInflight` = 2
+  `kWindow` first builds, `kRefreshInflight` = 2 `kRefreshWindow` refreshes: the two windows each kind can be
+  served in). Beyond that a request may only take a field another group already has: a build past the windows
+  would hold its potential array unserved, and an unfinished field is never an eviction victim. (The per-kind cap
+  came in the fix round: a first build admitted as a first route is a Waiting job the next tick, its members
+  standing for it, and a refresh promoted out of its class leaves its slot, so the per-class count alone let
+  builds pile up past the windows -- 151 unserved first builds holding many-5000's whole allowance, 78 refreshes
+  in many-2500. With memory to spare such builds cost nobody room, and capping them there cost outcomes --
+  sched-load stuck 101 -> 162, many-1000 arrivals -9% -- so the cap applies only when memory is short; no gate
+  fixture reaches it.) One refused for want of room is stepped over --
+  at most `kWaitFitScan` (256) times a tick in the Waiting class, whose members stand still, `kFitScan` (8) in the
+  others, so a large request no longer blocks every admission behind it -- and after `kReserveAge` ticks of
+  refusals it reserves (also when its class's window is full): nothing after it takes new room, in its class or a
+  later one, so the room that frees next is its (`NavAdmit`; letting smaller waiting requests start round it was
+  measured and rejected: a large waiting request could be overtaken without end). Behind a stopped scan -- a
+  reservation or the scan bound -- the remaining requests are still tried, but only for a share of a field that
+  already exists: a share takes no room (and lands within `kStillScan` of the field's start, so it delays that
+  field's eviction by no more), so the reserved request loses nothing it waits for (fix round; before, a
+  reservation stopped every admission, shares included, in 84-92% of the overloaded rows' ticks).
+* **Eviction** (`startField`, `evictionHolders`). A request that does not fit evicts finished fields past their
+  tenure, oldest first: a group's own field as before, and (fix round) a shared one once every holder is past its
+  tenure, dropped from all of them. Shared fields used never to be victims, so a few fields shared by groups that
+  never finish could pin the room a reservation waited for: many-1000 under a two-map allowance stopped admitting
+  at tick ~1,600 for the rest of the run. A share lands only within `kStillScan` of a field's start, so sharing
+  extends no field's tenure by more; every finished field is therefore a victim `kFieldTenure + kStillScan` after
+  it starts, which bounds how long a reservation waits (`legion_sched_pin`, `legion_sched_mix`).
+* **Memory** (`NavBytes`, `fieldAllowance`). Deterministic bytes (element counts times fixed sizes) for every
+  container, by category; the field cap is a fixed byte allowance (`kFieldBytes`, 128 MiB, never below two
+  whole-map fields) over the potentials and the unfinished builds' frontiers, no longer 48 whole maps of cells.
+  The process heap is measured beside it by the tools, never read by the sim.
+* **Still synchronous** (reported by `accounting().syncPlane*` and in the record): a stale plane's rebuild on use
+  (legacy nav-grid worlds, or after a whole-map change), the whole-plane relabel an incremental refresh falls back
+  to, the incremental refresh itself (bounded by the changed rectangles), the awareness snapshot (one pass over
+  the members every 30 ticks), a formation's slot ranking when its area closes, a single field's initialisation
+  (at most one whole map).
+* **Exact optimisation in the stage** (d190169c): `packedBound` and `slotsFor` sort their window's cells by a
+  stable counting sort (the cells are collected in ascending order): a 10,000-body area was a 20 ms sort.
+
+Tests: `navbudget_test` (the policy alone under continuous synthetic overload: fairness, service gaps, age
+promotion, a shared job, the fit scan and reservation, shares behind a reservation; each mutated policy fails it),
+`legion_sched_load` and `legion_sched_load_div` (the scheduler under continuous quota load in the sim; budgets
+divided by 512 under `TAK_LEGION_VERIFY`, so registrations really defer and wait for plane builds; the accounting
+counts the waits still open at the end of every tick, so ongoing starvation is measured, not only the waits that
+ended), `legion_sched_mix` (memory pressure, `navbytes`: the fit scan, reservations, request promotion and shares
+behind a stopped scan run in the sim, and every request's wait stays within a bound derived from the allowance,
+the tenure and the measured queue -- removing the reservation or serving by id instead of age fails it),
+`legion_sched_pin` (admission liveness under a two-map allowance: fails if shared fields are never victims),
+`legion_sched_inflight` (many-2500: while memory is short no admission takes a kind past its windows; 78
+refreshes in flight without the per-kind cap),
+`legion_planepin`, `replay_test` (267 refused).
+
+### Legion 10,000 stage 5: route queries (protocol 269)
+
+Movement consumers no longer read a field's cells; they ask a **route** (`src/sim/legion_route.h`) what they need,
+so stage 6 can replace the storage (sparse tiles) behind the same queries. The record, with the measurements, is
+docs/legion-10000-progress.md section 7.5.
+
+* **The interface** (`RouteView` over `RouteGrid`, exact: 8c6efbff). A `Field` is a `RouteGrid` (its window,
+  potentials, build state, serial, epoch, work count) plus the builder's own state; only the builder (`startField`,
+  `advance`, `serve`, `coveredFor`) touches the cells. A view answers, kept apart: `estimate` (direction guidance:
+  exact where settled, a real way's length where reached but unsettled -- the descent stays sound on it, as on a
+  half-built field), `known` (exact or none, never a tentative value), `covered(cell, margin)` (settled with that
+  much key to spare: every cell within cost margin/2 of it is final), `reach` (Unknown / Reachable / Unreachable:
+  Unreachable only on a complete route that spans the cell's static component and was built on the current
+  geometry; Unknown never retires an order), `progress` (a distance with its metric, the route serial) and
+  `geometryEpoch` (freshness, apart from all of the above). `legion_route_test` checks the answers on building,
+  paused, complete, bounded and stale routes.
+* **Demand** (`RouteDemand`, exact wherever the old list never filled: 5f60ce54). A paused build's demand is one
+  entry per cell (the widest margin), in arrival order, indexed, with no cap; the 32-cell list dropped the oldest,
+  so past 32 standing members some members' needs were never seen.
+* **Stated regions** (662574f1). The consumers that read past their own settled cell -- the passage gate, passage
+  lanes and pinwheel, awareness, MV-05's soft-block probe, packed slots, reach rings, the formation entrance, a ring
+  member's walk to its spot -- run on a usable route (complete, or paused once it covered its group), not only a
+  finished one. Each states the region it needs as `(cell, margin)` -- the lanes `kLaneCover` past the body (asked
+  for only when a wall end or a passage lies on the way, `laneTrigger`), awareness `kAwareCover` ahead of the
+  centroid, the entrance its open-ground test's radius round the point, a reach group its ring's spots (part of its
+  first pause) -- and asks a paused build for it (`need`: a demand entry, served in the FirstRoute class through
+  `needIds`, so a stated region does not take the Waiting class's place ahead of standing members and refreshes).
+  It reads the region through certainty checks: `certainValue`, `certainReach` and `descend`'s check take a value
+  as final only where the cell is settled, or proven unreachable (illegal, or outside the route's component on the
+  current geometry). A consumer that meets any other read acts as on a route not yet built (no lane, slot, ring
+  spot, corridor or entrance this time) and the route runs on to done (`Field::runOn`, hashed): no tentative or
+  unknown value is acted on, and the worst case is the old wait for `done`. A formation's entrance waits for its
+  region (`kEntryPending`, hashed) and is computed when it is settled. `serve`'s cover scan is incremental within
+  one call (coverage only grows while a call advances the build), so a 10,000-body group costs O(members) per
+  call, not per slice.
+* **Which builds pause is unchanged.** Solo groups pause as before (C1); slot groups, pinwheel parts and reach
+  groups still run to done. Letting them pause too was built and measured (three offsets of the scale files, and
+  the gate fixtures with `--pause-all`): many-5000's longest field wait halves (1,189-1,234 -> 627-660 ticks) and
+  its arrivals rise 8%, attack and battle fixtures spend a third less field work, but awareness on those paused
+  routes asks for whole-window refreshes that dominate the work, many-2500's arrivals fall 6% and sched-load's
+  stuck bodies double (101 -> 181-211) over the offsets, not diagnosed to the end; it is not taken here
+  (`setPauseAllForTest` / `legion_scenario --pause-all` keep it for tests; stage 6's sparse tiles change the
+  economics it was measured under). `legion_route_paused` runs the consumers on paused routes under
+  `TAK_LEGION_VERIFY`.
+* **Progress across metrics** (35cac631, 9bd3f5c3). An audit of the detour and
+  back-off measures found two that compared values across metrics: the detour record (`Member::nearest`, the least
+  of potential x64 on any field and squared cells to the own goal: a lost field read squared cells far below its
+  potential as a record and restarted the back-off) and the approach holder's gain (across routes, its window
+  restarted wherever the route gave no value). A metric transition is now never a record (a record needs a gain
+  within the current metric, `nearestHere`, as well as a new low of `nearest`); the gain is per route serial with a
+  clock that stops while the route gives no value; and a complete route that a static change has touched since
+  its build no longer traps a body it does not reach (`RouteGrid::touched`, set by `staticChanged` for exactly the
+  groups it marks stale, so a refresh decides; an epoch comparison was used first and left a body Waiting for ever
+  when an unrelated change on another island or plane bumped the shared epoch, since nothing refreshes an untouched
+  route). Re-basing `nearest` itself per metric was built first and rejected: it counted every gain
+  after a refresh as a record, which the rules were not tuned on (battle-assault +9.7% detours; many-1000 -4.4%
+  arrivals and +48% stuck over three offsets). The stall clock, the headway clock (already per metric), the hold
+  clock, the crowd window and the settle bound are unchanged; the settle bound compares potentials across a refresh
+  on purpose (a tolerance that must keep growing under churn).
+* `Progress` is route-wide by definition: a provider built from tiles adds the exit's remaining distance and gives
+  the tile chain its own metric, so a tile-local zero is never read as standing on a goal.
+
+Tests: `legion_route_test` (the view and the demand alone), `legion_route_paused` (the consumers on paused routes:
+verify on, serial == workers, every consumer asked for its region, no read uncertain), `replay_test` (268 refused).
+
+### Legion 10,000 stage 6: hierarchical routes and shared tiles (protocol 270)
+
+Long routes no longer have to be one field over a rectangle of the map. A route is planned over a hierarchy built on
+the exact footprint-origin planes and built sparsely; groups whose demand is low read shared tiles. The record, with
+the measurements and the sector-size experiment, is docs/legion-10000-progress.md section 7.6.
+
+* **The hierarchy** (`src/sim/legion_hier.h`). Each plane is cut into K x K sectors (K = 32). A sector's legal origins
+  fall into regions -- the 4-connected parts inside the sector, which under the step rule (8-connected, a diagonal
+  needs both orthogonal cells) is exactly connectivity inside it -- and regions of neighbouring sectors are joined by
+  portals, the maximal runs of boundary rows (or columns) legal on both sides. Portals carry every legal connection
+  (a diagonal crossing needs an orthogonal one beside it), so two origins share a plane component exactly when their
+  regions are joined by portals; clearance stays the plane's rectangle predicate. Sectors are built on first use and
+  rebuilt on next use after a legality change touches them (the plane refresh invalidates them); identities are
+  generation-aware: a relabelled sector gets a new generation, and a plane slot reused for another mobility class a
+  new PlaneId generation. `legion_hier_test` (random planes, corner cases, incremental rebuilds, the search),
+  `planeMatchesRebuild` (legion_planeincremental: the lazily maintained hierarchy joins exactly the plane's
+  components after random churn) and a rotating sector check under `TAK_LEGION_VERIFY`.
+* **Sparse storage** (`RouteGrid`). A route's potentials live in K x K tiles aligned to the sectors, allocated when the
+  builder first writes one; an unwritten tile reads none. Exact for the window builds (78343da5).
+* **Route plans** (`planRoute`, `routePlan`). A low-demand build (below) whose window has 128k cells or more is
+  planned: the hierarchy's region search (Dijkstra over regions, portal midpoints as entries, at most 65,536 regions)
+  links every member's region to the goals' regions. The route is
+  * a **window** (as before): every high-demand route (one exact field the whole crowd shares), an approach group
+    (its goals unreachable: churn-1000's approach group on a chain re-planned every ~40 ticks, -12% arrivals), small windows,
+    a search that does not reach every member (`route.fallbacks`), or a corridor that would hold more than half the
+    window;
+  * a **corridor** (a low-demand group planning round movers while memory has room, a reach ring, a short trip): the
+    same A* field restricted to the sectors round the tree (a 32-cell halo, more for a pinwheel formation) and round
+    the destination (the crowd's packed disc plus the halo). Exact within the corridor, bounded (an origin outside it
+    is Unknown, never Unreachable). Corridors for big crowds were built and dropped: churn-10000's army lost 20% of its
+    arrivals in one;
+  * a **tile chain** (low demand): the destination's own exact field over the sectors its crowd needs (the packed
+    disc plus 8 cells), then one shared **tile** per transit region of the tree. A tile is the exact field of one
+    region toward the far side of the portal it leaves by, each seed starting at a boundary cost, read with the
+    chain's offset (`RouteGrid::offset`) so its value is route-wide (Progress stays a distance to the goals). A tile
+    leading into another transit region is **aimed**: its boundary cost is linear along the portal, falling toward the
+    next region's exit, so its lanes run parallel toward that exit (an octile distance to the exit's middle was tried
+    first and drew every body of a squad into the middle of each portal: many-2500 stuck +16% over three offsets).
+    One leading into the destination's field is **exact** (the field's values at its seeds). The offset is the
+    largest (estimate - boundary cost) over the seeds, so a cell beside a seed reads more than the seed: every legal
+    descent step strictly lowers the estimate, across tiles too, and ends on a goal -- no loop, no false minimum
+    (`verifyDescent` under `TAK_LEGION_VERIFY` on every finished chain and repair). The regions one portal off the
+    transit regions are the chain's halo: their tiles are attached when a member steps into one (a repair, queued
+    and served before the field quota), so a body pushed off its way is back on the route without a rebuild.
+* **The tile cache** (`Tile`, `tileFor`). Keyed by everything a tile's values depend on, compared whole after a hash
+  match: the plane identity, the sector, region and both portal sectors' generations, the portal run, the boundary
+  costs (an aimed tile's aim, an exact tile's list), the soft level of every origin of the region as the route's
+  command sees it, and the route's mover corridors that reach the region (a group planning round movers gets local
+  corrections there and shared tiles elsewhere). A tile leaving region R by portal P toward the same next exit is the
+  same tile for every route, whatever its destination. Unreferenced tiles (an explicit route count, not shared_ptr
+  use counts) are evicted oldest-use first past 64 MiB, after the requesting chain has attached its tile (so a new
+  tile is never its own victim). A sector where a chain reads two regions gets a tile of the route's own, counted in
+  the field allowance. Hashed: the cache's count and an insert/evict digest.
+* **Search or field by demand** (`routeDemand`, `Group::routeMode`). The bodies that would read the route -- the
+  group's members and those of every other group with the same goals -- at most 48 take a chain (or a corridor); a
+  group that took the field keeps the field until that falls to 24 (hysteresis); a high-demand route needs no search.
+  Chains have a count cap of their own (16,384; the byte allowance bounds their storage): under the shared 1,024-field
+  cap, 1,024 one-body routes held every slot in scatter-10000 and no other route could start for the rest of the
+  run (inherited: the stage-5 head starves the same way, request age 14,154 of 14,400 ticks). A group planning round movers (awareness corridors)
+  takes a corridor while memory has room, so its detour has the corridor's width, and a chain with local
+  corrections once more than half the field allowance is in use (stage 4's "memory short"): corridors for every
+  awareness re-plan of 800 squads filled the allowance and evicted their own fields. Big orders (one-10000's 10,000 bodies) keep one exact
+  field; many small ones (many-10000's 400 squads, scatter-10000's 10,000 single bodies) take chains over shared
+  tiles. A route of fewer than two transit regions outside the destination is a short trip: its corridor or window.
+* **Sharing.** A group with the same goals, soft rule and corridors takes another group's corridor that holds all of
+  its plan's sectors, or a finished chain that already gives every one of its members an estimate -- also when its
+  start may only share (a share allocates nothing).
+* **Widening.** A body a corridor or chain does not reach (outside it, or unreached in it) first gets its halo
+  repair (a chain), waits for the refresh its group is due if a static change touched the route (Unknown is not
+  cut off), else the route is rebuilt round it (`Group::widens`, at most three); then the whole component's window
+  takes over, as for any bounded window. The current solver stays the bounded fallback, never the default for a
+  hard request.
+* **Static changes** reach a corridor or chain only through the tiles it holds (`fieldTouched`); a chain refresh
+  re-plans and finds every tile whose sectors did not change in the cache, so only the dirty tiles are rebuilt.
+* `RouteGrid::fin`: an attached tile is final everywhere it reaches, whatever the build's key.
+
+Tests: `legion_hier_test`, `legion_route_test` (sparse reads), `legion_chains` (eight squads cross a wall to eight
+destinations: chains built, transit tiles shared between squads with different destinations -- hits by routes to
+other goals than the tile's builder --, every body arrives, the descent check and the class check on),
+`legion_chainschurn` (the same with a wall dropped across the routes while the chains build and lifted later),
+`legion_sched_load` / `_div` now with `--no-hier-routes` (`setHierarchicalRoutesForTest`: sched-load's squads on chains
+no longer saturate the quota the scheduler tests need), `legion_chainplane` (25 mobility classes take turns, the
+25th reuses plane slot 0: no chain reads a tile of the previous class; fails if a reused slot keeps its generation),
+`replay_test` (269 refused).
+
+### Legion 10,000 stage 7: static navigation apart from traffic (protocol 271)
+
+Terrain navigation (planes, the hierarchy, static tiles) is kept apart from what units do on it (soft bodies with
+their own-order and allied-flyer exemptions, standing jams, moving streams, occupancy). A static change reaches only
+the routes it can alter, as a closure or an improvement; traffic enters the coarse route choice as a cost and the
+regions a route keeps as a local correction. The record, with the measurements and the variants rejected, is
+docs/legion-10000-progress.md section 7.7.
+
+* **Static changes per cluster, closures apart from improvements.** `refreshPlane` reports each cluster of changed
+  origins as its own box (`StaticChange`), and whether any origin lost legality (a closure) or gained it (an
+  improvement); `staticChanged` tests every route against each box at tile granularity (`fieldTouched`), so a corpse
+  in one corner and a building in another no longer touch every route between them. A **closure** reaching a route
+  makes it stale at once, as before (the plane and `commitGroundStep` still decide every step). An **improvement**
+  only leaves every step the route describes legal and every estimate the length of a real way: the route keeps
+  steering, its "unreached" stops proving anything (`RouteGrid::touched`: Unknown, never Unreachable), and its refresh
+  waits `kImproveDefer` (150) ticks (`Group::improveTick`, hashed), coalescing churn; a member the touched route does
+  not reach, or a member blocked by B1's rule (an improvement may be its way out, not a shortcut), asks for it at once
+  (`legion_staticidle`'s second gap). A refresh installed after the build began is stale again only if a closure reached it
+  while it built (`Field::closed`; until stage 7 any new epoch did, a change on another island included, so under
+  churn anywhere every refresh was born stale).
+* **Trapped orders and churn.** A trapped member re-registers only after an improvement whose box touches its
+  component's box grown by its footprint (`trappedReopened`, over a per-plane log of recent improvements; a stale
+  plane's rebuild counts as a whole-map improvement): a closure cannot open its way. Under never-ending churn
+  elsewhere the 5-minute grace now runs out (`legion_trapped`; inherited from c2c25707 through stage 6).
+* **Chain repair.** A chain region whose sector was relabelled since the plan is re-resolved on the current geometry
+  (`resolveChainNode`: the portal run on the same boundary overlapping the old one most, still leading into the region
+  the route continues in) and its tile rebuilt, instead of being left off the route -- a member there used to wait for
+  a refresh that the next change abandoned again. A chain refreshed for a closure keeps its route: its plan is
+  repaired (`repairPlan`: regions re-resolved, window and digest kept) and the build rebuilds only the dirty tiles, the
+  clean ones coming from the cache; it is searched again when traffic or an improvement asks (`Group::reroute`:
+  an awareness or MV-05 re-plan, a promoted improvement) or when the repair fails (a transit portal closed: the route
+  itself is cut, a global consequence; or a member stands in a region the plan does not hold). A repaired or
+  re-resolved chain is versioned, not exact: its tiles come from more than one geometry epoch, each descent-valid on
+  its own build, the offsets taken from the values actually attached; it is touched and never proves Unreachable
+  (`legion_chainresolve`).
+* **Standing jams are traffic.** A member held `kRestAfter` (60) ticks on its way (`jamStill`) is stamped soft
+  (kind 2) and owned by its group's command: other orders' routes plan round it, its own order never does (the parts
+  of one selection share the command). It stops being soft the update it steps. Until stage 7 nothing that plans saw
+  a held crowd -- the soft scan skipped every Legion member on its way and awareness skips a standing crowd -- so
+  crossing walkers kept walking into the knots they formed. And a member held 60 updates against another order's jam
+  (`blockedByJam`) may plan the short committed detour that formation members already could (the local correction);
+  a queue of its own order is still waited for. The standing jams of each scan cycle are also MV-05 blocks
+  (`jamBlockList`, rebuilt every cycle: a knot grows a few bodies a cycle and never made a dense tile of newly soft
+  cells), so a group whose way meets another order's jam re-plans round it (at most once per 300 ticks) instead of
+  steering into it on the field it built before the jam. Visibility: a jam is stamped for any player, as any still body is
+  (the soft rule has no sight test); no route learns more of an enemy than the still bodies it already planned round.
+  scatter-400 (400 single walkers to unrelated destinations) checks it (`ctest:legion_traffic`).
+* **Traffic in coarse route selection.** The region search (`Hierarchy::search` with a traffic term) charges the way
+  across each region by the share of its origins soft to the route's command: step x (kSoftFactor - 1) x soft /
+  cells (`trafficPenalty`) -- the same soft rule the field and the tiles charge cell by cell, own-order arrivals and
+  jams exempt, liftable allied flyers left out. The counts are cached per sector, keyed by its generation and the
+  soft serials of it and its east, south and south-east neighbours. The search only picks the regions; the exact
+  local correction inside them is the tiles' (never a sum of two fields). `legion_trafficlane`: the chain avoids the
+  gap whose sector holds 121 idle bodies.
+* **Static tiles apart from corrections.** Tiles with no soft level and no mover corridor in their key are terrain
+  alone, the same for every command and player; those with them are the route's traffic correction of the region.
+  They live in two caches (`staticTiles`, 48 MiB; `corrTiles`, 16 MiB), so traffic never evicts terrain; a correction
+  is shared only by routes whose whole traffic view is identical (its key holds the view), so no route reads another
+  player's view.
+* **Eviction.** Each cache keeps its unreferenced tiles in a set ordered by (last use, insertion): a tile enters it
+  when no chain holds it any more and leaves it when one attaches it; eviction pops the oldest -- the same victims, in
+  the same order, as the whole-cache scan it replaced, which ran after every attach while referenced tiles alone held
+  more than the allowance (half of scatter-10000's run time).
+
+Window fields (high demand, small windows, the fallback) still charge soft bodies and corridors inside their own
+build: a window is the whole route rebuilt, the "tile rebuild" end of the brief's corrections. Tests:
+`legion_trapped` (never-ending churn, and the pocket opened under it), `legion_improvedefer`, `legion_chainresolve`,
+`legion_trafficlane`, `legion_traffic`, each shown to fail on a scratch mutation of its mechanism (the record, 7.7).
+
+### Legion 10,000 stage 8: chokepoints, subgroups and arrivals (protocol 272)
+
+Narrow passages carry their queues, groups choose and split between passages by travel time plus queue delay, a
+narrow passage is admitted one direction at a time, two orders to one point are one destination crowd, and the
+arrival rules measure a formation member's headway on its own slot. Retail is untouched. The record, with the
+measurements and the variants rejected, is docs/legion-10000-progress.md section 7.8.
+
+* **Openings.** An opening is a narrow crossing of a hierarchy sector boundary: a portal run (sim/legion_hier.h)
+  bounded at both ends by a pair of origins that do not cross the boundary (a wall, a bank, the map's edge), the run
+  followed past sector corners (a door across one is one opening), fewer than `kOpeningSpan` (64) origins long. Its
+  identity is its cells on the boundary line, so every movement class crossing one bridge shares one record
+  (`Opening`, `openingIndex`; per plane, the openings of each sector side are cached by both sectors' generations,
+  `Plane::sideOps`). Nothing is precomputed: records appear the first time a route's build or a chain walk crosses
+  them.
+* **Entrants and queue delay.** A window or corridor field of a group of `kOpeningMembers` (8) or more records, for
+  every cell it reaches, the first opening its descent crosses and the direction (`Field::via`, 2 bytes a cell of a
+  labelled tile, allocated only where a label is not 0; a tile chain's members read theirs from the chain's nodes).
+  Every `kOpeningScan` (30) ticks each such member adds its queue area, (footX + 1) x (footZ + 1), to its next opening
+  in its direction (`openingScan`). The delay of a crossing is the queue in front of it in cells of travel, area /
+  width (`queueDelay`): on a narrow opening (`kNarrowWidth`, 16 cells) an opposing body counts twice (the direction
+  turns, each turn clears the passage), on a wide one half (the streams keep to their halves). A group's own entrants
+  (`Group::openArea`) are left out of the delays it is charged: a route never plans round itself.
+* **Route choice.** A new window or corridor route carries the delays of its window's openings as charges on the
+  crossing steps (`Field::charges`, route units, halved where the group already crosses -- a commitment), part of its
+  sharing key; the build's bucket ring grows to a power of two above the largest charge. The region search charges
+  them too (chains and corridors). Every scan, a group whose route is `kOpeningHold` (300) ticks old asks the region
+  search where its members would go with today's queues (`predictEntrants`); if a quarter or more of its queue area
+  would move (64 cells or more), it re-plans (`openingDrift`), and the move is committed in the table before the next
+  group is judged -- one group at a time in id order -- and kept while its replacement builds. Without the
+  commitment two groups traded places at every recount.
+* **Subgroups for allocation.** A group of `kAllocMembers` (128) or more is cut by position into `kAllocCells` (64)
+  squares of its members. For the opening with most of its queue it compares, per square, the region search's way
+  through it and round it (closed), and moves squares, the cheapest detour first, to one other passage while the
+  queue left behind still exceeds the other one plus the square's detour (`allocateQueue`). The moved members become
+  a new group of the same order (`splitGroup`: seeds, command and kind copied; member state, formation slots and point
+  kept), which plans its own route; each subgroup is judged on its own afterwards.
+* **Admission at narrow passages.** An opening at most `kNarrowWidth` cells wide is admitted one direction at a time
+  (`admissionHold`). Its strip is the run of cross-sections along the axis across the line no wider than the opening
+  + 2 cells (a bridge's length, a door's wall; `ensureStrip`, per plane epoch). A member whose next opening it is and
+  that stands within `kAdmitZone` bodies of the strip takes the token when the passage is free or open its way and no
+  allied body the other way is in the strip, and otherwise waits (order kept, stall clock stopped). Admitted, it
+  passes until it leaves the zone. Any member standing in a watched strip is an occupant whatever its route says
+  (`watchStrips`). The token turns once the strip has no occupant its way and nothing was admitted for `kAdmitClear`
+  (60) ticks; it closes after the other way waited `kAdmitGreen` (300) ticks. Only allies defer to each other; a group
+  without labels neither waits nor counts. Open ground is never an opening, so nothing waits there.
+* **Shared destination areas.** An explicit order sent within a cell of the point where an earlier explicit area of
+  the same player still gathers (its point live, or its arrivals settled there) takes that area's key and exact point
+  (`sharedArea` over `destArea`, hashed): one command, one formation and crowd bound, and the first order's settled
+  bodies and held queue are not obstacles or traffic to the second.
+* **Arrivals.** A formation member's crowd window also measures its distance to its own slot against its best so far
+  (`Member::windowSlotDist`): gaining half a body or more is not still. And a member with a free step that brings its
+  origin nearer its slot is not pressed (`freeTowardSlot`). Both keep the front of a crowd going to the far side of its
+  area, beyond the click, where every step climbs the field toward the click: before, it settled 20-60 cells short and
+  the area filled from the click backwards.
+* **An entrance per group.** Each group of a destination area finds its own entrance on its own plane and field from
+  its own members (`Point::entries`); members exchange slots only with members coming through the same entrance (a
+  room entered by several doors, a crowd of several footprints). The point's first entrance is computed as before.
+
+Not changed (measured and rejected, section 7.8): awareness by streams (separate movers for spatially separate parts
+of a destination area: swap-2500 lost 13% of its arrivals; split only where terrain separates the parts, a crosser
+lost time on all three offsets); moving an off-slot arrival's claim to the cells it stands on; re-seeding a far
+reach group only for a move of D/8 cells uncapped (the cap of 8 stays).
+
+### Legion 10,000 stage 9: parallel planning (7b9428f8 .. 9064aa35, no protocol change)
+
+Independent planning work runs on the sim's SimPool workers; movement commits stay serial. Everything here is exact:
+the state hash and every observer key are those of the serial run on any worker count and in any job completion
+order (the record, with measurements and the profile of the movement phase, is docs/legion-10000-progress.md
+section 7.9).
+
+* **The rule.** A parallel job's inputs and logical budget are chosen from sim state before it runs; each job reads
+  immutable inputs (copies, or state nothing writes while it runs) and writes only its own slot; the serial pass
+  consumes results by exact identity, in its own order, and waits for a job still running. Nothing a worker computes
+  is published by the worker, no decision reads whether or when a job finished, and a slower machine waits rather than
+  using a different subset. Results that are never consumed are dropped and never counted in `NavBytes`.
+* **Chain tiles beside the serial pass** (`tilePrefetch`, `TileJob`, `takePrefetched`). Before a class's field jobs
+  are served, the chain regions the class's window will attach next are picked in key order while their predicted
+  attach work fits two DRR slices per job and the quota left. Each region's key is computed as `attachNode` does
+  (`tileKey`), and a key neither the tile cache nor the staging holds becomes an asynchronous SimPool job
+  (`SimPool::start`) over its own copies of the seed cells, the legality of the sector and the ring of origins round
+  it, and the sector's region labels; the job and the serial `buildTile` share one body (`tileCore`). The serial pass
+  then: takes a prepared key's soft levels and corridors in `attachNode` when the route, the node and the soft grid
+  (`softSerial`) are unchanged, charging the work the scan would; and, where `tileFor` misses its cache, takes the
+  staged tile with the equal key, charging the work its build counted (`help()`ing with unstarted jobs while it waits
+  for a running one). The batch is joined at the end of the pass (`SimPool::finish`); a staged tile nobody took stays
+  `kStagedTicks` (3) passes, then is dropped. With no workers nothing is prepared.
+* **Plane first builds in row chunks** (`computeRows`). The cell layer of a first plane build (the per-tick budgeted
+  `advanceBuild` stage 1 and `buildPlane`'s whole-map pass) runs in 16-row chunks as a fork-join; the structures are
+  resolved once, in id order, before the fork.
+* **Not parallelised.** Window and corridor field relaxation (`advance`): its slices share one quota with carry-over
+  between jobs, so a parallel version needs per-job budgets fixed before execution -- a schedule change, i.e. a behaviour
+  change, for at most about a millisecond a tick in the most planning-heavy row. Incremental plane refreshes
+  (`refreshPlane`): measured per plane on workers in WE E4.2 -- exact, but the spike is one plane's relabel and the
+  max got worse. Authoritative movement (`move`): serial by design (a unit observes earlier commits in the tick); its
+  profile is in the record.
+* **Instruments and test hooks.** `LegionNavigator::parallelStats()` and legion_scenario's `NAVPAR` stderr line
+  (`--navpar`, and with `--scale`; observation only, and not the same on every worker count). `setParallelForTest` /
+  `--par-force` (jobs inline with no workers) and `--par-perturb SEED` (debug builds also `TAK_LEGION_PAR_PERTURB`):
+  jobs run in a shuffled order with random delays. Under `TAK_LEGION_VERIFY` every reused key is recomputed and every
+  staged tile rebuilt from the plane. ctest `legion_parallel` (tools/legion_parallel_test.py) compares 1, 3 and 7
+  workers, perturbed runs and a forced inline verify run with `--serial`; `simpool_test` covers the asynchronous API.
+
+### Legion 10,000: where the program left it
+
+docs/legion-10000-report.md gives the measured result against the starting revision c2c25707:
+
+* what is met and missed per workload;
+* the regressions found in the final validation;
+* the remaining bottlenecks: crowds at corners and narrow mouths, the queue for many unrelated destinations, and
+  serial movement as the tick.
+
+The stage sections above describe the code as built. The "Known weaknesses" section below predates the program.
+Where it disagrees with the report on a 10,000-body workload, the report's numbers are the current ones.
 
 ## Instruments
 

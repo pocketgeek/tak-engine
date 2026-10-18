@@ -22,8 +22,8 @@ namespace tak::net {
 // `slots` is the START table (kMaxSlots entries). The config holds one player per
 // slot up to the last used (human or AI) one, as setPlayerCount(maxUsed+1) expects:
 // an empty trailing player would enter the state hash. An AI slot takes its income
-// multiplier from its level (Absurd = 2x; the commands do not carry it) and level 0
-// plays the passive (defensive) stance. `mission` forces Retail pathfinding and no
+// multiplier from its level (Absurd and Absurdly Defensive = 2x; the commands do not
+// carry it), and levels 0 and 5 play the passive (defensive) stance. `mission` forces Retail pathfinding and no
 // double sight; the live paths have that from CreateGame, a replay file does not.
 sim::MatchConfig matchConfigFor(const GameOptions& o, const SlotInfo* slots, uint32_t seed,
                                 bool mission = false);

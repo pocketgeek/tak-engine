@@ -72,7 +72,8 @@ const ConvoyTable::Convoy* ConvoyTable::bruteMatch(int player,ConvoyClass cls,in
     return best;
 }
 
-const ConvoyTable::Convoy& ConvoyTable::join(int player,ConvoyClass cls,int32_t x,int32_t z,bool shared,uint32_t now) {
+const ConvoyTable::Convoy& ConvoyTable::join(int player,ConvoyClass cls,int32_t x,int32_t z,bool shared,uint32_t now,
+                                              uint32_t key) {
     prune(now);
     const uint8_t k=uint8_t(cls);
     uint64_t tests=0;
@@ -115,7 +116,7 @@ const ConvoyTable::Convoy& ConvoyTable::join(int player,ConvoyClass cls,int32_t 
         return c;
     }
     Convoy c;
-    c.id=nextId_++;c.first=c.last=now;c.player=player;c.cls=cls;
+    c.id=nextId_++;c.first=c.last=now;c.player=player;c.cls=cls;c.key=key==kNone?now:key;
     c.anchored=shared;c.ax=shared?x:0;c.az=shared?z:0;
     c.fx=x;c.fz=z;c.minX=c.maxX=x;c.minZ=c.maxZ=z;
     const auto& placed=table_.emplace(keyOf(c),c).first->second;
@@ -135,6 +136,7 @@ uint64_t ConvoyTable::checksum() const {
         if(c.anchored) {mix(uint32_t(c.ax));mix(uint32_t(c.az));}
         mix(uint32_t(c.fx));mix(uint32_t(c.fz));
         mix(uint32_t(c.minX));mix(uint32_t(c.maxX));mix(uint32_t(c.minZ));mix(uint32_t(c.maxZ));
+        if(c.key!=c.first) {mix(0x41524541ull);mix(c.key);}   // an explicit area's key (absent before 267)
     }
     mix(nextId_);
     return h;

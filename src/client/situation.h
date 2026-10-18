@@ -236,6 +236,32 @@ private:
             }
             for (const auto& c : bundles[req_.tick + k].cmds) {
                 V v;
+                if (c.kind == tak::net::Cmd::Order) {
+                    // An explicit selection order (protocol 267) is a click already: its verb, point,
+                    // target and exact members, no clustering needed.
+                    if (!c.order) continue;
+                    const auto& t = c.order->tmpl;
+                    switch (t.kind) {
+                    case tak::net::Cmd::Move: v = V::Move; break;
+                    case tak::net::Cmd::AttackMove: v = V::Fight; break;
+                    case tak::net::Cmd::Patrol: v = V::Patrol; break;
+                    case tak::net::Cmd::Attack: v = V::Attack; break;
+                    case tak::net::Cmd::Guard: v = V::Guard; break;
+                    case tak::net::Cmd::Stop: v = V::Stop; break;
+                    case tak::net::Cmd::SetSquad: v = V::Squad; break;
+                    default: continue;
+                    }
+                    if (v == V::Squad && t.targetId == 0) continue;   // eviction of the old members
+                    if ((v == V::Attack || v == V::Guard) && !inSnapshot.count(t.targetId)) continue;
+                    Click click;
+                    click.tick = k; click.verb = v; click.owner = c.player; click.queue = t.queue != 0;
+                    click.target = (v == V::Attack || v == V::Guard) ? t.targetId : 0;
+                    click.squad = v == V::Squad ? t.targetId : 0;
+                    click.x = t.x; click.z = t.z;
+                    for (const int32_t id : c.order->members) if (inSnapshot.count(id)) click.units.push_back(id);
+                    if (!click.units.empty()) clicks_.push_back(std::move(click));
+                    continue;
+                }
                 switch (c.kind) {
                 case tak::net::Cmd::Move: v = V::Move; break;
                 case tak::net::Cmd::AttackMove: v = V::Fight; break;

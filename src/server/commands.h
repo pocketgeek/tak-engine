@@ -7,11 +7,9 @@ inline bool parsePlayerCommands(const std::vector<uint8_t>& payload, std::vector
     tak::net::Reader reader(payload.data(),payload.size());
     const uint32_t count=reader.u32();
     if (!reader.ok || count>payload.size()/35) return false;
-    const auto coordinate=[](float v) {
-        // Simulation destinations use signed 16.16. Reject values that cannot
-        // be converted safely, including finite but enormous coordinates.
-        return std::isfinite(v) && v>=-32768.0f && v<32768.0f;
-    };
+    // Simulation destinations use signed 16.16. Reject values that cannot
+    // be converted safely, including finite but enormous coordinates.
+    const auto coordinate=[](float v) { return tak::net::commandCoordinate(v); };
     parsed.clear();
     parsed.reserve(count);
     for (uint32_t i=0;i<count && reader.ok;++i) {

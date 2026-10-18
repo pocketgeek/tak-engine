@@ -3,7 +3,7 @@
 // The .takrep header, in ONE place.
 //
 // It used to be written out field-by-field in two places -- Server::writeReplay and
-// the client's saveReplayFile -- and read in a third, with a comment in each asking
+// the client's writer (now net/replaywriter.h) -- and read in a third, with a comment in each asking
 // the next person to keep them in step. That is not a contract, it is a hope. The
 // struct below is the contract: both writers fill it, the loader reads it, and a
 // field that is added is added once.

@@ -5,6 +5,22 @@
 //       [--offsets 0,1,-1] [--workers|--serial|--both-exec] [--window R]
 //       [--data <install>] [--json] [--ticks N] [--no-observer] [--neutral]
 //       [--wanderers on|off]   (fbi types keep / lose Standby_wander; default: the file's)
+//       [--no-vertex-probe]    (as the game: the W8 vertex probe off, its lanes.vertex_* keys 0;
+//                               LegionNavigator::setInstrumentProbes, on by default here)
+//       [--budget-div N]       (test: the registration / plane-build / awareness budgets divided by N,
+//                               LegionNavigator::setBudgetDivisorForTest; changes behaviour and hashes)
+//       [--field-bytes N]      (test: the field byte allowance, LegionNavigator::setFieldBytesForTest -- never
+//                               below two whole-map fields; memory pressure on any file; changes behaviour and hashes)
+//       [--pause-all]          (test: every first build may pause, LegionNavigator::setPauseAllForTest -- the
+//                               stage-5 consumers on paused routes; changes behaviour and hashes)
+//       [--sector K]           (test: the routing hierarchy's sector size, LegionNavigator::setSectorSizeForTest --
+//                               the stage-6 sector-size experiment; default 32; changes behaviour and hashes)
+//       [--no-hier-routes]     (test: every route the window build, LegionNavigator::setHierarchicalRoutesForTest --
+//                               the scheduler's load tests; changes behaviour and hashes)
+//       [--par-force] [--par-perturb SEED]   (test: stage 9's parallel planning jobs run even with no SimPool workers,
+//                               and in a shuffled order with random delays, LegionNavigator::setParallelForTest --
+//                               never changes behaviour or hashes; a NAVPAR line on stderr reports the jobs)
+//       [--navpar]             (the NAVPAR line without --scale)
 //       [--check <baseline.json> [--step ID] [--cumulative] [--ratchet "reason"]]
 //       [--baseline <baseline.json> --reason "text" [--since ID]]
 //       [--exit-table <old.json|run.jsonl>] [--anchor <anchor.json>]
@@ -34,7 +50,8 @@
 // is outside them).
 //
 // Keys beside the observer's:
-//   commands             commands landed in the sim
+//   commands             unit commands landed in the sim (an explicit order counts each member)
+//   orders               explicit selection orders landed (protocol 267: Legion clicks; 0 in Retail)
 //   last_command_tick    tick the last of them landed
 //   legion_groups        Legion only: distinct LegionNavigator groups among
 //                        the scenario's units with orders, sampled after the
@@ -81,6 +98,7 @@
 // Exit: 0 ok, 1 a mismatch (serial != workers, or --neutral), 2 usage or a
 // bad file, 77 the file needs --data (ctest SKIP).
 #include "legion_observe.h"
+#include "legion_scale.h"
 #include "legion_scn.h"
 #include "client/ordershape.h"
 #include "sim/convoy.h"
@@ -148,6 +166,17 @@ struct Options {
                             // in-flight order at tick 0; the retail request queue would drain that backlog over ~2000 ticks)
     int wanderers = -1;     // --wanderers on|off overrides the file's; -1: the file's
     bool w9 = false;        // --w9: report the W9 instruments for any file (as `probe w9`)
+    bool scale = false;     // --scale: report the scale.* keys for any file (as `probe scale`)
+    bool vertexProbe = true;   // --no-vertex-probe: the W8 vertex probe off, as in the game (setInstrumentProbes)
+    int budgetDiv = 1;         // --budget-div N: setBudgetDivisorForTest (tests of the over-budget paths)
+    uint64_t fieldBytes = 0;   // --field-bytes N: setFieldBytesForTest (memory pressure; 0: NavBudget::kFieldBytes)
+    bool pauseAll = false;     // --pause-all: setPauseAllForTest (stage 5: the consumers on paused routes)
+    int sector = 0;            // --sector K: setSectorSizeForTest (stage 6: the sector-size experiment; 0: the game's 32)
+    bool hierRoutes = true;    // --no-hier-routes: setHierarchicalRoutesForTest(false) (every route the window build)
+    bool parForce = false;     // --par-force: setParallelForTest (stage 9: the parallel jobs inline with no workers)
+    uint64_t parPerturb = 0;   // --par-perturb SEED: ... in a shuffled order with random delays (0 off)
+    bool navpar = false;       // --navpar: the NAVPAR line without --scale (it comes with --scale and the --par-* flags)
+    uint32_t dumpUnits = 0;    // --dump-units N: a DUMP line per live unit on stderr every N ticks (observation only)
     std::vector<int> trace; // --trace IDS: decision trace lines on stderr for these members (debug build)
     std::vector<std::string> traceGroups;   // ... and whole groups, by name (a token that is not a number)
     // Gate modes: the JSON lines go to tools/legion_check.py instead of stdout.
@@ -167,7 +196,9 @@ void emit(const std::string& line) {
     std::fprintf(stderr, "legion_scenario: %s\n"
         "usage: legion_scenario <file.scn|builtin:NAME> [--mode legion|retail|both] [--offsets 0,1,-1|gate]\n"
         "       [--workers|--serial|--both-exec] [--window R] [--data <install>] [--json] [--ticks N]\n"
-        "       [--no-observer] [--neutral] [--wanderers on|off] [--w9] [--trace ID[,ID...]]\n"
+        "       [--no-observer] [--neutral] [--wanderers on|off] [--w9] [--scale] [--trace ID[,ID...]] [--no-vertex-probe]\n"
+        "       [--budget-div N] [--field-bytes N] [--pause-all] [--sector K] [--no-hier-routes] [--dump-units N]\n"
+        "       [--par-force] [--par-perturb SEED] [--navpar]\n"
         "       [--check B.json [--step ID] [--cumulative] [--ratchet REASON]] [--baseline B.json --reason TEXT\n"
         "       [--since ID]] [--exit-table OLD] [--anchor A.json]   (gate modes: tools/legion_check.py)\n", why);
     std::exit(2);
@@ -740,6 +771,25 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     const tak::sim::LegionNavigator* nav = nullptr;
     std::optional<ApproachProbe> approach;
     if (observe && s.probeApproach) approach.emplace(all);
+    // `probe scale` / --scale (tools/legion_scale.h): each order's packed disc (the observer's, sized for every
+    // body of the convoy the click joined, at the selection's largest footprint) and the bodies it selects.
+    std::optional<tak::legion_scale::ScaleProbe> scale;
+    std::vector<int64_t> scaleR2(s.orders.size(), 0);
+    if (observe && (s.probeScale || opt.scale)) {
+        scale.emplace(all);
+        std::map<uint32_t, int64_t> convoyN;
+        std::vector<int> foot(s.orders.size(), 1), count(s.orders.size(), 0);
+        for (size_t i = 0; i < s.orders.size(); ++i) {
+            for (int id : feed.selection(s.orders[i]))
+                if (const auto* u = w.unit(id); u && u->type) {
+                    foot[i] = std::max({foot[i], u->type->footX, u->type->footZ});
+                    ++count[i];
+                }
+            if (convoys[i]) convoyN[convoys[i]] += count[i];
+        }
+        for (size_t i = 0; i < s.orders.size(); ++i)
+            scaleR2[i] = obs::detail::discRadius2(foot[i], int(std::max<int64_t>(1, convoys[i] ? convoyN[convoys[i]] : count[i])));
+    }
     std::vector<CreepProbe> creeps;
     if (observe)
         for (const auto& sh : s.shapes) {
@@ -818,7 +868,9 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             };
             reach.emplace_back(sh.name, idsOf(sh.a), idsOf(sh.b), sh.range, sh.marks);
         }
-    int64_t commands = 0, lastCommand = -1, groupsAfter = -1, groupsPeak = 0;
+    int64_t commands = 0, orders = 0, lastCommand = -1, groupsAfter = -1, groupsPeak = 0;
+    double applyMaxMs = 0;   // the longest tick of applyCommand calls (membership application; stderr only)
+    uint32_t applyMaxAt = 0;
     std::vector<int> ids;
     auto legionGroups = [&]() -> int64_t {
         ids.clear();
@@ -833,7 +885,7 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     std::vector<std::pair<uint32_t, scn::TruthReport>> truthNow;   // (tick, report) per `truth` line the run reaches
     // TAK_ORDER_STATS=N: log the movers' order-queue shape every N ticks (src/client/ordershape.h; compare a harvested situation with its recording).
     const uint32_t orderStatsEvery = std::getenv("TAK_ORDER_STATS") ? uint32_t(std::strtoul(std::getenv("TAK_ORDER_STATS"), nullptr, 10)) : 0;
-    std::vector<double> tickMs;
+    std::vector<double> tickMs, wholeMs;
     tickMs.reserve(s.ticks);
     const auto start = std::chrono::steady_clock::now();
     for (uint32_t t = 0; t < s.ticks; ++t) {
@@ -844,8 +896,39 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             for (const auto& od : s.orders)
                 if (od.tick == t && !od.queue && !od.append)
                     o->noteSelection(feed.selection(od), convoys[size_t(&od - s.orders.data())]);
+        if (scale)
+            for (const auto& od : s.orders) {
+                if (od.tick != t || od.queue || od.append) continue;
+                if (od.verb == scn::Verb::Stop) {
+                    for (int id : feed.selection(od)) scale->cancel(id);
+                    continue;
+                }
+                const bool pointVerb = od.verb == scn::Verb::Move || od.verb == scn::Verb::Fight || od.verb == scn::Verb::Patrol;
+                if (!pointVerb && od.verb != scn::Verb::Attack && od.verb != scn::Verb::Guard) continue;
+                int64_t px = int64_t(std::lround(double(od.x) * 16)), pz = int64_t(std::lround(double(od.z) * 16));
+                bool point = pointVerb && od.point;
+                if (pointVerb && !od.point && !od.target.empty()) {   // @GROUP: its centroid now, as the feed clicks it
+                    int64_t sx = 0, sz = 0, n = 0;
+                    for (int id : b->groups.at(od.target))
+                        if (const auto* u = w.unit(id); u && u->alive()) { sx += u->x.v >> 16; sz += u->z.v >> 16; ++n; }
+                    if (n) { px = sx / n; pz = sz / n; point = true; }
+                }
+                const int64_t r2 = scaleR2[size_t(&od - s.orders.data())];
+                for (int id : feed.selection(od)) scale->click(w, id, int(t), point, px, pz, r2);
+            }
         const size_t landed = feed.apply(t);
-        if (landed) { commands += int64_t(landed); lastCommand = t; }
+        if (feed.lastApplyMs() > applyMaxMs) { applyMaxMs = feed.lastApplyMs(); applyMaxAt = t; }
+        if (landed) {
+            commands += int64_t(feed.landedUnits().size());   // unit commands: an explicit order's members each
+            for (const auto& c : feed.landed()) orders += c.kind == tak::net::Cmd::Order;
+            lastCommand = t;
+        }
+        if (scale) {
+            // A click is delivered when its own command lands (the uplink is one FIFO: an earlier order or a
+            // squad press still draining lands before it, a queued leg of the same tick after it).
+            for (const auto& [id, n] : feed.clicks()) scale->expect(id, n);
+            for (const int id : feed.landedUnits()) scale->landed(w, id, int(t));
+        }
         if (opt.catchup) {
             if (t == 0) w.setPathBudget(1 << 28);
             else if (t == opt.catchup) w.setPathBudget(tak::sim::kPathBudgetDefault);
@@ -853,11 +936,26 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         const auto tickStart = std::chrono::steady_clock::now();
         w.tick(1.f / 30);
         tickMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tickStart).count());
+        wholeMs.push_back(tickMs.back() + feed.lastApplyMs());   // the whole sim tick: its commands applied, then World::tick
         nav = w.legionNavigator();
+        if (opt.dumpUnits && t % opt.dumpUnits == opt.dumpUnits - 1)
+            // --dump-units: every live unit's position (px), footprint, Legion state and group, steering site and
+            // first order's point (px, -1 none), for rendering a tick (observation only; reads, never writes).
+            for (const auto& u : w.units()) {
+                if (!u.alive() || !u.type) continue;
+                const bool any = !u.orders.empty();
+                int32_t sx = -1, sz = -1;   // the member's goal footprint centre (its slot), raw Fixed
+                if (!nav || !nav->goalPoint(u.id, sx, sz)) sx = sz = -(1 << 16);
+                std::fprintf(stderr, "DUMP t=%u id=%d p=%d x=%d z=%d f=%d st=%d g=%d site=%d gx=%d gz=%d sx=%d sz=%d\n", t, u.id,
+                             u.player, int(u.x.v >> 16), int(u.z.v >> 16), u.type->footX, nav ? nav->unitState(u.id) : 0,
+                             nav ? nav->unitGroup(u.id) : 0, nav ? nav->steerSite(u.id) : -1,
+                             any ? int(u.orders.front().x.v >> 16) : -1, any ? int(u.orders.front().z.v >> 16) : -1, sx >> 16, sz >> 16);
+            }
         if (o) {
             navWork.sample(*o, w);
             o->sample(w, t);
             if (approach) approach->sample(w, nav, int(t));
+            if (scale) scale->sample(w, nav, int(t));
             for (auto& rp : reach) rp.sample(w, nav, int(t));
             for (auto& cp : creeps) cp.sample(w);
             for (auto& bp : behinds) bp.sample(w);
@@ -884,17 +982,60 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         const size_t at = (tickMs.size() * 99 + 99) / 100 - 1;   // nearest rank, as the observer's work p99
         std::nth_element(tickMs.begin(), tickMs.begin() + ptrdiff_t(at), tickMs.end());
         r.tickP99Ms = tickMs[at];
+        if (scale) {   // the scale suite's wall line (stderr only, never in the JSON; tools/legion_scale.py reads it)
+            double sum = 0;
+            int over = 0;
+            for (double v : tickMs) { sum += v; over += v > 1000.0 / 30; }
+            const size_t mid = (tickMs.size() + 1) / 2 - 1;
+            std::nth_element(tickMs.begin(), tickMs.begin() + ptrdiff_t(mid), tickMs.end());
+            // The whole sim tick (apply + World::tick): its p99, max and ticks over 33.3 ms. Legion's
+            // deterministic NavBytes and its capacity estimate (Stats::bytes) at the end, beside the
+            // process heap, so the allocator's overhead can be read off (stage 4).
+            const auto wtop = std::max_element(wholeMs.begin(), wholeMs.end());
+            const double wholeMax = *wtop;
+            const uint32_t wholeAt = uint32_t(wtop - wholeMs.begin());
+            int wholeOver = 0;
+            for (double v : wholeMs) wholeOver += v > 1000.0 / 30;
+            std::nth_element(wholeMs.begin(), wholeMs.begin() + ptrdiff_t(at), wholeMs.end());
+            const double wholeP99 = wholeMs[at];
+            long long navDet = -1, navCap = -1;
+            if (nav) { navDet = (long long)nav->accounting().bytes.total(); navCap = (long long)nav->stats().bytes; }
+            std::fprintf(stderr, "SCALE_WALL %s %s offset=%d %s ticks=%zu tick_mean_ms=%.3f tick_p50_ms=%.3f "
+                         "tick_p99_ms=%.3f tick_max_ms=%.3f@%u over_budget=%d rss_peak_kb=%lld heap_kb=%lld "
+                         "apply_max_ms=%.3f@%u whole_p99_ms=%.3f whole_max_ms=%.3f@%u whole_over_budget=%d "
+                         "navbytes=%lld nav_capacity_bytes=%lld\n",
+                         s.name.c_str(), mode == PathfindingMode::Legion ? "legion" : "retail", offset,
+                         serial ? "serial" : "workers", tickMs.size(), sum / double(tickMs.size()), tickMs[mid],
+                         r.tickP99Ms, r.tickMaxMs, r.tickMaxAt, over, tak::legion_scale::peakRssKb(),
+                         tak::legion_scale::heapKb(), applyMaxMs, applyMaxAt, wholeP99, wholeMax, wholeAt, wholeOver,
+                         navDet, navCap);
+        }
     }
     r.hash = w.stateHash();
     r.digest = mix(r.digest, r.hash);
+    if (nav && (scale || opt.navpar || opt.parForce || opt.parPerturb)) {   // stage 9's parallel jobs (stderr only: not the same on every worker count)
+        const auto p = nav->parallelStats();
+        std::fprintf(stderr, "NAVPAR %s offset=%d %s picked=%llu staged=%llu forks=%llu jobs=%llu used=%llu unused=%llu "
+                     "used_work=%llu unused_work=%llu keys_reused=%llu serial_work=%llu waits=%llu staged_bytes_peak=%llu "
+                     "plane_rows=%llu worker_jobs=%llu fork_ms=%.1f wait_ms=%.1f join_ms=%.1f\n", s.name.c_str(), offset,
+                     serial ? "serial" : "workers", (unsigned long long)p.picked, (unsigned long long)p.staged,
+                     (unsigned long long)p.forks, (unsigned long long)p.jobs, (unsigned long long)p.used,
+                     (unsigned long long)p.unused, (unsigned long long)p.usedWork, (unsigned long long)p.unusedWork,
+                     (unsigned long long)p.keysReused, (unsigned long long)p.serialWork, (unsigned long long)p.waits,
+                     (unsigned long long)p.stagedBytesPeak, (unsigned long long)p.planeRows, (unsigned long long)p.workerJobs,
+                     double(p.forkNs) / 1e6, double(p.waitNs) / 1e6, double(p.joinNs) / 1e6);
+    }
     if (o) {
         r.keys = o->report();
         if (approach) approach->report(r.keys, mode == PathfindingMode::Legion);
+        if (scale && nav) scale->account(*nav);
+        if (scale) scale->report(r.keys, w, mode == PathfindingMode::Legion);
         for (const auto& rp : reach) rp.report(r.keys, w);
         for (const auto& cp : creeps) cp.report(r.keys);
         for (const auto& bp : behinds) bp.report(r.keys);
         if (claims && mode == PathfindingMode::Legion) claims->report(r.keys);
         r.keys.emplace_back("commands", commands);
+        r.keys.emplace_back("orders", orders);
         r.keys.emplace_back("last_command_tick", lastCommand);
         // The convoy lookups' declared per-order bounds (PLAN 3.0: p99 <= 16,
         // max <= 64 tests per order), which per-tick work.convoy_tests cannot
@@ -1065,6 +1206,17 @@ int main(int argc, char** argv) {
             if (opt.window < 1 || opt.window > 600) usage("--window R takes 1..600 ticks");
         } else if (a == "--data") { static std::string d; d = value(); opt.data = d.c_str(); }
         else if (a == "--json") opt.json = true;
+        else if (a == "--scale") opt.scale = true;
+        else if (a == "--no-vertex-probe") opt.vertexProbe = false;
+        else if (a == "--budget-div") opt.budgetDiv = std::max(1, std::atoi(value().c_str()));
+        else if (a == "--field-bytes") opt.fieldBytes = std::strtoull(value().c_str(), nullptr, 10);
+        else if (a == "--pause-all") opt.pauseAll = true;
+        else if (a == "--sector") opt.sector = std::atoi(value().c_str());
+        else if (a == "--no-hier-routes") opt.hierRoutes = false;
+        else if (a == "--par-force") opt.parForce = true;
+        else if (a == "--navpar") opt.navpar = true;
+        else if (a == "--par-perturb") opt.parPerturb = std::strtoull(value().c_str(), nullptr, 10);
+        else if (a == "--dump-units") opt.dumpUnits = uint32_t(std::max(0L, std::atol(value().c_str())));
         else if (a == "--ticks") {
             const long v = std::atol(value().c_str());
             if (v < 1 || v > 10'000'000) usage("--ticks N takes 1..10000000");
@@ -1109,6 +1261,12 @@ int main(int argc, char** argv) {
     const bool gate = !opt.gate.empty();
     if (opt.files.size() > 1 && !opt.neutral && !gate) usage("one scenario file (several only with --neutral or a gate mode)");
     if (!opt.trace.empty() && opt.traceGroups.empty()) tak::sim::LegionNavigator::setTrace(opt.trace);   // debug builds; a no-op in release
+    tak::sim::LegionNavigator::setInstrumentProbes(opt.vertexProbe);   // the lanes.vertex_* keys (Stats only)
+    tak::sim::LegionNavigator::setBudgetDivisorForTest(opt.budgetDiv);
+    tak::sim::LegionNavigator::setPauseAllForTest(opt.pauseAll);
+    if (opt.sector) tak::sim::LegionNavigator::setSectorSizeForTest(opt.sector);
+    tak::sim::LegionNavigator::setHierarchicalRoutesForTest(opt.hierRoutes);
+    if (opt.parForce || opt.parPerturb) tak::sim::LegionNavigator::setParallelForTest(opt.parForce, opt.parPerturb);
     if (gate && opt.neutral) usage("--neutral and a gate mode do not combine");
     for (size_t i = 0; i + 1 < opt.gateArgs.size(); ++i)
         if (opt.gateArgs[i] == "--ratchet" && opt.gate != "check") usage("--ratchet goes with --check");
@@ -1149,6 +1307,9 @@ int runFile(const std::string& file, Options opt) {
     if (opt.ticks) s.ticks = opt.ticks;
     if (opt.gateOffsets && !s.gateOffsets.empty()) opt.offsets = s.gateOffsets;   // the eleven leave its map
     if (opt.wanderers >= 0) s.wanderers = opt.wanderers == 1;
+    // The field byte allowance: --field-bytes, else the file's `navbytes`, else the game's (per file:
+    // a gate run loads several files in one process).
+    tak::sim::LegionNavigator::setFieldBytesForTest(opt.fieldBytes ? opt.fieldBytes : s.navBytes);
     const std::string name = !s.name.empty() ? s.name : std::filesystem::path(file).stem().string();
     if (const auto why = s.needsData(); !why.empty() && !opt.data) {
         if (opt.json) emit("{\"scenario\":\"" + name + "\",\"skipped\":\"needs --data: " + why + "\"}");

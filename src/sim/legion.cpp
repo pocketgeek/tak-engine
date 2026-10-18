@@ -1,17 +1,24 @@
 #include "legion.h"
+#include "legion_route.h"
+#include "legion_hier.h"
 #include "sim.h"
 #include "footprint.h"
 #include "idmap.h"
 #include "retailplacement.h"
+#include "simpool.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <climits>
+#include <deque>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <map>
+#include <queue>
 #include <set>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -29,8 +36,8 @@ namespace {
 // saturated at 65535, about 13,100 orthogonal steps, so a body farther than
 // that along a connected route (serplong.scn's 30-lane serpentine, potential
 // 87,356 at its head) read as unreachable and stood trapped.
-constexpr uint32_t kUnreached=0xffffffff;
-constexpr uint16_t kOrthogonal=5,kDiagonal=7;   // 7/5 = 1.4 ~ sqrt(2)
+constexpr uint32_t kUnreached=route::kNone;
+constexpr uint16_t kOrthogonal=route::kOrthogonal,kDiagonal=route::kDiagonal;   // 7/5 = 1.4 ~ sqrt(2)
 // Relaxations per tick, all fields: about 1.5 ms (4.4 ns each, measured on
 // the jank replay), a third of a tick at 8x game speed (4.17 ms). A field
 // still steers the bodies its frontier has passed while it builds.
@@ -56,6 +63,25 @@ constexpr uint32_t kRestStride=2;
 // the world tests only set the variable). Observation only, never hashed.
 uint32_t gRestStride=kRestStride;
 bool gAwareOff=false;
+bool gPauseAll=false;           // LegionNavigator::setPauseAllForTest (process-wide; false in the game)
+bool gInstrumentProbes=false;   // LegionNavigator::setInstrumentProbes: the vertex probe (Stats only)
+uint64_t gBudgetDiv=1;          // LegionNavigator::setBudgetDivisorForTest (process-wide; 1 in the game)
+uint64_t gFieldBytes=0;         // LegionNavigator::setFieldBytesForTest (process-wide; 0: NavBudget::kFieldBytes)
+// Stage 6: the routing hierarchy's sector size, K = 1 << gSectorShift origins (LegionNavigator::setSectorSizeForTest;
+// 32 in the game, chosen by measurement: docs/legion-10000-progress.md 7.6).
+int gSectorShift=5;
+bool gHierRoutes=true;   // LegionNavigator::setHierarchicalRoutesForTest (process-wide; true in the game)
+// Stage 9 (LegionNavigator::setParallelForTest; process-wide, never hashed, never a decision): run the parallel planning
+// jobs even with no SimPool workers (inline), and shuffle their execution order with random delays (seed; 0 off). A debug
+// build also reads the seed from TAK_LEGION_PAR_PERTURB, so whole-game harnesses (--mpai) can perturb too.
+bool gParForce=false;
+#ifndef NDEBUG
+uint64_t gParPerturb=std::getenv("TAK_LEGION_PAR_PERTURB")?std::strtoull(std::getenv("TAK_LEGION_PAR_PERTURB"),nullptr,10):0;
+#else
+uint64_t gParPerturb=0;
+#endif
+// A per-tick budget of the registration / plane-build / awareness work, divided by the test divisor.
+uint64_t budgetOf(uint64_t units) {return std::max<uint64_t>(1,units/gBudgetDiv);}
 #ifndef NDEBUG
 bool gVerify=std::getenv("TAK_LEGION_VERIFY")!=nullptr;
 // W9 step 0: the members whose decisions are traced to stderr (LegionNavigator::setTrace, or TAK_LEGION_TRACE=ID[,ID...]
@@ -80,11 +106,19 @@ uint32_t gProbe=std::getenv("TAK_LPROBE")?uint32_t(std::strtoul(std::getenv("TAK
 #else
 uint32_t gProbe=0;
 #endif
-constexpr size_t kMaxFields=48,kMaxPlanes=24;     // field budget: kMaxFields whole maps of cells
-constexpr size_t kMaxFieldCount=1024;             // live fields (and in-progress rebuilds), any size
+constexpr size_t kMaxPlanes=24;                   // the field budget is bytes (NavBudget::kFieldBytes)
+constexpr size_t kMaxFieldCount=1024;             // live fields (and in-progress rebuilds), any size -- but chains:
+// Stage 6: a tile chain's own storage is its destination's few tiles (its transit tiles are the shared cache's, bounded
+// by kTileBytes), so chains have a count cap of their own: 1,024 one-body chains held every slot of the count cap in
+// scatter-10000 (10,000 unrelated routes) and no other route could start for the rest of the run. The byte allowance
+// bounds their storage as it bounds every field's.
+constexpr size_t kMaxChainCount=16384;
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
 constexpr uint32_t kNoTick=~0u;                // an unset tick stamp
 constexpr uint32_t kTrappedRetire=9000;        // ticks (5 min) a trapped order waits for terrain to open
+// Stage 7: an improvement (origins that gained legality, and no closure) on a route defers its refresh this many
+// ticks, coalescing churn; a member the touched route does not reach asks for it at once (move).
+constexpr uint32_t kImproveDefer=150;
 // Ticks an approach member's order (an unreachable goal) is kept once the body
 // reaches its approach point, the nearest reachable spot: none, the order drops
 // there (user decision 2026-10-08, PLAN W2 AR-11). Timed from arrival, so the
@@ -125,6 +159,11 @@ constexpr uint32_t kCrowdWindow=45;            // no-progress window for "close 
 // stands on its own slot).
 constexpr int kSettleSlack=2,kSettleGrow=2;
 constexpr uint8_t kRechoices=3;
+// An explicit order's queue (stage 3): its settle bound never grows past its
+// point's crowd bound (the packed area of every body the point gathers, see
+// crowdBound) scaled to the arrival disc, kExplicitSettleNum*(foot+1) /
+// (kExplicitSettleDen*foot), plus kSettleSlack bodies (see settleWindow).
+constexpr uint32_t kExplicitSettleNum=9,kExplicitSettleDen=8;
 constexpr int kSettleRing=64;                  // cells the queue test may visit per window
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
 constexpr uint32_t kPassHold=300;              // ticks a passing body keeps its new lane
@@ -153,6 +192,9 @@ constexpr int kEntryChain=4096;
 constexpr int kEntryNear=24;
 constexpr int kEntryCells=12;
 constexpr int64_t kEntryAcross=2;
+// Stage 5: a formation's entrance waiting for its region on a paused route
+// (Point::entry; formationSlot computes it once the region is settled).
+constexpr int kEntryPending=-2;
 constexpr int kPivotChain=48;
 constexpr int kPivotMaxCells=32;
 constexpr int kPivotMinBodies=2;
@@ -160,6 +202,12 @@ constexpr int kPivotSweeps=48;                 // line probes per pivot aim (bou
 constexpr int kPivotAhead=4;                   // an arc aim is at least this many descent cells ahead
 constexpr int kPivotNear=32;                   // no pinwheel within this many cells of the destination
 constexpr int kPivotLead=6;                    // pursuit distance along the arc (cells)
+// The lanes' stated region (stage 5): the key past a body that the passage
+// gate (its chain to kGateCommit + kGateRun + 3 cells), the passage lanes
+// (kGateRun along the strip) and the pinwheel (kPivotChain cells of chain,
+// kPivotMaxCells of arc beside it) read, two diagonal steps of key per cell
+// (RouteView::covered: margin 2d covers every cell within cost d).
+constexpr uint32_t kLaneCover=2u*kDiagonal*uint32_t(kPivotChain+kPivotMaxCells+2);
 // A lone tree or rock is no wall end (user decision 2026-10-13, see
 // wallOrigin): a run of blocked cells, linked where the body cannot pass
 // between them, that are all blocking tree/rock features and fit in
@@ -217,7 +265,7 @@ constexpr uint32_t kStillScan=30;
 constexpr uint16_t kStillScans=2;
 constexpr uint32_t kSoftFactor=4;
 constexpr uint32_t kSoftNear=3;                // ... within a cell of one
-constexpr uint32_t kBehindFactor=12;           // a pass-behind corridor (see Field::Corridor)
+constexpr uint32_t kBehindFactor=12;           // a pass-behind corridor (see Corridor)
 static_assert((kSoftFactor+kBehindFactor-1)*kDiagonal+kDiagonal<128,"Field buckets: one relaxation's key rise");
 // Group awareness (see awareScan): every kAwareScan ticks each moving
 // formation of at least kAwareMembers is a mover: its centroid, spread and
@@ -231,6 +279,9 @@ constexpr uint32_t kAwareScan=30;
 constexpr int kAwareMembers=8,kAwareAhead=3,kAwareChain=48,kAwareKeep=2;
 constexpr uint32_t kConvoyTicks=90;
 constexpr int kConvoyCells=32;
+// Awareness's stated region (stage 5): its chain of kAwareChain cells ahead of
+// the centroid, two diagonal steps of key per cell (see kLaneCover).
+constexpr uint32_t kAwareCover=2u*kDiagonal*uint32_t(kAwareChain+2);
 constexpr std::array<std::array<int,2>,8> kDirections{{
     {1,0},{-1,0},{0,1},{0,-1},{1,1},{-1,1},{1,-1},{-1,-1}}};
 
@@ -292,36 +343,197 @@ struct LegionNavigator::Impl {
         mutable std::vector<uint32_t> loneGen;
         mutable uint32_t loneGenCur=0;
         mutable uint64_t loneEpoch=~0ull,loneCells=~0ull;
+        // Stage 6: the routing hierarchy over `legal` (sectors, regions, portals; sim/legion_hier.h), built lazily
+        // and invalidated where legality changes; and the plane's identity: its slot and a generation that a
+        // reused slot renews, so nothing keyed on another class's plane ever matches (docs 3.4). Derived from
+        // `legal` and the order of builds; never hashed.
+        hier::Hierarchy hier;
+        hier::PlaneId id;
+        // Stage 7: coarse traffic per hierarchy sector (see trafficPenalty): each region's soft origins, recomputed
+        // when the sector's generation or the soft stamps round it changed. Derived, never hashed.
+        struct SectorTraffic {
+            uint32_t gen=0;uint64_t serial=~0ull;
+            std::vector<uint32_t> all;                                   // per region: origins soft to every command
+            std::vector<std::vector<std::pair<uint64_t,uint32_t>>> owned;  // per region: (owner, origins soft to all but it)
+        };
+        std::vector<SectorTraffic> traffic;
+        // Stage 8: per sector side (s * 2 + which), its openings (see sideOpenings), valid for the generations of
+        // its two sectors. Derived, never hashed.
+        struct SideOpenings {uint32_t genA=0,genB=0;bool valid=false;std::vector<std::array<int32_t,3>> runs;};
+        std::vector<SideOpenings> sideOps;
     };
     // Running totals of the live fields (every Field lives in some group's
     // field or next): startField's cap test reads them instead of walking
     // every group, which cost O(groups) per call and O(groups^2) per tick
     // with many groups waiting at the cap. Derived, never hashed.
-    struct FieldTotals {size_t fields=0,cells=0;};
+    // inflight: the deterministic bytes of the unfinished builds' frontiers (queued bucket entries
+    // and seeds not yet enqueued, Field::inflightBytes), part of the byte allowance (stage 4).
+    // A mover corridor a field plans round (see Field::avoid; stage 6 moved it out of Field so that a chain's tiles
+    // can carry the corridors that reach them).
+    struct Corridor {
+        int64_t x0=0,z0=0,x1=0,z1=0,r=0;bool behind=false;
+        int64_t ux=0,uz=0,L=1,len=0,speed=0,lead=0;
+        bool operator==(const Corridor&) const=default;
+        // 2 inside, 1 within 32 px of it, 0 clear.
+        int level(int64_t px,int64_t pz) const {
+            if(!behind) {
+                const int64_t d2=segDist2(px,pz,*this);
+                return d2<=r*r?2:d2<=(r+32)*(r+32)?1:0;
+            }
+            const int64_t ox=px-x0,oz=pz-z0,q=std::abs(ox*uz-oz*ux)/L;
+            if(q>r+32)return 0;
+            const int64_t s=(ox*ux+oz*uz)/L;
+            const int64_t ax=std::abs(px-x1),az=std::abs(pz-z1);
+            const int64_t t=std::max<int64_t>(0,std::max(ax,az)+std::min(ax,az)*2/5-lead)*65536/speed;
+            const int64_t st=L*t/int64_t(kAwareScan);
+            if(s<st-32||s>st+len+32)return 0;
+            return q<=r&&s>=st&&s<=st+len?2:1;
+        }
+    static int64_t segDist2(int64_t px,int64_t pz,const Corridor& c) {
+        const int64_t vx=c.x1-c.x0,vz=c.z1-c.z0,wx=px-c.x0,wz=pz-c.z0;
+        const int64_t len2=vx*vx+vz*vz;
+        int64_t qx=c.x0,qz=c.z0;
+        if(len2>0) {
+            const int64_t t=std::clamp<int64_t>(wx*vx+wz*vz,0,len2);
+            qx=c.x0+vx*t/len2;qz=c.z0+vz*t/len2;
+        }
+        return (px-qx)*(px-qx)+(pz-qz)*(pz-qz);
+    }
+    };
+    // The step charge of corridors `avoid` at origin (x, z) (Field::corridorCharge and a chain tile's build).
+    static uint32_t corridorChargeOf(const std::vector<Corridor>& avoid,int x,int z,int fx,int fz,uint32_t base) {
+        uint32_t extra=0;
+        const int64_t px=int64_t(x)*16+fx*8,pz=int64_t(z)*16+fz*8;
+        for(const auto& c:avoid) {
+            const int l=c.level(px,pz);
+            if(l==2)extra=std::max(extra,base*((c.behind?kBehindFactor:kSoftFactor)-1));
+            else if(l==1)extra=std::max(extra,base*(kSoftNear-1));
+        }
+        return extra;
+    }
+    // ---- stage 6: shared tiles of tile chains -------------------------------------------------------------------
+    // A TILE is the field of one hierarchy region (sim/legion_hier.h) toward the far side of one of its portals: the
+    // exact distance from every origin of the region, inside its sector, to those seed origins, each seed starting at
+    // its boundary cost. Built whole (Dijkstra over the region, the field's own step rule and soft charges), shared
+    // by every chain whose route leaves that region by that portal with the same boundary costs, and kept in a cache
+    // keyed by everything the values depend on, compared whole after a hash match: the plane's identity (slot and
+    // generation), the sector and region with the generations of both sectors of the portal, the portal run, the
+    // boundary costs (an AIMED tile: the octile distance from each seed to an aim cell -- the next portal's middle;
+    // an EXACT tile: the route's own distance at each seed), and the soft level of every origin of the region (the
+    // soft rule as the route's command sees it). Downstream costs are never left out: an aimed tile's are its aim, an
+    // exact tile's its boundary list. A chain reads a tile with its own offset (rem: the rest of the way from the
+    // tile's seeds, route-wide), so the same tile serves routes to different destinations.
+    struct Tile {
+        hier::PlaneId plane;
+        int sector=0;uint16_t region=0;uint32_t gen=0,ngen=0;   // the region, its sector's and the other side's generation
+        hier::Portal exit;               // the run the region leaves by; its other side holds the seeds
+        bool onA=true;                   // the region is the portal's a side
+        int aim=-1;                      // aimed: the cell boundary costs measure toward; -1: exact
+        std::vector<uint32_t> boundary;  // per pair of the run: the seed's boundary cost (kUnreached: no seed)
+        std::vector<std::pair<uint16_t,uint8_t>> soft;   // the region's nonzero soft levels (cell in the sector, level)
+        std::vector<Corridor> avoid;     // the route's mover corridors that reach the region (awareness: a local correction)
+        uint64_t hash=0;
+        std::vector<uint32_t> values;    // K x K, kUnreached outside the region or unreachable
+        uint32_t maxValue=0;             // the largest finite value (a chain's offset must keep sums below kUnreached)
+        uint32_t routes=0,lastUse=0;     // chains holding it (an explicit count: eviction reads only this), last use
+        // Stage 7: the eviction queue of its cache (unreferenced tiles by (lastUse, seq)), nullptr once evicted: a tile is
+        // in it exactly while no chain holds it, so an eviction pops the oldest instead of scanning the whole cache --
+        // the scan ran after every attach while referenced tiles alone held more than the allowance (scatter-10000:
+        // half of the run's time). Same victims in the same order as the scan.
+        std::set<std::tuple<uint32_t,uint64_t,const void*>>* unref=nullptr;
+        void acquire() {if(routes++==0&&unref)unref->erase({lastUse,seq,this});}
+        void release() {if(--routes==0&&unref)unref->insert({lastUse,seq,this});}
+        void touch(uint32_t now) {
+            if(routes==0&&unref) {unref->erase({lastUse,seq,this});lastUse=now;unref->insert({lastUse,seq,this});}
+            else lastUse=now;
+        }
+        uint64_t seq=0;                  // insertion order (eviction tie-break)
+        // The mobility class it was built for (footprint, depths, slopes): not part of the key -- the plane's
+        // identity already separates classes -- but checked under TAK_LEGION_VERIFY on every attach, so a plane
+        // slot reused without a new generation would be caught reading its previous class's tiles.
+        uint64_t classSig=0;
+        uint64_t builtFor=0;   // the goals (seedsKey) of the route that built it: observation only (cross-destination hits)
+        bool sameKey(const Tile& o) const {
+            return plane==o.plane&&sector==o.sector&&region==o.region&&gen==o.gen&&ngen==o.ngen&&onA==o.onA&&aim==o.aim&&
+                   exit.a==o.exit.a&&exit.b==o.exit.b&&exit.ra==o.exit.ra&&exit.rb==o.exit.rb&&exit.side==o.exit.side&&
+                   exit.start==o.exit.start&&exit.len==o.exit.len&&boundary==o.boundary&&soft==o.soft&&avoid==o.avoid;
+        }
+        uint64_t bytes() const {return 160+uint64_t(values.size())*4+uint64_t(boundary.size())*4+uint64_t(soft.size())*4+uint64_t(avoid.size())*NavSize::kCorridor;}
+    };
+    // One region of a chain (a route plan's transit node): the region, the generations its tile key takes, the node
+    // it leads into (-1: the destination's own field), and the portal it leaves by.
+    struct ChainNode {
+        int s=0;uint16_t r=0;uint32_t gen=0,ngen=0;
+        int parent=-1;
+        hier::Portal exit;bool onA=true;
+    };
+    struct FieldTotals {size_t fields=0,cells=0,chains=0;uint64_t inflight=0;};
     // Integer distance field from a group's goal origins, built with a
     // bounded bucket queue; resumable across ticks under the work quota.
     // A field covers only the bounding box of its seeds' static component
     // (every origin it can ever reach): a group penned in a small region
     // costs that region, not the whole map. Cells outside read kUnreached.
-    struct Field {
+    // Its cells, build state and identity are the RouteGrid (legion_route.h,
+    // stage 5): the builder below writes them; every movement consumer reads
+    // them through a RouteView (view()).
+    struct Field : RouteGrid {
         Field()=default;
         Field(const Field&)=delete;
         Field& operator=(const Field&)=delete;
-        ~Field() {if(totals) {--totals->fields;totals->cells-=potential.size();}}
-        FieldTotals* totals=nullptr;      // set once potential is sized (startField)
+        ~Field() {detach();for(const auto& t:held)t->release();}
+        // Leave the field totals (the field is about to be freed; see Impl::orphan).
+        void detach() {if(totals) {--totals->fields;totals->chains-=kind==2;totals->cells-=counted;totals->inflight-=inflightBytes;totals=nullptr;}}
+        FieldTotals* totals=nullptr;      // set once the window is sized (startField)
+        size_t counted=0;                 // its cells in FieldTotals::cells (the window's)
+        // The scheduler's job state (Legion 10,000 stage 4; a field is one job however many groups
+        // share it): its deficit round robin credit and the last tick it was given work (its start
+        // tick until then). Hashed with the field. inflightBytes: its frontier's share of
+        // FieldTotals::inflight (derived from queued and the seeds, never hashed).
+        int64_t deficit=0;
+        uint32_t lastServed=0;
+        uint64_t inflightBytes=0;
+        // Observation only (accounting's per-class service gaps; never hashed, read by no decision): the
+        // class the job last had and the tick it entered it.
+        NavClass seenClass=NavClass::Count;uint32_t classSince=0;
+        void syncInflight() {
+            const uint64_t now=done?0:uint64_t(queued)*NavSize::kCell32+uint64_t(seedKeys.size()-seedNext)*NavSize::kKeyed;
+            if(totals)totals->inflight=totals->inflight-inflightBytes+now;
+            inflightBytes=now;
+        }
         int plane=-1;
-        uint64_t epoch=0;
-        uint64_t serial=0;                // unique per field built (identifies it to the aim memo)
-        int W=0,x0=0,z0=0,fw=0,fh=0;      // map width; window origin and size (cells)
-        std::vector<uint32_t> potential;  // fw*fh, row-major within the window
-        bool inside(int x,int z) const {return x>=x0&&z>=z0&&x<x0+fw&&z<z0+fh;}
-        size_t local(int x,int z) const {return size_t(z-z0)*size_t(fw)+size_t(x-x0);}
-        uint32_t at(int x,int z) const {return inside(x,z)?potential[local(x,z)]:kUnreached;}
-        uint32_t at(size_t cell) const {return at(int(cell%size_t(W)),int(cell/size_t(W)));}
         // Buckets keyed by potential + heuristic (see advance); the key of a
         // relaxed neighbour is at most (kSoftFactor+1)*kDiagonal above the
-        // popped one, plus a mover corridor's charge (see Corridor).
-        std::array<std::vector<int>,128> buckets;
+        // popped one, plus a mover corridor's charge (see Corridor), plus (stage 8)
+        // a chokepoint's queue charge: a field that carries charges has a ring of
+        // mask+1 buckets, a power of two above its largest key rise.
+        std::vector<std::vector<int>> buckets=std::vector<std::vector<int>>(128);
+        uint32_t mask=127;
+        // Stage 8 (chokepoints, see Opening): `labels` -- the build records in `via`, for every cell it reaches,
+        // the first opening its descent crosses (Opening index + 1, shifted, with the direction bit; 0: none),
+        // so a recount reads each member's next chokepoint from its cell; per tile, allocated with the tile.
+        // `charges`: the queue charge (route units) of crossing an opening in a direction, by label, sorted: the
+        // travel-time-plus-queue-delay costs the route was planned with (part of its sharing key). Hashed with
+        // the field (the charges); the labels are a function of the build.
+        bool labels=false;
+        std::vector<std::unique_ptr<uint16_t[]>> via;
+        struct Charge {uint32_t label=0,cost=0;bool operator==(const Charge&) const=default;};
+        std::vector<Charge> charges;
+        uint16_t viaAt(int x,int z) const {
+            if(via.empty()||!inside(x,z))return 0;
+            const auto& t=via[tileOf(x,z)];
+            return t?t[inTile(x,z)]:uint16_t(0);
+        }
+        bool viaTile(int x,int z) const {return !via.empty()&&via[tileOf(x,z)];}
+        uint16_t& viaSlot(int x,int z) {
+            if(via.empty())via.resize(tiles.size());
+            auto& t=via[tileOf(x,z)];
+            if(!t) {t.reset(new uint16_t[tileCells()]);std::fill(t.get(),t.get()+tileCells(),uint16_t(0));}
+            return t[inTile(x,z)];
+        }
+        uint32_t chargeFor(uint32_t label) const {
+            const auto at=std::lower_bound(charges.begin(),charges.end(),label,[](const Charge& c,uint32_t l) {return c.label<l;});
+            return at!=charges.end()&&at->label==label?at->cost:0;
+        }
         // Movers this field plans round (see awareScan): corridor segments
         // (px) and radius; a step inside one costs kSoftFactor times, within
         // two cells of its edge kSoftNear times. With a soft obstacle on top
@@ -343,62 +555,15 @@ struct LegionNavigator::Impl {
         // at all the group still crosses as before. With a soft obstacle on
         // top a key then rises by at most (kSoftFactor+kBehindFactor-1)*
         // kDiagonal plus the heuristic's kDiagonal = 112, under the 128 buckets.
-        struct Corridor {
-            int64_t x0=0,z0=0,x1=0,z1=0,r=0;bool behind=false;
-            int64_t ux=0,uz=0,L=1,len=0,speed=0,lead=0;
-            bool operator==(const Corridor&) const=default;
-            // 2 inside, 1 within 32 px of it, 0 clear.
-            int level(int64_t px,int64_t pz) const {
-                if(!behind) {
-                    const int64_t d2=segDist2(px,pz,*this);
-                    return d2<=r*r?2:d2<=(r+32)*(r+32)?1:0;
-                }
-                const int64_t ox=px-x0,oz=pz-z0,q=std::abs(ox*uz-oz*ux)/L;
-                if(q>r+32)return 0;
-                const int64_t s=(ox*ux+oz*uz)/L;
-                const int64_t ax=std::abs(px-x1),az=std::abs(pz-z1);
-                const int64_t t=std::max<int64_t>(0,std::max(ax,az)+std::min(ax,az)*2/5-lead)*65536/speed;
-                const int64_t st=L*t/int64_t(kAwareScan);
-                if(s<st-32||s>st+len+32)return 0;
-                return q<=r&&s>=st&&s<=st+len?2:1;
-            }
-        };
         std::vector<Corridor> avoid;
-        uint32_t corridorCharge(int x,int z,int fx,int fz,uint32_t base) const {
-            uint32_t extra=0;
-            const int64_t px=int64_t(x)*16+fx*8,pz=int64_t(z)*16+fz*8;
-            for(const auto& c:avoid) {
-                const int l=c.level(px,pz);
-                if(l==2)extra=std::max(extra,base*((c.behind?kBehindFactor:kSoftFactor)-1));
-                else if(l==1)extra=std::max(extra,base*(kSoftNear-1));
-            }
-            return extra;
-        }
-        static int64_t segDist2(int64_t px,int64_t pz,const Corridor& c) {
-            const int64_t vx=c.x1-c.x0,vz=c.z1-c.z0,wx=px-c.x0,wz=pz-c.z0;
-            const int64_t len2=vx*vx+vz*vz;
-            int64_t qx=c.x0,qz=c.z0;
-            if(len2>0) {
-                const int64_t t=std::clamp<int64_t>(wx*vx+wz*vz,0,len2);
-                qx=c.x0+vx*t/len2;qz=c.z0+vz*t/len2;
-            }
-            return (px-qx)*(px-qx)+(pz-qz)*(pz-qz);
-        }
-        uint32_t current=0;
-        int tx=0,tz=0;bool aimed=false;    // heuristic target: the group's bodies
+        uint32_t corridorCharge(int x,int z,int fx,int fz,uint32_t base) const {return corridorChargeOf(avoid,x,z,fx,fz,base);}
+        // The heuristic target (RouteGrid::tx, tz, aimed) is the group's
+        // bodies.
         std::vector<std::pair<uint32_t,int>> seedKeys;size_t seedNext=0;   // seeds by key, enqueued in order
-        uint32_t heuristic(int x,int z) const {
-            if(!aimed)return 0;
-            const int dx=std::abs(x-tx),dz=std::abs(z-tz);
-            return uint32_t(kOrthogonal*std::max(dx,dz)+(kDiagonal-kOrthogonal)*std::min(dx,dz));
-        }
         size_t queued=0;
-        bool done=false;
-        // The window is a margin around the group's bodies and seeds, not
-        // its whole static component: a body outside it (or cut off from
-        // the seeds inside it) widens the group's next field.
-        bool bounded=false;
-        uint64_t work=0;
+        // The window (RouteGrid::bounded) is a margin around the group's
+        // bodies and seeds, not its whole static component: a body outside it
+        // (or cut off from the seeds inside it) widens the group's next field.
         // The build is A* toward the group's bodies with a consistent
         // (octile) heuristic, run to exhaustion: the finished potentials are
         // the exact distances, the same as plain Dijkstra, but the frontier
@@ -411,40 +576,49 @@ struct LegionNavigator::Impl {
         uint64_t command=~0ull;int softCounts=-1;
         bool ownArrivals=true;   // a settled arrival of `command` stood soft when the build started
         bool liftAllied=true;    // a liftable flyer of an ally of `command` stood soft then
-        bool softened=false;   // some step was charged as a soft obstacle
         std::vector<int> seeds;   // the group's seeds when the build started
         uint64_t seedKey=0;       // seedsKey(seeds): its route-key index entry (see routeIndex)
         uint32_t started=0;       // tick the build started
-        bool settled(size_t cell,uint32_t v) const {
-            if(done)return v!=kUnreached;
-            return v!=kUnreached&&uint32_t(v)+heuristic(int(cell%size_t(W)),int(cell/size_t(W)))<=current;
-        }
-        // Paused (T7 C1): a first build that stopped once its members were
-        // planned; its frontier (buckets, seeds) is kept and it resumes on
-        // demand. Never cleared: a resumed build only settles more cells
-        // (A* with a consistent heuristic never changes a settled
+        // Paused (T7 C1, RouteGrid::covered): a first build that stopped once
+        // its members were planned; its frontier (buckets, seeds) is kept and
+        // it resumes on demand. Never cleared: a resumed build only settles
+        // more cells (A* with a consistent heuristic never changes a settled
         // potential), so what was usable stays usable.
-        bool covered=false;
         // Cells members reached unsettled (or under the cover margin): the
         // waited loop advances the build until each is settled with its
-        // margin, then clears them. (cell, margin), in arrival order.
-        std::vector<std::pair<int,uint32_t>> demand;
+        // margin, then clears them. (cell, margin), in arrival order, every
+        // need represented (RouteDemand, stage 5: no cap).
+        RouteDemand demand;
+        // Stage 5: a consumer met a read a later slice could change (see
+        // runOnRoute): the build no longer pauses and runs on to done.
+        // Hashed when set.
+        bool runOn=false;
+        // Stage 6: what kind of route it is (RouteKind: the window, a corridor whose tiles RouteGrid::allow lists,
+        // or a tile chain) and a digest of the corridor's tiles or of the chain's plan. Hashed when not a window.
+        uint8_t kind=0;
+        uint64_t corridorSig=0;
+        // A chain: the destination's own field is built first over dAllow's tiles (dDone when finished), then its
+        // transit regions get their tiles in plan order (chainNext: the next to attach); dAllow lists the
+        // destination's tiles (the A* build stays inside them; RouteGrid::allow is the route's whole area, its
+        // transit and halo sectors too). held: the shared tiles it reads (each counts it in routes).
+        std::vector<ChainNode> chain;
+        size_t chainNext=0,chainTransit=0;   // the next transit region to attach; the transit regions (the rest: halo)
+        bool dDone=false;
+        std::vector<uint8_t> attached,repairing;   // per node: its tile is read; a repair is queued for it
+        std::vector<uint8_t> dAllow;
+        std::vector<std::shared_ptr<Tile>> held;
         bool usable() const {return done||covered;}
-        // Settled with `margin` of key to spare (the frontier is that far
-        // past it); a done field: reached at all.
-        bool ahead(size_t cell,uint32_t margin) const {
-            const uint32_t v=at(cell);
-            if(done)return v!=kUnreached;
-            return v!=kUnreached&&uint32_t(v)+heuristic(int(cell%size_t(W)),int(cell/size_t(W)))+margin<=current;
-        }
-        // A gate's read (the settle rule, the lift walk): the potential where
-        // it is settled, kUnreached elsewhere, so no gate ever reads an
-        // unsettled (tentative) potential of a paused build.
-        uint32_t known(size_t cell) const {
-            const uint32_t v=at(cell);
-            return settled(cell,v)?v:kUnreached;
-        }
+        RouteView view() const {return RouteView(this);}
+        // Stage 7: which kind of static change reached the route after its build began (staticChanged; both also
+        // set RouteGrid::touched). A CLOSURE (some origin it may cover lost legality) makes its steering stale: its
+        // group refreshes at once, as before. An IMPROVEMENT only (origins gained legality) leaves every step it
+        // describes legal and every estimate the length of a real way -- an upper bound of the new distance -- so
+        // it keeps steering and its refresh may wait (Group::improveTick). Derived from the world's static changes
+        // and the window, never hashed (as touched).
+        bool closed=false,opened=false;
     };
+    static RouteView view(const Field* f) {return f?f->view():RouteView();}
+    struct RoutePlan;
     struct Group {
         int id=0,player=0,plane=-1;
         uint32_t issuedTick=0;
@@ -476,6 +650,8 @@ struct LegionNavigator::Impl {
         // Fields are shared between groups with the same plane and seeds
         // (see sharedField). A field is never written once done.
         std::shared_ptr<Field> field;    // the field members steer by (done or building)
+        // The route its members read (stage 5): the field's view, empty without one.
+        RouteView route() const {return field?field->view():RouteView();}
         // After a static change the finished field keeps steering (the mover
         // re-proves every step) while its replacement builds in `next`.
         std::shared_ptr<Field> next;
@@ -490,10 +666,15 @@ struct LegionNavigator::Impl {
         // The destination area's bound per goal (see areaBound): (field
         // serial, (members, bound)). A function of the field, never hashed.
         std::map<int,std::pair<uint64_t,std::pair<int,uint32_t>>> areaBounds;
+        // The same for an explicit order's crowd bound (see crowdBound): per
+        // goal, the bound of the point's whole crowd in this group's
+        // footprint. A function of the field and the point's hashed
+        // crowdPeak, never hashed.
+        std::map<int,std::pair<uint64_t,std::pair<int,uint32_t>>> crowdBounds;
         // Group awareness (see awareScan): the movers (by command) its
         // fields plan round, their corridors as planned, and the scans each
         // has been off its way.
-        std::vector<uint64_t> avoidCmd;std::vector<Field::Corridor> avoidSeg;std::vector<uint8_t> avoidOff;
+        std::vector<uint64_t> avoidCmd;std::vector<Corridor> avoidSeg;std::vector<uint8_t> avoidOff;
         // Each entry's class, fixed when it was first planned (kAwareHeadOn or
         // kAwareCross, see awareScan; C28). Hashed with a tag when not head on (C27).
         std::vector<uint8_t> avoidKind;
@@ -530,6 +711,30 @@ struct LegionNavigator::Impl {
         uint64_t pausedSerial=0;
         uint32_t byBuiltKey=0;
         std::array<uint64_t,2> routeKeys{};uint8_t routeCount=0;   // its routeIndex entries
+        // Start requests (Legion 10,000 stage 4): the tick the group last became a request (it went on
+        // needFieldIds or staleDoneIds, or a suppressed refresh became eligible again) -- its age orders
+        // the admissions and promotes it -- and the tick its start was first refused for want of room
+        // (NavAdmit::kNever when clear). Both hashed while set.
+        uint32_t requestTick=kNoTick,blockedSince=NavAdmit::kNever;
+        // Stage 7: the tick an improvement (and no closure) first reached its route since the route was built: the
+        // refresh it may want is deferred to improveTick + kImproveDefer, or sooner when a member needs it (a body
+        // the touched route does not reach). kNoTick: none pending. Hashed while set. onImprove: listed in
+        // improveIds (derived, never hashed).
+        uint32_t improveTick=kNoTick;bool onImprove=false;
+        // Stage 7: the pending refresh wants a new route choice -- traffic changed (an awareness or MV-05 re-plan) or
+        // an improvement may have opened a shortcut -- rather than the repair of its chain (planRoute: repairPlan).
+        // Cleared when a build starts. Hashed when set.
+        bool reroute=false;
+        // Stage 6: the plan of the next build (routePlan: kept while the start waits, up to kPlanReuse ticks on one
+        // epoch and membership; hashed while held: its tick, kind and corridor digest), and the corridor widenings
+        // so far (a member outside the corridor rebuilds it; past kMaxWiden the whole-component window takes over;
+        // hashed when set).
+        std::shared_ptr<RoutePlan> plan;
+        uint32_t planTick=kNoTick;uint64_t planEpoch=0;int planMembers=0;
+        uint8_t widens=0;
+        // The demand rule's state (hysteresis, see planRoute): 0 none yet, 1 its last plan took a chain, 2 a field.
+        // Hashed when set.
+        uint8_t routeMode=0;
         // ---- the reach ring (AR-06 part B, PLAN 3.4) ------------------------
         // A reach kind's group (attack, guard) is keyed by its target, the
         // target's origin when the group was seeded (centre) and the members'
@@ -544,6 +749,10 @@ struct LegionNavigator::Impl {
         uint32_t softReplanTick=kNoTick;
         uint32_t scanCycle=~0u;int64_t scanSumX=0,scanSumZ=0;int scanCount=0,scanTail=-1;uint32_t scanTailPot=0;
         std::vector<int> reachIds;
+        // Stage 8: this group's own entrants at the last opening recount, (label, queue area), sorted by label: its
+        // own share of each queue, left out of the delays its route is charged (a route never plans round itself).
+        // Set by the recount and by committed moves (openingDrift, allocateQueue): hashed while non-zero.
+        std::vector<std::pair<uint32_t,uint64_t>> openArea;
         // Two or more members: arrival spots round the target at weapon reach.
         // cells: band 0 (centre distance R-1.5 .. R-0.5 bodies, in the
         // members' static component and in line of sight of the target: the
@@ -680,7 +889,11 @@ struct LegionNavigator::Impl {
         bool approach=false;uint32_t approachSince=0;uint64_t approachEpoch=0;
         // Approach members only (0 otherwise): the least distance still to
         // go to the approach point so far, and the tick it last improved.
-        uint32_t gainBest=0,gainTick=0;
+        // Stage 5: gainSerial is the route (metric) gainBest is measured on
+        // (a new one re-baselines it without counting a gain; derived, like
+        // progressSerial), and gainSeen the last update that read a value
+        // (the clock stops while the route gives none). Hashed with them.
+        uint32_t gainBest=0,gainTick=0,gainSeen=0;uint64_t gainSerial=0;
         int real=-1;                      // the unreachable goal origin an approach member stands in for
         int requested=-1;                 // the goal origin the order named
         int slot=-1;                      // claimed slot index (shared goals)
@@ -692,11 +905,13 @@ struct LegionNavigator::Impl {
         int8_t passRX=0,passRZ=0;         // the side it moved over to
         std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, command (convoy) tick, requested point
         // The 64-unit part of the click this member's order came in (the
-        // order's own issuedTick; the point's tick is the convoy's, A2). The
+        // order's own issuedTick; the point's tick is the convoy's, A2); an
+        // explicit order (protocol 267) lands whole, so it is one part. The
         // pinwheel ranks a member within its part (C33). Hashed when it
         // differs from the point's tick.
         uint32_t part=0;
         Point* pt=nullptr;         // points[point]: alive while this member holds its ref
+        uint16_t ptCells=0;        // the footprint cells it added to its point's crowd (Point::crowdCells)
         std::vector<int> route;           // committed local detour around still bodies
         // Pinwheel (see pivotAim): the member's distance off a wall end it
         // rounds (cells; 0 not yet measured, -1 hugs as the inner file), and
@@ -709,6 +924,11 @@ struct LegionNavigator::Impl {
         // W8 step 1: the origin of the last vertex probe (instrument only:
         // it gates a Stats-only probe, never a decision; not hashed).
         int vertexCell=-1;
+        // Stage 5 (see laneTrigger): its last answer, for origin laneCell on
+        // the route (metric, version) laneRoute, the plane epoch laneEpoch,
+        // the goal laneGoal (descend's tie-break) and the footprint of
+        // laneType. A pure function of those: derived, never hashed.
+        int laneCell=-1,laneGoal=-1;uint64_t laneRoute=0,laneVersion=0,laneEpoch=~0ull;const UnitType* laneType=nullptr;bool laneHit=false;
         // W9 step 0: which steering source moved the member on its last update (LegionNavigator::Site;
         // 0 none). Observation only: never read by a decision, never hashed.
         uint8_t site=0;
@@ -724,6 +944,9 @@ struct LegionNavigator::Impl {
         // in the gate, and the travel axis and sign across the line. Hashed
         // only when set (PLAN 3.0, C27).
         int gateCell=-1;int8_t gateLane=0,gateAxis=0,gateSign=0;
+        // Stage 8 (admission, see admissionHold): the label of the narrow opening this member was admitted
+        // through (0: none), kept until it leaves the opening's zone. Hashed while set.
+        uint16_t passLabel=0;
         // C1 (see meetScan): the last tick this member's lane scan (passAhead) found an oncoming body of
         // another command ahead (kNoTick: never). Hashed only when set (PLAN 3.0, C27).
         uint32_t meetSeen=kNoTick;
@@ -749,11 +972,21 @@ struct LegionNavigator::Impl {
         // detourCount, detourBest) are hashed.
         uint32_t nearest=0xffffffffu;
         int64_t detourBest=-1;            // `nearest` when the last local detour was planned
+        // Stage 5: the least distance read in the current metric
+        // (nearestHere; the metric: nearestKind, nearestSerial, as
+        // progressKind and progressSerial for `progress`). A record now needs
+        // a gain within the metric as well as on `nearest`, so a metric
+        // transition is never a record. Derived, not hashed, like progressKind.
+        uint32_t nearestHere=0xffffffffu;uint8_t nearestKind=0;uint64_t nearestSerial=0;
         // "Close enough": the start of the current no-progress window and the
         // pixel distance to the requested point then (see settleWindow), and
         // the start of the run of still windows that ends there (kNoTick:
         // the last window was not still; read by production exits).
         uint32_t windowTick=0;int64_t windowDist=-1;uint32_t stillSince=kNoTick;
+        // Stage 8: a formation member's least distance (px) to its own slot at a window's start so far and that
+        // slot (windowGoal; -1: no slot then). A body that gained half a body or more on that record over the
+        // window is not still, whatever its distance to the click does (a slot beyond the click). Hashed while set.
+        int64_t windowSlotDist=-1;int windowGoal=-1;
         // The settle rule (settleWindow): the potential bound (0 not yet
         // set), whether the last window found this body queued back to its
         // destination's settled crowd, and the slot re-choices it has made.
@@ -775,10 +1008,20 @@ struct LegionNavigator::Impl {
             int32_t x=0,z=0;int goal=-1;const UnitType* type=nullptr;
             uint64_t field=0,epoch=~0ull,work=0;int cell=-1;   // work: the field's relaxations (a paused build resumes)
         } aim;
+        // Memo of gateCommit's static verdict (Legion 10,000 stage 2): the
+        // inputs of its last call when that call declined before reading
+        // any soft body -- origin, goal, footprint, the finished field, the
+        // static plane and the lane band -- so the same call declines again
+        // without walking the chain. Derived: never hashed.
+        struct GateMemo {
+            int ox=-1,oz=-1,goal=-1,band=-1;const UnitType* type=nullptr;
+            uint64_t field=0,epoch=~0ull,planeEpoch=~0ull;bool valid=false;
+        } gateMemo;
     };
 
     World& w;
     std::vector<Plane> planes;
+    uint32_t planeGeneration=0;   // stage 6: PlaneId::generation's counter (never reused; never hashed)
     // Declared before `groups`: the fields it owns update these as they die.
     FieldTotals fieldTotals;
     // startField found no field to evict at (tick, fieldsDone): until a
@@ -786,6 +1029,7 @@ struct LegionNavigator::Impl {
     // (see startField), so the next caller skips the O(groups) scan.
     uint64_t fieldsDone=0;
     uint32_t noVictimTick=~0u;uint64_t noVictimDone=~0ull;
+    uint32_t admitIdleSince=~0u;   // accounting only (admitGapMax): the first tick of the current run of refusals without a new build
     // Groups, members and anchors (D5): flat id-indexed maps with std::map's
     // ascending visit order (idmap.h).
     IdMap<Group> groups;
@@ -803,7 +1047,13 @@ struct LegionNavigator::Impl {
     // every write of those is followed by listGroup (waited: setWaited),
     // and TAK_LEGION_VERIFY checks each list against a full scan. Never
     // hashed; a peer replaying the same commands lists the same groups.
-    std::set<int> buildingIds,waitedIds,needFieldIds,staleDoneIds;
+    //   needIds      (stage 5) a consumer stated a region its group's paused
+    //                build has not settled (need); served in the FirstRoute
+    //                class -- its members steer meanwhile -- and dropped by
+    //                tick once the build has no demand left or is no longer
+    //                paused.
+    std::set<int> buildingIds,waitedIds,needFieldIds,staleDoneIds,needIds;
+    std::set<int> improveIds;   // stage 7: groups with a deferred improvement refresh (Group::improveTick)
     std::set<std::pair<uint32_t,int>> byBuilt;
     // Route-key index for sharedField: (group plane, seedsKey of a field's
     // seeds) -> ascending ids of the groups whose field or next has those
@@ -812,6 +1062,32 @@ struct LegionNavigator::Impl {
     // so a walk of that entry in id order finds the same first field as a
     // walk of every group. Maintained by listGroup; never hashed.
     std::map<std::pair<int,uint64_t>,std::set<int>> routeIndex;
+    // Join index for registerMove (Legion 10,000 stage 2): the groups by the
+    // equality part of the join predicate, all fixed when a group is made --
+    // (player, plane, kind, approach, and for a reach kind its target id and
+    // ring bucket, else its issue key) -> ascending ids.
+    // A group outside a member's entry fails one of those equalities, so the
+    // first group of the entry, in id order, to pass the whole predicate is
+    // the first of every group to pass it. Maintained where groups are made
+    // and erased; never hashed (TAK_LEGION_VERIFY: against a scan of the
+    // groups, and each join against the brute-force walk).
+    using JoinKey=std::tuple<int,int,int,bool,int64_t,int>;
+    std::map<JoinKey,std::vector<int>> joinIndex;
+    static JoinKey joinKey(const Group& g) {
+        const bool ring=g.kind==LegionMission::Attack||g.kind==LegionMission::Guard;
+        return {g.player,g.plane,int(g.kind),g.approach,ring?int64_t(g.reachTarget):int64_t(g.issuedTick),ring?g.reachBucket:0};
+    }
+    void joinList(const Group& g) {
+        auto& ids=joinIndex[joinKey(g)];
+        ids.insert(std::upper_bound(ids.begin(),ids.end(),g.id),g.id);
+    }
+    void joinUnlist(const Group& g) {
+        const auto at=joinIndex.find(joinKey(g));
+        if(at==joinIndex.end())return;
+        auto& ids=at->second;
+        if(const auto i=std::lower_bound(ids.begin(),ids.end(),g.id);i!=ids.end()&&*i==g.id)ids.erase(i);
+        if(ids.empty())joinIndex.erase(at);
+    }
     // LPROBE only (never hashed, never read by the sim): the four work
     // lists' sizes and the live groups, summed over the ticks.
     uint64_t probeListSum=0,probeGroupSum=0;
@@ -875,8 +1151,12 @@ struct LegionNavigator::Impl {
             on=want;
         };
         put(buildingIds,g.onBuilding,wantsBuilding(g));
+        const bool wasRequest=g.onNeedField||g.onStaleDone;
         put(needFieldIds,g.onNeedField,wantsNeedField(g));
         put(staleDoneIds,g.onStaleDone,wantsStaleDone(g));
+        put(improveIds,g.onImprove,g.improveTick!=kNoTick);
+        if(g.onNeedField||g.onStaleDone) {if(!wasRequest)g.requestTick=w.tickCounter_;}
+        else {g.requestTick=kNoTick;g.blockedSince=NavAdmit::kNever;}
         const bool built=g.field!=nullptr;
         if(g.onByBuilt&&(!built||g.byBuiltKey!=g.built)) {byBuilt.erase({g.byBuiltKey,g.id});g.onByBuilt=false;}
         if(built&&!g.onByBuilt) {byBuilt.insert({g.built,g.id});g.byBuiltKey=g.built;g.onByBuilt=true;}
@@ -887,8 +1167,9 @@ struct LegionNavigator::Impl {
         if(g.onBuilding)buildingIds.erase(g.id);
         if(g.onNeedField)needFieldIds.erase(g.id);
         if(g.onStaleDone)staleDoneIds.erase(g.id);
+        if(g.onImprove)improveIds.erase(g.id);
         if(g.onByBuilt)byBuilt.erase({g.byBuiltKey,g.id});
-        waitedIds.erase(g.id);
+        waitedIds.erase(g.id);needIds.erase(g.id);
     }
 #ifndef NDEBUG
     [[noreturn]] void verifyFail(const char* what) const {
@@ -907,12 +1188,17 @@ struct LegionNavigator::Impl {
     IdMap<Member> members;
     Member* member(int id) const {return members.get(id);}
     void putMember(int id,const Member& m) {
-        auto& slot=members[id];slot=m;
+        auto& slot=members[id];const uint16_t hadCells=slot.ptCells;slot=m;slot.ptCells=hadCells;
         markPass(id);
         if(slot.pt) {
             auto& ids=slot.pt->ids;
             const auto at=std::lower_bound(ids.begin(),ids.end(),id);
-            if(at==ids.end()||*at!=id) {ids.insert(at,id);++slot.pt->partRefs[slot.part];}
+            if(at==ids.end()||*at!=id) {
+                ids.insert(at,id);++slot.pt->partRefs[slot.part];
+                const Unit* u=w.unit(id);
+                slot.ptCells=u&&u->type?uint16_t(std::max(1,u->type->footX)*std::max(1,u->type->footZ)):1;
+                slot.pt->crowdCells+=slot.ptCells;slot.pt->crowdPeak=std::max(slot.pt->crowdPeak,slot.pt->crowdCells);
+            }
         }
     }
     // Settled Legion arrivals: the goal origin each one completed on, and how
@@ -920,18 +1206,20 @@ struct LegionNavigator::Impl {
     // cell (never farther than one cell from that goal origin, so it stays
     // inside its destination area) to open a lane for a same-player member
     // whose own goal it walls in. Capped per body: no endless shuffling.
-    struct Anchor {int goal=-1;uint8_t yields=0;std::tuple<int,uint32_t,int32_t,int32_t> point{};};
+    struct Anchor {int goal=-1;uint8_t yields=0;std::tuple<int,uint32_t,int32_t,int32_t> point{};
+                   uint16_t cells=0;};   // cells: its footprint's (stage 8; derived from its type, never hashed)
     IdMap<Anchor> anchors;
     // Settled arrivals per destination (player, requested point): the crowd
     // a settling body's reach is sized by (see settleReach). A function of
     // `anchors`, kept with it by setAnchor/dropAnchor; never hashed.
     std::map<std::tuple<int,int32_t,int32_t>,int> anchorsAt;
+    std::map<std::tuple<int,int32_t,int32_t>,uint64_t> anchorCellsAt;   // stage 8: their footprint cells (crowdBound)
     static std::tuple<int,int32_t,int32_t> destination(const std::tuple<int,uint32_t,int32_t,int32_t>& p) {
         return {std::get<0>(p),std::get<2>(p),std::get<3>(p)};
     }
     void setAnchor(int id,const Anchor& a) {
         dropAnchor(id);
-        anchors[id]=a;markAnchor(id,true);++anchorsAt[destination(a.point)];
+        anchors[id]=a;markAnchor(id,true);++anchorsAt[destination(a.point)];anchorCellsAt[destination(a.point)]+=a.cells;
     }
     // ---- event-driven erasure (T7 B3) -----------------------------------
     // A settled body stays an anchor while it is alive and idle, or stands
@@ -978,6 +1266,10 @@ struct LegionNavigator::Impl {
     IdMap<Anchor>::iterator dropAnchor(IdMap<Anchor>::iterator it) {
         const auto d=anchorsAt.find(destination(it->second.point));
         if(d!=anchorsAt.end()&&--d->second<=0)anchorsAt.erase(d);
+        if(const auto c=anchorCellsAt.find(destination(it->second.point));c!=anchorCellsAt.end()) {
+            c->second-=std::min<uint64_t>(c->second,it->second.cells);
+            if(!c->second)anchorCellsAt.erase(c);
+        }
         markAnchor(it->first,false);
         return anchors.erase(it);
     }
@@ -1233,7 +1525,7 @@ struct LegionNavigator::Impl {
         if(k==3) {
             // An idle landed flyer lifts for an allied group (see liftFlyers):
             // no obstacle to its fields, still one to anyone else's.
-            const Unit* f=w.unit(soft[c]);
+            const Unit* f=w.unitNoRepair(soft[c]);   // the same unit as unit(); never writes (stage 9: read on SimPool workers)
             return !f||!w.allied(f->player,int(uint32_t(command>>32)));
         }
         if(k!=2)return k!=0;
@@ -1332,8 +1624,13 @@ struct LegionNavigator::Impl {
     }
     // Cell c's covering stamp becomes `id` of `kind` (0, 0: none). The
     // window counts follow the kind (only a kind change moves them).
+    // Stage 7: per hierarchy sector (K = 1 << gSectorShift cells) of the soft grid, a serial bumped by every stamp
+    // change of a cell in it (trafficPenalty's cache key). Derived, never hashed.
+    std::vector<uint64_t> softSector;
+    int softSectorW=0;
     void cellSet(size_t c,int32_t id,uint8_t kind) {
         const uint8_t k0=softKind[c];const int32_t o=soft[c];
+        if(!softSector.empty())++softSector[size_t((int(c)/w.occW_)>>gSectorShift)*size_t(softSectorW)+size_t((int(c)%w.occW_)>>gSectorShift)];
         if(k0!=kind) {
             if(k0)countAll(int(c),k0,-1);
             if(kind)countAll(int(c),kind,1);
@@ -1376,6 +1673,7 @@ struct LegionNavigator::Impl {
             if(v.size()==1)softStack.erase(it);
             if(soft[c]==id)cellSet(c,first,softBodies[size_t(first)].kind);
         });
+        jamIds.erase(id);
         if(b.owner!=~0ull) {
             softOwner[size_t(id)]=~0ull;
             if(auto it=softOwnerCount.find(b.owner);--it->second==0)softOwnerCount.erase(it);
@@ -1427,6 +1725,18 @@ struct LegionNavigator::Impl {
     bool trappedStill(const Member& m) const {
         return m.approach&&policy(m.kind).completes&&(m.state==Trapped||(m.state==Holding&&heldFor(m)>=kRestAfter));
     }
+    // Stage 7 (traffic): a member held kRestAfter ticks on its way -- a standing jam -- is traffic to OTHER orders:
+    // stamped soft (kind 2) and owned by its group's command, as an approach member's clot (trappedStill) is, so
+    // the routes of other orders plan round a jam instead of joining it, while its own order never plans round
+    // itself (the parts of one selection keep one command: same-order semantics). Until stage 7 a held crowd was
+    // seen by nothing that plans: the soft scan skipped every Legion member on its way and awareness skips a
+    // standing crowd, so crossing walkers kept walking into the knot they formed (scatter-2500: 1,545 of 2,500 stuck
+    // at the end). A jam of any player is stamped, as any still body is (the soft rule has no sight test; no route
+    // learns more of an enemy than the still bodies it already plans round). It stops being soft the update the
+    // body steps (drive) and at its next sample otherwise.
+    bool jamStill(const Member& m) const {
+        return policy(m.kind).completes&&!m.approach&&m.state==Holding&&heldFor(m)>=kRestAfter;
+    }
     // ---- MV-05: a block that forms on a planned way ---------------------
     // Cells scanStill made soft over the last kStillScan ticks (one stripe
     // cycle; never hashed: a function of the stamps, which are). Every
@@ -1449,25 +1759,40 @@ struct LegionNavigator::Impl {
         const uint32_t now=w.tickCounter_;
         softBlockList.erase(std::remove_if(softBlockList.begin(),softBlockList.end(),
             [&](const auto& b) {return now-b.first>kSoftBlockKeep;}),softBlockList.end());
-        newBlocks();
-        if(softBlockList.empty())return;
+        newBlocks(softAdded,softBlockList);
+        // Stage 7: the standing jams of this cycle are blocks too (jamBlockList, rebuilt every cycle: a jam is a block
+        // while it stands, not only in the cycle its cells were stamped -- a knot grows a few bodies a cycle and never
+        // made a dense tile of newly soft cells), so a group whose way meets a jam of another order re-plans round it
+        // (at most once per kSoftReplanCooldown) instead of steering into it on the field it built before the jam.
+        jamBlockList.clear();
+        if(!jamIds.empty()) {
+            std::vector<int> cells;
+            for(const int id:jamIds)forStampCells(softBodies[size_t(id)],[&](size_t c) {cells.push_back(int(c));});
+            newBlocks(cells,jamBlockList);
+        }
+        if(softBlockList.empty()&&jamBlockList.empty())return;
         replanForBlocks();
     }
-    void newBlocks() {
-        if(softAdded.empty())return;
-        std::sort(softAdded.begin(),softAdded.end());
-        softAdded.erase(std::unique(softAdded.begin(),softAdded.end()),softAdded.end());
+    // Stage 7: the ids stamped as standing jams (jamStill when stamped), ascending; kept by stamp/unstamp. Derived
+    // from the stamps and the member states they were taken from, never hashed.
+    std::set<int> jamIds;
+    std::vector<std::pair<uint32_t,std::array<int,4>>> jamBlockList;
+    // Bin cells into kSoftTile tiles; append the blocks of dense tiles (8-connected) spanning kSoftBlockCells to out.
+    void newBlocks(std::vector<int>& cells,std::vector<std::pair<uint32_t,std::array<int,4>>>& out) {
+        if(cells.empty())return;
+        std::sort(cells.begin(),cells.end());
+        cells.erase(std::unique(cells.begin(),cells.end()),cells.end());
         const int W=w.occW_;
-        if(W<=0) {softAdded.clear();return;}
+        if(W<=0) {cells.clear();return;}
         const int TW=(W+kSoftTile-1)/kSoftTile;
         std::map<int,std::array<int,5>> tiles;   // tile -> count, box
-        for(const int c:softAdded) {
+        for(const int c:cells) {
             const int x=c%W,z=c/W,t=(z/kSoftTile)*TW+x/kSoftTile;
             auto [it,fresh]=tiles.try_emplace(t,std::array<int,5>{0,x,z,x,z});
             auto& v=it->second;++v[0];
             v[1]=std::min(v[1],x);v[2]=std::min(v[2],z);v[3]=std::max(v[3],x);v[4]=std::max(v[4],z);
         }
-        softAdded.clear();
+        cells.clear();
         std::vector<int> dense;
         for(const auto& [t,v]:tiles)if(v[0]>=kSoftTileDense)dense.push_back(t);
         if(dense.empty())return;
@@ -1488,16 +1813,21 @@ struct LegionNavigator::Impl {
             auto& b=it->second;
             b={std::min(b[0],v[1]),std::min(b[1],v[2]),std::max(b[2],v[3]),std::max(b[3],v[4])};
         }
-        for(const auto& [r,b]:blocks)if(std::max(b[2]-b[0],b[3]-b[1])+1>=kSoftBlockCells)softBlockList.push_back({w.tickCounter_,b});
+        for(const auto& [r,b]:blocks)if(std::max(b[2]-b[0],b[3]-b[1])+1>=kSoftBlockCells)out.push_back({w.tickCounter_,b});
     }
     void replanForBlocks() {
         const uint32_t now=w.tickCounter_;
         for(auto& [id,g]:groups) {
             ++stats.groupLoopIters;
-            if(!g.soft||!g.field||!g.field->done||g.next||g.seeds.empty()||g.scanCount==0||g.scanCycle!=now/kStillScan)continue;
+            // Stage 5: a usable route (complete, or paused); on a paused one
+            // the chains read through the certainty checks, and an uncertain
+            // read has the route run on to done (no re-plan this cycle).
+            if(!g.soft||!g.route().usable()||g.next||g.seeds.empty()||g.scanCount==0||g.scanCycle!=now/kStillScan)continue;
             if(g.softReplanTick!=kNoTick&&now-g.softReplanTick<kSoftReplanCooldown)continue;
-            const Field& f=*g.field;
+            const RouteView f=g.route();
             const Plane& p=plane(g.plane);
+            const int comp=f.complete()?-1:groupComp(g,p);
+            unsure=false;
             const int fx=p.footX,fz=p.footZ,foot=std::max(fx,fz);
             const uint64_t command=g.command;
             const int counts=softCountsFor(fx,fz);
@@ -1509,18 +1839,21 @@ struct LegionNavigator::Impl {
                 if(start<0||hit)continue;
                 int cell=start;
                 for(int k=0;k<kSoftChain&&!hit;++k) {
-                    const uint32_t v=f.at(size_t(cell));
+                    uint32_t v=kUnreached;
+                    if(!certainValue(f,p,comp,size_t(cell),v))break;
                     if(v==kUnreached||v<nearSeed)break;
                     const int x=cell%Wp,z=cell/Wp;
-                    for(const auto& [formed,b]:softBlockList)
-                        if(formed>=g.built&&x+fx>b[0]&&x<=b[2]&&z+fz>b[1]&&z<=b[3]&&softAt(x,z,fx,fz,command,counts)) {hit=true;break;}
-                    const int next=descend(p,f,x,z,g.seeds.front());
-                    if(next<0)break;
+                    for(const auto* list:{&softBlockList,&jamBlockList})
+                        for(const auto& [formed,b]:*list)
+                            if(formed>=g.built&&x+fx>b[0]&&x<=b[2]&&z+fz>b[1]&&z<=b[3]&&softAt(x,z,fx,fz,command,counts)) {hit=true;break;}
+                    const int next=descend(p,f,x,z,g.seeds.front(),0,0,true);
+                    if(next<0||unsure)break;
                     cell=next;
                 }
             }
+            if(unsure) {runOnRoute(g,RouteNeed::SoftBlock);continue;}
             if(!hit)continue;
-            g.softReplanTick=now;g.stale=true;g.demand=true;
+            g.softReplanTick=now;g.stale=true;g.demand=true;g.reroute=true;
             listGroup(g);
             ++stats.softReplans;
         }
@@ -1530,6 +1863,8 @@ struct LegionNavigator::Impl {
         const size_t n=size_t(w.occW_)*w.occH_;
         if(soft.size()!=n) {
             soft.assign(n,0);softKind.assign(n,0);softCellCount=0;softStack.clear();softCounts.clear();
+            softSectorW=(w.occW_+(1<<gSectorShift)-1)>>gSectorShift;
+            softSector.assign(size_t(softSectorW)*size_t((w.occH_+(1<<gSectorShift)-1)>>gSectorShift),0);
             softOwner.clear();softOwnerCount.clear();liftCells.clear();liftSoftPlayers.clear();softHash=0;
             for(auto& b:softBodies) {b.stamped=false;b.owner=~0ull;}
         }
@@ -1541,7 +1876,7 @@ struct LegionNavigator::Impl {
             const Unit* found=bodyUnit(id);
             const Member* m=found?member(found->id):nullptr;
             if(!found||!found->alive()||found->embarked()||!found->type||(found->type->canFly&&found->flightGroundMode!=1)||
-               found->type->isStructure()||(m&&m->state!=Arrived&&!reachStill(*found,*m)&&!trappedStill(*m))) {
+               found->type->isStructure()||(m&&m->state!=Arrived&&!reachStill(*found,*m)&&!trappedStill(*m)&&!jamStill(*m))) {
                 if(id<softBodies.size()&&softBodies[id].present) {
                     unstamp(int(id));
                     softBodies[id].present=false;softBodies[id].scans=0;
@@ -1575,12 +1910,14 @@ struct LegionNavigator::Impl {
             }
             const uint8_t kind=u.type->canFly&&w.legionLiftable(u,u.player)?3:owner!=~0ull?2:1;
             if(b.stamped&&b.ox==ox&&b.oz==oz&&b.fx==fx&&b.fz==fz&&b.kind==kind&&b.owner==owner&&b.player==u.player)continue;
+            if(m&&jamStill(*m))++acct.jamStamps;
             unstamp(int(id));
             b.ox=ox;b.oz=oz;b.fx=fx;b.fz=fz;b.kind=kind;b.owner=owner;b.player=u.player;
             // MV-05: cells a body standing still makes soft that were not
             // (a liftable flyer and an engaged or ring-held member never).
             if(kind!=3&&!m)forStampCells(b,[&](size_t c) {if(!soft[c])softAdded.push_back(int(c));});
             stamp(int(id));
+            if(m&&jamStill(*m))jamIds.insert(int(id));
         }
         stats.stillUnitsProcessed+=processed;
         stats.stillPerResidueMax=std::max<uint64_t>(stats.stillPerResidueMax,processed);
@@ -1592,6 +1929,8 @@ struct LegionNavigator::Impl {
     template<class Fail> void verifySoft(Fail&& fail) {
         ++stats.softHashVerifyTicks;
         if(softHashFull()!=softHash)fail("softHash differs from its recompute over the stamps");
+        for(const int id:jamIds)
+            if(size_t(id)>=softBodies.size()||!softBodies[size_t(id)].stamped)fail("jamIds holds a body without a stamp");
         if(w.tickCounter_%kStillScan!=0||soft.empty())return;
         std::vector<int32_t> first(soft.size(),0);
         std::map<int,std::vector<int>> stack;
@@ -1647,6 +1986,7 @@ struct LegionNavigator::Impl {
         // positions on demand (see pivotAim), so never hashed.
         int64_t liveX=0,liveZ=0;uint32_t liveTick=~0u;
         int64_t awareX=0,awareZ=0;bool awareSeen=false;   // centroid (px) at the last awareScan (hashed)
+        uint32_t awareTick=0;   // the tick of that sample (a resumed scan can make samples more than kAwareScan apart; derived, never hashed)
         SlotShape shape;   // I2 probe, set by assignFormation (never hashed)
         // Members per 64-unit part (Member::part) over `ids`: the pinwheel's
         // per-part cap and threshold (C33). Derived, never hashed.
@@ -1663,8 +2003,16 @@ struct LegionNavigator::Impl {
         std::vector<int> queue;
         // The cell where the way into the area enters it past a narrowing (see entrance; -1: none): an
         // origin of the footprint of the member it was found for. Its members exchange slots there
-        // (enterArea). Hashed while set.
-        int entry=-1;
+        // (enterArea). Hashed while set. kEntryPending (stage 5): its region is not settled yet on a
+        // paused route; formationSlot computes it once it is, trying at most once a tick (entryTick: the
+        // tick of the last try, only ever compared with the current tick, so not hashed, like movedTick).
+        int entry=-1;uint32_t entryTick=kNoTick;
+        // Stage 8: one entrance per group of the point (its own movement plane and footprint, its own field: a
+        // room entered by several doors, a crowd of several footprint classes), group id -> (entrance, last try
+        // tick) with the values `entry` takes. `entry` is the entrance assignFormation found for the point's
+        // first group, kept as before; a group without its own entry computes it at its members' next claim.
+        // Hashed while set (the entrances).
+        std::map<int,std::pair<int,uint32_t>> entries;
         // C1 (W9 lane C, see meetScan): a head-on meet latched for this Point. tick: the latch (kNoTick:
         // none); contact: the last tick a member found the other command oncoming or awareness kept its
         // head-on entry; ax,az,L: the travel axis (px, the live centroid to the requested point when it
@@ -1683,6 +2031,13 @@ struct LegionNavigator::Impl {
         // The unseen cue (see stampMeet): the tick some member stamped meetSeen and the least oncoming
         // point found in that tick (a min reduction: independent of the update order). Hashed while set.
         uint32_t cueTick=kNoTick;std::tuple<int,uint32_t,int32_t,int32_t> cueOther{};
+        // The footprint cells of the members `ids` lists (crowdCells) and the
+        // most they ever were (crowdPeak): the size of the whole crowd this
+        // point gathers, every footprint plane together (an explicit
+        // order's settle ceiling, see crowdBound). crowdCells is a function of
+        // `ids` (each member keeps what it added, Member::ptCells); crowdPeak
+        // is history, hashed for an explicit area's point.
+        uint64_t crowdCells=0,crowdPeak=0;
     };
     std::map<std::tuple<int,uint32_t,int32_t,int32_t>,Point> points;
     // C1: the points with an unseen cue (cueTick set) and the points with a latched meet, ascending.
@@ -1744,6 +2099,299 @@ struct LegionNavigator::Impl {
 #ifndef NDEBUG
     Stats verified;        // the Stats at the previous verifyIndexes
 #endif
+    // ---- navigation accounting (Legion 10,000 stage 4; observation only, never hashed) ----------
+    // Cumulative counts of the NavWork classes Stats does not carry; workTotals() adds the Stats
+    // ones. Every tick() closes the window the previous one opened (foldWindow): the work of the
+    // window -- the tick's own plus what ran between ticks (orders) -- goes into the per-class
+    // maxima. No decision reads any of it.
+    // tileBuildServed: the part of tileBuild an advanceChain returned to serveFields (so in Stats::fieldWork too).
+    struct NavCounters {uint64_t initCells=0,resolveCells=0,planeBuild=0,planeRelabel=0,ringCells=0,connectivity=0,routeSearch=0,tileBuild=0,tileBuildServed=0;};
+    mutable NavCounters navc;
+    mutable NavAccounting acct;
+    std::array<uint64_t,size_t(NavWork::Count)> acctMark{};
+    std::array<uint64_t,size_t(NavWork::Count)> workTotals() const {
+        std::array<uint64_t,size_t(NavWork::Count)> t{};
+        t[size_t(NavWork::FieldRelax)]=stats.fieldWork-std::min(stats.fieldWork,navc.tileBuildServed);
+        t[size_t(NavWork::FieldInit)]=navc.initCells;
+        t[size_t(NavWork::PlaneBuild)]=navc.planeBuild;
+        t[size_t(NavWork::PlaneRelabel)]=navc.planeRelabel;
+        t[size_t(NavWork::Registration)]=stats.registrations*NavBudget::kRegBase+stats.joinIterations+navc.resolveCells;
+        t[size_t(NavWork::Awareness)]=stats.awarePairs+stats.awareWork;
+        t[size_t(NavWork::SlotSearch)]=stats.slotSearchCells-std::min(stats.slotSearchCells,navc.ringCells);
+        t[size_t(NavWork::RingBuild)]=navc.ringCells;
+        t[size_t(NavWork::Connectivity)]=navc.connectivity;
+        t[size_t(NavWork::TileBuild)]=navc.tileBuild;
+        t[size_t(NavWork::RouteSearch)]=navc.routeSearch;
+        return t;
+    }
+    // The open window's work per class (peek: accounting() reads it without closing the window).
+    void windowMax(NavAccounting& a) const {
+        const auto t=workTotals();
+        uint64_t all=0;
+        for(size_t c=0;c<t.size();++c) {
+            const uint64_t d=t[c]-std::min(t[c],acctMark[c]);
+            a.tickMax[c]=std::max(a.tickMax[c],d);a.total[c]=t[c];all+=d;
+        }
+        a.tickAll=std::max(a.tickAll,all);
+    }
+    void foldWindow() {windowMax(acct);acctMark=workTotals();}
+    // Whole-plane relabels an incremental refresh fell back to: synchronous stages (2 W H units each).
+    void noteSyncRelabels(uint64_t n) const {
+        if(!n)return;
+        acct.syncPlaneCalls+=n;acct.syncPlaneMax=std::max<uint64_t>(acct.syncPlaneMax,2*uint64_t(width())*height());
+    }
+    // NavBytes (navbudget.h): element counts x fixed sizes, every container the navigator keeps.
+    NavBytes navBytes() const {
+        using S=NavSize;
+        NavBytes b;
+        for(const auto& p:planes)
+            b.planes+=p.legal.size()*S::kCell8+p.comp.size()*S::kCell32+p.compSize.size()*S::kCell32+p.compBox.size()*S::kBox+
+                p.cell.size()*S::kCell8+p.queue.size()*S::kCell32+p.run.size()*S::kCell16+p.column.size()*S::kCell32+
+                p.pending.size()*S::kBox+p.nearMemo.size()*S::kMemo+p.nearGen.size()*S::kCell32+p.spanMemo.size()*S::kCell32+
+                p.spanGen.size()*S::kCell32+p.loneMemo.size()*S::kCell8+p.loneGen.size()*S::kCell32;
+        for(const auto& p:planes)b.portals+=p.hier.bytes();   // stage 6: sectors, region labels, portals
+        // Stage 8: the opening records and their index, and each plane's per-side opening runs.
+        b.portals+=openings.size()*(48+S::kNode+24);
+        for(const auto& p:planes)for(const auto& so:p.sideOps)b.portals+=16+so.runs.size()*12;
+        b.tiles+=tileBytes;                                   // stage 6: the shared tile cache
+        std::set<const Field*> seen;
+        for(const auto& [id,g]:groups) {
+            for(const Field* f:{g.field.get(),g.next.get()}) {
+                if(!f||!seen.insert(f).second)continue;
+                b.fields+=S::kField+f->counted*S::kCell32+f->seeds.size()*S::kCell32+f->avoid.size()*S::kCorridor;
+                // Stage 8: its opening labels (2 bytes a cell of each labelled tile) and queue charges.
+                for(const auto& t:f->via)if(t)b.fields+=f->tileCells()*S::kCell16;
+                b.fields+=f->charges.size()*8;
+                if(f->done)continue;
+                for(const auto& q:f->buckets)b.inflight+=q.size()*S::kCell32;
+                b.inflight+=f->seedKeys.size()*S::kKeyed+f->demand.size()*(S::kKeyed+S::kNode+16);   // RouteDemand: entry + index node
+            }
+            b.metadata+=S::kGroup+g.seeds.size()*S::kCell32+(g.sharing.size()+g.peak.size())*(S::kNode+8)+g.ids.size()*S::kCell32+
+                g.reachIds.size()*S::kCell32+(g.areaBounds.size()+g.crowdBounds.size())*(S::kNode+24)+
+                g.avoidCmd.size()*(8+S::kCorridor+1+1+1+4)+g.ring.cells.size()*(S::kCell32+1+S::kCell32);
+            for(const auto& [seed,sl]:g.slots)b.metadata+=S::kNode+16+sl.cells.size()*S::kCell32+sl.taken.size();
+        }
+        const uint64_t setNode=S::kNode+8;
+        b.queues+=(buildingIds.size()+waitedIds.size()+needFieldIds.size()+staleDoneIds.size()+needIds.size()+byBuilt.size())*setNode;
+        b.queues+=(handIds.size()+pendingMeets.size()+meetIds.size())*(S::kNode+16);
+        for(const auto& [k,ids]:routeIndex)b.queues+=S::kNode+16+ids.size()*setNode;
+        for(const auto& [k,ids]:joinIndex)b.queues+=S::kNode+32+ids.size()*S::kCell32;
+        for(const auto& [id,m]:members)b.metadata+=S::kMember+m.route.size()*S::kCell32;
+        for(const auto& [key,pt]:points) {
+            b.metadata+=S::kPoint+S::kNode+pt.cells.size()*(S::kNode+S::kCell32)+pt.ids.size()*S::kCell32+
+                (pt.partRefs.size()+pt.partLive.size())*(S::kNode+32);
+            b.queues+=pt.queue.size()*S::kCell32;
+        }
+        b.metadata+=(anchors.size()+yielding.size()+approachDone.size()+parts.size()+anchorsAt.size())*(S::kNode+32);
+        b.metadata+=resolved.size()*(S::kNode+24);
+        b.scratch+=soft.size()*S::kCell32+softKind.size()*S::kCell8+softOwner.size()*S::kMemo+softBodies.size()*32+
+            grounded.size()*S::kCell32+liftHome.size()*S::kCell32+passMask.size()*S::kCell16+liftBuckets.size()*S::kCell16+
+            watchMark.size()+anchorMark.size();
+        for(const auto& k:softCounts)b.scratch+=k.at.size()*S::kCell32;
+        // Retained scratch: the plane refresh's split-search marks, the lift walk's goal map, the
+        // structure stamps and the per-plane change boxes.
+        b.scratch+=refreshScratch.seenGen.size()*S::kCell32+refreshScratch.seenBy.size()*S::kCell32+
+            liftGoal.size()*S::kCell32+liftGoalCells.size()*S::kCell32+(stamps.size()+nowStamps.size())*24+
+            structurePtrs.size()*S::kKeyed+touch.size()*S::kKeyed+refreshList.size()*S::kKeyed+refreshResults.size()*24+
+            groundedCells.size()*S::kCell32+groundedIds.size()*S::kCell32+liftHomeCells.size()*S::kCell32+
+            liftedIds.size()*S::kCell32+passMaskList.size()*S::kCell32+liftBucketList.size()*S::kCell32;
+        b.queues+=regQueue.size()*24+regSeq.size()*S::kCell32+regPlane.size()+planeWant.size()*S::kCell32+
+            regAreas.size()*(S::kNode+16)+regAreaOf.size()*S::kMemo;
+        b.scratch+=(pbOrder.size()+pbSorted.size())*S::kKeyed+pbCount.size()*S::kCell32;
+        b.scratch+=awMovers.size()*S::kMover+awAcc.size()*(S::kNode+48)+awByCommand.size()*16+awGrid.size()*24;
+        b.scratch+=jamIds.size()*S::kNode+jamBlockList.size()*S::kBox;
+        for(const auto& cell:awGrid)b.scratch+=cell.size()*S::kCell32;
+        return b;
+    }
+    // ---- the registration budget (Legion 10,000 stage 4) -----------------------------------------
+    // registerMove costs NavBudget::kRegBase units plus its join candidates and its goal-resolution
+    // cells. A window -- one batch of commands between two ticks, or one tick -- may spend
+    // kRegBudget units (the registration that starts while any is left may overshoot by itself).
+    // While the budget lasts and nothing waits, a registration runs at once, exactly as before, so a
+    // window under budget behaves as it always did. Past it, registrations wait in a FIFO (regQueue;
+    // a waiting unit brakes in move()) that the next tick() drains first, oldest first, with its
+    // fresh budget; while any waits, every later registration queues behind it, so a burst cannot
+    // starve the units ahead of it. A cancel runs at once and drops the unit's queued registration;
+    // a queued unit asked to register again keeps its place (registerMove reads its orders then), and the area it
+    // holds open is rechecked against its current leg.
+    // Hashed while not empty (the waiting ids, in order). The budgets themselves never outlive their
+    // window (refilled at each tick() and at each command batch), so they are not state.
+    struct RegEntry {uint32_t seq=0;int id=0;uint32_t since=0;int player=-1;uint32_t area=0;};
+    // (player, area key) -> live queued registrations of that area (the area a point of the unit's leg
+    // would key on: its convoy, else its issue tick); commandOpen keeps such an area's formation open.
+    // A function of the queue (hashed), never hashed itself.
+    std::map<std::pair<int,uint32_t>,int> regAreas;
+    std::vector<uint64_t> regAreaOf;   // unit id -> its live entry's (player, area), packed (~0: none)
+    void areaCount(int id,int player,uint32_t area,int delta) {
+        if(player<0)return;
+        auto& n=regAreas[{player,area}];n+=delta;
+        if(n<=0)regAreas.erase({player,area});
+        if(size_t(id)>=regAreaOf.size())regAreaOf.resize(size_t(id)+1,~0ull);
+        regAreaOf[size_t(id)]=delta>0?(uint64_t(uint32_t(player))<<32|area):~0ull;
+    }
+    // The (player, area key) a unit's current leg would key its point on (player -1: no leg).
+    static std::pair<int,uint32_t> legArea(const Unit& u) {
+        if(u.orders.empty())return {-1,0u};
+        const auto& leg=u.orders[World::currentLeg(u.orders)];
+        return {u.player,leg.convoyTick!=ConvoyTable::kNone?leg.convoyTick:leg.issuedTick};
+    }
+    void areaRelease(int id) {
+        if(size_t(id)>=regAreaOf.size()||regAreaOf[size_t(id)]==~0ull)return;
+        const uint64_t k=regAreaOf[size_t(id)];
+        areaCount(id,int(uint32_t(k>>32)),uint32_t(k),-1);
+    }
+    std::deque<RegEntry> regQueue;
+    std::vector<uint32_t> regSeq;      // unit id -> the seq of its live queue entry (0: not queued)
+    uint32_t regNextSeq=0;
+    size_t regLive=0;                  // live entries in regQueue
+    // Units whose live entry waits for its plane's first build (regPlane[id]) and their count: an
+    // in-tick registration may pass entries that wait only for a plane (another class's, or a plane
+    // being built), never one that waits for the budget.
+    std::vector<uint8_t> regPlane;
+    size_t regBlocked=0;
+    uint64_t regBudget=0;              // units left in the current window
+    uint64_t planeLeft=0;              // plane-build units left in the current window (buildPlanes, planeReady)
+    bool regCommandWindow=false;       // the current window is a command batch (refilled at its first call)
+    bool queued(int id) const {return id>=0&&size_t(id)<regSeq.size()&&regSeq[size_t(id)]!=0;}
+    void setPlaneBlocked(int id,bool on) {
+        if(size_t(id)>=regPlane.size())regPlane.resize(size_t(id)+1,0);
+        if(bool(regPlane[size_t(id)])==on)return;
+        regPlane[size_t(id)]=on;if(on)++regBlocked;else --regBlocked;
+    }
+    void unqueue(int id) {
+        if(!queued(id))return;
+        setPlaneBlocked(id,false);areaRelease(id);
+        regSeq[size_t(id)]=0;--regLive;
+        while(!regQueue.empty()&&regSeq[size_t(regQueue.front().id)]!=regQueue.front().seq)regQueue.pop_front();
+    }
+    // Is the unit's plane ready for a registration? On a placement map a plane never built (or still
+    // building) is not: its first build is an incremental job (buildPlanes, kPlaneBuildBudget a tick)
+    // the registration waits for instead of a whole-map build inside the call. A built plane is ready
+    // (a stale one -- legacy nav-grid worlds, or after a whole-map change -- still rebuilds in plane(),
+    // reported as a synchronous stage). Marks the plane wanted (planeWant, first come first served).
+    // A plane whose whole build can never exceed one window's plane budget (8 W H units at most:
+    // maps up to 131k cells) is built at once, inside the call, exactly as before, while any of the
+    // window's budget is left (so it may overshoot by one such plane); only a larger one becomes the
+    // incremental job.
+    bool planeReady(const Unit& u) {
+        if(!placementPlane()||width()<2||height()<2)return true;
+        const int index=planeFor(*u.type);
+        Plane& p=planes[size_t(index)];
+        if(p.stage==0&&p.epoch!=~0ull)return true;
+        if(8*uint64_t(width())*uint64_t(height())<=budgetOf(NavBudget::kPlaneBuildBudget)&&planeLeft>0) {
+            const uint64_t before=navc.planeBuild;
+            rebuild(p,false);
+            planeLeft-=std::min(planeLeft,navc.planeBuild-before);
+            return true;
+        }
+        if(std::find(planeWant.begin(),planeWant.end(),index)==planeWant.end())planeWant.push_back(index);
+        return false;
+    }
+    // Planes registrations wait for, in demand order; a plane leaves when built. Hashed while not
+    // empty, with each one's build stage and cursor.
+    std::vector<int> planeWant;
+    void registerCharged(Unit& u) {
+        const uint64_t joins=stats.joinIterations,cells=navc.resolveCells;
+        registerMove(u);
+        const uint64_t units=NavBudget::kRegBase+(stats.joinIterations-joins)+(navc.resolveCells-cells);
+        regBudget-=std::min(regBudget,units);
+    }
+    // A supported leg asks for registration (World::requestPath, or move() itself).
+    void requestRegister(Unit& u) {
+        if(!w.inTick_&&!regCommandWindow) {
+            regBudget=budgetOf(NavBudget::kRegBudget);planeLeft=budgetOf(NavBudget::kPlaneBuildBudget);regCommandWindow=true;
+        }
+        if(queued(u.id)) {
+            // It keeps its place, but its leg may have changed without a cancel: the area it holds open
+            // (regAreas, commandOpen) follows the current leg, never the one it was queued with.
+            const auto [areaPlayer,area]=legArea(u);
+            const uint64_t key=areaPlayer<0?~0ull:(uint64_t(uint32_t(areaPlayer))<<32|area);
+            if(size_t(u.id)>=regAreaOf.size()||regAreaOf[size_t(u.id)]!=key) {areaRelease(u.id);areaCount(u.id,areaPlayer,area,+1);}
+            return;
+        }
+        const bool open=regLive==regBlocked&&regBudget>0;   // nothing waits that this could overtake
+        const bool ready=planeReady(u);
+        if(open&&ready) {registerCharged(u);return;}
+        if(size_t(u.id)>=regSeq.size())regSeq.resize(size_t(u.id)+1,0);
+        if(++regNextSeq==0)regNextSeq=1;
+        regSeq[size_t(u.id)]=regNextSeq;++regLive;
+        const auto [areaPlayer,area]=legArea(u);
+        regQueue.push_back({regNextSeq,u.id,w.tickCounter_,areaPlayer,area});
+        areaCount(u.id,areaPlayer,area,+1);
+        if(!ready) {setPlaneBlocked(u.id,true);++acct.planeWaits;}
+        else ++acct.regDeferred;
+    }
+    // move()'s own re-registrations: false while the unit waits in the queue.
+    bool registerNow(Unit& u) {requestRegister(u);return !queued(u.id);}
+    void requestCancel(int id) {unqueue(id);leave(id);}
+    // tick()'s first step (refill) and its step after the plane builds (no refill): the waiting
+    // registrations, oldest first, while the budget lasts. One whose plane is not ready yet keeps its
+    // place and the walk goes on past it (planes are per mobility class, so a class waiting for its
+    // first build never holds up another); at most kRegScan of them are stepped over per pass.
+    static constexpr size_t kRegScan=65536;
+    void drainRegistrations(bool refill) {
+        if(refill) {regBudget=budgetOf(NavBudget::kRegBudget);planeLeft=budgetOf(NavBudget::kPlaneBuildBudget);regCommandWindow=false;}
+        std::deque<RegEntry> kept;
+        size_t skipped=0;
+        while(regLive&&regBudget>0&&!regQueue.empty()&&skipped<kRegScan) {
+            const RegEntry e=regQueue.front();regQueue.pop_front();
+            if(regSeq[size_t(e.id)]!=e.seq)continue;   // cancelled, or re-queued behind
+            Unit* u=w.unit(e.id);
+            if(u&&u->alive()&&u->type&&!planeReady(*u)) {kept.push_back(e);setPlaneBlocked(e.id,true);++skipped;continue;}
+            setPlaneBlocked(e.id,false);areaRelease(e.id);
+            regSeq[size_t(e.id)]=0;--regLive;
+            acct.regWaitMax=std::max<uint64_t>(acct.regWaitMax,w.tickCounter_-e.since);
+            if(!u||!u->alive()) {leave(e.id);continue;}
+            registerCharged(*u);   // an unsupported leg by now: registerMove just leaves
+        }
+        if(!kept.empty())regQueue.insert(regQueue.begin(),kept.begin(),kept.end());
+        while(!regQueue.empty()&&regSeq[size_t(regQueue.front().id)]!=regQueue.front().seq)regQueue.pop_front();
+    }
+    // The first builds registrations wait for (planeWant, in demand order): kPlaneBuildBudget units a
+    // tick of the same resumable build the background prebuild runs (identical result to
+    // buildPlane + labelPlane). A plane finished here takes its waiting registrations in this tick.
+    void buildPlanes() {
+        uint64_t& budget=planeLeft;
+        bool finished=false;
+        for(const int index:planeWant) {
+            if(budget==0)break;
+            if(size_t(index)>=planes.size())continue;
+            Plane& p=planes[size_t(index)];
+            if(p.stage==0&&p.epoch!=~0ull)continue;
+            if(p.stage==0)startBuild(p);
+            const uint64_t spent=advanceBuild(p,budget);
+            navc.planeBuild+=spent;budget-=std::min(budget,spent);
+            finished|=p.stage==0;
+        }
+        std::erase_if(planeWant,[&](int index) {
+            return size_t(index)>=planes.size()||(planes[size_t(index)].stage==0&&planes[size_t(index)].epoch!=~0ull);
+        });
+        if(finished)planesFinished();
+    }
+    // A plane became ready: the entries that waited only for it wait for the budget now (their mark
+    // clears, so nothing bypasses them as plane-blocked), and the FIFO drains with what is left.
+    void planesFinished() {
+        for(const auto& e:regQueue) {
+            if(regSeq[size_t(e.id)]!=e.seq||size_t(e.id)>=regPlane.size()||!regPlane[size_t(e.id)])continue;
+            const Unit* u=w.unit(e.id);
+            if(!u||!u->type)continue;
+            const int index=findPlaneFor(*u->type);
+            if(index>=0&&planes[size_t(index)].stage==0&&planes[size_t(index)].epoch!=~0ull)setPlaneBlocked(e.id,false);
+        }
+        drainRegistrations(false);
+    }
+    // planeFor without creating or evicting (-1: no plane for the class yet).
+    int findPlaneFor(const UnitType& t) const {
+        const bool legacy=!placementPlane();
+        const int maxDepth=t.canFly||t.domain!=UnitType::Domain::Ground?10000:(t.maxWaterDepth>0?t.maxWaterDepth:20);
+        const int minDepth=t.domain==UnitType::Domain::Water?(t.minWaterDepth>0?t.minWaterDepth:13):-10000;
+        for(size_t i=0;i<planes.size();++i) {
+            const auto& p=planes[i];
+            if(p.legacy==legacy&&p.footX==t.footX&&p.footZ==t.footZ&&(legacy||
+               (p.maxDepth==maxDepth&&p.minDepth==minDepth&&p.maxSlope==t.maxSlope&&p.maxWaterSlope==t.maxWaterSlope)))return int(i);
+        }
+        return -1;
+    }
     explicit Impl(World& world):w(world) {}
 
     int width() const {return w.hW_;}
@@ -1795,6 +2443,23 @@ struct LegionNavigator::Impl {
     }
 
     // ---- static plane -------------------------------------------------
+    // Does a waiting registration need plane `index` (its unit's mobility class)? Walks the FIFO; only
+    // asked when a plane must be evicted (24 planes in use), so rarely.
+    bool queuedNeeds(int index) const {
+        if(!regLive||size_t(index)>=planes.size())return false;
+        const Plane& p=planes[size_t(index)];
+        for(const auto& e:regQueue) {
+            if(regSeq[size_t(e.id)]!=e.seq)continue;
+            const Unit* u=w.unit(e.id);
+            if(!u||!u->type)continue;
+            const auto& t=*u->type;
+            const int maxDepth=t.canFly||t.domain!=UnitType::Domain::Ground?10000:(t.maxWaterDepth>0?t.maxWaterDepth:20);
+            const int minDepth=t.domain==UnitType::Domain::Water?(t.minWaterDepth>0?t.minWaterDepth:13):-10000;
+            if(p.footX==t.footX&&p.footZ==t.footZ&&(p.legacy||(p.maxDepth==maxDepth&&p.minDepth==minDepth&&
+               p.maxSlope==t.maxSlope&&p.maxWaterSlope==t.maxWaterSlope)))return true;
+        }
+        return false;
+    }
     int planeFor(const UnitType& t) {
         const bool legacy=!placementPlane();
         const int maxDepth=t.canFly||t.domain!=UnitType::Domain::Ground?10000:(t.maxWaterDepth>0?t.maxWaterDepth:20);
@@ -1812,7 +2477,8 @@ struct LegionNavigator::Impl {
             for(size_t i=0;i<planes.size();++i) {
                 bool used=false;
                 for(const auto& [id,g]:groups) {++iters;if(g.plane==int(i)) {used=true;break;}}
-                if(!used&&(victim<0||planes[i].lastUse<planes[size_t(victim)].lastUse))victim=int(i);
+                // A plane still building, or one a waiting registration needs, is never a victim.
+                if(!used&&planes[i].stage==0&&!queuedNeeds(int(i))&&(victim<0||planes[i].lastUse<planes[size_t(victim)].lastUse))victim=int(i);
             }
             stats.groupLoopIters+=iters;
             if(victim>=0) {
@@ -1821,11 +2487,14 @@ struct LegionNavigator::Impl {
                 auto& p=planes[size_t(victim)];
                 p.legacy=legacy;p.footX=t.footX;p.footZ=t.footZ;p.maxDepth=maxDepth;p.minDepth=minDepth;
                 p.maxSlope=t.maxSlope;p.maxWaterSlope=t.maxWaterSlope;p.epoch=~0ull;
+                p.id={uint16_t(victim),++planeGeneration};   // the slot holds another class now
+                if(size_t(victim)<improveLog.size())improveLog[size_t(victim)]=ImproveLog{{},epoch};
                 return victim;
             }
         }
         Plane p;p.legacy=legacy;p.footX=t.footX;p.footZ=t.footZ;p.maxDepth=maxDepth;p.minDepth=minDepth;
         p.maxSlope=t.maxSlope;p.maxWaterSlope=t.maxWaterSlope;p.epoch=~0ull;
+        p.id={uint16_t(planes.size()),++planeGeneration};
         planes.push_back(std::move(p));
         return int(planes.size()-1);
     }
@@ -1847,7 +2516,7 @@ struct LegionNavigator::Impl {
         }
         p.cell.assign(size_t(W)*H,0);
         auto& cell=p.cell;
-        computeCells(p,0,0,W-1,H-1);
+        computeRows(p,0,H);
         // Separable rectangle test: run of legal cells to the right >= footX
         // on footZ consecutive rows, and the footprint's bounds (x+fx<W).
         std::vector<uint16_t> run(size_t(W)*H,0);
@@ -1923,6 +2592,31 @@ struct LegionNavigator::Impl {
         }
         return work;
     }
+    // Stage 9: the cell layer of rows [z0, z1) (computeCells over whole rows), in chunks of kPlaneRowChunk rows on the
+    // SimPool: a row's cells depend only on the world and the structures over them, and each chunk writes only its own
+    // rows of p.cell, so the layer is the same whatever the chunks' order (the structures are resolved once, in id
+    // order, before the fork: computeCells' own lookup may repair World's id table, a write). The rows a call covers
+    // are the caller's (a first build's per-tick budget, or the whole map): chosen before the fork, never by it.
+    static constexpr int kPlaneRowChunk=16;
+    void computeRows(Plane& p,int z0,int z1) {
+        const int W=width();
+        if(z1<=z0)return;
+        if(!prefetching()||z1-z0<2*kPlaneRowChunk) {computeCells(p,0,z0,W-1,z1-1);return;}
+        const std::vector<const Unit*>* outer=structureList;
+        std::vector<const Unit*> list;
+        if(!outer) {
+            syncUnitLists();
+            for(const int id:lists.structures)if(const Unit* u=w.unit(id))list.push_back(u);
+            structureList=&list;
+        }
+        const size_t chunks=size_t(z1-z0+kPlaneRowChunk-1)/kPlaneRowChunk;
+        par.planeRows+=uint64_t(z1-z0);
+        parallelJobs(chunks,[&](size_t k) {
+            const int a=z0+int(k)*kPlaneRowChunk;
+            computeCells(p,0,a,W-1,std::min(z1,a+kPlaneRowChunk)-1);
+        });
+        structureList=outer;
+    }
     // (World::unitScript: the dense mirror of unitScripts_, kept by every
     // insert and erase of it.)
     bool yardOpen(int id) const {
@@ -1986,8 +2680,13 @@ struct LegionNavigator::Impl {
     // few dozen changed cells. Clusters are rectangles whose boxes, grown by
     // the relabel margin plus the footprint, overlap; cluster order is the
     // order of each cluster's first rectangle.
+    // Stage 7: one cluster's legality change -- the box of the origins whose legality changed, and whether any lost
+    // it (a closure) or gained it (an improvement). syncStatic hands staticChanged one list per plane: the routes a
+    // change reaches are found per cluster, not by one box round every change of the tick (a corpse in one corner
+    // and a building in another touched every route between them).
+    struct StaticChange {std::array<int,4> box{0,0,-1,-1};bool closes=false,opens=false;};
     uint64_t refreshPlane(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,RefreshScratch& scratch,
-                          std::array<int,4>* box=nullptr) {
+                          std::vector<StaticChange>* out=nullptr) {
         const int grow=kRelabelMargin+std::max(p.footX,p.footZ)+1;
         std::vector<int> cluster(rects.size());
         for(size_t i=0;i<rects.size();++i)cluster[i]=int(i);
@@ -2000,21 +2699,19 @@ struct LegionNavigator::Impl {
             }
         }
         uint64_t work=0;
-        if(box)*box={0,0,-1,-1};
         std::vector<std::array<int,4>> part;
         for(size_t i=0;i<rects.size();++i) {
             if(root(int(i))!=int(i))continue;
             part.clear();
             for(size_t j=i;j<rects.size();++j)if(root(int(j))==int(i))part.push_back(rects[j]);
-            std::array<int,4> b{0,0,-1,-1};
-            work+=refreshCluster(p,part,changedAny,scratch,&b);
-            if(box&&b[2]>=0)*box=(*box)[2]<0?b:std::array<int,4>{std::min((*box)[0],b[0]),std::min((*box)[1],b[1]),
-                std::max((*box)[2],b[2]),std::max((*box)[3],b[3])};
+            StaticChange c;
+            work+=refreshCluster(p,part,changedAny,scratch,&c);
+            if(out&&c.box[2]>=0)out->push_back(c);
         }
         return work;
     }
     uint64_t refreshCluster(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,RefreshScratch& scratch,
-                            std::array<int,4>* box) {
+                            StaticChange* change) {
         const int W=width(),H=height();
         uint64_t work=0;
         for(const auto& r:rects)work+=computeCells(p,r[0],r[1],r[0]+r[2]-1,r[1]+r[3]-1);
@@ -2035,7 +2732,8 @@ struct LegionNavigator::Impl {
         }
         if(added.empty()&&removed.empty())return work;
         changedAny=true;
-        if(box)*box={bx0,bz0,bx1,bz1};
+        p.hier.invalidate({bx0,bz0,bx1,bz1});   // stage 6: the sectors whose regions or portals may differ
+        if(change)*change={{bx0,bz0,bx1,bz1},!removed.empty(),!added.empty()};
         return work+relabel(p,added,removed,bx0,bz0,bx1,bz1,scratch);
     }
     static constexpr int kRelabelMargin=8;   // relabel's local window margin (cells)
@@ -2273,6 +2971,19 @@ struct LegionNavigator::Impl {
         if(!placementPlane())e=mix(e,w.nav_.version());
         return e;
     }
+    // A whole-plane build in one call (buildPlane + labelPlane). `sync`: outside any budget -- a
+    // stale rebuild on use, or a test hook -- reported as a synchronous stage; otherwise inside the
+    // window's plane budget (planeReady).
+    void rebuild(Plane& p,bool sync) {
+        // Stage 7: a stale plane's rebuild may hold any change the per-cluster lists never reported for it.
+        if(p.epoch!=~0ull)logImprovement(size_t(&p-planes.data()),{0,0,width()-1,height()-1});
+        p.epoch=epoch;buildPlane(p);labelPlane(p);clearStage(p);
+        p.hier.reset(width(),height(),gSectorShift,p.id);p.traffic.clear();
+        uint64_t legalCells=0;for(const int n:p.compSize)legalCells+=uint64_t(std::max(n,0));
+        const uint64_t units=4*uint64_t(width())*height()+4*legalCells;
+        navc.planeBuild+=units;
+        if(sync) {++acct.syncPlaneCalls;acct.syncPlaneMax=std::max(acct.syncPlaneMax,units);}
+    }
     Plane& plane(int index) {
         auto& p=planes[size_t(index)];
         if(p.epoch!=epoch) {
@@ -2282,7 +2993,7 @@ struct LegionNavigator::Impl {
             // split into groups (a started field takes no new seeds) and cost
             // jagged 2000 about 30% of its arrivals (seeds 0/7/42).
             const bool first=p.epoch==~0ull;
-            p.epoch=epoch;buildPlane(p);labelPlane(p);clearStage(p);
+            rebuild(p,true);
             // The carried debt is clamped to half a tick's quota: under
             // constant churn (corpses, burning features) every epoch rebuilds
             // every plane in use, and an unbounded debt starved all field
@@ -2435,12 +3146,15 @@ struct LegionNavigator::Impl {
     // Nearest statically legal origin to a requested one. Past the near
     // search radius, like Retail, settle for the nearest origin the unit can
     // actually reach (its own static component); -1 only if there is none.
+    // Cells the goal searches below visited (scratch for registerMove's accounting; never hashed).
+    mutable uint64_t searchCells=0;
     int nearestLegal(const Plane& p,int x,int z,int reach=-1) const {
         if(legal(p,x,z))return z*width()+x;
         int best=-1;int64_t bestD=0;
         const int far=reach>=0?std::max(width(),height()):kGoalSearchCells;
         for(int r=1;r<=far&&best<0;++r)
             for(int dz=-r;dz<=r;++dz)for(int dx=-r;dx<=r;dx+=(dz==-r||dz==r||dx==r)?1:2*r) {
+                ++searchCells;
                 if(!legal(p,x+dx,z+dz))continue;
                 if(r>kGoalSearchCells&&compAt(p,(z+dz)*width()+x+dx)!=reach)continue;
                 const int64_t d=int64_t(dx)*dx+int64_t(dz)*dz;
@@ -2463,6 +3177,7 @@ struct LegionNavigator::Impl {
         for(int r=r0;r<=far;++r) {
             if(best>=0&&int64_t(r)*r>bestD)break;
             auto visit=[&](int cx,int cz) {
+                ++searchCells;
                 const int index=cz*W+cx;
                 if(p.comp[size_t(index)]!=comp)return;
                 const int64_t d=int64_t(cx-x)*(cx-x)+int64_t(cz-z)*(cz-z);
@@ -2505,6 +3220,7 @@ struct LegionNavigator::Impl {
         int best=-1;int64_t bestD=0;
         for(int cz=std::max<int64_t>(b[1],z-bound);cz<=std::min<int64_t>(b[3],z+bound);++cz)
             for(int cx=std::max<int64_t>(b[0],x-bound);cx<=std::min<int64_t>(b[2],x+bound);++cx) {
+                ++searchCells;
                 const int index=cz*W+cx;
                 if(p.comp[size_t(index)]!=comp)continue;
                 const int64_t d=int64_t(cx-x)*(cx-x)+int64_t(cz-z)*(cz-z);
@@ -2516,12 +3232,14 @@ struct LegionNavigator::Impl {
     void leave(int id) {
         auto found=members.find(id);
         if(found==members.end())return;
+        if(found->second.passLabel)clearPass(id,found->second);
         if(const auto* u=w.unit(id);u&&u->type&&found->second.slot>=0&&found->second.state!=Arrived)
             slotCells(found->second,u->type->footX,u->type->footZ,false);
         if(auto point=points.find(found->second.point);point!=points.end()) {
             auto& ids=point->second.ids;
             if(const auto at=std::lower_bound(ids.begin(),ids.end(),id);at!=ids.end()&&*at==id) {
                 ids.erase(at);
+                point->second.crowdCells-=std::min<uint64_t>(point->second.crowdCells,found->second.ptCells);
                 auto& parts=point->second.partRefs;
                 if(auto part=parts.find(found->second.part);part!=parts.end()&&--part->second<=0)parts.erase(part);
             }
@@ -2544,9 +3262,41 @@ struct LegionNavigator::Impl {
                 if(const auto at=std::lower_bound(ids.begin(),ids.end(),id);at!=ids.end()&&*at==id)ids.erase(at);
             auto& gids=group->second.ids;
             if(const auto at=std::lower_bound(gids.begin(),gids.end(),id);at!=gids.end()&&*at==id)gids.erase(at);
-            if(--group->second.members<=0) {unlistGroup(group->second);groups.erase(group);}
+            if(--group->second.members<=0) {unlistGroup(group->second);joinUnlist(group->second);groups.erase(group);}
         }
         members.erase(found);
+    }
+    // Stage 8: shared destination areas across orders. destArea: per (player, 16 px cell of an explicit area's
+    // point), the area key and exact point of the latest explicit area whose point it is. An explicit order sent
+    // within a cell of such a point while that area still gathers there (its point is live, or bodies settled
+    // there as its arrivals) takes that area's key and exact point instead of its own: the same command (its
+    // settled bodies and its queue are no obstacles to the newcomers, as they are none to each other), the same
+    // formation and crowd bound. Until stage 8 a second order to the point where the first was arriving was a
+    // second destination crowd that planned round the first one's arrivals as traffic (churn-1000's re-sent half).
+    // Hashed (its entries); stale entries are dropped when looked up.
+    std::map<std::tuple<int,int32_t,int32_t>,std::pair<uint32_t,std::pair<int32_t,int32_t>>> destArea;
+    void sharedArea(int player,uint32_t& command,Fixed& tx,Fixed& tz) {
+        const int32_t cx=int32_t(tx.v>>20),cz=int32_t(tz.v>>20);
+        const std::tuple<int,int32_t,int32_t>* best=nullptr;int64_t bestD=0;
+        std::vector<std::tuple<int,int32_t,int32_t>> stale;
+        for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx) {
+            const auto at=destArea.find({player,cx+dx,cz+dz});
+            if(at==destArea.end())continue;
+            const auto& [key,pt]=at->second;
+            if(key==command)continue;
+            const std::tuple<int,uint32_t,int32_t,int32_t> full{player,key,pt.first,pt.second};
+            const auto live=points.find(full);
+            const bool settled=anchorsAt.count({player,pt.first,pt.second})>0;
+            if((live==points.end()||live->second.refs<=0)&&!settled) {stale.push_back(at->first);continue;}
+            const int64_t ex=std::abs(int64_t(pt.first)-tx.v),ez=std::abs(int64_t(pt.second)-tz.v),d=std::max(ex,ez);
+            if(d>ConvoyTable::kSharedReach)continue;
+            if(!best||d<bestD||(d==bestD&&key>destArea.at(*best).first)) {best=&at->first;bestD=d;}
+        }
+        if(best) {
+            const auto& [key,pt]=destArea.at(*best);
+            command=key;tx.v=pt.first;tz.v=pt.second;++acct.sharedAreas;
+        }
+        for(const auto& k:stale)if(!best||k!=*best)destArea.erase(k);
     }
     void registerMove(Unit& u) {
         // A re-registration of the same order keeps its approach clock: the
@@ -2586,7 +3336,15 @@ struct LegionNavigator::Impl {
         if(!hadPrior||priorKey!=legKey(leg,kind)||priorKind!=kind)++stats.missionLegs[size_t(kind)];
         const int planeIndex=planeFor(*u.type);
         auto& p=plane(planeIndex);
-        const auto [tx,tz]=target(leg);
+        auto [tx,tz]=target(leg);
+        // The command a member belongs to: the order's convoy (one click,
+        // however many ticks the uplink split it over; its issue tick when
+        // unstamped); every patrol lap on its own; moving goals on the
+        // shared re-seed grid. Stage 8: an explicit order sent to the point
+        // where an earlier area of the same player still gathers (sharedArea)
+        // joins that area: one destination crowd, not two.
+        uint32_t command=leg.convoyTick!=ConvoyTable::kNone?leg.convoyTick:leg.issuedTick;
+        if(rule.area&&explicitArea(command))sharedArea(u.player,command,tx,tz);
         int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
         const int sx=footprintOrigin(u.x,u.type->footX),sz=footprintOrigin(u.z,u.type->footZ);
         const int reach=legal(p,sx,sz)?compAt(p,sz*width()+sx):-1;
@@ -2611,16 +3369,13 @@ struct LegionNavigator::Impl {
         }
         Member m;m.controller=legKey(leg,kind);m.state=Waiting;m.windowTick=w.tickCounter_;m.stallTick=w.tickCounter_;m.headTick=w.tickCounter_;
         m.kind=kind;m.seedX=gx;m.seedZ=gz;m.seededAt=w.tickCounter_;
-        // The command a member belongs to: the order's convoy (one click,
-        // however many ticks the uplink split it over; its issue tick when
-        // unstamped); every patrol lap on its own; moving goals on the
-        // shared re-seed grid.
-        const uint32_t command=leg.convoyTick!=ConvoyTable::kNone?leg.convoyTick:leg.issuedTick;
         const uint32_t issue=rule.moving?w.tickCounter_-w.tickCounter_%kReseedTicks:
             rule.perController?uint32_t(leg.controller):command;
         if(resolvedEpoch!=epoch||resolved.size()>=4096) {resolved.clear();resolvedEpoch=epoch;}
         auto [cached,fresh]=resolved.try_emplace({planeIndex,gx,gz,reach},-1,-1);
         if(fresh) {
+            const uint64_t searched=searchCells;
+            struct Count {Impl& I;uint64_t from;~Count() {I.navc.resolveCells+=I.searchCells-from;}} count{*this,searched};
             cached->second.first=nearestLegal(p,gx,gz,reach);
             const int goal=cached->second.first;
             if(reach>=0&&goal>=0&&compAt(p,goal)!=reach&&p.compSize[size_t(reach)]>=kApproachRegion)
@@ -2636,14 +3391,25 @@ struct LegionNavigator::Impl {
             if(near>=0) {
                 m.real=m.goal;m.goal=near;m.approach=true;m.approachEpoch=epoch;
                 m.approachSince=priorReal==m.real&&priorController==m.controller?priorSince:w.tickCounter_;
-                m.gainBest=0xffffffffu;m.gainTick=w.tickCounter_;
+                m.gainBest=0xffffffffu;m.gainTick=w.tickCounter_;m.gainSeen=w.tickCounter_;m.gainSerial=0;
             }
         }
         m.requested=m.goal;
         // A kind without a shared destination area gets a point of its own
         // (keyed by the unit), so no formation or area logic joins it.
+        // The part: the tick the leg's command was applied in. An explicit
+        // order (protocol 267) is applied whole in one tick, so it is one part
+        // however many units it has; orders applied in one tick share it, as
+        // per-unit commands of one tick always did. (Keeping 64-body rank
+        // groups inside an order was measured and rejected: the click-heavy
+        // fixtures move with the simultaneous start, not with the parts.)
         m.point={rule.area?u.player:-1-u.id,rule.area?command:issue,tx.v,tz.v};m.part=leg.issuedTick;
-        {auto& pt=points[m.point];++pt.refs;m.pt=&pt;}
+        {
+            auto [pit,fresh]=points.try_emplace(m.point);
+            auto& pt=pit->second;++pt.refs;m.pt=&pt;
+            if(fresh&&rule.area&&explicitArea(command))
+                destArea[{u.player,int32_t(tx.v>>20),int32_t(tz.v>>20)}]={command,{tx.v,tz.v}};
+        }
         unpin();
         if(m.goal<0) {putMember(u.id,m);return;}   // trapped on first move
         const int x=m.goal%width(),z=m.goal/width();
@@ -2654,32 +3420,50 @@ struct LegionNavigator::Impl {
         const int ringBucket=ringKind?reachPx(u,w.unit(ringTarget),kind==Kind::Guard).first/kRingBucket:-1;
         Group* joined=nullptr;
         uint64_t joins=0;
-        for(auto& [id,g]:groups) {
-            if(rule.solo)break;
-            ++joins;
-            if(g.player!=u.player||g.plane!=planeIndex||g.kind!=kind)continue;
-            if(ringKind?g.reachTarget!=ringTarget||g.reachBucket!=ringBucket:g.issuedTick!=issue)continue;
+        // The join predicate, whole (the index below only narrows the walk).
+        auto joinable=[&](const Group& g) {
+            if(g.player!=u.player||g.plane!=planeIndex||g.kind!=kind)return false;
+            if(ringKind?g.reachTarget!=ringTarget||g.reachBucket!=ringBucket:g.issuedTick!=issue)return false;
             // Seeds in different static components never share a field: a
             // member whose goal it cannot reach would descend to a
             // teammate's seed and hold there forever instead of retiring.
-            if(groupComp(g,p)!=goalComp)continue;
+            if(groupComp(g,p)!=goalComp)return false;
             // Approach points never share a field with real goals: a member
             // would descend to a stand-in point beside an obstacle instead
             // of its own goal behind it.
-            if(g.approach!=m.approach)continue;
-            if(x<g.minX-kClusterCells||x>g.maxX+kClusterCells||z<g.minZ-kClusterCells||z>g.maxZ+kClusterCells)continue;
+            if(g.approach!=m.approach)return false;
+            if(x<g.minX-kClusterCells||x>g.maxX+kClusterCells||z<g.minZ-kClusterCells||z>g.maxZ+kClusterCells)return false;
             // (A reach group's seeds are its ring once built: it serves the
             // target's origin it was seeded at.)
             const bool seeded=ringKind?g.reachCentre==m.goal:std::binary_search(g.seeds.begin(),g.seeds.end(),m.goal);
             // A field in progress or complete is never re-seeded.
-            if(g.field&&!seeded)continue;
+            if(g.field&&!seeded)return false;
             // A field is "distance to the nearest seed of anyone": over a
             // whole army's goal lattice it pulls every body to the lattice's
             // near edge, where they jam and then thread between settled goals.
             // Groups of at most kGroupSeeds goals keep each field aimed at its
             // own block of the destination.
-            if(!seeded&&g.seeds.size()>=kGroupSeeds)continue;
-            joined=&g;break;
+            if(!seeded&&g.seeds.size()>=kGroupSeeds)return false;
+            return true;
+        };
+        if(!rule.solo) {
+            // The first joinable group in id order, from the member's join
+            // index entry (see joinIndex).
+            const JoinKey key{u.player,planeIndex,int(kind),m.approach,ringKind?int64_t(ringTarget):int64_t(issue),ringKind?ringBucket:0};
+            if(const auto entry=joinIndex.find(key);entry!=joinIndex.end())
+                for(const int id:entry->second) {
+                    ++joins;
+                    Group* g=groups.get(id);
+                    if(joinable(*g)) {joined=g;break;}
+                }
+#ifndef NDEBUG
+            // The brute-force reference: the first joinable group of all.
+            if(gVerify) {
+                Group* first=nullptr;
+                for(auto& [id,g]:groups)if(joinable(g)) {first=&g;break;}
+                if(first!=joined)verifyFail("the join index chose another group than the walk of every group");
+            }
+#endif
         }
         stats.joinIterations+=joins;stats.groupLoopIters+=joins;
         if(!joined) {
@@ -2688,7 +3472,7 @@ struct LegionNavigator::Impl {
             g.minX=g.maxX=x;g.minZ=g.maxZ=z;
             if(ringKind) {g.reachTarget=ringTarget;g.reachBucket=ringBucket;g.reachCentre=m.goal;}
             joined=&groups.emplace(g.id,std::move(g)).first->second;
-            listGroup(*joined);
+            listGroup(*joined);joinList(*joined);
             ++stats.groups;
         }
         auto& g=*joined;
@@ -2733,6 +3517,960 @@ struct LegionNavigator::Impl {
                                         std::min(box[2],x1+margin),std::min(box[3],z1+margin)};
         return bounded;
     }
+    // ---- stage 6: corridors over the routing hierarchy ----------------------------------------------------------
+    // A route's plan: the window field as before (kind Window), or a CORRIDOR -- the window cut down to the sectors
+    // round the hierarchy's region tree from the goals to the members (sim/legion_hier.h's search), each dilated by
+    // a halo, and the destination's sectors dilated by the area the group's crowd needs there. The field over a
+    // corridor is the same A* build with every origin outside its sectors treated as outside the window: exact
+    // distances within the corridor, bounded (an origin outside it is Unknown, never Unreachable), so a member it
+    // fails to reach widens it (a bounded number of times) and then the whole-component window takes over, as for
+    // any bounded window. Only a low-demand route is planned (a high-demand one keeps its window: one exact field
+    // the whole crowd shares), only on windows of kCorridorWindow cells or more, and a corridor only if it holds at
+    // most half the window's cells; otherwise, or if the search does not reach every member's region within
+    // kRouteExpand regions, the window is built as before (counted: acct.routeFallbacks).
+    //
+    // A TILE CHAIN (kind Chain) serves a group whose demand is low -- few bodies to its goals, no reach ring -- on a
+    // long way (a group planning round movers takes one once memory is short: the regions its corridors reach get
+    // tiles of their own, local corrections whose key holds those corridors, and the rest stay shared): the
+    // destination gets its own exact field over the sectors its crowd needs
+    // (dAllow), and every region of the tree outside them reads a shared tile toward the portal it leaves by (Tile),
+    // with an offset that makes the value route-wide. A tile whose way leads into another transit region is AIMED
+    // (its seeds' boundary costs measure toward that region's own exit, so it is shared by every route leaving the
+    // region that way, whatever its destination); one leading into the destination's field is EXACT (its boundary
+    // costs are that field's values at its seeds). The offset of a tile is the largest (estimate - boundary cost) over
+    // its seeds, so the estimate on a region's cell next to a seed is above the seed's own estimate: every legal
+    // descent step strictly lowers the route's estimate, across tiles too, and ends on a goal (no loops, no false
+    // minimum). Choosing between a chain and a field is the demand rule (chainDemand) with hysteresis.
+    enum RouteKind : uint8_t {KindWindow=0,KindCorridor=1,KindChain=2};
+    struct RoutePlan {
+        uint8_t kind=KindWindow;
+        std::array<int,4> box{};           // the field's window (cells, inclusive)
+        std::vector<uint8_t> allow;        // corridor / chain: per tile of the window's tile box, 1 = inside
+        size_t cells=0;                    // the cells of the allowed tiles (the corridor's reserved storage; a
+                                           // chain's destination tiles -- its shared tiles are the cache's)
+        uint64_t sig=0;                    // a digest of the allowed tiles / of the chain (hashed with the field)
+        std::vector<uint8_t> dAllow;       // chain: the destination's tiles (its own field)
+        std::vector<ChainNode> nodes;      // chain: the transit regions, every parent before its children, then the halo
+        size_t transit=0;                  // chain: how many of nodes are transit regions
+    };
+    static constexpr size_t kCorridorWindow=131072;  // windows smaller than this keep the window build
+    static constexpr uint8_t kMaxWiden=3;            // corridor rebuilds for members outside it, then the window
+    static constexpr size_t kRouteExpand=1u<<16;     // regions the abstract search may expand for one plan
+    static constexpr int kCorridorHalo=32;           // cells of halo round the tree's sectors
+    static constexpr int kDestMargin=8;              // cells round a chain destination's packed disc (its own field)
+    // Chains or fields by demand (deterministic, with hysteresis): the bodies that would read the route -- this
+    // group's members and those of every other group with the same goals on the plane (they share one field) -- at
+    // most kChainDemand take a chain; a group that took a field keeps fields until the demand falls to
+    // kChainDemandLow. A route of fewer than kChainMinNodes transit regions is a short trip: its corridor or window.
+    static constexpr int kChainDemand=48,kChainDemandLow=24;
+    static constexpr size_t kChainMinNodes=2;
+    int routeDemand(const Group& g) const {
+        int n=g.members;
+        if(const auto found=routeIndex.find({g.plane,seedsKey(g.seeds)});found!=routeIndex.end())
+            for(const int id:found->second)if(id!=g.id) {const auto o=groups.find(id);if(o!=groups.end()&&o->second.seeds==g.seeds)n+=o->second.members;}
+        return n;
+    }
+    // ---- stage 7: traffic in coarse route selection ------------------------------------------------------------------
+    // The region search charges the way across a region (its step: entry to portal) by the share of the region's
+    // origins that are soft to the route's command -- the same soft rule the field and the tiles charge cell by cell
+    // (kSoftFactor inside a soft footprint): step * (kSoftFactor - 1) * soft / cells, the extra a way through a
+    // region of that density pays on average. So a route is chosen round a region full of a standing jam, settled
+    // bodies or idle units when a way round is cheaper, and the tiles then make the exact local correction inside the
+    // regions it keeps (never a sum of two fields: the search only picks the regions). Soft origins: those whose
+    // footprint covers a stamp of kind 1 (soft to every command), or of kind 2 owned by another command than the
+    // route's (settled arrivals, an approach clot, a jam: never the order's own); a liftable flyer (kind 3) lifts for
+    // the allies of its owner and is left out. The counts are cached per sector, keyed by its generation and the soft
+    // serials of it and its east, south and south-east neighbours (a footprint reaches into them).
+    uint64_t trafficPenalty(Plane& p,int s,uint16_t r,uint64_t step,uint64_t command,uint64_t& work) {
+        if(command==kNoSoft||!softCellCount||softSector.empty())return 0;
+        if(p.traffic.size()!=size_t(p.hier.sectorCount()))p.traffic.assign(size_t(p.hier.sectorCount()),{});
+        auto& T=p.traffic[size_t(s)];
+        const int SW=p.hier.sectorsWide(),SH=p.hier.sectorsHigh(),sx=s%SW,sz=s/SW;
+        uint64_t key=0;
+        for(int dz=0;dz<=1;++dz)for(int dx=0;dx<=1;++dx)
+            if(sx+dx<softSectorW&&sz+dz<SH&&size_t((sz+dz)*softSectorW+sx+dx)<softSector.size())
+                key=mix(key,softSector[size_t((sz+dz)*softSectorW+sx+dx)]);
+        const auto& S=p.hier.sector(s);
+        if(T.gen!=S.gen||T.serial!=key) {
+            T.gen=S.gen;T.serial=key;
+            T.all.assign(S.regions.size(),0);
+            T.owned.assign(S.regions.size(),{});
+            const auto rc=p.hier.rect(s);
+            const int W=width(),fx=p.footX,fz=p.footZ;
+            const int counts=softCountsFor(fx,fz);
+            std::vector<uint64_t> owners;
+            for(int z=rc[1];z<rc[3];++z)for(int x=rc[0];x<rc[2];++x) {
+                ++work;
+                if(counts>=0&&!(softCounts[size_t(counts)].at[size_t(z)*w.occW_+x]&kCoverCount))continue;
+                const uint16_t reg=p.hier.regionAt(z*W+x);
+                if(reg==hier::kNoRegion)continue;
+                bool all=false;owners.clear();
+                for(int j=0;j<fz&&!all;++j)for(int i=0;i<fx&&!all;++i) {
+                    const int cx=x+i,cz=z+j;
+                    if(cx>=w.occW_||cz>=w.occH_)continue;
+                    const size_t c=size_t(cz)*w.occW_+cx;
+                    const uint8_t k=softKind[c];
+                    work+=1;
+                    if(k==1)all=true;
+                    else if(k==2) {const int32_t o=soft[c];owners.push_back(size_t(o)<softOwner.size()?softOwner[size_t(o)]:~0ull);}
+                }
+                if(all) {++T.all[reg];continue;}
+                std::sort(owners.begin(),owners.end());
+                owners.erase(std::unique(owners.begin(),owners.end()),owners.end());
+                for(const uint64_t o:owners) {
+                    auto& v=T.owned[reg];
+                    auto at=std::lower_bound(v.begin(),v.end(),std::pair<uint64_t,uint32_t>{o,0});
+                    if(at==v.end()||at->first!=o)at=v.insert(at,{o,0});
+                    ++at->second;
+                }
+            }
+            ++acct.trafficSectors;
+        }
+        if(r>=T.all.size())return 0;
+        uint64_t soft=T.all[r];
+        for(const auto& [o,n]:T.owned[r])if(o!=command)soft+=n;
+        const uint64_t cells=uint64_t(std::max(S.regions[r].cells,1));
+        if(!soft)return 0;
+        soft=std::min(soft,cells);
+        ++acct.trafficCharges;
+        return step*uint64_t(kSoftFactor-1)*soft/cells;
+    }
+    // ---- stage 8: chokepoints (openings) and their queues ------------------------------------------------------------
+    // An OPENING is a narrow crossing of a sector boundary: a portal run (sim/legion_hier.h) bounded at both ends by a
+    // pair of origins that do not cross the boundary (a wall, a river bank, the map's edge) -- a bridge, a door, a
+    // gap. A run that goes on past its sector's corner into open ground is no opening. Its physical identity is the
+    // run's cells, not its origins: on the boundary line `line` (the last column / row of the west / north sector),
+    // cells lo..hi along it, hi = the last origin + the footprint along the run - 1 (the run followed past sector
+    // corners: the pieces of a door across one are one opening; a run of kOpeningSpan origins or more is no opening). Bounded by the same obstacles,
+    // that span is the same for every movement plane (a footprint f fits origins lo..lo+width-f), so the bodies of
+    // every class that cross one bridge share one record: its queue is one queue. The table is never shrunk (a
+    // record no route reaches any more counts no entrants); at most 32,767 records (a label's 15 bits).
+    //
+    // Entrants: every kOpeningScan ticks, every member of a group whose route records labels (a window or corridor
+    // field of a group of kOpeningMembers or more: Field::via, the first opening along each cell's descent) or that
+    // walks a tile chain (the first opening on its region's way through the chain) adds its footprint's queue area,
+    // (footX + 1) x (footZ + 1) cells, to that opening in its direction (0: toward +x / +z, 1: toward -x / -z).
+    // A member counts only the next opening on its way: once through, its cell names the one after. Its queue DELAY,
+    // in cells of travel, is the length of the queue in front of it, queue area / width: a body waits about that
+    // many of its own steps (one body per lane every footprint + 1 cells at walking speed); see queueDelay for how
+    // an opposing stream counts. Derived from hashed state (members, fields) and recomputed on a fixed cadence:
+    // a decision input, hashed (checksum folds every record's delays while nonzero).
+    struct Opening {
+        uint8_t side=0;int line=0,lo=0,hi=0,width=1;uint64_t area[2]={0,0};uint32_t delay[2]={0,0};
+        // Admission (stage 8, see admissionHold): the narrow strip round the crossing along the axis across the
+        // line (cells stripLo..stripHi, measured on plane stripPlane at its epoch stripEpoch), and the token:
+        // the direction the passage is open to (-1 none), its player (an ally of a member, or the token is not
+        // its concern), the tick it was granted and the last admission, whether it is closing (the other way
+        // has waited kAdmitGreen ticks: no new admission until the passage is clear), and per direction the first
+        // tick of the current run of waiting (kNoTick none) and whether some body waited in the last tick.
+        int stripLo=0,stripHi=-1,stripPlane=-1;uint64_t stripEpoch=~0ull;
+        int8_t tokenDir=-1;int tokenPlayer=-1;bool closing=false;uint32_t granted=0,lastEntry=0;
+        uint32_t waitSince[2]={kNoTick,kNoTick};bool waited[2]={false,false},waiting[2]={false,false};
+        uint32_t occ[2]={0,0};
+        uint32_t active=kNoTick;   // the last tick a member asked for this passage (its strip is then watched)
+    };
+    std::vector<uint32_t> activeOpenings;   // openings asked for in the last two ticks, ascending (derived; never hashed)
+    std::vector<Opening> openings;
+    std::map<std::tuple<uint8_t,int,int,int>,uint32_t> openingIndex;
+    static constexpr uint32_t kOpeningScan=30;          // ticks between recounts (phase kOpeningScan/3)
+    static constexpr uint32_t kOpeningMinCharge=16;     // cells: a shorter queue is no charge
+    static constexpr int kNarrowWidth=16;               // cells: an opening this narrow passes one way at a time (admission)
+    static constexpr int kOpeningMembers=8;             // groups this big record labels and take charges
+    static constexpr uint32_t kOpeningHold=300;         // ticks a route keeps its charges before a re-plan for new ones
+    static constexpr size_t kMaxOpenings=32767;
+    static constexpr int kOpeningSpan=64;               // origins: a longer crossing run is open ground
+    // Does the pair of origins across boundary line `line` (which 0: the column x = line | line+1; 1: the row
+    // z = line | line+1) at position t along it cross it (both origins legal)? Off the map: no.
+    bool crossingPair(const Plane& p,int which,int line,int t) const {
+        const int W=width(),H=height();
+        if(t<0||t>=(which==0?H:W)||line<0||line+1>=(which==0?W:H))return false;
+        return which==0?p.legal[size_t(t)*W+line]&&p.legal[size_t(t)*W+line+1]:p.legal[size_t(line)*W+t]&&p.legal[size_t(line+1)*W+t];
+    }
+    // The openings among sector s's east (which 0) or south (1) portals: (start, len, record) per run, cached per
+    // side by the generations of its two sectors (the plane's SideOpenings; a relabelled sector reclassifies).
+    const std::vector<std::array<int32_t,3>>& sideOpenings(Plane& p,int s,int which,uint64_t& work) {
+        auto& H=p.hier;
+        if(p.sideOps.size()!=size_t(H.sectorCount())*2)p.sideOps.assign(size_t(H.sectorCount())*2,Plane::SideOpenings{});
+        const auto& ports=H.side(s,which,p.legal.data(),work);
+        const int n=which==0?((s%H.sectorsWide())+1<H.sectorsWide()?s+1:-1):((s/H.sectorsWide())+1<H.sectorsHigh()?s+H.sectorsWide():-1);
+        auto& so=p.sideOps[size_t(s)*2+size_t(which)];
+        const uint32_t ga=H.gen(s),gb=n>=0?H.gen(n):0;
+        if(so.valid&&so.genA==ga&&so.genB==gb)return so.runs;
+        so.valid=true;so.genA=ga;so.genB=gb;so.runs.clear();
+        if(n<0)return so.runs;
+        const auto r=H.rect(s);
+        const int line=which==0?r[2]-1:r[3]-1,along=which==0?p.footZ:p.footX;
+        for(const auto& q:ports) {
+            // The whole run along the line: a run that reaches its side's end may go on in the next side (a door
+            // across a sector corner); past kOpeningSpan origins in all it is open ground.
+            int first=q.start,last=q.start+q.len-1;
+            while(last-first<kOpeningSpan&&crossingPair(p,which,line,first-1)) {--first;++work;}
+            while(last-first<kOpeningSpan&&crossingPair(p,which,line,last+1)) {++last;++work;}
+            work+=2;
+            if(last-first>=kOpeningSpan)continue;
+            const int lo=first,hi=last+along-1;
+            const auto key=std::make_tuple(uint8_t(which),line,lo,hi);
+            auto at=openingIndex.find(key);
+            if(at==openingIndex.end()) {
+                if(openings.size()>=kMaxOpenings)continue;
+                Opening o;o.side=uint8_t(which);o.line=line;o.lo=lo;o.hi=hi;o.width=hi-lo+1;
+                at=openingIndex.emplace(key,uint32_t(openings.size())).first;
+                openings.push_back(o);++acct.openings;
+            }
+            so.runs.push_back({q.start,q.len,int32_t(at->second)});
+        }
+        return so.runs;
+    }
+    // The label of a body's step from (nx, nz) into (x, z) across a sector boundary: (record + 1) << 1 | direction
+    // (1: toward -x / -z), or 0 when it crosses no opening. A diagonal step across a boundary crosses it where its
+    // orthogonal half from (x, z) does (the step rule needs that pair legal), so the row / column of (x, z) names it;
+    // across a sector corner the east boundary is read.
+    uint16_t crossLabel(Plane& p,int x,int z,int nx,int nz,uint64_t& work) {
+        const int sh=p.hier.shift();
+        int which,line,t,dir;
+        if((x>>sh)!=(nx>>sh)) {which=0;line=std::min(x,nx);t=z;dir=nx>x?1:0;}
+        else if((z>>sh)!=(nz>>sh)) {which=1;line=std::min(z,nz);t=x;dir=nz>z?1:0;}
+        else return 0;
+        const int s=which==0?p.hier.sectorOf(line,t):p.hier.sectorOf(t,line);
+        for(const auto& r:sideOpenings(p,s,which,work))if(t>=r[0]&&t<r[0]+r[1])return uint16_t((r[2]+1)<<1|dir);
+        return 0;
+    }
+    // The label of portal q crossed from its `a` side (aSide) or its `b` side (a chain's exit, the region search).
+    uint16_t portalLabel(Plane& p,const hier::Portal& q,bool fromA,uint64_t& work) {
+        for(const auto& r:sideOpenings(p,q.a,q.side,work))if(r[0]==q.start)return uint16_t((r[2]+1)<<1|(fromA?0:1));
+        return 0;
+    }
+    // The queue delay (cells) of an opening for a body with `same` cells of queue area ahead its way and `opp` the
+    // other way: a narrow one (kNarrowWidth) is admitted one way at a time, and each turn of its direction costs a
+    // clearing of the passage, so an opposing body counts twice (routes keep opposing streams on different
+    // passages where they can); on a wide one the streams keep to their own halves, an opposing body taking half
+    // the room it would going along.
+    static uint32_t queueDelay(const Opening& o,uint64_t same,uint64_t opp) {
+        const uint64_t load=o.width<=kNarrowWidth?same+2*opp:same+opp/2;
+        return uint32_t(std::min<uint64_t>(1u<<20,load/uint64_t(std::max(o.width,1))));
+    }
+    // The delay (cells) of `label` for group g: the queue without g's own entrants.
+    uint32_t delayFor(const Group& g,uint32_t label) const {
+        const uint32_t idx=(label>>1)-1;
+        if(idx>=openings.size())return 0;
+        const Opening& o=openings[idx];
+        auto own=[&](uint32_t l) {
+            const auto at=std::lower_bound(g.openArea.begin(),g.openArea.end(),std::pair<uint32_t,uint64_t>{l,0});
+            return at!=g.openArea.end()&&at->first==l?at->second:uint64_t(0);
+        };
+        const uint32_t d=label&1;
+        const uint64_t same=o.area[d]-std::min(o.area[d],own(label)),opp=o.area[1-d]-std::min(o.area[1-d],own(label^1));
+        return queueDelay(o,same,opp);
+    }
+    // The queue delay (cells) a body crossing by `label` meets.
+    uint32_t labelDelay(uint32_t label) const {
+        const uint32_t idx=(label>>1)-1;
+        return idx<openings.size()?openings[idx].delay[label&1]:0;
+    }
+    // The recount (every kOpeningScan ticks): every record's entrants and delays from the members' routes as they
+    // stand, then a re-plan for a route whose charges have drifted from the delays it would now be charged
+    // (openingDrift), at most once per kOpeningHold ticks of its build.
+    void openingScan() {
+        if(w.tickCounter_%kOpeningScan!=kOpeningScan/3)return;
+        if(openings.empty())return;
+        ++acct.openingScans;
+        for(auto& o:openings)o.area[0]=o.area[1]=0;
+        uint64_t work=0;
+        const int W=width();
+        for(auto& [gid,g]:groups) {
+            const Field* f=g.field.get();
+            // A route whose replacement is due or building (stale, or a refresh in `next`) keeps the entrants it
+            // had -- or committed to when it was re-planned for a queue (openingDrift) -- until it is installed: its
+            // members still walk the old route, whose labels would undo the commitment.
+            if(f&&(g.stale||g.next)&&!g.openArea.empty()) {
+                for(const auto& [label,a]:g.openArea)if(const uint32_t idx=(label>>1)-1;idx<openings.size())openings[idx].area[label&1]+=a;
+                continue;
+            }
+            g.openArea.clear();
+            if(!f||!f->usable()||g.plane<0)continue;
+            Plane& p=planes[size_t(g.plane)];
+            const bool chain=f->kind==KindChain;
+            if(!f->labels&&!chain)continue;
+            std::map<uint32_t,uint64_t> mine;
+            std::map<uint64_t,int> node;
+            if(chain)for(size_t i=0;i<f->chainTransit;++i)node.emplace(hier::Hierarchy::key(f->chain[i].s,f->chain[i].r),int(i));
+            for(const int id:g.ids) {
+                const Unit* u=w.unit(id);
+                if(!u||!u->type||!u->alive())continue;
+                const int ox=footprintOrigin(u->x,u->type->footX),oz=footprintOrigin(u->z,u->type->footZ);
+                ++work;
+                uint32_t label=0;
+                if(!chain)label=f->viaAt(ox,oz);
+                else if(p.hier.built(p.hier.sectorOf(ox,oz))) {
+                    const int cell=oz*W+ox,sec=p.hier.sectorOfCell(cell);
+                    const uint16_t reg=p.hier.regionAt(cell);
+                    auto at=reg==hier::kNoRegion?node.end():node.find(hier::Hierarchy::key(sec,reg));
+                    for(int i=at==node.end()?-1:at->second,depth=0;i>=0&&depth<256&&!label;i=f->chain[size_t(i)].parent,++depth) {
+                        const ChainNode& c=f->chain[size_t(i)];
+                        if(p.hier.gen(c.s)!=c.gen)break;
+                        label=portalLabel(p,c.exit,c.onA,work);
+                    }
+                }
+                if(!label)continue;
+                const uint32_t idx=(label>>1)-1;
+                if(idx>=openings.size())continue;
+                const uint64_t a=uint64_t(u->type->footX+1)*uint64_t(u->type->footZ+1);
+                openings[idx].area[label&1]+=a;mine[label]+=a;
+                ++acct.openingEntrants;
+            }
+            g.openArea.assign(mine.begin(),mine.end());
+        }
+        navc.connectivity+=work;
+        // Routes whose charges drifted: re-planned (a reroute refresh, as awareness asks for one), one group at a
+        // time in id order, each committing its move in the table before the next is judged (openingDrift), so
+        // that two groups do not both leave one queue for the other and come back together the next time.
+        const uint32_t now=w.tickCounter_;
+        struct Split {int group;std::vector<int> ids;std::pair<uint32_t,uint64_t> area;};
+        std::vector<Split> splits;   // (group, members to a new subgroup, their queue), done after the walk
+        for(auto& [gid,g]:groups) {
+            Field* f=g.field.get();
+            if(!f||!f->done||!f->labels||g.next||g.stale||now-g.built<kOpeningHold)continue;
+            // Stage 8: a big group whose queue would be shorter shared with another passage gives part of itself to
+            // a subgroup that plans round it (allocateQueue); otherwise the whole group may re-plan (openingDrift).
+            if(g.members>=kAllocMembers) {
+                std::vector<int> moved;
+                if(allocateQueue(g,moved)) {splits.push_back({gid,std::move(moved),splitArea});continue;}
+            }
+            if(!openingDrift(g,*f))continue;
+            ++acct.openingReplans;
+            g.stale=true;g.demand=true;g.reroute=true;
+            listGroup(g);
+        }
+        for(auto& sp:splits) {splitArea=sp.area;splitGroup(sp.group,sp.ids);}
+        for(auto& o:openings)
+            for(int d=0;d<2;++d) {
+                o.delay[d]=queueDelay(o,o.area[d],o.area[1-d]);
+                acct.openingDelayMax=std::max<uint64_t>(acct.openingDelayMax,o.delay[d]);
+            }
+    }
+    // The charges a new route for g would carry: for every opening of its window whose delay in a direction is
+    // kOpeningMinCharge cells or more, that delay in route units, halfway from the charge its current route carried
+    // there (a damped step: the route's own members are part of the queue they move away from, and the next
+    // recount sees where they went). Sorted by label.
+    // ---- stage 8: admission at genuinely narrow friendly passages -----------------------------------------------------
+    // Two streams head on in a passage too narrow for them to pass (bridges-1000: three stragglers of one army on a
+    // 12-cell bridge against the head of the other, 600 bodies standing for the rest of the run) never untangle: the
+    // lane rules need room to keep right. An opening at most kNarrowWidth cells wide (four bodies of the
+    // roster's largest common footprint, 3x3) is admitted one direction at a time. Its STRIP is the run of cross-sections along the axis across the line no
+    // wider than the opening + kStripSlack cells (a bridge's length, a door's wall), measured once per plane epoch on
+    // the plane's 1x1 legality. A member whose route's next opening it is (its field's label at its cell) and that
+    // stands in the approach zone -- within kAdmitZone bodies of the strip on its own side, across the opening's
+    // span widened as much -- is admitted when the passage is open its way or free (it takes the token), and holds
+    // otherwise (order kept, stall clock stopped: a wait, not a block). Admitted, it passes (Member::passLabel) until
+    // it leaves the zone on either side. The token changes once no admitted body of its direction is left in the
+    // zone and the other way waits; it closes (admits no more) once the other way has waited kAdmitGreen ticks, so
+    // a stream never starves the other. Only allies defer to each other (no enemy is asked to cooperate); a member
+    // of a group without labels (fewer than kOpeningMembers, or a tile chain) neither waits nor counts.
+    static constexpr int kStripSlack=2,kStripMax=192,kAdmitZone=6;
+    static constexpr uint32_t kAdmitGreen=300;
+    static constexpr uint32_t kAdmitClear=60;   // ticks without a new admission before a clear passage turns
+    std::set<int> passers;   // members with passLabel set, ascending (derived from the members; never hashed)
+    bool narrowFor(const Opening& o,const UnitType&) const {return o.width<=kNarrowWidth;}
+    void ensureStrip(Opening& o,const Plane& p,int planeIndex) {
+        if(o.stripPlane==planeIndex&&o.stripEpoch==p.epoch)return;
+        o.stripPlane=planeIndex;o.stripEpoch=p.epoch;
+        const int W=width(),H=height(),mid=(o.lo+o.hi)/2;
+        auto cellOk=[&](int x,int z) {return x>=0&&z>=0&&x<W&&z<H&&!p.cell.empty()&&p.cell[size_t(z)*W+x];};
+        // The legal run through (a, mid) along the line's direction, a the position across it.
+        auto run=[&](int a) {
+            auto ok=[&](int t) {return o.side==0?cellOk(a,t):cellOk(t,a);};
+            if(!ok(mid))return 0;
+            int lo=mid,hi=mid;
+            while(hi-lo<=o.width+kStripSlack&&ok(lo-1))--lo;
+            while(hi-lo<=o.width+kStripSlack&&ok(hi+1))++hi;
+            return hi-lo+1;
+        };
+        int a0=o.line,a1=o.line+1;
+        auto narrow=[&](int a) {const int r=run(a);return r>0&&r<=o.width+kStripSlack;};
+        while(o.line-a0<kStripMax&&narrow(a0-1))--a0;
+        while(a1-o.line<kStripMax&&narrow(a1+1))++a1;
+        o.stripLo=a0;o.stripHi=a1;
+    }
+    // A member's place relative to opening o: along (across the line) and across (along it), of its footprint's centre cell.
+    void openingFrame(const Opening& o,const Unit& u,int& along,int& across) const {
+        const int cx=int(u.x.v>>20),cz=int(u.z.v>>20);
+        along=o.side==0?cx:cz;across=o.side==0?cz:cx;
+    }
+    int admitZone(const UnitType& t) const {return kAdmitZone*(std::max(t.footX,t.footZ)+1);}
+    bool inStrip(const Opening& o,const Unit& u) const {
+        int a,c;openingFrame(o,u,a,c);
+        const int m=std::max(u.type->footX,u.type->footZ);
+        return a>=o.stripLo&&a<=o.stripHi&&c>=o.lo-m&&c<=o.hi+m;
+    }
+    bool inZone(const Opening& o,const Unit& u) const {
+        int a,c;openingFrame(o,u,a,c);
+        const int z=admitZone(*u.type);
+        return a>=o.stripLo-z&&a<=o.stripHi+z&&c>=o.lo-z&&c<=o.hi+z;
+    }
+    void clearPass(int id,Member& m) {m.passLabel=0;passers.erase(id);}
+    // Should member m hold before the narrow opening its route crosses next? (Admits it when it may go.)
+    bool admissionHold(const Unit& u,Member& m,const Group& g,int ox,int oz) {
+        if(m.passLabel) {
+            const uint32_t idx=(uint32_t(m.passLabel)>>1)-1;
+            if(idx<openings.size()&&inZone(openings[idx],u))return false;
+            clearPass(u.id,m);
+        }
+        const uint16_t label=g.field->viaAt(ox,oz);
+        if(!label)return false;
+        const uint32_t idx=(uint32_t(label)>>1)-1;
+        if(idx>=openings.size())return false;
+        Opening& o=openings[idx];
+        if(!narrowFor(o,*u.type))return false;
+        ensureStrip(o,plane(g.plane),g.plane);
+        if(!inZone(o,u))return false;
+        if(o.active!=w.tickCounter_) {
+            if(o.active==kNoTick||w.tickCounter_-o.active>1)activeOpenings.insert(std::upper_bound(activeOpenings.begin(),activeOpenings.end(),idx),idx);
+            o.active=w.tickCounter_;
+        }
+        const int dir=label&1;
+        auto admit=[&] {
+            o.tokenDir=int8_t(dir);o.tokenPlayer=u.player;o.lastEntry=w.tickCounter_;
+            if(o.waitSince[dir]!=kNoTick)o.waitSince[dir]=kNoTick;
+            m.passLabel=label;passers.insert(u.id);++acct.passAdmits;
+            return false;
+        };
+        // Already in the narrow part (it got there before the passage was asked for): it goes on, an occupant.
+        if(inStrip(o,u)) {m.passLabel=label;passers.insert(u.id);return false;}
+        if(o.tokenDir<0||o.tokenPlayer<0||!w.allied(o.tokenPlayer,u.player)) {
+            // A free passage (or one only enemies use): taken, unless allied bodies the other way still pass in it.
+            if(o.tokenDir<0&&o.occ[1-dir]) {o.waiting[dir]=true;if(o.waitSince[dir]==kNoTick)o.waitSince[dir]=w.tickCounter_;++acct.admitWaits;return true;}
+            o.granted=w.tickCounter_;o.closing=false;return admit();
+        }
+        if(o.tokenDir==dir&&!o.closing&&!o.occ[1-dir])return admit();
+        // The passage is open the other way: wait.
+        o.waiting[dir]=true;
+        if(o.waitSince[dir]==kNoTick)o.waitSince[dir]=w.tickCounter_;
+        ++acct.admitWaits;
+        return true;
+    }
+    // Start of tick: the admitted bodies still in each zone (by direction), the passers that left cleared, and the
+    // tokens moved on: a passage whose direction has no admitted body left in its zone turns to the other way if it
+    // waited (else frees), and one the other way has waited kAdmitGreen ticks for closes.
+    // Any member standing in the strip of a watched passage is an occupant, whatever its route says (a straggler
+    // past the line has the next opening as its label): its direction is the side of the line its goal is on.
+    void watchStrips(const Unit& u,Member& m) {
+        if(m.passLabel||activeOpenings.empty()||m.goal<0)return;
+        for(const uint32_t idx:activeOpenings) {
+            const Opening& o=openings[idx];
+            if(!inStrip(o,u))continue;
+            const int W=width(),gx=m.goal%W,gz=m.goal/W;
+            const int dir=(o.side==0?gx:gz)>o.line?0:1;
+            m.passLabel=uint16_t((idx+1)<<1|uint32_t(dir));passers.insert(u.id);
+            return;
+        }
+    }
+    void admissionTick() {
+        std::set<uint32_t> touched;
+        std::erase_if(activeOpenings,[&](uint32_t idx) {return openings[idx].active==kNoTick||w.tickCounter_-openings[idx].active>1;});
+        for(auto& o:openings)if(o.tokenDir>=0||o.waiting[0]||o.waiting[1]) {o.occ[0]=o.occ[1]=0;}
+        for(auto it=passers.begin();it!=passers.end();) {
+            const int id=*it;
+            Member* m=member(id);const Unit* u=w.unit(id);
+            const uint32_t idx=m?(uint32_t(m->passLabel)>>1)-1:~0u;
+            if(!m||!u||!u->alive()||!u->type||!m->passLabel||idx>=openings.size()||!inZone(openings[idx],*u)) {
+                if(m)m->passLabel=0;
+                it=passers.erase(it);continue;
+            }
+            // Occupants are the bodies in the narrow part itself; an admitted body still before it is committed,
+            // not an occupant (a crowd waiting at the other mouth cannot hold the passage through it).
+            if(inStrip(openings[idx],*u))++openings[idx].occ[m->passLabel&1];
+            touched.insert(idx);
+            ++it;
+        }
+        const uint32_t now=w.tickCounter_;
+        for(auto& o:openings) {
+            if(o.tokenDir<0&&!o.waiting[0]&&!o.waiting[1])continue;
+            for(int d=0;d<2;++d) {o.waited[d]=o.waiting[d];o.waiting[d]=false;if(!o.waited[d])o.waitSince[d]=kNoTick;}
+            if(o.tokenDir<0)continue;
+            const int cur=o.tokenDir,other=1-cur;
+            if(!o.occ[cur]&&now-o.lastEntry>=kAdmitClear) {
+                if(o.waited[other]) {o.tokenDir=int8_t(other);o.granted=now;o.closing=false;o.waitSince[other]=kNoTick;++acct.admitTurns;}
+                else if(!o.waited[cur]) {o.tokenDir=-1;o.closing=false;}
+            }
+            if(o.tokenDir!=cur) {
+                // Turned (or freed): the old direction's admissions still before the narrow part lapse; they ask again.
+                const uint32_t i=uint32_t(&o-openings.data());
+                for(auto it=passers.begin();it!=passers.end();) {
+                    Member* m=member(*it);const Unit* u=w.unit(*it);
+                    if(m&&u&&(uint32_t(m->passLabel)>>1)-1==i&&int(m->passLabel&1)==cur&&!inStrip(o,*u)) {m->passLabel=0;it=passers.erase(it);}
+                    else ++it;
+                }
+            } else if(o.waited[other]&&o.waitSince[other]!=kNoTick&&now-o.waitSince[other]>=kAdmitGreen&&!o.closing) {
+                o.closing=true;++acct.admitClosings;
+            }
+        }
+    }
+    // The charge (route units) a route of g would carry for crossing by `label`: the delay without g's own
+    // entrants, halved where its members already cross (a commitment: a route leaves a queue it stands in only
+    // for twice the gain it would need to join it, so groups that trade places at every recount settle), and none
+    // under kOpeningMinCharge cells.
+    uint32_t chargeWant(const Group& g,uint32_t label) const {
+        uint32_t d=delayFor(g,label);
+        const auto mine=std::lower_bound(g.openArea.begin(),g.openArea.end(),std::pair<uint32_t,uint64_t>{label,0});
+        if(mine!=g.openArea.end()&&mine->first==label&&mine->second)d/=2;
+        return d>=kOpeningMinCharge?std::min<uint32_t>(d,1u<<16)*kOrthogonal:0u;
+    }
+    std::vector<Field::Charge> openingCharges(const Group& g,const std::array<int,4>& box) const {
+        std::vector<Field::Charge> out;
+        if(g.members<kOpeningMembers||!g.soft)return out;
+        for(size_t i=0;i<openings.size();++i) {
+            const Opening& o=openings[i];
+            if(!o.delay[0]&&!o.delay[1])continue;
+            const bool in=o.side==0?(o.line>=box[0]&&o.line<box[2]&&o.hi>=box[1]&&o.lo<=box[3]):
+                                    (o.line>=box[1]&&o.line<box[3]&&o.hi>=box[0]&&o.lo<=box[2]);
+            if(!in)continue;
+            for(uint32_t d=0;d<2;++d) {
+                const uint32_t label=uint32_t((i+1)<<1|d);
+                if(const uint32_t c=chargeWant(g,label))out.push_back({label,c});
+            }
+        }
+        return out;
+    }
+    // ---- stage 8: navigation subgroups for route allocation ----------------------------------------------------------
+    // One group is one route, so a big group re-planned for a queue moves whole: its share of the queue all goes
+    // to the other passage (bridges-10000: 2,500-body groups, every one on one bridge). A group of kAllocMembers or
+    // more is cut into SUBGROUPS by position: its members by kAllocCells-cell squares of where they stand
+    // (spatially coherent; never packets or id ranges). For the opening with most of its queue area (L) it compares,
+    // per square, the region search's way to the goals through L and round it (L closed; the traffic charge only,
+    // the queues apart) and moves squares, the cheapest detour first, to the other passage while L's queue after the
+    // move still exceeds the other passage's queue plus the square's detour (cells). Moved squares become one new
+    // group (splitGroup: the same order, seeds, command and kind; its members keep their state, slots and point)
+    // that plans its own route -- its charges see L's queue without itself, so it takes the other passage -- and
+    // the move is committed in the table at once. Each subgroup is judged on its own from then on.
+    static constexpr int kAllocMembers=128,kAllocCells=64,kAllocMin=32;
+    bool allocateQueue(Group& g,std::vector<int>& moved) {
+        moved.clear();
+        if(g.plane<0||g.approach||!policy(g.kind).area||g.reachTarget)return false;
+        uint32_t main=0;uint64_t mainArea=0;
+        for(const auto& [label,a]:g.openArea)if(a>mainArea) {mainArea=a;main=label;}
+        if(!main)return false;
+        const uint32_t mi=(main>>1)-1,md=main&1;
+        if(mi>=openings.size())return false;
+        Plane& p=planes[size_t(g.plane)];
+        if(!p.hier.ready()||p.legal.empty()||p.stage>0)return false;
+        if(queueDelay(openings[mi],openings[mi].area[md],openings[mi].area[1-md])<kOpeningMinCharge)return false;
+        const int W=width();
+        std::vector<int> targets,ids;
+        for(const int id:g.ids) {
+            const Unit* u=w.unit(id);
+            if(!u||!u->type||!u->alive())continue;
+            targets.push_back(footprintOrigin(u->z,u->type->footZ)*W+footprintOrigin(u->x,u->type->footX));ids.push_back(id);
+        }
+        uint64_t work=0;
+        const uint64_t command=g.soft?g.command:kNoSoft;
+        auto searchWith=[&](bool closed) {
+            return p.hier.search(g.seeds,targets,p.legal.data(),kRouteExpand,work,
+                [&](int s,uint16_t r,uint64_t step,const hier::Portal& q,bool aSide) {
+                    uint64_t extra=trafficPenalty(p,s,r,step,command,work);
+                    if(closed&&portalLabel(p,q,!aSide,work)==main)extra+=uint64_t(1)<<32;
+                    return extra;
+                });
+        };
+        const auto open=searchWith(false),shut=searchWith(true);
+        navc.routeSearch+=work;
+        if(!open.complete||!shut.complete)return false;
+        // Per square: members on L now (their label), their queue area, summed detour (route units), alternative.
+        struct Square {std::vector<int> ids;uint64_t area=0;int64_t detour=0;std::map<uint32_t,uint64_t> alt;};
+        std::map<std::pair<int,int>,Square> squares;
+        const Field& f=*g.field;
+        for(size_t k=0;k<ids.size();++k) {
+            const int c=targets[k],cx=c%W,cz=c/W;
+            if(f.viaAt(cx,cz)!=main||!legal(p,cx,cz))continue;
+            const int sec=p.hier.sectorOfCell(c);const uint16_t reg=p.hier.regionAt(c);
+            if(reg==hier::kNoRegion)continue;
+            const auto a=open.index.find(hier::Hierarchy::key(sec,reg)),b=shut.index.find(hier::Hierarchy::key(sec,reg));
+            if(a==open.index.end()||b==shut.index.end())continue;
+            const uint64_t ca=open.nodes[size_t(a->second)].cost,cb=shut.nodes[size_t(b->second)].cost;
+            if(cb>=uint64_t(1)<<32)continue;   // no way round L from here
+            uint32_t label=0;
+            for(int i=b->second,depth=0;i>=0&&depth<4096&&!label;i=shut.nodes[size_t(i)].parent,++depth) {
+                const auto& n=shut.nodes[size_t(i)];
+                if(n.parent<0)break;
+                const hier::Portal& q=p.hier.portal(n.exit);
+                label=portalLabel(p,q,q.a==n.s&&q.ra==n.r,work);
+            }
+            if(!label)continue;
+            const Unit* u=w.unit(ids[k]);
+            const uint64_t ar=uint64_t(u->type->footX+1)*uint64_t(u->type->footZ+1);
+            Square& sq=squares[{cx/kAllocCells,cz/kAllocCells}];
+            sq.ids.push_back(ids[k]);sq.area+=ar;sq.detour+=int64_t(cb)-int64_t(ca);sq.alt[label]+=ar;
+        }
+        // Cheapest detour (per body) first; ties by the square's position.
+        std::vector<std::pair<int64_t,std::pair<int,int>>> order;
+        for(const auto& [key,sq]:squares)order.push_back({sq.detour/int64_t(sq.ids.size()),key});
+        std::sort(order.begin(),order.end());
+        uint64_t mainSame=openings[mi].area[md];
+        std::map<uint32_t,uint64_t> altArea;   // the queue area moved to each alternative so far
+        uint32_t chosen=0;
+        for(const auto& [detour,key]:order) {
+            Square& sq=squares.at(key);
+            uint32_t alt=0;uint64_t best=0;
+            for(const auto& [l,a]:sq.alt)if(a>best) {best=a;alt=l;}
+            if(!alt||(chosen&&alt!=chosen))continue;   // one alternative per split
+            const uint32_t ai=(alt>>1)-1,ad=alt&1;
+            if(ai>=openings.size())continue;
+            const Opening& oa=openings[ai];const Opening& om=openings[mi];
+            const uint64_t nMain=mainSame-std::min(mainSame,sq.area);
+            const uint64_t nAlt=oa.area[ad]+altArea[alt]+sq.area;
+            const int64_t dMain=queueDelay(om,nMain,om.area[1-md]),dAlt=queueDelay(oa,nAlt,oa.area[1-ad]);
+            if(dMain<dAlt+detour/int64_t(kOrthogonal))break;
+            chosen=alt;mainSame=nMain;altArea[alt]+=sq.area;
+            moved.insert(moved.end(),sq.ids.begin(),sq.ids.end());
+        }
+        if(moved.size()<size_t(kAllocMin)||g.members-int(moved.size())<kAllocMin) {moved.clear();return false;}
+        std::sort(moved.begin(),moved.end());
+        // Commit in the table: the moved area leaves L for the alternative.
+        const uint64_t a=altArea[chosen];
+        openings[mi].area[md]-=std::min(openings[mi].area[md],a);
+        openings[(chosen>>1)-1].area[chosen&1]+=a;
+        for(auto& [label,ar]:g.openArea)if(label==main)ar-=std::min(ar,a);
+        splitArea={chosen,a};
+        ++acct.openingSplits;acct.splitMembers+=moved.size();
+        return true;
+    }
+    std::pair<uint32_t,uint64_t> splitArea{0,0};   // the last allocation's alternative and area (splitGroup's own entrants)
+    // Move members `ids` of group gid to a new subgroup of the same order (see allocateQueue). Their member state
+    // (clocks, formation slots, point) is kept; a packed per-goal slot of the old group is given back.
+    void splitGroup(int gid,const std::vector<int>& ids) {
+        Group* old=groups.get(gid);
+        if(!old)return;
+        Group g;g.id=nextGroup++;g.player=old->player;g.plane=old->plane;g.issuedTick=old->issuedTick;g.compCell=old->compCell;
+        g.approach=old->approach;g.kind=old->kind;g.command=old->command;g.soft=old->soft;
+        g.minX=old->minX;g.maxX=old->maxX;g.minZ=old->minZ;g.maxZ=old->maxZ;g.seeds=old->seeds;
+        g.openArea.assign(1,splitArea);
+        Group& n=groups.emplace(g.id,std::move(g)).first->second;
+        old=groups.get(gid);
+        for(const int id:ids) {
+            Member* m=member(id);const Unit* u=w.unit(id);
+            if(!m||!u||!u->type||m->group!=gid)continue;
+            if(m->slot>=0&&!formationMember(*m)) {
+                if(auto sl=old->slots.find(m->requested);sl!=old->slots.end()&&size_t(m->slot)<sl->second.taken.size())sl->second.taken[size_t(m->slot)]=0;
+                slotCells(*m,u->type->footX,u->type->footZ,false);
+                m->slot=-1;m->goal=m->requested;
+            }
+            if(auto sh=old->sharing.find(m->requested);sh!=old->sharing.end()&&--sh->second<=0)old->sharing.erase(sh);
+            if(const auto at=std::lower_bound(old->ids.begin(),old->ids.end(),id);at!=old->ids.end()&&*at==id)old->ids.erase(at);
+            --old->members;
+            {const int k=++n.sharing[m->requested];int& top=n.peak[m->requested];top=std::max(top,k);}
+            n.ids.insert(std::upper_bound(n.ids.begin(),n.ids.end(),id),id);++n.members;
+            const int sx=footprintOrigin(u->x,u->type->footX),sz=footprintOrigin(u->z,u->type->footZ);
+            if(n.bodyMaxX<n.bodyMinX) {n.bodyMinX=n.bodyMaxX=sx;n.bodyMinZ=n.bodyMaxZ=sz;}
+            else {n.bodyMinX=std::min(n.bodyMinX,sx);n.bodyMaxX=std::max(n.bodyMaxX,sx);n.bodyMinZ=std::min(n.bodyMinZ,sz);n.bodyMaxZ=std::max(n.bodyMaxZ,sz);}
+            m->group=n.id;m->lineCell=-1;
+        }
+        n.lastUse=w.tickCounter_;
+        listGroup(n);joinList(n);++stats.groups;
+        if(old->members<=0) {unlistGroup(*old);joinUnlist(*old);groups.erase(gid);}
+        else listGroup(*old);
+    }
+    // The entrants g's members would be at each opening if g planned now: the region search from its goals to its
+    // members' regions with the traffic and queue charges a new route of g would carry (chargeWant: without its own
+    // entrants, halved where it already crosses), each member's region followed down the tree to the first opening
+    // on its way. (label, queue area), sorted; false when the search does not reach every member.
+    bool predictEntrants(Group& g,std::vector<std::pair<uint32_t,uint64_t>>& out) {
+        out.clear();
+        if(g.plane<0)return false;
+        Plane& p=planes[size_t(g.plane)];
+        if(!p.hier.ready()||p.legal.empty()||p.stage>0)return false;
+        const int W=width();
+        std::vector<int> targets;std::vector<uint64_t> area;
+        for(const int id:g.ids) {
+            const Unit* u=w.unit(id);
+            if(!u||!u->type||!u->alive())continue;
+            targets.push_back(footprintOrigin(u->z,u->type->footZ)*W+footprintOrigin(u->x,u->type->footX));
+            area.push_back(uint64_t(u->type->footX+1)*uint64_t(u->type->footZ+1));
+        }
+        uint64_t work=0;
+        const uint64_t command=g.soft?g.command:kNoSoft;
+        const auto tree=p.hier.search(g.seeds,targets,p.legal.data(),kRouteExpand,work,
+            [&](int s,uint16_t r,uint64_t step,const hier::Portal& q,bool aSide) {
+                uint64_t extra=trafficPenalty(p,s,r,step,command,work);
+                if(const uint16_t label=portalLabel(p,q,!aSide,work))extra+=chargeWant(g,label);
+                return extra;
+            });
+        navc.routeSearch+=work;
+        if(!tree.complete)return false;
+        std::map<uint32_t,uint64_t> sum;
+        std::map<int,uint32_t> first;   // node -> first label on its way (0 none)
+        for(size_t k=0;k<targets.size();++k) {
+            const int c=targets[size_t(k)];
+            if(!legal(p,c%W,c/W))continue;
+            const int sec=p.hier.sectorOfCell(c);
+            const uint16_t reg=p.hier.regionAt(c);
+            const auto at=reg==hier::kNoRegion?tree.index.end():tree.index.find(hier::Hierarchy::key(sec,reg));
+            if(at==tree.index.end())continue;
+            uint32_t label=0;
+            if(const auto memo=first.find(at->second);memo!=first.end())label=memo->second;
+            else {
+                for(int i=at->second,depth=0;i>=0&&depth<4096&&!label;i=tree.nodes[size_t(i)].parent,++depth) {
+                    const auto& n=tree.nodes[size_t(i)];
+                    if(n.parent<0)break;
+                    const hier::Portal& q=p.hier.portal(n.exit);
+                    label=portalLabel(p,q,q.a==n.s&&q.ra==n.r,work);
+                }
+                first.emplace(at->second,label);
+            }
+            if(label)sum[label]+=area[k];
+        }
+        out.assign(sum.begin(),sum.end());
+        return true;
+    }
+    // Has g's route drifted from the queues? Its predicted entrants (predictEntrants) moved a quarter or more of its
+    // queue area -- and 64 cells of it or more -- between openings against its own entrants now (a route that would
+    // take another passage, or come back to one that cleared). Then the move is committed at once: its own entrants
+    // in the table become the predicted ones, so the next group judged in this recount sees where it is going.
+    bool openingDrift(Group& g,const Field&) {
+        std::vector<std::pair<uint32_t,uint64_t>> pred;
+        if(!predictEntrants(g,pred))return false;
+        uint64_t total=0,moved=0;
+        size_t i=0,j=0;
+        const auto& cur=g.openArea;
+        while(i<pred.size()||j<cur.size()) {
+            if(j>=cur.size()||(i<pred.size()&&pred[i].first<cur[j].first)) {moved+=pred[i].second;total+=pred[i].second;++i;}
+            else if(i>=pred.size()||cur[j].first<pred[i].first) {moved+=cur[j].second;++j;}
+            else {moved+=pred[i].second>cur[j].second?pred[i].second-cur[j].second:cur[j].second-pred[i].second;total+=pred[i].second;++i;++j;}
+        }
+        moved/=2;
+        uint64_t had=0;
+        for(const auto& [l,a]:cur)had+=a;
+        total=std::max(total,had);
+        if(moved<64||4*moved<total)return false;
+        for(const auto& [label,a]:cur)if(const uint32_t idx=(label>>1)-1;idx<openings.size()) {uint64_t& t=openings[idx].area[label&1];t-=std::min(t,a);}
+        for(const auto& [label,a]:pred)if(const uint32_t idx=(label>>1)-1;idx<openings.size())openings[idx].area[label&1]+=a;
+        g.openArea=std::move(pred);
+        return true;
+    }
+    RoutePlan planRoute(Group& g,const std::array<int,4>& box) {
+        RoutePlan rp;
+        rp.box=box;
+        const size_t windowCells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
+        if(g.full||windowCells<kCorridorWindow||g.plane<0)return rp;
+        auto& p=planes[size_t(g.plane)];
+        if(!p.hier.ready()||p.legal.empty()||p.stage>0)return rp;
+        // The demand rule first (it alone moves the hysteresis state): a high-demand route keeps the window -- one
+        // exact field the whole crowd shares, the field side of the rule -- and needs no search. Corridors for big
+        // crowds were measured and dropped: churn-10000's 10,000-body army lost 20% of its arrivals in a
+        // 32-cell-halo corridor (4,603 -> 3,664 over three offsets) and 8% even with a halo as wide as the crowd;
+        // with the window 5,065 (offsets 0 and 1).
+        const int demand=routeDemand(g);
+        const bool lowDemand=demand<=(g.routeMode==2?kChainDemandLow:kChainDemand);
+        g.routeMode=lowDemand?1:2;
+        if(!lowDemand||!gHierRoutes)return rp;
+        // An approach group (its goals unreachable: seeds are stand-in points on the members' own region) keeps the
+        // window: churn-1000's approach group on a chain was re-planned about every 40 ticks (arrivals 520 -> 458
+        // over three offsets; back to 520 with the window).
+        if(g.approach)return rp;
+        // Stage 7: a chain refreshed for a closure (no new route choice asked for) keeps its route: its plan is
+        // repaired on the current geometry (repairPlan) -- the regions re-resolved, the dirty tiles rebuilt by the
+        // build, the clean ones found in the cache -- so static churn does not re-search, and swing, the way at every
+        // change. Re-searched when traffic or an improvement asks (reroute) or the repair fails.
+        if(!g.reroute&&g.field&&g.field->kind==KindChain&&g.field->seeds==g.seeds&&g.field->plane==g.plane) {
+            uint64_t work=0;
+            const bool ok=repairPlan(g,*g.field,rp,work);
+            navc.routeSearch+=work;startCharge+=work;
+            if(ok) {++acct.planRepairs;return rp;}
+            rp=RoutePlan{};rp.box=box;
+        }
+        const int W=width();
+        std::vector<int> targets;
+        targets.reserve(g.ids.size());
+        for(const int id:g.ids) {
+            const Unit* u=w.unit(id);
+            if(!u||!u->type||!u->alive())continue;
+            targets.push_back(footprintOrigin(u->z,u->type->footZ)*W+footprintOrigin(u->x,u->type->footX));
+        }
+        uint64_t work=0;
+        // Stage 7: traffic as the route's command sees it in the coarse search (trafficPenalty).
+        const uint64_t trafficCommand=g.soft?g.command:kNoSoft;
+        // Stage 8: and a chokepoint's queue (the delay of crossing an opening the way the bodies walk: from the
+        // neighbour toward the goals) for a group whose members are entrants (kOpeningMembers or more).
+        const bool queues=g.members>=kOpeningMembers&&g.soft&&!openings.empty();
+        const auto tree=p.hier.search(g.seeds,targets,p.legal.data(),kRouteExpand,work,
+            [&](int s,uint16_t r,uint64_t step,const hier::Portal& q,bool aSide) {
+                uint64_t extra=trafficPenalty(p,s,r,step,trafficCommand,work);
+                if(queues)
+                    if(const uint16_t label=portalLabel(p,q,!aSide,work))
+                        if(const uint32_t d=delayFor(g,label);d>=kOpeningMinCharge) {extra+=uint64_t(d)*kOrthogonal;++acct.openingSearchCharges;}
+                return extra;
+            });
+        if(!tree.complete||tree.nodes.empty()) {navc.routeSearch+=work;startCharge+=work;++acct.routeFallbacks;return rp;}
+        struct Charge {uint64_t& work;Impl& I;~Charge() {I.navc.routeSearch+=work;I.startCharge+=work;}} charge{work,*this};
+        const int K=p.hier.K(),SW=p.hier.sectorsWide(),SH=p.hier.sectorsHigh();
+        auto dilate=[&](std::vector<uint8_t>& mark,int s,int r) {
+            const int sx=s%SW,sz=s/SW;
+            for(int z=std::max(0,sz-r);z<=std::min(SH-1,sz+r);++z)
+                for(int x=std::max(0,sx-r);x<=std::min(SW-1,sx+r);++x)mark[size_t(z)*SW+x]=1;
+        };
+        int halo=kCorridorHalo;
+        // A formation strong enough to pinwheel takes its outer arcs up to kPivotMaxCells off the way (fieldWindow).
+        for(const auto& [seed,count]:g.sharing)if(count>=kPivotMembers) {halo+=kPivotMaxCells;break;}
+        // The destination: the packed disc the crowd of each goal needs (coveredFor's area radius) plus a margin --
+        // the corridor's halo for a corridor (dest), kDestMargin for a chain's own field (chainDest: the sectors that
+        // square round the goal touches, so a lone body's destination is one to four sectors, not a 5 x 5 block).
+        std::vector<uint8_t> dest(size_t(SW)*size_t(SH),0),chainDest(size_t(SW)*size_t(SH),0);
+        const int foot=std::max(p.footX,p.footZ);
+        for(const int seed:g.seeds) {
+            const auto pk=g.peak.find(seed);
+            const int n=pk==g.peak.end()?1:pk->second;
+            const int area=int(isqrtFloor(uint64_t((5*n+3)/4)))*foot+2*foot+4;
+            dilate(dest,p.hier.sectorOfCell(seed),(area+halo+K-1)/K);
+            const int gx=seed%W,gz=seed/W,R=area+kDestMargin,sh=p.hier.shift();
+            for(int sz=std::max(0,gz-R)>>sh;sz<=(std::min(height()-1,gz+R)>>sh);++sz)
+                for(int sx=std::max(0,gx-R)>>sh;sx<=(std::min(W-1,gx+R)>>sh);++sx)chainDest[size_t(sz)*SW+sx]=1;
+        }
+        const auto comp=fieldWindow(g,true);
+        // A set of sectors as a window (clipped to the seeds' component box: nothing outside it is reachable) and
+        // its tiles; false if empty.
+        auto boxOf=[&](const std::vector<uint8_t>& mark,std::array<int,4>& out,size_t& cells,uint64_t& sig)->bool {
+            int bx0=W,bz0=height(),bx1=-1,bz1=-1;
+            cells=0;
+            for(int s=0;s<SW*SH;++s) {
+                if(!mark[size_t(s)])continue;
+                const auto r=p.hier.rect(s);
+                const int x0=std::max(r[0],comp[0]),z0=std::max(r[1],comp[1]),x1=std::min(r[2]-1,comp[2]),z1=std::min(r[3]-1,comp[3]);
+                if(x0>x1||z0>z1)continue;
+                bx0=std::min(bx0,x0);bz0=std::min(bz0,z0);bx1=std::max(bx1,x1);bz1=std::max(bz1,z1);
+                cells+=size_t(x1-x0+1)*size_t(z1-z0+1);
+                sig=mix(sig,uint64_t(s));
+            }
+            out={bx0,bz0,bx1,bz1};
+            return bx1>=bx0;
+        };
+        auto tilesOf=[&](const std::vector<uint8_t>& mark,const std::array<int,4>& b) {
+            const int sh=p.hier.shift(),sx0=b[0]>>sh,sz0=b[1]>>sh,sx1=b[2]>>sh,sz1=b[3]>>sh;
+            std::vector<uint8_t> a(size_t(sx1-sx0+1)*size_t(sz1-sz0+1),0);
+            for(int sz=sz0;sz<=sz1;++sz)for(int sx=sx0;sx<=sx1;++sx)a[size_t(sz-sz0)*size_t(sx1-sx0+1)+size_t(sx-sx0)]=mark[size_t(sz)*SW+sx];
+            return a;
+        };
+        // A chain (low demand, above): the transit regions are the tree's outside the destination's sectors.
+        // A group planning round movers (awareness corridors) takes a corridor while memory has room -- its detour
+        // round a crossing stream then has the corridor's width -- and a chain with local corrections once more than
+        // half the field allowance is in use (the stage-4 rule for "memory short"): corridors for every awareness
+        // re-plan of 800 squads filled the allowance and evicted their own fields (many-10000: 5,433 evictions).
+        const bool tight=fieldBytes()*2>fieldAllowance();
+        bool chain=g.ring.cells.empty()&&(g.avoidSeg.empty()||tight);
+
+        if(chain) {
+            std::vector<int> index(tree.nodes.size(),-1);
+            for(size_t i=0;i<tree.nodes.size();++i) {
+                const auto& n=tree.nodes[i];
+                if(chainDest[size_t(n.s)]||n.parent<0)continue;
+                const auto& pt=p.hier.portal(n.exit);
+                ChainNode c;
+                c.s=n.s;c.r=n.r;c.gen=p.hier.gen(n.s);c.exit=pt;c.onA=pt.a==n.s&&pt.ra==n.r;
+                c.ngen=p.hier.gen(c.onA?pt.b:pt.a);
+                c.parent=index[size_t(n.parent)];
+                index[i]=int(rp.nodes.size());
+                rp.nodes.push_back(c);
+            }
+            chain=rp.nodes.size()>=kChainMinNodes;
+            if(!chain)rp.nodes.clear();
+            rp.transit=rp.nodes.size();
+            // The halo: every region outside the destination one portal away from a transit region, leading into
+            // it (its tile aimed at that region's exit). Attached only when a member steps into one (requestRepair),
+            // so a body pushed off its way is back on the route within a tick instead of rebuilding it.
+            if(chain) {
+                std::map<uint64_t,int> in;
+                for(size_t i=0;i<rp.transit;++i)in[hier::Hierarchy::key(rp.nodes[i].s,rp.nodes[i].r)]=int(i);
+                for(const auto& n:tree.nodes)in.emplace(hier::Hierarchy::key(n.s,n.r),-1);
+                for(size_t i=0;i<rp.transit;++i) {
+                    const ChainNode base=rp.nodes[i];
+                    p.hier.forPortals(base.s,base.r,p.legal.data(),work,[&](const hier::Portal& pt,bool aSide,uint32_t) {
+                        const int ns=aSide?pt.b:pt.a;
+                        const uint16_t nr=aSide?pt.rb:pt.ra;
+                        if(chainDest[size_t(ns)]||!in.emplace(hier::Hierarchy::key(ns,nr),int(rp.nodes.size())).second)return;
+                        ChainNode c;
+                        c.s=ns;c.r=nr;c.gen=p.hier.gen(ns);c.exit=pt;c.onA=!aSide;c.ngen=p.hier.gen(base.s);
+                        c.parent=int(i);
+                        rp.nodes.push_back(c);
+                    });
+                }
+            }
+        }
+        if(chain) {
+            std::vector<uint8_t> all=chainDest;
+            for(const auto& c:rp.nodes)all[size_t(c.s)]=1;
+            uint64_t sig=0x636861696eull,dsig=0;
+            size_t cells=0,dcells=0;
+            std::array<int,4> b{},db{};
+            if(!boxOf(all,b,cells,sig)||!boxOf(chainDest,db,dcells,dsig))return rp;
+            rp.kind=KindChain;rp.box=b;rp.cells=dcells;
+            rp.allow=tilesOf(all,b);rp.dAllow=tilesOf(chainDest,b);
+            for(const auto& c:rp.nodes) {sig=mix(sig,uint64_t(c.s)<<16|c.r);sig=mix(sig,uint64_t(c.exit.start)<<32|uint64_t(c.exit.len)<<8|c.exit.side);}
+            rp.sig=mix(sig,dsig);
+            return rp;
+        }
+        // A corridor (a low-demand group planning round movers while memory has room, a reach ring, or a short
+        // trip): the tree's sectors dilated by the halo, and the destination's.
+        std::vector<uint8_t> mark=dest;
+        const int hs=(halo+K-1)/K;
+        for(const auto& n:tree.nodes)dilate(mark,n.s,hs);
+        uint64_t sig=0x636f727269646f72ull;
+        size_t cells=0;
+        std::array<int,4> b{};
+        if(!boxOf(mark,b,cells,sig)||cells*2>windowCells)return rp;
+        rp.kind=KindCorridor;rp.box=b;rp.cells=cells;rp.sig=sig;
+        rp.allow=tilesOf(mark,b);
+        return rp;
+    }
+    // Stage 7: the plan of chain `old` repaired on the current geometry: its transit regions re-resolved
+    // (resolveChainNode; a halo region that does not resolve stays off), its window, tiles and digest kept. False
+    // when a transit region cannot be re-resolved (its portal closed: the route itself is cut, re-search) or a live
+    // member stands in a region the plan does not hold (re-search: the plan no longer describes the group).
+    bool repairPlan(Group& g,const Field& old,RoutePlan& rp,uint64_t& work) {
+        auto& p=planes[size_t(g.plane)];
+        if(!p.hier.ready()||p.legal.empty()||p.stage>0||old.chain.empty())return false;
+        rp.kind=KindChain;rp.box={old.x0,old.z0,old.x0+old.fw-1,old.z0+old.fh-1};
+        rp.allow=old.allow;rp.dAllow=old.dAllow;rp.transit=old.chainTransit;rp.sig=old.corridorSig;rp.nodes=old.chain;
+        rp.cells=0;
+        for(size_t i=0;i<rp.dAllow.size();++i) {
+            if(!rp.dAllow[i])continue;
+            const int sx=old.sx0+int(i%size_t(old.sw)),sz=old.sz0+int(i/size_t(old.sw)),sh=old.shift;
+            const int x0=std::max(sx<<sh,rp.box[0]),z0=std::max(sz<<sh,rp.box[1]);
+            const int x1=std::min(((sx+1)<<sh)-1,rp.box[2]),z1=std::min(((sz+1)<<sh)-1,rp.box[3]);
+            if(x0<=x1&&z0<=z1)rp.cells+=size_t(x1-x0+1)*size_t(z1-z0+1);
+        }
+        for(size_t i=0;i<rp.nodes.size();++i) {
+            ChainNode& n=rp.nodes[i];
+            const int other=n.onA?n.exit.b:n.exit.a;
+            if(p.hier.built(n.s)&&p.hier.gen(n.s)==n.gen&&p.hier.built(other)&&p.hier.gen(other)==n.ngen)continue;
+            if(resolveChainNode(rp.nodes,i,p,work))continue;
+            if(i<rp.transit)return false;
+            n.gen=0;   // a halo region gone: never attached (attachNode finds its generation stale and cannot resolve it)
+        }
+        const int W=width();
+        for(const int id:g.ids) {
+            const Unit* u=w.unit(id);
+            if(!u||!u->type||!u->alive())continue;
+            const int c=footprintOrigin(u->z,u->type->footZ)*W+footprintOrigin(u->x,u->type->footX);
+            const int s=p.hier.sectorOfCell(c);
+            p.hier.ensure(s,p.legal.data(),work);
+            const int sx=s%p.hier.sectorsWide()-old.sx0,sz=s/p.hier.sectorsWide()-old.sz0;
+            if(sx>=0&&sz>=0&&sx<old.sw&&sz<old.sh&&rp.dAllow[size_t(sz)*size_t(old.sw)+size_t(sx)])continue;
+            const uint16_t r=p.hier.regionAt(c);
+            bool on=false;
+            for(const auto& n:rp.nodes)if(n.s==s&&n.r==r&&n.gen==p.hier.gen(s)) {on=true;break;}
+            if(!on)return false;
+        }
+        return true;
+    }
+    // The group's plan for its next build: planned once and reused while the start waits (for budget or room) up
+    // to kPlanReuse ticks, on the same static epoch and membership; the build drops it (startField).
+    static constexpr uint32_t kPlanReuse=kStillScan;
+    const RoutePlan& routePlan(Group& g,const std::array<int,4>& window) {
+        const uint32_t now=w.tickCounter_;
+        if(!g.plan||g.planTick==kNoTick||now-g.planTick>=kPlanReuse||g.planEpoch!=epoch||g.planMembers!=g.members||g.plan->box[2]<0) {
+            g.plan=std::make_shared<RoutePlan>(planRoute(g,window));
+            g.planTick=now;g.planEpoch=epoch;g.planMembers=g.members;
+        }
+        if(g.plan->kind==KindWindow)g.plan->box=window;   // a window plan follows the window (it moves with the bodies)
+        return *g.plan;
+    }
     // Another group's field that serves this group as well as its own
     // build would: the same plane at the current static epoch, the same
     // seeds, a window holding this group's (a larger window only frees
@@ -2746,32 +4484,68 @@ struct LegionNavigator::Impl {
     // orders) otherwise each built the same whole-map field, and rebuilt it
     // after every static change in a battle: a full quota for seconds.
     // A finished field first, then one in progress, each in group order.
-    std::shared_ptr<Field> sharedField(const Group& g,const std::array<int,4>& box,uint64_t command,bool own) const {
+    // Stage 6: with `plan` (a corridor) the test is coverage of that corridor -- a window field holding its box, or
+    // a corridor field whose tiles include all of its tiles; without one, a corridor field never serves (the
+    // window test above, unchanged, is for window fields only).
+    std::shared_ptr<Field> sharedField(const Group& g,const std::array<int,4>& box,uint64_t command,bool own,const RoutePlan* plan) const {
         std::shared_ptr<Field> hit;
         uint64_t iters=0;
+        // Stage 8: the queue charges this group's own build would carry (and whether it records labels).
+        const bool chainPlan=plan&&plan->kind==KindChain;
+        const auto charges=chainPlan?std::vector<Field::Charge>{}:openingCharges(g,box);
+        const bool labels=!chainPlan&&g.members>=kOpeningMembers&&g.soft;
         if(const auto found=routeIndex.find({g.plane,seedsKey(g.seeds)});found!=routeIndex.end()) {
             for(int pass=0;pass<2&&!hit;++pass)for(int id:found->second) {
                 ++iters;
-                if(sharesWith(g,groups.find(id)->second,pass,box,command,own,hit))break;
+                if(sharesWith(g,groups.find(id)->second,pass,box,command,own,plan,charges,labels,hit))break;
             }
         }
         stats.shareScanIters+=iters;
 #ifndef NDEBUG
         if(gVerify) {
             std::shared_ptr<Field> scan;
-            for(int pass=0;pass<2&&!scan;++pass)for(const auto& [id,o]:groups)if(sharesWith(g,o,pass,box,command,own,scan))break;
+            for(int pass=0;pass<2&&!scan;++pass)for(const auto& [id,o]:groups)if(sharesWith(g,o,pass,box,command,own,plan,charges,labels,scan))break;
             if(scan!=hit)verifyFail("route-key index finds another shared field than the full scan");
         }
 #endif
         return hit;
     }
+    // Does route f give every live member of g an estimate?
+    bool reachesMembers(const Group& g,const Field& f) const {
+        for(const int id:g.ids) {
+            const Unit* u=w.unit(id);
+            if(!u||!u->type||!u->alive())continue;
+            if(f.cellAt(footprintOrigin(u->x,u->type->footX),footprintOrigin(u->z,u->type->footZ))==kUnreached)return false;
+        }
+        return true;
+    }
+    // Does field f (on the same plane) hold every tile of corridor plan `rp`?
+    bool coversCorridor(const Field& f,const RoutePlan& rp,int shift) const {
+        if(f.shift!=shift||f.kind==KindChain)return false;
+        const int sx0=rp.box[0]>>shift,sz0=rp.box[1]>>shift,sw=(rp.box[2]>>shift)-sx0+1;
+        for(size_t i=0;i<rp.allow.size();++i) {
+            if(!rp.allow[i])continue;
+            const int sx=sx0+int(i%size_t(sw)),sz=sz0+int(i/size_t(sw));
+            if(sx<f.sx0||sz<f.sz0||sx>=f.sx0+f.sw||sz>=f.sz0+f.sh)return false;
+            if(!f.allow.empty()&&!f.allow[size_t(sz-f.sz0)*size_t(f.sw)+size_t(sx-f.sx0)])return false;
+        }
+        // The plan's cells lie in its own box; a window field must hold all of them, not just their tiles.
+        return f.kind==KindCorridor||(f.x0<=rp.box[0]&&f.z0<=rp.box[1]&&f.x0+f.fw-1>=rp.box[2]&&f.z0+f.fh-1>=rp.box[3]);
+    }
     // sharedField's test of one group: its field, then its next.
-    bool sharesWith(const Group& g,const Group& o,int pass,const std::array<int,4>& box,uint64_t command,bool own,std::shared_ptr<Field>& hit) const {
+    bool sharesWith(const Group& g,const Group& o,int pass,const std::array<int,4>& box,uint64_t command,bool own,const RoutePlan* plan,
+                    const std::vector<Field::Charge>& charges,bool labels,std::shared_ptr<Field>& hit) const {
         if(&o==&g||o.plane!=g.plane)return false;
         for(const auto* d:{&o.field,&o.next}) {
             const Field* f=d->get();
             if(!f||f->usable()!=(pass==0)||f->epoch!=epoch||w.tickCounter_-f->started>kStillScan)continue;
-            if(f->x0>box[0]||f->z0>box[1]||f->x0+f->fw-1<box[2]||f->z0+f->fh-1<box[3])continue;
+            if(!plan) {
+                if(f->kind!=KindWindow)continue;
+                if(f->x0>box[0]||f->z0>box[1]||f->x0+f->fw-1<box[2]||f->z0+f->fh-1<box[3])continue;
+            } else if(plan->kind==KindChain) {
+                // A finished chain to the same goals that already reaches every member of this group.
+                if(f->kind!=KindChain||!f->done||!reachesMembers(g,*f))continue;
+            } else if(!coversCorridor(*f,*plan,planes[size_t(g.plane)].hier.shift()))continue;
             if((f->command==kNoSoft)!=(command==kNoSoft)||f->ownArrivals!=own||(own&&f->command!=command))continue;
             if(f->seeds!=g.seeds)continue;
             // Equal charge lists (PLAN 3.3 F, C34): a field planned round
@@ -2779,6 +4553,9 @@ struct LegionNavigator::Impl {
             // none (empty == empty). Tested per candidate, never in the
             // route-key index's key (C10).
             if(f->avoid!=g.avoidSeg)continue;
+            // Stage 8: equal queue charges (a route planned round a chokepoint's queue serves no group planned
+            // through it), and labels wherever this group would record them (its members are entrants).
+            if(f->kind!=KindChain&&(f->charges!=charges||(labels&&!f->labels)))continue;
             hit=*d;
             return true;
         }
@@ -2796,58 +4573,129 @@ struct LegionNavigator::Impl {
     // group for a while (oldest build first); otherwise the group waits for
     // a slot. Evicting the least recently used field every tick thrashed:
     // all live groups use theirs every tick.
-    bool startField(Group& g,bool shareOnly=false) {
-        // A reach group of two or more members plans to its ring (AR-06).
-        if(!g.field&&!g.ring.tried&&g.reachIds.size()>=kRingMembers)buildRing(g);
-        const auto box=fieldWindow(g);
-        const size_t cells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
-        {
-            const uint64_t command=g.soft?g.command:kNoSoft;
-            const bool own=ownsArrivals(command);
-            if(auto shared=sharedField(g,box,command,own)) {
-                g.built=w.tickCounter_;++stats.fieldsShared;
-                if(!shared->done)(g.field?g.next:g.field)=std::move(shared);
-                else if(g.field) {
-                    if(g.next&&!g.next->done)++stats.refreshDiscards;
-                    ++stats.refreshCompleted;
-                    g.field=std::move(shared);g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);noteAwareInstall(g,*g.field);
-                }
-                else g.field=std::move(shared);
-                listGroup(g);
-                return true;
-            }
+    // A start's outcome (stage 4): a new build, another group's field taken, nothing to share (share
+    // only), no room under the byte allowance or the field count, or its initialisation (cells /
+    // kInitDiv units) more than `initRoom` -- the budget left this tick when it is not the whole
+    // quota (the first start of a tick always fits).
+    enum class Start : uint8_t {Built,Shared,NoShare,NoRoom,NoBudget};
+    uint64_t startCharge=0;   // the last start's initialisation + ring units (the scheduler charges them)
+    // The bytes every live field holds now, and the allowance: NavBudget::kFieldBytes, but never less
+    // than two whole-map fields, so that no single request exceeds it on any map.
+    uint64_t fieldBytes() const {return uint64_t(liveFieldCells())*NavSize::kCell32+fieldTotals.inflight;}
+    uint64_t fieldAllowance() const {
+        return std::max<uint64_t>(gFieldBytes?gFieldBytes:NavBudget::kFieldBytes,2*uint64_t(width())*uint64_t(height())*NavSize::kCell32);
+    }
+    // May group o's field be evicted (o past its tenure: the caller's test)? Its field must be usable; held by
+    // o alone it is o's (as before); shared, every holder -- the groups listed under its route key whose field
+    // is it -- must be past its tenure too, and none may hold it as its refresh: then it is dropped from all
+    // of them (`holders`, ascending ids; the caller frees it). Stage 4 fix round: a shared field was never a
+    // victim, so a few fields shared by groups that never finish pinned the room a reservation waited for
+    // for ever (many-1000 under a two-map allowance stopped admitting at tick ~1,600 for the rest of the run).
+    // A share only lands within kStillScan of a field's start, so sharing extends no field's tenure by more.
+    // fullScan (TAK_LEGION_VERIFY): find the holders by a walk of every group instead of the index.
+    bool evictionHolders(Group& o,std::vector<Group*>& holders,bool fullScan) {
+        holders.clear();
+        const std::shared_ptr<Field>& f=o.field;
+        if(!f||!f->usable())return false;
+        const long refs=ownRefs(f);
+        if(refs==1) {holders.push_back(&o);return true;}
+        auto take=[&](Group& h)->bool {
+            if(h.next==f)return false;
+            if(h.field!=f)return true;
+            if(w.tickCounter_-h.built<kFieldTenure)return false;
+            holders.push_back(&h);
+            return true;
+        };
+        if(fullScan) {for(auto& [id,h]:groups)if(!take(h))return false;}
+        else if(const auto at=routeIndex.find({o.plane,f->seedKey});at!=routeIndex.end()) {
+            for(const int id:at->second)if(!take(groups.find(id)->second))return false;
         }
-        if(shareOnly)return false;
-        const size_t budget=kMaxFields*size_t(width())*size_t(height());
-        while(liveFields()>=kMaxFieldCount||liveFieldCells()+cells>budget) {
-            // A victim is a group whose finished field is past its tenure
-            // and its own (dropping a shared one frees nothing).
+        return long(holders.size())==refs;   // every reference is a holder's field (else: not evictable)
+    }
+    Start startField(Group& g,bool shareOnly=false,uint64_t initRoom=~0ull) {
+        startCharge=0;
+        // A reach group of two or more members plans to its ring (AR-06).
+        if(!g.field&&!g.ring.tried&&g.reachIds.size()>=kRingMembers) {
+            const uint64_t before=navc.ringCells;
+            buildRing(g);
+            startCharge+=navc.ringCells-before;
+        }
+        const uint64_t command=g.soft?g.command:kNoSoft;
+        const bool own=ownsArrivals(command);
+        auto install=[&](std::shared_ptr<Field> shared) {
+            g.built=w.tickCounter_;++stats.fieldsShared;
+            if(g.field)g.improveTick=kNoTick;   // a shared replacement is of this epoch (sharedField)
+            g.reroute=false;
+            if(!shared->done)(g.field?g.next:g.field)=std::move(shared);
+            else if(g.field) {
+                if(g.next&&!g.next->done)++stats.refreshDiscards;
+                ++stats.refreshCompleted;
+                {auto oldField=std::move(g.field),oldNext=std::move(g.next);g.field=std::move(shared);orphan(oldField);orphan(oldNext);}
+                g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);noteAwareInstall(g,*g.field);
+            }
+            else g.field=std::move(shared);
+            listGroup(g);
+            return Start::Shared;
+        };
+        const auto window=fieldWindow(g);
+        if(auto shared=sharedField(g,window,command,own,nullptr))return install(std::move(shared));
+        // A share-only start may take a corridor or chain another group already has too (a share allocates
+        // nothing) -- by the plan the group already holds, if any: a share-only request is asked every tick it waits,
+        // and planning each one (the region search) cost scatter-10000 a quarter of its tick.
+        if(shareOnly) {
+            if(g.plan&&g.planTick!=kNoTick&&g.planEpoch==epoch&&g.planMembers==g.members&&g.plan->kind!=KindWindow)
+                if(auto shared=sharedField(g,g.plan->box,command,own,g.plan.get()))return install(std::move(shared));
+            return Start::NoShare;
+        }
+        // Stage 6: the window, or a corridor or chain through the hierarchy (planRoute; reused for kPlanReuse ticks
+        // of the same epoch and membership while the start waits for budget or room).
+        const RoutePlan& plan=routePlan(g,window);
+        if(plan.kind!=KindWindow)
+            if(auto shared=sharedField(g,plan.box,command,own,&plan))return install(std::move(shared));
+        const auto box=plan.box;
+        const size_t cells=plan.kind!=KindWindow?plan.cells:size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
+        if(cells/NavBudget::kInitDiv>initRoom)return Start::NoBudget;
+        const uint64_t want=uint64_t(cells)*NavSize::kCell32+uint64_t(g.seeds.size())*NavSize::kKeyed,allowance=fieldAllowance();
+        const bool chainStart=plan.kind==KindChain;
+        while((chainStart?fieldTotals.chains>=kMaxChainCount:liveFields()-fieldTotals.chains>=kMaxFieldCount)||fieldBytes()+want>allowance) {
+            // A victim is a finished field past its tenure: one group's own, or a shared one every holder
+            // of which is past its tenure (evictionHolders), dropped from all of them.
             // Within one tick that set only grows when a field finishes
             // (fieldsDone): evictions and new builds only shrink it.
-            if(noVictimTick==w.tickCounter_&&noVictimDone==fieldsDone)return false;
+            if(noVictimTick==w.tickCounter_&&noVictimDone==fieldsDone)return Start::NoRoom;
             // The oldest build first (ties: the lowest id), so the walk in
             // byBuilt order stops at the first victim or at tenure.
             Group* victim=nullptr;
+            std::vector<Group*> holders;
             uint64_t iters=0;
             for(const auto& [built,id]:byBuilt) {
                 ++iters;
                 if(w.tickCounter_-built<kFieldTenure)break;
                 Group& o=groups.find(id)->second;
-                if(o.field->usable()&&o.field.use_count()==1) {victim=&o;break;}
+                if(evictionHolders(o,holders,false)) {victim=&o;break;}
             }
             stats.groupLoopIters+=iters;
 #ifndef NDEBUG
             if(gVerify) {
                 Group* scan=nullptr;
+                std::vector<Group*> scanHolders;
                 for(auto& [id,o]:groups)
-                    if(o.field&&o.field->usable()&&o.field.use_count()==1&&w.tickCounter_-o.built>=kFieldTenure&&(!scan||o.built<scan->built))scan=&o;
+                    if(o.field&&w.tickCounter_-o.built>=kFieldTenure&&(!scan||o.built<scan->built)&&evictionHolders(o,scanHolders,true))scan=&o;
                 if(scan!=victim)verifyFail("byBuilt eviction victim differs from the full scan");
+                if(scan) {
+                    evictionHolders(*scan,scanHolders,true);
+                    if(scanHolders!=holders)verifyFail("route-key index finds other holders of the victim than the full scan");
+                }
             }
 #endif
-            if(!victim) {noVictimTick=w.tickCounter_;noVictimDone=fieldsDone;return false;}
-            if(victim->next&&!victim->next->done)++stats.refreshDiscards;
-            victim->field.reset();victim->next.reset();victim->stale=false;victim->demand=false;victim->awareDemand=false;++stats.fieldEvictions;
-            listGroup(*victim);
+            if(!victim) {noVictimTick=w.tickCounter_;noVictimDone=fieldsDone;return Start::NoRoom;}
+            if(holders.size()>1)++acct.sharedEvictions;
+            for(Group* h:holders) {
+                if(h->next&&!h->next->done)++stats.refreshDiscards;
+                {auto oldField=std::move(h->field),oldNext=std::move(h->next);orphan(oldField);orphan(oldNext);}
+                h->stale=false;h->demand=false;h->awareDemand=false;++stats.fieldEvictions;
+                listGroup(*h);
+            }
         }
         g.built=w.tickCounter_;
         auto f=std::make_shared<Field>();
@@ -2859,20 +4707,52 @@ struct LegionNavigator::Impl {
         ++stats.fieldsStartedByKind[size_t(g.kind)&15];
         f->liftAllied=std::any_of(liftSoftPlayers.begin(),liftSoftPlayers.end(),
             [&](int owner) {return w.allied(owner,int(uint32_t(f->command>>32)));});
-        f->W=width();f->x0=box[0];f->z0=box[1];f->fw=box[2]-box[0]+1;f->fh=box[3]-box[1]+1;
-        f->potential.assign(cells,kUnreached);
-        f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;
-        {const auto whole=fieldWindow(g,true);f->bounded=whole!=box;}
+        // Stage 8: a window or corridor of a group of kOpeningMembers or more records each cell's next opening and
+        // carries the queue charges of its window's openings (openingCharges); a ring wide enough for the largest.
+        if(plan.kind!=KindChain&&g.members>=kOpeningMembers&&g.soft) {
+            f->labels=true;f->charges=openingCharges(g,box);
+            if(!f->charges.empty()) {
+                uint32_t top=0;
+                for(const auto& c:f->charges)top=std::max(top,c.cost);
+                uint32_t ring=128;
+                while(ring<top+128)ring<<=1;
+                if(ring!=128) {f->buckets.assign(ring,{});f->mask=ring-1;}
+                ++acct.chargedFields;acct.openingCharges+=f->charges.size();
+            }
+        }
+        if(plan.kind==KindCorridor) {
+            f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,planes[size_t(g.plane)].hier.shift());
+            f->allow=plan.allow;f->kind=KindCorridor;f->corridorSig=plan.sig;++acct.corridors;
+            f->bind();
+        } else if(plan.kind==KindChain) {
+            // The destination's own field first (dAllow), then the transit tiles (advanceChain).
+            f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,planes[size_t(g.plane)].hier.shift());
+            f->allow=plan.allow;f->dAllow=plan.dAllow;f->chain=plan.nodes;f->kind=KindChain;f->corridorSig=plan.sig;
+            f->chainTransit=plan.transit;f->attached.assign(plan.nodes.size(),0);f->repairing.assign(plan.nodes.size(),0);
+            f->offset.assign(f->tiles.size(),0);f->fin.assign(f->tiles.size(),0);
+            f->bind();
+            ++acct.chains;
+        } else f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,gSectorShift);
+        f->counted=cells;
+        navc.initCells+=cells;acct.initMax=std::max<uint64_t>(acct.initMax,cells);
+        startCharge+=cells/NavBudget::kInitDiv;
+        f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;fieldTotals.chains+=f->kind==KindChain;
+        f->lastServed=w.tickCounter_;
+        {const auto whole=fieldWindow(g,true);f->bounded=f->kind!=KindWindow||whole!=box;}
         if(g.bodyMaxX>=g.bodyMinX) {f->aimed=true;f->tx=(g.bodyMinX+g.bodyMaxX)/2;f->tz=(g.bodyMinZ+g.bodyMaxZ)/2;}
         for(int s:g.seeds) {
             if(!f->inside(s%f->W,s/f->W))continue;
-            f->potential[f->local(s%f->W,s/f->W)]=0;f->seedKeys.push_back({f->heuristic(s%f->W,s/f->W),s});
+            f->slot(s%f->W,s/f->W)=0;f->seedKeys.push_back({f->heuristic(s%f->W,s/f->W),s});
         }
         std::sort(f->seedKeys.begin(),f->seedKeys.end());
         f->current=f->seedKeys.empty()?0:f->seedKeys.front().first;
-        if(g.field)g.next=std::move(f);else g.field=std::move(f);
+        f->syncInflight();
+        // Built: the next build plans afresh. (`plan` refers into g.plan: nothing reads it after this.)
+        g.plan.reset();g.planTick=kNoTick;g.reroute=false;
+        if(g.field) {g.next=std::move(f);g.improveTick=kNoTick;}   // the refresh is built on the plane as it is now
+        else g.field=std::move(f);
         listGroup(g);
-        return true;
+        return Start::Built;
     }
     // Dial's algorithm on key = potential + heuristic (A*; consistent, so
     // a key never drops below its parent's and rises by at most
@@ -2880,18 +4760,21 @@ struct LegionNavigator::Impl {
     // buckets suffice). Seeds enter
     // in key order.
     uint64_t advance(Field& f,uint64_t budget) {
-        const auto& p=planes[size_t(f.plane)];
-        const int W=width();uint64_t spent=0;
+        if(f.kind==KindChain&&f.dDone)return advanceChain(f,budget);
+        Plane& p=planes[size_t(f.plane)];
+        const int W=width();uint64_t spent=0,opWork=0;
+        const int shift=p.hier.shift();
+        struct OpCharge {uint64_t& work;Impl& I;~OpCharge() {I.navc.connectivity+=work;}} opCharge{opWork,*this};
         while((f.queued||f.seedNext<f.seedKeys.size())&&spent<budget) {
             if(!f.queued&&f.seedKeys[f.seedNext].first>f.current)f.current=f.seedKeys[f.seedNext].first;
             while(f.seedNext<f.seedKeys.size()&&f.seedKeys[f.seedNext].first==f.current) {
-                f.buckets[f.current&127].push_back(f.seedKeys[f.seedNext].second);++f.queued;++f.seedNext;
+                f.buckets[f.current&f.mask].push_back(f.seedKeys[f.seedNext].second);++f.queued;++f.seedNext;
             }
-            auto& bucket=f.buckets[f.current&127];
+            auto& bucket=f.buckets[f.current&f.mask];
             if(bucket.empty()) {++f.current;continue;}
             const int cell=bucket.back();bucket.pop_back();--f.queued;
             const int x=cell%W,z=cell/W;
-            const uint32_t g=f.at(x,z);
+            const uint32_t g=f.cellAt(x,z);
             if(g+f.heuristic(x,z)!=f.current)continue;   // stale entry
             const uint32_t open=steps(p,x,z);
             for(size_t k=0;k<kDirections.size();++k) {
@@ -2902,7 +4785,9 @@ struct LegionNavigator::Impl {
                 // Outside the window only after a static change mid-build
                 // (the field is then stale and rebuilt on the new plane).
                 if(!f.inside(x+d[0],z+d[1]))continue;
-                auto& slot=f.potential[f.local(x+d[0],z+d[1])];
+                // A chain's own field covers its destination's tiles only (stage 6).
+                if(!f.dAllow.empty()&&!f.dAllow[f.tileOf(x+d[0],z+d[1])])continue;
+                const uint32_t slot=f.cellAt(x+d[0],z+d[1]);
                 if(g+base>=slot)continue;   // no charge can improve it
 #ifndef NDEBUG
                 // C1's soundness: a settled potential is final (a paused
@@ -2913,32 +4798,764 @@ struct LegionNavigator::Impl {
 #endif
                 const int level=softLevel(x+d[0],z+d[1],p.footX,p.footZ,f.command,f.softCounts,f.ownArrivals,f.liftAllied);
                 f.softened|=level>0;
+                // Stage 8: a step across a sector boundary may cross an opening (a body at the neighbour walks
+                // into this cell): its label, and the route's queue charge for that crossing.
+                uint16_t label=0;uint32_t queue=0;
+                if(f.labels&&(((x^(x+d[0]))|(z^(z+d[1])))>>shift)) {
+                    label=crossLabel(p,x,z,x+d[0],z+d[1],opWork);
+                    if(label&&!f.charges.empty())queue=f.chargeFor(label);
+                }
                 const uint32_t next=g+(level==2?base*kSoftFactor:level==1?base*kSoftNear:base)+
-                    (f.avoid.empty()?0:f.corridorCharge(x+d[0],z+d[1],p.footX,p.footZ,base));
+                    (f.avoid.empty()?0:f.corridorCharge(x+d[0],z+d[1],p.footX,p.footZ,base))+queue;
                 if(next>=kUnreached)continue;   // out of range (never: over 40M cells even at the highest charge)
                 if(next<slot) {
-                    slot=next;
-                    f.buckets[(next+f.heuristic(x+d[0],z+d[1]))&127].push_back((z+d[1])*W+x+d[0]);++f.queued;
+                    f.slot(x+d[0],z+d[1])=next;
+                    if(f.labels) {
+                        // Allocated only where some label is not 0 (an unwritten tile reads 0).
+                        const uint16_t v=label?label:f.viaAt(x,z);
+                        if(v||f.viaTile(x+d[0],z+d[1]))f.viaSlot(x+d[0],z+d[1])=v;
+                    }
+                    f.buckets[(next+f.heuristic(x+d[0],z+d[1]))&f.mask].push_back((z+d[1])*W+x+d[0]);++f.queued;
                 }
             }
         }
         if(!f.queued&&f.seedNext>=f.seedKeys.size()) {
-            f.done=true;++fieldsDone;for(auto& b:f.buckets)std::vector<int>().swap(b);std::vector<std::pair<uint32_t,int>>().swap(f.seedKeys);
-            std::vector<std::pair<int,uint32_t>>().swap(f.demand);
+            for(auto& b:f.buckets)std::vector<int>().swap(b);
+            std::vector<std::pair<uint32_t,int>>().swap(f.seedKeys);
+            if(f.kind==KindChain) {
+                // The destination's field is done: its values are final; the transit tiles follow.
+                f.dDone=true;
+                f.work+=spent;f.syncInflight();
+                return spent+(spent<budget?advanceChain(f,budget-spent):0);
+            }
+            f.done=true;++fieldsDone;
+            f.demand.clear();
         }
         f.work+=spent;
+        f.syncInflight();
         return spent;
+    }
+    // ---- stage 6: the chain's transit tiles ---------------------------------------------------------------------
+    // Attach the chain's transit regions in plan order (every parent before its children), one tile each, until the
+    // budget is spent; the halo regions after them wait until a member steps into one (repairs). A region whose
+    // sector (or the portal's other sector) has been relabelled since the plan stays off the route (and so do the
+    // regions leading into it): the route was touched by that change (staticChanged), its group refreshes, and a
+    // member it does not reach waits for that refresh (move). Returns the work (tile builds, key cells, attaches).
+    uint64_t advanceChain(Field& f,uint64_t budget) {
+        uint64_t spent=0;
+        while(f.chainNext<f.chainTransit&&spent<budget) {
+            attachNode(f,f.chainNext,spent);
+            ++f.chainNext;
+        }
+        if(f.chainNext>=f.chainTransit) {
+            f.done=true;++fieldsDone;f.demand.clear();
+#ifndef NDEBUG
+            if(gVerify)verifyDescent(f);
+#endif
+        }
+        navc.tileBuild+=spent;navc.tileBuildServed+=spent;
+        f.work+=spent+1;   // the version: estimates changed
+        return spent;
+    }
+#ifndef NDEBUG
+    // TAK_LEGION_VERIFY: on a finished chain every cell with an estimate above 0 has a legal step to a neighbour
+    // whose estimate is strictly lower (so every descent strictly lowers the estimate, across tiles too, and ends on
+    // a goal: no loop, no false minimum).
+    void verifyDescent(const Field& f) const {
+        // A touched chain's tiles were built on older geometry around the change (staticChanged keeps it steering
+        // until its refresh lands): the current plane's steps do not describe them.
+        if(f.touched)return;
+        const auto& p=planes[size_t(f.plane)];
+        const int W=width();
+        for(int z=f.z0;z<f.z0+f.fh;++z)for(int x=f.x0;x<f.x0+f.fw;++x) {
+            const uint32_t v=f.cellAt(x,z);
+            if(v==kUnreached||v==0)continue;
+            bool lower=false;
+            for(const auto& d:kDirections)
+                if(step(p,x,z,d[0],d[1])&&f.cellAt(x+d[0],z+d[1])<v) {lower=true;break;}
+            if(!lower) {
+                std::fprintf(stderr,"TAK_LEGION_VERIFY: chain %llu cell (%d,%d) estimate %u has no lower neighbour\n",
+                             (unsigned long long)f.serial,x,z,v);
+                verifyFail("a chain's estimate has a local minimum off its goals");
+            }
+            (void)W;
+        }
+    }
+#endif
+    // The key of chain node n's tile on plane p (attachNode; the stage-9 prefetch computes the same key ahead of the
+    // serial pass, tilePrefetch): its identity, the boundary -- aimed (toward the exit of the region it leads into) or
+    // exact (`est`, the route's own values at the seeds) -- the region's soft levels as the route's command sees them,
+    // and the route's mover corridors that reach the region. `spent` gains the cells read (the work attachNode
+    // charges), so both callers count alike. `reuse`: a key prepared for the same route and region on the same soft
+    // grid (preparedKey): its soft levels and corridors are taken instead of scanning the region, with the same work.
+    void tileKey(Tile& key,const Field& f,const ChainNode& n,const Plane& p,bool aimed,const std::vector<int>& seed,
+                 const std::vector<uint32_t>& est,uint64_t& spent,const Tile* reuse=nullptr) const {
+        const int W=width();
+        const int len=n.exit.len;
+        key.plane=p.hier.id();key.sector=n.s;key.region=n.r;key.gen=n.gen;key.ngen=n.ngen;key.exit=n.exit;key.onA=n.onA;
+        key.classSig=classSig(p);
+        key.boundary.assign(size_t(len),kUnreached);
+        if(aimed) {
+            // Aimed: toward the exit of the region it leads into, so the tile is that of every route leaving this
+            // region by this portal toward that exit, whatever its destination. The boundary cost is LINEAR along
+            // the run, falling toward the aim's side: kOrthogonal per cell of the seeds' projection onto the
+            // direction from the run's middle to the aim. The field's lanes then run parallel in that direction (a
+            // straight way crosses an edge square on, a turn cuts its corner diagonally), not radially into one
+            // point (an octile distance to the aim drew every body of a squad into the middle of each portal).
+            const ChainNode& par=f.chain[size_t(n.parent)];
+            key.aim=p.hier.midCell(par.exit,par.s);
+            const int mid=seed[size_t(len/2)];
+            const int64_t dx=key.aim%W-mid%W,dz=key.aim/W-mid/W;
+            const int64_t norm=std::max<int64_t>(1,isqrtFloor(uint64_t(dx*dx+dz*dz)));
+            int64_t top=INT64_MIN;
+            std::vector<int64_t> t(static_cast<size_t>(len));
+            for(int i=0;i<len;++i) {
+                t[size_t(i)]=(seed[size_t(i)]%W-mid%W)*dx+(seed[size_t(i)]/W-mid/W)*dz;
+                top=std::max(top,t[size_t(i)]);
+            }
+            for(int i=0;i<len;++i)key.boundary[size_t(i)]=uint32_t(int64_t(kOrthogonal)*(top-t[size_t(i)])/norm);
+        } else key.boundary=est;   // exact: the route's own values (kUnreached: no seed there)
+        // The region's soft levels as this route's command sees them (the soft rule is part of the key).
+        const auto r=p.hier.rect(n.s);
+        if(reuse) {
+            key.soft=reuse->soft;key.avoid=reuse->avoid;
+            const uint64_t cells=uint64_t(r[2]-r[0])*uint64_t(r[3]-r[1]);
+            spent+=(softCellCount?cells:0)+cells*uint64_t(f.avoid.size());
+            return;
+        }
+        // The region's origins, read from the sector's own labels (regionAt's lookup without its sector division).
+        const std::vector<uint16_t>& lab=p.hier.sector(n.s).label;
+        const int sh=p.hier.shift();
+        auto mine=[&](int x,int z) {return !lab.empty()&&lab[size_t(((z-r[1])<<sh)|(x-r[0]))]==n.r;};
+        if(softCellCount) {
+            for(int z=r[1];z<r[3];++z)for(int x=r[0];x<r[2];++x) {
+                if(!mine(x,z))continue;
+                const int lv=softLevel(x,z,p.footX,p.footZ,f.command,f.softCounts,f.ownArrivals,f.liftAllied);
+                if(lv)key.soft.push_back({uint16_t(((z-r[1])<<p.hier.shift())|(x-r[0])),uint8_t(lv)});
+            }
+            spent+=uint64_t(r[2]-r[0])*uint64_t(r[3]-r[1]);
+        }
+        // The route's mover corridors that charge some origin of the region (group awareness) are part of the key:
+        // the tile is then this route's local correction; a region no corridor reaches keeps the shared tile.
+        for(const Corridor& c:f.avoid) {
+            bool reaches=false;
+            for(int z=r[1];z<r[3]&&!reaches;++z)for(int x=r[0];x<r[2]&&!reaches;++x)
+                reaches=mine(x,z)&&corridorChargeOf({c},x,z,p.footX,p.footZ,kOrthogonal)>0;
+            spent+=uint64_t(r[2]-r[0])*uint64_t(r[3]-r[1]);
+            if(reaches)key.avoid.push_back(c);
+        }
+    }
+    // Attach chain node `idx` (a transit region, or a halo region a member stepped into): build or find its tile,
+    // compute its offset and read it. False when it stays off the route: nothing to lead into, out of range, or its
+    // geometry relabelled since the plan (counted as an abandon).
+    bool attachNode(Field& f,size_t idx,uint64_t& spent) {
+        auto& p=planes[size_t(f.plane)];
+        const int W=width();
+        const ChainNode& n=f.chain[idx];
+        const int other=n.onA?n.exit.b:n.exit.a;
+        if(!p.hier.built(n.s)||p.hier.gen(n.s)!=n.gen||!p.hier.built(other)||p.hier.gen(other)!=n.ngen) {
+            // Stage 7: the region's sector (or the portal's other one) was relabelled since the plan -- a local
+            // change. Re-resolve the node on the current geometry (the portal run on the same boundary that overlaps
+            // the old one most, still leading into the region the route continues in) and build that tile: only the
+            // dirty tile is rebuilt and the route keeps its topology. Gone (the portal closed, or it leads elsewhere
+            // now): the region stays off the route -- a closure of the route itself, whose group refreshes and
+            // re-plans (staticChanged touched it).
+            if(!resolveChainNode(f.chain,idx,p,spent)) {++acct.chainAbandons;return false;}
+        }
+        if(n.parent>=0&&!f.attached[size_t(n.parent)]) {++acct.chainSkips;return false;}
+        // The seeds (the portal's other side) and the route's estimate there (its destination field, or the tile
+        // already attached for the region the portal leads into).
+        const int len=n.exit.len;
+        std::vector<int> seed(static_cast<size_t>(len));
+        std::vector<uint32_t> est(static_cast<size_t>(len));
+        bool all=true;
+        for(int i=0;i<len;++i) {
+            seed[size_t(i)]=n.onA?p.hier.farCell(n.exit,i):p.hier.nearCell(n.exit,i);
+            est[size_t(i)]=f.cellAt(seed[size_t(i)]%W,seed[size_t(i)]/W);
+            all&=est[size_t(i)]!=kUnreached;
+        }
+        spent+=uint64_t(len);
+        Tile key;
+        const Tile* ready=preparedKey(f,idx,n);
+        tileKey(key,f,n,p,n.parent>=0&&all,seed,est,spent,ready);
+#ifndef NDEBUG
+        if(gVerify&&ready) {
+            Tile full;uint64_t work=0;
+            tileKey(full,f,n,p,n.parent>=0&&all,seed,est,work);
+            if(!full.sameKey(key))verifyFail("a prepared chain key differs from the region scan");
+        }
+#endif
+        if(ready)++par.keysReused;
+        uint64_t built=0;
+        const std::shared_ptr<Tile> tile=tileFor(std::move(key),p,built,f.seedKey);
+        spent+=built;
+        // The offset: the largest (estimate - boundary cost) over the seeds, so a cell beside a seed reads more than
+        // the seed itself and every descent step lowers the estimate (an exact tile's is 0).
+        int64_t rem=0;
+        bool any=false;
+        for(int i=0;i<len;++i) {
+            if(tile->boundary[size_t(i)]==kUnreached||est[size_t(i)]==kUnreached)continue;
+            const int64_t d=int64_t(est[size_t(i)])-int64_t(tile->boundary[size_t(i)]);
+            rem=any?std::max(rem,d):d;any=true;
+        }
+        if(!any||int64_t(tile->maxValue)+rem>=int64_t(kUnreached)-1||int64_t(tile->maxValue)+rem<0) {
+            ++acct.chainSkips;
+            if(overTileLimit())evictTiles();
+            return false;
+        }
+        attachTile(f,n,tile,rem);
+        f.attached[idx]=1;
+        f.softened|=!tile->soft.empty();
+        if(overTileLimit())evictTiles();   // after the attach: the tile counts this route now
+        return true;
+    }
+    // Stage 7: re-resolve chain node idx after its geometry changed (see attachNode). The boundary keeps its sectors
+    // (a and b, the side); its runs are rescanned and the one overlapping the old run most is taken (ties: the lower
+    // start). Its region on the node's side is the node's region now; the other side must be the region the route
+    // continues in (the parent node as it stands; for a node leading into the destination field, any: attachNode
+    // reads the field's values at the seeds). The node's generations become the current ones. A versioned repair: the
+    // chain's tiles then come from more than one geometry epoch (the route is touched and never proves Unreachable),
+    // each descent-valid on its own build, the offsets taken from the values actually attached.
+    bool resolveChainNode(std::vector<ChainNode>& chain,size_t idx,Plane& p,uint64_t& spent) {
+        ChainNode& n=chain[idx];
+        uint64_t work=0;
+        const auto& list=p.hier.side(n.exit.a,n.exit.side,p.legal.data(),work);
+        spent+=work;navc.connectivity+=work;
+        int best=-1,bestOverlap=0;
+        for(size_t i=0;i<list.size();++i) {
+            const auto& q=list[i];
+            const int overlap=std::min(q.start+q.len,n.exit.start+n.exit.len)-std::max(q.start,n.exit.start);
+            if(overlap>bestOverlap) {bestOverlap=overlap;best=int(i);}
+        }
+        if(best<0)return false;
+        const hier::Portal q=list[size_t(best)];
+        const uint16_t mine=n.onA?q.ra:q.rb,theirs=n.onA?q.rb:q.ra;
+        const int otherSector=n.onA?q.b:q.a;
+        if(n.parent>=0) {
+            const ChainNode& par=chain[size_t(n.parent)];
+            if(par.s!=otherSector||par.r!=theirs)return false;
+        }
+        n.r=mine;n.gen=p.hier.gen(n.s);n.ngen=p.hier.gen(otherSector);n.exit=q;
+        ++acct.chainResolves;
+        return true;
+    }
+    // A member stands in a region of its group's chain's halo that is not attached yet: queue the repair (served in
+    // tick() before the field quota, charged to it). True when the region is a halo region of the chain.
+    bool requestRepair(Group& g,Field& f,int cell) {
+        const auto& p=planes[size_t(f.plane)];
+        const int s=p.hier.sectorOfCell(cell);
+        if(!p.hier.built(s))return false;
+        const uint16_t r=p.hier.regionAt(cell);
+        for(size_t i=f.chainTransit;i<f.chain.size();++i) {
+            const ChainNode& n=f.chain[i];
+            if(n.s!=s||n.r!=r||n.gen!=p.hier.gen(s))continue;
+            if(f.attached[i])return false;
+            if(!f.repairing[i]) {f.repairing[i]=1;repairs.push_back({g.id,f.serial,i});}
+            return true;
+        }
+        return false;
+    }
+    struct Repair {int group=0;uint64_t serial=0;size_t node=0;};
+    std::deque<Repair> repairs;   // halo regions to attach, in request order (hashed while not empty)
+    void serveRepairs(uint64_t& budget) {
+        while(!repairs.empty()&&budget>0) {
+            const Repair r=repairs.front();
+            repairs.pop_front();
+            const auto g=groups.find(r.group);
+            if(g==groups.end()||!g->second.field||g->second.field->serial!=r.serial)continue;
+            Field& f=*g->second.field;
+            f.repairing[r.node]=0;
+            if(f.attached[r.node])continue;
+            uint64_t spent=0;
+            if(attachNode(f,r.node,spent)) {
+                ++acct.chainRepairs;
+#ifndef NDEBUG
+                if(gVerify)verifyDescent(f);
+#endif
+            }
+            navc.tileBuild+=spent;
+            f.work+=spent+1;
+            budget-=std::min(budget,spent);
+        }
+    }
+    // Read tile `t` for region n of chain f at offset rem. A sector the route already holds a tile in (its
+    // destination field's, or another region's) gets one tile of its own holding both: the cells the new tile
+    // reaches that read nothing yet take its values plus rem.
+    static uint64_t classSig(const Plane& p) {
+        uint64_t h=mix(0x636c617373ull,uint64_t(uint32_t(p.footX))<<32|uint32_t(p.footZ));
+        h=mix(h,uint64_t(uint32_t(p.maxDepth))<<32|uint32_t(p.minDepth));h=mix(h,uint64_t(uint32_t(p.maxSlope))<<32|uint32_t(p.maxWaterSlope));
+        return mix(h,p.legacy);
+    }
+    void attachTile(Field& f,const ChainNode& n,const std::shared_ptr<Tile>& t,int64_t rem) {
+        const auto& p=planes[size_t(f.plane)];
+#ifndef NDEBUG
+        if(gVerify&&t->classSig!=classSig(p))verifyFail("a chain read a tile built for another mobility class");
+#endif
+        const auto r=p.hier.rect(n.s);
+        const size_t ti=f.tileOf(r[0],r[1]);
+        if(!f.tiles[ti]) {
+            f.tiles[ti]=t->values.data();f.offset[ti]=rem;f.fin[ti]=1;
+        } else {
+            const size_t cells=f.tileCells();
+            if(!f.own[ti]||f.tiles[ti]!=f.own[ti].get()) {
+                std::unique_ptr<uint32_t[]> mine(new uint32_t[cells]);
+                for(size_t c=0;c<cells;++c) {
+                    const uint32_t v=f.tiles[ti][c];
+                    mine[c]=v==kUnreached?kUnreached:uint32_t(int64_t(v)+f.offset[ti]);
+                }
+                f.own[ti]=std::move(mine);f.tiles[ti]=f.own[ti].get();f.offset[ti]=0;++f.ownTiles;
+                // Storage of the route's own: in the field allowance like its destination's tiles.
+                f.counted+=cells;if(f.totals)f.totals->cells+=cells;
+            }
+            for(size_t c=0;c<cells;++c)
+                if(t->values[c]!=kUnreached&&f.own[ti][c]==kUnreached)f.own[ti][c]=uint32_t(int64_t(t->values[c])+rem);
+            f.fin[ti]=1;
+        }
+        t->acquire();t->touch(w.tickCounter_);
+        f.held.push_back(t);
+    }
+    // The cache of shared tiles: a hit is a tile whose whole key equals this one; a miss builds it (Dijkstra over
+    // the region from its seeds) and inserts it, then unreferenced tiles are evicted oldest-use first while the cache
+    // holds more than its allowance. `built` gains the build's relaxations (0 on a hit).
+    // Stage 7: two caches. STATIC tiles -- no soft level and no mover corridor in the key -- are terrain navigation
+    // alone: a function of the plane's geometry and the boundary, the same for every command and player, reused by
+    // every route through the region. CORRECTIONS -- a region where the route's command sees soft bodies or plans round
+    // a mover -- are the bounded local traffic correction of the same region (the same Dijkstra, the same boundary,
+    // the traffic charged cell by cell), shared only by routes whose traffic view is identical (the key holds the
+    // whole view: the soft rule with its own-arrival and allied-flyer exemptions, the corridors with awareness's sight
+    // rule), so no route reads more of another player than its own view holds. They come and go with the traffic
+    // and get their own, smaller allowance, so traffic never evicts terrain. tileBytes / tileCount / tileDigest
+    // cover both (the digest is hashed).
+    static constexpr uint64_t kTileBytes=uint64_t(48)<<20,kCorrectionBytes=uint64_t(16)<<20;
+    struct TileCache {
+        std::map<uint64_t,std::vector<std::shared_ptr<Tile>>> map;uint64_t bytes=0;
+        std::set<std::tuple<uint32_t,uint64_t,const void*>> unref;   // its unreferenced tiles, oldest use first (Tile::unref)
+        TileCache()=default;
+        TileCache(const TileCache&)=delete;
+        TileCache& operator=(const TileCache&)=delete;
+        // The caches are declared after the groups and go first: a chain destroyed later must not touch this queue.
+        ~TileCache() {for(auto& [h,bucket]:map)for(auto& t:bucket)t->unref=nullptr;}
+    };
+    TileCache staticTiles,corrTiles;
+    static bool correction(const Tile& t) {return !t.soft.empty()||!t.avoid.empty();}
+    TileCache& cacheOf(const Tile& t) {return correction(t)?corrTiles:staticTiles;}
+    bool overTileLimit() const {return staticTiles.bytes>kTileBytes||corrTiles.bytes>kCorrectionBytes;}
+    uint64_t tileBytes=0,tileSeq=0,tileDigest=0;
+    size_t tileCount=0;
+    static uint64_t tileHash(const Tile& t) {
+        uint64_t h=mix(0x74696c65ull,uint64_t(t.plane.slot)<<32|t.plane.generation);
+        h=mix(h,uint64_t(uint32_t(t.sector))<<16|t.region);h=mix(h,uint64_t(t.gen)<<32|t.ngen);
+        h=mix(h,uint64_t(uint32_t(t.exit.a))<<32|uint32_t(t.exit.b));h=mix(h,uint64_t(t.exit.ra)<<48|uint64_t(t.exit.rb)<<32|uint64_t(t.exit.side)<<24|uint64_t(t.onA));
+        h=mix(h,uint64_t(uint32_t(t.exit.start))<<32|uint32_t(t.exit.len));h=mix(h,uint64_t(uint32_t(t.aim)));
+        for(const uint32_t b:t.boundary)h=mix(h,b);
+        for(const auto& [c,l]:t.soft)h=mix(h,uint64_t(c)<<8|l);
+        for(const auto& c:t.avoid) {h=mix(h,uint64_t(c.x0)^uint64_t(c.z0)<<20^uint64_t(c.x1)<<40);h=mix(h,uint64_t(c.z1)^uint64_t(c.r)<<32^uint64_t(c.behind)<<63);
+                                    h=mix(h,uint64_t(c.ux)^uint64_t(c.uz)<<20^uint64_t(c.L)<<40);h=mix(h,uint64_t(c.len)^uint64_t(c.speed)<<24^uint64_t(c.lead)<<48);}
+        return h;
+    }
+    std::shared_ptr<Tile> tileFor(Tile&& key,const Plane& p,uint64_t& built,uint64_t asker) {
+        key.hash=tileHash(key);
+        TileCache& C=cacheOf(key);
+        auto& bucket=C.map[key.hash];
+        for(const auto& t:bucket)
+            if(t->sameKey(key)) {
+                t->touch(w.tickCounter_);++acct.tileHits;acct.tileCrossHits+=t->builtFor!=asker;
+                if(&C==&corrTiles)++acct.correctionHits;
+                return t;
+            }
+        key.builtFor=asker;
+        auto t=std::make_shared<Tile>(std::move(key));
+        built+=takePrefetched(*t,p);
+        t->seq=++tileSeq;t->lastUse=w.tickCounter_;
+        t->unref=&C.unref;C.unref.insert({t->lastUse,t->seq,t.get()});   // unreferenced until a chain attaches it
+        bucket.push_back(t);
+        tileBytes+=t->bytes();C.bytes+=t->bytes();++tileCount;++acct.tilesBuilt;
+        if(&C==&corrTiles)++acct.correctionsBuilt;
+        tileDigest+=mix(t->hash,t->seq);
+        acct.tileBytesPeak=std::max(acct.tileBytesPeak,tileBytes);
+        return t;   // the caller evicts (evictTiles) once it has attached it, so the new tile is never the victim
+    }
+    // ---- stage 9: tile builds on the SimPool -------------------------------------------------------------------------
+    // A tile's values are a pure function of its key and of the plane's geometry round its sector (buildTile reads the
+    // legality of the sector's origins and of the ring of origins round it, and the sector's region labels, both of the
+    // generations the key names). So the builds a field pass is about to ask for can run beside it, on the SimPool's
+    // workers, without deciding anything. Before a class's jobs are served (serveFields, ahead of navDrr), tilePrefetch
+    // picks the jobs of the class's window in key order and the chain regions each will attach next, while their
+    // predicted attach work fits a job's two slices and the quota left (a deterministic choice from the sim state,
+    // before any job runs), computes each region's key as attachNode does (tileKey) and, for a key that neither the
+    // cache nor the staging holds, starts a job with IMMUTABLE inputs of its own: the key, the seed cells and a copy
+    // of the legality and labels it reads (TileJob). The jobs run asynchronously while the serial pass goes on; nothing
+    // is published by a worker. The serial pass runs exactly as before and consumes by exact identity:
+    //  * attachNode takes the prepared key's soft levels and corridors instead of scanning the region again when they
+    //    cannot differ -- the same route (serial), node (region, generations, portal) and soft grid (softSerial, bumped by
+    //    every stamp change) -- and charges the same work the scan would;
+    //  * where tileFor misses its cache it takes the staged tile whose whole key is equal (takePrefetched), waiting for
+    //    its job if a worker is still on it (helping with jobs nobody has started meanwhile), and charges the work its
+    //    build counted.
+    // The cache, the budgets, the eviction order and every decision see the same keys and tiles, in the same order,
+    // with the same work, prepared or not, on any number of workers and in any completion order: a slower machine waits
+    // at the consumer (and at the pass's end, where every job is joined before the pool serves anything else); it never
+    // publishes a different subset. A staged tile nobody took stays staged for kStagedTicks passes, then is dropped --
+    // never inserted, never counted in NavBytes; a prepared key is good for its pass only. A speculation that missed (an
+    // aimed region whose seeds turned out unreachable, a node re-resolved on new geometry) costs only the wasted job.
+    // With no workers nothing is prepared (it would only add the serial pass's own work), unless a test forces it
+    // (setParallelForTest). Under TAK_LEGION_VERIFY every reused key is recomputed and every staged tile rebuilt from the
+    // plane, and both compared.
+    static constexpr uint32_t kStagedTicks=3;
+    static constexpr size_t kPrefetchMax=256;   // regions picked per pass at most
+    // A tile build's immutable inputs and its output (one per staged key; heap-held, so a worker's slot never moves).
+    struct TileJob {
+        Tile tile;                          // the key; the job writes values, maxValue
+        std::vector<int> seeds;             // the seed cell of each pair of the run (map cells)
+        std::array<int,4> rect{};           // the sector's cells [x0, x1) x [z0, z1)
+        int bx0=0,bz0=0,bw=0,bh=0;          // the legality copy's box: the rect grown by one origin, clipped to the map
+        std::vector<uint8_t> legal;         // bw x bh
+        std::vector<uint16_t> label;        // the sector's K x K region labels
+        int shift=5,W=0,footX=1,footZ=1;
+        uint64_t work=0;
+        std::atomic<uint8_t> ready{0};
+    };
+    struct Staged {
+        std::unique_ptr<TileJob> job;       // job->tile holds the key
+        size_t plane=0;uint32_t tick=0;
+        bool built=false,taken=false;
+        uint64_t field=0;size_t node=0;uint64_t soft=0;   // the prepared key: route serial, chain node, softSerial
+    };
+    std::vector<Staged> staged;
+    std::map<uint64_t,std::vector<size_t>> stagedIndex;   // staged builds by hash
+    std::map<std::pair<uint64_t,size_t>,size_t> keyIndex; // this pass's prepared keys by (route serial, node)
+    std::vector<TileJob*> running;                        // the open asynchronous batch's jobs (chunk k: running[k])
+    std::function<void(size_t,unsigned)> runJob;          // its chunk function (valid until joinTiles)
+    ParallelStats par;                                    // observation only (LegionNavigator::parallelStats)
+    bool prefetching() {return gParForce||w.simPool().workers()>0;}
+    uint64_t parPerturbSerial=0;
+    // The perturbation hook (tests): chunk k runs job order[k] after a random delay, so jobs complete in a different
+    // order on every run.
+    std::vector<size_t> perturbOrder(size_t n,uint64_t& h) {
+        std::vector<size_t> order(n);
+        for(size_t i=0;i<n;++i)order[i]=i;
+        h=mix(gParPerturb,++parPerturbSerial);
+        for(size_t i=n;i>1;--i) {h=mix(h,i);std::swap(order[i-1],order[size_t(h%i)]);}
+        return order;
+    }
+    static void perturbDelay(uint64_t h,size_t k) {
+        const uint64_t r=mix(h,k);
+        if(r&1)std::this_thread::sleep_for(std::chrono::microseconds(r>>1&255));
+    }
+    // Run job(i) for every i in [0, n) on the SimPool and wait (a fork-join; inline with no workers, or while an
+    // asynchronous batch is open). Each job writes only its own slot; the caller reads the slots after the join.
+    template<class Job> void parallelJobs(size_t n,Job&& job) {
+        if(!n)return;
+        ++par.forks;par.jobs+=n;
+        using Clock=std::chrono::steady_clock;
+        const auto t0=Clock::now();
+        std::atomic<uint64_t> byWorkers{0};
+        if(!gParPerturb)
+            w.simPool().forChunks(n,1,2,[&](size_t k,size_t,size_t,unsigned slot) {
+                job(k);
+                if(slot)byWorkers.fetch_add(1,std::memory_order_relaxed);
+            });
+        else {
+            uint64_t h=0;
+            const auto order=perturbOrder(n,h);
+            w.simPool().forChunks(n,1,0,[&](size_t k,size_t,size_t,unsigned slot) {
+                perturbDelay(h,k);job(order[k]);
+                if(slot)byWorkers.fetch_add(1,std::memory_order_relaxed);
+            });
+        }
+        par.forkNs+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-t0).count());
+        par.workerJobs+=byWorkers.load();
+    }
+    // The tile build itself, over accessors for the legality and the sector's labels: buildTile reads the plane,
+    // runJobs a job's copies. One body, so both give the same values and the same work.
+    template<class Legal,class Label>
+    static uint64_t tileCore(Tile& t,const std::array<int,4>& r,int sh,int W,int footX,int footZ,
+                             const std::vector<int>& seeds,Legal&& legalAt,Label&& labelAt) {
+        const int K=1<<sh;
+        t.values.assign(size_t(K)*size_t(K),kUnreached);
+        std::vector<uint8_t> level(size_t(K)*size_t(K),0);
+        for(const auto& [c,l]:t.soft)level[c]=l;
+        using Item=std::pair<uint32_t,int>;
+        std::priority_queue<Item,std::vector<Item>,std::greater<Item>> open;
+        std::map<int,uint32_t> seedAt;
+        for(int i=0;i<t.exit.len;++i) {
+            if(t.boundary[size_t(i)]==kUnreached)continue;
+            const int c=seeds[size_t(i)];
+            seedAt[c]=t.boundary[size_t(i)];
+            open.push({t.boundary[size_t(i)],c});
+        }
+        auto inRegion=[&](int x,int z) {
+            return x>=r[0]&&z>=r[1]&&x<r[2]&&z<r[3]&&labelAt(size_t(((z-r[1])<<sh)|(x-r[0])))==t.region;
+        };
+        auto step=[&](int x,int z,int dx,int dz) {   // Impl::step: diagonal steps clear both orthogonal neighbours
+            if(!legalAt(x+dx,z+dz))return false;
+            return !dx||!dz||(legalAt(x+dx,z)&&legalAt(x,z+dz));
+        };
+        uint64_t work=0;
+        while(!open.empty()) {
+            const auto [d,c]=open.top();
+            open.pop();
+            const int x=c%W,z=c/W;
+            const bool mine=inRegion(x,z);
+            if(mine) {if(t.values[size_t(((z-r[1])<<sh)|(x-r[0]))]!=d)continue;}
+            else if(seedAt[c]!=d)continue;
+            for(const auto& dir:kDirections) {
+                ++work;
+                const int nx=x+dir[0],nz=z+dir[1];
+                if(!inRegion(nx,nz)||!step(x,z,dir[0],dir[1]))continue;
+                const size_t lc=size_t(((nz-r[1])<<sh)|(nx-r[0]));
+                const uint32_t base=dir[0]&&dir[1]?kDiagonal:kOrthogonal;
+                const uint32_t lv=level[lc];
+                const uint32_t nd=d+(lv==2?base*kSoftFactor:lv==1?base*kSoftNear:base)+
+                    (t.avoid.empty()?0:corridorChargeOf(t.avoid,nx,nz,footX,footZ,base));
+                if(nd<d||nd>=kUnreached)continue;   // out of range (an exact seed near kUnreached)
+                if(nd<t.values[lc]) {t.values[lc]=nd;open.push({nd,nz*W+nx});}
+            }
+        }
+        for(const uint32_t v:t.values)if(v!=kUnreached)t.maxValue=std::max(t.maxValue,v);
+        return work;
+    }
+    static void runTileJob(TileJob& j) {
+        j.work=tileCore(j.tile,j.rect,j.shift,j.W,j.footX,j.footZ,j.seeds,
+            [&](int x,int z) {
+                const int lx=x-j.bx0,lz=z-j.bz0;
+                return lx>=0&&lz>=0&&lx<j.bw&&lz<j.bh&&j.legal[size_t(lz)*size_t(j.bw)+size_t(lx)]!=0;
+            },
+            [&](size_t lc) {return j.label.empty()?hier::kNoRegion:j.label[lc];});
+        j.ready.store(1,std::memory_order_release);
+    }
+    // The seed cells of tile key t on plane p (the portal's other side).
+    static std::vector<int> tileSeeds(const Tile& t,const Plane& p) {
+        std::vector<int> seeds(size_t(t.exit.len));
+        for(int i=0;i<t.exit.len;++i)seeds[size_t(i)]=t.onA?p.hier.farCell(t.exit,i):p.hier.nearCell(t.exit,i);
+        return seeds;
+    }
+    // A job for key t on plane p: its inputs copied, so it reads nothing the serial pass may change meanwhile.
+    std::unique_ptr<TileJob> tileJob(Tile&& t,const Plane& p) const {
+        auto j=std::make_unique<TileJob>();
+        j->seeds=tileSeeds(t,p);
+        j->rect=p.hier.rect(t.sector);j->shift=p.hier.shift();j->W=width();j->footX=p.footX;j->footZ=p.footZ;
+        j->label=p.hier.sector(t.sector).label;
+        j->bx0=std::max(0,j->rect[0]-1);j->bz0=std::max(0,j->rect[1]-1);
+        const int bx1=std::min(width(),j->rect[2]+1),bz1=std::min(height(),j->rect[3]+1);
+        j->bw=bx1-j->bx0;j->bh=bz1-j->bz0;
+        j->legal.resize(size_t(j->bw)*size_t(j->bh));
+        for(int z=0;z<j->bh;++z)
+            std::copy_n(p.legal.begin()+ptrdiff_t(size_t(j->bz0+z)*size_t(width())+size_t(j->bx0)),j->bw,
+                        j->legal.begin()+ptrdiff_t(size_t(z)*size_t(j->bw)));
+        j->tile=std::move(t);
+        return j;
+    }
+    // Join the open batch: every job finished, the pool free again.
+    void joinTiles() {
+        if(running.empty())return;
+        using Clock=std::chrono::steady_clock;
+        const auto t0=Clock::now();
+        w.simPool().finish();
+        par.joinNs+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-t0).count());
+        running.clear();runJob=nullptr;
+        par.workerJobs+=asyncByWorkers.exchange(0);
+    }
+    std::atomic<uint64_t> asyncByWorkers{0};   // jobs of the open batch a worker ran (NAVPAR)
+    // The seeds of chain node n and the route's values there (attachNode reads them the same way).
+    void chainSeeds(const Field& f,const ChainNode& n,const Plane& p,std::vector<int>& seed,std::vector<uint32_t>& est,
+                    bool& all) const {
+        const int W=width(),len=n.exit.len;
+        seed.resize(size_t(len));est.resize(size_t(len));all=true;
+        for(int i=0;i<len;++i) {
+            seed[size_t(i)]=n.onA?p.hier.farCell(n.exit,i):p.hier.nearCell(n.exit,i);
+            est[size_t(i)]=f.cellAt(seed[size_t(i)]%W,seed[size_t(i)]/W);
+            all&=est[size_t(i)]!=kUnreached;
+        }
+    }
+    template<class Ref> void tilePrefetch(const std::vector<Ref>& ring,size_t window,uint64_t budget) {
+        if(!prefetching()||ring.empty())return;
+        joinTiles();   // one batch at a time: the previous class's jobs finish first
+        std::vector<TileJob*> fresh;
+        size_t seen=0,picked=0;
+        uint64_t total=0;
+        for(const Ref& ref:ring) {
+            if(seen++>=window||picked>=kPrefetchMax||total>=budget)break;
+            const Field* fp=ref.job->f;
+            if(!fp||fp->kind!=KindChain||fp->done)continue;
+            const Field& f=*fp;
+            const Plane& p=planes[size_t(f.plane)];
+            if(p.epoch!=epoch)continue;   // plane() rebuilds it before the pass serves the job: new generations
+            // The attach work this job's visits can spend: two slices (navDrr's deficit cap) or the quota left.
+            uint64_t mine=0;
+            const uint64_t allow=std::min<uint64_t>(2*uint64_t(NavBudget::kSlice),budget-total);
+            for(size_t idx=f.chainNext;idx<f.chainTransit&&mine<allow&&picked<kPrefetchMax;++idx) {
+                const ChainNode& c=f.chain[idx];
+                const int other=c.onA?c.exit.b:c.exit.a;
+                if(!p.hier.built(c.s)||p.hier.gen(c.s)!=c.gen||!p.hier.built(other)||p.hier.gen(other)!=c.ngen)break;
+                // A region leading into the destination's field is exact, its boundary that field's values: final only
+                // once the field is done. One leading into another region is aimed if its seeds are reached (speculated).
+                if(c.parent<0&&!f.dDone)continue;
+                std::vector<int> seed;std::vector<uint32_t> est;bool all=true;
+                chainSeeds(f,c,p,seed,est,all);
+                uint64_t cost=uint64_t(c.exit.len);
+                Tile key;
+                tileKey(key,f,c,p,c.parent>=0,seed,est,cost);
+                key.hash=tileHash(key);
+                ++picked;
+                Staged st;
+                st.plane=size_t(f.plane);st.tick=w.tickCounter_;st.field=f.serial;st.node=idx;st.soft=softSerial;
+                const auto r=p.hier.rect(c.s);
+                if(!cached(key)&&stagedAt(key)<0) {
+                    cost+=8*uint64_t(r[2]-r[0])*uint64_t(r[3]-r[1]);   // a build's relaxations, at most
+                    st.built=true;
+                    stagedIndex[key.hash].push_back(staged.size());
+                    st.job=tileJob(std::move(key),p);
+                    fresh.push_back(st.job.get());
+                } else {
+                    st.job=std::make_unique<TileJob>();st.job->tile=std::move(key);
+                }
+                keyIndex.insert_or_assign(std::make_pair(st.field,st.node),staged.size());
+                staged.push_back(std::move(st));
+                mine+=cost;
+            }
+            total+=mine;
+        }
+        par.picked+=picked;
+        {
+            uint64_t bytes=0;
+            for(const Staged& st:staged)if(st.built)bytes+=st.job->tile.bytes()+uint64_t(st.job->tile.values.capacity())*4;
+            par.stagedBytesPeak=std::max(par.stagedBytesPeak,bytes);
+        }
+        if(fresh.empty())return;
+        par.staged+=fresh.size();++par.forks;par.jobs+=fresh.size();
+        running=std::move(fresh);
+        if(!gParPerturb) runJob=[this](size_t k,unsigned slot) {runTileJob(*running[k]);if(slot)asyncByWorkers.fetch_add(1,std::memory_order_relaxed);};
+        else {
+            uint64_t h=0;
+            auto order=perturbOrder(running.size(),h);
+            runJob=[this,order=std::move(order),h](size_t k,unsigned slot) {
+                perturbDelay(h,k);runTileJob(*running[order[k]]);
+                if(slot)asyncByWorkers.fetch_add(1,std::memory_order_relaxed);
+            };
+        }
+        w.simPool().start(running.size(),runJob);
+    }
+    bool cached(const Tile& key) const {
+        const TileCache& C=correction(key)?corrTiles:staticTiles;
+        const auto at=C.map.find(key.hash);
+        if(at==C.map.end())return false;
+        for(const auto& t:at->second)if(t->sameKey(key))return true;
+        return false;
+    }
+    long stagedAt(const Tile& key) const {
+        const auto at=stagedIndex.find(key.hash);
+        if(at==stagedIndex.end())return -1;
+        for(const size_t i:at->second)if(staged[i].built&&staged[i].job->tile.sameKey(key))return long(i);
+        return -1;
+    }
+    // attachNode: this pass's prepared key for node idx of route f, if its soft levels and corridors are those the scan
+    // would find now (same route, the node unchanged since, no stamp change since); nullptr otherwise.
+    const Tile* preparedKey(const Field& f,size_t idx,const ChainNode& n) const {
+        const auto at=keyIndex.find({f.serial,idx});
+        if(at==keyIndex.end())return nullptr;
+        const Staged& st=staged[at->second];
+        const Tile& k=st.job->tile;
+        if(st.soft!=softSerial||k.sector!=n.s||k.region!=n.r||k.gen!=n.gen||k.ngen!=n.ngen||k.onA!=n.onA||
+           !(k.exit.a==n.exit.a&&k.exit.b==n.exit.b&&k.exit.start==n.exit.start&&k.exit.len==n.exit.len&&k.exit.side==n.exit.side))
+            return nullptr;
+        return &k;
+    }
+    uint64_t buildTile(Tile& t,const Plane& p) const {
+        const std::vector<uint16_t>& lab=p.hier.sector(t.sector).label;
+        return tileCore(t,p.hier.rect(t.sector),p.hier.shift(),width(),p.footX,p.footZ,tileSeeds(t,p),
+                        [&](int x,int z) {return legal(p,x,z);},
+                        [&](size_t lc) {return lab.empty()?hier::kNoRegion:lab[lc];});
+    }
+    // tileFor's build of a missing tile: the staged build of the same key if there is one (waiting for its job, and
+    // helping with unstarted ones meanwhile), with the work its build counted; else the build here.
+    uint64_t takePrefetched(Tile& t,const Plane& p) {
+        const long i=stagedAt(t);
+        if(i<0||staged[size_t(i)].taken||&planes[staged[size_t(i)].plane]!=&p) {
+            const uint64_t work=buildTile(t,p);
+            if(prefetching())par.serialWork+=work;
+            return work;
+        }
+        Staged& st=staged[size_t(i)];
+        TileJob& j=*st.job;
+        if(!j.ready.load(std::memory_order_acquire)) {
+            using Clock=std::chrono::steady_clock;
+            const auto t0=Clock::now();
+            ++par.waits;
+            for(unsigned spins=0;!j.ready.load(std::memory_order_acquire);++spins)
+                if(!w.simPool().help())spins<4096?(void)0:std::this_thread::yield();
+            par.waitNs+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-t0).count());
+        }
+        st.taken=true;
+        t.values=std::move(j.tile.values);t.maxValue=j.tile.maxValue;
+        ++par.used;par.usedWork+=j.work;
+#ifndef NDEBUG
+        if(gVerify) {
+            Tile check=t;check.values.clear();check.maxValue=0;
+            const uint64_t work=buildTile(check,p);
+            if(work!=j.work||check.values!=t.values||check.maxValue!=t.maxValue)verifyFail("a staged tile differs from its serial build");
+        }
+#endif
+        return j.work;
+    }
+    // The end of a field pass: the batch joined; prepared keys and taken tiles leave the staging, and so do the tiles
+    // nobody took in kStagedTicks passes.
+    void dropStaged() {
+        joinTiles();
+        keyIndex.clear();
+        size_t keep=0;
+        for(size_t i=0;i<staged.size();++i) {
+            Staged& st=staged[i];
+            if(!st.built||st.taken)continue;
+            if(w.tickCounter_-st.tick+1>=kStagedTicks) {++par.unused;par.unusedWork+=st.job->work;continue;}
+            if(keep!=i)staged[keep]=std::move(st);
+            ++keep;
+        }
+        staged.resize(keep);
+        stagedIndex.clear();
+        for(size_t i=0;i<staged.size();++i)stagedIndex[staged[i].job->tile.hash].push_back(i);
+    }
+    void evictTiles() {
+        for(TileCache* C:{&staticTiles,&corrTiles}) {
+            const uint64_t limit=C==&staticTiles?kTileBytes:kCorrectionBytes;
+            if(C->bytes<=limit)continue;
+            while(C->bytes>limit/10*9&&!C->unref.empty()) {
+                const Tile* victim=static_cast<const Tile*>(std::get<2>(*C->unref.begin()));
+                C->unref.erase(C->unref.begin());
+                const uint64_t hash=victim->hash;   // the erase below frees the tile (no chain holds it)
+                auto& bucket=C->map[hash];
+                for(size_t i=0;i<bucket.size();++i)if(bucket[i].get()==victim) {
+                    const uint64_t b=victim->bytes();
+                    tileBytes-=b;C->bytes-=b;--tileCount;tileDigest-=mix(hash,victim->seq);++acct.tileEvictions;
+                    bucket[i]->unref=nullptr;
+                    bucket.erase(bucket.begin()+long(i));break;
+                }
+                if(bucket.empty())C->map.erase(hash);
+            }
+        }
     }
     // ---- paused first builds (T7 C1) ------------------------------------
     // A group whose first field may pause once its members are planned: no
     // member can claim a packed per-goal slot (more members than goals: the
-    // slot class) or pinwheel (pivotAim reads potentials far beyond the
-    // bodies and keeps `done`). Slot groups' first builds and every refresh
-    // still run to done; awareScan and the aware replan keep `done` (a
-    // paused group plans round no crossing traffic until its field is done).
+    // slot class) or pinwheel (a formation part of kPivotMembers or more),
+    // and no reach kind (attack, guard: its ring). Slot groups' first builds
+    // and every refresh still run to done.
+    // Stage 5: the consumers that read past their members' cells -- the
+    // lanes, awareness, MV-05, packed slots, reach rings, the formation
+    // entrance -- state the region they need, ask a paused build for it
+    // (need) and read it through the certainty checks; one that meets a read
+    // a later slice could change has the route run on to done (runOn). So
+    // they no longer require `done`, and run on the paused builds of the
+    // groups above. Extending pausing to the slot class, pinwheel parts and
+    // reach groups was measured and is not taken here (docs/legion-10000-
+    // progress.md 7.5: the quota-saturated rows' longest wait halves, but
+    // awareness on those paused routes asks for whole-window refreshes and
+    // sched-load's stuck bodies double); setPauseAllForTest takes it in the
+    // tests that exercise those consumers on paused routes.
     bool pausable(const Group& g) const {
-        // A reach group (attack, guard) plans its ring of spots from a done
-        // field (ringClaim): its build runs to done.
+        if(g.field&&g.field->runOn)return false;
+        if(g.field&&g.field->kind==KindChain)return false;   // a chain's destination field is small; its tiles are whole
+        if(gPauseAll)return true;
         if(g.kind==Kind::Attack||g.kind==Kind::Guard)return false;
         if(!policy(g.kind).area||g.approach)return true;
         if(g.members>int(g.sharing.size()))return false;
@@ -2947,20 +5564,9 @@ struct LegionNavigator::Impl {
             if(!m)continue;
             const Point* pt=m->pt;
             if(!pt) {const auto found=points.find(m->point);pt=found==points.end()?nullptr:&found->second;}
-            // A formation point: its slot hand-out reads no potential
-            // (claimSlot runs on a paused build, see move); its pinwheel
-            // does (pivotAim keeps `done`), so a part strong enough to
-            // pinwheel keeps its build running to done.
             if(pt&&partRefs(*m)>=kPivotMembers)return false;
         }
         return true;
-    }
-    // A member whose slot claim on a paused build is its formation's
-    // hand-out only (no packed per-goal slots, no pinwheel).
-    bool formationOnly(const Group& g,const Member& m) const {
-        if(!policy(m.kind).area||m.approach||!m.pt||partRefs(m)>=kPivotMembers)return false;
-        const auto sharing=g.sharing.find(m.requested);
-        return sharing==g.sharing.end()||sharing->second<2;
     }
     static uint32_t coverMargin(int foot) {return kCoverAhead+2u*kDiagonal*uint32_t(foot+2);}
     // ... and a member of a formation walks its own lane up to the
@@ -2979,16 +5585,28 @@ struct LegionNavigator::Impl {
     // Does the field serve the group without building on: every demand cell
     // settled with its margin (those that are now are dropped) and, before
     // the field first paused, every live member's cell inside the window.
-    bool coveredFor(const Group& g,Field& f) {
+    // serve's scan within one call (stage 5): while one call advances the
+    // build nothing it reads moves (members stand still, the key only rises,
+    // potentials only fall), so coverage only grows, and what one slice
+    // found covered the next skips -- the same answers as a full scan each
+    // slice, without O(members) per slice for a 10,000-body group. A demand
+    // entry met stays met, so the met ones are dropped when the call ends
+    // (dropDemand), as the full scan's last slice dropped them.
+    struct CoverScan {size_t demand=0,members=0;bool area=false,ring=false;};
+    bool demandMet(const Field& f,int cell,uint32_t margin) const {
         const int W=width();
-        std::erase_if(f.demand,[&](const std::pair<int,uint32_t>& d) {
-            return !f.inside(d.first%W,d.first/W)||f.ahead(size_t(d.first),d.second);
-        });
-        if(!f.demand.empty())return false;
+        return !f.inside(cell%W,cell/W)||f.ahead(size_t(cell),margin);
+    }
+    void dropDemand(Field& f) {f.demand.drop([&](int cell,uint32_t margin) {return demandMet(f,cell,margin);});}
+    bool coveredFor(const Group& g,Field& f,CoverScan& sc) {
+        const int W=width();
+        const auto& e=f.demand.entries();
+        for(;sc.demand<e.size();++sc.demand)if(!demandMet(f,e[sc.demand].first,e[sc.demand].second))return false;
+        if(!e.empty()) {f.demand.clear();sc.demand=0;}   // every entry met
         if(f.covered)return true;
         // A goal several members shared: the settle rule's destination area
         // (areaBound) reads the potentials of a packed disc round it.
-        if(policy(g.kind).area&&!g.approach) {
+        if(!sc.area&&policy(g.kind).area&&!g.approach) {
             const auto& pl=planes[size_t(g.plane)];const int foot=std::max(pl.footX,pl.footZ);
             for(const auto& [seed,n]:g.peak) {
                 if(n<=1||!f.inside(seed%W,seed/W))continue;
@@ -2996,7 +5614,16 @@ struct LegionNavigator::Impl {
                 if(!f.ahead(size_t(seed),uint32_t(2*kDiagonal)*uint32_t(radius)))return false;
             }
         }
-        for(const int id:g.ids) {
+        sc.area=true;
+        // A reach group (stage 5): its ring's spots, which ringClaim reads
+        // (each settled, or never reachable).
+        if(!sc.ring&&!g.ring.cells.empty()) {
+            const auto& pl=planes[size_t(g.plane)];const int comp=groupComp(g,pl);
+            for(const int c:g.ring.cells)if(!f.ahead(size_t(c),0)&&!provenUnreached(f.view(),pl,comp,size_t(c)))return false;
+        }
+        sc.ring=true;
+        for(;sc.members<g.ids.size();++sc.members) {
+            const int id=g.ids[sc.members];
             const Member* m=member(id);const Unit* u=w.unit(id);
             if(!m||!u||!u->type||m->goal<0||m->state==Arrived||m->state==Trapped)continue;
             const int ox=footprintOrigin(u->x,u->type->footX),oz=footprintOrigin(u->z,u->type->footZ);
@@ -3010,13 +5637,14 @@ struct LegionNavigator::Impl {
     uint64_t serve(Group& g,Field& f,uint64_t budget) {
         const bool resumed=f.covered&&!f.demand.empty();
         uint64_t spent=0;
+        CoverScan sc;
         while(!f.done) {
-            if(coveredFor(g,f)) {
+            if(coveredFor(g,f,sc)) {
                 if(!f.covered) {f.covered=true;++stats.fieldsPaused;}
                 if(g.field.get()==&f&&g.pausedSerial!=f.serial) {g.pausedSerial=f.serial;listGroup(g);}
                 break;
             }
-            if(spent>=budget)break;
+            if(spent>=budget) {dropDemand(f);break;}
             spent+=advance(f,std::min(kPauseSlice,budget-spent));
         }
         if(resumed&&spent)++stats.pausedResumes;
@@ -3024,14 +5652,12 @@ struct LegionNavigator::Impl {
     }
     // A member stands where its group's paused field is not settled with
     // its margin: the waited loop resumes the build (setWaited) up to it.
-    // Members re-ask every update they stand there, so only the newest
-    // kDemandCells cells are kept.
+    // Members re-ask every update they stand there; every need is kept until
+    // the build meets it (RouteDemand: until stage 5 only the newest 32 cells
+    // were, so past 32 standing members some needs were forgotten).
     void demand(Group& g,Field& f,int cell,uint32_t margin) {
-        static constexpr size_t kDemandCells=32;
         setWaited(g);
-        for(auto& d:f.demand)if(d.first==cell) {d.second=std::max(d.second,margin);return;}
-        if(f.demand.size()>=kDemandCells)f.demand.erase(f.demand.begin());
-        f.demand.push_back({cell,margin});
+        if(f.demand.need(cell,margin))acct.demandPeak=std::max<uint64_t>(acct.demandPeak,f.demand.size());
     }
     // Structure footprints as last stamped into the planes (id order).
     struct Stamp {
@@ -3109,7 +5735,7 @@ struct LegionNavigator::Impl {
             ++cellGen;
             auto& refreshed=refreshList;
             refreshed.clear();
-            touch.assign(planes.size(),{0,0,-1,-1});
+            touch.assign(planes.size(),{});
             for(auto& p:planes) {
                 // A background build keeps going on what it has read and
                 // applies the changes incrementally once complete (exact:
@@ -3121,7 +5747,7 @@ struct LegionNavigator::Impl {
                 }
                 // Unbuilt planes build fresh; stale ones rebuild on use.
                 if(p.legacy||p.epoch==~0ull||p.epoch!=epoch)continue;
-                if(all) {changed=true;touch[size_t(&p-planes.data())]={0,0,width()-1,height()-1};continue;}
+                if(all) {changed=true;touch[size_t(&p-planes.data())].push_back({{0,0,width()-1,height()-1},true,true});continue;}
                 refreshed.push_back(&p);
             }
             // Each refresh reads the world and structureList and writes only
@@ -3142,6 +5768,13 @@ struct LegionNavigator::Impl {
                 for(const auto& r:refreshResults) {probeSync.planeMs=std::max(probeSync.planeMs,r.ms);probeSync.work+=r.work;}
                 probeSync.relabels=refreshScratch.relabels;
             }
+            {
+                uint64_t work=0;
+                for(const auto& r:refreshResults)work+=r.work;
+                const uint64_t relabel=refreshScratch.relabels*2*uint64_t(width())*height();
+                navc.planeRelabel+=relabel;navc.connectivity+=work-std::min(work,relabel);
+                noteSyncRelabels(refreshScratch.relabels);
+            }
             for(const auto& r:refreshResults) {
                 planeDebt=std::min(planeDebt+r.work,kFieldQuota/2);
                 if(r.any) {changed=true;++stats.planeRefreshes;}
@@ -3153,28 +5786,44 @@ struct LegionNavigator::Impl {
         touch.clear();
         if(gProbe)probeSync.changedMs=probeMs(probeT1,ProbeClock::now());
     }
-    // Per plane, the bounding box of origins whose legality changed in this
-    // sync ({0,0,-1,-1}: none).
-    std::vector<std::array<int,4>> touch;
+    // Per plane, the clusters of origins whose legality changed in this sync (stage 7: a list of boxes, each a
+    // closure and/or an improvement; empty: none).
+    std::vector<std::vector<StaticChange>> touch;
     // syncStatic's scratch: the planes refreshed incrementally (plane order)
     // and each one's work and whether its legality changed.
     struct RefreshResult {uint64_t work=0;bool any=false;double ms=0;};   // ms: LPROBE only
     std::vector<Plane*> refreshList;
     std::vector<RefreshResult> refreshResults;
-    // Does a static change box (on the group's plane) reach the group's
-    // fields? A field covers its seeds' component box; a change farther
-    // than one cell from every cell of that box cannot alter any step
-    // inside it (a step reads its target and the two orthogonal cells), nor
-    // merge another region into it.
-    bool fieldTouched(const Group& g,const std::array<int,4>& b) const {
+    // Does a static change box (on the field's plane) reach the field? A field covers its seeds' component box; a
+    // change farther than one cell from every cell of that box cannot alter any step inside it (a step reads its
+    // target and the two orthogonal cells), nor merge another region into it.
+    static bool fieldTouched(const Field& f,const std::array<int,4>& b) {
         if(b[2]<0)return false;
-        for(const Field* f:{g.field.get(),g.next.get()}) {
-            if(!f)continue;
-            if(b[0]<=f->x0+f->fw&&b[2]>=f->x0-1&&b[1]<=f->z0+f->fh&&b[3]>=f->z0-1)return true;
-        }
+        if(!(b[0]<=f.x0+f.fw&&b[2]>=f.x0-1&&b[1]<=f.z0+f.fh&&b[3]>=f.z0-1))return false;
+        if(f.allow.empty())return true;
+        // Stage 6: a corridor or chain holds only its listed tiles; a change one cell or more from all of them
+        // reaches none of its steps (the same argument as the box), so only those tiles are tested.
+        const int x0=std::max(b[0]-1,f.x0),z0=std::max(b[1]-1,f.z0),x1=std::min(b[2]+1,f.x0+f.fw-1),z1=std::min(b[3]+1,f.z0+f.fh-1);
+        if(x0>x1||z0>z1)return false;
+        for(int sz=z0>>f.shift;sz<=z1>>f.shift;++sz)for(int sx=x0>>f.shift;sx<=x1>>f.shift;++sx)
+            if(f.allow[size_t(sz-f.sz0)*size_t(f.sw)+size_t(sx-f.sx0)])return true;
         return false;
     }
-    void staticChanged(const std::vector<std::array<int,4>>* changes=nullptr) {
+    // Stage 7: per plane, the improvements of the recent epochs (the epoch after the change, its box; whole-map
+    // changes as the whole map): a trapped member re-registers only when one of them could have joined its
+    // component to another (move: trappedReopened), not on every change anywhere. Bounded: past kImproveLog entries
+    // the oldest go, and `floor` (the newest epoch dropped) makes an older trapped member re-register as before.
+    // Derived from the world's static changes, never hashed.
+    struct ImproveLog {std::deque<std::pair<uint64_t,std::array<int,4>>> e;uint64_t floor=0;};
+    static constexpr size_t kImproveLog=1024;
+    std::vector<ImproveLog> improveLog;   // by plane index
+    void logImprovement(size_t plane,const std::array<int,4>& box) {
+        if(improveLog.size()<=plane)improveLog.resize(plane+1);
+        auto& L=improveLog[plane];
+        L.e.push_back({epoch,box});
+        while(L.e.size()>kImproveLog) {L.floor=L.e.front().first;L.e.pop_front();}
+    }
+    void staticChanged(const std::vector<std::vector<StaticChange>>* changes=nullptr) {
         {
             ++epoch;
             // Terrain changed. A finished field keeps steering its group
@@ -3189,15 +5838,56 @@ struct LegionNavigator::Impl {
             // keeps building too, and another follows once it is installed
             // (see finish): refreshes run on a reduced allowance, and
             // restarted on every change in a battle they never finished.
-            // Only the groups a change reaches (all, without per-plane boxes).
+            // Only the groups a change reaches (all, without per-plane boxes),
+            // each against its plane's changes one cluster at a time (stage 7).
+            // A closure reaching a route makes it stale at once (as before);
+            // improvements alone defer its refresh (improveTick) and keep the
+            // arrival slots, whose cells stay legal.
+            if(changes)
+                for(size_t pi=0;pi<changes->size();++pi)
+                    for(const auto& c:(*changes)[pi])if(c.opens)logImprovement(pi,c.box);
+            if(!changes)for(size_t pi=0;pi<planes.size();++pi)logImprovement(pi,{0,0,width()-1,height()-1});
             stats.groupLoopIters+=groups.size();
             for(auto& [id,g]:groups) {
-                if(changes&&(g.plane<0||size_t(g.plane)>=changes->size()||!fieldTouched(g,(*changes)[size_t(g.plane)])))continue;
-                g.stale=g.field!=nullptr;
+                bool closes=!changes,opens=false;
+                for(Field* f:{g.field.get(),g.next.get()}) {
+                    if(!f)continue;
+                    bool fc=!changes,fo=false;
+                    if(changes&&g.plane>=0&&size_t(g.plane)<changes->size())
+                        for(const auto& c:(*changes)[size_t(g.plane)])
+                            if((c.closes&&!fc)||(c.opens&&!fo))
+                                if(fieldTouched(*f,c.box)) {fc|=c.closes;fo|=c.opens;}
+                    if(!fc&&!fo)continue;
+                    // Its routes' "unreached" no longer proves anything (RouteView::reach) until the refresh lands.
+                    f->touched=true;f->closed|=fc;f->opened|=fo;
+                    closes|=fc;opens|=fo;
+                }
+                if(closes&&g.field)++acct.routesClosed;
+                else if(opens&&g.field)++acct.routesOpened;
+                if(!g.field||(!closes&&!opens))continue;
+                if(closes) {
+                    g.stale=true;g.improveTick=kNoTick;   // the refresh is built on the new plane: it has the improvements too
+                    restaleSlots(g);
+                } else if(g.improveTick==kNoTick&&!g.stale)g.improveTick=w.tickCounter_;
                 listGroup(g);
-                restaleSlots(g);
             }
         }
+    }
+    // Stage 7: deferred improvement refreshes whose time has come (improveIds, in id order) become stale refreshes.
+    void serveImprovements() {
+        const uint32_t now=w.tickCounter_;
+        for(int id=after(improveIds,0);id;) {
+            const int next=after(improveIds,id);
+            Group& g=groups.find(id)->second;
+            ++stats.groupLoopIters;
+            if(now-g.improveTick>=kImproveDefer)promoteImprovement(g);
+            id=next;
+        }
+    }
+    void promoteImprovement(Group& g) {
+        g.improveTick=kNoTick;g.reroute=true;   // a shortcut may have opened: choose the route afresh
+        if(g.field&&!g.stale) {g.stale=true;++acct.improveRefreshes;}
+        listGroup(g);
     }
     // ---- background first builds ---------------------------------------
     // A class's first plane build is a whole-map pass (15 ms on 768x768,
@@ -3216,6 +5906,7 @@ struct LegionNavigator::Impl {
     void startBuild(Plane& p) {
         const size_t n=size_t(width())*height();
         p.cell.assign(n,0);p.legal.assign(n,0);p.comp.assign(n,-1);
+        p.hier.reset(width(),height(),gSectorShift,p.id);p.traffic.clear();
         p.compSize.clear();p.compBox.clear();p.liveComps=0;
         p.run.assign(n,0);p.column.assign(size_t(width()),0);
         p.stage=1;p.cursor=0;
@@ -3246,15 +5937,18 @@ struct LegionNavigator::Impl {
             if(!p)return;
             startBuild(*p);
         }
-        advanceBuild(*p,kPrebuildCells);
+        navc.planeBuild+=advanceBuild(*p,kPrebuildCells);
+        if(p->stage==0)planesFinished();   // a background build registrations may be waiting for
     }
-    void advanceBuild(Plane& p,uint64_t budget) {
+    // Returns the units spent (accounting).
+    uint64_t advanceBuild(Plane& p,uint64_t budget) {
+        const uint64_t given=budget;
         const int W=width(),H=height();
         while(budget>0&&p.stage>0) {
             if(p.stage==1) {   // cell layer, rows ascending
                 const int rows=std::max(1,int(budget/uint64_t(W)));
                 const int z1=std::min(H,p.cursor+rows);
-                computeCells(p,0,p.cursor,W-1,z1-1);
+                computeRows(p,p.cursor,z1);
                 budget-=std::min(budget,uint64_t(z1-p.cursor)*W);
                 p.cursor=z1;
                 if(p.cursor>=H) {p.stage=2;p.cursor=0;}
@@ -3295,7 +5989,10 @@ struct LegionNavigator::Impl {
                         clearStage(p);
                         bool changed=false;
                         if(!pending.empty()) {
-                            refreshPlane(p,pending,changed,refreshScratch);
+                            const uint64_t work=refreshPlane(p,pending,changed,refreshScratch);
+                            const uint64_t relabel=refreshScratch.relabels*2*uint64_t(W)*H;
+                            navc.planeRelabel+=relabel;navc.connectivity+=work-std::min(work,relabel);
+                            noteSyncRelabels(refreshScratch.relabels);
                             stats.planeRelabels+=refreshScratch.relabels;refreshScratch.relabels=0;
                         }
                         break;
@@ -3318,6 +6015,7 @@ struct LegionNavigator::Impl {
                 }
             }
         }
+        return given-budget;
     }
     // Idle landed flyers make way (World::requestLegionLift): every
     // kLiftStride ticks (staggered by id) a ground member on its way looks
@@ -3407,7 +6105,7 @@ struct LegionNavigator::Impl {
         // any grounded or lift-home cell, and asks nothing.
         auto walk=[&](Unit* u,const Member& m,const Group& g,bool dry) {
             const auto& p=planes[size_t(g.plane)];
-            const Field* f=g.field&&g.field->usable()?g.field.get():nullptr;
+            const RouteView f=g.route().usable()?g.route():RouteView();
             const int fx=u->type->footX,fz=u->type->footZ;
             int x=footprintOrigin(u->x,fx),z=footprintOrigin(u->z,fz);
             const int gx=m.goal%W,gz=m.goal/W;
@@ -3451,11 +6149,11 @@ struct LegionNavigator::Impl {
                 int nx=x,nz=z;
                 while(r<m.route.size()&&m.route[r]==z*W+x)++r;
                 if(r<m.route.size()) {nx=m.route[r]%W;nz=m.route[r]/W;++r;}
-                else if(f&&f->inside(x,z)&&f->known(size_t(z*W+x))!=kUnreached) {
-                    uint32_t best=f->known(size_t(z*W+x));
+                else if(f&&f.inside(x,z)&&f.known(size_t(z*W+x))!=kUnreached) {
+                    uint32_t best=f.known(size_t(z*W+x));
                     for(const auto& d:kDirections) {
-                        if(!step(p,x,z,d[0],d[1])||!f->inside(x+d[0],z+d[1]))continue;
-                        const uint32_t v=f->known(size_t((z+d[1])*W+x+d[0]));
+                        if(!step(p,x,z,d[0],d[1])||!f.inside(x+d[0],z+d[1]))continue;
+                        const uint32_t v=f.known(size_t((z+d[1])*W+x+d[0]));
                         if(v<best) {best=v;nx=x+d[0];nz=z+d[1];}
                     }
                 } else {
@@ -3494,12 +6192,352 @@ struct LegionNavigator::Impl {
         }
         stats.liftMembersWalked+=walked;stats.liftMembersSkipped+=skipped;
     }
+    // ---- field service (Legion 10,000 stage 4) ---------------------------------------------------
+    // One deterministic quota a tick (NavBudget::kFieldQuota, less the plane debt, at most half of
+    // it) pays field relaxations, field initialisation (cells / kInitDiv at a start) and reach-ring
+    // cells. The work is served by JOB: a field being built, however many groups share it, so a
+    // shared field gets one allocation. A job's class is the most urgent its groups ask for:
+    // Waiting (a member stands still for want of it, or a paused build it waits on), FirstRoute (a
+    // group's first field), AwareRepair (an awareness re-plan), StaleRefresh (after a static change;
+    // the members steer by the finished stale field). Classes are served in that order; within a
+    // class the jobs share the quota by deficit round robin (navDrr: a slice of kSlice a visit, the
+    // cursor kept across ticks, so no job is always last), the two refresh classes inside the
+    // refresh allowance (kRefreshQuota) as before. A job (or a start request) that has gone
+    // kAgeStep ticks without service moves up one class (navPromote; a promoted refresh no longer
+    // spends the refresh allowance), so no class starves another for longer than three steps.
+    // Start requests -- groups with no field, then stale refreshes -- are admitted at the head of
+    // their class, oldest request first; one refused for want of room (the byte allowance or the
+    // field count) is stepped over, at most kFitScan a tick, unless it has been refused for
+    // kReserveAge ticks: then it reserves and nothing after it starts this tick (NavAdmit), so the
+    // room that frees next is its. A start whose initialisation does not fit the budget left waits
+    // for the next tick (the first start of a tick always fits). Once the room scan has stopped (the
+    // bound or a reservation) the requests behind it are still tried, but only for a share of a field
+    // that already exists: a share takes no room (Start::Shared allocates nothing), so blocking it
+    // would give the reserved request nothing back. Everything here reads hashed state
+    // only and walks ids, serials and lists in a fixed order.
+    // A job holds its field (keep) for the whole serveFields call, so a field an install or an eviction
+    // drops mid-tick stays valid for every pointer the rings hold into it; it is freed when the call ends.
+    // Such a field is retired at once (orphan: f cleared, out of the totals), as if freed.
+    struct FieldJob {uint64_t key=0;std::shared_ptr<Field> keep;Field* f=nullptr;std::vector<Group*> subs;NavClass base=NavClass::StaleRefresh,cls=NavClass::StaleRefresh;};
+    std::array<NavCursor,size_t(NavClass::Count)> navCursor{};   // per class: the round-robin position (hashed when set)
+    // The jobs of the serveFields call in progress (nullptr outside it). A field's references not
+    // counting its job's own (eviction takes only a field no other group holds, as before).
+    std::map<uint64_t,FieldJob>* liveJobs=nullptr;
+    // A field dropped while the scheduler's job still holds it leaves the totals at once, as it did when
+    // dropping it freed it: the room it held is free to the admissions of the same call.
+    // Its job is retired too (f cleared, the field kept): no ring visit serves it, no window counts it.
+    void orphan(const std::shared_ptr<Field>& f) const {
+        if(!f||ownRefs(f)!=1)return;
+        f->detach();
+        if(liveJobs)if(const auto it=liveJobs->find(f->serial);it!=liveJobs->end())it->second.f=nullptr;
+    }
+    long ownRefs(const std::shared_ptr<Field>& f) const {
+        long n=f.use_count();
+        if(liveJobs)if(const auto it=liveJobs->find(f->serial);it!=liveJobs->end()&&it->second.keep==f)--n;
+        return n;
+    }
+    // A group's own class for a field it waits on (f: its field or its replacement).
+    NavClass jobClass(const Group& g,const Field& f) const {
+        if(&f==g.next.get())return g.awareDemand?NavClass::AwareRepair:NavClass::StaleRefresh;
+        return w.tickCounter_-g.waited<=1?NavClass::Waiting:NavClass::FirstRoute;
+    }
+    static bool refreshClass(NavClass c) {return c==NavClass::AwareRepair||c==NavClass::StaleRefresh;}
+    // May this job's build pause (serve) rather than run to done (advance)? Only a first build every
+    // subscriber holding it as its own field may pause, and that no subscriber holds as a refresh.
+    bool jobPausable(const FieldJob& j) const {
+        bool any=false;
+        for(const Group* o:j.subs) {
+            if(o->next.get()==j.f)return false;
+            if(o->field.get()==j.f) {if(!pausable(*o))return false;any=true;}
+        }
+        return any;
+    }
+    // A refresh job: some subscriber holds the field as its refresh (next); else a first build.
+    static bool refreshJob(const FieldJob& j) {
+        for(const Group* o:j.subs)if(o->next.get()==j.f)return true;
+        return false;
+    }
+    // A paused build nobody asks to resume: not asking for work (no window slot, no visit).
+    bool jobIdle(const FieldJob& j) const {return j.f->covered&&j.f->demand.empty()&&jobPausable(j);}
+    void serveFields(uint64_t& budget,uint64_t& visits) {
+        const uint32_t now=w.tickCounter_;
+        // Plane rebuilds and labelling are charged against the same quota (debt carries over); at
+        // most half of it pays plane debt in one tick, so field work always progresses.
+        uint64_t charged=0;
+        auto settle=[&] {
+            const uint64_t c=std::min({budget,planeDebt,kFieldQuota/2-charged});
+            budget-=c;planeDebt-=c;charged+=c;
+        };
+        settle();
+        // Who the work was for (Stats only), and the install of a finished field into its group.
+        auto finish=[&](Group& g,Field& f,uint64_t spent) {
+            stats.fieldWork+=spent;
+            if(spent) {
+                if(g.next.get()==&f)
+                    (now-g.movingTick<=2?stats.fieldWorkRefreshMoving:stats.fieldWorkRefreshIdle)+=spent;
+                else
+                    (policy(g.kind).area&&!g.approach&&g.members>int(g.sharing.size())?stats.fieldWorkFirstSlot:stats.fieldWorkFirstSolo)+=spent;
+            }
+            if(f.done) {
+                ++stats.fieldsBuilt;noteAwareInstall(g,f);
+                if(g.next) {
+                    auto oldField=std::move(g.field);g.field=std::move(g.next);orphan(oldField);++fieldsDone;
+                    // Stage 7: stale again only if a closure reached it while it built; improvements alone defer the
+                    // next refresh (until stage 7 any new epoch did, a change on another island included).
+                    g.stale=g.field->closed;
+                    if(!g.stale&&g.field->opened&&g.improveTick==kNoTick)g.improveTick=now;
+                    g.demand=false;g.awareDemand=false;restaleSlots(g);++stats.refreshCompleted;
+                }
+                listGroup(g);
+            }
+        };
+        // Another subscriber finished a shared build: a refresh is installed; a first field is just
+        // usable (it is the same object), so the group only leaves the building list.
+        auto installed=[&](Group& g,Field& f) {
+            if(g.next.get()==&f)finish(g,f,0);
+            else if(!wantsBuilding(g))listGroup(g);
+        };
+        // ---- the jobs: every unfinished field a group waits on, by serial ----
+        std::map<uint64_t,FieldJob> jobs;
+        liveJobs=&jobs;
+        struct Clear {std::map<uint64_t,FieldJob>*& p;Impl& I;~Clear() {p=nullptr;I.dropStaged();}} clearJobs{liveJobs,*this};
+        auto subscribe=[&](Group& g,const std::shared_ptr<Field>& sp,NavClass c) {
+            Field* f=sp.get();
+            auto& j=jobs[f->serial];
+            if(!j.f) {j.key=f->serial;j.keep=sp;j.f=f;j.base=c;}
+            if(std::find(j.subs.begin(),j.subs.end(),&g)==j.subs.end())j.subs.push_back(&g);
+            if(c<j.base)j.base=c;
+        };
+        // Groups whose member stood still for want of a field (a paused build it waits on included).
+        for(int id=after(waitedIds,0);id;id=after(waitedIds,id)) {
+            ++visits;
+            Group& g=groups.find(id)->second;
+            if(now-g.waited>1) {waitedIds.erase(id);continue;}
+            if(g.next||!g.field||g.field->done)continue;
+            subscribe(g,g.field,NavClass::Waiting);
+        }
+        // Groups whose consumers stated a region their paused build has not settled (stage 5).
+        for(int id=after(needIds,0);id;id=after(needIds,id)) {
+            ++visits;
+            Group& g=groups.find(id)->second;
+            if(g.next||!g.field||!g.field->covered||g.field->done||g.field->demand.empty()) {needIds.erase(id);continue;}
+            subscribe(g,g.field,NavClass::FirstRoute);
+        }
+        for(int id=after(buildingIds,0);id;id=after(buildingIds,id)) {
+            ++visits;
+            Group& g=groups.find(id)->second;
+            if(g.next&&g.next->done) {installed(g,*g.next);continue;}   // a refresh another group finished
+            if(g.field&&!g.field->done&&g.pausedSerial!=g.field->serial)subscribe(g,g.field,jobClass(g,*g.field));
+            if(g.next)subscribe(g,g.next,jobClass(g,*g.next));
+            if(!wantsBuilding(g))listGroup(g);   // a shared first build another group finished
+        }
+        // Each job's class this tick: its most urgent group's, promoted by the time since its last work.
+        for(auto& [serial,j]:jobs) {
+            if(!j.f)continue;
+            j.cls=navPromote(j.base,now-j.f->lastServed);
+            if(j.cls!=j.base)++acct.promotions;
+            if(j.f->seenClass!=j.cls) {j.f->seenClass=j.cls;j.f->classSince=now;}
+        }
+        // ---- the start requests, oldest first within their class ----
+        struct Request {uint32_t since;int id;NavClass base;};
+        std::array<std::vector<Request>,size_t(NavClass::Count)> requests;
+        auto ask=[&](Group& g,NavClass base) {
+            if(g.requestTick==kNoTick)g.requestTick=now;
+            const NavClass at=navPromote(base,now-g.requestTick);
+            if(at!=base)++acct.requestPromotions;
+            requests[size_t(at)].push_back({g.requestTick,g.id,base});
+        };
+        for(const int id:needFieldIds) {
+            Group& g=groups.find(id)->second;
+            if(!g.field&&!g.next)ask(g,now-g.waited<=1?NavClass::Waiting:NavClass::FirstRoute);
+        }
+        for(const int id:staleDoneIds) {
+            Group& g=groups.find(id)->second;
+            if(g.field&&g.stale&&!g.next&&g.field->usable())ask(g,g.awareDemand?NavClass::AwareRepair:NavClass::StaleRefresh);
+        }
+        auto older=[](const Request& a,const Request& b) {return std::tie(a.since,a.id)<std::tie(b.since,b.id);};
+        {
+            size_t listed=0;uint64_t cells=0;
+            for(auto& list:requests) {
+                std::sort(list.begin(),list.end(),older);visits+=list.size();listed+=list.size();
+                for(const Request& r:list) {const auto b=fieldWindow(*groups.get(r.id));cells+=uint64_t(b[2]-b[0]+1)*uint64_t(b[3]-b[1]+1);}
+            }
+            acct.requestsMax=std::max<uint64_t>(acct.requestsMax,listed);
+            acct.requestCellsMax=std::max<uint64_t>(acct.requestCellsMax,cells);
+        }
+        // ---- serve the classes in order ----
+        uint64_t refresh=kRefreshQuota;
+        bool built=false,refused=false;   // accounting only: a new build started / a request was refused for room this tick
+        NavAdmit admit;
+        int awareStarts=0;
+        for(size_t ci=0;ci<size_t(NavClass::Count);++ci) {
+            const NavClass cls=NavClass(ci);
+            // Admissions. An aware re-plan past kAwareStarts this tick waits with the stale refreshes.
+            auto& list=requests[ci];
+            if(ci>0)admit.nextClass();
+            // A new build is admitted only while the class's window has a free slot: a build past the
+            // window would hold its whole potential array unserved -- and an unfinished field is never an
+            // eviction victim -- so beyond it a request may only take a field another group has. While
+            // more than half the byte allowance is in use, also only while its kind has room over every
+            // class (NavBudget::kFirstInflight, kRefreshInflight: the two windows a kind can be served in):
+            // a first build admitted as a first route is a Waiting job the next tick (its members stand
+            // still for it), and a refresh promoted out of its class leaves its slot, so the per-class count
+            // alone let builds pile up unserved past the windows (fix round: 151 held many-5000's whole
+            // allowance, 78 refreshes in many-2500). With memory to spare such a build costs nobody room,
+            // and capping it there was measured to cost outcomes (sched-load stuck 101 -> 162, many-1000
+            // arrivals -9%), so the cap applies only when memory is short.
+            const size_t window=refreshClass(cls)?NavBudget::kRefreshWindow:NavBudget::kWindow;
+            size_t inflight=0,firstInflight=0,refreshInflight=0;
+            for(const auto& [serial,j]:jobs)if(j.f&&!j.f->done&&!jobIdle(j)) {
+                inflight+=j.cls==cls;
+                ++(refreshJob(j)?refreshInflight:firstInflight);
+            }
+            for(size_t k=0;k<list.size();++k) {
+                if(budget==0)break;
+                // The room scan has stopped (a reservation, or this class's fit-scan bound): the rest may
+                // still start by sharing a field that already exists -- that takes no room, so the
+                // reserved request loses nothing (a share of a refresh even drops the stale field).
+                const bool stopped=admit.stopped();
+                const Request r=list[k];
+                Group& g=*groups.get(r.id);
+                if(g.next||(g.field&&!g.stale))continue;   // started (shared) since it was listed
+                const bool refreshing=g.field!=nullptr;
+                if(refreshing) {
+                    // B1: nobody steers by an inactive group's stale field; it refreshes the tick the
+                    // group is active again (its request age restarts then).
+                    if(!active(g)) {++stats.refreshSuppressed;g.suppressed=true;g.requestTick=now;continue;}
+                    if(!stopped&&cls==NavClass::AwareRepair&&r.base==NavClass::AwareRepair) {
+                        if(awareStarts>=kAwareStarts) {
+                            auto& stale=requests[size_t(NavClass::StaleRefresh)];
+                            stale.insert(std::upper_bound(stale.begin(),stale.end(),r,older),r);
+                            continue;
+                        }
+                        ++awareStarts;
+                    }
+                    if(g.suppressed) {++stats.demandResumes;g.suppressed=false;}
+                }
+                plane(g.plane);settle();
+                if(budget==0)break;
+                // With the refresh allowance spent, a stale group in a refresh class only takes a field
+                // another group already has (see sharedField).
+                const bool tight=fieldBytes()*2>fieldAllowance();   // memory short: the per-kind cap applies
+                const bool full=inflight>=window||(tight&&(refreshing?refreshInflight>=NavBudget::kRefreshInflight:firstInflight>=NavBudget::kFirstInflight));
+                const bool chargeRefresh=refreshing&&refreshClass(cls);   // an unpromoted refresh: inside the refresh allowance
+                const bool shareOnly=(chargeRefresh&&refresh==0)||full||stopped;
+                uint64_t initRoom=budget+charged==kFieldQuota?~0ull:budget;
+                if(chargeRefresh)initRoom=std::min(initRoom,refresh);
+                const Start got=startField(g,shareOnly,initRoom);
+                if(got==Start::Built)built=true;else if(got==Start::NoRoom)refused=true;
+                budget-=std::min(budget,startCharge);
+                if(chargeRefresh)refresh-=std::min(refresh,startCharge);
+                if(got==Start::NoShare) {
+                    if(stopped)continue;
+                    if(!full) {++stats.refreshDeferred;continue;}
+                    // The window is full: a request refused for want of room long enough still reserves,
+                    // so no later class takes the room it waits for (the rest only share).
+                    if(g.blockedSince!=NavAdmit::kNever&&now-g.blockedSince>=NavBudget::kReserveAge) {
+                        if(!admit.reserved)++acct.reservations;
+                        admit.reserve();
+                    }
+                    continue;
+                }
+                if(got==Start::NoBudget)continue;
+                if(got==Start::NoRoom) {
+                    ++acct.fitSkips;
+                    const bool was=admit.reserved;
+                    admit.refuse(g.blockedSince,now);
+                    if(admit.reserved&&!was)++acct.reservations;
+                    continue;
+                }
+                NavAdmit::admitted(g.blockedSince);
+                ++acct.admissions;
+                if(stopped)++acct.stoppedShares;
+                acct.requestAgeMax[size_t(r.base)]=std::max<uint64_t>(acct.requestAgeMax[size_t(r.base)],now-r.since);
+                if(const std::shared_ptr<Field>& sp=g.next?g.next:g.field;sp&&!sp->done) {
+                    Field* f=sp.get();
+                    const bool fresh=!jobs.count(f->serial);
+                    subscribe(g,sp,cls);
+                    if(fresh) {
+                        jobs[f->serial].cls=cls;++inflight;++(refreshing?refreshInflight:firstInflight);   // a new build serves in the class that admitted it
+                        if(tight)(refreshing?acct.refreshInflightMax:acct.firstInflightMax)=
+                            std::max<uint64_t>(refreshing?acct.refreshInflightMax:acct.firstInflightMax,refreshing?refreshInflight:firstInflight);
+                    }
+                }
+            }
+
+            // This class's jobs, by deficit round robin.
+            struct Ref {uint64_t key;int64_t* deficit;FieldJob* job;};
+            std::vector<Ref> ring;
+            for(auto& [serial,j]:jobs)if(j.f&&j.cls==cls&&!j.f->done) {
+                if(jobIdle(j)) {j.f->lastServed=now;continue;}   // a paused build nobody asks to resume
+                ring.push_back({serial,&j.f->deficit,&j});
+            }
+            if(ring.empty())continue;
+            settle();
+            // Stage 9: the tiles this class's chain jobs will attach next, built ahead on the SimPool (exact: see
+            // tilePrefetch). The DRR replaces a job that leaves its window by the next oldest, so twice the window.
+            tilePrefetch(ring,2*(refreshClass(cls)?NavBudget::kRefreshWindow:NavBudget::kWindow),
+                         refreshClass(cls)?std::min(budget,refresh):budget);
+            navDrr(ring,refreshClass(cls)?NavBudget::kRefreshWindow:NavBudget::kWindow,navCursor[ci],budget,
+                   refreshClass(cls)?&refresh:nullptr,[&](Ref& ref,uint64_t allow)->NavVisit {
+                FieldJob& j=*ref.job;
+                if(!j.f)return {};   // retired: dropped by an eviction or an install this tick (j.keep holds it)
+                Field& f=*j.f;
+                // The group that builds it: the first subscriber holding it as its own first field,
+                // else the first holding it at all (subscriptions can change during the tick).
+                Group* holder=nullptr;
+                for(Group* o:j.subs)if(o->field.get()==&f) {holder=o;break;}
+                if(!holder)for(Group* o:j.subs)if(o->next.get()==&f) {holder=o;break;}
+                if(!holder)return {};
+                Group& g=*holder;
+                ++visits;
+                plane(g.plane);
+                // A paused first build with no demand waits (see serve); it is not asking for work, so
+                // its service clock restarts.
+                const bool pause=jobPausable(j);
+                if(pause&&f.covered&&f.demand.empty()) {f.lastServed=now;return {};}
+                const uint32_t gap=now-f.lastServed;
+                const uint64_t spent=pause?serve(g,f,allow):advance(f,allow);
+                if(spent) {
+                    // The wait this class saw: since the last slice, or since the job entered the class.
+                    const uint32_t inClass=now-std::max(f.lastServed,f.classSince);
+                    acct.serviceGapMax[size_t(j.cls)]=std::max<uint64_t>(acct.serviceGapMax[size_t(j.cls)],inClass);
+                    acct.serviceGapAny=std::max<uint64_t>(acct.serviceGapAny,gap);
+                    f.lastServed=now;
+                }
+                finish(g,f,spent);
+                if(f.done)for(Group* o:j.subs)if(o!=&g&&(o->field.get()==&f||o->next.get()==&f))installed(*o,f);
+                return {spent,!f.done&&!(pause&&f.covered&&f.demand.empty())};
+            });
+        }
+        // Accounting (observation only): admission liveness -- consecutive ticks with a refusal for room and no
+        // new build -- and the waits still open at the end of the tick -- a job that asked
+        // for work and got none, a request not admitted -- count too, so ongoing starvation is measured.
+        if(built||!refused)admitIdleSince=~0u;
+        else {
+            if(admitIdleSince==~0u)admitIdleSince=now;
+            acct.admitGapMax=std::max<uint64_t>(acct.admitGapMax,now-admitIdleSince+1);
+        }
+        for(const auto& [serial,j]:jobs) {
+            if(!j.f||j.f->done||j.f->lastServed==now)continue;
+            const uint32_t inClass=now-std::max(j.f->lastServed,j.f->classSince);
+            acct.serviceGapMax[size_t(j.cls)]=std::max<uint64_t>(acct.serviceGapMax[size_t(j.cls)],inClass);
+            acct.serviceGapAny=std::max<uint64_t>(acct.serviceGapAny,now-j.f->lastServed);
+        }
+        for(const auto& list:requests)for(const Request& r:list) {
+            const Group* g=groups.get(r.id);
+            if(!g||g->next||(g->field&&!g->stale)||g->requestTick==kNoTick)continue;   // admitted, or not waiting now
+            acct.requestAgeMax[size_t(r.base)]=std::max<uint64_t>(acct.requestAgeMax[size_t(r.base)],now-g->requestTick);
+        }
+    }
     void tick() {
+        foldWindow();
+        drainRegistrations(true);
         if(gProbe) {
             using Clock=std::chrono::steady_clock;
             auto ms=[](Clock::time_point a,Clock::time_point b) {return std::chrono::duration<double,std::milli>(b-a).count();};
             const auto t0=Clock::now();
-            syncStatic();
+            syncStatic();buildPlanes();
             const auto t1=Clock::now();
             stampGrounded();
             const auto t2=Clock::now();
@@ -3510,7 +6548,7 @@ struct LegionNavigator::Impl {
             probeSyncMs+=ms(t0,t1);probeStampMs+=ms(t1,t2);probeLiftMs+=ms(t3,t4);
             if(ms(t0,t1)>probeSyncMaxMs) {probeSyncMaxMs=ms(t0,t1);probeSyncMax=probeSync;}
         } else {
-            syncStatic();
+            syncStatic();buildPlanes();
             stampGrounded();
             scanStill();
             liftFlyers();
@@ -3519,125 +6557,19 @@ struct LegionNavigator::Impl {
         if(w.tickCounter_%kStillScan==kStillScan-1)softBlocks();
         awareScan();
         meetScan();
+        openingScan();
+        admissionTick();
         prebuildStep();
         prune();
         // Yields run even while no Legion member remains (a committed yield
         // must finish or time out, never freeze until the next order).
         serviceYields();
-        // Plane rebuilds and labelling are charged against the same
-        // deterministic quota as field relaxations (debt carries over).
-        // At most half the quota pays plane debt in one tick, so field work
-        // always progresses (the rest of the debt carries over).
-        uint64_t budget=kFieldQuota,charged=0;
-        auto settle=[&] {
-            const uint64_t c=std::min({budget,planeDebt,kFieldQuota/2-charged});
-            budget-=c;planeDebt-=c;charged+=c;
-        };
-        settle();
-        uint64_t visits=0;
+        uint64_t budget=kFieldQuota,visits=0;
         probeListSum+=waitedIds.size()+buildingIds.size()+needFieldIds.size()+staleDoneIds.size();
         probeGroupSum+=groups.size();
-        auto finish=[&](Group& g,Field& f,uint64_t spent) {
-            budget-=std::min(budget,spent);stats.fieldWork+=spent;
-            if(spent) {
-                // Who the work was for (Stats only): a refresh is the
-                // replacement building in `next`; a group has an area when
-                // some goal is shared (more members than distinct goals).
-                if(g.next.get()==&f)
-                    (w.tickCounter_-g.movingTick<=2?stats.fieldWorkRefreshMoving:stats.fieldWorkRefreshIdle)+=spent;
-                else
-                    (policy(g.kind).area&&!g.approach&&g.members>int(g.sharing.size())?stats.fieldWorkFirstSlot:stats.fieldWorkFirstSolo)+=spent;
-            }
-            if(f.done) {
-                ++stats.fieldsBuilt;noteAwareInstall(g,f);
-                if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;g.demand=false;g.awareDemand=false;restaleSlots(g);++stats.refreshCompleted;}
-                listGroup(g);
-            }
-        };
-        // Groups with a member standing still for want of a field come
-        // first (their field starts, or its frontier advances toward them),
-        // then first fields whose members all steer already, then refreshes
-        // (members still steer by the finished stale field).
-        // Each loop walks its work list (see buildingIds) in id order with
-        // the predicate of a walk over every group: a list holds every
-        // group the predicate accepts, including one a step of the loop
-        // makes eligible (an eviction), so the same groups are served in
-        // the same order.
-        for(int id=after(waitedIds,0);id;id=after(waitedIds,id)) {
-            if(budget==0)break;
-            ++visits;
-            Group& g=groups.find(id)->second;
-            if(w.tickCounter_-g.waited>1) {waitedIds.erase(id);continue;}
-            if(g.next||(g.field&&g.field->done))continue;
-            plane(g.plane);settle();
-            if(budget==0)break;
-            if(!g.field&&!startField(g))continue;
-            if(!g.field->done)finish(g,*g.field,pausable(g)?serve(g,*g.field,budget):advance(*g.field,budget));   // (done: shared)
-        }
-        uint64_t refresh=kRefreshQuota;
-        // Refreshes advance in two sub-passes: aware re-plans first (PLAN
-        // 3.3 F, C7), then the rest, all inside the one refresh allowance.
-        for(int pass=0;pass<3;++pass)for(int id=after(buildingIds,0);id;id=after(buildingIds,id)) {
-            if(budget==0)break;
-            Group& g=groups.find(id)->second;
-            if(pass>0&&(pass==1)!=g.awareDemand)continue;
-            ++visits;
-            Field* f=pass>0?g.next.get():g.field&&!g.field->done?g.field.get():nullptr;
-            if(!f) {if(!wantsBuilding(g))listGroup(g);continue;}   // a shared build another group finished
-            if(f->done) {finish(g,*f,0);continue;}   // a refresh another group finished
-            if(pass>0&&refresh==0)continue;
-            // A paused first build with no demand waits (see serve; such a
-            // group is normally off this list).
-            const bool pause=pass==0&&pausable(g);
-            if(pause&&f->covered&&f->demand.empty())continue;
-            plane(g.plane);settle();
-            if(budget==0)break;
-            const uint64_t spent=pause?serve(g,*f,budget):advance(*f,pass>0?std::min(budget,refresh):budget);
-            if(pass>0)refresh-=std::min(refresh,spent);
-            finish(g,*f,spent);
-        }
-        // Groups that need a field start in id order: first those with none
-        // (they cannot steer at all), then stale refreshes. Served first,
-        // refreshes of older groups under constant churn starved a new
-        // group forever.
-        // Stale refreshes start aware re-plans first (at most
-        // kAwareStarts a tick, in id order; PLAN 3.3 F), then the rest.
-        int awareStarts=0;std::vector<int> awareSeen;
-        for(int pass=0;pass<3;++pass) {
-            const std::set<int>& ids=pass==0?needFieldIds:staleDoneIds;
-            for(int id=after(ids,0);id;id=after(ids,id)) {
-                if(budget==0)break;
-                Group& g=groups.find(id)->second;
-                if(pass==1&&(!g.awareDemand||awareStarts>=kAwareStarts))continue;
-                if(pass==2&&std::find(awareSeen.begin(),awareSeen.end(),id)!=awareSeen.end())continue;   // the aware sub-pass had it
-                ++visits;
-                if(pass==1)awareSeen.push_back(id);
-                // (A stale paused first build is refreshed as a finished one
-                // would be: it never finishes on its own.)
-                if((g.field&&(!g.stale||!g.field->usable()))||g.next)continue;
-                if((pass==0)!=(g.field==nullptr))continue;
-                if(pass==1)++awareStarts;
-                // B1: nobody steers by an inactive group's stale field; it
-                // stays listed and refreshes the tick the group is active
-                // (refresh suppressed / demand resumes count the visits). A
-                // refresh already under way keeps building whatever its group
-                // does (pausing it measured worse: crowdtrap 200x1 arrived
-                // settled -4% on every seed).
-                if(pass>0&&!active(g)) {++stats.refreshSuppressed;g.suppressed=true;continue;}
-                if(pass>0&&g.suppressed) {++stats.demandResumes;g.suppressed=false;}
-                plane(g.plane);settle();
-                if(budget==0)break;
-                // With the refresh allowance spent, a stale group only takes a
-                // field another group already has (see sharedField).
-                const bool shareOnly=pass>0&&refresh==0;
-                if(!startField(g,shareOnly)) {if(shareOnly) {++stats.refreshDeferred;continue;}break;}
-                Field& f=g.next?*g.next:*g.field;
-                if(f.done)continue;   // shared
-                const uint64_t spent=pass==0&&pausable(g)?serve(g,f,budget):advance(f,pass>0?std::min(budget,refresh):budget);
-                if(pass>0)refresh-=std::min(refresh,spent);
-                finish(g,f,spent);
-            }
-        }
+        serveImprovements();    // stage 7: deferred improvement refreshes whose time has come
+        serveRepairs(budget);   // stage 6: halo tiles members stepped onto (cheap, and a member waits for each)
+        serveFields(budget,visits);
         stats.schedGroupVisits+=visits;stats.groupLoopIters+=visits;
         // The longest run of ticks whose whole field quota went to work.
         quotaPegRun=budget==0?quotaPegRun+1:0;
@@ -3684,8 +6616,27 @@ struct LegionNavigator::Impl {
         uint64_t dist=0;
         for(uint64_t n:s.completionDist)dist+=n;
         if(dist!=s.arrivals)fail("completion distance histogram does not sum to arrivals");
+        {   // the registration FIFO: one live entry per queued id, and the count
+            size_t live=0;std::set<int> ids;
+            for(const auto& e:regQueue)if(regSeq[size_t(e.id)]==e.seq) {++live;if(!ids.insert(e.id).second)fail("a unit has two live registration entries");}
+            size_t marked=0;for(const uint32_t q:regSeq)marked+=q!=0;
+            if(live!=regLive||marked!=regLive)fail("regLive differs from the live registration entries");
+            size_t blocked=0;
+            for(size_t id=0;id<regPlane.size();++id)if(regPlane[id]) {++blocked;if(!queued(int(id)))fail("a unit not queued is marked plane-blocked");}
+            if(blocked!=regBlocked)fail("regBlocked differs from the plane-blocked marks");
+        }
         if(s.midrouteCompletions>s.outsideAreaCompletions||s.outsideAreaCompletions>s.arrivals)
             fail("mid-route completions exceed outside-area completions or arrivals");
+        // Stage 6: built hierarchy sectors equal a fresh labelling of their plane (a rotating window of them a
+        // tick: the regions, and the portals of every side marked built).
+        for(const auto& p:planes) {
+            if(!p.hier.ready()||p.stage>0||p.legal.empty())continue;
+            const int n=p.hier.sectorCount();
+            for(int k=0;k<std::min(n,16);++k) {
+                const int sct=int((uint64_t(w.tickCounter_)*16+uint64_t(k))%uint64_t(n));
+                if(!p.hier.sectorMatches(sct,p.legal.data()))fail("a hierarchy sector differs from a fresh labelling");
+            }
+        }
         {
             // anchorsAt against a count of every anchor (settleReach).
             std::map<std::tuple<int,int32_t,int32_t>,int> count;
@@ -3721,6 +6672,12 @@ struct LegionNavigator::Impl {
             for(const auto& [key,pt]:points)if(!pt.queue.empty())waiting.insert(key);
             if(waiting!=handIds)fail("handIds differs from the points with a queue");
         }
+        // Each point's crowd cells against its listed members' own counts.
+        for(const auto& [key,pt]:points) {
+            uint64_t cells=0;
+            for(const int id:pt.ids)if(const Member* m=member(id))cells+=m->ptCells;
+            if(cells!=pt.crowdCells||pt.crowdCells>pt.crowdPeak)fail("a point's crowd cells differ from its members'");
+        }
         {
             // Each group's member ids (the paused build's cover test).
             std::map<int,std::vector<int>> ids;
@@ -3746,7 +6703,16 @@ struct LegionNavigator::Impl {
             }
             if(building!=buildingIds.size()||need!=needFieldIds.size()||staleDone!=staleDoneIds.size()||built!=byBuilt.size())
                 fail("a scheduler list holds a group that is not listed");
+            {   // stage 7: improveIds against the groups' pending improvement refreshes
+                size_t pending=0;
+                for(const auto& [id,g]:groups) {
+                    if(g.onImprove!=(g.improveTick!=kNoTick)||g.onImprove!=(improveIds.count(id)>0))fail("improveIds differs from the groups' improveTick");
+                    pending+=g.onImprove;
+                }
+                if(pending!=improveIds.size())fail("improveIds holds a group that is not listed");
+            }
             for(int id:waitedIds)if(!groups.count(id))fail("waitedIds holds a dead group");
+            for(int id:needIds)if(!groups.count(id))fail("needIds holds a dead group");
             std::map<std::pair<int,uint64_t>,std::set<int>> routes;
             for(const auto& [id,g]:groups)for(const Field* f:{g.field.get(),g.next.get()}) {
                 if(!f)continue;
@@ -3754,6 +6720,10 @@ struct LegionNavigator::Impl {
                 routes[{g.plane,f->seedKey}].insert(id);
             }
             if(routes!=routeIndex)fail("routeIndex differs from the groups' fields");
+            // joinIndex against the groups (registerMove's join walk).
+            std::map<JoinKey,std::vector<int>> joins;
+            for(const auto& [id,g]:groups)joins[joinKey(g)].push_back(id);
+            if(joins!=joinIndex)fail("joinIndex differs from the groups");
         }
         // The flyer and structure lists against a walk of every unit (A5),
         // and the dense yard lookup against the script map.
@@ -3828,72 +6798,171 @@ struct LegionNavigator::Impl {
     static constexpr int kAwareSample=15,kAwareHorizon=450,kAwareLead=45;
     static constexpr uint32_t kBehindMove=90;
     enum : uint8_t {kAwareHeadOn=0,kAwareCross=1};
+    // A mover: its command, centroid (px), the corridor it sweeps over the
+    // next kAwareAhead scans, its spread radius, its displacement over the
+    // last scan (px per kAwareScan ticks) and its length L, and its
+    // members' extent behind and ahead of the centroid along that heading
+    // and across it (px).
+    struct AwareMover {uint64_t command;int player;uint32_t issue;int64_t px,pz,cx,cz,ax,az,r,dx,dz,L,tail,head,half;std::tuple<int,uint32_t,int32_t,int32_t> key;};
+    // Each group's centroid, spread, slowest base speed (raw Fixed, px
+    // per tick) and the sight of its members.
+    struct AwareAcc {int64_t sx=0,sz=0,sq=0,n=0,sight=0,slow=0;};
+    // A scan in progress (Legion 10,000 stage 4): its snapshot -- the movers, the groups' accumulators,
+    // the broad-phase grid -- taken on the scan tick, and the last group it judged (awCursor; -1: no
+    // scan in progress). The groups are judged in id order against that snapshot, at most
+    // NavBudget::kAwareBudget units (candidate pairs, conflict samples, descent cells) a tick and
+    // always at least one group; a scan that needs more resumes on the next tick, and the next scan
+    // starts on the first scan tick after it ends. Under the budget a scan ends in its own tick, as
+    // before. Hashed while in progress: the cursor, the scan tick and a digest of the snapshot.
+    std::vector<AwareMover> awMovers;
+    std::map<int,AwareAcc> awAcc;
+    std::vector<std::vector<uint32_t>> awGrid;
+    std::vector<std::pair<uint64_t,uint32_t>> awByCommand;   // (command, mover index), ascending
+    int64_t awGridW=0,awGridH=0;
+    int awCursor=-1;
+    uint32_t awStarted=0;
+    uint64_t awDigest=0;
     void awareScan() {
-        if(w.tickCounter_%kAwareScan!=kAwareScan/2||gAwareOff)return;
+        if(gAwareOff)return;
+        const bool start=awCursor<0&&w.tickCounter_%kAwareScan==kAwareScan/2;
+        if(!start&&awCursor<0)return;
         awareHeadOn.clear();
-        // A mover: its command, centroid (px), the corridor it sweeps over the
-        // next kAwareAhead scans, its spread radius, its displacement over the
-        // last scan (px per kAwareScan ticks) and its length L, and its
-        // members' extent behind and ahead of the centroid along that heading
-        // and across it (px).
-        struct Mover {uint64_t command;int player;uint32_t issue;int64_t px,pz,cx,cz,ax,az,r,dx,dz,L,tail,head,half;std::tuple<int,uint32_t,int32_t,int32_t> key;};
-        std::vector<Mover> movers;
+        using Mover=AwareMover;
+        auto& movers=awMovers;auto& acc=awAcc;auto& grid=awGrid;auto& byCommand=awByCommand;
         uint64_t work=0;
-        for(auto& [key,pt]:points) {
-            if(std::get<0>(key)<0)continue;
-            int64_t sx=0,sz=0,n=0;
-            for(const int id:pt.ids) {
-                const Member* mm=member(id);const Unit* v=w.unit(id);
-                if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
-                sx+=v->x.v>>16;sz+=v->z.v>>16;++n;
-            }
-            if(n<kAwareMembers) {pt.awareSeen=false;continue;}
-            const int64_t cx=sx/n,cz=sz/n;
-            const int64_t dx=pt.awareSeen?cx-pt.awareX:0,dz=pt.awareSeen?cz-pt.awareZ:0;
-            pt.awareX=cx;pt.awareZ=cz;pt.awareSeen=true;
-            if(dx*dx+dz*dz<16*16)continue;   // standing: the soft-obstacle scan sees still bodies
-            const int64_t L=std::max<int64_t>(1,isqrtFloor(uint64_t(dx*dx+dz*dz)));
-            int64_t ss=0,tail=0,head=0,half=0;
-            for(const int id:pt.ids) {
-                const Member* mm=member(id);const Unit* v=w.unit(id);
-                if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
-                const int64_t ox=(v->x.v>>16)-cx,oz=(v->z.v>>16)-cz;ss+=ox*ox+oz*oz;
-                const int64_t along=(ox*dx+oz*dz)/L,across=(ox*dz-oz*dx)/L;
-                tail=std::max(tail,-along);head=std::max(head,along);half=std::max(half,std::abs(across));
-            }
-            work+=uint64_t(n);
-            const int64_t r=isqrtFloor(uint64_t(ss/n))*3/2+16;
-            movers.push_back({commandKey(std::get<0>(key),std::get<1>(key)),std::get<0>(key),std::get<1>(key),int64_t(std::get<2>(key))>>16,int64_t(std::get<3>(key))>>16,
-                cx,cz,cx+dx*kAwareAhead,cz+dz*kAwareAhead,r,dx,dz,L,tail,head,half,key});
-        }
-        // Each group's centroid, spread, slowest base speed (raw Fixed, px
-        // per tick) and the sight of its members.
-        struct Acc {int64_t sx=0,sz=0,sq=0,n=0,sight=0,slow=0;};
-        std::map<int,Acc> acc;
-        for(const auto& [id,m]:members) {
-            if(m.state!=Moving&&m.state!=Holding)continue;
-            const Unit* v=w.unit(id);if(!v||!v->type)continue;
-            auto& a=acc[m.group];
-            const int64_t x=v->x.v>>16,z=v->z.v>>16;
-            a.sx+=x;a.sz+=z;a.sq+=x*x+z*z;++a.n;a.sight=std::max<int64_t>(a.sight,w.sightDistance(*v->type));
-            if(v->baseSpeed.v>0&&(a.slow==0||v->baseSpeed.v<a.slow))a.slow=v->baseSpeed.v;
-        }
         const int W=width();
         uint64_t pairs=0;
-        stats.groupLoopIters+=groups.size();
+        constexpr int64_t kAwareCell=1024;   // px, 64 cells
+        if(start) {
+            movers.clear();acc.clear();grid.clear();byCommand.clear();
+            for(auto& [key,pt]:points) {
+                if(std::get<0>(key)<0)continue;
+                int64_t sx=0,sz=0,n=0;
+                for(const int id:pt.ids) {
+                    const Member* mm=member(id);const Unit* v=w.unit(id);
+                    if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
+                    sx+=v->x.v>>16;sz+=v->z.v>>16;++n;
+                }
+                if(n<kAwareMembers) {pt.awareSeen=false;continue;}
+                const int64_t cx=sx/n,cz=sz/n;
+                int64_t dx=pt.awareSeen?cx-pt.awareX:0,dz=pt.awareSeen?cz-pt.awareZ:0;
+                // The displacement per kAwareScan ticks (samples are farther apart after a scan that
+                // resumed past its next scan tick; exactly kAwareScan otherwise).
+                if(const uint32_t dt=w.tickCounter_-pt.awareTick;pt.awareSeen&&dt!=kAwareScan&&dt>0) {
+                    dx=dx*int64_t(kAwareScan)/int64_t(dt);dz=dz*int64_t(kAwareScan)/int64_t(dt);
+                }
+                pt.awareX=cx;pt.awareZ=cz;pt.awareSeen=true;pt.awareTick=w.tickCounter_;
+                if(dx*dx+dz*dz<16*16)continue;   // standing: the soft-obstacle scan sees still bodies
+                const int64_t L=std::max<int64_t>(1,isqrtFloor(uint64_t(dx*dx+dz*dz)));
+                int64_t ss=0,tail=0,head=0,half=0;
+                for(const int id:pt.ids) {
+                    const Member* mm=member(id);const Unit* v=w.unit(id);
+                    if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
+                    const int64_t ox=(v->x.v>>16)-cx,oz=(v->z.v>>16)-cz;ss+=ox*ox+oz*oz;
+                    const int64_t along=(ox*dx+oz*dz)/L,across=(ox*dz-oz*dx)/L;
+                    tail=std::max(tail,-along);head=std::max(head,along);half=std::max(half,std::abs(across));
+                }
+                work+=uint64_t(n);
+                const int64_t r=isqrtFloor(uint64_t(ss/n))*3/2+16;
+                movers.push_back({commandKey(std::get<0>(key),std::get<1>(key)),std::get<0>(key),std::get<1>(key),int64_t(std::get<2>(key))>>16,int64_t(std::get<3>(key))>>16,
+                    cx,cz,cx+dx*kAwareAhead,cz+dz*kAwareAhead,r,dx,dz,L,tail,head,half,key});
+            }
+            for(const auto& [id,m]:members) {
+                if(m.state!=Moving&&m.state!=Holding)continue;
+                const Unit* v=w.unit(id);if(!v||!v->type)continue;
+                auto& a=acc[m.group];
+                const int64_t x=v->x.v>>16,z=v->z.v>>16;
+                a.sx+=x;a.sz+=z;a.sq+=x*x+z*z;++a.n;a.sight=std::max<int64_t>(a.sight,w.sightDistance(*v->type));
+                if(v->baseSpeed.v>0&&(a.slow==0||v->baseSpeed.v<a.slow))a.slow=v->baseSpeed.v;
+            }
+            // Broad phase (Legion 10,000 stage 2; exact): a mover not yet in a
+            // group's plan enters it only through a conflict sample, where the
+            // group's way point P (on its descent chain, so inside the chain's
+            // box of cell centres) and the mover's box centre Q (its centroid
+            // moved t/kAwareScan of its displacement, t <= kAwareHorizon, so
+            // inside its swept box) satisfy |s| <= B, |q| <= A with A =
+            // half+rG+32, B = max(tail,head)+rG+32. s and q are the offset P-Q
+            // dotted with (dx,dz) and divided by L <= |(dx,dz)| (truncated), so
+            // the offset's components along and across the heading are under B+1
+            // and A+1, and each coordinate of P-Q under A+B+2 = (half+
+            // max(tail,head)+66) + 2rG. Each mover is listed in the grid cells its
+            // swept box, grown by its own part, covers; a group reads the cells
+            // its chain box, grown by 2rG, covers (both clamped to the grid, which
+            // keeps every overlap). Every mover the scan could newly plan round is
+            // a candidate; movers already in the plan (avoidCmd) are candidates
+            // whatever their place, since a crossing stays planned off its box.
+            // Candidates are visited in the movers' order, so every decision and
+            // the plan's order are those of the walk over all movers
+            // (TAK_LEGION_VERIFY runs the conflict samples of every other mover
+            // and fails on a hit).
+            awGridW=(int64_t(W)*16+kAwareCell-1)/kAwareCell;awGridH=(int64_t(height())*16+kAwareCell-1)/kAwareCell;
+        }
+        const int64_t gridW=awGridW,gridH=awGridH;
+        auto gridCol=[&](int64_t x) {return std::clamp<int64_t>(x>=0?x/kAwareCell:-1,0,gridW-1);};
+        auto gridRow=[&](int64_t z) {return std::clamp<int64_t>(z>=0?z/kAwareCell:-1,0,gridH-1);};
+        if(start&&!movers.empty()) {
+            grid.resize(size_t(gridW*gridH));
+            for(size_t i=0;i<movers.size();++i) {
+                const auto& mv=movers[i];
+                const int64_t grow=mv.half+std::max(mv.tail,mv.head)+66;
+                const int64_t ex=mv.cx+mv.dx*int64_t(kAwareHorizon/kAwareScan),ez=mv.cz+mv.dz*int64_t(kAwareHorizon/kAwareScan);
+                const int64_t c0=gridCol(std::min(mv.cx,ex)-grow),c1=gridCol(std::max(mv.cx,ex)+grow);
+                const int64_t r0=gridRow(std::min(mv.cz,ez)-grow),r1=gridRow(std::max(mv.cz,ez)+grow);
+                for(int64_t r=r0;r<=r1;++r)for(int64_t c=c0;c<=c1;++c)grid[size_t(r*gridW+c)].push_back(uint32_t(i));
+                byCommand.push_back({mv.command,uint32_t(i)});
+            }
+            std::sort(byCommand.begin(),byCommand.end());
+        }
+        if(start) {
+            awCursor=0;awStarted=w.tickCounter_;
+            uint64_t d=mix(0x617761726573ull,movers.size());
+            for(const auto& mv:movers) {
+                d=mix(d,mv.command);d=mix(d,uint64_t(mv.cx)<<32^uint64_t(uint32_t(mv.cz)));d=mix(d,uint64_t(mv.dx)<<32^uint64_t(uint32_t(mv.dz)));
+                d=mix(d,uint64_t(mv.r)^uint64_t(mv.tail)<<20^uint64_t(mv.head)<<40);d=mix(d,uint64_t(mv.half));
+            }
+            for(const auto& [gid,a]:acc) {d=mix(d,uint64_t(uint32_t(gid)));d=mix(d,uint64_t(a.sx)^uint64_t(a.sz)<<32);d=mix(d,uint64_t(a.n)^uint64_t(a.slow)<<24);}
+            awDigest=d;
+            stats.groupLoopIters+=groups.size();
+        }
+        std::vector<uint32_t> cand;
+        bool paused=false,first=true;
         for(auto& [id,g]:groups) {
+            if(id<=awCursor)continue;
+            if(!first&&pairs+work>=budgetOf(NavBudget::kAwareBudget)) {paused=true;break;}
+            first=false;awCursor=id;
             const auto a=acc.find(id);
-            std::vector<uint64_t> want;std::vector<Field::Corridor> seg;std::vector<uint8_t> kind;
+            std::vector<uint64_t> want;std::vector<Corridor> seg;std::vector<uint8_t> kind;
             std::vector<int8_t> side;std::vector<uint32_t> placed;std::vector<uint8_t> moved;
-            if(a!=acc.end()&&a->second.n>=kAwareMembers&&g.field&&g.field->done&&!movers.empty()) {
+            // Stage 5: a usable route serves awareness once the way ahead of
+            // the centroid is settled (kAwareCover of key: a need on a paused
+            // build) and every chain cell's step reads final; until then the
+            // group plans round nobody new this scan (its planned entries age
+            // as for a group with no way), and an uncertain read has its route
+            // run on to done.
+            bool unsureChain=false;
+            if(a!=acc.end()&&a->second.n>=kAwareMembers&&g.route().usable()&&!movers.empty()) {
                 const auto& p=planes[size_t(g.plane)];
                 const int64_t n=a->second.n,cx=a->second.sx/n,cz=a->second.sz/n;
                 const int64_t rG=isqrtFloor(uint64_t(std::max<int64_t>(0,a->second.sq/n-cx*cx-cz*cz)))*3/2+16;
                 const int64_t speed=a->second.slow>0?a->second.slow:65536;
                 int c=nearestLegal(p,int(cx/16),int(cz/16));
-                if(c>=0&&g.field->at(size_t(c))!=kUnreached) {
-                    std::vector<int> chain{c};
-                    for(int k=0;k<kAwareChain;++k) {const int next=descend(p,*g.field,chain.back()%W,chain.back()/W,chain.back());if(next<0)break;chain.push_back(next);}
+                const RouteView r=g.route();
+                bool ready=c>=0;
+                if(ready&&!r.complete()) {
+                    if(!r.covered(size_t(c),kAwareCover)) {
+                        ready=false;
+                        if(!provenUnreached(r,p,groupComp(g,p),size_t(c)))need(g,c,kAwareCover,RouteNeed::Awareness);
+                    }
+                }
+                std::vector<int> chain;
+                if(ready&&r.estimate(size_t(c))!=kUnreached) {
+                    unsure=false;
+                    chain.push_back(c);
+                    for(int k=0;k<kAwareChain;++k) {const int next=descend(p,r,chain.back()%W,chain.back()/W,chain.back(),0,0,true);if(next<0)break;chain.push_back(next);}
+                    unsureChain=unsure;
+                    if(unsureChain) {runOnRoute(g,RouteNeed::Awareness);chain.clear();}
+                }
+                if(!chain.empty()) {
                     work+=chain.size();
                     const int64_t tx=(chain.back()%W)*16-cx,tz=(chain.back()/W)*16-cz;
                     // The way as arc lengths (px): an orthogonal step 16, a diagonal 23.
@@ -3912,14 +6981,58 @@ struct LegionNavigator::Impl {
                         x=x0+(x1-x0)*(s-arc[k])/span;z=z0+(z1-z0)*(s-arc[k])/span;
                     };
                     const bool engages=g.kind==Kind::Fight||g.kind==Kind::Attack||g.kind==Kind::Guard||g.kind==Kind::Patrol;
-                    pairs+=movers.size();
-                    for(const auto& mv:movers) {
+                    // The first conflict sample (see below); `count` adds one per sample.
+                    auto firstHit=[&](const Mover& mv,uint64_t* count) {
+                        int64_t hit=-1;
+                        for(int64_t t=0;t<=kAwareHorizon&&hit<0;t+=kAwareSample) {
+                            int64_t x=0,z=0;at(t,x,z);if(count)++*count;
+                            const int64_t rx=x-(mv.cx+mv.dx*t/int64_t(kAwareScan)),rz=z-(mv.cz+mv.dz*t/int64_t(kAwareScan));
+                            const int64_t s=(rx*mv.dx+rz*mv.dz)/mv.L,q=(rx*mv.dz-rz*mv.dx)/mv.L;
+                            if(std::abs(q)<=mv.half+rG+32&&s>=-(mv.tail+rG+32)&&s<=mv.head+rG+32)hit=t;
+                        }
+                        return hit;
+                    };
+                    // The candidates (broad phase above), in the movers' order.
+                    cand.clear();
+                    {
+                        int64_t bx0=INT64_MAX,bz0=INT64_MAX,bx1=INT64_MIN,bz1=INT64_MIN;
+                        for(const int k:chain) {
+                            const int64_t px=int64_t(k%W)*16+8,pz=int64_t(k/W)*16+8;
+                            bx0=std::min(bx0,px);bx1=std::max(bx1,px);bz0=std::min(bz0,pz);bz1=std::max(bz1,pz);
+                        }
+                        const int64_t c0=gridCol(bx0-2*rG),c1=gridCol(bx1+2*rG),r0=gridRow(bz0-2*rG),r1=gridRow(bz1+2*rG);
+                        for(int64_t r=r0;r<=r1;++r)for(int64_t c=c0;c<=c1;++c) {
+                            const auto& cell=grid[size_t(r*gridW+c)];
+                            cand.insert(cand.end(),cell.begin(),cell.end());
+                        }
+                        for(const uint64_t known:g.avoidCmd)
+                            for(auto e=std::lower_bound(byCommand.begin(),byCommand.end(),std::pair<uint64_t,uint32_t>{known,0});
+                                e!=byCommand.end()&&e->first==known;++e)cand.push_back(e->second);
+                        std::sort(cand.begin(),cand.end());
+                        cand.erase(std::unique(cand.begin(),cand.end()),cand.end());
+                    }
+#ifndef NDEBUG
+                    if(gVerify)
+                        for(size_t i=0,j=0;i<movers.size();++i) {
+                            while(j<cand.size()&&cand[j]<i)++j;
+                            if(j<cand.size()&&cand[j]==i)continue;
+                            if(std::find(g.avoidCmd.begin(),g.avoidCmd.end(),movers[i].command)!=g.avoidCmd.end())
+                                verifyFail("awareScan's broad phase dropped a planned mover");
+                            if(firstHit(movers[i],nullptr)>=0)verifyFail("awareScan's broad phase dropped a mover with a conflict");
+                        }
+#endif
+                    pairs+=cand.size();
+                    for(const uint32_t ci:cand) {
+                        const Mover& mv=movers[ci];
                         if(mv.command==g.command)continue;
                         // One selection sent as several groups (one player,
                         // within kConvoyTicks, to points within kConvoyCells)
-                        // never plans round itself.
+                        // never plans round itself. An explicit order's area
+                        // (protocol 267) is exact: the same command or not, so
+                        // the tick rule is for per-unit commands only.
                         const int64_t gcx=int64_t(g.minX+g.maxX)*8,gcz=int64_t(g.minZ+g.maxZ)*8;
-                        if(mv.player==g.player&&(mv.issue>g.issuedTick?mv.issue-g.issuedTick:g.issuedTick-mv.issue)<=kConvoyTicks&&
+                        if(mv.player==g.player&&!explicitArea(mv.issue)&&!explicitArea(g.issuedTick)&&
+                           (mv.issue>g.issuedTick?mv.issue-g.issuedTick:g.issuedTick-mv.issue)<=kConvoyTicks&&
                            std::abs(mv.px-gcx)<=kConvoyCells*16&&std::abs(mv.pz-gcz)<=kConvoyCells*16)continue;
                         const bool friendly=mv.player==g.player||w.allied(g.player,mv.player);
                         if(!friendly) {
@@ -3935,10 +7048,10 @@ struct LegionNavigator::Impl {
                         // Pass behind (G2, user decision 5): the stream's band,
                         // swept in time from its tail to kAwareHorizon past its
                         // head, as wide as the stream plus 16 px (see
-                        // Field::Corridor). The later group never waits at the
+                        // Corridor). The later group never waits at the
                         // stream's edge: it takes the longer way behind it.
                         auto behind=[&]() {
-                            return Field::Corridor{mv.cx-mv.dx*mv.tail/mv.L,mv.cz-mv.dz*mv.tail/mv.L,cx,cz,mv.half+16,true,
+                            return Corridor{mv.cx-mv.dx*mv.tail/mv.L,mv.cz-mv.dz*mv.tail/mv.L,cx,cz,mv.half+16,true,
                                 mv.dx,mv.dz,mv.L,mv.tail+mv.head+mv.L*kAwareHorizon/int64_t(kAwareScan),speed,2*rG};
                         };
                         // A crossing the group gives way to stays planned until
@@ -3949,27 +7062,21 @@ struct LegionNavigator::Impl {
                         // kBehindMove ticks.
                         if(isKnown&&g.avoidKind[ki]==kAwareCross) {
                             if(qg*g.avoidSide[ki]<=0||sg<-(mv.tail+rG+32))continue;
-                            Field::Corridor cor=behind();
-                            const Field::Corridor& was=g.avoidSeg[ki];
+                            Corridor cor=behind();
+                            const Corridor& was=g.avoidSeg[ki];
                             // The planned tail, carried to now, against the live one.
-                            const int64_t gone=int64_t(w.tickCounter_-g.avoidAt[ki]);
+                            const int64_t gone=int64_t(awStarted-g.avoidAt[ki]);   // the snapshot's time (a resumed scan)
                             const int64_t drift=std::max(std::abs(cor.x0-was.x0-was.ux*gone/int64_t(kAwareScan)),std::abs(cor.z0-was.z0-was.uz*gone/int64_t(kAwareScan)));
                             const int64_t limit=std::max<int64_t>(32,mv.half/2);
-                            const bool move=!was.behind||(drift>limit&&w.tickCounter_-g.avoidAt[ki]>=kBehindMove);
+                            const bool move=!was.behind||(drift>limit&&awStarted-g.avoidAt[ki]>=kBehindMove);
                             if(!move)cor=was;
                             want.push_back(mv.command);seg.push_back(cor);kind.push_back(kAwareCross);side.push_back(g.avoidSide[ki]);
-                            placed.push_back(move?w.tickCounter_:g.avoidAt[ki]);moved.push_back(move);
+                            placed.push_back(move?awStarted:g.avoidAt[ki]);moved.push_back(move);
                             continue;
                         }
                         // The conflict: the first sample where the group's disc
                         // meets the mover's box, both moved on t ticks.
-                        int64_t hit=-1;
-                        for(int64_t t=0;t<=kAwareHorizon&&hit<0;t+=kAwareSample) {
-                            int64_t x=0,z=0;at(t,x,z);++work;
-                            const int64_t rx=x-(mv.cx+mv.dx*t/int64_t(kAwareScan)),rz=z-(mv.cz+mv.dz*t/int64_t(kAwareScan));
-                            const int64_t s=(rx*mv.dx+rz*mv.dz)/mv.L,q=(rx*mv.dz-rz*mv.dx)/mv.L;
-                            if(std::abs(q)<=mv.half+rG+32&&s>=-(mv.tail+rG+32)&&s<=mv.head+rG+32)hit=t;
-                        }
+                        const int64_t hit=firstHit(mv,&work);
                         if(hit<0)continue;
                         // Already in among each other: too late to plan round
                         // (a late swerve only reverses bodies).
@@ -3989,16 +7096,23 @@ struct LegionNavigator::Impl {
                             if(narrow&&dot>=0)continue;   // the same way: followed
                             cls=narrow?kAwareHeadOn:kAwareCross;
                         }
-                        // Crossing ways: only one group gives way, the later
-                        // one (the larger command key: player, then issue
-                        // tick); head on, both keep right.
+                        // Crossing ways: only one group gives way, the one
+                        // with the larger command key (player, then the
+                        // area key); head on, both keep right. Within one
+                        // kind of key that is the later one (per-unit keys
+                        // are the issue tick, explicit keys kExplicitArea |
+                        // serial). Across kinds it is not: an explicit
+                        // order's key always has the top bit set, so for one
+                        // player an explicit order gives way to a per-unit
+                        // (AI or script) command whichever came first.
+                        // Deterministic either way (both keys are sim state).
                         if(cls==kAwareCross&&mv.command>g.command)continue;
                         if(cls==kAwareCross) {
                             want.push_back(mv.command);seg.push_back(behind());kind.push_back(kAwareCross);
-                            side.push_back(qg<0?-1:1);placed.push_back(w.tickCounter_);moved.push_back(true);
+                            side.push_back(qg<0?-1:1);placed.push_back(awStarted);moved.push_back(true);
                             continue;
                         }
-                        Field::Corridor cor{mv.cx,mv.cz,mv.ax,mv.az,mv.r};
+                        Corridor cor{mv.cx,mv.cz,mv.ax,mv.az,mv.r};
                         // Head on: keep right (plan round a corridor shifted left).
                         {
                             const int64_t tl=std::max<int64_t>(1,isqrtFloor(uint64_t(tx*tx+tz*tz)));
@@ -4017,7 +7131,7 @@ struct LegionNavigator::Impl {
             // Hysteresis: a mover leaves the plan only after kAwareKeep
             // scans off the way; a new one re-plans at once.
             bool replan=false;
-            std::vector<uint64_t> cmd;std::vector<Field::Corridor> keep;std::vector<uint8_t> off,cls;
+            std::vector<uint64_t> cmd;std::vector<Corridor> keep;std::vector<uint8_t> off,cls;
             std::vector<int8_t> sides;std::vector<uint32_t> ats;
             for(size_t i=0;i<g.avoidCmd.size();++i) {
                 const auto at=std::find(want.begin(),want.end(),g.avoidCmd[i]);
@@ -4046,14 +7160,17 @@ struct LegionNavigator::Impl {
                     for(size_t j=0;j<want.size();++j)if(want[j]==cmd[i])keep[i]=seg[j];
             }
             g.avoidCmd.swap(cmd);g.avoidSeg.swap(keep);g.avoidOff.swap(off);g.avoidKind.swap(cls);g.avoidSide.swap(sides);g.avoidAt.swap(ats);
-            if(replan&&g.field&&g.field->done) {
+            if(replan&&g.route().usable()) {
                 ++stats.awareReplans;if(!g.awareAt)g.awareAt=w.tickCounter_;
                 if(g.next&&!g.next->done)++stats.refreshDiscards;
-                g.next.reset();g.stale=true;g.demand=true;g.awareDemand=true;   // not a static change: refresh even if idle (C6)
+                g.next.reset();g.stale=true;g.demand=true;g.awareDemand=true;g.reroute=true;   // not a static change: refresh even if idle (C6)
                 listGroup(g);
             }
         }
         stats.awarePairs+=pairs;stats.awareWork+=work;
+        if(!paused) {   // the scan is over: drop its snapshot
+            awCursor=-1;movers.clear();acc.clear();grid.clear();byCommand.clear();
+        }
     }
     // C1 (W9 lane C, decision 7 / W9-U2): columns narrowing before they meet head on. A formation
     // Point of kPivotMembers or more latches a meet (Point::meet) when awareness plans a head-on entry
@@ -4210,7 +7327,7 @@ struct LegionNavigator::Impl {
     // line and (with a field) lower on it: forward only, no field charge, no re-plan. Not inside
     // kPivotNear of the member's goal (the area packs it, as for the pinwheel). False: no aim (the
     // member keeps its own).
-    bool meetAim(const Unit& u,Member& m,const Plane& p,const Field* f,int ox,int oz,Fixed& aimX,Fixed& aimZ) {
+    bool meetAim(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz,Fixed& aimX,Fixed& aimZ) {
         const auto& mt=m.pt->meet;
         const int W=width();
         if(!mt.active)return false;
@@ -4230,7 +7347,7 @@ struct LegionNavigator::Impl {
         const int cx=footprintOrigin(tx,fx),cz=footprintOrigin(tz,fz);
         if(cx<0||cz<0||cx>=W||cz>=height()||!legal(p,cx,cz))return false;
         if(f) {
-            const uint32_t here=f->at(size_t(oz*W+ox)),there=f->at(size_t(cz*W+cx));
+            const uint32_t here=f.estimate(size_t(oz*W+ox)),there=f.estimate(size_t(cz*W+cx));
             if(there==kUnreached||(here!=kUnreached&&there>=here))return false;
         }
         // The line from this origin's centre to the aim origin's centre (memoised per origin pair: the
@@ -4389,10 +7506,12 @@ struct LegionNavigator::Impl {
     // the uplink landed as several commands -- the convoy rule of the
     // awareness scan: one player, within kConvoyTicks, to points within
     // kConvoyCells.
+    // (An explicit order's area key, protocol 267, is exact: equal or not.)
     static bool oneSelection(const PointKey& a,const PointKey& b) {
         if(std::get<0>(a)!=std::get<0>(b))return false;
         if(std::get<1>(a)==std::get<1>(b))return true;
         const uint32_t ia=std::get<1>(a),ib=std::get<1>(b);
+        if(explicitArea(ia)||explicitArea(ib))return false;
         return (ia>ib?ia-ib:ib-ia)<=kConvoyTicks&&
             std::abs(int64_t(std::get<2>(a))-std::get<2>(b))<=int64_t(kConvoyCells*16)<<16&&
             std::abs(int64_t(std::get<3>(a))-std::get<3>(b))<=int64_t(kConvoyCells*16)<<16;
@@ -4756,7 +7875,7 @@ struct LegionNavigator::Impl {
         completionStats(u,m);
         if(policy(m.kind).passThrough) {leave(u.id);return;}
         m.state=Arrived;
-        setAnchor(u.id,Anchor{m.goal,0,m.point});
+        setAnchor(u.id,Anchor{m.goal,0,m.point,uint16_t(std::max(1,u.type->footX)*std::max(1,u.type->footZ))});
         leave(u.id);
     }
     // Where a leg completed, from its click (Stats only): the distance
@@ -4790,6 +7909,34 @@ struct LegionNavigator::Impl {
                 if(a!=anchors.end()&&std::get<0>(a->second.point)==std::get<0>(m.point)&&std::get<1>(a->second.point)==std::get<1>(m.point))return;
             }
         ++stats.midrouteCompletions;
+    }
+    // Stage 7: could an improvement since the member was found trapped have opened its way? Any improvement on its
+    // plane when it has no goal (its click may resolve now); else one whose box touches its component's box grown by
+    // its footprint and a cell (a join needs newly legal origins next to both components). True as well when the log
+    // no longer reaches back to the member's epoch.
+    bool trappedReopened(const Unit& u,const Member& m) {
+        const auto g=groups.find(m.group);
+        if(g==groups.end()||g->second.plane<0)return true;
+        const size_t pi=size_t(g->second.plane);
+        if(pi>=improveLog.size())return false;
+        const ImproveLog& L=improveLog[pi];
+        if(m.trappedEpoch<L.floor)return true;
+        std::array<int,4> box{0,0,width()-1,height()-1};
+        if(m.goal>=0&&u.type) {
+            const Plane& p=planes[pi];
+            const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+            const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+            const int c=ox>=0&&oz>=0&&ox<W&&oz<height()?p.comp[size_t(oz)*W+ox]:-1;
+            if(c<0)return true;
+            const auto& b=p.compBox[size_t(c)];
+            const int grow=std::max(fx,fz)+1;
+            box={b[0]-grow,b[1]-grow,b[2]+grow,b[3]+grow};
+        }
+        for(auto it=L.e.rbegin();it!=L.e.rend()&&it->first>m.trappedEpoch;++it) {
+            const auto& b=it->second;
+            if(m.goal<0||(b[0]<=box[2]&&b[2]>=box[0]&&b[1]<=box[3]&&b[3]>=box[1]))return true;
+        }
+        return false;
     }
     void trapped(Unit& u,Member& m) {
         // No legal route exists for this footprint: stop at once (zero speed,
@@ -4862,17 +8009,24 @@ struct LegionNavigator::Impl {
     // OWN goal, then direction order. Plain first-found tie breaking pulled
     // bodies toward other members' goals and folded formations into a file.
     // Potential strictly decreases, so no step can cycle.
-    int descend(const Plane& p,const Field& f,int x,int z,int goal,int fx=0,int fz=0) const {
+    // It reads estimates (direction guidance: sound on a half-built route).
+    // `check` (stage 5, a consumer that takes the chain as the finished
+    // route's): on a route not yet complete, a legal step to a cell not yet
+    // settled sets `unsure` -- the step taken there might differ on the
+    // finished route.
+    int descend(const Plane& p,RouteView f,int x,int z,int goal,int fx=0,int fz=0,bool check=false) const {
         const int W=width(),gx=goal%W,gz=goal/W;
-        const uint32_t here=f.at(x,z);
+        const uint32_t here=f.estimate(x,z);
         int best=-1;int64_t bestSlope=0,bestD=0;
         std::array<std::pair<int,int64_t>,8> down{};int count=0;
         const uint32_t open=steps(p,x,z);
+        check=check&&!f.complete();
         for(size_t k=0;k<kDirections.size();++k) {
             const auto& d=kDirections[k];
             if(!(open>>k&1))continue;
             const int cell=(z+d[1])*W+x+d[0];
-            const uint32_t v=f.at(x+d[0],z+d[1]);
+            const uint32_t v=f.estimate(x+d[0],z+d[1]);
+            if(check&&!f.settled(size_t(cell)))unsure=true;
             if(v>=here)continue;
             const int64_t slope=int64_t(here-v)*(d[0]&&d[1]?kOrthogonal:kDiagonal);
             const int64_t dx=gx-x-d[0],dz=gz-z-d[1],dd=dx*dx+dz*dz;
@@ -4892,30 +8046,134 @@ struct LegionNavigator::Impl {
         }
         return best;
     }
+    // Stage 5: does anything the lanes react to lie on this body's way --
+    // a wall end within a cell of its descent chain (the pinwheel), or a
+    // cross-section narrower than kPassageSpan origins (the passage gate,
+    // the passage lanes)? Only then do the lanes ask a paused route for
+    // their region (kLaneCover): on open ground they would find nothing, and
+    // settling 80 cells round every formation member for nothing cost the
+    // many-squad workloads (many-1000 arrivals 834 -> 701: a resumed build
+    // charges the soft bodies of a later tick; unexplained further). Static
+    // reads (wallOrigin, spanAt) along a chain of estimates (the guidance
+    // descent); a function of the origin, the route's version, the goal and
+    // the footprint, memoised.
+    bool laneTrigger(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz) {
+        const int W=width(),here=oz*W+ox;
+        if(m.laneCell==here&&m.laneRoute==f.metric()&&m.laneVersion==f.version()&&m.laneEpoch==p.epoch&&
+           m.laneGoal==m.goal&&m.laneType==u.type)return m.laneHit;
+        bool hit=false;
+        int cell=here;
+        for(int k=0;k<=kPivotChain&&!hit;++k) {
+            const int x=cell%W,z=cell/W;
+            for(const auto& d:kDirections)if(wallOrigin(p,x+d[0],z+d[1])) {hit=true;break;}
+            const uint32_t e=spanAt(p,x,z);
+            if(int(e&0xff)+int(e>>8&0xff)+1<kPassageSpan||int(e>>16&0xff)+int(e>>24)+1<kPassageSpan)hit=true;
+            const int next=descend(p,f,x,z,m.goal,u.type->footX,u.type->footZ);
+            if(next<0)break;
+            cell=next;
+        }
+        m.laneCell=here;m.laneRoute=f.metric();m.laneVersion=f.version();m.laneEpoch=p.epoch;m.laneGoal=m.goal;m.laneType=u.type;m.laneHit=hit;
+        return hit;
+    }
+    // ---- stated regions and certain reads (Legion 10,000 stage 5) -------
+    // On a complete route every read is final. A consumer that reads past
+    // its own settled cell -- the lanes (passage gate, passage lanes,
+    // pinwheel), awareness, MV-05, packed slots, reach rings, the formation
+    // entrance -- states the region it needs, (cell, margin) as
+    // RouteView::covered reads it, and asks a paused build for it (need);
+    // and it reads through certainValue / certainReach and descend's check,
+    // which set `unsure` on any answer a later slice of the build could
+    // change. A consumer that met one acts as on a route not yet built (no
+    // lane, slot, ring spot, corridor or entrance this time) and has the
+    // route run on to done (runOnRoute): no tentative or unknown value is
+    // taken as final, and the worst case is the old wait for `done`.
+    // `unsure` is the evaluation's flag: each consumer clears it before and
+    // reads it after (the serial unit loop: one evaluation at a time).
+    mutable bool unsure=false;
+    // A cell the route can never reach: illegal for the plane, or (on the
+    // geometry it was built on) outside its static component `comp`.
+    bool provenUnreached(RouteView f,const Plane& p,int comp,size_t cell) const {
+        const int W=width();
+        if(!legal(p,int(cell%size_t(W)),int(cell/size_t(W))))return true;
+        return comp>=0&&f.geometryEpoch()==epoch&&compAt(p,int(cell))!=comp;
+    }
+    // A distance read taken as final: true, v the distance (kUnreached:
+    // none), when no later slice changes it; else false and `unsure`.
+    bool certainValue(RouteView f,const Plane& p,int comp,size_t cell,uint32_t& v) const {
+        v=f.estimate(cell);
+        if(f.complete()||(v!=kUnreached&&f.settled(cell)))return true;
+        if(provenUnreached(f,p,comp,cell)) {v=kUnreached;return true;}
+        unsure=true;return false;
+    }
+    // ... reachability only: a finite estimate is a real way, settled or not.
+    bool certainReach(RouteView f,const Plane& p,int comp,size_t cell,bool& reached) const {
+        reached=f.estimate(cell)!=kUnreached;
+        if(reached||f.complete()||provenUnreached(f,p,comp,cell))return true;
+        unsure=true;return false;
+    }
+    // A consumer's stated region on a paused build: the build resumes until
+    // `cell` is settled with `margin` (a demand entry, as a member standing
+    // where it is not covered makes one), served in the FirstRoute class
+    // (needIds): the members keep steering meanwhile, so a stated region does
+    // not take the Waiting class's place ahead of standing members and of the
+    // refreshes. (Served as Waiting, the lanes' needs held the many-squad
+    // workloads' aware repairs back: many-1000 arrivals 834 -> 701.) Counted
+    // per consumer (accounting).
+    void need(Group& g,int cell,uint32_t margin,RouteNeed who) {
+        Field* f=g.field.get();
+        if(!f||!f->covered||f->done||!f->inside(cell%width(),cell/width()))return;
+        ++acct.routeNeeds[size_t(who)];
+        if(f->demand.need(cell,margin))acct.demandPeak=std::max<uint64_t>(acct.demandPeak,f->demand.size());
+        needIds.insert(g.id);
+    }
+    // A consumer met an uncertain read: the group's route runs on to done
+    // (it pauses no more; RouteGrid::covered stays, so what was usable stays
+    // usable), and every group holding it is listed for building again.
+    void runOnRoute(Group& g,RouteNeed who) {
+        Field* f=g.field.get();
+        if(!f||f->done||f->runOn)return;
+        f->runOn=true;++acct.routeRunOns[size_t(who)];
+        std::vector<int> holders;
+        if(const auto at=routeIndex.find({g.plane,f->seedKey});at!=routeIndex.end())holders.assign(at->second.begin(),at->second.end());
+        for(const int id:holders) {
+            Group& h=groups.find(id)->second;
+            if(h.field.get()!=f)continue;
+            if(h.pausedSerial==f->serial)h.pausedSerial=0;
+            listGroup(h);
+        }
+        if(g.pausedSerial==f->serial)g.pausedSerial=0;
+        listGroup(g);
+    }
     // Rebuild a group's arrival slots on its current plane and field,
     // around the cells members and arrivals already hold (those claims live
     // in `points`, so a rebuilt slot is never handed out twice).
     static void restaleSlots(Group& g) {
         for(auto& [seed,slot]:g.slots) {slot.built=false;slot.stale=true;slot.cells.clear();slot.taken.clear();}
     }
+    // Stage 5: on a paused route the window's potentials are read through
+    // certainValue; an uncertain one (`unsure`) leaves the slots unbuilt
+    // (tried again later; the caller has the route run on to done).
     Group::Slots& slotsFor(const Member& m,Group& g,const Plane& p,int seed,int count,int fx,int fz) {
         auto& s=g.slots[seed];
         if(s.built)return s;
         s.built=true;
-        const Field& f=*g.field;
+        const RouteView f=g.route();
+        const int comp=f.complete()?-1:groupComp(g,p);
         const int W=width(),H=height(),sx=seed%W,sz=seed/W;
         const int foot=std::max(fx,fz);
         for(int radius=int(isqrtFloor(uint64_t(count)))*foot+2*foot+4,attempt=0;attempt<4;++attempt,radius*=2) {
             const int x0=std::max(0,sx-radius),z0=std::max(0,sz-radius);
             const int x1=std::min(W-1,sx+radius),z1=std::min(H-1,sz+radius);
-            std::vector<std::pair<uint32_t,int>> order;
+            auto& order=pbOrder;order.clear();
             stats.slotSearchCells+=uint64_t(x1-x0+1)*uint64_t(z1-z0+1);
             for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x) {
                 const int cell=z*W+x;
-                if(legal(p,x,z)&&f.at(size_t(cell))!=kUnreached&&(!s.stale||slotFree(m,cell,fx,fz)))
-                    order.push_back({f.at(size_t(cell)),cell});
+                if(!legal(p,x,z))continue;
+                uint32_t v=kUnreached;
+                if(!certainValue(f,p,comp,size_t(cell),v)) {s.built=false;s.cells.clear();s.taken.clear();return s;}
+                if(v!=kUnreached&&(!s.stale||slotFree(m,cell,fx,fz)))order.push_back({v,cell});
             }
-            std::sort(order.begin(),order.end());
+            sortByPotential(order);
             const int bw=x1-x0+1+fx,bh=z1-z0+1+fz;
             std::vector<uint8_t> used(size_t(bw)*bh,0);
             s.cells.clear();
@@ -5007,7 +8265,7 @@ struct LegionNavigator::Impl {
             if(mm->slot>=0||mm->slot==-2||mm->slot==-3)mm->slot=-1;
             mm->entryState=0;
         }
-        pt.queue.clear();pt.cells.clear();pt.assigned=false;pt.tried=false;pt.entry=-1;
+        pt.queue.clear();pt.cells.clear();pt.assigned=false;pt.tried=false;pt.entry=-1;pt.entries.clear();
         handIds.erase(key);
     }
     void takeFormation(Member& m,const Unit& u,int cell) {
@@ -5100,6 +8358,18 @@ struct LegionNavigator::Impl {
         }
         if(!pt.queue.empty())handIds.insert(key);
         pt.entry=entrance(pt,list,px,pz);
+        // The group of the member the entrance was found from owns it (entrance picks the member nearest the
+        // centroid; the same pick here names its group).
+        pt.entries.clear();
+        if(pt.entry!=-1&&!list.empty()) {
+            size_t pick=0;int64_t nearest=-1;
+            for(size_t i=0;i<list.size();++i) {
+                const Unit* v=w.unit(list[i].first);
+                const int64_t dx=(v->x.v>>16)-pt.centreX,dz=(v->z.v>>16)-pt.centreZ,d=dx*dx+dz*dz;
+                if(nearest<0||d<nearest) {pick=i;nearest=d;}
+            }
+            pt.entries[list[pick].second->group]={pt.entry,kNoTick};
+        }
         slotShape(pt,list,ax,az,px,pz);
     }
     // The entrance of a formation's area (2026-10-14 Legion review, item 4): where the way in passes a
@@ -5131,11 +8401,28 @@ struct LegionNavigator::Impl {
         const Unit& u=*w.unit(list[pick].first);
         const Member& m=*list[pick].second;
         const auto group=groups.find(m.group);
-        if(group==groups.end()||!group->second.field||!group->second.field->done)return -1;
+        // A first build still running: none (as before stage 5).
+        if(group==groups.end()||!group->second.route().usable())return -1;
         const Plane& p=plane(group->second.plane);
-        const Field& f=*group->second.field;
+        const RouteView f=group->second.route();
         const int fx=u.type->footX,fz=u.type->footZ;
         const int64_t radius=pt.limit/16;
+        // Stage 5, a paused route: the open-ground test reads the route R
+        // cells round the point; until that is settled the entrance is
+        // pending (a need), and every read below goes through the certainty
+        // checks -- an uncertain one leaves it pending and has the route run
+        // on to done (formationSlot then finds it).
+        const int comp=f.complete()?-1:groupComp(group->second,p);
+        if(!f.complete()) {
+            if(group->second.field->runOn)return kEntryPending;
+            const int sx=footprintOrigin(Fixed::fromInt(int32_t(px)),fx),sz=footprintOrigin(Fixed::fromInt(int32_t(pz)),fz);
+            const int R=int(radius)+kEntryNear;
+            if(sx>=0&&sz>=0&&sx<W&&sz<height()&&!f.covered(size_t(sz)*W+sx,2u*kDiagonal*uint32_t(R+2))) {
+                if(!provenUnreached(f,p,comp,size_t(sz)*W+sx))need(group->second,sz*W+sx,2u*kDiagonal*uint32_t(R+2),RouteNeed::Entrance);
+                return kEntryPending;
+            }
+        }
+        unsure=false;
         {   // Open ground: no search.
             const int sx=footprintOrigin(Fixed::fromInt(int32_t(px)),fx),sz=footprintOrigin(Fixed::fromInt(int32_t(pz)),fz);
             const int R=int(radius)+kEntryNear,D=R*7/10;
@@ -5143,7 +8430,8 @@ struct LegionNavigator::Impl {
             bool open=true;
             for(const auto& d:kDir) {
                 const int step=d[0]&&d[1]?D:R,x=sx+d[0]*step,z=sz+d[1]*step;
-                const uint32_t v=x>=0&&z>=0&&x<W&&z<height()?f.at(x,z):kUnreached;
+                uint32_t v=kUnreached;
+                if(x>=0&&z>=0&&x<W&&z<height()&&!certainValue(f,p,comp,size_t(z)*W+x,v)) {runOnRoute(group->second,RouteNeed::Entrance);return kEntryPending;}
                 const int64_t ax=std::abs(int64_t(x-sx)),az=std::abs(int64_t(z-sz));
                 const int64_t octile=kOrthogonal*std::max(ax,az)+(kDiagonal-kOrthogonal)*std::min(ax,az);
                 if(v==kUnreached||int64_t(v)>octile+octile/4) {open=false;break;}
@@ -5151,7 +8439,11 @@ struct LegionNavigator::Impl {
             if(open)return -1;
         }
         int cell=footprintOrigin(u.z,fz)*W+footprintOrigin(u.x,fx);
-        if(!legal(p,cell%W,cell/W)||f.at(size_t(cell))==kUnreached)return -1;
+        {
+            uint32_t v=kUnreached;
+            if(legal(p,cell%W,cell/W)&&!certainValue(f,p,comp,size_t(cell),v)) {runOnRoute(group->second,RouteNeed::Entrance);return kEntryPending;}
+            if(!legal(p,cell%W,cell/W)||v==kUnreached)return -1;
+        }
         auto inside=[&](int c) {
             const int64_t cx=int64_t(c%W)*16+fx*8-px,cz=int64_t(c/W)*16+fz*8-pz;
             return cx*cx+cz*cz<=pt.limit*pt.limit;
@@ -5163,8 +8455,9 @@ struct LegionNavigator::Impl {
             chain.push_back(cell);
             if(at<0&&inside(cell))at=int(chain.size())-1;
             if(at>=0&&int(chain.size())-1-at>=kEntryNear)break;
-            const int next=descend(p,f,cell%W,cell/W,m.requested,fx,fz);
+            const int next=descend(p,f,cell%W,cell/W,m.requested,fx,fz,true);
             ++work;
+            if(unsure) {stats.laneWork+=work;runOnRoute(group->second,RouteNeed::Entrance);return kEntryPending;}
             if(next<0)break;
             cell=next;
         }
@@ -5204,22 +8497,38 @@ struct LegionNavigator::Impl {
     // footprint and one movement plane exchange (a slot is legal and reachable on the plane and component
     // formationCell found it on: a ground body and a hovercraft of one footprint share the point, not their
     // slots); a body already through when it got its slot keeps it.
-    void enterArea(const Unit& u,Member& m,const Group& g,Point& pt) {
-        if(m.entryState==2||!g.field||!g.field->done)return;
-        const Field& f=*g.field;
+    void enterArea(const Unit& u,Member& m,Group& g,Point& pt,int entry) {
+        if(m.entryState==2||!g.route().usable())return;
+        const RouteView f=g.route();
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
-        const uint32_t pe=f.at(size_t(pt.entry));
+        // Stage 5, a paused route: every potential read below must be final
+        // first (the entrance, this body, each candidate); an uncertain one
+        // has the route run on to done and nothing changes this time.
+        if(!f.complete()) {
+            const Plane& pl=plane(g.plane);const int comp=groupComp(g,pl);
+            uint32_t v=kUnreached;
+            unsure=false;
+            bool ok=certainValue(f,pl,comp,size_t(entry),v)&&
+                certainValue(f,pl,comp,size_t(footprintOrigin(u.z,fz))*W+footprintOrigin(u.x,fx),v);
+            for(size_t i=0;ok&&i<pt.ids.size();++i) {
+                const Member* o=member(pt.ids[i]);const Unit* ov=w.unit(pt.ids[i]);
+                if(!o||!ov||!ov->type||o->point!=m.point||o->slot<0||o->entryState==2||ov->type->footX!=fx||ov->type->footZ!=fz)continue;
+                ok=certainValue(f,pl,comp,size_t(footprintOrigin(ov->z,fz))*W+footprintOrigin(ov->x,fx),v);
+            }
+            if(!ok) {runOnRoute(g,RouteNeed::Entrance);return;}
+        }
+        const uint32_t pe=f.estimate(size_t(entry));
         if(pe==kUnreached)return;
         const uint64_t edge=uint64_t(pe)+uint64_t(kEntryCells*kOrthogonal);
         auto outside=[&](const Unit& v) {
-            const uint32_t q=f.at(footprintOrigin(v.x,v.type->footX),footprintOrigin(v.z,v.type->footZ));
+            const uint32_t q=f.estimate(footprintOrigin(v.x,v.type->footX),footprintOrigin(v.z,v.type->footZ));
             return q!=kUnreached&&uint64_t(q)>edge;
         };
         if(outside(u)) {m.entryState=1;return;}
         const bool crossed=m.entryState==1;
         m.entryState=2;
         if(!crossed)return;
-        const int64_t ex=int64_t(pt.entry%W)*16+fx*8,ez=int64_t(pt.entry/W)*16+fz*8;
+        const int64_t ex=int64_t(entry%W)*16+fx*8,ez=int64_t(entry/W)*16+fz*8;
         const int64_t ax=(int64_t(std::get<2>(m.point))>>16)-ex,az=(int64_t(std::get<3>(m.point))>>16)-ez;
         const int64_t len=std::max<int64_t>(1,isqrtFloor(uint64_t(ax*ax+az*az)));
         auto depth=[&](int c) {
@@ -5235,6 +8544,8 @@ struct LegionNavigator::Impl {
         uint64_t work=0;
         auto samePlane=[&](const Member& o) {
             if(o.group==m.group)return true;
+            // Stage 8: with entrances per group, only members that come through the same one exchange.
+            if(const auto oe=pt.entries.find(o.group);oe!=pt.entries.end()&&oe->second.first!=entry)return false;
             const auto og=groups.find(o.group);
             if(og==groups.end()||og->second.plane!=g.plane)return false;
             const Plane& p=plane(g.plane);
@@ -5337,8 +8648,14 @@ struct LegionNavigator::Impl {
     // several ticks (the 64-per-tick uplink); its convoy stays joinable for
     // up to kGapTicks after its last order (sim/convoy.h). Slots wait for it
     // to close, so the formation is sized and ranked over the whole click.
+    // An explicit order (protocol 267) lands whole in one tick, but its area
+    // stays joinable by further orders to the same point for as long.
     bool commandOpen(const std::tuple<int,uint32_t,int32_t,int32_t>& key) const {
-        return std::get<0>(key)>=0&&w.convoys().joinable(std::get<0>(key),std::get<1>(key),w.tickCounter_);
+        if(std::get<0>(key)<0)return false;
+        // Members of this area still waiting for their registration (the budget or their plane) will
+        // join it: the formation is not sized without them (stage 4).
+        if(const auto pending=regAreas.find({std::get<0>(key),std::get<1>(key)});pending!=regAreas.end()&&pending->second>0)return true;
+        return w.convoys().joinable(std::get<0>(key),std::get<1>(key),w.tickCounter_);
     }
     // I2 slot-shape probe (observation only, never hashed): the members'
     // spread and their slots' layout in the approach frame (along: centroid
@@ -5381,7 +8698,7 @@ struct LegionNavigator::Impl {
     // Shared points: formation slots (assigned once for the whole point; a
     // later joiner maps its own offset the same way). A member walled off
     // from its slot re-chooses one only through the settle rule (rechoose).
-    bool formationSlot(const Unit& u,Member& m,const Group& g,const Plane& p) {
+    bool formationSlot(const Unit& u,Member& m,Group& g,const Plane& p) {
         Point* cached=m.pt;
         if(!cached) {auto found=points.find(m.point);cached=found==points.end()?nullptr:&found->second;}
         // Once assigned, the point's formation stays in force for its last
@@ -5393,7 +8710,11 @@ struct LegionNavigator::Impl {
         // tick (kUplinkPart) is the whole click as far as the server can
         // tell: it takes its formation at once, provisionally, and if another
         // part joins the point before the convoy closes the formation is
-        // rebuilt over every part then. (Waiting the convoy's 9-plus ticks
+        // rebuilt over every part then.
+        // (An explicit order, protocol 267, keeps this rule unchanged: taking
+        // the formation at once for any order size was measured and rejected --
+        // one-1000 822 arrived instead of 847, churn-1000's last member started
+        // at 86 instead of 46, one-2500 2014 instead of 1970, the rest equal.) (Waiting the convoy's 9-plus ticks
         // without slots walked small groups -- the flyer fixtures' 40,
         // doorplug's 60 -- the first stretch by the shared field alone,
         // bunched on the line to the click.)
@@ -5424,7 +8745,38 @@ struct LegionNavigator::Impl {
         // bodies in front of it (battle-field 2x500: 454 of A's 500 died
         // instead of 376, and Legion work rose 15%).
         if(m.slot>=0&&laneDue(m))m.lineCell=-1;
-        if(pt.entry>=0&&m.slot>=0)enterArea(u,m,g,pt);
+        // An entrance pending on a paused route (stage 5): computed once its
+        // region is settled (entrance asks for it), over the point's members.
+        // Stage 8: the entrance of this member's own group (see Point::entries).
+        if(!pt.entries.empty()||pt.entry!=-1) {
+            auto at=pt.entries.find(g.id);
+            if(at==pt.entries.end())at=pt.entries.emplace(g.id,std::pair<int,uint32_t>{kEntryPending,kNoTick}).first;
+            auto& [e,tried]=at->second;
+            if(e==kEntryPending&&tried!=w.tickCounter_) {
+                tried=w.tickCounter_;
+                std::vector<std::pair<int,Member*>> list;
+                for(const int id:pt.ids) {
+                    Member* mm=member(id);const Unit* v=w.unit(id);
+                    if(!mm||mm->point!=m.point||mm->group!=g.id||mm->goal<0||mm->approach||!v||!v->type)continue;
+                    list.push_back({id,mm});
+                }
+                e=list.empty()?-1:entrance(pt,list,px,pz);
+                if(e!=kEntryPending)++acct.groupEntrances;
+            }
+            if(e>=0&&m.slot>=0)enterArea(u,m,g,pt,e);
+            if(m.slot>=0||m.slot==-2)return true;
+        }
+        if(pt.entry==kEntryPending&&pt.entryTick!=w.tickCounter_) {
+            pt.entryTick=w.tickCounter_;
+            std::vector<std::pair<int,Member*>> list;
+            for(const int id:pt.ids) {
+                Member* mm=member(id);const Unit* v=w.unit(id);
+                if(!mm||mm->point!=m.point||mm->goal<0||mm->approach||!v||!v->type||groups.find(mm->group)==groups.end())continue;
+                list.push_back({id,mm});
+            }
+            pt.entry=list.empty()?-1:entrance(pt,list,px,pz);
+        }
+        if(pt.entry>=0&&m.slot>=0)enterArea(u,m,g,pt,pt.entry);
         if(m.slot>=0||m.slot==-2)return true;
         // A member without a slot (it joined or registered again after the
         // formation was taken, or its search in the first burst found no
@@ -5532,7 +8884,7 @@ struct LegionNavigator::Impl {
             }
             if(b==0&&cells.empty())break;
         }
-        stats.slotSearchCells+=scanned;
+        stats.slotSearchCells+=scanned;navc.ringCells+=scanned;
         int band0=0;for(const uint8_t b:band)band0+=b==0;
         if(!band0)return false;
         r.R=R;r.band0=band0;r.tx=tx;r.tz=tz;r.ax=ax;r.az=az;
@@ -5567,11 +8919,26 @@ struct LegionNavigator::Impl {
     }
     // A spot nobody holds, statically legal and reached by the field, and
     // (for a re-choice) not covered by a body standing there now (an
-    // engaged one that let its own spot go).
+    // engaged one that let its own spot go). The callers check ringReady
+    // first, so on a paused route every spot's reach is final.
     bool ringFree(const Group& g,const Plane& p,int slot,int self=0) const {
         const int c=g.ring.cells[size_t(slot)],W=width();
-        if(g.ring.owner[size_t(slot)]||!legal(p,c%W,c/W)||!g.field||g.field->at(size_t(c))==kUnreached)return false;
+        if(g.ring.owner[size_t(slot)]||!legal(p,c%W,c/W)||!g.route()||g.route().estimate(size_t(c))==kUnreached)return false;
         return !self||!ringCovered(g,p,slot,self);
+    }
+    // Stage 5: may the ring's spots be read as final? A complete route, or
+    // every spot reached or never reachable (certainReach); otherwise the
+    // route runs on to done and no spot is handed out this time.
+    bool ringReady(Group& g,const Plane& p) {
+        const RouteView f=g.route();
+        if(!f.usable())return false;
+        if(f.complete())return true;
+        const int comp=groupComp(g,p);
+        unsure=false;
+        for(const int c:g.ring.cells) {bool reached=false;if(!certainReach(f,p,comp,size_t(c),reached))break;}
+        if(!unsure)return true;
+        runOnRoute(g,RouteNeed::Ring);
+        return false;
     }
     // The first claim hands every member a spot at once: the members nearest
     // the target take band 0, the next band 1 and so on; within a band the
@@ -5619,7 +8986,7 @@ struct LegionNavigator::Impl {
         // point seed: re-planning it to a ring then cost the battles a
         // refresh per target, measured +13-28% total Legion work.)
         if(g.ring.band0==0||m.slot>=0||m.state==Engaged)return;
-        if(!g.field||!g.field->done||g.field->seedKey!=seedsKey(g.seeds))return;
+        if(!g.route().usable()||g.field->seedKey!=seedsKey(g.seeds)||!ringReady(g,p))return;
         if(!g.ring.assigned) {assignRing(g,p);return;}
         ringNearest(u,m,g,p,255);
     }
@@ -5627,6 +8994,7 @@ struct LegionNavigator::Impl {
     // body than its own (any, if another body now stands on its own: an
     // engaged one stopped there); ties: the lower index.
     bool ringRechoose(const Unit& u,Member& m,Group& g,const Plane& p) {
+        if(g.route().paused()&&!ringReady(g,p))return false;   // (a building route: as before)
         const int W=width();
         const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
         auto dist=[&](size_t i) {
@@ -5679,8 +9047,13 @@ struct LegionNavigator::Impl {
         if(m.slot>=0)return;
         const auto sharing=g.sharing.find(m.requested);
         if(sharing==g.sharing.end()||sharing->second<2)return;
+        unsure=false;
         auto& s=slotsFor(m,g,p,m.requested,sharing->second,u.type->footX,u.type->footZ);
-        const uint32_t potential=g.field->at(size_t(here));
+        if(unsure) {runOnRoute(g,RouteNeed::Slots);return;}
+        // Its own cell's potential, final (a paused route: not yet settled
+        // here, its demand resumes the build and it claims later).
+        uint32_t potential=kUnreached;
+        if(!certainValue(g.route(),p,g.route().complete()?-1:groupComp(g,p),size_t(here),potential)) {unsure=false;return;}
         const int foot=std::max(u.type->footX,u.type->footZ);
         if(potential==kUnreached||potential>uint32_t(s.reach)+uint32_t(12*kOrthogonal*foot))return;
         const int W=width(),ux=here%W,uz=here/W;
@@ -5696,7 +9069,8 @@ struct LegionNavigator::Impl {
             // A slot a corpse, feature or structure now covers (or cut off)
             // is never claimed: claiming it would re-register this member
             // and claim it again, forever.
-            if(!legal(p,s.cells[i]%W,s.cells[i]/W)||g.field->at(size_t(s.cells[i]))==kUnreached)continue;
+            // (Its cells were settled when the slots were built: reached stays reached.)
+            if(!legal(p,s.cells[i]%W,s.cells[i]/W)||g.route().estimate(size_t(s.cells[i]))==kUnreached)continue;
             const int64_t cx=s.cells[i]%W,cz=s.cells[i]/W;
             const int64_t score=(cx-seedX)*ax+(cz-seedZ)*az;
             const int64_t side=std::abs((cx-seedX)*az-(cz-seedZ)*ax);
@@ -5793,7 +9167,7 @@ struct LegionNavigator::Impl {
         g.peak[centre]=std::max(top,n);
         g.compCell=centre;
         if(g.next) {if(!g.next->done)++stats.refreshDiscards;g.next.reset();}
-        g.stale=true;g.demand=true;g.areaBounds.clear();
+        g.stale=true;g.demand=true;g.areaBounds.clear();g.crowdBounds.clear();
         listGroup(g);
     }
     // The member follows its group's re-seed: new goal (its ring spot,
@@ -5808,7 +9182,7 @@ struct LegionNavigator::Impl {
             else {ringRelease(g,u.id,m);m.slot=-1;m.goal=m.requested;}
         } else {m.slot=-1;m.goal=m.requested;}
         m.lineCell=-1;m.line=false;m.route.clear();m.routeTicks=0;
-        m.progress=m.nearest=0xffffffffu;m.rechoices=0;m.pivotCell=-1;m.pivotAim=-1;m.gateCell=-1;
+        m.progress=m.nearest=m.nearestHere=0xffffffffu;m.rechoices=0;m.pivotCell=-1;m.pivotAim=-1;m.gateCell=-1;
         markPass(u,m);
     }
     // An illegal goal (AR-07): a slot member gives its slot back and claims
@@ -5828,7 +9202,7 @@ struct LegionNavigator::Impl {
         }
         const int near=nearestLegal(p,m.goal%W,m.goal/W,region);
         if(near<0||compAt(p,near)!=region)return false;
-        m.goal=near;m.lineCell=-1;m.line=false;m.route.clear();m.progress=m.nearest=0xffffffffu;
+        m.goal=near;m.lineCell=-1;m.line=false;m.route.clear();m.progress=m.nearest=m.nearestHere=0xffffffffu;
         markPass(u,m);
         return true;
     }
@@ -5919,6 +9293,8 @@ struct LegionNavigator::Impl {
     static bool giveWayHolder(const Member&) {return false;}
     void move(Unit& u,Fixed maximum) {
         contactRefused=nullptr;pivoting=nullptr;
+        // Waiting for its registration (the budget): it stands, order kept.
+        if(queued(u.id)) {w.brakeGround(u);return;}
         Member* found=member(u.id);
         // A member parting a lane (partable) takes its side-step from
         // serviceYields; it keeps its order and hold clock meanwhile.
@@ -5935,7 +9311,8 @@ struct LegionNavigator::Impl {
         // timers; a member of a group already re-seeded is reseated.
         if(found&&rule.moving&&found->controller==key&&found->kind==kind&&
            w.tickCounter_/kReseedTicks!=found->seededAt/kReseedTicks&&!reseed(u,*found,leg)) {
-            registerMove(u);found=member(u.id);
+            if(!registerNow(u)) {w.brakeGround(u);return;}
+            found=member(u.id);
             if(!found) {w.brakeGround(u);return;}
         }
         // A new controller, or terrain that changed since this body was
@@ -5949,10 +9326,18 @@ struct LegionNavigator::Impl {
             found->approachEpoch=epoch;
             if(found->state==Trapped)found->trappedEpoch=epoch;
         }
+        // Stage 7: a trapped (terrain-unreachable) member re-registers only after a change that could join its
+        // component to another -- an improvement touching that component's box -- not after every change anywhere
+        // (under endless churn elsewhere it never reached its retirement: c2c25707's island-forever).
+        if(found&&found->controller==key&&!found->approach&&found->state==Trapped&&found->trappedEpoch!=epoch) {
+            if(trappedReopened(u,*found))++acct.trappedReopened;
+            else {found->trappedEpoch=epoch;++acct.trappedKept;}
+        }
         if(!found||found->controller!=key||found->kind!=kind||
            (found->state==Trapped&&found->trappedEpoch!=epoch)||
            (found->approach&&found->approachEpoch!=epoch)) {
-            registerMove(u);found=member(u.id);
+            if(!registerNow(u)) {w.brakeGround(u);return;}
+            found=member(u.id);
             if(!found) {w.brakeGround(u);return;}
         }
         auto& m=*found;m.movedTick=w.tickCounter_;m.site=LegionNavigator::SiteNone;
@@ -5985,7 +9370,7 @@ struct LegionNavigator::Impl {
         // walking to it kTrappedRetire after the order (the walk's age limit).
         if(m.approach&&(m.state==Trapped||w.tickCounter_-m.approachSince>=kTrappedRetire)) {trapped(u,m);return;}
         auto group=groups.find(m.group);
-        if(group==groups.end()) {registerMove(u);w.brakeGround(u);return;}
+        if(group==groups.end()) {registerNow(u);w.brakeGround(u);return;}
         auto& g=group->second;g.lastUse=w.tickCounter_;
         if(m.state==Moving)g.movingTick=w.tickCounter_;
         const auto& p=plane(g.plane);
@@ -5997,35 +9382,35 @@ struct LegionNavigator::Impl {
         // member takes the nearest legal origin of its region, in its group
         // (AR-07: no new group or field); a fresh registration only when
         // none is left in the region.
-        if(!legal(p,m.goal%W,m.goal/W)&&!regoal(u,m,g,p,ox,oz)) {registerMove(u);w.brakeGround(u);return;}
+        if(!legal(p,m.goal%W,m.goal/W)&&!regoal(u,m,g,p,ox,oz)) {registerNow(u);w.brakeGround(u);return;}
         const int here=oz*W+ox;
-        const Field* f=g.field&&g.field->done?g.field.get():nullptr;
-        if(f&&(m.state==Moving||m.state==Holding)) {
-            // MV-05's probe of the group (see softBlocks).
+        // The route this body steers by: a complete one, or one whose
+        // frontier has settled this cell (a first field still building, or
+        // paused, already steers the bodies it has passed: no standing still
+        // for the rest of the build).
+        const RouteView route=g.route();
+        RouteView f=route.complete()||(route&&route.settled(size_t(here)))?route:RouteView();
+        // A usable route (complete, or paused once it covered the group)
+        // serves the consumers that state their region (stage 5): MV-05's
+        // probe, the slots, rings and formation hand-out (claimSlot), the
+        // lanes. Slots and the rest still wait while a first build runs.
+        if(route.usable()&&f&&(m.state==Moving||m.state==Holding)) {
+            // MV-05's probe of the group (see softBlocks): f is settled here.
             const uint32_t cycle=w.tickCounter_/kStillScan;
             if(g.scanCycle!=cycle) {g.scanCycle=cycle;g.scanSumX=g.scanSumZ=0;g.scanCount=0;g.scanTail=-1;g.scanTailPot=0;}
             g.scanSumX+=ox;g.scanSumZ+=oz;++g.scanCount;
-            if(const uint32_t v=f->at(size_t(here));v!=kUnreached&&(g.scanTail<0||v>g.scanTailPot)) {g.scanTail=here;g.scanTailPot=v;}
+            if(const uint32_t v=f.estimate(size_t(here));v!=kUnreached&&(g.scanTail<0||v>g.scanTailPot)) {g.scanTail=here;g.scanTailPot=v;}
         }
-        if(f)claimSlot(u,m,g,p,here);
-        // A first field still building already steers a body its frontier
-        // has passed (see Field::settled): no standing still for the rest
-        // of the build. Slots wait for the finished field.
-        else {
-            // ... except on a paused first build (C1), where a member's slot
-            // claim is its formation's hand-out only, which reads no potential.
-            if(g.field&&g.field->covered&&formationOnly(g,m))claimSlot(u,m,g,p,here);
-            if(g.field&&g.field->settled(size_t(here),g.field->at(size_t(here))))f=g.field.get();
-        }
+        if(route.usable())claimSlot(u,m,g,p,here);
         // A paused first build (see serve) resumes for a member whose cell
         // it has not settled with the cover margin: one that strayed off
         // the planned ground, joined late, or walks on toward the frontier.
-        if(g.field&&g.field->covered&&!g.field->done&&g.field->inside(ox,oz)) {
-            // A part that has grown strong enough to pinwheel (pivotAim
-            // keeps `done`): the build runs on to done (see pausable).
-            if(g.pausedSerial&&m.pt&&partRefs(m)>=kPivotMembers) {g.pausedSerial=0;listGroup(g);}
+        if(route.paused()&&route.inside(ox,oz)) {
+            // A part that has grown strong enough to pinwheel: the build runs
+            // on to done (see pausable).
+            if(g.pausedSerial&&m.pt&&partRefs(m)>=kPivotMembers&&!gPauseAll) {g.pausedSerial=0;listGroup(g);}
             const uint32_t margin=memberMargin(m,std::max(fx,fz));
-            if(!g.field->ahead(size_t(here),margin))demand(g,*g.field,here,margin);
+            if(!route.covered(size_t(here),margin))demand(g,*g.field,here,margin);
         }
         // A bounded field that cannot reach this body (it walked or joined
         // outside the window, or the way out leaves it): widen the group's
@@ -6035,9 +9420,23 @@ struct LegionNavigator::Impl {
         // steering this body by the old field, which cannot reach it. (A
         // refresh does finish under constant static churn, about every 85
         // ticks since the quarter-quota allowance, kRefreshQuota.)
-        if(g.field&&g.field->bounded&&!g.full&&(!g.field->inside(ox,oz)||(g.field->done&&g.field->at(size_t(here))==kUnreached))) {
+        // Stage 6: a corridor rebuilds round the body first (its plan takes every member's region again), at most
+        // kMaxWiden times; then the whole component's window takes over, as for any bounded window.
+        if(const RouteView r=view(g.field.get());r&&r.bounded()&&!g.full&&(!r.inside(ox,oz)||(r.complete()&&r.estimate(size_t(here))==kUnreached))) {
+            // A chain's halo region: attach its tile (a repair, next tick) instead of rebuilding.
+            if(g.field->kind==KindChain&&r.complete()&&requestRepair(g,*g.field,here)) {m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;}
+            // A corridor or chain a static change touched (its group is stale): the body is unknown to it, not cut
+            // off; it waits for the refresh (demanded at once) instead of widening.
+            if(g.field->kind!=KindWindow&&g.field->touched&&(g.stale||g.improveTick!=kNoTick)) {
+                // Stage 7: a deferred improvement refresh is wanted now (this body may be reachable only by it).
+                if(g.improveTick!=kNoTick) {++acct.improveDemands;promoteImprovement(g);}
+                if(!g.demand) {g.demand=true;listGroup(g);}
+                m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
+            }
             if(g.next&&!g.next->done)++stats.refreshDiscards;
-            g.full=true;g.field.reset();g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);listGroup(g);
+            if(g.field->kind!=KindWindow&&g.widens<kMaxWiden) {++g.widens;++acct.corridorWidens;}
+            else g.full=true;
+            g.field.reset();g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);listGroup(g);
             m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
         }
         // The holder rule (approachSettled): checked before routes and
@@ -6049,16 +9448,24 @@ struct LegionNavigator::Impl {
         // maze can gain nothing for a long stretch) never does. The look is
         // staggered by unit id over kApproachLook ticks (the ring walk is
         // the cost; a held crowd would otherwise pay it every tick).
-        // Gain is one measure, the field potential: where the field does not
-        // give one (not built yet, or this cell outside it) the window starts
-        // over, so switching between two scales can neither fake a gain nor
-        // hide one (it mixed potential x64 with squared cells).
+        // Gain is one measure, the field potential, on one route
+        // (RouteView::progress: its metric is the route's serial). Stage 5:
+        // a new route re-baselines the best without counting a gain (a
+        // refresh with other charges read lower or higher, and counted); and
+        // where the route gives no value (not built yet, unsettled, this cell
+        // outside it) the window's clock stops -- missing data neither
+        // retires the order nor restarts a genuine stall (until stage 5 it
+        // restarted the window, so a group whose field kept going missing
+        // never settled).
         if(m.approach) {
-            const uint32_t left=f?f->at(size_t(here)):kUnreached;
-            if(left==kUnreached) {m.gainBest=0xffffffffu;m.gainTick=w.tickCounter_;}
-            else if(left<m.gainBest) {m.gainBest=left;m.gainTick=w.tickCounter_;}
-            else if(w.tickCounter_-m.gainTick>=kApproachSettle&&(m.state==Holding||!m.route.empty()||m.detour>=0)&&
-                    (uint32_t(u.id)+w.tickCounter_)%kApproachLook==0&&approachSettled(u,m)) {complete(u,m,true);return;}
+            const uint32_t now=w.tickCounter_;
+            if(const auto pr=f?f.progress(size_t(here)):std::nullopt) {
+                if(pr->metric!=m.gainSerial) {m.gainBest=pr->value;m.gainSerial=pr->metric;}
+                else if(pr->value<m.gainBest) {m.gainBest=pr->value;m.gainTick=now;}
+                m.gainSeen=now;
+                if(pr->value>=m.gainBest&&now-m.gainTick>=kApproachSettle&&(m.state==Holding||!m.route.empty()||m.detour>=0)&&
+                   (uint32_t(u.id)+now)%kApproachLook==0&&approachSettled(u,m)) {complete(u,m,true);return;}
+            } else {m.gainTick+=now-m.gainSeen;m.gainSeen=now;}
         }
         // Close enough: a body that gained less than half a body on its
         // point over the last window, queued back to the settled crowd
@@ -6069,16 +9476,33 @@ struct LegionNavigator::Impl {
             const int64_t dx=(int64_t(u.x.v)-std::get<2>(m.point))>>16,dz=(int64_t(u.z.v)-std::get<3>(m.point))>>16;
             const int64_t dist=isqrtFloor(uint64_t(dx*dx+dz*dz));
             const int64_t body=int64_t(std::max(fx,fz))*16;
-            const bool still=m.windowDist>=0&&m.windowDist-dist<body/2;
+            // Stage 8: a formation member's headway is also measured on its own slot. The front of a crowd
+            // takes the far side of its area, beyond the click: walking there it gains nothing on the click,
+            // and was found still, queued back to its own crowd behind it and pressed, and settled 20-60 cells
+            // short of its slot (one-1000: 766 of 854 completions off their slot, the last ~10% of the army
+            // outside the area). Gaining on the slot is measured against the best distance so far (a body
+            // stepping to and fro gains nothing).
+            int64_t slotDist=-1;
+            if(m.slot>=0&&m.goal>=0) {
+                const int64_t sx=(int64_t(u.x.v)>>16)-(int64_t(m.goal%W)*16+fx*8),sz=(int64_t(u.z.v)>>16)-(int64_t(m.goal/W)*16+fz*8);
+                slotDist=isqrtFloor(uint64_t(sx*sx+sz*sz));
+            }
+            const bool same=slotDist>=0&&m.windowGoal==m.goal;
+            const bool gaining=same&&m.windowSlotDist-slotDist>=body/2;
+            const bool still=m.windowDist>=0&&m.windowDist-dist<body/2&&!gaining;
             if(!still)m.stillSince=kNoTick;
             else if(m.stillSince==kNoTick)m.stillSince=m.windowTick;
             m.windowTick=w.tickCounter_;m.windowDist=dist;
+            m.windowSlotDist=same?std::min(m.windowSlotDist,slotDist):slotDist;m.windowGoal=slotDist>=0?m.goal:-1;
             if(!still)m.queued=false;
             else if(settleWindow(u,m,g,p,ox,oz,dist)) {complete(u,m,true);return;}
             // A reach member held a whole window re-chooses a free ring spot
             // nearer the front (C2: kRechoices times, reset by a re-seed).
             if(ringMember(g,m)&&m.state==Holding&&heldFor(m)>=kCrowdWindow&&m.rechoices<kRechoices&&ringRechoose(u,m,g,p))++m.rechoices;
         }
+        // Stage 8: a narrow friendly passage open the other way (admissionHold): wait before it.
+        watchStrips(u,m);
+        if(f&&g.field&&g.field->labels&&m.state!=Arrived&&admissionHold(u,m,g,ox,oz)) {holdStall(m);hold(u,m);return;}
         if(!m.route.empty()) {
             while(!m.route.empty()&&m.route.front()==here)m.route.erase(m.route.begin());
             if(m.route.empty()||++m.routeTicks>240||(m.state==Holding&&heldFor(m)>=30)) {m.route.clear();m.lineCell=-1;}
@@ -6137,22 +9561,36 @@ struct LegionNavigator::Impl {
         // field, and made no progress until it was within 125 cells: its stall
         // clock aged through most of a free walk (battle-field-2x60's
         // stall_stale_ticks, about 9,400 member updates at an offset). The
-        // detour rules keep the record they were tuned on (Member::nearest,
-        // across both measures): its new lows restart the detour back-off.
+        // detour rules' record (Member::nearest) restarts the detour back-off
+        // on its new lows, in one measure since stage 5 (below).
         {
-            const uint32_t at=f?f->at(size_t(here)):kUnreached;
+            const uint32_t at=f?f.estimate(size_t(here)):kUnreached;
             const bool onField=at!=kUnreached&&at>0;
             const uint32_t left=uint32_t(std::min<int64_t>(0xfffffff,
                 onField?int64_t(at)*64:(int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz))));
             const uint8_t kind=onField?1:2;
-            const uint64_t serial=onField?f->serial:0;
+            const uint64_t serial=onField?f.metric():0;
             const bool fresh=m.progress!=0xffffffffu&&(kind!=m.progressKind||serial!=m.progressSerial);
-            const bool ontoSeed=fresh&&at==0&&m.headSerial==f->serial&&m.headBest>0;
+            const bool ontoSeed=fresh&&at==0&&m.headSerial==f.metric()&&m.headBest>0;
             if(fresh&&!ontoSeed) {m.progress=left;m.progressKind=kind;m.progressSerial=serial;}
             else if(ontoSeed||left<m.progress) {m.progress=left;m.progressKind=kind;m.progressSerial=serial;m.stallTick=w.tickCounter_;}
-            if(left<m.nearest) {m.nearest=left;m.detourCount=0;}
+            // A metric transition is never a record (stage 5): a record needs a
+            // gain within the current metric (nearestHere) as well as a new low
+            // of `nearest`. (Until stage 5 a body whose field went missing read
+            // squared cells, far below its potential x64, as a record and
+            // restarted its detour back-off. Re-basing `nearest` itself per
+            // metric was measured and rejected: it counted every gain after a
+            // refresh as a record, which the rules were not tuned on --
+            // battle-assault +9.7% detours, many-1000 -4.4% arrivals and +48%
+            // stuck over three offsets.)
+            if(m.nearest!=0xffffffffu&&(kind!=m.nearestKind||serial!=m.nearestSerial))m.nearestHere=left;
+            else if(left<m.nearestHere) {
+                m.nearestHere=left;
+                if(left<m.nearest) {m.nearest=left;m.detourCount=0;}
+            }
+            m.nearestKind=kind;m.nearestSerial=serial;
             if(f) {
-                if(f->serial!=m.headSerial) {m.headSerial=f->serial;m.headBest=at;}
+                if(f.metric()!=m.headSerial) {m.headSerial=f.metric();m.headBest=at;}
                 else if(at<m.headBest) {m.headBest=at;m.headTick=w.tickCounter_;}
             }
             if(stalledFor(m)>=20&&contactArrival(u,m)) {complete(u,m,true);return;}
@@ -6168,10 +9606,14 @@ struct LegionNavigator::Impl {
             // refresh would give it the same way (guards queued at an idle
             // friend hold like this for good: staticidle).
             if(stalledFor(m)>=kBlockedRetry&&!giveWayHolder(m)&&
-               (!f||!f->usable()||f->known(size_t(here))==kUnreached||
-                (!freeDescent(u,g,p,*f,ox,oz)&&f->known(size_t(here))>areaBound(g,m,fx,fz,int64_t(std::max(fx,fz))*16)))) {
+               (!f||!f.usable()||f.known(size_t(here))==kUnreached||
+                (!freeDescent(u,g,p,f,ox,oz)&&f.known(size_t(here))>areaBound(g,m,fx,fz,int64_t(std::max(fx,fz))*16)))) {
                 if(w.tickCounter_-g.blockedTick>2)++stats.blockedRerequests;
                 g.blockedTick=w.tickCounter_;
+                // Stage 7: an improvement whose refresh was deferred may be this body's way out (it is blocked, not
+                // looking for a shortcut): the refresh is wanted now (staticidle: a second gap opening for a pair
+                // plugged at the first).
+                if(g.improveTick!=kNoTick) {++acct.improveDemands;promoteImprovement(g);}
             }
             // Nothing contactArrival reads changes before drive asks again
             // in this update (no step was taken, no goal or slot changes).
@@ -6202,13 +9644,34 @@ struct LegionNavigator::Impl {
             direct=m.line;
         }
         // A ring member near its own spot walks to it: band 0 is all one
-        // potential, and an outer spot lies up the field from band 0.
-        if(!direct&&f&&f->done&&ringMember(g,m)) {
-            const uint32_t ph=f->at(size_t(here)),pg=f->at(size_t(m.goal));
-            if(ph!=kUnreached&&pg!=kUnreached&&uint32_t(ph)<=uint32_t(pg)+uint32_t(3*std::max(fx,fz)*kOrthogonal))direct=true;
+        // potential, and an outer spot lies up the field from band 0. (On a
+        // paused route both potentials must be final: stage 5.)
+        if(!direct&&f&&route.usable()&&ringMember(g,m)) {
+            uint32_t ph=kUnreached,pg=kUnreached;
+            unsure=false;
+            const int comp=route.complete()?-1:groupComp(g,p);
+            if(certainValue(f,p,comp,size_t(here),ph)&&certainValue(f,p,comp,size_t(m.goal),pg)) {
+                if(ph!=kUnreached&&pg!=kUnreached&&uint32_t(ph)<=uint32_t(pg)+uint32_t(3*std::max(fx,fz)*kOrthogonal))direct=true;
+            } else runOnRoute(g,RouteNeed::RingDirect);
+        }
+        // The lanes (passage gate, passage lanes, pinwheel) read the route
+        // up to kLaneCover of key past this body: on a paused route they wait
+        // until it is settled there (a need) and read through the certainty
+        // checks (stage 5); a first build still running gives no lanes.
+        const bool laneMember=m.slot>=0&&m.pt&&partRefs(m)>=kPivotMembers&&formationMember(m);
+        bool laneRoute=f&&route.complete();
+        if(f&&laneMember&&route.paused()) {
+            laneRoute=route.covered(size_t(here),kLaneCover);
+            if(!laneRoute&&laneTrigger(u,m,p,f,ox,oz))need(g,here,kLaneCover,RouteNeed::Lanes);
         }
         if(!direct) {
-            if(!f||(f->at(size_t(here))==kUnreached&&f->bounded)) {
+            // No route reaches this body yet -- none, a bounded window that
+            // does not, or (stage 5, RouteView::reach) a complete route that a
+            // static change has touched since: its "unreached" proves nothing
+            // now, and its group is stale, so a refresh follows. (A change
+            // that does not touch the route -- another island or plane --
+            // leaves it proven: nothing would refresh it.)
+            if(!f||(f.estimate(size_t(here))==kUnreached&&f.reach(size_t(here))!=Reach::Unreachable)) {
                 setWaited(g);
                 // No field reaches this body yet: head toward the goal along
                 // a short proven straight segment (kHeadingCells) instead of
@@ -6223,37 +9686,44 @@ struct LegionNavigator::Impl {
                 }
                 m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
             }
-            const uint32_t potential=f->at(size_t(here));
+            const uint32_t potential=f.estimate(size_t(here));
             if(potential==kUnreached) {trapped(u,m);return;}
-            int cell=aimCell(u,m,p,*f,ox,oz);
+            int cell=aimCell(u,m,p,f,ox,oz);
             if(cell<0) {hold(u,m);return;}
             m.site=LegionNavigator::SiteField;
-            if(f->done&&m.slot>=0&&m.pt&&m.vertexCell!=here&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
-                m.vertexCell=here;vertexInstrument(u,m,g,p,*f,ox,oz);
+            if(gInstrumentProbes&&f.complete()&&m.slot>=0&&m.pt&&m.vertexCell!=here&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
+                m.vertexCell=here;vertexInstrument(u,m,g,p,f,ox,oz);
             }
-            const bool lanes=f->done&&m.slot>=0&&m.pt&&partRefs(m)>=kPivotMembers&&formationMember(m);
+            const bool lanes=laneRoute&&laneMember;
+            const int laneComp=lanes&&!route.complete()?groupComp(g,p):-1;
+            unsure=false;
             if(!lanes)m.gateCell=-1;
-            else if(gateAim(u,m,g,p,*f,ox,oz,cell)) {pivoting=&m;pivotTarget=cell;m.site=LegionNavigator::SiteGate;}
+            else if(gateAim(u,m,g,p,f,ox,oz,cell,laneComp)) {pivoting=&m;pivotTarget=cell;m.site=LegionNavigator::SiteGate;}
             // A livelocked body (Unit::legionShuffle, World::updateLegionStill)
             // walks down the field instead: its arc aim is what swapped.
-            else if(m.pivotR>=0&&!livelock(u)) {
-                if(m.pivotCell!=here) {m.pivotCell=here;m.pivotAim=pivotAim(u,m,p,*f,ox,oz);}
+            else if(!unsure&&m.pivotR>=0&&!livelock(u)) {
+                if(m.pivotCell!=here) {
+                    m.pivotCell=here;m.pivotAim=pivotAim(u,m,p,f,ox,oz,laneComp);
+                    if(unsure) {m.pivotCell=-1;m.pivotAim=-1;}   // not taken: evaluated again on the finished route
+                }
                 if(m.pivotAim>=0) {cell=m.pivotAim;pivoting=&m;pivotTarget=cell;m.site=LegionNavigator::SitePivot;}
             }
+            if(unsure)runOnRoute(g,RouteNeed::Lanes);
             aimX=centre(cell%W,fx);aimZ=centre(cell/W,fz);
         } else m.site=LegionNavigator::SiteDirect;
         // Passage lanes (see passageLane): inside a short passage a formation member keeps its lateral
         // place until it is clear of the far end, over its straight walk, the field and the pinwheel (a
         // gate-committed member aims at its gate point until it crosses the gate line). A blocked step
         // flows round toward the lane's cell, as round an arc point.
-        if(here!=m.goal&&f&&f->done&&m.slot>=0&&m.pt&&!engagesEnemies(m.kind)&&
-           (m.site==LegionNavigator::SiteDirect||m.site==LegionNavigator::SiteField||m.site==LegionNavigator::SitePivot)&&
-           partRefs(m)>=kPivotMembers&&formationMember(m)) {
+        if(here!=m.goal&&laneRoute&&laneMember&&!engagesEnemies(m.kind)&&
+           (m.site==LegionNavigator::SiteDirect||m.site==LegionNavigator::SiteField||m.site==LegionNavigator::SitePivot)) {
             int lane=-1;
-            if(passageLane(u,m,p,*f,ox,oz,lane)) {
+            unsure=false;
+            if(passageLane(u,m,p,f,ox,oz,lane,route.complete()?-1:groupComp(g,p))) {
                 aimX=centre(lane%W,fx);aimZ=centre(lane/W,fz);
                 pivoting=&m;pivotTarget=lane;direct=false;m.site=LegionNavigator::SiteGate;
             }
+            if(unsure)runOnRoute(g,RouteNeed::Lanes);
         }
         // C1: a member of a Point latched in a head-on meet narrows before it (see meetAim).
         if(m.pt&&m.pt->meet.tick!=kNoTick&&here!=m.goal&&pivoting!=&m&&partRefs(m)>=kPivotMembers&&formationMember(m)&&
@@ -6270,12 +9740,12 @@ struct LegionNavigator::Impl {
     // on one field and plane (the field is finished, the plane changes only
     // with the static epoch), so a held body reuses its last answer: the
     // descent and line sweeps were the largest share of a held update.
-    int aimCell(const Unit& u,Member& m,const Plane& p,const Field& f,int ox,int oz) {
+    int aimCell(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz) {
         auto& a=m.aim;
         // A paused build is fixed while its work count stands (a resumed
         // build lowers tentative potentials the descent may read).
-        const bool memo=f.usable()&&f.serial;
-        if(memo&&a.x==u.x.v&&a.z==u.z.v&&a.goal==m.goal&&a.type==u.type&&a.field==f.serial&&a.epoch==epoch&&a.work==f.work)
+        const bool memo=f.usable()&&f.metric();
+        if(memo&&a.x==u.x.v&&a.z==u.z.v&&a.goal==m.goal&&a.type==u.type&&a.field==f.metric()&&a.epoch==epoch&&a.work==f.version())
             return a.cell;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int goalX=m.goal%W,goalZ=m.goal/W;
@@ -6322,7 +9792,7 @@ struct LegionNavigator::Impl {
             }
 #endif
         }
-        if(memo)a={u.x.v,u.z.v,m.goal,u.type,f.serial,epoch,f.work,cell};
+        if(memo)a={u.x.v,u.z.v,m.goal,u.type,f.metric(),epoch,f.version(),cell};
         return cell;
     }
     // ---- W8 (PLAN 3.2 T2): obstacle clearance and the visible vertex ----
@@ -6401,8 +9871,8 @@ struct LegionNavigator::Impl {
         const int n=peak==g.peak.end()?1:peak->second;
         if(n<=1||m.requested<0) {out=uint32_t((body+4)*kOrthogonal/16);return true;}
         const auto it=g.areaBounds.find(m.requested);
-        if(it==g.areaBounds.end()||!g.field||!g.field->done)return false;
-        if(it->second.first!=g.field->serial||it->second.second.first!=n)return false;
+        if(it==g.areaBounds.end()||!g.route().complete())return false;
+        if(it->second.first!=g.route().metric()||it->second.second.first!=n)return false;
         out=it->second.second.second;return true;
     }
     // Is every soft body covering the footprint at origin (x,z) an Engaged (ring) body of `command`?
@@ -6494,7 +9964,7 @@ struct LegionNavigator::Impl {
     // past the body's own cell is visible (3).
     struct Vertex {int v=-1,at=-1,n=0,side=0;uint8_t code=0;};
     template<size_t N>
-    Vertex vertexProbe(const Unit& u,const Member& m,const Plane& p,const Field& f,int ox,int oz,uint64_t command,int counts,
+    Vertex vertexProbe(const Unit& u,const Member& m,const Plane& p,RouteView f,int ox,int oz,uint64_t command,int counts,
                        std::array<int,N>& chain,uint64_t& work) const {
         static_assert(N>=size_t(kVertexChain)+1);
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
@@ -6520,7 +9990,7 @@ struct LegionNavigator::Impl {
         }
         out.at=lo;out.v=chain[size_t(lo)];
         if(lo==0) {out.code=3;return out;}
-        if(f.at(size_t(out.v))<kLaneNear*kOrthogonal) {out.code=2;return out;}
+        if(f.estimate(size_t(out.v))<kLaneNear*kOrthogonal) {out.code=2;return out;}
         const int b=chain[size_t(std::min(lo+6,n-1))];
         const int64_t ax=out.v%W-ox,az=out.v/W-oz,bx=b%W-out.v%W,bz=b/W-out.v/W;
         const int64_t cross=ax*bz-az*bx;
@@ -6529,8 +9999,10 @@ struct LegionNavigator::Impl {
     }
     // The W8 step 1 probe: the vertex search run where the pinwheel would
     // run, counted in Stats and used by nothing. Its sweeps are kept out of
-    // the line-sweep and trace counters (they are not steering work).
-    void vertexInstrument(const Unit& u,const Member& m,const Group& g,const Plane& p,const Field& f,int ox,int oz) {
+    // the line-sweep and trace counters (they are not steering work). Run
+    // only while the instrument probes are on (setInstrumentProbes): in the
+    // game it was 4-7% of a 10,000-body tick for counters nobody reads.
+    void vertexInstrument(const Unit& u,const Member& m,const Group& g,const Plane& p,RouteView f,int ox,int oz) {
         const int fx=u.type->footX,fz=u.type->footZ;
         const uint64_t sweeps=stats.lineSweeps,cells=stats.traceCells;
         const uint64_t command=g.soft?g.command:kNoSoft;
@@ -6538,7 +10010,7 @@ struct LegionNavigator::Impl {
         uint64_t work=0;
         std::array<int,kVertexChain+1> chain{};
         // Only members far from the destination count (kLaneNear twice over).
-        if(f.at(size_t(oz*width()+ox))<2*kLaneNear*kOrthogonal)return;
+        if(f.estimate(size_t(oz*width()+ox))<2*kLaneNear*kOrthogonal)return;
         const Vertex v=vertexProbe(u,m,p,f,ox,oz,command,counts,chain,work);
         if(v.code==0) {
             // The clearance at the look-ahead cell past V (the "already clear"
@@ -6616,14 +10088,31 @@ struct LegionNavigator::Impl {
     // strips of one lane and gates within kLaneNear of the destination are
     // left to the field and its lane grid; the pinwheel's look-ahead still
     // ends at such a strip.
-    bool gateCommit(const Unit& u,Member& m,const Group& g,const Plane& p,const Field& f,int ox,int oz) {
+    // Stage 5: on a route not yet complete the chain and the gate point are
+    // read through the certainty checks (comp: the group's component); an
+    // uncertain read (`unsure`) declines without committing or memoising.
+    bool gateCommit(const Unit& u,Member& m,const Group& g,const Plane& p,RouteView f,int ox,int oz,int comp) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
         const int band=laneBand(m,foot);
+        // Every check before the soft bodies reads only the static plane, the
+        // finished field (gateAim asks with a done field), the member's goal,
+        // origin, footprint and band: the same inputs give the same static
+        // decline (see Member::gateMemo). TAK_LEGION_VERIFY recomputes a hit.
+        auto& gm=m.gateMemo;
+        const bool memo=f.complete()&&f.metric()!=0;
+        const bool memoHit=memo&&gm.valid&&gm.ox==ox&&gm.oz==oz&&gm.goal==m.goal&&gm.band==band&&gm.type==u.type&&
+            gm.field==f.metric()&&gm.epoch==epoch&&gm.planeEpoch==p.epoch;
+#ifndef NDEBUG
+        if(memoHit&&!gVerify)return false;
+#else
+        if(memoHit)return false;
+#endif
+        gm.valid=false;
         std::array<int,kVertexChain+1> chain{};int n=0;chain[size_t(n++)]=oz*W+ox;
         uint64_t work=0;
         auto extend=[&](int upto) {
             while(n<=std::min(upto,kVertexChain)) {
-                const int next=descend(p,f,chain[size_t(n-1)]%W,chain[size_t(n-1)]/W,m.goal,fx,fz);
+                const int next=descend(p,f,chain[size_t(n-1)]%W,chain[size_t(n-1)]/W,m.goal,fx,fz,true);
                 if(next<0)return;
                 chain[size_t(n++)]=next;++work;
             }
@@ -6636,20 +10125,25 @@ struct LegionNavigator::Impl {
         auto declined=[&](const char* why) {
             if(!traced(u.id)||m.dbgGateWhy==why)return false;
             m.dbgGateWhy=why;
-            std::fprintf(stderr,"TRACE t=%u u=%d gate-declined: %s at=(%d,%d) potential=%u\n",w.tickCounter_,u.id,why,ox,oz,unsigned(f.at(size_t(oz*W+ox))));
+            std::fprintf(stderr,"TRACE t=%u u=%d gate-declined: %s at=(%d,%d) potential=%u\n",w.tickCounter_,u.id,why,ox,oz,unsigned(f.estimate(size_t(oz*W+ox))));
             return false;
         };
 #else
         auto declined=[&](const char*) {return false;};
 #endif
-        if(gateStrip(gateSpan(p,chain.data(),n,0,fx,fz),band))return declined("inside a strip");
+        auto staticDecline=[&](const char* why) {
+            if(unsure)return false;   // read a value a later slice could change: no verdict, nothing memoised
+            if(memo)gm={ox,oz,m.goal,band,u.type,f.metric(),epoch,p.epoch,true};
+            return declined(why);
+        };
+        if(gateStrip(gateSpan(p,chain.data(),n,0,fx,fz),band))return staticDecline("inside a strip");
         int best=-1;Span bs;
         for(int j=1;j<n&&j<=kGateCommit;++j) {
             ++work;
             const Span sp=gateSpan(p,chain.data(),n,j,fx,fz);
             if(gateStrip(sp,band)) {best=j;bs=sp;break;}
         }
-        if(best<0)return declined("no strip within kGateCommit cells");
+        if(best<0)return staticDecline("no strip within kGateCommit cells");
         // G: the narrowest cell of the strip's first kGateRun cells (the
         // first of equals).
         // A gate is a short passage: at least two chain cells (one narrow
@@ -6667,11 +10161,16 @@ struct LegionNavigator::Impl {
             if(sp.free<bs.free) {best=j;bs=sp;}
         }
         const int G=chain[size_t(best)],gx=G%W,gz=G/W;
-        if(!exits)return declined("strip does not end within kGateRun (a corridor)");
-        if(length<2||!bs.sign)return declined("strip shorter than two cells");
-        if(f.at(size_t(G))<kLaneNear*kOrthogonal)return declined("gate within kLaneNear of the destination");
+        if(!exits)return staticDecline("strip does not end within kGateRun (a corridor)");
+        if(length<2||!bs.sign)return staticDecline("strip shorter than two cells");
+        uint32_t potentialG=kUnreached;
+        if(!certainValue(f,p,comp,size_t(G),potentialG))return false;
+        if(potentialG<kLaneNear*kOrthogonal)return staticDecline("gate within kLaneNear of the destination");
         // Not when the member is already at or past the gate line.
-        if(((bs.axis==0?oz-gz:ox-gx)*bs.sign)>=0)return declined("already at or past the gate line");
+        if(((bs.axis==0?oz-gz:ox-gx)*bs.sign)>=0)return staticDecline("already at or past the gate line");
+#ifndef NDEBUG
+        if(memoHit)verifyFail("gateCommit's memo declined a member that passes the static checks");
+#endif
         const uint64_t command=g.soft?g.command:kNoSoft;
         const int counts=!softCellCount?-1:softCountsFor(fx,fz);
         auto soft=[&](int k) {++work;return bs.axis==0?softAt(gx+k,gz,fx,fz,command,counts):softAt(gx,gz+k,fx,fz,command,counts);};
@@ -6700,6 +10199,7 @@ struct LegionNavigator::Impl {
             }
         }
 #endif
+        if(unsure)return false;   // the chain read a cell a later slice could change
         if(soft(0))return declined("gate point covered by a soft body");
         int lo=0,hi=0;
         while(lo<bs.lo&&!soft(-(lo+1)))++lo;
@@ -6760,7 +10260,7 @@ struct LegionNavigator::Impl {
     // A committed member aims at its gate point while it is in a straight
     // legal line (otherwise the field and the pinwheel steer, the gate kept);
     // false when it has none.
-    bool gateAim(const Unit& u,Member& m,const Group& g,const Plane& p,const Field& f,int ox,int oz,int& cell) {
+    bool gateAim(const Unit& u,Member& m,const Group& g,const Plane& p,RouteView f,int ox,int oz,int& cell,int comp) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         if(m.gateCell>=0) {
             const int gx=m.gateCell%W,gz=m.gateCell/W;
@@ -6775,7 +10275,7 @@ struct LegionNavigator::Impl {
 #endif
                 m.gateCell=-1;++stats.gateReleases;return false;
             }
-        } else if(!gateCommit(u,m,g,p,f,ox,oz))return false;
+        } else if(!gateCommit(u,m,g,p,f,ox,oz,comp))return false;
         ++stats.laneWork;
         if(!sweep(p,u,u.x,u.z,centre(m.gateCell%W,fx),centre(m.gateCell/W,fz)))return false;
         cell=m.gateCell;
@@ -6802,9 +10302,13 @@ struct LegionNavigator::Impl {
     // against a face: the stray rocks along the corner fixtures' wall). Not within kLaneNear of the
     // destination, where the area's own rules place the bodies. Static reads, the field and the member's goal
     // only: no state. The checks past the first cross-section count with the gate's lane_work.
-    bool passageLane(const Unit& u,const Member& m,const Plane& p,const Field& f,int ox,int oz,int& cell) {
+    // Stage 5: on a route not yet complete its route reads go through the
+    // certainty checks (comp: the group's component); an uncertain one
+    // (`unsure`) gives no lane.
+    bool passageLane(const Unit& u,const Member& m,const Plane& p,RouteView f,int ox,int oz,int& cell,int comp) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
-        const uint32_t here=f.at(size_t(oz*W+ox));
+        uint32_t here=kUnreached;
+        if(!certainValue(f,p,comp,size_t(oz*W+ox),here))return false;
         if(here==kUnreached||here<uint32_t(kLaneNear*kOrthogonal))return false;
         const int band=laneBand(m,std::max(fx,fz));
         // Legal origins beside (x,z) across axis 1 (z: a passage along x) or 0 (x: along z).
@@ -6843,7 +10347,8 @@ struct LegionNavigator::Impl {
             };
             if(!wall(-lo-1,-1)||!wall(hi+1,1))return false;
         }
-        const int next=descend(p,f,ox,oz,m.goal,fx,fz);
+        const int next=descend(p,f,ox,oz,m.goal,fx,fz,true);
+        if(unsure)return false;
         const int way=next<0?0:axis==1?next%W-ox:next/W-oz;
         if(!way)return false;   // the way does not run along the strip here
         auto at=[&](int k) {return axis==1?std::pair{ox+k,oz}:std::pair{ox,oz+k};};
@@ -6864,7 +10369,8 @@ struct LegionNavigator::Impl {
         if(length<2||length>kGateRun)return false;
         const auto [ax,az]=at(run[0]);
         const auto [bx,bz]=at(-run[1]);
-        const uint32_t pa=f.at(size_t(az*W+ax)),pb=f.at(size_t(bz*W+bx));
+        uint32_t pa=kUnreached,pb=kUnreached;
+        if(!certainValue(f,p,comp,size_t(az*W+ax),pa)||!certainValue(f,p,comp,size_t(bz*W+bx),pb))return false;
         if(pa==pb||std::min(pa,pb)==kUnreached)return false;
         const int sign=pa<pb?1:-1,reach=pa<pb?run[0]:run[1];
         if(way!=sign)return false;
@@ -6969,14 +10475,17 @@ struct LegionNavigator::Impl {
     // arc shrinks cell by cell to what is free, so a gap folds the outer
     // files inward, down to the field's own passage lanes and single file.
     // Bounded work; recomputed when the body changes origin.
-    int pivotAim(const Unit& u,Member& m,const Plane& p,const Field& f,int ox,int oz) {
+    // Stage 5: on a route not yet complete its route reads go through the
+    // certainty checks (comp: the group's component); after an uncertain
+    // one (`unsure`) it ranks nothing and aims nowhere.
+    int pivotAim(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz,int comp) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
         const int here=oz*W+ox;
-        const uint32_t level=f.at(size_t(here));
+        const uint32_t level=f.estimate(size_t(here));
         if(level==kUnreached)return -1;
         std::array<int,kPivotChain+1> chain{};int n=0;chain[size_t(n++)]=here;
         while(n<=kPivotChain) {
-            const int next=descend(p,f,chain[size_t(n-1)]%W,chain[size_t(n-1)]/W,m.goal,fx,fz);
+            const int next=descend(p,f,chain[size_t(n-1)]%W,chain[size_t(n-1)]/W,m.goal,fx,fz,true);
             if(next<0)break;
             chain[size_t(n++)]=next;
         }
@@ -7013,7 +10522,10 @@ struct LegionNavigator::Impl {
         int narrowTests=0;
         for(int i=touch;i<n;++i) {
             ++narrowTests;
-            if(narrow(i)||f.at(size_t(chain[size_t(i)]))<kPivotNear*kOrthogonal) {n=i;break;}
+            if(narrow(i)) {n=i;break;}
+            uint32_t v=kUnreached;
+            if(!certainValue(f,p,comp,size_t(chain[size_t(i)]),v))return -1;
+            if(v<kPivotNear*kOrthogonal) {n=i;break;}
         }
         stats.pivotWork+=uint64_t(narrowTests);   // W8 step 0
         if(touch>=n)return -1;
@@ -7029,7 +10541,7 @@ struct LegionNavigator::Impl {
                 if(cross*cross*4>=(ax*ax+az*az)*(bx*bx+bz*bz)) {turn=i+6;side=cross>0?1:-1;}
             }
             const int cap=std::min<int>(kPivotMaxCells,int(isqrtFloor(uint64_t(std::max(partRefs(m),0))))*foot*3/2);
-            if(turn<0)return -1;
+            if(turn<0||unsure)return -1;
 #ifndef NDEBUG
             {   // W9 census (B3): the turn the guard would drop -- the 12-cell chord test fails, or the wall
                 // contact before the turn is no face (three illegal neighbours on one side).
@@ -7118,7 +10630,10 @@ struct LegionNavigator::Impl {
             // nearest legal origin short of it.
             auto open=[&](int64_t k) {
                 const int x=cx+int(nx*k/len),z=cz+int(nz*k/len);
-                return legal(p,x,z)?f.at(size_t(z)*W+x)!=kUnreached:!wallOrigin(p,x,z);
+                if(!legal(p,x,z))return !wallOrigin(p,x,z);
+                bool reached=false;
+                certainReach(f,p,comp,size_t(z)*W+x,reached);   // uncertain: `unsure`, the aim is dropped below
+                return reached;
             };
             int64_t r=0;
             while(r<R&&open(r+1))++r;
@@ -7130,6 +10645,7 @@ struct LegionNavigator::Impl {
             // Only an arc point ahead along the arc (never one beside or
             // behind the body: walking back to it reads as reversing).
             if((qx-mx)*tx+(qz-mz)*tz<=0)continue;
+            if(unsure)return -1;
             if(++sweeps>kPivotSweeps)return -1;
             ++stats.pivotSweeps;++stats.pivotWork;   // W8 step 0
             if(sweep(p,u,u.x,u.z,centre(qx,fx),centre(qz,fz))) {
@@ -7154,7 +10670,7 @@ struct LegionNavigator::Impl {
     // lanes instead of meeting nose to nose and holding. It repeats while
     // the lane ahead still holds oncoming bodies; same-direction bodies
     // ahead are followed, never passed. Returns whether a step was committed.
-    bool passAhead(Unit& u,Member& m,const Plane& p,const Field* f,Fixed maximum,int ox,int oz,Fixed aimX,Fixed aimZ,bool direct) {
+    bool passAhead(Unit& u,Member& m,const Plane& p,RouteView f,Fixed maximum,int ox,int oz,Fixed aimX,Fixed aimZ,bool direct) {
         const int64_t ax=int64_t(aimX.v)-u.x.v,az=int64_t(aimZ.v)-u.z.v;
         const int64_t aax=std::abs(ax),aaz=std::abs(az);
         if(!aax&&!aaz)return false;
@@ -7165,7 +10681,7 @@ struct LegionNavigator::Impl {
         // there only displaces them.
         if(std::max(std::abs(m.goal%W-ox),std::abs(m.goal/W-oz))<=2*kPassCells)return false;
         const int rx=-dz,rz=dx;
-        const uint32_t here=f?f->at(size_t(oz*W+ox)):kUnreached;
+        const uint32_t here=f?f.estimate(size_t(oz*W+ox)):kUnreached;
         const std::array<std::array<int,2>,2> options{{{std::clamp(dx+rx,-1,1),std::clamp(dz+rz,-1,1)},{rx,rz}}};
         // The lane scan only decides between the two outcomes below. When
         // neither can commit a step -- no pass cell is open (a body in a
@@ -7190,7 +10706,7 @@ struct LegionNavigator::Impl {
         auto passOpen=[&](const std::array<int,2>& d) {
             if(!d[0]&&!d[1])return false;
             const int cell=(oz+d[1])*W+ox+d[0];
-            if(f&&(f->at(size_t(cell))==kUnreached||(!direct&&f->at(size_t(cell))>uint64_t(here)+kDiagonal)))return false;
+            if(f&&(f.estimate(size_t(cell))==kUnreached||(!direct&&f.estimate(size_t(cell))>uint64_t(here)+kDiagonal)))return false;
             return mayStep(d[0],d[1]);
         };
         const bool laneHeld=direct&&m.passUntil>w.tickCounter_;
@@ -7279,7 +10795,7 @@ struct LegionNavigator::Impl {
             const int cell=(oz+d[1])*W+ox+d[0];
             // Never onto an unreachable cell; a field follower also may not
             // climb more than a diagonal step of potential.
-            if(f&&(f->at(size_t(cell))==kUnreached||(!direct&&f->at(size_t(cell))>uint64_t(here)+kDiagonal)))continue;
+            if(f&&(f.estimate(size_t(cell))==kUnreached||(!direct&&f.estimate(size_t(cell))>uint64_t(here)+kDiagonal)))continue;
             if(!stepFree(u,ox,oz,ox+d[0],oz+d[1]))continue;
             ++stats.slides;
             // A pass made with the lane ahead nearly clear is a committed
@@ -7306,7 +10822,7 @@ struct LegionNavigator::Impl {
     // A livelock (World::updateLegionStill): the body stands by its net
     // headway although it went on stepping or turning to and fro.
     static bool livelock(const Unit& u) {return u.legionShuffle;}
-    void drive(Unit& u,Member& m,const Plane& p,const Field* f,Fixed maximum,Fixed aimX,Fixed aimZ,bool final,
+    void drive(Unit& u,Member& m,const Plane& p,RouteView f,Fixed maximum,Fixed aimX,Fixed aimZ,bool final,
                bool towardGoal=false,bool face=true,bool pass=false) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
@@ -7426,14 +10942,14 @@ struct LegionNavigator::Impl {
                 auto metric=[&](int x,int z)->int64_t {
                     if(arc)return int64_t(arcX-x)*(arcX-x)+int64_t(arcZ-z)*(arcZ-z);
                     if(towardGoal)return int64_t(goalX-x)*(goalX-x)+int64_t(goalZ-z)*(goalZ-z);
-                    return f->at(size_t(z*W+x));
+                    return f.estimate(size_t(z*W+x));
                 };
                 const int64_t here=metric(ox,oz);
                 std::array<std::pair<int64_t,int>,8> options{};int count=0;
                 for(int k=0;k<8;++k) {
                     const auto& d=kDirections[size_t(k)];
                     if(!step(p,ox,oz,d[0],d[1]))continue;
-                    if(f->at(size_t((oz+d[1])*W+ox+d[0]))==kUnreached)continue;
+                    if(f.estimate(size_t((oz+d[1])*W+ox+d[0]))==kUnreached)continue;
                     // A body that just moved over for oncoming traffic does
                     // not edge back across the lane it left. (W8 step 5, S4,
                     // released this after 6 held updates when the lane's
@@ -7469,12 +10985,15 @@ struct LegionNavigator::Impl {
             if(!moved&&corner)moved=cornerStep();
             if(!moved) {
                 if(contactRefused!=&m&&contactArrival(u,m)) {complete(u,m,true);return;}
-                if(f&&m.detour<0)sidestep(u,m,p,*f,ox,oz,nx,nz);
+                if(f&&m.detour<0)sidestep(u,m,p,f,ox,oz,nx,nz);
                 // A body walled in by STILL bodies (settled arrivals, a held
                 // queue, idle units) plans a short committed detour around
                 // them; moving traffic is waited for, not planned around.
                 // A formation member held a long time is in a standing jam of
-                // crossing lanes (nobody ahead will move first): it plans too.
+                // crossing lanes (nobody ahead will move first): it plans too,
+                // and so (stage 7) does any member held as long against another
+                // order's jam (blockedByJam) -- a local correction round traffic;
+                // a queue of its own order is still waited for.
                 // Blocked by settled bodies again with no new record
                 // (Member::nearest) since the last detour: ask them to yield
                 // FIRST. A detour away from them is dropped when blocked and
@@ -7483,7 +11002,7 @@ struct LegionNavigator::Impl {
                 const bool settled=f&&m.detour<0&&m.route.empty()&&blockedBySettled(u,m,nx,nz);
                 if(settled&&int64_t(m.nearest)==m.detourBest&&m.holdUpdates>=6&&yieldLane(u,m,p,nx,nz)) {hold(u,m);restartHold(m);return;}
                 if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=m.nextDetour&&
-                   (settled||(m.holdUpdates>=60&&formationMember(m)))) {
+                   (settled||(m.holdUpdates>=60&&(formationMember(m)||blockedByJam(u,m,nx,nz))))) {
                     // Back off geometrically after each attempt: a crowd that
                     // stays jammed stops re-planning instead of shuffling
                     // (the count restarts on a new record, Member::nearest).
@@ -7511,8 +11030,8 @@ struct LegionNavigator::Impl {
         // A step that does not turn the body requests no turn of its
         // scripts either (TurnDirection walks the zontroll/zongob gait).
         u.turnReqBam=face?diff:0;
-        // A reach member leaving its ring spot is no soft obstacle any more.
-        if(m.state==Holding&&!policy(m.kind).completes)unstamp(u.id);
+        // A reach member leaving its ring spot, or a member leaving a jam (stage 7), is no soft obstacle any more.
+        if(m.state==Holding)unstamp(u.id);
         m.state=Moving;m.heldSince=kNoTick;m.holdUpdates=0;
     }
     // A hold that starts over (a detour planned, a lane asked for): the
@@ -7540,19 +11059,36 @@ struct LegionNavigator::Impl {
         }
         return false;
     }
+    // Stage 7: is the wanted footprint held by another order's jam -- a Legion member of another command held
+    // kRestAfter ticks or more (jamStill)? Nobody in a standing knot of crossing traffic moves first.
+    bool blockedByJam(const Unit& u,const Member& m,int nx,int nz) const {
+        const auto mine=groups.find(m.group);
+        if(mine==groups.end())return false;
+        for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
+            const int cx=nx+i,cz=nz+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            if(!o||o==u.id)continue;
+            const Member* peer=member(o);
+            if(!peer||!jamStill(*peer))continue;
+            const auto theirs=groups.find(peer->group);
+            if(theirs!=groups.end()&&theirs->second.command!=mine->second.command)return true;
+        }
+        return false;
+    }
     static int z0goal(int local,int S,int R,int ox,int oz,int W) {return (oz+local/S-R)*W+ox+local%S-R;}
     // Bounded breadth-first search (window of radius kDetourCells) over
     // statically legal origins whose footprint touches no STILL body. The
     // target is the own goal if inside, else the reachable cell that most
     // reduces the distance still to go. The route is committed.
-    bool localDetour(const Unit& u,Member& m,const Plane& p,const Field* f,bool towardGoal) {
+    bool localDetour(const Unit& u,Member& m,const Plane& p,RouteView f,bool towardGoal) {
         constexpr int R=kDetourCells,S=2*R+1;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
         const int goalX=m.goal%W,goalZ=m.goal/W;
         auto metric=[&](int x,int z)->int64_t {
             if(!towardGoal&&f) {
-                const uint32_t v=f->at(size_t(z*W+x));
+                const uint32_t v=f.estimate(size_t(z*W+x));
                 return v==kUnreached?INT64_MAX:int64_t(v)*64;
             }
             return int64_t(goalX-x)*(goalX-x)+int64_t(goalZ-z)*(goalZ-z);
@@ -7612,7 +11148,7 @@ struct LegionNavigator::Impl {
     // Opposing traffic: after a short hold, both bodies commit to a lateral
     // step to their own right (keep-right), so head-on pairs pass instead
     // of pushing. Same-direction queues only side-step after a long hold.
-    void sidestep(const Unit& u,Member& m,const Plane& p,const Field& f,int ox,int oz,int nx,int nz) {
+    void sidestep(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz,int nx,int nz) {
         if(m.holdUpdates<6)return;
         const int W=width();
         int blocker=0;
@@ -7649,13 +11185,13 @@ struct LegionNavigator::Impl {
         int dx=nx-ox,dz=nz-oz;
         if(!dx&&!dz)return;
         dx=std::clamp(dx,-1,1);dz=std::clamp(dz,-1,1);
-        const uint32_t here=f.at(size_t(oz*W+ox));
+        const uint32_t here=f.estimate(size_t(oz*W+ox));
         const std::array<std::array<int,2>,2> sides{{{-dz,dx},{dz,-dx}}};
         for(int k=0;k<1;++k) {
             const int sx=sides[size_t(k)][0],sz=sides[size_t(k)][1];
             if(!step(p,ox,oz,sx,sz))continue;
             const int cell=(oz+sz)*W+ox+sx;
-            if(f.at(size_t(cell))>uint64_t(here)+kDiagonal)continue;
+            if(f.estimate(size_t(cell))>uint64_t(here)+kDiagonal)continue;
             if(!stepFree(u,ox,oz,ox+sx,oz+sz))continue;
             m.detour=cell;m.detourTicks=0;m.detourFace=false;m.detourPass=false;return;
         }
@@ -7716,11 +11252,11 @@ struct LegionNavigator::Impl {
         // A paused first build serves too: every potential read here and in
         // pressed, areaBound and rechoose goes through known(), so an
         // unsettled cell reads as unreached.
-        const Field* f=g.field&&g.field->usable()?g.field.get():nullptr;
+        const RouteView f=g.route().usable()?g.route():RouteView();
         if(!f)return false;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
         const int64_t body=int64_t(foot)*16;
-        const uint32_t potential=f->known(size_t(oz*W+ox));
+        const uint32_t potential=f.known(size_t(oz*W+ox));
         if(potential==kUnreached)return false;
         const int64_t px=int64_t(std::get<2>(m.point)),pz=int64_t(std::get<3>(m.point));
         const bool area=policy(m.kind).area,waypoint=policy(m.kind).passThrough;
@@ -7752,7 +11288,7 @@ struct LegionNavigator::Impl {
             uint32_t lo=kUnreached,hi=0;
             for(int z=std::max(0,bz-fz/2);z<=std::min(height()-1,bz+bfz-(fz+1)/2);++z)
                 for(int x=std::max(0,bx-fx/2);x<=std::min(W-1,bx+bfx-(fx+1)/2);++x)
-                    if(const uint32_t v=f->known(size_t(z*W+x));v!=kUnreached) {lo=std::min(lo,v);hi=std::max(hi,v);}
+                    if(const uint32_t v=f.known(size_t(z*W+x));v!=kUnreached) {lo=std::min(lo,v);hi=std::max(hi,v);}
             const Spread s{other.id,lo,lo==kUnreached?kUnreached:uint32_t((uint64_t(lo)+hi)/2)};
             if(spreadN<spreads.size())spreads[spreadN++]=s;
             return s;
@@ -7767,7 +11303,7 @@ struct LegionNavigator::Impl {
             if(!sameFootprint(other)) {const uint32_t lo=spread(other).lo;return lo!=kUnreached&&lo<potential;}
             const int qx=footprintOrigin(other.x,fx),qz=footprintOrigin(other.z,fz);
             if(qx>=0&&qz>=0&&qx<W&&qz<height()) {
-                const uint32_t q=f->known(size_t(qz*W+qx));
+                const uint32_t q=f.known(size_t(qz*W+qx));
                 if(q!=kUnreached)return q<potential;
             }
             const int64_t dx=(int64_t(other.x.v)-px)>>16,dz=(int64_t(other.z.v)-pz)>>16;
@@ -7803,7 +11339,7 @@ struct LegionNavigator::Impl {
                     uint32_t q=kUnreached;
                     if(!sameFootprint(*other))q=spread(*other).mid;
                     else if(const int qx=footprintOrigin(other->x,fx),qz=footprintOrigin(other->z,fz);qx>=0&&qz>=0&&qx<W&&qz<height())
-                        q=f->known(size_t(qz*W+qx));
+                        q=f.known(size_t(qz*W+qx));
                     if(q!=kUnreached&&(front==kUnreached||q>front))front=q;
                 }
             } else if(other->orders.empty())foreign=true;
@@ -7824,7 +11360,7 @@ struct LegionNavigator::Impl {
         // point returns an empty route: 0x200, and the mission handler
         // decides (build within reach, or give up). That body counts as a
         // foreign crowd, so complete raises the same event.
-        if(stranger&&!foreign&&policy(m.kind).exact&&pressed(u,p,*f,ox,oz,potential))foreign=true;
+        if(stranger&&!foreign&&policy(m.kind).exact&&pressed(u,p,f,ox,oz,potential))foreign=true;
         // The chain's first link: a shared point's member standing inside
         // the destination area itself is at the crowd.
         if(area&&!queued&&!foreign&&shared(g,m)&&potential<=areaBound(g,m,fx,fz,body))queued=true;
@@ -7837,7 +11373,7 @@ struct LegionNavigator::Impl {
 #ifndef NDEBUG
         if(area&&(m.dbgRefusedWin&3)==3&&!shared(g,m)&&m.stillSince!=kNoTick&&w.tickCounter_-m.stillSince>=2*kCrowdWindow) {
             StatsFence fence(stats);
-            if(pressed(u,p,*f,ox,oz,potential))++census.a2Seal;
+            if(pressed(u,p,f,ox,oz,potential))++census.a2Seal;
         }
         if(traced(u.id)) {
             uint32_t ab=0;const bool have=peekAreaBound(g,m,body,ab);
@@ -7851,7 +11387,7 @@ struct LegionNavigator::Impl {
         if(!queued&&!foreign)return false;
         // Soft obstacles (an idle crowd standing there) charge kSoftFactor
         // per step in a softened field.
-        const int64_t factor=f->softened?kSoftFactor:1;
+        const int64_t factor=f.softened()?kSoftFactor:1;
         auto connected=[&](int64_t d) {return int64_t(potential)<=factor*((d*kDiagonal)/16+int64_t(3*foot*kOrthogonal));};
         const int64_t reach=settleReach(m,body);
         if(foreign&&dist<=reach&&connected(dist)&&!inExitLane(u,body))return true;
@@ -7862,7 +11398,9 @@ struct LegionNavigator::Impl {
         // steering, toward its slot, takes no step, or steps to and fro)
         // re-chooses its slot, and once its re-choices are spent it counts
         // as pressed.
-        const bool press=pressed(u,p,*f,ox,oz,potential);
+        // Stage 8: a formation member with a free step toward its own slot is not pressed either (its slot may lie
+        // beyond the click, where every step toward it climbs the field).
+        const bool press=pressed(u,p,f,ox,oz,potential)&&!(m.slot>=0&&freeTowardSlot(u,m,p,ox,oz));
 #ifndef NDEBUG
         if(!press&&m.stillSince!=kNoTick&&w.tickCounter_-m.stillSince>=2*kCrowdWindow) {
             uint32_t ab=0;
@@ -7882,7 +11420,7 @@ struct LegionNavigator::Impl {
         // (liftflyers' open run: 8 cells sideways); it settles here instead.
         if(m.rechoices<kRechoices&&m.goal!=oz*W+ox) {
             ++m.rechoices;
-            if(rechoose(u,m,g,p,*f,potential)||!press)return false;
+            if(rechoose(u,m,g,p,f,potential)||!press)return false;
         }
         const uint32_t grow=uint32_t(kSettleGrow*foot*kOrthogonal),slack=uint32_t(kSettleSlack*foot*kOrthogonal);
         // C29, measured along the queue: no completion farther from the click
@@ -7897,6 +11435,27 @@ struct LegionNavigator::Impl {
         const bool behind=front!=kUnreached&&potential<=uint64_t(front)+slack;
         uint32_t cap=uint32_t(std::min<int64_t>(kUnreached-1,factor*((2*reach*kDiagonal)/16+int64_t(3*foot*kOrthogonal))));
         if(behind)cap=std::max(cap,uint32_t(std::min<uint64_t>(kUnreached-1,uint64_t(front)+slack)));
+        // An explicit order's queue is bounded by the order's own crowd. The
+        // reach above grows with everyone settled at the destination, and one
+        // order is now the whole selection: a 10,000-body click's settled
+        // bodies widen the reach until it spans the map, and the queue behind
+        // them, row by row, runs back to where its bodies started (maze-10000:
+        // 7,595 of 8,500 completing beyond the arrival disc, at their starting
+        // rect). The packed area of the point's whole crowd (crowdBound: every
+        // footprint plane's bodies, in this body's footprint, following walls,
+        // so a dead end's strip is its length) is what its bodies can claim,
+        // widened to the arrival disc of that many bodies: AR-08's disc is
+        // 20(foot+1) px per sqrt(n/pi), the packed bound 16 foot px per
+        // sqrt(1.25 n/pi), a ratio of 1.118(foot+1)/foot (9/8 here). Past it
+        // plus kSettleSlack bodies a queued body waits: an honest unarrived
+        // body, never an arrival declared where it stands. Per-unit (inferred)
+        // areas keep the rule above unchanged (the AI, scripts, Retail-mode
+        // tools).
+        if(explicitArea(std::get<1>(m.point))) {
+            const uint64_t ceiling=uint64_t(crowdBound(g,m,fx,fz,body))*kExplicitSettleNum*uint64_t(foot+1)/
+                                   (uint64_t(kExplicitSettleDen)*uint64_t(foot))+slack;
+            cap=uint32_t(std::min<uint64_t>(cap,ceiling));
+        }
         if(!m.settleP)m.settleP=std::min(cap,areaBound(g,m,fx,fz,body)+slack);
         if(potential<=m.settleP&&(dist<=2*reach||behind)&&connected(dist)&&!inExitLane(u,body))return true;
         m.settleP=std::min(cap,m.settleP+grow);
@@ -7916,7 +11475,7 @@ struct LegionNavigator::Impl {
     // the group's command, whoever moves through it now (see move's B1 test:
     // a body held only on such a way is held by bodies a re-plan does not
     // plan round -- its own, or movers -- and a refresh would not help it).
-    bool freeDescent(const Unit& u,const Group& g,const Plane& p,const Field& f,int ox,int oz) {
+    bool freeDescent(const Unit& u,const Group& g,const Plane& p,RouteView f,int ox,int oz) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const uint32_t potential=f.known(size_t(oz*W+ox));
         const uint64_t command=g.soft?g.command:kNoSoft;
@@ -7930,7 +11489,17 @@ struct LegionNavigator::Impl {
     }
     // Pressed: no neighbour origin nearer the point (lower potential) that
     // the body could step into now.
-    bool pressed(const Unit& u,const Plane& p,const Field& f,int ox,int oz,uint32_t potential) const {
+    bool freeTowardSlot(const Unit& u,const Member& m,const Plane& p,int ox,int oz) const {
+        const int W=width(),gx=m.goal%W,gz=m.goal/W;
+        const int64_t d0=int64_t(gx-ox)*(gx-ox)+int64_t(gz-oz)*(gz-oz);
+        for(const auto& d:kDirections) {
+            const int nx=ox+d[0],nz=oz+d[1];
+            if(int64_t(gx-nx)*(gx-nx)+int64_t(gz-nz)*(gz-nz)>=d0||!step(p,ox,oz,d[0],d[1]))continue;
+            if(stepFree(u,ox,oz,nx,nz))return true;
+        }
+        return false;
+    }
+    bool pressed(const Unit& u,const Plane& p,RouteView f,int ox,int oz,uint32_t potential) const {
         const int W=width();
         for(const auto& d:kDirections) {
             if(!step(p,ox,oz,d[0],d[1]))continue;
@@ -7959,23 +11528,79 @@ struct LegionNavigator::Impl {
         const auto peak=g.peak.find(m.requested);
         const int n=peak==g.peak.end()?1:peak->second;
         if(n<=1||m.requested<0)return uint32_t((body+4)*kOrthogonal/16);
-        const Field& f=*g.field;
-        auto& cached=g.areaBounds[m.requested];
+        return packedBound(g,g.areaBounds[m.requested],m.requested,n,fx,fz);
+    }
+    // An explicit order's crowd bound: the destination area's bound for the
+    // point's whole crowd -- its peak footprint cells (Point::crowdPeak, every
+    // plane's bodies) in footprints of this body's size, never fewer than
+    // areaBound's own count. One click of mixed footprints gathers one crowd,
+    // but each plane is its own group, whose peak counts its own bodies only.
+    uint32_t crowdBound(Group& g,const Member& m,int fx,int fz,int64_t body) {
+        const auto peak=g.peak.find(m.requested);
+        const int own=peak==g.peak.end()?1:peak->second;
+        int n=own;
+        if(const Point* pt=m.pt;pt&&pt->crowdPeak) {
+            const uint64_t cells=uint64_t(std::max(1,fx))*uint64_t(std::max(1,fz));
+            n=int(std::max<uint64_t>(uint64_t(n),std::min<uint64_t>((pt->crowdPeak+cells-1)/cells,uint64_t(1)<<24)));
+            // Stage 8: the footprint cells of the bodies the area still gathers and of those already settled at its point. One order's
+            // arrivals leave the point's crowd as they settle, so for it this is its whole size again (as the
+            // peak is); for an order that joined an earlier order's area (sharedArea) the peak counts only the
+            // members that were on their way together, not the crowd already standing there.
+            const auto settled=anchorCellsAt.find(destination(m.point));
+            const uint64_t now=(pt->crowdCells+(settled==anchorCellsAt.end()?0:settled->second)+cells-1)/cells;
+            n=int(std::max<uint64_t>(uint64_t(n),std::min<uint64_t>(now,uint64_t(1)<<24)));
+        }
+        // A crowd of this plane's bodies alone is the destination area itself (areaBound's
+        // cache): only a crowd of several footprints packs anew.
+        if(n==own)return areaBound(g,m,fx,fz,body);
+        if(n<=1||m.requested<0)return uint32_t((body+4)*kOrthogonal/16);
+        return packedBound(g,g.crowdBounds[m.requested],m.requested,n,fx,fz);
+    }
+    // (potential, cell) pairs collected in increasing cell order, sorted as
+    // std::sort sorts the pairs: by potential, ties by cell. The cells already
+    // ascend, so a stable counting sort by potential gives exactly that order in
+    // linear time (Legion 10,000 stage 4: a 10,000-body area sorted ~200k pairs,
+    // 20 ms in one tick); a potential range far wider than the list falls back to
+    // a stable comparison sort on the potential alone (the same order).
+    std::vector<std::pair<uint32_t,int>> pbOrder,pbSorted;std::vector<uint32_t> pbCount;   // scratch
+    void sortByPotential(std::vector<std::pair<uint32_t,int>>& order) {
+#ifndef NDEBUG
+        if(gVerify)for(size_t i=1;i<order.size();++i)if(order[i-1].second>=order[i].second)verifyFail("sortByPotential: cells not ascending");
+#endif
+        if(order.size()<2)return;
+        uint32_t lo=order[0].first,hi=lo;
+        for(const auto& [v,c]:order) {lo=std::min(lo,v);hi=std::max(hi,v);}
+        if(uint64_t(hi-lo)>8*uint64_t(order.size())+1024) {
+            std::stable_sort(order.begin(),order.end(),[](const auto& a,const auto& b) {return a.first<b.first;});
+            return;
+        }
+        pbCount.assign(size_t(hi-lo)+2,0);
+        for(const auto& [v,c]:order)++pbCount[size_t(v-lo)+1];
+        for(size_t i=1;i<pbCount.size();++i)pbCount[i]+=pbCount[i-1];
+        pbSorted.resize(order.size());
+        for(const auto& e:order)pbSorted[pbCount[size_t(e.first-lo)]++]=e;
+        order.swap(pbSorted);
+    }
+    // The potential of the last of the ceil(1.25n) footprints nearest goal
+    // origin `seed` by field potential (packed as slotsFor packs slots), cached
+    // in `cached` per field serial and n.
+    uint32_t packedBound(Group& g,std::pair<uint64_t,std::pair<int,uint32_t>>& cached,int seed,int n,int fx,int fz) {
+        const RouteView f=g.route();
         // A paused build (C1) reads settled cells only and is not cached:
         // it settles more cells when it resumes.
-        if(f.done&&cached.first==f.serial&&cached.second.first==n)return cached.second.second;
+        if(f.complete()&&cached.first==f.metric()&&cached.second.first==n)return cached.second.second;
         const int count=(5*n+3)/4;
-        const int W=width(),H=height(),sx=m.requested%W,sz=m.requested/W,foot=std::max(fx,fz);
+        const int W=width(),H=height(),sx=seed%W,sz=seed/W,foot=std::max(fx,fz);
         uint32_t bound=0;
         for(int radius=int(isqrtFloor(uint64_t(count)))*foot+2*foot+4,attempt=0;attempt<4;++attempt,radius*=2) {
             const int x0=std::max(0,sx-radius),z0=std::max(0,sz-radius);
             const int x1=std::min(W-1,sx+radius),z1=std::min(H-1,sz+radius);
-            std::vector<std::pair<uint32_t,int>> order;
+            auto& order=pbOrder;order.clear();
             stats.slotSearchCells+=uint64_t(x1-x0+1)*uint64_t(z1-z0+1);
             const Plane& p=plane(g.plane);
             for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x)
-                if(legal(p,x,z)&&f.known(size_t(z*W+x))!=kUnreached)order.push_back({f.known(size_t(z*W+x)),z*W+x});
-            std::sort(order.begin(),order.end());
+                if(legal(p,x,z))if(const uint32_t v=f.known(size_t(z*W+x));v!=kUnreached)order.push_back({v,z*W+x});
+            sortByPotential(order);
             const int bw=x1-x0+1+fx,bh=z1-z0+1+fz;
             std::vector<uint8_t> used(size_t(bw)*bh,0);
             int packed=0;
@@ -7990,7 +11615,7 @@ struct LegionNavigator::Impl {
             }
             if(packed>=count)break;
         }
-        if(f.done)cached={f.serial,{n,bound}};
+        if(f.complete())cached={f.metric(),{n,bound}};
         return bound;
     }
     // Re-choice (C2, C28): the free slot of this member's destination it can
@@ -8000,7 +11625,7 @@ struct LegionNavigator::Impl {
     // lowest slot index. Formation points take any free cell of the area;
     // packed points their free packed slots. Returns whether it took one.
     std::vector<uint32_t> rcSeen;uint32_t rcGen=0;std::vector<int> rcQueue;   // rechoose's scratch (see there)
-    bool rechoose(const Unit& u,Member& m,Group& g,const Plane& p,const Field& f,uint32_t potential) {
+    bool rechoose(const Unit& u,Member& m,Group& g,const Plane& p,RouteView f,uint32_t potential) {
         if(m.requested<0||m.approach)return false;
         Point* pt=m.pt;
         if(!pt) {auto found=points.find(m.point);pt=found==points.end()?nullptr:&found->second;}
@@ -8207,24 +11832,82 @@ struct LegionNavigator::Impl {
     uint64_t checksum() const {
         uint64_t h=mix(0x4c4547494f4eull,epoch);
         h=mix(h,planeDebt);h=mix(h,uint64_t(pruneCursor));
+        // Registrations waiting for the budget (stage 4), while any wait.
+        if(regLive) {
+            h=mix(h,0x7265677175657565ull);h=mix(h,uint64_t(regLive));
+            for(const auto& e:regQueue)if(regSeq[size_t(e.id)]==e.seq)h=mix(h,uint64_t(uint32_t(e.id)));
+        }
+        // The field scheduler's round-robin cursors (stage 4), while any is set.
+        for(size_t c=0;c<navCursor.size();++c)if(navCursor[c].key||navCursor[c].resume) {
+            h=mix(h,0x637572736f72ull^uint64_t(c)<<48^uint64_t(navCursor[c].resume)<<47);h=mix(h,navCursor[c].key);
+        }
+        // An awareness scan in progress (stage 4).
+        if(awCursor>=0) {h=mix(h,0x6177617265736361ull);h=mix(h,uint64_t(uint32_t(awCursor))<<32|awStarted);h=mix(h,awDigest);}
+        // First plane builds registrations wait for (stage 4), while any.
+        for(const int index:planeWant) {
+            const Plane& p=planes[size_t(index)];
+            h=mix(h,0x706c616e65ull^uint64_t(uint32_t(index))<<40);h=mix(h,uint64_t(uint32_t(p.stage))<<32|uint32_t(p.cursor));
+            h=mix(h,uint64_t(p.head)<<32|uint32_t(p.nextLabel));
+        }
         h=mix(h,uint64_t(nextGroup));
+        // Stage 8: the shared destination areas.
+        for(const auto& [k,v]:destArea) {
+            h=mix(h,0x6465737461ull^uint64_t(uint32_t(std::get<0>(k)))<<40);h=mix(h,uint64_t(uint32_t(std::get<1>(k)))<<32|uint32_t(std::get<2>(k)));
+            h=mix(h,uint64_t(v.first)<<32|uint32_t(v.second.first));h=mix(h,uint32_t(v.second.second));
+        }
+        // Stage 8: the openings' queue delays (decision inputs between recounts), while nonzero.
+        for(size_t i=0;i<openings.size();++i)
+            if(openings[i].delay[0]||openings[i].delay[1]) {h=mix(h,0x6f70656eull^uint64_t(i)<<32);h=mix(h,uint64_t(openings[i].delay[0])<<32|openings[i].delay[1]);}
+        for(size_t i=0;i<openings.size();++i)
+            if(const auto& o=openings[i];o.tokenDir>=0||o.waitSince[0]!=kNoTick||o.waitSince[1]!=kNoTick) {
+                h=mix(h,0x746f6b656eull^uint64_t(i)<<32);h=mix(h,uint64_t(uint8_t(o.tokenDir))|uint64_t(uint32_t(o.tokenPlayer))<<8|uint64_t(o.closing)<<40);
+                h=mix(h,uint64_t(o.granted)<<32|o.lastEntry);h=mix(h,uint64_t(o.waitSince[0])<<32|o.waitSince[1]);
+            }
+        // Stage 6: the shared tile cache (which tiles a chain finds decides the work it is charged), and repairs.
+        if(tileCount) {h=mix(h,0x74696c6573ull);h=mix(h,uint64_t(tileCount));h=mix(h,tileDigest);}
+        for(const auto& r:repairs) {h=mix(h,0x726570616972ull^uint64_t(uint32_t(r.group))<<16);h=mix(h,r.serial);h=mix(h,uint64_t(r.node));}
         for(const auto& [id,g]:groups) {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(g.player));h=mix(h,g.issuedTick);
             h=mix(h,uint64_t(uint32_t(g.minX))<<32|uint32_t(g.minZ));h=mix(h,uint64_t(uint32_t(g.maxX))<<32|uint32_t(g.maxZ));
             h=mix(h,uint64_t(uint32_t(g.compCell)));h=mix(h,g.stale);h=mix(h,g.approach);h=mix(h,g.command);h=mix(h,g.soft);
             if(g.kind!=Kind::Move)h=mix(h,uint64_t(g.kind));
             for(const auto& [seed,count]:g.sharing) {h=mix(h,uint64_t(seed));h=mix(h,uint64_t(count));}
-            if(g.next) {h=mix(h,g.next->work);h=mix(h,g.next->done);h=mix(h,g.next->epoch);h=mix(h,g.next->started);}
+            if(g.next) {h=mix(h,g.next->work);h=mix(h,g.next->done);h=mix(h,g.next->epoch);h=mix(h,g.next->started);
+                        h=mix(h,uint64_t(g.next->deficit));h=mix(h,g.next->lastServed);}
             h=mix(h,uint64_t(g.members));h=mix(h,uint64_t(g.plane));
             for(int s:g.seeds)h=mix(h,uint64_t(s));
             for(const auto& [seed,n]:g.peak) {h=mix(h,uint64_t(seed));h=mix(h,uint64_t(n));}
             h=mix(h,g.lastUse);
             h=mix(h,g.built);
-            if(g.field) {h=mix(h,g.field->work);h=mix(h,g.field->done);h=mix(h,g.field->epoch);h=mix(h,g.field->current);h=mix(h,g.field->bounded);h=mix(h,g.field->started);}
+            if(g.field) {h=mix(h,g.field->work);h=mix(h,g.field->done);h=mix(h,g.field->epoch);h=mix(h,g.field->current);h=mix(h,g.field->bounded);h=mix(h,g.field->started);
+                         if(!g.field->done) {h=mix(h,uint64_t(g.field->deficit));h=mix(h,g.field->lastServed);}
+                         if(g.field->kind) {h=mix(h,0x6b696e64ull^uint64_t(g.field->kind)<<56);h=mix(h,g.field->corridorSig);
+                                            if(g.field->kind==KindChain) {
+                                                h=mix(h,uint64_t(g.field->chainNext)<<1|g.field->dDone);
+                                                for(size_t i=g.field->chainTransit;i<g.field->chain.size();++i)if(g.field->attached[i])h=mix(h,0x68616c6full^i);
+                                            }}}
+            if(g.next&&g.next->kind) {h=mix(h,0x6e6b696e64ull^uint64_t(g.next->kind)<<56);h=mix(h,g.next->corridorSig);}
+            // Stage 8: the queue charges a route was built with (and whether it records labels), while any.
+            for(const Field* f:{g.field.get(),g.next.get()})
+                if(f&&(f->labels||!f->charges.empty())) {
+                    h=mix(h,0x6368617267ull^uint64_t(f->labels)<<40);
+                    for(const auto& c:f->charges)h=mix(h,uint64_t(c.label)<<32|c.cost);
+                }
+            // Stage 6: a plan held for the next build, and corridor widenings.
+            if(g.plan&&g.planTick!=kNoTick) {h=mix(h,0x706c616eull);h=mix(h,uint64_t(g.planTick)<<8|g.plan->kind);h=mix(h,g.plan->sig);}
+            if(g.widens)h=mix(h,0x7769646e73ull^uint64_t(g.widens)<<48);
+            if(g.routeMode)h=mix(h,0x6d6f6465ull^uint64_t(g.routeMode)<<48);
+            // Start requests (stage 4): their age and a refusal stamp, while set.
+            if(g.requestTick!=kNoTick) {h=mix(h,0x726571756573ull);h=mix(h,g.requestTick);}
+            if(g.improveTick!=kNoTick) {h=mix(h,0x696d70726f7665ull);h=mix(h,g.improveTick);}
+            if(g.reroute)h=mix(h,0x7265726f757465ull);
+            for(const auto& [label,a]:g.openArea)if(a) {h=mix(h,0x6f61726561ull^uint64_t(label)<<40);h=mix(h,a);}
+            if(g.blockedSince!=NavAdmit::kNever) {h=mix(h,0x626c6f636bull);h=mix(h,g.blockedSince);}
             // A paused first build (C1), tagged only when set.
+            if(g.field&&g.field->runOn)h=mix(h,0x72756e6f6eull);
             if(g.field&&(g.field->covered||!g.field->demand.empty())) {
                 h=mix(h,0x434f5645524544ull);h=mix(h,g.field->covered);
-                for(const auto& [cell,margin]:g.field->demand)h=mix(h,uint64_t(uint32_t(cell))<<16|margin);
+                for(const auto& [cell,margin]:g.field->demand.entries())h=mix(h,uint64_t(uint32_t(cell))<<16|margin);
             }
             for(size_t i=0;i<g.avoidCmd.size();++i) {
                 h=mix(h,g.avoidCmd[i]);h=mix(h,g.avoidOff[i]);const auto& c=g.avoidSeg[i];
@@ -8257,12 +11940,15 @@ struct LegionNavigator::Impl {
             if(point.awareSeen) {h=mix(h,uint64_t(point.awareX));h=mix(h,uint64_t(point.awareZ));}
             if(!point.queue.empty()) {h=mix(h,0x71756575ull);for(const int id:point.queue)h=mix(h,uint64_t(id));}
             if(point.entry>=0) {h=mix(h,0x656e747279ull);h=mix(h,uint64_t(uint32_t(point.entry)));}
+            else if(point.entry==kEntryPending)h=mix(h,0x70656e64ull);
+            for(const auto& [gid,e]:point.entries) {h=mix(h,0x656e7472696573ull^uint64_t(uint32_t(gid))<<16);h=mix(h,uint64_t(uint32_t(e.first)));}
             if(const auto& mt=point.meet;mt.tick!=kNoTick) {
                 h=mix(h,0x6d656574ull);h=mix(h,uint64_t(mt.tick)<<32|mt.contact);h=mix(h,uint64_t(mt.ax));h=mix(h,uint64_t(mt.az));h=mix(h,uint64_t(mt.L));
                 h=mix(h,uint64_t(mt.seen));h=mix(h,uint64_t(mt.left0));h=mix(h,uint64_t(mt.width0));h=mix(h,uint64_t(mt.lo));h=mix(h,uint64_t(mt.hi));
                 h=mix(h,uint64_t(mt.mean0));h=mix(h,uint64_t(mt.meanF));h=mix(h,uint64_t(mt.span)|uint64_t(mt.active)<<63);h=mix(h,uint64_t(uint32_t(mt.q)));
                 h=mix(h,uint64_t(uint32_t(std::get<0>(mt.other)))<<32|std::get<1>(mt.other));h=mix(h,uint64_t(uint32_t(std::get<2>(mt.other)))<<32|uint32_t(std::get<3>(mt.other)));
             }
+            if(explicitArea(std::get<1>(key))&&point.crowdPeak) {h=mix(h,0x63726f7764ull);h=mix(h,point.crowdPeak);}
             if(point.cueTick!=kNoTick) {
                 h=mix(h,0x637565ull);h=mix(h,point.cueTick);
                 h=mix(h,uint64_t(uint32_t(std::get<0>(point.cueOther)))<<32|std::get<1>(point.cueOther));h=mix(h,uint64_t(uint32_t(std::get<2>(point.cueOther)))<<32|uint32_t(std::get<3>(point.cueOther)));
@@ -8299,15 +11985,17 @@ struct LegionNavigator::Impl {
             h=mix(h,m.rest);if(m.rest) {h=mix(h,uint32_t(m.restX));h=mix(h,uint32_t(m.restZ));h=mix(h,uint32_t(m.restHp));h=mix(h,m.restEpoch);h=mix(h,m.restRing);}
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillSince);
+            if(m.windowGoal>=0) {h=mix(h,0x77736c6f74ull);h=mix(h,uint64_t(m.windowSlotDist));h=mix(h,uint64_t(uint32_t(m.windowGoal)));}
             if(m.settleP||m.queued||m.rechoices) {h=mix(h,0x736574746c65ull);h=mix(h,m.settleP);h=mix(h,uint64_t(m.queued)|uint64_t(m.rechoices)<<8);}
             h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);h=mix(h,uint64_t(m.real));
-            if(m.gainTick) {h=mix(h,0x6761696eull);h=mix(h,m.gainTick);h=mix(h,m.gainBest);}
+            if(m.gainTick) {h=mix(h,0x6761696eull);h=mix(h,m.gainTick);h=mix(h,m.gainBest);h=mix(h,m.gainSeen);}
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
             if(std::get<0>(m.point)>=0&&m.part!=std::get<1>(m.point)) {h=mix(h,0x70617274ull);h=mix(h,m.part);}
             if(m.pivotR||m.pivotCell>=0) {h=mix(h,uint64_t(uint16_t(m.pivotR)));h=mix(h,uint64_t(uint32_t(m.pivotCell))<<32|uint32_t(m.pivotAim));}
             if(m.slideCell>=0) {h=mix(h,0x736c696465ull);h=mix(h,uint64_t(uint32_t(m.slideCell))<<32|uint32_t(m.slideFrom));}
             if(m.meetSeen!=kNoTick) {h=mix(h,0x6d73656eull);h=mix(h,m.meetSeen);}
+            if(m.passLabel) {h=mix(h,0x70617373ull);h=mix(h,m.passLabel);}
             if(m.gateCell>=0) {
                 h=mix(h,0x67617465ull);h=mix(h,uint32_t(m.gateCell));
                 h=mix(h,uint64_t(uint8_t(m.gateLane))|uint64_t(uint8_t(m.gateAxis))<<8|uint64_t(uint8_t(m.gateSign))<<16);
@@ -8331,8 +12019,8 @@ LegionNavigator::~LegionNavigator() {
 }
 bool LegionNavigator::supports(const Unit& u) const {return impl_->supports(u);}
 LegionMission LegionNavigator::mission(const Unit& u) const {return impl_->kindOf(u);}
-void LegionNavigator::registerMove(Unit& u) {impl_->registerMove(u);}
-void LegionNavigator::cancel(int id) {impl_->leave(id);}
+void LegionNavigator::registerMove(Unit& u) {impl_->requestRegister(u);}
+void LegionNavigator::cancel(int id) {impl_->requestCancel(id);}
 void LegionNavigator::ordersChanged(int id) {impl_->validate(id);}
 void LegionNavigator::tick() {impl_->tick();}
 void LegionNavigator::move(Unit& u,Fixed maximum) {impl_->move(u,maximum);impl_->markPass(u.id);}
@@ -8344,7 +12032,7 @@ LegionNavigator::Stats LegionNavigator::stats() const {
     for(const auto& [id,g]:impl_->groups) {
         s.bytes+=g.seeds.capacity()*sizeof(int);
         if(g.field) {
-            s.bytes+=g.field->potential.capacity()*sizeof(uint32_t);
+            s.bytes+=g.field->counted*sizeof(uint32_t);
             for(const auto& b:g.field->buckets)s.bytes+=b.capacity()*sizeof(int);
         }
     }
@@ -8352,6 +12040,16 @@ LegionNavigator::Stats LegionNavigator::stats() const {
     s.liveGroups=impl_->groups.size();s.liveMembers=impl_->members.size();
     s.livePoints=impl_->points.size();s.liveFields=impl_->liveFields();
     return s;
+}
+LegionNavigator::ParallelStats LegionNavigator::parallelStats() const {return impl_->par;}
+void LegionNavigator::setParallelForTest(bool force,uint64_t perturbSeed) {gParForce=force;gParPerturb=perturbSeed;}
+NavAccounting LegionNavigator::accounting() const {
+    NavAccounting a=impl_->acct;
+    impl_->windowMax(a);
+    a.bytes=impl_->navBytes();
+    impl_->acct.bytesPeak=std::max(impl_->acct.bytesPeak,a.bytes.total());
+    a.bytesPeak=impl_->acct.bytesPeak;
+    return a;
 }
 bool LegionNavigator::staticLegal(const Unit& u,int x,int z) {
     if(!u.type)return false;
@@ -8367,6 +12065,13 @@ bool LegionNavigator::planeMatchesRebuild(const Unit& u) {
     Impl::Plane fresh=p;
     impl_->buildPlane(fresh);impl_->labelPlane(fresh);
     if(fresh.legal!=p.legal)return false;
+    // Stage 6: the routing hierarchy, maintained lazily through the same changes, joins exactly the plane's
+    // components (every sector and side built here; derived state only).
+    {
+        auto& q=const_cast<Impl::Plane&>(p);
+        if(q.hier.ready()&&!q.hier.connectivityMatches(q.legal.data(),q.comp.data()))return false;
+        for(int s=0;s<q.hier.sectorCount();++s)if(!q.hier.sectorMatches(s,q.legal.data()))return false;
+    }
     // Same partition up to numbering, and the same size and box per part.
     std::map<int,int> to,from;
     for(size_t c=0;c<p.comp.size();++c) {
@@ -8410,11 +12115,11 @@ int LegionNavigator::laneGeometryCheck(const Unit& u,int queries,uint64_t seed,s
     for(const auto& [id,m]:I.members) {
         const Unit* v=I.w.unit(id);
         const auto group=I.groups.find(m.group);
-        if(!v||!v->type||group==I.groups.end()||!group->second.field||!group->second.field->done)continue;
-        const auto& g=group->second;const auto& f=*g.field;
+        if(!v||!v->type||group==I.groups.end()||!group->second.route().complete())continue;
+        const auto& g=group->second;const RouteView f=g.route();
         const auto& vp=I.plane(g.plane);
         const int vx=footprintOrigin(v->x,v->type->footX),vz=footprintOrigin(v->z,v->type->footZ);
-        if(f.at(size_t(vz)*W+vx)==kUnreached)continue;
+        if(f.estimate(size_t(vz)*W+vx)==kUnreached)continue;
         const uint64_t command=g.soft?g.command:Impl::kNoSoft;
         const int vc=!I.softCellCount?-1:I.softCountsFor(v->type->footX,v->type->footZ);
         std::array<int,kVertexChain+1> chain{};
@@ -8447,6 +12152,7 @@ int LegionNavigator::laneGeometryCheck(const Unit& u,int queries,uint64_t seed,s
     return bad+vbad;
 }
 int LegionNavigator::unitState(int id) const {
+    if(impl_->queued(id))return 3;   // waiting for its registration: navigation service delay
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:int(found->second.state);
 }
@@ -8535,9 +12241,9 @@ int LegionNavigator::fieldPotential(int id,int x,int z) const {
     const auto found=impl_->members.find(id);
     if(found==impl_->members.end())return -1;
     const auto group=impl_->groups.find(found->second.group);
-    if(group==impl_->groups.end()||!group->second.field||!group->second.field->done)return -1;
+    if(group==impl_->groups.end()||!group->second.route().complete())return -1;
     if(x<0||z<0||x>=impl_->width()||z>=impl_->height())return -1;
-    const uint32_t v=group->second.field->at(size_t(z)*impl_->width()+x);
+    const uint32_t v=group->second.route().estimate(size_t(z)*impl_->width()+x);
     return v==kUnreached?INT_MAX:int(v);
 }
 LegionNavigator::SlotShape LegionNavigator::slotShape(int id) const {
@@ -8547,6 +12253,16 @@ LegionNavigator::SlotShape LegionNavigator::slotShape(int id) const {
 LegionNavigator::SlotShape LegionNavigator::lastSlotShape() const {return impl_->lastShape;}
 void LegionNavigator::setRestStrideForTest(int stride) {gRestStride=uint32_t(std::max(stride,1));}
 void LegionNavigator::setAwareOffForTest(bool off) {gAwareOff=off;}
+void LegionNavigator::setPauseAllForTest(bool on) {gPauseAll=on;}
+void LegionNavigator::setInstrumentProbes(bool on) {gInstrumentProbes=on;}
+void LegionNavigator::setBudgetDivisorForTest(int div) {gBudgetDiv=uint64_t(std::max(div,1));}
+void LegionNavigator::setFieldBytesForTest(uint64_t bytes) {gFieldBytes=bytes;}
+void LegionNavigator::setHierarchicalRoutesForTest(bool on) {gHierRoutes=on;}
+void LegionNavigator::setSectorSizeForTest(int k) {
+    int shift=5;
+    for(int s=2;s<=8;++s)if((1<<s)==k)shift=s;
+    gSectorShift=shift;
+}
 void LegionNavigator::setVerify(bool on) {gVerify=on;}
 bool LegionNavigator::verifying() {return gVerify;}
 void LegionNavigator::setProbe(uint32_t ticks) {gProbe=ticks;}

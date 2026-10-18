@@ -38,6 +38,7 @@ enum class Act {
     SelectBallistic, SelectTroops, SelectArmed, SelectOnScreenType, SelectFlying,
     SelfDestruct,
     GiveUnits, ToggleCounts, UnitInfo, FullScreenRadar, Disco, Headbang, RetailZoom,
+    PushToTalk,
     Count
 };
 
@@ -59,6 +60,12 @@ uint16_t normMod(uint16_t sdlMod);
 std::string chordName(const KeyChord& c);
 bool parseChord(const std::string& s, KeyChord& out);
 
+// Keys the game reads itself, outside the rebindable actions, that PUSH TO TALK may not
+// take: it is checked before them and swallows its key in a voice room, so on Enter the
+// chat composer could never open, on a digit a squad could never be recalled, and on an
+// arrow the camera could not pan. (Esc cancels a capture and is never bound.)
+bool pushToTalkReserved(int32_t key);
+
 // The effective binding set: defaults overlaid with the user's overrides. Built from
 // Settings::hotkeys and consulted by the input handler.
 class Hotkeys {
@@ -68,6 +75,15 @@ public:
     KeyChord chord(Act a) const { return chords_[size_t(a)]; }
     // The action bound to this pressed key+mod, or Act::Count if none.
     Act match(int32_t key, uint16_t sdlMod) const;
+    // Push-to-talk is held, not pressed, so it matches more loosely than match(): its
+    // key with AT LEAST its modifiers (Shift-clicking while talking still talks),
+    // unless another action is bound to exactly the chord being pressed. Releases match
+    // on the key alone, whatever modifiers are down by then.
+    bool pushToTalkPress(int32_t key, uint16_t sdlMod) const;
+    bool pushToTalkRelease(int32_t key) const {
+        const KeyChord c = chord(Act::PushToTalk);
+        return c.bound() && c.key == key;
+    }
 
 private:
     KeyChord chords_[size_t(Act::Count)] = {};

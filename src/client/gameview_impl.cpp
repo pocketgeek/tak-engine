@@ -126,9 +126,11 @@
 
     GameView::~GameView() {
         stopSimThread(/*drain=*/false);
-        // Last chance: a player who quit, conceded or was dropped before the game
-        // was decided still gets the replay of what they played.
-        saveNetReplay();
+        // The session is over, however it ended (quit, return to menu, results,
+        // disconnect, desync, kick, SIGTERM): finish the replay with everything
+        // received up to now. The net client outlives the view (main.cpp).
+        finishReplayRecording();
+        if (mp_) mp_->setRecordingRestartHook(nullptr);
         resetMinimap();
         destroyGpuTextures();
         if (gaitLog_) std::fclose(gaitLog_);
@@ -249,6 +251,7 @@
                 replayMode_ ? "Change it from Options on the main menu, not while watching a replay."
                 : inLobbyPhase() ? "Change it from Options on the main menu, not in a lobby."
                                  : "Change it from Options on the main menu, not during a game.", {}});
+        options_->offerVoicePage();
     }
 
     void GameView::writeResume(uint32_t gid, uint64_t tok) const {
@@ -316,8 +319,28 @@
     void GameView::issue(tak::net::Command c) {
         if (replayMode_ || spectating_) return;   // watch-only: can't order units
         c.player = uint8_t(localPlayer_);
+        if (click_) { click_->cmds.push_back(std::move(c)); return; }
         if (mp_) outbox_.push_back(c);
         else apply(c);
+    }
+
+    // The outermost ClickScope closed: a Legion net game sends the click as
+    // explicit orders, everything else command by command, as issued.
+    void GameView::flushClick() {
+        if (!click_) return;
+        ClickBuffer click = std::move(*click_);
+        click_.reset();
+        if (click.cmds.empty()) return;
+        if (!mp_) { for (const auto& c : click.cmds) apply(c); return; }
+        if (!tak::sim::isLegionPathfinding(worldTables().pathfindingMode())) {
+            outbox_.insert(outbox_.end(), click.cmds.begin(), click.cmds.end());
+            return;
+        }
+        // Serials are given when an order is sent (mpStep), so a click held through a
+        // rejoin's catch-up still gets one above every order that activated before.
+        uint32_t provisional = nextOrderSerial_;
+        for (auto& item : tak::net::packClick(click.cmds, click.shape, provisional))
+            outbox_.push_back(std::move(item));
     }
 
     void GameView::startReplay(tak::sim::MatchConfig cfg,
@@ -574,12 +597,11 @@
                 outcome_ = -1;
             }
         }
-        // The result just landed: ask for this player's replay to be written. REQUEST,
+        // The result just landed: ask for the replay so far to be made durable. REQUEST,
         // not write -- simStep runs on the sim worker, while the net client appends to
-        // its recorded bundles and hashes from the main thread. Serializing those
-        // vectors from here would read them while they grow. The main thread picks
-        // this up (see cosmeticStep) and does the work.
-        if (previousOutcome == 0 && outcome_ != 0) replayWanted_.store(true, std::memory_order_relaxed);
+        // its recorded bundles and hashes from the main thread. The main thread picks
+        // this up (pumpReplayRecording). The recording itself goes on.
+        if (previousOutcome == 0 && outcome_ != 0) replayResultSync_.store(true, std::memory_order_relaxed);
 #ifndef NDEBUG
         PaceSpan captureSpan(paceCaptureNs_);
 #endif
@@ -769,7 +791,7 @@
         s.constructionPercentLeft = u.retailSite
             ? int(tak::sim::retailConstructionPercent(u.retailSite->progress.remaining))
             : int(u.underConstruction);
-        s.buildProgress = float(u.buildProgress) / 30.0f;   // ticks -> seconds
+        s.buildProgress = (float(u.buildProgress) + float(u.buildFraction) / 65536.0f) / 30.0f;   // ticks -> seconds
         // Orders/rally/areaVisited are read for the VIEWED player's units only (the order
         // trails, queued-build ghosts and the HUD all gate on localPlayer_; a spectator or
         // replay viewer is seated as localPlayer_ too). Copying them for every unit was the
@@ -1061,10 +1083,6 @@
         // Reads the render SNAPSHOT (front()), never live world_, so it is safe
         // on the main thread while the sim worker ticks. Transient combat events
         // arrive through queues so skipped snapshots cannot discard them.
-        // Deferred replay write, requested by the sim thread when the result landed.
-        // Done HERE because this runs on the main thread, which is the only one that
-        // may read the net client's recorded bundles while it is still connected.
-        if (replayWanted_.exchange(false, std::memory_order_relaxed)) saveNetReplay();
         const bool newTick_ = (front().gen != lastCosmeticGen_);
         lastCosmeticGen_ = front().gen;
         // Weapon impacts this tick: play each weapon's soundhitclass, picking the
@@ -3188,6 +3206,7 @@
 
 
     void GameView::issuePerUnit(tak::net::Cmd kind, int value) {
+        ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         for (int id : selection_) {
             const auto* u = frameUnitP(id);
             if (!u || u->player != localPlayer_) continue;
@@ -3233,6 +3252,7 @@
     }
 
     bool GameView::handleKey(SDL_Keycode key, uint16_t mod) {
+        ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         bool ctrl = (mod & KMOD_CTRL) != 0;
         bool shift = (mod & KMOD_SHIFT) != 0;
         bool alt = (mod & KMOD_ALT) != 0;
@@ -3296,10 +3316,12 @@
         // Everything below is a REBINDABLE action: resolve the pressed chord to an
         // Act via the user's hotkey config (src/client/hotkeys) and dispatch.
         switch (hotkeys_.match(int32_t(key), mod)) {
+            case tak::Act::PushToTalk: return true;   // held for voice chat (voiceKey), no action here
             case tak::Act::GiveUnits:
                 if (!spectating_ && !replayMode_ && missionStem_.empty()) {
                     giveUnitsMenu_ = true;
                     giveUnitsHots_.clear();
+                    voiceVolumeDrag_ = -1;
                     dragging_ = false;
                 }
                 return true;

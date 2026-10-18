@@ -277,7 +277,7 @@ jobs:
         env:
           CTEST_PARALLEL_LEVEL: 4
         run: |
-          cmake --build build --target legion_world_test legion_idmap_test legion_flyers_test legion_still_test crowdbench legion_observe_selftest issue_selection_test legion_scenario legion_acceptance_test
+          cmake --build build --target legion_world_test legion_idmap_test legion_flyers_test legion_still_test crowdbench legion_observe_selftest issue_selection_test legion_scenario legion_acceptance_test legion_hier_test legion_route_test
           bash tools/run-ctest-selection.sh --exclude-labels 'nightly|data' --selection tools/legion_ci_selection.txt build
 
       - name: Streaming encode test
@@ -362,7 +362,7 @@ jobs:
           cmake --build build-debug --target takclient takserver cartographer crusades_admin
           python3 tools/check-linux-architecture.py ${{ matrix.arch }} build-debug/takclient build-debug/takserver build-debug/cartographer build-debug/crusades_admin
           mkdir -p dist-linux-debug
-          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt dist-linux-debug/
+          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-linux-debug/
           cp build-debug/takclient build-debug/takserver build-debug/cartographer build-debug/crusades_admin dist-linux-debug/
           tar -C dist-linux-debug -czf dist/tak-engine-linux-${{ matrix.arch }}-debug.tar.gz .
 

@@ -34,6 +34,7 @@
 #include "sim/simprobe.h"
 #include "sim/simpool.h"
 
+#include <array>
 #include <cstddef>
 #include <span>
 #include <algorithm>
@@ -674,6 +675,11 @@ struct alignas(64) Order {
     // leg's value. kNone outside Legion and on orders no click made (formation
     // anchors, rallies, waypoints spliced in by a route). Retail never sets
     // it; hashed with a tag when set.
+    // Since protocol 267 the value is the order's ARRIVAL AREA key
+    // (ConvoyTable::Convoy::key): an explicit selection order (Cmd::Order)
+    // joins the table once for all its members, and an area it opens is keyed
+    // kExplicitArea | its serial, unique per area; per-unit commands (the AI,
+    // scripts) still open areas keyed by their first tick.
     uint32_t convoyTick = ConvoyTable::kNone;
     uint64_t controller = 0;
     HeapOptional<RetailParkState> park;
@@ -739,6 +745,13 @@ struct alignas(64) Order {
     // MobileBuild placement at the site (405824..405911): failures while only
     // mobile units stand on it, and the tick of the next 10-tick retry. Zero
     // until the first such failure. Hashed with a tag when set.
+    // Legion only: the serial of the explicit selection order (Cmd::Order,
+    // protocol 267) whose member got this leg, 0 for every other order (and
+    // always in Retail). Stamped and copied with convoyTick; the pair is the
+    // leg's OrderIdentity. Hashed with a tag when set.
+    uint32_t orderSerial = 0;   // cold: read once per Legion registration and by the hash
+    OrderIdentity identity() const { return {convoyTick, orderSerial}; }
+    void setIdentity(const OrderIdentity& id) { convoyTick = id.convoyTick; orderSerial = id.serial; }
     uint32_t placementRetryTick = 0;
     uint8_t placementFailures = 0;
     // An auto attack issued with a return (4d7de0's leash path: the idle
@@ -778,6 +791,7 @@ TAK_ORDER_LINE(park, 1); TAK_ORDER_LINE(buildRectangle, 1); TAK_ORDER_LINE(fligh
 TAK_ORDER_LINE(missionTarget, 1); TAK_ORDER_LINE(patrolRepair, 1); TAK_ORDER_LINE(patrolOpen, 1);
 TAK_ORDER_LINE(transportUnloadReleasePending, 1); TAK_ORDER_LINE(transportUnloadTransferDeferred, 1);
 TAK_ORDER_LINE(formationLevel, 1); TAK_ORDER_LINE(stationFree, 1); TAK_ORDER_LINE(missionRadius, 1);
+TAK_ORDER_LINE(orderSerial, 4);
 static_assert(offsetof(Order, mission) == 128, "line 1 ends at byte 127; line 2 starts with mission");
 static_assert(sizeof(Order) == 320, "Order is five cache lines (the cold tail has room left); a new field names its line above");
 #undef TAK_ORDER_LINE
@@ -1148,6 +1162,10 @@ struct alignas(64) Unit {
     // BUILD stage 2's refusal sleep (401df4): the tick a factory whose output
     // site was refused may test it again. 0 = not waiting. Hashed when set.
     uint32_t productionRetryTick = 0;
+    // Factory/conjure progress past buildProgress, in 1/65536 of a tick of work.
+    // Nonzero only when the player's construction share (Player::constructionShare)
+    // bought part of a tick. Hashed when set.
+    uint16_t buildFraction = 0;
     // RALLY orders for a production building: what the units it makes should do once
     // they have walked clear of the exit. Kept OUT of `orders` on purpose -- a
     // structure must never enter the mover (it has no velocity, but the mover still
@@ -1569,6 +1587,27 @@ struct Player {
     // RetailConstructionResources preserves that arithmetic for the pending
     // economy/construction integration.
     double mana = 500;
+    // Construction work shares the pool, as retail does (51d837 sets allocation =
+    // stored / demand; 429af0 scales every worker's work by it and pro-rates the
+    // last one against what is left; see RetailConstructionResources). Without it
+    // each consumer paid its whole per-tick cost or did nothing, in unit order, so
+    // cheap low-id producers took every trickle and a costly later one could sit at
+    // zero progress for minutes while mana income was short.
+    //   constructionDemand: full-rate mana asked for by construction, repair and
+    //     production work this tick (retail records the request before scaling).
+    //     It is the demand the next tick's allocation divides by. Hashed when set.
+    //   constructionAllocation: this tick's share, recomputed after income.
+    // Unused for a player with retailResources, which runs the native object.
+    double constructionDemand = 0;
+    double constructionAllocation = 1;
+    // The fraction of `cost` (one tick of full-rate work) this consumer may do
+    // now. Records the request; the caller debits cost * share, capped at mana.
+    double constructionShare(double cost) {
+        if (cost <= 0) return mana >= cost ? 1.0 : 0.0;
+        if (!retailResources) constructionDemand += cost;
+        if (mana <= 0) return 0.0;
+        return std::min(constructionAllocation, mana / cost);
+    }
     float scenarioResourceLimit = 0; // CRT override: positive values also suppress natural income
     float storage = 0;   // recomputed each tick from alive units
     float income = 0;
@@ -2284,10 +2323,23 @@ public:
     // terrain by splicing its waypoints in as further order legs (see replaceLeg).
     // This used to describe a shared flow field; that system is gone.
     // Under Legion every order joins a convoy of its class (Move here, Fight
-    // from attackMove, Patrol from patrolTo); `convoyCopy`, when set, is stamped
-    // instead of joining (a patrol's return leg).
+    // from attackMove, Patrol from patrolTo); `identityCopy`, when set, is stamped
+    // instead of joining (a patrol's return leg). Inside an explicit order
+    // (beginOrder) the order's area and serial are stamped instead.
     void order(int unitId, float x, float z, bool queue, ConvoyClass cls = ConvoyClass::Move,
-               std::optional<uint32_t> convoyCopy = std::nullopt);
+               std::optional<OrderIdentity> identityCopy = std::nullopt);
+    // Explicit selection orders (Cmd::Order, protocol 267; applySelectionOrder in
+    // sim/matchsetup.cpp): between beginOrder and endOrder the members of ONE order
+    // are applied, each named by orderMember before its command, and under Legion
+    // every leg the member gets for itself carries the order's identity: its
+    // serial, and -- for an order with a click point (`point`: Move, AttackMove,
+    // Patrol) -- the arrival area the order joins once per class at that point
+    // (`x`, `z`), never per member. Legs of other verbs (an Assist's approach
+    // move) and of any unit but the member keep the per-unit identity. Not state:
+    // it lasts one applyCommand call.
+    void beginOrder(uint32_t serial, int player, bool point, Fixed x, Fixed z);
+    void orderMember(int unitId) { if (activeOrder_) activeOrder_->member = unitId; }
+    void endOrder() { activeOrder_.reset(); }
     // A unit's orders changed (a leg gained or retired, a mission step, its
     // death): Legion drops the settled-arrival and parting records the unit
     // no longer qualifies for. The order helpers, dropLeg, acquireTarget, the
@@ -2339,7 +2391,7 @@ public:
     void patrol(int unitId, float x, float z);
     // Queue a patrol waypoint (SetMission "p X Y"): like a move but the completed
     // order re-queues at the back, so a chain of these loops the unit through them.
-    void patrolTo(int unitId, float x, float z, bool queue, std::optional<uint32_t> convoyCopy = std::nullopt);
+    void patrolTo(int unitId, float x, float z, bool queue, std::optional<OrderIdentity> identityCopy = std::nullopt);
     // The player's Shift-patrol (Cmd::Patrol, queue=1): appends point (x,z)
     // after every queued order. If it starts with no loop in the queue, the
     // patrol mission adds the return point where the unit then stands (see
@@ -2768,6 +2820,11 @@ private:
         int x=0,z=0,width=0,height=0;
         BodyCells cells;
     };
+    // Inside World::tick (set for its whole extent). Between ticks the lockstep
+    // driver applies commands: Legion queues the navigator events those raise and
+    // replays them at the start of its next tick (Legion 10,000 stage 4). Derived
+    // from the call context, never hashed.
+    bool inTick_=false;
     // Tick-local broad phase. Buckets keep conservative candidates, including
     // dead/flying bodies; exact current eligibility and yards are checked below.
     bool bodyIndexEnabled_=false;
@@ -3192,6 +3249,19 @@ private:
     std::unique_ptr<LegionNavigator> legion_; // Legion mode only
     ConvoyTable convoys_;                     // Legion mode only; hashed while not empty
     uint32_t joinConvoy(const Unit& u, ConvoyClass cls, Fixed x, Fixed z);
+    uint32_t joinArea(int player, ConvoyClass cls, Fixed x, Fixed z, bool shared, uint32_t key);
+    // The identity a new leg of `u` of class `cls` at (x, z) gets under Legion:
+    // the active explicit order's (its area, joined once per class), else a
+    // per-unit convoy join (serial 0).
+    OrderIdentity stampIdentity(const Unit& u, ConvoyClass cls, Fixed x, Fixed z);
+    struct ActiveOrder {
+        uint32_t serial = 0;
+        int player = 0, member = -1;
+        bool point = false;
+        Fixed x, z;
+        std::array<uint32_t, 3> area{ConvoyTable::kNone, ConvoyTable::kNone, ConvoyTable::kNone};
+    };
+    std::optional<ActiveOrder> activeOrder_;   // never hashed: lives within one applyCommand
     // Bumped whenever terrain/feature placement legality may change. Derived
     // planes compare it; never hashed (it is a cache key, not state).
     uint64_t placementEpoch_=0;

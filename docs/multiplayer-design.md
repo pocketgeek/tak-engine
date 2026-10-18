@@ -324,6 +324,7 @@ silently skipped.)
 | Msg | Payload | Notes |
 |---|---|---|
 | `PlayerCommands` | n × Command | client → server; player byte ignored/overwritten |
+| `OrderBegin` / `OrderMembers` / `OrderCommit` / `OrderAbort` | serial, template Command, shape, count / serial, member deltas (≤ 2,048) / serial, count, digest / serial | client → server (protocol 267): one explicit selection order as a transaction; the server puts the committed order whole into ONE TickBundle (`Cmd::Order`, its activation tick). Legion clients send their selection verbs this way, Retail clients keep per-unit commands. `net/protocol.h` beside `kOrderMaxMembers`, `server/orders.h`, docs/legion-pathfinding.md "Legion 10,000 stage 3" |
 | `TickBundle` | tick u32, n × Command (ascending player, then arrival order), m × Event | server → all clients, 30/s; empty bundles are the clock; the event section exists from day one (§3) |
 | `StateHash` | tick u32, hash u64 | client → server, every 30 ticks |
 | `Desynced` | tick, reason | server → one client; client auto-reconnects |
@@ -332,6 +333,98 @@ silently skipped.)
 | `PlayerStatus` | slot, {connected, dropped, left} + ping | informational only — never sim-affecting (sim-affecting lifecycle is an Event in the bundle) |
 | `Rejoin` | game id, resume token | then `LogChunk`* (compressed) → live bundles |
 | `Bye` | reason | clean shutdown both ways |
+
+### Voice chat (protocol 276)
+
+Voice is **presentation only**: it never enters a TickBundle, the replay log, the
+referee or `World::stateHash`, and the sim is unchanged by it. The server relays it
+beside the game on three messages (`net/protocol.h` beside `kVoiceMaxOpus`):
+
+| Msg | Payload | Notes |
+|---|---|---|
+| `VoiceListen` | u8 on | client → server: this connection wants voice (voice chat switched on). Off by default, so the headless harness, a benchmark and anyone with voice off are sent none |
+| `VoiceUp` | u16 seq, u8 recipients, u8 flags, u16 len, Opus | client → server: one 20 ms frame (48 kHz mono, ~24 kbit/s, in-band FEC), `recipients` = the talker's diplomacy VOICE mask. Flags: START (resets the receiver), END (key released, no audio) |
+| `VoiceDown` | u32 talker id, u8 slot (0xFF spectator), u16 seq, u8 flags, u16 len, Opus, [str name] | server → client; the name rides on START frames and every 25th (`kVoiceHasName`) |
+
+Recipients follow the **chat rules exactly**: before the game runs, or for mask
+0xff, the whole room including spectators; otherwise the seated players whose bit
+is set. Never back to the talker, never to a connection catching up (`replaying`)
+or one that has not sent `VoiceListen 1`. Spectators cannot open diplomacy, so
+their mask is 0xff and they talk to everyone, as their chat does.
+
+Voice must never cost the game anything. Relayed frames go out through
+`Conn::sendLow`: a separate queue that joins the byte stream only once every
+ordinary frame queued so far has left, holds at most 16 frames (the newest win),
+and refuses frames while 64 KiB of game traffic waits. That ordering holds inside
+the program; once bytes are handed to the operating system they are sent in
+order, so voice also waits for the kernel: a batch (at most 1 KiB) joins the
+stream only while the kernel holds under 2 KiB for that peer, unsent or not yet
+acknowledged (`kernelQueued`: `SIOCOUTQ` on Linux, `SO_NWRITE` on macOS; on
+Windows `SIO_TCP_INFO`, Windows 10 1703 or later, as the bytes `send()` accepted --
+counted by `Conn`, or the TLS socket BIO's count -- minus `BytesOut - BytesRetrans -
+BytesInFlight`). Where the kernel cannot answer, voice is dropped rather than sent
+ungated: before this, Windows let a talker's voice fill Winsock's 64 KiB send
+buffer ahead of every `Progress`. A tick bundle queued later finds at most about
+3 KiB of voice ahead of it whatever the link speed, and on a link the game already
+fills voice overflows its queue and is dropped. The server also caps each client
+socket's unsent kernel queue at 16 KiB (`TCP_NOTSENT_LOWAT`, `limitUnsent`), so a
+backlog of game traffic waits in the program where the send-backlog limits see it.
+
+What the sender's kernel cannot show -- a slow reader's receive buffer, or a few
+KiB of voice already ahead of a `Progress` on a link of a few kbit/s -- is caught
+at each end by how late the game's own traffic is:
+
+- **The talker's uplink** (`MpClient::sendVoice`). While transmitting, the client
+  pings the server four times a second (every two seconds while voice is on, for a
+  quiet baseline). A round trip more than max(100 ms, 4 ticks) above the lowest one
+  (back, or still out) means its own voice is queueing ahead of its `Progress` and commands: voice is
+  held -- an END closes the transmission, the queued voice is thrown away, captured
+  frames are dropped -- for a back-off of 5 s doubling to 60 s (forgotten after 2
+  quiet minutes), and resumes with a START once the probe is quiet.
+  The Pong is read once a rendered frame, so a probe is judged by the least it can
+  have taken: from its Ping to the last read that found the socket empty of it, not
+  to the read that found it. Otherwise a talker whose machine stutters (a 180 ms
+  frame every 0.7 s on a fast link) was held for 54 s of every 60.
+  `voice_uplink_test` (all platforms, Windows included) talks over a 2500 B/s
+  uplink: no `Progress` waits more than ~0.4 s, where without the hold Linux queued
+  up to 2.4 s and Windows 5.5 s after 15 s and 22 s after 60 s; and with 180 ms and
+  250 ms frames on a fast link nothing is held.
+- **A listener's downlink** (`Server::voiceBehind`). `Progress` reports the newest
+  tick that has *arrived* as well as the one processed. In a running game the server
+  stops voice to a listener whose arrival lags the room by more than 3/4 of the lead
+  it would have on an idle link (`flowLeadTicks` at its lowest reported round trip),
+  drops its queued voice, and resumes once it is back within half that lead, after
+  the same back-off. Arrival, not processing: a slow *machine* has its bundles in
+  hand and runs them late, and in a room it holds back it lags by its whole lead for
+  as long as that lasts, which is no reason to take its voice away.
+  `server_voice_slow_test.py` reads two listeners (one seated, one spectating) at
+  1500 B/s while a third player talks: the room keeps about 27 of its 30 ticks a
+  second and neither falls more than ~25 ticks behind; without these rules the room
+  ran at 2-8 ticks a second. Its `--case cpu` (ctest `server_voice_cpu`) seats a
+  fast-link player who runs 22 ticks a second: he holds the room and hears every
+  frame (judged by the processed tick he would have heard none).
+
+Per talker the server relays 60 frames / 16 KB a second and drops the
+excess. An END marker skips those budgets so a cut-off transmission still
+closes, but it carries no audio (audio or START with END fails the connection)
+and only the one END owed to a transmission that relayed audio is passed on, so
+ENDs can never outnumber relayed audio frames. 300 frames a second, a malformed
+frame or a client sending `VoiceDown` fails that connection; 4,000 frames a second
+across the server. `VoiceListen` is exempt from the lobby budgets shared by an
+address, an account and the server (a dropped one would never be repeated), but
+not from the connection's own. The client
+(`client/voice.h`) captures and plays on SDL audio devices of its own, buffers
+2–8 frames per talker, rebuilds a frame the server dropped from the next frame's
+FEC, and conceals a late one. It mixes the talkers with each one scaled by that
+player's diplomacy **VOLUME** slider (0-100 by player slot, 100 by default; humans
+other than yourself only, none for an AI), then applies OUTPUT VOLUME and a soft
+limiter. The sliders are local: never sent, hashed or recorded, reset to 100 each
+game, greyed while voice chat is off. Opus is built from its pinned source release
+(`cmake/Opus.cmake`) and linked only into takclient. Tests: `voice_test` (codec,
+jitter buffer, push-to-talk, engine on SDL's disk audio driver, the VOICE CHAT
+page, the per-player mix), `diplomacy_ui` (the VOLUME sliders), `voice_client_test` (MpClient on the wire), `server_voice_test.py`
+(routing, budgets, abuse against a real server), `server_voice_slow_test.py`
+(slow listeners do not hold up the game), `conn_test` (the low-priority queue).
 
 Bundle **Event** records (u8 kind + payload): `Forfeit{player}` (grace expired
 or explicit surrender), `Leave{player}` (voluntary, units per forfeit rule),
@@ -350,6 +443,12 @@ attackMove) all map onto existing `Train` / `Build` / `AttackMove` commands.
   connection.
 - Per-player per-tick command cap (e.g. 64) so a spammer can't inflate every
   bundle for eight clients; excess commands are dropped with a notice.
+  Explicit orders (protocol 267) have limits of their own: 16,384 members, 64
+  orders / 384 KiB outstanding per client, 96 KiB of order records per tick
+  shared by the room (first pick rotating), the same per-second byte and
+  command budgets (an order's members count as commands; over the command
+  budget an order waits at the head of its client's queue, it is never
+  dropped). An order in a Retail game fails the connection.
 - Full validation of remote input: `Cmd` kind range, `type` strings looked up
   against the registry, unit/target ids sane. Malformed ⇒ disconnect.
 - Lobby rate limits (CreateGame, Chat, ListGames floods).
@@ -751,6 +850,11 @@ so the default 2,000 cap scans 500 slots a player, not 2,000 (hashed pool
 sizes; see the 2026-10-15 grow-as-needed audit in `pathfinding-port.md`). The
 `--mpai` Inner Circle seed 1 hashes: Retail 300 s `7535cb08ee787b75`, 60 s
 `2c39430636a3dbda`; Legion 300 s `c707e1a8063bc0c7`, 60 s `532539f51d70840b`.
+Protocol 267 adds explicit selection orders (`Cmd::Order` in the tick bundles,
+the OrderBegin/OrderMembers/OrderCommit/OrderAbort uplink transaction; Legion
+clients only, so Retail is bit-identical), and protocol 266 recordings no longer
+play. An AI-only game issues no orders, so the `--mpai` hashes above are
+unchanged under 267 (both modes, 60 s and 300 s).
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when

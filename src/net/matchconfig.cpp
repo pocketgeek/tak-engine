@@ -23,9 +23,10 @@ sim::MatchConfig matchConfigFor(const GameOptions& o, const SlotInfo* slots, uin
     cfg.slots.resize(size_t(maxSlot + 1));
     for (int i = 0; i <= maxSlot; ++i) {
         const SlotInfo& s = slots[i];
-        const float mm = s.type == 2 ? ai::incomeMultFor(ai::difficultyFromLevel(s.aiLevel)) : 1.0f;
+        const auto level = ai::difficultyFromLevel(s.aiLevel);
+        const float mm = s.type == 2 ? ai::incomeMultFor(level) : 1.0f;
         cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team, mm, s.type == 2,
-                                s.type == 2 && s.aiLevel == 0};
+                                s.type == 2 && ai::defensiveLevel(level)};
     }
     return cfg;
 }

@@ -61,6 +61,14 @@ std::string settingsPath() {
     return base.empty() ? std::string() : base + "settings.ini";
 }
 
+std::string replayDir() {
+    std::string dir = settingsPath();
+    const size_t cut = dir.find_last_of("/\\");
+    if (cut == std::string::npos) return {};
+    dir.erase(cut + 1);
+    return dir;
+}
+
 Settings loadSettings() {
     Settings s;   // defaults
     std::string path = settingsPath();
@@ -131,6 +139,12 @@ Settings loadSettings() {
         else if (key == "accountName")     s.accountName = val;
         else if (key == "streamRememberKey") s.streamRememberKey = asBool();
         else if (key == "audioDevice")     s.audioDevice = val;
+        else if (key == "voiceEnabled")    s.voiceEnabled = asBool();
+        else if (key == "voiceMicDevice")  s.voiceMicDevice = val;
+        else if (key == "voiceOutputSameAsGame") s.voiceOutputSameAsGame = asBool();
+        else if (key == "voiceOutputDevice") s.voiceOutputDevice = val;
+        else if (key == "voiceMicVolume")  s.voiceMicVolume = asInt(0, 100);
+        else if (key == "voiceOutputVolume") s.voiceOutputVolume = asInt(0, 100);
         else if (key == "gameCreate.crusades") s.gameCreate.crusades = asBool();
         else if (key == "gameCreate.pathfindingMode")
             // Exactly one stable mode byte; anything else falls back to Retail.
@@ -222,6 +236,12 @@ std::string serializeSettings(const Settings& s) {
     o << "accountName = " << s.accountName << "\n";
     o << "streamRememberKey = " << (s.streamRememberKey ? 1 : 0) << "\n";
     o << "audioDevice = " << s.audioDevice << "\n";
+    o << "voiceEnabled = " << (s.voiceEnabled ? 1 : 0) << "\n";
+    o << "voiceMicDevice = " << s.voiceMicDevice << "\n";
+    o << "voiceOutputSameAsGame = " << (s.voiceOutputSameAsGame ? 1 : 0) << "\n";
+    o << "voiceOutputDevice = " << s.voiceOutputDevice << "\n";
+    o << "voiceMicVolume = " << std::clamp(s.voiceMicVolume, 0, 100) << "\n";
+    o << "voiceOutputVolume = " << std::clamp(s.voiceOutputVolume, 0, 100) << "\n";
     o << "gameCreate.crusades = " << s.gameCreate.crusades << "\n";
     o << "gameCreate.pathfindingMode = " << int(s.gameCreate.pathfindingMode) << "\n";
     o << "gameCreate.doubleSight = " << s.gameCreate.doubleSight << "\n";

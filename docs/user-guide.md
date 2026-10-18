@@ -273,11 +273,12 @@ scenario.
 
 | Difficulty | What to expect |
 | --- | --- |
-| **Defensive** | Builds at home. Sends its army to meet attackers near its base, then pulls it back, including attackers it cannot see that shoot its units from out of sight. Does not build where enemy troops are about. Never raids. |
+| **Defensive** | Keeps building as fast as its mana income allows, with no limit of its own on how many factories, builders, towers or troops it makes; only the room's unit cap and the game's rules stop it. Builds at home; the base spreads outward as it grows, but stays on its own side of the map, and its builders claim mana deposits farther out. Sends its army to meet attackers near its base, then pulls it back, including attackers it cannot see that shoot its units from out of sight. Does not build where enemy troops are about. Never raids. |
 | **Easy** | Builds slowly. First attack after about four minutes, then small waves of at most eight units, at least two minutes apart. |
 | **Normal** | Sends small raiding parties to probe and scout while it builds up a main army sized to its income. |
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
 | **Absurd** | Plays like Hard, with **double mana income**. |
+| **Absurdly Defensive** | Plays like Defensive, with Absurd's **double mana income**. |
 
 At every difficulty, the AI's Monarch fights back when it is attacked, or when
 an armed enemy comes within its reach, instead of carrying on with a build.
@@ -296,8 +297,9 @@ for it, its own or an ally's, has got no nearer for a minute, and sends its own
 stuck builders to other work.
 
 Normal starts with its Monarch and one builder and adds builders as its income
-grows, up to the Monarch and four; Easy and Defensive keep two. No AI builds more
-of one builder type than the original game's AI file allows. Zhon has no factory
+grows, up to the Monarch and four; Easy keeps two. Defensive and Absurdly
+Defensive add one per 50 income with no ceiling. No other AI builds more of one
+builder type than the original game's AI file allows. Zhon has no factory
 buildings, so its AI counts its Beast Handlers, Tamers, Lords and Shamans as
 both producers and builders. An AI whose mana store is nearly full keeps its
 builders building income rather than leaving them idle.
@@ -1453,9 +1455,19 @@ may still have problems. See the [campaign notes](campaign-design.md).
 
 ## Replays
 
-Every game you play or watch is **recorded automatically**, including games where
-you only spectate the AI (the Benchmark is not recorded). Replays of games you
+Every game you play or watch is **recorded automatically**, including campaign
+missions and games where you only spectate the AI (the Benchmark is not
+recorded). Replays of games you
 watched carry no checkpoint hashes, since a spectator does not report them.
+
+The replay is written to disk while you play, so it is kept however the game
+ends: a win or a loss, quitting, returning to the menu, a lost connection, the
+computer shutting down, or the game being killed or crashing. It runs to the
+moment you left, including anything played or watched after the result. If the
+game was killed or crashed, the recording is finished the next time TAK Engine
+starts and loses at most about the last second. If the disk fills up or the
+replay folder cannot be written for a while, the game keeps the recording in
+memory and writes it as soon as it can.
 
 To watch one, open **Settings → Load Replay** on the main menu and choose a
 recording. During playback:

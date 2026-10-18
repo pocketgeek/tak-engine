@@ -45,7 +45,16 @@
     }
 
     void GameView::setMpClient(tak::net::MpClient* mp) {
+        if (mp_ && mp_ != mp) mp_->setRecordingRestartHook(nullptr);
         mp_ = mp;
+        // A new game on this connection: finish the old game's file while its bundles
+        // are still in the log (the hook runs before the log is cleared). The new game
+        // opens its own once it is set up (startMpGame).
+        if (mp_) mp_->setRecordingRestartHook([this] {
+            if ((replayRec_ || replayRecRetryMs_) &&
+                (replayRecGame_ != mp_->room().id || replayRecSeed_ != mp_->startSeed()))
+                finishReplayRecording();
+        });
     }
 
     // Watch-only view of a live net game (spectator join or create-as-spectator):
@@ -60,25 +69,89 @@
         gameStartMs_ = SDL_GetTicks64();
     }
 
-    void GameView::saveNetReplay() {
-        if (replaySaved_ || !mp_ || !mp_->recording() || mp_->replayLog().empty()) return;
-        if (benchmarkMode_) return;   // a performance run, not a game worth keeping
-        replaySaved_ = true;
-        // Beside settings.ini: settingsPath() is <prefdir>/settings.ini, so trim the
-        // file name off rather than rebuilding the platform path by hand.
-        std::string dir = tak::settingsPath();
-        const size_t cut = dir.find_last_of("/\\");
-        if (cut == std::string::npos) return;
-        dir.erase(cut + 1);
-        const std::string path = saveReplayFile(dir, *mp_, uint64_t(std::time(nullptr)),
-                                                gameDataHash());
-        if (!path.empty()) {
-            std::fprintf(stderr, "replay: wrote %s (%zu ticks)\n",
-                         path.c_str(), mp_->replayLog().size());
-            postNotice("REPLAY SAVED", 5);
-        } else {
-            std::fprintf(stderr, "replay: could not write into %s\n", dir.c_str());
+    // The whole game is kept in memory (mp_->replayLog()), so a recording that cannot
+    // start now -- the folder unwritable or the disk full at this moment -- is tried
+    // again every few seconds (pumpReplayRecording) and a last time when the game
+    // ends (finishReplayRecording); once it opens it still begins at tick 0. Only the
+    // first failure is logged.
+    void GameView::tryOpenReplayRecording(bool first) {
+        const uint64_t now = SDL_GetTicks64();
+        replayRecRetryMs_ = now + 5000;
+        const std::string dir = tak::replayDir();
+        if (dir.empty()) {
+            if (first) std::fprintf(stderr, "replay: no replay folder yet; will keep trying\n");
+            return;
         }
+        auto rec = std::make_unique<tak::net::ReplayWriter>();
+        if (!rec->open(dir, replayRecHeader_, replayRecGame_, uint64_t(std::time(nullptr)))) {
+            if (first)
+                std::fprintf(stderr, "replay: cannot record yet (%s); will keep trying\n", rec->error().c_str());
+            return;
+        }
+        std::fprintf(stderr, "replay: recording to %s\n", rec->partPath().c_str());
+        replayRec_ = std::move(rec);
+        replayRecRetryMs_ = 0;
+        replayFlushMs_ = replaySyncMs_ = now;
+    }
+
+    // Main thread, every mpStep. Bundles are handed to the OS about once a second, so
+    // a crash or a kill loses at most that much; they reach the disk itself every ten
+    // seconds (a power cut), and at once when the result lands.
+    void GameView::pumpReplayRecording() {
+        if (!mp_) return;
+        if (!replayRec_ && replayRecRetryMs_ && SDL_GetTicks64() >= replayRecRetryMs_) tryOpenReplayRecording(false);
+        if (!replayRec_) return;
+        replayRec_->append(mp_->replayLog(), mp_->hashLog());
+        const uint64_t now = SDL_GetTicks64();
+        const bool result = replayResultSync_.exchange(false, std::memory_order_relaxed);
+        if (result || replayRec_->buffered() >= (64u << 10) ||
+            (replayRec_->buffered() && now - replayFlushMs_ >= 1000)) {
+            // A failed write (disk full) keeps its bytes and is retried at the next
+            // flush and at finish(); it is logged once per run of failures.
+            const bool wasFailing = replayRec_->failing();
+            if (!replayRec_->flush() && !wasFailing)
+                std::fprintf(stderr, "replay: %s; will keep trying\n", replayRec_->error().c_str());
+            else if (wasFailing && !replayRec_->failing())
+                std::fprintf(stderr, "replay: writing %s again\n", replayRec_->partPath().c_str());
+            replayFlushMs_ = now;
+        }
+        if (result || now - replaySyncMs_ >= 10000) {
+            replayRec_->syncAsync();
+            replaySyncMs_ = now;
+        }
+        if (result) {
+            // What is on disk now is the game up to its result. Recording goes on:
+            // whatever is played or watched after it belongs to the replay too.
+            std::fprintf(stderr, "replay: result at tick %u, %u ticks recorded; recording continues\n",
+                         netTick_, replayRec_->bundles());
+            if (!replayRec_->failing()) postNotice("REPLAY SAVED", 5);
+        }
+    }
+
+    // ownLog: mp_'s log is still the recorded game's (the destructor, the restart
+    // hook). beginGameRecording passes false: by then the log is the next game's.
+    void GameView::finishReplayRecording(bool ownLog) {
+        ownLog = ownLog && mp_;
+        if (!replayRec_ && replayRecRetryMs_ && ownLog) tryOpenReplayRecording(false);   // a last try
+        replayRecRetryMs_ = 0;   // this game's recording is over, opened or not
+        if (!replayRec_) return;
+        if (ownLog) replayRec_->append(mp_->replayLog(), mp_->hashLog());
+        const uint32_t ticks = replayRec_->bundles();
+        const std::string path = replayRec_->finish();
+        if (!path.empty())
+            std::fprintf(stderr, "replay: wrote %s (%u ticks)\n", path.c_str(), ticks);
+        else if (ticks)
+            std::fprintf(stderr, "replay: could not finish %s (%s); it is completed at the next start\n",
+                         replayRec_->partPath().c_str(), replayRec_->error().c_str());
+        replayRec_.reset();
+    }
+
+    void GameView::resetDiplomacy(const tak::net::RoomView& room) {
+        chatRecipients_=0xff;voiceRecipients_=0xff;requestedManaSharing_.reset();
+        voiceVolume_.fill(100);voiceVolumeDrag_=-1;humanSlots_=0;
+        for (int i=0;i<tak::net::kMaxSlots && i<8;++i)
+            if (room.slots[i].type==1) humanSlots_|=uint8_t(1u<<i);
+        giveUnitsMenu_=false;giveUnitsHots_.clear();
     }
 
     void GameView::startMpGame(const tak::net::RoomView& room, uint32_t seed) {
@@ -87,9 +160,10 @@
             missionSoundQueue_.clear();
             unitSoundQueue_.clear();
         }
-        chatRecipients_=0xff;requestedManaSharing_.reset();
-        giveUnitsMenu_=false;giveUnitsHots_.clear();
-        replaySaved_ = false;   // a fresh game gets a fresh recording
+        resetDiplomacy(room);
+        // A room field (SAY, a password) focused when the host started is let go: the game
+        // has no such field, and its text input would otherwise hold push to talk off.
+        if (lbField_) { lbField_ = 0; SDL_StopTextInput(); }
         resultParticipants_.reset();
         if (room.mission.empty()) {
             resultParticipants_=0;
@@ -187,6 +261,7 @@
             loadGui(side_);
             loadScreen_->step("WAITING FOR PLAYERS", 100);
             startAtMonarch();
+            beginGameRecording();
             return;
         }
         // Adopt the ROOM's map (the host's / lobby selection), which may differ from
@@ -250,6 +325,29 @@
         loadGui(side_);
         loadScreen_->step("WAITING FOR PLAYERS", 100);
         startAtMonarch();
+        beginGameRecording();
+    }
+
+    // The last step of startMpGame, on BOTH of its paths (a campaign mission returns
+    // early). Record from here: the header needs the data this game runs on (the
+    // room's tier, mounted above) and nothing has been simulated yet. A rejoin or a
+    // spectator gets the backlog first, so its recording starts from tick 0 too.
+    void GameView::beginGameRecording() {
+        gameDataHash_ = gameDataHash();   // reported at Loaded and recorded in the replay header
+        if (!mp_ || !mp_->recording() || replayMode_) return;
+        // The Benchmark is a performance run, not a game: it is never recorded.
+        if (benchmarkMode_ || mp_->room().opts.benchmark) return;
+        if ((replayRec_ || replayRecRetryMs_) && replayRecGame_ == mp_->room().id &&
+            replayRecSeed_ == mp_->startSeed())
+            return;   // a rejoin of the game already being recorded: keep its file
+        finishReplayRecording(/*ownLog=*/false);   // normally done already, by the restart hook
+        // Everything the file needs about this game, taken now: the restart hook can
+        // run (and try a last open) after the next game's GameStarting replaced it.
+        replayRecHeader_ = clientReplayHeader(*mp_, gameDataHash_);
+        replayRecGame_ = mp_->room().id;
+        replayRecSeed_ = mp_->startSeed();
+        replayResultSync_.store(false, std::memory_order_relaxed);
+        tryOpenReplayRecording(/*first=*/true);
     }
 
     bool GameView::showInitialCampaignBriefing(const std::string& stem) {
@@ -332,6 +430,7 @@
             if (now - resultStartedMs_ >= 3000) menuRequested_ = true;
         }
 
+        pumpReplayRecording();
         if (!mp_->poll()) { netError_ = mp_->error().empty() ? "disconnected" : mp_->error(); return false; }
         if (mp_->desynced()) { netError_ = mp_->desyncReason(); return false; }
 #ifndef NDEBUG
@@ -358,28 +457,60 @@
         // much may be outstanding. Without the window the rate limiter alone let a
         // stalled uplink accumulate 1024 unacknowledged commands against a 512
         // queue, and the server dropped the difference when they all landed.
-        const int sendable = tak::net::cmdSendWindow(cmdCredit_, cmdInFlight_);
-        const size_t pending = outbox_.size() - outboxHead_;
-        if (pending > 0 && sendable > 0 && !cmdCatchUp_) {
-            const size_t n = std::min(pending, size_t(sendable));
-            cmdCredit_ -= int(n);
-            cmdInFlight_ += int(n);
-            const auto first = outbox_.begin() + ptrdiff_t(outboxHead_);
-            if (n == pending && outboxHead_ == 0) {
-                mp_->sendCommands(outbox_);          // whole buffer, no copy
+        //
+        // The outbox is ONE FIFO of commands and explicit orders (Cmd::Order, protocol
+        // 267). A run of commands goes out as one PlayerCommands message under the
+        // rate and window above; an order goes out whole as its transaction
+        // (MpClient::sendOrder) under its own window (orderSendWindow), never behind
+        // the command credit. Whatever cannot go yet waits, and so does everything
+        // behind it: a Stop issued after a big Move never overtakes it.
+        // Input the server dropped never comes back in a bundle: the server says so
+        // (Msg::InputDropped) and that releases it from the windows, so a drop can
+        // never hold the outbox shut.
+        for (const auto& d : mp_->takeInputDropped()) {
+            cmdInFlight_ -= std::min(cmdInFlight_, int(std::min<uint32_t>(d.commands, uint32_t(INT32_MAX))));
+            if (d.serial) orderWindow_.retire(d.serial);
+            if (tak::devEnv("TAK_NETLOG"))
+                std::fprintf(stderr, "server dropped %u commands, order %u\n", d.commands, d.serial);
+        }
+        if (outboxHead_ < outbox_.size() && !cmdCatchUp_) {
+            int sendable = tak::net::cmdSendWindow(cmdCredit_, cmdInFlight_);
+            size_t at = outboxHead_;
+            while (at < outbox_.size()) {
+                size_t end = at;
+                while (end < outbox_.size() && outbox_[end].kind != tak::net::Cmd::Order &&
+                       int(end - at) < sendable) ++end;
+                if (end > at) {
+                    const int n = int(end - at);
+                    cmdCredit_ -= n;
+                    cmdInFlight_ += n;
+                    sendable -= n;
+                    mp_->sendCommands({outbox_.begin() + ptrdiff_t(at), outbox_.begin() + ptrdiff_t(end)});
+                    at = end;
+                    continue;
+                }
+                auto& item = outbox_[at];
+                if (item.kind != tak::net::Cmd::Order || !item.order) break;   // out of command credit
+                const size_t bytes = tak::net::orderRecordBytes(*item.order);
+                if (!orderWindow_.fits(bytes)) break;
+                // The serial is the one current when the order LEAVES, not when it was clicked: an
+                // order clicked during a rejoin's catch-up waits here, and nextOrderSerial_ only
+                // passes the orders that activated before the drop as that history is replayed.
+                // flushClick made this order (non-const) and nothing else holds it until it is
+                // sent, so the serial is set in place.
+                std::const_pointer_cast<tak::net::SelectionOrder>(item.order)->serial = nextOrderSerial_++;
+                mp_->sendOrder(*item.order);
+                orderWindow_.sent(item.order->serial, bytes);
+                ++at;
+            }
+            outboxHead_ = at;
+            if (outboxHead_ == outbox_.size()) {  // fully drained
                 outbox_.clear();
                 outboxHead_ = 0;
-            } else {
-                mp_->sendCommands({first, first + ptrdiff_t(n)});
-                outboxHead_ += n;
-                if (outboxHead_ == outbox_.size()) {  // fully drained
-                    outbox_.clear();
-                    outboxHead_ = 0;
-                } else if (outboxHead_ > outbox_.size() / 2 && outboxHead_ > 64) {
-                    // Amortised compaction: each command moves at most once.
-                    outbox_.erase(outbox_.begin(), outbox_.begin() + ptrdiff_t(outboxHead_));
-                    outboxHead_ = 0;
-                }
+            } else if (outboxHead_ > outbox_.size() / 2 && outboxHead_ > 64) {
+                // Amortised compaction: each command moves at most once.
+                outbox_.erase(outbox_.begin(), outbox_.begin() + ptrdiff_t(outboxHead_));
+                outboxHead_ = 0;
             }
         }
         // Decide once whether to run the sim on its own worker thread. On for interactive
@@ -414,10 +545,34 @@
             // sent, reopening the send window past what the server can hold. We send
             // nothing while catching up anyway (see cmdCatchUp_), so there is nothing
             // legitimate to retire here.
+            if (int ms = mp_->room().mySlot; ms >= 0)
+                for (const auto& c : bd.cmds)   // serials continue above every own order that activated
+                    if (int(c.player) == ms && c.kind == tak::net::Cmd::Order && c.order)
+                        nextOrderSerial_ = std::max(nextOrderSerial_, c.order->serial + 1);
             if (!cmdCatchUp_)
                 if (int ms = mp_->room().mySlot; ms >= 0) {
-                    for (const auto& c : bd.cmds)
-                        if (int(c.player) == ms && cmdInFlight_ > 0) --cmdInFlight_;
+                    for (const auto& c : bd.cmds) {
+                        if (int(c.player) != ms) continue;
+                        if (c.kind == tak::net::Cmd::Order) {
+                            if (c.order) orderWindow_.retire(c.order->serial);
+                        } else if (cmdInFlight_ > 0) --cmdInFlight_;
+                    }
+#ifndef NDEBUG
+                    // TAK_AUTOPLAY_FORMATION delivery probe: own commands applied this tick (stderr only).
+                    if (formPending_ > 0) {
+                        int own = 0;   // unit commands: an explicit order counts each member
+                        for (const auto& c : bd.cmds)
+                            if (int(c.player) == ms)
+                                own += c.kind == tak::net::Cmd::Order && c.order ? int(c.order->members.size()) : 1;
+                        if (own && !formLanded_) formFirstTick_ = netTick_;
+                        formLanded_ += own;
+                        if (formLanded_ >= formPending_) {
+                            std::fprintf(stderr, "FORMATION_DELIVERY issue=%u n=%d landed=%d first=%u last=%u\n",
+                                         formIssueTick_, formPending_, formLanded_, formFirstTick_, netTick_);
+                            formPending_ = 0;
+                        }
+                    }
+#endif
                 }
             if (useSimThread_) {
                 // Hand this tick's bundle to the sim worker (FIFO == lockstep tick order).
@@ -578,6 +733,7 @@
                 std::fprintf(stderr, "catch-up complete at tick %u\n", netTick_);
             cmdInFlight_ = 0;
             cmdCredit_ = tak::net::kCmdCapPerTick;
+            orderWindow_.clear();
         }
         // Send the worker's finished per-tick state hashes to the server (lockstep desync
         // check + flow-control ack). Drained here on the main thread -- mp_ has a single owner.
@@ -814,6 +970,7 @@ void GameView::speedProbe() {
 // so they travel the real path -- outbox -> sendCommands -> server -> bundle -> every
 // peer -- rather than being applied locally, which would desync by construction.
 void GameView::autoplayStep() {
+    ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
     static const int rate = [] {
         const char* e = tak::devEnv("TAK_AUTOPLAY");
         return e ? std::clamp(std::atoi(e), 0, 60) : 0;
@@ -859,6 +1016,15 @@ void GameView::autoplayStep() {
             c.queue = 0;
             issue(c);
         }
+        // Delivery probe: the issue tick and the commands to watch for (an unfinished earlier order's
+        // count is reported as it stood).
+        if (formPending_ > 0)
+            std::fprintf(stderr, "FORMATION_DELIVERY issue=%u n=%d landed=%d first=%u last=-1 (superseded)\n",
+                         formIssueTick_, formPending_, formLanded_, formFirstTick_);
+        formIssueTick_ = netTick_;
+        formPending_ = int(mine.size()) * 2;
+        formLanded_ = 0;
+        formFirstTick_ = 0;
         return;
     }
 
@@ -1103,13 +1269,14 @@ void GameView::autoplayStep() {
             cmdReplayEnd_ = mp_->replayTicks();
             cmdCatchUp_ = cmdReplayEnd_ > 0;
             cmdInFlight_ = 0;
+            orderWindow_.clear();
             outbox_.clear();   // pre-disconnect orders are moot; the server dropped them
             outboxHead_ = 0;
             startMpGame(mp_->startRoom(), mp_->startSeed());
             if (spec) {
                 beginSpectating();   // watch-only: no fog, no control, no resume
             } else {
-                mp_->reportLoaded(gameDataHash());
+                mp_->reportLoaded(gameDataHash_);
                 writeResume(mp_->gameId(), mp_->resumeToken());
             }
             mpSetupDone_ = true;
@@ -1124,7 +1291,7 @@ void GameView::autoplayStep() {
                 // no resume ticket, and nothing to report loaded.
                 beginSpectating();
             } else {
-                mp_->reportLoaded(gameDataHash());
+                mp_->reportLoaded(gameDataHash_);
                 writeResume(mp_->gameId(), mp_->resumeToken());   // reconnect ticket
             }
             mpSetupDone_ = true;

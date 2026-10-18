@@ -147,6 +147,7 @@ add_library(tak-formats
   src/net/crusades.cpp
   src/net/conn.cpp
   src/net/client.cpp
+  src/net/replaywriter.cpp
   src/net/mappackage.cpp
   src/net/overridepackage.cpp
   src/net/auth.cpp
@@ -392,6 +393,25 @@ set_tests_properties(legion_staticidle PROPERTIES LABELS "legion;w4")
 # W4 C1: a paused first build resumes for a member's demand within 10 ticks.
 add_test(NAME legion_pausedemand COMMAND legion_world_test pausedemand)
 set_tests_properties(legion_pausedemand PROPERTIES LABELS "legion;w4")
+# Legion 10,000 stage 4: more mobility classes than kMaxPlanes start together; no plane is evicted before
+# the registrations waiting for it use it (it failed on the pre-review head: 36 builds for 25 classes).
+add_test(NAME legion_planepin COMMAND legion_world_test planepin)
+set_tests_properties(legion_planepin PROPERTIES LABELS "legion")
+# Legion 10,000 stage 6: tile chains (transit tiles shared across destinations, the descent check; with a wall
+# dropped and lifted while they build) and a reused plane slot never reading the previous class's tiles; all
+# under TAK_LEGION_VERIFY.
+foreach(legion_case chains chainschurn chainplane)
+  add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
+  set_tests_properties(legion_${legion_case} PROPERTIES LABELS "legion" ENVIRONMENT TAK_LEGION_VERIFY=1)
+endforeach()
+# Legion 10,000 stage 7 (static navigation apart from traffic): an improvement defers its route's refresh while a
+# closure refreshes at once (improvedefer); a chain relabelled while it builds re-resolves its regions instead of
+# leaving them off (chainresolve); the coarse search routes round a region full of idle bodies (trafficlane); and
+# (trapped) a trapped order retires under never-ending churn elsewhere, all under TAK_LEGION_VERIFY.
+foreach(legion_case improvedefer chainresolve trafficlane)
+  add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
+  set_tests_properties(legion_${legion_case} PROPERTIES LABELS "legion" ENVIRONMENT TAK_LEGION_VERIFY=1)
+endforeach()
 foreach(legion_probe pocket deadend tail)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
@@ -408,6 +428,20 @@ target_link_libraries(legion_observe_selftest PRIVATE tak-formats)
 add_test(NAME legion_observe_selftest COMMAND legion_observe_selftest)
 set_tests_properties(legion_observe_selftest PROPERTIES LABELS legion)
 # .scn scenarios and issueSelection (the client's 64-per-tick order split).
+add_executable(navbudget_test tools/navbudget_test.cpp)
+target_include_directories(navbudget_test PRIVATE src)
+add_test(NAME navbudget_test COMMAND navbudget_test)
+set_tests_properties(navbudget_test PROPERTIES LABELS legion)
+# Legion 10,000 stage 6: the routing hierarchy (src/sim/legion_hier.h), header-only.
+add_executable(legion_hier_test tools/legion_hier_test.cpp)
+target_include_directories(legion_hier_test PRIVATE src)
+add_test(NAME legion_hier_test COMMAND legion_hier_test)
+set_tests_properties(legion_hier_test PROPERTIES LABELS legion)
+# Legion 10,000 stage 5: the route-query interface (src/sim/legion_route.h), header-only.
+add_executable(legion_route_test tools/legion_route_test.cpp)
+target_include_directories(legion_route_test PRIVATE src)
+add_test(NAME legion_route_test COMMAND legion_route_test)
+set_tests_properties(legion_route_test PROPERTIES LABELS legion)
 add_executable(convoy_test tools/convoy_test.cpp)
 target_link_libraries(convoy_test PRIVATE tak-formats)
 add_test(NAME convoy_test COMMAND convoy_test)
@@ -442,6 +476,30 @@ add_test(NAME observer_neutral
                  --neutral --mode both --offsets 0)
 set_tests_properties(legion_scenario_smoke observer_neutral
                      PROPERTIES SKIP_RETURN_CODE 77 LABELS legion)
+# The Legion 10,000 scale probe (tools/legion_scale.h, `probe scale`): it changes no hash with the observer on
+# or off, serial or workers (legion_scale_neutral), and the smallest scale file still delivers every body
+# (legion_scale_one100: all 100 arrive, none stuck). The suite itself (tools/scenarios/scale/, 100 to 10,000
+# bodies) is run by tools/legion_scale.py at stage ends, not by ctest (docs/legion-10000-progress.md).
+add_test(NAME legion_scale_neutral
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/one-100.scn
+                 ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/churn-1000.scn --neutral --mode both --offsets 0)
+add_test(NAME legion_scale_one100
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/one-100.scn --mode legion --offsets 0
+                 --serial --json)
+set_tests_properties(legion_scale_neutral legion_scale_one100 PROPERTIES LABELS legion TIMEOUT 600)
+set_tests_properties(legion_scale_one100 PROPERTIES
+                     PASS_REGULAR_EXPRESSION "\"scale\\.arrive\\.n\":100,.*\"scale\\.stuck_end\":0,"
+                     FAIL_REGULAR_EXPRESSION "MISMATCH|serial != workers|legion_scenario:")
+# Legion 10,000 stage 2 (exact optimisations): the brute-force references under TAK_LEGION_VERIFY (debug builds;
+# compiled out of Release, where these only run the file). Each file is one a deliberate mutation trips:
+# battle-assault the join index (registerMove picks the first joinable group of all), crosslong awareScan's
+# broad phase (a dropped mover with a conflict), gap8 gateCommit's static-decline memo (docs/legion-10000-progress.md).
+foreach(legion_scn battle-assault crosslong gap8)
+  add_test(NAME legion_verify_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode legion --offsets 0 --workers)
+  set_tests_properties(legion_verify_${legion_scn} PROPERTIES LABELS legion TIMEOUT 600
+                       ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
+endforeach()
 # Asset-free scenario set, part A (tools/scenarios/*.scn): both modes, serial and
 # workers (the runner fails on a state or key mismatch), three start offsets.
 # No bounds yet: a later task adds `--check` against baseline.json. The long
@@ -647,6 +705,99 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME legion_doc_links_selftest
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_doc_links.py --root ${CMAKE_SOURCE_DIR} --selftest)
   set_tests_properties(legion_doc_links legion_doc_links_selftest PROPERTIES LABELS legion TIMEOUT 120)
+  # Legion 10,000 stage 4: the field scheduler under continuous load (tools/scenarios/scale/sched-load.scn:
+  # field requests faster than the quota serves them for the whole run). Service gaps and start-request ages
+  # within the policy's bounds, no body waiting over 60 ticks for a field, serial == workers
+  # (tools/legion_sched_load_test.py). The _div run divides the registration, plane-build and awareness
+  # budgets by 512 under TAK_LEGION_VERIFY: the registration FIFO (deferred registrations), the incremental
+  # plane builds and the resumable awareness scan all run over budget, with every index checked.
+  # legion_sched_mix (sched-mix.scn, a two-map field allowance): memory pressure -- the fit scan, the
+  # reservation, request promotion and shares behind a stopped scan run in the sim, and every request's
+  # wait stays within a bound derived from the allowance, the tenure and the measured queue.
+  # (Stage 6: sched-load's squads take tile chains in the game, and then no longer keep the quota saturated; the
+  # two load tests run it with every route the window build, --no-hier-routes, so they still test the scheduler
+  # under the continuous load they were written for.)
+  add_test(NAME legion_sched_load
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-load.scn --no-hier-routes)
+  add_test(NAME legion_sched_load_div
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-load.scn --budget-div 512
+                   --no-hier-routes)
+  add_test(NAME legion_sched_mix
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/sched-mix.scn)
+  # legion_sched_pin: many-1000 under a two-map allowance, where fields shared by groups that never finish
+  # once pinned the room a reservation waited for (admissions froze for the rest of the run): admission
+  # liveness. legion_sched_inflight: many-2500, where refreshes promoted out of their class used to pile up
+  # past the windows while memory was short (78 in flight): the per-kind cap.
+  add_test(NAME legion_sched_pin
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/many-1000.scn
+                   --field-bytes 778752 --ticks 3000)
+  add_test(NAME legion_sched_inflight
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_sched_load_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/many-2500.scn)
+  set_tests_properties(legion_sched_load legion_sched_load_div legion_sched_mix legion_sched_pin legion_sched_inflight
+                       PROPERTIES LABELS legion TIMEOUT 900)
+  set_tests_properties(legion_sched_load_div PROPERTIES ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
+  # Legion 10,000 stage 5: the route consumers that state their region (lanes, slots, rings, the formation
+  # entrance, awareness) on paused routes, every first build pausable (--pause-all), under TAK_LEGION_VERIFY,
+  # serial == workers; each consumer asked a paused build for its region and no read was uncertain
+  # (tools/legion_route_paused_test.py).
+  add_test(NAME legion_route_paused
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_route_paused_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios --data "${TAK_TEST_DATA}")
+  set_tests_properties(legion_route_paused PROPERTIES LABELS legion TIMEOUT 900
+                       ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
+  # Legion 10,000 stage 9: the parallel planning jobs (chain tiles built beside the serial pass, plane rows in
+  # chunks) decide nothing: the state hash and every observer key equal the serial run at 1, 3 and 7 workers, with
+  # the jobs' completion order perturbed, and forced inline under TAK_LEGION_VERIFY (tools/legion_parallel_test.py).
+  add_test(NAME legion_parallel
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_parallel_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
+  set_tests_properties(legion_parallel PROPERTIES LABELS legion TIMEOUT 1800 SKIP_RETURN_CODE 77)
+  # Legion 10,000 stage 7: crossing walkers no longer stand in the knots they form (scatter-400: 400 single
+  # walkers to unrelated destinations, serial and workers; tools/legion_traffic_test.py).
+  add_test(NAME legion_traffic
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_traffic_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
+  set_tests_properties(legion_traffic PROPERTIES LABELS legion TIMEOUT 900 SKIP_RETURN_CODE 77)
+  # Legion 10,000 stage 8: a formation member gaining on its own slot beyond the click is not settled short of
+  # it (one-1000: at least 960 of 1,000 arrive; tools/legion_arrival_test.py).
+  add_test(NAME legion_arrival
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_arrival_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
+  set_tests_properties(legion_arrival PROPERTIES LABELS legion TIMEOUT 900 SKIP_RETURN_CODE 77)
+  # Legion 10,000 stage 8: chokepoints as queues -- route choice by travel time plus queue delay and admission at
+  # narrow passages (bridges-1000: both bridges used, at least 450 of 1,000 arrive; maze-1000: groups take the other
+  # doors, at least 850 arrive; tools/legion_choke_test.py).
+  add_test(NAME legion_choke
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_choke_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
+  set_tests_properties(legion_choke PROPERTIES LABELS legion TIMEOUT 1200 SKIP_RETURN_CODE 77)
+  # Legion 10,000 stage 8: shared destination areas -- churn-1000's half stopped and sent again to the point the
+  # other half is arriving at joins its area instead of planning round it as traffic (at least 780 of 1,000 arrive,
+  # at most 40 stuck; the previous commit 717 / 73).
+  add_test(NAME legion_sharedarea
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale churn-1000 --data "${TAK_TEST_DATA}"
+                   --min scale.arrive.shared_areas=1 --min scale.arrive.n=780 --max scale.stuck_end=40)
+  set_tests_properties(legion_sharedarea PROPERTIES LABELS legion TIMEOUT 900 SKIP_RETURN_CODE 77)
+  # Legion 10,000 stage 8: a formation member with a free step toward its own slot is not pressed (one-1000: at
+  # least 995 of 1,000 arrive, the 99th percentile too, at most 5 stuck; the previous commit 978 / never / 14).
+  add_test(NAME legion_arrival_press
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale one-1000 --data "${TAK_TEST_DATA}"
+                   --min scale.arrive.n=995 --min scale.arrive.t99=1 --max scale.stuck_end=5)
+  set_tests_properties(legion_arrival_press PROPERTIES LABELS legion TIMEOUT 900 SKIP_RETURN_CODE 77)
+  # Legion 10,000 stage 8: an entrance per group (room2door: one order of 2x2 and 3x3 bodies into a room through
+  # two doors; the second group finds its own entrance on its own plane, and all 100 arrive).
+  add_test(NAME legion_entrances
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale room2door --data "${TAK_TEST_DATA}"
+                   --min scale.arrive.group_entrances=1 --min scale.arrive.n=100 --max scale.stuck_end=0)
+  set_tests_properties(legion_entrances PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison
@@ -706,6 +857,15 @@ add_test(NAME local_server COMMAND local_server_test)
 set_tests_properties(local_server PROPERTIES TIMEOUT 30)
 target_link_libraries(server_commands_test PRIVATE tak-formats)
 add_test(NAME server_commands COMMAND server_commands_test)
+# Selection-order transactions at the server (server/orders.h, protocol 267).
+add_executable(server_orders_test tools/server_orders_test.cpp)
+target_link_libraries(server_orders_test PRIVATE tak-formats)
+add_test(NAME server_orders COMMAND server_orders_test)
+# Explicit selection orders end to end: codec, client packing, sim application (protocol 267).
+add_executable(selection_order_test tools/selection_order_test.cpp)
+target_link_libraries(selection_order_test PRIVATE tak-formats)
+add_test(NAME selection_order COMMAND selection_order_test)
+set_tests_properties(selection_order PROPERTIES LABELS legion)
 add_executable(override_transfer_test tools/override_transfer_test.cpp)
 target_link_libraries(override_transfer_test PRIVATE tak-formats)
 add_executable(override_packs_test tools/override_packs_test.cpp)
@@ -1014,14 +1174,14 @@ if(TAK_TEST_DATA)
             --shot "${CMAKE_CURRENT_BINARY_DIR}/diplomacy-test.png")
         set_tests_properties(diplomacy_ui PROPERTIES
             ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_DIPLOMACY_TEST=1"
-            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults"
+            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column, volume sliders"
             TIMEOUT 60)
         add_test(NAME retirement_ui COMMAND takclient game "Ulasem Arena"
             --data "${TAK_TEST_DATA}" --testbuild --time 0
             --shot "${CMAKE_CURRENT_BINARY_DIR}/retirement-ui.png")
         set_tests_properties(retirement_ui PROPERTIES
             ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_DIPLOMACY_TEST=1;TAK_RETIREMENT_TEST=1"
-            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults"
+            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column, volume sliders"
             TIMEOUT 60)
         add_test(NAME script_transient COMMAND takclient game "ulasem arena"
             --data "${TAK_TEST_DATA}" --firetest --nofog --time 0.1
@@ -1291,7 +1451,7 @@ set_tests_properties(credstore PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/font.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/client/streaming.cpp)
+    add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/font.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/client/streaming.cpp)
     # Local dev/test harness (standalone scenario/demo/FFA setup, --testbuild/--firetest...):
     # debug builds only. The file is also wrapped in #ifndef NDEBUG, as are its callers, so
     # this just skips an empty TU when the config's flags define NDEBUG.
@@ -1314,6 +1474,22 @@ if(TAK_BUILD_CLIENT)
     else()
       set(_tak_sdl2 SDL2::SDL2)
     endif()
+    # Voice chat (client/voice.h): the engine and the Opus codec, built from a pinned
+    # source release (cmake/Opus.cmake). Client only -- takserver relays voice frames as
+    # opaque bytes and never links Opus.
+    include(cmake/Opus.cmake)
+    add_library(tak-voice STATIC src/client/voice.cpp src/client/voicecodec.cpp)
+    target_include_directories(tak-voice PUBLIC src)
+    target_compile_definitions(tak-voice PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(tak-voice PUBLIC tak-formats ${_tak_sdl2} PRIVATE opus)
+    # The codec, jitter buffer, push-to-talk rules, the engine on SDL's disk/dummy audio
+    # drivers with synthetic PCM, the VOICE CHAT page (greyed while off) and the settings.
+    add_executable(voice_test tools/voice_test.cpp src/client/options.cpp src/client/settings.cpp
+      src/client/hotkeys.cpp)
+    target_compile_definitions(voice_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(voice_test PRIVATE tak-voice tak-formats ${_tak_sdl2})
+    add_test(NAME voice COMMAND voice_test)
+    set_tests_properties(voice PROPERTIES TIMEOUT 60 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     if(UNIX AND NOT APPLE)
       add_executable(override_settings_test tools/override_settings_test.cpp src/client/settings.cpp)
       target_link_libraries(override_settings_test PRIVATE tak-formats ${_tak_sdl2})
@@ -1806,7 +1982,8 @@ if(TAK_BUILD_CLIENT)
     target_link_libraries(fogupload_test PRIVATE ${_tak_sdl2})
     add_test(NAME fogupload COMMAND fogupload_test)
     set_tests_properties(fogupload PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
-    add_executable(audio_device_test tools/audio_device_test.cpp src/client/options.cpp src/client/settings.cpp)
+    add_executable(audio_device_test tools/audio_device_test.cpp src/client/options.cpp src/client/settings.cpp
+      src/client/hotkeys.cpp)
     target_compile_definitions(audio_device_test PRIVATE SDL_MAIN_HANDLED
       SDL_GetNumAudioDevices=TAK_Test_GetNumAudioDevices
       SDL_OpenAudioDevice=TAK_Test_OpenAudioDevice)
@@ -2004,7 +2181,7 @@ if(TAK_BUILD_CLIENT)
       endif()
     endif()
 
-    target_link_libraries(takclient PRIVATE tak-crusades-map tak-formats tak-gpustats tak-credstore ${_tak_sdl2})
+    target_link_libraries(takclient PRIVATE tak-crusades-map tak-formats tak-gpustats tak-credstore tak-voice ${_tak_sdl2})
     # We provide our own main() and call SDL_SetMainReady(). Define SDL_MAIN_HANDLED for
     # the WHOLE target (not just main.cpp) so it applies before ANY header pulls in
     # <SDL.h> -- otherwise, on Windows, SDL_main.h renames our main to SDL_main via a
@@ -2241,6 +2418,13 @@ set_tests_properties(crusades_client_network PROPERTIES TIMEOUT 60)
 add_executable(spectator_client_test tools/spectator_client_test.cpp)
 target_link_libraries(spectator_client_test PRIVATE tak-formats)
 add_test(NAME spectator_client COMMAND spectator_client_test)
+add_executable(voice_client_test tools/voice_client_test.cpp)
+target_link_libraries(voice_client_test PRIVATE tak-formats)
+add_test(NAME voice_client COMMAND voice_client_test)
+add_executable(voice_uplink_test tools/voice_uplink_test.cpp)
+target_link_libraries(voice_uplink_test PRIVATE tak-formats)
+add_test(NAME voice_uplink COMMAND voice_uplink_test)
+set_tests_properties(voice_uplink PROPERTIES TIMEOUT 150)
 set_tests_properties(spectator_client PROPERTIES TIMEOUT 60)
 # TAK_PACELOG's summary (src/client/pacelog.h, header-only).
 add_executable(pacelog_test tools/pacelog_test.cpp)
@@ -2249,6 +2433,10 @@ add_test(NAME pacelog COMMAND pacelog_test)
 add_executable(replay_file_test tools/replay_file_test.cpp src/client/replayfile.cpp)
 target_link_libraries(replay_file_test PRIVATE tak-formats)
 add_test(NAME replay_file COMMAND replay_file_test)
+# The streamed replay writer and the recovery of a recording a crash left unfinished.
+add_executable(replay_writer_test tools/replay_writer_test.cpp src/client/replayfile.cpp)
+target_link_libraries(replay_writer_test PRIVATE tak-formats)
+add_test(NAME replay_writer COMMAND replay_writer_test)
 add_executable(match_codec_test tools/match_codec_test.cpp src/client/replayfile.cpp)
 target_link_libraries(match_codec_test PRIVATE tak-formats)
 add_test(NAME match_codec COMMAND match_codec_test)
@@ -2289,6 +2477,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_command_flood_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_command_flood PROPERTIES TIMEOUT 60)
+    add_test(NAME server_orders_network COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_orders_network_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(server_orders_network PROPERTIES TIMEOUT 120)
     add_test(NAME server_seed COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_seed_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
@@ -2305,6 +2497,18 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_spectators_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_spectators PROPERTIES TIMEOUT 120)
+    add_test(NAME server_voice COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_voice_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(server_voice PROPERTIES TIMEOUT 120)
+    # Voice to a listener on a slow link (and, --case cpu, to a slow machine, which keeps it).
+    add_test(NAME server_voice_slow COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_voice_slow_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    add_test(NAME server_voice_cpu COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_voice_slow_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --case cpu)
+    set_tests_properties(server_voice_slow server_voice_cpu PROPERTIES TIMEOUT 120)
     add_test(NAME server_map_scenario COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_map_scenario_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --map-tool "$<TARGET_FILE:map_transfer_test>")
@@ -2337,6 +2541,14 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/crusades_matchmaking_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(crusades_matchmaking_network PROPERTIES TIMEOUT 180)
+    if(TARGET takclient AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+      # Replays are saved however a game ends: crash, kill, play on after the result,
+      # SIGTERM, a dead server (the headless harness is debug-only).
+      add_test(NAME replay_always COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/replay_always_test.py"
+        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
+      set_tests_properties(replay_always PROPERTIES TIMEOUT 300)
+    endif()
     if(TARGET takclient AND CMAKE_BUILD_TYPE STREQUAL "Debug" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
       add_test(NAME crusades_ui_network COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/tools/crusades_ui_network_test.py"
@@ -2377,7 +2589,7 @@ if(UNIX AND NOT APPLE)
   install(FILES packaging/systemd/takserver-acme.conf packaging/systemd/takserver-settings.conf
                 packaging/systemd/README.md
           DESTINATION share/doc/tak-engine/systemd)
-  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt DESTINATION share/licenses/tak-engine)
+  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt DESTINATION share/licenses/tak-engine)
   install(TARGETS takserver crusades_admin RUNTIME DESTINATION bin)
   if(TARGET takclient)
     install(TARGETS takclient RUNTIME DESTINATION bin)
@@ -2431,7 +2643,7 @@ if(UNIX AND NOT APPLE)
 
   include(CPack)
 elseif(WIN32)
-  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt DESTINATION .)
+  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt DESTINATION .)
   # Windows installer (NSIS via CPack; the CI's MSYS2 job runs `cpack -G NSIS`).
   # Binaries install into the chosen folder root (no bin/), with Start-menu
   # shortcuts and an uninstaller. The static build has no DLLs to carry.

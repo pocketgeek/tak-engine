@@ -9,6 +9,9 @@
 
 #include <atomic>
 #include <csignal>
+#ifndef _WIN32
+#include <signal.h>   // sigaction: query SIGHUP's disposition
+#endif
 
 namespace tak {
 
@@ -16,11 +19,19 @@ inline std::atomic<bool> g_termRequested{false};
 
 inline bool termRequested() { return g_termRequested.load(std::memory_order_relaxed); }
 
-// Install SIGTERM/SIGINT handlers. Call once, after SDL_Init, so ours replace SDL's.
+// Install SIGTERM/SIGINT (and SIGHUP: the terminal or SSH session closed) handlers.
+// Call once, after SDL_Init, so ours replace SDL's. A clean teardown is what finishes
+// the game's replay file; a process killed outright leaves it to the next start's
+// recovery (net/replaywriter.h). SIGHUP is left alone when it is IGNORED (`nohup`,
+// a launcher that detaches us): that is a request to outlive the terminal.
 inline void installSignalHandlers() {
     auto handler = [](int) { g_termRequested.store(true, std::memory_order_relaxed); };
     std::signal(SIGTERM, handler);
     std::signal(SIGINT, handler);
+#ifndef _WIN32
+    struct sigaction hup{};
+    if (::sigaction(SIGHUP, nullptr, &hup) == 0 && hup.sa_handler != SIG_IGN) std::signal(SIGHUP, handler);
+#endif
 }
 
 }  // namespace tak

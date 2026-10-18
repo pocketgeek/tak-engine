@@ -101,6 +101,7 @@
             drawLobby(int(kLobbyW), int(kLobbyH));
             SDL_RenderSetViewport(ren_, nullptr);
             SDL_RenderSetScale(ren_, 1.0f, 1.0f);
+            drawVoiceIndicator(winW, winH);   // voice works in the room too
             return;
         }
         // Pull any chat that arrived and age the overlay on a real wall clock, so
@@ -3264,6 +3265,8 @@
             if (campaignReplayReturn_) hudFont_.draw(ren_, "ESC: RETURN TO CAMPAIGN", bx, by + 21, 1.1f, {235, 230, 210, 255});
         }
 
+        drawVoiceIndicator(winW, winH);   // who is talking (voice chat), top-left
+
         // In-game chat: recent lines bottom-left, plus a composer while typing.
         if (mp_ && hudFont_.ok() && (chatTyping_ || !gameChat_.empty())) {
             const float kFade = 10.0f;   // seconds a line stays up when not typing
@@ -3304,9 +3307,11 @@
             SDL_SetRenderDrawColor(ren_, 0, 0, 0, 150);
             SDL_RenderFillRectF(ren_, &dim);
 
-            const float bw = 280, bh = 50, gap = 14, pad = 32, titlePx = 3.0f;
-            const int nBtn = canReturnToMenu_ ? 6 : 5;
+            const int nBtn = canReturnToMenu_ ? 7 : 6;
+            const float bw = 280, gap = 14, pad = 32, titlePx = 3.0f;
             const float titleH = 7 * titlePx + 24;
+            // Buttons shrink on a short window (the minimum is 480 high) rather than spill.
+            const float bh = std::clamp((float(winH) - 2 * pad - titleH - 24 - (nBtn - 1) * gap) / float(nBtn), 30.0f, 50.0f);
             const float pw = bw + pad * 2;
             const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap;
             const float px0 = (winW - pw) / 2, py0 = (winH - ph) / 2;
@@ -3344,6 +3349,7 @@
             });
             btn("OPTIONS", [this] { exitMenu_ = false; openOptions(); });
             btn("CONTROLS", [this] { exitMenu_ = false; openHotkeys(); });   // hotkey rebinding
+            btn("VOICE CHAT", [this] { exitMenu_ = false; openVoiceOptions(); });
             if (canReturnToMenu_) btn(campaignReplayReturn_ ? "CAMPAIGN" : "MAIN MENU", [this] { menuRequested_ = true; });
             btn("QUIT", [this] { quitRequested_ = true; });
         }

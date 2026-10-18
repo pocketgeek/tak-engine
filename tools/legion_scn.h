@@ -21,6 +21,7 @@
 #include "tnt/mapgen.h"
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -146,9 +147,11 @@ struct Scenario {
     bool crusades = false;            // `crusades on`: the Crusades balance overlay (unitscb/canbuildcb)
     bool wanderers = true;            // `wanderers off`: fbi types lose Standby_wander (their home-pull)
     int roundTrip = -1;               // `uplink R`: the 512-command window
+    uint64_t navBytes = 0;            // `navbytes N`: the Legion field byte allowance (0: the game's)
     bool probeApproach = false;       // `probe approach`: the runner reports per-unit approach arrival and order completion
     bool probeLanes = false;          // `probe lanes`: the runner reports the lanes.* counters (W8 step 0)
     bool probeW9 = false;             // `probe w9`: the runner reports the w9.* counters and the debug-build census.* keys (W9 step 0)
+    bool probeScale = false;          // `probe scale`: the runner reports the scale.* keys (tools/legion_scale.h; Legion 10,000 phase 0)
     bool probeAware = false;          // `probe aware`: the runner reports the aware.* counters (W7 step 0)
     bool probeClaims = false;         // `probe claims`: the runner audits the arrival-slot claims every 10 ticks (W5 step 0)
     std::vector<int> gateOffsets;     // `gateoffsets O,O,..`: legion_scenario's gate offsets where 0,+-1..+-5 leave the map
@@ -364,11 +367,13 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             }
         } else if (k == "probe") {
             need(2, 2);
-            if (w[1] != "approach" && w[1] != "claims" && w[1] != "aware" && w[1] != "lanes" && w[1] != "w9")
-                c.fail("probe approach|claims|aware|lanes|w9");
+            if (w[1] != "approach" && w[1] != "claims" && w[1] != "aware" && w[1] != "lanes" && w[1] != "w9" &&
+                w[1] != "scale")
+                c.fail("probe approach|claims|aware|lanes|w9|scale");
             (w[1] == "approach" ? s.probeApproach : w[1] == "aware" ? s.probeAware : w[1] == "lanes" ? s.probeLanes
-             : w[1] == "w9" ? s.probeW9 : s.probeClaims) = true;
+             : w[1] == "w9" ? s.probeW9 : w[1] == "scale" ? s.probeScale : s.probeClaims) = true;
         } else if (k == "uplink") { need(2, 2); s.roundTrip = int(c.integer(w[1], 1, 600)); }
+        else if (k == "navbytes") { need(2, 2); s.navBytes = uint64_t(c.integer(w[1], 1, int64_t(1) << 40)); }
         else if (k == "gateoffsets") {
             need(2, 2);
             s.gateOffsets.clear();
@@ -734,11 +739,13 @@ inline std::string format(const Scenario& s) {
         o << "\n";
     } else o << "explored " << (s.explored ? "all" : "none") << "\n";
     if (s.roundTrip >= 0) o << "uplink " << s.roundTrip << "\n";
+    if (s.navBytes) o << "navbytes " << s.navBytes << "\n";
     if (s.probeApproach) o << "probe approach\n";
     if (s.probeClaims) o << "probe claims\n";
     if (s.probeAware) o << "probe aware\n";
     if (s.probeLanes) o << "probe lanes\n";
     if (s.probeW9) o << "probe w9\n";
+    if (s.probeScale) o << "probe scale\n";
     if (!s.gateOffsets.empty()) {
         o << "gateoffsets ";
         for (size_t i = 0; i < s.gateOffsets.size(); ++i) o << (i ? "," : "") << s.gateOffsets[i];
@@ -1213,7 +1220,22 @@ public:
                 so.z = cz / float(n);
                 so.targetId = first;
             }
-            link_.issue(hudCommands(world, sel, so, world.unit(sel[0])->player));
+            const int player = world.unit(sel[0])->player;
+            uint32_t& serial = serials_.try_emplace(player, 1u).first->second;
+            const auto cmds = hudItems(world, sel, so, player, serial);
+            const bool click = !o.queue && !o.append && o.verb != Verb::Stop && o.verb != Verb::Squad;
+            // Per unit, the commands issued for it (an explicit order counts once for each member).
+            auto count = [&](int id) {
+                if (id < 0) return;
+                if (size_t(id) >= issued_.size()) issued_.resize(size_t(id) + 1, 0);
+                ++issued_[size_t(id)];
+                if (click) clicks_.push_back({id, issued_[size_t(id)]});
+            };
+            for (const auto& c : cmds) {
+                if (c.kind == tak::net::Cmd::Order && c.order) for (const int id : c.order->members) count(id);
+                else count(c.unitId);
+            }
+            link_.issue(cmds);
         }
         return link_.land(tick);
     }
@@ -1221,10 +1243,29 @@ public:
     // Apply tick `tick`'s commands; call before World::tick with tick == tickCount().
     size_t apply(uint32_t tick) {
         applyChurn(tick);
-        const auto cmds = commandsFor(tick);
-        for (const auto& c : cmds) tak::sim::applyCommand(*b_.world, b_.registry, c);
-        return cmds.size();
+        clicks_.clear();
+        landed_ = commandsFor(tick);
+        landedUnits_.clear();
+        const auto start = std::chrono::steady_clock::now();
+        for (const auto& c : landed_) tak::sim::applyCommand(*b_.world, b_.registry, c);
+        applyMs_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        for (const auto& c : landed_) {
+            if (c.kind == tak::net::Cmd::Order && c.order)
+                landedUnits_.insert(landedUnits_.end(), c.order->members.begin(), c.order->members.end());
+            else landedUnits_.push_back(c.unitId);
+        }
+        return landed_.size();
     }
+    // Wall time of the last apply()'s applyCommand calls (ms; observation only, stderr reports).
+    double lastApplyMs() const { return applyMs_; }
+    // The commands (and explicit orders) the last apply() landed, in application order.
+    const std::vector<tak::net::Command>& landed() const { return landed_; }
+    // The unit of every command the last apply() landed, an explicit order's members each once.
+    const std::vector<int>& landedUnits() const { return landedUnits_; }
+    // The non-queued clicks the last apply() issued: (unit id, that click's command's position in the unit's
+    // command stream). The uplink is one FIFO, so the click is delivered when that many of the unit's commands
+    // have landed; a later order of the same tick (a queued leg) comes after it.
+    const std::vector<std::pair<int, uint32_t>>& clicks() const { return clicks_; }
     bool done() const { return next_ >= pending_.size() && link_.idle(); }
 
     // The `churn` events due at `tick`: a blocking feature of the spec's size placed in the static map (an odd
@@ -1249,6 +1290,12 @@ private:
     Uplink link_;
     std::vector<OrderSpec> pending_;
     size_t next_ = 0;
+    std::vector<tak::net::Command> landed_;
+    std::vector<int> landedUnits_;
+    double applyMs_ = 0;
+    std::vector<uint32_t> issued_;   // per unit id
+    std::map<int, uint32_t> serials_;   // per player: the next explicit-order serial (from 1)
+    std::vector<std::pair<int, uint32_t>> clicks_;
 };
 
 // ---- situations: the recording's own positions ------------------------------

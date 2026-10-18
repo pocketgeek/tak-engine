@@ -26,5 +26,7 @@
     <true/>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.strategy-games</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Voice chat sends your microphone to the other players while you hold the push-to-talk key.</string>
 </dict>
 </plist>

@@ -9,10 +9,13 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "net/auth.h"
@@ -177,6 +180,40 @@ public:
     // Drain chat lines received since the last call (sender, text).
     std::vector<std::pair<std::string, std::string>> takeChat() { auto c = std::move(chat_); chat_.clear(); return c; }
 
+    // ---- voice chat (protocol 276; presentation only, see net/protocol.h) ----------
+    // Whether this connection wants voice relayed to it (voice chat switched on). Sent
+    // only when it changes, and again after every new connection; the server sends no
+    // voice to a connection that never said yes.
+    void setVoiceListen(bool on);
+    // One captured frame, as a LOW-PRIORITY message (Conn::sendLow): it waits behind game
+    // traffic queued in this program and in the kernel, and is dropped when the link is
+    // backed up. Ignored outside a room.
+    // recipients: the diplomacy VOICE mask (0xff = everyone, as for chat).
+    // The uplink is guarded too, since what the kernel already holds still goes ahead of
+    // the Progress and commands queued after it: while this client transmits it pings the
+    // server four times a second (and every two seconds while voice is on, for a quiet
+    // baseline), and a round trip more than max(100 ms, 4 ticks) above that baseline (back,
+    // or still out) means its own voice is queueing on the link. Voice is then held -- captured frames are
+    // dropped, an END closes the transmission at once, and the queued voice is thrown
+    // away -- for a back-off of 5 s that doubles with each repeat (to 60 s, forgotten after
+    // 2 quiet minutes), and resumes (with a START) once the probe is quiet again.
+    void sendVoice(uint16_t seq, uint8_t recipients, uint8_t flags, const std::vector<uint8_t>& opus);
+    bool voiceHeld() const { return voiceHeld_; }
+    uint64_t voiceHeldFrames() const { return voiceHeldFrames_; }   // captured frames the hold dropped
+    struct VoiceFrame {
+        uint32_t talker = 0;      // the talker's connection id
+        uint8_t slot = 0xFF;      // their player slot, 0xFF = spectator
+        uint16_t seq = 0;
+        uint8_t flags = 0;
+        std::string name;         // only on frames that carry it (kVoiceHasName)
+        std::vector<uint8_t> opus;
+    };
+    // Drain the voice frames received since the last call. Bounded: past kVoiceInbox
+    // frames the oldest are dropped, so a host that stops draining holds no backlog.
+    static constexpr size_t kVoiceInbox = 512;
+    std::vector<VoiceFrame> takeVoice() { auto v = std::move(voice_); voice_.clear(); return v; }
+    uint64_t voiceDropped() const { return voiceDropped_; }
+
     // ---- game start / play -------------------------------------------------
     // After GameStarting the viewer reads these, loads the map, then calls
     // reportLoaded(). The server begins ticking once every human has loaded.
@@ -199,6 +236,11 @@ public:
     const std::vector<ReplayCheck>& hashLog() const { return hashLog_; }
     uint64_t dataHash() const { return dataHash_; }
     void startRecording() { recording_ = true; replayLog_.clear(); hashLog_.clear(); }
+    // Called when a GameStarting is about to restart the recording, BEFORE the log is
+    // cleared: the room and seed are already the new game's, the log still the old
+    // one's. A writer streaming the old game finishes it here (a rejoin of the same
+    // game re-sends the same log from tick 0, so that one it keeps).
+    void setRecordingRestartHook(std::function<void()> hook) { recordingRestart_ = std::move(hook); }
     void stopRecording() { recording_ = false; replayLog_.clear(); hashLog_.clear(); }
     bool recording() const { return recording_; }
     // Slot table as it was when the game STARTED. The live room_.slots mutates as
@@ -236,6 +278,13 @@ public:
     bool takeBundle(uint32_t tick, Bundle& out);
     size_t bufferedBundles() const { return bundles_.size(); }   // backlog depth
     void sendCommands(const std::vector<Command>& cmds);
+    // An explicit selection order (Cmd::Order) as its uplink transaction.
+    void sendOrder(const SelectionOrder& o);
+    // Input the server dropped (Msg::InputDropped): commands of a PlayerCommands
+    // message, or one order transaction (serial, 0 = none). Taken by the view,
+    // which releases them from its send windows.
+    struct InputDrop { uint32_t commands = 0, serial = 0; };
+    std::vector<InputDrop> takeInputDropped() { return std::exchange(inputDropped_, {}); }
     // posDigest rides only into the recorded replay trail (format 12), never onto the wire.
     void sendHash(uint32_t tick, uint64_t hash, uint64_t posDigest = 0);
     // Flow-control progress (WE S3): the last tick processed and the smoothed RTT.
@@ -325,12 +374,32 @@ private:
     uint8_t gameSpeed_ = 10;   // live game speed (from opts + in-game SpeedUpdate)
     int missionOutcome_ = 0;   // campaign mission result (0 running / +1 win / -1 loss)
     std::vector<std::pair<std::string, std::string>> chat_;
+    std::vector<VoiceFrame> voice_;
+    uint64_t voiceDropped_ = 0;
+    bool voiceListen_ = false;       // what the host wants
+    int voiceListenSent_ = 0;        // what this connection last told the server (0 = its default, off)
+    // The uplink guard (sendVoice). voiceTxAt_: the last captured audio frame (transmitting
+    // while recent). voiceBaseRtt_: the lowest probe round trip, allowed to creep up 1 ms a
+    // sample so a route that got slower is followed. voiceOpen_: the last frame sent was
+    // audio, so a hold owes the server an END; voiceRestart_: a hold cut a transmission, so
+    // the next audio frame carries START.
+    uint64_t voiceTxAt_ = 0, voiceHeldUntil_ = 0, voiceTripAt_ = 0, voiceHeldFrames_ = 0;
+    uint32_t voiceBaseRtt_ = UINT32_MAX;
+    unsigned voiceStrikes_ = 0;
+    // voiceSlowRtt_: the last probe came back past the limit.
+    bool voiceHeld_ = false, voiceOpen_ = false, voiceRestart_ = false, voiceSlowRtt_ = false;
+    uint16_t voiceSeq_ = 0;
+    uint8_t voiceMask_ = 0xff;
+    uint64_t voiceSlackMs() const;
+    void voiceProbe(uint64_t now, int64_t rtt = -1);
+    void holdVoice(uint64_t now);
 
     uint64_t dataHash_ = 0;      // local gameplay-data fingerprint (sent in Hello)
     uint32_t startSeed_ = 0;
     std::vector<std::vector<uint8_t>> replayLog_;   // raw TickBundle payloads (recording)
     std::vector<ReplayCheck> hashLog_;              // (tick, hash) we reported
     bool recording_ = false;
+    std::function<void()> recordingRestart_;
     SlotInfo startSlots_[kMaxSlots] = {};
     uint32_t replayTicks_ = 0;   // history the server replays after a rejoin/spectate
     std::array<bool, kMaxSlots> slotLoaded_{};   // per-slot "reported Loaded"
@@ -341,9 +410,17 @@ private:
     bool expectingSpectate_ = false;
     bool paused_ = false;
     std::map<uint32_t, Bundle> bundles_;
+    std::vector<InputDrop> inputDropped_;
     bool desynced_ = false;
     std::string desyncReason_;
     uint64_t lastRecvMs_ = 0, lastPingMs_ = 0;
+    // When the last read that took everything the socket had began (poll): a frame that was
+    // not in by then arrived after it.
+    uint64_t readAt_ = 0;
+    // Send time of every Ping still waiting for its Pong, oldest first (the server answers
+    // in order). Probes go out only while this is empty.
+    std::deque<uint64_t> pingsOut_;
+    void sendPing(uint64_t now) { send(Msg::Ping); lastPingMs_ = now; pingsOut_.push_back(now); }
 
     // ---- account login state ------------------------------------------------
     std::string loginUser_, loginPass_;
@@ -385,7 +462,6 @@ private:
     // Round-trip time, measured with active pings when a consumer asks for it
     // (the adaptive jitter buffer). Off by default -> no extra traffic.
     bool measureRtt_ = false;
-    uint64_t pingSentMs_ = 0;           // outstanding RTT ping send time (0 = none)
     float rttMs_ = 0;                   // smoothed round-trip time
     // Bundle-arrival jitter: how much later than the 30 Hz schedule bundles land,
     // as a slowly-decaying recent max. This is what the jitter buffer must cover.
