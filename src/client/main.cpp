@@ -1973,14 +1973,19 @@ int main(int argc, char** argv) {
                 SDL_GetRendererInfo(ren,&info);
                 const bool gl=info.name && std::strcmp(info.name,"opengl")==0;
                 std::printf("PALETTE_STUDY renderer=%s indexed_frames=%llu baked_frames=%llu indexed_draws=%llu spans=%llu "
-                            "fallbacks=%llu switches=%llu upload_bytes=%llu\n",info.name ? info.name : "?",
+                            "fallbacks=%llu switches=%llu upload_bytes=%llu bake_runs=%llu\n",info.name ? info.name : "?",
                     ull(t.indexedFrames),ull(t.bakedFrames),ull(t.indexedDraws),ull(t.spans),ull(t.fallbacks),
-                    ull(t.switches),ull(t.uploadBytes));
+                    ull(t.switches),ull(t.uploadBytes),ull(t.bakeRuns));
                 if(t.fallbacks)throw std::runtime_error("an indexed palette draw failed");
                 if(gl && (!t.indexedDraws || !t.indexedFrames))throw std::runtime_error("OpenGL study drew no indexed palette runs");
                 if(!gl && t.indexedFrames)throw std::runtime_error("indexed palette form on a renderer without it");
                 if(gl && studyFilter && (t.switches<2 || !t.bakedFrames))
                     throw std::runtime_error("texture-filter toggles did not switch the palette form both ways");
+                // TAK_REQUIRE_PALETTE=bakes: the scene must bake indexed runs into distant
+                // images (structures at zoom 0.4): they must reach drawModelRun.
+                const char* require=tak::devEnv("TAK_REQUIRE_PALETTE");
+                if(gl && require && !std::strcmp(require,"bakes") && !t.bakeRuns)
+                    throw std::runtime_error("OpenGL study baked no indexed palette run through drawModelRun");
             }
             if(tak::devFlag("TAK_REQUIRE_GEOMETRY_REUSE")) {
                 std::printf("GEOMETRY_VERIFY checks=%llu animated_cross_tick=%llu\n",

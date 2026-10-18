@@ -1450,7 +1450,8 @@ private:
 public:
     // Workstream M totals since the session began (render-study requirement checks).
     struct PaletteTotals { uint64_t indexedDraws = 0, spans = 0, fallbacks = 0, switches = 0, uploadBytes = 0,
-                                    indexedFrames = 0, bakedFrames = 0; };
+                                    indexedFrames = 0, bakedFrames = 0,
+                                    bakeRuns = 0; };   // indexed runs drawn into distant images
     const PaletteTotals& paletteTotals() const { return paletteTotals_; }
 private:
     std::vector<tak::render::palette::Bank> paletteBanks_;

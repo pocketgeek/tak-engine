@@ -489,7 +489,6 @@
         // cache on SDL's software renderer (pages then composite with plain blending).
         distantModelCache_.sweepEveryPrepare=tak::devFlag("TAK_DISTANT_SWEEP_EVERY_FRAME");
         distantModelCache_.allowSoftware=tak::devFlag("TAK_DISTANT_SOFTWARE");
-        distantModelCache_.setRunDrawer(&GameView::drawModelRunThunk,this);   // indexed palette runs (M)
 #endif
         distantModelCache_.prepare(ren_,distantModelItems_,distantNow_,[](void* self,size_t index) {
             static_cast<GameView*>(self)->materializeDistantBody(index);
@@ -4106,9 +4105,17 @@
     // TAK_PALETTE_BAKED forces it: the same-binary reference). A change releases
     // the held form and rebuilds everything that captured its textures.
     void GameView::updatePaletteMode() {
+        // Bakes draw their runs through drawModelRun in EVERY build: SDL cannot draw
+        // an indexed run (it would sample the 1x1 key texture), and a baked-form run
+        // goes to SDL_RenderGeometry there exactly as without the drawer. Installed
+        // here, next to the decision, so the indexed form is never chosen without it.
+        distantModelCache_.setRunDrawer(&GameView::drawModelRunThunk,this);
         const bool linear=tak::texturefilter::unitsLinear(textureFilter_);
         paletteIndexed_.setMarkOutside(tak::devFlag("TAK_PALETTE_MARK_EDGES"));
+        // Debug TAK_BODY_SDL_SUBMIT (the pure-SDL submission reference) takes the
+        // baked form too: indexed runs, and the spans they open, are native draws.
         bool indexed=!paletteIndexedFailed_ && !tak::devFlag("TAK_PALETTE_BAKED") &&
+                     !tak::devFlag("TAK_BODY_SDL_SUBMIT") &&
                      (!linear || tak::devFlag("TAK_PALETTE_INDEXED_LINEAR")) &&
                      paletteIndexed_.ready(ren_) && bodySubmit_.nativeCapable(ren_);
         const PaletteMode wanted=indexed ? PaletteMode::Indexed : PaletteMode::Baked;
@@ -4276,7 +4283,9 @@
         return SDL_RenderGeometry(ren_,texture,vertices,count,nullptr,0);
     }
     int GameView::drawModelRunThunk(void* self, SDL_Renderer*, SDL_Texture* texture, const SDL_Vertex* vertices, int count) {
-        return static_cast<GameView*>(self)->drawModelRun(texture,vertices,count,true);
+        auto* view=static_cast<GameView*>(self);
+        if(view->palettePage(texture)>=0)++view->paletteTotals_.bakeRuns;
+        return view->drawModelRun(texture,vertices,count,true);
     }
 
     // The animated model textures that have an atlas rect, in registry order, with
