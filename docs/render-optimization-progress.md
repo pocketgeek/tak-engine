@@ -7,6 +7,805 @@ and the resumable checkpoint. Read it first; update it before stopping.
 The work is presentation-only. `World::stateHash`, the `--mpai` hashes and
 replays must not move; nothing in this program may feed the simulation.
 
+## Final report (2026-10-18)
+
+This section is the program's final summary. The record per workstream, its
+architecture and its own experiments follow below it unchanged.
+
+### Final status per workstream
+
+Every workstream has exactly one of the brief's five statuses. All fourteen
+are **implemented and verified**. None is already satisfied, experimental
+and disabled, or blocked. Partial validation is listed per workstream in the
+last column; those gaps are platforms and backends this machine cannot run,
+and none of them blocks the status. Experimental paths that stay out of the
+default path, and rejected experiments, are listed under "Rejected
+experiments".
+
+| | Workstream | Final status | Evidence (experiments, tests) | Validation still unavailable |
+|---|---|---|---|---|
+| A | Renderer telemetry | **Implemented and verified** | Exp. 3; `render_telemetry` (also built with `NDEBUG`), `render_benchmark_tool`; compiled out of release (no key strings in the release binary, rechecked 2026-10-18) | GPU busy time is not measured (the GPU number is a draw timeline only); SDL-internal flushes and driver draws cannot be seen |
+| B | Animated atlas dirty regions | **Implemented and verified** | Exp. 4; `animated_atlas`, `render_atlas_verify`, GL `TAK_ATLAS_VERIFY` in the final verifier pass | non-GL renderers (the logic is renderer-neutral SDL; captures on GL only) |
+| C | Stable geometry ownership | **Implemented and verified** | Exp. 5; `geometry_owners` (ASan/UBSan/TSan), `render_geometry_ownership`, GL `TAK_GEOMETRY_OWNERSHIP_VERIFY` | – |
+| D | Preparation separate from placement | **Implemented and verified** | Exp. 6; `geometry_stages`, `render_geometry_stages`, GL `TAK_GEOMETRY_VERIFY` | – |
+| E | Split body/shadow invalidation | **Implemented and verified** | Exp. 7; `shadow_tiles`, `render_shadow_cache`, GL `TAK_SHADOW_CACHE_VERIFY` | – |
+| F | Persistent shadow allocation | **Implemented and verified** | Exp. 8, 8b; `shadow_atlas`, `render_shadow_atlas[_zoom/_band]`; shadow-edge differences explained and accepted by the user on 2026-10-16 (pixel-identical when slots match; final check below) | – |
+| G | Distant-image lookup first | **Implemented and verified** | Exp. 9; `distant_models`, `render_distant_lookup`, GL `TAK_DISTANT_VERIFY` | – |
+| H | Less full-scene vertex copying | **Implemented and verified** | Exp. 10, 10b; `vertex_arena`, `geometrysubmit` (GL), `render_body_arena[_still/_fail]`, GL `TAK_BODY_ARENA_VERIFY` | arena only on SDL `opengl`; other backends use the assembled fallback (pre-H path), not measured there |
+| I | Cost-based scheduling | **Implemented and verified** | Exp. 11; `work_schedule` (ASan/UBSan/TSan), `render_schedule`, GL `TAK_SCHEDULE_VERIFY` | competition with a concurrently running simulation; pool sizing on Windows/macOS (no affinity query) |
+| J | CPU cache budgets | **Implemented and verified** | Exp. 12; `terrain_compositor` (ASan/UBSan/TSan), `terrain_cache`, `cpu_budget`, `render_cpu_budget`, GL `TAK_CPU_TRIM_VERIFY` | RSS after trims (`malloc_trim` not called; RSS reported separately) |
+| K | Camera-prioritized terrain | **Implemented and verified** | Exp. 13, 13c; `terrain_work`, `terrain_schedule`, `terrain_cache` | a real resize/fullscreen switch; other GPUs |
+| L | Unit spatial index | **Implemented and verified** | Exp. 14; `unit_index`, `render_unit_index[_jump]`, GL `TAK_UNIT_INDEX_VERIFY` | – |
+| M | Indexed palette path | **Implemented and verified** | Exp. 15, 15b; `palette_sheets`, `palette_indexed` (GL + software), `render_palette_indexed` | indexed form only on SDL `opengl`; Direct3D/Metal/GLES2 keep the baked form (pre-M output) and were not run; Mesa GL not run |
+| N | Native pass submission | **Implemented and verified** | Exp. 16; `native_pass` (GL 384 cases), `render_native_pass`, GL `TAK_NATIVE_PASS_VERIFY` | Mesa/AMD/Intel GL, Windows/macOS, a real window resize and fullscreen switch |
+
+Backends exercised for timing and captures: SDL `opengl` on the offscreen EGL
+video driver, NVIDIA GeForce RTX 5070 Laptop GPU, driver 615.71.09, GL 4.6.
+The software renderer ran the in-game ctests only, for correctness and not
+timing. **Unvalidated:** Direct3D 11/12, Metal, OpenGL ES 2, Mesa/AMD/Intel
+GL, Windows and macOS builds, visible windows on X11/Wayland, high-DPI
+output scales, fullscreen. Nothing was run on oden-win or pocketgsmacbook.
+
+- Every native path (H, M, N) is gated on SDL `opengl`; other backends get
+  the pre-program SDL paths.
+- The CPU-side work (B–G, I–L) is backend-independent. The in-game ctests
+  exercise it on the software renderer.
+
+### Integration with current main (2026-10-18)
+
+- `origin/main` had moved 121 commits past the branch's base `c2c25707`
+  (voice chat, AI and economy fixes, Legion 10,000 stages 8–9; protocol 276).
+  It was **merged** into the local branch (`a8bbe6ed`), not rebased, so every
+  commit id quoted in this record still names the code that was measured.
+  Conflicts: the `takclient` source list (`animatedatlas.cpp` beside main's
+  new `gameview_voice.cpp`) and `tools/ctest_costs.txt` (union of both lists).
+  Main's renderer changes are HUD-only (the voice indicator, drawn after the
+  world pass; no native pass is open there). `cd46c2c3` adds the median to
+  the benchmark report; `7cae1561` makes 7680×2160 capture comparisons fast
+  (unfiltered PNG rows are no longer walked byte by byte). Nothing was
+  pushed.
+- **Builds:** `build-o2` (all targets, optimized Debug) and the Release
+  `takclient`/`takserver` (`~/tak-tmp/render-opt/build-rel`, -O3 -DNDEBUG)
+  build. The Release `takclient` contains none of the debug strings
+  (`RENDERSTATS`, `t_body_submit`, `TAK_RENDER_STUDY`, every `*_VERIFY` knob:
+  0 occurrences).
+- **Tests on the merged code:** `ctest -L quick` 413/413 passed (build-o2).
+  All render, terrain, shadow, palette, pass, arena, schedule, budget and
+  index tests, costed ones included (40 tests matching
+  `^(render_|terrain_|shadow_|palette_|native_pass|vertex_arena|geometry|distant_models|animated_atlas|work_schedule|cpu_budget|unit_index|spectator_health_bars|tactical_dots)`):
+  40/40 passed (plus the two profile-guard fixtures).
+- **GL verifier pass on the merged binary** (not timed; 240 frames, both
+  sizes, 16 scenes: small-battle, stationary-mixed, moving,
+  total10k-visible, effects, churn, colour-reset, battle-sparse, pan-snap,
+  veteran, pan-distant, distant-sparse, structures, naval, forest, zoom; two
+  runs per case). Three groups: (1) `TAK_GEOMETRY_VERIFY` +
+  `TAK_SHADOW_CACHE_VERIFY` + `TAK_GEOMETRY_OWNERSHIP_VERIFY`; (2)
+  `TAK_NATIVE_PASS_VERIFY` + `TAK_BODY_ARENA_VERIFY` +
+  `TAK_SCHEDULE_VERIFY`; (3) `TAK_UNIT_INDEX_VERIFY` + `TAK_ATLAS_VERIFY` +
+  `TAK_DISTANT_VERIFY` + `TAK_CPU_TRIM_VERIFY`. Every verifier throws at its
+  first mismatch. 95 of 96 cases passed. The one exception is not a
+  mismatch: in total10k-visible at 7680×2160 the shadow tiles exceed the
+  four-page limit every frame, so the atlas takes its whole-frame direct
+  path (Known limitations, F) and `TAK_SHADOW_CACHE_VERIFY` refuses a run in
+  which it checked nothing ("shadow cache verify ran no checks"). The same
+  scene re-run with the geometry and ownership verifiers passed.
+- **`--mpai` hashes** (Inner Circle, seed 1, `takserver --local --no-auth`,
+  scratch profiles), main's own build (`c551ae6c`) vs the merged branch:
+
+  | Mode | 60 s main | 60 s branch | 300 s main | 300 s branch |
+  |---|---|---|---|---|
+  | Retail | `b353410003e98dd5` | `b353410003e98dd5` | `a3d953803a064191` | `a3d953803a064191` |
+  | Legion | `0825aeb9e8139203` | `0825aeb9e8139203` | `ce5c4ba7562e53b9` | `ce5c4ba7562e53b9` |
+
+  Unchanged. The hashes quoted in the brief (Retail `7535cb08ee787b75` /
+  `2c39430636a3dbda`, Legion `c707e1a8063bc0c7` / `532539f51d70840b`) are older
+  baselines: main moved them itself (among others the protocol-273 mana
+  sharing). The branch matched main at every point it was checked
+  (`2c39430636a3dbda` Retail 60 s at C and L, all four values above now).
+
+### Experiment 17 — final matrix: before (p0h) vs after (the program's final renderer)
+
+**What is compared.** A = **p0h** (local branch `task-render-opt-p0h`,
+`60f2b586`): the starting commit's renderer plus the phase-0 telemetry and
+the harness knobs that later scenes need (see "Reproducing"). B = **N5**
+(`f97f21c8`, the program's final renderer code). Both run the same simulation
+(`c2c25707`'s), so every scene is the same workload in both: the world hash
+was identical A vs B in every one of the 48 scene/size pairs. The merged
+build (B + main's 121 commits) runs a different simulation in some scenes;
+its comparison with B is the merge check further below.
+
+**Setup.** Optimized Debug builds (-O2), SDL `opengl` renderer on the
+offscreen EGL video driver, NVIDIA GeForce RTX 5070 Laptop GPU, driver
+615.71.09; actual outputs 1280×960 (world view 1075×888) and 7680×2160 (world
+view 7475×2088) checked from `RENDER_ENV` in every run. 900 frames, 300
+warmup, forced completion (a `glFinish` before present), client pinned to
+CPUs 16–23, `--wait-quiet 30`, ABBA ×2 (4 runs per label, 8 per scene and
+size), all 24 scenes at both sizes. The pipelined group (no `glFinish`) is
+separate. Load: the 1280×960 block and the first four 7680×2160 scenes ran
+02:47–03:30. The Legion nightly then took CPUs 16–23 (03:39–04:52), and the
+7680×2160 runs from 03:30 on were flagged contended. They were discarded,
+and those scenes were rerun from 04:52 behind a wait for the nightly to
+finish. Across every kept run: 1-minute load average ≤ 5.9, no
+`legion_scenario` process, pinned-CPU busy fraction ≤ 0.33 (the client
+itself is about 0.2). No run in the tables below was contended.
+
+**Materiality.** A change counts as material when it exceeds max(2 × the
+larger A/A run spread, 2%) for that scene, size and metric (bold). GPU
+timeline is the `GL_TIME_ELAPSED` draw timeline: it includes gaps where the
+GPU waits for submission and is **not** GPU busy time, which is not measured.
+
+**Frame time** (ms; median = p50 of all measured frames; "noise" = larger A/A spread of
+the run means for total / draw):
+
+| scene | size | visible | total mean A → B | Δ | median A → B | Δ | p95 A → B | Δ | p99 A → B | Δ | draw mean A → B | Δ | GPU timeline A → B | Δ | noise (total / draw) |
+|---|---|---:|---|---:|---|---:|---|---:|---|---:|---|---:|---|---:|---:|
+| small-battle | 1280×960 | 198 | 1.332 → 0.955 | **-28.3%** | 1.300 → 0.903 | **-30.5%** | 1.731 → 1.304 | **-24.7%** | 1.995 → 1.583 | -20.7% | 0.795 → 0.506 | **-36.3%** | 0.221 → 0.132 | **-40.4%** | 5% / 3% |
+| stationary-mixed | 1280×960 | 1825 | 7.266 → 3.604 | **-50.4%** | 6.495 → 3.603 | **-44.5%** | 15.158 → 4.074 | **-73.1%** | 16.677 → 4.646 | **-72.1%** | 5.195 → 2.328 | **-55.2%** | 1.723 → 0.999 | **-42.0%** | 2% / 1% |
+| moving | 1280×960 | 1195 | 12.594 → 8.052 | **-36.1%** | 14.244 → 7.352 | **-48.4%** | 17.221 → 16.000 | -7.1% | 18.448 → 17.331 | -6.1% | 9.250 → 5.521 | **-40.3%** | 2.441 → 1.577 | **-35.4%** | 6% / 6% |
+| total10k-subset | 1280×960 | 108 | 10.302 → 8.661 | -15.9% | 9.365 → 8.235 | -12.1% | 19.898 → 11.429 | **-42.6%** | 24.133 → 14.617 | -39.4% | 2.505 → 1.313 | **-47.6%** | 0.172 → 0.193 | +12.0% | 8% / 6% |
+| total10k-visible | 1280×960 | 8752 | 50.117 → 22.530 | **-55.0%** | 42.716 → 22.093 | **-48.3%** | 76.576 → 27.772 | **-63.7%** | 79.804 → 31.402 | **-60.7%** | 38.627 → 14.071 | **-63.6%** | 20.222 → 6.900 | **-65.9%** | 1% / 0% |
+| forest | 1280×960 | 300 | 1.259 → 0.847 | **-32.7%** | 1.250 → 0.810 | **-35.2%** | 1.556 → 1.102 | **-29.2%** | 1.920 → 1.418 | -26.1% | 0.940 → 0.574 | **-39.0%** | 0.252 → 0.170 | **-32.4%** | 4% / 2% |
+| pan | 1280×960 | 1584 | 11.556 → 8.503 | -26.4% | 10.395 → 7.465 | **-28.2%** | 18.373 → 15.157 | -17.5% | 20.167 → 16.916 | -16.1% | 9.129 → 6.421 | -29.7% | 4.063 → 3.035 | **-25.3%** | 13% / 15% |
+| zoom | 1280×960 | 1814 | 13.247 → 9.725 | **-26.6%** | 13.063 → 10.075 | **-22.9%** | 21.217 → 15.093 | -28.9% | 23.796 → 20.016 | -15.9% | 10.853 → 7.767 | **-28.4%** | 6.388 → 5.287 | **-17.2%** | 7% / 7% |
+| jump | 1280×960 | 220 | 2.128 → 1.684 | **-20.9%** | 2.020 → 1.621 | **-19.8%** | 2.852 → 2.006 | **-29.7%** | 4.042 → 3.499 | -13.4% | 0.898 → 0.583 | **-35.0%** | 0.163 → 0.105 | **-35.2%** | 6% / 2% |
+| effects | 1280×960 | 332 | 3.274 → 2.742 | -16.3% | 3.060 → 2.618 | -14.4% | 4.989 → 3.752 | -24.8% | 5.925 → 4.489 | -24.2% | 2.383 → 1.909 | **-19.9%** | 0.734 → 0.764 | +4.1% | 15% / 7% |
+| naval | 1280×960 | 63 | 0.800 → 0.703 | **-12.1%** | 0.818 → 0.744 | **-9.1%** | 1.155 → 0.965 | -16.4% | 1.703 → 1.140 | -33.0% | 0.536 → 0.432 | **-19.5%** | 0.074 → 0.082 | **+10.2%** | 3% / 2% |
+| churn | 1280×960 | 1794 | 15.476 → 13.617 | -12.0% | 13.666 → 11.862 | **-13.2%** | 22.034 → 20.424 | -7.3% | 24.604 → 22.522 | -8.5% | 10.832 → 9.307 | -14.1% | 4.647 → 4.151 | **-10.7%** | 9% / 11% |
+| colour-reset | 1280×960 | 198 | 1.768 → 1.237 | **-30.1%** | 1.320 → 0.935 | **-29.1%** | 2.571 → 1.910 | **-25.7%** | 8.594 → 4.208 | -51.0% | 1.144 → 0.698 | **-39.0%** | 0.551 → 0.338 | -38.7% | 7% / 5% |
+| battle-sparse | 1280×960 | 465 | 6.681 → 5.655 | -15.4% | 3.696 → 3.519 | -4.8% | 17.344 → 12.529 | -27.8% | 21.986 → 15.943 | -27.5% | 3.081 → 2.328 | -24.4% | 1.321 → 0.797 | **-39.7%** | 9% / 13% |
+| constrained | 1280×960 | 1814 | 15.022 → 10.223 | **-31.9%** | 14.103 → 10.150 | **-28.0%** | 22.639 → 17.103 | -24.5% | 24.148 → 19.562 | -19.0% | 12.390 → 8.219 | **-33.7%** | 5.147 → 5.311 | +3.2% | 6% / 5% |
+| pan-snap | 1280×960 | 1094 | 6.779 → 4.737 | **-30.1%** | 6.593 → 4.695 | **-28.8%** | 7.656 → 5.210 | **-31.9%** | 12.788 → 5.580 | **-56.4%** | 5.170 → 3.124 | **-39.6%** | 2.157 → 1.327 | **-38.4%** | 1% / 1% |
+| veteran | 1280×960 | 1825 | 6.782 → 3.680 | **-45.7%** | 6.511 → 3.628 | **-44.3%** | 13.193 → 4.532 | **-65.7%** | 15.239 → 5.255 | **-65.5%** | 4.909 → 2.411 | **-50.9%** | 2.038 → 1.083 | **-46.9%** | 16% / 11% |
+| pan-distant | 1280×960 | 1944 | 12.664 → 9.527 | **-24.8%** | 12.435 → 9.456 | **-24.0%** | 14.068 → 10.169 | **-27.7%** | 20.261 → 13.589 | -32.9% | 10.386 → 7.644 | **-26.4%** | 6.313 → 5.568 | **-11.8%** | 3% / 2% |
+| distant-sparse | 1280×960 | 2253 | 12.990 → 8.060 | **-38.0%** | 7.312 → 6.240 | **-14.7%** | 45.762 → 14.306 | **-68.7%** | 46.761 → 16.627 | **-64.4%** | 8.106 → 4.092 | **-49.5%** | 3.737 → 1.814 | **-51.5%** | 2% / 2% |
+| structures | 1280×960 | 380 | 6.933 → 4.998 | **-27.9%** | 6.922 → 5.029 | **-27.4%** | 8.047 → 5.862 | **-27.2%** | 10.766 → 6.757 | -37.2% | 6.152 → 4.261 | **-30.7%** | 4.556 → 2.976 | **-34.7%** | 4% / 4% |
+| bigmap-zoom | 1280×960 | 300 | 2.980 → 2.418 | **-18.9%** | 3.044 → 2.548 | **-16.3%** | 3.771 → 3.022 | **-19.9%** | 5.189 → 4.124 | -20.5% | 1.976 → 1.418 | **-28.2%** | 0.980 → 0.862 | **-12.0%** | 1% / 1% |
+| terrain-sweep | 1280×960 | 0 | 0.977 → 1.006 | +3.0% | 0.924 → 0.949 | +2.7% | 1.453 → 1.507 | +3.7% | 1.982 → 2.060 | +3.9% | 0.194 → 0.204 | **+5.3%** | 0.054 → 0.051 | -4.6% | 2% / 3% |
+| terrain-zoom-osc | 1280×960 | 300 | 3.160 → 2.634 | **-16.6%** | 3.139 → 2.635 | **-16.0%** | 3.609 → 2.924 | **-19.0%** | 4.110 → 3.271 | -20.4% | 2.257 → 1.729 | **-23.4%** | 1.450 → 1.225 | **-15.6%** | 3% / 2% |
+| terrain-jumps | 1280×960 | 60 | 1.073 → 1.071 | -0.3% | 0.847 → 0.950 | +12.1% | 2.099 → 1.627 | -22.5% | 2.578 → 2.702 | +4.8% | 0.303 → 0.245 | **-19.0%** | 0.067 → 0.052 | **-22.3%** | 15% / 5% |
+| small-battle | 7680×2160 | 198 | 1.810 → 1.561 | **-13.7%** | 1.783 → 1.518 | **-14.9%** | 2.124 → 2.000 | -5.9% | 2.499 → 2.299 | -8.0% | 1.028 → 0.811 | **-21.1%** | 0.627 → 0.549 | **-12.4%** | 3% / 3% |
+| stationary-mixed | 7680×2160 | 2000 | 10.471 → 4.539 | **-56.7%** | 8.814 → 4.540 | **-48.5%** | 17.828 → 5.139 | **-71.2%** | 20.983 → 5.630 | **-73.2%** | 8.134 → 3.139 | **-61.4%** | 5.698 → 1.619 | **-71.6%** | 2% / 2% |
+| moving | 7680×2160 | 1200 | 16.793 → 8.701 | **-48.2%** | 17.196 → 7.923 | **-53.9%** | 20.183 → 16.295 | **-19.3%** | 21.744 → 20.139 | -7.4% | 12.952 → 6.047 | **-53.3%** | 3.582 → 2.048 | **-42.8%** | 2% / 3% |
+| total10k-subset | 7680×2160 | 384 | 11.644 → 9.119 | **-21.7%** | 10.573 → 8.696 | **-17.8%** | 22.422 → 12.021 | **-46.4%** | 26.812 → 14.449 | -46.1% | 3.680 → 1.927 | **-47.6%** | 1.630 → 0.990 | **-39.3%** | 2% / 3% |
+| total10k-visible | 7680×2160 | 9398 | 67.620 → 64.612 | **-4.4%** | 66.125 → 63.942 | **-3.3%** | 76.243 → 70.997 | **-6.9%** | 82.178 → 74.797 | **-9.0%** | 58.339 → 54.082 | **-7.3%** | 52.226 → 48.012 | **-8.1%** | 1% / 1% |
+| forest | 7680×2160 | 300 | 1.698 → 1.343 | **-20.9%** | 1.635 → 1.311 | **-19.8%** | 2.009 → 1.602 | **-20.2%** | 2.518 → 2.117 | -16.0% | 1.129 → 0.768 | **-32.0%** | 0.591 → 0.560 | **-5.3%** | 1% / 1% |
+| pan | 7680×2160 | 2000 | 19.667 → 16.228 | -17.5% | 19.677 → 16.463 | -16.3% | 21.360 → 17.959 | -15.9% | 22.345 → 19.184 | -14.1% | 15.924 → 13.060 | -18.0% | 10.348 → 9.535 | -7.9% | 12% / 14% |
+| zoom | 7680×2160 | 2000 | 19.480 → 15.505 | **-20.4%** | 19.655 → 15.628 | **-20.5%** | 21.101 → 16.716 | **-20.8%** | 22.071 → 17.443 | **-21.0%** | 15.749 → 12.388 | **-21.3%** | 10.431 → 9.288 | **-11.0%** | 2% / 1% |
+| jump | 7680×2160 | 1237 | 7.236 → 3.647 | **-49.6%** | 7.229 → 3.893 | **-46.2%** | 16.742 → 5.233 | **-68.7%** | 17.277 → 6.662 | **-61.4%** | 5.233 → 2.245 | **-57.1%** | 3.540 → 1.343 | **-62.1%** | 1% / 1% |
+| effects | 7680×2160 | 334 | 3.761 → 3.278 | **-12.8%** | 3.579 → 3.154 | -11.9% | 5.311 → 4.346 | **-18.2%** | 6.280 → 5.061 | -19.4% | 2.875 → 2.394 | **-16.7%** | 1.162 → 1.194 | +2.8% | 2% / 1% |
+| naval | 7680×2160 | 116 | 1.527 → 1.343 | **-12.1%** | 1.570 → 1.298 | **-17.3%** | 1.891 → 1.758 | -7.1% | 2.295 → 2.123 | -7.5% | 0.850 → 0.707 | **-16.9%** | 0.433 → 0.418 | -3.5% | 2% / 2% |
+| churn | 7680×2160 | 2294 | 23.709 → 21.854 | -7.8% | 24.216 → 22.214 | -8.3% | 29.312 → 26.377 | -10.0% | 33.494 → 30.693 | **-8.4%** | 17.967 → 16.357 | -9.0% | 11.746 → 11.190 | -4.7% | 6% / 7% |
+| colour-reset | 7680×2160 | 198 | 2.691 → 2.311 | **-14.1%** | 1.938 → 1.797 | **-7.3%** | 4.263 → 3.827 | -10.2% | 10.744 → 9.595 | -10.7% | 1.742 → 1.405 | **-19.3%** | 1.111 → 0.838 | **-24.5%** | 2% / 3% |
+| battle-sparse | 7680×2160 | 499 | 8.593 → 7.308 | **-15.0%** | 4.348 → 4.260 | -2.0% | 22.594 → 20.243 | -10.4% | 24.854 → 21.649 | -12.9% | 4.504 → 3.494 | **-22.4%** | 3.122 → 1.937 | **-37.9%** | 3% / 3% |
+| constrained | 7680×2160 | 2000 | 19.244 → 15.976 | **-17.0%** | 19.011 → 15.658 | **-17.6%** | 20.830 → 18.683 | -10.3% | 26.052 → 23.016 | **-11.7%** | 16.999 → 14.021 | **-17.5%** | 11.124 → 10.212 | **-8.2%** | 2% / 2% |
+| pan-snap | 7680×2160 | 1941 | 16.812 → 8.056 | **-52.1%** | 17.581 → 7.880 | **-55.2%** | 22.919 → 9.953 | **-56.6%** | 26.292 → 15.006 | **-42.9%** | 13.654 → 6.185 | **-54.7%** | 6.893 → 3.550 | **-48.5%** | 10% / 10% |
+| veteran | 7680×2160 | 2000 | 10.354 → 4.597 | **-55.6%** | 8.845 → 4.582 | **-48.2%** | 17.386 → 5.277 | **-69.6%** | 18.602 → 6.176 | **-66.8%** | 8.068 → 3.215 | **-60.1%** | 5.610 → 1.733 | **-69.1%** | 6% / 6% |
+| pan-distant | 7680×2160 | 2000 | 20.027 → 16.688 | **-16.7%** | 20.201 → 17.190 | **-14.9%** | 22.472 → 18.933 | **-15.7%** | 23.596 → 20.113 | **-14.8%** | 16.273 → 13.493 | **-17.1%** | 10.815 → 10.093 | -6.7% | 4% / 5% |
+| distant-sparse | 7680×2160 | 1501 | 12.719 → 8.087 | **-36.4%** | 6.058 → 5.576 | -8.0% | 44.770 → 16.148 | **-63.9%** | 48.415 → 19.121 | **-60.5%** | 7.561 → 3.649 | **-51.7%** | 5.703 → 2.054 | **-64.0%** | 3% / 3% |
+| structures | 7680×2160 | 764 | 14.240 → 10.459 | **-26.6%** | 14.324 → 10.468 | **-26.9%** | 15.724 → 12.272 | **-22.0%** | 18.523 → 14.727 | -20.5% | 13.304 → 9.492 | **-28.7%** | 10.878 → 6.880 | **-36.8%** | 5% / 5% |
+| bigmap-zoom | 7680×2160 | 300 | 4.707 → 3.974 | **-15.6%** | 4.349 → 3.594 | **-17.4%** | 7.640 → 6.687 | -12.5% | 13.801 → 13.799 | -0.0% | 3.409 → 2.622 | **-23.1%** | 2.014 → 1.714 | **-14.9%** | 3% / 3% |
+| terrain-sweep | 7680×2160 | 0 | 2.085 → 2.093 | +0.4% | 1.943 → 1.976 | +1.7% | 2.924 → 2.916 | -0.3% | 3.809 → 3.803 | -0.2% | 0.797 → 0.800 | +0.4% | 0.491 → 0.502 | +2.2% | 1% / 2% |
+| terrain-zoom-osc | 7680×2160 | 300 | 6.047 → 4.778 | **-21.0%** | 5.737 → 4.531 | **-21.0%** | 10.330 → 8.755 | -15.2% | 12.287 → 10.633 | **-13.5%** | 4.841 → 3.506 | **-27.6%** | 2.767 → 2.058 | **-25.6%** | 3% / 3% |
+| terrain-jumps | 7680×2160 | 60 | 2.588 → 2.449 | -5.4% | 1.769 → 1.797 | +1.6% | 4.929 → 3.973 | -19.4% | 16.413 → 18.940 | +15.4% | 1.192 → 1.085 | -9.0% | 0.855 → 0.820 | -4.0% | 4% / 7% |
+
+**Reading the frame-time table.**
+
+- **Faster, material.** 37 of the 48 scene/size pairs have a material drop in
+  mean frame time. The largest:
+  - dense stationary armies: stationary-mixed −50% / −57% (7.27 → 3.60 ms and
+    10.47 → 4.54 ms), veteran −46% / −56%, with p99 −72% / −73%;
+  - moving armies: moving −36% / −48%;
+  - the 10,000-unit scenes: total10k-visible −55% at 1280×960 (50.1 → 22.5
+    ms) and total10k-subset −16% (n.s.; draw −48%, p95 −43%);
+  - whole-pixel pans: pan-snap −30% / −52%;
+  - camera jumps: jump −21% / −50%;
+  - large-population views: distant-sparse −38% / −36%;
+  - everyday scenes: small-battle −28% / −14%, forest −33% / −21%,
+    structures −28% / −27%.
+- **total10k-visible at 7680×2160 is GPU-bound and improves the least:**
+  −4.4% total (67.6 → 64.6 ms; material, A/A noise 1%), draw −7.3%, GPU
+  timeline −8.1%, p99 −9%. Its shadow tiles exceed the four-page atlas, so
+  it takes the whole-frame direct shadow path in both builds. The spatial
+  index cannot help a view that holds every unit (L). The large gain at
+  1280×960 there comes from F's shadow packing (21.8 → 1.8 ms
+  `t_shadow_pack`), G (`t_distant` 2.7 → 0.9 ms) and H/N (`t_body_submit`
+  5.7 → 3.6 ms).
+- **Faster, inside the noise.** pan 1280×960 −26% and 7680×2160 −17.5% (pan's A/A spread is
+  12–15%), effects 1280×960 −16% (draw −20%, material), churn −12% / −8% (A/A
+  9% / 6%), battle-sparse 1280×960 −15%, terrain-jumps −0.3% / −5.4%.
+- **Not faster.** terrain-sweep: +3.0% / +0.4% total (not material). Its
+  draw time at 1280×960 rises +5.3% (0.194 → 0.204 ms, material, +10 µs);
+  B spends `t_terrain` 0.10 ms re-ranking chunk work while the camera sweeps
+  (K). The p0h baseline has no `t_terrain` key, so that phase cannot be
+  compared directly. No unit is visible in this scene: the 300 units stay
+  off the sweep's path.
+- **Regressions in a sub-metric** (material unless marked; the totals still fall):
+  - naval 1280×960: GPU timeline +10.2% (0.074 → 0.082 ms), total −12%;
+  - total10k-subset 1280×960: GPU timeline +12% (0.17 → 0.19 ms), not material;
+  - terrain-jumps 7680×2160: p99 +15% (16.4 → 18.9 ms), not material
+    (spread); the jump-storm trade-off of K, see Known limitations;
+  - terrain-jumps 1280×960: draw median +42% (0.099 → 0.141 ms) while draw
+    mean −19%;
+  - colour-reset 7680×2160: the geometry draw phase +26% (0.16 → 0.20 ms)
+    (probably: each reset makes every entry cold, and D's local rebuild
+    costs 7–12% more than the former single pass, Experiment 6);
+  - constrained 7680×2160: present +36% (0.23 → 0.31 ms), total −17%;
+  - distant-sparse 1280×960: the body draw phase +31% (1.11 → 1.45 ms), see
+    `t_body_submit` below.
+- **Phase-level costs the totals absorb:**
+  - N's pass planning moved time into `t_body_assembly` (structures +0.26 /
+    +0.77 ms, small-battle +0.02 ms, battle-sparse +0.17 ms) while
+    `t_body_submit` fell by more;
+  - distant-sparse 1280×960 `t_body_submit` +0.35 ms (0.85 → 1.20 ms,
+    material). The same bodies are submitted (800 per frame) and draw is
+    −49.5%. The arena uploads (5.9k vertices per frame) and pass primings are
+    counted inside that phase; the cause was not isolated further;
+  - total10k-visible `t_geometry` +10% / +11% (2.10 → 2.31 ms, 2.24 → 2.50 ms)
+    and `t_atlas` +24% / +27% (about 0.06 ms). Likely D's staged key checks
+    and B's per-frame atlas check (not isolated); far smaller than the
+    savings elsewhere in the frame.
+- **total10k-visible 7680×2160: CPU time moves into the shadow composite.**
+  The frame is GPU-bound. Its shadow tiles exceed the four-page atlas, so
+  both builds take the whole-frame direct shadow path, which the program did
+  not change. The baseline logs "page limit reached"; B reports
+  `shadow_fallback` = 1 with all 9,398 units in `shadow_direct_units`.
+  - Changes: body submit −10.5 ms (13.9 → 3.4 ms); direct shadow composite
+    +6.7 ms (33.2 → 39.8 ms); present under forced completion +1.6 ms (0.73 →
+    2.32 ms, the H limitation from Experiment 10). Net: total −3.0 ms, GPU
+    timeline −4.2 ms.
+  - Most likely the CPU now reaches the composite earlier and blocks there on
+    a busier GPU queue. That was not isolated.
+
+**Per-frame work** (means; "–" = the baseline has no such counter). The
+changes, A → B:
+
+- Vertices generated: −97% to −98% in the camera scenes over still armies,
+  where D re-places units instead of rebuilding them. Pan 1280×960 goes
+  from 419k to 9.9k; zoom from 480k to 11.5k. churn, whose army also moves,
+  falls −55%.
+- Body vertices copied: −75% to −96% wherever geometry is retained (H, N).
+  stationary-mixed 1280×960 goes from 161k to 18k; total10k-visible
+  1280×960 from 771k to 50k. Streaming camera scenes copy as before.
+- Shadow tiles redrawn: −68% to −91% in still and whole-pixel scenes (E, F),
+  −16% to −45% in scenes with moving units.
+  stationary-mixed goes from 858 to 83; pan-snap 1280×960 from 1.1k to 190.
+
+Notes on the columns:
+
+- `bytes_uploaded`, `native_draws` and `native_primes` exist only in B.
+- `target_switches` is **not comparable**: workstream A added counting sites
+  (`countTargetSwitch` in the shared submit paths), so B counts more places,
+  not more switches. That is the steady +1.1 per frame.
+- The animated atlas repaints the same regions and pixels in both builds,
+  because all 44 shipped animated regions advance on the same ticks (B's
+  savings there are flushes and repaint-frame cost; see Experiment 4).
+
+Per-frame work, mean, A → B:
+
+| scene | size | verts_generated | body_verts_copied | bytes_uploaded | geometry_misses | shadow_tiles_dirty | shadow_dirty_pixels | atlas_regions | atlas_pixels | target_switches | body_submissions | native_draws | native_primes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| small-battle | 1280×960 | 8.1k → 7.3k | 56.3k → 12.2k | – → 369.2k | 26.6 → 24.0 | 105 → 23.9 | 153.5k → 27.7k | 8.8 → 8.8 | 26.8k → 26.8k | 1.2 → 2.3 | 92.9 → 92.9 | – → 92.1 | – → 7.8 |
+| stationary-mixed | 1280×960 | 11.3k → 11.3k | 160.5k → 18.0k | – → 784.3k | 83.0 → 83.0 | 858 → 83.0 | 944.8k → 151.1k | 4.4 → 4.4 | 13.4k → 13.4k | 0.7 → 1.8 | 922 → 922 | – → 925 | – → 30.7 |
+| moving | 1280×960 | 263.1k → 238.6k | 375.1k → 323.7k | – → 9.86M | 835 → 773 | 1.2k → 776 | 413.9k → 279.3k | 4.4 → 4.4 | 13.4k → 13.4k | 1.1 → 2.2 | 39.2 → 39.2 | – → 41.6 | – → 41.6 |
+| total10k-subset | 1280×960 | 624 → 624 | 28.5k → 1.1k | – → 46.8k | 4.8 → 4.8 | 32.2 → 5.1 | 126.0k → 34.7k | 4.4 → 4.4 | 13.4k → 13.4k | 0.7 → 1.8 | 72.0 → 72.0 | – → 73.7 | – → 11.7 |
+| total10k-visible | 1280×960 | 52.1k → 52.1k | 771.2k → 50.0k | – → 3.51M | 392 → 392 | 4.4k → 406 | 1.45M → 207.3k | 4.4 → 4.4 | 13.4k → 13.4k | 4.6 → 5.7 | 3.7k → 3.7k | – → 3.7k | – → 80.7 |
+| forest | 1280×960 | 1.7k → 1.7k | 79.4k → 3.1k | – → 127.8k | 13.2 → 13.2 | 89.6 → 13.2 | 385.9k → 87.9k | 4.4 → 4.4 | 13.4k → 13.4k | 0.7 → 1.8 | 181 → 181 | – → 183 | – → 16.1 |
+| pan | 1280×960 | 419.1k → 9.9k | 419.1k → 417.9k | – → 15.24M | 1.6k → 1.6k | 1.6k → 1.6k | 3.68M → 3.68M | 4.4 → 4.4 | 13.4k → 13.4k | 1.1 → 2.2 | 939 → 939 | – → 945 | – → 26.9 |
+| zoom | 1280×960 | 480.0k → 11.5k | 451.1k → 449.9k | – → 17.47M | 1.8k → 1.8k | 1.8k → 1.8k | 2.23M → 2.23M | 4.4 → 4.4 | 13.4k → 13.4k | 2.5 → 3.6 | 1.1k → 1.1k | – → 1.1k | – → 33.9 |
+| jump | 1280×960 | 2.1k → 2.3k | 57.6k → 3.8k | – → 145.5k | 12.1 → 12.4 | 61.2 → 13.3 | 143.6k → 43.9k | 4.4 → 4.4 | 13.4k → 13.4k | 0.7 → 1.8 | 140 → 140 | – → 142 | – → 9.1 |
+| effects | 1280×960 | 87.6k → 43.9k | 98.4k → 92.8k | – → 3.25M | 284 → 274 | 319 → 269 | 958.7k → 847.7k | 8.8 → 8.8 | 26.8k → 26.8k | 1.2 → 2.3 | 199 → 199 | – → 177 | – → 23.8 |
+| naval | 1280×960 | 7.4k → 7.4k | 28.0k → 18.8k | – → 442.0k | 15.5 → 15.5 | 16.6 → 9.4 | 144.4k → 92.5k | 4.4 → 4.4 | 13.4k → 13.4k | 0.7 → 1.8 | 223 → 223 | – → 224 | – → 4.1 |
+| churn | 1280×960 | 485.0k → 216.9k | 485.0k → 483.7k | – → 17.80M | 1.8k → 1.8k | 1.8k → 1.8k | 4.05M → 4.05M | 4.4 → 4.4 | 13.4k → 13.4k | 1.6 → 2.7 | 502 → 502 | – → 506 | – → 42.0 |
+| colour-reset | 1280×960 | 8.5k → 7.8k | 56.3k → 12.8k | – → 388.4k | 28.2 → 25.6 | 106 → 25.5 | 156.3k → 30.7k | 8.8 → 8.8 | 26.8k → 26.8k | 1.2 → 2.3 | 92.9 → 92.9 | – → 92.2 | – → 7.8 |
+| battle-sparse | 1280×960 | 68.8k → 60.9k | 122.1k → 108.9k | – → 3.33M | 185 → 165 | 443 → 165 | 514.8k → 271.7k | 8.8 → 8.8 | 26.8k → 26.8k | 0.8 → 1.4 | 198 → 198 | – → 194 | – → 12.0 |
+| constrained | 1280×960 | 480.0k → 11.5k | 480.0k → 453.8k | – → 16.94M | 1.8k → 1.8k | 1.6k → 1.7k | 1.62M → 1.86M | 4.4 → 4.4 | 13.4k → 13.4k | 1.0 → 3.2 | 1.1k → 1.1k | – → 1.1k | – → 33.3 |
+| pan-snap | 1280×960 | 289.4k → 7.0k | 289.4k → 288.6k | – → 6.89M | 1.1k → 1.1k | 1.1k → 190 | 4.39M → 805.7k | 4.4 → 4.4 | 13.4k → 13.4k | 2.1 → 3.2 | 647 → 647 | – → 654 | – → 22.9 |
+| veteran | 1280×960 | 14.4k → 11.3k | 161.1k → 20.6k | – → 878.1k | 91.1 → 91.1 | 866 → 83.0 | 952.9k → 151.1k | 4.4 → 4.4 | 13.4k → 13.4k | 0.9 → 1.9 | 925 → 925 | – → 927 | – → 30.7 |
+| pan-distant | 1280×960 | 514.8k → 12.1k | 320.5k → 319.9k | – → 15.76M | 1.9k → 1.9k | 1.9k → 1.9k | 2.13M → 2.13M | 4.4 → 4.4 | 13.4k → 13.4k | 3.1 → 4.2 | 1.1k → 1.1k | – → 1.1k | – → 34.7 |
+| distant-sparse | 1280×960 | 14.3k → 13.8k | 29.8k → 6.2k | – → 846.8k | 103 → 103 | 1.0k → 104 | 341.6k → 53.1k | 4.4 → 4.4 | 13.4k → 13.4k | 3.1 → 4.2 | 800 → 800 | – → 803 | – → 32.8 |
+| structures | 1280×960 | 22.9k → 22.9k | 134.4k → 33.1k | – → 779.9k | 50.3 → 50.3 | 61.7 → 19.6 | 484.0k → 154.1k | 4.4 → 4.4 | 13.4k → 13.4k | 0.7 → 1.8 | 13.8k → 13.8k | – → 13.8k | – → 17.2 |
+| bigmap-zoom | 1280×960 | 79.4k → 1.7k | 50.6k → 50.5k | – → 2.90M | 300 → 300 | 300 → 300 | 399.8k → 399.8k | 4.4 → 4.4 | 13.4k → 13.4k | 2.4 → 3.5 | 163 → 163 | – → 169 | – → 7.0 |
+| terrain-sweep | 1280×960 | 0.0 → 0.0 | 0.0 → 0.0 | – → 124.8k | 0.0 → 0.0 | 0.0 → 0.0 | 0.0 → 0.0 | 0.0 → 0.0 | 0.0 → 0.0 | 0.0 → 0.0 | 0.0 → 0.0 | – → 2.3 | – → 2.3 |
+| terrain-zoom-osc | 1280×960 | 78.2k → 1.7k | 36.0k → 36.0k | – → 2.88M | 296 → 296 | 296 → 296 | 334.8k → 333.4k | 4.4 → 4.4 | 13.4k → 13.4k | 3.1 → 4.2 | 178 → 178 | – → 184 | – → 6.9 |
+| terrain-jumps | 1280×960 | 423 → 423 | 15.9k → 791 | – → 176.1k | 2.8 → 2.8 | 23.0 → 2.8 | 51.7k → 11.0k | 4.4 → 4.4 | 13.4k → 13.4k | 0.2 → 0.6 | 35.4 → 35.4 | – → 39.4 | – → 4.2 |
+| small-battle | 7680×2160 | 8.1k → 7.3k | 56.3k → 12.7k | – → 380.6k | 26.6 → 24.0 | 105 → 23.9 | 153.5k → 27.7k | 8.8 → 8.8 | 26.8k → 26.8k | 1.2 → 2.3 | 97.9 → 97.9 | – → 94.1 | – → 14.2 |
+| stationary-mixed | 7680×2160 | 12.3k → 12.3k | 529.3k → 22.8k | – → 918.6k | 90.2 → 90.2 | 914 → 90.2 | 2.11M → 332.8k | 4.4 → 4.4 | 13.4k → 13.4k | 1.1 → 2.4 | 1.2k → 1.2k | – → 1.2k | – → 38.1 |
+| moving | 7680×2160 | 264.7k → 240.0k | 376.6k → 325.6k | – → 9.92M | 840 → 778 | 1.2k → 781 | 797.3k → 540.8k | 4.4 → 4.4 | 13.4k → 13.4k | 1.1 → 2.2 | 80.6 → 80.6 | – → 81.3 | – → 81.3 |
+| total10k-subset | 7680×2160 | 2.5k → 2.5k | 101.5k → 4.5k | – → 180.8k | 17.6 → 17.6 | 123 → 17.6 | 520.9k → 119.7k | 4.4 → 4.4 | 13.4k → 13.4k | 0.7 → 1.8 | 230 → 230 | – → 232 | – → 8.3 |
+| total10k-visible | 7680×2160 | 56.0k → 56.0k | 2.49M → 181.2k | – → 3.62M | 420 → 420 | 0.0 → 0.0 | 0.0 → 0.0 | 4.4 → 4.4 | 13.4k → 13.4k | 0.1 → 0.2 | 5.5k → 5.5k | – → 5.5k | – → 76.0 |
+| forest | 7680×2160 | 1.7k → 1.7k | 79.4k → 3.1k | – → 127.8k | 13.2 → 13.2 | 120 → 13.2 | 940.2k → 183.4k | 4.4 → 4.4 | 13.4k → 13.4k | 0.7 → 2.0 | 181 → 181 | – → 184 | – → 16.8 |
+| pan | 7680×2160 | 529.2k → 12.3k | 529.2k → 527.7k | – → 19.24M | 2.0k → 2.0k | 2.0k → 2.0k | 4.65M → 4.65M | 4.4 → 4.4 | 13.4k → 13.4k | 2.1 → 3.2 | 1.2k → 1.2k | – → 1.2k | – → 44.8 |
+| zoom | 7680×2160 | 529.3k → 12.3k | 529.3k → 527.8k | – → 19.25M | 2.0k → 2.0k | 2.0k → 2.0k | 4.67M → 4.67M | 4.4 → 4.4 | 13.4k → 13.4k | 2.1 → 3.2 | 1.2k → 1.2k | – → 1.2k | – → 44.9 |
+| jump | 7680×2160 | 8.7k → 7.7k | 327.5k → 17.1k | – → 664.0k | 58.6 → 58.6 | 516 → 61.6 | 1.28M → 226.1k | 8.8 → 8.8 | 26.8k → 26.8k | 1.0 → 2.2 | 744 → 744 | – → 746 | – → 24.8 |
+| effects | 7680×2160 | 88.4k → 43.9k | 99.4k → 94.5k | – → 3.30M | 286 → 276 | 322 → 270 | 967.7k → 853.7k | 8.8 → 8.8 | 26.8k → 26.8k | 1.2 → 2.3 | 214 → 214 | – → 159 | – → 38.0 |
+| naval | 7680×2160 | 13.3k → 13.3k | 51.5k → 34.3k | – → 798.6k | 27.7 → 27.7 | 32.4 → 15.7 | 443.5k → 259.3k | 4.4 → 4.4 | 13.4k → 13.4k | 0.7 → 1.8 | 449 → 449 | – → 370 | – → 17.1 |
+| churn | 7680×2160 | 627.1k → 292.1k | 627.1k → 625.5k | – → 23.24M | 2.3k → 2.3k | 2.3k → 2.3k | 5.28M → 5.28M | 4.4 → 4.4 | 13.4k → 13.4k | 2.1 → 3.2 | 665 → 665 | – → 653 | – → 103 |
+| colour-reset | 7680×2160 | 8.5k → 7.8k | 56.3k → 13.3k | – → 767.5k | 28.2 → 25.6 | 106 → 25.5 | 156.3k → 30.7k | 8.8 → 8.8 | 26.8k → 26.8k | 1.2 → 2.3 | 97.9 → 97.9 | – → 100 | – → 20.4 |
+| battle-sparse | 7680×2160 | 72.6k → 63.2k | 130.8k → 116.5k | – → 3.73M | 201 → 173 | 472 → 173 | 1.09M → 562.7k | 8.8 → 8.8 | 26.8k → 26.8k | 0.7 → 2.0 | 215 → 215 | – → 199 | – → 20.6 |
+| constrained | 7680×2160 | 529.3k → 12.3k | 529.3k → 527.8k | – → 13.59M | 2.0k → 2.0k | 0.0 → 0.0 | 0.0 → 0.0 | 4.4 → 4.4 | 13.4k → 13.4k | 0.1 → 0.2 | 1.2k → 1.2k | – → 1.2k | – → 70.3 |
+| pan-snap | 7680×2160 | 478.2k → 12.1k | 513.9k → 496.3k | – → 11.26M | 1.8k → 1.8k | 1.9k → 227 | 7.51M → 1.11M | 4.4 → 4.4 | 13.4k → 13.4k | 2.3 → 4.1 | 1.2k → 1.2k | – → 1.2k | – → 43.8 |
+| veteran | 7680×2160 | 15.8k → 12.3k | 529.3k → 28.1k | – → 1.02M | 99.1 → 99.1 | 923 → 90.2 | 2.13M → 332.8k | 4.4 → 4.4 | 13.4k → 13.4k | 1.1 → 2.4 | 1.2k → 1.2k | – → 1.2k | – → 38.2 |
+| pan-distant | 7680×2160 | 529.3k → 12.3k | 529.3k → 527.8k | – → 19.25M | 2.0k → 2.0k | 2.0k → 2.0k | 4.41M → 4.41M | 4.4 → 4.4 | 13.4k → 13.4k | 2.1 → 3.2 | 1.2k → 1.2k | – → 1.2k | – → 44.9 |
+| distant-sparse | 7680×2160 | 9.3k → 9.3k | 397.3k → 16.8k | – → 902.9k | 67.8 → 67.8 | 716 → 77.4 | 1.67M → 271.4k | 4.4 → 4.4 | 13.4k → 13.4k | 0.6 → 1.7 | 882 → 882 | – → 884 | – → 18.8 |
+| structures | 7680×2160 | 45.1k → 45.1k | 272.1k → 63.4k | – → 1.52M | 99.0 → 99.0 | 141 → 41.3 | 997.2k → 341.3k | 4.4 → 4.4 | 13.4k → 13.4k | 1.3 → 2.3 | 30.4k → 30.4k | – → 30.4k | – → 24.3 |
+| bigmap-zoom | 7680×2160 | 79.4k → 1.7k | 50.7k → 50.6k | – → 3.07M | 300 → 300 | 300 → 300 | 400.3k → 400.3k | 7.0 → 6.9 | 21.5k → 21.0k | 2.4 → 3.5 | 163 → 163 | – → 171 | – → 9.4 |
+| terrain-sweep | 7680×2160 | 7.0 → 0.8 | 7.0 → 6.7 | – → 1.75M | 0.0 → 0.0 | 0.0 → 0.0 | 36.5 → 36.5 | 4.4 → 4.4 | 13.4k → 13.4k | 0.1 → 0.2 | 0.1 → 0.1 | – → 14.6 | – → 14.6 |
+| terrain-zoom-osc | 7680×2160 | 78.2k → 1.7k | 36.0k → 36.0k | – → 3.20M | 296 → 296 | 296 → 296 | 334.7k → 333.4k | 4.4 → 4.4 | 13.4k → 13.4k | 3.1 → 4.2 | 179 → 179 | – → 189 | – → 16.1 |
+| terrain-jumps | 7680×2160 | 423 → 423 | 15.9k → 791 | – → 3.00M | 2.8 → 2.8 | 23.0 → 2.8 | 51.7k → 11.0k | 4.4 → 4.4 | 13.4k → 13.4k | 0.2 → 0.6 | 35.6 → 35.6 | – → 58.8 | – → 24.4 |
+
+**Renderer phases** (ms per frame, A → B; t_ = render-thread wall, w_ = CPU summed over workers; **bold** = material; the baseline lacks the pool and terrain keys):
+
+| scene | size | t_candidates | t_atlas | t_geometry | t_distant | t_shadow_pack | t_body_assembly | t_body_submit | t_terrain | t_pool_dispatch | t_pool_wait | w_pool_wake | w_geometry_build |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| small-battle | 1280×960 | **0.009 → 0.010** | **0.052 → 0.046** | **0.126 → 0.093** | **0.000 → 0.001** | **0.135 → 0.074** | **0.037 → 0.060** | **0.284 → 0.068** | – → 0.010 | – → 0.006 | – → 0.022 | – → 0.043 | – → 0.337 |
+| stationary-mixed | 1280×960 | **0.092 → 0.063** | **0.058 → 0.047** | **0.418 → 0.310** | **0.459 → 0.066** | **1.829 → 0.254** | 0.223 → 0.200 | **1.497 → 0.877** | – → 0.017 | – → 0.009 | – → 0.010 | – → 0.143 | – → 0.507 |
+| moving | 1280×960 | **0.071 → 0.058** | **0.044 → 0.037** | 1.757 → 1.701 | **0.002 → 0.002** | **5.096 → 1.536** | **0.421 → 0.571** | 1.274 → 1.088 | – → 0.021 | – → 0.015 | – → 0.016 | – → 2.651 | – → 10.633 |
+| total10k-subset | 1280×960 | **0.491 → 0.028** | **0.048 → 0.042** | **0.251 → 0.110** | **0.001 → 0.001** | **0.143 → 0.065** | **0.201 → 0.031** | **0.194 → 0.139** | – → 0.036 | – → 0.007 | – → 0.012 | – → 0.085 | – → 0.051 |
+| total10k-visible | 1280×960 | **0.733 → 0.337** | **0.238 → 0.296** | **2.102 → 2.313** | **2.745 → 0.879** | **21.789 → 1.755** | 1.392 → 1.353 | **5.650 → 3.557** | – → 0.065 | – → 0.181 | – → 0.032 | – → 2.230 | – → 2.769 |
+| forest | 1280×960 | 0.014 → 0.014 | **0.032 → 0.027** | **0.098 → 0.060** | **0.000 → 0.001** | **0.118 → 0.049** | **0.049 → 0.031** | **0.479 → 0.252** | – → 0.008 | – → 0.006 | – → 0.016 | – → 0.042 | – → 0.090 |
+| pan | 1280×960 | **0.103 → 0.065** | 0.060 → 0.064 | **2.586 → 0.868** | 0.003 → 0.003 | 2.458 → 2.319 | 0.509 → 0.474 | 2.688 → 1.881 | – → 0.024 | – → 0.026 | – → 0.021 | – → 1.743 | – → 3.668 |
+| zoom | 1280×960 | **0.121 → 0.084** | **0.062 → 0.071** | **2.924 → 1.079** | 0.685 → 0.685 | 2.788 → 2.532 | 0.567 → 0.570 | **2.850 → 1.857** | – → 0.065 | – → 0.030 | – → 0.022 | – → 2.266 | – → 4.476 |
+| jump | 1280×960 | **0.052 → 0.017** | **0.035 → 0.029** | **0.063 → 0.053** | **0.000 → 0.001** | **0.101 → 0.050** | **0.040 → 0.033** | **0.332 → 0.156** | – → 0.014 | – → 0.004 | – → 0.008 | – → 0.025 | – → 0.108 |
+| effects | 1280×960 | **0.013 → 0.014** | **0.059 → 0.053** | **0.601 → 0.335** | 0.001 → 0.001 | **0.398 → 0.299** | 0.142 → 0.093 | **0.418 → 0.338** | – → 0.015 | – → 0.015 | – → 0.020 | – → 0.186 | – → 1.997 |
+| naval | 1280×960 | **0.007 → 0.006** | **0.028 → 0.025** | 0.126 → 0.133 | **0.000 → 0.000** | **0.050 → 0.040** | 0.043 → 0.049 | **0.186 → 0.063** | – → 0.010 | – → 0.005 | – → 0.014 | – → 0.027 | – → 0.315 |
+| churn | 1280×960 | **0.134 → 0.081** | **0.105 → 0.120** | **2.943 → 2.019** | **0.004 → 0.005** | 3.491 → 3.417 | 0.609 → 0.648 | 2.401 → 1.803 | – → 0.063 | – → 0.025 | – → 0.025 | – → 2.789 | – → 12.114 |
+| colour-reset | 1280×960 | **0.009 → 0.010** | **0.280 → 0.179** | **0.141 → 0.107** | **0.000 → 0.001** | **0.156 → 0.079** | **0.052 → 0.068** | **0.305 → 0.070** | – → 0.038 | – → 0.006 | – → 0.024 | – → 0.064 | – → 0.366 |
+| battle-sparse | 1280×960 | **0.076 → 0.028** | **0.064 → 0.060** | 0.517 → 0.492 | **0.027 → 0.024** | 0.814 → 0.350 | **0.157 → 0.330** | **0.743 → 0.308** | – → 0.043 | – → 0.004 | – → 0.005 | – → 0.703 | – → 3.008 |
+| constrained | 1280×960 | **0.125 → 0.086** | **0.062 → 0.071** | **2.932 → 1.073** | **0.968 → 0.688** | 2.911 → 2.492 | 0.591 → 0.574 | **3.200 → 1.921** | – → 0.078 | – → 0.028 | – → 0.022 | – → 2.274 | – → 4.433 |
+| pan-snap | 1280×960 | **0.079 → 0.050** | 0.052 → 0.051 | **1.384 → 0.449** | **0.002 → 0.002** | **1.097 → 0.577** | **0.201 → 0.221** | **1.648 → 1.053** | – → 0.026 | – → 0.021 | – → 0.021 | – → 0.153 | – → 1.852 |
+| veteran | 1280×960 | **0.090 → 0.064** | **0.058 → 0.048** | **0.420 → 0.314** | **0.498 → 0.116** | **1.499 → 0.255** | 0.215 → 0.217 | **1.512 → 0.882** | – → 0.017 | – → 0.009 | – → 0.011 | – → 0.145 | – → 0.545 |
+| pan-distant | 1280×960 | **0.119 → 0.082** | **0.063 → 0.072** | **3.078 → 1.057** | **1.283 → 1.220** | 2.394 → 2.268 | 0.463 → 0.510 | **2.194 → 1.616** | – → 0.028 | – → 0.033 | – → 0.020 | – → 2.564 | – → 4.074 |
+| distant-sparse | 1280×960 | **0.293 → 0.113** | 0.077 → 0.077 | 0.573 → 0.554 | **0.328 → 0.289** | **4.412 → 0.419** | 0.258 → 0.255 | **0.848 → 1.195** | – → 0.079 | – → 0.008 | – → 0.010 | – → 0.598 | – → 0.753 |
+| structures | 1280×960 | **0.021 → 0.018** | **0.060 → 0.052** | 0.493 → 0.477 | 0.001 → 0.001 | **0.245 → 0.080** | **0.320 → 0.576** | **4.755 → 2.805** | – → 0.015 | – → 0.009 | – → 0.067 | – → 0.879 | – → 1.927 |
+| bigmap-zoom | 1280×960 | 0.006 → 0.008 | **0.036 → 0.029** | **0.476 → 0.130** | **0.610 → 0.552** | **0.317 → 0.279** | **0.055 → 0.040** | **0.276 → 0.177** | – → 0.051 | – → 0.012 | – → 0.017 | – → 0.125 | – → 0.446 |
+| terrain-sweep | 1280×960 | **0.007 → 0.003** | **0.002 → 0.003** | **0.000 → 0.000** | **0.000 → 0.000** | **0.000 → 0.000** | **0.000 → 0.002** | 0.011 → 0.012 | – → 0.100 | – → 0.000 | – → 0.000 | – → 0.000 | – → 0.000 |
+| terrain-zoom-osc | 1280×960 | 0.011 → 0.012 | **0.035 → 0.029** | **0.462 → 0.133** | **0.979 → 0.877** | **0.290 → 0.270** | 0.041 → 0.039 | **0.270 → 0.198** | – → 0.020 | – → 0.012 | – → 0.021 | – → 0.147 | – → 0.444 |
+| terrain-jumps | 1280×960 | **0.005 → 0.002** | **0.031 → 0.026** | 0.026 → 0.023 | **0.000 → 0.000** | **0.034 → 0.014** | 0.020 → 0.011 | **0.077 → 0.020** | – → 0.042 | – → 0.001 | – → 0.004 | – → 0.023 | – → 0.027 |
+| small-battle | 7680×2160 | **0.021 → 0.022** | **0.053 → 0.046** | 0.133 → 0.138 | **0.000 → 0.001** | **0.139 → 0.077** | **0.037 → 0.067** | **0.472 → 0.286** | – → 0.022 | – → 0.006 | – → 0.030 | – → 0.144 | – → 0.382 |
+| stationary-mixed | 7680×2160 | **0.128 → 0.093** | **0.063 → 0.050** | **0.535 → 0.385** | 0.003 → 0.003 | **1.239 → 0.316** | **0.529 → 0.258** | **4.616 → 1.117** | – → 0.041 | – → 0.010 | – → 0.013 | – → 0.349 | – → 0.588 |
+| moving | 7680×2160 | **0.105 → 0.089** | **0.044 → 0.037** | **1.806 → 1.704** | **0.002 → 0.002** | **8.301 → 1.316** | **0.424 → 0.570** | 1.618 → 1.696 | – → 0.050 | – → 0.016 | – → 0.017 | – → 2.609 | – → 10.664 |
+| total10k-subset | 7680×2160 | **0.582 → 0.057** | **0.055 → 0.045** | **0.317 → 0.211** | 0.001 → 0.001 | **0.268 → 0.113** | **0.229 → 0.073** | **0.802 → 0.405** | – → 0.062 | – → 0.024 | – → 0.019 | – → 0.530 | – → 0.167 |
+| total10k-visible | 7680×2160 | **0.753 → 0.364** | **0.250 → 0.318** | **2.239 → 2.496** | **0.058 → 0.067** | **1.216 → 0.814** | 3.235 → 3.156 | **13.879 → 3.415** | – → 0.093 | – → 0.150 | – → 0.049 | – → 2.375 | – → 2.966 |
+| forest | 7680×2160 | 0.017 → 0.017 | **0.033 → 0.027** | **0.110 → 0.081** | **0.000 → 0.001** | **0.137 → 0.053** | **0.047 → 0.033** | **0.626 → 0.401** | – → 0.011 | – → 0.006 | – → 0.028 | – → 0.051 | – → 0.115 |
+| pan | 7680×2160 | **0.134 → 0.096** | **0.061 → 0.074** | **3.085 → 1.135** | **0.004 → 0.005** | 2.446 → 2.377 | 0.669 → 0.677 | 7.229 → 6.402 | – → 0.070 | – → 0.029 | – → 0.024 | – → 2.386 | – → 4.961 |
+| zoom | 7680×2160 | **0.135 → 0.093** | **0.064 → 0.074** | **3.141 → 1.115** | 0.004 → 0.005 | **2.864 → 2.677** | 0.658 → 0.619 | **7.665 → 6.566** | – → 0.067 | – → 0.026 | – → 0.024 | – → 1.718 | – → 4.955 |
+| jump | 7680×2160 | **0.099 → 0.067** | **0.074 → 0.062** | **0.324 → 0.244** | 0.002 → 0.002 | **0.719 → 0.221** | **0.307 → 0.184** | **2.920 → 0.801** | – → 0.045 | – → 0.008 | – → 0.013 | – → 0.210 | – → 0.376 |
+| effects | 7680×2160 | 0.035 → 0.036 | 0.061 → 0.055 | **0.661 → 0.356** | 0.001 → 0.001 | **0.432 → 0.309** | **0.174 → 0.100** | 0.722 → 0.731 | – → 0.039 | – → 0.016 | – → 0.018 | – → 0.284 | – → 2.045 |
+| naval | 7680×2160 | **0.012 → 0.012** | **0.030 → 0.026** | 0.177 → 0.170 | **0.000 → 0.001** | **0.077 → 0.055** | **0.060 → 0.086** | **0.367 → 0.211** | – → 0.021 | – → 0.006 | – → 0.026 | – → 0.077 | – → 0.580 |
+| churn | 7680×2160 | **0.171 → 0.111** | 0.113 → 0.131 | **3.881 → 2.724** | **0.005 → 0.007** | 6.655 → 6.760 | **0.843 → 0.917** | 4.466 → 3.871 | – → 0.399 | – → 0.040 | – → 0.034 | – → 4.101 | – → 16.362 |
+| colour-reset | 7680×2160 | **0.023 → 0.024** | **0.287 → 0.175** | **0.160 → 0.202** | **0.000 → 0.001** | **0.185 → 0.093** | 0.075 → 0.080 | **0.506 → 0.301** | – → 0.365 | – → 0.007 | – → 0.033 | – → 0.420 | – → 0.426 |
+| battle-sparse | 7680×2160 | **0.098 → 0.047** | 0.064 → 0.062 | 0.546 → 0.519 | **0.001 → 0.002** | **0.646 → 0.391** | **0.173 → 0.354** | **2.059 → 1.091** | – → 0.228 | – → 0.005 | – → 0.006 | – → 0.827 | – → 3.152 |
+| constrained | 7680×2160 | 0.153 → 0.136 | **0.070 → 0.079** | **3.187 → 1.200** | **0.004 → 0.005** | **0.220 → 0.235** | 0.642 → 0.690 | **3.268 → 2.287** | – → 1.427 | – → 0.012 | – → 0.016 | – → 1.955 | – → 5.032 |
+| pan-snap | 7680×2160 | **0.115 → 0.076** | 0.063 → 0.069 | **2.890 → 0.975** | **0.004 → 0.005** | **3.884 → 0.945** | 0.653 → 0.665 | **4.950 → 2.247** | – → 0.048 | – → 0.029 | – → 0.023 | – → 1.574 | – → 4.051 |
+| veteran | 7680×2160 | **0.127 → 0.094** | **0.063 → 0.052** | **0.551 → 0.406** | 0.003 → 0.003 | **1.271 → 0.324** | **0.517 → 0.284** | **4.488 → 1.118** | – → 0.041 | – → 0.010 | – → 0.013 | – → 0.399 | – → 0.647 |
+| pan-distant | 7680×2160 | **0.137 → 0.097** | **0.063 → 0.075** | **3.156 → 1.151** | 0.004 → 0.005 | 2.445 → 2.415 | 0.622 → 0.635 | 8.692 → 7.927 | – → 0.071 | – → 0.032 | – → 0.024 | – → 2.490 | – → 5.020 |
+| distant-sparse | 7680×2160 | **0.259 → 0.076** | 0.065 → 0.069 | 0.373 → 0.373 | **0.007 → 0.009** | **2.301 → 0.372** | **0.499 → 0.350** | **2.395 → 0.806** | – → 0.229 | – → 0.004 | – → 0.005 | – → 0.313 | – → 0.510 |
+| structures | 7680×2160 | 0.055 → 0.050 | 0.081 → 0.075 | 0.737 → 0.749 | 0.001 → 0.002 | **0.415 → 0.170** | **0.562 → 1.332** | **10.937 → 6.606** | – → 0.052 | – → 0.017 | – → 0.053 | – → 1.183 | – → 3.655 |
+| bigmap-zoom | 7680×2160 | 0.038 → 0.038 | **0.072 → 0.047** | **0.619 → 0.188** | **0.636 → 0.587** | 0.469 → 0.393 | **0.162 → 0.053** | 0.673 → 0.575 | – → 0.554 | – → 0.015 | – → 0.016 | – → 0.516 | – → 0.460 |
+| terrain-sweep | 7680×2160 | **0.014 → 0.008** | **0.034 → 0.027** | 0.000 → 0.001 | **0.000 → 0.000** | **0.001 → 0.001** | **0.000 → 0.003** | 0.061 → 0.062 | – → 0.606 | – → 0.000 | – → 0.000 | – → 0.000 | – → 0.000 |
+| terrain-zoom-osc | 7680×2160 | 0.043 → 0.040 | **0.042 → 0.036** | **0.799 → 0.235** | 1.071 → 1.020 | 0.625 → 0.505 | **0.250 → 0.063** | 0.614 → 0.563 | – → 0.833 | – → 0.022 | – → 0.019 | – → 0.680 | – → 0.489 |
+| terrain-jumps | 7680×2160 | **0.014 → 0.008** | **0.036 → 0.029** | 0.041 → 0.032 | **0.000 → 0.000** | **0.046 → 0.015** | **0.041 → 0.011** | **0.121 → 0.060** | – → 0.808 | – → 0.001 | – → 0.004 | – → 0.079 | – → 0.029 |
+
+**Pipelined frames** (no `glFinish`; normal play pacing, a separate group,
+ABBA ×2, same setup). **Caveat:** the phase-0 baseline reads every frame's
+GPU timer result right after present, a blocking wait. Workstream A replaced
+that with a non-blocking query ring (Experiment 3). So the baseline's
+"pipelined" frames are partly forced and stall now and then: stationary-mixed
+1280×960 has a 24.3 ms mean against a 5.7 ms median. This table therefore
+overstates B's gain. The forced-completion table above is the matched
+comparison; the medians here are the fairer pipelined numbers.
+
+| scene | size | visible | total mean A → B | Δ | median A → B | Δ | p95 A → B | Δ | p99 A → B | Δ | draw mean A → B | Δ | GPU timeline A → B | Δ | noise (total / draw) |
+|---|---|---:|---|---:|---|---:|---|---:|---|---:|---|---:|---|---:|---:|
+| moving | 1280×960 | 1195 | 7.425 → 6.683 | **-10.0%** | 7.452 → 6.905 | **-7.3%** | 8.612 → 8.385 | -2.6% | 9.610 → 9.088 | -5.4% | 5.047 → 4.637 | **-8.1%** | 2.380 → 2.071 | **-13.0%** | 1% / 2% |
+| pan | 1280×960 | 1584 | 10.373 → 7.142 | **-31.1%** | 10.280 → 7.120 | **-30.7%** | 11.623 → 7.660 | **-34.1%** | 13.001 → 8.017 | **-38.3%** | 8.135 → 5.491 | **-32.5%** | 4.022 → 3.128 | **-22.2%** | 1% / 2% |
+| small-battle | 1280×960 | 198 | 1.468 → 0.850 | **-42.1%** | 1.446 → 0.804 | **-44.4%** | 1.902 → 1.186 | **-37.7%** | 2.138 → 1.299 | **-39.2%** | 0.806 → 0.499 | **-38.1%** | 0.304 → 0.126 | **-58.5%** | 2% / 2% |
+| stationary-mixed | 1280×960 | 1825 | 24.256 → 3.562 | **-85.3%** | 5.670 → 3.569 | **-37.0%** | 7.303 → 3.999 | **-45.2%** | 8.375 → 4.190 | **-50.0%** | 4.288 → 2.335 | **-45.5%** | 1.956 → 1.006 | **-48.6%** | 2% / 3% |
+| structures | 1280×960 | 380 | 6.918 → 4.915 | **-29.0%** | 6.949 → 4.943 | **-28.9%** | 7.869 → 5.710 | **-27.4%** | 9.111 → 6.729 | **-26.1%** | 6.160 → 4.233 | **-31.3%** | 4.532 → 2.957 | **-34.7%** | 3% / 3% |
+| total10k-visible | 1280×960 | 8752 | 31.769 → 22.121 | **-30.4%** | 35.374 → 21.785 | **-38.4%** | 37.905 → 27.281 | **-28.0%** | 41.484 → 31.974 | **-22.9%** | 22.924 → 13.879 | **-39.5%** | 12.390 → 6.815 | **-45.0%** | 1% / 1% |
+| moving | 7680×2160 | 1200 | 7.976 → 7.344 | **-7.9%** | 8.008 → 7.572 | **-5.4%** | 9.165 → 9.079 | -0.9% | 9.700 → 9.688 | -0.1% | 5.539 → 5.279 | **-4.7%** | 2.914 → 2.530 | **-13.2%** | 1% / 1% |
+| pan | 7680×2160 | 2000 | 13.101 → 9.368 | **-28.5%** | 13.031 → 9.320 | **-28.5%** | 14.231 → 9.774 | **-31.3%** | 15.336 → 11.082 | **-27.7%** | 10.770 → 7.659 | **-28.9%** | 6.065 → 5.067 | **-16.5%** | 1% / 1% |
+| small-battle | 7680×2160 | 198 | 1.908 → 1.121 | **-41.2%** | 1.904 → 1.074 | **-43.6%** | 2.287 → 1.439 | **-37.1%** | 2.588 → 1.552 | **-40.0%** | 1.039 → 0.765 | **-26.3%** | 0.656 → 0.583 | **-11.1%** | 2% / 2% |
+| stationary-mixed | 7680×2160 | 2000 | 8.725 → 4.447 | **-49.0%** | 8.690 → 4.444 | **-48.9%** | 10.168 → 5.022 | **-50.6%** | 10.980 → 5.448 | **-50.4%** | 6.737 → 3.140 | **-53.4%** | 4.629 → 1.629 | **-64.8%** | 4% / 3% |
+| structures | 7680×2160 | 764 | 14.072 → 10.191 | **-27.6%** | 14.200 → 10.248 | **-27.8%** | 15.336 → 11.653 | **-24.0%** | 16.517 → 12.730 | **-22.9%** | 13.148 → 9.352 | **-28.9%** | 10.730 → 6.779 | **-36.8%** | 3% / 4% |
+| total10k-visible | 7680×2160 | 9398 | 66.732 → 56.642 | **-15.1%** | 65.833 → 56.102 | **-14.8%** | 75.301 → 61.620 | **-18.2%** | 79.459 → 66.091 | **-16.8%** | 57.582 → 48.272 | **-16.2%** | 51.585 → 42.345 | **-17.9%** | 1% / 2% |
+
+**Memory.** The table shows memory at the last frame, MiB, mean of the
+runs. Three kinds of accounting are kept separate:
+- **CPU gauges** are renderer-owned capacity: the geometry entries, the body
+  buffer, and B's `cpu_cache_retained_bytes` total from J. That total covers
+  geometry, terrain sections and mips, the frame lists, the shadow scratch
+  and worker scratch. It excludes SDL/driver memory, textures' CPU copies,
+  the simulation, audio and the allocator's own slack.
+- **Tracked GPU** is the engine's own texture and buffer accounting, the
+  figure the VRAM cap uses. It includes the shadow atlas, the distant-image
+  pages, the H arena with three frames in flight, terrain chunks and
+  sections, and the palette pages. It excludes the driver's internal
+  allocations, SDL's own batch buffers and the window's back buffers.
+- **RSS** is the whole process.
+
+The baseline has no `cpu_cache_*` gauges, so only B's total is shown.
+
+Reading the memory table:
+
+- **Lower.**
+  - Body buffer capacity: −43% to −88% in the scenes that keep geometry (H
+    retains vertices in the GPU arena; J trims the buffer).
+  - Tracked GPU in structures: −50% / −28% (M: 144 MiB of baked shade
+    pages replaced by 9.3 MiB of indexed pages).
+  - Tracked GPU in terrain-jumps (−32% / −40%), distant-sparse (−33% /
+    −20%) and battle-sparse (−25% / −12%): K, G and F release pages.
+  - Final RSS is lower in 33 of 48 cases.
+- **Higher.**
+  - Geometry capacity is +21% in every scene whose units stay put. D keeps
+    each unit's local (pre-placement) positions so a camera move does not
+    re-transform it; this is the recorded cost of D.
+  - jump 1280×960: geometry capacity +138% (7.0 → 16.7 MiB). C keeps an
+    absent unit's entry for up to 2 s, so the previous view's units are
+    still held when the camera comes back 60 frames later.
+  - Tracked GPU: moving 1280×960 +57% (76 → 119 MiB) and total10k-visible
+    1280×960 +27% (168 → 213 MiB). This is H's vertex arena, counted with
+    three frames in flight. At 7680×2160 the arena is offset by other
+    savings (total10k-visible −5%).
+  - RSS: total10k-visible 1280×960 final +9% and peak +5%, peak +8% at
+    7680×2160. That is the geometry and arena growth above.
+- **Recovery after demand subsides** (segment table): the baseline keeps its
+  peak forever. After battle-sparse's view empties, B releases geometry
+  72 → 0.1 MiB and the body buffer 18.6 → 0.1 MiB (7680×2160: 78 → 0.3 and
+  20.5 → 0.1), and tracked GPU ends 31 / 47 MiB lower. After distant-sparse
+  moves to a corner, geometry falls to 21 / 3.8 MiB (baseline 103 / 96) and
+  tracked GPU ends 58 / 79 MiB lower. While the army is in view, B holds
+  more geometry (118 vs 96 MiB, D's local positions), and frames are 53–54%
+  faster.
+
+Memory at the last frame, MiB, A → B:
+
+| scene | size | geom capacity | body capacity | tracked GPU | final RSS | peak RSS | CPU retained total (B only) |
+|---|---|---|---|---|---|---|---|
+| small-battle | 1280×960 | 3.5 → 4.3 (+21%) | 2.3 → 1.2 (-47%) | 96.7 → 99.1 (+3%) | 395 → 376 (-5%) | 492 → 472 (-4%) | 70.1 |
+| stationary-mixed | 1280×960 | 29.7 → 36.0 (+21%) | 8.4 → 1.2 (-85%) | 120.0 → 111.5 (-7%) | 488 → 455 (-7%) | 594 → 551 (-7%) | 110.1 |
+| moving | 1280×960 | 20.1 → 24.5 (+22%) | 13.6 → 7.7 (-43%) | 76.0 → 119.3 (+57%) | 417 → 456 (+9%) | 572 → 571 (-0%) | 107.8 |
+| total10k-subset | 1280×960 | 1.8 → 2.1 (+21%) | 0.6 → 0.6 (+6%) | 102.0 → 88.5 (-13%) | 666 → 636 (-4%) | 740 → 689 (-7%) | 67.5 |
+| total10k-visible | 1280×960 | 143.1 → 173.8 (+21%) | 43.8 → 5.3 (-88%) | 168.0 → 213.3 (+27%) | 831 → 902 (+9%) | 1038 → 1090 (+5%) | 311.1 |
+| forest | 1280×960 | 4.9 → 6.0 (+21%) | 1.5 → 0.8 (-47%) | 113.0 → 101.4 (-10%) | 447 → 373 (-17%) | 493 → 443 (-10%) | 67.7 |
+| pan | 1280×960 | 64.2 → 39.8 (-38%) | 16.3 → 8.6 (-47%) | 138.0 → 107.3 (-22%) | 539 → 495 (-8%) | 647 → 568 (-12%) | 123.3 |
+| zoom | 1280×960 | 76.2 → 44.9 (-41%) | 17.5 → 9.8 (-44%) | 187.3 → 172.5 (-8%) | 560 → 495 (-12%) | 684 → 598 (-13%) | 145.3 |
+| jump | 1280×960 | 7.0 → 16.7 (+138%) | 2.0 → 1.6 (-22%) | 166.2 → 153.7 (-8%) | 499 → 499 (+0%) | 558 → 525 (-6%) | 84.2 |
+| effects | 1280×960 | 25.5 → 8.0 (-69%) | 6.5 → 3.4 (-47%) | 137.3 → 126.0 (-8%) | 540 → 451 (-16%) | 578 → 510 (-12%) | 79.4 |
+| naval | 1280×960 | 1.6 → 1.9 (+13%) | 1.1 → 0.5 (-49%) | 99.3 → 103.3 (+4%) | 480 → 408 (-15%) | 514 → 488 (-5%) | 82.3 |
+| churn | 1280×960 | 76.4 → 52.5 (-31%) | 16.4 → 10.6 (-36%) | 140.0 → 125.2 (-11%) | 668 → 567 (-15%) | 712 → 647 (-9%) | 139.6 |
+| colour-reset | 1280×960 | 3.5 → 4.3 (+21%) | 2.3 → 1.2 (-47%) | 107.4 → 109.9 (+2%) | 452 → 417 (-8%) | 506 → 476 (-6%) | 70.6 |
+| battle-sparse | 1280×960 | 72.2 → 0.1 (-100%) | 18.6 → 0.1 (-100%) | 124.4 → 93.7 (-25%) | 545 → 486 (-11%) | 656 → 612 (-7%) | 77.4 |
+| constrained | 1280×960 | 76.2 → 44.9 (-41%) | 18.3 → 10.6 (-42%) | 126.5 → 126.3 (-0%) | 637 → 518 (-19%) | 692 → 607 (-12%) | 145.6 |
+| pan-snap | 1280×960 | 48.3 → 36.4 (-25%) | 10.7 → 6.0 (-44%) | 138.0 → 123.3 (-11%) | 521 → 482 (-8%) | 611 → 547 (-10%) | 109.7 |
+| veteran | 1280×960 | 29.7 → 36.2 (+22%) | 8.4 → 1.8 (-78%) | 120.0 → 117.7 (-2%) | 520 → 459 (-12%) | 598 → 557 (-7%) | 110.9 |
+| pan-distant | 1280×960 | 59.8 → 40.4 (-32%) | 9.3 → 9.9 (+6%) | 126.0 → 111.3 (-12%) | 480 → 516 (+8%) | 632 → 563 (-11%) | 133.7 |
+| distant-sparse | 1280×960 | 102.7 → 21.2 (-79%) | 29.5 → 4.1 (-86%) | 172.1 → 114.6 (-33%) | 606 → 627 (+3%) | 833 → 827 (-1%) | 116.2 |
+| structures | 1280×960 | 6.2 → 7.6 (+21%) | 5.3 → 2.8 (-47%) | 250.4 → 126.2 (-50%) | 506 → 451 (-11%) | 649 → 496 (-24%) | 77.6 |
+| bigmap-zoom | 1280×960 | 6.7 → 6.0 (-11%) | 1.5 → 1.6 (+5%) | 178.2 → 163.5 (-8%) | 787 → 559 (-29%) | 914 → 890 (-3%) | 146.3 |
+| terrain-sweep | 1280×960 | 0.0 → 0.0 | 0.0 → 0.0 | 108.5 → 100.7 (-7%) | 729 → 689 (-6%) | 866 → 865 (-0%) | 177.5 |
+| terrain-zoom-osc | 1280×960 | 4.9 → 6.0 (+21%) | 1.3 → 0.9 (-30%) | 157.1 → 144.2 (-8%) | 556 → 624 (+12%) | 910 → 895 (-2%) | 128.9 |
+| terrain-jumps | 1280×960 | 4.8 → 5.9 (+24%) | 3.0 → 0.7 (-76%) | 197.2 → 133.6 (-32%) | 822 → 539 (-34%) | 924 → 881 (-5%) | 124.9 |
+| small-battle | 7680×2160 | 3.5 → 4.3 (+21%) | 2.3 → 1.2 (-47%) | 177.0 → 179.5 (+1%) | 465 → 392 (-16%) | 534 → 492 (-8%) | 70.1 |
+| stationary-mixed | 7680×2160 | 32.7 → 39.6 (+21%) | 10.2 → 2.6 (-74%) | 234.4 → 239.9 (+2%) | 475 → 500 (+5%) | 628 → 617 (-2%) | 109.1 |
+| moving | 7680×2160 | 20.1 → 24.5 (+22%) | 13.6 → 7.7 (-43%) | 202.4 → 231.4 (+14%) | 451 → 480 (+6%) | 603 → 605 (+0%) | 102.5 |
+| total10k-subset | 7680×2160 | 6.3 → 7.6 (+21%) | 2.0 → 1.1 (-46%) | 194.3 → 187.7 (-3%) | 706 → 623 (-12%) | 781 → 733 (-6%) | 73.6 |
+| total10k-visible | 7680×2160 | 153.6 → 186.5 (+21%) | 48.0 → 13.0 (-73%) | 306.5 → 291.8 (-5%) | 817 → 774 (-5%) | 987 → 1070 (+8%) | 271.5 |
+| forest | 7680×2160 | 4.9 → 6.0 (+21%) | 1.5 → 0.8 (-47%) | 137.1 → 141.5 (+3%) | 469 → 417 (-11%) | 517 → 478 (-8%) | 67.7 |
+| pan | 7680×2160 | 55.5 → 39.6 (-29%) | 10.2 → 10.8 (+6%) | 274.5 → 259.8 (-5%) | 594 → 465 (-22%) | 651 → 586 (-10%) | 125.2 |
+| zoom | 7680×2160 | 73.2 → 39.6 (-46%) | 10.2 → 10.8 (+6%) | 290.5 → 259.8 (-11%) | 541 → 519 (-4%) | 668 → 593 (-11%) | 124.7 |
+| jump | 7680×2160 | 36.6 → 39.7 (+8%) | 10.2 → 10.8 (+6%) | 365.5 → 355.8 (-3%) | 518 → 516 (-0%) | 624 → 614 (-2%) | 123.6 |
+| effects | 7680×2160 | 25.7 → 8.0 (-69%) | 6.6 → 3.5 (-47%) | 273.8 → 262.2 (-4%) | 461 → 502 (+9%) | 589 → 534 (-9%) | 79.6 |
+| naval | 7680×2160 | 2.9 → 3.4 (+17%) | 2.0 → 1.0 (-49%) | 162.5 → 166.5 (+2%) | 488 → 457 (-6%) | 544 → 510 (-6%) | 84.6 |
+| churn | 7680×2160 | 96.1 → 55.3 (-43%) | 20.5 → 13.4 (-35%) | 275.0 → 260.2 (-5%) | 587 → 586 (-0%) | 755 → 691 (-9%) | 147.5 |
+| colour-reset | 7680×2160 | 3.5 → 4.3 (+21%) | 2.3 → 1.2 (-47%) | 227.0 → 219.6 (-3%) | 464 → 414 (-11%) | 545 → 494 (-9%) | 70.7 |
+| battle-sparse | 7680×2160 | 77.8 → 0.3 (-100%) | 20.5 → 0.1 (-100%) | 378.3 → 331.8 (-12%) | 587 → 516 (-12%) | 688 → 642 (-7%) | 65.7 |
+| constrained | 7680×2160 | 73.2 → 39.6 (-46%) | 10.2 → 10.8 (+6%) | 127.9 → 128.0 (+0%) | 565 → 468 (-17%) | 655 → 574 (-12%) | 116.3 |
+| pan-snap | 7680×2160 | 80.8 → 40.6 (-50%) | 18.1 → 10.3 (-43%) | 226.3 → 231.9 (+2%) | 589 → 578 (-2%) | 662 → 615 (-7%) | 122.4 |
+| veteran | 7680×2160 | 32.7 → 39.9 (+22%) | 10.2 → 10.8 (+6%) | 234.4 → 239.9 (+2%) | 447 → 506 (+13%) | 625 → 607 (-3%) | 117.5 |
+| pan-distant | 7680×2160 | 32.7 → 39.6 (+21%) | 10.2 → 10.8 (+6%) | 274.5 → 259.8 (-5%) | 538 → 524 (-3%) | 628 → 587 (-7%) | 124.3 |
+| distant-sparse | 7680×2160 | 96.4 → 3.8 (-96%) | 30.6 → 0.1 (-100%) | 398.9 → 320.4 (-20%) | 701 → 637 (-9%) | 837 → 873 (+4%) | 77.2 |
+| structures | 7680×2160 | 12.6 → 15.4 (+22%) | 10.7 → 5.6 (-47%) | 402.9 → 289.4 (-28%) | 476 → 511 (+7%) | 700 → 540 (-23%) | 90.9 |
+| bigmap-zoom | 7680×2160 | 4.9 → 6.0 (+21%) | 1.5 → 1.6 (+5%) | 370.8 → 356.0 (-4%) | 655 → 695 (+6%) | 942 → 991 (+5%) | 180.4 |
+| terrain-sweep | 7680×2160 | 0.0 → 0.0 (-97%) | 0.0 → 0.0 (+1%) | 215.4 → 217.4 (+1%) | 732 → 791 (+8%) | 899 → 900 (+0%) | 128.2 |
+| terrain-zoom-osc | 7680×2160 | 4.9 → 6.0 (+21%) | 1.3 → 0.9 (-30%) | 402.6 → 388.4 (-4%) | 641 → 647 (+1%) | 967 → 909 (-6%) | 149.3 |
+| terrain-jumps | 7680×2160 | 4.8 → 5.9 (+24%) | 3.0 → 0.7 (-76%) | 398.5 → 239.8 (-40%) | 764 → 846 (+11%) | 956 → 943 (-1%) | 132.9 |
+
+Memory recovery, last frame of each segment, MiB, A → B:
+
+| scene | size | segment | geom capacity | body capacity | tracked GPU | total mean ms |
+|---|---|---|---|---|---|---|
+| battle-sparse | 1280×960 | battle | 72.2 → 38.7 | 18.6 → 9.9 | 131.3 → 151.3 | 15.291 → 11.885 (-22%) |
+| battle-sparse | 1280×960 | sparse | 72.2 → 0.1 | 18.6 → 0.1 | 124.4 → 93.7 | 3.811 → 3.578 (-6%) |
+| distant-sparse | 1280×960 | army | 95.6 → 117.9 | 29.5 → 31.2 | 168.0 → 155.8 | 29.564 → 13.511 (-54%) |
+| distant-sparse | 1280×960 | corner | 102.7 → 21.2 | 29.5 → 4.1 | 172.1 → 114.6 | 7.465 → 6.243 (-16%) |
+| battle-sparse | 7680×2160 | battle | 77.8 → 40.9 | 20.5 → 10.9 | 245.7 → 266.3 | 20.626 → 15.699 (-24%) |
+| battle-sparse | 7680×2160 | sparse | 77.8 → 0.3 | 20.5 → 0.1 | 378.3 → 331.8 | 4.582 → 4.511 (-2%) |
+| distant-sparse | 7680×2160 | army | 96.4 → 118.9 | 30.6 → 32.4 | 306.5 → 352.4 | 32.169 → 15.185 (-53%) |
+| distant-sparse | 7680×2160 | corner | 96.4 → 3.8 | 30.6 → 0.1 | 398.9 → 320.4 | 6.236 → 5.721 (-8%) |
+
+**Captures, p0h vs N5** (12 frames per scene and size: 360, 480–489 and
+720, in separate capture runs, world view compared pixel for pixel). Each
+pair is compared twice: B as it ships (default), and B with
+`TAK_SHADOW_REPACK=1`, which runs the former packer every frame so that
+shadow slots match the baseline's.
+
+| scene | size | frames | default: frames differing / pixels (worst frame) | TAK_SHADOW_REPACK: frames differing / pixels |
+|---|---|---:|---|---|
+| small-battle | 1280×960 | 12 | identical | identical |
+| stationary-mixed | 1280×960 | 12 | identical | identical |
+| moving | 1280×960 | 12 | 1 / 1 (1) | identical |
+| total10k-subset | 1280×960 | 12 | identical | identical |
+| total10k-visible | 1280×960 | 12 | 6 / 22 (5) | identical |
+| forest | 1280×960 | 12 | identical | identical |
+| pan | 1280×960 | 12 | identical | identical |
+| zoom | 1280×960 | 12 | identical | identical |
+| jump | 1280×960 | 12 | identical | identical |
+| effects | 1280×960 | 12 | 7 / 10 (2) | identical |
+| naval | 1280×960 | 12 | 1 / 1 (1) | identical |
+| churn | 1280×960 | 12 | identical | identical |
+| colour-reset | 1280×960 | 12 | identical | identical |
+| battle-sparse | 1280×960 | 12 | 1 / 1 (1) | identical |
+| constrained | 1280×960 | 12 | 11 / 89101 (10560) | identical |
+| pan-snap | 1280×960 | 12 | 11 / 23 (9) | identical |
+| veteran | 1280×960 | 12 | identical | identical |
+| pan-distant | 1280×960 | 12 | identical | identical |
+| distant-sparse | 1280×960 | 12 | identical | identical |
+| structures | 1280×960 | 12 | identical | identical |
+| bigmap-zoom | 1280×960 | 12 | identical | identical |
+| terrain-sweep | 1280×960 | 12 | identical | identical |
+| terrain-zoom-osc | 1280×960 | 12 | identical | identical |
+| terrain-jumps | 1280×960 | 12 | 12 / 4844121 (432464) | 12 / 4480757 (432464) |
+| small-battle | 7680×2160 | 12 | identical | identical |
+| stationary-mixed | 7680×2160 | 12 | 12 / 48 (6) | identical |
+| moving | 7680×2160 | 12 | identical | identical |
+| total10k-subset | 7680×2160 | 12 | identical | identical |
+| total10k-visible | 7680×2160 | 12 | identical | identical |
+| forest | 7680×2160 | 12 | 5 / 10 (2) | identical |
+| pan | 7680×2160 | 12 | identical | identical |
+| zoom | 7680×2160 | 12 | identical | identical |
+| jump | 7680×2160 | 12 | 2 / 2 (1) | identical |
+| effects | 7680×2160 | 12 | 4 / 6 (2) | identical |
+| naval | 7680×2160 | 12 | identical | identical |
+| churn | 7680×2160 | 12 | identical | identical |
+| colour-reset | 7680×2160 | 12 | identical | identical |
+| battle-sparse | 7680×2160 | 12 | 11 / 48740417 (5892492) | 10 / 53317114 (5892495) |
+| constrained | 7680×2160 | 12 | 12 / 16992403 (1462632) | 12 / 16992403 (1462632) |
+| pan-snap | 7680×2160 | 12 | 12 / 104 (14) | identical |
+| veteran | 7680×2160 | 12 | 12 / 48 (6) | identical |
+| pan-distant | 7680×2160 | 12 | identical | identical |
+| distant-sparse | 7680×2160 | 12 | 11 / 37133441 (5147533) | 10 / 33946998 (4812901) |
+| structures | 7680×2160 | 12 | 12 / 12 (1) | identical |
+| bigmap-zoom | 7680×2160 | 12 | 10 / 33057861 (6130495) | 10 / 29249602 (5212417) |
+| terrain-sweep | 7680×2160 | 12 | identical | identical |
+| terrain-zoom-osc | 7680×2160 | 12 | 12 / 23678792 (4367745) | 12 / 22128906 (5090788) |
+| terrain-jumps | 7680×2160 | 12 | 11 / 22428204 (3180347) | 11 / 20270345 (2832597) |
+
+Classification. Every difference has an identified cause. Two causes had
+not been described before this report: constrained 1280×960 (F and G under
+the debug cap) and the slower fill after a camera jump (K). Both are now
+under Known limitations. None is a pixel difference without a cause.
+
+- **Shadow-edge pixels (F, accepted by the user on 2026-10-16).** These are
+  moving, total10k-visible, effects, naval, battle-sparse and pan-snap: 1–9
+  pixels in a frame, all gone with `TAK_SHADOW_REPACK`. This is the class
+  recorded in Experiment 8: raster rounding depends on a tile's cell
+  position.
+- **constrained 1280×960 (up to 10,560 pixels, identical with
+  `TAK_SHADOW_REPACK`).** These are whole unit bodies, not shadows. Under
+  the debug 128 MiB GPU cap (below the 512 MiB Options minimum) B's
+  persistent shadow atlas holds one 16 MiB page where the former packer
+  holds 32 MiB (`shadow_atlas_gpu_bytes`, frames 480–720). The freed room
+  lets the distant-image cache create one page: 128 units per frame are drawn
+  as distant images (`distant_images=128`, `distant_reject_budget=1164`). In
+  A and in B with the former packer, `distant_reject_pages=1001` and every
+  unit is drawn live. Distant images differ from live geometry by their
+  bilinear resample, a pre-existing property (Experiment 9). The difference
+  therefore follows from F needing less GPU memory, under a cap no user
+  setting reaches.
+- **Shadow-edge pixels at 7680×2160** (same class): stationary-mixed,
+  veteran, forest, jump, effects, structures and pan-snap, 1–14 pixels in a
+  frame, all identical with `TAK_SHADOW_REPACK`.
+- **Terrain readiness at 7680×2160, with or without `TAK_SHADOW_REPACK`.**
+  Every differing frame has visible cells that B draws from the section
+  fallback or from another level's stand-in, while the baseline had
+  different chunk images. The fallback and the stand-ins resample slightly
+  differently from a finished chunk at fractional zoom. A/A (p0h twice) and
+  B/B (N5 twice) captures sort these scenes into two groups:
+  - **Timing-dependent** in both builds: bigmap-zoom (A/A 6 frames, B/B 10
+    frames differ), terrain-zoom-osc (6 / 2), terrain-jumps (12 / 1). Which
+    chunks are finished at a captured frame depends on the worker's timing,
+    so these differences are noise of the scene, not of the program.
+  - **Deterministic**, identical A/A and B/B: battle-sparse and
+    distant-sparse in the ten frames after their camera jump, and
+    constrained. After the jump the baseline had composed and uploaded 58–63
+    chunk images by frame 480. B fills the new view over more frames: 14 →
+    23 of 40 visible chunks ready from frame 480 to 489 in battle-sparse,
+    16 → 7 holes in distant-sparse. Both are identical again by frame 720.
+    Experiment 13 recorded the same battle-sparse frames as K's work. The
+    pre-K FIFO, with its separate per-frame caps, finished more of the new
+    view within 30 frames. Which part of K's policy delays the fill (the
+    shared upload budget, the job order or the cancellation of the
+    battlefield's pending work) was not isolated. In Experiment 17
+    battle-sparse total p95/p99 fall 10–28%, inside that scene's noise.
+    constrained 7680×2160 is the debug 128 MiB cap, where neither build has
+    room for its chunks (Experiment 13: holes and underlay in every frame in
+    both builds); B keeps 3 chunks and draws the rest from sections and the
+    underlay. The jump fill is added under Known limitations (K).
+- **terrain-jumps 1280×960 (≈ 430k pixels a frame, with or without
+  `TAK_SHADOW_REPACK`).** Terrain readiness. During a jump storm K's calm
+  gate queues no new chunk work, so B draws the section fallback (frame 480:
+  0 of 6 visible chunks ready, `terrain_gated_frames=1`). The baseline had
+  composed 26 chunk images by then. The fallback resamples slightly
+  differently from a chunk. This is K's documented jump-storm trade-off
+  (Known limitations, K). It is also timing-dependent: p0h against itself
+  differs in 1 of 12 frames (363k pixels). Two N5 runs were identical once
+  and differed in total another time (4.84 M vs 4.48 M pixels against p0h).
+
+**Merge check: N5 (pre-merge) vs the merged build.**
+
+- **World hashes.** All 48 scene/size pairs ran the same world in both builds
+  (the tool stops on a mismatch). Main's 121 commits do not change these
+  scenes' simulation results.
+- **Captures.** 45 of 48 pairs are pixel-identical. The other three are
+  terrain readiness: terrain-jumps 1280×960 (1 frame), bigmap-zoom 7680×2160
+  (7 frames) and terrain-zoom-osc 7680×2160 (12 frames). The same scenes vary
+  between two runs of one build (the A/A and B/B captures above).
+- **Timing** (forced completion, ABBA ×2, five scenes at both sizes, same
+  settings as Experiment 17). Draw time is unchanged within noise
+  everywhere: −1.2% to +0.6%, except pan-distant 7680×2160 at +5.0% (A/A
+  14%).
+  - The only material change is total10k-visible 1280×960, total frame
+    +2.6% (22.53 → 23.12 ms). It is the simulation update (8.02 → 8.58 ms;
+    the render study runs the simulation inline) and comes from main's own
+    changes. Draw (14.09 → 14.12 ms) and present are unchanged.
+  - small-battle 1280×960: total +7.3% and p99 +107%, both inside the
+    run spread (A/A 17% / 94%).
+
+### Commits (local branch `task-render-opt`, never pushed)
+
+101 program commits on top of `c2c25707`, then the merge with main, two benchmark-tool commits and this docs commit. Docs commits are
+listed last in each row.
+
+| | Code and test commits | Docs |
+|---|---|---|
+| Phase 0 | `e08d7ccf` telemetry vocabulary, study knobs, `render_benchmark.py`, tests · `65230a7d` contention gating, re-aggregation · `7c5d9cb8` zoom in force, constrained scene | `4ec8baee`, `09dd424f` |
+| A | `37f73c48` phases, worker times, miss attribution, pool stats · `50ac99e6` submissions, terrain jobs, distant causes · `97a5a1e8` GameView wiring · `f7f923c6` deferred GPU timeline queries · `9569bdbc` benchmark tool tables | `da473c72` |
+| B | `bae9afd8` atlas painter + tracker · `095e1fba` changed regions only · `42c1c4a6` free update when nothing changed · `ea2db865` copy-started colour atlases | `8ad6b28c` |
+| C | `81a29b58` generational entry pool · `b180e477` entries owned by the unit · `50acac44` owner-index hashing | `ef71277d` |
+| D | `361484d2` stage vocabulary · `08d027d4` local/placement/material stages · `32c5d71a` entry layout · `ed8e6e2a` exact shadow-coverage revision · `dc04c856` debug-only verifier · `aae1a9fa` section trimming on the study clock | `3032087d` |
+| E | `0af89d63` tile keys, exact translation check · `1979d413` GameView integration · `71a71e9b` harness knobs + `render_shadow_cache` · `15da2bff` decision pre-pass | `cfb11f36` |
+| F | `3565f3fe` persistent allocator · `5febc00f` persistent cells · `6c7b93df` cheap failure path · `ec3df732` / `fbe21589` / `3fd2c8de` all-redraw frames use the former packer · `ce2a3466` page textures only after a frame fits | `b74f499e`, `4d305158` |
+| G | `6d56ac8d` retained bounds, bake by page, page release · `b59cdd8a` lookup before body generation · `b084644e` scenes · `2d755167` per-frame switch read | `908cf088` |
+| H | `97e42721` arena planner + GL buffer · `8d96905f` ordered commands + arena · `37ecd884` staged writes · `d8744efe` rollover · `e311cae5` release fix · `0cbc4401` bounded body-buffer growth, write-failure fallback | `d875a630`, `3934b0b8` |
+| I | `a5ba14e4` ThreadPool wake/wait + WorkPlan · `68021102` cost-planned passes · `590db308` cheaper plans | `31c5ce79` |
+| J | `dac6e399` pinned section handles · `469f743a` section budget · `8cb58b59` mip budget + idle trim · `2cb7cdf5` buffer and worker-scratch trims · `3dc315c4` working-set rule · `8b39eef9` release fix | `4515fbab` |
+| K | `4c7a018d` terrain scenes + readiness telemetry · `01cd7a01` policy · `85bbb1eb` TerrainChunks integration · `61be4a96` sections in the upload budget · `5eebec8b` settle harness · `b98183b1` no passes when nothing is missing · `918300a4` / `b96fe8fb` / `6cf541b0` calm-gate scope fixes | `df330946`, `04022ade`, `14da6214` |
+| L | `63aa38f4` grid + band-to-world · `11753fdb` painter candidates · `895e629a` overlays · `74bb3556` registration record · `a42da929` ghosts · `e90c79a0` release fix | `58353350` |
+| M | `b3cafd0d` indexed form + program + pass · `5e3f1bfa` baked OR indexed, native spans · `cf7eebd3` structures scene · `92d54e0d` / `789126df` release fix · `3c9becf7` ctest cost · `ab9def88` special units in one pass · `502e45d1` run drawer in every build · `fc13a7fb` exact out-of-sheet decode | `49fc8541`, `2e11e016` |
+| N | `d7ca8c07` `NativePassGL` + state snapshot · `ce75fa18` passes over body runs · `a7447d30` no redundant buffer setup · `f97f21c8` passes planned once + arena inside passes | `b1ba66d2` |
+| Final | `a8bbe6ed` merge of `origin/main` `c551ae6c` · `cd46c2c3` median in the benchmark report · `7cae1561` fast PNG decode for 7680×2160 capture comparisons | this commit |
+
+Baseline for the final matrix: local branch `task-render-opt-p0h`
+(`60f2b586` = `7c5d9cb8` + harness-only cherry-picks; see "Reproducing").
+
+### Tests added by the program
+
+The tests are pure/synthetic (run in `ctest -L quick` unless costed) or
+in-game (`render_*`: a real scene on SDL's software renderer with a
+verifier that throws at the first mismatch). The costed ones are in
+`tools/ctest_costs.txt`.
+
+| | Tests |
+|---|---|
+| Phase 0 / A | `render_telemetry` (also with `NDEBUG`), `render_benchmark_tool` |
+| B | `animated_atlas`, `render_atlas_verify` |
+| C | `geometry_owners`, `render_geometry_ownership` |
+| D | `geometry_stages`, `render_geometry_stages` |
+| E | `shadow_tiles`, `render_shadow_cache` |
+| F | `shadow_atlas`, `render_shadow_atlas`, `render_shadow_atlas_zoom`, `render_shadow_atlas_band` |
+| G | `distant_models` (extended: the pre-G cache kept verbatim as the oracle), `render_distant_lookup` |
+| H | `vertex_arena`, `geometrysubmit` (extended; GL comparisons with `TAK_GEOMETRY_TEST_ACCELERATED=1`), `render_body_arena`, `render_body_arena_still`, `render_body_arena_fail` |
+| I | `work_schedule`, `render_schedule` |
+| J | `terrain_compositor`, `terrain_cache` (extended), `cpu_budget`, `render_cpu_budget` |
+| K | `terrain_work`, `terrain_schedule` |
+| L | `unit_index`, `render_unit_index`, `render_unit_index_jump` |
+| M | `palette_sheets`, `palette_indexed` (GL + software), `render_palette_indexed` |
+| N | `native_pass` (GL + software), `render_native_pass` |
+
+Each workstream checked that its tests can fail: mutation counts are in its
+row of the checklist. Sanitizers: ASan/UBSan on `geometry_owners`,
+`shadow_atlas`, `vertex_arena`, `work_schedule`, `terrain_compositor`; TSan on
+`geometry_owners`, `work_schedule`, `terrain_compositor` and the terrain
+integration. Final run on the merged code: `ctest -L quick` 413/413, the 40
+render-related tests (costed included) 40/40, the GL verifier pass 95/96 plus
+the re-run (above).
+
+### Limitations, in short
+
+The full list, per workstream, is under "Known limitations and unsupported
+paths"; rejected and opt-in experiments are under "Rejected experiments".
+The ones a reader of this report most needs:
+
+- **Backends.** Every native fast path (H's arena, M's indexed palette,
+  N's passes) runs only on SDL `opengl`. Everywhere else the pre-program SDL
+  paths run: the assembled body, the baked palette pages, per-command
+  submission. Only NVIDIA GL on Linux was timed. Direct3D, Metal, GLES2,
+  Mesa, Windows and macOS were not run (see the status table).
+- **The densest view is GPU-bound.** total10k-visible at 7680×2160 gains
+  only 4.4% (forced) / 15% (pipelined, against the stalling baseline). Its
+  shadows exceed the four-page atlas, so the whole-frame direct path runs in
+  both builds (F), and the spatial index cannot help a view that holds every
+  unit (L).
+- **Memory costs.** Geometry capacity is +21% for retained local positions
+  (D). Absent units' entries are kept up to 2 s (C). The H arena adds up to
+  +45 MiB of tracked GPU memory, three frames in flight included.
+- **Sub-pixel shadow edges.** With persistent shadow cells, 1–14 single
+  edge pixels per frame differ from the former packer. The cause is raster
+  rounding by cell position (F). This was accepted by the user on
+  2026-10-16, and output is pixel-identical whenever slots match (see
+  captures).
+- **Terrain trade-offs (K).** Jump storms at 1280×960 draw the fallback
+  longer (they compose fewer abandoned views). terrain-zoom-osc 7680×2160
+  uploads about one chunk per frame where the old FIFO dropped work. A
+  camera sweep adds about 10 µs of `t_terrain` re-ranking per frame. After a
+  long camera jump at 7680×2160 the new view's chunks fill over more frames
+  than before, and the section fallback shows meanwhile (deterministic,
+  complete by frame 720; found in the final captures).
+- **Measurement.** The GPU number is a draw timeline, not busy time. The
+  simulation runs inline in the render study, so competition with a
+  concurrently running simulation worker is not measured (I, J). The pass
+  and arena counters see only the shared world-pass paths: HUD and effects
+  draw directly through SDL.
+- **Not done (open follow-ups, none required):** features inside native
+  passes; the remaining per-batch primings (shadow raster/composite, fog,
+  terrain chunks, distant-image bakes); a multi-pass shadow atlas beyond
+  four pages; a pixel-grid distant-image bake (would change appearance;
+  needs a decision); the unit-effect and minimap full scans (L); the first
+  colour atlas's full paint (B); `malloc_trim` after large trims (J).
+
+### Reproducing the final report
+
+Builds (optimized Debug, the build every measurement used):
+
+```sh
+# baseline p0h = p0base (7c5d9cb8: the starting commit c2c25707 + phase-0 telemetry/harness)
+#   + the harness-only commits 71a71e9b (pan-snap/veteran/roster knobs), aae1a9fa (section
+#   trimming on the study clock) and the main.cpp camera paths of 4c7a018d (terrain scenes).
+#   Its renderer is the starting commit's. Worktree ~/tak-tmp/wt/render-opt-p0h:
+git worktree add ~/tak-tmp/wt/render-opt-p0h task-render-opt-p0h   # local branch, 60f2b586
+#   (made from 7c5d9cb8 by cherry-picking 71a71e9b -- keeping HEAD's CMakeLists.txt, dropping the TAK_RENDER_EPOCH line --,
+#   aae1a9fa, and 4c7a018d keeping only src/client/main.cpp); then
+~/tak-tmp/render-opt/build.sh ~/tak-tmp/wt/render-opt-p0h takclient
+cp ~/tak-tmp/wt/render-opt-p0h/build-o2/takclient ~/tak-tmp/render-opt/takclient-p0h-baseline
+# candidate N5 = the program's final renderer code (f97f21c8 = b1ba66d2 minus docs), on the
+#   same simulation as p0h: ~/tak-tmp/render-opt/takclient-N5-candidate
+# merged = this branch after the merge with main: build-o2/takclient
+#   (copied to ~/tak-tmp/render-opt/takclient-final-merged)
+```
+
+Runs (scripts in `~/tak-tmp/render-opt/final/`):
+
+```sh
+final/matrix.sh <normal|uhd> <out> --scenes <scene>   # A = p0h, B = N5, ABBA x2, forced completion,
+                                                     # --cpus 16-23 --wait-quiet 30, 900 frames / 300 warmup
+final/matrix.sh <size> <out> --pipelined --scenes …  # pipelined frames (no glFinish), separate group
+final/matrix.sh <size> <out> --capture-only --scenes <scene> [--b-env TAK_SHADOW_REPACK=1]
+final/run-all.sh, final/run-rest.sh, final/run-caps-uhd.sh   # the whole sequence as run on 2026-10-18
+final/aa-caps.sh                                     # A/A (p0h) and B/B (N5) captures, terrain-readiness scenes
+python3 final/caps.py ~/tak-tmp/render-opt/runs c cr  # capture table (mc - for the merge check)
+final/mergecheck.sh                                  # N5 vs merged: captures per scene, timing
+final/verify.sh                                      # GL verifier pass on the merged binary
+final/mpai.sh <builddir> <port> <label> <retail|legion> <seconds>
+python3 final/summ.py ~/tak-tmp/render-opt/runs m [time work phase mem seg]   # the tables below
+python3 final/summ.py ~/tak-tmp/render-opt/runs p time                        # pipelined table
+```
+
+Raw output (not in Git): `~/tak-tmp/render-opt/runs/m-{normal,uhd}/<scene>/`
+(timing), `p-{normal,uhd}` (pipelined), `c-…`/`cr-…` (captures default /
+`TAK_SHADOW_REPACK`), `aa-…` (A/A, B/B), `mc-…`/`mt-…` (merge check), `final-verify/` (verifiers),
+`~/tak-tmp/render-opt/final/mpai/` (hash runs), `final/ctest-*.log`.
+
 ## Resumable checkpoint
 
 - Branch `task-render-opt` (local only, never pushed), worktree
@@ -330,14 +1129,23 @@ replays must not move; nothing in this program may feed the simulation.
   passes there: the per-command paths), a real window resize and fullscreen
   switch (hidden windows keep their drawable size; target-size changes and
   recreated renderers were tested).
-- **All workstreams A-N are implemented and verified.** Next concrete step:
-  the final report (the full 14-scene matrix at both sizes against p0base,
-  and the full capture matrix), per the lean-testing rule. Open follow-ups
-  (none required): features as pass members (an exact native
-  `SDL_RenderCopyF`; the brief keeps feature boundaries), the remaining
-  per-batch primings (shadow raster/composite, fog, terrain chunks,
-  distant-image bakes), the unit-effect and minimap scans from L, the first
-  colour atlas's full paint from B.
+- **The program is complete (2026-10-18).** All workstreams A–N are
+  implemented and verified, and the final report is written: see "Final
+  report" at the top of this document. In short:
+  - `origin/main` (`c551ae6c`) is merged into the local branch (`a8bbe6ed`).
+  - `ctest -L quick` passes 413/413 and the render tests 40/40 on the merged
+    code, and the GL verifier pass is clean.
+  - The `--mpai` hashes equal main's.
+  - Experiment 17 is the full 24-scene matrix at both sizes against the
+    pinned baseline p0h, with captures and the merge check.
+  - Nothing was pushed.
+
+  Branch head after the final docs commit: `task-render-opt`. There is no
+  next step inside the brief. The open follow-ups (none required) are listed
+  under "Limitations, in short".
+- (Superseded, kept for the record) Former checkpoint: "All workstreams A-N
+  are implemented and verified. Next concrete step: the final report (the
+  full matrix at both sizes against p0base, and the full capture matrix)."
 - (Superseded, kept for the record) Former next step: workstream N (native pass submission). M left a
   working, scoped native pass (`GeometrySubmit::beginPass/passDraw/
   passDrawBuffer/endPass` + `PaletteIndexedGL` pass state: SDL-identical
@@ -440,6 +1248,9 @@ replays must not move; nothing in this program may feed the simulation.
 Status words: not started · in progress · implemented · verified ·
 experimental · blocked. "Present" notes what current code already does, with
 evidence; nothing below is already fully satisfied.
+
+Final statuses in the brief's five-way vocabulary are in "Final report" at
+the top: every workstream is **implemented and verified**.
 
 | | Workstream | Status | Present in current code (evidence) |
 |---|---|---|---|
@@ -5078,6 +5889,12 @@ ghosts, projectiles), colour-reset (render-target resets) at 1280×960 and
 - `--mpai` not run: only `src/client` and `tools/` changed (presentation),
   and every benchmark run checks the world hash.
 
+### Experiment 17 — final report (2026-10-18)
+
+The final matrix (p0h vs the program's final renderer, 24 scenes at both
+sizes, forced and pipelined), its captures and the merge check are recorded
+in "Final report" at the top of this document.
+
 ## Known limitations and unsupported paths
 
 - **N: features stay pass boundaries** (a decision, not an oversight). The brief
@@ -5219,6 +6036,21 @@ ghosts, projectiles), colour-reset (render-target resets) at 1280×960 and
   cap binds as before (~0.14 ns/byte); on a machine with slow uploads a large
   jump fills over more frames (an extra underlay frame is possible). Not
   measured on other GPUs or backends.
+- **K: a long camera jump fills more slowly at 7680×2160** (found in the
+  final captures, Experiment 17). After battle-sparse's and distant-sparse's
+  jump at frame 450, the pre-K build had 58–63 chunk images by frame 480. K
+  has 14 → 23 of 40 visible chunks ready over frames 480–489 (16 → 7 holes
+  in distant-sparse), and the section fallback draws the rest, slightly
+  resampled at fractional zoom. The difference is deterministic (A/A and B/B
+  captures identical) and gone by frame 720. Which part of the policy delays
+  the fill was not isolated. Frame-time p95/p99 there are not worse (−10% to
+  −28%, inside noise).
+- **F + G under the debug 128 MiB cap.** In `constrained` 1280×960 the
+  persistent shadow atlas holds 16 MiB where the former packer held 32 MiB.
+  The freed room lets the distant-image cache take a page, so 128 units are
+  drawn as distant images that the pre-F build drew live (captures differ by
+  up to 10,560 pixels; identical with `TAK_SHADOW_REPACK`). No Options
+  setting reaches this cap (minimum 512 MiB).
 - **K: ThreadSanitizer** covered `terrainchunks.cpp` / `mapview.cpp` with the
   library uninstrumented (the compositor itself passed TSan in J); scenario 8
   (calm gate) cannot run under TSan's slowdown.
