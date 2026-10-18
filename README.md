@@ -52,7 +52,43 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.8.3
+## New in 0.8.4
+
+0.8.4 changes the simulation in both pathfinding modes, so the protocol moves
+to **276**: **0.8.4 cannot play with 0.8.3 or earlier, and cannot play their
+replays**. Update the server and every player together.
+
+- **Voice chat.** Hold **Space** to talk to the other players in a multiplayer
+  room or game. It is off by default: turn it on under **Settings → Voice
+  Chat**, where you also pick the microphone and voice output and set their
+  volumes. The diplomacy screen chooses who hears you and how loud each player
+  sounds to you, and the push-to-talk key can be changed in **Controls**. Voice
+  is relayed by the server, never recorded, and always gives way to the game.
+  See [voice chat](docs/user-guide.md#voice-chat).
+<!-- RENDER-OPT PLACEHOLDER: one bullet for the rendering optimization program
+     (task-render-opt), from docs/render-optimization-progress.md, goes here
+     when that branch merges. -->
+- **Legion takes much bigger armies.** A click reaches every unit of a
+  selection in the same tick, even 10,000 of them (it took over ten seconds),
+  long routes are planned over the whole map, and groups share out bridges and
+  doors by their queues. Crowds that size can still jam at corners and narrow
+  passages. Retail is unchanged by this work. See the
+  [Legion 10,000 report](docs/legion-10000-report.md).
+- **New AI difficulty: Absurdly Defensive**, Defensive play with Absurd's
+  double income. **Defensive** now keeps building as fast as its income allows,
+  with no limit of its own, and its melee troops answer the unit hitting them.
+- **Replays are saved however a game ends**, including a crash, a kill or a
+  power cut, and campaign missions are recorded again.
+- **Short mana is shared.** When income cannot keep up, every construction
+  slows down together, as in the original, instead of the costliest builds
+  standing still. A divine lodestone upgrade now finishes in that case too.
+
+Generated-map recipes, saved `.kmp` maps and settings carry over. No new
+runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.8.4-notes.md) and
+[validation report](docs/release-0.8.4-validation.md).
+
+### Previously in 0.8.3
 
 0.8.3 changes the simulation in both pathfinding modes, so the protocol moves
 to **266**: **0.8.3 cannot play with 0.8.2 or earlier, and cannot play their
@@ -894,9 +930,9 @@ and the original server rules still missing.
 
 ## Controls
 
-These are the engine's default bindings. Command, selection, view, and emote
-bindings can be changed in **Settings → Controls** (click a row and press a
-new key; right-click clears it). Number-key squads, **Esc**, chat, pause, and
+These are the engine's default bindings. Command, selection, view, emote, and
+push-to-talk bindings can be changed in **Settings → Controls** (click a row and
+press a new key; right-click clears it). Number-key squads, **Esc**, chat, pause, and
 speed controls are fixed. Orders requiring a target are armed by the key and
 issued with a left-click; **Shift** queues any order behind the unit's current
 ones, and an armed order stays armed while **Shift** is held. A queued patrol
@@ -1055,6 +1091,7 @@ default. Its **Volume** column sets how loud each other human player's voice pla
 for you (100% by default, reset each game; computer players have none). Voice is relayed by the server beside the game (about 3 KB/s per talker),
 never recorded in replays, and gives way to game traffic: a player whose connection
 cannot carry it stops receiving voice for a while rather than slow the game.
+See [voice chat](docs/user-guide.md#voice-chat) in the user guide.
 
 Multiplayer automatically verifies and transfers missing or differing maps before play.
 Downloaded maps remain available in the map picker; generated maps are saved on every

@@ -230,6 +230,19 @@ room inherits the rule too. Once the game starts, it is fixed: an in-game
 keeps that seat. Crusades battle rooms never allow spectators.
 `server_spectators_test.py` checks each of these against a real server.
 
+Voice chat (protocol 276) is relayed, never stored or recorded: a client's
+frames go only to the room members that have switched voice chat on and that
+its diplomacy mask picks (the whole room before the game starts), never back
+to the talker and never to a client still catching up. Each talker is relayed
+at most 60 frames and 16 KB a second (about 3 KB/s is normal), and the whole
+server at most 4,000 frames a second; the excess is dropped. 300 frames a second
+from one connection, a malformed frame, or a client sending server-to-client
+voice fails that connection. Voice leaves through a low-priority queue behind
+all game traffic, and a listener whose link lags the running game is sent no
+voice for 5 to 60 seconds, so voice never slows a game.
+`server_voice_test.py` and `server_voice_slow_test.py` check these rules against
+a real server. See [voice chat](multiplayer-design.md#voice-chat-protocol-276).
+
 Public games cannot enable benchmark/stress workloads or launch local campaign
 missions. Private `--local --no-auth` games retain those features. Debug builds
 have an explicit `--allow-benchmarks` override for isolated performance harnesses;
@@ -243,7 +256,11 @@ disconnected with a resource-limit error. History is not silently truncated,
 which would invalidate reconnects and replays. Campaign resource failures do
 not award victory credit. Ordinary replay saving is skipped when its disk quota
 is full; a campaign outcome whose required replay cannot be persisted is handled
-as a no-credit abort.
+as a no-credit abort. With `--replaydir`, stopping the server with SIGTERM
+(`systemctl stop`) or Ctrl-C first writes the replays of the games still
+running, which used to be lost. Every replay is written under a temporary name
+and renamed once complete, so a server stopped part way never leaves a
+truncated `.takrep`.
 
 `--closed-registration` allows existing accounts to log in while refusing new
 ones. It can be enabled after inviting the initial community. Keep the account

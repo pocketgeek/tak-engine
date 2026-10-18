@@ -28,14 +28,15 @@ and [Your first skirmish](#your-first-skirmish), then come back to the rest.
 10. [Pathfinding: Retail and Legion](#pathfinding-retail-and-legion)
 11. [Options](#options)
 12. [Multiplayer](#multiplayer)
-13. [Campaigns](#campaigns)
-14. [Replays](#replays)
-15. [Overrides](#overrides)
-16. [Map editor](#map-editor)
-17. [Running a server](#running-a-server)
-18. [Benchmark](#benchmark)
-19. [Troubleshooting and FAQ](#troubleshooting-and-faq)
-20. [Differences from the original game](#differences-from-the-original-game)
+13. [Voice chat](#voice-chat)
+14. [Campaigns](#campaigns)
+15. [Replays](#replays)
+16. [Overrides](#overrides)
+17. [Map editor](#map-editor)
+18. [Running a server](#running-a-server)
+19. [Benchmark](#benchmark)
+20. [Troubleshooting and FAQ](#troubleshooting-and-faq)
+21. [Differences from the original game](#differences-from-the-original-game)
 
 ---
 
@@ -195,7 +196,8 @@ The **Settings** button opens:
 | Entry | What it does |
 | --- | --- |
 | **Options** | Audio, display, graphics, interface and camera settings. See [Options](#options). |
-| **Controls** | Rebind command, selection, view and emote keys. |
+| **Controls** | Rebind command, selection, view, emote and push-to-talk keys. |
+| **Voice Chat** | Turn voice chat on and choose the microphone, voice output and volumes. See [Voice chat](#voice-chat). |
 | **Benchmark** | A repeatable performance test. See [Benchmark](#benchmark). |
 | **Load Replay** | Watch a recorded game. See [Replays](#replays). |
 | **YouTube Streaming** | Stream your game. See [streaming](streaming.md). |
@@ -212,7 +214,8 @@ the box is greyed out with **NO SYSTEM PASSWORD STORE**.
 The version number is shown on the title screen.
 
 In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
-**Options**, **Controls**, **Main Menu** (or **Campaign**) and **Quit**.
+**Options**, **Controls**, **Voice Chat**, **Main Menu** (or **Campaign**) and
+**Quit**.
 
 ---
 
@@ -273,7 +276,7 @@ scenario.
 
 | Difficulty | What to expect |
 | --- | --- |
-| **Defensive** | Keeps building as fast as its mana income allows, with no limit of its own on how many factories, builders, towers or troops it makes; only the room's unit cap and the game's rules stop it. Builds at home; the base spreads outward as it grows, but stays on its own side of the map, and its builders claim mana deposits farther out. Sends its army to meet attackers near its base, then pulls it back, including attackers it cannot see that shoot its units from out of sight. Does not build where enemy troops are about. Never raids. |
+| **Defensive** | Keeps building as fast as its mana income allows, with no limit of its own on how many factories, builders, towers or troops it makes; only the room's unit cap and the game's rules stop it. Builds at home; the base spreads outward as it grows, but stays on its own side of the map, and its builders claim mana deposits farther out. Sends its army to meet attackers near its base, then pulls it back, including attackers it cannot see that shoot its units from out of sight. Its melee troops go first for the unit hitting them, and keep chasing a target while it stays near, instead of all walking at one enemy. Does not build where enemy troops are about. Never raids. |
 | **Easy** | Builds slowly. First attack after about four minutes, then small waves of at most eight units, at least two minutes apart. |
 | **Normal** | Sends small raiding parties to probe and scout while it builds up a main army sized to its income. |
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
@@ -768,8 +771,9 @@ build menus unchanged.
 
 ## Controls
 
-These are the default bindings. Command, selection, view and emote keys can be
-changed in **Settings → Controls**: click a row and press the new key;
+These are the default bindings. Command, selection, view, emote and
+push-to-talk keys can be changed in **Settings → Controls** (or **Esc →
+Controls** in a game): click a row and press the new key;
 right-click a row to unbind it. Number-key squads, **Esc**, chat, pause and game
 speed keys are fixed.
 
@@ -907,6 +911,7 @@ group automatically.
 | **Pause** | Pause or resume. This pauses the game for every player. |
 | **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×), 0.1× per level. A banner shows the new level, for example **GAME SPEED NORMAL** or **GAME SPEED +5**. Only the host can change it, and only if **Allow speed change** was on. |
 | **Enter** | Open chat; **Enter** sends, **Esc** cancels. |
+| **Space** (hold) | Push to talk, in multiplayer, when [voice chat](#voice-chat) is on. Never while you are typing in a text box. |
 | **Esc** | Close a dialog, cancel placement or an armed order, clear the selection, then open the game menu. |
 
 ### Emotes
@@ -987,9 +992,16 @@ armies:
   individuals.
 - **One order per click.** A right-click is one order however big the
   selection is: the whole army gets one destination area and one formation,
-  even though a selection over 64 units reaches the game in parts over a few
-  ticks. Quick clicks that send parts of an army to the same spot a moment
-  apart join that one order too.
+  and the order reaches every unit in the same game tick, even for 10,000
+  units (before 0.8.4 a big selection arrived in parts over several seconds).
+  A second order to the same spot, while the first army is still gathering
+  there, joins its destination area.
+- **Groups share out narrow passages.** A narrow passage, such as a bridge or a
+  door, keeps count of the units queueing for it. A group picks its way by
+  travel time plus that queue, a big group can split to use two passages, and
+  your own and allied units take turns through a narrow one, one direction at a
+  time. Groups entering one room by different doors each fill it from their own
+  door.
 - **Arrivals settle.** Units take up places around the destination point, and
   once they are close they stop. Large groups do not keep shuffling forever:
   the last units of a group, pressed against the group's own crowd with no way
@@ -1099,6 +1111,10 @@ in a formation or Ctrl+number group with ground units keep station over them.
   (about five cells instead of two).
 - Two separate clicks of one kind given in the same moment share one set of flyer stations.
 - With thousands of units, Legion uses more processor time than Retail.
+- With about 10,000 units moving at once, crowds can still stand at corners,
+  at the mouths of narrow passages where two armies meet head on, and in the
+  queue for routes when many groups head for many different places. The
+  [Legion 10,000 report](legion-10000-report.md) has the measurements.
 
 ### Which should I choose?
 
@@ -1150,6 +1166,7 @@ is the one both use next time.
 | **Music volume** | 50% | Soundtrack volume. |
 | **Sound effects** | 100% | Unit, world and interface sounds. |
 | **Speaker** sliders | 100% | One per speaker channel on your device, for surround setups. |
+| **Voice chat** | Off | Opens the **Voice Chat** page; the row says whether voice chat is on (**ON - OPEN** or **OFF - OPEN**). Voice chat has its own devices, volumes and **Defaults**; see [Voice chat](#voice-chat). |
 
 World sounds are full volume on screen and fade with distance off screen.
 
@@ -1358,10 +1375,12 @@ Press **D** for the **Diplomacy** screen:
   first to the ally whose storage is least full. Sharing starts on for
   teammates.
 - **Chat recipients**: choose who receives your chat messages.
+- **Voice**: choose who hears you on [voice chat](#voice-chat).
+- **Volume**: how loud each other player's voice plays for you.
 
 ![The Diplomacy screen listing players with Share Mana and Chat checkboxes and a Give Selected Units button](img/diplomacy.jpg)
 
-*The Diplomacy screen (**D**), from the engine's built-in input test.*
+*The Diplomacy screen (**D**), from the engine's built-in input test. The picture was taken before the Voice and Volume columns were added.*
 
 See [unit gifting](unit-gifting.md) for which units can be given.
 
@@ -1409,8 +1428,141 @@ does, please report it with the replay.
 
 The game sends orders, not unit positions, so it needs very little bandwidth:
 about 0.5 KB/s per player plus a few bytes per order. Low latency and low packet
-loss matter more than raw speed. The [README](../README.md#multiplayer-and-replays)
-has the details.
+loss matter more than raw speed. Voice chat adds about 3 KB/s for each player
+talking, and always gives way to the game (see [What is sent](#what-is-sent)).
+The [README](../README.md#multiplayer-and-replays) has the details.
+
+---
+
+## Voice chat
+
+Voice chat lets the people in a multiplayer room or game talk to each other
+while they hold a key. It is **off by default**. It works only in multiplayer:
+single-player and campaign games, replays and the Benchmark have nobody to talk
+to, so they never open the microphone.
+
+### Turning it on
+
+1. Open the **Voice Chat** page: **Settings → Voice Chat** on the main menu,
+   **Esc → Voice Chat** in a game, or the **Voice chat** row in the Audio section
+   of **Options** (its **Back** then returns to Options).
+2. Turn **Voice chat** on.
+3. Speak, and check that the **Mic level** meter moves.
+4. Click **Save**.
+
+Changes apply at once, also in the middle of a game; **Save** keeps them for
+next time. Everyone who wants to talk or listen needs voice chat turned on: a
+player with it off cannot talk and is sent no voice at all.
+
+### The Voice Chat page
+
+While **Voice chat** is off, every other row is greyed out and ignores clicks.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| **Voice chat** | Off | Turns voice chat on or off. |
+| **Push to talk** | Space | The key you hold to talk. Click the row to open **Controls** and change it. |
+| **Mic device** | System Default | The microphone: **System Default**, or any input device by name. |
+| **Mic volume** | 100 | How loud you are sent, 0 to 100. 100 sends the microphone as it is; lower values make you quieter. |
+| **Mic level** | | A live meter of what the microphone hears, after **Mic volume**. Speak to test it. |
+| **Output device** | Same as Game Output | Where other players' voices play. **Same as Game Output** follows the game's own **Sound device**, also when you change it. You can instead choose **System Default** or any output device by name, for example a headset while the game plays on speakers. |
+| **Output volume** | 100 | How loud voices play, 0 to 100: one value for every speaker, stereo or surround. It is separate from the game's own volumes. |
+
+Device lists are sorted A to Z and read afresh each time you open one. A note
+beside a device row says when something is wrong:
+
+| Note | Meaning |
+| --- | --- |
+| **NOT FOUND - USING DEFAULT** | The chosen device is not plugged in. The system default is used meanwhile; the choice is kept, and the game goes back to the device when it returns. |
+| **DEVICE LOST - USING DEFAULT** | The device went away while in use, so the system default took over. |
+| **UNAVAILABLE** | No device could be opened at all. The game tries again every few seconds. |
+
+**Defaults** resets only the voice chat settings: voice chat off, System Default
+microphone, Same as Game Output, and both volumes at 100. It does not change the
+push-to-talk key (reset that in **Controls**), and the **Defaults** button in
+**Options** does not change voice chat.
+
+### Talking
+
+Hold **Space** to talk, in a multiplayer room before the game starts and during
+the game. Release it to stop. Talking also stops at once if the game window loses
+focus, if you start typing, or if you leave the room.
+
+A key pressed while you are typing in a text box (the chat line, a lobby field,
+your name) is typing, never talking, so a space in a chat message is just a
+space.
+
+To use another key, open **Settings → Controls** (**Esc → Controls** in a game,
+or click **Push to talk** on the Voice Chat page). **PUSH TO TALK** is under
+**VOICE**: click it and press the new key, or right-click it to unbind it.
+**Enter**, the number keys and the arrow keys are refused, because the game uses
+them for chat, squads and scrolling. If the key you choose already belongs to
+another action, that action is left unbound.
+
+While voice chat is on, the top-left corner of the screen shows who is talking:
+**YOU** while you are sending, then the name of each player heard a moment ago,
+in their colour, with a small speaker. Spectators are shown in grey.
+
+### Who hears you
+
+Before the game starts, everyone in the room who has voice chat on hears you.
+
+In the game, the **Diplomacy** screen (**D**) chooses, like chat:
+
+- The **Voice** column says who hears you. Everyone is ticked at the start of
+  each game. Your own box cannot be changed: you never hear yourself.
+  Spectators hear you only while every player is ticked.
+- The **Volume** column sets how loud each other player's voice plays for you,
+  0 to 100% (click or drag along the slider). Each game starts with every slider
+  at 100%. Only other human players have one; computer players have no voice.
+  The sliders are greyed out while voice chat is off, and they change only what
+  you hear: nobody else is told.
+
+Spectators cannot open the Diplomacy screen, so a spectator always talks to
+everyone, as their chat does.
+
+### What is sent
+
+- The microphone is opened only while voice chat is on, and then only in a
+  multiplayer room or game, or while the Voice Chat page is open for its level
+  meter. Sound is recorded only while you hold the push-to-talk key, or while
+  that page is showing the meter. Voice is sent **only while you hold the key**.
+- Your voice goes to the game server, which passes it straight on to the
+  players you chose. It travels on the same connection as the game, so it is
+  encrypted when the server uses a secure (TLS) connection, as public servers do.
+- Voice is never saved: not by the server, not in replays. It has no effect on
+  the game itself.
+- Each talker uses about 3 KB/s (Opus, 48 kHz mono). The game always comes
+  first: if a player's connection cannot carry voice as well as the game, the
+  server stops sending them voice for a few seconds (longer if it keeps
+  happening) instead of slowing the game, and it starts again on its own. A
+  talker whose own upload is too slow is paused the same way.
+
+### When voice chat does not work
+
+- **Space does nothing.** Voice chat must be on, and you must be in a
+  multiplayer room or game; check that no text box has the keyboard and that
+  **Push to talk** shows the key you expect.
+- **Nobody hears me.** Speak on the Voice Chat page: if **Mic level** stays
+  still, the game is getting no sound from the microphone. Check **Mic device**
+  and **Mic volume**, that the microphone is not muted in your system's sound
+  settings, and that the system allows the game to use it (below). If the meter
+  moves, check the **Voice** column in Diplomacy, and that the other players
+  have voice chat on.
+- **I hear nobody.** Check **Output device** and **Output volume**, and that
+  player's **Volume** slider in Diplomacy.
+- **UNAVAILABLE** or **NOT FOUND - USING DEFAULT** beside a device: plug the
+  device in, or choose another one.
+- **macOS.** The first time the microphone opens, macOS asks whether *Total
+  Annihilation - Kingdoms* may use it. If you said no, the game records only
+  silence: allow it under **System Settings → Privacy & Security → Microphone**,
+  then restart the game. If you start the bare `takclient` program from
+  Terminal instead of the app, macOS asks for Terminal.
+- **Windows.** Under **Settings → Privacy & security → Microphone**, turn on
+  **Microphone access** and **Let desktop apps access your microphone**.
+- **Voice cuts out for a while, then comes back.** Your connection or the other
+  player's could not carry voice and the game together, so voice was paused to
+  keep the game smooth.
 
 ---
 
@@ -1719,6 +1871,12 @@ starts but then misbehaves.
 Choose the device under **Options → Audio → Sound device**. If a saved device is
 unplugged, the game falls back to the system default.
 
+### Voice chat does not work
+
+See [When voice chat does not work](#when-voice-chat-does-not-work). Voice chat
+is off by default, works only in multiplayer, and on macOS and Windows needs
+the system's permission to use the microphone.
+
 ### I cannot join a multiplayer game
 
 - Check that you and the server run the **same version**.
@@ -1742,7 +1900,7 @@ Settings, saved replays and downloaded content live in a per-user folder:
 | Linux | `~/.local/share/TAKengine/TAKingdoms/` |
 
 The settings file is `settings.ini`. Replays (`.takrep` files) are saved beside
-it. Cartographer keeps its preferences in a sibling `Cartographer` folder.
+it; a game still being recorded is a `.takrep.part` file until it ends. Cartographer keeps its preferences in a sibling `Cartographer` folder.
 
 The game prints diagnostic messages to the terminal it was started from. On
 Linux and macOS, start it from a terminal if you need them for a bug report.
@@ -1770,7 +1928,7 @@ differences:
 - **Modern platforms**: any resolution, UI scaling, borderless fullscreen,
   hardware cursor and smooth motion between game updates.
 - **Client-server multiplayer** with accounts, spectators, reconnecting,
-  automatic map transfer and up to eight players.
+  automatic map transfer, push-to-talk voice chat and up to eight players.
 - **Gods do not appear on their own** in skirmish or multiplayer. They can still
   be conjured.
 - **Legion pathfinding** is available as an alternative; Retail remains the
