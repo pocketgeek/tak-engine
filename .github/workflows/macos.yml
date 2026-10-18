@@ -419,6 +419,25 @@ jobs:
             codesign --force --options runtime --timestamp --keychain "$KEYCHAIN" \
               --sign "$MACOS_SIGN_IDENTITY" "$@"
           }
+          # Voice chat records the microphone. Under the hardened runtime that needs this
+          # entitlement on takclient (and on the game bundle, whose signature re-signs its
+          # main executable), or macOS hands it silence without ever asking the player.
+          # Info.plist carries the NSMicrophoneUsageDescription the permission prompt shows.
+          MIC="$RUNNER_TEMP/takclient.entitlements"
+          cat > "$MIC" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.security.device.audio-input</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+          plutil -lint "$MIC"
+          signbin() {   # takclient gets the microphone entitlement, the others nothing extra
+            if [ "$(basename "$1")" = takclient ]; then sign --entitlements "$MIC" "$1"; else sign "$1"; fi
+          }
           # notarytool prints its JSON on stdout on success but on stderr on failure (a --wait
           # timeout included), so both streams are kept and parsed.
           notary() {
@@ -474,12 +493,14 @@ jobs:
 
           # Nested code first (every Mach-O in Contents/MacOS), then the bundle itself; no --deep.
           for app in "$GAME" "$EDITOR"; do
-            for bin in "$app"/Contents/MacOS/*; do sign "$bin"; done
-            sign "$app"
+            for bin in "$app"/Contents/MacOS/*; do signbin "$bin"; done
+            if [ "$app" = "$GAME" ]; then sign --entitlements "$MIC" "$app"; else sign "$app"; fi
             codesign --verify --strict --verbose=2 "$app"
           done
+          codesign -d --entitlements - "$GAME" 2>/dev/null | grep -q com.apple.security.device.audio-input \
+            || { echo "::error::the game bundle lost its microphone entitlement"; exit 1; }
           for bin in takclient takserver cartographer crusades_admin; do
-            sign "work/release/$bin"
+            signbin "work/release/$bin"
           done
 
           # Debug CLI binaries: bare Mach-Os cannot hold a stapled ticket; Gatekeeper checks online.
@@ -488,7 +509,7 @@ jobs:
           # upload-artifact drops Unix modes on a loose directory; restore the execute bit.
           chmod 755 work/debug/takclient work/debug/takserver work/debug/cartographer work/debug/crusades_admin
           for bin in takclient takserver cartographer crusades_admin; do
-            sign "work/debug/$bin"
+            signbin "work/debug/$bin"
           done
           (cd work/debug && zip -qr "$GITHUB_WORKSPACE/signed/takclient-macos-$ARCH-debug.zip" .)
 

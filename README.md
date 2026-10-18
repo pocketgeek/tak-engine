@@ -917,7 +917,7 @@ loops back to where the patrol starts, as in retail.
 | **W** | Cycle the active weapon of a selected unit with multiple weapons |
 | **K** | Toggle cloak for selected units that can cloak |
 | **O** | Open / close selected gates |
-| **D** | Open diplomacy: give eligible selected units, toggle outgoing mana sharing with teammates, and choose chat recipients |
+| **D** | Open diplomacy: give eligible selected units, toggle outgoing mana sharing with teammates, and choose chat and voice recipients |
 | **Ctrl+Shift+D** | Toggle self-destruct for selected units; press again to cancel |
 
 ### Selection
@@ -972,6 +972,7 @@ builders, but units they produce inherit their squad.
 | **Shift+Z** | Reset to retail’s native 1:1 zoom, keeping the same view center |
 | **+** / **−** (also **=** and keypad **+/−**) | Change game / replay speed |
 | **Enter** (also keypad Enter) | Open chat; press again to send; **Esc** cancels |
+| **Space** (hold) | Push to talk, when voice chat is on (never while typing in a text box); rebindable in **Controls** |
 | **Esc** | Close unit information, cancel placement / an armed order, clear selection, then open the game menu as applicable |
 | **Shift+D** | Selected mobile units disco for 10 real seconds; with no selection, living monarch |
 | **Shift+H** | Selected mobile units headbang for 10 real seconds; with no selection, living monarch |
@@ -1044,6 +1045,14 @@ game. An unused account name is registered on first sign-in. Players connect
 to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically. A loading screen shows
 startup stages and map-list progress before opening game setup.
+
+**Voice chat** is off by default. Turn it on under **Settings → Voice Chat** (also in
+the in-game menu and in Options' Audio section), pick the microphone and the voice
+output (the game's own sound device unless you choose another), each with a 0–100
+volume, then hold **Space** to talk in multiplayer rooms and games. The diplomacy
+screen's **Voice** column chooses who hears you, like the Chat column; everyone by
+default. Voice is relayed by the server beside the game (about 3 KB/s per talker),
+never recorded in replays, and never delays game traffic.
 
 Multiplayer automatically verifies and transfers missing or differing maps before play.
 Downloaded maps remain available in the map picker; generated maps are saved on every

@@ -61,6 +61,8 @@ public:
         lastArrivalMs_ = nowMs;
         if (flags & kFlagEnd) { ended_ = true; endSeq_ = s; }
         if (!(flags & kFlagEnd) || !opus.empty()) q_[s] = std::move(opus);
+        // Nobody is pulling (no output device): never hold more than a burst's worth.
+        while (q_.size() > size_t(4 * kMaxDepth)) { q_.erase(q_.begin()); ++stats_.trimmed; }
     }
 
     // The next 20 ms.

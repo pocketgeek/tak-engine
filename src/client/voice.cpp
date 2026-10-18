@@ -92,7 +92,9 @@ struct Endpoint {
             if (state == VoiceEngine::Device::Failed && now >= retryAt) open(false, now);
             return;
         }
-        if (SDL_GetAudioDeviceStatus(dev) == SDL_AUDIO_STOPPED) {   // disconnected
+        // Disconnected. At most one re-open per kRetryMs, so a backend whose default is
+        // gone as well cannot turn this into a re-open (and a log line) every frame.
+        if (SDL_GetAudioDeviceStatus(dev) == SDL_AUDIO_STOPPED && now >= retryAt) {
             std::fprintf(stderr, "voice: %s disconnected\n", iscapture ? "microphone" : "voice output");
             open(true, now);
             return;
@@ -156,19 +158,19 @@ void VoiceEngine::configure(const Settings& s, const std::string& gameOutput) {
     c.micVol = std::clamp(s.voiceMicVolume, 0, 100);
     c.outVol = std::clamp(s.voiceOutputVolume, 0, 100);
     if (p_->configured && c == p_->cfg) return;
-    const bool devicesChanged = !p_->configured || c.enabled != p_->cfg.enabled ||
-                                c.mic != p_->cfg.mic || c.out != p_->cfg.out;
+    const bool first = !p_->configured;
+    const bool micChanged = first || c.mic != p_->cfg.mic, outChanged = first || c.out != p_->cfg.out;
+    const bool switched = first || c.enabled != p_->cfg.enabled;
     p_->cfg = c;
     p_->configured = true;
-    if (!devicesChanged) return;               // just a volume
-    // Re-open on the next update() whatever is open now on the old choice.
-    const bool capWasOpen = p_->cap.dev != 0, outWasOpen = p_->out.dev != 0;
     p_->cap.wanted = c.mic;
     p_->out.wanted = c.out;
-    if (!c.enabled) { p_->closeAll(); return; }
+    if (!c.enabled) { if (switched) p_->closeAll(); return; }
+    // A different device: re-open just that endpoint, if it is open (update() opens it
+    // when it is next needed otherwise). A volume alone changes nothing here.
     const uint64_t now = p_->now();
-    if (capWasOpen) { p_->cap.open(false, now); p_->capRunning = false; p_->pending.clear(); }
-    if (outWasOpen) p_->out.open(false, now);
+    if (micChanged && p_->cap.state != Device::Off) { p_->cap.open(false, now); p_->capRunning = false; p_->pending.clear(); }
+    if (outChanged && p_->out.state != Device::Off) p_->out.open(false, now);
 }
 
 void VoiceEngine::setMonitoring(bool on) { p_->monitoring = on; }

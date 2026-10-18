@@ -40,7 +40,9 @@ the pinned, SHA-256-verified archive on first configure; subsequent builds reuse
 the extracted source under the build directory. For offline configuration,
 set `-DFETCHCONTENT_SOURCE_DIR_TAK_SQLITE=/path/to/sqlite-amalgamation-3530400`
 to an extracted copy containing `sqlite3.c` and `sqlite3.h`. It adds no runtime
-SQLite DLL/shared-library dependency. The opt-in authenticated Crusades service
+SQLite DLL/shared-library dependency. Voice chat's codec, Opus 1.5.2, is built
+the same way (`cmake/Opus.cmake`, client only, BSD licence in `OPUS-LICENSE.txt`);
+offline, set `-DFETCHCONTENT_SOURCE_DIR_TAK_OPUS=/path/to/opus-1.5.2`. The opt-in authenticated Crusades service
 supports tactical battles, territory browsing, matchmaking, results and retained
 replays. Operators supply campaign definitions and battle-map assignments.
 Historical territory-capture and campaign-victory rules remain incomplete; see

@@ -334,6 +334,39 @@ silently skipped.)
 | `Rejoin` | game id, resume token | then `LogChunk`* (compressed) → live bundles |
 | `Bye` | reason | clean shutdown both ways |
 
+### Voice chat (protocol 276)
+
+Voice is **presentation only**: it never enters a TickBundle, the replay log, the
+referee or `World::stateHash`, and the sim is unchanged by it. The server relays it
+beside the game on three messages (`net/protocol.h` beside `kVoiceMaxOpus`):
+
+| Msg | Payload | Notes |
+|---|---|---|
+| `VoiceListen` | u8 on | client → server: this connection wants voice (voice chat switched on). Off by default, so the headless harness, a benchmark and anyone with voice off are sent none |
+| `VoiceUp` | u16 seq, u8 recipients, u8 flags, u16 len, Opus | client → server: one 20 ms frame (48 kHz mono, ~24 kbit/s, in-band FEC), `recipients` = the talker's diplomacy VOICE mask. Flags: START (resets the receiver), END (key released, no audio) |
+| `VoiceDown` | u32 talker id, u8 slot (0xFF spectator), u16 seq, u8 flags, u16 len, Opus, [str name] | server → client; the name rides on START frames and every 25th (`kVoiceHasName`) |
+
+Recipients follow the **chat rules exactly**: before the game runs, or for mask
+0xff, the whole room including spectators; otherwise the seated players whose bit
+is set. Never back to the talker, never to a connection catching up (`replaying`)
+or one that has not sent `VoiceListen 1`. Spectators cannot open diplomacy, so
+their mask is 0xff and they talk to everyone, as their chat does.
+
+Voice must never cost the game anything. Relayed frames go out through
+`Conn::sendLow`: a separate queue that joins the byte stream only once every
+ordinary frame queued so far has left, holds at most 16 frames (the newest win),
+and refuses frames while 64 KiB of game traffic waits. Per talker the server
+relays 60 frames / 16 KB a second and drops the excess (an END marker always
+passes); 300 frames a second, a malformed frame or a client sending `VoiceDown`
+fails that connection; 4,000 frames a second across the server. The client
+(`client/voice.h`) captures and plays on SDL audio devices of its own, buffers
+2–8 frames per talker, rebuilds a frame the server dropped from the next frame's
+FEC, and conceals a late one. Opus is built from its pinned source release
+(`cmake/Opus.cmake`) and linked only into takclient. Tests: `voice_test` (codec,
+jitter buffer, push-to-talk, engine on SDL's disk audio driver, the VOICE CHAT
+page), `voice_client_test` (MpClient on the wire), `server_voice_test.py`
+(routing, budgets, abuse against a real server).
+
 Bundle **Event** records (u8 kind + payload): `Forfeit{player}` (grace expired
 or explicit surrender), `Leave{player}` (voluntary, units per forfeit rule),
 reserved: `AllianceChange` (v2 diplomacy). Defeat itself is *not* an event —
