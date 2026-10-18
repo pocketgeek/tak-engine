@@ -150,6 +150,16 @@ public:
 private:
     friend struct PlacementProbe;
     std::vector<std::pair<float,float>> plannedManaSites_; // reservations until emitted orders reach the world
+    // Unbounded levels: building sites already spoken for -- ordered this think
+    // (plannedSites_), or ordered earlier and refused when the builder got there
+    // (refusedSites_, held for kRefusedSiteTicks; issuedBuilds_ watches each order).
+    struct PlannedSite { const tak::sim::UnitType* type; float x, z; };
+    std::vector<PlannedSite> plannedSites_;
+    struct IssuedBuild { int unit; const tak::sim::UnitType* type; float x, z; uint32_t tick; };
+    std::vector<IssuedBuild> issuedBuilds_;
+    struct RefusedSite { float x, z; uint32_t until; };
+    std::vector<RefusedSite> refusedSites_;
+    void updateIssuedBuilds(const tak::sim::World&, uint32_t simTick);
     // --- deterministic RNG (retail-style LCG) --------------------------------
     int rand(int n) {
         rng_ = rng_ * 1103515245u + 12345u;
@@ -198,6 +208,8 @@ private:
     bool nearestVisibleEnemy(const tak::sim::World&, float cx, float cz,
                              const tak::sim::UnitType* atype, float& tx, float& tz) const;
     bool nearestEnemyStart(float cx, float cz, float& tx, float& tz) const;
+    // (x,z) lies nearer some enemy start than home (hx,hz): the enemy's side of the map.
+    bool enemySide(float x, float z, float hx, float hz) const;
     bool reachablePoint(const tak::sim::World&, const tak::sim::UnitType*,
                         float fx, float fz, float tx, float tz, float& x, float& z) const;
     int terrainWeight(const tak::sim::World&, const tak::sim::Unit&,

@@ -668,6 +668,86 @@ static void unboundedLevels() {
         }) && std::none_of(cs.begin(),cs.end(),[&](const auto& c){return c.unitId==outside && c.kind==net::Cmd::Move;}),
               "Defensive walks idle troops out of its base to the ring around it, and no further");
     }
+    // A fighter is not sent onto a ring spot another stands on, nor onto the enemy's
+    // side of the map.
+    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive}) {
+        sim::World w;terrain(w);w.buildNavClasses(reg);
+        w.spawn(reg.find("factory"),1600,1600,0,0);
+        const int inside=w.spawn(reg.find("soldier"),1640,1680,0,0);
+        // The first spot the inside soldier tries -- the inner ring along its own
+        // bearing -- has a fighter standing 34 px off it: clear for placement (28 px),
+        // but inside the 40 px a stationed fighter keeps.
+        const float a=std::atan2(80.0f,40.0f),sx=1600+468*std::cos(a)+34,sz=1600+468*std::sin(a);
+        w.spawn(reg.find("soldier"),sx,sz,0,0);
+        ai::Profile none;
+        ai::Controller controller(0,reg,none,1,difficulty,{{3400,3400}});
+        const auto cs=think(controller,w);
+        check(std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+            return c.unitId==inside && c.kind==net::Cmd::Move && (c.x-sx)*(c.x-sx)+(c.z-sz)*(c.z-sz)>=40.f*40;
+        }),"Defensive does not station a fighter on a spot another fighter holds");
+        sim::World v;terrain(v);v.buildNavClasses(reg);
+        v.spawn(reg.find("factory"),1600,1600,0,0);
+        const int toward=v.spawn(reg.find("soldier"),1640,1680,0,0);
+        ai::Controller near(0,reg,none,1,difficulty,{{2000,2200}});
+        const auto vs=think(near,v);
+        check(std::any_of(vs.begin(),vs.end(),[&](const auto& c) {
+            const float hx=c.x-1600,hz=c.z-1600,ex=c.x-2000,ez=c.z-2200;
+            return c.unitId==toward && c.kind==net::Cmd::Move && hx*hx+hz*hz<=ex*ex+ez*ez;
+        }),"Defensive stations its troops on its own side of the map");
+    }
+    // The base grows with its buildings: a filled 600 px disc does not stop the
+    // builders (they used to idle beside it with a full store). A site past it
+    // lies within retail's base radius, on the AI's own side of the map, with a
+    // lane to every building.
+    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive}) {
+        sim::World w;terrain(w);w.buildNavClasses(reg);
+        // 81 towers 140 apart around (800,800): no 2x2 site with a 48 px lane fits
+        // within 640 px of home; their footprint (81 * 4) makes a 1440 px base.
+        std::vector<std::pair<float,float>> towers;
+        for (int i=-4;i<=4;++i) for (int j=-4;j<=4;++j) {
+            towers.emplace_back(800+float(i)*140,800+float(j)*140);
+            w.spawn(reg.find("tower"),towers.back().first,towers.back().second,0,0);
+        }
+        const int worker=w.spawn(reg.find("worker"),800,1500,0,0);
+        for (const auto& enemy : std::vector<std::pair<float,float>>{{3800,3800},{2400,800}}) {
+            ai::Controller controller(0,reg,{},1,difficulty,{enemy});
+            float x=0,z=0;
+            const bool found=ai::PlacementProbe::place(controller,w,reg.find("tower"),*w.unit(worker),x,z);
+            const float d2=(x-800)*(x-800)+(z-800)*(z-800);
+            const float e2=(x-enemy.first)*(x-enemy.first)+(z-enemy.second)*(z-enemy.second);
+            check(found && d2>600.f*600 && d2<=1440.f*1440 && d2<=e2 &&
+                  std::none_of(towers.begin(),towers.end(),[&](const auto& t) {
+                      return std::abs(t.first-x)<32+48 && std::abs(t.second-z)<32+48;
+                  }),"Defensive builds past a full 600 px disc, within its grown base, on its own side, with lanes");
+        }
+    }
+    // Two builders moved in one think take two sites, a lane apart; and a site whose
+    // order came to nothing (the builder idle again, nothing started there) is not
+    // picked again at once.
+    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive}) {
+        sim::World w;terrain(w);w.buildNavClasses(reg);
+        w.spawn(reg.find("factory"),1600,1600,0,0);
+        w.spawn(reg.find("worker"),1500,1800,0,0);
+        w.spawn(reg.find("worker"),1500,1800,0,0);
+        w.player(0).mana=100000;w.player(0).income=2000;
+        ai::Profile p;p.weight["tower"]=10;
+        ai::Controller controller(0,reg,p,1,difficulty,{{3400,3400}});
+        auto sites=[&](uint32_t tick) {
+            std::vector<std::pair<float,float>> out;
+            for (const auto& c:think(controller,w,tick))
+                if (c.kind==net::Cmd::Build && std::string(c.type)=="tower") out.emplace_back(c.x,c.z);
+            return out;
+        };
+        const auto first=sites(0);
+        check(first.size()==2 && (std::abs(first[0].first-first[1].first)>=80 ||
+                                  std::abs(first[0].second-first[1].second)>=80),
+              "Defensive's builders in one think take separate sites");
+        const auto again=sites(30);   // neither order reached the world
+        check(!first.empty() && !again.empty() && std::none_of(again.begin(),again.end(),[&](const auto& s) {
+            return std::any_of(first.begin(),first.end(),[&](const auto& f) {
+                return std::abs(f.first-s.first)<32 && std::abs(f.second-s.second)<32; });
+        }),"Defensive does not send a builder straight back to a site that came to nothing");
+    }
     // A factory waiting half a minute on a queue head it cannot place (its pad
     // blocked) gives that order up and trains something else for a while.
     {

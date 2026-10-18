@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <sstream>
+#include <unordered_map>
 #include <vector>
 
 namespace tak::ai {
@@ -718,6 +719,10 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
             float x, z;
             if (placeSite(world, pick, p, ox, oz, x, z, siteLimit)) {
                 if (pick->onMana) plannedManaSites_.emplace_back(x,z);
+                if (dp_.unbounded) {
+                    plannedSites_.push_back({pick,x,z});
+                    issuedBuilds_.push_back({p.id,pick,x,z,now_});
+                }
                 emit(sink, tak::net::Cmd::Build, p.id, pick->id, x, z);
                 return true;
             } else {
@@ -766,10 +771,18 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     const bool aggressive=diff_==Difficulty::Hard || diff_==Difficulty::Absurd;
     const bool naval=navalFactory(t);
     const bool waterUnit=!t->isStructure() && !t->canFly && t->domain==tak::sim::UnitType::Domain::Water;
-    // The defensive levels build within 600 of home, but their builders other than the
-    // Monarch claim deposits out to Normal's 1600, so income -- and with it the build
-    // rate -- can keep growing; sendDefenders guards every building, remote ones too.
-    const float defensiveRadius=dp_.unbounded && t->onMana && !builder.type->commander ? 1600.0f : 600.0f;
+    // Defensive builds within 600 of home. The unbounded levels' base grows with it:
+    // they build within retail's AI base radius (retailLodestoneRadius -- 8*b*sqrt(n)
+    // for n the summed footprint, b 7 for the Monarch and 10 for other builders), never
+    // under 600 -- a fixed 600 px disc filled at ~31 buildings and left every builder
+    // idle with a full store. Builders other than the Monarch also claim deposits out
+    // to Normal's 1600, so income -- and with it the build rate -- keeps growing;
+    // sendDefenders guards every building, remote ones too.
+    float defensiveRadius=600.0f;
+    if (dp_.unbounded) {
+        defensiveRadius=std::max(defensiveRadius,retailLodestoneRadius(world,builder));
+        if (t->onMana && !builder.type->commander) defensiveRadius=std::max(defensiveRadius,1600.0f);
+    }
     const float homeRadius=!dp_.attack ? defensiveRadius : (builder.type->commander ? 900.0f : aggressive ? 100000.0f : 1600.0f);
     // A coastal outpost may be farther away than an ordinary base building.
     // Send an expansion builder; keep the Monarch and Defensive AI near home.
@@ -812,9 +825,37 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             })) fights.emplace_back(ex,ez);
         }
     }
+    // The unbounded levels keep a 48 px lane between buildings (see below), but a
+    // lodestone goes where its deposit is.
+    const float lane=dp_.unbounded && t->isStructure() && !t->onMana ? 48.0f : 0.0f;
+    // The unbounded levels move every idle producer in one think, so two builders
+    // could be given one site -- in this think, or one another builder is still
+    // walking to -- and one walks there for nothing. Those sites are taken, with
+    // the same lane.
+    std::vector<PlannedSite> pendingSites;
+    if (dp_.unbounded && t->isStructure()) {
+        pendingSites=plannedSites_;
+        for (const auto& u:world.units()) {
+            if (!u.alive() || u.player!=player_ || u.id==builder.id || !u.type || !u.type->isBuilder) continue;
+            for (const auto& order:u.orders)
+                if (order.buildType && order.buildType->isStructure() && (order.buildX.v || order.buildZ.v))
+                    pendingSites.push_back({order.buildType,order.buildX.toFloat(),order.buildZ.toFloat()});
+        }
+    }
+    // Past the old fixed radii the unbounded levels' grown base stays on its own side
+    // of the map -- nearer home than any enemy start -- so a defensive AI does not
+    // build its way into an enemy's base (Frey River Plain, Absurdly Defensive: its
+    // base and army reached 140 px from the idle enemy's within the hour).
+    const float ownRadius=dp_.unbounded ? (t->onMana && !builder.type->commander ? 1600.0f : 600.0f) : radius;
     auto usable=[&](float x,float z) {
         const float dx=x-home.first,dz=z-home.second;
         if (dx*dx+dz*dz>radius*radius || !world.canPlace(t,x,z,player_)) return false;
+        if (dx*dx+dz*dz>ownRadius*ownRadius && enemySide(x,z,home.first,home.second)) return false;
+        if (std::any_of(refusedSites_.begin(),refusedSites_.end(),[&](const RefusedSite& r) {
+                return std::abs(r.x-x)<float(t->footX)*8+16 && std::abs(r.z-z)<float(t->footZ)*8+16; }) ||
+            std::any_of(pendingSites.begin(),pendingSites.end(),[&](const PlannedSite& o) {
+                return std::abs(o.x-x)<float(t->footX+o.type->footX)*8+lane &&
+                       std::abs(o.z-z)<float(t->footZ+o.type->footZ)*8+lane; })) return false;
         if (std::any_of(fights.begin(),fights.end(),[&](const auto& f) {
             const float fx=f.first-x,fz=f.second-z;return fx*fx+fz*fz<kFightRadius*kFightRadius;
         })) return false;
@@ -895,7 +936,16 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
         }
         for (const auto& u : world.units()) {
             if (!u.alive() || u.player!=player_ || !u.type || !u.type->isStructure()) continue;
-            if (registry_.buildable(u.type->id).empty() && registry_.buildable(t->id).empty()) continue;
+            if (registry_.buildable(u.type->id).empty() && registry_.buildable(t->id).empty()) {
+                // The unbounded levels pack a growing base: keep a 48 px lane
+                // between any two of its buildings, or they wall their own builders
+                // and siege engines into pockets (Ulasem Arena, Absurdly Defensive:
+                // two arabuilds shut in by 46 minutes, every site unreachable, the
+                // store full). A deposit is where it is; a lodestone takes no lane.
+                if (lane>0 && std::abs(x-u.x.toFloat()) < float(t->footX+u.type->footX)*8+lane &&
+                    std::abs(z-u.z.toFloat()) < float(t->footZ+u.type->footZ)*8+lane) return false;
+                continue;
+            }
             // Leave working room around production buildings, including their
             // scripted output point. Placement validity alone allows blocked doors.
             if (std::abs(x-u.x.toFloat()) < float(t->footX+u.type->footX)*8+48 &&
@@ -963,7 +1013,27 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             float z = tak::sim::footprintWaypoint(tak::sim::footprintCell(nz + detmath::sin(a) * r,t->footZ),t->footZ).toFloat();
             if (usable(x, z)) { outX = x; outZ = z; return true; }
         }
+    // Nothing fits within 340 of the builder (for the Monarch, of home). The unbounded
+    // levels then search their whole base outward from home, so the base keeps
+    // growing outward instead of its builders idling beside a filled core; the angle
+    // step keeps the probes ~48 px apart on every ring.
+    if (dp_.unbounded && !naval && !waterUnit && t->minWaterDepth<=0 && searchRadius<radius) {
+        const auto [hx,hz]=home;
+        for (float r = 70; r <= radius; r += 30)
+            for (float a = 0; a < 6.28f; a += std::min(0.5f,48.0f/r)) {
+                const float x = tak::sim::footprintWaypoint(tak::sim::footprintCell(hx + detmath::cos(a) * r,t->footX),t->footX).toFloat();
+                const float z = tak::sim::footprintWaypoint(tak::sim::footprintCell(hz + detmath::sin(a) * r,t->footZ),t->footZ).toFloat();
+                if (usable(x, z)) { outX = x; outZ = z; return true; }
+            }
+    }
     return false;
+}
+
+bool Controller::enemySide(float x, float z, float hx, float hz) const {
+    const float ox=x-hx,oz=z-hz,own=ox*ox+oz*oz;
+    return std::any_of(enemyStarts_.begin(),enemyStarts_.end(),[&](const auto& e) {
+        const float dx=x-e.first,dz=z-e.second;return dx*dx+dz*dz<own;
+    });
 }
 
 // Nearest enemy the group at (cx,cz) can SEE (some AI unit within sight/radar of it)
@@ -1420,6 +1490,35 @@ void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& 
     }
 }
 
+// A build order can come to nothing -- the site taken or blocked by the time the
+// builder gets there -- and the site, still the nearest free one, was given straight
+// back to the idle builder: on Frey River Plain an Absurdly Defensive Aramon sent
+// builders to one keep site, think after think, from 50 minutes while its store
+// filled. So an order whose builder is idle (or doing something else) with nothing
+// started on the site marks that site refused for kRefusedSiteTicks, and placeSite
+// passes it over meanwhile.
+void Controller::updateIssuedBuilds(const tak::sim::World& world, uint32_t simTick) {
+    constexpr uint32_t kRefusedSiteTicks = 60 * 30;
+    std::erase_if(refusedSites_, [&](const RefusedSite& r) { return simTick >= r.until; });
+    std::erase_if(issuedBuilds_, [&](const IssuedBuild& b) {
+        if (b.tick == simTick) return false;          // not yet reached the world
+        const auto* u = world.unit(b.unit);
+        if (!u || !u->alive()) return true;
+        if (u->buildSiteId) return true;              // started
+        if (std::any_of(u->orders.begin(), u->orders.end(), [&](const auto& order) {
+                return order.buildType == b.type && std::abs(order.buildX.toFloat() - b.x) < 12 &&
+                    std::abs(order.buildZ.toFloat() - b.z) < 12; }))
+            return false;                             // still on its way
+        // Not bound for it any more: did the building go up there?
+        const bool started = std::any_of(world.units().begin(), world.units().end(), [&](const auto& s) {
+            return s.alive() && s.player == player_ && s.type == b.type &&
+                std::abs(s.x.toFloat() - b.x) < 12 && std::abs(s.z.toFloat() - b.z) < 12;
+        });
+        if (!started) refusedSites_.push_back({b.x, b.z, simTick + kRefusedSiteTicks});
+        return true;
+    });
+}
+
 // A factory can wait for ever on a queue head it cannot place: a Creon Defensive
 // AI's Workshop on Frey River Plain held a Mechanic from t=200 s to the end with
 // its output beside a rock, so its builder count never grew (the queued Mechanic
@@ -1456,24 +1555,55 @@ void Controller::unqueueStalled(const tak::sim::World& world, uint32_t simTick,
 // spot on the rings around it, where they still guard it (sendDefenders sends them
 // out from there and back). Outward along their own bearing first, so they do not
 // cross the base, then turning further from it -- a base in a map corner has only
-// a quarter of each ring.
+// a quarter of each ring. Never onto the enemy's side of the map (enemySide).
 void Controller::stationArmy(const tak::sim::World& world, std::vector<int>& assigned,
                              const CommandSink& sink) {
     constexpr float kBaseRadius = 420, kSpacing = 48, kNearHome = 900, kReach = 1600;
     constexpr int kMaxCommands = 64;
     const auto [hx, hz] = homeOf(world);
     float base = kBaseRadius;
-    // Spots already taken: where own units stand or are walking to.
-    std::vector<std::pair<float, float>> taken;
+    int32_t footprint = 0;
+    // Spots already taken: where own units stand idle or are walking to (a unit on
+    // another order -- a fight, a build -- holds no spot). Bucketed in kSpacing
+    // cells, so each probe checks its 3x3 neighbourhood rather than the whole army.
+    constexpr float kTaken = 40;
+    std::unordered_map<int64_t, std::vector<std::pair<float, float>>> taken;
+    auto cellOf = [](float v) { return int64_t(std::floor(v / kSpacing)); };
+    auto take = [&](float x, float z) { taken[(cellOf(x) << 32) ^ (cellOf(z) & 0xffffffff)].emplace_back(x, z); };
+    auto isTaken = [&](float x, float z) {
+        const int64_t cx = cellOf(x), cz = cellOf(z);
+        for (int64_t i = cx - 1; i <= cx + 1; ++i)
+            for (int64_t j = cz - 1; j <= cz + 1; ++j) {
+                const auto it = taken.find((i << 32) ^ (j & 0xffffffff));
+                if (it != taken.end() && std::any_of(it->second.begin(), it->second.end(), [&](const auto& t) {
+                        const float tx = t.first - x, tz = t.second - z; return tx*tx + tz*tz < kTaken*kTaken; }))
+                    return true;
+            }
+        return false;
+    };
     for (const auto& u : world.units()) {
         if (!u.alive() || u.player != player_ || !u.type) continue;
         if (!u.type->isStructure()) {
-            if (!u.orders.empty() && !u.orders.front().targetId)
-                taken.emplace_back(u.orders.front().x.toFloat(), u.orders.front().z.toFloat());
+            if (u.embarked() || u.underConstruction) continue;
+            // A move's route may queue waypoints ahead of its goal: the spot is the last.
+            const auto* goal = u.orders.empty() ? nullptr : &u.orders.back();
+            if (!goal) take(u.x.toFloat(), u.z.toFloat());
+            else if (!goal->targetId && !goal->buildType && !goal->reclaimFeat && !goal->repairTarget)
+                take(goal->x.toFloat(), goal->z.toFloat());
             continue;
         }
+        footprint += u.type->footX + u.type->footZ;
+    }
+    // The base builds out to retail's base radius (placeSite), so buildings that
+    // far out still count as the base; stationing troops among them would cover
+    // their sites again.
+    const float nearHome = std::max(kNearHome, float(tak::sim::retailAiBaseRadius(footprint, 1)) + 300);
+    for (const auto& u : world.units()) {
+        if (!u.alive() || u.player != player_ || !u.type || !u.type->isStructure()) continue;
+        // A remote lodestone is not the base.
+        if (u.type->onMana) continue;
         const float dx = u.x.toFloat() - hx, dz = u.z.toFloat() - hz, d = std::sqrt(dx*dx + dz*dz);
-        if (d <= kNearHome)
+        if (d <= nearHome)
             base = std::max(base, d + float(std::max(u.type->footX, u.type->footZ)) * 8 + 96);
     }
     int issued = 0;
@@ -1494,12 +1624,10 @@ void Controller::stationArmy(const tak::sim::World& world, std::vector<int>& ass
                 // 0, +30, -30, +60, -60 ... 180 degrees from the unit's own bearing.
                 const float a = bearing + float((i + 1) / 2) * (i % 2 ? 0.523598776f : -0.523598776f);
                 const float x = hx + detmath::cos(a) * r, z = hz + detmath::sin(a) * r;
-                if (std::any_of(taken.begin(), taken.end(), [&](const auto& t) {
-                        const float tx = t.first - x, tz = t.second - z; return tx*tx + tz*tz < 40*40; }) ||
-                    !world.canPlace(u.type, x, z) ||
+                if (isTaken(x, z) || enemySide(x, z, hx, hz) || !world.canPlace(u.type, x, z) ||
                     (!u.type->canFly && !world.pathExists(u.type, x, z, ux, uz))) continue;
                 emit(sink, tak::net::Cmd::Move, u.id, "", x, z);
-                taken.emplace_back(x, z);
+                take(x, z);
                 assigned.push_back(u.id);
                 ++issued;
                 moved = true;
@@ -1630,6 +1758,8 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     if (world.hasManaSpots()) updateBuilderProgress(world,simTick,sink);
     if (!allyHomes_.empty() && world.hasManaSpots()) updateAllyClaims(world,simTick);
     plannedManaSites_.clear();
+    plannedSites_.clear();
+    if (dp_.unbounded) updateIssuedBuilds(world, simTick);
     if (dp_.unbounded) unqueueStalled(world, simTick, sink);
     Needs needs = assessNeeds(world);   // one empire assessment drives every producer
     // Snapshot the idle producers, then act on up to producersPerThink of them -- the
