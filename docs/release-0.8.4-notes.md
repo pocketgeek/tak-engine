@@ -4,14 +4,13 @@
 Legion 10,000 program (a click reaches every unit of a 10,000-unit selection in
 one tick, long routes, shared passages), a new AI difficulty, Absurdly
 Defensive, beside an uncapped Defensive, replays that are kept however a game
-ends, the original game's sharing of short mana across construction, and
-<!-- RENDER-OPT PLACEHOLDER: name the rendering work in this list. -->
-[the rendering work: placeholder]. The simulation changed in both pathfinding
-modes, so the network protocol moves from 266 to **276**: **0.8.4 cannot play
-with 0.8.3 or earlier, and cannot play their replays.** A server and all of its
-players must update to 0.8.4 together. As in 0.8.3, Retail pathfinding does
-**not** play exactly as before: the shared mana changes Retail games too,
-although the Legion work leaves Retail untouched.
+ends, the original game's sharing of short mana across construction, and a
+faster renderer, above all for large armies. The simulation changed in both
+pathfinding modes, so the network protocol moves from 266 to **276**: **0.8.4
+cannot play with 0.8.3 or earlier, and cannot play their replays.** A server
+and all of its players must update to 0.8.4 together. As in 0.8.3, Retail
+pathfinding does **not** play exactly as before: the shared mana changes Retail
+games too, although the Legion work leaves Retail untouched.
 
 ## Voice chat
 
@@ -72,15 +71,66 @@ See [Voice chat](user-guide.md#voice-chat) in the user guide.
 
 ## Rendering
 
-<!-- RENDER-OPT PLACEHOLDER: the lead fills this section from
-     docs/render-optimization-progress.md when task-render-opt merges: what got
-     faster, the measured before/after, any option or default that changed,
-     any visible difference, and the protocol (none expected; rendering is
-     client-only). Also update the intro paragraph, README "New in 0.8.4" and
-     the validation report's Scope and Screenshots sections. -->
+The renderer does much less work per frame, most of all for large armies.
+Rendering is local to each player, so this has no effect on the protocol,
+replays or the state hash (the `--mpai` hashes are unchanged by it). No option
+or default changed, and nothing new is shown. The
+[rendering optimization record](render-optimization-progress.md) has the
+design, every measurement and the full list of limits.
 
-**Placeholder: the rendering optimization program is still on its branch.
-This section is filled in when it merges.**
+- **Work kept between frames.** When the camera moves, a unit that stands
+  still is only placed again, not rebuilt, and its shadow stays where it was
+  drawn instead of being redrawn. A spatial index finds the units near the view, so
+  the others are not visited; a distant unit's cached picture is looked up
+  before its body is built; animated textures skip their update when no
+  animation frame changed.
+- **Terrain follows the camera.** Terrain for the current view is prepared
+  first, and work for a view the camera has left is dropped.
+- **Threads and memory.** The renderer's worker threads share work by its
+  measured cost, and its caches keep to a CPU memory budget and give memory
+  back when a big view empties (0.8.3 kept its peak for the rest of the game).
+- **On OpenGL** the vertices of unchanged units stay on the graphics card,
+  bodies are drawn in batched passes, and buildings are shaded through a
+  palette lookup instead of pre-shaded copies of each texture (in the
+  structures test, 9.3 MiB of graphics memory instead of 144 MiB). Direct3D,
+  Metal, OpenGL ES and the software renderer keep 0.8.3's way for these three;
+  everything else above applies to every renderer.
+
+**Measured** on Linux with an NVIDIA GeForce RTX 5070 Laptop GPU, OpenGL, an
+optimized build, in 24 scenes at 1280×960 and at 7680×2160, each frame finished
+on the GPU before the next (900 frames, each case run four times against 0.8.3's
+renderer on the same simulation). The mean frame time fell by more than twice
+the run-to-run spread (and at least 2%) in 37 of the 48 cases:
+
+| Scene | Units in view | 1280×960 | 7680×2160 |
+|---|---:|---|---|
+| Armies standing still | 1,825 / 2,000 | 7.3 → 3.6 ms (−50%) | 10.5 → 4.5 ms (−57%) |
+| Armies on the move | 1,195 / 1,200 | 12.6 → 8.1 ms (−36%) | 16.8 → 8.7 ms (−48%) |
+| 10,000 units, most in view | 8,752 / 9,398 | 50.1 → 22.5 ms (−55%) | 67.6 → 64.6 ms (−4%) |
+| Camera jumps | 220 / 1,237 | 2.1 → 1.7 ms (−21%) | 7.2 → 3.6 ms (−50%) |
+| Small battle | 198 | 1.33 → 0.96 ms (−28%) | 1.81 → 1.56 ms (−14%) |
+
+The slowest frames improved most where armies stand still: the 99th
+percentile fell 72–73% in the still-army scene.
+
+**Limits.**
+
+- Only NVIDIA OpenGL on Linux was timed. Windows, macOS, Mesa, AMD and Intel
+  drivers and the other renderers run the same code apart from the
+  OpenGL-only parts, but their gains were not measured.
+- The densest view, almost 9,400 units on a 7680×2160 screen, is limited by
+  the graphics card and gained only 4%. A camera sweep over empty terrain is
+  not faster (+3%, within the noise).
+- After a long camera jump at 7680×2160, the new view's terrain fills in over
+  more frames than before, and its lower-detail stand-in shows meanwhile; the
+  same happens for a moment during rapid repeated jumps.
+- Memory: units that stand still keep about 21% more geometry in main memory,
+  and on OpenGL the retained vertices take up to about 45 MiB more graphics
+  memory (76 → 119 MiB in the moving-army test at 1280×960), which counts
+  toward the GPU Memory Limit.
+- A frame can differ from 0.8.3's in 1–14 pixels at shadow edges, where a
+  shadow is now rasterized at a different place in its page; otherwise the
+  picture is the same.
 
 ## Game
 
@@ -224,9 +274,8 @@ before. See the report's sections 13 and 14.
   seat's Monarch at tick 1,303, leaving the case checking almost nothing.
 - The `--mpai` Inner Circle seed 1 hashes are now: Retail 300 s
   `a3d953803a064191`, 60 s `b353410003e98dd5`; Legion 300 s
-  `ce5c4ba7562e53b9`, 60 s `0825aeb9e8139203`.
-  <!-- LEAD: confirm on the final main after the rendering merge (the
-       validation report's --mpai table); update if anything moved. -->
+  `ce5c4ba7562e53b9`, 60 s `0825aeb9e8139203`, unchanged by the rendering
+  merge.
 
 ## Compatibility
 

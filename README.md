@@ -12,7 +12,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
 [Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [Map editor guide](docs/cartographer-guide.md) · [Build from source](docs/development.md)
 
-<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.3"></a>
+<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.4"></a>
 
 <table>
   <tr>
@@ -40,7 +40,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.25 to 0.8.3 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
+<sub>Captured from the 0.7.25 to 0.8.4 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
 
 </div>
 
@@ -65,9 +65,13 @@ replays**. Update the server and every player together.
   sounds to you, and the push-to-talk key can be changed in **Controls**. Voice
   is relayed by the server, never recorded, and always gives way to the game.
   See [voice chat](docs/user-guide.md#voice-chat).
-<!-- RENDER-OPT PLACEHOLDER: one bullet for the rendering optimization program
-     (task-render-opt), from docs/render-optimization-progress.md, goes here
-     when that branch merges. -->
+- **Faster rendering.** Frames take much less work, most of all with large
+  armies: in the renderer's tests a still army of 2,000 units drew in 4.5 ms
+  instead of 10.5 ms on a 7680×2160 screen, and 8,752 units in view in
+  22.5 ms instead of 50.1 ms at 1280×960. Nothing looks different and no
+  setting changed. The biggest gains are on the OpenGL renderer, and only
+  Linux with an NVIDIA GPU was measured. See
+  [rendering](docs/release-0.8.4-notes.md#rendering).
 - **Legion takes much bigger armies.** A click reaches every unit of a
   selection in the same tick, even 10,000 of them (it took over ten seconds),
   long routes are planned over the whole map, and groups share out bridges and

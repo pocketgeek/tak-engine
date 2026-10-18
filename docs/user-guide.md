@@ -1378,9 +1378,9 @@ Press **D** for the **Diplomacy** screen:
 - **Voice**: choose who hears you on [voice chat](#voice-chat).
 - **Volume**: how loud each other player's voice plays for you.
 
-![The Diplomacy screen listing players with Share Mana and Chat checkboxes and a Give Selected Units button](img/diplomacy.jpg)
+![The Diplomacy screen listing four players with Share Mana, Chat and Voice checkboxes, Volume sliders at 50% and 25% for the two other human players, and a Give Selected Units button](img/diplomacy.jpg)
 
-*The Diplomacy screen (**D**), from the engine's built-in input test. The picture was taken before the Voice and Volume columns were added.*
+*The Diplomacy screen (**D**), from the engine's built-in input test, with voice chat on. The computer player (ENEMY) has no Volume slider.*
 
 See [unit gifting](unit-gifting.md) for which units can be given.
 
@@ -1458,6 +1458,8 @@ player with it off cannot talk and is sent no voice at all.
 ### The Voice Chat page
 
 While **Voice chat** is off, every other row is greyed out and ignores clicks.
+
+![The Voice Chat page with voice chat on, push to talk on Space, System Default microphone at volume 100 with an empty level meter, and output Same as Game Output at volume 100](img/guide/voice-chat.jpg)
 
 | Option | Default | What it does |
 | --- | --- | --- |

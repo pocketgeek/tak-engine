@@ -22,16 +22,17 @@ PENDING: Tagged `v0.8.4` at `<sha>` and published on `<date>`.
 ## Scope and compatibility
 
 0.8.4 follows 0.8.3 (protocol 266). After the 0.8.3 validation commit
-`c2c25707`, 121 commits up to `c551ae6c` (origin/main when this skeleton was
-written) change the simulation in both pathfinding modes, the server-side AI,
-the client (voice chat, replays), the network layer and server, the tests and
-the documentation. `git diff --stat v0.8.3..c551ae6c -- src` touches 60 files:
-`src/sim/` (12), `src/client/` (30), `src/net/` (13), `src/server/` (3) and
-`src/ai/` (2). Nothing under `src/tnt/` (the map generator), `src/campaign/`,
+`c2c25707`, main reached `f11fbc1a` in 225 commits: 121 up to `c551ae6c` change
+the simulation in both pathfinding modes, the server-side AI, the client (voice
+chat, replays), the network layer and server, the tests and the documentation;
+the rendering optimization program adds 103 commits and its merge `a8bbe6ed`
+(made on the program's branch, which was based on `c2c25707`). `git diff --stat
+v0.8.3..f11fbc1a -- src` touches 91 files: `src/sim/` (12), `src/client/` (59),
+`src/net/` (13), `src/server/` (3), `src/ai/` (2) and `src/terrain/` (2). The
+rendering program changes 35 client files (6 of them also changed on main) and
+both terrain files, and no file under `src/sim/`, `src/net/`, `src/server/` or
+`src/ai/`. Nothing under `src/tnt/` (the map generator), `src/campaign/`,
 `src/cartographer/`, `src/cob/`, `src/crt/` or `src/util/` changed.
-<!-- RENDER-OPT PLACEHOLDER: add the rendering program's merge, its commit range
-     and its src/ file counts (and recount everything above) once
-     task-render-opt is merged onto main. -->
 
 The protocol steps, each recorded in `src/net/protocol.h`:
 
@@ -66,13 +67,21 @@ section 4), and 275 and 276 leave the default-level simulation unchanged.
 The `--mpai` Inner Circle seed 1 hashes recorded by `af90da79` and unchanged
 since are Retail 300 s `a3d953803a064191`, 60 s `b353410003e98dd5`; Legion
 300 s `ce5c4ba7562e53b9`, 60 s `0825aeb9e8139203` (0.8.3's Retail 300 s was
-`7535cb08ee787b75`).
-<!-- LEAD: confirm after the rendering merge (Local preparation checks). -->
+`7535cb08ee787b75`). They are unchanged on the final tree: an optimized Debug
+build of `657aef1b` (`f11fbc1a` plus these docs) gave all four, once each,
+against the user's retail install through a read-only scratch folder
+(`takserver --local --no-auth --seed 1`, scratch profiles). The rendering
+program's own merge check found the same four on its merge `a8bbe6ed`, whose
+`src/` equals `f11fbc1a`'s.
 
 Every measured figure in the [release notes](release-0.8.4-notes.md) is taken
 from the commit that made the change, with its setup, or from the section of
 `docs/legion-10000-report.md`, `docs/legion-pathfinding.md`,
-`docs/ai-defensive-2026-10-17.md` or `docs/multiplayer-design.md` it cites.
+`docs/ai-defensive-2026-10-17.md` or `docs/multiplayer-design.md` it cites. The
+Rendering section's figures are Experiment 17 of
+`docs/render-optimization-progress.md` (forced-completion table and memory
+table, A = `60f2b586`, the 0.8.3 renderer with the program's telemetry, B =
+`f97f21c8`, the program's final renderer, on the same simulation).
 
 **Compatibility.** `kNetVersion` is **276** in `src/net/protocol.h` at
 `c551ae6c`, against 266 at `v0.8.3`. `kReplayFormat` is **13** in
@@ -170,20 +179,41 @@ New checks for 0.8.4:
 
 ## Screenshots
 
-PENDING. Candidates, following [the capture notes](img/README.md):
+Recaptured on 2026-10-18 per [the capture notes](img/README.md), with an
+optimized Debug build (`-O2`, the debug capture harnesses) of `657aef1b` (main
+`f11fbc1a` plus these docs and the version bump) and the capture-only patch.
+The retail data came from the user's install, read-only, through a scratch
+folder with its own caches. All scratch profiles were used. Every new picture
+was inspected.
 
-- `title.jpg` (shows VERSION 0.8.4). With the recapture, update the lines that
-  describe the pictures, left at 0.8.3 until then: README.md's title alt text
-  ("version 0.8.3") and gallery caption ("Captured from the 0.7.25 to 0.8.3
-  builds"), and docs/img/README.md's refresh date and per-image build notes.
-- `diplomacy.jpg`: the diplomacy screen now has **Voice** and **Volume**
-  columns. The user guide's caption says the current picture predates them;
-  drop that sentence when it is re-rendered.
-- A new user-guide picture of the **Voice Chat** page, if wanted.
-- Any lobby picture showing an AI difficulty list (Absurdly Defensive, violet).
-- The scenes the rendering program changes.
-  <!-- RENDER-OPT PLACEHOLDER -->
-- Simulation-dependent pictures (Retail moved with 273; Legion with 267–273).
+- Interface: `title.jpg` (VERSION 0.8.4), `diplomacy.jpg` (VOICE and VOLUME
+  columns, with live sliders at 50% and 25% for the two other humans and none
+  for the computer player), and the new `guide/voice-chat.jpg`, now shown in
+  the user guide's Voice Chat section. The guide no longer says that the
+  diplomacy picture predates the Voice and Volume columns.
+- Simulation-dependent: `battle.jpg`, `dragons.jpg`, `hud.jpg`, `naval.jpg`,
+  `guide/benchmark.jpg`, `guide/scorecard.jpg`, `guide/tactical-dots.jpg` and
+  `guide/fire-on-the-move.jpg`. Each is the 0.8.3 scene, with units moved a
+  little; the captions were updated where a count changed. The HUD's stats panel
+  now reads VID 94 MB (0.8.3 capture: 87 MB), and three of sixteen units
+  have fallen in the fire picture (0.8.3: four).
+- Rendering: the program draws the same picture as 0.8.3 apart from 1–14
+  shadow-edge pixels a frame and the slower terrain fill after a long camera
+  jump at 7680×2160 (the capture sizes are 1920×1080 and 1600×900). So no
+  picture was retaken for the rendering alone, and none shows a difference.
+- Not retaken: `lobby.jpg`, `lobby-scenario.jpg` and `room.jpg` (their screens
+  did not change; Absurdly Defensive appears only in a slot's level list),
+  `generated.jpg`, the menus and the editor pictures.
+- **`flyers.jpg` and `guide/flyers-retail-legion.jpg` kept from 0.8.3:** on this
+  build, the Legion flyers of a formation no longer stay over the front of the
+  ground units. They fly ahead to the destination, as Retail's do. This shows in
+  the gallery scene (44 Zhon, one formation move, 22 s) and in the committed
+  `TAK_FLYER_FRONT` fixture (`--testbuild`, 30 Swordsmen and 8 Gryphons, 14 s).
+  A `v0.8.3` build with the same capture patch keeps the flyers over the front
+  in both scenes. The user guide's [Air units](user-guide.md#air-units) section
+  still describes 0.8.3's behaviour. New pictures wait for a fix or a change to
+  that text.
+  <!-- LEAD: reported to the lead on 2026-10-18; resolve before tagging. -->
 
 ## Limits
 
