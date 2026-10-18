@@ -2113,6 +2113,14 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_voice_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_voice PROPERTIES TIMEOUT 120)
+    # The voice gate the slow listener relies on reads the kernel's send queue, which
+    # Windows cannot report (only the server's lag check works there): Linux and macOS.
+    if(NOT WIN32)
+      add_test(NAME server_voice_slow COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/server_voice_slow_test.py"
+        --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+      set_tests_properties(server_voice_slow PROPERTIES TIMEOUT 120)
+    endif()
     add_test(NAME server_map_scenario COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_map_scenario_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --map-tool "$<TARGET_FILE:map_transfer_test>")

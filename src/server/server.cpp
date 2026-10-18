@@ -283,6 +283,14 @@ struct Client {
     WorkBudget voiceFrames, voiceBytes, voiceAbuse;
     uint64_t voiceDropped = 0, voiceLogAt = 0;
     uint32_t voiceOut = 0;
+    // As a LISTENER in a running game: voice to this client stops while its acknowledged
+    // tick lags the room (Server::voiceBehind). baseRttMs is the lowest round trip its
+    // Progress reports have shown (allowed to creep up 1 ms a report, so a route that got
+    // slower is followed), i.e. its round trip with no voice queued ahead of the ticks.
+    uint32_t baseRttMs = UINT32_MAX;
+    bool voiceMuted = false;
+    unsigned voiceStrikes = 0;
+    uint64_t voiceMutedUntil = 0, voiceTripAt = 0;
 };
 
 // Voice relay budgets (per talking connection; voice is 50 frames a second of ~60 bytes).
@@ -521,6 +529,7 @@ private:
     WorkBudget voiceGlobal_;                // kVoiceGlobalFramesPerSec, all rooms together
     uint64_t voiceGlobalDropped_ = 0;
     void relayVoice(Client& c, Room& r, const Frame& f);
+    bool voiceBehind(Client& listener, const Room& r, uint64_t now);
     bool allowLobbyWork(Client& c,const Frame& f);
     bool canRead(const Client& c,uint64_t now) const {return c.commandBytes.available(now,4u<<20) && commandBytes_.available(now,32u<<20) && ((!c.mapReceive.size && !c.overrideReceive.size) || (c.uploadWork.available(now,4096,64) && uploadGlobalWork_.available(now,16384,64)));}
     size_t mapMemory() const;
@@ -1815,11 +1824,45 @@ void Server::broadcastRoom(Room& r, Msg kind, const Writer& w, uint32_t exceptCl
     }
 }
 
+// Is this listener too far behind the running room to be sent voice? Voice shares the
+// listener's TCP stream with its tick bundles, so on a link too slow for both it delays
+// them -- and a seated player's delay holds the whole room (canAdvance). Conn's own rules
+// keep voice behind game traffic and bound how much the kernel holds, but not what is
+// already on its way (in flight, or in a slow reader's receive buffer), and on Windows
+// the kernel cannot be asked at all. So the acknowledged tick decides: past 3/4 of the
+// lead the listener would get on an idle link (flowLeadTicks at its base round trip),
+// voice to it stops and its queued voice is dropped; it resumes once it is back within
+// half that lead, but not before a back-off of 5 s that doubles with each repeat (to
+// 60 s; forgotten after 2 quiet minutes), so a link that cannot carry voice is not
+// probed again every few seconds. The game's own pace never depends on voice.
+bool Server::voiceBehind(Client& d, const Room& r, uint64_t now) {
+    const uint32_t lead = d.baseRttMs == UINT32_MAX ? d.leadTicks
+                                                    : tak::net::flowLeadTicks(int(r.opts.speed), d.baseRttMs);
+    const uint64_t lag = r.tick > d.ackTick ? r.tick - d.ackTick : 0;
+    if (d.voiceMuted) {
+        if (now < d.voiceMutedUntil || lag * 2 > lead) return true;
+        d.voiceMuted = false;
+        return false;
+    }
+    if (lag * 4 <= uint64_t(lead) * 3) return false;
+    if (now - d.voiceTripAt > 120000) d.voiceStrikes = 0;
+    d.voiceTripAt = now;
+    d.voiceMutedUntil = now + std::min<uint64_t>(5000ull << std::min(d.voiceStrikes, 4u), 60000);
+    ++d.voiceStrikes;
+    d.voiceMuted = true;
+    d.conn.dropLow();
+    if (commandLogs_.take(now, 4))
+        std::fprintf(stderr, "game %u: client %u lags %llu ticks (lead %u): voice to it paused %llu s\n", r.id, d.id,
+                     (unsigned long long)lag, lead, (unsigned long long)((d.voiceMutedUntil - now) / 1000));
+    return true;
+}
+
 // Voice chat: one frame from a talker in room r, to the recipients its VOICE mask picks
 // with exactly the Chat rules -- the whole room (spectators included) while the room is
 // not running or for 0xff, otherwise the seated players whose bit is set -- minus the
-// talker, minus anyone who has not asked for voice or is still catching up. Sent as
-// low-priority frames (Conn::sendLow), which a backed-up recipient drops.
+// talker, minus anyone who has not asked for voice or is still catching up, and minus
+// anyone lagging the running game (voiceBehind). Sent as low-priority frames
+// (Conn::sendLow), which a backed-up recipient drops.
 void Server::relayVoice(Client& c, Room& r, const Frame& f) {
     Reader rd(f.payload.data(), f.payload.size());
     const uint16_t seq = rd.u16();
@@ -1864,6 +1907,7 @@ void Server::relayVoice(Client& c, Room& r, const Frame& f) {
         if (cid == c.id) return;
         auto it = clients_.find(cid);
         if (it == clients_.end() || !it->second->voiceListen || it->second->replaying) return;
+        if (r.running && voiceBehind(*it->second, r, now)) return;
         it->second->conn.sendLow(Msg::VoiceDown, w.b);
     };
     if (!r.running || recipients == 0xff) {
@@ -2902,6 +2946,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if (tk >= r->tick) break;
             if (tk > c.ackTick) c.ackTick = tk;
             c.leadTicks = tak::net::flowLeadTicks(int(r->opts.speed), rtt);
+            c.baseRttMs = c.baseRttMs == UINT32_MAX ? rtt : std::min(rtt, c.baseRttMs + 1);
             break;
         }
         case Msg::StateHash: {
@@ -3440,7 +3485,8 @@ int Server::run() {
         // deadline in.
         for (const auto& [id, c] : clients_) {
             if (c->conn.bufferedInput() && canRead(*c,now))soonest=now;
-            if ((c->replaying || c->mapSend.package || c->mapReceive.size || c->overrideSend.package || c->overrideReceive.size) && now + 10 < soonest) soonest = now + 10;
+            if ((c->replaying || c->mapSend.package || c->mapReceive.size || c->overrideSend.package || c->overrideReceive.size ||
+                 c->conn.lowWaiting()) && now + 10 < soonest) soonest = now + 10;
         }
         int timeout = int(soonest > now ? soonest - now : 0);
 

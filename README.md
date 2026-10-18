@@ -1052,7 +1052,8 @@ output (the game's own sound device unless you choose another), each with a 0–
 volume, then hold **Space** to talk in multiplayer rooms and games. The diplomacy
 screen's **Voice** column chooses who hears you, like the Chat column; everyone by
 default. Voice is relayed by the server beside the game (about 3 KB/s per talker),
-never recorded in replays, and gives way to game traffic.
+never recorded in replays, and gives way to game traffic: a player whose connection
+cannot carry it stops receiving voice for a while rather than slow the game.
 
 Multiplayer automatically verifies and transfers missing or differing maps before play.
 Downloaded maps remain available in the map picker; generated maps are saved on every

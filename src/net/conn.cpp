@@ -10,6 +10,10 @@
 #include <openssl/x509v3.h>
 #ifndef _WIN32
 #include <arpa/inet.h>
+#include <sys/ioctl.h>
+#endif
+#ifdef __linux__
+#include <linux/sockios.h>
 #endif
 #include <utility>
 
@@ -30,6 +34,20 @@ void limitUnsent(int fd) {
     setsockopt(fd, IPPROTO_TCP, TCP_NOTSENT_LOWAT, reinterpret_cast<const char*>(&bytes), sizeof bytes);
 #else
     (void)fd;
+#endif
+}
+
+long kernelQueued(int fd) {
+#if defined(__linux__) && defined(SIOCOUTQ)
+    int n = 0;
+    return ioctl(fd, SIOCOUTQ, &n) == 0 ? long(n) : -1;
+#elif defined(__APPLE__) && defined(SO_NWRITE)
+    int n = 0;
+    socklen_t len = sizeof n;
+    return getsockopt(fd, SOL_SOCKET, SO_NWRITE, &n, &len) == 0 ? long(n) : -1;
+#else
+    (void)fd;
+    return -1;
 #endif
 }
 
@@ -62,6 +80,7 @@ Conn& Conn::operator=(Conn&& o) noexcept {
         rxBuf_ = std::move(o.rxBuf_); rxOff_ = o.rxOff_;
         txBuf_ = std::move(o.txBuf_); txOff_ = o.txOff_;
         low_ = std::move(o.low_); lowDropped_ = o.lowDropped_; o.low_.clear(); o.lowDropped_ = 0;
+        lowGated_ = o.lowGated_; o.lowGated_ = false;
         peerClosed_ = o.peerClosed_;   // part of the socket's state, like err_
         o.fd_ = -1; o.rxOff_ = o.txOff_ = 0; o.peerClosed_ = false;
     }
@@ -165,13 +184,18 @@ bool Conn::sendLow(Msg kind, const std::vector<uint8_t>& payload) {
 }
 
 // Move queued low-priority frames into the byte stream, but only once it is empty (and
-// no TLS record is half written), and only a few KiB at a time: whatever is queued after
-// them can wait at most that long.
+// no TLS record is half written) and the kernel's own queue for this peer is nearly
+// drained, and only kLowPromoteBytes at a time: whatever is queued after them waits
+// behind at most kLowKernelMax + kLowPromoteBytes bytes of voice. On a link the game
+// already fills, the kernel's queue never drains that far and the voice queue overflows
+// and drops instead (sendLow keeps only the newest frames).
 void Conn::promoteLow() {
+    lowGated_ = false;
     if (low_.empty() || txOff_ != txBuf_.size() || tlsWriteSize_) return;
+    const long queued = kernelQueued(fd_);
+    if (queued >= kLowKernelMax) { lowGated_ = true; return; }
     txBuf_.clear(); txOff_ = 0;
-    constexpr size_t kPromoteBytes = 4096;
-    while (!low_.empty() && txBuf_.size() < kPromoteBytes) {
+    while (!low_.empty() && txBuf_.size() < kLowPromoteBytes) {
         txBuf_.insert(txBuf_.end(), low_.front().begin(), low_.front().end());
         low_.pop_front();
     }
@@ -211,7 +235,8 @@ bool Conn::flushWrite() {
     }
     if (txOff_ == txBuf_.size()) { txBuf_.clear(); txOff_ = 0; }
     // Everything ordinary went out: let the voice queue follow on the next flush (the
-    // caller polls for writability while lowPending(), see wantWrite()).
+    // caller polls for writability while voice waits, see wantWrite(), or flushes again
+    // soon while it waits on the kernel, see lowWaiting()).
     return true;
 }
 

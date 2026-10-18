@@ -357,14 +357,27 @@ Voice must never cost the game anything. Relayed frames go out through
 ordinary frame queued so far has left, holds at most 16 frames (the newest win),
 and refuses frames while 64 KiB of game traffic waits. That ordering holds inside
 the program; once bytes are handed to the operating system they are sent in
-order, so the server also caps each client socket's unsent kernel queue at 16 KiB
-(`TCP_NOTSENT_LOWAT`, `limitUnsent`): on a slow downlink game traffic then backs
-up in the program, where voice yields to it and is dropped, instead of queuing
-behind seconds of voice in an autotuned send buffer. At most that 16 KiB plus one
-4 KiB batch of voice can be ahead of a tick bundle. Linux enforces the cap on
-send; macOS only delays writability by it, and Windows has no equivalent, so
-there the kernel buffer can still hold voice ahead of game traffic (servers run
-on Linux). Per talker the server relays 60 frames / 16 KB a second and drops the
+order, so voice also waits for the kernel: a batch (at most 1 KiB) joins the
+stream only while the kernel holds under 2 KiB for that peer, unsent or not yet
+acknowledged (`kernelQueued`: `SIOCOUTQ` on Linux, `SO_NWRITE` on macOS). A tick
+bundle queued later finds at most about 3 KiB of voice ahead of it whatever the
+link speed, and on a link the game already fills voice overflows its queue and is
+dropped. This applies to both ends, so a weak uplink does not queue a client's
+`Progress` behind its own voice either. The server also caps each client socket's
+unsent kernel queue at 16 KiB (`TCP_NOTSENT_LOWAT`, `limitUnsent`), so a backlog
+of game traffic waits in the program where the send-backlog limits see it.
+What the sender cannot see -- bytes in flight, or a slow reader's receive buffer --
+and Windows, which has no such query, are covered by the acknowledged tick: in a
+running game the server stops voice to a listener whose `Progress` lags the room
+by more than 3/4 of the lead it would have on an idle link (`flowLeadTicks` at its
+lowest reported round trip), drops its queued voice, and resumes once it is back
+within half that lead, after a back-off of 5 s doubling to 60 s
+(`Server::voiceBehind`). `server_voice_slow_test.py` reads two listeners (one
+seated, one spectating) at 1500 B/s while a third player talks: the room keeps
+about 27 of its 30 ticks a second and neither falls more than ~25 ticks behind;
+without these rules the room ran at 2-8 ticks a second.
+
+Per talker the server relays 60 frames / 16 KB a second and drops the
 excess. An END marker skips those budgets so a cut-off transmission still
 closes, but it carries no audio (audio or START with END fails the connection)
 and only the one END owed to a transmission that relayed audio is passed on, so
@@ -379,7 +392,8 @@ FEC, and conceals a late one. Opus is built from its pinned source release
 (`cmake/Opus.cmake`) and linked only into takclient. Tests: `voice_test` (codec,
 jitter buffer, push-to-talk, engine on SDL's disk audio driver, the VOICE CHAT
 page), `voice_client_test` (MpClient on the wire), `server_voice_test.py`
-(routing, budgets, abuse against a real server).
+(routing, budgets, abuse against a real server), `server_voice_slow_test.py`
+(slow listeners do not hold up the game), `conn_test` (the low-priority queue).
 
 Bundle **Event** records (u8 kind + payload): `Forfeit{player}` (grace expired
 or explicit surrender), `Leave{player}` (voluntary, units per forfeit rule),

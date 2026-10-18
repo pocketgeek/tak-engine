@@ -242,6 +242,27 @@ int main() {
               "the newest frames survive");
         while (p.conn.lowPending()) { p.conn.flushWrite(); readFrames(); }
 
+        // Voice waits for the kernel's queue too: with game bytes the peer has not read yet,
+        // a voice frame stays in its queue (and leaves writability alone, or a poll loop
+        // would spin on a writable socket), then goes once the peer has read them.
+        p.conn.send(Msg::TickBundle, std::vector<uint8_t>(8192, 7));
+        p.conn.flushWrite();
+        if (p.conn.txPending() == 0 && tak::net::kernelQueued(p.conn.fd()) >= Conn::kLowKernelMax) {
+            p.conn.sendLow(Msg::VoiceDown, bytes("held"));
+            p.conn.flushWrite();
+            check(p.conn.lowPending() == 1 && p.conn.lowWaiting() && !p.conn.wantWrite(),
+                  "voice waits while the kernel holds unread game bytes");
+            got = readFrames();
+            check(got.size() == 1 && got[0].first == Msg::TickBundle, "the game bytes arrive alone");
+            p.conn.flushWrite();
+            got = readFrames();
+            check(got.size() == 1 && got[0].second == "held" && !p.conn.lowWaiting() && !p.conn.wantWrite(),
+                  "then the voice frame follows");
+        } else {
+            std::printf("  (kernel queue not reported on this socket: voice gate check skipped)\n");
+            readFrames();
+        }
+
         // Backed-up ordinary traffic: voice is refused rather than queued behind it.
         Conn c;   // never flushed
         c.send(Msg::TickBundle, std::vector<uint8_t>(Conn::kLowBackpressure + 1));
