@@ -544,8 +544,10 @@ def world_rect(render_env, w, h):
 
 # ---- Aggregation ----
 
-KEY_METRICS = [("frame_ms", "total", "mean"), ("frame_ms", "total", "p95"), ("frame_ms", "total", "p99"),
-               ("frame_ms", "draw", "mean"), ("frame_ms", "draw", "p95"), ("frame_ms", "draw", "p99"),
+KEY_METRICS = [("frame_ms", "total", "mean"), ("frame_ms", "total", "p50"), ("frame_ms", "total", "p95"),
+               ("frame_ms", "total", "p99"),
+               ("frame_ms", "draw", "mean"), ("frame_ms", "draw", "p50"), ("frame_ms", "draw", "p95"),
+               ("frame_ms", "draw", "p99"),
                ("frame_ms", "present", "mean"),
                ("drawphase", "proj", "mean"), ("drawphase", "shadow", "mean"),
                ("drawphase", "body", "mean"), ("gpu", "timeline", "mean")]
@@ -743,8 +745,8 @@ def telemetry_table(report, keys, title, scale=1.0, unit=""):
 
 
 def markdown(report):
-    lines = ["| scene | size | mode | label | runs (contended) | visible | total mean | p95 | p99 | draw | present | gpu timeline | A/A spread (total mean) | A/A spread (draw mean) |",
-             "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    lines = ["| scene | size | mode | label | runs (contended) | visible | total mean | median | p95 | p99 | draw | present | gpu timeline | A/A spread (total mean) | A/A spread (draw mean) |",
+             "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     fmt = lambda e, k: f"{e[k]['mean']:.3f}" if k in e else "-"
     for row in report:
         for label, e in sorted(row["labels"].items()):
@@ -754,7 +756,7 @@ def markdown(report):
             lines.append(f"| {row['scene']} | {row['size']} | {row.get('frame_mode', 'forced')} | {label} | "
                          f"{e['runs']} ({e.get('contended_runs', 0)}) | "
                          f"{'-' if visible is None else f'{visible:.0f}'} | {fmt(e, 'frame_ms.total.mean')} | "
-                         f"{fmt(e, 'frame_ms.total.p95')} | {fmt(e, 'frame_ms.total.p99')} | "
+                         f"{fmt(e, 'frame_ms.total.p50')} | {fmt(e, 'frame_ms.total.p95')} | {fmt(e, 'frame_ms.total.p99')} | "
                          f"{fmt(e, 'frame_ms.draw.mean')} | {fmt(e, 'frame_ms.present.mean')} | "
                          f"{fmt(e, 'gpu.timeline.mean')} | "
                          f"{'-' if spread is None else f'{spread * 100:.1f}%'} | "
