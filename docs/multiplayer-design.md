@@ -718,7 +718,11 @@ LOCATIONS: BY SLOT), 261 ports retail healtime self-repair, 262 and 263 air
 combat (see below), 264 carries the 2026-10-14 Legion review (Legion only; see
 the replay notes below), 265 the 2026-10-15 retail path-search fidelity fixes
 (all modes), and 266 entity pools sized from retail's maxunits that grow as
-needed (all modes); 0.8.3 ships protocol 266. Game options
+needed (all modes); 0.8.3 ships protocol 266. Protocols 267 to 272 carry the
+Legion 10,000 program (Legion only), 273 shares short mana across construction
+(all modes), 274 lets a lodestone upgrade finish under a short share, 275 adds
+the Absurdly Defensive AI level and 276 voice chat; 0.8.4 ships protocol 276.
+Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
 host sends later option updates. Both clients and the referee apply that choice
@@ -855,6 +859,32 @@ the OrderBegin/OrderMembers/OrderCommit/OrderAbort uplink transaction; Legion
 clients only, so Retail is bit-identical), and protocol 266 recordings no longer
 play. An AI-only game issues no orders, so the `--mpai` hashes above are
 unchanged under 267 (both modes, 60 s and 300 s).
+Protocols 268 to 272 carry stages 4 to 8 of the Legion 10,000 program (budgeted
+navigation scheduling, route queries, hierarchical routes, static changes apart
+from traffic, chokepoints, subgroups and arrivals; see `legion-pathfinding.md`
+and `legion-10000-report.md`). Each changes Legion movement and only Legion, and
+each refuses the previous protocol's recordings; Retail stays bit-identical to
+266. The program's merge left the `--mpai` Legion hashes at 300 s
+`47b705a730bbc22f`, 60 s `f75b2a11410f43b4`, and Retail's as under 266.
+Protocol 273 shares short mana across construction in every mode: production,
+mobile construction and repair each do the player's allocation (the stored mana
+over last tick's demand) of a full tick of work, as retail does, instead of each
+paying in full or doing nothing in unit order. Per-player demand and
+per-producer fractional progress are hashed, and 272 recordings no longer play.
+The `--mpai` Inner Circle seed 1 hashes: Retail 300 s `a3d953803a064191`, 60 s
+`b353410003e98dd5`; Legion 300 s `ce5c4ba7562e53b9`, 60 s `0825aeb9e8139203`.
+Protocol 274 scales a lodestone upgrade's tick of work by that allocation before
+clamping it to what is left, so a short share no longer leaves the upgrade one
+rounding step from done; 273 recordings no longer play, and the `--mpai` hashes
+are unchanged. Protocol 275 adds AI level 5, Absurdly Defensive
+(`SlotInfo.aiLevel`): every peer derives its double income and defensive stance
+from the level, so an older peer would read 5 as Normal and desync; the
+simulation is otherwise unchanged and 274 recordings no longer play. Protocol
+276 adds voice chat (`VoiceListen`, `VoiceUp`, `VoiceDown`; see
+[Voice chat](#voice-chat-protocol-276)), relayed beside the game and never in a
+tick bundle or replay; the simulation is unchanged, but a 275 peer would not
+know the messages, and 275 recordings no longer play. The `--mpai` hashes stand
+as under 273.
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
@@ -910,6 +940,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.8.3 (peers and server) requires protocol 266; 0.8.2 required 257,
-0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
+227. Version 0.8.4 (peers and server) requires protocol 276; 0.8.3 required 266,
+0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

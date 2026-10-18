@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.3** (network protocol **266**, replay format
+This guide covers **TAK Engine 0.8.4** (network protocol **276**, replay format
 **13**). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -1415,9 +1415,9 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.3 uses network protocol **266**. It cannot play with 0.8.2 (protocol
-257) or any earlier version: the server turns away a client whose protocol
-differs from its own, so a server and all of its players must update to 0.8.3
+Version 0.8.4 uses network protocol **276**. It cannot play with 0.8.3 (protocol
+266) or any earlier version: the server turns away a client whose protocol
+differs from its own, so a server and all of its players must update to 0.8.4
 together.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
@@ -1439,7 +1439,8 @@ The [README](../README.md#multiplayer-and-replays) has the details.
 Voice chat lets the people in a multiplayer room or game talk to each other
 while they hold a key. It is **off by default**. It works only in multiplayer:
 single-player and campaign games, replays and the Benchmark have nobody to talk
-to, so they never open the microphone.
+to, so they never send or receive voice (the Voice Chat page can still be
+opened there to test the microphone).
 
 ### Turning it on
 
@@ -1554,12 +1555,13 @@ everyone, as their chat does.
 - **UNAVAILABLE** or **NOT FOUND - USING DEFAULT** beside a device: plug the
   device in, or choose another one.
 - **macOS.** The first time the microphone opens, macOS asks whether *Total
-  Annihilation - Kingdoms* may use it. If you said no, the game records only
+  Annihilation: Kingdoms* may use it. If you said no, the game records only
   silence: allow it under **System Settings → Privacy & Security → Microphone**,
   then restart the game. If you start the bare `takclient` program from
   Terminal instead of the app, macOS asks for Terminal.
 - **Windows.** Under **Settings → Privacy & security → Microphone**, turn on
   **Microphone access** and **Let desktop apps access your microphone**.
+  Sending voice needs Windows 10 version 1703 or later.
 - **Voice cuts out for a while, then comes back.** Your connection or the other
   player's could not carry voice and the game together, so voice was paused to
   keep the game smooth.
@@ -1617,7 +1619,8 @@ ends: a win or a loss, quitting, returning to the menu, a lost connection, the
 computer shutting down, or the game being killed or crashing. It runs to the
 moment you left, including anything played or watched after the result. If the
 game was killed or crashed, the recording is finished the next time TAK Engine
-starts and loses at most about the last second. If the disk fills up or the
+starts and loses at most about the last second (after a power cut, up to about
+the last ten seconds). If the disk fills up or the
 replay folder cannot be written for a while, the game keeps the recording in
 memory and writes it as soon as it can.
 
@@ -1636,8 +1639,8 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.3 plays protocol-266 recordings only, so replays recorded by
-  0.8.2 or earlier need the version that recorded them);
+  recorded it (0.8.4 plays protocol-276 recordings only, so replays recorded by
+  0.8.3 or earlier need the version that recorded them);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -1781,7 +1784,7 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together.** A server only accepts clients of
-the same protocol version (0.8.3 uses protocol 266; 0.8.2 uses 257).
+the same protocol version (0.8.4 uses protocol 276; 0.8.3 uses 266).
 
 ---
 
@@ -1886,7 +1889,7 @@ the system's permission to use the microphone.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.3 uses protocol 266, 0.8.2 uses 257). See
+one that recorded them (0.8.4 uses protocol 276, 0.8.3 uses 266). See
 [Replays](#replays).
 
 ### Where files are kept
@@ -1900,7 +1903,8 @@ Settings, saved replays and downloaded content live in a per-user folder:
 | Linux | `~/.local/share/TAKengine/TAKingdoms/` |
 
 The settings file is `settings.ini`. Replays (`.takrep` files) are saved beside
-it; a game still being recorded is a `.takrep.part` file until it ends. Cartographer keeps its preferences in a sibling `Cartographer` folder.
+it; a game still being recorded is a `.takrep.part` file, with a small
+`.takrep.part.chk` beside it, until it ends. Cartographer keeps its preferences in a sibling `Cartographer` folder.
 
 The game prints diagnostic messages to the terminal it was started from. On
 Linux and macOS, start it from a terminal if you need them for a bug report.

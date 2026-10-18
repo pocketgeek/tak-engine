@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.8.3-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.8.4-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -78,7 +78,7 @@ replays**. Update the server and every player together.
   double income. **Defensive** now keeps building as fast as its income allows,
   with no limit of its own, and its melee troops answer the unit hitting them.
 - **Replays are saved however a game ends**, including a crash, a kill or a
-  power cut, and campaign missions are recorded again.
+  power cut.
 - **Short mana is shared.** When income cannot keep up, every construction
   slows down together, as in the original, instead of the costliest builds
   standing still. A divine lodestone upgrade now finishes in that case too.
@@ -851,7 +851,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.8.3 uses generator v8;
+the same named map when the game starts. Version 0.8.4 uses generator v8;
 older seed recipes are unsupported, while saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -859,7 +859,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.8.3 uses protocol **266** and generator version 8; generated-map recipes from 0.8.0 to 0.8.2 still work.
+Version 0.8.4 uses protocol **276** and generator version 8; generated-map recipes from 0.8.0 to 0.8.3 still work.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -1145,10 +1145,10 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same network protocol and compatible game data** on every participant.
-Version **0.8.3 uses protocol 266**, including authoritative pathfinding
+Version **0.8.4 uses protocol 276**, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
-0.8.2 (protocol 257) and earlier clients cannot join 0.8.3 matches, and
-0.8.3 clients cannot join older servers: update the server and all players together.
+0.8.3 (protocol 266) and earlier clients cannot join 0.8.4 matches, and
+0.8.4 clients cannot join older servers: update the server and all players together.
 Replay format is **13** (checkpoints also carry a position digest, and the header
 records the Map Scenario option), and
 playback requires the current simulation protocol. Older recordings need the engine that recorded them.
@@ -1353,7 +1353,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.8.3 uses protocol **266**; servers and clients must all run 0.8.3 (0.8.2 uses 257).
+Version 0.8.4 uses protocol **276**; servers and clients must all run 0.8.4 (0.8.3 uses 266).
 
 
 ## License

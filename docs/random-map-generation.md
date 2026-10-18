@@ -1,6 +1,6 @@
 # Random map generation
 
-Version 0.8.3 uses generator version 8 and network protocol 266. The map ID carries the
+Version 0.8.4 uses generator version 8 and network protocol 276. The map ID carries the
 seed, optional title and parameters in `~gen1~` followed by hexadecimal bytes;
 the first two payload bytes identify the generator version. Version 8 makes
 the extra-mana control request 0–6 additional spots per player, independently

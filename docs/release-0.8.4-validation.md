@@ -8,7 +8,14 @@
 Protocol **276** (0.8.3: 266), replay format **13**, generator version **8**,
 campaign payload **4**, database schema **9** (the last four unchanged since
 0.8.3).
-<!-- LEAD: re-check kNetVersion right before tagging (it moved during 0.8.0 prep). -->
+<!-- LEAD: re-check kNetVersion right before tagging (it moved during 0.8.0 prep).
+     Version 0.8.4 and protocol 276 are already written in: CMakeLists.txt
+     (project VERSION); README.md (badge, random maps x2, multiplayer, overrides,
+     New in 0.8.4); docs/user-guide.md (intro, Versions, Replays, public server,
+     old replays); docs/public-server.md; docs/random-map-generation.md;
+     docs/multiplayer-design.md (pathfinding protocol summary, 268-276 replay
+     history, the required-protocol line); these notes and the release notes.
+     If kNetVersion moves past 276, update every one of them. -->
 
 PENDING: Tagged `v0.8.4` at `<sha>` and published on `<date>`.
 
@@ -155,8 +162,9 @@ New checks for 0.8.4:
   files.
 - **macOS microphone.** `Info.plist` in both DMG and ZIP apps carries
   `NSMicrophoneUsageDescription`, and `codesign -d --entitlements -` on the
-  app's `takclient` (and the bare `takclient`) shows
-  `com.apple.security.device.audio-input`.
+  game app, its `takclient` and the bare `takclient` shows
+  `com.apple.security.device.audio-input` (the other programs carry no
+  entitlement).
 - As in 0.8.1 to 0.8.3: no packaged Linux `takclient` has a `NEEDED` entry for
   libsecret, GLib, GIO or GObject.
 
@@ -164,7 +172,10 @@ New checks for 0.8.4:
 
 PENDING. Candidates, following [the capture notes](img/README.md):
 
-- `title.jpg` (shows VERSION 0.8.4).
+- `title.jpg` (shows VERSION 0.8.4). With the recapture, update the lines that
+  describe the pictures, left at 0.8.3 until then: README.md's title alt text
+  ("version 0.8.3") and gallery caption ("Captured from the 0.7.25 to 0.8.3
+  builds"), and docs/img/README.md's refresh date and per-image build notes.
 - `diplomacy.jpg`: the diplomacy screen now has **Voice** and **Volume**
   columns. The user guide's caption says the current picture predates them;
   drop that sentence when it is re-rendered.
@@ -185,7 +196,9 @@ PENDING. Draft items:
   version 1703 cannot send voice (no `SIO_TCP_INFO`), by design.
 - The Legion 10,000 program does not meet its own success criterion for
   congested workloads (the report's sections 13 and 14): crowds at corners and
-  narrow passages, the queue for many unrelated destinations, and many-10000 /
-  scatter-10000 over the tick budget in 13% / 2% of ticks.
+  narrow passages, the queue for many unrelated destinations, and three of the
+  ten 10,000-unit rows over the 33.3 ms tick budget: many-10000 / scatter-10000
+  in 13% / 2% of ticks (more bodies now move), and mixed-10000, whose overrun is
+  inherited from its flyers' exploration phase outside Legion.
 - Local visual inspection covers Linux OpenGL only; Windows and macOS packages
   are checked from CI and by signature, notarization and build-id checks.

@@ -74,7 +74,8 @@ violet, on two lines. `TAK_AI_LEVEL=5` selects it in headless runs.
 
 Every peer derives the income multiplier and the defensive stance from the
 level, so a peer that does not know level 5 would clamp it to Normal and desync.
-**Protocol 273**; 272 replays are refused. The sim itself is unchanged; Normal,
+**Protocol 275** (it landed after the shared-mana and lodestone steps, 273 and
+274); 274 replays are refused. The sim itself is unchanged; Normal,
 Easy, Hard and Absurd play exactly as before (identical `aitool` runs on all 15
 map/side cases below).
 

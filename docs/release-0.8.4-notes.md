@@ -63,11 +63,12 @@ See [Voice chat](user-guide.md#voice-chat) in the user guide.
   malformed frame or a client sending server-to-client voice fails that
   connection. See [public server deployment](public-server.md#resource-controls).
 - **macOS** asks for microphone permission the first time the microphone opens
-  (the app carries the microphone usage text and the signed programs the
-  audio-input entitlement, without which a notarized build would record
-  silence). **Windows** needs Windows 10 version 1703 or later to send voice:
-  where the system cannot report how much it still has queued, voice is
-  dropped rather than allowed to delay the game.
+  (the app carries the microphone usage text, and `takclient` and the game app
+  the audio-input entitlement, without which a notarized build would record
+  silence; the other programs are signed without it). **Windows** needs
+  Windows 10 version 1703 or later to send voice: where the system cannot
+  report how much it still has queued, voice is dropped rather than allowed to
+  delay the game.
 
 ## Rendering
 
@@ -137,11 +138,18 @@ Easy, Normal, Hard and Absurd play as before.
   computer losing power all leave a replay, running to the moment the player
   left, including anything watched after the result. A recording a crash or a
   kill left unfinished is completed at the next start, losing at most about the
-  last second. The finished file is format 13, byte for byte as before.
-- **Campaign missions are recorded again.**
+  last second (a power cut, up to about the last ten seconds, the interval at
+  which the recording is forced onto the disk). The finished file is format 13,
+  byte for byte as before; while it is written, a small
+  `<name>.takrep.part.chk` beside it holds the checkpoint hashes.
+- Campaign missions and games watched as a spectator are recorded the same way,
+  as they were in 0.8.3.
 - A failed write (a full disk, an unwritable folder) no longer stops the
   recording: the game keeps it in memory and writes it as soon as it can.
-- `nohup takclient` keeps running when its terminal closes.
+- Closing the terminal a client was started from (SIGHUP) closes the game
+  cleanly, so its replay is finished; `nohup takclient` keeps running instead.
+- **Windows.** The replay picker opens replays in a profile folder whose name
+  has characters outside the system's code page.
 - **Servers.** A `takserver --replaydir` stopped by SIGTERM (`systemctl stop`)
   or Ctrl-C first writes the replays of the games still running, and every
   server replay is written under a temporary name and renamed when complete.
@@ -158,7 +166,7 @@ design is in the [Legion notes](legion-pathfinding.md).
   one explicit order for the whole selection, and the server puts it into a
   single tick. A 10,000-unit click used to take 308 ticks (10.3 s) to arrive and
   became up to 20 groups; on the real client and server path, an 18,000-unit
-  order took 345 ticks and the next order could replace it before it landed.
+  order took 345–512 ticks and the next order could replace it before it landed.
   Now it lands whole in one tick, and in the 10,000-unit single-click test the
   last unit starts moving after 92 ticks instead of 652.
 - **Fair, budgeted navigation work** (268): planning is shared fairly between
@@ -181,9 +189,11 @@ design is in the [Legion notes](legion-pathfinding.md).
 128 of the program's 212 frozen targets are met (99 at the start). Not done:
 very large crowds still jam at static corners, at the mouths of narrow passages
 where two armies meet head on, and in the route queue when many groups head for
-many different places; two of the ten 10,000-unit workloads now run over the
-33 ms tick budget in 2–13% of ticks, because four to eight times as many units
-actually move. See the report's sections 13 and 14.
+many different places. Three of the ten 10,000-unit workloads run over the
+33 ms tick budget: many-10000 and scatter-10000 in 13% and 2% of ticks, because
+four to eight times as many units now actually move, and mixed-10000, whose
+overrun comes from its flyers' exploration phase, outside Legion, and was there
+before. See the report's sections 13 and 14.
 
 ## For contributors
 
