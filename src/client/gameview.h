@@ -705,9 +705,6 @@ public:
     // Render study (workstream M): toggle Texture Filtering Off <-> Units (the palette
     // form follows: indexed for point-sampled units, baked for bilinear ones).
     void renderStudyToggleFilter() { setTextureFilter(textureFilter_ ? 0 : 1); }
-    // Workstream M totals since the session began (study requirement checks).
-    struct PaletteTotals { uint64_t indexedDraws = 0, spans = 0, fallbacks = 0, switches = 0, uploadBytes = 0,
-                                    indexedFrames = 0, bakedFrames = 0; };
     const PaletteTotals& paletteTotals() const { return paletteTotals_; }
     // Render study (workstream L): a camera shake of the given magnitude (shakemagnitude
     // units) and duration, the path a weapon's shake request takes.
@@ -1451,6 +1448,11 @@ private:
         uint32_t sheets=0;              // indexed: sheet ids handed out
     };
     enum class PaletteMode : uint8_t { Unset, Baked, Indexed };
+public:
+    // Workstream M totals since the session began (render-study requirement checks).
+    struct PaletteTotals { uint64_t indexedDraws = 0, spans = 0, fallbacks = 0, switches = 0, uploadBytes = 0,
+                                    indexedFrames = 0, bakedFrames = 0; };
+private:
     std::vector<tak::render::palette::Bank> paletteBanks_;
     std::map<std::string,PaletteTextureSource> paletteTextureSources_;
     std::map<std::string,std::vector<PaletteTextureSheet>> paletteTextureSheets_;
