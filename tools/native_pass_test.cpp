@@ -220,7 +220,9 @@ int runCases(SDL_Window* window, SDL_Renderer* renderer, std::mt19937& rng, int 
                     } else for (size_t c = 0; c < commands.size(); ++c) {
                         const int k = premultipliedOnly ? 2 + commands[c].kind : commands[c].kind;
                         pass.useTexture(names[k], k >= 2);
-                        if (buffer) {
+                        // Buffer cases mix the two sources inside one pass (arena and
+                        // assembled commands): every third command from client memory.
+                        if (buffer && c % 3 != 1) {
                             const GLsizei count = GLsizei(commands[c].v.size());
                             submit.passDrawBuffer(vbo, std::span(&first[c], 1), std::span(&count, 1), commands[c].v.size());
                         } else submit.passDraw(commands[c].v);

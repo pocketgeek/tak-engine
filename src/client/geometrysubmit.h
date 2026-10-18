@@ -173,6 +173,7 @@ public:
         pushAttrib_(GL_CURRENT_BIT);pushClientAttrib_(GL_CLIENT_VERTEX_ARRAY_BIT);
         matrixMode_(GL_MODELVIEW);pushMatrix_();scale_(passScaleX_,passScaleY_,1);
         enable_(GL_VERTEX_ARRAY);enable_(GL_COLOR_ARRAY);enable_(GL_TEXTURE_COORD_ARRAY);
+        passArrays_=kNoArrays;
         inPass_=true;used_=true;
         return true;
     }
@@ -182,19 +183,25 @@ public:
     bool inPass() const { return inPass_; }
     void passDraw(std::span<const SDL_Vertex> vertices) {
         if(!inPass_ || vertices.empty())return;
-        bindBuffer_(GL_ARRAY_BUFFER,0);
+        if(passArrays_!=0)bindBuffer_(GL_ARRAY_BUFFER,0);
         vertex_(2,GL_FLOAT,sizeof(SDL_Vertex),&vertices[0].position);
         color_(4,GL_UNSIGNED_BYTE,sizeof(SDL_Vertex),&vertices[0].color);
         texcoord_(2,GL_FLOAT,sizeof(SDL_Vertex),&vertices[0].tex_coord);
+        passArrays_=0;
         draw_(GL_TRIANGLES,0,GLsizei(vertices.size()));
         render::countNativeDraw(vertices.size(),vertices.size_bytes(),false);
     }
     void passDrawBuffer(GLuint vertexBuffer,std::span<const GLint> firsts,std::span<const GLsizei> counts,size_t vertices) {
         if(!inPass_ || firsts.empty() || firsts.size()!=counts.size())return;
-        bindBuffer_(GL_ARRAY_BUFFER,vertexBuffer);
-        vertex_(2,GL_FLOAT,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,position)));
-        color_(4,GL_UNSIGNED_BYTE,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,color)));
-        texcoord_(2,GL_FLOAT,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,tex_coord)));
+        // Consecutive draws from the same buffer keep its binding and array
+        // pointers (offsets into it): set them only when the source changes.
+        if(passArrays_!=vertexBuffer) {
+            bindBuffer_(GL_ARRAY_BUFFER,vertexBuffer);
+            vertex_(2,GL_FLOAT,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,position)));
+            color_(4,GL_UNSIGNED_BYTE,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,color)));
+            texcoord_(2,GL_FLOAT,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,tex_coord)));
+            passArrays_=vertexBuffer;
+        }
         if(multiDraw_ && firsts.size()>1)multiDraw_(GL_TRIANGLES,firsts.data(),counts.data(),GLsizei(firsts.size()));
         else for(size_t i=0;i<firsts.size();++i)draw_(GL_TRIANGLES,firsts[i],counts[i]);
         render::countNativeDraw(vertices,vertices*sizeof(SDL_Vertex),true);
@@ -221,6 +228,10 @@ public:
 private:
     bool inPass_=false,primed_=false;
     GLint passBuffer_=0,passMode_=0;
+    // Inside a pass: the source the array pointers were last set for (0 = client
+    // memory, set per draw), kNoArrays right after openPass.
+    static constexpr GLuint kNoArrays=~GLuint(0);
+    GLuint passArrays_=kNoArrays;
     float passScaleX_=1,passScaleY_=1;
     bool nativeReady(SDL_Renderer* renderer,SDL_Texture* texture,float& sx,float& sy) {
         SDL_RendererInfo info{};
