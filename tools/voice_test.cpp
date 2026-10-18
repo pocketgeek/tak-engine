@@ -19,10 +19,12 @@
 #include "client/voicejitter.h"
 #include "client/voiceptt.h"
 #include "net/protocol.h"
+#include "util/png.h"
 
 #include <SDL.h>
 
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -358,6 +360,16 @@ static void testPage() {
         OptionsScreen page(ren, s, [&] { ++changes; }, [&] { ++saves; }, hooks, [&] { ++hotkeys; });
         check(page.page() == OptionsPage::Voice && monitorOn == 1, "the page opens and starts the meter");
         page.render(W, H);
+        // TAK_VOICE_SHOT_DIR=<dir>: also write the page as PNGs, to look at.
+        auto shot = [&](const char* name) {
+            const char* dir = std::getenv("TAK_VOICE_SHOT_DIR");
+            if (!dir) return;
+            SDL_SetRenderDrawColor(ren, 40, 60, 40, 255); SDL_RenderClear(ren);
+            page.render(W, H);
+            std::vector<uint8_t> px(size_t(W) * H * 4);
+            if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_RGBA32, px.data(), W * 4) == 0)
+                png::write((fs::path(dir) / name).string(), W, H, px);
+        };
         auto click = [&](const char* label, float frac) {
             const SDL_FRect* r = page.rowRect(label);
             check(r != nullptr, std::string("row ") + label);
@@ -371,6 +383,7 @@ static void testPage() {
             page.render(W, H);
         };
         const char* rows[] = {"MIC DEVICE", "MIC VOLUME", "MIC LEVEL", "OUTPUT DEVICE", "OUTPUT VOLUME", "PUSH TO TALK"};
+        shot("voice-off.png");
         check(page.rowEnabled("VOICE CHAT"), "the switch is live while off");
         for (const char* r : rows) check(!page.rowEnabled(r), std::string(r) + " is greyed while voice chat is off");
         // Greyed rows ignore input.
@@ -390,6 +403,7 @@ static void testPage() {
         check(s.voiceOutputVolume >= 73 && s.voiceOutputVolume <= 77, "OUTPUT VOLUME 0..100");
         click("PUSH TO TALK", 0.98f);
         check(hotkeys == 1, "PUSH TO TALK opens CONTROLS");
+        shot("voice-on.png");
         // VOICE OUTPUT: open the list, pick System Default (index 1), not same as game.
         const SDL_FRect* out = page.rowRect("OUTPUT DEVICE");
         click("OUTPUT DEVICE", 0.9f);
@@ -406,6 +420,24 @@ static void testPage() {
         check(s.masterVol == 256, "the page touches nothing but voice");
     }
     check(monitorOff == 1, "closing the page stops the meter");
+    {   // OPTIONS offers a VOICE CHAT row that hands over to the voice page.
+        OptionsScreen opts(ren, s, [] {}, [] {}, 2);
+        opts.offerVoicePage();
+        opts.render(W, H);
+        const SDL_FRect* r = opts.rowRect("VOICE CHAT");
+        check(r != nullptr && opts.page() == OptionsPage::General, "Options has a VOICE CHAT row");
+        if (r) {
+            // It may sit below the fold of the long page: scroll it to the middle.
+            for (int i = 0; i < 60 && r->y + r->h / 2 > H * 0.6f; ++i) {
+                SDL_Event e{}; e.type = SDL_MOUSEWHEEL; e.wheel.y = -1;
+                opts.input(e, W, H); opts.render(W, H);
+                r = opts.rowRect("VOICE CHAT");
+            }
+            SDL_Event c{}; c.type = SDL_MOUSEBUTTONDOWN; c.button.button = SDL_BUTTON_LEFT;
+            c.button.x = int(r->x + r->w - 20); c.button.y = int(r->y + r->h / 2);
+            check(opts.input(c, W, H) && opts.voiceRequested(), "clicking it leaves Options for the voice page");
+        }
+    }
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
 }

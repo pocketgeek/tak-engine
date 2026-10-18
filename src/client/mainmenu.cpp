@@ -25,6 +25,7 @@
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
 #include "client/settings.h"
+#include "client/voice.h"
 #include "client/dev.h"
 #include "client/appquit.h"
 
@@ -149,7 +150,26 @@ struct MainMenu::Impl {
     // The SETTINGS menu overlay -- the lower-right menu button opens THIS (OPTIONS / CONTROLS)
     // instead of jumping straight into Options, mirroring the in-game Esc GAME MENU.
     bool settingsMenu_ = false;
-    SDL_FRect setBtnRect_[5]{};        // OPTIONS / CONTROLS / BENCHMARK / LOAD REPLAY / STREAMING
+    SDL_FRect setBtnRect_[6]{};        // OPTIONS / CONTROLS / VOICE CHAT / BENCHMARK / LOAD REPLAY / STREAMING
+    VoiceEngine* voice_ = nullptr;     // main()'s voice engine (MainMenu::setVoice)
+
+    // The VOICE CHAT page (SETTINGS > VOICE CHAT, or Options > VOICE CHAT), in options_.
+    void openVoicePage(Settings* settings) {
+        VoicePageHooks hooks;
+        if (VoiceEngine* v = voice_) {
+            hooks.micLevel = [v] { return v->micLevel(); };
+            hooks.micNote = [v] { return VoiceEngine::note(v->micState()); };
+            hooks.outNote = [v] { return VoiceEngine::note(v->outState()); };
+            hooks.monitor = [v](bool on) { v->setMonitoring(on); };
+        }
+        // The engine reads the settings every frame (run()); only SAVE persists.
+        options_ = std::make_unique<OptionsScreen>(ren, *settings, [] {},
+            [settings] { saveSettings(*settings); }, std::move(hooks),
+            [this, settings] {   // PUSH TO TALK -> CONTROLS, over this page
+                hotkeys_ = std::make_unique<HotkeysScreen>(ren, *settings,
+                    [] {}, [settings] { saveSettings(*settings); });
+            });
+    }
     bool benchMenu_ = false;          // benchmark intensity submenu (opened from SETTINGS)
     bool replayMenu_ = false;         // replay picker (opened from SETTINGS)
     int replayScroll_ = 0;            // first listed row
@@ -1039,9 +1059,11 @@ struct MainMenu::Impl {
         SDL_FRect dim{0, 0, float(winW), float(winH)};
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 150);
         SDL_RenderFillRectF(ren, &dim);
-        const int nBtn = 5;
-        const float bw = 320, bh = 54, gap = 16, pad = 34, titlePx = 3.2f;
+        const int nBtn = 6;
+        const float bw = 320, gap = 16, pad = 34, titlePx = 3.2f;
         const float titleH = 7 * titlePx + 22;
+        // Buttons shrink on a short window rather than run off it.
+        const float bh = std::clamp((float(winH) - 2 * pad - titleH - 28 - 24 - (nBtn - 1) * gap) / float(nBtn), 30.0f, 54.0f);
         const float pw = bw + pad * 2;
         const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap + 28;
         const float px0 = (winW - pw) / 2, py0 = (winH - ph) / 2;
@@ -1053,7 +1075,7 @@ struct MainMenu::Impl {
         shadowText("SETTINGS", px0 + (pw - tw("SETTINGS", titlePx)) / 2, py0 + pad, titlePx, {235, 225, 180, 255});
         int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
         { float lx, ly; SDL_RenderWindowToLogical(ren, mx, my, &lx, &ly); mx = int(lx); my = int(ly); }
-        const char* labels[nBtn] = {"OPTIONS", "CONTROLS", "BENCHMARK", "LOAD REPLAY", "YOUTUBE STREAMING"};
+        const char* labels[nBtn] = {"OPTIONS", "CONTROLS", "VOICE CHAT", "BENCHMARK", "LOAD REPLAY", "YOUTUBE STREAMING"};
         float by = py0 + pad + titleH;
         for (int i = 0; i < nBtn; ++i) {
             SDL_FRect r{px0 + pad, by, bw, bh};
@@ -1235,6 +1257,7 @@ MainMenu::~MainMenu() { delete d_; }
 
 void MainMenu::setFailure(const SessionFailure& failure) { d_->pendingFailure = failure; }
 void MainMenu::setDataFolder(DataFolderRow row) { d_->dataFolder_ = std::move(row); }
+void MainMenu::setVoice(VoiceEngine* voice) { d_->voice_ = voice; }
 
 MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverOut,
                                MenuMusic* music, Settings* settings, Streaming* streaming) {
@@ -1480,8 +1503,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             if (d_->options_) {   // Options overlay is up: route everything to it
                 if (d_->options_->input(e, w, h)) {   // BACK / Esc (SAVE is explicit), or RESTART NOW
                     const bool restart = d_->options_->restartRequested();
+                    const bool voice = d_->options_->voiceRequested();
                     d_->options_.reset();
                     if (restart) return Choice::Restart;
+                    if (voice && settings) d_->openVoicePage(settings);   // Options > VOICE CHAT
                 }
                 continue;
             }
@@ -1524,7 +1549,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                             [settings] { saveSettings(*settings); }, 0, [] {},
                             [music] { if (music) music->reopen(); },   // live output-device switch
                             d_->dataFolder_);
-                    } else if (hit(d_->setBtnRect_[4]) && streaming) {
+                        d_->options_->offerVoicePage();
+                    } else if (hit(d_->setBtnRect_[2])) {   // VOICE CHAT -> its own page of Options
+                        d_->settingsMenu_ = false;
+                        d_->openVoicePage(settings);
+                    } else if (hit(d_->setBtnRect_[5]) && streaming) {
                         d_->settingsMenu_ = false;
                         SDL_Event event{};event.type=SDL_USEREVENT;event.user.code=kStreamingEvent;
                         streaming->input(event,w,h);
@@ -1532,11 +1561,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         d_->settingsMenu_ = false;
                         d_->hotkeys_ = std::make_unique<HotkeysScreen>(ren, *settings,
                             [] {}, [settings] { saveSettings(*settings); });
-                    } else if (hit(d_->setBtnRect_[3])) {   // LOAD REPLAY -> the picker
+                    } else if (hit(d_->setBtnRect_[4])) {   // LOAD REPLAY -> the picker
                         d_->settingsMenu_ = false;
                         d_->scanReplays();                 // rescan on every open
                         d_->replayMenu_ = true;
-                    } else if (hit(d_->setBtnRect_[2])) {   // BENCHMARK -> intensity submenu
+                    } else if (hit(d_->setBtnRect_[3])) {   // BENCHMARK -> intensity submenu
                         d_->settingsMenu_ = false;
                         d_->benchMenu_ = true;
                     }
@@ -1653,6 +1682,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         prev = now;
         for (auto& dr : d_->doors) d_->updateDoor(dr, dt);
         if (music) music->poll();
+        // Voice chat: never in a room here, but the VOICE CHAT screen meters the mic.
+        if (d_->voice_ && settings) {
+            d_->voice_->configure(*settings, currentAudioDevice());
+            d_->voice_->update(false, false, {});
+        }
         d_->render(w, h);
         // Capture only the title artwork: account entry and other private
         // overlays are drawn afterward and never enter the broadcast.

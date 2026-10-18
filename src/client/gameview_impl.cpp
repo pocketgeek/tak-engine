@@ -251,6 +251,7 @@
                 replayMode_ ? "Change it from Options on the main menu, not while watching a replay."
                 : inLobbyPhase() ? "Change it from Options on the main menu, not in a lobby."
                                  : "Change it from Options on the main menu, not during a game.", {}});
+        options_->offerVoicePage();
     }
 
     void GameView::writeResume(uint32_t gid, uint64_t tok) const {
@@ -3269,6 +3270,7 @@
         // Everything below is a REBINDABLE action: resolve the pressed chord to an
         // Act via the user's hotkey config (src/client/hotkeys) and dispatch.
         switch (hotkeys_.match(int32_t(key), mod)) {
+            case tak::Act::PushToTalk: return true;   // held for voice chat (voiceKey), no action here
             case tak::Act::GiveUnits:
                 if (!spectating_ && !replayMode_ && missionStem_.empty()) {
                     giveUnitsMenu_ = true;

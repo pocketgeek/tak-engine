@@ -2415,8 +2415,8 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         if (!resultParticipants_ || (*resultParticipants_ & (1u<<p))) players.push_back(p);
     const auto eligible=eligibleGiftRecipients();
     const auto manaMask=requestedManaSharing_.value_or(framePlayer(localPlayer_).manaShareMask);
-    const float scale=std::min({1.0f,float(winW)/820.0f,float(winH)/550.0f});
-    const float width=780*scale,rowH=38*scale;
+    const float scale=std::min({1.0f,float(winW)/900.0f,float(winH)/550.0f});
+    const float width=860*scale,rowH=38*scale;
     const float height=(172+44*players.size())*scale;
     const float x=(winW-width)/2,y=(winH-height)/2;
     SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_BLEND);
@@ -2429,6 +2429,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
     blockText("PLAYER",x+24*scale,y+66*scale,1.6f*scale,{190,190,200,255});
     blockText("SHARE MANA",x+252*scale,y+66*scale,1.6f*scale,{190,190,200,255});
     blockText("CHAT",x+394*scale,y+66*scale,1.6f*scale,{190,190,200,255});
+    blockText("VOICE",x+456*scale,y+66*scale,1.6f*scale,{190,190,200,255});
     auto button=[&](const std::string& label,SDL_FRect r,int p,DiplomacyAction action,bool enabled) {
         const bool hover=enabled && mouseX_>=r.x && mouseX_<r.x+r.w && mouseY_>=r.y && mouseY_<r.y+r.h;
         SDL_SetRenderDrawColor(ren_,enabled?(hover?90:60):37,enabled?(hover?110:66):39,enabled?(hover?150:86):46,255);
@@ -2461,7 +2462,10 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         const bool sharing=ally && !framePlayer(p).defeated && !framePlayer(localPlayer_).defeated;
         if(ally)checkbox(294,by,p,DiplomacyAction::Mana,manaMask & (1u<<p),sharing);
         checkbox(402,by,p,DiplomacyAction::Chat,chatRecipients_ & (1u<<p),true);
-        if(ally)button("GIVE SELECTED UNITS",{x+478*scale,by,278*scale,rowH},p,DiplomacyAction::Give,eligible[size_t(p)]);
+        // VOICE: chat's column again, for voice chat. Your own voice never comes back to
+        // you, so your own box is shown as it stands but cannot be changed.
+        checkbox(468,by,p,DiplomacyAction::Voice,voiceRecipients_ & (1u<<p),p!=localPlayer_);
+        if(ally)button("GIVE SELECTED UNITS",{x+558*scale,by,278*scale,rowH},p,DiplomacyAction::Give,eligible[size_t(p)]);
         by+=44*scale;
     }
     button("CLOSE",{x+width-164*scale,y+height-56*scale,140*scale,rowH},-1,DiplomacyAction::Close,true);

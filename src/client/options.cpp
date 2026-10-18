@@ -210,7 +210,7 @@ void OptionsScreen::buildVoice() {
         const KeyChord c = effectiveChord(s_.hotkeys, Act::PushToTalk);
         std::string t = chordName(c);
         for (char& ch : t) ch = char(std::toupper(static_cast<unsigned char>(ch)));
-        return t + " >";
+        return t;
     };
     ctls_.back().help = [] {
         return std::vector<std::string>{
@@ -303,6 +303,7 @@ void OptionsScreen::buildVoice() {
 
 void OptionsScreen::build(int channels) {
     ctls_.clear();   // rebuildable: a live device switch re-runs this with a new channel count
+    channels_ = channels;
     if (page_ == OptionsPage::Voice) { buildVoice(); return; }
     std::fprintf(stderr, "Options: %d speaker sliders\n", channels);
     auto section = [&](const char* label) { ctls_.push_back({Control::Section, label, 0, 0, {}, {}, {}, {}, {}}); };
@@ -379,6 +380,11 @@ void OptionsScreen::build(int channels) {
         std::string label = std::string("SPEAKER ") + role(channels, i);
         slider(label.c_str(), 0, 1, [this, i] { return s_.chanGain[i]; },
                [this, i](float v) { s_.chanGain[i] = v; }, [](float v) { return pctOf(v, 1); });
+    }
+    // Voice chat keeps its own page and settings; this row is the way there.
+    if (showVoice_) {
+        ctls_.push_back({Control::Button, "VOICE CHAT", 0, 0, {}, {}, {}, [this] { voiceRequested_ = true; }, {}});
+        ctls_.back().note = [this] { return std::string(s_.voiceEnabled ? "ON - OPEN" : "OFF - OPEN"); };
     }
 
     // DISPLAY: the window / output device itself.
@@ -767,7 +773,10 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
                 c.set(c.get() > 0.5f ? 0.0f : 1.0f); dirty_ = true; if (onChange_) onChange_(); return false;
             }
             if (c.kind == Control::Slider) { drag_ = int(i); commit(c, mx); return false; }
-            if (c.kind == Control::Button) { if (c.action) c.action(); return false; }
+            if (c.kind == Control::Button) {
+                if (c.action) c.action();
+                return voiceRequested_;   // VOICE CHAT: leave, so the host opens that page
+            }
             if (c.kind == Control::Folder) { clickFolder(); return false; }
             if (c.kind == Control::Dropdown) { refreshDevices(); openDrop_ = int(i); dropScroll_ = 0; return false; }   // fresh A-Z list
         }

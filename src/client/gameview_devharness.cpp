@@ -673,7 +673,19 @@
             for(int p:{0,1,2,7})check(has(DiplomacyAction::Chat,p),"all participants need chat controls");
             check(!has(DiplomacyAction::Chat,3),"empty slots must not appear as players");
             check(chatRecipients_==0xff && framePlayer(0).manaShareMask==0xff,"default sharing/chat preferences");
+            // VOICE: chat's column again, same defaults (everyone) and the same players; your
+            // own box is shown but inert (your voice never comes back to you).
+            check(voiceRecipients_==chatRecipients_ && voiceRecipients_==0xff,"voice defaults equal chat's");
+            for(int p:{1,2,7})check(has(DiplomacyAction::Voice,p),"every other participant needs a voice control");
+            check(!has(DiplomacyAction::Voice,0) && !has(DiplomacyAction::Voice,3),"no voice control for yourself or an empty slot");
             click(DiplomacyAction::Chat,2);check(!(chatRecipients_ & 4),"chat checkbox updates recipients");
+            check(voiceRecipients_==0xff,"the chat column leaves voice alone");
+            click(DiplomacyAction::Voice,2);check(!(voiceRecipients_ & 4) && (voiceRecipients_ & 2),"voice checkbox updates its recipients");
+            click(DiplomacyAction::Voice,2);check(voiceRecipients_==0xff,"and back");
+            // Push to talk never fires while a text field has focus.
+            check(!textEntryActive(),"no text field focused");
+            chatTyping_=true;check(textEntryActive(),"the chat composer counts as typing");chatTyping_=false;
+            SDL_StartTextInput();check(textEntryActive(),"any focused text field counts as typing");SDL_StopTextInput();
             click(DiplomacyAction::Mana,1);check(!(world_.player(0).manaShareMask & 2),"mana checkbox issues command");
             selection_={monarch};drawGiveUnitsMenu(1000,700);
             check(!has(DiplomacyAction::Give,1),"ineligible monarch must disable gifts");
@@ -684,7 +696,7 @@
             check(selection_==std::vector<int>{monarch} && world_.unit(soldier)->player==1 && world_.unit(soldier)->squad==0,"gift filters selection and removes old control group");
             input(key,1000,700);check(!giveUnitsMenu_,"D closes diplomacy");
             input(key,1000,700);drawGiveUnitsMenu(1000,700);
-            std::fprintf(stderr,"PASS: diplomacy hotkey, roster, defaults, checkboxes, eligibility, gift and selection cleanup\n");
+            std::fprintf(stderr,"PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column, eligibility, gift and selection cleanup\n");
             return;
         }
         if (tak::devFlag("TAK_CURSOR_TEST")) {

@@ -152,7 +152,7 @@
             missionSoundQueue_.clear();
             unitSoundQueue_.clear();
         }
-        chatRecipients_=0xff;requestedManaSharing_.reset();
+        chatRecipients_=0xff;voiceRecipients_=0xff;requestedManaSharing_.reset();
         giveUnitsMenu_=false;giveUnitsHots_.clear();
         resultParticipants_.reset();
         if (room.mission.empty()) {

@@ -50,6 +50,9 @@
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) stopBenchmark();
             return;
         }
+        // Push to talk, ahead of the lobby and every overlay but CONTROLS (which may be
+        // capturing that very key): talking is allowed with a menu open, typing is not.
+        if (voiceKey(e)) return;
         if (inLobbyPhase()) {
             if (!missionStem_.empty()) {
                 // Hidden lobby controls must not react behind the loading plate.
@@ -79,7 +82,11 @@
             // below): the custom cursor renders from mouseX_/mouseY_, so swallowing
             // motion events here froze it for as long as Options was open.
             if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
-            if (options_->input(e, winW, winH)) options_.reset();   // BACK / Esc (SAVE is explicit)
+            if (options_->input(e, winW, winH)) {   // BACK / Esc (SAVE is explicit)
+                const bool voice = options_->voiceRequested();
+                options_.reset();
+                if (voice) openVoiceOptions();   // Options > VOICE CHAT
+            }
             return;
         }
         // In-game exit menu (opened with Esc). While it's up, all game input is
@@ -110,6 +117,7 @@
                     switch (hot.action) {
                         case DiplomacyAction::Give: giveSelectedUnits(hot.player); break;
                         case DiplomacyAction::Chat: chatRecipients_ ^= uint8_t(1u<<hot.player); break;
+                        case DiplomacyAction::Voice: voiceRecipients_ ^= uint8_t(1u<<hot.player); break;
                         case DiplomacyAction::Mana: {
                             uint8_t mask=requestedManaSharing_.value_or(framePlayer(localPlayer_).manaShareMask);
                             mask ^= uint8_t(1u<<hot.player);

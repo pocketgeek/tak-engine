@@ -1174,14 +1174,14 @@ if(TAK_TEST_DATA)
             --shot "${CMAKE_CURRENT_BINARY_DIR}/diplomacy-test.png")
         set_tests_properties(diplomacy_ui PROPERTIES
             ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_DIPLOMACY_TEST=1"
-            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults"
+            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column"
             TIMEOUT 60)
         add_test(NAME retirement_ui COMMAND takclient game "Ulasem Arena"
             --data "${TAK_TEST_DATA}" --testbuild --time 0
             --shot "${CMAKE_CURRENT_BINARY_DIR}/retirement-ui.png")
         set_tests_properties(retirement_ui PROPERTIES
             ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_DIPLOMACY_TEST=1;TAK_RETIREMENT_TEST=1"
-            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults"
+            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column"
             TIMEOUT 60)
         add_test(NAME script_transient COMMAND takclient game "ulasem arena"
             --data "${TAK_TEST_DATA}" --firetest --nofog --time 0.1
@@ -1451,7 +1451,7 @@ set_tests_properties(credstore PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/font.cpp src/client/distantmodels.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/client/streaming.cpp)
+    add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/font.cpp src/client/distantmodels.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/client/streaming.cpp)
     # Local dev/test harness (standalone scenario/demo/FFA setup, --testbuild/--firetest...):
     # debug builds only. The file is also wrapped in #ifndef NDEBUG, as are its callers, so
     # this just skips an empty TU when the config's flags define NDEBUG.

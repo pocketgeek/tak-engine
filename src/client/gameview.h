@@ -77,6 +77,8 @@
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
+#include "client/voice.h"
+#include "client/voiceptt.h"
 #include "client/settings.h"
 #include "client/artscale.h"
 #include "client/dev.h"
@@ -232,6 +234,13 @@ public:
     void openOptions();
     // Open the hotkey-config overlay (from the Options screen's CONTROLS button).
     void openHotkeys();
+    // Voice chat (client/voice.h): main()'s engine, or null (headless, benchmark, no
+    // voice). pumpVoice() runs once per frame: it applies the settings, relays frames
+    // between the engine and the server, and keeps push to talk honest.
+    void setVoice(tak::VoiceEngine* v) { voice_ = v; }
+    void pumpVoice();
+    // The VOICE CHAT screen, in the same overlay as Options (Esc menu > VOICE CHAT).
+    void openVoiceOptions();
     // Persist / read the resume ticket (gameId + rotating token) so a killed
     // client can rejoin its held slot on restart.
     void writeResume(uint32_t gid, uint64_t tok) const;
@@ -1475,10 +1484,24 @@ private:
     // the sim in lockstep at a fixed step, so scaling one peer's dt would desync.
     float speedMult() const;
     bool giveUnitsMenu_ = false;
-    enum class DiplomacyAction { Give, Mana, Chat, Close };
+    enum class DiplomacyAction { Give, Mana, Chat, Voice, Close };
     struct DiplomacyHot { SDL_FRect rect; int player; DiplomacyAction action; };
     std::vector<DiplomacyHot> giveUnitsHots_;
     uint8_t chatRecipients_ = 0xff;
+    // Who hears this player's voice: the diplomacy VOICE column, with chat's defaults and
+    // rules (everyone; reset each game; sent with every frame, enforced by the server).
+    uint8_t voiceRecipients_ = 0xff;
+    tak::VoiceEngine* voice_ = nullptr;
+    tak::voice::PushToTalk ptt_;
+    // A room that carries voice: connected and in a room or game, never a replay or a
+    // benchmark run (which never open the microphone).
+    bool voiceRoomActive() const;
+    // A text field has keyboard focus (chat composer, lobby fields, Options' name, the
+    // streaming key...): push to talk is off, and a held key is released.
+    bool textEntryActive() const;
+    // Push to talk for one key event; true when it consumed the event.
+    bool voiceKey(const SDL_Event& e);
+    void drawVoiceIndicator(int winW, int winH);
     std::optional<uint8_t> requestedManaSharing_;
     std::array<bool,8> eligibleGiftRecipients();
     std::array<bool,8> giftEligibleLast_{};   // its answer when the worker held the world

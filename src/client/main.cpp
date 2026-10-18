@@ -62,6 +62,7 @@
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
+#include "client/voice.h"
 #include "client/datafolder.h"
 #include "util/relaunch.h"
 #include "util/prefpath.h"
@@ -686,6 +687,11 @@ int main(int argc, char** argv) {
     }
     if (win && settings.fullscreen)
         SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    // SDL starts text input with the video subsystem. Every text field here starts it
+    // when it takes focus and stops it when it lets go, so stop it now: then "is a text
+    // field focused?" is SDL_IsTextInputActive(), which push to talk relies on (Space
+    // typed into a field is text, never voice).
+    SDL_StopTextInput();
     Uint32 renFlags = SDL_RENDERER_SOFTWARE;
     if (shot.empty()) renFlags = noVsync ? SDL_RENDERER_ACCELERATED
                                          : SDL_RENDERER_PRESENTVSYNC;
@@ -827,6 +833,11 @@ int main(int argc, char** argv) {
     if (fromMenu && shot.empty()) tak::MainMenu::playIntro(ren, dataRoot);
     auto streamingOwner = std::make_unique<tak::Streaming>(ren, &settings, [&settings] { tak::saveSettings(settings); });
     auto& streaming = *streamingOwner;
+    // Voice chat (client/voice.h). Only for a real interactive window: the headless
+    // harnesses and screenshot runs never construct it, so they never open a device.
+    // Built for every interactive launch, it still opens nothing while voice chat is off.
+    std::unique_ptr<tak::VoiceEngine> voiceOwner;
+    if (mpHeadless == 0 && shot.empty() && applyRenderer) voiceOwner = std::make_unique<tak::VoiceEngine>();
     menuMusic.setAudioTap(&streaming.stream(),
         [](void* context, const int16_t* pcm, int frames, int channels) {
             static_cast<tak::video::Stream*>(context)->audio(pcm,frames,channels);
@@ -904,6 +915,7 @@ int main(int argc, char** argv) {
 #endif
                 menu.setDataFolder(std::move(row));
             }
+            menu.setVoice(voiceOwner.get());
             choice = menu.run(shot, &menuServer, &menuMusic, &settings, &streaming);
             tak::renderdriver::active().noticeShown = true;   // the menu showed it (if any)
             if (choice == tak::MainMenu::Choice::Campaign) {
@@ -1234,6 +1246,7 @@ int main(int argc, char** argv) {
 #endif
             gameView->applySettings(settings);   // audio / camera / UI-scale prefs
             gameView->setSettings(&settings);     // in-game Options edits + persists these
+            gameView->setVoice(voiceOwner.get()); // voice chat in multiplayer rooms (none for replays/benchmarks)
             if (std::string n = tak::renderdriver::pendingNotice(); !n.empty()) {
                 gameView->showNotice(n, 10);   // launched straight into a game: say it here
                 tak::renderdriver::active().noticeShown = true;
@@ -1757,6 +1770,7 @@ int main(int argc, char** argv) {
 #ifndef NDEBUG
             if(studyQuery)studyBeginQuery(0x88bf,studyQuery); // GL_TIME_ELAPSED
 #endif
+            gameView->pumpVoice();   // voice chat: frames in and out, push-to-talk upkeep
             gameView->draw(w, h);
 #ifndef NDEBUG
             if(studyQuery) {
@@ -2302,6 +2316,7 @@ int main(int argc, char** argv) {
     menuMusic.stop();
     menuMusic.setAudioTap(nullptr,nullptr);
     streamingOwner.reset();
+    voiceOwner.reset();   // closes the voice devices before SDL goes
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
