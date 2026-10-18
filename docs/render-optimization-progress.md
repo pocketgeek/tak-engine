@@ -262,31 +262,51 @@ replays must not move; nothing in this program may feed the simulation.
 - **Workstream M (indexed structure palette) is implemented and verified**
   (commits `b3cafd0d` layout + indexed form + GL program + native pass +
   `palette_sheets` / `palette_indexed` tests, `5e3f1bfa` GameView integration
-  (shared banks, one form at a time, native body spans, special units and
-  distant bakes through `drawModelRun`, telemetry, debug knobs) +
-  `render_palette_indexed` ctest, `cf7eebd3` `structures` scene, `92d54e0d` +
-  `789126df` release-build fix, `3c9becf7` ctest cost, `ab9def88` special
-  units' runs in one pass, then the docs commit). The sheet layout is held
-  baked (pre-M pages, every renderer, bilinear units, any failure) or indexed
-  (SDL `opengl`): full roster 144 → 4.8 MiB GPU, uploads 130.8 → 3.4 MiB,
-  sources 39.4 → 6.6 MiB CPU; peak RSS −45…−195 MiB. Captures identical to
-  L4 except samples outside the polygon's own sheet (7 px/frame in
-  `structures` 1280×960, 30 at 7680×2160, 1 px in one pan-distant 7680×2160
-  frame; every one matched by a `TAK_PALETTE_MARK_EDGES` pixel) -- **needs
-  the lead's ruling** like F's edge pixels (revert = never choose indexed in
-  `updatePaletteMode`). Timing (Experiment 15): stationary-mixed 7680×2160
-  draw −20 % (significant; from the native spans), structures 1280×960 −5.6 %
-  (significant), others within noise; recorded cost: effects 7680×2160
-  `t_body_submit` +0.08 ms (+11 %, significant) with draw/total within noise.
-  Tests: `palette_sheets`, `palette_indexed` (GL + software),
-  `geometrysubmit` (both), `render_palette_indexed` (software ctest; GL by
-  hand), `ctest -L quick` 392/392 at `ab9def88`. Release builds without the M
-  debug strings. `--mpai` not run (presentation only; world hashes identical
-  in every run). Baseline for later comparisons:
-  `~/tak-tmp/render-opt/takclient-M4-candidate` (code of `ab9def88`).
-  Not validated: non-GL backends take the baked form (pre-M output, captures
+  (shared banks, one form at a time, native body spans, telemetry, debug
+  knobs) + `render_palette_indexed` ctest, `cf7eebd3` `structures` scene,
+  `92d54e0d` + `789126df` release-build fix, `3c9becf7` ctest cost,
+  `ab9def88` special units' runs in one pass, `49fc8541` docs; verifier
+  fixes `502e45d1` + `fc13a7fb`, then the 15b docs commit). The verifier
+  rejected `49fc8541` for:
+  - a **release-only defect**: the distant-image run drawer was installed
+    in a debug-only block, so release bakes drew indexed runs grey. Now it
+    is installed in `updatePaletteMode()` in every build (confirmed in the
+    release disassembly), and `TAK_REQUIRE_PALETTE=bakes` is the GL check;
+  - a wrong coverage claim (pan-distant bakes no indexed run; structures at
+    zoom 0.4 does);
+  - a stale limitation;
+  - `TAK_BODY_SDL_SUBMIT` still drawing natively (it now selects baked);
+  - the out-of-sheet pixel class awaiting a ruling. That class is
+    **eliminated**: owner texels let the shader decode a neighbouring
+    sheet's texel exactly like the baked page.
+
+  The sheet layout is held baked (pre-M pages, every renderer, bilinear
+  units, any failure) or indexed (SDL `opengl`): full roster 144 → 9.26 MiB
+  GPU, uploads 130.8 → 6.7 MiB, sources 39.4 → 6.6 MiB CPU. Captures are
+  pixel-identical to L4 in structures (also at zoom 0.4, with indexed runs in
+  distant bakes), stationary-mixed, pan-distant and effects at 1280×960 and
+  7680×2160 (Experiment 15b).
+
+  Timing (Experiment 15, vs L4): stationary-mixed 7680×2160 draw −20 %
+  (significant; from the native spans), structures 1280×960 −5.6 %
+  (significant), others within noise. Recorded cost: effects 7680×2160
+  `t_body_submit` +0.08 ms (+11 %, significant), with draw and total within
+  noise. M5's owner path vs M4: no material change in structures or
+  stationary-mixed at either size (15b).
+
+  Tests: `palette_sheets`, `palette_indexed` (GL + software), `geometrysubmit`
+  (both), `render_palette_indexed` (software ctest; GL by hand, incl. the
+  zoom-0.4 `bakes` study), `distant_models`, `ctest -L quick` 392/392 at
+  `fc13a7fb`. The Release build has none of the M debug strings. `--mpai`
+  not run (presentation only; world hashes identical in every run).
+
+  Baseline for later comparisons: `~/tak-tmp/render-opt/takclient-M5-candidate`
+  (code of `fc13a7fb`).
+
+  Not validated: non-GL backends take the baked form (pre-M output; captures
   identical with `TAK_PALETTE_BAKED`); Windows/macOS not run; GL on Mesa not
-  run.
+  run; the no-owner case assumes never-written baked page memory reads zero
+  (true on NVIDIA).
 - Workstream N: not started.
 - **Next concrete step:** workstream N (native pass submission). M left a
   working, scoped native pass (`GeometrySubmit::beginPass/passDraw/
@@ -296,9 +316,9 @@ replays must not move; nothing in this program may feed the simulation.
   of body commands (removing the per-command priming of ≥512-vertex
   commands, the source of M's stationary-mixed 7680×2160 gain) and decide
   whether features (sprite copies) can join; that would also remove M's
-  effects 7680×2160 span cost. M follow-ups (not required for N): the lead's
-  ruling on the out-of-sheet pixels; distant-image bakes still prime per
-  indexed run; indexed bilinear stays experimental.
+  effects 7680×2160 span cost. M follow-ups (not required for N):
+  distant-image bakes still prime per indexed run; indexed bilinear stays
+  experimental.
 - (Superseded, kept for the record) Former next step, workstream M (indexed palette path): inspect
   `preparePaletteTexture` / `paletteTextureSources_` / `paletteTextureSheets_`
   and the shade tables; a capability-gated indexed-texture path with the baked
@@ -405,7 +425,7 @@ evidence; nothing below is already fully satisfied.
 | J | CPU cache budgets | **verified** | Workstream J (`dac6e399` pinned section handles + consumer audit, `469f743a` section budget, `8cb58b59` mip budget + idle trim, `2cb7cdf5` retained-buffer and worker-scratch trims + CPU accounting, `3dc315c4` working-set rule, a measured fix of pure LRU). **Lifetimes first:** `Compositor::sectionImage` returned a reference valid until `clear()`; it now returns a `SectionRef` (shared, immutable) that pins the image. Every consumer was audited and converted before eviction was enabled: the chunk worker pins per job, MapView per upload, renderBlock (minimap crunch, Cartographer) per copy, validators/tools transiently. The decode runs outside the cache lock with in-flight dedup. **Sections:** 128/112 MiB budget over unpinned sections cold for 10 s; LRU; prefetch only into free budget; the render thread never decodes in play; `trim()` per job and per frame. 97.7% of the 1371 shipped maps stay under budget (median 21 MiB, Ulasem 64, max 402) and behave as before. **Mips:** worker-owned LRU, 64/56 MiB, idle trim after 30 s + 120 frames posted by the render thread and done by the worker. **Buffers:** `TrimTracker` (two half-window buckets, 5 s and 120 frames; capacity > 2× window peak, floor 64 KiB; to peak + 1/16; regrowth backoff up to 8×; never per frame) over the body buffer, frame lists, shadow scratch and F's cell stamps, model scratch, and the per-participant worker scratch (`ThreadPool::participant`; trimmed by the render thread between passes). **Accounting:** used/retained/pinned/evictable/peak per component and totals (`cpu_cache_*`), eviction/redecode/regeneration/trim counts; GPU and RSS separate, exclusions listed. Tests: `terrain_compositor` (ASan/UBSan, TSan; mutations fail it), `terrain_cache` (budgeted = unbounded texel for texel), `cpu_budget`, `work_schedule` (participants; TSan), `render_cpu_budget`. Measured (Experiment 12): no material frame-time change in any timed scene; battle-sparse releases 19 MiB 300 frames after the view empties (the trim frame is not measurably slower); total10k-visible releases 81 MiB of first-frame capacity at frame 450 at 1280×960 (no regrowth); bigmap-zoom ends at 146 vs 259 MiB retained CPU (37 redecodes at 1280×960), the peak unchanged; captures identical except terrain-chunk readiness races right after camera changes, which A/A and B/B pairs reproduce in both builds (Experiment 12). |
 | K | Camera-prioritized terrain | **verified** | Workstream K (`4c7a018d` harness: sweep / zoom-oscillation / jump-list camera paths, `terrain-sweep` / `terrain-zoom-osc` / `terrain-jumps` scenes, readiness gauges, `TAK_TERRAIN_SETTLE`; `01cd7a01` policy `client/terrainwork.h` + `terrain_work` test; `85bbb1eb` TerrainChunks integration + calm gate + `terrain_schedule` test; `61be4a96` sections join the frame budget; `5eebec8b` settle harness; `b98183b1` no per-frame passes when nothing is missing, a measured fix; verifier fixes `918300a4` gate scope + `readyHeld_` under the lock + holes-first test, `b96fe8fb` storms gated at every level, `6cf541b0` storms last 1 s). Before: FIFO queue of ≤64 visible-cell jobs, no cancellation outside clear/invalidate, completed off-view results dropped at upload, separate caps (8 MiB chunks, 32 sections), plain LRU. Now: the worker takes the most urgent queued job (holes > upgrades over a stand-in > kept work; centre first); pending work is re-ranked every frame and obsolete jobs cancelled (outside a 2-cell keep band, or a level the zoom left past a 1 s / 30-frame grace) — cooperative for running jobs, lifetime-safe through J's pins; a full queue gives kept slots to visible work; stand-ins of visible cells are evicted last; off-view results only use free or cold room; one per-frame upload budget for chunk images and fallback sections (holes first, 32 MiB / 6 ms est. urgent, 2 ms est. for the rest, measured CPU submission cost, no GPU sync, first upload always proceeds, finishChunks unlimited); a calm gate queues no new work during fast motion at level 0 (the fallback draws those cells texel-identically; uploading a unique 4 MiB chunk per passing cell cost more — K3a, rejected) or during jump storms at any level (until 1 s without a jump); not for motion from level 1, where chunks are small and the fallback dear (gating there made zoomed-out fast pans 1.4×/3.2× slower — K5 scope, rejected by the verifier, Experiment 13c); leading-edge prefetch implemented but opt-in (GPU +56–80 MiB in pans, no gain). Tests: `terrain_work` (816 checks, nine + four mutations), `terrain_schedule` (scenarios 1–9; nine in-game mutations incl. gate scope and holes-first ordering), `terrain_cache`, TSan on the integration (scenarios 1–7). Settled captures identical in all comparable frames; normal captures differ only by terrain readiness (Experiment 13). Measured (Experiment 13, 13c): no material frame-time change in any of 9 scenes × 2 sizes nor in terrain-sweep at zoom 0.3/0.5/0.75/1.0; terrain-jumps 7680×2160 total −28% / −49% / −4.9% (zoom 0.4 / 0.3 / 0.75, material); wasted worker compose −80% to −100% in the terrain scenes, −83% bigmap-zoom 7680×2160; terrain-zoom-osc 7680×2160 hole frames 93% → 37%, `t_terrain` −28% (p99 −68%), total p99 −10%; constrained `t_terrain` −10/−12% (material). Costs (recorded, not hidden): terrain-jumps 1280×960 draw +25% / +40% / +10% (+0.02–0.11 ms, total within noise: K0 caches all five revisited views there); terrain-zoom-osc 7680×2160 total p95 +4.7% (Exp. 13) / +31.8% material in the quieter 13b session — K uploads ~1 chunk per frame where the stale FIFO dropped them; still views +6 µs `t_terrain` at 7680×2160 (material for the phase, frame time unchanged); under the debug 128 MiB cap stand-in retention leaves the shadow atlas without its page in 28 more of 600 frames (existing fallback). Calm-gate-less version rejected (K3a); nearby prefetch opt-in. |
 | L | Unit spatial index | **verified** | Workstream L (`63aa38f4` grid + band-to-world + `unit_index` test, `11753fdb` painter candidates from the snapshot's grid + verifier + `render_unit_index[_jump]`, `895e629a` per-unit overlays + shared pass geometry `unitpass::*`, `74bb3556` dense registration record `UnitTypeTable` + whole-list answers, `a42da929` queued-build ghosts from a snapshot list, `e90c79a0` release fix + report keys). Before: the painter pass, four per-unit overlays and the ghost pass each walked every live unit per frame. Now `captureFrame` builds `Frame::unitGrid` (snapshot-owned, 256-px cells, counting sort, ascending live order) from the positions it copies; `unitCandidates(band)` maps a pass's screen band for the lifted anchor to a world rectangle (lift bounded per map by the highest height above the datum, 1 world px + 1 screen px slack) and returns a superset in live order (bitset, no sort; whole list when the view holds every unit); every pass keeps its exact test, so items, keys, equal-depth order and overlay order are a full scan's. Interpolation, altitude and extents are not inputs of these culls (their margins stand for them); shake is in the offset; fog stays in the exact test. Compact records: `UnitTypeTable` (dense registration flag mirroring the map; `t_candidates` −50% with 10,000 visible) and `Frame::buildGhostUnits`; a visual record was rejected (visual names change in place). Tests: `unit_index` (grid vs brute force; every pass's band vs its exact float test at ulp-located edges; movement/churn; the table; covers; 28 of 33 header mutations fail it, the 5 that pass only enlarge a band or shrink it by less than the slack, i.e. stay conservative), `render_unit_index` / `_jump` (in game, `TAK_UNIT_INDEX_VERIFY`: painter list, all four overlays and ghosts equal a full scan every frame; shake, flyers, corpses, construction, fog, churn, epochs; two in-game mutations fail them). Captures identical (84 frames). Measured (Experiment 14): `total10k-subset` draw −39.4% / −30.8% (1280×960 / 7680×2160, material), p95 −37.5% / −29.6%, `t_candidates` 0.55 → 0.03 ms; `total10k-visible` draw −2.7% / −1.4% (not material — the index cannot help there), `t_candidates` −52% / −50% (material, the record); small-battle and jump unchanged within noise. Costs: grid build 0.07 ms per snapshot per 10,000 units on the capture thread; ≈ 0.55 MiB of grids over the 12-slot ring at 10,000 units. `--mpai` Retail 60 s unchanged. |
-| M | Indexed palette path | **verified** (see Experiment 15 for the trade-offs) | Workstream M (`b3cafd0d` layout + indexed form + GL program + native pass + `palette_sheets` / `palette_indexed` tests, `5e3f1bfa` GameView integration + native body spans + `render_palette_indexed` ctest, `cf7eebd3` `structures` scene, `92d54e0d`/`789126df` release-build fix). The sheet layout (the former packer, `client/palettesheets.h`) is held ONE way: indexed on SDL `opengl` (a 512² (index, alpha) page per layout page, a LUT, an identity texture; sheet id in the texture coordinates; the GLSL program resolves palette[shade[level][index]] at the texel the texture unit picks), baked 2048² RGBA pages elsewhere (other renderers, bilinear unit filtering, any failure; lazily rebuilt from the CPU sources, never kept beside the indexed form). Full structure roster: 144 → 4.8 MiB GPU, sheet uploads 130.8 → 3.4 MiB; sources 39.4 → 6.6 MiB CPU (shared banks, 2 B/texel). Indexed runs open native spans in the body replay (one priming for the following body commands), which keeps body submission at the pre-M cost. Output identical to the baked form except samples outside the polygon's own sheet (baked: a neighbouring sheet's texel; indexed: the sheet's edge texel) -- classified pixel by pixel; bilinear stays baked (experimental indexed linear not bit-identical). |
+| M | Indexed palette path | **verified** (Experiment 15; verifier fixes in Experiment 15b) | Workstream M (`b3cafd0d` layout + indexed form + GL program + native pass + `palette_sheets` / `palette_indexed` tests, `5e3f1bfa` GameView integration + native body spans + `render_palette_indexed` ctest, `cf7eebd3` `structures` scene, `92d54e0d`/`789126df` release-build fix, `ab9def88` special units in one pass, `502e45d1` run drawer in every build + `TAK_BODY_SDL_SUBMIT` → baked, `fc13a7fb` owner texels: exact out-of-sheet decode). The sheet layout (the former packer, `client/palettesheets.h`) is held ONE way: indexed on SDL `opengl` (a 512² RGBA (index, owner, alpha) page per layout page, a LUT, an identity texture; sheet id in the texture coordinates; the GLSL program resolves palette[shade[level][index]] at the texel the texture unit picks, through the owner's entry when that texel is a neighbouring sheet's), baked 2048² RGBA pages elsewhere (other renderers, bilinear unit filtering, any failure; lazily rebuilt from the CPU sources, never kept beside the indexed form). Full structure roster: 144 → 9.26 MiB GPU, sheet uploads 130.8 → 6.7 MiB; sources 39.4 → 6.6 MiB CPU (shared banks, 2 B/texel). Indexed runs open native spans in the body replay (one priming for the following body commands): stationary-mixed 7680×2160 draw −20 %. Captures pixel-identical to pre-M in structures (incl. zoom 0.4 distant bakes), stationary-mixed, pan-distant and effects at both sizes; bilinear stays baked (experimental indexed linear not bit-identical, max error 3). |
 | N | Native pass submission | not started | Each native batch (`GeometrySubmit::draw`, `OpaqueShadowSubmit::draw`) primes SDL state with a degenerate draw, flushes, and pushes/pops GL attribute state — once per body run, per shadow page and per mask batch. |
 
 ## Baseline record
@@ -509,7 +529,7 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 | Distant images | `DistantModels` | geometry-entry handle (index + generation; unit id before C) → entry (revision, texture tick, source ptr, zoom, scale), 67 ms refresh; since G also retained bounds per handle (revision, source ptr, count) and the early lookup `holds()` | ≤4 × 2048² pages (64 MiB), 1024 64-px tiles/page, ≤128 bakes/frame (bakes grouped by page since G); per-page occupancy since G | entries/bounds expire after 120 unseen prepares; since G a page is released when its last image expires (before: only when all expired), bounded same-position migration off a sparse highest page; cleared on reset |
 | Colour atlases `atlasTex_` | GameView | per player-colour slot; layout fixed at first model load; `atlasTracker_` slot record = (renderer generation, asset generation, painted frame per animated region) | GPU target ≈ 2048×atlasH ×4 (≈11 MiB) per slot, ≤10; essential (bypasses cap) | destroyed on reset (tracker cleared); painted completely on creation |
 | Animated texture state | `modelTextureAnimations_`, `animatedTex_`, `animatedRegions_` | frame from game tick, every draw; `animatedRegions_` (rect, frames, frame) rebuilt per update in registry order | CPU | `assetGeneration_` bumped on texture teardown and atlas layout; tracker records from another generation repaint every region |
-| Palette pages | `paletteLayout_` (layout), `palettePages_`, `paletteTextureSheets_`, `paletteIndexed_` (since M) | per texture name, 20 shade bands; one form at a time (`paletteMode_`): baked 2048² RGBA pages, or indexed key texture + 512² (index, alpha) page + shared LUT / identity | baked ≤16 × 16 MiB; indexed ≤16 × 0.5 MiB + 264 KiB | both forms released on a form switch (filter, failure, GL context) and in `destroyGpuTextures`; not on a target reset (static) |
+| Palette pages | `paletteLayout_` (layout), `palettePages_`, `paletteTextureSheets_`, `paletteIndexed_` (since M) | per texture name, 20 shade bands; one form at a time (`paletteMode_`): baked 2048² RGBA pages, or indexed key texture + 512² RGBA (index, owner, alpha) page + shared LUT / identity | baked ≤16 × 16 MiB; indexed ≤16 × 1 MiB + 264 KiB | both forms released on a form switch (filter, failure, GL context) and in `destroyGpuTextures`; not on a target reset (static) |
 | Palette sources (CPU) | `paletteTextureSources_`, `paletteBanks_` (since M) | per texture name: bank + (index, alpha) frames | 6.6 MiB for 3008 textures (39.4 MiB before M: palette + shade copies + RGBA per texture) | session |
 | Model source textures `textures_` | GameView | per texture name, per colour/frame | GPU static | teardown |
 | Shadow mask/coverage pages | `shadowMaskPages_`, `shadowCoverageTextures_` | per texture/frame | GPU | teardown |
@@ -1751,8 +1771,8 @@ cap: identical placements. The layout is held in exactly ONE form
 
 | | Baked (pre-M form) | Indexed |
 |---|---|---|
-| Per layout page | 2048² RGBA page (16 MiB) | 1×1 key texture (the runs' texture) + 512² (index, alpha) page (0.5 MiB) |
-| Per frame | 20 bands expanded (80 B/texel) | the frame once at (x0/4, y0/5) (2 B/texel) + a 4-texel sheet-table entry |
+| Per layout page | 2048² RGBA page (16 MiB) | 1×1 key texture (the runs' texture) + 512² RGBA page: index, owner sheet (16 bit), alpha (1 MiB) |
+| Per frame | 20 bands expanded (80 B/texel) | the frame once at (x0/4, y0/5) (4 B/texel) + a 4-texel sheet-table entry |
 | Shared | — | 2048×1 identity texture (8 KiB), LUT 256×256 RGBA (8 banks × 32 levels, 256 KiB) |
 | Drawn by | SDL (or the native batch with SDL's program) | the indexed GLSL program (native only) |
 | Where | every renderer; bilinear unit filtering; any failure | SDL `opengl`, GL ≥ 2.0 program builds, native draws possible (integer output scale), units point-sampled |
@@ -1761,7 +1781,13 @@ The packer only ever advances x by sheet widths (4w) and y by heights (5h),
 so every sheet origin has x0 % 4 = 0 and y0 % 5 = 0: (x0/4, y0/5, w, h) is
 exact, disjoint from every other sheet's rectangle and inside rows [0, 410)
 (tested); rows 410..511 hold the sheet table (x0/4, y0/5, w, h, bank; 13,056
-entries per page).
+entries per page). The same arithmetic maps EVERY baked page texel (X, Y)
+to index texel (X/4, Y/5), which lies in the indexed rectangle of exactly
+the sheet whose baked rectangle holds (X, Y): floor(X/4) ∈ [x0/4, x0/4 + w)
+⇔ X ∈ [x0, x0 + 4w) because x0 % 4 = 0 (likewise for Y and 5). Each index
+texel therefore records its owner (sheet id + 1; 0 where no sheet was
+written), and the indexed page knows what the baked page holds at every
+texel, not only inside the polygon's own sheet.
 
 **Exactness of the indexed draw** (`client/paletteindexed.h`):
 
@@ -1787,21 +1813,33 @@ entries per page).
   colour × vertex colour, SDL's `SHADER_RGBA` expression. The CPU decode is
   tested against the baked expansion at every texel of 120 random sheets
   (2.87 M texels).
-- *The one difference.* A sample OUTSIDE the polygon's own sheet. The baked
-  page then shows a neighbouring sheet's texel (or never-written page memory);
-  the indexed form does not hold the neighbours and repeats the sheet's edge
-  texel. It happens only when the interpolated coordinate lands on (or, by
-  float overshoot, just past) a sheet's outer edge: right/bottom edges of the
-  4th-column/5th-row bands, left/top edges of the 1st. `palette_indexed_test`
-  classifies every differing pixel per triangle with a probe page (the
-  hardware-sampled texel) and finds no other kind; in game,
-  `TAK_PALETTE_MARK_EDGES=1` paints exactly those decodes and every capture
-  difference coincides with a marked pixel (Experiment 15).
+- *Outside the polygon's own sheet.* The interpolated coordinate can land on
+  (or, by float overshoot, just past) a sheet's outer edge: right/bottom edges
+  of the 4th-column/5th-row bands, left/top edges of the 1st. The baked page
+  then shows a neighbouring sheet's texel, or page memory no sheet was written
+  to. The shader does the same: for a texel outside its own sheet it reads
+  the owner at (X/4, Y/5), decodes with THAT sheet's table entry (its origin,
+  size and bank) and returns the neighbour's colour and alpha; with no owner
+  it returns transparent black (0, 0, 0, 0). `palette::IndexPageModel` is
+  the CPU version; `palette_sheets_test` checks it against full baked pages
+  at every one of 8.4 M texels (own sheet, neighbouring sheet and unused
+  area), and `palette_indexed_test` requires pixel identity in every GL case
+  while a marked program set counts the pixels that took the owner path
+  (1326 over 48 cases). The first M builds lacked the owner and repeated the
+  sheet's edge texel there: 7 px/frame in `structures` 1280×960, 30 at
+  7680×2160, 40 at zoom 0.4 (Experiment 15); that difference is gone
+  (Experiment 15b: 0 px everywhere against pre-M). One assumption remains:
+  never-written baked page memory reads zero. SDL's GL backend creates the
+  page without data (GL leaves it undefined); NVIDIA returns zero, so the
+  forms agree here. On a driver that returns garbage the baked form shows that
+  garbage, and the indexed form stays transparent.
+  `TAK_PALETTE_MARK_EDGES=1` (debug) paints those decodes magenta to show
+  where the owner path runs.
 - *Bilinear* (Texture Filtering Units/Everything) is not bit-identical: the
-  shader filters four resolved COLOURS (never indices) with 8-bit weights, the
-  texture unit's arithmetic differs in the last bit, and at sheet edges the
-  baked page bleeds its neighbours. So bilinear unit filtering keeps the
-  baked form; `TAK_PALETTE_INDEXED_LINEAR=1` (debug) runs the experimental
+  shader filters four resolved COLOURS (never indices; neighbouring sheets
+  included, as the baked page bleeds them) with 8-bit weights, and the
+  texture unit's arithmetic differs in the last bit (max channel error 3). So
+  bilinear unit filtering keeps the baked form; `TAK_PALETTE_INDEXED_LINEAR=1` (debug) runs the experimental
   linear program. No gamma/colour-space change (8-bit UNORM in, the same
   multiply), no premultiplication (straight alpha, BLEND as before).
 
@@ -1824,8 +1862,17 @@ Plain runs draw with SDL's own `TEXTURE_VERTEX_SHADER` + `texture2D × colour`
 sampling unit 4 (unit 0 is never touched). Arena commands (H) draw from their
 GL buffer ranges inside the span. Spans open only at an indexed run, so a
 scene without structures, and every baked-form frame, replays exactly as
-before. Special units (`drawUnit`) and distant-image bakes (DistantModels'
-run drawer) draw indexed runs one by one (`drawModelRun`).
+before. A special unit (`drawUnit` → `drawRunsNative`) with an indexed run
+draws all its runs in one pass the same way (`ab9def88`). Distant-image
+bakes draw each run through DistantModels' run drawer (`drawModelRun`: an
+indexed run as one native draw with its own priming, any other run with
+`SDL_RenderGeometry` as before). GameView installs that drawer in
+`updatePaletteMode()` in every build, next to the decision that may choose
+the indexed form (the first M builds installed it inside a debug-only block,
+so a release build baked indexed runs with plain SDL: grey structures in
+distant images; fixed in Experiment 15b). Debug `TAK_BODY_SDL_SUBMIT` (the
+pure-SDL submission reference) selects the baked form, so a reference run
+opens no span and draws nothing natively.
 
 **Switching, reset, failure.** `updatePaletteMode()` runs once per frame
 before the structures' sheets are prepared. A change of form releases the
@@ -1839,7 +1886,7 @@ draws impossible (other renderer, fractional output scale), an indexed draw
 failing (sticky for the session, logged once), a GL context change (the
 index pages are forgotten, not deleted, and the keys that named them rebuilt
 like a switch). A render-target reset touches neither form (static textures,
-as before). Allocation: an index page counts 512 KiB against the gpuvram cap
+as before). Allocation: an index page counts 1 MiB against the gpuvram cap
 (`addBuffer`; GL errors after creation are checked and noted as a failure); a
 refused page leaves the frame on the colour atlas exactly like a refused
 baked page did.
@@ -2013,9 +2060,10 @@ not `quick`). Debug knobs `TAK_UNIT_FULL_SCAN`, `TAK_UNIT_INDEX_VERIFY`,
 
 Palette tooling (workstream M): tests `palette_sheets` (pure: layout vs
 the pre-M packer, alignment, coordinate round trips, decode vs baked
-expansion), `palette_indexed` (GL with `TAK_GEOMETRY_TEST_ACCELERATED=1
-SDL_VIDEODRIVER=offscreen`: baked vs indexed NEAREST with per-triangle
-classification of every differing pixel by a probe page, linear reported,
+expansion, `IndexPageModel` vs full baked pages at every texel),
+`palette_indexed` (GL with `TAK_GEOMETRY_TEST_ACCELERATED=1
+SDL_VIDEODRIVER=offscreen`: baked vs indexed NEAREST pixel-identical in every
+case, outside-sheet decodes counted by a marked program set, linear reported,
 native pass vs SDL, release/rebuild, budget; without the variable: the
 software renderer is refused), `render_palette_indexed` (in game; the ctest's
 dummy driver checks the baked form; run it with `SDL_VIDEODRIVER=offscreen
@@ -2024,11 +2072,14 @@ SDL_RENDER_DRIVER=opengl` for the GL form). Debug knobs `TAK_PALETTE_BAKED`
 `TAK_PALETTE_MARK_EDGES` (paints decodes outside their sheet magenta),
 `TAK_RENDER_ROSTER=structures`, `TAK_RENDER_FILTER=N` (Texture Filtering
 Off↔Units every N frames), `TAK_REQUIRE_PALETTE` (study check, prints
-`PALETTE_STUDY`), `TAK_PALETTE_ROSTER_TEST` (`--firetest`: every structure's
+`PALETTE_STUDY`; `=bakes` also requires indexed runs baked into distant
+images through the run drawer, `bake_runs` > 0, on OpenGL), `TAK_PALETTE_ROSTER_TEST` (`--firetest`: every structure's
 sheets; prints pages, GPU/CPU/upload MiB and the pre-M source bytes). Capture
 classification: `~/tak-tmp/render-opt/m/classify.py <baseline> <indexed>
 <marked>` (every baseline/indexed difference must be a marked pixel).
-Experiment 15 script: `~/tak-tmp/render-opt/m/measure.sh`.
+Experiment 15 script: `~/tak-tmp/render-opt/m/measure.sh`; Experiment 15b:
+`~/tak-tmp/render-opt/m5/caps.sh` (captures) and `m5/time.sh` (timing,
+single runs, roster).
 
 Shadow-atlas ctests (workstream F, software renderer, `TAK_SHADOW_CACHE_VERIFY`):
 `render_shadow_atlas` (the render_shadow_cache roster, 288-px pages,
@@ -4458,8 +4509,15 @@ World hashes identical A vs B in every scene. Scenes chosen because they draw
 palette-lit structures: `stationary-mixed` (a third of the roster are
 lodestones; distant images at 1280×960), `structures` (new: all 51 types, all
 nine pages, live bodies), `effects` (construction sites = special units,
-flyers, ghosts), `pan-distant` (distant-image bakes of structures at
-1280×960; 7680×2160 clamps to zoom 0.73). Scenes without structures run no
+flyers, ghosts), `pan-distant` (distant images at 1280×960; 7680×2160 clamps
+to zoom 0.73). **Correction (verifier, Experiment 15b):** `pan-distant` does
+NOT bake indexed runs. Its structures exceed the 28 px bake limit and stay
+live, so captures and `palette_indexed_draws` are identical with and without
+the run drawer. In these scenes no bake containing an indexed run was ever
+compared against pre-M. The scene that bakes them is `structures` at
+`TAK_PROFILE_ZOOM=0.4`: L4 vs M4 there gave 40-41 px per frame (490 over
+12 frames, max channel error 140), every one a marked out-of-sheet decode,
+which shows the Debug bake path was correct. Experiment 15b covers it. Scenes without structures run no
 new code beyond a per-frame mode check (not timed, per the lean rule; the
 final report's full matrix covers them).
 
@@ -4556,25 +4614,147 @@ none of the M debug strings. `--mpai` not run: only `src/client`
 (presentation), `tools/` and CMake changed; every benchmark run checks the
 world hash.
 
+### Experiment 15b — workstream M verifier fixes: release bakes, exact out-of-sheet decode (2026-10-17)
+
+The verifier rejected M (head `49fc8541`) for five reasons. This entry
+covers each one; commits `502e45d1` and `fc13a7fb`.
+
+1. **Release-only visual defect (blocking), fixed in `502e45d1`.**
+   `distantModelCache_.setRunDrawer(...)` sat inside the `#ifndef NDEBUG`
+   block with the `TAK_DISTANT_*` switches. Release builds still choose the
+   indexed form on SDL `opengl`, so without the drawer DistantModels baked
+   indexed runs with plain `SDL_RenderGeometry`. That draws the 1×1 white
+   key texture at the sheet-encoded coordinates: grey, vertex-lit
+   structures in distant images. The verifier reproduced it with a
+   release-equivalent mutant: 6.5k px per frame, max error 247, `structures`
+   at zoom 0.4. My Debug-only evidence could not see it.
+   - **Fix.** `updatePaletteMode()` installs the drawer in every build, next
+     to the decision that may choose indexed. In the release binary
+     (`build-rel`, `-O3 -DNDEBUG`), `GameView::updatePaletteMode` now
+     stores `drawModelRunThunk` (0x5e82a0) into the cache
+     (`movq $0x5e82a0,0x658(%rdi)` at 0x5e9270, objdump).
+   - **Audit.** I checked every `#ifndef NDEBUG` block in the files M
+     touches. None holds M functionality any more: only harness accessors,
+     `renderStudyToggleFilter`, and the debug switches read through
+     `devEnv`.
+   - **Coverage.** The drawer counts the indexed runs it bakes
+     (`PaletteTotals::bakeRuns`, printed as `PALETTE_STUDY ... bake_runs=`).
+     `TAK_REQUIRE_PALETTE=bakes` fails an OpenGL study that baked none. On
+     GL (offscreen, NVIDIA, actual output 1024×768) the `render_palette_indexed`
+     scene at `TAK_PROFILE_ZOOM=0.4` with `TAK_REQUIRE_PALETTE=bakes`
+     passed: `indexed_frames=160 baked_frames=140 switches=4 fallbacks=0
+     bake_runs=7150`, with the geometry verifier on. The release binary cannot
+     run the harness (`devEnv` is a constant `nullptr` there), which is why
+     the fix removes the build dependence instead of testing around it.
+2. **Coverage claim corrected.** `pan-distant` never bakes an indexed run
+   (Experiment 15 now says so). The scene that does is `structures` at zoom
+   0.4, 1280×960. At 7680×2160 the map-fills-window clamp raises that request
+   to 0.73, so no bakes happen there. It is in the captures below.
+3. **Doc contradiction fixed.** The limitation now says a special unit's
+   runs draw in one pass (`ab9def88`), and only distant-image bakes draw
+   each indexed run with its own priming.
+4. **`TAK_BODY_SDL_SUBMIT` fixed** (`502e45d1`). The reference switch now
+   selects the baked form, so a pure-SDL reference run opens no native span
+   and draws no indexed run.
+5. **Out-of-sheet pixel class: removed, not ruled on** (`fc13a7fb`). Since
+   sheet origins are multiples of (4, 5), every baked page texel (X, Y)
+   maps to index texel (X/4, Y/5) inside the one sheet whose baked rectangle
+   holds it.
+   - **Owner texels.** Index pages are now 512² RGBA (index, owner = sheet
+     id + 1, alpha). For a texel outside its own sheet, the shader decodes
+     with the owner's entry, exactly as the baked page shows the neighbour.
+     No owner gives transparent black (never-written baked memory reads zero
+     on this driver; see Known limitations).
+   - **Tests.** `palette_sheets` checks the CPU model against full baked
+     pages at every one of 8,388,608 texels: 3.67 M own sheet, 3.64 M
+     neighbouring sheet, 1.08 M unused. `palette_indexed` on GL (NVIDIA RTX
+     5070 Laptop) is now pixel-identical in all 48 NEAREST cases (1326
+     pixels took the owner path) and in all 16 native-pass cases, which now
+     sample any band. With the owner lookup mutated
+     (`if (owner > -1.0) return vec4(0.0)`) the NEAREST cases fail
+     (`FAIL nearest ... 69 pixels differ`, ...). The experimental linear
+     program improved as a side effect: max channel error 3 (was larger at
+     sheet edges).
+   - **Status.** No pixel class waits for a ruling any more.
+
+**Captures**, A = `takclient-L4-candidate` (pre-M), B =
+`takclient-M5-candidate` (code of `fc13a7fb`). Optimized Debug; SDL
+`opengl` offscreen, NVIDIA GL 4.6.0 615.71.09; frames 360, 480-489, 720;
+CPUs 16-23; 0 `legion_scenario` processes. Load was 1.3-10 during the
+captures because my ctest ran at the same time on cores 4-15; captures only,
+no timing claims from them. World hashes were identical between A and B:
+
+| Scenes | Size | Worst world-view differing pixels |
+|---|---|---|
+| structures, stationary-mixed, pan-distant, effects | 1280×960 | 0 (12 frames each) |
+| structures, stationary-mixed, pan-distant, effects | 7680×2160 | 0 |
+| structures `TAK_PROFILE_ZOOM=0.4` (indexed runs in bakes) | 1280×960 | 0 (M4: 40-41 per frame) |
+| structures `TAK_PROFILE_ZOOM=0.4` (clamped to 0.73) | 7680×2160 | 0 |
+
+`structures` at its normal zoom was 7 px/frame (1280×960) and 30
+(7680×2160) with M1-M4; both are now 0.
+
+**Timing**, M4 (A) vs M5 (B), to isolate the cost of the owner path and the
+larger page. ABBA ×2, CPUs 16-23, 30 s quiet wait, forced-completion
+frames. Load 1.2-4.0 and 0 `legion_scenario` processes. Scenes are the ones
+that draw palette-lit structures live; pan-distant and effects run the same
+shader on fewer pixels and were not re-timed:
+
+| Scene | Size | draw mean A → B (ms) | Δ | noise (max A/A) | GPU timeline A → B | material |
+|---|---|---|---|---|---|---|
+| structures | 1280×960 | 5.048 → 4.992 | −1.1 % | 6.7 % | 3.73 → 3.63 | no |
+| structures | 7680×2160 | 11.289 → 11.350 | +0.5 % | 5.4 % | 8.81 → 8.91 | no |
+| stationary-mixed | 1280×960 | 2.917 → 2.960 | +1.5 % | 14.3 % (A drifted with load 2.6-4.0) | 1.37 → 1.39 | no |
+| stationary-mixed | 7680×2160 | 3.350 → 3.362 | +0.3 % | 3.2 % | 1.87 → 1.87 | no |
+
+`drawphase.body` +0.0 / +0.1 / +1.1 / −0.2 %, all inside noise. The owner
+path costs nothing measurable here. The stationary-mixed 1280×960 pair is
+noisy (A/A 14.3 %) and supports only "no material change". The Experiment
+15 results against L4 (draw −20.3 % in stationary-mixed 7680×2160 from the
+spans) are not re-measured: the spans are unchanged.
+
+**Residency and uploads (M5, single runs; full roster with `roster.sh`):**
+- **Full roster:** 9 pages. Palette GPU 9.26 MiB (M4: 4.76; baked 144.00).
+  Sheet uploads 6.68 MiB (M4: 3.40; baked 130.81). Palette CPU 6.73 MiB
+  (sources 6.55; pre-M 39.39).
+- **Tracked GPU at the last frame, M3/M4 → M5:** +0.5 MiB per page in use,
+  nothing else. structures 113.6 → 118.1 (1280×960) and 264.9 → 269.4
+  (7680×2160). stationary-mixed 106.3 → 106.8 and 259.1 → 259.6. effects
+  127.4 → 127.9 and 261.1 → 261.6. pan-distant 110.8 → 111.3 and 259.3 →
+  259.8 MiB.
+- **Against baked:** the indexed form still holds 15.6× less palette GPU
+  memory (144 → 9.26 MiB) and uploads 19.6× fewer sheet bytes.
+
+**Tests:**
+- `palette_sheets` and `palette_indexed` (GL and software), both above.
+- `render_palette_indexed`: the ctest (software) passed; the GL zoom-0.4
+  `bakes` study passed (above).
+- `distant_models`.
+- `ctest -L quick` 392/392 on the final code (`fc13a7fb`; the docs
+  commit changes nothing compiled).
+- The Release `takclient` builds. It holds none of the `TAK_PALETTE*` /
+  `TAK_REQUIRE_PALETTE` / `TAK_BODY_SDL_SUBMIT` strings, and it does hold
+  the owner-lookup shader.
+- `--mpai` not run: only `src/client` and `tools/` changed, and the world
+  hashes are identical in every run.
+
 ## Known limitations and unsupported paths
 
-- **M: one explained pixel class differs from the baked form.** A sample
-  outside the polygon's own sheet (the interpolated coordinate on, or by
-  float overshoot just past, a sheet's outer edge) reads a neighbouring
-  sheet's texel or never-written page memory on the baked page; the indexed
-  form repeats the sheet's edge texel. Retail's rasterizer never samples
-  outside a texture, so neither is "retail", but it is a change: 7 pixels per
-  frame in `structures` 1280×960, 30 at 7680×2160, none in stationary-mixed,
-  effects, veteran, pan-distant or colour-reset (Experiment 15), every one
-  matched by a `TAK_PALETTE_MARK_EDGES` pixel. Reproducing the bleed would
-  need each sheet's neighbours (and assumes zero-filled page memory, which GL
-  does not promise); not attempted. Needs the lead's ruling like F's edge
-  pixels; reverting is one line (`updatePaletteMode`: never choose indexed).
+- **M: never-written baked page memory is assumed to read zero.** A sample
+  outside its own sheet resolves exactly like the baked page (neighbouring
+  sheet through the owner texels; Experiment 15b: 0 px against pre-M). Where
+  NO sheet was written, the indexed form returns transparent black, and the
+  baked page returns whatever GL left there: SDL creates it without data,
+  which GL leaves undefined. NVIDIA reads zero, so both forms agree on this
+  machine. Another driver could show garbage in the baked form there, which
+  pre-M builds would show too. (The first M builds repeated the sheet's
+  edge texel instead: 7-40 px per frame, Experiment 15. Fixed in 15b.)
 - **M: bilinear unit filtering keeps the baked pages** (144 MiB for the
   roster). The experimental linear program filters resolved colours but is
-  not bit-identical (`palette_indexed`: 592k differing pixels over 48 cases,
-  89.6% by 1, larger ones where the baked page bleeds a neighbour at sheet
-  edges). `TAK_PALETTE_INDEXED_LINEAR=1` (debug) runs it.
+  not bit-identical (`palette_indexed` at 15b: 549k differing pixels over 48
+  cases, 99.1 % by 1, max 3; before the owner texels 592k with larger errors
+  where the baked page bleeds a neighbour). `TAK_PALETTE_INDEXED_LINEAR=1`
+  (debug) runs it.
 - **M: only SDL `opengl`.** Direct3D 11/12, Metal, OpenGL ES 2 and the
   software renderer use the baked form, whose output and cost are the pre-M
   ones (captures identical to L4 with `TAK_PALETTE_BAKED`). The indexed
@@ -4585,17 +4765,18 @@ world hash.
   default).
 - **M: native spans are scoped.** Opened only by an indexed palette run and
   ended by features, special units, the air-shadow boundary and textures
-  with another blend mode or a colour/alpha mod. Special units and
-  distant-image bakes draw indexed runs one priming each (`drawModelRun`). A
-  general native pass (workstream N) would extend the spans to every body
-  command.
+  with another blend mode or a colour/alpha mod. A special unit with an
+  indexed run draws all its runs in one pass (`drawRunsNative`, `ab9def88`).
+  Distant-image bakes still draw each indexed run with its own priming
+  (`drawModelRun` through the run drawer). A general native pass
+  (workstream N) would extend the spans to every body command.
 - **M: the colour atlas sources stay resident.** `textures_` (one SDL
   texture per model texture frame, the colour atlases' source) is unchanged;
   palette-capable textures are among them. Not part of the shade-variant
   duplication M removes.
 - **M: the index pages are not compacted.** A layout page keeps its 512² page
   while any sheet lives on it (sheets are never released before a form switch
-  or teardown, as before); worst case 16 × 0.5 MiB.
+  or teardown, as before); worst case 16 × 1 MiB.
 
 - **L: the index does not make 10,000 visible units cheaper.** It narrows
   the units the passes examine; with the whole army in view it returns all of
