@@ -2151,6 +2151,7 @@
         // when the boundary already fired. It sits BEFORE the submit timer closes so that
         // every air-shadow draw falls inside the same phase as the rest of them.
         drainAirShadows();
+        spanTextures_.clear();   // GL names are valid for this replay only
         profSubmitMs_ += (double(SDL_GetPerformanceCounter()) - _st0) / _ptFreq;
         renderStats_.addMs(RP::BodySubmit, -airShadowMs + (double(SDL_GetPerformanceCounter()) - _bsub0) / _ptFreq);
         renderStats_.addMs(RP::ShadowComposite, airShadowMs);
@@ -4186,6 +4187,38 @@
         return spanTextures_.back();
     }
 
+    bool GameView::drawRunsNative(const std::vector<std::pair<SDL_Texture*, int>>& runs, const SDL_Vertex* vertices) {
+        if(paletteMode_!=PaletteMode::Indexed)return false;
+        SDL_Texture* prime=nullptr;
+        for(const auto& [texture,count]:runs) {
+            if(!texture || count<=0)continue;
+            if(palettePage(texture)>=0) { if(!prime)prime=texture; }
+            else if(!spanTexture(texture).name)return false;
+        }
+        if(!prime || !bodySubmit_.beginPass(ren_,prime))return false;
+        paletteIndexed_.beginPass();
+        int offset=0;
+        for(const auto& [texture,count]:runs) {
+            if(texture && count>0) {
+                if(const int page=palettePage(texture);page>=0) {
+                    paletteIndexed_.usePremultiplied(false);
+                    paletteIndexed_.usePage(size_t(page),paletteLinear_);
+                    ++paletteIndexedDraws_;
+                } else {
+                    const SpanTexture& entry=spanTexture(texture);
+                    paletteIndexed_.usePremultiplied(entry.premultiplied);
+                    paletteIndexed_.usePlain(entry.name);
+                }
+                bodySubmit_.passDraw(std::span<const SDL_Vertex>(vertices+offset,size_t(count)));
+            }
+            offset+=count;
+        }
+        paletteIndexed_.endPass();
+        bodySubmit_.endPass();
+        ++paletteSpans_;
+        return true;
+    }
+
     size_t GameView::drawPaletteSpan(size_t first) {
         using RS = tak::render::Counter;
         size_t end=first;
@@ -5679,14 +5712,18 @@
         // Submit the pre-built, depth-sorted vertex runs -- one SDL_RenderGeometry
         // per texture (usually 1 per unit). The veterancy/conjure colour tint was
         // already baked into the vertices on the worker pool.
-        int off = 0;
-        for (const auto& r : g.runs) {
-            // A null run texture (an atlas page that failed to allocate under
-            // VRAM pressure -- corpse meshes load mid-game) must be SKIPPED:
-            // SDL_RenderGeometry(nullptr,..) paints the raw vertex colours as a
-            // solid white shape. Invisible-until-retry beats a white flash.
-            if (r.first) drawModelRun(r.first, g.verts.data() + off, r.second, false);
-            off += r.second;
+        // Workstream M: a unit with indexed palette runs draws all its runs in one
+        // native pass when every run texture can join (one priming, not one per run).
+        if (!drawRunsNative(g.runs, g.verts.data())) {
+            int off = 0;
+            for (const auto& r : g.runs) {
+                // A null run texture (an atlas page that failed to allocate under
+                // VRAM pressure -- corpse meshes load mid-game) must be SKIPPED:
+                // SDL_RenderGeometry(nullptr,..) paints the raw vertex colours as a
+                // solid white shape. Invisible-until-retry beats a white flash.
+                if (r.first) drawModelRun(r.first, g.verts.data() + off, r.second, false);
+                off += r.second;
+            }
         }
 
         constructionParticles(true);

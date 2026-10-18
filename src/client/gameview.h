@@ -1490,6 +1490,9 @@ private:
     // (== first when the pass could not start: the caller draws `first` as usual).
     size_t drawPaletteSpan(size_t first);
     int palettePage(SDL_Texture* texture) const;
+    // A unit's runs in one native pass (special units): false when the form is baked,
+    // no run is indexed or a run texture cannot join -- the caller draws run by run.
+    bool drawRunsNative(const std::vector<std::pair<SDL_Texture*, int>>& runs, const SDL_Vertex* vertices);
     struct SpanTexture { SDL_Texture* texture = nullptr; GLuint name = 0; bool premultiplied = false; };
     const SpanTexture& spanTexture(SDL_Texture* texture);   // name 0 = cannot join a native span
     std::vector<SpanTexture> spanTextures_;   // per frame (body replay)
