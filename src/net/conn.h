@@ -45,8 +45,10 @@ public:
     void send(Msg kind, const Writer& w) { send(kind, w.b); }
     void send(Msg kind) { send(kind, std::vector<uint8_t>{}); }
     // Queue a LOW-PRIORITY frame (voice). It waits in its own small queue and joins the
-    // byte stream only when every ordinary frame queued so far has left, so it never
-    // delays a tick bundle or a command; and it is dropped, never buffered without
+    // byte stream only when every ordinary frame queued so far has left this program, so
+    // it is never queued ahead of a tick bundle or a command here; what is already in the
+    // kernel's send buffer still goes first, which limitUnsent() bounds on a server
+    // socket. It is dropped, never buffered without
     // bound, when this peer is not keeping up: the newest kLowMaxFrames survive, and
     // nothing is queued while kLowBackpressure bytes of ordinary frames wait. Returns
     // false when the frame was dropped on arrival.
@@ -110,5 +112,13 @@ std::string peerAddress(int fd);
 
 // Set a socket non-blocking + TCP_NODELAY.
 void setupSocket(int fd);
+// Cap the bytes the kernel holds unsent for this socket (TCP_NOTSENT_LOWAT, where the
+// platform has it; Linux enforces it on send(), macOS only on writability, Windows has
+// none). The server sets it on every client socket: once its kernel queue is full, what
+// remains waits in the Conn, where a low-priority voice frame yields to game traffic and
+// is dropped under backpressure, instead of the kernel holding seconds of voice ahead of
+// the next tick bundle on a slow downlink. Throughput is unaffected: it bounds the bytes
+// not yet sent, not the bytes in flight.
+void limitUnsent(int fd);
 
 }  // namespace tak::net

@@ -1018,7 +1018,8 @@ void MpClient::setVoiceListen(bool on) {
 
 void MpClient::sendVoice(uint16_t seq, uint8_t recipients, uint8_t flags, const std::vector<uint8_t>& opus) {
     if (state_ != State::InRoom && state_ != State::Starting && state_ != State::InGame) return;
-    if (opus.size() > kVoiceMaxOpus || (opus.empty() && !(flags & kVoiceEnd))) return;
+    if (opus.size() > kVoiceMaxOpus || opus.empty() != bool(flags & kVoiceEnd) ||
+        (flags & (kVoiceStart | kVoiceEnd)) == (kVoiceStart | kVoiceEnd)) return;   // the server fails these
     Writer w;
     w.u16(seq); w.u8(recipients); w.u8(flags); w.u16(uint16_t(opus.size()));
     w.b.insert(w.b.end(), opus.begin(), opus.end());

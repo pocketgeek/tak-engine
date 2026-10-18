@@ -684,7 +684,8 @@ enum class Msg : uint8_t {
                         // recipients is the talker's diplomacy VOICE mask, with the same rules
                         // as Chat's: 0xff (or a room not yet running) is the whole room,
                         // spectators included; otherwise the seated players whose bit is set.
-                        // Never echoed to the talker. len <= kVoiceMaxOpus; 0 only with END.
+                        // Never echoed to the talker. len <= kVoiceMaxOpus; 0 exactly with END
+                        // (which is never combined with START).
     VoiceDown,          // S->C: u32 talker client id | u8 talker slot (0xFF = spectator) | u16 seq |
                         // u8 flags | u16 len | len bytes | str name (only with kVoiceHasName).
 };

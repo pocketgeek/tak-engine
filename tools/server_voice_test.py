@@ -12,8 +12,11 @@ Three players and a spectator in one room. Voice frames are opaque to the server
   names       the talker's name rides on START frames (and every 25th), its slot always
   budget      a burst past the per-second budget is cut and logged, the END marker still
               arrives, and the game's tick bundles keep coming throughout
-  abuse       a flood far past it, a malformed frame, or a client posing as the server
-              (VoiceDown) costs that connection only; the game goes on for the others
+  end         END markers skip the budgets but only one is relayed per transmission that
+              relayed audio: a stream of bare ENDs reaches nobody
+  abuse       a flood far past it, a malformed frame (wrong length, audio with END,
+              START with END), or a client posing as the server (VoiceDown) costs that
+              connection only; the game goes on for the others
 """
 import argparse
 import collections
@@ -129,7 +132,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix='tak-voice-') as tmp:
         root = Path(tmp)
         with server(a.server.resolve(), a.data.resolve(), root) as (port, h, process), contextlib.ExitStack() as stack:
-            peers = {n: stack.enter_context(contextlib.closing(login(port, h, n))) for n in ('Alice', 'Bob', 'Carol', 'Dave')}
+            peers = {n: stack.enter_context(contextlib.closing(login(port, h, n)))
+                     for n in ('Alice', 'Bob', 'Carol', 'Dave', 'Erin', 'Frank')}
             alice, bob, carol, dave = (peers[n] for n in ('Alice', 'Bob', 'Carol', 'Dave'))
 
             recipe = '~gen1~' + (struct.pack('<HQBHH', 8, 1234, 0, 128, 128) + bytes([2, 0, 0, 1, 0, 0, 0])).hex()
@@ -175,8 +179,9 @@ def main():
                 assert L[n].wait('GameStarting'), n + ' never got GameStarting'
                 peers[n].send('Loaded')
             assert L['Alice'].wait('TickBundle', 5), 'the game is not ticking'
-            dave.send('Spectate', struct.pack('<I', rid) + auth.field(''))
-            assert L['Dave'].wait('GameStarting'), 'the spectator was not admitted'
+            for n in ('Dave', 'Erin', 'Frank'):   # Erin and Frank never listen; they misbehave below
+                peers[n].send('Spectate', struct.pack('<I', rid) + auth.field(''))
+                assert L[n].wait('GameStarting'), n + ' was not admitted as a spectator'
             dave.send('VoiceListen', b'\x01')
             time.sleep(0.3)
             for n in L:
@@ -243,6 +248,20 @@ def main():
             assert [f['seq'] for f in plain] == sorted(f['seq'] for f in plain), 'voice frames reordered'
             print('burst: %d of 200 delivered, in order, END kept' % len(plain))
 
+            # end: END skips the budgets, but only the END owed to a transmission that relayed
+            # audio goes out. 250 bare ENDs in a second (under the disconnect threshold) reach
+            # nobody; one audio frame followed by 50 ENDs delivers that frame and one END.
+            time.sleep(1.1)
+            L['Alice'].raw(b''.join(frame('VoiceUp', up(800 + i, 0xff, END, b'')) for i in range(250)))
+            assert L['Bob'].voice(0.8) == [], 'bare END markers were relayed'
+            time.sleep(1.1)
+            L['Alice'].raw(frame('VoiceUp', up(1100, 0xff, START)) +
+                           b''.join(frame('VoiceUp', up(1101 + i, 0xff, END, b'')) for i in range(50)))
+            v = L['Bob'].voice(0.8)
+            assert [f['flags'] & (START | END) for f in v] == [START, END], [f['flags'] for f in v]
+            assert not L['Alice'].closed, 'the talker lost its connection'
+            print('end: bare ENDs reach nobody; one END per transmission')
+
             # Ticks flowed for everyone throughout: the same bundles, in the same order.
             for n in ('Alice', 'Bob', 'Carol'):
                 assert not L[n].take('Desynced'), n + ' desynced'
@@ -251,17 +270,21 @@ def main():
             # server each cost that connection only.
             L['Carol'].raw(b''.join(frame('VoiceUp', up(i, 0xff)) for i in range(400)))
             dave.send('VoiceUp', struct.pack('<HBBH', 1, 0xff, 0, 50) + b'x' * 10)
+            peers['Erin'].send('VoiceUp', up(1, 0xff, END, b'x' * 400))
+            peers['Frank'].send('VoiceUp', up(1, 0xff, START | END, b''))
             bob.send('VoiceDown', struct.pack('<IBHBH', 1, 0, 0, 0, 0))
             deadline = time.monotonic() + 5
-            while not all(L[n].closed for n in ('Carol', 'Dave', 'Bob')) and time.monotonic() < deadline:
+            while not all(L[n].closed for n in ('Carol', 'Dave', 'Erin', 'Frank', 'Bob')) and time.monotonic() < deadline:
                 time.sleep(0.05)
             assert L['Carol'].closed, 'a voice flood did not cost the flooder its connection'
             assert L['Dave'].closed, 'a malformed voice frame was accepted'
+            assert L['Erin'].closed, 'an END frame carrying audio was accepted'
+            assert L['Frank'].closed, 'a START|END frame was accepted'
             assert L['Bob'].closed, 'a client sent VoiceDown and kept its connection'
             L['Alice'].take('Pong')
             alice.send('Ping')
             assert L['Alice'].wait('Pong') and not L['Alice'].closed, 'the innocent player lost its connection'
-            print('abuse: flood, malformed frame and a fake VoiceDown each cost only that connection')
+            print('abuse: flood, malformed frames and a fake VoiceDown each cost only that connection')
             assert process.poll() is None, 'the server died'
     print('server_voice: all passed')
 

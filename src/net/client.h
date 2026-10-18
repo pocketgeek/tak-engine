@@ -184,8 +184,9 @@ public:
     // only when it changes, and again after every new connection; the server sends no
     // voice to a connection that never said yes.
     void setVoiceListen(bool on);
-    // One captured frame, as a LOW-PRIORITY message (Conn::sendLow): it never delays game
-    // traffic and is dropped when the link is backed up. Ignored outside a room.
+    // One captured frame, as a LOW-PRIORITY message (Conn::sendLow): it waits behind game
+    // traffic queued in this program and is dropped when the link is backed up. Ignored
+    // outside a room.
     // recipients: the diplomacy VOICE mask (0xff = everyone, as for chat).
     void sendVoice(uint16_t seq, uint8_t recipients, uint8_t flags, const std::vector<uint8_t>& opus);
     struct VoiceFrame {

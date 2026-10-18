@@ -355,10 +355,24 @@ their mask is 0xff and they talk to everyone, as their chat does.
 Voice must never cost the game anything. Relayed frames go out through
 `Conn::sendLow`: a separate queue that joins the byte stream only once every
 ordinary frame queued so far has left, holds at most 16 frames (the newest win),
-and refuses frames while 64 KiB of game traffic waits. Per talker the server
-relays 60 frames / 16 KB a second and drops the excess (an END marker always
-passes); 300 frames a second, a malformed frame or a client sending `VoiceDown`
-fails that connection; 4,000 frames a second across the server. The client
+and refuses frames while 64 KiB of game traffic waits. That ordering holds inside
+the program; once bytes are handed to the operating system they are sent in
+order, so the server also caps each client socket's unsent kernel queue at 16 KiB
+(`TCP_NOTSENT_LOWAT`, `limitUnsent`): on a slow downlink game traffic then backs
+up in the program, where voice yields to it and is dropped, instead of queuing
+behind seconds of voice in an autotuned send buffer. At most that 16 KiB plus one
+4 KiB batch of voice can be ahead of a tick bundle. Linux enforces the cap on
+send; macOS only delays writability by it, and Windows has no equivalent, so
+there the kernel buffer can still hold voice ahead of game traffic (servers run
+on Linux). Per talker the server relays 60 frames / 16 KB a second and drops the
+excess. An END marker skips those budgets so a cut-off transmission still
+closes, but it carries no audio (audio or START with END fails the connection)
+and only the one END owed to a transmission that relayed audio is passed on, so
+ENDs can never outnumber relayed audio frames. 300 frames a second, a malformed
+frame or a client sending `VoiceDown` fails that connection; 4,000 frames a second
+across the server. `VoiceListen` is exempt from the lobby budgets shared by an
+address, an account and the server (a dropped one would never be repeated), but
+not from the connection's own. The client
 (`client/voice.h`) captures and plays on SDL audio devices of its own, buffers
 2–8 frames per talker, rebuilds a frame the server dropped from the next frame's
 FEC, and conceals a late one. Opus is built from its pinned source release

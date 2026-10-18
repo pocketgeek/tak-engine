@@ -24,6 +24,15 @@ void setupSocket(int fd) {
     sockSetNonBlock(fd);
 }
 
+void limitUnsent(int fd) {
+#ifdef TCP_NOTSENT_LOWAT
+    const int bytes = 16 << 10;
+    setsockopt(fd, IPPROTO_TCP, TCP_NOTSENT_LOWAT, reinterpret_cast<const char*>(&bytes), sizeof bytes);
+#else
+    (void)fd;
+#endif
+}
+
 Conn::Conn(int fd,std::shared_ptr<TlsContext> tls):tlsContext_(std::move(tls)),fd_(fd) {
     if(tlsContext_) {
         tls_=SSL_new(tlsContext_->handle);

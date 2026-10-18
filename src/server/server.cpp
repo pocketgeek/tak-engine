@@ -277,7 +277,9 @@ struct Client {
     // they are dropped (a frame stall followed by catch-up is normal), past
     // kVoiceAbusePerSec the connection is failed. voiceOut counts frames relayed, to
     // repeat the talker's name every kVoiceNameEvery of them.
-    bool voiceListen = false;
+    // voiceOpen: an audio frame of this talker's current transmission has been relayed
+    // and its END has not, so the next END is owed to the listeners.
+    bool voiceListen = false, voiceOpen = false;
     WorkBudget voiceFrames, voiceBytes, voiceAbuse;
     uint64_t voiceDropped = 0, voiceLogAt = 0;
     uint32_t voiceOut = 0;
@@ -1823,17 +1825,24 @@ void Server::relayVoice(Client& c, Room& r, const Frame& f) {
     const uint16_t seq = rd.u16();
     const uint8_t recipients = rd.u8(), flags = rd.u8();
     const uint16_t len = rd.u16();
+    // An END marker carries no audio and opens nothing: audio, or START, with END is malformed
+    // (the client never sends it), as is an audio frame without audio.
     if (!rd.ok || len > kVoiceMaxOpus || size_t(rd.end - rd.p) != len || (flags & ~(kVoiceStart | kVoiceEnd)) ||
-        (len == 0 && !(flags & kVoiceEnd))) {
+        ((flags & kVoiceEnd) ? (len != 0 || (flags & kVoiceStart)) : len == 0)) {
         c.conn.fail("invalid voice message");
         return;
     }
     const uint64_t now = nowMs();
     if (!c.voiceAbuse.take(now, kVoiceAbusePerSec)) { c.conn.fail("voice rate exceeded"); return; }
     // Budgets drop, they do not disconnect: a talker whose client stalled sends a burst.
-    // An END marker is never dropped, so a cut-off transmission still closes.
+    // An END marker skips the budgets so a cut-off transmission still closes, but only the
+    // one END owed to a transmission that relayed audio: ENDs can never outnumber the audio
+    // frames the budgets let through, and any other END reaches nobody.
     const bool end = flags & kVoiceEnd;
-    if (!end && (!c.voiceFrames.take(now, kVoiceFramesPerSec) || !c.voiceBytes.take(now, kVoiceBytesPerSec, len))) {
+    if (end) {
+        if (!c.voiceOpen) return;
+        c.voiceOpen = false;
+    } else if (!c.voiceFrames.take(now, kVoiceFramesPerSec) || !c.voiceBytes.take(now, kVoiceBytesPerSec, len)) {
         ++c.voiceDropped;
         if (now - c.voiceLogAt >= 5000 && commandLogs_.take(now, 4)) {
             c.voiceLogAt = now;
@@ -1843,6 +1852,7 @@ void Server::relayVoice(Client& c, Room& r, const Frame& f) {
         return;
     }
     if (!end && !voiceGlobal_.take(now, kVoiceGlobalFramesPerSec)) { ++voiceGlobalDropped_; return; }
+    if (!end) c.voiceOpen = true;
     const bool named = (flags & kVoiceStart) || c.voiceOut % kVoiceNameEvery == 0;
     ++c.voiceOut;
     Writer w;
@@ -3248,7 +3258,9 @@ bool Server::allowLobbyWork(Client& c,const Frame& f) {
     // A hostile peer behind a NAT must not disconnect healthy neighbours.
     // Keepalive has only the per-connection budget; shared exhaustion drops
     // expensive requests without revoking anybody else's session.
-    if(f.kind==Msg::Ping || f.kind==Msg::Pong)return true;
+    // VoiceListen too: one byte, sent only when the switch changes and never repeated, so a
+    // dropped one would leave this connection deaf to voice until the player toggled it.
+    if(f.kind==Msg::Ping || f.kind==Msg::Pong || f.kind==Msg::VoiceListen)return true;
     return keys.take("ip:"+c.peer,now,personal*4,cost) &&
        (c.account.empty() || keys.take("user:"+tak::auth::foldUsername(c.account),now,personal*2,cost)) &&
        global.take(now,shared,cost);
@@ -3480,6 +3492,7 @@ int Server::run() {
                 // Never silently accept plaintext while initial ACME issuance waits.
                 if(acme_ && !acme_->context()) {sockClose(fd);continue;}
                 setupSocket(fd);
+                limitUnsent(fd);   // voice yields to game traffic in the kernel's queue too
                 auto c = std::make_unique<Client>();
                 c->id = nextClientId_++;
                 c->conn = Conn(fd,acme_?acme_->context():tlsContext_);
