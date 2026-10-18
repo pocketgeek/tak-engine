@@ -222,7 +222,7 @@ struct Uplink {
                                          uint32_t(buf[off + 2]) << 16 | uint32_t(buf[off + 3]) << 24;
                     if (buf.size() - off - 4 < len) break;
                     const net::Msg kind = net::Msg(buf[off + 4]);
-                    const uint8_t* p = &buf[off + 5];
+                    const uint8_t* p = buf.data() + off + 5;   // may be one past the end (a bare Ping)
                     const uint64_t at = nowUs();
                     if (kind == net::Msg::Ping) {
                         const uint8_t pong[5] = {1, 0, 0, 0, uint8_t(net::Msg::Pong)};
