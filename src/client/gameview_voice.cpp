@@ -57,12 +57,27 @@
         SDL_Window* win = SDL_RenderGetWindow(ren_);
         const bool focused = win && (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS);
         ptt_.frame(on && !hotkeysScreen_, textEntryActive(), focused, down);
+        // The diplomacy VOLUME sliders, by slot. They belong to the game: in a room the
+        // slots may hold other people, so everyone plays at 100 there.
+        const bool inGame = mp_ && mp_->state() == tak::net::MpClient::State::InGame;
+        for (int p = 0; p < 8; ++p) voice_->setPlayerVolume(p, inGame ? voiceVolume_[size_t(p)] : 100);
         // Before the game runs the server sends to the whole room whatever the mask says,
         // as it does chat.
         const uint8_t mask = voiceRecipients_;
         voice_->update(room, ptt_.talking(), [this, mask](const tak::VoiceEngine::Frame& f) {
             if (mp_) mp_->sendVoice(f.seq, mask, f.flags, f.opus);
         });
+    }
+
+    bool GameView::voiceVolumeSlider(int p) const {
+        // Humans only (an AI has no voice), and never yourself (you never hear yourself).
+        return p >= 0 && p < 8 && p != localPlayer_ && (humanSlots_ & (1u << p));
+    }
+
+    void GameView::setVoiceVolumeAt(const SDL_FRect& track, int p, float mx) {
+        if (p < 0 || p >= 8 || track.w <= 0) return;
+        const float frac = std::clamp((mx - track.x) / track.w, 0.0f, 1.0f);
+        voiceVolume_[size_t(p)] = uint8_t(std::lround(frac * 100.0f));
     }
 
     void GameView::openVoiceOptions() {

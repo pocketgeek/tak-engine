@@ -415,10 +415,14 @@ address, an account and the server (a dropped one would never be repeated), but
 not from the connection's own. The client
 (`client/voice.h`) captures and plays on SDL audio devices of its own, buffers
 2–8 frames per talker, rebuilds a frame the server dropped from the next frame's
-FEC, and conceals a late one. Opus is built from its pinned source release
+FEC, and conceals a late one. It mixes the talkers with each one scaled by that
+player's diplomacy **VOLUME** slider (0-100 by player slot, 100 by default; humans
+other than yourself only, none for an AI), then applies OUTPUT VOLUME and a soft
+limiter. The sliders are local: never sent, hashed or recorded, reset to 100 each
+game, greyed while voice chat is off. Opus is built from its pinned source release
 (`cmake/Opus.cmake`) and linked only into takclient. Tests: `voice_test` (codec,
 jitter buffer, push-to-talk, engine on SDL's disk audio driver, the VOICE CHAT
-page), `voice_client_test` (MpClient on the wire), `server_voice_test.py`
+page, the per-player mix), `diplomacy_ui` (the VOLUME sliders), `voice_client_test` (MpClient on the wire), `server_voice_test.py`
 (routing, budgets, abuse against a real server), `server_voice_slow_test.py`
 (slow listeners do not hold up the game), `conn_test` (the low-priority queue).
 

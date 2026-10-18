@@ -917,7 +917,7 @@ loops back to where the patrol starts, as in retail.
 | **W** | Cycle the active weapon of a selected unit with multiple weapons |
 | **K** | Toggle cloak for selected units that can cloak |
 | **O** | Open / close selected gates |
-| **D** | Open diplomacy: give eligible selected units, toggle outgoing mana sharing with teammates, and choose chat and voice recipients |
+| **D** | Open diplomacy: give eligible selected units, toggle outgoing mana sharing with teammates, choose chat and voice recipients, and set each player's voice volume |
 | **Ctrl+Shift+D** | Toggle self-destruct for selected units; press again to cancel |
 
 ### Selection
@@ -1051,7 +1051,8 @@ the in-game menu and in Options' Audio section), pick the microphone and the voi
 output (the game's own sound device unless you choose another), each with a 0–100
 volume, then hold **Space** to talk in multiplayer rooms and games. The diplomacy
 screen's **Voice** column chooses who hears you, like the Chat column; everyone by
-default. Voice is relayed by the server beside the game (about 3 KB/s per talker),
+default. Its **Volume** column sets how loud each other human player's voice plays
+for you (100% by default, reset each game; computer players have none). Voice is relayed by the server beside the game (about 3 KB/s per talker),
 never recorded in replays, and gives way to game traffic: a player whose connection
 cannot carry it stops receiving voice for a while rather than slow the game.
 

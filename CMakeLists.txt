@@ -1174,14 +1174,14 @@ if(TAK_TEST_DATA)
             --shot "${CMAKE_CURRENT_BINARY_DIR}/diplomacy-test.png")
         set_tests_properties(diplomacy_ui PROPERTIES
             ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_DIPLOMACY_TEST=1"
-            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column"
+            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column, volume sliders"
             TIMEOUT 60)
         add_test(NAME retirement_ui COMMAND takclient game "Ulasem Arena"
             --data "${TAK_TEST_DATA}" --testbuild --time 0
             --shot "${CMAKE_CURRENT_BINARY_DIR}/retirement-ui.png")
         set_tests_properties(retirement_ui PROPERTIES
             ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_DIPLOMACY_TEST=1;TAK_RETIREMENT_TEST=1"
-            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column"
+            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column, volume sliders"
             TIMEOUT 60)
         add_test(NAME script_transient COMMAND takclient game "ulasem arena"
             --data "${TAK_TEST_DATA}" --firetest --nofog --time 0.1

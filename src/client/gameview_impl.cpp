@@ -3275,6 +3275,7 @@
                 if (!spectating_ && !replayMode_ && missionStem_.empty()) {
                     giveUnitsMenu_ = true;
                     giveUnitsHots_.clear();
+                    voiceVolumeDrag_ = -1;
                     dragging_ = false;
                 }
                 return true;

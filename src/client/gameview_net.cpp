@@ -146,17 +146,24 @@
         replayRec_.reset();
     }
 
+    void GameView::resetDiplomacy(const tak::net::RoomView& room) {
+        chatRecipients_=0xff;voiceRecipients_=0xff;requestedManaSharing_.reset();
+        voiceVolume_.fill(100);voiceVolumeDrag_=-1;humanSlots_=0;
+        for (int i=0;i<tak::net::kMaxSlots && i<8;++i)
+            if (room.slots[i].type==1) humanSlots_|=uint8_t(1u<<i);
+        giveUnitsMenu_=false;giveUnitsHots_.clear();
+    }
+
     void GameView::startMpGame(const tak::net::RoomView& room, uint32_t seed) {
         {
             std::lock_guard<std::mutex> lock(hitQueueMutex_);
             missionSoundQueue_.clear();
             unitSoundQueue_.clear();
         }
-        chatRecipients_=0xff;voiceRecipients_=0xff;requestedManaSharing_.reset();
+        resetDiplomacy(room);
         // A room field (SAY, a password) focused when the host started is let go: the game
         // has no such field, and its text input would otherwise hold push to talk off.
         if (lbField_) { lbField_ = 0; SDL_StopTextInput(); }
-        giveUnitsMenu_=false;giveUnitsHots_.clear();
         resultParticipants_.reset();
         if (room.mission.empty()) {
             resultParticipants_=0;

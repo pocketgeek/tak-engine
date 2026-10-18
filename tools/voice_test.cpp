@@ -9,7 +9,10 @@
 //  - the settings: voice chat OFF by default, a round trip through the file;
 //  - the engine on SDL's DISK audio driver: a synthetic tone in the capture file, captured
 //    only while talking, sent as START..END frames, played back (looped in as a remote
-//    talker) at the output volume, mic volume applied, a missing device falling back;
+//    talker) at the output volume and at a per-player VOLUME, mic volume applied, a
+//    missing device falling back;
+//  - the output mix: each talker at its diplomacy VOLUME (synthetic PCM, two talkers, one
+//    at 50%), then the output volume and the soft limiter;
 //  - the VOICE CHAT page: every row but the switch greyed and inert while off.
 #include "client/hotkeys.h"
 #include "client/options.h"
@@ -23,6 +26,7 @@
 
 #include <SDL.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -210,6 +214,70 @@ static void testPtt() {
           "Space and ordinary keys are");
 }
 
+// The output mix, as VoiceEngine::update() makes it: each talker's decoded frame scaled by
+// that player's diplomacy VOLUME and summed, then OUTPUT VOLUME and the soft limiter.
+static void testMix() {
+    std::printf("per-player volume mix\n");
+    constexpr int n = voice::kFrame;
+    VoiceEngine v;
+    bool full = true;
+    for (int p = 0; p < 8; ++p) full = full && v.playerVolume(p) == 100;
+    check(full && v.playerVolume(-1) == 100 && v.playerVolume(0xFF) == 100,
+          "every player (and a spectator, who has no slot) starts at 100");
+    v.setPlayerVolume(3, 150); v.setPlayerVolume(4, -5); v.setPlayerVolume(8, 10); v.setPlayerVolume(-1, 10);
+    check(v.playerVolume(3) == 100 && v.playerVolume(4) == 0 && v.playerVolume(8) == 100 && v.playerVolume(-1) == 100,
+          "VOLUME clamps to 0..100 and only player slots have one");
+
+    const auto a = tone(n, 0.4f, 440.0f), b = tone(n, 0.3f, 700.0f, 17);
+    float mix[n] = {}, plain[n] = {};
+    VoiceEngine::mixTalker(mix, a.data(), n, 100);
+    VoiceEngine::mixTalker(mix, b.data(), n, 50);
+    for (int i = 0; i < n; ++i) plain[i] = a[size_t(i)] + b[size_t(i)];
+    float err = 0;
+    for (int i = 0; i < n; ++i) err = std::max(err, std::fabs(mix[i] - (a[size_t(i)] + 0.5f * b[size_t(i)])));
+    check(err < 1e-6f, "two talkers, one at 50%: the mix is a + b/2 (max error " + std::to_string(err) + ")");
+    float bOnly[n] = {};
+    VoiceEngine::mixTalker(bOnly, b.data(), n, 50);
+    check(std::fabs(rms(bOnly, n) - 0.5f * rms(b.data(), n)) < 1e-4f, "the 50% talker plays at half level");
+    // Below the limiter's knee the finished frame is the sum at OUTPUT VOLUME.
+    float out[n];
+    std::copy(mix, mix + n, out);
+    VoiceEngine::finishMix(out, n, 100);
+    err = 0;
+    for (int i = 0; i < n; ++i) err = std::max(err, std::fabs(out[i] - mix[i]));
+    check(err < 1e-6f, "OUTPUT VOLUME 100 leaves a quiet mix as it is");
+    // Both at 100 is the plain sum: the default changes nothing.
+    float same[n] = {};
+    VoiceEngine::mixTalker(same, a.data(), n, 100);
+    VoiceEngine::mixTalker(same, b.data(), n, 100);
+    err = 0;
+    for (int i = 0; i < n; ++i) err = std::max(err, std::fabs(same[i] - plain[i]));
+    check(err == 0, "at the default 100 the mix is the plain sum, bit for bit");
+    float muted[n] = {};
+    VoiceEngine::mixTalker(muted, a.data(), n, 100);
+    VoiceEngine::mixTalker(muted, b.data(), n, 0);
+    err = 0;
+    for (int i = 0; i < n; ++i) err = std::max(err, std::fabs(muted[i] - a[size_t(i)]));
+    check(err == 0, "a talker at 0 adds nothing");
+    // The gain comes before OUTPUT VOLUME and the limiter: two loud talkers stay inside
+    // full scale, and halving one lowers the limited peak.
+    const auto loud1 = tone(n, 0.8f, 440.0f), loud2 = tone(n, 0.8f, 440.0f);
+    float hot[n] = {}, eased[n] = {};
+    VoiceEngine::mixTalker(hot, loud1.data(), n, 100); VoiceEngine::mixTalker(hot, loud2.data(), n, 100);
+    VoiceEngine::mixTalker(eased, loud1.data(), n, 100); VoiceEngine::mixTalker(eased, loud2.data(), n, 50);
+    VoiceEngine::finishMix(hot, n, 100); VoiceEngine::finishMix(eased, n, 100);
+    float peakHot = 0, peakEased = 0;
+    for (int i = 0; i < n; ++i) { peakHot = std::max(peakHot, std::fabs(hot[i])); peakEased = std::max(peakEased, std::fabs(eased[i])); }
+    check(peakHot <= 1.0f && peakEased <= 1.0f && peakEased < peakHot && peakEased > 0.9f,
+          "the limiter follows the per-player gain: " + std::to_string(peakHot) + " / " + std::to_string(peakEased));
+    float half[n];
+    std::copy(mix, mix + n, half);
+    VoiceEngine::finishMix(half, n, 50);
+    err = 0;
+    for (int i = 0; i < n; ++i) err = std::max(err, std::fabs(half[i] - 0.5f * mix[i]));
+    check(err < 1e-6f, "then OUTPUT VOLUME 50 halves the whole mix");
+}
+
 static void testSettings(const fs::path& dir) {
     std::printf("settings\n");
     const Settings d;
@@ -331,6 +399,14 @@ static void testEngine(const fs::path& dir) {
     const float half = playback(50);
     check(full > 0.35f && full < 0.75f, "the remote talker plays at full volume: peak " + std::to_string(full));
     check(half > full * 0.35f && half < full * 0.65f, "output volume 50 halves it: " + std::to_string(half));
+    // The talker's diplomacy VOLUME (slot 2) at 50 halves them too; another slot's does not.
+    v.setPlayerVolume(5, 0);
+    const float other = playback(100);
+    v.setPlayerVolume(2, 50);
+    const float player = playback(100);
+    v.setPlayerVolume(2, 100); v.setPlayerVolume(5, 100);
+    check(other > full * 0.8f && other < full * 1.25f, "another player's VOLUME leaves this talker alone: " + std::to_string(other));
+    check(player > full * 0.35f && player < full * 0.65f, "this player's VOLUME 50 halves them: " + std::to_string(player));
     check(v.stats().decoded > 20, "frames were decoded: " + std::to_string(v.stats().decoded));
 
     // Out of the room: no devices, and no talkers.
@@ -515,6 +591,7 @@ int main() {
     testCodec();
     testJitter();
     testPtt();
+    testMix();
     testSettings(dir);
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { std::printf("SDL_Init: %s\n", SDL_GetError()); return 1; }
     testEngine(dir);

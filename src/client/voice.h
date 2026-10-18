@@ -70,6 +70,17 @@ public:
     void push(Incoming in);
     // Forget every talker (leaving a room).
     void clearTalkers();
+    // One player's VOLUME from the diplomacy screen, by player slot: 0..100, 100 (the
+    // default) plays them as received. Applied to that talker's decoded voice before the
+    // mix, so it holds whether or not they are talking now. Local only: it changes what
+    // this machine plays and nothing else. A spectator (no slot) always plays at 100.
+    void setPlayerVolume(int slot, int percent);
+    int playerVolume(int slot) const;
+
+    // The output mix exactly as update() makes it, for the tests: add one talker's frame
+    // at its VOLUME, then finish the summed frame with OUTPUT VOLUME and the soft limiter.
+    static void mixTalker(float* mix, const float* pcm, int n, int percent);
+    static void finishMix(float* mix, int n, int outPercent);
 
     bool enabled() const;
     bool transmitting() const;               // sending right now

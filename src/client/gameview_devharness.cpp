@@ -644,6 +644,12 @@
             writableWorld().setPlayerCount(8);writableWorld().setTeam(1,0);localPlayer_=0;
             resultParticipants_=uint8_t((1u<<0)|(1u<<1)|(1u<<2)|(1u<<7));
             playerName_[0]="PLAYER";playerName_[1]="ALLY";playerName_[2]="ENEMY";playerName_[7]="DEFEATED";
+            {   // Humans in slots 0 (you), 1 and 7; the ENEMY in slot 2 is a computer player.
+                tak::net::RoomView room;
+                for(int i:{0,1,7})room.slots[i].type=1;
+                room.slots[2].type=2;
+                resetDiplomacy(room);
+            }
             writableWorld().player(7).defeated=true;hotkeys_.load({});
             const int monarch=spawn("araking",1800,2100,0,0);
             const int soldier=spawn("arasword",1650,2100,0,0);
@@ -682,6 +688,80 @@
             check(voiceRecipients_==0xff,"the chat column leaves voice alone");
             click(DiplomacyAction::Voice,2);check(!(voiceRecipients_ & 4) && (voiceRecipients_ & 2),"voice checkbox updates its recipients");
             click(DiplomacyAction::Voice,2);check(voiceRecipients_==0xff,"and back");
+            // VOLUME: a slider for each other human (ALLY, DEFEATED), none for yourself or the
+            // computer player, every one at 100; greyed and inert while voice chat is off.
+            const auto allFull=[&]{return std::all_of(voiceVolume_.begin(),voiceVolume_.end(),[](uint8_t v){return v==100;});};
+            const auto volumeHot=[&](int p) {
+                auto found=std::find_if(giveUnitsHots_.begin(),giveUnitsHots_.end(),[&](const auto& h){return h.action==DiplomacyAction::Volume && h.player==p;});
+                check(found!=giveUnitsHots_.end(),"VOLUME slider unavailable");
+                return found->rect;
+            };
+            const auto mouse=[&](Uint32 type,float mx,float my,bool held) {
+                SDL_Event e{};e.type=type;
+                if(type==SDL_MOUSEMOTION){e.motion.x=int(mx);e.motion.y=int(my);e.motion.state=held?SDL_BUTTON_LMASK:0;}
+                else{e.button.button=SDL_BUTTON_LEFT;e.button.x=int(mx);e.button.y=int(my);}
+                input(e,1000,700);
+            };
+            check(allFull(),"every VOLUME starts at 100");
+            check(voiceVolumeSlider(1) && voiceVolumeSlider(7),"a VOLUME slider for every other human");
+            check(!voiceVolumeSlider(0) && !voiceVolumeSlider(2) && !voiceVolumeSlider(3),"none for yourself, a computer player or an empty slot");
+            check(!has(DiplomacyAction::Volume,1) && !has(DiplomacyAction::Volume,7),"no voice engine: the sliders are greyed");
+            tak::VoiceEngine engine;   // opens nothing: it is never pumped, only asked whether voice is on
+            tak::Settings voiceCfg;
+            engine.configure(voiceCfg,"");voice_=&engine;drawGiveUnitsMenu(1000,700);
+            check(!has(DiplomacyAction::Volume,1) && !has(DiplomacyAction::Volume,7),"voice chat off: the sliders are greyed");
+            {   // ...and inert: a press where ALLY's slider sits changes nothing.
+                voiceCfg.voiceEnabled=true;engine.configure(voiceCfg,"");drawGiveUnitsMenu(1000,700);
+                const SDL_FRect r=volumeHot(1);
+                voiceCfg.voiceEnabled=false;engine.configure(voiceCfg,"");drawGiveUnitsMenu(1000,700);
+                mouse(SDL_MOUSEBUTTONDOWN,r.x+r.w*0.3f,r.y+r.h/2,true);mouse(SDL_MOUSEBUTTONUP,r.x+r.w*0.3f,r.y+r.h/2,false);
+                check(allFull() && voiceVolumeDrag_<0,"a greyed slider ignores the mouse");
+            }
+            voiceCfg.voiceEnabled=true;engine.configure(voiceCfg,"");drawGiveUnitsMenu(1000,700);
+            check(has(DiplomacyAction::Volume,1) && has(DiplomacyAction::Volume,7),"voice chat on: the sliders are live");
+            check(!has(DiplomacyAction::Volume,0) && !has(DiplomacyAction::Volume,2) && !has(DiplomacyAction::Volume,3),
+                  "still no slider for yourself or the computer player");
+            {
+                const SDL_FRect r=volumeHot(1);
+                mouse(SDL_MOUSEBUTTONDOWN,r.x+r.w*0.3f,r.y+r.h/2,true);
+                check(voiceVolume_[1]>=29 && voiceVolume_[1]<=31,"a press sets ALLY's VOLUME where it lands");
+                mouse(SDL_MOUSEBUTTONUP,r.x+r.w*0.3f,r.y+r.h/2,false);
+                // A new game puts every slider back to 100.
+                tak::net::RoomView room;
+                for(int i:{0,1,7})room.slots[i].type=1;
+                room.slots[2].type=2;
+                resetDiplomacy(room);
+                check(allFull() && humanSlots_==((1u<<0)|(1u<<1)|(1u<<7)),"a new game starts every VOLUME at 100");
+                input(key,1000,700);drawGiveUnitsMenu(1000,700);check(giveUnitsMenu_,"diplomacy reopens");
+                // Drag: past either end clamps to 0..100, and the release, wherever it lands,
+                // ends the drag without clicking what is under it (ENEMY's CHAT box here).
+                mouse(SDL_MOUSEBUTTONDOWN,r.x+r.w*0.5f,r.y+r.h/2,true);
+                check(voiceVolume_[1]>=49 && voiceVolume_[1]<=51 && voiceVolumeDrag_==1,"a press starts a drag");
+                mouse(SDL_MOUSEMOTION,r.x+r.w+80,r.y-40,true);check(voiceVolume_[1]==100,"dragged past the end: 100");
+                mouse(SDL_MOUSEMOTION,r.x-80,r.y,true);check(voiceVolume_[1]==0,"dragged past the start: 0");
+                mouse(SDL_MOUSEMOTION,r.x+r.w*0.5f,r.y,true);
+                const uint8_t chat=chatRecipients_;
+                auto box=std::find_if(giveUnitsHots_.begin(),giveUnitsHots_.end(),[&](const auto& h){return h.action==DiplomacyAction::Chat && h.player==2;});
+                check(box!=giveUnitsHots_.end(),"ENEMY has a CHAT box");
+                mouse(SDL_MOUSEBUTTONUP,box->rect.x+box->rect.w/2,box->rect.y+box->rect.h/2,false);
+                check(voiceVolumeDrag_<0 && chatRecipients_==chat && voiceVolume_[1]>=49 && voiceVolume_[1]<=51,
+                      "releasing a drag over another control only ends the drag");
+                check(voiceVolume_[7]==100 && voiceVolume_[0]==100 && voiceVolume_[2]==100,"one slider moves one player");
+                const SDL_FRect r7=volumeHot(7);
+                mouse(SDL_MOUSEBUTTONDOWN,r7.x+r7.w*0.25f,r7.y+r7.h/2,true);mouse(SDL_MOUSEBUTTONUP,r7.x+r7.w*0.25f,r7.y+r7.h/2,false);
+                check(voiceVolume_[7]>=24 && voiceVolume_[7]<=26 && voiceVolume_[1]>=49 && voiceVolume_[1]<=51,"DEFEATED's slider on its own");
+            }
+            if(const char* cap=tak::devEnv("TAK_DIPLOMACY_CAPTURE")) {   // the screen as drawn, to look at
+                SDL_SetRenderDrawColor(ren_,40,60,40,255);SDL_RenderClear(ren_);drawGiveUnitsMenu(1000,700);
+                int ow=0,oh=0;SDL_GetRendererOutputSize(ren_,&ow,&oh);
+                std::vector<uint8_t> px(size_t(ow)*size_t(oh)*4);
+                if (SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px.data(),ow*4)==0)tak::png::write(cap,ow,oh,px);
+                voiceCfg.voiceEnabled=false;engine.configure(voiceCfg,"");
+                SDL_SetRenderDrawColor(ren_,40,60,40,255);SDL_RenderClear(ren_);drawGiveUnitsMenu(1000,700);
+                if (SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px.data(),ow*4)==0)
+                    tak::png::write(std::string(cap)+".off.png",ow,oh,px);
+                voiceCfg.voiceEnabled=true;engine.configure(voiceCfg,"");
+            }
             // Push to talk never fires while a text field has focus.
             check(!textEntryActive(),"no text field focused");
             chatTyping_=true;check(textEntryActive(),"the chat composer counts as typing");chatTyping_=false;
@@ -697,7 +777,8 @@
             check(selection_==std::vector<int>{monarch} && world_.unit(soldier)->player==1 && world_.unit(soldier)->squad==0,"gift filters selection and removes old control group");
             input(key,1000,700);check(!giveUnitsMenu_,"D closes diplomacy");
             input(key,1000,700);drawGiveUnitsMenu(1000,700);
-            std::fprintf(stderr,"PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column, eligibility, gift and selection cleanup\n");
+            voice_=nullptr;   // the harness's engine is not the game's
+            std::fprintf(stderr,"PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column, volume sliders, eligibility, gift and selection cleanup\n");
             return;
         }
         if (tak::devFlag("TAK_CURSOR_TEST")) {

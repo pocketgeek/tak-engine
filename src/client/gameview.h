@@ -1487,13 +1487,24 @@ private:
     // the sim in lockstep at a fixed step, so scaling one peer's dt would desync.
     float speedMult() const;
     bool giveUnitsMenu_ = false;
-    enum class DiplomacyAction { Give, Mana, Chat, Voice, Close };
+    enum class DiplomacyAction { Give, Mana, Chat, Voice, Volume, Close };
     struct DiplomacyHot { SDL_FRect rect; int player; DiplomacyAction action; };
     std::vector<DiplomacyHot> giveUnitsHots_;
     uint8_t chatRecipients_ = 0xff;
     // Who hears this player's voice: the diplomacy VOICE column, with chat's defaults and
     // rules (everyone; reset each game; sent with every frame, enforced by the server).
     uint8_t voiceRecipients_ = 0xff;
+    // How loud each player's voice plays here: the diplomacy VOLUME sliders, 0..100 by
+    // slot, 100 by default. Local only (never sent, hashed or recorded); reset each game
+    // like the columns above. Only human players other than you get a slider.
+    std::array<uint8_t, 8> voiceVolume_{100, 100, 100, 100, 100, 100, 100, 100};
+    uint8_t humanSlots_ = 0;      // this game's human players (room slot type 1), by slot
+    int voiceVolumeDrag_ = -1;    // the player whose VOLUME slider is being dragged
+    bool voiceVolumeSlider(int p) const;   // does player p's row get a VOLUME slider?
+    // The diplomacy screen's choices as a new game starts: chat and voice to everyone, the
+    // usual mana sharing, every VOLUME at 100, and which slots are human.
+    void resetDiplomacy(const tak::net::RoomView& room);
+    void setVoiceVolumeAt(const SDL_FRect& track, int p, float mx);
     tak::VoiceEngine* voice_ = nullptr;
     tak::voice::PushToTalk ptt_;
     // A room that carries voice: connected and in a room or game, never a replay or a

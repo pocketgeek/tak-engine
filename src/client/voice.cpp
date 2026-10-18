@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <array>
 #include <map>
 
 namespace tak {
@@ -142,6 +143,7 @@ struct VoiceEngine::Impl {
         uint64_t lastMs = 0;
     };
     std::map<uint32_t, Talker> talkers;
+    std::array<uint8_t, 8> playerVol{100, 100, 100, 100, 100, 100, 100, 100};   // diplomacy VOLUME, by slot
     Stats stats;
 
     uint64_t now() const { return SDL_GetTicks64(); }
@@ -249,7 +251,6 @@ void VoiceEngine::update(bool inRoom, bool transmit, const Sender& send) {
 
     // ---- output: mix every talker, keep ~60 ms queued ahead of the device ----
     if (p.out.dev) {
-        const float vol = float(p.cfg.outVol) / 100.0f;
         for (int guard = 0; guard < 8 && SDL_GetQueuedAudioSize(p.out.dev) < kOutTargetBytes; ++guard) {
             float mix[voice::kFrame] = {};
             float pcm[voice::kFrame];
@@ -267,11 +268,11 @@ void VoiceEngine::update(bool inRoom, bool transmit, const Sender& send) {
                     case voice::Playout::Idle: break;
                 }
                 if (!ok) continue;
-                for (int i = 0; i < voice::kFrame; ++i) mix[i] += pcm[i];
+                mixTalker(mix, pcm, voice::kFrame, t.slot < 8 ? p.playerVol[t.slot] : 100);
                 any = true;
             }
             if (!any) break;   // nobody talking: let the device drain to silence
-            for (float& s : mix) s = limit(s * vol);
+            finishMix(mix, voice::kFrame, p.cfg.outVol);
             SDL_QueueAudio(p.out.dev, mix, sizeof mix);
         }
     }
@@ -294,6 +295,22 @@ void VoiceEngine::push(Incoming in) {
 }
 
 void VoiceEngine::clearTalkers() { p_->talkers.clear(); }
+
+void VoiceEngine::setPlayerVolume(int slot, int percent) {
+    if (slot >= 0 && slot < 8) p_->playerVol[size_t(slot)] = uint8_t(std::clamp(percent, 0, 100));
+}
+
+int VoiceEngine::playerVolume(int slot) const { return slot >= 0 && slot < 8 ? p_->playerVol[size_t(slot)] : 100; }
+
+void VoiceEngine::mixTalker(float* mix, const float* pcm, int n, int percent) {
+    const float g = float(std::clamp(percent, 0, 100)) / 100.0f;
+    for (int i = 0; i < n; ++i) mix[i] += pcm[i] * g;
+}
+
+void VoiceEngine::finishMix(float* mix, int n, int outPercent) {
+    const float vol = float(std::clamp(outPercent, 0, 100)) / 100.0f;
+    for (int i = 0; i < n; ++i) mix[i] = limit(mix[i] * vol);
+}
 
 bool VoiceEngine::enabled() const { return p_->cfg.enabled; }
 bool VoiceEngine::transmitting() const { return p_->sending; }

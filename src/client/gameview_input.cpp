@@ -117,6 +117,32 @@
             if (e.type == SDL_KEYDOWN && (e.key.keysym.sym == SDLK_ESCAPE ||
                 hotkeys_.match(e.key.keysym.sym, e.key.keysym.mod) == tak::Act::GiveUnits))
                 giveUnitsMenu_ = false;
+            // VOLUME sliders: press on one to set it and drag along it (as the Options
+            // sliders do). A slider only has a hot area while it is live.
+            const auto volumeHot = [&](int p) -> const DiplomacyHot* {
+                for (const auto& hot : giveUnitsHots_)
+                    if (hot.action == DiplomacyAction::Volume && hot.player == p) return &hot;
+                return nullptr;
+            };
+            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                for (const auto& hot : giveUnitsHots_) {
+                    const auto& r=hot.rect;
+                    if (hot.action != DiplomacyAction::Volume || e.button.x < r.x || e.button.x >= r.x+r.w ||
+                        e.button.y < r.y || e.button.y >= r.y+r.h) continue;
+                    voiceVolumeDrag_ = hot.player;
+                    setVoiceVolumeAt(r, hot.player, float(e.button.x));
+                    break;
+                }
+            }
+            if (e.type == SDL_MOUSEMOTION && voiceVolumeDrag_ >= 0) {
+                const DiplomacyHot* hot = volumeHot(voiceVolumeDrag_);
+                if (hot && (e.motion.state & SDL_BUTTON_LMASK)) setVoiceVolumeAt(hot->rect, voiceVolumeDrag_, float(e.motion.x));
+                else voiceVolumeDrag_ = -1;   // released unseen, or the slider went grey
+            }
+            if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT && voiceVolumeDrag_ >= 0) {
+                voiceVolumeDrag_ = -1;   // the end of a drag, not a click on whatever it ended over
+                return;
+            }
             if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                 for (const auto& hot : giveUnitsHots_) {
                     const auto& r=hot.rect;
@@ -126,6 +152,7 @@
                         case DiplomacyAction::Give: giveSelectedUnits(hot.player); break;
                         case DiplomacyAction::Chat: chatRecipients_ ^= uint8_t(1u<<hot.player); break;
                         case DiplomacyAction::Voice: voiceRecipients_ ^= uint8_t(1u<<hot.player); break;
+                        case DiplomacyAction::Volume: break;   // set on the press (above)
                         case DiplomacyAction::Mana: {
                             uint8_t mask=requestedManaSharing_.value_or(framePlayer(localPlayer_).manaShareMask);
                             mask ^= uint8_t(1u<<hot.player);
