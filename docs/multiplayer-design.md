@@ -359,23 +359,45 @@ and refuses frames while 64 KiB of game traffic waits. That ordering holds insid
 the program; once bytes are handed to the operating system they are sent in
 order, so voice also waits for the kernel: a batch (at most 1 KiB) joins the
 stream only while the kernel holds under 2 KiB for that peer, unsent or not yet
-acknowledged (`kernelQueued`: `SIOCOUTQ` on Linux, `SO_NWRITE` on macOS). A tick
-bundle queued later finds at most about 3 KiB of voice ahead of it whatever the
-link speed, and on a link the game already fills voice overflows its queue and is
-dropped. This applies to both ends, so a weak uplink does not queue a client's
-`Progress` behind its own voice either. The server also caps each client socket's
-unsent kernel queue at 16 KiB (`TCP_NOTSENT_LOWAT`, `limitUnsent`), so a backlog
-of game traffic waits in the program where the send-backlog limits see it.
-What the sender cannot see -- bytes in flight, or a slow reader's receive buffer --
-and Windows, which has no such query, are covered by the acknowledged tick: in a
-running game the server stops voice to a listener whose `Progress` lags the room
-by more than 3/4 of the lead it would have on an idle link (`flowLeadTicks` at its
-lowest reported round trip), drops its queued voice, and resumes once it is back
-within half that lead, after a back-off of 5 s doubling to 60 s
-(`Server::voiceBehind`). `server_voice_slow_test.py` reads two listeners (one
-seated, one spectating) at 1500 B/s while a third player talks: the room keeps
-about 27 of its 30 ticks a second and neither falls more than ~25 ticks behind;
-without these rules the room ran at 2-8 ticks a second.
+acknowledged (`kernelQueued`: `SIOCOUTQ` on Linux, `SO_NWRITE` on macOS; on
+Windows `SIO_TCP_INFO`, Windows 10 1703 or later, as the bytes `send()` accepted --
+counted by `Conn`, or the TLS socket BIO's count -- minus `BytesOut - BytesRetrans -
+BytesInFlight`). Where the kernel cannot answer, voice is dropped rather than sent
+ungated: before this, Windows let a talker's voice fill Winsock's 64 KiB send
+buffer ahead of every `Progress`. A tick bundle queued later finds at most about
+3 KiB of voice ahead of it whatever the link speed, and on a link the game already
+fills voice overflows its queue and is dropped. The server also caps each client
+socket's unsent kernel queue at 16 KiB (`TCP_NOTSENT_LOWAT`, `limitUnsent`), so a
+backlog of game traffic waits in the program where the send-backlog limits see it.
+
+What the sender's kernel cannot show -- a slow reader's receive buffer, or a few
+KiB of voice already ahead of a `Progress` on a link of a few kbit/s -- is caught
+at each end by how late the game's own traffic is:
+
+- **The talker's uplink** (`MpClient::sendVoice`). While transmitting, the client
+  pings the server four times a second (every two seconds while voice is on, for a
+  quiet baseline). A round trip more than max(100 ms, 4 ticks) above the lowest one
+  (back, or still out) means its own voice is queueing ahead of its `Progress` and commands: voice is
+  held -- an END closes the transmission, the queued voice is thrown away, captured
+  frames are dropped -- for a back-off of 5 s doubling to 60 s (forgotten after 2
+  quiet minutes), and resumes with a START once the probe is quiet.
+  `voice_uplink_test` (all platforms, Windows included) talks over a 2500 B/s
+  uplink: no `Progress` waits more than ~0.4 s, where without the hold Linux queued
+  up to 2.4 s and Windows 5.5 s after 15 s and 22 s after 60 s.
+- **A listener's downlink** (`Server::voiceBehind`). `Progress` reports the newest
+  tick that has *arrived* as well as the one processed. In a running game the server
+  stops voice to a listener whose arrival lags the room by more than 3/4 of the lead
+  it would have on an idle link (`flowLeadTicks` at its lowest reported round trip),
+  drops its queued voice, and resumes once it is back within half that lead, after
+  the same back-off. Arrival, not processing: a slow *machine* has its bundles in
+  hand and runs them late, and in a room it holds back it lags by its whole lead for
+  as long as that lasts, which is no reason to take its voice away.
+  `server_voice_slow_test.py` reads two listeners (one seated, one spectating) at
+  1500 B/s while a third player talks: the room keeps about 27 of its 30 ticks a
+  second and neither falls more than ~25 ticks behind; without these rules the room
+  ran at 2-8 ticks a second. Its `--case cpu` (ctest `server_voice_cpu`) seats a
+  fast-link player who runs 22 ticks a second: he holds the room and hears every
+  frame (judged by the processed tick he would have heard none).
 
 Per talker the server relays 60 frames / 16 KB a second and drops the
 excess. An END marker skips those budgets so a cut-off transmission still

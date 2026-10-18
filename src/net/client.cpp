@@ -31,6 +31,8 @@ bool MpClient::connect(const std::string& host, uint16_t port, const std::string
     resetOverrideTransfer();resetMapTransfer();
     room_=RoomView{};roomRequestPending_=false;
     voice_.clear(); voiceListenSent_ = 0;   // a new connection starts unheard: the server default is off
+    pingsOut_.clear(); voiceBaseRtt_ = UINT32_MAX;
+    voiceHeld_ = voiceOpen_ = voiceRestart_ = voiceSlowRtt_ = false;
     name_ = name;
     if (!conn_.connect(host, port)) { err_ = conn_.error(); state_ = State::Done; return false; }
     state_ = State::Connecting;
@@ -132,13 +134,11 @@ bool MpClient::poll() {
             else ++it;
         }
     }
-    // Active RTT probe (only when a consumer enabled it): one ping/sec.
-    if (measureRtt_ && !pingSentMs_ && now - lastPingMs_ > 1000) {
-        send(Msg::Ping); lastPingMs_ = now; pingSentMs_ = now;
-    }
-    if (now - lastRecvMs_ > kPingIdleMs && now - lastPingMs_ > kPingIdleMs) {
-        send(Msg::Ping); lastPingMs_ = now;
-    }
+    // Active RTT probes, one ping at a time: one a second when a consumer enabled them, and
+    // the voice uplink guard's (see voiceProbe).
+    if (measureRtt_ && pingsOut_.empty() && now - lastPingMs_ > 1000) sendPing(now);
+    voiceProbe(now);
+    if (now - lastRecvMs_ > kPingIdleMs && now - lastPingMs_ > kPingIdleMs) sendPing(now);
     // A spectator's render loop can freeze for several seconds on a heavy frame
     // (big supersampled resolution under VRAM pressure) without pumping the socket;
     // give it the same long grace the server extends to spectators so a transient
@@ -753,11 +753,17 @@ void MpClient::onFrame(const Frame& f) {
             break;
         case Msg::Ping: send(Msg::Pong); break;
         case Msg::Pong:
-            if (pingSentMs_) {
-                // Add the modelled return-path delay so RTT reflects the test link.
-                float sample = float(nowMs() - pingSentMs_) + float(receiveDelayMs());
-                rttMs_ = rttMs_ > 0 ? 0.7f * rttMs_ + 0.3f * sample : sample;
-                pingSentMs_ = 0;
+            if (!pingsOut_.empty()) {
+                const uint64_t now = nowMs(), rtt = now - pingsOut_.front();
+                pingsOut_.pop_front();
+                if (measureRtt_) {
+                    // Add the modelled return-path delay so RTT reflects the test link.
+                    float sample = float(rtt) + float(receiveDelayMs());
+                    rttMs_ = rttMs_ > 0 ? 0.7f * rttMs_ + 0.3f * sample : sample;
+                }
+                const uint32_t ms = uint32_t(std::min<uint64_t>(rtt, 60000));
+                voiceBaseRtt_ = voiceBaseRtt_ == UINT32_MAX ? ms : std::min(voiceBaseRtt_ + 1, ms);
+                voiceProbe(now, int64_t(rtt));
             }
             break;
         case Msg::Bye: err_ = r.str(); state_ = State::Done; break;
@@ -1020,11 +1026,69 @@ void MpClient::sendVoice(uint16_t seq, uint8_t recipients, uint8_t flags, const 
     if (state_ != State::InRoom && state_ != State::Starting && state_ != State::InGame) return;
     if (opus.size() > kVoiceMaxOpus || opus.empty() != bool(flags & kVoiceEnd) ||
         (flags & (kVoiceStart | kVoiceEnd)) == (kVoiceStart | kVoiceEnd)) return;   // the server fails these
+    const bool end = flags & kVoiceEnd;
+    const uint64_t now = nowMs();
+    if (!end) voiceTxAt_ = now;
+    if (voiceHeld_) {   // the hold already closed the transmission (holdVoice)
+        if (!end) ++voiceHeldFrames_;
+        return;
+    }
+    if (end) voiceRestart_ = false;
+    else if (voiceRestart_) { flags |= kVoiceStart; voiceRestart_ = false; }   // a fresh start after a hold
     Writer w;
     w.u16(seq); w.u8(recipients); w.u8(flags); w.u16(uint16_t(opus.size()));
     w.b.insert(w.b.end(), opus.begin(), opus.end());
+    voiceSeq_ = seq; voiceMask_ = recipients; voiceOpen_ = !end;
     conn_.sendLow(Msg::VoiceUp, w.b);
     if (!conn_.flushWrite() && err_.empty()) err_ = conn_.error();   // out now, not a frame later
+}
+
+// How far above the quiet round trip a probe may come back before this client's own voice
+// counts as queueing ahead of its game traffic: 4 ticks at the current speed, at least
+// 100 ms (a few ticks of the 16-tick reserve every lead keeps, flowLeadTicks).
+uint64_t MpClient::voiceSlackMs() const {
+    return std::max<uint64_t>(100, 40000 / (30 * uint64_t(std::max<uint8_t>(gameSpeed_, 1))));
+}
+
+// The voice uplink guard (sendVoice): probe the round trip, hold voice when it shows
+// queueing, release the hold once the back-off is over and the probe is quiet. Run from
+// poll(), and on each Pong with the round trip it measured (rtt, else -1).
+void MpClient::voiceProbe(uint64_t now, int64_t rtt) {
+    const bool inRoom = state_ == State::InRoom || state_ == State::Starting || state_ == State::InGame;
+    const bool talking = inRoom && voiceTxAt_ && now - voiceTxAt_ < 1000;
+    if (rtt < 0 && (talking || (inRoom && voiceListen_)) && pingsOut_.empty() &&
+        now - lastPingMs_ >= (talking ? 250u : 2000u))
+        sendPing(now);
+    if (voiceBaseRtt_ == UINT32_MAX) return;
+    // Queueing shows as a probe back past the limit, or one still out past it. Acting on the
+    // first is deliberate: waiting for a second costs another probe interval of voice
+    // queued ahead of the game (a 2500 B/s uplink: worst Progress delay 0.4 s -> 0.8 s),
+    // and a blip on the route that trips it costs only a few seconds of voice.
+    const uint64_t limit = voiceBaseRtt_ + voiceSlackMs();
+    if (rtt >= 0) voiceSlowRtt_ = uint64_t(rtt) > limit;
+    const bool queueing = voiceSlowRtt_ || (!pingsOut_.empty() && now - pingsOut_.front() > limit);
+    if (voiceHeld_) {
+        if (now >= voiceHeldUntil_ && !queueing) voiceHeld_ = false;
+    } else if (talking && queueing) {
+        holdVoice(now);
+    }
+}
+
+void MpClient::holdVoice(uint64_t now) {
+    if (now - voiceTripAt_ > 120000) voiceStrikes_ = 0;
+    voiceTripAt_ = now;
+    voiceHeldUntil_ = now + std::min<uint64_t>(5000ull << std::min(voiceStrikes_, 4u), 60000);
+    ++voiceStrikes_;
+    voiceHeld_ = true;
+    conn_.dropLow();
+    if (voiceOpen_) {
+        // Close the transmission now, as an ordinary frame: it follows whatever voice
+        // already left, and the listeners stop waiting for more.
+        Writer w; w.u16(uint16_t(voiceSeq_ + 1)); w.u8(voiceMask_); w.u8(kVoiceEnd); w.u16(0);
+        send(Msg::VoiceUp, w);
+        voiceOpen_ = false;
+        voiceRestart_ = true;
+    }
 }
 
 void MpClient::startGame() { startRequested_ = true; startError_.clear(); }
@@ -1098,6 +1162,7 @@ void MpClient::sendHash(uint32_t tick, uint64_t hash, uint64_t posDigest) {
 void MpClient::sendProgress(uint32_t tick) {
     Writer w; w.u32(tick);
     w.u32(uint32_t(std::min(rttMs_ > 0 ? rttMs_ + 0.5f : 0.0f, 60000.0f)));
+    w.u32(bundles_.empty() ? tick : std::max(tick, bundles_.rbegin()->first));   // arrived, not yet run
     send(Msg::Progress, w);
 }
 

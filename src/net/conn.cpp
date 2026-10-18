@@ -15,6 +15,9 @@
 #ifdef __linux__
 #include <linux/sockios.h>
 #endif
+#ifdef _WIN32
+#include <mstcpip.h>
+#endif
 #include <utility>
 
 namespace tak::net {
@@ -37,18 +40,55 @@ void limitUnsent(int fd) {
 #endif
 }
 
-long kernelQueued(int fd) {
+#ifdef _WIN32
+namespace {
+// SIO_TCP_INFO version 0 (mstcpip.h declares it only for _WIN32_WINNT >= Windows 10
+// 1703, above what this build targets, so the layout is restated here; the ioctl simply
+// fails on an older Windows).
+struct TcpInfoV0 {
+    int state;
+    ULONG mss;
+    ULONG64 connectionTimeMs;
+    BOOLEAN timestampsEnabled;
+    ULONG rttUs, minRttUs, bytesInFlight, cwnd, sndWnd, rcvWnd, rcvBuf;
+    ULONG64 bytesOut, bytesIn;
+    ULONG bytesReordered, bytesRetrans, fastRetrans, dupAcksIn, timeoutEpisodes;
+    UCHAR synRetrans;
+};
+constexpr DWORD kSioTcpInfo = _WSAIORW(IOC_VENDOR, 39);
+}  // namespace
+#endif
+
+long kernelQueued(int fd, uint64_t written) {
 #if defined(__linux__) && defined(SIOCOUTQ)
+    (void)written;
     int n = 0;
     return ioctl(fd, SIOCOUTQ, &n) == 0 ? long(n) : -1;
 #elif defined(__APPLE__) && defined(SO_NWRITE)
+    (void)written;
     int n = 0;
     socklen_t len = sizeof n;
     return getsockopt(fd, SOL_SOCKET, SO_NWRITE, &n, &len) == 0 ? long(n) : -1;
+#elif defined(_WIN32)
+    DWORD version = 0, got = 0;
+    TcpInfoV0 info{};
+    if (fd < 0 || WSAIoctl(SOCKET(fd), kSioTcpInfo, &version, sizeof version, &info, sizeof info, &got, nullptr,
+                           nullptr) != 0 || got < sizeof info)
+        return -1;
+    // BytesOut counts retransmissions too; what is left once those and the bytes in flight
+    // are taken off has been acknowledged.
+    const uint64_t acked = info.bytesOut - info.bytesRetrans - info.bytesInFlight;
+    return written > acked ? long(std::min<uint64_t>(written - acked, 1u << 30)) : 0;
 #else
-    (void)fd;
+    (void)fd; (void)written;
     return -1;
 #endif
+}
+
+long Conn::kernelQueued() const {
+    // Under TLS every byte goes through the socket BIO, whose count includes the handshake.
+    const uint64_t written = tls_ ? BIO_number_written(SSL_get_wbio(static_cast<SSL*>(tls_))) : wireOut_;
+    return tak::net::kernelQueued(fd_, written);
 }
 
 Conn::Conn(int fd,std::shared_ptr<TlsContext> tls):tlsContext_(std::move(tls)),fd_(fd) {
@@ -79,6 +119,7 @@ Conn& Conn::operator=(Conn&& o) noexcept {
         fd_ = o.fd_; err_ = std::move(o.err_);
         rxBuf_ = std::move(o.rxBuf_); rxOff_ = o.rxOff_;
         txBuf_ = std::move(o.txBuf_); txOff_ = o.txOff_;
+        wireOut_ = o.wireOut_; o.wireOut_ = 0;
         low_ = std::move(o.low_); lowDropped_ = o.lowDropped_; o.low_.clear(); o.lowDropped_ = 0;
         lowGated_ = o.lowGated_; o.lowGated_ = false;
         peerClosed_ = o.peerClosed_;   // part of the socket's state, like err_
@@ -188,11 +229,14 @@ bool Conn::sendLow(Msg kind, const std::vector<uint8_t>& payload) {
 // drained, and only kLowPromoteBytes at a time: whatever is queued after them waits
 // behind at most kLowKernelMax + kLowPromoteBytes bytes of voice. On a link the game
 // already fills, the kernel's queue never drains that far and the voice queue overflows
-// and drops instead (sendLow keeps only the newest frames).
+// and drops instead (sendLow keeps only the newest frames). Where the kernel cannot report
+// its queue the voice is thrown away: unchecked, it would fill the kernel's whole send
+// buffer (64 KiB on Windows) on a slow link, ahead of every tick acknowledgement.
 void Conn::promoteLow() {
     lowGated_ = false;
     if (low_.empty() || txOff_ != txBuf_.size() || tlsWriteSize_) return;
-    const long queued = kernelQueued(fd_);
+    const long queued = kernelQueued();
+    if (queued < 0) { dropLow(); return; }
     if (queued >= kLowKernelMax) { lowGated_ = true; return; }
     txBuf_.clear(); txOff_ = 0;
     while (!low_.empty() && txBuf_.size() < kLowPromoteBytes) {
@@ -228,7 +272,7 @@ bool Conn::flushWrite() {
             tlsWriteSize_=0;tlsWantWrite_=false;
         } else n=::send(fd_,reinterpret_cast<const char*>(txBuf_.data()+txOff_),
                        int(std::min(txBuf_.size()-txOff_,size_t(1u<<20)-sent)),MSG_NOSIGNAL);
-        if (n > 0) { txOff_ += size_t(n); sent+=size_t(n); continue; }
+        if (n > 0) { txOff_ += size_t(n); sent+=size_t(n); if(!tls_)wireOut_+=uint64_t(n); continue; }
         if (n < 0 && sockWouldBlock(sockErr())) break;   // socket full
         err_ = "send failed: " + sockErrStr(sockErr());
         return false;

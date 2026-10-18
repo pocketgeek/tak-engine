@@ -2037,6 +2037,10 @@ add_test(NAME spectator_client COMMAND spectator_client_test)
 add_executable(voice_client_test tools/voice_client_test.cpp)
 target_link_libraries(voice_client_test PRIVATE tak-formats)
 add_test(NAME voice_client COMMAND voice_client_test)
+add_executable(voice_uplink_test tools/voice_uplink_test.cpp)
+target_link_libraries(voice_uplink_test PRIVATE tak-formats)
+add_test(NAME voice_uplink COMMAND voice_uplink_test)
+set_tests_properties(voice_uplink PROPERTIES TIMEOUT 90)
 set_tests_properties(spectator_client PROPERTIES TIMEOUT 60)
 # TAK_PACELOG's summary (src/client/pacelog.h, header-only).
 add_executable(pacelog_test tools/pacelog_test.cpp)
@@ -2113,14 +2117,14 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_voice_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_voice PROPERTIES TIMEOUT 120)
-    # The voice gate the slow listener relies on reads the kernel's send queue, which
-    # Windows cannot report (only the server's lag check works there): Linux and macOS.
-    if(NOT WIN32)
-      add_test(NAME server_voice_slow COMMAND "${Python3_EXECUTABLE}"
-        "${CMAKE_SOURCE_DIR}/tools/server_voice_slow_test.py"
-        --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
-      set_tests_properties(server_voice_slow PROPERTIES TIMEOUT 120)
-    endif()
+    # Voice to a listener on a slow link (and, --case cpu, to a slow machine, which keeps it).
+    add_test(NAME server_voice_slow COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_voice_slow_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    add_test(NAME server_voice_cpu COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_voice_slow_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --case cpu)
+    set_tests_properties(server_voice_slow server_voice_cpu PROPERTIES TIMEOUT 120)
     add_test(NAME server_map_scenario COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_map_scenario_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --map-tool "$<TARGET_FILE:map_transfer_test>")

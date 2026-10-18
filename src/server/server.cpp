@@ -229,6 +229,7 @@ struct Client {
     tak::net::maps::Sender mapSend;
 
     uint32_t ackTick = 0;   // latest tick this client reported processing (StateHash or Progress)
+    uint32_t arrivedTick = 0;   // latest tick it reported having received (Progress; >= ackTick)
     // How far the room may run past ackTick for this client: kMaxLeadTicks until it sends
     // Msg::Progress, then flowLeadTicks() from that report's RTT (WE S3).
     uint32_t leadTicks = kMaxLeadTicks;
@@ -1770,7 +1771,7 @@ void Server::sendGameStarting(Client& c, Room& r, uint8_t slot, uint64_t token, 
     }
     c.conn.send(Msg::GameStarting, w);
     if (catchUp) { c.replaying = true; c.replayPos = 0; }
-    c.ackTick = 0; c.leadTicks = kMaxLeadTicks;   // flow control starts over with this game
+    c.ackTick = c.arrivedTick = 0; c.leadTicks = kMaxLeadTicks;   // flow control starts over with this game
 }
 
 void Server::broadcastLobby(Room& r) {
@@ -1828,17 +1829,21 @@ void Server::broadcastRoom(Room& r, Msg kind, const Writer& w, uint32_t exceptCl
 // listener's TCP stream with its tick bundles, so on a link too slow for both it delays
 // them -- and a seated player's delay holds the whole room (canAdvance). Conn's own rules
 // keep voice behind game traffic and bound how much the kernel holds, but not what is
-// already on its way (in flight, or in a slow reader's receive buffer), and on Windows
-// the kernel cannot be asked at all. So the acknowledged tick decides: past 3/4 of the
-// lead the listener would get on an idle link (flowLeadTicks at its base round trip),
-// voice to it stops and its queued voice is dropped; it resumes once it is back within
-// half that lead, but not before a back-off of 5 s that doubles with each repeat (to
-// 60 s; forgotten after 2 quiet minutes), so a link that cannot carry voice is not
-// probed again every few seconds. The game's own pace never depends on voice.
+// already on its way (in flight, or in a slow reader's receive buffer). So the tick the
+// listener last reported RECEIVING decides: past 3/4 of the lead it would get on an idle
+// link (flowLeadTicks at its base round trip), voice to it stops and its queued voice is
+// dropped; it resumes once it is back within half that lead, but not before a back-off of
+// 5 s that doubles with each repeat (to 60 s; forgotten after 2 quiet minutes), so a link
+// that cannot carry voice is not probed again every few seconds. The game's own pace never
+// depends on voice. The received tick, not the processed one: a slow MACHINE has its
+// bundles in hand and runs them late, and in a room it holds back it lags by its whole
+// lead for as long as that lasts -- voice is not what delays it. (A client that does not
+// report it counts as having received only what it processed.)
 bool Server::voiceBehind(Client& d, const Room& r, uint64_t now) {
     const uint32_t lead = d.baseRttMs == UINT32_MAX ? d.leadTicks
                                                     : tak::net::flowLeadTicks(int(r.opts.speed), d.baseRttMs);
-    const uint64_t lag = r.tick > d.ackTick ? r.tick - d.ackTick : 0;
+    const uint32_t arrived = std::max(d.ackTick, d.arrivedTick);
+    const uint64_t lag = r.tick > arrived ? r.tick - arrived : 0;
     if (d.voiceMuted) {
         if (now < d.voiceMutedUntil || lag * 2 > lead) return true;
         d.voiceMuted = false;
@@ -2939,12 +2944,14 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if (!r->running) return;
             Reader rd(f.payload.data(), f.payload.size());
             uint32_t tk = rd.u32(), rtt = rd.u32();
+            const uint32_t arrived = rd.p != rd.end ? rd.u32() : tk;   // optional (protocol 276)
             if (!rd.ok || rd.p != rd.end) {
                 if(!r->campaignBattleId.empty())r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;
                 return;
             }
             if (tk >= r->tick) break;
             if (tk > c.ackTick) c.ackTick = tk;
+            if (arrived >= tk && arrived < r->tick && arrived > c.arrivedTick) c.arrivedTick = arrived;
             c.leadTicks = tak::net::flowLeadTicks(int(r->opts.speed), rtt);
             c.baseRttMs = c.baseRttMs == UINT32_MAX ? rtt : std::min(rtt, c.baseRttMs + 1);
             break;

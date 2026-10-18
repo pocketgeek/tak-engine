@@ -9,6 +9,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -188,7 +189,17 @@ public:
     // traffic queued in this program and in the kernel, and is dropped when the link is
     // backed up. Ignored outside a room.
     // recipients: the diplomacy VOICE mask (0xff = everyone, as for chat).
+    // The uplink is guarded too, since what the kernel already holds still goes ahead of
+    // the Progress and commands queued after it: while this client transmits it pings the
+    // server four times a second (and every two seconds while voice is on, for a quiet
+    // baseline), and a round trip more than max(100 ms, 4 ticks) above that baseline (back,
+    // or still out) means its own voice is queueing on the link. Voice is then held -- captured frames are
+    // dropped, an END closes the transmission at once, and the queued voice is thrown
+    // away -- for a back-off of 5 s that doubles with each repeat (to 60 s, forgotten after
+    // 2 quiet minutes), and resumes (with a START) once the probe is quiet again.
     void sendVoice(uint16_t seq, uint8_t recipients, uint8_t flags, const std::vector<uint8_t>& opus);
+    bool voiceHeld() const { return voiceHeld_; }
+    uint64_t voiceHeldFrames() const { return voiceHeldFrames_; }   // captured frames the hold dropped
     struct VoiceFrame {
         uint32_t talker = 0;      // the talker's connection id
         uint8_t slot = 0xFF;      // their player slot, 0xFF = spectator
@@ -367,6 +378,21 @@ private:
     uint64_t voiceDropped_ = 0;
     bool voiceListen_ = false;       // what the host wants
     int voiceListenSent_ = 0;        // what this connection last told the server (0 = its default, off)
+    // The uplink guard (sendVoice). voiceTxAt_: the last captured audio frame (transmitting
+    // while recent). voiceBaseRtt_: the lowest probe round trip, allowed to creep up 1 ms a
+    // sample so a route that got slower is followed. voiceOpen_: the last frame sent was
+    // audio, so a hold owes the server an END; voiceRestart_: a hold cut a transmission, so
+    // the next audio frame carries START.
+    uint64_t voiceTxAt_ = 0, voiceHeldUntil_ = 0, voiceTripAt_ = 0, voiceHeldFrames_ = 0;
+    uint32_t voiceBaseRtt_ = UINT32_MAX;
+    unsigned voiceStrikes_ = 0;
+    // voiceSlowRtt_: the last probe came back past the limit.
+    bool voiceHeld_ = false, voiceOpen_ = false, voiceRestart_ = false, voiceSlowRtt_ = false;
+    uint16_t voiceSeq_ = 0;
+    uint8_t voiceMask_ = 0xff;
+    uint64_t voiceSlackMs() const;
+    void voiceProbe(uint64_t now, int64_t rtt = -1);
+    void holdVoice(uint64_t now);
 
     uint64_t dataHash_ = 0;      // local gameplay-data fingerprint (sent in Hello)
     uint32_t startSeed_ = 0;
@@ -388,6 +414,10 @@ private:
     bool desynced_ = false;
     std::string desyncReason_;
     uint64_t lastRecvMs_ = 0, lastPingMs_ = 0;
+    // Send time of every Ping still waiting for its Pong, oldest first (the server answers
+    // in order). Probes go out only while this is empty.
+    std::deque<uint64_t> pingsOut_;
+    void sendPing(uint64_t now) { send(Msg::Ping); lastPingMs_ = now; pingsOut_.push_back(now); }
 
     // ---- account login state ------------------------------------------------
     std::string loginUser_, loginPass_;
@@ -429,7 +459,6 @@ private:
     // Round-trip time, measured with active pings when a consumer asks for it
     // (the adaptive jitter buffer). Off by default -> no extra traffic.
     bool measureRtt_ = false;
-    uint64_t pingSentMs_ = 0;           // outstanding RTT ping send time (0 = none)
     float rttMs_ = 0;                   // smoothed round-trip time
     // Bundle-arrival jitter: how much later than the 30 Hz schedule bundles land,
     // as a slowly-decaying recent max. This is what the jitter buffer must cover.

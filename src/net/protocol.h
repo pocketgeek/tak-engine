@@ -658,11 +658,14 @@ enum class Msg : uint8_t {
     CrusadesGetReplayChunk,      // C->S: battle ID + bounded offset/limit
     CrusadesReplayChunk,         // S->C: request-bound immutable replay bytes
     OverrideOffer, OverrideRequest, OverrideChunk, OverrideReady, OverrideError,
-    Progress,           // C->S: u32 tick (last tick PROCESSED), u32 rttMs (the client's smoothed ping).
-                        // Flow control only (WE S3), every kProgressPeriod processed ticks: it
-                        // moves the sender's ack tick and its lead (flowLeadTicks), is never
-                        // hash-checked and never recorded. A tick the server has not closed is
-                        // ignored, as for StateHash.
+    Progress,           // C->S: u32 tick (last tick PROCESSED), u32 rttMs (the client's smoothed ping)
+                        // [, u32 received: the newest tick whose bundle has ARRIVED, >= tick;
+                        // protocol 276, optional]. Flow control only (WE S3), every
+                        // kProgressPeriod processed ticks: it moves the sender's ack tick and its
+                        // lead (flowLeadTicks), is never hash-checked and never recorded. A tick
+                        // the server has not closed is ignored, as for StateHash. `received`
+                        // tells a slow link (bundles late to arrive) from a slow machine
+                        // (bundles waiting to run): voice is paused only for the first.
     // Selection-order transaction (protocol 267; formats beside kOrderMaxMembers).
     OrderBegin,         // C->S
     OrderMembers,       // C->S

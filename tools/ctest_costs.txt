@@ -62,9 +62,11 @@ legion_gen1_route_54772_om1 20
 cartographer_place_features 20
 crusades_ui_network 19
 legion_scenario_strait-2x150 19
+voice_uplink 19
 legion_check_unreach-200 18
 legion_situation_r9-61930_legion 18
 movement_orders_maze 18
+server_voice_slow 18
 cartographer_feature_ops_veruna 17
 legion_movement_orders_maze 16
 structure_combat 16
@@ -72,6 +74,7 @@ cartographer_feature_ops_aramon 16
 legion_situation_r10-46292_retail 15
 override_transfer 15
 cartographer_feature_ops_zhon 15
+server_voice_cpu 15
 legion_gen1_route_36057_om1 14
 cartographer_place_units 14
 server_speed_pacing 13

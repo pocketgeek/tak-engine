@@ -51,8 +51,7 @@ public:
     // it is never queued ahead of a tick bundle or a command here, and a bundle queued
     // later finds at most a few KiB of voice ahead of it in the kernel, whatever the link
     // speed: voice takes only the capacity the game leaves. Where the kernel cannot say
-    // (Windows) only the first rule holds, and the server's lag check (relayVoice) is what
-    // keeps voice from piling up ahead of a slow recipient's ticks.
+    // (an old Windows, see kernelQueued()) the voice is dropped: it never goes out ungated.
     // It is dropped, never buffered without bound, when this peer is not keeping up: the
     // newest kLowMaxFrames survive, and nothing is queued while kLowBackpressure bytes of
     // ordinary frames wait. Returns false when the frame was dropped on arrival.
@@ -70,6 +69,9 @@ public:
     // nothing about that, so wantWrite() leaves them out and the caller must flushWrite()
     // again soon on its own (the server caps its poll timeout while this holds).
     bool lowWaiting() const { return lowGated_ && !low_.empty(); }
+    // Bytes the kernel holds for this peer (unsent, or sent and not yet acknowledged), or
+    // -1 where it cannot say. See the free kernelQueued() below.
+    long kernelQueued() const;
 
     // Non-blocking I/O against the ready socket:
     //  recv(): read available bytes into rxBuf_; false on ERROR only -- a clean peer
@@ -105,6 +107,7 @@ private:
     size_t rxOff_ = 0;
     std::vector<uint8_t> txBuf_;
     size_t txOff_ = 0;
+    uint64_t wireOut_ = 0;                   // bytes send() has accepted on this socket (no TLS)
     std::deque<std::vector<uint8_t>> low_;   // framed low-priority messages, oldest first
     uint64_t lowDropped_ = 0;
     bool lowGated_ = false;                  // promoteLow() last held back for the kernel's queue
@@ -133,8 +136,11 @@ void setupSocket(int fd);
 // large transfer just needs the server loop to top the kernel up every 16 KiB.
 void limitUnsent(int fd);
 // Bytes the kernel holds for this socket's peer: not yet sent plus sent but not yet
-// acknowledged (SIOCOUTQ on Linux, SO_NWRITE on macOS). -1 where the platform has no
-// such query (Windows).
-long kernelQueued(int fd);
+// acknowledged (SIOCOUTQ on Linux, SO_NWRITE on macOS). Windows has no such query, but
+// its TCP_INFO (Windows 10 1703 and later) counts the bytes put on the wire, so there it
+// is `written` -- every byte send() has accepted on the socket, which the caller counts
+// (Conn::kernelQueued does) -- minus the bytes acknowledged (BytesOut - BytesRetrans -
+// BytesInFlight). -1 when the query fails or the platform has none.
+long kernelQueued(int fd, uint64_t written = 0);
 
 }  // namespace tak::net
