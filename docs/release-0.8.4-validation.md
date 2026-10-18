@@ -1,6 +1,5 @@
 # 0.8.4 release validation
 
-<!-- The tag line and the CI and packages section are filled in after tagging. -->
 
 Protocol **277** (0.8.3: 266), replay format **13**, generator version **8**,
 campaign payload **4**, database schema **9** (the last four unchanged since
@@ -16,7 +15,7 @@ campaign payload **4**, database schema **9** (the last four unchanged since
      the voice chat step.) If kNetVersion moves past 277, update every one of
      them. -->
 
-PENDING: Tagged `v0.8.4` at `<sha>` and published on `<date>`.
+Tagged `v0.8.4` at `de8cd784` (annotated tag object `1fc81edd`) and published on 2026-10-18 23:03 UTC.
 
 ## Scope and compatibility
 
@@ -856,24 +855,56 @@ Logs:
 
 ## CI and packages
 
-PENDING. Determinism (dispatched on the tag: `gh workflow run determinism.yml
---ref v0.8.4`), Linux, Windows and macOS on `main` and on the tag (macOS x64
-`stream_test` is a known timing flake: one rerun allowed). All assets
-downloaded and checked against GitHub's SHA-256 digests and sizes; ZIP CRCs;
-build ids `v0.8.4` with no `-dirty`; Windows signatures (`Get-AuthenticodeSignature`
-on oden-win); macOS notarization and stapling on the MacBook.
+The final source (`de8cd784`) passed the Determinism, Linux, Windows and macOS
+workflows on `main` (runs 39167653985, 39167653927, 39167654128 and
+39167654074). On the exact tag, Determinism, Linux and Windows passed on the
+first attempt; macOS needed one rerun:
+
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/39170719631), started manually on the tag because the workflow is path-filtered.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/39170713842): all native package jobs and release attachment.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/39170713848): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/39170713884): on the first attempt the x64 job built and tested but failed its last step, uploading the debug CI artifact (`Failed to CreateArtifact: Unable to make request: ENOTFOUND`), so the **Sign + notarize** jobs were skipped. That is a network error on the hosted runner, not a build or test failure, so the failed job was rerun once. Attempt 2 passed both builds and the **Sign + notarize** job for each architecture (Apple accepted every submission; stapling and validation succeeded), which replaced the unsigned macOS ZIPs and DMGs in the draft with the signed, notarized and stapled ones.
+
+The release was created as a draft with these notes and tagged CI attached the
+packages. All **29 assets** (the same set as 0.8.3) were downloaded after the
+macOS signing finished and matched GitHub's SHA-256 digests and byte sizes
+before publication.
+
+- **Build ids.** The client and server in every Linux package (Debian 12 and
+  13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44, openSUSE Leap 16.0, Arch,
+  Slackware) carry `v0.8.4`. Run: the Debian 12 amd64, Fedora 44 x86-64 and
+  Slackware packages report `takclient (TAK engine) 0.8.4 (build v0.8.4)`;
+  the Arch `takserver` reports `0.8.4 (build v0.8.4)` (its `takclient` needs
+  glibc 2.44, newer than the checking host, so only its build string was
+  checked); the x64 Windows ZIP's `takclient.exe` reports `0.8.4 (build v0.8.4)`
+  on Windows 11; on the arm64 MacBook (macOS 26.6.2) the release ZIPs'
+  `takclient` reports `0.8.4 (build v0.8.4)` for both architectures.
+- **Windows signatures.** `Get-AuthenticodeSignature` on oden-win reports
+  **Valid** (CN=Curtis Edge) for the setup `.exe` and for `takclient.exe`,
+  `takserver.exe`, `cartographer.exe` and `crusades_admin.exe` in both the x64
+  and ARM64 ZIPs: 9 signed files. The debug ZIPs were not checked.
+- **macOS notarization.** On the MacBook, both DMGs pass `xcrun stapler
+  validate` and `spctl` (open, primary signature) as **accepted, source=Notarized
+  Developer ID, origin=Developer ID Application: Curtis Edge (L479Y59RN8)**; so
+  do both apps (the game and TAK Cartographer) from each DMG and from each ZIP.
+  The bare command-line programs are Developer ID signed (TeamIdentifier
+  L479Y59RN8); `spctl` says they do not seem to be an app, as expected for
+  unstapled command-line tools.
 
 New checks for 0.8.4:
 
-- **Opus is static.** No packaged `takclient` has a `NEEDED` (Linux), import
-  (Windows) or `otool -L` (macOS) entry for libopus, and no package declares
-  one. `OPUS-LICENSE.txt` is present in every package beside the other licence
-  files.
-- **macOS microphone.** `Info.plist` in both DMG and ZIP apps carries
-  `NSMicrophoneUsageDescription`, and `codesign -d --entitlements -` on the
-  game app, its `takclient` and the bare `takclient` shows
-  `com.apple.security.device.audio-input` (the other programs carry no
-  entitlement).
+- **Opus is static.** No packaged Linux `takclient` or `takserver` has a
+  `NEEDED` entry beyond libc, libm and the loader (Slackware also lists libdl
+  and libpthread), so none needs libopus; the Debian packages depend only on
+  `libc6`. Neither Windows `takclient.exe` imports or names an Opus DLL (the x64
+  import table lists only system DLLs), and neither macOS `takclient` names a
+  libopus dylib. `OPUS-LICENSE.txt` is in every Debian, RPM, Arch and Slackware
+  package and in all four release ZIPs.
+- **macOS microphone.** The game app's `Info.plist` carries
+  `NSMicrophoneUsageDescription` in both ZIPs, and `codesign -d --entitlements -`
+  on the game app from both DMG and ZIP shows
+  `com.apple.security.device.audio-input`; the entitlement is also embedded in
+  the app's `takclient` and absent from `takserver` and `crusades_admin`.
 - As in 0.8.1 to 0.8.3: no packaged Linux `takclient` has a `NEEDED` entry for
   libsecret, GLib, GIO or GObject.
 
