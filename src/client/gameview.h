@@ -2801,7 +2801,9 @@ private:
     std::pair<int, int> unitFootZRange();
     std::pair<const void*, size_t> unitFootKey_{nullptr, 0};
     std::pair<int, int> unitFoot_{1, 1};
+#ifndef NDEBUG
     std::vector<int> overlayIdsIndexed_, overlayIdsFull_;   // TAK_UNIT_INDEX_VERIFY scratch
+#endif
     std::vector<uint64_t> unitQueryBits_;
     std::vector<uint32_t> unitQuery_;
     std::vector<uint32_t> unitAll_;       // 0, 1, 2, ... (whole-list answers)
@@ -2811,8 +2813,10 @@ private:
     tak::render::LiftBounds unitLift_;
     bool unitFullScan_ = false;           // read once per frame
     uint32_t unitGridShownGen_ = 0;       // snapshot whose grid build time was last tallied
+#ifndef NDEBUG
     bool unitIndexVerify_ = false;
     UnitIndexVerifyTotals unitIndexVerifyStats_;
+#endif
     std::unordered_set<int> featInstIds_;   // sim ids with a visual inst (dynamic adds)
     std::vector<std::pair<float, float>> manaSpots_;   // Sacred Stone deposits
 
