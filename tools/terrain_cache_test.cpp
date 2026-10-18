@@ -1,6 +1,7 @@
 #include "client/mapview.h"
 #include "client/gpuvram.h"
 #include "hpi/hpi.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -130,13 +131,46 @@ int main(int argc,char** argv) try {
                 }
                 return n;
             };
+            // The view's clock (section idle times) is simulated: 16 ms a frame. On wall time
+            // the release waits below were 10 s windows, and a loaded machine missed them: the
+            // software renderer batches every frame's draws until a readback or a texture
+            // destroy, so the first released section ran hundreds of queued frames (6-16 s
+            // under load) before the window closed.
+            uint64_t clockMs=SDL_GetTicks64();
             auto frame=[&](float x,float y,float zoom=1) {
+                clockMs+=16;fresh.setClockMs(clockMs);
                 fresh.setZoom(zoom);fresh.setOffset(x,y);
                 SDL_SetRenderDrawColor(renderer,255,0,255,255);SDL_RenderClear(renderer);fresh.draw(610,450);
             };
+            // The fallback's section uploads share the frame's upload budget
+            // (terrainwork::UploadBudget: 6 ms of estimated time for hole fills, priced by
+            // the measured upload cost), and what does not fit waits for the next frame,
+            // the underlay showing meanwhile. On a loaded machine or an unoptimized build the
+            // measured cost can exceed the budget, so "drawn completely in the same frame" is
+            // a wall-time property. The budget's estimate (a moving average of the cost per
+            // byte, starting from the view's earlier uploads) stays near this frame's upload
+            // time plus the bytes at the earlier rate, so the property is asserted when that
+            // is two thirds of the budget or less (quiet cores: about 3 ms for the first frame,
+            // 2 ms for the jump). Otherwise the frame's holes must be fallback tiles whose
+            // section the budget postponed, and later frames at the same view fill them.
+            auto drawnFromSections=[&](const MapView::SectionStats& before,float x,float y,const char* what) {
+                const auto after=fresh.sectionStats();
+                const double bytes=double(after.uploadBytes-before.uploadBytes),ns=double(after.uploadNs-before.uploadNs);
+                const double earlier=std::max(0.15,before.uploadBytes ? double(before.uploadNs)/double(before.uploadBytes) : 0.);
+                const double est=ns+earlier*bytes;
+                const size_t h=holes();
+                std::fprintf(stderr,"%s: %llu section uploads, %.1f MiB in %.2f ms (est %.2f ms), %zu hole px\n",what,
+                             (unsigned long long)(after.uploads-before.uploads),bytes/1048576.,ns/1e6,est/1e6,h);
+                if(!h)return;
+                check(est>4e6,what);
+                check(fresh.underlayTiles()>0,"holes only where the upload budget postponed a section");
+                for(int f=0;f<32 && holes();++f)frame(x,y);
+                check(holes()==0,"postponed sections arrive in later frames");
+            };
+            auto uploadsBefore=fresh.sectionStats();
             frame(2000,2000);
             check(fresh.chunkStats().ready==0,"fixture: the first frame has no chunk images");
-            check(holes()==0,"chunk-less first frame is drawn completely from sections");
+            drawnFromSections(uploadsBefore,2000,2000,"chunk-less first frame is drawn completely from sections");
             check(fresh.sectionBytes()>0,"the fallback uploaded its sections");
             const auto fallback=read();
             const auto settle=SDL_GetTicks();
@@ -148,8 +182,7 @@ int main(int argc,char** argv) try {
             SDL_RendererInfo info{};SDL_GetRendererInfo(renderer,&info);
             if(info.name && !std::strcmp(info.name,"opengl"))
                 check(read()==fallback,"section fallback matches the chunk image texel for texel");
-            const auto idle=SDL_GetTicks();
-            while(fresh.sectionBytes() && SDL_GetTicks()-idle<10000) {frame(2000,2000);SDL_Delay(5);}
+            for(int f=0;f<400 && fresh.sectionBytes();++f)frame(2000,2000);   // 6.4 s: idle past kSectionIdleMs
             check(fresh.sectionBytes()==0,"sections are released once chunks cover the view");
             // A zoom that changes the chunk level: until the new level bakes, the cached
             // images of another level stand in, so no section is needed at all.
@@ -157,16 +190,16 @@ int main(int argc,char** argv) try {
                 const auto t=SDL_GetTicks();
                 do {frame(5000,5000,.5f);check(SDL_GetTicks()-t<60000,"chunks failed to finish");SDL_Delay(1);}
                 while(fresh.chunkStats().ready!=fresh.chunkStats().visible);
-                const auto idle2=SDL_GetTicks();
-                while(fresh.sectionBytes() && SDL_GetTicks()-idle2<10000) {frame(5000,5000,.5f);SDL_Delay(5);}
+                for(int f=0;f<400 && fresh.sectionBytes();++f)frame(5000,5000,.5f);
                 frame(5000,5000,1);
                 check(fresh.chunkStats().ready<fresh.chunkStats().visible,"fixture: the zoom changed the chunk level");
                 check(holes()==0,"a level change leaves no hole");
                 check(fresh.sectionBytes()==0,"a level change draws the cached level, not sections");
             }
             // A jump to an unbaked spot: the fallback re-uploads in the same frame.
+            uploadsBefore=fresh.sectionStats();
             frame(9000,9000);
-            check(holes()==0,"a jump draws completely from re-uploaded sections");
+            drawnFromSections(uploadsBefore,9000,9000,"a jump draws completely from re-uploaded sections");
             // finishChunks (screenshots, the campaign briefing) lifts the limits for ONE
             // draw only: afterwards the sections are budgeted and released as usual.
             fresh.finishChunks();frame(6000,6000);
@@ -175,8 +208,7 @@ int main(int argc,char** argv) try {
                 const auto t=SDL_GetTicks();
                 do {frame(6000,6000);check(SDL_GetTicks()-t<60000,"chunks failed to finish");SDL_Delay(1);}
                 while(fresh.chunkStats().ready!=fresh.chunkStats().visible);
-                const auto idle2=SDL_GetTicks();
-                while(fresh.sectionBytes() && SDL_GetTicks()-idle2<10000) {frame(6000,6000);SDL_Delay(5);}
+                for(int f=0;f<400 && fresh.sectionBytes();++f)frame(6000,6000);
                 check(fresh.sectionBytes()==0,"finishChunks does not pin sections for the session");
             }
             // Lowering the limit below what is held sheds off-screen chunks next frame.
@@ -233,11 +265,17 @@ int main(int argc,char** argv) try {
             // drops its mips; a view that needs them again regenerates the same pixels.
             {
                 // New work, then fewer than 120 frames: never a trim, however long they take.
+                // The view's clock is simulated from here, and held while it settles: on wall
+                // time a loaded machine spent 200 ms and 120 settle frames inside one compose
+                // job (a running job is not terrain work for the idle rule), requesting a trim
+                // before the check began.
+                uint64_t clockMs=SDL_GetTicks64();budgeted.setClockMs(clockMs);
                 budgeted.invalidateRenderTargets();settled(budgeted,9000,9000,.5f);
                 for(int frame=0;frame<100;++frame) {SDL_RenderClear(renderer);budgeted.draw(610,450);}
                 check(budgeted.chunkStats().mipTrims==mips.mipTrims,"no idle trim within 120 frames of terrain work");
                 const auto t=SDL_GetTicks();
                 while(budgeted.chunkStats().mipTrims==mips.mipTrims || budgeted.chunkStats().mipBytes) {
+                    clockMs+=16;budgeted.setClockMs(clockMs);   // 16 ms a frame: 120 frames pass 200 ms
                     SDL_RenderClear(renderer);budgeted.draw(610,450);SDL_Delay(2);
                     check(SDL_GetTicks()-t<30000,"idle mip trim did not happen");
                 }

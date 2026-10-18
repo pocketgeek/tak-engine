@@ -34,7 +34,14 @@ int main(int argc,char** argv) try {
         constexpr int W=1200,H=900;
         auto* target=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,1280,960);
         check(target,SDL_GetError());SDL_SetRenderTarget(renderer,target);
+        // The policy's clock (calm gate, storm window, level grace) is a simulated one:
+        // every frame is 16 ms later, whatever it really took. On wall time an unoptimized
+        // build or a loaded machine stretched frames past what the gate calls fast
+        // (900 px a frame in scenario 8 is slow at 0.9 s a frame), and the gate scenarios
+        // failed. Worker progress stays real (the settle loops wait for it).
+        uint64_t clockMs=1000;
         const auto frame=[&](MapView& v,float x,float y,float zoom) {
+            clockMs+=16;v.setClockMs(clockMs);
             v.setZoom(zoom);v.setOffset(x,y);
             SDL_SetRenderDrawColor(renderer,255,0,255,255);SDL_RenderClear(renderer);v.draw(W,H);
         };
@@ -194,7 +201,7 @@ int main(int argc,char** argv) try {
             k.setScheduleParams(Params{});legacy.setScheduleParams(Params::legacy());
             settle(k,2000,9000,.6f);
             const auto before=k.chunkStats();
-            // 900 px a frame: fast (>= half a view per second) unless a frame took 0.9 s.
+            // 900 px a 16 ms frame: fast (>= half a view per second).
             for(int f=1;f<=10;++f)frame(k,2000+float(f)*900,9000,.6f);
             const auto during=k.chunkStats();
             check(during.framesGated-before.framesGated>=9 && during.jobsQueued==before.jobsQueued,"a fast pan queues no new work");
