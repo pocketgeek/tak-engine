@@ -236,8 +236,39 @@ replays must not move; nothing in this program may feed the simulation.
   every benchmark run checks the world hash (identical A vs B). Baseline for
   later comparisons: `~/tak-tmp/render-opt/takclient-K8-candidate` (code of
   `6cf541b0`); K0 (`takclient-K0-baseline`, `4c7a018d`) = J + the K harness.
-- Workstreams L–N: not started.
-- **Next concrete step:** workstream L (renderer-owned spatial index for unit
+- **Workstream L (unit spatial index, compact records) is implemented and
+  verified** (commits `63aa38f4` `UnitGrid` + `anchorBandToWorld` +
+  `unit_index` test, `11753fdb` painter candidates from `Frame::unitGrid`
+  (built by `captureFrame`) + `TAK_UNIT_FULL_SCAN` / `TAK_UNIT_INDEX_VERIFY` /
+  `TAK_RENDER_SHAKE` + telemetry + `render_unit_index[_jump]` ctests,
+  `895e629a` per-unit overlays through the grid + `unitpass::*` shared pass
+  geometry + `TAK_RENDER_OVERLAYS`, `74bb3556` `UnitTypeTable` (dense
+  registration record) + whole-list answers, `a42da929` queued-build ghosts
+  from `Frame::buildGhostUnits`, `e90c79a0` release-build fix + report keys,
+  then the docs commit). Tests: `unit_index` (28 of 33 header mutations fail
+  it; the 5 that pass keep the bands conservative), `render_unit_index` /
+  `render_unit_index_jump` (costed, not `quick`; a band mutation and a lift
+  mutation fail them), `spectator_health_bars`, `tactical_dots`,
+  `render_telemetry`, `render_benchmark_tool`; `ctest -L quick` 390/390 on
+  build-o2 at the final code. Release `takclient` builds and contains none of
+  the L debug or telemetry strings. `--mpai` Retail 60 s Inner Circle seed 1 =
+  `2c39430636a3dbda` (unchanged; run because `captureFrame` changed).
+  Captures identical (84 frames, Experiment 14). Measured (Experiment 14):
+  `total10k-subset` draw −39.4% / −30.8% (material), `total10k-visible`
+  unchanged within noise (the index cannot help; the record halves
+  `t_candidates`), small-battle / jump within noise. Baseline for later
+  comparisons: `~/tak-tmp/render-opt/takclient-L4-candidate` (code of
+  `a42da929`; `e90c79a0` changes only release-build declarations).
+- Workstreams M–N: not started.
+- **Next concrete step:** workstream M (indexed palette path): inspect
+  `preparePaletteTexture` / `paletteTextureSources_` / `paletteTextureSheets_`
+  and the shade tables; a capability-gated indexed-texture path with the baked
+  RGBA pages as the lazy fallback. L follow-ups (not required for M): the
+  unit-effect pass (`drawUnitFx`, 0.45 ms over `anims_` with 10,000 units —
+  needs an order-preserving design or an accepted order change) and the
+  minimap dots (0.39 ms, every unit drawn); splitting the grid build over
+  `capturePool_` if the capture thread becomes the bottleneck.
+- (Superseded, kept for the record) Former next step: workstream L (renderer-owned spatial index for unit
   candidates). Today every frame scans all of `front().live` with fog and
   frustum tests (`gameview_render.cpp`, candidate selection); features
   already use `FeatureIndex` with a `TAK_FEATURE_FULL_SCAN` reference. Start
@@ -334,7 +365,7 @@ evidence; nothing below is already fully satisfied.
 | I | Cost-based work scheduling | **verified** | Workstream I (`a5ba14e4` pool + `WorkPlan` + `work_schedule` test, `68021102` planned GameView passes + `TAK_SCHEDULE_VERIFY` + `render_schedule` ctest + telemetry, `590db308` cheaper plans + no copy cap, both measured fixes). Before: `ThreadPool` of `hardware_concurrency` threads, every pass woke every worker (`notify_all`) in fixed 8-item chunks above an item-count threshold and the caller waited for every worker, including those that woke after the work was gone. Now (`client/threadpool.h`): sized by the process's CPU affinity (SimPool's rule); a pass posts only the workers it asks for (one condition variable per worker); participants claim chunks off one atomic word and the caller waits for the CHUNKS, so late wakers never delay it and never touch a finished pass (job fields read only by a thread holding an unfinished chunk). `WorkPlan` (`client/workschedule.h`) cuts contiguous chunks of ~10 µs estimated work, one participant per 40 µs, serial below 30 µs; estimates calibrated on serial per-unit / per-pass timings: geometry from each entry's previous build (key words, stages, body vertices, shadow points; 16-bit `UnitGeom::nextCost`, a dense copy taken at claim), shadow point checks by points, shadow tile transform by points over the page's dirty tiles only, body copy by bytes + per range. Every item writes only its own outputs, so results are independent of the plan and of completion order (deterministic output; captures identical, serial reference identical). Tests: `work_schedule` (ASan/UBSan, TSan; ten mutations fail it), `render_schedule` (four in-game mutations fail it), `render_telemetry`. Measured (Experiment 11, vs H5): pool dispatch −87% to −99%, caller wait −44% to −96%, wake latency −89% to −99%; stationary-mixed 7680×2160 draw −11.4% and total p99 −13.8%, total10k-visible 1280×960 total p95 −19.4% / p99 −13.8% (material); other draw deltas −1.3% to −7.6% inside noise; nothing regressed materially. Planning alone (same binary vs uniform passes) is neutral on frame time at both sizes (−5.4% to +2.1%, inside noise) and halves woken workers on small passes; the gain comes from the pool mechanics. Not measured: competition with a concurrently running simulation (the study runs it inline); non-Linux pool sizing (no affinity query). |
 | J | CPU cache budgets | **verified** | Workstream J (`dac6e399` pinned section handles + consumer audit, `469f743a` section budget, `8cb58b59` mip budget + idle trim, `2cb7cdf5` retained-buffer and worker-scratch trims + CPU accounting, `3dc315c4` working-set rule, a measured fix of pure LRU). **Lifetimes first:** `Compositor::sectionImage` returned a reference valid until `clear()`; it now returns a `SectionRef` (shared, immutable) that pins the image. Every consumer was audited and converted before eviction was enabled: the chunk worker pins per job, MapView per upload, renderBlock (minimap crunch, Cartographer) per copy, validators/tools transiently. The decode runs outside the cache lock with in-flight dedup. **Sections:** 128/112 MiB budget over unpinned sections cold for 10 s; LRU; prefetch only into free budget; the render thread never decodes in play; `trim()` per job and per frame. 97.7% of the 1371 shipped maps stay under budget (median 21 MiB, Ulasem 64, max 402) and behave as before. **Mips:** worker-owned LRU, 64/56 MiB, idle trim after 30 s + 120 frames posted by the render thread and done by the worker. **Buffers:** `TrimTracker` (two half-window buckets, 5 s and 120 frames; capacity > 2× window peak, floor 64 KiB; to peak + 1/16; regrowth backoff up to 8×; never per frame) over the body buffer, frame lists, shadow scratch and F's cell stamps, model scratch, and the per-participant worker scratch (`ThreadPool::participant`; trimmed by the render thread between passes). **Accounting:** used/retained/pinned/evictable/peak per component and totals (`cpu_cache_*`), eviction/redecode/regeneration/trim counts; GPU and RSS separate, exclusions listed. Tests: `terrain_compositor` (ASan/UBSan, TSan; mutations fail it), `terrain_cache` (budgeted = unbounded texel for texel), `cpu_budget`, `work_schedule` (participants; TSan), `render_cpu_budget`. Measured (Experiment 12): no material frame-time change in any timed scene; battle-sparse releases 19 MiB 300 frames after the view empties (the trim frame is not measurably slower); total10k-visible releases 81 MiB of first-frame capacity at frame 450 at 1280×960 (no regrowth); bigmap-zoom ends at 146 vs 259 MiB retained CPU (37 redecodes at 1280×960), the peak unchanged; captures identical except terrain-chunk readiness races right after camera changes, which A/A and B/B pairs reproduce in both builds (Experiment 12). |
 | K | Camera-prioritized terrain | **verified** | Workstream K (`4c7a018d` harness: sweep / zoom-oscillation / jump-list camera paths, `terrain-sweep` / `terrain-zoom-osc` / `terrain-jumps` scenes, readiness gauges, `TAK_TERRAIN_SETTLE`; `01cd7a01` policy `client/terrainwork.h` + `terrain_work` test; `85bbb1eb` TerrainChunks integration + calm gate + `terrain_schedule` test; `61be4a96` sections join the frame budget; `5eebec8b` settle harness; `b98183b1` no per-frame passes when nothing is missing, a measured fix; verifier fixes `918300a4` gate scope + `readyHeld_` under the lock + holes-first test, `b96fe8fb` storms gated at every level, `6cf541b0` storms last 1 s). Before: FIFO queue of ≤64 visible-cell jobs, no cancellation outside clear/invalidate, completed off-view results dropped at upload, separate caps (8 MiB chunks, 32 sections), plain LRU. Now: the worker takes the most urgent queued job (holes > upgrades over a stand-in > kept work; centre first); pending work is re-ranked every frame and obsolete jobs cancelled (outside a 2-cell keep band, or a level the zoom left past a 1 s / 30-frame grace) — cooperative for running jobs, lifetime-safe through J's pins; a full queue gives kept slots to visible work; stand-ins of visible cells are evicted last; off-view results only use free or cold room; one per-frame upload budget for chunk images and fallback sections (holes first, 32 MiB / 6 ms est. urgent, 2 ms est. for the rest, measured CPU submission cost, no GPU sync, first upload always proceeds, finishChunks unlimited); a calm gate queues no new work during fast motion at level 0 (the fallback draws those cells texel-identically; uploading a unique 4 MiB chunk per passing cell cost more — K3a, rejected) or during jump storms at any level (until 1 s without a jump); not for motion from level 1, where chunks are small and the fallback dear (gating there made zoomed-out fast pans 1.4×/3.2× slower — K5 scope, rejected by the verifier, Experiment 13c); leading-edge prefetch implemented but opt-in (GPU +56–80 MiB in pans, no gain). Tests: `terrain_work` (816 checks, nine + four mutations), `terrain_schedule` (scenarios 1–9; nine in-game mutations incl. gate scope and holes-first ordering), `terrain_cache`, TSan on the integration (scenarios 1–7). Settled captures identical in all comparable frames; normal captures differ only by terrain readiness (Experiment 13). Measured (Experiment 13, 13c): no material frame-time change in any of 9 scenes × 2 sizes nor in terrain-sweep at zoom 0.3/0.5/0.75/1.0; terrain-jumps 7680×2160 total −28% / −49% / −4.9% (zoom 0.4 / 0.3 / 0.75, material); wasted worker compose −80% to −100% in the terrain scenes, −83% bigmap-zoom 7680×2160; terrain-zoom-osc 7680×2160 hole frames 93% → 37%, `t_terrain` −28% (p99 −68%), total p99 −10%; constrained `t_terrain` −10/−12% (material). Costs (recorded, not hidden): terrain-jumps 1280×960 draw +25% / +40% / +10% (+0.02–0.11 ms, total within noise: K0 caches all five revisited views there); terrain-zoom-osc 7680×2160 total p95 +4.7% (Exp. 13) / +31.8% material in the quieter 13b session — K uploads ~1 chunk per frame where the stale FIFO dropped them; still views +6 µs `t_terrain` at 7680×2160 (material for the phase, frame time unchanged); under the debug 128 MiB cap stand-in retention leaves the shadow atlas without its page in 28 more of 600 frames (existing fallback). Calm-gate-less version rejected (K3a); nearby prefetch opt-in. |
-| L | Unit spatial index | not started | Features use `FeatureIndex` (`featureindex.h`) with a `TAK_FEATURE_FULL_SCAN` reference. Units: every frame scans all of `front().live` with fog + frustum tests (`:187`). |
+| L | Unit spatial index | **verified** | Workstream L (`63aa38f4` grid + band-to-world + `unit_index` test, `11753fdb` painter candidates from the snapshot's grid + verifier + `render_unit_index[_jump]`, `895e629a` per-unit overlays + shared pass geometry `unitpass::*`, `74bb3556` dense registration record `UnitTypeTable` + whole-list answers, `a42da929` queued-build ghosts from a snapshot list, `e90c79a0` release fix + report keys). Before: the painter pass, four per-unit overlays and the ghost pass each walked every live unit per frame. Now `captureFrame` builds `Frame::unitGrid` (snapshot-owned, 256-px cells, counting sort, ascending live order) from the positions it copies; `unitCandidates(band)` maps a pass's screen band for the lifted anchor to a world rectangle (lift bounded per map by the highest height above the datum, 1 world px + 1 screen px slack) and returns a superset in live order (bitset, no sort; whole list when the view holds every unit); every pass keeps its exact test, so items, keys, equal-depth order and overlay order are a full scan's. Interpolation, altitude and extents are not inputs of these culls (their margins stand for them); shake is in the offset; fog stays in the exact test. Compact records: `UnitTypeTable` (dense registration flag mirroring the map; `t_candidates` −50% with 10,000 visible) and `Frame::buildGhostUnits`; a visual record was rejected (visual names change in place). Tests: `unit_index` (grid vs brute force; every pass's band vs its exact float test at ulp-located edges; movement/churn; the table; covers; 28 of 33 header mutations fail it, the 5 that pass only enlarge a band or shrink it by less than the slack, i.e. stay conservative), `render_unit_index` / `_jump` (in game, `TAK_UNIT_INDEX_VERIFY`: painter list, all four overlays and ghosts equal a full scan every frame; shake, flyers, corpses, construction, fog, churn, epochs; two in-game mutations fail them). Captures identical (84 frames). Measured (Experiment 14): `total10k-subset` draw −39.4% / −30.8% (1280×960 / 7680×2160, material), p95 −37.5% / −29.6%, `t_candidates` 0.55 → 0.03 ms; `total10k-visible` draw −2.7% / −1.4% (not material — the index cannot help there), `t_candidates` −52% / −50% (material, the record); small-battle and jump unchanged within noise. Costs: grid build 0.07 ms per snapshot per 10,000 units on the capture thread; ≈ 0.55 MiB of grids over the 12-slot ring at 10,000 units. `--mpai` Retail 60 s unchanged. |
 | M | Indexed palette path | not started | `preparePaletteTexture` (`:2230`) expands each structure palette frame into 20 shade bands of RGBA in 2048² pages (≤16 pages, 256 MiB). Original per-texture SDL textures (`textures_`) also stay resident as atlas sources. |
 | N | Native pass submission | not started | Each native batch (`GeometrySubmit::draw`, `OpaqueShadowSubmit::draw`) primes SDL state with a degenerate draw, flushes, and pushes/pops GL attribute state — once per body run, per shadow page and per mask batch. |
 
@@ -414,7 +445,7 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 | Snapshot | `GameView::captureFrame` (`gameview_impl.cpp:848`) writes the triple-buffered `Frame` on the sim worker; `presentFrame` (`:2990`) picks the slot; `front()` | `UnitR` mirror of sim fields; render never reads live `World` except documented exceptions |
 | Interpolation | `interpPose` (`gameview_impl.cpp:981`), α from presentation clock (`draw` `:256`) | per unit, worker-safe |
 | Terrain | `MapView::draw` → `TerrainChunks::prepare/draw`, fallback tile batch, sections uploaded on demand; since K `prepare` re-ranks/cancels pending work by camera demand (`terrainwork.h`), uploads hole fills first under one frame budget shared with the sections, and `uploadDeferred` runs after the fallback | chunk composition on its own worker thread (takes the most urgent job since K); section JPEG decode on a second worker; uploads on the render thread |
-| Visibility / candidates | `draw` `:144`–`:230`: `FeatureIndex::query` broad phase + exact screen/fog cull for features; full scan of `front().live` with fog + frustum cull for units | render thread |
+| Visibility / candidates | `draw` `:144`–`:230`: `FeatureIndex::query` broad phase + exact screen/fog cull for features; units (since L): `Frame::unitGrid` broad phase (`unitCandidates`, built by `captureFrame`) + the unchanged exact registration/fog/frustum test, in live order; the four per-unit overlays query the same grid with their own bands; queued-build ghosts read `Frame::buildGhostUnits` | grid built on the capture thread (sim worker or inline), queried on the render thread |
 | Painter list | `paintItems_` stable sort by (layer, z) (`:233`); air units layer 1 | render thread |
 | Entry claim (since C) | `claimGeometryEntries` (`gameview_render.cpp`): each painter-ordered unit claims the entry its identity owns in `geomEntries_` (`StableEntryPool<UnitGeom>`, `client/geometryowners.h`); `visUnits_` / `visGeom_` (ordered entry pointers) / `geomIndex_`; then `reclaim` (destroyed, expired, budget, trim) | render thread, before the parallel pass |
 | Atlas maintenance | `atlasFor` per visible colour slot (`:272`), `preparePaletteTextures` for structures (`:284`), `animateGlowTextures` (`:289`) | render thread, render-target draws |
@@ -450,6 +481,8 @@ frame) → `draw()` → cursor overlay → `endFrame()` → `SDL_RenderPresent`.
 | Terrain fallback batch | `MapView::tileBatch_/apronBatch_` + `tileSubmit_` | camera/offset/zoom/size/dirty | CPU vectors + retained VBO via revision | rebuilt on change |
 | Fog | `fogTex_`, `fogUpload_`, `fogSubmit_`, fog mesh | vis generation, camera | GPU texture + retained mesh | reset clears |
 | Feature index | `FeatureIndex` | rebuilt when features change (`featureIndexDirty_`) | CPU | session |
+| Unit grid (since L) | `Frame::unitGrid` (`UnitGrid`, `client/unitindex.h`) + `Frame::buildGhostUnits` | rebuilt by `captureFrame` for every snapshot from the copied positions; indices into that frame's `live` | CPU, per ring slot (12): 4 B per live unit + 8 B per cell (cells ≤ 256², 256-px cells over the units' bounding box: 40×40 on Ulasem Arena); capture scratch 12 B per unit; render scratch (identity table, query list, bitset) ≈ 8 B per unit | lives and swaps with its snapshot; never read by the simulation |
+| Unit registration record (since L) | `UnitTypeTable` (`client/unittypetable.h`, was `std::unordered_map<int,std::string> unitType_`) | one flag per non-negative unit id, changed only with the map (`set`/`erase`) | CPU, 1 B per id ever registered (the map keeps a string per id; neither is pruned, as before) | session |
 | Minimap | `miniTex_`, async crunch | map | GPU | rebuilt |
 | Fog LoS masks | `World::visMaskCache_` (client-local, never hashed) | (sight, radar, cell) | CPU, 8192 entries | session |
 
@@ -740,6 +773,31 @@ Added by workstream J:
   `TAK_CPU_TRIM_FRAMES`, `TAK_CPU_TRIM_FLOOR_KIB`, `TAK_CPU_TRIM_VERIFY`
   (prints `CPU_TRIM_VERIFY frames trims worker_trims released content_checks
   regrowths peak_retained final_retained recovered`).
+
+Added by workstream L:
+
+- `client/unitindex.h`: `UnitGrid` (`build(xs, zs, scratch)`, `query(l, t,
+  r, b, bits, out, stats)` → ascending superset, `covers`, `all`,
+  `capacityBytes`), `LiftBounds`, `anchorBandToWorld`, and per renderer pass
+  (`unitpass::painter`, `healthBar`, `selfDestruct`, `squadMarker`,
+  `productionBar`) the screen-position expression, its `…InView` test and its
+  `…Band` (`ScreenBand`, `ScreenPoint`, `AnchorView`). A new per-unit pass that
+  culls a unit's lifted anchor should add its triple here and query through
+  `GameView::unitCandidates(band)` rather than walk `front().live`.
+- `client/unittypetable.h`: `UnitTypeTable` (map read API + `registered(id)`,
+  `set`, `erase`); `GameView::unitType_` is one. A unit's visual name changes in
+  place on corpse/veteran mesh swaps: never cache a resolved visual by unit
+  identity.
+- `Frame::unitGrid`, `Frame::unitGridBuildNs`, `Frame::buildGhostUnits`
+  (`client/renderframe.h`); `CaptureSlot::x/z/buildGhosts`;
+  `GameView::unitCandidates`, `unitLiftBounds`, `unitFootZRange`,
+  `unitIndexVerifyTotals()`.
+- Debug: `TAK_UNIT_FULL_SCAN=1` (same-binary pre-L reference),
+  `TAK_UNIT_INDEX_VERIFY=1` (prints `UNIT_INDEX_VERIFY frames passes live
+  candidates accepted health selfdestruct squads production ghosts`; throws
+  at the first difference); harness `TAK_RENDER_SHAKE=N` (camera shake every N
+  study frames), `TAK_RENDER_OVERLAYS=1` (control squads, factories with long
+  queues, builders with queued builds).
 
 ### Cache ownership and invalidation (workstream C)
 
@@ -1526,6 +1584,102 @@ gate's fast-motion rule at every level (the rejected K5 scope) and
 `stormlevel0` limits its jump-storm rule to level 0 (the rejected K6 scope). Tests pin the policy with
 `MapView::setScheduleParams`.
 
+### Unit broad phase and compact records (workstream L)
+
+**Before L** (`c2c25707` … `6cf541b0`): every frame the painter pass walked
+all of `front().live` and ran, per unit, the dead/embarked test, a
+`unitType_` hash lookup ("is it registered?"), the fog test, the lifted
+anchor's frustum test and the flyer layer test. The same walk over every
+unit was repeated by four per-unit overlays (health bars, self-destruct
+numbers, control-squad markers, production bars) and by the queued-build
+ghost pass. With 10,000 units and ~100 in view (`total10k-subset` 1280×960)
+the painter walk was 0.61–0.70 ms, the overlays 0.30 ms and the ghost walk
+0.16 ms of a ~2.4 ms draw. Features already had `FeatureIndex` (with the
+`TAK_FEATURE_FULL_SCAN` reference); units had nothing.
+
+**Ownership.** The index is snapshot data. `captureFrame` (sim worker, or
+the main thread when the sim runs inline) already copies every unit into the
+`Frame` it is about to publish; `captureUnit` now also leaves the copied
+position in its `CaptureSlot`, and the serial tail -- which already walks
+every slot in order to build `Frame::live` -- collects the positions of the
+live units and builds `Frame::unitGrid` (`client/unitindex.h`). The grid
+therefore lives in the same ring slot as `live`, swaps with it, is read only
+by the render thread through the pinned `front()`, and never touches the
+simulation (`World` is not read, nothing is hashed). Its build time is
+recorded in the frame (`unitGridBuildNs`, tallied as `w_unit_grid_build` on
+the first frame that shows the snapshot).
+
+**Grid.** 256-px cells over the bounding box of the snapshot's finite
+positions (doubled until each side has at most 256 cells), built by a
+counting sort: per cell the live indices in ascending order, cells
+row-major, so one grid row of a query rectangle is one contiguous run.
+`query(rect)` marks the runs of the rectangle's rows in a bitset and emits
+the set bits, i.e. the candidates in ascending live order without a sort;
+`covers(rect)` (no non-finite position, stored exact extremes inside) lets
+the caller take the whole list without a query. The cell of a position is a
+monotone function of it clamped to the grid, so every point of a rectangle
+falls in the rectangle's cell range: a query is a superset, never a subset.
+Non-finite positions (never produced) are returned by every query, a NaN
+rectangle returns everything.
+
+**From a screen test to a world rectangle.** Every unit pass that culls by
+screen position tests the lifted anchor of the snapshot position,
+`sx = (x - offX)·zoom - liftX·zoom`, `sy = (z - offY)·zoom - liftY·zoom`,
+against a band (shifted by the pass's own offset). `anchorBandToWorld`
+turns the band into the world rectangle the position must lie in for some
+lift in `LiftBounds`, widened by 1 world px + 1 screen px for the exact
+test's float evaluation (its error is far below 0.01 px at map scale).
+`unitpass::*` holds, for the painter cull and the four overlays, the
+renderer's position expression, its acceptance test and its band; the
+renderer calls these, so `unit_index_test` checks the arithmetic the
+renderer runs.
+
+**Why each requirement of the brief is covered** (the query must be
+conservative for the exact pass that follows):
+
+| Input | How |
+|---|---|
+| Interpolation | No pass reads the interpolated position: all cull the snapshot `x`/`z` the grid is built from. The painter cull's margins (160 px left/right, 260 top, 120 bottom) are what stand for interpolation and model extent, as before. |
+| Terrain lift | `unitLiftBounds()`: ground units lift by `heightAbove · scale` (heights above the modal datum, floored at 0); flyers by their smoothed datum, which never exceeds the dilated sector maximum of the same heights. Both lie in `[0, (max height − datum + 1) · scale]` (scales may be negative or zero under debug settings), cached per map, heights, datum and scales. |
+| Airborne altitude | Not an input of any culled pass (the painter cull's 260-px top margin stands for it); a flyer's lift is its datum, covered above. Tactical Dots (which add altitude and interpolation) keep their full scan. |
+| Large extents | Unchanged margins; footprint-dependent overlay offsets (squad markers, production bars) use a band covering every type's footprint depth in the registry. |
+| Replacement models and corpses | Culled by the unit's own `x`/`z` like before (the replacement is drawn elsewhere, but the cull never looked there); corpses are live snapshot records and so grid entries. |
+| Camera shake | The shake is applied to the map offset before the passes; the query reads the same offset. |
+| Viewport edges and clipping | The bands are the passes' own constants and view sizes; edges are tested ulp by ulp. |
+| Fog of war, registration, dead/embarked, layers | Stay in the exact per-unit test. |
+| Order | Candidates come in ascending live order and the exact test runs in that order, so painter items, depth keys, the stable sort's equal-depth order and overlay batch order are exactly a full scan's. |
+
+**Compact records.** With every unit in view the index cannot narrow
+anything; there the painter pass's per-unit `unitType_` hash lookup was half
+of the pass (removing it in an experiment: `t_candidates` 0.75 → 0.39 ms).
+`unitType_` became `UnitTypeTable` (`client/unittypetable.h`): the same map
+and read API plus a dense registration flag per non-negative id, changed only
+through `set()`/`erase()` together with the map, so `registered(id) ==
+(count(id) != 0)` always. Making it a class exposed two writers a grep had
+missed: the corpse and veteran mesh swaps give an existing unit a new visual
+name. A unit's visual therefore cannot be cached by identity (and a per-thread
+memo of the visual lookup in `buildUnitGeom` measured nothing), so the visual
+and anim lookups stay where they are. The queued-build ghosts read
+`Frame::buildGhostUnits` (live indices whose captured orders hold a build
+order the pass draws, listed by the capture's serial tail): any unit not
+listed has no such order and drew nothing before.
+
+**What is still a full scan per frame** (not a spatial question, or
+already exact): the minimap dots (every unit is drawn, 0.39 ms at 10,000),
+the unit-effect pass (iterates `anims_` -- 10,000 entries -- for active
+fire/smoke; its draw order is the hash map's iteration order, which a
+separate list could not reproduce, 0.45 ms with 10,000 units), Tactical Dots
+(far zoom, nearly everything visible; adds altitude and interpolation), the
+HUD's unit count and squad label, and input picking (on events).
+
+**Reference and verification.** `TAK_UNIT_FULL_SCAN=1` (debug) answers
+every query with the whole list -- the pre-L behaviour in the same binary.
+`TAK_UNIT_INDEX_VERIFY=1` re-runs every indexed pass over all live units each
+frame (overlays and ghosts without drawing) and throws unless the same units
+come out in the same order with the same keys, and checks the registration
+record for every live unit; the study prints `UNIT_INDEX_VERIFY frames passes
+live candidates accepted health selfdestruct squads production ghosts`.
+
 ### Telemetry reference (RENDERSTATS keys)
 
 `t_*` = render-thread wall ms (nested: `terrain_upload` in `terrain`;
@@ -1564,6 +1718,7 @@ sampled by the benchmark from `/proc`).
 | Cost-planned pool passes (I) | `t_schedule_plan` (nested: building the plans), `pool_posted` (workers woken), `pool_idle_wakes` (woken after every chunk was taken), `pool_chunks`, `sched_geometry_threads` (participants of the geometry pass; 1 = render thread alone), `sched_shadow_threads` (check + transform passes, summed), `sched_copy_threads`, `sched_geometry_estimate_us` (the plan's estimate, to compare with `w_geometry_key` + `w_geometry_build`). `w_pool_wake` / `pool_dispatches` keep their meaning; since I a wake is counted only for a worker that ran a chunk |
 | CPU budgets (J) | sections: `terrain_section_cpu_bytes` (used), `_pinned_bytes`, `_young_bytes`, `_peak_bytes`, per frame `terrain_section_decodes` (real decodes by any thread since J), `_evictions`, `_redecodes`, `_prefetch_skipped`; mips: `terrain_mip_cpu_bytes`, `_pinned_bytes`, `_peak_bytes`, per frame `terrain_mip_evictions`, `_regens`, `_trims`; buffers: per frame `cpu_trims`, `cpu_trim_bytes`; gauges `worker_scratch_used/capacity_bytes`, `geom_pinned_bytes`, totals `cpu_cache_used/retained/pinned/evictable/peak_bytes` (see the J accounting table; GPU and RSS are separate). `body_capacity_bytes` is reported after the frame's trim |
 | Camera-driven terrain (K) | gauges of the last terrain draw `terrain_chunk_visible`, `_ready` (wanted level), `_standin` (another level's image), `_holes` (no image: the section fallback draws the cell), `terrain_underlay_tiles` (fallback tiles without a resident section: the blurry underlay shows); per frame `terrain_jobs_obsolete` (cancelled: keep band, level grace, displaced), `terrain_jobs_aborted` (running jobs stopped by any cancel), `terrain_jobs_nearby`, `terrain_jobs_offview` (results uploaded for cells not visible then), `terrain_upload_deferred` (results the frame budget postponed), `terrain_gated_frames` (1 = the calm gate queued nothing); `w_terrain_wasted` (worker time of jobs never uploaded). The benchmark's `report.json` adds per run `terrain.hole_frames` / `underlay_frames` / `standin_frames` (share of measured frames with any) |
+| Unit broad phase (L) | `units_live` (snapshot), `units_scanned` (since L: units the painter's exact test examined, i.e. the candidates), `unit_index_queries`, `unit_index_returned` (summed over the painter + overlay queries), `unit_index_rows`, `unit_index_full_scans` (whole-list answers by the reference switch or a grid/live mismatch; never expected otherwise), `unit_grid_bytes` (gauge, the shown snapshot's grid), `w_unit_grid_build` (capture-thread build of the shown snapshot's grid, once per snapshot) |
 | GPU | render-study `gpu_timeline_ms` / `GPUTIMELINE` (draw timeline, not busy time), `gpu_tracked_bytes` |
 
 Coverage limits (deliberate): `logical_draws`/`flushes`/`target_switches`
@@ -1675,6 +1830,14 @@ chunks are ready, gate lifted; gives up for good after one 10 s wait);
 (same-binary reference / ablation). Experiment 13 script:
 `~/tak-tmp/render-opt/k/measure.sh`; summaries `abcmp.py` / `tq.py` (scratch,
 copied to `~/tak-tmp/render-opt/k/`).
+
+Unit broad-phase tooling (workstream L): tests `unit_index` (pure: grid vs
+brute force, every pass's band vs its exact float test at ulp-located edges,
+movement/churn, `UnitTypeTable`), `render_unit_index` and
+`render_unit_index_jump` (software renderer, `TAK_UNIT_INDEX_VERIFY`; costed,
+not `quick`). Debug knobs `TAK_UNIT_FULL_SCAN`, `TAK_UNIT_INDEX_VERIFY`,
+`TAK_RENDER_SHAKE`, `TAK_RENDER_OVERLAYS`. Experiment 14 script:
+`~/tak-tmp/render-opt/l/measure.sh`.
 
 Shadow-atlas ctests (workstream F, software renderer, `TAK_SHADOW_CACHE_VERIFY`):
 `render_shadow_atlas` (the render_shadow_cache roster, 288-px pages,
@@ -3980,7 +4143,142 @@ fix has no deterministic test (the window lies between the worker's
 predicate check and its wait). The Release `takclient` builds and contains none of `TAK_TERRAIN_SCHEDULE`, `TAK_TERRAIN_SETTLE`, `TAK_RENDER_SWEEP`, `terrain_gated_frames`, `gateall`, `stormlevel0`. `--mpai` not run: only
 `src/client` and `tools/` changed; every benchmark run checks the world hash.
 
+### Experiment 14 — workstream L unit broad phase (2026-10-17)
+
+**Builds.** A = `takclient-K8-candidate` (code of `6cf541b0`, the last code
+before L; `14da6214` only adds docs). B = `takclient-L4-candidate` (code of
+`a42da929`: grid, painter candidates, overlays, registration record,
+whole-list answers, ghost list). The final commit `e90c79a0` only moves
+debug members under `NDEBUG` and adds report keys (the debug binary's code
+is the same). Pinned `taskset -c 16-23`, `offscreen` video driver, SDL
+`opengl` renderer, RTX 5070 Laptop (confirmed by `RENDER_ENV`), forced
+completion, 900 frames, 300 warmup.
+
+**Scenes and why.** `total10k-subset` (10,000 units, small visible subset:
+the case L targets), `total10k-visible` (10,000 units in view: the case the
+index cannot solve; the registration record is for it), `small-battle`
+(ordinary 200-unit game: the index's overhead), `jump` (2,000 units, views
+jumping between corners: partial subsets). Other matrix scenes have at most
+2,000 units, nearly all visible.
+
+```sh
+~/tak-tmp/render-opt/l/measure.sh          # ABBA x2 per size, --wait-quiet 120
+# re-run of the two 10k scenes at 1280x960 (one A run per scene contended, see below):
+python3 tools/render_benchmark.py --a ~/tak-tmp/render-opt/takclient-K8-candidate \
+  --b ~/tak-tmp/render-opt/takclient-L4-candidate --data ~/tak_data --cpus 16-23 --wait-quiet 300 \
+  --repeats 2 --scenes total10k-subset total10k-visible --sizes normal --output ~/tak-tmp/render-opt/runs/l4-normal-b
+# captures (separate runs, frames 360, 480-489, 720):
+python3 tools/render_benchmark.py --a <K8> --b <L4> --data ~/tak_data --cpus 16-23 --capture-only \
+  --scenes total10k-subset total10k-visible small-battle effects churn --sizes normal --output .../l4-cap-normal
+python3 tools/render_benchmark.py ... --capture-only --scenes total10k-subset effects --sizes uhd --output .../l4-cap-uhd
+```
+
+Output: `~/tak-tmp/render-opt/runs/l4-{normal,normal-b,uhd,cap-normal,cap-uhd}`.
+**Load.** Legion sweeps ran on cores 4–15 throughout (load average 2–36,
+0–7 `legion_scenario` processes). In `l4-normal` one A run of
+`total10k-visible` had the pinned cores 90% busy (7 sweeps running) and one
+A run of `total10k-subset` 51%: both scenes were re-run (`l4-normal-b`, every
+run 26–27% busy = the client itself, 0–6 sweeps); the 1280×960 numbers for
+them below are from the re-run. Every other run: pinned cores 16–25% busy.
+World hashes identical A vs B in every scene.
+
+Captures: **identical** — 0 differing pixels in all 84 compared frames
+(5 scenes at 1280×960, 2 at 7680×2160, 12 frames each; effects includes
+flyers, corpses, construction, ghosts, projectiles; churn deaths/respawns and
+target resets).
+
+Material = `|Δ| > max(2 × the larger A/A spread of the two labels, 2%)`.
+Means of run means; spread in brackets is the A/A spread of that label.
+
+| Scene | Size | Draw mean A → B | Δ | Draw p95 Δ | Total mean Δ | `t_candidates` A → B | Material |
+|---|---|---|---:|---:|---:|---|---|
+| total10k-subset | 1280×960 | 2.238 (10.2%) → 1.357 (3.9%) | **−39.4%** | **−37.5%** | −12.5% (noise 11.6%) | 0.554 → 0.029 ms | draw mean, p95, `t_candidates` |
+| total10k-subset | 7680×2160 | 3.251 (7.9%) → 2.249 (3.8%) | **−30.8%** | **−29.6%** (p99 −34.7%) | −11.3% (noise 7.9%) | 0.665 → 0.058 ms | draw mean/p95/p99, `t_candidates` |
+| total10k-visible | 1280×960 | 15.553 (8.1%) → 15.130 (4.7%) | −2.7% | −1.5% | −0.9% | 0.769 → 0.368 ms | `t_candidates` only |
+| total10k-visible | 7680×2160 | 60.272 (1.8%) → 59.416 (1.3%) | −1.4% | −1.3% | −0.9% | 0.771 → 0.388 ms | `t_candidates` only |
+| small-battle | 1280×960 | 0.794 (12.2%) → 0.804 (5.9%) | +1.2% | +3.5% | +6.0% (noise 14.5%) | 0.011 → 0.013 ms | none |
+| small-battle | 7680×2160 | 1.080 (21.2%) → 1.100 (17.7%) | +1.9% | −1.9% | +3.5% (noise 17.2%) | 0.026 → 0.028 ms | none |
+| jump | 1280×960 | 0.940 (16.1%) → 0.841 (7.1%) | −10.5% | −9.8% | −4.8% | 0.075 → 0.026 ms | none (inside noise) |
+| jump | 7680×2160 | 3.647 (29.6%) → 3.405 (25.2%) | −6.6% | −5.4% | −5.4% | 0.154 → 0.083 ms | none (inside noise) |
+
+Counters (B, per frame): `total10k-subset` 10,002 live units, the painter's
+exact test examines 224 (1280×960) / 585 (7680×2160) instead of 10,002; the
+five grid queries return 784 / 3,380 units in 29 / 53 rows. `total10k-visible`:
+every query covers the whole army (whole-list answers), the painter examines
+8,752 / 10,000 as before; the gain there is the registration record
+(`t_candidates` −52% / −50%). `small-battle`: 198 of 200 examined.
+`unit_index_full_scans` = 0 everywhere.
+
+**Costs.**
+
+- Grid build on the capture thread: `w_unit_grid_build` 0.069–0.072 ms per
+  snapshot with 10,002 units, 0.015 ms with 2,002, 0.002 ms with 200. In the
+  render study the simulation runs inline, so this is inside each frame's
+  `update` (every frame shows a new snapshot there); in play it runs on the
+  sim worker once per tick (30 Hz), not per rendered frame.
+- `small-battle` `t_candidates` +0.002 ms (the query and lift-bounds lookup
+  for 200 units); draw within noise at both sizes.
+- Memory: `unit_grid_bytes` 46 KB per snapshot at 10,002 units (5 KB at 200),
+  times the 12 ring slots ≈ 0.55 MiB; capture scratch 12 B per unit
+  (≈ 117 KB), render-side identity table + query list + bitset ≈ 8 B per
+  unit; registration flags 1 B per unit id ever registered (the map they
+  mirror holds a string per id). Not included in `cpu_cache_*` (snapshot data,
+  not a cache with a budget). `frame_lists_capacity_bytes` unchanged.
+- The remaining per-frame full scans in `total10k-subset` 1280×960 (measured
+  with temporary timers on the L2 code, not committed): unit effects 0.45 ms,
+  minimap dots 0.39 ms; neither is a visible-subset question (see the
+  architecture section).
+
+**What the index does not solve.** With 10,000 units genuinely visible the
+frame is the per-unit work of drawing them (geometry keys, shadows, bodies,
+GPU): draw 15.1 ms (1280×960) and 59.4 ms (7680×2160) on L4, unchanged within
+noise. The index returns everything there; only the registration record
+shaves 0.4 ms off the candidate pass, and the whole-list shortcut keeps the
+five queries free.
+
+**Experiments recorded (not committed).**
+
+- Duplicating the type/visual/anim lookups of `buildUnitGeom` and the
+  registration lookup (non-inlined helpers): no measurable change
+  (`w_geometry_key` 13.07 vs 13.09 ms, `t_candidates` 0.736 vs 0.757 ms) — but
+  the duplicate warms the cache for the real lookup, so this bounds only the
+  warm cost.
+- Removing the registration lookup (upper bound): `t_candidates` 0.753 →
+  0.392 ms in `total10k-visible` 1280×960 → the dense record was built.
+- A per-thread memo of the visual lookup by type in `buildUnitGeom`:
+  `w_geometry_key` 13.44 vs 13.75 ms (inside noise; the roster interleaves
+  types in painter order, so the memo rarely hits) → no visual record. It
+  would also be unsafe by identity alone (corpse/veteran swaps rename a
+  unit's visual in place).
+
 ## Known limitations and unsupported paths
+
+- **L: the index does not make 10,000 visible units cheaper.** It narrows
+  the units the passes examine; with the whole army in view it returns all of
+  them (whole-list answer) and the frame is the per-unit drawing work
+  (Experiment 14: `total10k-visible` draw unchanged within noise, only the
+  registration record's −0.4 ms in the candidate pass).
+- **L: full scans that remain.** The minimap dots (every unit is drawn on it),
+  the unit-effect pass over `anims_` (0.45 ms with 10,000 units; its draw
+  order is the hash map's iteration order, which a separate active-effect list
+  could not reproduce without changing overlapping-sprite order), Tactical
+  Dots (far zoom; would need altitude and interpolation bounds), the HUD's unit
+  count and squad label, and pointer picking. `geomIndex_.assign(units)` (a
+  40 KB fill) stays per frame.
+- **L: the grid is built per snapshot on the capture thread** (0.07 ms per
+  10,000 units): in the render study that is inside `update`, in play on the
+  sim worker at the tick rate. Not split across `capturePool_`.
+- **L: overlay bands for footprint-dependent offsets** (squad markers,
+  production bars) cover every type in the registry; a type registered after
+  the cache key was taken (registry size) would be missed — the registry is
+  fixed for a game, and the verifier would throw.
+- **L: in-game tests are coarse.** The 256-px cells hide band errors smaller
+  than a cell in `render_unit_index` (40-px shrinks of a band survive it);
+  band precision is proven by `unit_index` (ulp-located edges), which the
+  renderer shares through `unitpass::*`.
+- **L: backends.** No backend-specific code; exercised on SDL `opengl`
+  (offscreen EGL) and the software renderer (ctests). Direct3D/Metal not run
+  (not needed: CPU-only change).
 
 - **K: "missing terrain" is mostly invisible in this engine.** A visible
   cell without a chunk image is drawn by the section fallback, texel-identical
@@ -4410,6 +4708,17 @@ predicate check and its wait). The Release `takclient` builds and contains none 
   `render_shadow_atlas` ctests); Direct3D/Metal/GLES not run.
 
 ## Rejected experiments
+
+- **L, not adopted: a resolved-visual record per unit** (cache the
+  `visuals_` entry on the geometry entry). The corpse and veteran mesh swaps
+  rename a registered unit's visual in place, so a record keyed by unit
+  identity would go stale; a per-thread memo of the lookup measured nothing
+  (Experiment 14). The visual and anim lookups stay in `buildUnitGeom`.
+- **L, not adopted: an active-effect list for `drawUnitFx`.** Would save
+  most of 0.45 ms with 10,000 units, but the pass draws in `anims_`' hash
+  iteration order; a separate list changes the order of overlapping smoke and
+  fire sprites (pixels), so it was not attempted under the "identical output"
+  rule.
 
 - **K, rejected by the verifier: the calm gate at every level** (K5 scope,
   `b98183b1`/`df330946`, the committed default until `918300a4`). Justified
