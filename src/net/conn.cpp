@@ -123,7 +123,8 @@ Conn& Conn::operator=(Conn&& o) noexcept {
         low_ = std::move(o.low_); lowDropped_ = o.lowDropped_; o.low_.clear(); o.lowDropped_ = 0;
         lowGated_ = o.lowGated_; o.lowGated_ = false;
         peerClosed_ = o.peerClosed_;   // part of the socket's state, like err_
-        o.fd_ = -1; o.rxOff_ = o.txOff_ = 0; o.peerClosed_ = false;
+        rxDrained_ = o.rxDrained_;
+        o.fd_ = -1; o.rxOff_ = o.txOff_ = 0; o.peerClosed_ = o.rxDrained_ = false;
     }
     return *this;
 }
@@ -285,6 +286,7 @@ bool Conn::flushWrite() {
 }
 
 bool Conn::recv(size_t budget) {
+    rxDrained_ = false;
     if(!tlsHandshake())return err_.empty();
     char buf[16384];
     // Two bounds, because this loop used to run until the socket blocked with no
@@ -337,6 +339,7 @@ bool Conn::recv(size_t budget) {
         err_ = "recv failed: " + sockErrStr(e);
         return false;
     }
+    rxDrained_ = got < kRecvPassBytes;
     return true;
 }
 

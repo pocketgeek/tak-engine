@@ -13,7 +13,11 @@
 //    after 60 s), and Linux still queued up to ~2.5 s in the receiver's buffers. Now its
 //    round-trip probe sees the queue and holds voice (an END closes the transmission, a
 //    START opens the next one): no Progress waits a second, and voice still went out.
-//  - On a fast link nothing is held and every frame arrives.
+//  - On a fast link nothing is held and every frame arrives -- also when the talker's own
+//    machine stutters (a 180 ms frame every 0.7 s, a 250 ms one every 0.5 s). The probe's
+//    Pong is read once a frame, so a long frame after the Ping used to count as round trip:
+//    the guard held a stuttering talker's voice for 54 s of every 60 on a fast link. And a
+//    slow uplink is still held when the machine stutters too.
 #include "net/client.h"
 #include "net/conn.h"
 #include "net/netcompat.h"
@@ -159,6 +163,7 @@ struct Uplink {
     std::map<uint32_t, uint64_t> progressSent;   // tick -> send time (us)
     std::vector<double> delays;                   // ms, Progress send -> read
     std::vector<std::pair<uint64_t, uint8_t>> voice;   // (read time, flags) of each VoiceUp
+    std::atomic<int> pings{0};                    // Pings read
     explicit Uplink(int rcvbuf) { listenFd = listener(port, rcvbuf); }
     ~Uplink() {
         stop = true;
@@ -222,6 +227,7 @@ struct Uplink {
                     if (kind == net::Msg::Ping) {
                         const uint8_t pong[5] = {1, 0, 0, 0, uint8_t(net::Msg::Pong)};
                         ::send(peer, reinterpret_cast<const char*>(pong), 5, MSG_NOSIGNAL);
+                        ++pings;
                     } else if (kind == net::Msg::Progress && len >= 5) {
                         uint32_t tick; std::memcpy(&tick, p, 4);
                         std::lock_guard<std::mutex> lock(m);
@@ -239,34 +245,54 @@ struct Uplink {
     }
 };
 
-struct TalkResult { double p50 = 0, max = 0; size_t frames = 0, starts = 0, ends = 0; bool everHeld = false; };
+struct TalkResult {
+    double p50 = 0, max = 0;
+    size_t sent = 0, frames = 0, starts = 0, ends = 0;
+    bool everHeld = false;
+};
 
 // Talk for `seconds`: a voice frame every 20 ms, a Progress every 4 ticks (133 ms), the
-// client polled every 5 ms, as a game frame loop does.
-TalkResult talk(net::MpClient& client, Uplink& up, double seconds) {
+// client polled every 5 ms, as a game frame loop does -- or, with hitchMs, about one frame
+// in every hitchEveryMs taking that long instead (the captured audio piles up meanwhile and
+// goes out in a burst, as the capture queue does).
+TalkResult talk(net::MpClient& client, Uplink& up, double seconds, int hitchMs = 0, int hitchEveryMs = 0,
+                bool afterProbe = false) {
     TalkResult res;
     const uint64_t t0 = nowUs(), end = t0 + uint64_t(seconds * 1e6);
-    uint64_t nextVoice = t0, nextProgress = t0;
+    uint64_t nextVoice = t0, nextProgress = t0, nextHitch = t0 + uint64_t(hitchEveryMs) * 1000;
     uint16_t seq = 0;
     uint32_t tick = 0;
     const std::vector<uint8_t> opus(66, 0x5a);
     while (nowUs() < end && client.state() == net::MpClient::State::InRoom) {
         const uint64_t n = nowUs();
-        if (n >= nextVoice) {
+        while (n >= nextVoice) {
             nextVoice += 20000;
             client.sendVoice(seq, 0xff, seq == 0 ? net::kVoiceStart : 0, opus);
             ++seq;
         }
-        if (n >= nextProgress) {
+        while (n >= nextProgress) {
             nextProgress += 133333;
             tick += 4;
             { std::lock_guard<std::mutex> lock(up.m); up.progressSent[tick] = nowUs(); }
             client.sendProgress(tick);
         }
+        const int pings = up.pings.load();
         client.poll();
         res.everHeld = res.everHeld || client.voiceHeld();
         sleepMs(5);
+        // On a fast link the long frame comes where it does the most harm: right after a
+        // poll that sent a probe (the server has read it), so the read that finds its Pong
+        // comes hitchMs late. A slow link reads the probe late, so there it comes on time.
+        if (hitchMs && n >= nextHitch) {
+            const uint64_t until = nowUs() + 30000;
+            while (afterProbe && up.pings.load() == pings && nowUs() < until) sleepMs(1);
+            if (!afterProbe || up.pings.load() != pings) {
+                nextHitch = nowUs() + uint64_t(hitchEveryMs) * 1000;
+                sleepMs(hitchMs);
+            }
+        }
     }
+    res.sent = seq;
     client.sendVoice(seq, 0xff, net::kVoiceEnd, {});
     for (int i = 0; i < 300; ++i) { client.poll(); sleepMs(5); }   // let the queue drain
     std::lock_guard<std::mutex> lock(up.m);
@@ -281,15 +307,19 @@ TalkResult talk(net::MpClient& client, Uplink& up, double seconds) {
     return res;
 }
 
-void slowUplink() {
-    std::printf("a talker on an uplink too slow for its voice (2500 B/s):\n");
+void slowUplink(int hitchMs = 0, int hitchEveryMs = 0) {
+    if (hitchMs)
+        std::printf("a talker on an uplink too slow for its voice (2500 B/s), a %d ms frame every %d ms:\n",
+                    hitchMs, hitchEveryMs);
+    else
+        std::printf("a talker on an uplink too slow for its voice (2500 B/s):\n");
     Uplink up(4096);
     net::MpClient client;
     check(client.connect("127.0.0.1", up.port, "Talker"), "connect");
     up.handshake(client);
     check(client.state() == net::MpClient::State::InRoom, "seated");
     up.startReading(2500);
-    const TalkResult r = talk(client, up, 12.0);
+    const TalkResult r = talk(client, up, 12.0, hitchMs, hitchEveryMs);
     std::printf("  Progress delay p50 %.0f ms, max %.0f ms; voice frames read %zu (START %zu, END %zu); held %llu frames\n",
                 r.p50, r.max, r.frames, r.starts, r.ends, (unsigned long long)client.voiceHeldFrames());
     check(r.max < 1000.0, "no Progress waits a second behind the talker's voice");
@@ -312,6 +342,23 @@ void fastLink() {
     check(r.frames >= 140 && r.starts == 1 && r.ends == 1, "every frame arrives, one START and one END");
     client.disconnect("done");
 }
+
+// The talker's machine stutters on a fast link: a long frame between the Ping and the read
+// that finds its Pong is the client's own delay, not queueing, and must not hold voice.
+void fastLinkHitches(int hitchMs, int hitchEveryMs) {
+    std::printf("a talker on a fast link whose machine stutters (a %d ms frame every %d ms):\n", hitchMs, hitchEveryMs);
+    Uplink up(0);
+    net::MpClient client;
+    check(client.connect("127.0.0.1", up.port, "Talker"), "connect");
+    up.handshake(client);
+    up.startReading(0);
+    const TalkResult r = talk(client, up, 6.0, hitchMs, hitchEveryMs, true);
+    std::printf("  Progress delay p50 %.0f ms, max %.0f ms; voice frames sent %zu, read %zu; held %llu frames\n",
+                r.p50, r.max, r.sent, r.frames, (unsigned long long)client.voiceHeldFrames());
+    check(!r.everHeld && client.voiceHeldFrames() == 0, "nothing is held");
+    check(r.frames == r.sent + 1 && r.starts == 1 && r.ends == 1, "every frame arrives, one START and one END");
+    client.disconnect("done");
+}
 }  // namespace
 
 int main() {
@@ -319,7 +366,10 @@ int main() {
     try {
         kernelGate();
         fastLink();
+        fastLinkHitches(180, 700);
+        fastLinkHitches(250, 500);
         slowUplink();
+        slowUplink(180, 700);
     } catch (const std::exception& e) {
         std::printf("  FAIL %s\n", e.what()); ++failures;
     }

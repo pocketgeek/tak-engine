@@ -85,6 +85,9 @@ public:
     // still drain whatever complete frames were buffered alongside the FIN; call this
     // AFTER the poll() drain to finish the connection off. See recv() for why.
     bool peerClosed() const { return peerClosed_; }
+    // Did the last recv() take everything the socket had (it stopped on an empty socket or
+    // the close, not on its budget)? Then a frame not buffered yet had not arrived when it ran.
+    bool recvDrained() const { return rxDrained_; }
     bool poll(Frame& out);
     bool flushWrite();
     bool wantWrite() const { return tlsWantWrite_ || txOff_ < txBuf_.size() || (!low_.empty() && !lowGated_); }
@@ -102,7 +105,7 @@ private:
     bool tlsHandshake();
     int fd_ = -1;
     std::string err_;
-    bool peerClosed_ = false;
+    bool peerClosed_ = false, rxDrained_ = false;
     std::vector<uint8_t> rxBuf_;
     size_t rxOff_ = 0;
     std::vector<uint8_t> txBuf_;

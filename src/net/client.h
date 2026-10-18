@@ -414,6 +414,9 @@ private:
     bool desynced_ = false;
     std::string desyncReason_;
     uint64_t lastRecvMs_ = 0, lastPingMs_ = 0;
+    // When the last read that took everything the socket had began (poll): a frame that was
+    // not in by then arrived after it.
+    uint64_t readAt_ = 0;
     // Send time of every Ping still waiting for its Pong, oldest first (the server answers
     // in order). Probes go out only while this is empty.
     std::deque<uint64_t> pingsOut_;

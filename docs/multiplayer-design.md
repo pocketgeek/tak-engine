@@ -381,9 +381,14 @@ at each end by how late the game's own traffic is:
   held -- an END closes the transmission, the queued voice is thrown away, captured
   frames are dropped -- for a back-off of 5 s doubling to 60 s (forgotten after 2
   quiet minutes), and resumes with a START once the probe is quiet.
+  The Pong is read once a rendered frame, so a probe is judged by the least it can
+  have taken: from its Ping to the last read that found the socket empty of it, not
+  to the read that found it. Otherwise a talker whose machine stutters (a 180 ms
+  frame every 0.7 s on a fast link) was held for 54 s of every 60.
   `voice_uplink_test` (all platforms, Windows included) talks over a 2500 B/s
   uplink: no `Progress` waits more than ~0.4 s, where without the hold Linux queued
-  up to 2.4 s and Windows 5.5 s after 15 s and 22 s after 60 s.
+  up to 2.4 s and Windows 5.5 s after 15 s and 22 s after 60 s; and with 180 ms and
+  250 ms frames on a fast link nothing is held.
 - **A listener's downlink** (`Server::voiceBehind`). `Progress` reports the newest
   tick that has *arrived* as well as the one processed. In a running game the server
   stops voice to a listener whose arrival lags the room by more than 3/4 of the lead

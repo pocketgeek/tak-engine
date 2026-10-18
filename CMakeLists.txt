@@ -2040,7 +2040,7 @@ add_test(NAME voice_client COMMAND voice_client_test)
 add_executable(voice_uplink_test tools/voice_uplink_test.cpp)
 target_link_libraries(voice_uplink_test PRIVATE tak-formats)
 add_test(NAME voice_uplink COMMAND voice_uplink_test)
-set_tests_properties(voice_uplink PROPERTIES TIMEOUT 90)
+set_tests_properties(voice_uplink PROPERTIES TIMEOUT 150)
 set_tests_properties(spectator_client PROPERTIES TIMEOUT 60)
 # TAK_PACELOG's summary (src/client/pacelog.h, header-only).
 add_executable(pacelog_test tools/pacelog_test.cpp)

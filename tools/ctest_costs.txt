@@ -62,7 +62,7 @@ legion_gen1_route_54772_om1 20
 cartographer_place_features 20
 crusades_ui_network 19
 legion_scenario_strait-2x150 19
-voice_uplink 19
+voice_uplink 49
 legion_check_unreach-200 18
 legion_situation_r9-61930_legion 18
 movement_orders_maze 18

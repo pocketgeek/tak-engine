@@ -79,10 +79,12 @@ bool MpClient::poll() {
     // well as on the server: a Reject sent immediately before the close used to be
     // buffered and then thrown away, leaving only a bare "peer closed" to explain a
     // rejection the server had actually spelled out.
+    const uint64_t readAt = nowMs();
     const bool recvOk = conn_.recv();
     Frame f;
     if (recvOk)
         while (conn_.poll(f)) { onFrame(f); if (!conn_.ok()) break; }
+    if (recvOk && conn_.recvDrained()) readAt_ = readAt;   // after the frames: a Pong needs the read before
     if (!recvOk || conn_.peerClosed()) {
         // Keep an existing reason (e.g. the server's Reject text): the socket
         // closing right after a Reject must not overwrite WHY with "peer closed".
@@ -754,7 +756,12 @@ void MpClient::onFrame(const Frame& f) {
         case Msg::Ping: send(Msg::Pong); break;
         case Msg::Pong:
             if (!pingsOut_.empty()) {
-                const uint64_t now = nowMs(), rtt = now - pingsOut_.front();
+                const uint64_t now = nowMs(), sent = pingsOut_.front(), rtt = now - sent;
+                // The Pong came in somewhere after the last read that took everything the
+                // socket had: rtt is the most the round trip took, and atLeast the least. They
+                // differ by the time between the two reads -- a frame, which on a stuttering
+                // machine can be a 250 ms one, and that is the client's own delay, not queueing.
+                const uint64_t atLeast = readAt_ > sent ? readAt_ - sent : 0;
                 pingsOut_.pop_front();
                 if (measureRtt_) {
                     // Add the modelled return-path delay so RTT reflects the test link.
@@ -763,7 +770,7 @@ void MpClient::onFrame(const Frame& f) {
                 }
                 const uint32_t ms = uint32_t(std::min<uint64_t>(rtt, 60000));
                 voiceBaseRtt_ = voiceBaseRtt_ == UINT32_MAX ? ms : std::min(voiceBaseRtt_ + 1, ms);
-                voiceProbe(now, int64_t(rtt));
+                voiceProbe(now, int64_t(atLeast));
             }
             break;
         case Msg::Bye: err_ = r.str(); state_ = State::Done; break;
@@ -1052,7 +1059,12 @@ uint64_t MpClient::voiceSlackMs() const {
 
 // The voice uplink guard (sendVoice): probe the round trip, hold voice when it shows
 // queueing, release the hold once the back-off is over and the probe is quiet. Run from
-// poll(), and on each Pong with the round trip it measured (rtt, else -1).
+// poll(), and on each Pong with the least round trip it shows (rtt, else -1).
+//
+// Only evidence of queueing trips it: a frame loop that stutters must not read as a slow
+// uplink. So a probe is judged by the least it took -- from its Ping to the last read that
+// found no Pong (readAt_), not to the read that found it -- while the quiet round trip it
+// is judged against comes from the most they took, which can only loosen the guard.
 void MpClient::voiceProbe(uint64_t now, int64_t rtt) {
     const bool inRoom = state_ == State::InRoom || state_ == State::Starting || state_ == State::InGame;
     const bool talking = inRoom && voiceTxAt_ && now - voiceTxAt_ < 1000;
@@ -1066,7 +1078,8 @@ void MpClient::voiceProbe(uint64_t now, int64_t rtt) {
     // and a blip on the route that trips it costs only a few seconds of voice.
     const uint64_t limit = voiceBaseRtt_ + voiceSlackMs();
     if (rtt >= 0) voiceSlowRtt_ = uint64_t(rtt) > limit;
-    const bool queueing = voiceSlowRtt_ || (!pingsOut_.empty() && now - pingsOut_.front() > limit);
+    const bool queueing = voiceSlowRtt_ || (!pingsOut_.empty() && readAt_ > pingsOut_.front() &&
+                                            readAt_ - pingsOut_.front() > limit);
     if (voiceHeld_) {
         if (now >= voiceHeldUntil_ && !queueing) voiceHeld_ = false;
     } else if (talking && queueing) {
