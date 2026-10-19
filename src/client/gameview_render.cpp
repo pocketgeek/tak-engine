@@ -6,6 +6,7 @@
 #include <functional>
 #include "client/gameview.h"
 #include "client/cursortiming.h"
+#include "client/buildghost.h"
 #include "client/reclaimpick.h"
 #include "client/retaillightningquad.h"
 #include "client/retailflame.h"
@@ -2204,13 +2205,18 @@
         // Ghosts of the local player's queued (shift) build orders. Only the units the
         // snapshot lists as holding such an order (Frame::buildGhostUnits, in live
         // order) can draw one (workstream L: no walk over every unit).
+        // The order being worked has a site of its own, drawn in its painter place
+        // (under any flyer); it gets no second ghost over everything
+        // (tak::render::buildGhostDrawn).
         const auto buildGhosts = [&](const UnitR& u, bool draw) {
             if (!u.alive() || u.player != localPlayer_) return false;
             bool any = false;
+            const UnitR* site = u.buildSiteId ? frameUnitP(u.buildSiteId) : nullptr;
             // Every queued build is an order now; the order sits at the builder's
             // working position, so step back to where the site actually goes.
-            for (const auto& o : u.orders)
-                if (o.buildType && !o.manaBuildArea) {
+            for (size_t i = 0; i < u.orders.size(); ++i)
+                if (tak::render::buildGhostDrawn(u, i, site)) {
+                    const auto& o = u.orders[i];
                     any = true;
                     if (draw) drawGhostAt(o.buildType,
                         o.buildRectangle ? o.buildX.toFloat() : o.x.toFloat(),
