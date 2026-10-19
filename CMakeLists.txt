@@ -828,6 +828,14 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale room2door --data "${TAK_TEST_DATA}"
                    --min scale.arrive.group_entrances=1 --min scale.arrive.n=100 --max scale.stuck_end=0)
   set_tests_properties(legion_entrances PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # Head-on meets near both goals (many-100: two pairs of 25-body orders sent to each other's positions meet
+  # within kPivotNear of both goals; the meet band now holds up to the destination area plus one lead): at least
+  # 98 of 100 arrive, the 90th percentile within 1,000 ticks (the previous commit 96 / 1,616; Retail 92 / 1,144).
+  add_test(NAME legion_meetnear
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale many-100 --data "${TAK_TEST_DATA}"
+                   --min scale.arrive.n=98 --min scale.arrive.t90=1 --max scale.arrive.t90=1000 --max scale.stuck_end=0)
+  set_tests_properties(legion_meetnear PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison

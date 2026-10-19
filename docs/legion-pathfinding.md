@@ -1477,8 +1477,9 @@ charge, no re-plan, no stored lanes (W9-U2). The target is an increasing map of
 each member's current lateral position driven by the group's progress, which
 never falls, so members cannot cross each other; they move at most one cell
 across per two along, only on a statically legal line that descends the field,
-never within the pivot distance of the goal, and the target is cut before a
-wall. Narrowing waits until the gap between the groups is within twice the
+never where the destination area packs the member (within the pivot distance
+of its goal and inside its point's area plus one lead, `Point::limit` + 6
+cells round the requested point), and the target is cut before a wall. Narrowing waits until the gap between the groups is within twice the
 span plus two leads. Both groups keep right. The latch is released when the
 other group's tail is behind this group's rear, or after 90 ticks without
 contact before the groups meet. Hashed only when set (`Point::meet`,
@@ -1492,6 +1493,25 @@ the premises of the other lanes (A1-A5 slot re-choice and settling, B1-B4 and
 B6 gate, ring and corner shaping); each was run for its two rounds, missed its
 acceptance and was reverted (`docs/legion-exit-tables.md`, "W9 lane A" and
 "W9 exit").
+
+Near both goals (2026-10-19, no protocol change). Until then the band was
+off anywhere within the pivot distance (32 cells) of the member's goal. Two
+small orders sent to each other's positions (many-100: pairs of 25-body squads
+40 cells apart, the second clicked 150 ticks after the first) meet within 32
+cells of both goals, so neither group narrowed: the columns met face to face,
+the arriving group's front bodies, pressed by the departing group, settled
+off-slot at the near edge of their area (after their three re-choices), and the
+departing group's last bodies were walled in behind them, some until the end.
+Start-up (first move 5-8 ticks) and the head's walk (arrive t50 557 against
+Retail's 627) were never the cost; the tail was. The band is now off only where
+the area packs the member: within the pivot distance of its goal AND inside
+the point's area (`Point::limit`) plus one lead. Large orders, whose areas
+reach past 32 cells, keep the old rule. many-100 over the gate offsets
+(median, Legion before / after / Retail): arrive.n 93 / 100 / 93, arrive.t90
+1986 / 767 / 1057, complete.t90 1981 / 1215 / 1126, stuck at the end 1 / 0 / 0;
+every other legion100 fixture is hash-identical except bridges-100, swap-100
+and motion-cross-100 (within their spread) and densehead is level
+(`ctest:legion_meetnear`).
 
 ### Clustered static repair (4a99092a)
 
@@ -2711,6 +2731,19 @@ Rules that came out of using them:
   `doorplug-112:wall_touch_permille`, `ringcross:g.M.t90`,
   `doorplug-124:g.A.done`, `motion-cross:click.u01.done` and
   `ctest:legion_liftflyers`.
+* **A late departure through an arrived crowd (many-100, some offsets).** When
+  an order arrives in an area another order is still leaving (or has not been
+  sent from yet), the arrivals settle among the bodies that will leave, and
+  those that leave last may find their way out sealed by settled bodies of
+  another command: Legion never asks another player's body to yield, and
+  settled bodies of its own player rarely have a free cell to yield to. After
+  the head-on fix above, many-100 still ends with up to 7 stuck bodies at
+  start offsets 3-5 (complete.t90 2048 / 2071 / never against Retail's
+  1164 / 1179 / 1353); the median is level with Retail. Letting a member in
+  its own area wait instead of settling while another command's mover presses
+  it brought those offsets' arrivals in but delayed completions (median
+  complete.t90 1215 -> 1269), so it was not taken. Measured by
+  `ctest:legion_meetnear` (offset 0 only).
 * **The livelock fix costs some lane order (protocol 257).** A body blocked
   again after a side-step toward its arc may not step straight back, so it
   takes another field step inward or holds and side-steps: the 150 bodies

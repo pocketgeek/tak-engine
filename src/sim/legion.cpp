@@ -7331,7 +7331,15 @@ struct LegionNavigator::Impl {
         const auto& mt=m.pt->meet;
         const int W=width();
         if(!mt.active)return false;
-        if(std::max(std::abs(m.goal%W-ox),std::abs(m.goal/W-oz))<=kPivotNear)return false;
+        // Not where the destination area packs it: within kPivotNear of its goal AND inside the point's
+        // area plus one lead (Point::limit, the packed disc and its margin, round the requested point). Two
+        // small orders sent to each other's positions meet within kPivotNear of both goals, and without
+        // the band there they met face to face (many-100).
+        if(std::max(std::abs(m.goal%W-ox),std::abs(m.goal/W-oz))<=kPivotNear) {
+            const int64_t dx=(int64_t(u.x.v)-std::get<2>(m.point))>>16,dz=(int64_t(u.z.v)-std::get<3>(m.point))>>16;
+            const int64_t r=m.pt->limit+int64_t(kPivotLead)*16;
+            if(m.pt->limit<=0||dx*dx+dz*dz<=r*r)return false;
+        }
         const int64_t x=u.x.v>>16,z=u.z.v>>16,lead=int64_t(kPivotLead)*16;
         const int64_t lat=(z*mt.ax-x*mt.az)/mt.L;
         // The band map F(x) = lo + (x - left0) x (hi - lo) / width0 = (A + x (hi - lo)) / width0 on the
