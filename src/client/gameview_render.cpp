@@ -2198,7 +2198,8 @@
         profBodyMs_ += -airShadowMs + (double(SDL_GetPerformanceCounter()) - _bdy0) /
                        (double(SDL_GetPerformanceFrequency()) / 1000.0);
         // Tactical Dots stand in for the unit bodies: over the terrain and features
-        // (a dot under a tree crown would vanish), under shots and explosions.
+        // (a dot under a tree crown would vanish). Shots and effects do not draw
+        // on a dots frame at all (worldFxFrame()).
         if (dotsFrame_) drawTacticalDots(mvw, winH);
         // Ghosts of the local player's queued (shift) build orders. Only the units the
         // snapshot lists as holding such an order (Frame::buildGhostUnits, in live
