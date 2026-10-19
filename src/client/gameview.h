@@ -2456,6 +2456,13 @@ private:
     int  tacticalDotsZoom_ = tak::tacticaldots::kDefaultPercent;  // the Options slider
     tak::tacticaldots::Switch dotsSwitch_;      // zoom threshold + hysteresis
     bool dotsFrame_ = false;
+    // The one rule for the world's effects and shots under Tactical Dots: when the
+    // units are dots, no fire, smoke, particles, glows, debris, storms, beams or
+    // projectiles draw either (at that zoom a fireball outsizes the dot it hit and
+    // buries the map). Drawing only: the sim, audio and every effect list and clock
+    // advance in their own update passes, so zooming back in finds each effect
+    // exactly where it would have been.
+    bool worldFxFrame() const { return !dotsFrame_; }
     // Exactly the minimap's rule for showing a unit: alive, not embarked, and
     // either a spectator, an ally, or standing in a cell the local player sees.
     // Shared by the minimap and the dots so the two can never disagree about
@@ -3635,6 +3642,10 @@ private:
     void drawRings();
 
     void drawEffects();
+    // Frame a nimbus shows at the current tick (frames.size() once it has played out),
+    // and the lifetime rule drawEffects applies, for frames that skip drawing it.
+    size_t nimbusFrame(const NimbusEffect& effect) const;
+    void pruneNimbusEffects();
 
     // Persistent per-unit ambient fire/smoke (emit-sfx). One looping flame/smoke per
     // unit, cycled off the continuous animClock so it flows smoothly (no restart/gaps

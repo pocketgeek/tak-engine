@@ -548,6 +548,20 @@
             check(!dotsFrame_ && !visUnits_.empty(),"past the exit zoom models return");
             frame(zIn);
             check(dotsFrame_,"dots come back below the threshold");
+            {   // World effects and shots follow the dots: an explosion glow in plain
+                // sight draws with models, not with dots, and survives the dots frame
+                // (drawing is skipped, the effect itself is not touched).
+                explosionGlows_.clear();
+                explosionGlows_.push_back({x0,z0,0,front().gameTick,0,std::nullopt});
+                frame(zIn);
+                check(!worldFxFrame() && debugGlowDrawCount_==0,"dots: no explosion glow drawn");
+                check(explosionGlows_.size()==1,"dots: the skipped glow is still alive");
+                tacticalDotsOpt_=false;frame(zIn);
+                check(worldFxFrame() && debugGlowDrawCount_==1,"models: the same glow draws again");
+                tacticalDotsOpt_=true;frame(zIn);
+                check(dotsFrame_ && debugGlowDrawCount_==0,"back to dots: glow hidden again");
+                explosionGlows_.clear();
+            }
             // Picking: a click on the dot selects it, a small box around it too.
             const auto* inf=frameUnitP(infantry);
             const SDL_FPoint c=dotCentre(*inf);

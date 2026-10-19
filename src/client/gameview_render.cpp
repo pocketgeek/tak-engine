@@ -2010,7 +2010,10 @@
                         SDL_RenderGeometry(ren_,shadow,v,4,indices,6);
                     } else SDL_RenderCopyF(ren_, shadow, nullptr, &sd);
                 }
+                // A burning feature keeps its burn art under Tactical Dots; only its
+                // flame overlays and smoke are world effects (worldFxFrame()).
                 const auto drawFeatureSmoke = [&] {
+                    if(!worldFxFrame())return;
                     const auto found=featureSmokeSprites_.find(f.simId);
                     if(found==featureSmokeSprites_.end())return;
                     for(const auto& sprite:found->second) {
@@ -2035,7 +2038,7 @@
                     }
                 };
                 const auto drawFlame = [&](const EffectAnim* animation) {
-                    if (!f.burnVis || !animation) return;
+                    if (!f.burnVis || !animation || !worldFxFrame()) return;
                     const auto index = tak::retailEffectFrame(animation->durations, false,
                         burnAge);
                     if (!index || *index >= animation->frames.size()) return;
@@ -2239,440 +2242,451 @@
 #ifndef NDEBUG
         debugFlameDrawCount_=0;
 #endif
-        if (!front().flames.empty()) (void)heightAbove(0,0);
-        const auto flameInViewport=[&](const std::array<int,2>& point) {
-            const float sx=(float(point[0])-mapView_.offX())*zm;
-            const float sy=(float(point[1])+float(heightRef_)*0.5f-mapView_.offY())*zm;
-            return sx>=0 && sx<=mvw && sy>=0 && sy<=winH;
-        };
-        for(const auto& stream:front().flames) {
-            if(!tak::retailFlameStreamVisible(stream.muzzle,stream.aimPoint,
-                [&](const auto& point) {return flameInViewport(tak::retailFlameEndpointPoint(point));},
-                [&](const auto& point) {return effectVisibleR(point);}))continue;
-            for(const auto& particle:stream.particles) {
-                const char* name=particle.kind==1 ? "bluefire" : particle.kind==2 ? "dieselflame" : "flame";
-                const auto* art=effectFor(name);
-                if(!art || art->frames.empty())continue;
-                const auto projected=tak::retailFlameParticlePoint(particle.position);
-                if(!flameInViewport(projected))continue;
-                const int frame=particle.frame(uint16_t(art->frames.size()));
-                if(frame<0 || size_t(frame)>=art->frames.size())continue;
-                const auto& f=art->frames[size_t(frame)];
-                SDL_FRect dst{(float(projected[0])-mapView_.offX()-f.ax)*zm,
-                    (float(projected[1])+float(heightRef_)*0.5f-mapView_.offY()-f.ay)*zm,f.w*zm,f.h*zm};
-                SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
-#ifndef NDEBUG
-                ++debugFlameDrawCount_;
-#endif
-            }
-        }
-        // Wandering storms. These are roaming hazards with their own three-part
-        // animation (wanderstartart while it spins up, wanderloopart while it
-        // roams); without it a Tornado or a god's vortex tears through an army
-        // completely invisibly. Drawn before the shots so units read on top of it.
-        for (const auto& st : front().storms) {
-            if (!st.w) continue;
-            if (!noFog_ && !cellVisibleR(st.x.toFloat(), st.z.toFloat())) continue;
-            using Phase=tak::sim::World::Storm::Phase;
-            if(st.phase==Phase::Waiting || !st.animation.active)continue;
-            const std::string& artName=st.phase==Phase::Starting ? st.w->wanderStart :
-                st.phase==Phase::Ending ? st.w->wanderEnd : st.w->wanderLoop;
-            if(artName.empty())continue;
-            const EffectAnim* ea=effectFor(artName);
-            if(!ea || st.animation.frame>=ea->frames.size())continue;
-            const size_t fi=st.animation.frame;
-            const auto& fr = ea->frames[fi];
-            // Native 52fd00 refreshes terrain Y at draw time, then projects
-            // signed whole coordinates. Keep that refresh local to rendering:
-            // client visibility must not mutate deterministic simulation state.
-            const auto& terrain=mapView_.map();
-            const int height=terrain.heights.empty() ? 0 : tak::sim::retailTerrainHeight(
-                st.x.v,st.z.v,terrain.width,terrain.height,[&](int x,int z) {
-                    return terrain.heights[size_t(z)*size_t(terrain.width)+size_t(x)];
-                });
-            heightAbove(st.x.toFloat(),st.z.toFloat()); // Initialize map height reference.
-            const int x=st.x.v>>16,z=st.z.v>>16;
-            float sx = (float(x) - mapView_.offX()) * zm;
-            float sy = (float(z-(height>>1)) + float(heightRef_)*0.5f - mapView_.offY()) * zm;
-            float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
-            // Anchored at the storm's FOOT: these sprites are tall columns whose
-            // anchor sits near the base, so the funnel stands on the ground.
-            SDL_FRect dst{sx - float(fr.ax) * zm, sy - float(fr.ay) * zm, fw, fh};
-            SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);
-        }
-        // Hitscan flashes first, behind the shots. A Line-of-Sight weapon applies
-        // its damage instantly and spawns no projectile, so this bolt IS the shot:
-        // without it the King's Thunder, the Creon tasers and the Zhon lightning
-        // all fire invisibly. Lightning zig-zags; other beams draw straight.
-        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
-        for (const auto& b : beams_) {
-            // The bolt is drawn muzzle -> travelling head, so a long shot visibly
-            // reaches out rather than appearing whole. Retail's colour ramp is flat,
-            // so hold full strength and fade only over the last quarter -- an even
-            // fade over a one-second bolt reads as a fizzle rather than a strike.
-            float t = std::clamp(b.age / std::max(b.life, 1e-3f), 0.0f, 1.0f);
-            if (t >= 1.0f) continue;
-            if (!cellVisibleR(b.x2, b.z2) && !noFog_) continue;
-            if (!b.model.empty()) {
-                // Line-of-sight describes hit delivery, not appearance. Crossbow
-                // bolts and harpoons use the same model path as travelling shots.
-                SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-                tak::sim::Projectile position;
-                const bool captured=b.fromPosition && b.position;
-                if(captured)for(size_t axis=0;axis<3;++axis)
-                    position.position[axis]=int32_t(double((*b.fromPosition)[axis])+
-                        (double((*b.position)[axis])-double((*b.fromPosition)[axis]))*t);
-                drawShotModel(b.model,b.player,b.x1+(b.x2-b.x1)*t,b.z1+(b.z2-b.z1)*t,
-                              (8+b.alt1+(b.alt2-b.alt1)*t)*zm,
-                              3.14159265358979323846f-std::atan2(b.x2-b.x1,b.z2-b.z1),
-                              captured ? &position : nullptr);
-                SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
-                continue;
-            }
-            if (!b.sprite.empty()) {
-                // Status LOS classes share retail's ordinary projectile draw
-                // routine (52c8c0): weaponart is a travelling sprite, not a beam.
-                if (const auto* art = effectFor(b.sprite)) {
-                    const auto index = tak::retailEffectFrame(art->durations, art->loop,
-                                                             uint32_t(b.age * 30.0f));
-                    if (index && *index < art->frames.size()) {
-                        const auto& fr = art->frames[*index];
-                        const float x = b.x1 + (b.x2 - b.x1) * t;
-                        const float z = b.z1 + (b.z2 - b.z1) * t;
-                        const float alt = b.alt1 + (b.alt2 - b.alt1) * t;
-                        const float sx = (x - mapView_.offX() - terrainLiftX(x, z)) * zm;
-                        float sy = (z - mapView_.offY() - terrainLift(x, z) - 12 - alt) * zm;
-                        if(b.fromPosition && b.position) {
-                            const float y1=float((*b.fromPosition)[1]>>16);
-                            const float y2=float((*b.position)[1]>>16);
-                            sy=(z-(y1+(y2-y1)*t)*0.5f+float(heightRef_)*0.5f-mapView_.offY())*zm;
-                        }
-                        const auto origin = tak::retailEffectSpriteOrigin(sx, sy, fr.ax, fr.ay, zm);
-                        SDL_FRect dst{origin.x, origin.y, fr.w * zm, fr.h * zm};
-                        SDL_SetTextureAlphaMod(fr.tex, 255);
-                        SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);
-                    }
-                }
-                continue;
-            }
-            float f = 1.0f - std::max(0.0f, (t - 0.75f) / 0.25f);
-            auto sx = [&](float x, float z) {
-                return (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
+        // Tactical Dots hide every world effect and shot as well (worldFxFrame()).
+        if (worldFxFrame()) {
+            if (!front().flames.empty()) (void)heightAbove(0,0);
+            const auto flameInViewport=[&](const std::array<int,2>& point) {
+                const float sx=(float(point[0])-mapView_.offX())*zm;
+                const float sy=(float(point[1])+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                return sx>=0 && sx<=mvw && sy>=0 && sy<=winH;
             };
-            auto sy = [&](float x, float z, float alt) {
-                return (z - mapView_.offY()) * zm - 12 * zm - terrainLift(x, z) * zm - alt * zm;
-            };
-            float ax = sx(b.x1, b.z1), ay = sy(b.x1, b.z1, b.alt1);
-            float fullx = sx(b.x2, b.z2), fully = sy(b.x2, b.z2, b.alt2);
-            float bx = ax + (fullx - ax) * t, by = ay + (fully - ay) * t;
-            // Three passes -- outer halo, middle body, hot core -- so a weapon's
-            // own colours read the way retail's layered bolt does.
-            struct Pass { const uint8_t* c; float wob; int reps; };
-            const Pass passes[3] = {{b.outer, 3.4f, 3}, {b.middle, 1.8f, 2}, {b.inner, 0.7f, 1}};
-            // Jag count follows the DRAWN length, so a stub isn't over-zigzagged
-            // while it is still reaching out (retail sizes its jag vertices from
-            // screen length the same way).
-            float blen = std::sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
-            int segs = b.lightning ? std::clamp(int(blen / 24.0f), 2, 10) : 1;
-            for (const Pass& ps : passes) {
-                SDL_SetRenderDrawColor(ren_, ps.c[0], ps.c[1], ps.c[2], Uint8(230 * f));
-                for (int rep = 0; rep < ps.reps; ++rep) {
-                    float px = ax, py = ay;
-                    for (int s = 1; s <= segs; ++s) {
-                        float t2 = float(s) / float(segs);
-                        float nx = ax + (bx - ax) * t2, ny = ay + (by - ay) * t2;
-                        if (b.lightning && s < segs) {
-                            int j = (s * 7919 + rep * 131 + int(b.age * 2000)) % 11 - 5;
-                            float dx = bx - ax, dy = by - ay;
-                            float dl = std::max(std::sqrt(dx * dx + dy * dy), 1e-3f);
-                            nx += -dy / dl * float(j) * ps.wob;
-                            ny += dx / dl * float(j) * ps.wob;
-                        }
-                        SDL_RenderDrawLineF(ren_, px, py, nx, ny);
-                        px = nx; py = ny;
-                    }
-                }
-            }
-        }
-        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-        for (const auto& p : front().projectiles) {
-            if(p.straight) {
-                if(front().gameTick<p.start || !p.wsrc)continue;
-                auto whole=[](int32_t v){return int(std::bit_cast<int16_t>(uint16_t(uint32_t(v)>>16)));};
-                const int x=whole(p.position[0]),y=whole(p.position[1]),z=whole(p.position[2]);
-                const bool lightning=p.wsrc->lightning;
-                const int mx=whole(p.muzzle[0]),my=whole(p.muzzle[1]),mz=whole(p.muzzle[2]);
-                if(!noFog_ && !cellVisibleR(float(x),float(z)) &&
-                   !(lightning && cellVisibleR(float(mx),float(mz))))continue;
-                (void)heightAbove(float(x),float(z));
-                const auto& w=*p.wsrc;
-                auto sprite=[&](const std::string& name,float projectedY,bool shadow) {
-                    if(name.empty())return;
+            for(const auto& stream:front().flames) {
+                if(!tak::retailFlameStreamVisible(stream.muzzle,stream.aimPoint,
+                    [&](const auto& point) {return flameInViewport(tak::retailFlameEndpointPoint(point));},
+                    [&](const auto& point) {return effectVisibleR(point);}))continue;
+                for(const auto& particle:stream.particles) {
+                    const char* name=particle.kind==1 ? "bluefire" : particle.kind==2 ? "dieselflame" : "flame";
                     const auto* art=effectFor(name);
-                    if(!art || art->frames.empty())return;
-                    const auto index=tak::retailEffectFrame(art->durations,art->loop,uint32_t(p.age));
-                    if(!index || *index>=art->frames.size())return;
-                    const auto& f=art->frames[*index];
-                    // effectFor loaded the native mode for each authored frame:
-                    // format-4 flag FF uses coverage alpha, other format-4 frames
-                    // add. Only shadows override that mode to darken terrain.
-                    if(shadow)SDL_SetTextureBlendMode(f.tex,SDL_BLENDMODE_BLEND);
-                    SDL_SetTextureAlphaMod(f.tex,255);
-                    SDL_FRect dst{(float(x)-mapView_.offX()-f.ax)*zm,
-                        (projectedY-mapView_.offY()-f.ay)*zm,f.w*zm,f.h*zm};
+                    if(!art || art->frames.empty())continue;
+                    const auto projected=tak::retailFlameParticlePoint(particle.position);
+                    if(!flameInViewport(projected))continue;
+                    const int frame=particle.frame(uint16_t(art->frames.size()));
+                    if(frame<0 || size_t(frame)>=art->frames.size())continue;
+                    const auto& f=art->frames[size_t(frame)];
+                    SDL_FRect dst{(float(projected[0])-mapView_.offX()-f.ax)*zm,
+                        (float(projected[1])+float(heightRef_)*0.5f-mapView_.offY()-f.ay)*zm,f.w*zm,f.h*zm};
                     SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
-                };
-                if(lightning)sprite(w.weaponArt,float(z-(y>>1))+float(heightRef_)*0.5f,false);
-                const std::string& projectileModel = p.projectileUsesVeteranModel &&
-                    !w.veteranShotModel.empty() ? w.veteranShotModel : w.shotModel;
-                if(lightning && p.lightningEffect && w.lightningEffect) {
-                    const auto& effect=*p.lightningEffect;
-                    const int tw=int(std::bit_ceil(unsigned(effect.width)));
-                    const int th=int(std::bit_ceil(unsigned(effect.height)));
-                    auto& texture=lightningTextures_[{tw,th}];
-                    if(!texture) {
-                        texture=gpuvram::create(ren_,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,tw,th);
-                        if(texture){SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);SDL_SetTextureScaleMode(texture,worldScaleMode());}
-                    }
-                    if(texture) {
-                        std::vector<uint32_t> pixels(size_t(tw)*th,0);
-                        for(int row=0;row<effect.height;++row)for(int col=0;col<effect.width;++col) {
-                            const uint16_t c=w.lightningEffect->palette[effect.pixels[size_t(row)*effect.width+col]];
-                            pixels[size_t(row)*tw+col]=uint32_t((c>>12)&15)*17u<<24 |
-                                uint32_t((c>>8)&15)*17u<<16 | uint32_t((c>>4)&15)*17u<<8 | uint32_t(c&15)*17u;
-                        }
-                        SDL_UpdateTexture(texture,nullptr,pixels.data(),tw*int(sizeof(uint32_t)));
-                        const auto quad=tak::retailLightningQuad(
-                            {mx-int(mapView_.offX()),mz-(my>>1)+int(float(heightRef_)*0.5f-mapView_.offY())},
-                            {x-int(mapView_.offX()),z-(y>>1)+int(float(heightRef_)*0.5f-mapView_.offY())},
-                            int(winW/zm),int(winH/zm),effect.width,effect.height,tw,th);
-                        if(quad) {
-                            SDL_Vertex vertices[4];
-                            for(size_t i=0;i<4;++i)vertices[i]={{(*quad)[i].x*zm,(*quad)[i].y*zm},
-                                {255,255,255,255},{(*quad)[i].u,(*quad)[i].v}};
-                            const int indices[]={0,1,2,0,2,3};
-                            SDL_RenderGeometry(ren_,texture,vertices,4,indices,6);
-                        }
-                    }
+#ifndef NDEBUG
+                    ++debugFlameDrawCount_;
+#endif
                 }
-                if(!lightning && shadowsOnFrame_ && !w.shadowArt.empty())
-                    sprite("shadows:"+w.shadowArt,float(z)-terrainLift(float(x),float(z)),true);
-                if(!lightning && !projectileModel.empty())
-                    drawShotModel(projectileModel,p.fromPlayer,float(x),float(z),0,
-                        3.14159265358979323846f-float(p.angles[1])*(6.283185307179586f/65536.f),&p);
-                if(!lightning)sprite(w.weaponArt,float(z-(y>>1))+float(heightRef_)*0.5f,false);
-                continue;
             }
-            const bool native3d=p.ballistic3d || p.guided3d;
-            const float renderX=native3d ? tak::sim::Fixed::raw(p.position[0]).toFloat() : p.x.toFloat();
-            const float renderZ=native3d ? tak::sim::Fixed::raw(p.position[2]).toFloat() : p.z.toFloat();
-            if (!noFog_ && !cellVisibleR(renderX, renderZ)) continue;
-            float t = std::clamp(float(p.age) / std::max(float(p.flight), 1.0f), 0.0f, 1.0f);
-            // Legacy 2D fixture shots have no vertical trajectory. Production
-            // weapons carry native XYZ; do not invent a height from live units.
-            const float palt = 0.0f;
-            const float shotWorldY=native3d ? tak::sim::Fixed::raw(p.position[1]).toFloat() : 0.0f;
-            const float velocityX=native3d ? tak::sim::Fixed::raw(p.velocity[0]).toFloat() : p.vx.toFloat();
-            const float velocityY=native3d ? tak::sim::Fixed::raw(p.velocity[1]).toFloat() : 0.0f;
-            const float velocityZ=native3d ? tak::sim::Fixed::raw(p.velocity[2]).toFloat() : p.vz.toFloat();
-            const float velocityLength=std::max(std::sqrt(velocityX*velocityX+
-                velocityY*velocityY+velocityZ*velocityZ),1e-3f);
-            float nativeSpriteX=0,nativeSpriteY=0;
-            if(native3d) {
-                auto whole=[](int32_t v){return int(std::bit_cast<int16_t>(uint16_t(uint32_t(v)>>16)));};
-                const int x=whole(p.position[0]),y=whole(p.position[1]),z=whole(p.position[2]);
-                (void)heightAbove(float(x),float(z));
-                nativeSpriteX=(float(x)-mapView_.offX())*zm;
-                nativeSpriteY=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+            // Wandering storms. These are roaming hazards with their own three-part
+            // animation (wanderstartart while it spins up, wanderloopart while it
+            // roams); without it a Tornado or a god's vortex tears through an army
+            // completely invisibly. Drawn before the shots so units read on top of it.
+            for (const auto& st : front().storms) {
+                if (!st.w) continue;
+                if (!noFog_ && !cellVisibleR(st.x.toFloat(), st.z.toFloat())) continue;
+                using Phase=tak::sim::World::Storm::Phase;
+                if(st.phase==Phase::Waiting || !st.animation.active)continue;
+                const std::string& artName=st.phase==Phase::Starting ? st.w->wanderStart :
+                    st.phase==Phase::Ending ? st.w->wanderEnd : st.w->wanderLoop;
+                if(artName.empty())continue;
+                const EffectAnim* ea=effectFor(artName);
+                if(!ea || st.animation.frame>=ea->frames.size())continue;
+                const size_t fi=st.animation.frame;
+                const auto& fr = ea->frames[fi];
+                // Native 52fd00 refreshes terrain Y at draw time, then projects
+                // signed whole coordinates. Keep that refresh local to rendering:
+                // client visibility must not mutate deterministic simulation state.
+                const auto& terrain=mapView_.map();
+                const int height=terrain.heights.empty() ? 0 : tak::sim::retailTerrainHeight(
+                    st.x.v,st.z.v,terrain.width,terrain.height,[&](int x,int z) {
+                        return terrain.heights[size_t(z)*size_t(terrain.width)+size_t(x)];
+                    });
+                heightAbove(st.x.toFloat(),st.z.toFloat()); // Initialize map height reference.
+                const int x=st.x.v>>16,z=st.z.v>>16;
+                float sx = (float(x) - mapView_.offX()) * zm;
+                float sy = (float(z-(height>>1)) + float(heightRef_)*0.5f - mapView_.offY()) * zm;
+                float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
+                // Anchored at the storm's FOOT: these sprites are tall columns whose
+                // anchor sits near the base, so the funnel stands on the ground.
+                SDL_FRect dst{sx - float(fr.ax) * zm, sy - float(fr.ay) * zm, fw, fh};
+                SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);
             }
-            // Ground shadow (shadowgaf/shadowart, 218 weapons) and light pool
-            // (lightmap, 36): both sit on the GROUND under the shot, not at its
-            // altitude, which is what sells the shot as being up in the air.
-            if (p.wsrc) {
-                float gx = (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
-                float gy = (renderZ - mapView_.offY()) * zm - terrainLift(renderX, renderZ) * zm;
-                if (p.wsrc->lightMap > 0) {
-                    // A soft additive pool tinted by the shot's own family, so a
-                    // fireball throws warm light on the ground as it passes.
-                    float r = (10.0f + 8.0f * float(p.wsrc->lightMap)) * zm;
-                    Uint8 lr = 255, lg = 230, lb = 160;
-                    if (p.fx == tak::sim::WeaponFx::Lightning) { lr = 190; lg = 215; lb = 255; }
-                    else if (p.fx == tak::sim::WeaponFx::Fire) { lr = 255; lg = 160; lb = 70; }
-                    SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
-                    for (int ring = 3; ring >= 1; --ring) {
-                        float rr = r * float(ring) / 3.0f;
-                        SDL_SetRenderDrawColor(ren_, lr, lg, lb, Uint8(26));
-                        SDL_FRect q{gx - rr, gy - rr * 0.5f, rr * 2, rr};
-                        SDL_RenderFillRectF(ren_, &q);
-                    }
+            // Hitscan flashes first, behind the shots. A Line-of-Sight weapon applies
+            // its damage instantly and spawns no projectile, so this bolt IS the shot:
+            // without it the King's Thunder, the Creon tasers and the Zhon lightning
+            // all fire invisibly. Lightning zig-zags; other beams draw straight.
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
+            for (const auto& b : beams_) {
+                // The bolt is drawn muzzle -> travelling head, so a long shot visibly
+                // reaches out rather than appearing whole. Retail's colour ramp is flat,
+                // so hold full strength and fade only over the last quarter -- an even
+                // fade over a one-second bolt reads as a fizzle rather than a strike.
+                float t = std::clamp(b.age / std::max(b.life, 1e-3f), 0.0f, 1.0f);
+                if (t >= 1.0f) continue;
+                if (!cellVisibleR(b.x2, b.z2) && !noFog_) continue;
+                if (!b.model.empty()) {
+                    // Line-of-sight describes hit delivery, not appearance. Crossbow
+                    // bolts and harpoons use the same model path as travelling shots.
                     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+                    tak::sim::Projectile position;
+                    const bool captured=b.fromPosition && b.position;
+                    if(captured)for(size_t axis=0;axis<3;++axis)
+                        position.position[axis]=int32_t(double((*b.fromPosition)[axis])+
+                            (double((*b.position)[axis])-double((*b.fromPosition)[axis]))*t);
+                    drawShotModel(b.model,b.player,b.x1+(b.x2-b.x1)*t,b.z1+(b.z2-b.z1)*t,
+                                  (8+b.alt1+(b.alt2-b.alt1)*t)*zm,
+                                  3.14159265358979323846f-std::atan2(b.x2-b.x1,b.z2-b.z1),
+                                  captured ? &position : nullptr);
+                    SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
+                    continue;
                 }
-                if (shadowsOnFrame_ && !p.wsrc->shadowArt.empty()) {
-                    // shadowgaf is always "shadows"; effectFor's "file:sequence"
-                    // form picks the named sequence out of it.
-                    if (const EffectAnim* sh = effectFor("shadows:" + p.wsrc->shadowArt)) {
-                        const auto index=tak::retailEffectFrame(sh->durations,sh->loop,uint32_t(p.age));
-                        if(index && *index<sh->frames.size()) {
-                            const auto& fr=sh->frames[*index];
-                            // effectFor caches its textures additively for glowing
-                            // effects; a shadow has to DARKEN instead.
-                            SDL_SetTextureBlendMode(fr.tex, SDL_BLENDMODE_BLEND);
-                            SDL_SetTextureAlphaMod(fr.tex, 110);
-                            float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
-                            SDL_FRect dst{gx - fw * 0.5f, gy - fh * 0.5f, fw, fh};
+                if (!b.sprite.empty()) {
+                    // Status LOS classes share retail's ordinary projectile draw
+                    // routine (52c8c0): weaponart is a travelling sprite, not a beam.
+                    if (const auto* art = effectFor(b.sprite)) {
+                        const auto index = tak::retailEffectFrame(art->durations, art->loop,
+                                                                 uint32_t(b.age * 30.0f));
+                        if (index && *index < art->frames.size()) {
+                            const auto& fr = art->frames[*index];
+                            const float x = b.x1 + (b.x2 - b.x1) * t;
+                            const float z = b.z1 + (b.z2 - b.z1) * t;
+                            const float alt = b.alt1 + (b.alt2 - b.alt1) * t;
+                            const float sx = (x - mapView_.offX() - terrainLiftX(x, z)) * zm;
+                            float sy = (z - mapView_.offY() - terrainLift(x, z) - 12 - alt) * zm;
+                            if(b.fromPosition && b.position) {
+                                const float y1=float((*b.fromPosition)[1]>>16);
+                                const float y2=float((*b.position)[1]>>16);
+                                sy=(z-(y1+(y2-y1)*t)*0.5f+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                            }
+                            const auto origin = tak::retailEffectSpriteOrigin(sx, sy, fr.ax, fr.ay, zm);
+                            SDL_FRect dst{origin.x, origin.y, fr.w * zm, fr.h * zm};
+                            SDL_SetTextureAlphaMod(fr.tex, 255);
                             SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);
                         }
                     }
-                }
-            }
-            // A shot with a real mesh (arrows, spears, boulders) is drawn as that
-            // mesh, yawed along its flight so an arrow actually points where it is
-            // going. Projectile models point along +z (the arrowhead is at
-            // +z and the fletching at -z), opposite the unit-model forward axis.
-            const std::string* projectileModel = p.wsrc ?
-                &(p.projectileUsesVeteranModel && !p.wsrc->veteranShotModel.empty()
-                    ? p.wsrc->veteranShotModel : p.wsrc->shotModel) : nullptr;
-            if (projectileModel && !projectileModel->empty()) {
-                if(native3d) {
-                    drawShotModel(*projectileModel,p.fromPlayer,renderX,renderZ,0,
-                        3.14159265358979323846f-float(p.angles[1])*(6.283185307179586f/65536.f),&p);
                     continue;
                 }
-                bool bal = p.wsrc->ballistic;
-                const float flightSec = float(p.flight) / 30.0f;
-                float peak = bal ? std::min(95.0f, flightSec * 55.0f)
-                                 : std::min(18.0f, flightSec * 12.0f);
-                float h = 8 + 4 * peak * t * (1 - t);
-                // Ballistic 3DO shots retain the authored spinheading rate too.
-                // The native model draw receives that accumulated heading; mirror
-                // the same 30 Hz COB-unit conversion used for spinning shot art.
-                const float spin = float(p.age) / 30.0f * float(p.wsrc->spinRate) *
-                                   (6.2831853071795864769f / 65536.0f);
-                drawShotModel(*projectileModel, p.fromPlayer, renderX, renderZ,
-                              h * zm + palt, 3.14159265358979323846f -
-                                  std::atan2(p.vx.toFloat(), p.vz.toFloat()) + spin);
-                continue;
+                float f = 1.0f - std::max(0.0f, (t - 0.75f) / 0.25f);
+                auto sx = [&](float x, float z) {
+                    return (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
+                };
+                auto sy = [&](float x, float z, float alt) {
+                    return (z - mapView_.offY()) * zm - 12 * zm - terrainLift(x, z) * zm - alt * zm;
+                };
+                float ax = sx(b.x1, b.z1), ay = sy(b.x1, b.z1, b.alt1);
+                float fullx = sx(b.x2, b.z2), fully = sy(b.x2, b.z2, b.alt2);
+                float bx = ax + (fullx - ax) * t, by = ay + (fully - ay) * t;
+                // Three passes -- outer halo, middle body, hot core -- so a weapon's
+                // own colours read the way retail's layered bolt does.
+                struct Pass { const uint8_t* c; float wob; int reps; };
+                const Pass passes[3] = {{b.outer, 3.4f, 3}, {b.middle, 1.8f, 2}, {b.inner, 0.7f, 1}};
+                // Jag count follows the DRAWN length, so a stub isn't over-zigzagged
+                // while it is still reaching out (retail sizes its jag vertices from
+                // screen length the same way).
+                float blen = std::sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
+                int segs = b.lightning ? std::clamp(int(blen / 24.0f), 2, 10) : 1;
+                for (const Pass& ps : passes) {
+                    SDL_SetRenderDrawColor(ren_, ps.c[0], ps.c[1], ps.c[2], Uint8(230 * f));
+                    for (int rep = 0; rep < ps.reps; ++rep) {
+                        float px = ax, py = ay;
+                        for (int s = 1; s <= segs; ++s) {
+                            float t2 = float(s) / float(segs);
+                            float nx = ax + (bx - ax) * t2, ny = ay + (by - ay) * t2;
+                            if (b.lightning && s < segs) {
+                                int j = (s * 7919 + rep * 131 + int(b.age * 2000)) % 11 - 5;
+                                float dx = bx - ax, dy = by - ay;
+                                float dl = std::max(std::sqrt(dx * dx + dy * dy), 1e-3f);
+                                nx += -dy / dl * float(j) * ps.wob;
+                                ny += dx / dl * float(j) * ps.wob;
+                            }
+                            SDL_RenderDrawLineF(ren_, px, py, nx, ny);
+                            px = nx; py = ny;
+                        }
+                    }
+                }
             }
-            // Authored projectile art. Retail draws most shots as a real sprite
-            // sequence (weaponart -> anims/<name>_4444.taf): cannonballs, fireballs,
-            // iceballs, meteors, lightning balls. Ours drew every one of them as the
-            // same yellow streak. Same loader the explosion/flame effects use.
-            const std::string& shotSprite = p.wsrc ? (p.wsrc->weaponArt.empty()
-                                                          ? p.wsrc->shotArt
-                                                          : p.wsrc->weaponArt)
-                                                   : std::string();
-            if (p.wsrc && !shotSprite.empty()) {
-                if (const EffectAnim* ea = effectFor(shotSprite)) {
-                    // Ballistic shots arc; flat shots ride just above the ground.
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            for (const auto& p : front().projectiles) {
+                if(p.straight) {
+                    if(front().gameTick<p.start || !p.wsrc)continue;
+                    auto whole=[](int32_t v){return int(std::bit_cast<int16_t>(uint16_t(uint32_t(v)>>16)));};
+                    const int x=whole(p.position[0]),y=whole(p.position[1]),z=whole(p.position[2]);
+                    const bool lightning=p.wsrc->lightning;
+                    const int mx=whole(p.muzzle[0]),my=whole(p.muzzle[1]),mz=whole(p.muzzle[2]);
+                    if(!noFog_ && !cellVisibleR(float(x),float(z)) &&
+                       !(lightning && cellVisibleR(float(mx),float(mz))))continue;
+                    (void)heightAbove(float(x),float(z));
+                    const auto& w=*p.wsrc;
+                    auto sprite=[&](const std::string& name,float projectedY,bool shadow) {
+                        if(name.empty())return;
+                        const auto* art=effectFor(name);
+                        if(!art || art->frames.empty())return;
+                        const auto index=tak::retailEffectFrame(art->durations,art->loop,uint32_t(p.age));
+                        if(!index || *index>=art->frames.size())return;
+                        const auto& f=art->frames[*index];
+                        // effectFor loaded the native mode for each authored frame:
+                        // format-4 flag FF uses coverage alpha, other format-4 frames
+                        // add. Only shadows override that mode to darken terrain.
+                        if(shadow)SDL_SetTextureBlendMode(f.tex,SDL_BLENDMODE_BLEND);
+                        SDL_SetTextureAlphaMod(f.tex,255);
+                        SDL_FRect dst{(float(x)-mapView_.offX()-f.ax)*zm,
+                            (projectedY-mapView_.offY()-f.ay)*zm,f.w*zm,f.h*zm};
+                        SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
+                    };
+                    if(lightning)sprite(w.weaponArt,float(z-(y>>1))+float(heightRef_)*0.5f,false);
+                    const std::string& projectileModel = p.projectileUsesVeteranModel &&
+                        !w.veteranShotModel.empty() ? w.veteranShotModel : w.shotModel;
+                    if(lightning && p.lightningEffect && w.lightningEffect) {
+                        const auto& effect=*p.lightningEffect;
+                        const int tw=int(std::bit_ceil(unsigned(effect.width)));
+                        const int th=int(std::bit_ceil(unsigned(effect.height)));
+                        auto& texture=lightningTextures_[{tw,th}];
+                        if(!texture) {
+                            texture=gpuvram::create(ren_,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,tw,th);
+                            if(texture){SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);SDL_SetTextureScaleMode(texture,worldScaleMode());}
+                        }
+                        if(texture) {
+                            std::vector<uint32_t> pixels(size_t(tw)*th,0);
+                            for(int row=0;row<effect.height;++row)for(int col=0;col<effect.width;++col) {
+                                const uint16_t c=w.lightningEffect->palette[effect.pixels[size_t(row)*effect.width+col]];
+                                pixels[size_t(row)*tw+col]=uint32_t((c>>12)&15)*17u<<24 |
+                                    uint32_t((c>>8)&15)*17u<<16 | uint32_t((c>>4)&15)*17u<<8 | uint32_t(c&15)*17u;
+                            }
+                            SDL_UpdateTexture(texture,nullptr,pixels.data(),tw*int(sizeof(uint32_t)));
+                            const auto quad=tak::retailLightningQuad(
+                                {mx-int(mapView_.offX()),mz-(my>>1)+int(float(heightRef_)*0.5f-mapView_.offY())},
+                                {x-int(mapView_.offX()),z-(y>>1)+int(float(heightRef_)*0.5f-mapView_.offY())},
+                                int(winW/zm),int(winH/zm),effect.width,effect.height,tw,th);
+                            if(quad) {
+                                SDL_Vertex vertices[4];
+                                for(size_t i=0;i<4;++i)vertices[i]={{(*quad)[i].x*zm,(*quad)[i].y*zm},
+                                    {255,255,255,255},{(*quad)[i].u,(*quad)[i].v}};
+                                const int indices[]={0,1,2,0,2,3};
+                                SDL_RenderGeometry(ren_,texture,vertices,4,indices,6);
+                            }
+                        }
+                    }
+                    if(!lightning && shadowsOnFrame_ && !w.shadowArt.empty())
+                        sprite("shadows:"+w.shadowArt,float(z)-terrainLift(float(x),float(z)),true);
+                    if(!lightning && !projectileModel.empty())
+                        drawShotModel(projectileModel,p.fromPlayer,float(x),float(z),0,
+                            3.14159265358979323846f-float(p.angles[1])*(6.283185307179586f/65536.f),&p);
+                    if(!lightning)sprite(w.weaponArt,float(z-(y>>1))+float(heightRef_)*0.5f,false);
+                    continue;
+                }
+                const bool native3d=p.ballistic3d || p.guided3d;
+                const float renderX=native3d ? tak::sim::Fixed::raw(p.position[0]).toFloat() : p.x.toFloat();
+                const float renderZ=native3d ? tak::sim::Fixed::raw(p.position[2]).toFloat() : p.z.toFloat();
+                if (!noFog_ && !cellVisibleR(renderX, renderZ)) continue;
+                float t = std::clamp(float(p.age) / std::max(float(p.flight), 1.0f), 0.0f, 1.0f);
+                // Legacy 2D fixture shots have no vertical trajectory. Production
+                // weapons carry native XYZ; do not invent a height from live units.
+                const float palt = 0.0f;
+                const float shotWorldY=native3d ? tak::sim::Fixed::raw(p.position[1]).toFloat() : 0.0f;
+                const float velocityX=native3d ? tak::sim::Fixed::raw(p.velocity[0]).toFloat() : p.vx.toFloat();
+                const float velocityY=native3d ? tak::sim::Fixed::raw(p.velocity[1]).toFloat() : 0.0f;
+                const float velocityZ=native3d ? tak::sim::Fixed::raw(p.velocity[2]).toFloat() : p.vz.toFloat();
+                const float velocityLength=std::max(std::sqrt(velocityX*velocityX+
+                    velocityY*velocityY+velocityZ*velocityZ),1e-3f);
+                float nativeSpriteX=0,nativeSpriteY=0;
+                if(native3d) {
+                    auto whole=[](int32_t v){return int(std::bit_cast<int16_t>(uint16_t(uint32_t(v)>>16)));};
+                    const int x=whole(p.position[0]),y=whole(p.position[1]),z=whole(p.position[2]);
+                    (void)heightAbove(float(x),float(z));
+                    nativeSpriteX=(float(x)-mapView_.offX())*zm;
+                    nativeSpriteY=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                }
+                // Ground shadow (shadowgaf/shadowart, 218 weapons) and light pool
+                // (lightmap, 36): both sit on the GROUND under the shot, not at its
+                // altitude, which is what sells the shot as being up in the air.
+                if (p.wsrc) {
+                    float gx = (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
+                    float gy = (renderZ - mapView_.offY()) * zm - terrainLift(renderX, renderZ) * zm;
+                    if (p.wsrc->lightMap > 0) {
+                        // A soft additive pool tinted by the shot's own family, so a
+                        // fireball throws warm light on the ground as it passes.
+                        float r = (10.0f + 8.0f * float(p.wsrc->lightMap)) * zm;
+                        Uint8 lr = 255, lg = 230, lb = 160;
+                        if (p.fx == tak::sim::WeaponFx::Lightning) { lr = 190; lg = 215; lb = 255; }
+                        else if (p.fx == tak::sim::WeaponFx::Fire) { lr = 255; lg = 160; lb = 70; }
+                        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
+                        for (int ring = 3; ring >= 1; --ring) {
+                            float rr = r * float(ring) / 3.0f;
+                            SDL_SetRenderDrawColor(ren_, lr, lg, lb, Uint8(26));
+                            SDL_FRect q{gx - rr, gy - rr * 0.5f, rr * 2, rr};
+                            SDL_RenderFillRectF(ren_, &q);
+                        }
+                        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+                    }
+                    if (shadowsOnFrame_ && !p.wsrc->shadowArt.empty()) {
+                        // shadowgaf is always "shadows"; effectFor's "file:sequence"
+                        // form picks the named sequence out of it.
+                        if (const EffectAnim* sh = effectFor("shadows:" + p.wsrc->shadowArt)) {
+                            const auto index=tak::retailEffectFrame(sh->durations,sh->loop,uint32_t(p.age));
+                            if(index && *index<sh->frames.size()) {
+                                const auto& fr=sh->frames[*index];
+                                // effectFor caches its textures additively for glowing
+                                // effects; a shadow has to DARKEN instead.
+                                SDL_SetTextureBlendMode(fr.tex, SDL_BLENDMODE_BLEND);
+                                SDL_SetTextureAlphaMod(fr.tex, 110);
+                                float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
+                                SDL_FRect dst{gx - fw * 0.5f, gy - fh * 0.5f, fw, fh};
+                                SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);
+                            }
+                        }
+                    }
+                }
+                // A shot with a real mesh (arrows, spears, boulders) is drawn as that
+                // mesh, yawed along its flight so an arrow actually points where it is
+                // going. Projectile models point along +z (the arrowhead is at
+                // +z and the fletching at -z), opposite the unit-model forward axis.
+                const std::string* projectileModel = p.wsrc ?
+                    &(p.projectileUsesVeteranModel && !p.wsrc->veteranShotModel.empty()
+                        ? p.wsrc->veteranShotModel : p.wsrc->shotModel) : nullptr;
+                if (projectileModel && !projectileModel->empty()) {
+                    if(native3d) {
+                        drawShotModel(*projectileModel,p.fromPlayer,renderX,renderZ,0,
+                            3.14159265358979323846f-float(p.angles[1])*(6.283185307179586f/65536.f),&p);
+                        continue;
+                    }
                     bool bal = p.wsrc->ballistic;
                     const float flightSec = float(p.flight) / 30.0f;
                     float peak = bal ? std::min(95.0f, flightSec * 55.0f)
                                      : std::min(18.0f, flightSec * 12.0f);
                     float h = 8 + 4 * peak * t * (1 - t);
+                    // Ballistic 3DO shots retain the authored spinheading rate too.
+                    // The native model draw receives that accumulated heading; mirror
+                    // the same 30 Hz COB-unit conversion used for spinning shot art.
+                    const float spin = float(p.age) / 30.0f * float(p.wsrc->spinRate) *
+                                       (6.2831853071795864769f / 65536.0f);
+                    drawShotModel(*projectileModel, p.fromPlayer, renderX, renderZ,
+                                  h * zm + palt, 3.14159265358979323846f -
+                                      std::atan2(p.vx.toFloat(), p.vz.toFloat()) + spin);
+                    continue;
+                }
+                // Authored projectile art. Retail draws most shots as a real sprite
+                // sequence (weaponart -> anims/<name>_4444.taf): cannonballs, fireballs,
+                // iceballs, meteors, lightning balls. Ours drew every one of them as the
+                // same yellow streak. Same loader the explosion/flame effects use.
+                const std::string& shotSprite = p.wsrc ? (p.wsrc->weaponArt.empty()
+                                                              ? p.wsrc->shotArt
+                                                              : p.wsrc->weaponArt)
+                                                       : std::string();
+                if (p.wsrc && !shotSprite.empty()) {
+                    if (const EffectAnim* ea = effectFor(shotSprite)) {
+                        // Ballistic shots arc; flat shots ride just above the ground.
+                        bool bal = p.wsrc->ballistic;
+                        const float flightSec = float(p.flight) / 30.0f;
+                        float peak = bal ? std::min(95.0f, flightSec * 55.0f)
+                                         : std::min(18.0f, flightSec * 12.0f);
+                        float h = 8 + 4 * peak * t * (1 - t);
+                        float sx = native3d ? nativeSpriteX :
+                            (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
+                        float sy = native3d ? nativeSpriteY :
+                            (renderZ - mapView_.offY()) * zm - h * zm
+                                - terrainLift(renderX, renderZ) * zm - palt;
+                        const auto index=tak::retailEffectFrame(ea->durations,ea->loop,uint32_t(p.age));
+                        if(!index || *index>=ea->frames.size())continue;
+                        const auto& fr = ea->frames[*index];
+                        float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
+                        const auto origin=tak::retailEffectSpriteOrigin(sx,sy,fr.ax,fr.ay,zm);
+                        SDL_FRect dst{origin.x,origin.y,fw,fh};
+                        if (p.wsrc->spinRate != 0)
+                            SDL_RenderCopyExF(ren_, fr.tex, nullptr, &dst,
+                                              // age is TICKS and spinRate is raw COB units per second:
+                                              // degrees = (ticks/30) * units * 360/65536.
+                                              double(double(p.age) / 30.0 * double(p.wsrc->spinRate)
+                                                     * 360.0 / 65536.0),
+                                              nullptr, SDL_FLIP_NONE);
+                        else
+                            SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);
+                        continue;
+                    }
+                }
+                if (p.fx == tak::sim::WeaponFx::Lightning) {
+                    // Flat, fast, jagged blue-white bolt from source toward target.
                     float sx = native3d ? nativeSpriteX :
                         (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
                     float sy = native3d ? nativeSpriteY :
-                        (renderZ - mapView_.offY()) * zm - h * zm
-                            - terrainLift(renderX, renderZ) * zm - palt;
-                    const auto index=tak::retailEffectFrame(ea->durations,ea->loop,uint32_t(p.age));
-                    if(!index || *index>=ea->frames.size())continue;
-                    const auto& fr = ea->frames[*index];
-                    float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
-                    const auto origin=tak::retailEffectSpriteOrigin(sx,sy,fr.ax,fr.ay,zm);
-                    SDL_FRect dst{origin.x,origin.y,fw,fh};
-                    if (p.wsrc->spinRate != 0)
-                        SDL_RenderCopyExF(ren_, fr.tex, nullptr, &dst,
-                                          // age is TICKS and spinRate is raw COB units per second:
-                                          // degrees = (ticks/30) * units * 360/65536.
-                                          double(double(p.age) / 30.0 * double(p.wsrc->spinRate)
-                                                 * 360.0 / 65536.0),
-                                          nullptr, SDL_FLIP_NONE);
-                    else
-                        SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);
-                    continue;
-                }
-            }
-            if (p.fx == tak::sim::WeaponFx::Lightning) {
-                // Flat, fast, jagged blue-white bolt from source toward target.
-                float sx = native3d ? nativeSpriteX :
-                    (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
-                float sy = native3d ? nativeSpriteY :
-                    (renderZ - mapView_.offY()) * zm - 12 * zm - terrainLift(renderX, renderZ) * zm - palt;
-                float len = 22.0f;
-                float bx = -velocityX, bz = -velocityZ;
-                float bl = native3d ? velocityLength : std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
-                bx /= bl; bz /= bl;
-                float px = sx, py = sy;
-                SDL_SetRenderDrawColor(ren_, 210, 230, 255, 255);
-                for (int s = 1; s <= 4; ++s) {
-                    float d = len * zm * s / 4.0f;
-                    float jitter = ((s * 1327 + int(float(p.age) / 30.0f * 900)) % 7 - 3) * 1.6f * zm;
-                    float nx = sx + bx * d - bz * jitter;
-                    float ny = sy + bz * d + bx * jitter -
-                        (native3d ? velocityY / velocityLength * d * 0.5f : 12 * zm * s / 4.0f);
-                    SDL_RenderDrawLineF(ren_, px, py, nx, ny);
-                    px = nx; py = ny;
-                }
-            } else if (p.fx == tak::sim::WeaponFx::Fire) {
-                // Flame breath: a short stream of flickering orange/yellow puffs
-                // trailing behind the leading tip, not a single fireball.
-                float bx = -velocityX, by = -velocityY, bz = -velocityZ;
-                float bl = native3d ? velocityLength : std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
-                bx /= bl; by /= bl; bz /= bl;
-                SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-                for (int s = 0; s < 5; ++s) {
-                    float back = s * 6.0f;   // world px behind the tip
-                    float wob = ((s * 811 + int(p.age * 1000)) % 5 - 2) * 2.0f;
-                    float fx = renderX + bx * back - bz * wob;
-                    float fz = renderZ + bz * back + bx * wob;
-                    float sx = native3d ? (fx-mapView_.offX())*zm :
-                        (fx - mapView_.offX()) * zm - terrainLiftX(fx, fz) * zm;
-                    float sy = native3d ?
-                        (fz-(shotWorldY+by*back)*0.5f+float(heightRef_)*0.5f-mapView_.offY())*zm :
-                        (fz - mapView_.offY()) * zm - 12 * zm - terrainLift(fx, fz) * zm - palt;
-                    float r = (4.0f - s * 0.6f) * zm;   // shrinks toward the tail
-                    Uint8 aA = Uint8(200 - s * 30);
-                    // outer orange
-                    SDL_SetRenderDrawColor(ren_, 230, 90, 25, aA);
-                    SDL_FRect o{sx - r, sy - r, 2 * r, 2 * r};
-                    SDL_RenderFillRectF(ren_, &o);
-                    // hot yellow core at the leading puffs
-                    if (s < 2) {
-                        SDL_SetRenderDrawColor(ren_, 255, 220, 110, aA);
-                        SDL_FRect c{sx - r * 0.45f, sy - r * 0.45f, r * 0.9f, r * 0.9f};
-                        SDL_RenderFillRectF(ren_, &c);
+                        (renderZ - mapView_.offY()) * zm - 12 * zm - terrainLift(renderX, renderZ) * zm - palt;
+                    float len = 22.0f;
+                    float bx = -velocityX, bz = -velocityZ;
+                    float bl = native3d ? velocityLength : std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
+                    bx /= bl; bz /= bl;
+                    float px = sx, py = sy;
+                    SDL_SetRenderDrawColor(ren_, 210, 230, 255, 255);
+                    for (int s = 1; s <= 4; ++s) {
+                        float d = len * zm * s / 4.0f;
+                        float jitter = ((s * 1327 + int(float(p.age) / 30.0f * 900)) % 7 - 3) * 1.6f * zm;
+                        float nx = sx + bx * d - bz * jitter;
+                        float ny = sy + bz * d + bx * jitter -
+                            (native3d ? velocityY / velocityLength * d * 0.5f : 12 * zm * s / 4.0f);
+                        SDL_RenderDrawLineF(ren_, px, py, nx, ny);
+                        px = nx; py = ny;
                     }
+                } else if (p.fx == tak::sim::WeaponFx::Fire) {
+                    // Flame breath: a short stream of flickering orange/yellow puffs
+                    // trailing behind the leading tip, not a single fireball.
+                    float bx = -velocityX, by = -velocityY, bz = -velocityZ;
+                    float bl = native3d ? velocityLength : std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
+                    bx /= bl; by /= bl; bz /= bl;
+                    SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+                    for (int s = 0; s < 5; ++s) {
+                        float back = s * 6.0f;   // world px behind the tip
+                        float wob = ((s * 811 + int(p.age * 1000)) % 5 - 2) * 2.0f;
+                        float fx = renderX + bx * back - bz * wob;
+                        float fz = renderZ + bz * back + bx * wob;
+                        float sx = native3d ? (fx-mapView_.offX())*zm :
+                            (fx - mapView_.offX()) * zm - terrainLiftX(fx, fz) * zm;
+                        float sy = native3d ?
+                            (fz-(shotWorldY+by*back)*0.5f+float(heightRef_)*0.5f-mapView_.offY())*zm :
+                            (fz - mapView_.offY()) * zm - 12 * zm - terrainLift(fx, fz) * zm - palt;
+                        float r = (4.0f - s * 0.6f) * zm;   // shrinks toward the tail
+                        Uint8 aA = Uint8(200 - s * 30);
+                        // outer orange
+                        SDL_SetRenderDrawColor(ren_, 230, 90, 25, aA);
+                        SDL_FRect o{sx - r, sy - r, 2 * r, 2 * r};
+                        SDL_RenderFillRectF(ren_, &o);
+                        // hot yellow core at the leading puffs
+                        if (s < 2) {
+                            SDL_SetRenderDrawColor(ren_, 255, 220, 110, aA);
+                            SDL_FRect c{sx - r * 0.45f, sy - r * 0.45f, r * 0.9f, r * 0.9f};
+                            SDL_RenderFillRectF(ren_, &c);
+                        }
+                    }
+                } else {
+                    // Arrow/bolt/cannonball: a yellow streak. Ballistic weapons (FBI
+                    // type = Ballistic) lob a high arc scaled by flight time; other
+                    // shots (line-of-sight bolts) fly nearly flat.
+                    bool bal = p.wsrc && p.wsrc->ballistic;
+                    float peak = bal ? std::min(95.0f, p.flight * 55.0f)
+                                     : std::min(18.0f, p.flight * 12.0f);
+                    float h = 8 + 4 * peak * t * (1 - t);
+                    float sx = native3d ? nativeSpriteX :
+                        (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
+                    float sy = native3d ? nativeSpriteY :
+                        (renderZ - mapView_.offY()) * zm - h * zm - terrainLift(renderX, renderZ) * zm - palt;
+                    SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
+                    // vx/vz are px per TICK now; the trail length was tuned against px/s.
+                    const float trailX=native3d ? -velocityX/velocityLength*12.0f :
+                        -p.vx.toFloat()*30.0f*0.035f;
+                    const float trailY=native3d ? (-velocityZ+velocityY*0.5f)/velocityLength*12.0f :
+                        -p.vz.toFloat()*30.0f*0.035f;
+                    SDL_RenderDrawLineF(ren_,sx,sy,sx+trailX*zm,
+                        sy+trailY*zm+(t<0.5f?2.5f:-2.5f)*zm);
                 }
-            } else {
-                // Arrow/bolt/cannonball: a yellow streak. Ballistic weapons (FBI
-                // type = Ballistic) lob a high arc scaled by flight time; other
-                // shots (line-of-sight bolts) fly nearly flat.
-                bool bal = p.wsrc && p.wsrc->ballistic;
-                float peak = bal ? std::min(95.0f, p.flight * 55.0f)
-                                 : std::min(18.0f, p.flight * 12.0f);
-                float h = 8 + 4 * peak * t * (1 - t);
-                float sx = native3d ? nativeSpriteX :
-                    (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
-                float sy = native3d ? nativeSpriteY :
-                    (renderZ - mapView_.offY()) * zm - h * zm - terrainLift(renderX, renderZ) * zm - palt;
-                SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
-                // vx/vz are px per TICK now; the trail length was tuned against px/s.
-                const float trailX=native3d ? -velocityX/velocityLength*12.0f :
-                    -p.vx.toFloat()*30.0f*0.035f;
-                const float trailY=native3d ? (-velocityZ+velocityY*0.5f)/velocityLength*12.0f :
-                    -p.vz.toFloat()*30.0f*0.035f;
-                SDL_RenderDrawLineF(ren_,sx,sy,sx+trailX*zm,
-                    sy+trailY*zm+(t<0.5f?2.5f:-2.5f)*zm);
             }
-        }
-        {
-            const double _t0 = double(SDL_GetPerformanceCounter());
-            tak::render::ScopedPhase effectsPhase(renderStats_, RP::Effects);
-            drawParticles();
-            drawEffects();
-            drawUnitFx();
-            profFxMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
-                         (double(SDL_GetPerformanceFrequency()) / 1000.0);
+            {
+                const double _t0 = double(SDL_GetPerformanceCounter());
+                tak::render::ScopedPhase effectsPhase(renderStats_, RP::Effects);
+                drawParticles();
+                drawEffects();
+                drawUnitFx();
+                profFxMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
+                             (double(SDL_GetPerformanceFrequency()) / 1000.0);
+            }
+        } else {
+            // Nothing above draws, but the one lifetime rule drawEffects applies
+            // still has to run (a finished or orphaned nimbus is dropped there).
+            pruneNimbusEffects();
+#ifndef NDEBUG
+            debugGlowDrawCount_=0;debugNimbusDrawCount_=0;
+            debugSmokeDrawCount_=0;debugDamageFlameDrawCount_=0;debugPointDrawCount_=0;
+#endif
         }
 
         {
@@ -7006,6 +7020,27 @@
             SDL_RenderGeometry(ren_, triangle.tex, triangle.v, 3, nullptr, 0);
     }
 
+    size_t GameView::nimbusFrame(const NimbusEffect& effect) const {
+        uint32_t elapsed = front().gameTick - effect.started;
+        size_t index = 0;
+        // Retail's faction loader forces nimbus to play once, regardless of
+        // the file's loop flag. Each frame uses its authored tick duration.
+        while (index < effect.anim->frames.size()) {
+            const auto duration = uint32_t(std::max(1, effect.anim->frames[index].ticks));
+            if (elapsed < duration) break;
+            elapsed -= duration;
+            ++index;
+        }
+        return index;   // == frames.size() once it has played out
+    }
+
+    void GameView::pruneNimbusEffects() {
+        std::erase_if(nimbusEffects_, [&](const auto& entry) {
+            const auto* u = frameUnitP(entry.first);
+            return !u || !u->alive() || nimbusFrame(entry.second) == entry.second.anim->frames.size();
+        });
+    }
+
     void GameView::drawEffects() {
 #ifndef NDEBUG
         debugGlowDrawCount_=0;debugNimbusDrawCount_=0;
@@ -7087,16 +7122,7 @@
         for (auto it = nimbusEffects_.begin(); it != nimbusEffects_.end();) {
             const auto* u = frameUnitP(it->first);
             const auto& effect = it->second;
-            uint32_t elapsed = front().gameTick - effect.started;
-            size_t index = 0;
-            // Retail's faction loader forces nimbus to play once, regardless of
-            // the file's loop flag. Each frame uses its authored tick duration.
-            while (index < effect.anim->frames.size()) {
-                const auto duration = uint32_t(std::max(1, effect.anim->frames[index].ticks));
-                if (elapsed < duration) break;
-                elapsed -= duration;
-                ++index;
-            }
+            const size_t index = nimbusFrame(effect);
             if (!u || !u->alive() || index == effect.anim->frames.size()) {
                 it = nimbusEffects_.erase(it);
                 continue;
