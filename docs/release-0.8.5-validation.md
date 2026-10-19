@@ -25,8 +25,9 @@ the task branches. `git diff --stat v0.8.4..8788c4fa -- src` touches 29 files:
 `src/client/` (18), `src/cartographer/` (5), `src/tnt/` (3), `src/sim/` (2)
 and `src/net/` (1). Nothing under `src/ai/`, `src/server/`, `src/campaign/`,
 `src/terrain/`, `src/cob/`, `src/crt/` or `src/util/` changed.
-<!-- LEAD: update the commit count and file counts if anything lands after
-     8788c4fa (release fixes, docs, screenshots). -->
+
+After `8788c4fa`, the release preparation added only the screenshots, the
+documentation and the CMake version bump; no source file changed.
 
 The changes:
 
@@ -46,9 +47,10 @@ The changes:
 
 **Retail and Legion are expected to be bit-identical to 0.8.4** on authored
 maps and on generated maps with Scattered Mana at None.
-<!-- LEAD: confirm with the --mpai Inner Circle seed 1 runs on the final main and
-     write the four hashes here (0.8.4: Retail 300 s a3d953803a064191, 60 s
-     b353410003e98dd5; Legion 300 s ce5c4ba7562e53b9, 60 s 0825aeb9e8139203). -->
+Confirmed on `8788c4fa` (see Local preparation checks): `--mpai` Inner Circle seed 1
+Retail 300 s `a3d953803a064191`, 60 s `b353410003e98dd5`; Legion 300 s
+`ce5c4ba7562e53b9`, 60 s `0825aeb9e8139203`, all equal to 0.8.4. The release
+commits after it change only documentation, screenshots and the version number.
 
 **Compatibility.** `kNetVersion` is **278** in `src/net/protocol.h` at
 `8788c4fa`, against 277 at `v0.8.4`. `kReplayFormat` is **13** in
@@ -73,23 +75,295 @@ maps and on generated maps with Scattered Mana at None.
 
 ## Local preparation checks
 
-<!-- PLACEHOLDER (LEAD / validation agents): builds (Release, Debug, -O2 -g,
-     Clang, ASan), ctest results per build, tools/check-detmath.sh,
-     tools/check-determinism.sh, the python research suite, the retail archive
-     verifier, the --mpai hashes above, any test fixes needed. -->
+All checks ran from a clean detached worktree (`~/tak-tmp/wt/release-085-local`) at
+`main` `8788c4fa61e8` (protocol **278**, replay format **13**, generator recipe **9**, campaign
+payload 4, database schema unchanged), with `assets` and `third_party` links to the
+main checkout. Toolchains: GCC 16.2.1, Clang 22.1.8, CMake 4.3.0, Ninja 1.13.2, Python 3.14.8.
+Builds and tests ran on cores 4-23; the owned retail install served as `--data` and
+`TAK_TEST_DATA`. The version bump is not in this commit, so binaries still call themselves
+`0.8.4 (build v0.8.4-16-g8788c4fa61e8)` (no `-dirty`).
 
-*To be written.*
+**Result: every release-relevant check passed. No real failure.** Four failures in the
+unoptimized suites were load timeouts: each passed when rerun alone.
+
+- **No multiplayer or replay compatibility with 0.8.4 or earlier.** `kNetVersion` is **278**
+  in `src/net/protocol.h` (277 in 0.8.4). The replay format stays 13; the replay loader
+  requires protocol == `kNetVersion`, so 0.8.4 replays do not play. 278 exists because a
+  277 peer would refuse a recipe-v9 map id.
+- **Builds.** Release, Debug, optimized Debug (`-O2 -g`), Clang Debug and AddressSanitizer
+  all-target builds completed with exit code 0: 869 steps in Release, 870 in the other
+  four (same as 0.8.4). ccache on the GCC trees; static-deps and static Bink FFmpeg
+  prefixes. Release emits about 850 warning lines (451 `-Wmissing-field-initializers`, 332
+  `-Wdeprecated-declarations`), the same kinds as 0.8.4 (852); neither of 0.8.4's two
+  fixed warnings came back.
+- **Full CTest.** Still **678** registered tests (640 in Release; the
+  nightly label is unchanged); no test was added or removed since 0.8.4 (the set of names is identical).
+
+  | Tree | Selection | Result | Time | Failures |
+  | --- | --- | --- | ---: | --- |
+  | Release | full, 640 | **640/640** | 2,552 s | none |
+  | Optimized Debug | full, 678 | **678/678** | 3,129 s | none |
+  | Debug (`-O0`) | `-LE nightly`, 516 | 514/516 | 4,418 s | `cartographer_ui_smoke`, `replay_always` (load; pass alone) |
+  | Clang Debug | `-LE nightly`, 516 | 514/516 | 5,475 s | `cartographer_ui_smoke`, `replay_always` (load; pass alone) |
+  | ASan (focused) | 270 | **270/270** | 2,124 s | none; no AddressSanitizer, LeakSanitizer or runtime-error report |
+
+  The suites ran in parallel with each other and with the Legion gate (load average
+  25-40 on 24 cores). No test reported a skip.
+  - **`cartographer_ui_smoke` (existing; passed in 0.8.4 at 134-154 s): `-O0` load.** It
+    failed in both unoptimized trees with `stuck at step 405 (modal 16 ...)`, then
+    `smoke stopped at step 405 of 581`. Modal 16 is `M_ANALYZING`: the smoke script's
+    "stalled for 400 frames" guard fires while an asynchronous analysis job is still
+    running, so it depends on wall time. Rerun alone on reserved cores: **Debug 2/2
+    (127 s, 121 s) and Clang Debug 1/1 (147 s)**. Release and optimized Debug passed in
+    the loaded full runs. The random-map commit `b1d5749f` touched the generator
+    dialog in Cartographer, so this is the one failure worth a look if it ever repeats
+    on a quiet machine; it is not a regression here.
+  - **`replay_always` (existing; passed in 0.8.4): load.** Case `mission-crash` failed
+    in both unoptimized trees (client `tick=0 ... err=peer closed end=timelimit`, the
+    mission did not start inside 60 s); the other seven cases passed. Rerun alone:
+    Debug 1/1 (48 s) and Clang Debug 1/1 (54 s). This is the same case that failed
+    under ASan load in 0.8.4's first round.
+  - **The unoptimized Legion tests passed under the 0.8.4 limits.** `legion_sched_inflight`
+    506 s / 995 s, `legion_scale_neutral` 560 s / 917 s, `legion_route_paused` 1,269 s /
+    1,323 s and `legion_parallel` 2,786 s / 3,881 s (Debug / Clang Debug); the largest use
+    of a limit is `legion_parallel` in Clang Debug, 72% of 5400 s. `movement_orders_trolls`
+    took 327 s / 419 s (limit 600 s). `terrain_schedule` 92 s / 105 s, `voice` and
+    `server_voice` passed in both. The 0.8.4 test-fix commits held.
+  - **The settings-leak guard held.** `pref_guard_setup`/`pref_guard_check` passed in every
+    selection. The real profile's `settings.ini` has the same SHA-256 and mtime before and
+    after (`real-profile-{before,after}.txt`; it was last changed at 19:39, before the
+    run started). `TAK_SETTINGS_FILE` was not exported.
+  - **Slowest tests** (Release / optimized Debug): `legion_check_pocket-615-wall` 1,071 s /
+    1,344 s, `legion_check_pocket-615-open` 1,019 s / 1,234 s and
+    `legion_check_tail-corner380` 968 s / 1,144 s, all under their 1800 s limit.
+- **Focused AddressSanitizer/leak run: 270/270**, with no sanitizer report. It is 0.8.4's
+  270-test selection (`bash tools/run-ctest-selection.sh`, dummy SDL video/audio,
+  `ASAN_OPTIONS=detect_leaks=1`, no suppressions). Because the new commits touch tests
+  outside that list, a second ASan selection of the touched tests also passed **18/18**:
+  `mapgen`, `mapgen_mana`, `mapgen_naval`, `mapgen_ports`, `mapgen_roster`,
+  `mapgen_themes`, `override_settings`, `settings`, `builder_automation`,
+  `cartographer_validation`, `death_sound`, `death_sound_roster`, `creon_death_sound`,
+  `creon_death_sound_peers`, `tactical_dots`, `replay` and the two `pref_guard` fixtures.
+- **`--mpai` golden hashes: all four unchanged from 0.8.4.** Each ran once, on the
+  optimized Debug build, Inner Circle, `takserver --local --no-auth --seed 1`, an empty
+  `XDG_DATA_HOME`, and `TAK_LEGION=1` for Legion. The four ran concurrently on separate
+  core pairs. No client or server log has a desync or referee-suspect line.
+
+  | Mode | Duration | `8788c4fa` (278) | 0.8.4 (277) | 0.8.3 |
+  | --- | ---: | --- | --- | --- |
+  | Legion | 300 s | `ce5c4ba7562e53b9` | `ce5c4ba7562e53b9` | `c707e1a8063bc0c7` |
+  | Retail | 300 s | `a3d953803a064191` | `a3d953803a064191` | `7535cb08ee787b75` |
+  | Legion | 60 s | `0825aeb9e8139203` | `0825aeb9e8139203` | `532539f51d70840b` |
+  | Retail | 60 s | `b353410003e98dd5` | `b353410003e98dd5` | `2c39430636a3dbda` |
+
+  They are expected not to move. The only protocol-278 change is the random-map recipe v9
+  (`Params.manaScatter` in the map id, v8 ids regenerate identically; Inner Circle is a
+  retail map, not generated). The only `src/sim` change is the death-sound record, which
+  gained two presentation fields (`ScriptSound::y` and `hidden`, filled in `sim.cpp` when a
+  dying VM plays a sound); the record is read by the client's audio and is not folded
+  into `stateHash()`. Optimized Debug binary SHA-256:
+  - client `098987fd266081d1955851d0353f1b13602e50926e2b5bf0068198d04ecdd72c`
+  - server `5a0d8235de85dcbe9ee02cee53b7aa675975429aa3c5ef89c7ecf39012d10664`
+- **Determinism.** In `tools/check-determinism.sh`, the GCC and Clang x86-64 builds at
+  O0/O2/O3 all agree on `dcef618cd2e4d558`, the same as 0.8.4. The aarch64 legs are
+  skipped (target headers missing). `tools/check-detmath.sh` passes, including the
+  `std::atomic_ref` guard.
+- **Legion scenario gate: PASS.** The gate ran the way `tools/legion_nightly.sh` stage 2
+  does: every `tools/scenarios/*.scn` (135 files), optimized Debug `legion_scenario`,
+  `--mode both --json --offsets gate --data <retail install>`, one file per core on cores
+  14-23, then `legion_check.py check --cumulative --baseline tools/scenarios/baseline.json`.
+  - **Result:** `PASS: 31859 keys checked, 0 failed, 3005 ratchets, 3333 licensed, 220 floor
+    exceptions, 864 report-only` - identical to 0.8.4, so every `hash@` key still equals the
+    baseline in both modes.
+  - Every file exited 0 (`problems.txt` empty). `legion_check.py validate` reports
+    `PASS: 0 problems`. No baseline was regenerated. The run took 3,924 s.
+- **Retail group emulation check (formation-air).** `python3 -B tools/re/check_retail_group.py`
+  (400 cases) passed every section: tick 400, query 4000, check 2000, formation 2000,
+  vtolcheck 2000, vtolform 2000, with the same outcome counts as 0.8.4.
+- **Python research suite.** **165 tests** passed, with one skip (the optional corpus test
+  that needs `TAK_AUTH_RETAIL_DIR`), the same as 0.8.4. The owned-retail archive verifier
+  (`TAK_AUTH_RETAIL_DIR`) passed all **6 tests**. The SHA-256 sums of the 16 retail HPI
+  archives and `Kingdoms.key` are identical before and after the runs.
+- **Syntax checks.** All **462** tracked Python files compile. All 22 `*.sh` scripts
+  (21 tracked plus `tools/tak-netem`) pass `bash -n`.
+
+Logs: `~/tak-tmp/scratch/release-085/` (`cfg.out`, `make-*.log`, `build-status.txt`,
+`ctest-*.log`, `ctest-status.txt`, `ctest-asan-touched.log`, `rerun-*.log`,
+`mpai-*.log`, `mpai-results.txt`, `gate/`, `check-determinism.log`, `check-detmath.log`,
+`check_retail_group.log`, `python-suite.log`, `verifier.log`, `pycompile.log`,
+`bashn.log`, `o2-sha256.txt`, `retail-sha-{before,after}.txt`,
+`real-profile-{before,after}.txt`).
+
 
 ## Remote multiplayer sweep
 
-<!-- PLACEHOLDER (LEAD / validation agents): tools/desync-hunt-remote.sh, the
-     37-scenario table for Retail and Legion, binaries/build ids, referee hosts,
-     mismatches (expected 0), reference ticks (0.8.4: Retail h-stress tick
-     5,240 1fe1eb4e3754ca93; Retail h-cramped ends at 1,307). Never touch the
-     public takserver. Consider one Scattered Mana generated-map game on the
-     remote referees, since 278 is the only simulation-facing change. -->
+The full 37-scenario table passed for both pathfinding modes, Retail and Legion,
+on **2026-10-19** (UTC), both on `main` at `8788c4fa61e8038a98fff0ef1586dc5281e2974e`
+(protocol **278**, build id `v0.8.4-16-g8788c4fa61e8`; the version string still reads
+0.8.4 because the 0.8.5 bump comes later):
 
-*To be written.*
+- **Retail:** 01:48-02:05 UTC (17.5 minutes including the gates).
+- **Legion:** 02:05-02:32 UTC (26.5 minutes including the gates).
+
+Referees ran on `tak.pgnet.us` (24 runs, 10 at a time) and `vpn3.pgnet.us` (13
+runs, 6 at a time), with optimized local clients pinned to CPUs 4-23. Each scenario
+allowed ten simulated minutes (18,000 ticks) or ended at an actual result for that
+seat. Real seated players provide the client/referee checksum coverage. The two
+all-AI spectator scenarios per mode test flow control, not hashes.
+
+The harness picks the mode through the hosting client's room options:
+`TAK_LEGION=1` creates a Legion room, and without it the room is Retail. Every
+recorded referee replay header confirms the intended mode, replay format 13 and
+protocol 278: 37 headers per mode, seeds 2000-2036 each mapped to its case
+(`retail-mapref.txt`, `legion-mapref.txt`).
+
+| Mode | Completed scenarios | Completed seats | Client-pair checkpoints | Client-referee checkpoints |
+| --- | ---: | ---: | ---: | ---: |
+| Retail | 37/37 | 52/52 | 10,280 across 22 seat pairs, 0 mismatched | 2,640 across 50 seat/referee comparisons, 0 mismatched |
+| Legion | 37/37 (single pass, no retries) | 52/52 | 10,211 across 22 seat pairs, 0 mismatched | 2,718 across 50 seat/referee comparisons, 0 mismatched |
+
+Each run passed all three `--validate` gates before its table started:
+
+- **Build identity:** `both at v0.8.4-16-g8788c4fa61e8`.
+- **Planted desync:** the referee reported `game 1: client 1 DESYNCED at tick 900`.
+- **Override transfer:** `verified packs transferred and incorrect loaded gameplay
+  rejected`.
+
+The gate checks only `tak.pgnet.us`; the binary on `vpn3.pgnet.us` was checked by
+hand after deployment: same SHA-256 and the same `--version` build id. No natural
+`DESYNCED`, `REFEREE SUSPECT` or client-reported desync appeared in any case log;
+the only such line is the planted one in `validate.server.log`.
+
+Every checkpoint carried a position digest as well as the state hash, and the
+script compares both:
+
+- **Referee checkpoints:** 2,060 in Retail, 2,142 in Legion.
+- **Seated checkpoints:** 26,345 in Retail, 27,143 in Legion; none lacked a digest.
+
+The comparison script (`checkpoints.py`) is the one used for 0.8.4, whose
+bit-flip self-test (`fliptest`) was done for that release; it was not changed.
+**Every game wrote a referee replay in both runs: 37 per mode, 35 of them seated.**
+Referee replays were matched to cases by the seed in the replay header.
+
+**No Legion retries.** As in 0.8.1-0.8.4, the Legion run used
+`TAK_WALL_TIMEOUT=3600` from the start, with the same seeds and simulated-time
+limit. Every seat completed in the single pass:
+
+| Case | Retail end | Retail tick | Retail units | Legion end | Legion tick | Legion units |
+| --- | --- | ---: | ---: | --- | ---: | ---: |
+| `h-stress` | concluded | 4,763 | 8,422 | concluded | 4,962 | 7,749 |
+| `2h-stress` | concluded | 4,851 | 9,174 | concluded | 5,654 | 8,268 |
+| `2h-orders-stress` | concluded | 5,512 | 8,858 | concluded | 5,066 | 8,394 |
+| `h-lake` | concluded | 4,149 | 4,845 | concluded | 4,541 | 4,775 |
+
+**Reproducibility against 0.8.4.** The hashed simulation is unchanged since the
+0.8.4 sweep: the only `src/sim` edit is two extra unhashed fields in the
+presentation-only `ScriptSound` record (`scriptSounds_` is never folded into
+`stateHash()`), and protocol 278 only covers the random-map recipe v9 id format.
+So every deterministic seated case is expected to repeat 0.8.4's tick and hash:
+
+- **Retail:** 29 of 37 ended at exactly 0.8.4's tick and hash (reference
+  `f11fbc1a`, bit-identical to `0fe6305d`). That includes `h-cramped` (1,307,
+  `45134591344a4d04`), `w-allai-stress` (18,000, `e10d25236d48c058`), `2h-stress`,
+  `2h-gods`, `4h-gods` and `h-everything`.
+- **Legion:** 28 of 37 ended at exactly the 0.8.4 (`0fe6305d`) tick and hash,
+  including `h-cramped` (18,000, `bbbd4becad56c714`, 34 units).
+
+The other 8 Retail and 9 Legion cases differ, in two groups. In every one, the seats
+and the referee agreed at every checkpoint.
+
+- **Six `TAK_AUTOPLAY` runs per mode:** `2h-orders`, `2h-orders-stress`,
+  `4h-orders`, `net-2h-rtt100`, `net-loss3-orders` and `net-orders100`. They issue
+  live orders that the server buckets by arrival tick, so they never repeat a hash
+  from run to run.
+- **Retail `h-stress` and `h-lake`; Legion `h-stress`, `h-lake` and `4h-gods`:**
+  these are load-sensitive cases that are not expected to repeat across sweeps (see
+  below).
+
+**Load-sensitive cases (not a 0.8.5 change).** Retail `h-stress` (seed 2003) ended at
+tick **4,763**, hash `8cff11dde3091026`, 8,422 units; 0.8.4's reference was 5,240
+(`1fe1eb4e3754ca93`, 8,250 units). To tell a real change from run-to-run variation
+the three cases whose result moved were rerun twice each, per mode, with `--only
+h-stress,h-lake,4h-gods` (same binaries, same seeds, no `--validate`, a quieter
+referee):
+
+| Case | Retail sweep | Retail rerun 1 / 2 | Legion sweep | Legion rerun 1 / 2 |
+| --- | --- | --- | --- | --- |
+| `h-stress` | 4,763 `8cff11dd...` | 4,761 `131cdfb6...` / same | 4,962 `a4c31945...` | 4,951 `99d35bd2...` / same |
+| `h-lake` | 4,149 `e3a0793a...` | 4,113 `e7ff2616...` / same | 4,541 `eb42a972...` | 4,507 `300e926c...` / same |
+| `4h-gods` | 18,000 `d2eb67f9...` (= 0.8.4) | 18,000 `8e445ce5...` / same | 18,000 `60825d98...` | `1267de66...` / `52cf3d76...` (= 0.8.4) |
+
+The same binary gives different results for these cases depending on the run, while
+back-to-back reruns under the same conditions repeat each other (all but Legion
+`4h-gods`, which produced three different hashes in three runs, one of them equal
+to 0.8.4's). Seats agreed with each other at every checkpoint in all reruns
+(6 pairs, 1,983 / 1,983 / 1,999 / 2,013 shared checkpoints, 0 mismatched; the rerun
+referee replays were not compared). This matches the history of the same seed:
+Retail `h-stress` has ended at 5,634, 5,606, 5,240 and now 4,763 / 4,761 across
+0.8.0-0.8.5 with seats and referee agreeing every time, and `h-lake` moved the same
+way in both modes. The stress fill (`kStressStaged`) and the god storm interact with
+the server's pacing, so these cases give a different but consistent outcome
+under different referee load. The new tick and hash are the references for the next
+sweep only where noted as reproducible; do not diff these three cases across
+sweeps. Nothing in the 0.8.5 changes touches hashed state, and the 29 / 28 exact
+repeats (including the stress spectator `w-allai-stress` and `2h-stress` in both
+modes) show it.
+
+**`h-cramped` with Monarch Expendable: known limitation, unchanged.** In Retail the
+game still concludes early at tick 1,307, hash `45134591344a4d04`, 10 units, exactly
+0.8.4's value, with the seat matching the referee (see the 0.8.4 notes: a match
+spawns only the Monarch, so the god storm eliminates an idle seat). Legion
+`h-cramped` runs to 18,000 ticks, 34 units, `bbbd4becad56c714`, as in 0.8.4.
+
+**Voice.** No case exercised voice chat; voice is presentation-only relay traffic,
+never in a tick bundle or a replay.
+
+**Impaired networks.** All eight impaired scenarios (`net-rtt50`, `net-rtt100`,
+`net-jitter`, `net-rtt500`, `net-loss1`, `net-loss3-orders`, `net-orders100`,
+`net-2h-rtt100`) ran under netem in both runs and completed; the harness set up and
+tore down shaping per case, and no `netem` or `prio` qdisc was left on either host
+(only the default `fq_codel`/`noqueue` qdiscs remain).
+
+**Isolation.** The referee was a separate test executable,
+`~/takserver.sweep085`, on test ports 7890-7936 (Retail) and 7990-8036 (Legion);
+the public service uses 7677. It used per-mode map caches
+`~/tak_cache.sweep085-{retail,legion}` and per-run replay directories
+`~/tak_replay.sweep085-{retail,legion}[-rrN]`. The public `/usr/bin/takserver` on
+tak.pgnet.us was not replaced, stopped or restarted: PID 8238, port 7677, active
+since 2026-10-18 23:32:20 UTC, unchanged before and after. No certificates were
+touched. `vpn3` runs no takserver service.
+
+**Cleanup.** After the sweep, on both hosts: no process was executing
+`takserver.sweep085`, no listener remained on the test ports, no netem claim
+file or watchdog remained, and the test binary, map caches, replay directories and
+`/tmp/tak-{srv,val,neg}-*.log` files were removed after the referee replays had been
+copied locally (`cleanup-check-{before,after}.txt`).
+
+**Binaries.** Built from a clean detached worktree
+(`~/tak-tmp/wt/release-085-val`) with optimized Debug (`-O2 -g`) for both referee and
+client.
+
+- **Referee:** Ubuntu 24.04 container, GCC 13.3, `TAK_BUILD_CLIENT=OFF`, max symbol
+  version GLIBC_2.38. On each host the deployed SHA-256 matched the build.
+- **Client:** Fedora, GCC 16.2.1.
+
+| Binary | SHA-256 (`8788c4fa`, `v0.8.4-16-g8788c4fa61e8`, protocol 278) |
+| --- | --- |
+| Referee | `df9fee3ea830686b61a2e138a340feb68d58636d3cc6a6b44b8f8bb7a7476507` |
+| Client | `e73d98e677e3900589a553a9770a38638694d66f37b908ad09825a7accd0e8a4` |
+| `override_transfer_test` | `65563bed31e38278ebf554384de7fa2a39fb175bb50bfe8c87b0d594db8d622c` |
+
+**Harness.** The committed `tools/desync-hunt-remote.sh`, unmodified; its SHA-256,
+`0ec213448db4f15df1ada6bd5c4bf8ab8d1bbe719e0d11bf03776200e2ba365b`, is the same as
+for the 0.8.4 sweep and has not changed since `5774601a`.
+
+**Mixed versions.** None played: 0.8.5 speaks protocol 278, and the server's Hello
+rejects any client at another protocol, so 0.8.5 is neither multiplayer- nor
+replay-compatible with 0.8.4 or earlier.
+
+Logs: `~/tak-tmp/scratch/release-085/remote/` (`{retail,legion}.sweep.log`,
+`r085.txt`, `l085.txt`, `*-vs-084.txt`, `*-checkpoints.json`, `*-rr{1,2}.sweep.log`).
+
 
 ## CI and packages
 
@@ -106,25 +380,50 @@ maps and on generated maps with Scattered Mana at None.
 
 ## Screenshots
 
-<!-- PLACEHOLDER (LEAD): merge task-release-085-shots (db85ee61: 15 pictures
-     recaptured with the 0.8.5 defaults plus the new guide/random-map-lobby.jpg,
-     docs/img/README.md rewritten there; the docs branch leaves that file alone,
-     so the two merge cleanly). Then summarise: recaptured title.jpg,
-     battle, dragons, flyers, hud, naval, generated (v9, Scattered Mana Medium),
-     guide/options-graphics (SCREEN SHAKE row, 1600 x 1100 window),
-     guide/tactical-dots (zoom 0.1875, no effects on the dots half),
-     guide/benchmark, scorecard, fire-on-the-move, flyers-retail-legion,
-     cartographer/random-generator (SCATTERED MANA field); new
-     guide/random-map-lobby.jpg (linked from the user guide's Random maps).
-     Kept: diplomacy.jpg, guide/voice-chat.jpg (0.8.4) and the 0.8.3/0.8.1
-     pictures, drawn with the old unfiltered defaults. Captions written for the
-     new pictures (README title/generated alt text and footnote, user-guide
-     options-graphics, tactical-dots, random-map-lobby and generated, the
-     cartographer random-generator alt text) were checked against the images.
-     Before/after evidence for the build ghost and dots-without-effects:
-     ~/tak-tmp/scratch/release-085/evidence/. -->
+Fifteen gallery and guide pictures were recaptured with the 0.8.5 defaults
+(Texture Filtering Everything, Smooth GUI Art and Smooth Movies on, Tactical
+Dots on at 0%, Screen Shake off) and one was added; each was inspected by eye,
+and `docs/img/README.md` describes how each was taken.
 
-*To be written.*
+- Recaptured: `title.jpg` (VERSION 0.8.5), `battle.jpg`, `dragons.jpg`,
+  `flyers.jpg`, `hud.jpg` (VID 113 MB with the new defaults), `naval.jpg`,
+  `generated.jpg` (the same Silverford recipe on generator 9 with Scattered Mana
+  Medium: 53 mana spots instead of 24, and an AI lodestone on a neutral spot in
+  the clearing that the version-8 map lacks), `guide/options-graphics.jpg`
+  (Display and the whole Graphics section at the new defaults with the SCREEN
+  SHAKE row, 1600 x 1100 window), `guide/tactical-dots.jpg` (full zoom-out,
+  0.1875: fire and spell effects on the models half, none on the dots half),
+  `guide/benchmark.jpg`, `guide/scorecard.jpg`, `guide/fire-on-the-move.jpg`,
+  `guide/flyers-retail-legion.jpg` and `cartographer/random-generator.jpg`
+  (12 fields with SCATTERED MANA (BY MAP AREA) at Medium).
+- New: `guide/random-map-lobby.jpg`, the single-player random-map panel with
+  SIZE and PLAYERS sharing a row and the SCATTERED MANA slider at HIGH (preview
+  MANA: 57, SCATTERED: 33 NEUTRAL), linked from the user guide's Random maps.
+- Kept: `diplomacy.jpg`, `guide/voice-chat.jpg` and the lobby and room pictures
+  from earlier releases, whose screens did not change; they are drawn with the
+  old unfiltered defaults, as the README says. There is no picture of the 50%
+  UI and Scorecard Scale ranges, and none of the macOS Retina change (Linux
+  capture host).
+- Captions written for the new pictures (README title and generated alt text
+  and the gallery footnote, the user guide's options-graphics, tactical-dots,
+  random-map-lobby and generated captions, the Cartographer guide's
+  random-generator alt text) were checked against the images.
+
+In-game evidence for the two client fixes (kept locally in
+`~/tak-tmp/scratch/release-085/evidence/`, not committed):
+
+- **Build ghost (`2a84a023`).** Thirsha (`zonhunt`) conjures a Zhon lodestone on
+  Ulasem Arena, approaching from the south so that she overlaps the site. On a
+  build with the fix reverted, a washed-out full lodestone (pillars and dome) is
+  drawn on top of her wings and robe; on main she is drawn over the half-built
+  site and no outline appears.
+- **Tactical Dots (`5cd02b1d`, `e7f6cdda`).** The same benchmark tick and camera
+  at zoom 0.6 with Tactical Dots Zoom at 100%: with dots on, only the coloured
+  dots are drawn, with no projectiles, fire streams, rings or glows; with dots
+  off, the same view shows flame streams, explosions and spell rings. Zoomed in
+  to 1.3 with dots still on, the view returns to models and the effects
+  reappear.
+
 
 ## Limits
 
@@ -135,6 +434,19 @@ maps and on generated maps with Scattered Mana at None.
   scale the interface looks larger or smaller until UI Scale is changed.
 - Local visual inspection covers Linux OpenGL only; Windows and macOS packages
   are checked from CI and by signature, notarization and build-id checks.
-<!-- LEAD: carry over the 0.8.4 limits that still apply (Legion 10,000
-     congestion and tick overruns, mixed-10000 under 277, Retail h-cramped tick
-     1,307) and anything new from the sweeps. -->
+- The Legion 10,000 program still does not meet its own success criterion for
+  congested workloads (crowds at corners and narrow passages, many unrelated
+  destinations), and many-10000, scatter-10000 and mixed-10000 still run over
+  the 33.3 ms tick budget in part of their ticks; mixed-10000's flyers hover
+  over a slow ground army since 277. Not re-measured for 0.8.5: no navigation,
+  Legion or hashed simulation code changed since 0.8.4.
+- **Retail `h-cramped` ends at tick 1,307** despite Monarch Expendable, because
+  the idle seat starts with only its Monarch (see the remote sweep). Known.
+- The remote sweep's Retail `h-stress`/`h-lake` and both modes' `4h-gods` end
+  on different ticks or hashes from sweep to sweep, with seats and referee
+  agreeing at every checkpoint; the hashed simulation is unchanged since 0.8.4,
+  so this is load-dependent timing, not a desync. Do not diff these three cases
+  across sweeps.
+- Scattered Mana on a generated map was not played in the remote sweep; its
+  coverage is `mapgen_test`, `cartographer_validation_test` and the screenshot
+  games.

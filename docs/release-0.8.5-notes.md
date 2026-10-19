@@ -11,10 +11,6 @@ with 0.8.4 or earlier, and cannot play their replays.** A server and all of
 its players must update to 0.8.5 together. Apart from the new map option the
 simulation is unchanged: a game on a shipped or saved map, or on a random map
 with Scattered Mana at None, plays as in 0.8.4.
-<!-- LEAD: confirm the --mpai Inner Circle seed 1 hashes on the final main
-     (expected unchanged from 0.8.4: Retail 300 s a3d953803a064191 / 60 s
-     b353410003e98dd5, Legion 300 s ce5c4ba7562e53b9 / 60 s 0825aeb9e8139203)
-     before keeping the "plays as in 0.8.4" sentence above and in the README. -->
 
 ## Random maps: Scattered Mana
 
@@ -138,7 +134,9 @@ resolution, as Windows does with Ignore Windows Display Scaling.
 - Unit sounds use the client's `RetailEffectVisibility` plane with the position
   and cloak/carried state the simulation records with each `ScriptSound`;
   those records are presentation only and not hashed.
-<!-- LEAD: add the --mpai hashes confirmed on the final main here, as in 0.8.4. -->
+- The `--mpai` Inner Circle seed 1 hashes are unchanged from 0.8.4: Retail
+  300 s `a3d953803a064191`, 60 s `b353410003e98dd5`; Legion 300 s
+  `ce5c4ba7562e53b9`, 60 s `0825aeb9e8139203`.
 
 ## Known limits
 
@@ -152,9 +150,12 @@ resolution, as Windows does with Ignore Windows Display Scaling.
 - Scattered Mana spots are fair but not mirrored, and on maps with much water,
   cliff or hill fewer spots fit than the level asks for (on a flat map Max
   places about 0.85 of a home's density).
-<!-- LEAD: carry over any 0.8.4 known limits that still apply (Legion 10,000
-     congestion, mixed-10000 under 277, Retail h-cramped tick 1,307) from the
-     validation run, and add anything the 0.8.5 sweeps find. -->
+- Carried over from 0.8.4: the Legion 10,000-unit workloads still struggle
+  with congestion (crowds at corners and narrow passages, many unrelated
+  destinations) and the largest of them run over the tick budget; in
+  mixed-10000 the flyers hover over a slow ground army. In the remote test
+  sweep, Retail `h-cramped` still ends at tick 1,307 because the idle seat
+  starts with only its Monarch.
 
 ## Compatibility
 
@@ -164,7 +165,6 @@ version **9** (0.8.4: 8), campaign payload **4** and Crusades SQL schema **9**
 `src/net/protocol.h`, `kReplayFormat` in `src/net/replayhdr.h`, the map
 generator's `formatVer` (`src/tnt/mapgen.h`), the campaign payload's `kVersion`
 (`src/net/crusades.h`) and `kSchemaVersion` (`src/server/crusades/store.cpp`).
-<!-- LEAD: re-check kNetVersion right before tagging; update 278 everywhere if it moved. -->
 
 - **Multiplayer.** A server rejects a client whose protocol differs from its
   own, so **0.8.5 clients cannot join 0.8.4 or older servers, and 0.8.4 or
