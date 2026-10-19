@@ -137,6 +137,7 @@ public:
         uint64_t engagedNow=0,reachSlotsBuilt=0,softReplans=0,reseedsInPlace=0,briskSteps=0;
         uint64_t ringReseeds=0;   // ring upkeep: ring groups re-seeded to their unspent band-0 spots (ringScan)
         uint64_t reachPresses=0;  // held attackers stepping into a free origin in reach (pressIn)
+        uint64_t reachPressRepeats=0;   // pressIn steps from the same origin as the member's previous one (an in/out shuffle; 0 expected)
         uint64_t ringSwaps=0;     // ring upkeep: a buried owner's spot swapped with a nearer waiting member's
         // ---- W7 step 0 instruments (observation only, never hashed) ----------
         // parts: bodies a parting shifted aside (one per body per part).
@@ -230,7 +231,7 @@ public:
         array("move_calls_by_state",s.moveCallsByState,8);f("join_iterations",s.joinIterations);
         f("midroute_completions",s.midrouteCompletions);f("outside_area_completions",s.outsideAreaCompletions);
         array("completion_dist",s.completionDist,10);f("completion_dist_sum",s.completionDistSum);f("completion_dist_max",s.completionDistMax);
-        f("engaged_now",s.engagedNow);f("reach_slots_built",s.reachSlotsBuilt);f("soft_replans",s.softReplans);f("ring_reseeds",s.ringReseeds);f("reach_presses",s.reachPresses);f("ring_swaps",s.ringSwaps);
+        f("engaged_now",s.engagedNow);f("reach_slots_built",s.reachSlotsBuilt);f("soft_replans",s.softReplans);f("ring_reseeds",s.ringReseeds);f("reach_presses",s.reachPresses);f("reach_press_repeats",s.reachPressRepeats);f("ring_swaps",s.ringSwaps);
         f("reseeds_in_place",s.reseedsInPlace);f("brisk_steps",s.briskSteps);
         f("parts",s.parts);f("aware_encounters",s.awareEncounters);f("aware_replans",s.awareReplans);f("aware_builds",s.awareBuilds);f("aware_work",s.awareWork);
         f("aware_latency_max",s.awareLatencyMax);f("aware_latency_sum",s.awareLatencySum);f("aware_latency_n",s.awareLatencyN);

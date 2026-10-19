@@ -906,6 +906,7 @@ struct LegionNavigator::Impl {
         int requested=-1;                 // the goal origin the order named
         int slot=-1;                      // claimed slot index (shared goals)
         int detour=-1;                    // committed side-step cell
+        int pressFrom=-1;                 // the origin of this member's last pressIn step (Stats only, never read by a decision)
         uint32_t detourTicks=0;
         bool detourFace=true;             // side-step turns the body (keep-right) or not (shuffle)
         bool detourPass=false;            // side-step is a lane-discipline pass (moves at travel speed)
@@ -7859,11 +7860,17 @@ struct LegionNavigator::Impl {
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
         const bool naval=u.type->domain==UnitType::Domain::Water||t->type->domain==UnitType::Domain::Water;
         const NavGrid& sight=naval?w.navalSight_:w.nav_;
+        // The side-step ends when the body's origin changes, half a cell
+        // (on a diagonal 8*sqrt(2) < 12 px) short of the neighbour's centre:
+        // the centre must lie 12 px inside reach, so the body is in reach
+        // wherever the step ends (else it walked back out and pressed again,
+        // an in/out shuffle that never fired; Stats::reachPressRepeats).
+        const int64_t inside=std::max<int64_t>(0,int64_t(R)-12);
         int best=-1;int64_t bestD=0;
         for(const auto& d:kDirections) {
             const int cx=ox+d[0],cz=oz+d[1];
             const int64_t px=int64_t(cx)*16+fx*8-tx,pz=int64_t(cz)*16+fz*8-tz,d1=px*px+pz*pz;
-            if(d1>int64_t(R)*R||(best>=0&&d1>=bestD))continue;
+            if(d1>inside*inside||(best>=0&&d1>=bestD))continue;
             if(!step(p,ox,oz,d[0],d[1])||!stepFree(u,ox,oz,cx,cz))continue;
             if(los&&!sight.losBetween(float(px+tx),float(pz+tz),t->x.toFloat(),t->z.toFloat(),std::max(fx,fz)/2,
                                       std::max(t->type->footX,t->type->footZ)/2))continue;
@@ -7872,6 +7879,11 @@ struct LegionNavigator::Impl {
         if(best<0)return false;
         m.detour=best;m.detourTicks=0;m.detourFace=false;m.detourPass=false;
         ++stats.reachPresses;
+        // A press from the origin of this member's last one: the step did not
+        // put it in reach and it walked back out (an in/out shuffle).
+        const int here=oz*W+ox;
+        if(m.pressFrom==here)++stats.reachPressRepeats;
+        m.pressFrom=here;
         return true;
     }
     void hold(Unit& u,Member& m) {
@@ -9170,6 +9182,7 @@ struct LegionNavigator::Impl {
             // that stands at least a body nearer to it; then members owning
             // a spent spot, or waiting outside band 0, take the nearest free
             // unspent band-0 spot (ids ascending).
+            std::vector<int> swapped;   // owners given an outer spot this scan: no band-0 spot back below
             for(size_t i=0;i<r.cells.size();++i) {
                 if(r.band[i]!=0||r.spent[i]||!r.owner[i])continue;
                 const int owner=r.owner[i];
@@ -9193,12 +9206,13 @@ struct LegionNavigator::Impl {
                 ringRelease(g,taker,*m2);slotCells(*m2,v2->type->footX,v2->type->footZ,false);
                 ringTake(g,*v2,*m2,int(i));
                 ringTake(g,*v,*mm,outer);
+                swapped.push_back(owner);
                 ++stats.ringSwaps;
             }
             for(const int id:g.reachIds) {
                 Member* mm=member(id);const Unit* v=w.unit(id);
                 if(!mm||!v||!v->type||mm->group!=g.id||!ringMember(g,*mm)||mm->state==Engaged)continue;
-                if(r.owner[size_t(mm->slot)]!=id)continue;
+                if(r.owner[size_t(mm->slot)]!=id||std::find(swapped.begin(),swapped.end(),id)!=swapped.end())continue;
                 if(r.band[size_t(mm->slot)]==0&&!r.spent[size_t(mm->slot)])continue;
                 if(r.band[size_t(mm->slot)]==0&&footprintOrigin(v->z,v->type->footZ)*W+footprintOrigin(v->x,v->type->footX)==mm->goal)continue;
                 ringNearest(*v,*mm,g,p,1);
