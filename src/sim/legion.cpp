@@ -926,6 +926,10 @@ struct LegionNavigator::Impl {
         uint32_t detourTicks=0;
         bool detourFace=true;             // side-step turns the body (keep-right) or not (shuffle)
         bool detourPass=false;            // side-step is a lane-discipline pass (moves at travel speed)
+        // The side-step is a formation member's flow-around shuffle on a move-like leg (drive's blocked
+        // branch): walked unturned at travel speed, not at the facing cap (see drive and the detour walk in
+        // move). Hashed while set.
+        bool detourFlow=false;
         uint32_t passUntil=0;             // tick until which a passing body keeps its new lane
         int8_t passRX=0,passRZ=0;         // the side it moved over to
         std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, command (convoy) tick, requested point
@@ -7610,7 +7614,7 @@ struct LegionNavigator::Impl {
         for(int i=0;i<count;++i) {
             const auto& d=kDirections[size_t(options[size_t(i)].second)];
             if(!requestYield(u,ox+d[0],oz+d[1]))continue;
-            m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;m.detourPass=false;
+            m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;m.detourPass=false;m.detourFlow=false;
 #ifndef NDEBUG
             refusal.ok=true;
 #endif
@@ -7768,7 +7772,7 @@ struct LegionNavigator::Impl {
                 part.sx=int8_t(std::clamp(cells[size_t(q)]%W-bx,-1,1));part.sz=int8_t(std::clamp(cells[size_t(q)]/W-bz,-1,1));
                 yielding[ids[size_t(q)]]=Yield{cells[size_t(q)],0};
             }
-            if(off) {m.detour=sz*W+sx;m.detourTicks=0;m.detourFace=false;m.detourPass=false;}
+            if(off) {m.detour=sz*W+sx;m.detourTicks=0;m.detourFace=false;m.detourPass=false;m.detourFlow=false;}
             return true;
         }
         return false;
@@ -10043,7 +10047,21 @@ struct LegionNavigator::Impl {
                 const auto [ax,az]=stepAim(u,m.detour);
                 holdStall(m);
                 m.site=m.detourPass?LegionNavigator::SitePass:LegionNavigator::SiteBlocked;
-                drive(u,m,p,nullptr,maximum,ax,az,false,false,m.detourFace,m.detourPass);
+                // A formation member's flow-around shuffle on a move-like leg keeps travel speed (detourFlow,
+                // see drive), as a long detour route does. A fight, attack, guard or patrol leg's shuffles round
+                // its own melee or ring keep the facing cap, and so do a body with a goal of its own
+                // (crowdheld's 64 distinct goals packed at a 3-cell pitch behind a door: 60 of 64 in goal at
+                // speed, the ratchet is 61), a member whose point is in a head-on meet with another order
+                // (Point::meet: at speed the two streams interleave into a knot -- bridges-1000's two-way 32-cell
+                // bridge ended with 97 bodies stuck at offset 0, 5 at the crawl), a body admitted through a
+                // narrow passage (passLabel: admission's commit and clear times were set on the crawl; at speed
+                // bridges-100 at offset -5 and taperbridge-100 at +2 ended with 52 and 97 bodies stuck head on
+                // in a bridge's mouth) and a body that has gained nothing for a crowd window (kCrowdWindow): at
+                // speed its shuffles round a settled crowd carried it along the crowd's edge, out of reach of
+                // the settle rule (a production rally's last output stood 7 cells off the point for good,
+                // movement_orders_test; gen1-route-61923 240 -> 221 arrived).
+                const bool brisk=m.detourFlow&&!m.passLabel&&!(m.pt&&m.pt->meet.tick!=kNoTick)&&stalledFor(m)<=kCrowdWindow;
+                drive(u,m,p,nullptr,maximum,ax,az,false,false,m.detourFace,m.detourPass,brisk);
                 return;
             }
         }
@@ -11321,7 +11339,7 @@ struct LegionNavigator::Impl {
                 if(o&&o!=u.id)++busy;
             }
             const bool face=busy<=fx*fz;
-            m.detour=cell;m.detourTicks=0;m.detourFace=face;m.detourPass=true;m.lineCell=-1;
+            m.detour=cell;m.detourTicks=0;m.detourFace=face;m.detourPass=true;m.detourFlow=false;m.lineCell=-1;
             m.passUntil=w.tickCounter_+kPassHold;m.passRX=int8_t(rx);m.passRZ=int8_t(rz);
             const auto [cx,cz]=stepAim(u,cell);
             drive(u,m,p,nullptr,maximum,cx,cz,false,false,face,true);
@@ -11353,8 +11371,15 @@ struct LegionNavigator::Impl {
         Fixed cap=retailGroundSpeedCap(maximum*multiplier,u.groundPitch,0);
         const int32_t facing=std::abs(diff);
         // A lane-discipline pass slides one cell over without turning (turning
-        // there read as spinning in a jam); it keeps travel speed, as does a
-        // long local detour route (brisk, see the route walk in move).
+        // there read as spinning in a jam); it keeps travel speed, as do a
+        // long local detour route (brisk, see the route walk in move) and a
+        // flow-around shuffle (Member::detourFlow, committed below). At the
+        // facing cap a shuffle sideways crept at an eighth of travel speed:
+        // a one-cell step took about 70 ticks, longer than the 45 a side-step
+        // lives, and a crowd folding round a wall end or a block of idle
+        // bodies stood in its own shuffles (island-1x100: 30-50% of the
+        // bodies under a third of their speed in front of the rock, Retail
+        // 10-20%). Retail's mover traces round a body at its own speed.
         if(pass||brisk) {}
         else if(facing>12288)cap=Fixed::raw(cap.v/8);
         else if(facing>4096)cap=Fixed::raw(cap.v/2);
@@ -11488,6 +11513,7 @@ struct LegionNavigator::Impl {
                         // keeps facing its route while it shuffles.
                         moved=true;++stats.slides;face=false;
                         m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;m.detourPass=false;
+                        m.detourFlow=policy(m.kind).completes&&!engagesEnemies(m.kind)&&formationMember(m);
                         if(arc) {m.slideCell=m.detour;m.slideFrom=oz*W+ox;}
                         else m.slideCell=-1;
                     }
@@ -11704,7 +11730,7 @@ struct LegionNavigator::Impl {
             const int cell=(oz+sz)*W+ox+sx;
             if(f.estimate(size_t(cell))>uint64_t(here)+kDiagonal)continue;
             if(!stepFree(u,ox,oz,ox+sx,oz+sz))continue;
-            m.detour=cell;m.detourTicks=0;m.detourFace=false;m.detourPass=false;return;
+            m.detour=cell;m.detourTicks=0;m.detourFace=false;m.detourPass=false;m.detourFlow=false;return;
         }
     }
     // "Close enough" settling (the user's rule: late bodies get close to the
@@ -12500,7 +12526,7 @@ struct LegionNavigator::Impl {
             h=mix(h,m.rest);if(m.rest) {h=mix(h,uint32_t(m.restX));h=mix(h,uint32_t(m.restZ));h=mix(h,uint32_t(m.restHp));h=mix(h,m.restEpoch);h=mix(h,m.restRing);}
             if(m.bend) {h=mix(h,0x62656e64ull);h=mix(h,uint32_t(m.bendX));h=mix(h,uint32_t(m.bendZ));}
             if(m.pressX!=kNoPress) {h=mix(h,0x7072657373ull);h=mix(h,uint32_t(m.pressX));h=mix(h,uint32_t(m.pressZ));h=mix(h,m.pressTicks);}
-            h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
+            h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);if(m.detourFlow)h=mix(h,0x666c6f77ull);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillSince);
             if(m.windowGoal>=0) {h=mix(h,0x77736c6f74ull);h=mix(h,uint64_t(m.windowSlotDist));h=mix(h,uint64_t(uint32_t(m.windowGoal)));}
             if(m.settleP||m.queued||m.rechoices) {h=mix(h,0x736574746c65ull);h=mix(h,m.settleP);h=mix(h,uint64_t(m.queued)|uint64_t(m.rechoices)<<8);}

@@ -865,7 +865,10 @@ constexpr int kLandedOpenTicks=1880;           // layout 1, none standing: the w
 // flyers sooner, before they have lifted, and stands against them longer while finishing faster (medians,
 // foot 2 / 3: ticks 2700 -> 2567 / 2432 -> 2332, stuck 996 -> 1568 / 171 -> 250). Ticks are the new medians;
 // stuck bases with the 1.20 band cover the new medians by about 7% / 10%.
-constexpr FlyerBase kLandedBlock[2]={{2567,1400,0,1.20},{2332,230,0,1.20}};      // layout 0, flyer foot 2 and 3
+// 2026-10-19 protocol 280 (flow-around shuffles at travel speed): the same again for the flow-around steps round
+// the stream's own bodies (medians, foot 2 / 3: ticks 2567 -> 2207 / 2332 -> 2162, stuck 1568 -> 1760 / 250 -> 218).
+// The foot-2 stuck base moves 1400 -> 1570 (the band covers the new median by about 7%); the rest is unchanged.
+constexpr FlyerBase kLandedBlock[2]={{2567,1570,0,1.20},{2332,230,0,1.20}};      // layout 0, flyer foot 2 and 3
 constexpr FlyerBase kLandedOff={2414,0,0,1.20};          // layout 2, the block takes off
 constexpr int kLandedOffHalf=1438;
 void landedflyers() {

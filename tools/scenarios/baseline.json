@@ -35004,6 +35004,244 @@
    "mode": "legion",
    "reason": "stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): in uturn, formation members gaining on their own slot, or with a free step toward it, are no longer settled short of it (legion.cpp Member::windowSlotDist, freeTowardSlot): the front of a crowd takes the far side of its area, completions stand nearer their slots (and farther from the click), and in a cramped area the last bodies queue longer instead of settling where they stand. g.A.complete_dist_median 7 at the stage-8 gate (entry 6): higher than allowed (per-step vs head base 6 x1.10; cumulative vs reference 6 x1.10), got 7",
    "scenario": "uturn"
+  },
+  {
+   "key": "work.still_units_processed.total",
+   "max": 2326,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.still_units_processed.total 2326 at the P280 gate (base 1982): higher than allowed (per-step vs head base 1982 x1.10; cumulative vs reference 1982 x1.10), got 2326",
+   "scenario": "aware-unseen"
+  },
+  {
+   "key": "contact_own_permille",
+   "max": 689,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): contact_own_permille 689 at the P280 gate (base 507): higher than allowed (per-step vs head base 507 x1.20; cumulative vs reference 507 x1.20), got 689",
+   "scenario": "island-1x48"
+  },
+  {
+   "key": "work.held_rechecks.total",
+   "max": 361,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.held_rechecks.total 361 at the P280 gate (base 3): higher than allowed (per-step vs head base 3 x1.10; cumulative vs reference 3 x1.10), got 361",
+   "scenario": "island-1x48"
+  },
+  {
+   "key": "work.holds.max",
+   "max": 4,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.holds.max 4 at the P280 gate (base 3): higher than allowed (per-step vs head base 3 x1.10; cumulative vs reference 3 x1.10), got 4",
+   "scenario": "island-1x48"
+  },
+  {
+   "key": "work.holds.total",
+   "max": 394,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.holds.total 394 at the P280 gate (base 242): higher than allowed (per-step vs head base 242 x1.10; cumulative vs reference 242 x1.10), got 394",
+   "scenario": "island-1x48"
+  },
+  {
+   "key": "work.move_calls_by_state_2.max",
+   "max": 14,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.move_calls_by_state_2.max 14 at the P280 gate (base 10): higher than allowed (per-step vs head base 10 x1.10; cumulative vs reference 10 x1.10), got 14",
+   "scenario": "island-1x48"
+  },
+  {
+   "key": "work.move_calls_by_state_2.p99",
+   "max": 8,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.move_calls_by_state_2.p99 8 at the P280 gate (base 6): higher than allowed (per-step vs head base 6 x1.10; cumulative vs reference 6 x1.10), got 8",
+   "scenario": "island-1x48"
+  },
+  {
+   "key": "work.pass_scan_cells.max",
+   "max": 528,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.pass_scan_cells.max 528 at the P280 gate (base 432): higher than allowed (per-step vs head base 432 x1.10; cumulative vs reference 432 x1.10), got 528",
+   "scenario": "island-1x48"
+  },
+  {
+   "key": "work.pass_scans.max",
+   "max": 22,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.pass_scans.max 22 at the P280 gate (base 18): higher than allowed (per-step vs head base 18 x1.10; cumulative vs reference 18 x1.10), got 22",
+   "scenario": "island-1x48"
+  },
+  {
+   "key": "work.slides.max",
+   "max": 9,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.slides.max 9 at the P280 gate (base 5): higher than allowed (per-step vs head base 5 x1.10; cumulative vs reference 5 x1.10), got 9",
+   "scenario": "island-1x48"
+  },
+  {
+   "key": "work.slides.p99",
+   "max": 3,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.slides.p99 3 at the P280 gate (base 2): higher than allowed (per-step vs head base 2 x1.10; cumulative vs reference 2 x1.10), got 3",
+   "scenario": "island-1x48"
+  },
+  {
+   "key": "work.slides.total",
+   "max": 1295,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.slides.total 1295 at the P280 gate (base 800): higher than allowed (per-step vs head base 800 x1.10; cumulative vs reference 800 x1.10), got 1295",
+   "scenario": "island-1x48"
+  },
+  {
+   "key": "reversals",
+   "max": 17,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): reversals 17 at the P280 gate (base 14): higher than allowed (per-step vs head base 14 x1.20; cumulative vs reference 14 x1.20), got 17",
+   "scenario": "motion-wall"
+  },
+  {
+   "key": "work.arrivals.total",
+   "max": 30,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.arrivals.total 30 at the P280 gate (base 24): higher than allowed (per-step vs head base 24 x1.10; cumulative vs reference 24 x1.10), got 30",
+   "scenario": "motion-wall"
+  },
+  {
+   "key": "work.completion_dist_3.total",
+   "max": 8,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.completion_dist_3.total 8 at the P280 gate (base 5): higher than allowed (per-step vs head base 5 x1.10; cumulative vs reference 5 x1.10), got 8",
+   "scenario": "motion-wall"
+  },
+  {
+   "key": "work.completion_dist_4.total",
+   "max": 20,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.completion_dist_4.total 20 at the P280 gate (base 14): higher than allowed (per-step vs head base 14 x1.10; cumulative vs reference 14 x1.10), got 20",
+   "scenario": "motion-wall"
+  },
+  {
+   "key": "work.completion_dist_sum.total",
+   "max": 252,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.completion_dist_sum.total 252 at the P280 gate (base 182): higher than allowed (per-step vs head base 182 x1.10; cumulative vs reference 182 x1.10), got 252",
+   "scenario": "motion-wall"
+  },
+  {
+   "key": "work.mission_arrivals_1.total",
+   "max": 30,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.mission_arrivals_1.total 30 at the P280 gate (base 24): higher than allowed (per-step vs head base 24 x1.10; cumulative vs reference 24 x1.10), got 30",
+   "scenario": "motion-wall"
+  },
+  {
+   "key": "work.slides.max",
+   "max": 4,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.slides.max 4 at the P280 gate (base 3): higher than allowed (per-step vs head base 3 x1.10; cumulative vs reference 3 x1.10), got 4",
+   "scenario": "motion-wall"
+  },
+  {
+   "key": "work.still_units_processed.total",
+   "max": 631,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.still_units_processed.total 631 at the P280 gate (base 522): higher than allowed (per-step vs head base 522 x1.10; cumulative vs reference 522 x1.10), got 631",
+   "scenario": "motion-wall"
+  },
+  {
+   "key": "contact_own_permille",
+   "max": 855,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): contact_own_permille 855 at the P280 gate (base 774): higher than allowed (per-step vs head base 774 x1.10; cumulative vs reference 774 x1.10), got 855",
+   "scenario": "strait-2x48"
+  },
+  {
+   "key": "work.completion_dist_1.max",
+   "max": 2,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.completion_dist_1.max 2 at the P280 gate (base 1): higher than allowed (per-step vs head base 1 x1.10; cumulative vs reference 1 x1.10), got 2",
+   "scenario": "strait-2x48"
+  },
+  {
+   "key": "work.completion_dist_2.max",
+   "max": 2,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.completion_dist_2.max 2 at the P280 gate (base 1): higher than allowed (per-step vs head base 1 x1.10; cumulative vs reference 1 x1.10), got 2",
+   "scenario": "strait-2x48"
+  },
+  {
+   "key": "work.legion_total.p99",
+   "max": 1210,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.legion_total.p99 1210 at the P280 gate (base 1867): higher than allowed (cumulative vs reference 1041 x1.10), got 1210",
+   "scenario": "strait-2x48"
+  },
+  {
+   "key": "work.line_sweeps.p99",
+   "max": 138,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.line_sweeps.p99 138 at the P280 gate (base 121): higher than allowed (per-step vs head base 121 x1.10; cumulative vs reference 121 x1.10), got 138",
+   "scenario": "strait-2x48"
+  },
+  {
+   "key": "work.move_calls_by_state_2.max",
+   "max": 22,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.move_calls_by_state_2.max 22 at the P280 gate (base 17): higher than allowed (per-step vs head base 17 x1.10; cumulative vs reference 17 x1.10), got 22",
+   "scenario": "strait-2x48"
+  },
+  {
+   "key": "work.slides.max",
+   "max": 10,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.slides.max 10 at the P280 gate (base 7): higher than allowed (per-step vs head base 7 x1.10; cumulative vs reference 7 x1.10), got 10",
+   "scenario": "strait-2x48"
+  },
+  {
+   "key": "work.trace_cells.p99",
+   "max": 1191,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.trace_cells.p99 1191 at the P280 gate (base 992): higher than allowed (per-step vs head base 992 x1.10; cumulative vs reference 992 x1.10), got 1191",
+   "scenario": "strait-2x48"
+  },
+  {
+   "key": "work.detour_cells.max",
+   "max": 588,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.detour_cells.max 588 at the P280 gate (base 568): higher than allowed (cumulative vs reference 447 x1.10), got 588",
+   "scenario": "strait-4x24"
+  },
+  {
+   "key": "work.holds.total",
+   "max": 475,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.holds.total 475 at the P280 gate (base 379): higher than allowed (per-step vs head base 379 x1.10; cumulative vs reference 379 x1.10), got 475",
+   "scenario": "strait-4x24"
+  },
+  {
+   "key": "work.legion_total.p99",
+   "max": 853,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.legion_total.p99 853 at the P280 gate (base 1067): higher than allowed (cumulative vs reference 771 x1.10), got 853",
+   "scenario": "strait-4x24"
+  },
+  {
+   "key": "work.move_calls_by_state_2.max",
+   "max": 10,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.move_calls_by_state_2.max 10 at the P280 gate (base 9): higher than allowed (per-step vs head base 9 x1.10; cumulative vs reference 9 x1.10), got 10",
+   "scenario": "strait-4x24"
+  },
+  {
+   "key": "work.slides.total",
+   "max": 1068,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.slides.total 1068 at the P280 gate (base 852): higher than allowed (per-step vs head base 852 x1.10; cumulative vs reference 852 x1.10), got 1068",
+   "scenario": "strait-4x24"
+  },
+  {
+   "key": "work.trace_cells.p99",
+   "max": 588,
+   "mode": "legion",
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): work.trace_cells.p99 588 at the P280 gate (base 533): higher than allowed (per-step vs head base 533 x1.10; cumulative vs reference 533 x1.10), got 588",
+   "scenario": "strait-4x24"
   }
  ],
  "entries": {
@@ -79347,10 +79585,10 @@
     },
     "contact_other_permille": {
      "dir": "lower",
-     "reason": "bound moved 585 -> 590 at the stage-8 gate. stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): in aware-unseen, formation members gaining on their own slot, or with a free step toward it, are no longer settled short of it (legion.cpp Member::windowSlotDist, freeTowardSlot): the front of a crowd takes the far side of its area, completions stand nearer their slots (and farther from the click), and in a cramped area the last bodies queue longer instead of settling where they stand. Before: W9 exit, bound raised 483 -> 585: W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+     "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): contact_other_permille 604 at the P280 gate. Was 590: bound moved 585 -> 590 at the stage-8 gate. stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): in aware-unseen, formation members gaining on their own slot, or with a free step toward it, are no longer settled short of it (legion.cpp Member::windowSlotDist, freeTowardSlot): the front of a crowd takes the far side of its area, completions stand nearer their slots (and farther from the click), and in a cramped area the last bodies queue longer instead of settling where they stand. Before: W9 exit, bound raised 483 -> 585: W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
      "rule": "bound",
-     "since": "W9 exit (2026-10-10)",
-     "value": 590
+     "since": "P280",
+     "value": 604
     },
     "contact_own_permille": {
      "band": 1.1,
@@ -201250,10 +201488,10 @@
     },
     "gate.lane.crossings": {
      "dir": "lower",
-     "reason": "W3 round 4 retake (lead ruling W3 round 3 (a), 2026-10-09): a small-count key (crossings, wall touch, the t90 of a group under 10 bodies) is gated on the median of the gate offsets 0,+-1..+-5 (or the file's gateoffsets), both modes; value: the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer); one-sided bound at median 29 x1.20",
+     "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): gate.lane.crossings 37 at the P280 gate. Was 35: W3 round 4 retake (lead ruling W3 round 3 (a), 2026-10-09): a small-count key (crossings, wall touch, the t90 of a group under 10 bodies) is gated on the median of the gate offsets 0,+-1..+-5 (or the file's gateoffsets), both modes; value: the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer); one-sided bound at median 29 x1.20",
      "rule": "bound",
-     "since": "W3-r4",
-     "value": 35
+     "since": "P280",
+     "value": 37
     },
     "gate.lane.files_x100": {
      "band": 1.2,
@@ -224218,10 +224456,10 @@
     },
     "hash@-5": {
      "dir": "lower",
-     "reason": "stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): in mixed-spacing-07x, formation members gaining on their own slot, or with a free step toward it, are no longer settled short of it (legion.cpp Member::windowSlotDist, freeTowardSlot): the front of a crowd takes the far side of its area, completions stand nearer their slots (and farther from the click), and in a cramped area the last bodies queue longer instead of settling where they stand. Hash retaken (was d5aa31beaf1f2831). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of mixed-spacing-07x moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was 04fb7d1fdcb9bbec). Before: protocol 267 (Legion 10,000 stage 3, explicit selection orders, 2026-10-15): mixed-spacing-07x's clicks are under one uplink tick, so they land on the same tick as before and no behaviour key moved; the state hash folds the explicit order's serial and area key. Hash retaken (was c0fffe322f158539). Before: W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
+     "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances); hash retaken (was 586e92c119fe7d1d). Before: stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): in mixed-spacing-07x, formation members gaining on their own slot, or with a free step toward it, are no longer settled short of it (legion.cpp Member::windowSlotDist, freeTowardSlot): the front of a crowd takes the far side of its area, completions stand nearer their slots (and farther from the click), and in a cramped area the last bodies queue longer instead of settling where they stand. Hash retaken (was d5aa31beaf1f2831). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of mixed-spacing-07x moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was 04fb7d1fdcb9bbec). Before: protocol 267 (Legion 10,000 stage 3, explicit selection orders, 2026-10-15): mixed-spacing-07x's clicks are under one uplink tick, so they land on the same tick as before and no behaviour key moved; the state hash folds the explicit order's serial and area key. Hash retaken (was c0fffe322f158539). Before: W8 exit: first baseline of the step-0 fixture on the exit head (gate offsets, both modes); the fixture's own behaviour is that of the W7 exit sim except where the passage gate acts",
      "rule": "eq",
-     "since": "W8 exit (2026-10-10)",
-     "value": "586e92c119fe7d1d"
+     "since": "P280",
+     "value": "5d6ca2c54e4409f3"
     },
     "hash@0": {
      "dir": "lower",
@@ -316978,6 +317216,14 @@
    "mode": "legion",
    "reason": "offset spread at the stage-8 gate: offset spread 3468..never exceeds band 1.10: list it under exceptions (cluster, reason) and gate it on median-of-5. stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): in tail-open570, formation members gaining on their own slot, or with a free step toward it, are no longer settled short of it (legion.cpp Member::windowSlotDist, freeTowardSlot): the front of a crowd takes the far side of its area, completions stand nearer their slots (and farther from the click), and in a cramped area the last bodies queue longer instead of settling where they stand",
    "scenario": "tail-open570"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.abreast.files_x100",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 367..464 exceeds the band at P280 (protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances)); gated on median-of-5 offsets",
+   "scenario": "island-1x48"
   }
  ],
  "history": [
@@ -341696,6 +341942,12 @@
    "ratchets": [],
    "reason": "stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): Legion hash retakes and licences for the keys stage 8 moved (arrival headway on the own slot, chokepoints as queues with admission and subgroup allocation, shared destination areas, an entrance per group; docs/legion-10000-progress.md 7.8)",
    "when": "2026-10-17T12:00:00Z"
+  },
+  {
+   "cleared_exceptions": [],
+   "ratchets": [],
+   "reason": "protocol 280 (Legion ~100 round 2, 2026-10-19): a formation member's flow-around shuffle keeps travel speed on a move-like leg (legion.cpp Member::detourFlow; the committed one-cell step round a blocking body crept at the facing cap, an eighth of travel speed sideways), so crowds flow round each other and obstacles sooner: more blocked steps are flowed round (slides) and held between them (holds), bodies press closer (contact) and settle sooner (still-scan samples, completion distances): licences for the keys it moved on the fixtures that passed the gate at its parent 4fe78bdb (aware-unseen, island-1x48, mixed-spacing-07x, motion-wall, strait-2x48, strait-4x24; tools/scenarios/*.scn, gate offsets, serial and workers; Retail identical). The other 115 fixtures already failed the gate at the parent.",
+   "when": "2026-10-19T12:00:00Z"
   }
  ],
  "references": {
