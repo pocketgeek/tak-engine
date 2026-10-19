@@ -165,6 +165,7 @@ constexpr uint8_t kRechoices=3;
 // (kExplicitSettleDen*foot), plus kSettleSlack bodies (see settleWindow).
 constexpr uint32_t kExplicitSettleNum=9,kExplicitSettleDen=8;
 constexpr int kSettleRing=64;                  // cells the queue test may visit per window
+constexpr int kBriskRoute=4;                    // a local detour route with this many cells left keeps travel speed
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
 constexpr uint32_t kPassHold=300;              // ticks a passing body keeps its new lane
 constexpr int kLaneSpan=8;                    // passage lane grid: strips narrower than this (origins)
@@ -7432,7 +7433,15 @@ struct LegionNavigator::Impl {
         const auto& mt=m.pt->meet;
         const int W=width();
         if(!mt.active)return false;
-        if(std::max(std::abs(m.goal%W-ox),std::abs(m.goal/W-oz))<=kPivotNear)return false;
+        // Not where the destination area packs it: within kPivotNear of its goal AND inside the point's
+        // area plus one lead (Point::limit, the packed disc and its margin, round the requested point). Two
+        // small orders sent to each other's positions meet within kPivotNear of both goals, and without
+        // the band there they met face to face (many-100).
+        if(std::max(std::abs(m.goal%W-ox),std::abs(m.goal/W-oz))<=kPivotNear) {
+            const int64_t dx=(int64_t(u.x.v)-std::get<2>(m.point))>>16,dz=(int64_t(u.z.v)-std::get<3>(m.point))>>16;
+            const int64_t r=m.pt->limit+int64_t(kPivotLead)*16;
+            if(m.pt->limit<=0||dx*dx+dz*dz<=r*r)return false;
+        }
         const int64_t x=u.x.v>>16,z=u.z.v>>16,lead=int64_t(kPivotLead)*16;
         const int64_t lat=(z*mt.ax-x*mt.az)/mt.L;
         // The band map F(x) = lo + (x - left0) x (hi - lo) / width0 = (A + x (hi - lo)) / width0 on the
@@ -7619,7 +7628,8 @@ struct LegionNavigator::Impl {
     }
     bool partable(const Unit& u,int id) const {
         const Unit* b=w.unit(id);
-        if(!b||!b->alive()||b->player!=u.player||b->speed!=Fixed()||!b->type||b->type->isStructure()||b->type->canFly)return false;
+        // Friendly bodies part: the mover's own and its allies' (never an enemy's).
+        if(!b||!b->alive()||!w.allied(b->player,u.player)||b->speed!=Fixed()||!b->type||b->type->isStructure()||b->type->canFly)return false;
         if(anchors.count(id)||yielding.count(id))return false;
         if(!b->orders.empty()&&!partableMember(id))return false;
         const auto part=parts.find(id);
@@ -7731,7 +7741,7 @@ struct LegionNavigator::Impl {
         }
         return false;
     }
-    // The cells this member wants are held by settled same-player arrivals:
+    // The cells this member wants are held by settled friendly arrivals (the mover's own or an ally's):
     // ask each of them to step one cell clear of that footprint, staying
     // within one cell of its own goal origin. All blockers must be able to
     // yield, or none is asked. Returns whether a yield was committed.
@@ -7773,7 +7783,7 @@ struct LegionNavigator::Impl {
             const int id=ids[size_t(k)];
             const Unit* b=w.unit(id);
             auto anchor=anchors.find(id);
-            if(!b||!b->alive()||b->player!=u.player||!b->orders.empty()||b->speed!=Fixed()||
+            if(!b||!b->alive()||!w.allied(b->player,u.player)||!b->orders.empty()||b->speed!=Fixed()||
                anchor==anchors.end()||yielding.count(id)||anchor->second.yields>=kMaxYields) {
 #ifndef NDEBUG
                 dbgWhy=anchor!=anchors.end()&&anchor->second.yields>=kMaxYields?"yields spent":"blocker moving, foreign or already yielding";
@@ -9616,11 +9626,21 @@ struct LegionNavigator::Impl {
                 // A short way around still bodies is walked without turning
                 // the body (a crowd shuffle), not as a U-turn and back.
                 // (Facing it while walking measured as spin in shared-goal
-                // crowds: 0 -> 10-22k unit-ticks in sharedgoal 2000.)
+                // crowds: 0 -> 10-22k unit-ticks in sharedgoal 2000.) A long
+                // way round -- kBriskRoute cells or more still to walk -- keeps
+                // travel speed: unturned at the facing cap of an eighth, a
+                // 12-cell detour round a settled crowd outlasted the route's
+                // 240 ticks, was dropped half way and the body shuffled back
+                // (many-100: a departing order's last bodies walled in by the
+                // next order's arrivals for good). Facing it instead spun
+                // bodies in packed crowds (sharedgoal 2000: 0 -> 3,809
+                // unit-ticks); unturned at speed, 28. A reach kind (attack,
+                // guard) keeps the shuffle: its detours are round its own ring.
                 const auto [ax,az]=stepAim(u,aim);
                 holdStall(m);
                 m.site=LegionNavigator::SiteBlocked;
-                drive(u,m,p,nullptr,maximum,ax,az,false,false,false);
+                const bool brisk=int(m.route.size())>=kBriskRoute&&policy(m.kind).completes;
+                drive(u,m,p,nullptr,maximum,ax,az,false,false,false,false,brisk);
                 return;
             }
         }
@@ -10925,7 +10945,7 @@ struct LegionNavigator::Impl {
     // headway although it went on stepping or turning to and fro.
     static bool livelock(const Unit& u) {return u.legionShuffle;}
     void drive(Unit& u,Member& m,const Plane& p,RouteView f,Fixed maximum,Fixed aimX,Fixed aimZ,bool final,
-               bool towardGoal=false,bool face=true,bool pass=false) {
+               bool towardGoal=false,bool face=true,bool pass=false,bool brisk=false) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
         int64_t dx=int64_t(aimX.v)-u.x.v,dz=int64_t(aimZ.v)-u.z.v;
@@ -10945,8 +10965,9 @@ struct LegionNavigator::Impl {
         Fixed cap=retailGroundSpeedCap(maximum*multiplier,u.groundPitch,0);
         const int32_t facing=std::abs(diff);
         // A lane-discipline pass slides one cell over without turning (turning
-        // there read as spinning in a jam); it keeps travel speed.
-        if(pass) {}
+        // there read as spinning in a jam); it keeps travel speed, as does a
+        // long local detour route (brisk, see the route walk in move).
+        if(pass||brisk) {}
         else if(facing>12288)cap=Fixed::raw(cap.v/8);
         else if(facing>4096)cap=Fixed::raw(cap.v/2);
         Fixed speed=fxMin(cap,u.speed+u.type->accel*multiplier);
@@ -11423,7 +11444,7 @@ struct LegionNavigator::Impl {
             if(!o||o==u.id)continue;
             const Unit* other=w.unit(o);
             if(!other||!other->type||other->type->isStructure())continue;
-            // Legion never asks another player's body to yield or part.
+            // Another player's body is no part of this crowd (an ally's settled body may yield, see requestYield).
             if(other->player!=u.player) {stranger=true;continue;}
             if(!nearer(*other))continue;
             if(isAnchor(o)) {

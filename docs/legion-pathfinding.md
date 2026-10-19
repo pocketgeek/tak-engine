@@ -336,7 +336,10 @@ stopped permille 288,524 to 288,538, Legion work flat.
   footprint touches no still body. The target is its own goal if it is inside
   the window, otherwise the reachable cell that most reduces its distance to
   go, and only a gain of about two cells is committed. The route is walked
-  cell by cell without turning the body. It is attempted only when the
+  cell by cell without turning the body: at travel speed while 4 or more of
+  its cells are left (`kBriskRoute`; a move-like order only, a reach kind's
+  detour round its own ring keeps the shuffle), otherwise at the unturned
+  facing cap (an eighth of travel speed). It is attempted only when the
   blocking body will not move by itself (idle, arrived, trapped, or not a
   Legion mover), or when a formation member has been held for 60 updates in
   a standing jam of crossing lanes; never for a queue of members waiting on
@@ -346,7 +349,8 @@ stopped permille 288,524 to 288,538, Legion work flat.
 * **Settled arrivals yield**: when a unit completes, Legion records an anchor
   (the origin it completed on). A member held for 12 or more updates, with no
   detour or route, whose wanted cell is held only by settled, idle,
-  same-player anchored bodies, asks those bodies to step one cell aside; if
+  friendly anchored bodies (its own player's or an ally's, never an enemy's),
+  asks those bodies to step one cell aside; if
   that fails, it tries the same for a neighbour nearer its own goal. Every
   blocker must find a target or none moves. A target is within one cell
   (Chebyshev) of the blocker's anchor, legal for its footprint, clear of the
@@ -1477,8 +1481,9 @@ charge, no re-plan, no stored lanes (W9-U2). The target is an increasing map of
 each member's current lateral position driven by the group's progress, which
 never falls, so members cannot cross each other; they move at most one cell
 across per two along, only on a statically legal line that descends the field,
-never within the pivot distance of the goal, and the target is cut before a
-wall. Narrowing waits until the gap between the groups is within twice the
+never where the destination area packs the member (within the pivot distance
+of its goal and inside its point's area plus one lead, `Point::limit` + 6
+cells round the requested point), and the target is cut before a wall. Narrowing waits until the gap between the groups is within twice the
 span plus two leads. Both groups keep right. The latch is released when the
 other group's tail is behind this group's rear, or after 90 ticks without
 contact before the groups meet. Hashed only when set (`Point::meet`,
@@ -1492,6 +1497,57 @@ the premises of the other lanes (A1-A5 slot re-choice and settling, B1-B4 and
 B6 gate, ring and corner shaping); each was run for its two rounds, missed its
 acceptance and was reverted (`docs/legion-exit-tables.md`, "W9 lane A" and
 "W9 exit").
+
+Near both goals (2026-10-19, no protocol change). Until then the band was
+off anywhere within the pivot distance (32 cells) of the member's goal. Two
+small orders sent to each other's positions (many-100: pairs of 25-body squads
+40 cells apart, the second clicked 150 ticks after the first) meet within 32
+cells of both goals, so neither group narrowed: the columns met face to face,
+the arriving group's front bodies, pressed by the departing group, settled
+off-slot at the near edge of their area (after their three re-choices), and the
+departing group's last bodies were walled in behind them, some until the end.
+Start-up (first move 5-8 ticks) and the head's walk (arrive t50 557 against
+Retail's 627) were never the cost; the tail was. The band is now off only where
+the area packs the member: within the pivot distance of its goal AND inside
+the point's area (`Point::limit`) plus one lead. Large orders, whose areas
+reach past 32 cells, keep the old rule. many-100 over the gate offsets
+(median, Legion before / after / Retail): arrive.n 93 / 100 / 93, arrive.t90
+1986 / 767 / 1057, complete.t90 1981 / 1215 / 1126, stuck at the end 1 / 0 / 0;
+every other legion100 fixture is hash-identical except bridges-100, swap-100
+and motion-cross-100 (within their spread) and densehead is level
+(`ctest:legion_meetnear`).
+
+Departures through an arrived crowd (2026-10-19, no protocol change). After
+the near-goal meet fix, an order arriving in an area another order was still
+leaving (or had not been sent from yet) settled among the bodies that would
+leave, and the last of those were sealed in: many-100 ended with up to 7 stuck
+bodies at start offsets 3-5, many-1000 with 30-73. Two causes. Their local
+detours round the settled crowd were found (12 cells round, a real gain) but
+walked unturned at the facing cap of an eighth of travel speed, so a 12-cell
+route outlasted its 240 ticks, was dropped half way and the body shuffled
+back, every 300 ticks, for good; and an ally's settled or idle bodies never
+yielded or parted for them (only the mover's own player's did). Retail has no
+step-aside for ground bodies (BUGGER_OFF is stored and never acted on,
+docs/factory-output-2026-10-12.md): parked bodies are impassable and its mover
+traces round them. Now a local detour route with 4 or more cells left
+(`kBriskRoute`, move-like orders only) keeps travel speed, still unturned, and
+the yield and parting rules (one cell round a settled body's anchor, one or
+two cells aside for an idle body, each at most 3 times, never a body with an
+order, never an enemy's) take friendly bodies of any allied player. Rejected
+on the way: turning the body to face the route (sharedgoal 2000 spin 0 ->
+3,809 unit-ticks, the round-2 finding again; unturned at speed: 28); a longer
+route life at the slow cap (no stuck bodies, complete.t90 +11%); yields and
+parting alone, at the slow cap (offset 5 still 6-10 stuck: a mover packed in
+a crowd has no neighbour that can move); waiting instead of settling while
+another order's mover presses (completions later). Measured (gate offsets,
+median [range]): many-100 stuck 0 at every offset (before: up to 7),
+arrive.t90 767 -> 677, complete.t90 1215 -> 965 (Retail 1057 / 1126);
+many-1000 offsets 0/1/-1 arrive.n 746/833/796 -> 961/956/937, stuck 73/51/36
+-> 6/17/6 (`ctest:legion_departure`). The other legion100 fixtures arrive as
+many or more (bridges-100 arrive.n 100 at every offset, maze-100 89 -> 95, ringcross-100
+38 -> 47); travel reversals rise (corner-1x100 38 -> 81, densehead 77 -> 155,
+all still far under Retail's) and doorplug100-112's queue stands more
+(stopped 628 -> 733 permille; arrivals 46 -> 47).
 
 ### Clustered static repair (4a99092a)
 
@@ -2774,6 +2830,22 @@ Rules that came out of using them:
   `doorplug-112:wall_touch_permille`, `ringcross:g.M.t90`,
   `doorplug-124:g.A.done`, `motion-cross:click.u01.done` and
   `ctest:legion_liftflyers`.
+* **Faster detours cost travel reversals (2026-10-19).** A local detour
+  route with 4 or more cells left is walked at travel speed, unturned (the
+  departure fix above), so a body that takes a detour and then rejoins its
+  field turns its travel direction round more often: travel reversals over
+  the gate offsets (median) corner-1x100 38 -> 81, corner-4x25 22 -> 68,
+  densehead 77 -> 155, all still far under Retail (corner-1x100 441); the
+  corner and island fixtures stand 10-16% more (`stopped_permille`) and
+  doorplug100-112's queue 628 -> 733 permille. A stream reaches parked flyers
+  before they have lifted and stands against them longer while finishing
+  sooner (`ctest:legion_landedflyers` bounds moved), and one ordinary
+  side-step shuffle runs out and back once among the lone trees
+  (`ctest:legion_lonetrees` allows that one event). Faster only from the
+  second detour, or only after 120 blocked ticks, kept both checks but left
+  stuck bodies at some many-100 offsets. Measured by the reversals key of
+  tools/scenarios/legion100/corner-1x100.scn and densehead.scn, and by
+  `ctest:legion_departure`.
 * **The livelock fix costs some lane order (protocol 257).** A body blocked
   again after a side-step toward its arc may not step straight back, so it
   takes another field step inward or holds and side-steps: the 150 bodies
@@ -2878,10 +2950,11 @@ Rules that came out of using them:
   148 to 184. Groups that were never 8 strong (`kOpeningMembers`) still neither wait nor count except as occupants,
   so a handful of separate walkers can still walk into a passage held the other way. Measured by `ctest:legion_passage_admission` (arrivals and stuck
   bodies; the time is in its run's JSON) and `ctest:legion_choke` (bridges-1000).
-* **Idle units of other players never step aside.** Only settled same-player
-  Legion arrivals yield; everything else idle is a still body to route
-  around (`strait-3x80:region.east.inside`: a selection that has to pass a
-  barrier of idle bodies).
+* **Idle enemy units never step aside.** Settled friendly Legion arrivals
+  yield and idle friendly bodies part a lane (own player and allies, since
+  2026-10-19); an enemy's idle body is a still body to route around
+  (`strait-3x80:region.east.inside`: a selection that has to pass a barrier
+  of idle bodies).
 * **Fog**: Legion plans on the static plane as Retail's mover sees it. It does
   not model unexplored terrain separately. The one place fog shows is group
   awareness, which sees an enemy mover only within sight
