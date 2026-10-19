@@ -267,7 +267,7 @@ dynamic runtime dependencies or retail assets are included. See the
   stress games, an order-heavy Legion battle went from about 1.1× to 1.6× real
   time, and Retail movement got about 16% cheaper. Retail behavior is
   unchanged. See the [release notes](docs/release-0.7.27-notes.md).
-- **Tactical Dots** (Options → Graphics, off by default, not in the original
+- **Tactical Dots** (Options → Graphics, on by default since 0.8.5, not in the original
   game): zoomed far out, units are drawn as minimap-style dots in their
   player's colour, with the minimap's fog rules. **Tactical Dots Zoom**
   (0–100%, default 20%, greyed out while dots are off) sets how far out, along
@@ -1175,18 +1175,17 @@ your login name.
 
 Use **Options** to adjust audio, shadows, health bars, UI scale, cursor size,
 and camera behavior. **F4 Scorecard Scale** independently adjusts the player
-scorecard from 75–200% and is remembered between sessions. Fullscreen, VSync, Shadows, Stats Panel, Hardware Cursor,
-and Smooth Motion default to **on**; saved choices still apply. **Max FPS** caps
+scorecard from 50–200% and is remembered between sessions. Fullscreen, VSync, Shadows, Smooth GUI Art, Smooth Movies, Trees Sway in Wind,
+Stats Panel, Hardware Cursor, Tactical Dots and Smooth Motion default to **on**; saved choices still apply. **Max FPS** caps
 the frame rate only while VSync is off, and is greyed out while VSync is on.
 The **Graphics** section holds **Renderer**, **Texture Filtering**, Shadows,
 **Smooth GUI Art**, **Smooth Movies**, Trees Sway in Wind, Tactical Dots,
-Hardware Cursor, Smooth Motion and GPU Memory Limit. Texture Filtering, Smooth GUI Art and Smooth Movies are **off** by
-default and remembered. Texture Filtering applies to the game area only and has
+Hardware Cursor, Smooth Motion and GPU Memory Limit. Texture Filtering defaults to **Everything**; all of these are remembered. **Screen Shake** (camera shake on heavy impacts) is **off** by default. Texture Filtering applies to the game area only and has
 three levels: **Off** (retail's look, everything point-sampled), **Units**
 (retail's Visual Options Bilinear Filter: unit model textures and unit shadows
 only) and **Everything** (Units, plus terrain, scenery and effect sprites once
 zoomed in past 150%; a non-retail extension, since retail had no camera zoom).
-A saved Bilinear Filtering choice from an older version loads as Off or Units.
+A saved Bilinear Filtering choice from an older version loads as Off or Units. Settings you have already saved keep their values; only new installs and the Defaults button use the new defaults.
 Smooth GUI Art applies immediately to the current interface, fonts,
 cursors and build-menu portraits without a restart. On Windows, **Ignore Windows
 Display Scaling** (default **on**, applied after a restart) draws at the real
@@ -1194,9 +1193,9 @@ screen resolution instead of letting Windows stretch the game blurrily; the firs
 run raises UI Scale and Cursor Size to the Windows scale so the interface keeps
 its size. **Trees Sway in Wind** is selectable,
 defaults to **on**, and remembers your choice. **Tactical Dots** (default
-**off**, not in retail) draws every unit as a minimap-style player-coloured dot
+**on**, not in retail) draws every unit as a minimap-style player-coloured dot
 when zoomed far out, with the same fog rules as the minimap; selection works on
-the dots. **Tactical Dots Zoom** (default **20%**) sets how far out: 0% means only
+the dots. **Tactical Dots Zoom** (default **0%**) sets how far out: 0% means only
 fully zoomed out, 100% means from normal size outwards.
 **GPU Memory Limit** (default **Auto**, 1.25 GB; also 512 MB to 4 GB or
 **Unlimited**) caps the video memory the game's own textures may use and

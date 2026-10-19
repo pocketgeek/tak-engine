@@ -1194,13 +1194,14 @@ missed are silent while the game catches up.
 | --- | --- | --- |
 | **Renderer** | Auto | Which graphics backend draws the game. Takes effect after a restart; see [Renderer](#renderer). |
 | **Ignore Windows Display Scaling** | On | Windows only. Stops Windows from enlarging the game window to match your display scaling (for example 150%), which made everything blurry. The game draws at the real screen resolution instead. Takes effect after a restart. The first time it runs, UI Scale and Cursor Size are raised to your Windows scale so the interface stays the same size, now sharp; adjust them afterwards if you like. |
-| **Texture Filtering** | Off | How the game area is smoothed when you zoom in. **Off**: nothing is smoothed, as in the original. **Units**: the original game's Bilinear Filtering option; smooths unit textures and unit shadows only. **Everything**: Units, plus terrain, trees, rocks and other scenery, and effects, once you zoom in past 150%. Not in the original game. The interface, cursor and movies are never affected; see below. |
+| **Texture Filtering** | Everything | How the game area is smoothed when you zoom in. **Off**: nothing is smoothed, as in the original. **Units**: the original game's Bilinear Filtering option; smooths unit textures and unit shadows only. **Everything**: Units, plus terrain, trees, rocks and other scenery, and effects, once you zoom in past 150%. Not in the original game. The interface, cursor and movies are never affected; see below. |
 | **Shadows** | On | Unit, scenery and projectile shadows. The biggest single graphics cost in a crowded battle. |
-| **Smooth GUI Art** | Off | Sharpens the low-resolution interface art, menus, fonts, cursors and build-menu portraits with an edge-aware upscale. Applies at once. No cost per frame; uses more video memory. |
-| **Smooth Movies** | Off | Removes the blocky compression artefacts from the game's movies. |
+| **Smooth GUI Art** | On | Sharpens the low-resolution interface art, menus, fonts, cursors and build-menu portraits with an edge-aware upscale. Applies at once. No cost per frame; uses more video memory. |
+| **Smooth Movies** | On | Removes the blocky compression artefacts from the game's movies. |
 | **Trees Sway in Wind** | On | Animated trees and their shadows. |
-| **Tactical Dots** | Off | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. |
-| **Tactical Dots Zoom** | 20% | How far out you must zoom before dots replace models. Greyed out while Tactical Dots is off. See below. |
+| **Screen Shake** | Off | Camera shake on heavy impacts and mission earthquakes. |
+| **Tactical Dots** | On | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. |
+| **Tactical Dots Zoom** | 0% | How far out you must zoom before dots replace models. Greyed out while Tactical Dots is off. See below. |
 | **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. |
 | **Smooth Motion** | On | Units glide between the game's 30 updates per second instead of stepping. Adds about 33 ms of visual delay. |
 | **GPU Memory Limit** | Auto (1.25 GB) | The most video memory the game's own textures may use: Auto, 512 MB, 768 MB, 1 GB, 1.5 GB, 2 GB, 3 GB, 4 GB or Unlimited. Applies at once. See below. |
@@ -1244,7 +1245,7 @@ the pointer is over the option says how much is in use right now.
 changed while Tactical Dots is off. It is a position along your zoom-out range:
 at **0%** dots appear only when you are zoomed all the way out;
 at **100%** they appear from normal size (100% zoom) outwards; the default
-**20%** means the most zoomed-out fifth of that range. The range is measured in
+**20%** would mean the most zoomed-out fifth of that range. The default is 0%. The range is measured in
 mouse-wheel notches, so each notch moves the same share of it. It is relative
 because how far you can zoom out depends on your window and the map: the view
 stops where the map fills the window, which on a very wide screen is close to
@@ -1262,7 +1263,7 @@ faster.
 ![Two views of the same moment in a large battle, zoomed far out. Left, with Tactical Dots off, the armies are tiny unit models that are hard to tell apart from the trees. Right, with Tactical Dots on, each army is a field of squares in its player's colour: blue, green and maroon](img/guide/tactical-dots.jpg)
 
 *The same moment of an eight-AI Benchmark battle on Ulasem Arena, zoomed far out
-in a 1920 × 1080 window with Tactical Dots Zoom at its default 20%. Left, Tactical
+in a 1920 × 1080 window with Tactical Dots Zoom at 20%. Left, Tactical
 Dots off; right, on. Trees, terrain and the blue spell effect are drawn either
 way.*
 
@@ -1293,8 +1294,8 @@ available on your system appear.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| **F4 Scorecard Scale** | 100% | Size of the F4 player panel (75–200%). |
-| **UI Scale** | 100% | Size of the in-game interface (75–200%). |
+| **F4 Scorecard Scale** | 100% | Size of the F4 player panel (50–200%). |
+| **UI Scale** | 100% | Size of the in-game interface (50–200%). |
 | **Health Bars** | Damaged | Off, only on damaged units, or always. |
 | **Stats Panel** | On | Live statistics in the space under the minimap. |
 | **Build Menu** | Center | Where the build icons sit: left, centre or right. |

@@ -78,7 +78,7 @@ inline constexpr float kCompactZoom = 0.35f;
 // every unit as a square too, so the shape matches it.
 inline float dotSide(int footX, int footZ, float zoom, float uiScale = 1.0f) {
     const float cells = float(std::max({footX, footZ, 1}));
-    const float ui = std::clamp(uiScale, 0.75f, 2.0f);
+    const float ui = std::clamp(uiScale, 0.5f, 2.0f);
     const float lo = kMinDotPx * ui;
     const float hi = std::max(lo, cells * kCellWorldPx * kCompactZoom * kFootFill * ui);
     return std::clamp(cells * kCellWorldPx * zoom * kFootFill, lo, hi);

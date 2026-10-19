@@ -753,7 +753,7 @@ public:
     void renderStudyToggleFilter() { setTextureFilter(textureFilter_ ? 0 : 1); }
     // Render study (workstream L): a camera shake of the given magnitude (shakemagnitude
     // units) and duration, the path a weapon's shake request takes.
-    void renderStudyShake(float magnitude, float seconds) { triggerShake(magnitude, seconds); }
+    void renderStudyShake(float magnitude, float seconds) { screenShake_ = true; triggerShake(magnitude, seconds); }
     void renderStudyMotion(unsigned frame) {
         if(!frame || frame%240)return;
         const float direction=(frame/240)%2 ? -1.f : 1.f;
@@ -3626,6 +3626,7 @@ private:
     uint32_t windGen_ = 0;
     // Camera shake (weapon shakemagnitude/shakeduration on heavy impacts).
     float shakeTime_ = 0, shakeDur_ = 0, shakeMag_ = 0;
+    bool screenShake_ = false;   // Options: SCREEN SHAKE (default off)
     void triggerShake(float mag, float dur);
 
     std::vector<RingFx> rings_;

@@ -37,12 +37,12 @@ int main() {
             throw std::runtime_error("new create preferences must default to Retail");
         s.gameCreate.pathfindingMode=PathMode::Legion;
         s.gameCreate.overrides=0;
-        s.uiScale=0.75f;s.scorecardScale=1.75f;
+        s.uiScale=0.5f;s.scorecardScale=1.75f;
         if(!tak::saveSettings(s))throw std::runtime_error("save failed");
         const auto loaded=tak::loadSettings();
         if(loaded.hostOverridePacks!=s.hostOverridePacks || loaded.cosmeticOverridePacks!=s.cosmeticOverridePacks || loaded.gameCreate.overrides!=0)
             throw std::runtime_error("pack selections did not survive save/load while off");
-        if(loaded.uiScale!=0.75f || loaded.scorecardScale!=1.75f)
+        if(loaded.uiScale!=0.5f || loaded.scorecardScale!=1.75f)
             throw std::runtime_error("independent scorecard scale did not persist");
         if(loaded.gameCreate.pathfindingMode!=PathMode::Legion)
             throw std::runtime_error("Legion create preference did not persist");
@@ -131,7 +131,7 @@ int main() {
         std::ofstream(path)<<"scorecardScale = 9\n";
         if(tak::loadSettings().scorecardScale!=2.0f)throw std::runtime_error("scorecard upper limit");
         std::ofstream(path)<<"scorecardScale = 0\n";
-        if(tak::loadSettings().scorecardScale!=0.75f)throw std::runtime_error("scorecard lower limit");
+        if(tak::loadSettings().scorecardScale!=0.5f)throw std::runtime_error("scorecard lower limit");
         // Renderer: AUTO ("") by default and when the key is absent (every file written
         // before the option existed); stored by SDL driver id, written as "auto" for AUTO.
         if(!tak::Settings{}.renderer.empty())throw std::runtime_error("renderer must default to Auto");
@@ -165,18 +165,18 @@ int main() {
             if(a==b)throw std::runtime_error("renderer changes not detected");
             if(!tak::preferenceDefaults(b).renderer.empty())throw std::runtime_error("DEFAULTS must reset the renderer to Auto");
         }
-        // Graphics defaults: Texture Filtering off (retail's default), art filters off.
+        // Graphics defaults: Texture Filtering Everything, art filters on.
         auto graphicsDefaults=[](const tak::Settings& v) {
-            if(v.textureFilter!=0 || v.smoothArt || v.videoDeblock)throw std::runtime_error("graphics defaults changed");
+            if(v.textureFilter!=2 || !v.smoothArt || !v.videoDeblock)throw std::runtime_error("graphics defaults changed");
         };
         graphicsDefaults(tak::Settings{});
         if(!tak::Settings{}.treeSway)throw std::runtime_error("tree sway must default on");
-        // Tactical Dots is a non-retail extra: off by default, off for a file written
+        // Tactical Dots is a non-retail extra: on by default, on for a file written
         // before the key existed, and its own key round-trips both ways.
-        if(tak::Settings{}.tacticalDots)throw std::runtime_error("tactical dots must default off");
-        if(tak::Settings{}.tacticalDotsZoom!=20)throw std::runtime_error("tactical dots zoom must default to 20%");
+        if(!tak::Settings{}.tacticalDots)throw std::runtime_error("tactical dots must default on");
+        if(tak::Settings{}.tacticalDotsZoom!=0)throw std::runtime_error("tactical dots zoom must default to 0%");
         std::ofstream(path)<<"treeSway = 0\nunitShadows = 1\n";
-        if(tak::loadSettings().tacticalDots)throw std::runtime_error("pre-dots settings file must load dots off");
+        if(!tak::loadSettings().tacticalDots)throw std::runtime_error("pre-dots settings file must load dots on");
         for(const char* text:{"tacticalDots = 1\n","tacticalDots = on\n","tacticalDots = true\n"}) {
             std::ofstream(path)<<text;
             if(!tak::loadSettings().tacticalDots)throw std::runtime_error(std::string("tactical dots not read: ")+text);
@@ -194,7 +194,7 @@ int main() {
         // Older keys, used only when textureFilter is absent. 0.7.25-0.7.28's
         // bilinearFilter, Zoom Smoothing's Smooth and 0.7.24's bilinear = 1 were all
         // the Units level; every other choice and every AA key has no successor and
-        // loads as Off.
+        // loads as the default (Everything).
         struct Legacy { const char* text; int expected; };
         for(const Legacy& c:std::initializer_list<Legacy>{
                 {"bilinear = 1\n",1},{"bilinear = 0\n",0},
@@ -212,7 +212,7 @@ int main() {
                 {"textureFilter = 2\nbilinearFilter = 0\n",2},
                 // a hand-edited level out of range clamps like every other number
                 {"textureFilter = 7\nbilinearFilter = 0\n",2},{"bilinearFilter = 1\ntextureFilter = -3\n",0},
-                {"antiAlias = 4\nterrainAA = 4\nmodelAA = 16\nunitEdgeAA = 16\nzoomedOutTerrain = 4\n",0}}) {
+                {"antiAlias = 4\nterrainAA = 4\nmodelAA = 16\nunitEdgeAA = 16\nzoomedOutTerrain = 4\n",2}}) {   // no filter key at all: the default, Everything
             std::ofstream(path)<<c.text<<"smoothArt = on\nvideoDeblock = 1\ntreeSway = 0\nvsync = 0\n";
             const auto loaded=tak::loadSettings();
             if(loaded.textureFilter!=c.expected)throw std::runtime_error(std::string("legacy filter not migrated: ")+c.text);
@@ -232,7 +232,7 @@ int main() {
         for(const char* key:{"textureFilter = 1","smoothArt = 1","videoDeblock ="})
             if(contents.find(key)==std::string::npos)throw std::runtime_error("graphics preference not saved");
         if(!(tak::loadSettings()==s))throw std::runtime_error("migrated settings did not round trip");
-        s.textureFilter=0;s.smoothArt=s.videoDeblock=false;
+        s.textureFilter=2;s.smoothArt=s.videoDeblock=true;
         if(!tak::saveSettings(s))throw std::runtime_error("save failed");
         graphicsDefaults(tak::loadSettings());
         fs::remove_all(root);std::cout<<"PASS: independent host/guest selections persist while Off\n";return 0;

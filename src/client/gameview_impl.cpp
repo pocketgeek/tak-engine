@@ -213,6 +213,7 @@
         edgeScrollSpeed_ = s.edgeScrollSpeed;
         edgeScrollOn_ = s.edgeScroll;
         uiScale_ = s.uiScale;
+        screenShake_ = s.screenShake;                     // Options: camera shake
         buildBarAlign_ = std::clamp(s.buildBarAlign, 0, 2);   // Options: build-menu row
         buildBarScale_ = std::clamp(s.buildBarScale, 0.75f, 4.0f);
         setTextureFilter(s.textureFilter);
@@ -3725,7 +3726,7 @@
     }
 
     void GameView::triggerShake(float mag, float dur) {
-        if (mag <= 0 || dur <= 0) return;
+        if (!screenShake_ || mag <= 0 || dur <= 0) return;
         // Let a stronger/longer quake override a fading one.
         if (mag * dur >= shakeMag_ * shakeTime_) {
             shakeMag_ = mag; shakeDur_ = dur; shakeTime_ = dur;

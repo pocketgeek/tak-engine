@@ -52,10 +52,11 @@ int main() {
     flips("dpiMigrated",     [](Settings& s) { s.dpiMigrated = !s.dpiMigrated; });
     flips("uiScale",         [](Settings& s) { s.uiScale += 0.25f; });
     flips("textureFilter",   [](Settings& s) { s.textureFilter = (s.textureFilter + 1) % 3; });
-    flips("textureFilter 2", [](Settings& s) { s.textureFilter = 2; });
+    flips("textureFilter 0", [](Settings& s) { s.textureFilter = 0; });
     flips("buildBarAlign",   [](Settings& s) { s.buildBarAlign = (s.buildBarAlign + 1) % 3; });
     flips("buildBarScale",   [](Settings& s) { s.buildBarScale += 0.25f; });
     flips("treeSway",        [](Settings& s) { s.treeSway = !s.treeSway; });
+    flips("screenShake",    [](Settings& s) { s.screenShake = !s.screenShake; });
     flips("tacticalDots",    [](Settings& s) { s.tacticalDots = !s.tacticalDots; });
     flips("unitShadows",     [](Settings& s) { s.unitShadows = !s.unitShadows; });
     flips("gpuMemoryLimit",  [](Settings& s) { s.gpuMemoryLimit = 2048; });
@@ -171,12 +172,13 @@ int main() {
         cur.voiceOutputVolume = 60;
         // Preferences that must be RESET.
         cur.unitShadows = false;
-        cur.smoothArt = true;
-        cur.videoDeblock = true;
+        cur.smoothArt = false;
+        cur.videoDeblock = false;
         cur.masterVol = 7;
         cur.uiScale = 1.75f;
-        cur.textureFilter = 2;
-        cur.tacticalDots = true;
+        cur.textureFilter = 0;
+        cur.tacticalDots = false;
+        cur.screenShake = true;
         cur.renderer = "opengles2";
         cur.gpuMemoryLimit = 768;
 
@@ -220,8 +222,10 @@ int main() {
         reset("videoDeblock",     d.videoDeblock == fresh.videoDeblock);
         reset("masterVol",        d.masterVol == fresh.masterVol);
         reset("uiScale",          d.uiScale == fresh.uiScale);
-        reset("textureFilter",    d.textureFilter == fresh.textureFilter && d.textureFilter == 0);
-        reset("tacticalDots",     d.tacticalDots == fresh.tacticalDots && !d.tacticalDots);
+        reset("textureFilter",    d.textureFilter == fresh.textureFilter && d.textureFilter == 2);
+        reset("tacticalDots",     d.tacticalDots == fresh.tacticalDots && d.tacticalDots);
+        reset("screenShake",      d.screenShake == fresh.screenShake && !d.screenShake);
+        reset("tacticalDotsZoom", d.tacticalDotsZoom == fresh.tacticalDotsZoom && d.tacticalDotsZoom == 0);
         reset("renderer",         d.renderer == fresh.renderer && d.renderer.empty());
         reset("gpuMemoryLimit",   d.gpuMemoryLimit == fresh.gpuMemoryLimit && d.gpuMemoryLimit == 0);
 
@@ -274,7 +278,7 @@ int main() {
             if (!ok) ++g_fail;
         };
         using tak::resolveTextureFilter;
-        check("tf: default Off", Settings{}.textureFilter == 0 && resolveTextureFilter(-1, -1, -1, -1) == 0);
+        check("tf: default Everything", Settings{}.textureFilter == 2 && resolveTextureFilter(-1, -1, -1, -1) == 2);
         check("tf: new key wins", resolveTextureFilter(2, 0, 0, 0) == 2 && resolveTextureFilter(0, 1, 1, 1) == 0);
         check("tf: new key clamps", resolveTextureFilter(9, -1, -1, -1) == 2);
         check("tf: bilinear 0 -> Off", resolveTextureFilter(-1, 0, 1, 1) == 0);

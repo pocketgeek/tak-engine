@@ -34,26 +34,27 @@ struct Settings {
     // Applied at startup only (restart required); see applyDpiMigration below.
     bool  ignoreDpiScaling = true;
     bool  dpiMigrated = false;     // one-time: uiScale/cursorScale already adapted to the OS scale
-    float scorecardScale = 1.0f;   // independent F4 scorecard scale; 0.75..2.0
-    float uiScale    = 1.0f;       // in-game HUD scale; 0.75..2.0 (1.0 = 100%)
+    float scorecardScale = 1.0f;   // independent F4 scorecard scale; 0.5..2.0
+    float uiScale    = 1.0f;       // in-game HUD scale; 0.5..2.0 (1.0 = 100%)
     // TEXTURE FILTERING for the game area (client/texturefilter.h): 0 = Off (retail's
     // default, all nearest), 1 = Units (retail's BiLinearFilter: unit model textures
     // and unit shadows linear), 2 = Everything (Units, plus terrain, features and
     // effects once zoomed in past 1.5x; a non-retail extension). The interface is
     // never filtered by this; see Smooth GUI Art. Persisted as textureFilter.
-    int   textureFilter = 0;
+    int   textureFilter = 2;
     int   buildBarAlign = 1;       // conjure/build icon row: 0=left, 1=center, 2=right
     float buildBarScale = 1.0f;    // extra scale on the build icon row, ON TOP of uiScale; 0.75..4.0
     bool  treeSway   = true;       // animated tree and shadow sway; default on
-    bool  tacticalDots = false;    // zoomed far out, draw units as minimap-style dots
-    int   tacticalDotsZoom = 20;   // when: 0 = only fully zoomed out .. 100 = from normal size
-                                   // instead of models (non-retail extra; default off)
-    bool  videoDeblock = false;    // deblock the Bink clips before upload. They are
+    bool  tacticalDots = true;     // zoomed far out, draw units as minimap-style dots
+    int   tacticalDotsZoom = 0;    // when: 0 = only fully zoomed out .. 100 = from normal size
+                                   // instead of models (non-retail extra; default on)
+    bool  screenShake = false;     // camera shake on heavy impacts / mission quakes; default off
+    bool  videoDeblock = true;     // deblock the Bink clips before upload. They are
                                    // 640x360 and get stretched ~12x on a wide display,
                                    // which magnifies every 8x8 compression seam into a
                                    // visible line. ~0.3ms per frame against a 66ms
                                    // budget at 15fps; nothing scales with window size.
-    bool  smoothArt  = false;      // edge-directed 2x upscale of the STATIC art (GUI,
+    bool  smoothArt  = true;       // edge-directed 2x upscale of the STATIC art (GUI,
                                    // panels, backdrops, cursors) when it is built, so
                                    // 1999 sprites do not show blocky stair-steps when
                                    // magnified. Costs load time and VRAM, nothing per
@@ -171,7 +172,7 @@ struct Settings {
             && a.scorecardScale == b.scorecardScale && a.uiScale == b.uiScale && a.textureFilter == b.textureFilter
             && a.buildBarAlign == b.buildBarAlign && a.buildBarScale == b.buildBarScale
             && a.treeSway == b.treeSway && a.tacticalDots == b.tacticalDots
-            && a.tacticalDotsZoom == b.tacticalDotsZoom
+            && a.tacticalDotsZoom == b.tacticalDotsZoom && a.screenShake == b.screenShake
             && a.unitShadows == b.unitShadows && a.smoothArt == b.smoothArt
             && a.gpuMemoryLimit == b.gpuMemoryLimit
             && a.videoDeblock == b.videoDeblock
@@ -286,13 +287,14 @@ inline Settings voiceDefaults(const Settings& cur) {
 // absent). textureFilter wins; a file written before it existed falls back to the
 // 0.7.25-0.7.28 bilinearFilter toggle (0 = Off, 1 = Units, which is exactly what that
 // toggle smoothed), then to 0.7.24's bilinear toggle or the unreleased Zoom Smoothing
-// choice whose Smooth mode was the same filter. Nothing at all = Off.
+// choice whose Smooth mode was the same filter. Nothing at all = the default (Everything).
 inline int resolveTextureFilter(int textureFilter, int bilinearFilter, int legacyBilinear,
                                 int legacyZoom) {
     if (textureFilter >= 0) return std::clamp(textureFilter, 0, 2);
     if (bilinearFilter >= 0) return bilinearFilter ? 1 : 0;
     if (legacyZoom >= 0) return legacyZoom == 1 ? 1 : 0;
-    return legacyBilinear == 1 ? 1 : 0;
+    if (legacyBilinear >= 0) return legacyBilinear == 1 ? 1 : 0;
+    return Settings{}.textureFilter;
 }
 
 // GPU MEMORY LIMIT choices, in Options order (MiB; 0 = AUTO, -1 = UNLIMITED).
@@ -344,7 +346,7 @@ inline bool applyDpiMigration(Settings& s, float osScale) {
     if (s.dpiMigrated) return false;
     s.dpiMigrated = true;
     if (s.ignoreDpiScaling && osScale > 1.01f) {
-        s.uiScale = std::clamp(s.uiScale * osScale, 0.75f, 2.0f);
+        s.uiScale = std::clamp(s.uiScale * osScale, 0.5f, 2.0f);
         s.cursorScale = std::clamp(int(float(s.cursorScale) * osScale + 0.5f), 1, 8);
     }
     return true;

@@ -472,6 +472,9 @@ void OptionsScreen::build(int channels) {
            [&](float v) { s_.tacticalDotsZoom = std::clamp(int(v + 0.5f), 0, 100); },
            [](float v) { return pctOf(v, 100); });
     ctls_.back().enabled = [&] { return s_.tacticalDots; };   // only meaningful with dots on
+    // Camera shake on heavy impacts and mission quakes; off unless asked for.
+    toggle("SCREEN SHAKE", [&] { return s_.screenShake ? 1.0f : 0.0f; },
+           [&](float v) { s_.screenShake = v > 0.5f; });
     // OS-tracked cursor: the pointer keeps moving smoothly even when a heavy frame
     // stalls the render loop (the retail Direct3D "hardware cursor" option).
     toggle("HARDWARE CURSOR", [&] { return s_.hardwareCursor ? 1.0f : 0.0f; },
@@ -520,9 +523,9 @@ void OptionsScreen::build(int channels) {
 
     // INTERFACE: on-screen HUD -- its size, and the game overlays.
     section("INTERFACE");
-    slider("F4 SCORECARD SCALE", 0.75f, 2.0f, [&] { return s_.scorecardScale; },
+    slider("F4 SCORECARD SCALE", 0.5f, 2.0f, [&] { return s_.scorecardScale; },
            [&](float v) { s_.scorecardScale = v; }, [](float v) { return pctOf(v, 1); });
-    slider("UI SCALE", 0.75f, 2.0f, [&] { return s_.uiScale; },
+    slider("UI SCALE", 0.5f, 2.0f, [&] { return s_.uiScale; },
            [&](float v) { s_.uiScale = v; }, [](float v) { return pctOf(v, 1); });
     slider("HEALTH BARS", 0, 2, [&] { return float(s_.healthBars); },
            [&](float v) { s_.healthBars = std::clamp(int(v + 0.5f), 0, 2); },

@@ -106,8 +106,8 @@ Settings loadSettings() {
         else if (key == "renderer")        s.renderer = renderdriver::normalize(val);
         else if (key == "ignoreDpiScaling") s.ignoreDpiScaling = asBool();
         else if (key == "dpiMigrated")     s.dpiMigrated = asBool();
-        else if (key == "scorecardScale")  s.scorecardScale = asFloat(0.75f, 2.0f);
-        else if (key == "uiScale")         s.uiScale = asFloat(0.75f, 2.0f);
+        else if (key == "scorecardScale")  s.scorecardScale = asFloat(0.5f, 2.0f);
+        else if (key == "uiScale")         s.uiScale = asFloat(0.5f, 2.0f);
         else if (key == "textureFilter")   textureFilter = asInt(0, 2);
         else if (key == "bilinearFilter")  bilinearFilter = asBool();
         else if (key == "bilinear")        legacyBilinear = asBool();
@@ -119,6 +119,7 @@ Settings loadSettings() {
         else if (key == "buildBarScale")   s.buildBarScale = asFloat(0.75f, 4.0f);
         else if (key == "treeSway")        s.treeSway = asBool();
         else if (key == "tacticalDots")    s.tacticalDots = asBool();
+        else if (key == "screenShake")     s.screenShake = asBool();
         else if (key == "tacticalDotsZoom") s.tacticalDotsZoom = asInt(0, 100);
         else if (key == "unitShadows")     s.unitShadows = asBool();
         else if (key == "gpuMemoryLimit")  s.gpuMemoryLimit = parseGpuMemoryLimit(val);
@@ -215,6 +216,7 @@ std::string serializeSettings(const Settings& s) {
     o << "buildBarScale = " << s.buildBarScale << "\n";
     o << "treeSway = " << (s.treeSway ? 1 : 0) << "\n";
     o << "tacticalDots = " << (s.tacticalDots ? 1 : 0) << "\n";
+    o << "screenShake = " << (s.screenShake ? 1 : 0) << "\n";
     o << "tacticalDotsZoom = " << s.tacticalDotsZoom << "\n";
     o << "unitShadows = " << (s.unitShadows ? 1 : 0) << "\n";
     o << "gpuMemoryLimit = " << gpuMemoryLimitValue(s.gpuMemoryLimit) << "\n";
