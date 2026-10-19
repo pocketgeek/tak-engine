@@ -10918,7 +10918,8 @@ struct World::ScriptHost {
         // Audio remains client-owned; a dying VM's sounds are presentation
         // events (ScriptSound), in script order.
         if(factory.dying)
-            world.scriptSounds_.push_back({world.tickCounter_,unit.id,unit.player,unit.x,unit.z,unit.type,name,flags});
+            world.scriptSounds_.push_back({world.tickCounter_,unit.id,unit.player,unit.x,unit.z,unit.type,name,flags,
+                unit.type->canFly ? unit.flightY : unit.groundY,unit.cloaked});
         return 0; // native unit sound host 50def0 always returns zero
     }
 };
