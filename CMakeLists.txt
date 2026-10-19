@@ -718,6 +718,23 @@ add_test(NAME legion_pressin
 set_tests_properties(legion_pressin PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"scenario\":\"attackring-wall-64\""
                      FAIL_REGULAR_EXPRESSION "\"work\\.reach_press_repeats\\.total\":(\\[|[1-9])")
+# Legion ~100 round 2 (2026-10-19). A ring fills round the outside of its own firing arc: the inside of the ring
+# within band 0 is charged in its field like a mover's corridor, so the queued army walks round the arc instead of
+# into its back (ringcross-100 before the Move group sets off). On the parent half the 50 attackers were in reach at
+# tick 850 (Retail 653). Passes when that time is 780 or less, serial equal to workers.
+add_test(NAME legion_ringfill
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/ringcross-100.scn --mode legion --offsets 0 --ticks 1500 --json)
+set_tests_properties(legion_ringfill PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.t50\":([1-6][0-9][0-9]|7[0-7][0-9]|[0-9][0-9]?),")
+# A Move group's formation members whose lanes run into (or by) another command's firing ring walk round it on their
+# own lane's side, steering by the flow round the ring's clearance circle (ringBend). On the parent every body took
+# the shared field round the side of its nearest slot in one or two files and the group never completed within
+# 5000 ticks at offsets 0,1,-1 (t90 4815 / 4696 / 4741, Retail 3857 / 3948 / 3951). Passes when the median t90 is
+# under 4500 and the group completes (median g.M.done set), serial equal to workers.
+add_test(NAME legion_ringbend
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/ringcross-100.scn --mode legion --offsets 0,1,-1 --json)
+set_tests_properties(legion_ringbend PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.M\\.t90\":([1-3][0-9][0-9][0-9]|4[0-4][0-9][0-9]),\"g\\.M\\.done\":[1-4][0-9][0-9][0-9],")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
