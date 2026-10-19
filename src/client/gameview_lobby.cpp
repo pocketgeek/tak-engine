@@ -247,7 +247,7 @@ std::string startLocationsLabel(uint8_t mode) {
         mapPreviewStarts_.clear();
         mapPreviewWorldW_ = mapPreviewWorldH_ = 0;
         if (tntPath.empty()) return;
-        genPreviewInfo_.clear(); genPreviewError_.clear();
+        genPreviewInfo_.clear(); genPreviewError_.clear(); genPreviewScattered_ = 0;
         if (tak::mapgen::isGeneratedMapId(tntPath)) {
             try { buildGenPreview(tntPath); }
             catch (const std::exception& e) { genPreviewError_ = e.what(); }
@@ -362,6 +362,7 @@ std::string startLocationsLabel(uint8_t mode) {
         mapPreviewDims_ = dims;
         if (gp.formatVer >= 3)
             genPreviewInfo_ = "WATER: " + std::to_string(g.waterPercent) + "%  MANA: " + std::to_string(manaSpots);
+        genPreviewScattered_ = g.scatteredMana;
 
     }
 
@@ -760,8 +761,19 @@ std::string startLocationsLabel(uint8_t mode) {
         slider(2, "EXTRA MANA SPOTS", genParams_.manaDensity);
         slider(3, "WATER AMOUNT", genParams_.waterDensity, !tak::mapgen::automaticWater(genParams_.layout));
         slider(4, genParams_.layout==tak::mapgen::Highlands?"HIGHLAND AMOUNT":"AUTHORED HILLS", genParams_.reliefDensity, genParams_.layout!=tak::mapgen::Maze);
-        lbBtn(px, py, 140, kRowH, "RE-ROLL SEED", true, [this] {
+        lbBtn(px, py, 110, kRowH, "RE-ROLL SEED", true, [this] {
             genParams_.seed = genParams_.seed * 6364136223846793005ULL + 1442695040888963407ULL;
+            applyGenParams();
+        });
+        // Neutral spots scattered by AREA (a level, not a count: the same level puts
+        // four times as many on a map twice as wide). MAX = a six-spot home's density.
+        // It shares the seed row: a row of its own pushed the column past the
+        // 540-high lobby canvas and into the BACK/CREATE footer band.
+        std::string scatter = tak::mapgen::scatterName(genParams_.manaScatter);
+        for (char& ch : scatter) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+        lbCycle(px + 116, py, kBtnW - 116, kRowH, "SCATTERED MANA: " + scatter, true, [this](int direction) {
+            genParams_.manaScatter = uint8_t((genParams_.manaScatter + direction + tak::mapgen::kScatterLevels) %
+                                             tak::mapgen::kScatterLevels);
             applyGenParams();
         });
       }
@@ -794,6 +806,9 @@ std::string startLocationsLabel(uint8_t mode) {
                 blockText("CHECK RETAIL DATA", pvx, pvy + pvH + 46, 1.4f, {220, 140, 120, 255});
             blockText("3 HOME MANA SPOTS EACH", pvx, pvy + pvH + 106, 1.3f, {160, 175, 160, 255});
             blockText("EXTRAS NEED FREE SPACE", pvx, pvy + pvH + 124, 1.3f, {160, 175, 160, 255});
+            if (genParams_.manaScatter)
+                blockText("SCATTERED: " + std::to_string(genPreviewScattered_) + " NEUTRAL", pvx, pvy + pvH + 160,
+                          1.3f, {160, 175, 160, 255});
             if (genParams_.layout == tak::mapgen::Islands || genParams_.layout == tak::mapgen::Ports)
                 blockText("SIZE RESERVES SEA LANES", pvx, pvy + pvH + 142, 1.3f, {160, 175, 160, 255});
         }
@@ -1164,6 +1179,8 @@ std::string startLocationsLabel(uint8_t mode) {
             try {
                 const auto gp=tak::mapgen::decodeMapId(room.mapId);
                 const auto level=[](uint8_t v){return v==0?"NONE":v<86?"LOW":v<171?"MED":"HIGH";};
+                std::string scatter=tak::mapgen::scatterName(gp.manaScatter);
+                for(char& ch:scatter)ch=char(std::toupper(static_cast<unsigned char>(ch)));
                 static const char* mapTypes[]={"ARAMON","TAROS","VERUNA","ZHON","CREON"};
                 const std::string shape=std::string("MAP TYPE: ")+mapTypes[gp.mapType%tak::mapgen::kMapTypes]+
                     "  LAYOUT: "+tak::mapgen::layoutName(gp.layout)+"  SIZE: "+
@@ -1175,7 +1192,7 @@ std::string startLocationsLabel(uint8_t mode) {
                     "  HILLS: "+level(gp.reliefDensity);
                 blockText(shape,x,y+98,1.1f,infoColor);
                 blockText(terrain,x,y+112,1.1f,infoColor);
-                blockText("MAP SEED: "+std::to_string(gp.seed),x,y+126,1.1f,infoColor);
+                blockText("MAP SEED: "+std::to_string(gp.seed)+"  SCATTERED MANA: "+scatter,x,y+126,1.1f,infoColor);
             } catch(const std::exception&) {} // Invalid map IDs cannot start.
         }
         // chat panel on the right (multiplayer only -- there's no one to chat with in SP)

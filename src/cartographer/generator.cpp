@@ -14,7 +14,7 @@ std::string mapGeneratorRecipe(const tak::hpi::Vfs& vfs,const std::string& mapPa
 GeneratorFields generatorFields(const tak::mapgen::Params& p) {
     return {std::to_string(p.seed),std::to_string(p.players),tak::mapgen::layoutName(p.layout),
         std::to_string(p.treeDensity),std::to_string(p.rockDensity),std::to_string(p.manaDensity),
-        std::to_string(p.waterDensity),std::to_string(p.reliefDensity)};
+        std::to_string(p.waterDensity),std::to_string(p.reliefDensity),tak::mapgen::scatterName(p.manaScatter)};
 }
 bool parseGeneratorFields(const GeneratorFields& f,tak::mapgen::Params& p,std::string& error) {
     auto next=p;
@@ -29,10 +29,16 @@ bool parseGeneratorFields(const GeneratorFields& f,tak::mapgen::Params& p,std::s
     for(uint8_t i=0;i<(p.formatVer>=6?tak::mapgen::kLayouts:tak::mapgen::Islands+1);++i)if(f[2]==tak::mapgen::layoutName(i)) {next.layout=i;layout=true;}
     if(!layout) {error="Choose a layout supported by this recipe version.";return false;}
     uint8_t* density[]={&next.treeDensity,&next.rockDensity,&next.manaDensity,&next.waterDensity,&next.reliefDensity};
-    for(size_t i=3;i<f.size();++i) {
+    for(size_t i=3;i<8;++i) {
         if(!number(i,0,255,value)) {error="Densities must be whole numbers from 0 to 255.";return false;}
         *density[i-3]=uint8_t(value);
     }
+    bool scatter=false;
+    for(uint8_t i=0;i<tak::mapgen::kScatterLevels;++i)if(f[8]==tak::mapgen::scatterName(i)) {next.manaScatter=i;scatter=true;}
+    if(!scatter) {error="Choose a scattered mana level.";return false;}
+    // A v8 recipe is v9 with no scattered mana, so asking for some upgrades it;
+    // leaving it at None keeps the restored recipe exactly as saved.
+    if(next.manaScatter && next.formatVer==8)next.formatVer=9;
     p=next;error.clear();return true;
 }
 bool restoreGeneratorRecipe(const std::string& recipe,const std::string& description,

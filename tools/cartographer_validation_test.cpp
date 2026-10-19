@@ -80,6 +80,14 @@ int main() {
             themed.formatVer=5;
             check(!cart::parseGeneratorFields(themeFields,themed,generatorError),"legacy editor accepts new theme");
         }
+        {
+            auto legacy=params;legacy.formatVer=8;auto legacyFields=cart::generatorFields(legacy);
+            check(legacyFields[8]=="None" && cart::parseGeneratorFields(legacyFields,legacy,generatorError) && legacy.formatVer==8,"v8 recipe kept exactly");
+            legacyFields[8]="Max";
+            check(cart::parseGeneratorFields(legacyFields,legacy,generatorError) && legacy.formatVer==9 &&
+                  tak::mapgen::decodeMapId(tak::mapgen::encodeMapId(legacy)).manaScatter==tak::mapgen::ScatterMax,"scattered mana upgrades a v8 recipe");
+            legacyFields[8]="Lots";check(!cart::parseGeneratorFields(legacyFields,legacy,generatorError),"unknown scattered mana level accepted");
+        }
         fields=cart::generatorFields(params);fields[3]="256";
         check(!cart::parseGeneratorFields(fields,parsed,generatorError),"density range checked");
         fields=cart::generatorFields(params);fields[1]="3players";

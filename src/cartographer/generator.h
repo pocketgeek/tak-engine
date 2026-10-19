@@ -3,8 +3,8 @@
 #include <array>
 namespace tak::hpi { class Vfs; }
 namespace cart {
-// Seed, players, layout, tree/rock/mana/water/relief densities.
-using GeneratorFields=std::array<std::string,8>;
+// Seed, players, layout, tree/rock/mana/water/relief densities, scattered mana.
+using GeneratorFields=std::array<std::string,9>;
 GeneratorFields generatorFields(const tak::mapgen::Params& params);
 bool parseGeneratorFields(const GeneratorFields& fields,tak::mapgen::Params& params,std::string& error);
 // Old editor maps stored the recipe as the description's first line. Explicit

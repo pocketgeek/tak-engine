@@ -153,8 +153,10 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 277, "replay format 11 is kept under protocol 277");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 277");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 278, "replay format 11 is kept under protocol 278");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 278");
+    // 278 adds random-map recipe v9 (scattered neutral mana); a 277 peer would refuse a v9 map id.
+    check(!supportedReplayProtocol(13, 277), "previous protocol without scattered mana recipes is refused");
     // 277 keeps Legion formation flyers on station while their ground waits for its registration (hashed state).
     check(!supportedReplayProtocol(13, 276), "previous protocol releasing formation flyers on a waiting ground is refused");
     // 276 adds voice chat messages (never in a replay); a 275 peer cannot speak them.
