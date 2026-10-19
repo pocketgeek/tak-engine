@@ -14,8 +14,7 @@ schema unchanged since 0.8.4).
      notes and the release notes. If kNetVersion moves past 278, update every
      one of them. -->
 
-<!-- LEAD: tag line, e.g. "Tagged `v0.8.5` at `<sha>` (annotated tag object
-     `<obj>`) and published on <date> UTC." -->
+Tagged `v0.8.5` at `86db5d61` (annotated tag object `b1901899`) and published on 2026-10-19 05:51 UTC.
 
 ## Scope and compatibility
 
@@ -367,16 +366,79 @@ Logs: `~/tak-tmp/scratch/release-085/remote/` (`{retail,legion}.sweep.log`,
 
 ## CI and packages
 
-<!-- PLACEHOLDER (LEAD): main CI runs on the final source; tag CI run ids
-     (Determinism dispatched with gh workflow run determinism.yml --ref v0.8.5,
-     Linux, Windows, macOS incl. Sign + notarize); asset count and digests;
-     build ids "build v0.8.5"; Authenticode on oden-win; DMG/app notarization
-     and stapling on the MacBook; no libsecret/GLib NEEDED on Linux takclient;
-     Opus static and OPUS-LICENSE present. New for 0.8.5: a packaged macOS
-     takclient on a Retina display logs "dpi: native Retina resolution;
-     backing scale 2.00". -->
+Main CI on the final source `86db5d61` passed: Determinism 39199985285, macOS
+39199985334, Windows 39199985237, and Linux packages 39199985245 after one
+rerun (Ubuntu 22.04 x64 `crusades_client_network_test`, "complete replay not
+published"; the same source had passed in run 39186433179, and the job passed
+on rerun, so it is recorded as a new flake candidate).
 
-*To be written.*
+On the exact tag (`86db5d61`, annotated tag object `b1901899`), all four
+workflows passed on the first attempt. No job needed a rerun, so none of the
+known flakes appeared, including the new Ubuntu 22.04 candidate
+`crusades_client_network_test`:
+
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/39203615343), started manually on the tag because the workflow is path-filtered.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/39203608328): all native package jobs and release attachment.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/39203608344): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/39203608314): both builds and the **Sign + notarize** job for each architecture, which replaced the unsigned macOS ZIPs and DMGs in the draft with the signed, notarized and stapled ones.
+
+The release was created as a draft with these notes, and tagged CI attached the
+packages. All **29 assets** (the same set as 0.8.4) were downloaded after the
+macOS signing finished. Each one matched GitHub's SHA-256 digest and byte size
+before publication. Every asset is within 0.1% of its 0.8.4 size: ratios run
+from 1.000 to 1.001.
+
+- **Build ids.** The client and server in every Linux package (Debian 12 and
+  13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44 and openSUSE Leap 16.0, both
+  architectures each, plus Arch and Slackware) carry `v0.8.5`. Run: the x86-64
+  `takclient` and `takserver` from Debian 12 and 13, Ubuntu 22.04, 24.04 and
+  26.04, Fedora 44, openSUSE Leap 16.0 and Slackware report
+  `0.8.5 (build v0.8.5)`. The Arch `takserver` reports `0.8.5 (build v0.8.5)`.
+  The Arch `takclient` needs glibc 2.44, newer than the checking host's 2.43,
+  so only its build string was checked. The x64 Windows ZIP's `takclient.exe`
+  and `takserver.exe` report `0.8.5 (build v0.8.5)` on Windows 11. The ARM64
+  `takclient.exe` carries `v0.8.5` (build string only). On the arm64 MacBook
+  (macOS 26.6.2), `takclient` and `takserver` report `0.8.5 (build v0.8.5)` for
+  both architectures, both as bare programs from the ZIPs and inside the game
+  app from each DMG and each ZIP.
+- **Windows signatures.** `Get-AuthenticodeSignature` on oden-win reports
+  **Valid** (CN=Curtis Edge) for the setup `.exe` and for `takclient.exe`,
+  `takserver.exe`, `cartographer.exe` and `crusades_admin.exe` in both the x64
+  and ARM64 ZIPs: 9 signed files. The debug ZIPs were not checked.
+- **macOS notarization.** On the MacBook, both DMGs pass `xcrun stapler
+  validate` and `spctl` (open, primary signature) as **accepted, source=Notarized
+  Developer ID, origin=Developer ID Application: Curtis Edge (L479Y59RN8)**. So
+  do both apps (the game and TAK Cartographer) from each DMG and from each ZIP.
+  Every bundled and bare `takclient`, `takserver`, `cartographer` and
+  `crusades_admin` passes `codesign --verify --strict` (TeamIdentifier
+  L479Y59RN8). `spctl` says the bare command-line programs do not seem to be an
+  app, as expected for unstapled command-line tools.
+- **Opus is static.** No packaged Linux `takclient` or `takserver` has a
+  `NEEDED` entry beyond libc, libm and the loader (Slackware also lists libdl
+  and libpthread), so none needs libopus. The Debian and Ubuntu packages depend
+  only on `libc6`. Neither Windows `takclient.exe` imports or names an Opus DLL;
+  the x64 import table lists only system DLLs. No macOS binary links a libopus
+  dylib (`otool -L`). `OPUS-LICENSE.txt` is in every Debian, RPM, Arch and
+  Slackware package and in all four release ZIPs.
+- **macOS microphone.** The game app's `Info.plist` carries
+  `NSMicrophoneUsageDescription` in both DMGs and both ZIPs. The
+  `com.apple.security.device.audio-input` entitlement is on the game app and on
+  its `takclient` (DMG and ZIP, both architectures), and also on the bare ZIP
+  `takclient`. It is absent from `takserver`, `crusades_admin` and
+  `cartographer`.
+- As in 0.8.1 to 0.8.4: no packaged Linux `takclient` has a `NEEDED` entry for
+  libsecret, GLib, GIO or GObject.
+
+New check for 0.8.5:
+
+- **macOS Retina.** `NSHighResolutionCapable` is `true` in the `Info.plist` of
+  both apps (the game and TAK Cartographer), from both DMGs and both ZIPs.
+  The packaged clients were not launched on a Retina display; the same code,
+  built from `0a70e24b` on the MacBook, rendered 2816x1762 in a 1408x881-point
+  window (backing scale 2.00) and was checked by eye on a 2x built-in panel and
+  a 1x external display, including moving the window between them.
+
+The release was published on 2026-10-19 05:51 UTC and is the latest release.
 
 ## Screenshots
 
