@@ -724,7 +724,9 @@ Legion 10,000 program (Legion only), 273 shares short mana across construction
 the Absurdly Defensive AI level, 276 voice chat, and 277 keeps a Legion
 formation's flyers over the front while its ground waits to register (Legion
 only); 0.8.4 ships protocol 277. Protocol 278 adds random-map recipe version 9
-(scattered neutral mana; all modes); 0.8.5 ships protocol 278.
+(scattered neutral mana; all modes); 0.8.5 ships protocol 278. Protocol 279 retunes Legion movement at about 100
+bodies: passage admission, departures through arrived crowds and attack rings
+(Legion only).
 Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
