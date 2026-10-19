@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.4** (network protocol **277**, replay format
+This guide covers **TAK Engine 0.8.5** (network protocol **278**, replay format
 **13**). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -330,8 +330,11 @@ starts a private server on your own computer for you.
 - **Map name**: optional; the generated map is saved under this name.
 
 Every player gets a flat base area, clear routes for armies and three home mana
-spots. Islands maps need ships or flyers to reach other players. The preview
-updates when you release a slider. When the game starts, the map is saved on
+spots. Scattered spots are always reachable from some start, never
+inside a base, and are spread evenly but not mirrored. Islands maps need ships
+or flyers to reach other players. The preview updates when you release a slider
+and counts the scattered spots with the rest; in the game room the map settings
+list the Scattered Mana level beside the map seed. When the game starts, the map is saved on
 every player's computer and on the server, so it appears in the map list later.
 See [random map generation](random-map-generation.md) for the rules it follows.
 
@@ -944,6 +947,9 @@ repair, reclaim, area reclaim, load, unload and building.
   one straight away.
 - **Hold Shift to see the plan.** The selected units show a dotted line through
   their queued orders, including building sites and area jobs.
+- **Queued buildings show as see-through outlines** on their sites until a
+  builder starts them. A building that is under construction is drawn as itself,
+  in its proper place under any flyer above it, with no outline laid over it.
 - **Stop** (**S**) clears the whole list.
 
 ![A dotted line with waypoint markers showing the Monarch's queued moves while Shift is held](img/guide/shift-queue.jpg)
@@ -1134,7 +1140,17 @@ in a formation or Ctrl+number group with ground units keep station over them.
 ## Options
 
 Open **Options** from **Settings** on the main menu, or **Esc → Options** in a
-game. Changes apply immediately; **Save** keeps them.
+game. Changes apply immediately; **Save** keeps them. **Defaults** puts the
+options back to their defaults; it leaves your player name, data folder, key
+bindings and voice chat settings alone. It also sets UI Scale and Cursor Size
+back to their defaults, undoing the one-time enlargement made by Ignore Windows
+Display Scaling or Native Retina Resolution, so raise them again on a scaled
+or Retina display.
+
+0.8.5 changed some defaults: Tactical Dots is now on at a zoom of 0%, Smooth GUI
+Art and Smooth Movies are on, Texture Filtering is Everything, and the new
+Screen Shake is off. A settings file you already have keeps the values saved in
+it; press **Defaults** to take the new ones.
 
 ### Player
 
@@ -1176,16 +1192,24 @@ is the one both use next time.
 World sounds are full volume on screen and fade with distance off screen.
 
 A dying unit's cry is the one the game itself chose, as in the original, so every
-player, spectator and replay of a game hears the same cry for the same death. You
-hear an enemy's cry only when you can see where it died. After a rejoin, or when
+player, spectator and replay of a game hears the same cry for the same death. As
+in the original, you hear your own units wherever your sight reaches, and a
+unit of yours that dies still counts as seeing its spot for two seconds, so its
+cry and anything it plays as it dies (a Creon bomb's fuse, for example) are
+heard even when nothing else of yours is watching. Another player's units are
+heard only where you can see them, and never while they are cloaked or carried
+in a transport. A few units are silent by design: the Automaton makes no sound
+when an explosive weapon kills it, as its original script says, and the
+original data has no sound for two death cries (`cregatldie1` and
+`zonbardie1`). After a rejoin, or when
 you start spectating a game in progress, the deaths of the part of the game you
 missed are silent while the game catches up.
 
 ### Display
 
-![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, then Renderer set to Auto, the filtering, shadow, art and tree settings, Tactical Dots off, Tactical Dots Zoom 20% greyed out, Hardware Cursor and Smooth Motion on, and GPU Memory Limit set to Auto (1.25 GB)](img/guide/options-graphics.jpg)
+![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, then Renderer set to Auto, Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Screen Shake off, Hardware Cursor and Smooth Motion on, and GPU Memory Limit set to Auto (1.25 GB)](img/guide/options-graphics.jpg)
 
-*Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on, and Tactical Dots Zoom because Tactical Dots is off. The picture was taken in a window, so Fullscreen shows Off.*
+*Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on. The picture was taken in a window, so Fullscreen shows Off.*
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -1200,14 +1224,14 @@ missed are silent while the game catches up.
 | **Renderer** | Auto | Which graphics backend draws the game. Takes effect after a restart; see [Renderer](#renderer). |
 | **Ignore Windows Display Scaling** | On | Windows only. Stops Windows from enlarging the game window to match your display scaling (for example 150%), which made everything blurry. The game draws at the real screen resolution instead. Takes effect after a restart. The first time it runs, UI Scale and Cursor Size are raised to your Windows scale so the interface stays the same size, now sharp; adjust them afterwards if you like. |
 | **Texture Filtering** | Everything | How the game area is smoothed when you zoom in. **Off**: nothing is smoothed, as in the original. **Units**: the original game's Bilinear Filtering option; smooths unit textures and unit shadows only. **Everything**: Units, plus terrain, trees, rocks and other scenery, and effects, once you zoom in past 150%. Not in the original game. The interface, cursor and movies are never affected; see below. |
-| **Native Retina Resolution** | On | macOS only. Draws at the full resolution of a Retina display (normally twice the window's size in points) instead of letting macOS double a half-size image, which made everything soft. Takes effect after a restart. The first time it runs, UI Scale and Cursor Size are doubled so the interface stays the same size, now sharp; adjust them afterwards if you like. |
+| **Native Retina Resolution** | On | macOS only; the same row as Ignore Windows Display Scaling. Draws at the full resolution of a Retina display (normally twice the window's size in points) instead of letting macOS double a half-size image, which made everything soft. Takes effect after a restart. The first time it runs on a Retina display, UI Scale and Cursor Size are doubled so the interface stays the same size, now sharp; adjust them afterwards if you like. The window can move between a Retina and an ordinary display: the picture and the pointer follow the display it is on, but UI Scale is not changed again, so the interface looks bigger on an ordinary display. |
 | **Shadows** | On | Unit, scenery and projectile shadows. The biggest single graphics cost in a crowded battle. |
 | **Smooth GUI Art** | On | Sharpens the low-resolution interface art, menus, fonts, cursors and build-menu portraits with an edge-aware upscale. Applies at once. No cost per frame; uses more video memory. |
 | **Smooth Movies** | On | Removes the blocky compression artefacts from the game's movies. |
 | **Trees Sway in Wind** | On | Animated trees and their shadows. |
-| **Screen Shake** | Off | Camera shake on heavy impacts and mission earthquakes. |
 | **Tactical Dots** | On | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. |
 | **Tactical Dots Zoom** | 0% | How far out you must zoom before dots replace models. Greyed out while Tactical Dots is off. See below. |
+| **Screen Shake** | Off | Shakes the camera on heavy impacts (weapons that shake the screen in the original game) and on mission earthquakes. Applies at once. |
 | **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. |
 | **Smooth Motion** | On | Units glide between the game's 30 updates per second instead of stepping. Adds about 33 ms of visual delay. |
 | **GPU Memory Limit** | Auto (1.25 GB) | The most video memory the game's own textures may use: Auto, 512 MB, 768 MB, 1 GB, 1.5 GB, 2 GB, 3 GB, 4 GB or Unlimited. Applies at once. See below. |
@@ -1250,8 +1274,8 @@ the pointer is over the option says how much is in use right now.
 **Tactical Dots Zoom** sets when dots take over; it is greyed out and cannot be
 changed while Tactical Dots is off. It is a position along your zoom-out range:
 at **0%** dots appear only when you are zoomed all the way out;
-at **100%** they appear from normal size (100% zoom) outwards; the default
-**20%** would mean the most zoomed-out fifth of that range. The default is 0%. The range is measured in
+at **100%** they appear from normal size (100% zoom) outwards; **20%** means
+the most zoomed-out fifth of that range. The range is measured in
 mouse-wheel notches, so each notch moves the same share of it. It is relative
 because how far you can zoom out depends on your window and the map: the view
 stops where the map fills the window, which on a very wide screen is close to
@@ -1262,16 +1286,19 @@ minimap's rules exactly: enemies show only where you can currently see them.
 Buildings are bigger squares than soldiers, flyers sit at their flying height,
 and selected units get a white outline. Click and box selection work on the
 dots. Health bars, production bars and unit shadows are hidden while dots are
-showing; trees, terrain, projectiles and explosions are drawn as normal. Dots
+showing, and so are the battle's effects: fire, smoke, particles, explosions,
+spell glows, beams and lightning, wandering storms and every projectile, which at that zoom
+would be drawn far bigger than the dots and bury them. They come back, already
+under way, as soon as you zoom in to models; sounds are not affected. Trees,
+terrain and the art of burning or burnt scenery are still drawn. Dots
 are much cheaper to draw than models, so a huge zoomed-out battle also runs
 faster.
 
 ![Two views of the same moment in a large battle, zoomed far out. Left, with Tactical Dots off, the armies are tiny unit models that are hard to tell apart from the trees. Right, with Tactical Dots on, each army is a field of squares in its player's colour: blue, green and maroon](img/guide/tactical-dots.jpg)
 
 *The same moment of an eight-AI Benchmark battle on Ulasem Arena, zoomed far out
-in a 1920 × 1080 window with Tactical Dots Zoom at 20%. Left, Tactical
-Dots off; right, on. Trees, terrain and the blue spell effect are drawn either
-way.*
+in a 1920 × 1080 window. Left, Tactical Dots off; right, on. Trees and terrain
+are drawn either way; the battle's effects only without dots.*
 
 #### Renderer
 
@@ -1422,9 +1449,9 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.4 uses network protocol **277**. It cannot play with 0.8.3 (protocol
-266) or any earlier version: the server turns away a client whose protocol
-differs from its own, so a server and all of its players must update to 0.8.4
+Version 0.8.5 uses network protocol **278**. It cannot play with 0.8.4 (protocol
+277) or any earlier version: the server turns away a client whose protocol
+differs from its own, so a server and all of its players must update to 0.8.5
 together.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
@@ -1648,8 +1675,8 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.4 plays protocol-277 recordings only, so replays recorded by
-  0.8.3 or earlier need the version that recorded them);
+  recorded it (0.8.5 plays protocol-278 recordings only, so replays recorded by
+  0.8.4 or earlier need the version that recorded them);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -1793,7 +1820,7 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together.** A server only accepts clients of
-the same protocol version (0.8.4 uses protocol 277; 0.8.3 uses 266).
+the same protocol version (0.8.5 uses protocol 278; 0.8.4 uses 277).
 
 ---
 
@@ -1898,7 +1925,7 @@ the system's permission to use the microphone.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.4 uses protocol 277, 0.8.3 uses 266). See
+one that recorded them (0.8.5 uses protocol 278, 0.8.4 uses 277). See
 [Replays](#replays).
 
 ### Where files are kept

@@ -6,13 +6,13 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.8.4-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.8.5-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
 [Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [Map editor guide](docs/cartographer-guide.md) · [Build from source](docs/development.md)
 
-<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.4"></a>
+<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.5"></a>
 
 <table>
   <tr>
@@ -40,7 +40,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.25 to 0.8.4 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
+<sub>Captured from the 0.7.25 to 0.8.5 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
 
 </div>
 
@@ -52,7 +52,45 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.8.4
+## New in 0.8.5
+
+0.8.5 adds a new random-map option, so the protocol moves to **278**:
+**0.8.5 cannot play with 0.8.4 or earlier, and cannot play their replays**.
+Update the server and every player together. Battles on the shipped and saved
+maps play as in 0.8.4.
+
+- **Scattered Mana for random maps.** A new **Scattered Mana** slider, under
+  Extra Mana Spots, adds neutral mana spots across open ground: None, Minimum,
+  Medium, High or Max. It goes by map area, so a bigger map gets more of them;
+  Max is as dense as a home with six spots and each step down halves it. The
+  map editor's generator has the same choice. See
+  [random maps](docs/user-guide.md#random-maps).
+- **Sharp on Retina Macs.** On macOS the game now draws at a Retina display's
+  full resolution instead of a blurry doubled image, with the interface and
+  cursor kept the same size (Options → Graphics → **Native Retina
+  Resolution**, on by default).
+- **Clearer Tactical Dots.** Zoomed out to dots, fire, smoke, explosions,
+  beams, lightning and projectiles are no longer drawn over the armies.
+- **New defaults and options.** Tactical Dots is on by default (at 0%, fully
+  zoomed out only), Smooth GUI Art and Smooth Movies are on, Texture Filtering
+  is Everything, and a new **Screen Shake** option (off by default) controls the
+  camera shake of heavy impacts and mission earthquakes. UI Scale and F4
+  Scorecard Scale go down to 50%. A settings file you already have keeps its
+  values; **Defaults** in Options applies the new ones. See
+  [Options](docs/user-guide.md#options).
+- **Death cries heard as in the original.** A unit of yours that dies where
+  nothing else of yours is watching is still heard, along with what it plays as
+  it dies, and cloaked or carried enemy units make no sound.
+- **Build outlines.** The see-through outline of a queued building no longer
+  stays over the site once it is being built, so a Zhon Monarch hovering over
+  the lodestone she conjures no longer seems to fly under it.
+
+Saved `.kmp` maps, generated-map recipes and settings carry over. No new
+runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.8.5-notes.md) and
+[validation report](docs/release-0.8.5-validation.md).
+
+### Previously in 0.8.4
 
 0.8.4 changes the simulation in both pathfinding modes, so the protocol moves
 to **277**: **0.8.4 cannot play with 0.8.3 or earlier, and cannot play their
@@ -267,10 +305,10 @@ dynamic runtime dependencies or retail assets are included. See the
   stress games, an order-heavy Legion battle went from about 1.1× to 1.6× real
   time, and Retail movement got about 16% cheaper. Retail behavior is
   unchanged. See the [release notes](docs/release-0.7.27-notes.md).
-- **Tactical Dots** (Options → Graphics, on by default since 0.8.5, not in the original
+- **Tactical Dots** (Options → Graphics, off by default until 0.8.5, not in the original
   game): zoomed far out, units are drawn as minimap-style dots in their
   player's colour, with the minimap's fog rules. **Tactical Dots Zoom**
-  (0–100%, default 20%, greyed out while dots are off) sets how far out, along
+  (0–100%, default 20% until 0.8.5, greyed out while dots are off) sets how far out, along
   your zoom-out range. See the
   [user guide](docs/user-guide.md#graphics).
 - **Renderer option** (Options → Graphics): **Auto** by default, or any graphics
@@ -859,15 +897,15 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.8.4 uses generator v8;
-older seed recipes are unsupported, while saved `.kmp` maps remain playable.
+the same named map when the game starts. Version 0.8.5 uses generator v9;
+v8 recipes still regenerate identically, older seed recipes are unsupported, and saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
 fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.8.4 uses protocol **277** and generator version 8; generated-map recipes from 0.8.0 to 0.8.3 still work.
+Version 0.8.5 uses protocol **278** and generator version 9; generated-map recipes from 0.8.0 to 0.8.4 still work.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -1153,10 +1191,10 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same network protocol and compatible game data** on every participant.
-Version **0.8.4 uses protocol 277**, including authoritative pathfinding
+Version **0.8.5 uses protocol 278**, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
-0.8.3 (protocol 266) and earlier clients cannot join 0.8.4 matches, and
-0.8.4 clients cannot join older servers: update the server and all players together.
+0.8.4 (protocol 277) and earlier clients cannot join 0.8.5 matches, and
+0.8.5 clients cannot join older servers: update the server and all players together.
 Replay format is **13** (checkpoints also carry a position digest, and the header
 records the Map Scenario option), and
 playback requires the current simulation protocol. Older recordings need the engine that recorded them.
@@ -1178,31 +1216,42 @@ local and unauthenticated multiplayer games. Account-based multiplayer uses
 your login name.
 
 Use **Options** to adjust audio, shadows, health bars, UI scale, cursor size,
-and camera behavior. **F4 Scorecard Scale** independently adjusts the player
-scorecard from 50–200% and is remembered between sessions. Fullscreen, VSync, Shadows, Smooth GUI Art, Smooth Movies, Trees Sway in Wind,
-Stats Panel, Hardware Cursor, Tactical Dots and Smooth Motion default to **on**; saved choices still apply. **Max FPS** caps
-the frame rate only while VSync is off, and is greyed out while VSync is on.
-The **Graphics** section holds **Renderer**, **Texture Filtering**, Shadows,
-**Smooth GUI Art**, **Smooth Movies**, Trees Sway in Wind, Tactical Dots,
-Hardware Cursor, Smooth Motion and GPU Memory Limit. Texture Filtering defaults to **Everything**; all of these are remembered. **Screen Shake** (camera shake on heavy impacts) is **off** by default. Texture Filtering applies to the game area only and has
-three levels: **Off** (retail's look, everything point-sampled), **Units**
-(retail's Visual Options Bilinear Filter: unit model textures and unit shadows
-only) and **Everything** (Units, plus terrain, scenery and effect sprites once
-zoomed in past 150%; a non-retail extension, since retail had no camera zoom).
-A saved Bilinear Filtering choice from an older version loads as Off or Units. Settings you have already saved keep their values; only new installs and the Defaults button use the new defaults.
-Smooth GUI Art applies immediately to the current interface, fonts,
-cursors and build-menu portraits without a restart. On Windows, **Ignore Windows
-Display Scaling** (default **on**, applied after a restart) draws at the real
-screen resolution instead of letting Windows stretch the game blurrily; the first
-run raises UI Scale and Cursor Size to the Windows scale so the interface keeps
-its size. On macOS, **Native Retina Resolution** (default **on**, applied after a
-restart) does the same for a Retina display: the game draws at its full backing
-resolution instead of macOS doubling a half-size image. **Trees Sway in Wind** is selectable,
-defaults to **on**, and remembers your choice. **Tactical Dots** (default
-**on**, not in retail) draws every unit as a minimap-style player-coloured dot
-when zoomed far out, with the same fog rules as the minimap; selection works on
-the dots. **Tactical Dots Zoom** (default **0%**) sets how far out: 0% means only
-fully zoomed out, 100% means from normal size outwards.
+and camera behavior. **UI Scale** and **F4 Scorecard Scale** (the player
+scorecard, set independently) range from 50–200% and are remembered between
+sessions. Fullscreen, VSync, Shadows, Smooth GUI Art, Smooth Movies, Trees Sway
+in Wind, Stats Panel, Tactical Dots, Hardware Cursor and Smooth Motion default
+to **on**; **Screen Shake** (the camera shake of heavy impacts and mission
+earthquakes) defaults to **off**. **Max FPS** caps the frame rate only while
+VSync is off, and is greyed out while VSync is on. The **Graphics** section
+holds **Renderer**, **Texture Filtering**, Shadows, **Smooth GUI Art**,
+**Smooth Movies**, Trees Sway in Wind, Tactical Dots, Tactical Dots Zoom,
+Screen Shake, Hardware Cursor, Smooth Motion and GPU Memory Limit; every choice
+is remembered. Texture Filtering applies to the game area only, defaults to
+**Everything** and has three levels: **Off** (retail's look, everything
+point-sampled), **Units** (retail's Visual Options Bilinear Filter: unit model
+textures and unit shadows only) and **Everything** (Units, plus terrain,
+scenery and effect sprites once zoomed in past 150%; a non-retail extension,
+since retail had no camera zoom). A saved Bilinear Filtering choice from an
+older version loads as Off or Units. The defaults of Tactical Dots, Tactical
+Dots Zoom, Smooth GUI Art, Smooth Movies, Texture Filtering and Screen Shake
+changed in 0.8.5; a settings file you already have keeps its saved values, and
+the **Defaults** button applies the new ones. Smooth GUI Art applies
+immediately to the current interface, fonts, cursors and build-menu portraits
+without a restart. On Windows, **Ignore Windows Display Scaling** (default
+**on**, applied after a restart) draws at the real screen resolution instead
+of letting Windows stretch the game blurrily; the first run raises UI Scale and
+Cursor Size to the Windows scale so the interface keeps its size. On macOS the
+same option is called **Native Retina Resolution** (default **on**, applied
+after a restart): the game draws at a Retina display's full resolution instead
+of macOS doubling a half-size image, and the first run doubles UI Scale and
+Cursor Size so the interface keeps its size, now sharp. **Trees Sway in Wind**
+defaults to **on**. **Tactical Dots** (default **on**, not in retail) draws
+every unit as a minimap-style player-coloured dot when zoomed far out, with the
+same fog rules as the minimap; selection works on the dots, and fire, smoke,
+particles, explosions, beams, lightning and every projectile are not drawn
+while dots show, so they no longer bury the dots. **Tactical Dots Zoom**
+(default **0%**) sets how far out: 0% means only fully zoomed out, 100% means
+from normal size outwards.
 **GPU Memory Limit** (default **Auto**, 1.25 GB; also 512 MB to 4 GB or
 **Unlimited**) caps the video memory the game's own textures may use and
 applies at once. It is a safety net: every part of the renderer also has its own
@@ -1362,7 +1411,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.8.4 uses protocol **277**; servers and clients must all run 0.8.4 (0.8.3 uses 266).
+Version 0.8.5 uses protocol **278**; servers and clients must all run 0.8.5 (0.8.4 uses 277).
 
 
 ## License
