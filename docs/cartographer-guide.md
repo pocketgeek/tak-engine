@@ -1046,6 +1046,7 @@ uses for its random maps.
 | **RELIEF** | How many hills, from 0 (flat) to 255. |
 | **WIDTH**, **HEIGHT** | 1 to 64 units. |
 | **WORLD** | The world to use. |
+| **SCATTERED MANA (BY MAP AREA)** | None, Minimum, Medium, High or Max neutral mana spots spread over open ground, by area. Max is as dense as a home with six spots; each lower level halves it. Choosing any level on a map saved by an older version upgrades its recipe to version 9. |
 
 The generator adjusts some settings without asking, and the preview shows the
 size it really used:

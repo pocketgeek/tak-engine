@@ -1,8 +1,10 @@
 # Random map generation
 
-Version 0.8.4 uses generator version 8 and network protocol 277. The map ID carries the
+New recipes use generator version 9 and network protocol 278. The map ID carries the
 seed, optional title and parameters in `~gen1~` followed by hexadecimal bytes;
-the first two payload bytes identify the generator version. Version 8 makes
+the first two payload bytes identify the generator version. Version 9 adds one
+byte, the scattered-mana level, before the title; it changes nothing else, so a
+version-8 ID still decodes (as None) and regenerates byte-identically. Version 8 makes
 the extra-mana control request 0–6 additional spots per player, independently
 of map area, and samples expansion candidates near their owner's home so
 large maps do not lose rounds to sparse whole-map sampling. Clients and servers
@@ -105,6 +107,31 @@ rounds than requested, so the actual count can stop increasing once space is
 exhausted. Raising the slider retains the earlier rounds; it does not place
 partial rounds that favor some players. Cartographer's Mana density field uses
 the same 0–255-to-0–6 mapping.
+
+### Scattered mana (version 9)
+
+**Scattered Mana** places neutral sacred stones, which belong to no player's
+rounds, as an area density rather than a count. **Max** is the density of a
+home economy holding six spots: the generator reserves an 87×87-cell square
+(7,569 cells) around each home, and six spots there is one per ~1,262 cells,
+a 36-cell grid pitch. **High**, **Medium** and **Minimum** halve the density in
+turn (pitches 50, 71 and 100; ½, ¼ and ⅛ of Max). The map is divided into a
+grid at that pitch and each grid cell gets at most one candidate, drawn from
+its own seeded stream (so the scenery that follows is unchanged), tried up to
+eight times. A site must be reachable flat ground with a clear 14×14 lodestone
+yard, outside every reserved home economy, approach and route, at least 60
+cells from every start and 24 cells from any other deposit. On a flat map Max
+measures about 0.85 of the home density, since homes and their approaches take
+their share; water, cliffs and hills reduce the count further. Spots take the
+shipped sacred-stone tier mix (223:446:537 weak:medium:strong) and the same
+ruins as other sites; a spot whose ruins find no room is omitted.
+
+Each site's approach is reserved along its nearest home's walking-distance
+field until it joins an approach already known to lead home, so scenery cannot
+wall it in; the final check requires every scattered spot to be reachable from
+some start. The generator's layouts are fair rather than mirror-symmetric, and
+scattered spots follow the same rule: they are spread evenly but are not
+mirrored, and they never enter a home economy. The preview counts them.
 
 Generated terrain ignores terrain replacements bundled with unrelated downloaded
 maps. Explicit user overrides retain their precedence, and authored maps retain

@@ -289,6 +289,7 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
 cart::Editor::Editor(int argc,char** argv,const FrameHook& frameHook,const EditorHooks& hooks)
     : Session(argc,argv,frameHook,hooks) {
     for(uint8_t i=0;i<tak::mapgen::kLayouts;++i)generatorLayouts.push_back(tak::mapgen::layoutName(i));
+    for(uint8_t i=0;i<tak::mapgen::kScatterLevels;++i)generatorScatter.push_back(tak::mapgen::scatterName(i));
     if(showWelcome) {
         openMessage("WELCOME TO CARTOGRAPHER",
             "Start with File > Open (Ctrl+O), or New (Ctrl+N). Pick a tool and search the left browser (Ctrl+F).\n"

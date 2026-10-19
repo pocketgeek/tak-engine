@@ -2254,6 +2254,7 @@ private:
     // slider bar rects for drag hit-testing.
     tak::mapgen::Params genParams_{};
     std::string genPreviewInfo_, genPreviewError_;
+    int genPreviewScattered_ = 0;   // v9 neutral spots the preview roll placed
     int genSlider_ = -1;
     SDL_FRect genSliderRect_[5]{};
     void applyGenParams();             // re-encode genParams_ -> mpMapId_

@@ -33,6 +33,18 @@ uint8_t themedLayout(uint8_t world) {
     constexpr uint8_t layouts[]={Riverlands,Maze,Ports,Jungle,Highlands};
     return layouts[world % kMapTypes];
 }
+const char* scatterName(uint8_t level) {
+    static const char* names[kScatterLevels]={"None","Minimum","Medium","High","Max"};
+    return names[std::min<int>(level,kScatterLevels-1)];
+}
+int scatterPitch(uint8_t level) {
+    // Max: a home economy reserves an 87x87-cell square (7569 cells) around its
+    // three deposits; six spots in that square is one per ~1262 cells, a 36-cell
+    // pitch. Each lower level halves the density (pitch x sqrt 2).
+    constexpr int pitch[kScatterLevels]={0,100,71,50,36};
+    return pitch[std::min<int>(level,kScatterLevels-1)];
+}
+
 bool automaticWater(uint8_t layout) {
     return layout==Islands || layout==Ports || layout==Riverlands || layout==Maze || layout==Highlands;
 }
@@ -136,7 +148,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
     };
     for (const auto s:r.starts) {
         mark(s.first,s.second,43,2); // home economy: terrain is flat; scenery allowed only outside base/routes
-        mark(s.first,s.second,14,1);
+        mark(s.first,s.second,14,5); // bit 4: walkable lane home (see scattered mana)
         if (p.layout!=Islands && p.layout!=Maze && p.layout!=Ports) reserveRoute(s,{w/2,h/2},8);
     }
     if (p.layout==Ports) for (size_t i=0;i<r.starts.size();++i) {
@@ -509,7 +521,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
             // reserve this approach before adding any trees or rocks.
             Point at=site;const auto& d=homeDistances[player];
             while(d[size_t(at.second)*w+at.first]>0) {
-                mark(at.first,at.second,4,1);
+                mark(at.first,at.second,4,5);
                 const int here=d[size_t(at.second)*w+at.first];
                 for(const auto [dx,dz]:std::array<Point,4>{{{0,-1},{1,0},{0,1},{-1,0}}}) {
                     const int nx=at.first+dx,nz=at.second+dz;
@@ -537,6 +549,78 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
         for (size_t player=0;player<r.starts.size();++player)
             homeDistances[player]=distances(ground,r.starts[player],6);
     }
+    const size_t roundDeposits=deposits.size();
+    // v9 scattered neutral mana: a jittered grid at the level's pitch (one
+    // candidate per pitch^2 cells, so the count follows map area), on flat open
+    // ground away from every home economy and other deposits. Its own RNG
+    // stream: the scenery draws after it are unchanged. Each site's approach is
+    // reserved along the nearest home's walking-distance field until it joins an
+    // existing lane, so later scenery cannot wall it in.
+    if(const int pitch=p.formatVer>=9?scatterPitch(p.manaScatter):0) {
+        const int nx=std::max(1,w/pitch),nz=std::max(1,h/pitch);
+        std::vector<Point> chosen(size_t(nx)*nz,{-1,-1});
+        std::vector<Point> sites;
+        uint64_t scatterRng=p.seed^0x6e65757472616cULL;
+        for(int gz=0;gz<nz;++gz)for(int gx=0;gx<nx;++gx) {
+            const int x0=std::max(8,gx*w/nx),x1=std::min(w-9,(gx+1)*w/nx);
+            const int z0=std::max(8,gz*h/nz),z1=std::min(h-9,(gz+1)*h/nz);
+            if(x1<=x0||z1<=z0)continue;
+            for(int attempt=0;attempt<8;++attempt) {
+                const int x=x0+int(splitmix(scatterRng)%uint64_t(x1-x0));
+                const int z=z0+int(splitmix(scatterRng)%uint64_t(z1-z0));
+                const size_t i=size_t(z)*w+x;
+                if(reserved[i]||!reachable[i]||!flat(x-6,z-6,14,14))continue;
+                bool good=true;
+                for(const auto s:r.starts)
+                    if((s.first-x)*(s.first-x)+(s.second-z)*(s.second-z)<60*60)good=false;
+                for(const auto pt:deposits)
+                    if((pt.first-x)*(pt.first-x)+(pt.second-z)*(pt.second-z)<24*24)good=false;
+                for(int dz=-1;good&&dz<=1;++dz)for(int dx=-1;dx<=1;++dx) {
+                    if(gx+dx<0||gz+dz<0||gx+dx>=nx||gz+dz>=nz)continue;
+                    const auto pt=chosen[size_t(gz+dz)*nx+gx+dx];
+                    if(pt.first>=0&&(pt.first-x)*(pt.first-x)+(pt.second-z)*(pt.second-z)<24*24)good=false;
+                }
+                if(!good)continue;
+                chosen[size_t(gz)*nx+gx]={x,z};sites.emplace_back(x,z);break;
+            }
+        }
+        // Reserve every approach before any ruins exist, as the expansion rounds do.
+        for(const auto site:sites) {
+            size_t owner=0;int best=-1;
+            for(size_t player=0;player<homeDistances.size();++player) {
+                const int d=homeDistances[player][size_t(site.second)*w+site.first];
+                if(d>=0&&(best<0||d<best)){best=d;owner=player;}
+            }
+            // Walk first, mark after: the lane's own marks must not end the walk.
+            Point at=site;const auto& d=homeDistances[owner];std::vector<Point> lane;
+            while(d[size_t(at.second)*w+at.first]>0&&!(reserved[size_t(at.second)*w+at.first]&4)) {
+                lane.push_back(at);
+                const int here=d[size_t(at.second)*w+at.first];
+                for(const auto [dx,dz]:std::array<Point,4>{{{0,-1},{1,0},{0,1},{-1,0}}}) {
+                    const int nx2=at.first+dx,nz2=at.second+dz;
+                    if(nx2>=0&&nz2>=0&&nx2<w&&nz2<h&&d[size_t(nz2)*w+nx2]==here-1){at={nx2,nz2};break;}
+                }
+            }
+            for(const auto pt:lane)mark(pt.first,pt.second,4,5);
+        }
+        for(const auto site:sites) {
+            // Shipped sacred-stone tier mix (223:446:537), as retail maps scatter them.
+            const uint32_t roll=uint32_t(splitmix(scatterRng)%1206);
+            const int tier=roll<223?0:roll<669?1:2;
+            if(!flat(site.first-6,site.second-6,14,14))continue;   // an earlier ring took it
+            const auto oldDeposits=deposits.size(),oldNames=m.featureNames.size();
+            undo.clear();transaction=true;
+            try {deposit(site.first,site.second,tier);++r.scatteredMana;}
+            catch(const NoManaRuins&) {
+                for(auto it=undo.rbegin();it!=undo.rend();++it) {
+                    m.features[it->index]=it->feature;reserved[it->index]=it->reserved;
+                    claim[it->index]=it->claim;obstacles[it->index]=it->obstacle;
+                }
+                deposits.resize(oldDeposits);m.featureNames.resize(oldNames);
+            }
+            transaction=false;undo.clear();
+        }
+    }
     // A separate noise field makes forest stands and rocky regions, with clear
     // paths through them. Dry, flat approaches around bases are never filled in.
     for(int z=1;z<h-4;++z)for(int x=1;x<w-4;++x) {
@@ -560,6 +644,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
     // Final footprint-aware validation sees scenery exactly as the simulation
     // will. Failure is explicit; an invalid map is never silently launched.
     ground.markClearanceDirty();
+    std::vector<uint8_t> scatterReached(deposits.size()-roundDeposits);
     for(size_t k=0;k<r.starts.size();++k) {
         const auto s=r.starts[k];
         if(!flat(s.first-12,s.second-12,24,24))throw std::runtime_error("Random map has an obstructed base");
@@ -567,12 +652,16 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
         for(size_t j=k*3;j<k*3+3;++j)
             if(d[size_t(deposits[j].second)*w+deposits[j].first]<0)
                 throw std::runtime_error("Random map home mana is unreachable");
-        for(size_t j=r.starts.size()*3+k;j<deposits.size();j+=r.starts.size())
+        for(size_t j=r.starts.size()*3+k;j<roundDeposits;j+=r.starts.size())
             if(d[size_t(deposits[j].second)*w+deposits[j].first]<0)
                 throw std::runtime_error("Random map expansion mana is unreachable");
         if(p.layout!=Islands)for(const auto target:r.starts)
             if(d[size_t(target.second)*w+target.first]<0)throw std::runtime_error("Random map scenery blocks an army route");
+        for(size_t j=roundDeposits;j<deposits.size();++j)
+            if(d[size_t(deposits[j].second)*w+deposits[j].first]>=0)scatterReached[j-roundDeposits]=1;
     }
+    if(std::find(scatterReached.begin(),scatterReached.end(),0)!=scatterReached.end())
+        throw std::runtime_error("Random map scattered mana is unreachable");
     if(p.layout==Islands || p.layout==Ports) {
         sim::NavGrid::Limits shipLimits;shipLimits.minWaterDepth=15;
         sim::NavGrid ships(m.heights,w,h,m.seaLevel,shipLimits);ships.setObstacles(&obstacles);

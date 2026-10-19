@@ -19,7 +19,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 277;      // 277: Legion formation flyers keep station while their ground waits in the
+constexpr uint32_t kNetVersion = 278;      // 278: random-map recipe v9, scattered neutral mana (Params.manaScatter rides in
+                                           //      the ~gen1~ mapId). v8 ids regenerate unchanged and default games hash
+                                           //      as before, but a 277 peer would refuse a v9 id. 277 replays refused
+                                           // 277: Legion formation flyers keep station while their ground waits in the
                                            //      registration FIFO (LegionNavigator::advancing reads a queued unit as
                                            //      Waiting; release A had freed them on a big map's first click). Hashed
                                            //      Legion state changes. 276 replays refused

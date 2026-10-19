@@ -56,6 +56,7 @@ Params sanitize(Params p) {
     p.widthCells = fix(p.widthCells);
     p.heightCells = fix(p.heightCells);
     p.players = uint8_t(std::clamp<int>(p.players, 2, 8));
+    p.manaScatter = p.formatVer >= 9 ? std::min<uint8_t>(p.manaScatter, kScatterLevels - 1) : uint8_t(ScatterNone);
     if (p.formatVer >= 3) {
         p.layout = std::min<uint8_t>(p.layout, p.formatVer >= 6 ? kLayouts-1 : Islands);
         if (p.layout >= Maze) for (uint8_t world=0;world<kMapTypes;++world)
@@ -76,7 +77,9 @@ Params sanitize(Params p) {
 }
 
 Result generate(const Params& raw, const tak::hpi::Vfs& input) {
-    if(raw.formatVer!=Params{}.formatVer)
+    // v9 only adds scattered mana: a v8 id is the same recipe with none, so maps
+    // generated (and saved or replayed) before it still regenerate byte-identically.
+    if(raw.formatVer!=Params{}.formatVer && raw.formatVer!=8)
         throw std::runtime_error("Unsupported random-map recipe version; generate a new map");
     tak::hpi::Vfs vfs(&input, true);
     Params p = sanitize(raw);
@@ -475,13 +478,14 @@ std::string encodeMapId(const Params& pin) {
     b.push_back(char(p.waterDensity));
     b.push_back(char(p.reliefDensity));
     if (p.formatVer >= 3) b.push_back(char(p.layout));
+    if (p.formatVer >= 9) b.push_back(char(p.manaScatter));   // before the variable-length name
     if (p.formatVer >= 5) b += p.name;
     return std::string(kMagic) + toHex(b);
 }
 
 Params decodeMapId(const std::string& id) {
     Params p;
-    if (!isGeneratedMapId(id) || id.size() > 98 || (id.size() - 6) % 2) return p;
+    if (!isGeneratedMapId(id) || id.size() > 100 || (id.size() - 6) % 2) return p;
     // De-hex the payload.
     std::string raw;
     for (size_t i = 6; i + 1 < id.size(); i += 2) {
@@ -493,9 +497,11 @@ Params decodeMapId(const std::string& id) {
     auto u16 = [&](size_t o) -> uint16_t { return uint16_t(u8(o) | (u8(o + 1) << 8)); };
     if (raw.size() >= 19) {
         p.formatVer = u16(0);
-        if (p.formatVer > 8 || (p.formatVer >= 3 && p.formatVer <= 4 && raw.size() != 22) ||
-            (p.formatVer >= 5 && (raw.size() < 22 || raw.size() > 46))) return Params{};
-        if (p.formatVer >= 5) p.name = raw.substr(22);
+        const size_t fixed = p.formatVer >= 9 ? 23 : 22;   // v9: + scattered-mana level
+        if (p.formatVer > 9 || (p.formatVer >= 3 && p.formatVer <= 4 && raw.size() != 22) ||
+            (p.formatVer >= 5 && (raw.size() < fixed || raw.size() > fixed + 24))) return Params{};
+        if (p.formatVer >= 5) p.name = raw.substr(fixed);
+        if (p.formatVer >= 9) p.manaScatter = u8(22);
         if (p.formatVer >= 3) p.layout = u8(21);
         uint64_t s = 0; for (int i = 0; i < 8; ++i) s |= uint64_t(u8(2 + i)) << (8 * i);
         p.seed = s;

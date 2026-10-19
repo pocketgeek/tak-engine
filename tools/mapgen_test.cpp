@@ -47,6 +47,51 @@ void manaSlider(const tak::hpi::Vfs& vfs) {
         }
     }
 }
+// v9 scattered neutral mana. An id written before v9 must regenerate exactly as
+// it did; each level must scale with map AREA (not player count), roughly double
+// the level below, and Max must approach a six-spot home's density (6 / 87^2).
+void scatteredMana(const tak::hpi::Vfs& vfs) {
+    using namespace tak::mapgen;
+    Params legacy;legacy.formatVer=8;legacy.players=8;legacy.seed=0xfedcba9876543210ULL;
+    legacy.waterDensity=legacy.reliefDensity=0;legacy.treeDensity=legacy.rockDensity=legacy.manaDensity=255;
+    const auto legacyId=encodeMapId(legacy);
+    const auto decoded=decodeMapId(legacyId);
+    check(decoded.formatVer==8 && decoded.manaScatter==ScatterNone && encodeMapId(decoded)==legacyId,"v8 id does not round-trip");
+    const auto old=generate(decoded,vfs);
+    check(hash(old)==0x6bf977a42891c638ULL && old.scatteredMana==0,"v8 id no longer regenerates its map");
+    auto current=legacy;current.formatVer=Params{}.formatVer;
+    check(hash(generate(current,vfs))==hash(old),"scattered mana None changed the map");
+    legacy.manaScatter=ScatterMax;
+    check(sanitize(legacy).manaScatter==ScatterNone,"v8 recipe accepted scattered mana");
+    Params named;named.name=std::string(24,'n');named.manaScatter=ScatterHigh;
+    const auto namedId=encodeMapId(named);
+    check(decodeMapId(namedId).manaScatter==ScatterHigh && decodeMapId(namedId).name==named.name,"v9 codec mismatch");
+    named.manaScatter=200;check(decodeMapId(encodeMapId(named)).manaScatter==ScatterMax,"scatter level unclamped");
+    const double homeDensity=6.0/(87*87);
+    for(const int players:{2}) {
+        int previous[2]={0,0};
+        for(int level=ScatterNone;level<kScatterLevels;++level) {
+            int counts[2];
+            for(int k=0;k<2;++k) {
+                Params p;p.players=uint8_t(players);p.widthCells=p.heightCells=uint16_t(512<<k);p.seed=7;
+                p.waterDensity=p.reliefDensity=p.manaDensity=0;p.treeDensity=p.rockDensity=128;p.manaScatter=uint8_t(level);
+                const auto r=generate(p,vfs);counts[k]=r.scatteredMana;
+                check(manaCount(r)==players*3+r.scatteredMana,"scattered count disagrees with the map");
+                check(hash(r)==hash(generate(decodeMapId(encodeMapId(p)),vfs)),"scattered mana not deterministic");
+                const double density=double(r.scatteredMana)/(double(p.widthCells)*p.heightCells);
+                std::printf("scattered mana players=%d size=%d level=%s count=%d density/home=%.2f\n",
+                            players,int(p.widthCells),scatterName(uint8_t(level)),r.scatteredMana,density/homeDensity);
+                if(level==ScatterMax && k==1) check(density>0.6*homeDensity && density<1.1*homeDensity,"Max is not a home's mana density");
+            }
+            if(!level) {check(counts[0]==0&&counts[1]==0,"None scattered mana");continue;}
+            // Four times the area: about four times the spots (homes take a share of the small map).
+            check(counts[1]>=3*counts[0] && counts[1]<=6*counts[0],"scattered mana does not follow map area");
+            if(level>ScatterMinimum) for(int k=0;k<2;++k)
+                check(counts[k]*10>=previous[k]*15 && counts[k]*10<=previous[k]*26,"levels do not roughly double");
+            previous[0]=counts[0];previous[1]=counts[1];
+        }
+    }
+}
 void syntheticMaps() {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-mapgen-"+
@@ -104,6 +149,7 @@ void syntheticMaps() {
         }
     }
     manaSlider(vfs);
+    scatteredMana(vfs);
 }
 void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
     const auto p=tak::mapgen::sanitize(input);const auto& m=r.map;
@@ -153,7 +199,7 @@ void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
         }
         check(ruins,"mana spot has no surrounding ruins");
     }
-    check(mana>=p.players*3&&mana%p.players==0,"unequal resource rounds");
+    check(mana-r.scatteredMana>=p.players*3&&(mana-r.scatteredMana)%p.players==0,"unequal resource rounds");
     check((p.layout!=tak::mapgen::Islands&&p.layout!=tak::mapgen::Ports)||r.harbors.size()==p.players,"missing island harbors");
 }
 }

@@ -48,7 +48,7 @@ void cart::Editor::openModal(Modal m, int unitIdx) {
         mLabel[0] = "SCENARIO NAME"; mf[0] = scenario.missionName;        mfNumeric[0] = false;
         mLabel[1] = "DESCRIPTION";   mf[1] = scenario.missionDescription; mfNumeric[1] = false;
     } else if(m==M_GENERATOR) {
-        mTitle="RANDOM MAP SETTINGS";mN=11;
+        mTitle="RANDOM MAP SETTINGS";mN=12;
         const auto fields=cart::generatorFields(generatorParams);
         const char* labels[]={"SEED (REPRODUCIBLE)","PLAYERS (2-8)","LAYOUT","TREES (0-255)","ROCKS (0-255)","MANA (0-255)","WATER INTENSITY (0-255)","RELIEF (0-255)"};
         for(int i=0;i<8;++i) {mf[i]=fields[i];mLabel[i]=labels[i];mfNumeric[i]=i!=2;}
@@ -57,6 +57,7 @@ void cart::Editor::openModal(Modal m, int unitIdx) {
         mLabel[8]="WIDTH (1-64 UNITS)";mf[8]=generatorDraft[1];mfNumeric[8]=true;
         mLabel[9]="HEIGHT (1-64 UNITS)";mf[9]=generatorDraft[2];mfNumeric[9]=true;
         mLabel[10]="WORLD";mf[10]=generatorDraft[3];mfNumeric[10]=false;mfChoices[10]=&kWorldOpts;
+        mLabel[11]="SCATTERED MANA (BY MAP AREA)";mf[11]=fields[8];mfNumeric[11]=false;mfChoices[11]=&generatorScatter;
     } else if(m==M_SYMMETRIZE) {
         setupSymmetrizeFields();
     } else if(m==M_PREFERENCES) {
@@ -221,7 +222,7 @@ void cart::Editor::openGeneratorRecipe() {
 void cart::Editor::applyModal() {
     const auto applying=modal;modalError.clear();
     if(modal==M_GENERATOR) {
-        cart::GeneratorFields fields;for(int i=0;i<8;++i)fields[i]=mf[i];std::string error;
+        cart::GeneratorFields fields;for(int i=0;i<8;++i)fields[i]=mf[i];fields[8]=mf[11];std::string error;
         auto nextParams=generatorParams;
         if(!cart::parseGeneratorFields(fields,nextParams,error)) {modalError=error;return;}
         for(int i=8;i<10;++i) {

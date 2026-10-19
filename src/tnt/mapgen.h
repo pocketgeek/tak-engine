@@ -5,7 +5,8 @@
 // client and the server referee build the BYTE-IDENTICAL map from the same seed --
 // the generated terrain/features feed the hashed lockstep sim, so it must agree on
 // every peer. The parameters ride inside the mapId string ("~gen1~<hex>"), which the
-// lobby threads to every peer. Protocol 222 supports v8 explicit extra-mana rounds.
+// lobby threads to every peer. Protocol 222 supports v8 explicit extra-mana rounds;
+// protocol 278 adds v9 scattered neutral mana (v8 ids still regenerate unchanged).
 
 #include "tnt/tnt.h"
 
@@ -27,8 +28,16 @@ const char* layoutName(uint8_t layout);
 uint8_t themedLayout(uint8_t world);
 bool automaticWater(uint8_t layout);
 
+// v9: neutral mana spots scattered over open ground, as an area density. Max is
+// the density of a home economy holding six spots (6 per 87x87-cell reserved home
+// square, ~1 spot per 1262 cells); each lower level halves it.
+enum ManaScatter : uint8_t { ScatterNone = 0, ScatterMinimum, ScatterMedium, ScatterHigh, ScatterMax, kScatterLevels };
+const char* scatterName(uint8_t level);
+// Jittered-grid pitch in cells for a level (0 = none): one candidate per pitch^2.
+int scatterPitch(uint8_t level);
+
 struct Params {
-    uint16_t formatVer = 8;
+    uint16_t formatVer = 9;
     uint64_t seed = 1;
     std::string name;               // v5: optional ASCII map title, up to 24 characters
     uint8_t  mapType = Aramon;
@@ -40,11 +49,13 @@ struct Params {
     uint8_t  waterDensity = 96;      // mainland/lake intensity, not coverage; 0 = dry
     uint8_t  layout = Mainland;
     uint8_t  reliefDensity = 128;    // authored hill patch density; 0 = flat
+    uint8_t  manaScatter = ScatterNone;   // v9: ManaScatter level for neutral spots
 };
 
 struct Result {
     tak::tnt::Map map;
     int waterPercent = 0, reliefPatches = 0;
+    int scatteredMana = 0;   // v9 neutral spots placed (not part of any player's rounds)
     // v3: one open-water harbor per island; cells suitable for naval construction.
     std::vector<std::pair<int, int>> harbors;
     std::vector<std::pair<int, int>> starts;   // start positions in 16px CELL coords (x, z)
