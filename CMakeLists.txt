@@ -897,6 +897,23 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale many-1000 --data "${TAK_TEST_DATA}"
                    --min scale.arrive.n=900 --max scale.stuck_end=20)
   set_tests_properties(legion_departure PROPERTIES LABELS legion TIMEOUT 900 SKIP_RETURN_CODE 77)
+  # Flow-around shuffles at travel speed (2026-10-19, Legion ~100 round 2): a body blocked by a body steps into a free
+  # neighbour nearer its goal without turning, and walked that step at the facing cap -- an eighth of travel speed
+  # sideways, a one-cell step in about 70 ticks -- so a crowd folding round a wall end or past a block of idle bodies
+  # stood in its own shuffles. island-1x100 (100 bodies round a 24x24 rock) at offsets 0, 1, -1: t90 at most 2,300
+  # and the last arrival by 3,000 (the previous commit 2,747-2,882 and 3,468-3,550; Retail 2,296 / 2,552 median).
+  add_test(NAME legion_flowshuffle
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100 island-1x100 --data "${TAK_TEST_DATA}"
+                   --offsets 0,1,-1 --max g.U.t90=2300 --max g.U.done=3000 --min g.U.done=1)
+  set_tests_properties(legion_flowshuffle PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # ... and 50 movers past a block of 50 idle bodies (idle-50x50) at offsets 0, 1, -1: the 99th percentile arrives
+  # by tick 3,650 (the previous commit 3,775-3,959; Retail 3,418 median).
+  add_test(NAME legion_flowshuffle_idle
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100 idle-50x50 --data "${TAK_TEST_DATA}"
+                   --offsets 0,1,-1 --max scale.arrive.t99=3650 --min scale.arrive.t99=1)
+  set_tests_properties(legion_flowshuffle_idle PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison

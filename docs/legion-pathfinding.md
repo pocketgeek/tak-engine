@@ -309,8 +309,13 @@ stopped permille 288,524 to 288,538, Legion work flat.
   strictly reduces its distance still to go. The step is committed until the
   new cell is entered. It moves only along the axis whose origin changes,
   never back toward a cell centre, and it does not turn the body; this is a
-  shuffle. Speed still follows the facing cap. A flat half-speed shuffle was
-  measured to gridlock opposing columns. If no such neighbour exists the unit
+  shuffle. Speed follows the facing cap, except that a formation member on a
+  move-like leg walks the shuffle at travel speed (`Member::detourFlow`, since
+  2026-10-19: "Flow-around at travel speed" below). A flat half-speed shuffle was
+  measured to gridlock opposing columns, and at travel speed two allied armies
+  meeting head on knot as well, so a member whose point is in a head-on meet, a
+  body admitted through a narrow passage, a body that has gained nothing for a
+  crowd window, and fight, attack, guard and patrol legs keep the cap. If no such neighbour exists the unit
   **holds**: speed zero, heading constant, no creeping. A held unit rechecks
   its candidate cells against occupancy every update. This is change-driven,
   since nothing moves until a cell frees, and it never triggers a re-plan, so
@@ -2800,6 +2805,106 @@ transitive holder and the approach-side count change no fixture measured (the ha
 every legion100 fixture are those without them). The headless `--mpai` Inner Circle game (seed 1, 60 s) keeps both hashes (Retail
 b353410003e98dd5, Legion 0825aeb9e8139203): nothing there waits at a narrow passage in its first minute.
 
+### Flow-around at travel speed (2026-10-19, Legion ~100 round 2, protocol 280)
+
+After round 1 (passage admission, the head-on meet band, departures, ring upkeep) the ~100-body fixtures still lost
+their tails round obstacles: gate medians on the parent 4fe78bdb against Retail, `island-1x100` (100 bodies round a
+24x24 rock) t90 2,792 / 2,296 and last arrival 3,512 / 2,552; `idle-50x50` (50 movers past a block of 50 idle bodies)
+t90 3,479 / 3,214 and t99 3,852 / 3,418; `doorplug100-124` group B t90 5,702 / 5,296; `corner-1x100` last arrival
+5,619 / 5,366.
+
+**The cause.** Position dumps every 20 ticks (a debug probe, not kept) give each body's speed between samples. In
+front of `island-1x100`'s rock (offset 0, ticks 200-1,500) 38% of the samples moved under a fifth of travel speed,
+against Retail's 9%, and at `idle-50x50`'s block corner (ticks 900-1,600) 34% against 3%; nearly all of them stood in
+drive's blocked branch, and 16-19% of all samples moved at about an eighth. A body blocked by a body flows round it
+(section 4): it commits a one-cell step into a free neighbour nearer its goal and walks it without turning, so at
+the facing cap -- an eighth of travel speed once the step is more than 67.5 degrees off its heading. A sideways cell
+took about 70 ticks, longer than the 45 a committed step lives, so a crowd folding round a wall end or past a block
+stood in its own shuffles. Nothing else differed much: the walk inside the destination area (entering the packed
+disc to arrival) was Retail's (`island-1x100` median 240 / p90 520 ticks against 220 / 480); the loss was in rounding
+the rock (90% inside the disc at 2,539 against 2,099).
+
+**The change.** A flow-around shuffle (`Member::detourFlow`, hashed while set) of a formation member on a move-like
+leg keeps travel speed, still unturned, as lane-discipline passes and long local detours (`kBriskRoute`) already
+did. Retail's mover traces round a body at its own speed. It keeps the facing cap where travel speed broke
+something, each measured:
+
+* a fight, attack, guard or patrol leg (rings and melees: no change wanted there);
+* a member whose point is in a head-on meet (`Point::meet`, C1): `bridges-1000`'s two allied 500-body armies on the
+  two-way 32-cell bridge interleaved into a knot, 97 bodies stuck at offset 0 (5 on the parent), and still 174 when
+  only a shuffle round an oncoming blocker (its way to its goal pointing back) kept the cap;
+* a body admitted through a narrow passage (`passLabel`): `bridges-100` at offset -5 and `taperbridge-100` at +2
+  ended with 52 and 97 bodies stuck head on in a bridge's mouth;
+* a body with a goal of its own (not a formation member): `legion_acceptance_crowdheld` (64 distinct goals packed
+  at a 3-cell pitch behind a door) 60 of 64 in goal, under its 61 ratchet;
+* a body that has gained nothing for a crowd window (`stalledFor` over `kCrowdWindow`, 45 ticks; the stall clock
+  stands still while a committed step is walked): at speed its shuffles along a settled crowd's edge carried it out
+  of the settle rule's reach, and `movement_orders_test`'s production rally ended with its last output standing 7
+  cells off the point for good (`gen1-route-61923` 240 -> 221 arrived; the window also halves the lane-swap rise
+  below). Shuffles only within the destination area at the cap, instead, cost 150 arrivals over the fixtures, and
+  only for a part of 16 or more the tails (`island-1x100` last 2,433 -> 2,689).
+
+Measured (gate offsets, Legion median before -> after, Retail). Retail is hash-identical: all 1,119 Retail
+`hash@` entries of tools/scenarios/baseline.json (136 fixtures, gate offsets), the legion100 fixtures checked, and the
+headless `--mpai` Inner Circle game (seed 1, 60 s: Retail `b353410003e98dd5`; Legion keeps `0825aeb9e8139203`:
+nothing in its first minute walks a shuffle at speed).
+
+| fixture | key | before | after | Retail |
+|---|---|---|---|---|
+| island-1x100 | t90 / last | 2,792 / 3,512 | 1,937 / 2,567 | 2,296 / 2,552 |
+| island-1x100 | lane crossings | 179 | 260 | 450 |
+| idle-50x50 | arrive t90 / t99 | 3,479 / 3,852 | 3,307 / 3,538 | 3,214 / 3,418 |
+| doorplug100-124 | B t90 / B last | 5,702 / 6,242 | 5,432 / 5,747 | 5,296 / never |
+| corner-1x100 | t90 / last | 4,907 / 5,619 | 4,187 / 4,862 | 5,084 / 5,366 |
+| corner-4x25 | D t90 / D last | 4,685 / 5,216 | 4,190 / 4,460 | 5,018 / 5,203 |
+| island-1x150 | t90 / lane crossings | 2,765 / 216 | 1,982 / 309 | 3,001 / 899 |
+| corner-1x448 | top crossings | 42 | 21 | 5 |
+| corner-8x56 | top crossings | 21 | 7 | 10 |
+| bridges-100 | arrive t90 | 10,821 | 11,037 | (55 arrive) |
+
+`island-1x100`'s last arrival is level with Retail's; `idle-50x50` and `doorplug100-124` B close most of the gap but
+stay 3% behind. Over the 158 fixtures (tools/scenarios and tools/scenarios/legion100, Legion, every gate offset,
+medians summed): arrivals 13,961 -> 14,340, groups never done 208 -> 183, summed t90 -8.3% and done -10.8%, gate
+crossings 732 -> 851, stopped permille +3.6%, travel reversals +3.5%, spins equal. The crossings come mostly where
+Legion stays far under Retail (`island-1x150` 216 -> 309 against 899); `mixed2` 13 -> 38 (Retail 0) and `sbend`'s
+second turn 9 -> 27 (Retail 5) are the lane-order losses, while the corner fixtures swap fewer (`corner-1x448` 42 ->
+21, `corner-8x56` 21 -> 7). Arrivals fall in `pocket-615-wall` 533 -> 474 (Retail 157): its denser crowd jams in the
+pocket. Whole-run Legion work moves little (`cost-corner` N100 3,754,274 -> 3,605,669, N400 9,416,924 -> 9,546,699;
+moves at N400 835,320 -> 740,413), but the counters of settled and flowing bodies rise with the earlier arrivals
+(`cost-corner` still-scan samples +46-71%, slides +16%, holds +11%) and so does the steady window's work per tick
+(`w_steady` N400 21% over its baseline): thirteen `legion_cost` entries moved, each naming protocol 280.
+`ctest:legion_flowshuffle` (island-1x100 at 0, +-1: t90 at most 2,300 and done by 3,000; 2,747-2,882 and 3,468-3,550
+on the parent) and `ctest:legion_flowshuffle_idle` (idle-50x50 t99 at most 3,650; 3,775-3,959). The scenario
+baseline gate (tools/scenarios/baseline.json) already failed at the parent on 115 of its 136 fixtures (round 1's
+behaviour, not retaken there); of the 21 that passed, six moved here (`aware-unseen`, `island-1x48`,
+`mixed-spacing-07x`, `motion-wall`, `strait-2x48`, `strait-4x24`) and their 38 keys carry protocol-280 licences
+(work counters of flowing and held bodies, contact permille, `island-1x48`'s lane-crossing bound 35 -> 37, one
+hash). The Legion lines of the navigation golden (tools/navigation_checkpoints.json) are retaken (14 of 24
+checkpoints moved; the Retail lines are unchanged).
+Two test bounds move with the trade: `ctest:legion_landedflyers` (the stream reaches the parked flyers sooner and
+stands against them longer while finishing sooner, as with round 1's brisk detours: foot-2 median stuck 1,760 and
+ticks 2,207, the stuck base 1,400 -> 1,570) and `ctest:legion_choke` (the 32-cell bridge drains faster, so fewer
+bodies take the 12-cell one: 39 crossings against the bound of 40 each, now 30; 843 of 1,000 arrive, none stuck).
+
+Rejected on the way (same fixtures, gate medians):
+
+* Walking the own line as far as it is legal, then the field (a Bug-like approach): bodies queue at the obstacle's
+  face, `island-1x100` t90 2,792 -> 3,242, `corner-1x100` 4,907 -> 5,447, `gap10-100` 2,612 -> 3,085.
+* Pinwheel walls that count idle bodies: no change at all (the turn under `idle-50x50`'s block is too gentle for a
+  rank).
+* Half speed sideways instead of the eighth: `island-1x100` t90 2,432. Full speed forward and half sideways kept
+  `gen1-route-61923` (264 arrive) and `pocket-615-wall` (551) but lost `island-1x100`'s tail (2,818 against 2,433)
+  and 2-3% of the summed t90 and done.
+* Holding the passage token while an admitted body stands in the mouth (it fixes `bridges-100` -5 too): +1,000 ticks
+  of t90 on `bridges-100`, +2,100 on `taperbridge-100`. Letting bodies that wait at a passage part for the stream
+  coming out of it: the gridlock moved to `bridges-100` -1.
+
+The island side choice was examined too: the shared field is seeded at the click, so 79 of the 100 bodies went
+over the rock's near side (Retail 50 / 50, each body bug-tracing to its own offset goal). The selection given as two
+orders at the halves' slot centroids split 50 / 50 and entered the disc 500 ticks sooner, but with the shuffles at
+speed `island-1x100` is ahead of Retail at t90 and level at the last arrival without it, so no per-band field was
+built.
+
 ### Legion 10,000: where the program left it
 
 docs/legion-10000-report.md gives the measured result against the starting revision c2c25707:
@@ -2936,6 +3041,24 @@ Rules that came out of using them:
   stuck bodies at some many-100 offsets. Measured by the reversals key of
   tools/scenarios/legion100/corner-1x100.scn and densehead.scn, and by
   `ctest:legion_departure`.
+  Since protocol 280 a formation member's flow-around shuffle keeps travel
+  speed too ("Flow-around at travel speed"): reversals over the 158 fixtures
+  +3.5%, stopped permille +3.6%, and lane swaps where streams cross after a
+  turn rise (`mixed2:gate.mid.crossings` 13 -> 38, Retail 0;
+  `sbend:gate.t2.crossings` 9 -> 27, Retail 5). A denser crowd jams in
+  `pocket-615-wall` (`g.A.arrived` 533 -> 474, Retail 157).
+* **Narrow-passage admission still gridlocks at some offsets.** At ~100 bodies
+  a head-on knot in a bridge's mouth is a matter of timing: over offsets -8..8,
+  `bridges-100` and `taperbridge-100` each end with 44-88 bodies stuck at one
+  offset on the parent of protocol 280 (both -7) and after it (`taperbridge-100`
+  +1, a gate offset: 19 of 100 arrive). The pattern is the one "Passage
+  admission at 100 bodies" describes: an admission lapses (or a crowd waits)
+  in the mouth the other way's stream comes out of. Holding the token for
+  admitted bodies in the mouth, and parting waiting bodies for the stream,
+  each moved the gridlock to another offset (above). Measured by
+  `taperbridge-100` (tools/scenarios) and `bridges-100` (legion100) over the
+  wide offsets; `ctest:legion_passage_admission` and `ctest:legion_passage_taper`
+  hold their offsets.
 * **Attack rings at ~100 bodies (after the 2026-10-19 ring upkeep).** Legion
   bodies stop at cell centres, Retail's at any sub-cell point whose origin cell
   is free, so Retail packs the firing edge about a third denser: on
