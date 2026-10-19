@@ -684,6 +684,31 @@ add_test(NAME legion_handout
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/deadend-multi-4x120.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_handout PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"work\\.formation_ring_cells\\.max\":([0-9]?[0-9]?[0-9]?[0-9]?[0-9]|1[0-4][0-9][0-9][0-9][0-9]),")
+# Ring upkeep (2026-10-19, ~100-body fixtures in tools/scenarios/legion100). Combat brakes an attacker the moment it
+# is in reach, so a ring spot with a body firing on or beside it is spent; on the parent the field still led the army
+# to the first arc it met (100 attackers against a walled target seen from one side: a jam on that side, the far
+# arc empty). Passes when, at offsets 3,-3,4 (the target on the wall's corner, seen from part of the ring), the
+# median damage dealt is 1400 or more (parent 1162, Retail 2307 / 2135 / 2227), serial equal to workers.
+add_test(NAME legion_ringupkeep
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/attackring-wall-100.scn --mode legion --offsets 3,-3,4 --json)
+set_tests_properties(legion_ringupkeep PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":(1[4-9][0-9][0-9]|[2-9][0-9][0-9][0-9]|[0-9][0-9][0-9][0-9][0-9]+),")
+# An attack on a target walled in out of the attackers' region (offset 0 of the same fixture) keeps its order and plans
+# a ring in reach round the walls, as Retail's attackers press up to them; on the parent the army walked to the one
+# nearest reachable point, piled against one face and dropped its orders there (19 attackers in reach at the end,
+# Retail 61). Passes at 30 or more, serial equal to workers.
+add_test(NAME legion_attackwalled
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/attackring-wall-100.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_attackwalled PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.now_end\":([3-9][0-9]|[1-9][0-9][0-9]),")
+# A Move group crossing its own firing ring (ringcross-100: 50 attackers ring a target, 50 movers pass at tick 1500).
+# On the parent the ring members held behind the firing line stood out of reach in the movers' way and the group's
+# t90 was never reached within 5000 ticks at any gate offset (Retail 3926). Passes when the median of offsets 0,1,-1
+# reaches t90 and at least 40 attackers get in reach (parent 38, Retail 43), serial equal to workers.
+add_test(NAME legion_ringcross
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/ringcross-100.scn --mode legion --offsets 0,1,-1 --json)
+set_tests_properties(legion_ringcross PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.M\\.t90\":[0-9]+,.*\"reach\\.ring\\.ever_end\":(4[0-9]|50),")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
