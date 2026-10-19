@@ -828,6 +828,16 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale room2door --data "${TAK_TEST_DATA}"
                    --min scale.arrive.group_entrances=1 --min scale.arrive.n=100 --max scale.stuck_end=0)
   set_tests_properties(legion_entrances PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # One passage, one admission (2026-10-19): two allied armies of 50 head on at bridges-100's 12-cell bridge. A group
+  # re-planned onto a tile chain skipped admission (a chain records no labels) and walked into the strip the other
+  # way held (offset -5: 36 arrive, 64 stuck), and an admission that lapsed when the token turned left its bodies
+  # standing in the bridge's mouth, in the way of the stream let in next (offset 0, once chains were admitted: 52 /
+  # 48). Checked at both offsets: at least 95 of 100 arrive and at most 2 stand stuck at the end.
+  add_test(NAME legion_passage_admission
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100 bridges-100 --data "${TAK_TEST_DATA}"
+                   --offsets 0,-5 --min scale.arrive.n=95 --max scale.stuck_end=2)
+  set_tests_properties(legion_passage_admission PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison
@@ -2395,6 +2405,14 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME legion_unreachable_orders COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tools/legion_unreachable_test.py" "$<TARGET_FILE:crowdbench>" --require-w2)
   set_tests_properties(legion_unreachable_orders PROPERTIES LABELS "legion;w2" TIMEOUT 300)
+  # One passage, one admission (2026-10-19): crowdbench `opposingbridges` 100x1, half of a lane's bodies sent each
+  # way through a 6-cell gap 64 cells long. The gap crosses two sector boundaries, two opening records with a token
+  # each: each stream took the record at its own end and both were admitted into the one strip (0 of 100 arrived,
+  # all 100 held). One record now holds the admission of the passage; at least 90 arrive.
+  add_test(NAME legion_passage_records COMMAND crowdbench --mode legion --scenario opposingbridges --units 100
+           --players 1 --moving-percent 100 --ticks 6000 --seed 0)
+  set_tests_properties(legion_passage_records PROPERTIES LABELS legion TIMEOUT 300
+                       PASS_REGULAR_EXPRESSION "\"physical_in_goal\":(9[0-9]|100),")
   add_test(NAME navigation_determinism COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tools/navigation_determinism_test.py"
     "$<TARGET_FILE:navigation_checkpoint_test>"

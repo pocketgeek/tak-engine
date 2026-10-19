@@ -2535,7 +2535,9 @@ measurements and the variants rejected, is docs/legion-10000-progress.md section
   passes until it leaves the zone. Any member standing in a watched strip is an occupant whatever its route says
   (`watchStrips`). The token turns once the strip has no occupant its way and nothing was admitted for `kAdmitClear`
   (60) ticks; it closes after the other way waited `kAdmitGreen` (300) ticks. Only allies defer to each other; a group
-  without labels neither waits nor counts. Open ground is never an opening, so nothing waits there.
+  without labels neither waits nor counts. Open ground is never an opening, so nothing waits there. (Since
+  2026-10-19 a tile chain's group of 8 or more is admitted too, one passage is admitted by one record, and admitted
+  bodies on their way hold the token: "Passage admission at 100 bodies" below.)
 * **Shared destination areas.** An explicit order sent within a cell of the point where an earlier explicit area of
   the same player still gathers (its point live, or its arrivals settled there) takes that area's key and exact point
   (`sharedArea` over `destArea`, hashed): one command, one formation and crowd bound, and the first order's settled
@@ -2592,6 +2594,52 @@ section 7.9).
   jobs run in a shuffled order with random delays. Under `TAK_LEGION_VERIFY` every reused key is recomputed and every
   staged tile rebuilt from the plane. ctest `legion_parallel` (tools/legion_parallel_test.py) compares 1, 3 and 7
   workers, perturbed runs and a forced inline verify run with `--serial`; `simpool_test` covers the asynchronous API.
+
+### Passage admission at 100 bodies (2026-10-19, no protocol change yet)
+
+The ~100-body triage fixtures found head-on deadlocks at narrow passages that the 1,000-body ones hid:
+`bridges-100` (two allied armies of 50 across a river; the 12-cell bridge is the nearest) gridlocked at offsets -5
+and -7 (36 and 12 of 100 arrived, 64 and 88 stuck), and crowdbench `opposingbridges` 100x1 (half of a lane sent
+each way through a 6-cell gap 64 cells long) arrived none, every body held. A dump of the stuck bodies (positions,
+labels and the passage records' tokens every 25 ticks; a debug probe, not kept) gave three causes, none of them the
+"exit lane" the 10,000 report guessed at.
+
+* **A tile chain skipped admission.** Admission read the next opening from the field's labels (`Field::via`), which
+  only window and corridor fields record. A group whose route was a tile chain -- both armies at -5 from their first
+  plan, the west army's two groups at -7 after a re-plan at tick 2925 -- never asked: it walked into the strip while
+  the other way held it, and the two streams met on the bridge. `nextOpening` now reads a chain member's next
+  opening the way the recount does (`openingScan`): from the chain node of the body's region, the first exit portal
+  along the parents that is an opening. It is cached per member by route serial, region key and plane epoch
+  (`Member::viaSerial`, `viaKey`, `viaEpoch`, `viaLabel`; derived, never hashed), and charged as connectivity work. A
+  chain's group of `kOpeningMembers` (8) or more is admitted, as a field's group of that size records labels.
+* **One passage had several records.** An opening is one crossing of one sector boundary, so a passage longer than a
+  sector is several records: `opposingbridges`' gap crosses lines 159 and 223, and the east-going stream took the
+  token of the west record while the west-going stream took the east record's. Both were admitted into one strip.
+  `passageOf` now maps a narrow record to the passage's holder: the lowest-numbered narrow record on the same side
+  whose crossing line lies in the record's strip (`stripLo - 1 .. stripHi`) and whose span overlaps its own. The
+  holder keeps the token, the waits, the occupants, the strip and the zone, and members are admitted with the
+  holder's label. Records are only appended, so the holder of a standing strip never changes (a later record of the
+  passage has a higher number). Cached per record by strip epoch and plane (`Opening::head`; derived, never hashed).
+* **A turn lapsed admissions on the apron.** The token turned 60 ticks after the last admission once no admitted
+  body stood in the strip, and admitted bodies still walking to the mouth lost their admission where they stood. With
+  chains admitted, `bridges-100` at offset 0 had 15 of the east army lapse 3-14 cells from the bridge when the token
+  turned, hold there, and the west army came through into them and stood on the bridge (52 arrived, 48 stuck). Those
+  bodies are now counted (`Opening::com`, derived per tick like `occ`), and a passage does not turn under them until
+  `kAdmitCommit` (120) ticks after its last admission (closing still stops new admissions; past that they lapse as
+  before). 300 ticks cost `bridges-100` another 1,200 ticks of t90 for no fewer deadlocks. Also fixed: `occ` was
+  reset only while the passage had a token or a waiter, so on a free passage it could carry an old count.
+
+Measured (Legion, serial, 15,300 ticks; Retail untouched): `bridges-100` over offsets -8..7 now arrives 97-100 at
+every offset (before 12-100, two offsets gridlocked) with at most 2 stuck at the end (before up to 88); the gate
+median of `scale.arrive.n` 99 to 100, `reversals` 1,508 to 481, but `scale.arrive.t90` 10,237 to 11,928 and
+`stopped_permille` 148 to 184: the chain groups that used to walk through head on, and on the 12-cell bridge usually
+got away with it, now wait their turn. Crowdbench `opposingbridges` 100x1 (seeds 0, 2, 4) 0 to 98 / 99 / 91 in goal,
+50x2 4 / 50 / 1 to 100 / 98 / 97. Every other legion100 fixture, and `swap-1000`, keeps its hashes at every offset
+measured; `bridges-1000` (offsets 0, +-1) arrives 653 / 631 / 646 to 651 / 631 / 646 with 32 / 38 / 10 stuck to 34 /
+1 / 15. `ctest:legion_passage_admission` (bridges-100 at offsets 0 and -5, at least 95 arrive and at most 2 stuck;
+36 / 64 on the parent) and `ctest:legion_passage_records` (opposingbridges 100x1, at least 90 in goal; 0 on the
+parent) cover the three. The headless `--mpai` Inner Circle game (seed 1, 60 s) keeps both hashes (Retail
+b353410003e98dd5, Legion 0825aeb9e8139203): nothing there waits at a narrow passage in its first minute.
 
 ### Legion 10,000: where the program left it
 
@@ -2808,6 +2856,14 @@ Rules that came out of using them:
   in registration order, so an order whose unit ids are not spatially
   coherent can get spatially interleaved groups
   (`split-450-open:g.A.arrived`, and the 8-group `corner-8x56:g.A.arrived`).
+* **One-way admission is slower than a lucky two-way crossing.** A narrow passage (16 cells or less) is admitted one
+  direction at a time, and since 2026-10-19 tile-chain groups wait too. On `bridges-100`'s 12-cell bridge, where two
+  lanes each way fit, the old two-way crossing of the chain groups arrived sooner when it did not gridlock:
+  `bridges-100` (tools/scenarios/legion100) `scale.arrive.t90` 10,237 to 11,928 (gate median), `stopped_permille`
+  148 to 184. Groups of
+  fewer than 8 (`kOpeningMembers`) still neither wait nor count except as occupants, so a handful of stragglers can
+  still walk into a passage held the other way. Measured by `ctest:legion_passage_admission` (arrivals and stuck
+  bodies; the time is in its run's JSON) and `ctest:legion_choke` (bridges-1000).
 * **Idle units of other players never step aside.** Only settled same-player
   Legion arrivals yield; everything else idle is a still body to route
   around (`strait-3x80:region.east.inside`: a selection that has to pass a

@@ -947,6 +947,10 @@ struct LegionNavigator::Impl {
         // Stage 8 (admission, see admissionHold): the label of the narrow opening this member was admitted
         // through (0: none), kept until it leaves the opening's zone. Hashed while set.
         uint16_t passLabel=0;
+        // Admission's read of a tile chain's next opening (see nextOpening): the label found for the route
+        // (Field::serial), the chain region the body stood in (Hierarchy::key) and the plane epoch. A function of
+        // the route and the static plane: derived, never hashed.
+        uint64_t viaSerial=~0ull,viaKey=~0ull,viaEpoch=~0ull;uint16_t viaLabel=0;
         // C1 (see meetScan): the last tick this member's lane scan (passAhead) found an oncoming body of
         // another command ahead (kNoTick: never). Hashed only when set (PLAN 3.0, C27).
         uint32_t meetSeen=kNoTick;
@@ -3667,7 +3671,12 @@ struct LegionNavigator::Impl {
         int8_t tokenDir=-1;int tokenPlayer=-1;bool closing=false;uint32_t granted=0,lastEntry=0;
         uint32_t waitSince[2]={kNoTick,kNoTick};bool waited[2]={false,false},waiting[2]={false,false};
         uint32_t occ[2]={0,0};
+        uint32_t com[2]={0,0};    // admitted bodies still before the strip, by direction (counted with occ)
         uint32_t active=kNoTick;   // the last tick a member asked for this passage (its strip is then watched)
+        // The record that holds this passage's admission (see passageOf): the lowest-numbered record whose crossing
+        // lies in this one's strip, measured with the strip (headEpoch). Derived from the record table and the
+        // static plane, never hashed.
+        uint32_t head=~0u;uint64_t headEpoch=~0ull;int headPlane=-1;
     };
     std::vector<uint32_t> activeOpenings;   // openings asked for in the last two ticks, ascending (derived; never hashed)
     std::vector<Opening> openings;
@@ -3869,6 +3878,7 @@ struct LegionNavigator::Impl {
     static constexpr int kStripSlack=2,kStripMax=192,kAdmitZone=6;
     static constexpr uint32_t kAdmitGreen=300;
     static constexpr uint32_t kAdmitClear=60;   // ticks without a new admission before a clear passage turns
+    static constexpr uint32_t kAdmitCommit=120; // ... and before one turns under admitted bodies still on their way to it
     std::set<int> passers;   // members with passLabel set, ascending (derived from the members; never hashed)
     bool narrowFor(const Opening& o,const UnitType&) const {return o.width<=kNarrowWidth;}
     void ensureStrip(Opening& o,const Plane& p,int planeIndex) {
@@ -3908,6 +3918,52 @@ struct LegionNavigator::Impl {
         return a>=o.stripLo-z&&a<=o.stripHi+z&&c>=o.lo-z&&c<=o.hi+z;
     }
     void clearPass(int id,Member& m) {m.passLabel=0;passers.erase(id);}
+    // One passage, one admission. A passage longer than a sector crosses several sector boundaries, and each
+    // crossing is an opening of its own (opposingbridges: a 6-cell, 64-cell-long bridge over lines 159 and 223):
+    // with a token on each, the stream going east took the west record and the stream going west the east one,
+    // and both were admitted into the one strip and met head on in it (100 bodies held for the rest of the run).
+    // The records whose crossing lies in a narrow opening's strip, with a span overlapping its own, are that one
+    // passage; its admission (token, waits, occupants, and the strip and zone they are measured on) is held by
+    // the lowest-numbered of them. Records are only ever appended, so a passage's holder never changes while its
+    // strip stands (a later record of it has a higher number).
+    uint32_t passageOf(uint32_t idx,const Plane& p,int planeIndex) {
+        Opening& o=openings[idx];
+        ensureStrip(o,p,planeIndex);
+        if(o.head!=~0u&&o.headEpoch==o.stripEpoch&&o.headPlane==o.stripPlane)return o.head;
+        uint32_t head=idx;
+        for(auto it=openingIndex.lower_bound({o.side,o.stripLo-1,std::numeric_limits<int>::min(),std::numeric_limits<int>::min()});
+            it!=openingIndex.end()&&std::get<0>(it->first)==o.side&&std::get<1>(it->first)<=o.stripHi;++it)
+            if(std::get<3>(it->first)>=o.lo&&std::get<2>(it->first)<=o.hi&&openings[it->second].width<=kNarrowWidth)head=std::min(head,it->second);
+        o.head=head;o.headEpoch=o.stripEpoch;o.headPlane=o.stripPlane;
+        return head;
+    }
+    // The label of the next opening on member m's route from origin (ox, oz): the field's label there, or on a tile
+    // chain the first opening on the chain's way from the body's region, as the recount reads it (openingScan).
+    // A chain records no labels, and a group re-planned onto one (bridges-100 at offset -7, both armies' groups
+    // at -5) used to skip admission altogether: it walked into a strip the other way held and the two streams met
+    // head on in it. The chain's read is cached per member (route, region, plane epoch).
+    uint16_t nextOpening(Member& m,const Group& g,const Field& f,int ox,int oz) {
+        if(f.kind!=KindChain)return f.labels?f.viaAt(ox,oz):uint16_t(0);
+        Plane& p=planes[size_t(g.plane)];
+        if(!p.hier.built(p.hier.sectorOf(ox,oz)))return 0;
+        const int cell=oz*width()+ox,sec=p.hier.sectorOfCell(cell);
+        const uint16_t reg=p.hier.regionAt(cell);
+        if(reg==hier::kNoRegion)return 0;
+        const uint64_t key=hier::Hierarchy::key(sec,reg);
+        if(m.viaSerial==f.serial&&m.viaKey==key&&m.viaEpoch==p.epoch)return m.viaLabel;
+        uint64_t work=0;
+        uint16_t label=0;
+        int at=-1;
+        for(size_t i=0;i<f.chainTransit&&at<0;++i,++work)if(hier::Hierarchy::key(f.chain[i].s,f.chain[i].r)==key)at=int(i);
+        for(int i=at,depth=0;i>=0&&depth<256&&!label;i=f.chain[size_t(i)].parent,++depth) {
+            const ChainNode& c=f.chain[size_t(i)];
+            if(p.hier.gen(c.s)!=c.gen)break;
+            label=portalLabel(p,c.exit,c.onA,work);
+        }
+        navc.connectivity+=work;
+        m.viaSerial=f.serial;m.viaKey=key;m.viaEpoch=p.epoch;m.viaLabel=label;
+        return label;
+    }
     // Should member m hold before the narrow opening its route crosses next? (Admits it when it may go.)
     bool admissionHold(const Unit& u,Member& m,const Group& g,int ox,int oz) {
         if(m.passLabel) {
@@ -3915,12 +3971,13 @@ struct LegionNavigator::Impl {
             if(idx<openings.size()&&inZone(openings[idx],u))return false;
             clearPass(u.id,m);
         }
-        const uint16_t label=g.field->viaAt(ox,oz);
-        if(!label)return false;
-        const uint32_t idx=(uint32_t(label)>>1)-1;
-        if(idx>=openings.size())return false;
+        const uint16_t via=nextOpening(m,g,*g.field,ox,oz);
+        if(!via)return false;
+        if((uint32_t(via)>>1)-1>=openings.size())return false;
+        if(!narrowFor(openings[(uint32_t(via)>>1)-1],*u.type))return false;
+        const uint32_t idx=passageOf((uint32_t(via)>>1)-1,plane(g.plane),g.plane);
+        const uint16_t label=uint16_t((idx+1)<<1|(uint32_t(via)&1));
         Opening& o=openings[idx];
-        if(!narrowFor(o,*u.type))return false;
         ensureStrip(o,plane(g.plane),g.plane);
         if(!inZone(o,u))return false;
         if(o.active!=w.tickCounter_) {
@@ -3967,7 +4024,7 @@ struct LegionNavigator::Impl {
     void admissionTick() {
         std::set<uint32_t> touched;
         std::erase_if(activeOpenings,[&](uint32_t idx) {return openings[idx].active==kNoTick||w.tickCounter_-openings[idx].active>1;});
-        for(auto& o:openings)if(o.tokenDir>=0||o.waiting[0]||o.waiting[1]) {o.occ[0]=o.occ[1]=0;}
+        for(auto& o:openings)if(o.tokenDir>=0||o.waiting[0]||o.waiting[1]||o.occ[0]||o.occ[1]||o.com[0]||o.com[1]) {o.occ[0]=o.occ[1]=o.com[0]=o.com[1]=0;}
         for(auto it=passers.begin();it!=passers.end();) {
             const int id=*it;
             Member* m=member(id);const Unit* u=w.unit(id);
@@ -3979,6 +4036,7 @@ struct LegionNavigator::Impl {
             // Occupants are the bodies in the narrow part itself; an admitted body still before it is committed,
             // not an occupant (a crowd waiting at the other mouth cannot hold the passage through it).
             if(inStrip(openings[idx],*u))++openings[idx].occ[m->passLabel&1];
+            else ++openings[idx].com[m->passLabel&1];
             touched.insert(idx);
             ++it;
         }
@@ -3988,7 +4046,12 @@ struct LegionNavigator::Impl {
             for(int d=0;d<2;++d) {o.waited[d]=o.waiting[d];o.waiting[d]=false;if(!o.waited[d])o.waitSince[d]=kNoTick;}
             if(o.tokenDir<0)continue;
             const int cur=o.tokenDir,other=1-cur;
-            if(!o.occ[cur]&&now-o.lastEntry>=kAdmitClear) {
+            // An admitted body still on its way to the strip keeps the passage its way, for kAdmitCommit ticks
+            // after the last admission: turned under it, the admission lapsed where it stood -- on the apron of the
+            // mouth, in the exit of the stream let in next (bridges-100 at offset 0: 15 bodies admitted east of
+            // the bridge lapsed when the token turned 60 ticks after the last admission, and the west army came
+            // through into them and stood on the bridge for the rest of the run).
+            if(!o.occ[cur]&&now-o.lastEntry>=kAdmitClear&&(!o.com[cur]||now-o.lastEntry>=kAdmitCommit)) {
                 if(o.waited[other]) {o.tokenDir=int8_t(other);o.granted=now;o.closing=false;o.waitSince[other]=kNoTick;++acct.admitTurns;}
                 else if(!o.waited[cur]) {o.tokenDir=-1;o.closing=false;}
             }
@@ -9502,7 +9565,8 @@ struct LegionNavigator::Impl {
         }
         // Stage 8: a narrow friendly passage open the other way (admissionHold): wait before it.
         watchStrips(u,m);
-        if(f&&g.field&&g.field->labels&&m.state!=Arrived&&admissionHold(u,m,g,ox,oz)) {holdStall(m);hold(u,m);return;}
+        if(f&&g.field&&(g.field->labels||(g.field->kind==KindChain&&g.members>=kOpeningMembers&&g.soft))&&m.state!=Arrived&&
+           admissionHold(u,m,g,ox,oz)) {holdStall(m);hold(u,m);return;}
         if(!m.route.empty()) {
             while(!m.route.empty()&&m.route.front()==here)m.route.erase(m.route.begin());
             if(m.route.empty()||++m.routeTicks>240||(m.state==Holding&&heldFor(m)>=30)) {m.route.clear();m.lineCell=-1;}
