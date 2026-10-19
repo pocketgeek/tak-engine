@@ -1806,8 +1806,9 @@ within their seed spread (aware headon contacts, landedflyers, tail wave p90).
   held same-target peer (30 ticks) is settled too, and reach kinds never run
   the settle rule or contact arrival: the owner ends the approach.
 * **Rings.** An attack group with two or more members when its first field
-  starts plans to a ring: band 0 lies 0.5-1.5 bodies inside `tickCombat`'s own
-  reach (melee at contact), legal, in the members' component and
+  starts plans to a ring: band 0 lies from 1.5 bodies inside `tickCombat`'s own
+  reach out to the reach edge (melee at contact; 0.5-1.5 bodies inside until
+  2026-10-19, see "Ring upkeep"), legal, in the members' component and
   in line of sight of the target, and is the field's seeds; outer bands wait.
   A guard group plans to its ward's point with no ring: its 70 px is a stance
   round the ward, and a ring there kept twelve guards re-choosing spots for
@@ -1833,6 +1834,93 @@ within their seed spread (aware headon contacts, landedflyers, tail wave p90).
   306 -> 561) and lost cost-open's t90; the restricted tier lost maze /
   exploration / dynamicobstacle arrivals by 2.5-3.4%. The cap/8 statue stays
   a documented trade (PLAN 3.4 stop rule).
+
+### Ring upkeep (2026-10-19, task-l100-ring)
+
+Measured on the ~100-body fixtures (`tools/scenarios/legion100/`). Combat
+brakes an attacker the moment it is in reach, so the bodies of a ring stand
+on its reach edge, and a band-0 spot with a body firing on or beside it can
+no longer be reached. The W5 ring did not know that:
+
+* All band-0 spots stayed the field's seeds, so the rest of the army descended
+  to the first arc it met and queued behind it, while the far side stood
+  empty. 100 attackers against a target on the corner of a walled box
+  (`attackring-wall-100`, offsets 3..-5) fired with 17 to 22 bodies against
+  Retail's 34.
+* Band 0 ended half a body inside the edge and band 1 straddled it, so members
+  waited a few pixels out of reach in the gaps of the firing line; members
+  owning spots behind the line held out of reach for good, standing in other
+  groups' way (`ringcross-100`).
+* An attack whose target stood outside the members' region (a target walled
+  in, offsets 0..+-2) was an unreachable goal: the army walked to the one
+  nearest reachable point, piled against one face and dropped its orders on
+  arrival. Retail keeps the order and presses up to the walls on every side.
+
+The changes, Legion only (Retail hashes unchanged):
+
+* **Bands.** Band 0 runs from 1.5 bodies inside reach to the reach edge; band 1
+  is the rest of reach out of the target's sight (behind its walls), where
+  nothing brakes a body; bands 2+ wait beyond the edge, only on the half
+  facing the members (waiting round the far side, they stood across the lanes
+  to it). With no spot of the members' region in sight of the target, the
+  whole of reach is band 0, planned without the sight test.
+* **Attack on a target out of the region.** No approach member: the goal is
+  the region's nearest point and the group plans a ring round the target as
+  usual; the order is kept, as Retail keeps it.
+* **ringScan** (every 30 ticks, a ring group with a finished field): a band-0
+  spot is spent when a still body (engaged, held, settled, or no Legion mover)
+  covers its footprint, or the footprint on the reach edge radially out from
+  it. The seeds become the unspent spots (none left: unchanged) and a refresh
+  plans to them (`work.ring_reseeds`). An unspent spot whose owner has been
+  held elsewhere for 90 ticks is swapped with the outer spot of the nearest
+  waiting member at least a body nearer to it (`work.ring_swaps`); members
+  owning a spent spot, or waiting outside band 0, take the nearest free
+  unspent band-0 spot. Re-choice never picks a spent spot.
+* **Soft to its own attack.** An engaged attacker, or one held on its own ring
+  spot, is a soft obstacle to its own attack too (guards are unchanged), so
+  the refresh goes round the firing arc instead of into it.
+* **Pressing in.** An attacker held within two bodies outside its reach steps
+  into a free neighbouring origin whose centre lies 12 px inside reach (and in
+  sight, where the shot needs it) as a committed side-step; combat brakes it
+  there (`work.reach_presses`). The side-step ends when the origin changes,
+  half a cell (on a diagonal under 12 px) short of the centre: tested at the
+  centre itself, as first landed, a body stepped in, was not braked, walked
+  back out and pressed again (attackring-wall-64 offset -4: 12 of 14 presses
+  from the origin of the member's previous one). `work.reach_press_repeats`
+  counts those; `ctest:legion_pressin` requires none.
+* A buried owner swapped onto an outer spot is not handed a band-0 spot again
+  in the same scan.
+
+Medians over the gate offsets (Legion before -> after, Retail):
+
+| fixture | key | before | after | Retail |
+|---|---|---|---|---|
+| attackring-wall-100 | reach.ring.damage_end | 865 | 1571 | 1922 |
+| attackring-wall-100 | reach.ring.ever_end | 33 | 33 | 49 |
+| attack-100 | reach.ring.ever_end | 6 | 21 | 18 |
+| attack-100 | reach.ring.damage_end | 1500 | 2493 | 1880 |
+| ringcross-100 | reach.ring.ever_end | 38 | 41 | 43 |
+| ringcross-100 | reach.ring.damage_end | 5453 | 5463 | 6458 |
+| ringcross-100 | g.M.t90 (5000 ticks) | -1 (all 11) | -1 (9 of 11) | 3926 |
+| ringcross-100 | g.M.t90 (12000 ticks) | 5618 (10 of 11) | 5191 (all 11) | 3926 |
+| ringcross-100 | g.M.arrived (12000 ticks) | 48 | 49 | 50 |
+| ringcross (48/40) | g.M.t90 (12000 ticks) | 4696 | 4381 | 3880 |
+
+attackring-wall-100's walled offsets (0, +-1, +-2) trade "ever in reach"
+(93 / 89 / 44 / 34 / 58 -> 42 / 46 / 40 / 33 / 44): the old blob milled at the
+approach point inside reach; now the ring stands round the walls, as Retail's
+does, and keeps its orders. On the offsets with a ring, ever in reach is
+28 / 33 / 16 / 23 / 15 / 21 -> 35 / 27 / 30 / 29 / 33 / 30 (Retail 40 / 49 /
+32 / 44 / 35 / 35) and damage reaches 68-89% of Retail's (was 37-60%). attack-100
+is a chase: Legion now kills its target as Retail does but sooner, with more
+bodies in reach. The other 19 legion100 fixtures are hash-identical. In
+battle-field-2x60 the contact window's line traces rise 11.5% while its Legion
+work falls 11% and its field work 17% (baseline entry updated; group A loses
+30 bodies instead of 33 over offsets 0,1,-1). `ctest:legion_ringupkeep`,
+`ctest:legion_attackwalled` and `ctest:legion_ringcross` fail on the parent
+and pass here. The Move group's crossing is sensitive to a handful of ring
+steps: with the pressing-in reach tested at the step's centre (the shuffle
+above) ringcross-100's t90 was 4771 at 12000 ticks, with it fixed 5191.
 
 ### Paused first builds (W4 C1, protocol 244)
 
@@ -2816,8 +2904,10 @@ Rules that came out of using them:
   a 20-cell gap, wider than a 48-body formation's band, still swaps 1.73 per
   file (`gap20:gate.top.crossings`). Walls: an attack ring against a wall and
   the bodies queued in doorplug-112 touch the wall about twice as often as
-  Retail. Tails: a Move group crossing its own firing ring arrives about 11%
-  later than Retail; one motion-cross body never finishes from some start
+  Retail (since the 2026-10-19 ring upkeep the 64-body wall ring touches it
+  29 permille against 58 before and Retail's 20). Tails: a Move group crossing
+  its own firing ring arrives about 11% later than Retail (see the next entry
+  for the ~100-body version); one motion-cross body never finishes from some start
   offsets (a doorplug-124 body did too, until the review's slots by arrival:
   its group A now completes at all eleven gate offsets); a lifted flyer
   detours 5 cells against 2.
@@ -2846,6 +2936,23 @@ Rules that came out of using them:
   stuck bodies at some many-100 offsets. Measured by the reversals key of
   tools/scenarios/legion100/corner-1x100.scn and densehead.scn, and by
   `ctest:legion_departure`.
+* **Attack rings at ~100 bodies (after the 2026-10-19 ring upkeep).** Legion
+  bodies stop at cell centres, Retail's at any sub-cell point whose origin cell
+  is free, so Retail packs the firing edge about a third denser: on
+  attackring-wall-100's ring offsets Legion fires with 68-89% of Retail's
+  damage. Against a target walled in on every side Legion's ring stands round
+  the walls but never fires; Retail's bodies pressed flush against a 1-cell
+  wall see through it (the sight cast starts in the cell their float-rounded
+  centre falls in, the wall itself), which Legion does not seek. A Move group
+  crossing a firing ring follows the field round the ring's tangent in one or
+  two files and its tail settles at the back of a loose crowd:
+  ringcross-100's t90 is 5191 at 12000 ticks against Retail's 3926 (never
+  within 5000 ticks at 9 of 11 offsets), and the group completes at 3 of 11
+  offsets. The crossing is sensitive to a few steps of the ring: a handful of
+  pressing-in steps over the whole game move ringcross-100's t90 between 4771
+  and 5191 and the 48/40 `ringcross`'s between 4873 and 4381.
+  Measured by `ctest:legion_ringupkeep`, `ctest:legion_attackwalled`,
+  `ctest:legion_ringcross` and `ringcross:g.M.t90`.
 * **The livelock fix costs some lane order (protocol 257).** A body blocked
   again after a side-step toward its arc may not step straight back, so it
   takes another field step inward or holds and side-steps: the 150 bodies

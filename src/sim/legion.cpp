@@ -248,6 +248,10 @@ constexpr uint32_t kReachPeerHeld=30;
 // The reach ring (see buildRing): members are grouped by reach in buckets of
 // this many px; the ring holds at most kRingCells spots.
 constexpr int kRingBucket=32;
+// Ring upkeep (ringScan): the period of the spent-spot scan.
+constexpr uint32_t kRingScan=30;
+// ... and how long an owner held away from its unspent spot keeps it.
+constexpr uint32_t kRingStale=90;
 constexpr size_t kRingCells=256;
 // Members a reach group needs when its first field starts to plan to a ring
 // (PLAN 3.4; its exit raises it to 8 if the battles' field quota pegs).
@@ -759,16 +763,20 @@ struct LegionNavigator::Impl {
         // Set by the recount and by committed moves (openingDrift, allocateQueue): hashed while non-zero.
         std::vector<std::pair<uint32_t,uint64_t>> openArea;
         // Two or more members: arrival spots round the target at weapon reach.
-        // cells: band 0 (centre distance R-1.5 .. R-0.5 bodies, in the
-        // members' static component and in line of sight of the target: the
-        // field's seeds) then the outer waiting bands, each in pseudo-angle
+        // cells: band 0 (centre distance R-1.5 bodies .. R, in the members'
+        // static component and in line of sight of the target: the field's
+        // seeds), band 1 (the rest of reach out of sight), then the outer
+        // waiting bands (see buildRing), each in pseudo-angle
         // order from the approach bearing, footprints never overlapping;
         // owner: the member holding each (0 free). tried: built (or found
         // without a band-0 spot: the group keeps its point seed) once.
+        // spent: band-0 spots a still body stands on or next to at the last
+        // upkeep scan (ringScan, scanned at that tick; kNoTick: none yet).
         struct Ring {
             bool tried=false,assigned=false;
             int R=0,band0=0;int64_t tx=0,tz=0,ax=0,az=0;   // px: target centre, approach axis
             std::vector<int> cells;std::vector<uint8_t> band;std::vector<int32_t> owner;
+            std::vector<uint8_t> spent;uint32_t scanned=kNoTick;
         } ring;
     };
     // Engaged (AR-06, PLAN 3.4): tickCombat braked this attacker in reach (or a
@@ -903,6 +911,7 @@ struct LegionNavigator::Impl {
         int requested=-1;                 // the goal origin the order named
         int slot=-1;                      // claimed slot index (shared goals)
         int detour=-1;                    // committed side-step cell
+        int pressFrom=-1;                 // the origin of this member's last pressIn step (Stats only, never read by a decision)
         uint32_t detourTicks=0;
         bool detourFace=true;             // side-step turns the body (keep-right) or not (shuffle)
         bool detourPass=false;            // side-step is a lane-discipline pass (moves at travel speed)
@@ -1913,7 +1922,12 @@ struct LegionNavigator::Impl {
             // trappedStill member likewise, owned by its group's command:
             // the convoy key (player, convoyTick) since A2, so the parts of
             // one split selection never plan round each other's tail.
-            else if(m) {
+            // (2026-10-19) An engaged attacker, or one held on its own ring
+            // spot, is soft to its own attack too: the refresh that re-plans
+            // a ring to its unspent spots (ringScan) goes round the firing arc
+            // and the bodies standing for it instead of into them. (A guard
+            // has no ring: its engaged crowd stays its own.)
+            else if(m&&!(m->kind==Kind::Attack&&reachStill(u,*m))) {
                 const auto g=groups.find(m->group);
                 owner=g!=groups.end()?g->second.command:commandKey(u.player,std::get<1>(m->point));
             }
@@ -3397,7 +3411,13 @@ struct LegionNavigator::Impl {
         // where it stands). A static change re-resolves the real goal.
         if(reach>=0&&m.goal>=0&&compAt(p,m.goal)!=reach&&p.compSize[size_t(reach)]>=kApproachRegion) {
             const int near=cached->second.second;
-            if(near>=0) {
+            // An attack on a target out of the region is no unreachable goal
+            // to retire (2026-10-19): Retail's attacker keeps its order and
+            // presses up to the target's walls, firing wherever a shot opens.
+            // Its group plans to the region's nearest point, and to a ring in
+            // reach round the target (buildRing).
+            if(near>=0&&kind==Kind::Attack)m.goal=near;
+            else if(near>=0) {
                 m.real=m.goal;m.goal=near;m.approach=true;m.approachEpoch=epoch;
                 m.approachSince=priorReal==m.real&&priorController==m.controller?priorSince:w.tickCounter_;
                 m.gainBest=0xffffffffu;m.gainTick=w.tickCounter_;m.gainSeen=w.tickCounter_;m.gainSerial=0;
@@ -6657,6 +6677,7 @@ struct LegionNavigator::Impl {
         }
         // The stripe cycle's last tick: the soft cells it added, as blocks.
         if(w.tickCounter_%kStillScan==kStillScan-1)softBlocks();
+        ringScan();
         awareScan();
         meetScan();
         openingScan();
@@ -7927,7 +7948,57 @@ struct LegionNavigator::Impl {
         if(!bodiesFree(u,nx,nz))return false;
         return nx==ox||nz==oz||(bodiesFree(u,nx,oz)&&bodiesFree(u,ox,nz));
     }
+    // Pressing in (2026-10-19): an attacker held within two bodies outside
+    // its reach steps into a free neighbouring origin that puts it in reach
+    // (and in sight, where its shot needs it), as Retail's attacker keeps
+    // walking at its target until combat brakes it: the gaps of a firing
+    // line fill instead of standing a few pixels short (attackring-wall-100,
+    // ringcross-100). The step is a committed side-step (no turn); combat
+    // brakes the body the moment it is in reach.
+    bool pressIn(const Unit& u,Member& m) {
+        if(m.kind!=Kind::Attack||m.detour>=0||!m.route.empty()||m.holdUpdates<4)return false;
+        const auto group=groups.find(m.group);
+        if(group==groups.end()||!group->second.reachTarget||group->second.plane<0)return false;
+        const Unit* t=w.unit(group->second.reachTarget);
+        if(!t||!t->alive()||!t->type||t->type->canFly)return false;
+        const auto [R,los]=reachPx(u,t,false);
+        if(R<=0)return false;
+        const Plane& p=planes[size_t(group->second.plane)];
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ,body=16*std::max(fx,fz);
+        const int64_t tx=t->x.v>>16,tz=t->z.v>>16;
+        const int64_t ux=(u.x.v>>16)-tx,uz=(u.z.v>>16)-tz,d0=ux*ux+uz*uz;
+        if(d0<=int64_t(R)*R||d0>int64_t(R+2*body)*(R+2*body))return false;
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        const bool naval=u.type->domain==UnitType::Domain::Water||t->type->domain==UnitType::Domain::Water;
+        const NavGrid& sight=naval?w.navalSight_:w.nav_;
+        // The side-step ends when the body's origin changes, half a cell
+        // (on a diagonal 8*sqrt(2) < 12 px) short of the neighbour's centre:
+        // the centre must lie 12 px inside reach, so the body is in reach
+        // wherever the step ends (else it walked back out and pressed again,
+        // an in/out shuffle that never fired; Stats::reachPressRepeats).
+        const int64_t inside=std::max<int64_t>(0,int64_t(R)-12);
+        int best=-1;int64_t bestD=0;
+        for(const auto& d:kDirections) {
+            const int cx=ox+d[0],cz=oz+d[1];
+            const int64_t px=int64_t(cx)*16+fx*8-tx,pz=int64_t(cz)*16+fz*8-tz,d1=px*px+pz*pz;
+            if(d1>inside*inside||(best>=0&&d1>=bestD))continue;
+            if(!step(p,ox,oz,d[0],d[1])||!stepFree(u,ox,oz,cx,cz))continue;
+            if(los&&!sight.losBetween(float(px+tx),float(pz+tz),t->x.toFloat(),t->z.toFloat(),std::max(fx,fz)/2,
+                                      std::max(t->type->footX,t->type->footZ)/2))continue;
+            best=cz*W+cx;bestD=d1;
+        }
+        if(best<0)return false;
+        m.detour=best;m.detourTicks=0;m.detourFace=false;m.detourPass=false;
+        ++stats.reachPresses;
+        // A press from the origin of this member's last one: the step did not
+        // put it in reach and it walked back out (an in/out shuffle).
+        const int here=oz*W+ox;
+        if(m.pressFrom==here)++stats.reachPressRepeats;
+        m.pressFrom=here;
+        return true;
+    }
     void hold(Unit& u,Member& m) {
+        if(pressIn(u,m)) {u.speed=Fixed();u.turnReqBam=0;return;}
         if(m.state!=Holding)m.nextDetour=8;
         // Holding is a full stop with a constant heading: no creeping, no
         // re-aiming. The body wakes when a candidate cell frees (rechecked
@@ -8919,6 +8990,7 @@ struct LegionNavigator::Impl {
         const bool los=best>64.0f&&!t->type->canFly&&!u.type->lobs();
         return {int(best+pad),los};
     }
+    static constexpr int64_t kQuarterTurn=65536;   // pseudoAngle's 90 degrees
     // Monotonic integer pseudo-angle of (along, across) in [-2^17, 2^17):
     // 0 along +along, counterclockwise positive (a diamond angle, no atan2).
     static int64_t pseudoAngle(int64_t along,int64_t across) {
@@ -8964,36 +9036,59 @@ struct LegionNavigator::Impl {
         std::vector<int> cells;std::vector<uint8_t> band;
         std::set<int> used;
         uint64_t scanned=0;
-        for(int b=0;b<8&&cells.size()<want;++b) {
-            // Band 0 lies half a body to a body and a half inside reach
-            // (combat brakes a body the moment it is in reach, so bodies on
-            // their way to it stop round the reach edge, leaving room
-            // between them for the ones behind); band b > 0 waits b bodies
-            // farther out.
-            const int64_t lo=std::max<int64_t>(touch,int64_t(R)-3*body/2+int64_t(b)*body),hi=int64_t(R)-body/2+int64_t(b)*body;
-            if(hi<=lo)continue;
-            const int span=int(hi/16)+foot+1;
-            const int cx=int(tx/16),cz=int(tz/16);
-            std::vector<std::pair<int64_t,int>> order;
-            for(int z=std::max(0,cz-span);z<=std::min(H-1,cz+span);++z)for(int x=std::max(0,cx-span);x<=std::min(W-1,cx+span);++x) {
-                ++scanned;
-                const int64_t dx=int64_t(x)*16+fx*8-tx,dz=int64_t(z)*16+fz*8-tz,d2=dx*dx+dz*dz;
-                if(d2<lo*lo||d2>=hi*hi||!legal(p,x,z)||compAt(p,z*W+x)!=comp)continue;
-                if(b==0&&los&&!sight.losBetween(float(x*16+fx*8),float(z*16+fz*8),t->x.toFloat(),t->z.toFloat(),foot/2,
-                                                std::max(t->type->footX,t->type->footZ)/2))continue;
-                order.push_back({pseudoAngle(dx*ax+dz*az,dx*az-dz*ax),z*W+x});
+        // The bands (2026-10-19). Band 0, the field's seeds, lies from a
+        // body and a half inside reach out to the reach edge itself: combat
+        // brakes a body the moment it is in reach, so bodies on their way to
+        // it stop round the edge. Band 1 is the rest of reach that has no
+        // sight of the target (behind its walls): nothing brakes a body
+        // there, and Retail's attackers press on in to the walls. Bands
+        // b >= 2 wait b-1 bodies beyond the edge. (Until 2026-10-19 band 0
+        // ended half a body inside the edge and band 1 straddled it, so
+        // members waited a pixel out of reach in the gaps of the firing
+        // line: attackring-wall-100.) Where no spot of the members'
+        // component in reach sees the target, the whole of reach is band 0,
+        // planned without the sight test (pass 1): one point seed piled the
+        // army against one face, and an unreachable target dropped the order
+        // there. The waiting bands keep to the half facing the members.
+        for(int pass=0;pass<2;++pass) {
+            if(pass==1) {
+                if(!los||!cells.empty())break;
+                los=false;used.clear();
             }
-            std::sort(order.begin(),order.end());
-            for(const auto& [angle,cell]:order) {
-                if(cells.size()>=kRingCells)break;
-                const int x=cell%W,z=cell/W;
-                bool clear=true;
-                for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!used.count((z+j)*W+x+i);
-                if(!clear)continue;
-                for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)used.insert((z+j)*W+x+i);
-                cells.push_back(cell);band.push_back(uint8_t(b));
+            for(int b=0;b<8&&cells.size()<want;++b) {
+                if(b==1&&!los)continue;
+                const int64_t edge=int64_t(R)+1;
+                const int64_t lo=std::max<int64_t>(touch,b>=2?edge+int64_t(b-2)*body:b==1||pass?0:int64_t(R)-3*body/2);
+                const int64_t hi=b>=2?edge+int64_t(b-1)*body:edge;
+                if(hi<=lo)continue;
+                const int span=int(hi/16)+foot+1;
+                const int cx=int(tx/16),cz=int(tz/16);
+                std::vector<std::pair<int64_t,int>> order;
+                for(int z=std::max(0,cz-span);z<=std::min(H-1,cz+span);++z)for(int x=std::max(0,cx-span);x<=std::min(W-1,cx+span);++x) {
+                    ++scanned;
+                    const int64_t dx=int64_t(x)*16+fx*8-tx,dz=int64_t(z)*16+fz*8-tz,d2=dx*dx+dz*dz;
+                    if(d2<lo*lo||d2>=hi*hi||!legal(p,x,z)||compAt(p,z*W+x)!=comp)continue;
+                    if(b<2&&los&&sight.losBetween(float(x*16+fx*8),float(z*16+fz*8),t->x.toFloat(),t->z.toFloat(),foot/2,
+                                                 std::max(t->type->footX,t->type->footZ)/2)!=(b==0))continue;
+                    const int64_t angle=pseudoAngle(dx*ax+dz*az,dx*az-dz*ax);
+                    // The waiting bands keep to the approach side: waiting
+                    // round the far side, they stood across the lanes to the
+                    // band-0 spots there.
+                    if(b>=2&&std::abs(angle)>kQuarterTurn)continue;
+                    order.push_back({angle,z*W+x});
+                }
+                std::sort(order.begin(),order.end());
+                for(const auto& [angle,cell]:order) {
+                    if(cells.size()>=kRingCells)break;
+                    const int x=cell%W,z=cell/W;
+                    bool clear=true;
+                    for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!used.count((z+j)*W+x+i);
+                    if(!clear)continue;
+                    for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)used.insert((z+j)*W+x+i);
+                    cells.push_back(cell);band.push_back(uint8_t(b));
+                }
+                if(b==0&&cells.empty())break;
             }
-            if(b==0&&cells.empty())break;
         }
         stats.slotSearchCells+=scanned;navc.ringCells+=scanned;
         int band0=0;for(const uint8_t b:band)band0+=b==0;
@@ -9035,6 +9130,7 @@ struct LegionNavigator::Impl {
     bool ringFree(const Group& g,const Plane& p,int slot,int self=0) const {
         const int c=g.ring.cells[size_t(slot)],W=width();
         if(g.ring.owner[size_t(slot)]||!legal(p,c%W,c/W)||!g.route()||g.route().estimate(size_t(c))==kUnreached)return false;
+        if(size_t(slot)<g.ring.spent.size()&&g.ring.spent[size_t(slot)])return false;   // see ringScan
         return !self||!ringCovered(g,p,slot,self);
     }
     // Stage 5: may the ring's spots be read as final? A complete route, or
@@ -9126,6 +9222,113 @@ struct LegionNavigator::Impl {
         ringRelease(g,u.id,m);slotCells(m,u.type->footX,u.type->footZ,false);m.slot=-1;
         ringTake(g,u,m,best);
         return true;
+    }
+    // Ring upkeep (2026-10-19). Combat brakes a body the moment it is in
+    // reach, so a band-0 spot with a body firing on or beside it is spent:
+    // nobody behind gets there. The field still descends to it (all band-0
+    // spots are seeds), so the rest of the army queued up behind the first
+    // arc it met while spots round the far side stood empty
+    // (attackring-wall-100: 22 shooters against Retail's 34), and members
+    // held on spots behind the firing line stood out of reach in other
+    // groups' way for good (ringcross). Every kRingScan ticks a ring group
+    // with a finished field marks the band-0 spots whose footprint a still
+    // body (engaged, held, settled, or no Legion mover) covers, there or on
+    // the reach edge radially out from the spot (where a body walking in to
+    // it is braked). If that changed its seeds, they become the unspent
+    // spots (none left: unchanged) and a refresh plans to them. Then the
+    // spots are handed on (below) so that the bodies that can get to a spot
+    // own it.
+    void ringScan() {
+        const uint32_t now=w.tickCounter_;
+        if(now%kRingScan!=kRingScan-1)return;
+        for(auto& [gid,g]:groups) {
+            auto& r=g.ring;
+            if(r.band0==0||!r.assigned||!g.field||!g.field->done||g.next||g.stale||g.plane<0)continue;
+            const Plane& p=planes[size_t(g.plane)];
+            const int W=width(),fx=p.footX,fz=p.footZ,foot=std::max(fx,fz),body=16*foot;
+            const int comp=groupComp(g,p);
+            std::vector<uint8_t> spent(r.cells.size(),0);
+            std::vector<int> seeds;
+            uint64_t visits=0;
+            for(size_t i=0;i<r.cells.size();++i) {
+                if(r.band[i]!=0)continue;
+                const int c=r.cells[i],x=c%W,z=c/W;
+                if(!legal(p,x,z)||compAt(p,c)!=comp)continue;
+                const int64_t sx=int64_t(x)*16+fx*8,sz=int64_t(z)*16+fz*8;
+                // ... and where a body walking in to it stops: on the reach
+                // edge, radially out from it.
+                const int64_t rx=sx-r.tx,rz=sz-r.tz,d=std::max<int64_t>(1,isqrtFloor(uint64_t(rx*rx+rz*rz)));
+                const int64_t ex=sx+rx*(r.R-d)/d,ez=sz+rz*(r.R-d)/d;
+                const int eox=int((ex-fx*8)>>4),eoz=int((ez-fz*8)>>4);
+                bool used=false;
+                auto still=[&](int ox,int oz) {
+                    for(int cz=oz;cz<oz+fz&&!used;++cz)for(int cx=ox;cx<ox+fx&&!used;++cx) {
+                        if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                        ++visits;
+                        const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+                        if(!o)continue;
+                        const Unit* v=w.unit(o);
+                        if(!v||!v->type||v->type->canFly)continue;
+                        const Member* mm=member(o);
+                        used=!mm||(mm->state!=Moving&&mm->state!=Waiting);
+                    }
+                };
+                still(x,z);still(eox,eoz);
+                spent[i]=used;
+                if(!used)seeds.push_back(c);
+            }
+            stats.slotSearchCells+=visits;
+            r.scanned=now;
+            std::sort(seeds.begin(),seeds.end());
+            r.spent=std::move(spent);
+            if(!seeds.empty()&&seeds!=g.seeds) {
+                g.seeds=std::move(seeds);
+                g.stale=true;g.demand=true;
+                ++stats.ringReseeds;
+                listGroup(g);
+            }
+            // An unspent spot whose owner has stood held elsewhere for
+            // kRingStale ticks (buried in the crowd) is swapped with the
+            // outer-band spot of the nearest member waiting outside band 0
+            // that stands at least a body nearer to it; then members owning
+            // a spent spot, or waiting outside band 0, take the nearest free
+            // unspent band-0 spot (ids ascending).
+            std::vector<int> swapped;   // owners given an outer spot this scan: no band-0 spot back below
+            for(size_t i=0;i<r.cells.size();++i) {
+                if(r.band[i]!=0||r.spent[i]||!r.owner[i])continue;
+                const int owner=r.owner[i];
+                Member* mm=member(owner);const Unit* v=w.unit(owner);
+                if(!mm||!v||!v->type||mm->group!=g.id||mm->slot!=int(i)||mm->state!=Holding||heldFor(*mm)<kRingStale)continue;
+                const int c=r.cells[i];
+                const int64_t sx=int64_t(c%W)*16+fx*8,sz=int64_t(c/W)*16+fz*8;
+                auto dist=[&](const Unit& x) {const int64_t dx=(x.x.v>>16)-sx,dz=(x.z.v>>16)-sz;return isqrtFloor(uint64_t(dx*dx+dz*dz));};
+                const int64_t own=dist(*v);
+                int taker=0;int64_t takerD=0;
+                for(const int id:g.reachIds) {
+                    const Member* m2=member(id);const Unit* v2=w.unit(id);
+                    if(!m2||!v2||!v2->type||m2->group!=g.id||!ringMember(g,*m2)||m2->state==Engaged||r.owner[size_t(m2->slot)]!=id||r.band[size_t(m2->slot)]==0)continue;
+                    const int64_t d=dist(*v2);
+                    if(d+body<=own&&(!taker||d<takerD)) {taker=id;takerD=d;}
+                }
+                if(!taker)continue;
+                Member* m2=member(taker);const Unit* v2=w.unit(taker);
+                const int outer=m2->slot;
+                ringRelease(g,owner,*mm);slotCells(*mm,v->type->footX,v->type->footZ,false);
+                ringRelease(g,taker,*m2);slotCells(*m2,v2->type->footX,v2->type->footZ,false);
+                ringTake(g,*v2,*m2,int(i));
+                ringTake(g,*v,*mm,outer);
+                swapped.push_back(owner);
+                ++stats.ringSwaps;
+            }
+            for(const int id:g.reachIds) {
+                Member* mm=member(id);const Unit* v=w.unit(id);
+                if(!mm||!v||!v->type||mm->group!=g.id||!ringMember(g,*mm)||mm->state==Engaged)continue;
+                if(r.owner[size_t(mm->slot)]!=id||std::find(swapped.begin(),swapped.end(),id)!=swapped.end())continue;
+                if(r.band[size_t(mm->slot)]==0&&!r.spent[size_t(mm->slot)])continue;
+                if(r.band[size_t(mm->slot)]==0&&footprintOrigin(v->z,v->type->footZ)*W+footprintOrigin(v->x,v->type->footX)==mm->goal)continue;
+                ringNearest(*v,*mm,g,p,1);
+            }
+        }
     }
     bool ringNearest(const Unit& u,Member& m,Group& g,const Plane& p,int below) {
         const int W=width();
@@ -9262,6 +9465,7 @@ struct LegionNavigator::Impl {
                 if(r.band[i]==0&&legal(p,x,z)&&compAt(p,z*W+x)==comp)++band0;
             }
             r.tx+=int64_t(dx)*16;r.tz+=int64_t(dz)*16;
+            r.spent.clear();r.scanned=kNoTick;
             g.seeds.clear();
             for(size_t i=0;i<r.cells.size();++i)
                 if(r.band[i]==0&&legal(p,r.cells[i]%W,r.cells[i]/W)&&compAt(p,r.cells[i])==comp)g.seeds.push_back(r.cells[i]);
@@ -12048,6 +12252,10 @@ struct LegionNavigator::Impl {
             if(g.ring.tried) {
                 h=mix(h,0x72696e67ull);h=mix(h,uint64_t(g.ring.assigned)|uint64_t(uint32_t(g.ring.R))<<8);h=mix(h,uint64_t(g.ring.band0));
                 for(size_t i=0;i<g.ring.cells.size();++i)h=mix(h,uint64_t(uint32_t(g.ring.cells[i]))<<32|uint64_t(uint32_t(g.ring.owner[i]))<<4|g.ring.band[i]);
+                if(g.ring.scanned!=kNoTick) {
+                    h=mix(h,0x7370656e74ull);h=mix(h,g.ring.scanned);
+                    for(size_t i=0;i<g.ring.spent.size();++i)if(g.ring.spent[i])h=mix(h,uint64_t(i));
+                }
             }
             for(const auto& [seed,slot]:g.slots) {
                 h=mix(h,uint64_t(seed));h=mix(h,slot.built);h=mix(h,slot.reach);h=mix(h,slot.stale);

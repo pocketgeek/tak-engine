@@ -684,6 +684,40 @@ add_test(NAME legion_handout
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/deadend-multi-4x120.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_handout PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"work\\.formation_ring_cells\\.max\":([0-9]?[0-9]?[0-9]?[0-9]?[0-9]|1[0-4][0-9][0-9][0-9][0-9]),")
+# Ring upkeep (2026-10-19, ~100-body fixtures in tools/scenarios/legion100). Combat brakes an attacker the moment it
+# is in reach, so a ring spot with a body firing on or beside it is spent; on the parent the field still led the army
+# to the first arc it met (100 attackers against a walled target seen from one side: a jam on that side, the far
+# arc empty). Passes when, at offsets 3,-3,4 (the target on the wall's corner, seen from part of the ring), the
+# median damage dealt is 1400 or more (parent 1162, Retail 2307 / 2135 / 2227), serial equal to workers.
+add_test(NAME legion_ringupkeep
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/attackring-wall-100.scn --mode legion --offsets 3,-3,4 --json)
+set_tests_properties(legion_ringupkeep PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":(1[4-9][0-9][0-9]|[2-9][0-9][0-9][0-9]|[0-9][0-9][0-9][0-9][0-9]+),")
+# An attack on a target walled in out of the attackers' region (offset 0 of the same fixture) keeps its order and plans
+# a ring in reach round the walls, as Retail's attackers press up to them; on the parent the army walked to the one
+# nearest reachable point, piled against one face and dropped its orders there (19 attackers in reach at the end,
+# Retail 61). Passes at 30 or more, serial equal to workers.
+add_test(NAME legion_attackwalled
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/attackring-wall-100.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_attackwalled PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.now_end\":([3-9][0-9]|[1-9][0-9][0-9]),")
+# A Move group crossing its own firing ring (ringcross-100: 50 attackers ring a target, 50 movers pass at tick 1500).
+# On the parent the ring members held behind the firing line stood out of reach in the movers' way: over offsets
+# 0,1,-1 in 12000 ticks the group's t90 is 5458 / never / 5551 and 38 attackers get in reach (Retail 3926, 43).
+# Passes when the median t90 is under 5400 and at least 40 attackers get in reach, serial equal to workers.
+add_test(NAME legion_ringcross
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/ringcross-100.scn --mode legion --offsets 0,1,-1 --ticks 12000 --json)
+set_tests_properties(legion_ringcross PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.M\\.t90\":([1-4][0-9][0-9][0-9]|5[0-3][0-9][0-9]),.*\"reach\\.ring\\.ever_end\":(4[0-9]|50),")
+# Pressing in never shuffles (2026-10-19 review): a held attacker's step into reach must end in reach. On the first
+# ring-upkeep head it tested reach at the neighbour origin's centre while the step ends half a cell short, so a body
+# stepped in, was not braked, walked back out and pressed again (attackring-wall-64 offset -4: 12 of 14 presses from
+# the same origin as the member's previous one). Passes with no such repeat at any gate offset.
+add_test(NAME legion_pressin
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-wall-64.scn --mode legion --offsets gate --serial --json)
+set_tests_properties(legion_pressin PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"scenario\":\"attackring-wall-64\""
+                     FAIL_REGULAR_EXPRESSION "\"work\\.reach_press_repeats\\.total\":(\\[|[1-9])")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
