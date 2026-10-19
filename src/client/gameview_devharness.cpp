@@ -1574,11 +1574,14 @@
             };
             lookAt(cx,cz);
             sounds_.setListener(cx,cz,640,400);
-            // A local observer keeps enemy victims inside the local player's sight
-            // after the local victims of the same batch die.
+            // Local observers above and below the grid keep every enemy victim inside
+            // the local player's sight after the local victims of the same batch die:
+            // the sound host tests retail's view plane, where one 232-pixel sage
+            // north of the grid does not reach its far row.
             const int observer=spawn("cresage",cx,cz+190,0,localPlayer_);
-            if (observer<0) throw std::runtime_error("observer did not spawn");
-            writableWorld().setStance(observer,2);
+            const int observer2=spawn("cresage",cx,cz-190,0,localPlayer_);
+            if (observer<0 || observer2<0) throw std::runtime_error("observer did not spawn");
+            writableWorld().setStance(observer,2);writableWorld().setStance(observer2,2);
             for (int t=0;t<15;++t) frame();
             int failures=0,deathsTotal=0,mismatched=0,doubled=0;
             std::map<std::string,std::pair<bool,float>> files;
@@ -1762,12 +1765,14 @@
                         if (!eye || !eye->alive()) throw std::runtime_error("observer died");
                         const float x=place ? eye->x.toFloat() : base.x.toFloat();
                         const float z=place ? eye->z.toFloat() : base.z.toFloat();
+                        const std::array<int32_t,3> at=place ? std::array{eye->x.v,eye->groundY.v,eye->z.v}
+                                                             : std::array{base.x.v,base.y.v,base.z.v};
                         if (place==2) selection_={observer};
                         requests.clear();
                         {
                             std::lock_guard<std::mutex> lock(hitQueueMutex_);
                             unitSoundQueue_.push_back({front().gameTick+1,place==2 ? observer : base.unitId,
-                                base.player,x,z,(base.flags&~7)|cls,name});
+                                base.player,x,z,(base.flags&~7)|cls,name,at,false,base.type});
                         }
                         frame();
                         selection_.clear();
@@ -1788,6 +1793,62 @@
                     }
                     std::fprintf(stderr,"CREON_DEATH fog classes 0-7 (G global, P positional): out of sight %s, "
                         "in sight %s, selected %s\n",row[0].c_str(),row[1].c_str(),row[2].c_str());
+                }
+            }
+            // (h) Local units dying where no other local unit sees them. Retail
+            // keeps a dying local unit's sight stamp for 60 ticks (4c6750) on the
+            // plane the sound host 50def0 tests, so their cries play, and a
+            // crebomb's fuse sounds keep playing through that window; display fog
+            // drops a dead unit's sight with its next pass and cut them short.
+            for (const char* id:{"creauto","crebomb"}) {
+                const auto* type=registry_.find(id);
+                if (!type || !type->script()) throw std::runtime_error(std::string(id)+" missing");
+                const auto& names=type->script()->names;
+                float lx=0,lz=0;
+                bool found=false;
+                for (const auto& [px,pz]:{std::pair{cx*1.7f,cz*1.7f},std::pair{cx*.3f,cz*1.7f},
+                                          std::pair{cx*1.7f,cz*.3f},std::pair{cx*.3f,cz*.3f}}) {
+                    bool unseen=true;
+                    for (int i=0;i<4;++i)
+                        unseen=unseen && !cellVisibleR(px-48+float(i%2)*96,pz-48+float(i/2)*96);
+                    if (unseen) {lx=px;lz=pz;found=true;break;}
+                }
+                if (!found) throw std::runtime_error("no unseen corner for the lone-death check");
+                std::vector<int> lone;
+                std::map<int,std::pair<float,float>> where;
+                for (int i=0;i<4;++i) {
+                    const int victim=writableWorld().spawn(type,lx-48+float(i%2)*96,lz-48+float(i/2)*96,0.0f,
+                                                           localPlayer_);
+                    if (victim<0) throw std::runtime_error(std::string("spawn failed: ")+id);
+                    writableWorld().setStance(victim,2);
+                    lone.push_back(victim);
+                }
+                for (int t=0;t<30;++t) frame();
+                requests.clear();sounds_.debugSilence();
+                for (int victim:lone) {
+                    const auto* u=world_.unit(victim);
+                    if (!u || !u->alive()) throw std::runtime_error("lone victim died before the hit");
+                    where[victim]={u->x.toFloat(),u->z.toFloat()};
+                    lethal(victim,1);
+                }
+                for (int t=0;t<120;++t) {
+                    frame();
+                    if (!(t%4)) sounds_.debugSilence();   // keep voices free: count every request
+                }
+                int sounded=0,expected=0,heard=0,fogged=0;
+                for (int victim:lone) {
+                    const auto& made=chosen[victim];
+                    sounded+=int(made.size());
+                    // The stamp is dropped once its deadline (death + 60) is past.
+                    for (const auto& sound:made) expected+=int32_t(sound.tick-made.front().tick)<=60;
+                    heard+=int(heardAt(where[victim].first,where[victim].second,names).size());
+                    fogged+=!cellVisibleR(where[victim].first,where[victim].second);
+                }
+                std::fprintf(stderr,"CREON_DEATH lone %s: 4 local deaths unwatched (%d now fogged), "
+                    "simulation sounded %d (%d within the stamp), client heard %d\n",
+                    id,fogged,sounded,expected,heard);
+                if (!expected || heard!=expected) {
+                    ++failures;std::fprintf(stderr,"FAIL (h) %s: unwatched local death sounds lost\n",id);
                 }
             }
             // (f) A backlog: deaths the presentation skipped over. In live play

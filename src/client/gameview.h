@@ -614,6 +614,11 @@ public:
     uint32_t frameVisGeneration() const { return front().visGen; }
     bool cellVisibleR(float x, float z) const;
     bool effectVisibleR(const std::array<int32_t,3>& position) const;
+    // The native unit sound host 50def0's sight test on the effect plane, which keeps
+    // a dying local unit's sight for 60 ticks: display fog drops it at once, and
+    // silenced the cry of a unit no other local unit was watching.
+    bool unitSoundVisibleR(int player,bool hidden,const tak::sim::UnitType* type,
+                           const std::array<int32_t,3>& position) const;
     std::unique_ptr<tak::RetailEffectVisibility> effectVisibility_;
     uint32_t effectVisibilityTick_=0;
     int effectVisibilityPlayer_=-1;
@@ -649,6 +654,9 @@ public:
         float x = 0, z = 0;
         int32_t flags = 0;
         std::string name;
+        std::array<int32_t,3> position{};   // 16.16 x, height, z for the sight test
+        bool hidden = false;                // cloaked or carried
+        const tak::sim::UnitType* type = nullptr;
     };
     std::deque<QueuedUnitSound> unitSoundQueue_; // guarded by hitQueueMutex_
     int frameWinningTeam() const { return front().winningTeam; }

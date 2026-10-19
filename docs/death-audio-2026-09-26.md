@@ -206,3 +206,32 @@ Leaving the display VM's sounds on as well doubled 541 deaths.
 No hashed state changed and no protocol bump: --mpai Inner Circle seed 1 Retail
 300 s `95b05c8290b55317`, 60 s `84fdef37bbb3606e`, Legion 60 s
 `55b0eec316e45071`; detmath golden `dcef618cd2e4d558`.
+
+## Unwatched local deaths and a data sweep — 2026-10-18
+
+A sweep of all 203 merged-retail unit FBIs (retail archive precedence) found
+92 units whose `Killed`/`Dying` (and the scripts they call or start) play a
+sound. Every referenced WAV is present except the two known absences above
+(`cregatldie1`, `zonbardie1`). No sound-class TDF, explosion class or
+`[EXPLODEAS]` block carries a death sound, so the scripts are the only source.
+The Automaton's `Dying` cries on every death except `deathType` 3: anything
+killed by a `damagetype = explosion` weapon (catapults, cannons, the Tortoise,
+Sage, Beast Rider and 25 other units' weapons; parser 531bad maps fire 2,
+explosion 3, paralyzer 4, anything else 1) dies silently, as authored.
+
+The real gap was the sight test. `50def0` asks `4f7210` (LosOn: the viewer's
+own unit always; another owner's when uncloaked and a projected bounding-box
+corner is seen), then the positional submit `50a7d0` needs the sound's own
+projected cell nonzero on the local current-view plane (`+0x88`). That plane
+keeps a dying local unit's stamp for 60 ticks (`4c6750`). The client tested
+display fog instead, which drops a dead unit's sight with its next pass: for a
+unit dying where no other local unit was watching (a lone scout, the head of a
+column) an immediate cry survived only while that pass lagged, and anything
+`Dying` plays later was lost (a crebomb's fuse: 8 of 20 heard before, 20 of 20
+now). Unit sounds now test the client's effect plane
+(`RetailEffectVisibility`), the same one the script effects use, with the
+position and cloak bit the simulation records at the call. `creon_death_sound`
+case (h) kills four unwatched local Automatons and four crebombs and requires
+every sound inside the 60-tick stamp; the harness now has a second observer,
+since one sage north of the victim grid does not cover its far row on the
+retail plane.
