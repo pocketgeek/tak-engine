@@ -726,7 +726,9 @@ formation's flyers over the front while its ground waits to register (Legion
 only); 0.8.4 ships protocol 277. Protocol 278 adds random-map recipe version 9
 (scattered neutral mana; all modes); 0.8.5 ships protocol 278. Protocol 279 retunes Legion movement at about 100
 bodies: passage admission, departures through arrived crowds and attack rings
-(Legion only).
+(Legion only). Protocol 280 is the second round at about 100 bodies: sub-cell
+presses and ring bends, passage lanes through wide gaps and flow-around at travel
+speed (Legion only).
 Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a

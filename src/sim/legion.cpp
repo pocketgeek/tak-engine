@@ -10035,7 +10035,7 @@ struct LegionNavigator::Impl {
         if(m.detour>=0) {
             // A committed side-step runs to completion (or a short timeout):
             // no re-deciding every update, so no back-and-forth.
-            if(here==m.detour||++m.detourTicks>45||!legal(p,m.detour%W,m.detour/W)) {m.detour=-1;m.lineCell=-1;}
+            if(here==m.detour||++m.detourTicks>45||!legal(p,m.detour%W,m.detour/W)) {m.detour=-1;m.detourFlow=false;m.lineCell=-1;}
             else {
                 // Lateral shuffles keep facing the route: no heading thrash.
                 // Side-steps do not turn the body either (measured: turning

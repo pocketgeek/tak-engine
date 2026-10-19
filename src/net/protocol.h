@@ -19,7 +19,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 279;      // 279: Legion at ~100 bodies: one admission per narrow passage (chain groups
+constexpr uint32_t kNetVersion = 280;      // 280: Legion at ~100 bodies, round 2: sub-cell presses and ring bends, passage
+                                           //      lanes through wide gaps, flow-around at travel speed. Legion state
+                                           //      differs from 279; 279 replays refused
+                                           // 279: Legion at ~100 bodies: one admission per narrow passage (chain groups
                                            //      and stragglers ask), head-on meets near goals sidestep, friendly settled
                                            //      bodies step aside and long detours keep travel speed, attack-ring upkeep
                                            //      and press-in. Legion state differs from 278; 278 replays refused
