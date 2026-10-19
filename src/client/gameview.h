@@ -2264,7 +2264,7 @@ private:
     std::string genPreviewInfo_, genPreviewError_;
     int genPreviewScattered_ = 0;   // v9 neutral spots the preview roll placed
     int genSlider_ = -1;
-    SDL_FRect genSliderRect_[5]{};
+    SDL_FRect genSliderRect_[6]{};
     void applyGenParams();             // re-encode genParams_ -> mpMapId_
     void setGenSlider(int i, float mx);  // drag a density slider from a panel-x
     SDL_FRect mapListRect_{};          // the list box (rows area) -- wheel target

@@ -320,7 +320,8 @@ starts a private server on your own computer for you.
 - **Size** and **player count**. Larger player counts need bigger maps.
 - **Water**, **highland**, **forest** and **rock** amounts.
 - **Extra Mana Spots**: 0 to 6 extra spots per player, added fairly.
-- **Scattered Mana**: None, Minimum, Medium, High or Max. Neutral spots spread
+- **Scattered Mana**: a second slider, separate from the per-player extra spots,
+  with five notches: None, Minimum, Medium, High or Max. Neutral spots spread
   over open ground away from the bases. It is a density, so a bigger map gets
   more of them: Max is as dense as a home with six spots, and each step down
   halves it.

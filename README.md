@@ -849,7 +849,8 @@ The available sizes depend on the layout and player count.
 Drag a density slider to choose its value; the preview regenerates once you
 release it. **Extra Mana Spots** requests 0–6 additional spots per player; the
 preview shows the actual total. Terrain can limit the number of balanced rounds
-that fit. **Scattered Mana** (None, Minimum, Medium, High, Max) adds neutral
+that fit. The **Scattered Mana** slider just below it, separate from those
+per-player spots, has five notches (None, Minimum, Medium, High, Max) and adds neutral
 spots across open ground by map area, so a bigger map gets proportionally more;
 Max matches the density of a home with six spots and each lower level halves it.
 New Lakes maps can reach the map edge, without a forced land border.

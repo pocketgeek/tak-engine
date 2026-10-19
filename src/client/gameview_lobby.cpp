@@ -392,7 +392,9 @@ std::string startLocationsLabel(uint8_t mode) {
             case 1: genParams_.rockDensity = v; break;
             case 2: genParams_.manaDensity = v; break;
             case 3: genParams_.waterDensity = v; break;
-            default: genParams_.reliefDensity = v; break;
+            case 4: genParams_.reliefDensity = v; break;
+            default:   // SCATTERED MANA snaps to its five levels
+                genParams_.manaScatter = uint8_t(t * float(tak::mapgen::kScatterLevels - 1) + 0.5f); break;
         }
     }
 
@@ -703,7 +705,8 @@ std::string startLocationsLabel(uint8_t mode) {
         // sat tighter than the sliders and the run of sliders drifted out of line
         // with everything above it.
         const float kRowH = 24, kGap = 6, kBtnW = 300;
-        const float kSliderH = 32;   // label (11) + 7 + bar (14)
+        const float kSliderH = 30;   // label (11) + 5 + bar (14)
+        const float kHalfW = (kBtnW - kGap) / 2;
         float px = lx, py = hy + 46;   // aligns with the map list's box top
         lbField(px, py, kBtnW, "MAP NAME (optional)", genParams_.name, 5); py += 44;
         lbCycle(px, py, kBtnW, kRowH, std::string("TYPE:  ") + kTypeName[genParams_.mapType % tak::mapgen::kMapTypes],
@@ -717,7 +720,9 @@ std::string startLocationsLabel(uint8_t mode) {
                              applyGenParams(); }); py += kRowH + kGap;
         int curU = genParams_.widthCells / 32;
         char szl[48]; std::snprintf(szl, sizeof szl, "SIZE:  %d x %d", curU, curU);
-        lbCycle(px, py, kBtnW, kRowH, szl, true, [this](int direction) {
+        // SIZE and PLAYERS share a row, so the six sliders and the seed button
+        // still end above the BACK/CREATE footer band of the 540-high canvas.
+        lbCycle(px, py, kHalfW, kRowH, szl, true, [this](int direction) {
             const int u = genParams_.widthCells / 32;
             std::vector<int> sizes;
             for (int size : kSizes) {
@@ -733,15 +738,15 @@ std::string startLocationsLabel(uint8_t mode) {
             int next = sizes[(index + direction + int(sizes.size())) % int(sizes.size())];
             genParams_.widthCells = genParams_.heightCells = uint16_t(next * 32);
             applyGenParams();
-        }); py += kRowH + kGap;
+        });
         char pl[32]; std::snprintf(pl, sizeof pl, "PLAYERS:  %d", int(genParams_.players));
-        lbCycle(px, py, kBtnW, kRowH, pl, true, [this](int direction) {
+        lbCycle(px + kHalfW + kGap, py, kHalfW, kRowH, pl, true, [this](int direction) {
             genParams_.players = uint8_t(2 + (genParams_.players - 2 + direction + 7) % 7);
             applyGenParams();
         }); py += kRowH + kGap * 2;   // a wider break between the pickers and the sliders
         auto slider = [&](int idx, const char* label, uint8_t val, bool enabled = true) {
             blockText(label, px, py, 1.6f, {180, 185, 195, 255});
-            float bx = px, by = py + 18, bw = kBtnW, bh = 14;
+            float bx = px, by = py + 16, bw = kBtnW, bh = 14;
             genSliderRect_[idx] = enabled ? SDL_FRect{bx, by, bw, bh} : SDL_FRect{};
             SDL_FRect bar{bx, by, bw, bh};
             SDL_SetRenderDrawColor(ren_, 30, 34, 46, 255); SDL_RenderFillRectF(ren_, &bar);
@@ -751,29 +756,25 @@ std::string startLocationsLabel(uint8_t mode) {
             SDL_FRect handle{bx + bw * t - 3, by - 2, 6, bh + 4};
             SDL_SetRenderDrawColor(ren_, 200, 220, 200, 255); if (enabled) SDL_RenderFillRectF(ren_, &handle);
             SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &bar);
+            // Short level names: a longer one would run into the preview column.
+            static const char* kScatterShort[tak::mapgen::kScatterLevels] = {"NONE", "MIN", "MED", "HIGH", "MAX"};
             const std::string level = idx==2 ? "+" + std::to_string(tak::mapgen::extraManaRounds(val)) + "/P" :
+                idx==5 ? kScatterShort[std::min<int>(genParams_.manaScatter, tak::mapgen::kScatterLevels - 1)] :
                 !enabled ? "AUTO" : val == 0 ? "NONE" : val < 86 ? "LOW" : val < 171 ? "MED" : "HIGH";
-            blockText(level, bx + bw + 8, py + 16, 1.5f, {160, 165, 180, 255});
+            blockText(level, bx + bw + 8, py + 14, 1.5f, {160, 165, 180, 255});
             py += kSliderH + kGap;
         };
         slider(0, "FORESTS", genParams_.treeDensity);
         slider(1, "ROCK CLUSTERS", genParams_.rockDensity);
         slider(2, "EXTRA MANA SPOTS", genParams_.manaDensity);
+        // Neutral spots scattered by AREA, apart from the per-player extra spots above
+        // (a level, not a count: the same level puts four times as many on a map twice
+        // as wide). Five notches, NONE..MAX; MAX = a six-spot home's density.
+        slider(5, "SCATTERED MANA", uint8_t(genParams_.manaScatter * 255 / (tak::mapgen::kScatterLevels - 1)));
         slider(3, "WATER AMOUNT", genParams_.waterDensity, !tak::mapgen::automaticWater(genParams_.layout));
         slider(4, genParams_.layout==tak::mapgen::Highlands?"HIGHLAND AMOUNT":"AUTHORED HILLS", genParams_.reliefDensity, genParams_.layout!=tak::mapgen::Maze);
         lbBtn(px, py, 110, kRowH, "RE-ROLL SEED", true, [this] {
             genParams_.seed = genParams_.seed * 6364136223846793005ULL + 1442695040888963407ULL;
-            applyGenParams();
-        });
-        // Neutral spots scattered by AREA (a level, not a count: the same level puts
-        // four times as many on a map twice as wide). MAX = a six-spot home's density.
-        // It shares the seed row: a row of its own pushed the column past the
-        // 540-high lobby canvas and into the BACK/CREATE footer band.
-        std::string scatter = tak::mapgen::scatterName(genParams_.manaScatter);
-        for (char& ch : scatter) ch = char(std::toupper(static_cast<unsigned char>(ch)));
-        lbCycle(px + 116, py, kBtnW - 116, kRowH, "SCATTERED MANA: " + scatter, true, [this](int direction) {
-            genParams_.manaScatter = uint8_t((genParams_.manaScatter + direction + tak::mapgen::kScatterLevels) %
-                                             tak::mapgen::kScatterLevels);
             applyGenParams();
         });
       }
@@ -1353,7 +1354,7 @@ std::string startLocationsLabel(uint8_t mode) {
             if (forward) { if (lbField_ == 5) applyGenParams(); lbField_ = 0; SDL_StopTextInput(); }
             float mx, my; lobbyMouse(mx, my);
             if (forward && ptIn(mapThumbRect_, mx, my)) { mapDrag_ = true; return; }   // grab the thumb
-            for (int gi = 0; gi < 5; ++gi)   // grab a density slider
+            for (int gi = 0; gi < 6; ++gi)   // grab a density slider
                 if (forward && ptIn(genSliderRect_[gi], mx, my)) { genSlider_ = gi; setGenSlider(gi, mx); return; }
             for (auto& hot : lobbyHots_)
                 if (ptIn(hot.rect, mx, my)) {
