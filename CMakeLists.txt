@@ -836,6 +836,14 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale many-100 --data "${TAK_TEST_DATA}"
                    --min scale.arrive.n=98 --min scale.arrive.t90=1 --max scale.arrive.t90=1000 --max scale.stuck_end=0)
   set_tests_properties(legion_meetnear PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # Departures through an arrived crowd (many-1000: each order's last bodies leave through the next order's
+  # arrivals; settled friendly bodies of any allied player yield or part for them, and a long detour round a
+  # crowd keeps travel speed): at least 900 of 1,000 arrive, at most 20 stuck (the previous commit 746 / 73).
+  add_test(NAME legion_departure
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale many-1000 --data "${TAK_TEST_DATA}"
+                   --min scale.arrive.n=900 --max scale.stuck_end=20)
+  set_tests_properties(legion_departure PROPERTIES LABELS legion TIMEOUT 900 SKIP_RETURN_CODE 77)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison
