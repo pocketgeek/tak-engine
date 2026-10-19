@@ -1,6 +1,7 @@
 #include "sim/matchsetup.h"
 #include "net/protocol.h"
 #include "client/renderframe.h"
+#include "client/buildghost.h"
 #include "hpi/hpi.h"
 #include <algorithm>
 #include <cstdio>
@@ -422,6 +423,35 @@ void fireSweep(sim::PathfindingMode mode) {
         check(w.unit(id)->slotAuto==7,"sweep: the slots return to auto after the attack order");
     }
 }
+// The build being worked keeps its order at the front of the queue, and its site is a
+// real unit drawn in the painter list. The queued-build ghosts (drawn over every body)
+// must skip that order, or a flyer conjuring it shows UNDER a copy of its own site;
+// the orders still waiting keep their ghosts.
+void workedBuildDrawsNoGhost(bool air) {
+    sim::World w;setup(w,sim::PathfindingMode::Retail);auto builder=worker(air);auto lode=lodestone();
+    w.setManaSpots({{600,400},{1000,400}});
+    const int id=w.spawn(&builder,400,400,0,0);
+    w.queueBuild(id,&lode,600,400,false);
+    w.queueBuild(id,&lode,1000,400,true);
+    const sim::Unit* site=nullptr;
+    for(int tick=0;tick<1200 && !site;++tick) {
+        w.tick(1.f/30);
+        const auto* b=w.unit(id);
+        if(const auto* s=b->buildSiteId ? w.unit(b->buildSiteId) : nullptr; s && s->buildBegun) site=s;
+    }
+    const auto& b=*w.unit(id);
+    // The rendered snapshot reads the same fields.
+    UnitR rb,rs;rb.captureOrders(b);rb.buildSiteId=b.buildSiteId;
+    if(site) {rs.type=site->type;rs.underConstruction=site->underConstruction;}
+    const bool worked=site && b.orders.size()==2 && b.orders.front().buildType==&lode;
+    check(worked && !render::buildGhostDrawn(b,0,site) && render::buildGhostDrawn(b,1,site) &&
+          !render::buildGhostDrawn(rb,0,&rs) && render::buildGhostDrawn(rb,1,&rs),
+          air ? "conjuring flyer: worked build draws no queued ghost, the next one does" :
+                "conjuring walker: worked build draws no queued ghost, the next one does");
+    // Without its site (not reached yet, or gone) the front order is just queued.
+    check(render::buildGhostDrawn(b,0,static_cast<const sim::Unit*>(nullptr)),
+          "front build without a site still draws its ghost");
+}
 int main(int argc,char** argv) {
     for(auto mode:{sim::PathfindingMode::Retail})
         for(bool air:{false,true}) {areaBuild(mode,air);patrolRepair(mode,air);}
@@ -434,6 +464,7 @@ int main(int argc,char** argv) {
     fireSweep(sim::PathfindingMode::Legion);   // the sweep is pathfinder-independent
     check(areaNearestFirst(true)==areaNearestFirst(false),"nearest-first area serial/threaded hashes agree");
     areaNearestEdgeCases();
+    for(bool air:{false,true}) workedBuildDrawsNoGhost(air);
     net::Command c;c.kind=net::Cmd::BuildManaArea;c.unitId=1;c.x=100;c.z=200;c.x2=800;c.z2=900;
     std::snprintf(c.type,sizeof c.type,"lode");net::Writer out;out.cmd(c);
     net::Reader in(out.b.data(),out.b.size());auto decoded=in.cmd();
