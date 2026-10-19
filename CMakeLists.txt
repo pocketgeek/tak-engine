@@ -674,6 +674,14 @@ add_test(NAME legion_passagelanes
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/gap14.scn --mode legion --offsets 0,1,-1,2,-2 --json)
 set_tests_properties(legion_passagelanes PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.A\\.done\":[0-9]+,.*\"gate\\.top\\.crossings\":0,")
+# Passage lanes through a wide gap (2026-10-19, Legion ~100 round 2): 100 bodies take a 20-cell gap, narrower than
+# their formation's band (25 cells) but not than the lanes' old 16-origin cap, so on the parent nobody kept a lane
+# there: 9 to 37 lane swaps in the gap strip over the core five (median 15; Retail 3 over the gate offsets). Passes
+# when the median run swaps none there and the group is done, serial equal to workers.
+add_test(NAME legion_widegaplanes
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/gap20-100.scn --mode legion --offsets 0,1,-1,2,-2 --json)
+set_tests_properties(legion_widegaplanes PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.A\\.done\":[0-9]+,.*\"gate\\.top\\.crossings\":0,")
 # One slot hand-out budget a tick (2026-10-14 Legion review, item 5): four 120-body clicks to four dead ends in one tick.
 # The formation slot searches had a budget per point, and none for a formation's first 32 slots or for a member
 # without a slot: on the parent they walk 602,176 ring cells in one tick (B's second part searching against the
