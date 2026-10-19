@@ -106,23 +106,23 @@ maps and on generated maps with Scattered Mana at None.
 
 ## Screenshots
 
-<!-- PLACEHOLDER (LEAD / screenshot agent, branch task-release-085-shots):
-     which pictures were recaptured and with which build. Captions written for
-     new captures by the docs branch, which must match the new pictures:
-     - title.jpg (VERSION 0.8.5): README alt text, gallery footnote
-       ("0.7.25 to 0.8.5 builds"), docs/img/README.md row;
-     - guide/options-graphics.jpg: user-guide alt text and caption now describe
-       the 0.8.5 defaults (Texture Filtering Everything, Smooth GUI Art and
-       Smooth Movies on, Tactical Dots on at 0%, Screen Shake off) and no
-       longer say Tactical Dots Zoom is greyed out;
-     - guide/tactical-dots.jpg: user-guide caption now says effects are drawn
-       only without dots and no longer names the 20% zoom or "the blue spell
-       effect drawn either way".
-     Possibly affected, captions unchanged: cartographer/random-generator.jpg
-     (the dialog has a new SCATTERED MANA row; its alt text lists the fields),
-     and the lobby generator panel if a picture of it exists (Scattered Mana
-     slider, SIZE and PLAYERS on one row). docs/img/README.md still describes
-     the 0.8.4 capture profiles (Smooth GUI Art off, Texture Filtering Off). -->
+<!-- PLACEHOLDER (LEAD): merge task-release-085-shots (db85ee61: 15 pictures
+     recaptured with the 0.8.5 defaults plus the new guide/random-map-lobby.jpg,
+     docs/img/README.md rewritten; its title.jpg row is identical to the docs
+     branch's, so the merge is clean). Then summarise: recaptured title.jpg,
+     battle, dragons, flyers, hud, naval, generated (v9, Scattered Mana Medium),
+     guide/options-graphics (SCREEN SHAKE row, 1600 x 1100 window),
+     guide/tactical-dots (zoom 0.1875, no effects on the dots half),
+     guide/benchmark, scorecard, fire-on-the-move, flyers-retail-legion,
+     cartographer/random-generator (SCATTERED MANA field); new
+     guide/random-map-lobby.jpg (linked from the user guide's Random maps).
+     Kept: diplomacy.jpg, guide/voice-chat.jpg (0.8.4) and the 0.8.3/0.8.1
+     pictures, drawn with the old unfiltered defaults. Captions written for the
+     new pictures (README title/generated alt text and footnote, user-guide
+     options-graphics, tactical-dots, random-map-lobby and generated, the
+     cartographer random-generator alt text) were checked against the images.
+     Before/after evidence for the build ghost and dots-without-effects:
+     ~/tak-tmp/scratch/release-085/evidence/. -->
 
 *To be written.*
 

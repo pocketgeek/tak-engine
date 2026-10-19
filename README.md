@@ -27,7 +27,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
     <td width="50%"><a href="docs/img/naval.jpg"><img src="docs/img/naval.jpg" alt="Veruna sailing ships trade fire with Creon ironclads on open water"></a><br><sub>Veruna's fleet against Creon ironclads (development scene)</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/img/generated.jpg"><img src="docs/img/generated.jpg" alt="A wooded lake shore on a generated Aramon Riverlands map"></a><br><sub>A generated Aramon Riverlands map</sub></td>
+    <td width="50%"><a href="docs/img/generated.jpg"><img src="docs/img/generated.jpg" alt="A wooded lake shore on a generated Aramon Riverlands map, with a lodestone on a scattered neutral mana spot in a clearing"></a><br><sub>A generated Aramon Riverlands map with Scattered Mana</sub></td>
     <td width="50%"><a href="docs/img/lobby.jpg"><img src="docs/img/lobby.jpg" alt="The create-game screen with map selection and a preview with numbered start positions"></a><br><sub>Maps and match setup</sub></td>
   </tr>
   <tr>

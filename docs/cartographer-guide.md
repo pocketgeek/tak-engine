@@ -1032,7 +1032,7 @@ uses for its random maps.
    Click **ACCEPT** (**Enter**) to use it, **SETTINGS** to go back and change
    the settings, or **DISCARD** (**Esc**) to keep your current map.
 
-![Left: RANDOM MAP SETTINGS with seed 2026, 4 players, layout Aramon Riverlands, trees 128, rocks 96, mana 128, water intensity 96, relief 128, width and height 16, world aramon. Right: GENERATED MAP PREVIEW, 16 x 16, 4 players, a green map with small ponds and four numbered yellow start markers](img/cartographer/random-generator.jpg)
+![Left: RANDOM MAP SETTINGS with seed 2026, 4 players, layout Aramon Riverlands, trees 128, rocks 96, mana 128, water intensity 96, relief 128, width and height 16, world aramon, scattered mana (by map area) Medium. Right: GENERATED MAP PREVIEW, 16 x 16, 4 players, a green map with small ponds and four numbered yellow start markers](img/cartographer/random-generator.jpg)
 
 *Generating a 4-player, 16 × 16 Aramon Riverlands map from seed 2026.*
 

@@ -333,14 +333,22 @@ Every player gets a flat base area, clear routes for armies and three home mana
 spots. Scattered spots are always reachable from some start, never
 inside a base, and are spread evenly but not mirrored. Islands maps need ships
 or flyers to reach other players. The preview updates when you release a slider
-and counts the scattered spots with the rest; in the game room the map settings
-list the Scattered Mana level beside the map seed. When the game starts, the map is saved on
+and counts the scattered spots in its MANA total, with a separate SCATTERED
+line for the neutral ones; in the game room the map settings list the Scattered
+Mana level beside the map seed. When the game starts, the map is saved on
 every player's computer and on the server, so it appears in the map list later.
 See [random map generation](random-map-generation.md) for the rules it follows.
 
-![A wooded lake shore on a generated Aramon Riverlands map](img/generated.jpg)
+![The single-player screen with Generate Random Map open: Type Aramon, Layout Mainland, Size 12 × 12 and Players 4 on one row, then the Forests, Rock Clusters, Extra Mana Spots, Scattered Mana (at High), Water Amount and Authored Hills sliders and Re-roll Seed. The preview shows four numbered starts and reads MANA: 57 and SCATTERED: 33 NEUTRAL](img/guide/random-map-lobby.jpg)
 
-*Part of a generated Aramon Riverlands map.*
+*The random map settings in the single-player lobby, with Scattered Mana at
+High. Size and Players share a row.*
+
+![A wooded lake shore on a generated Aramon Riverlands map, with a lodestone among standing-stone ruins in a clearing](img/generated.jpg)
+
+*Part of a generated Aramon Riverlands map with Scattered Mana at Medium. The
+lodestone in the clearing stands on a neutral scattered spot that an AI has
+claimed.*
 
 ---
 
@@ -1223,8 +1231,8 @@ missed are silent while the game catches up.
 | --- | --- | --- |
 | **Renderer** | Auto | Which graphics backend draws the game. Takes effect after a restart; see [Renderer](#renderer). |
 | **Ignore Windows Display Scaling** | On | Windows only. Stops Windows from enlarging the game window to match your display scaling (for example 150%), which made everything blurry. The game draws at the real screen resolution instead. Takes effect after a restart. The first time it runs, UI Scale and Cursor Size are raised to your Windows scale so the interface stays the same size, now sharp; adjust them afterwards if you like. |
-| **Texture Filtering** | Everything | How the game area is smoothed when you zoom in. **Off**: nothing is smoothed, as in the original. **Units**: the original game's Bilinear Filtering option; smooths unit textures and unit shadows only. **Everything**: Units, plus terrain, trees, rocks and other scenery, and effects, once you zoom in past 150%. Not in the original game. The interface, cursor and movies are never affected; see below. |
 | **Native Retina Resolution** | On | macOS only; the same row as Ignore Windows Display Scaling. Draws at the full resolution of a Retina display (normally twice the window's size in points) instead of letting macOS double a half-size image, which made everything soft. Takes effect after a restart. The first time it runs on a Retina display, UI Scale and Cursor Size are doubled so the interface stays the same size, now sharp; adjust them afterwards if you like. The window can move between a Retina and an ordinary display: the picture and the pointer follow the display it is on, but UI Scale is not changed again, so the interface looks bigger on an ordinary display. |
+| **Texture Filtering** | Everything | How the game area is smoothed when you zoom in. **Off**: nothing is smoothed, as in the original. **Units**: the original game's Bilinear Filtering option; smooths unit textures and unit shadows only. **Everything**: Units, plus terrain, trees, rocks and other scenery, and effects, once you zoom in past 150%. Not in the original game. The interface, cursor and movies are never affected; see below. |
 | **Shadows** | On | Unit, scenery and projectile shadows. The biggest single graphics cost in a crowded battle. |
 | **Smooth GUI Art** | On | Sharpens the low-resolution interface art, menus, fonts, cursors and build-menu portraits with an edge-aware upscale. Applies at once. No cost per frame; uses more video memory. |
 | **Smooth Movies** | On | Removes the blocky compression artefacts from the game's movies. |
@@ -1294,11 +1302,12 @@ terrain and the art of burning or burnt scenery are still drawn. Dots
 are much cheaper to draw than models, so a huge zoomed-out battle also runs
 faster.
 
-![Two views of the same moment in a large battle, zoomed far out. Left, with Tactical Dots off, the armies are tiny unit models that are hard to tell apart from the trees. Right, with Tactical Dots on, each army is a field of squares in its player's colour: blue, green and maroon](img/guide/tactical-dots.jpg)
+![Two views of the same moment in a large battle, fully zoomed out. Left, labelled MODELS, the armies are tiny unit models that are hard to tell apart from the trees, with fire and spell flashes among them. Right, labelled TACTICAL DOTS, each army is a field of squares in its player's colour, blue, red and grey, with no effects drawn](img/guide/tactical-dots.jpg)
 
 *The same moment of an eight-AI Benchmark battle on Ulasem Arena, zoomed far out
-in a 1920 × 1080 window. Left, Tactical Dots off; right, on. Trees and terrain
-are drawn either way; the battle's effects only without dots.*
+in a 1920 × 1080 window, at the default Tactical Dots Zoom of 0%. Left, Tactical
+Dots off; right, on. Trees and terrain are drawn either way; the battle's
+effects only without dots.*
 
 #### Renderer
 
