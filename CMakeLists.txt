@@ -735,6 +735,14 @@ add_test(NAME legion_ringbend
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/ringcross-100.scn --mode legion --offsets 0,1,-1 --json)
 set_tests_properties(legion_ringbend PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.M\\.t90\":([1-3][0-9][0-9][0-9]|4[0-4][0-9][0-9]),\"g\\.M\\.done\":[1-4][0-9][0-9][0-9],")
+# ringBend only bends a lane near the ring (3 clearance radii) and clear of walls up to it (2026-10-19 review of round
+# 2): a Move group whose lanes meet a U-shaped wall long before another command's firing ring (ringbend-pocket). On
+# the first round-2 head every member was bent into the pocket and the field led it back out, for good: 0 of 20
+# arrived at offsets 0,1,-1. Passes when the group completes (median g.M.done set), serial equal to workers.
+add_test(NAME legion_ringbend_pocket
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/ringbend-pocket.scn --mode legion --offsets 0,1,-1 --json)
+set_tests_properties(legion_ringbend_pocket PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.M\\.done\":[1-9][0-9]*,")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is

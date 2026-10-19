@@ -1968,6 +1968,15 @@ b353410003e98dd5, Legion 0825aeb9e8139203, both unchanged):
   the waiting bodies, crossed slower (4291). From inside the circle, with its slot
   inside it, or with the line refused, the body keeps the field.
   `ctest:legion_ringbend`.
+  The bend looks no farther than the line probe (kFormationLineCells past the 1.5
+  radii circle), only when its own lane up to that circle is clear of static
+  blocks (the line probe's whole-lane sweep), and never for a livelocked body. The
+  review of the first head found a livelock without these: a U-shaped wall on the
+  lane, 180 cells short of the ring, took every bend into the pocket and the field
+  back out (0 of 20 arrived in 20,000 ticks; now 20 of 20, t90 4485 at offsets
+  0,1,-1, Retail 19-20 / 4497; `ctest:legion_ringbend_pocket`). A cap of three
+  clearance radii was tried instead and cost the crossing: ringcross-100 t90 4426
+  at the gate offsets (4066 with no cap), since the lanes part well before the ring.
 
 Medians over the gate offsets (Legion before -> after, Retail):
 

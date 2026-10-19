@@ -9639,7 +9639,8 @@ struct LegionNavigator::Impl {
     // before) without such a ring, from inside the circle, when the slot lies
     // inside it, or when the line to the aim is not clear.
     bool ringBend(const Unit& u,const Group& g,const Plane& p,Fixed gx,Fixed gz,Fixed& ax,Fixed& az) {
-        if(ringDiscs.empty())return false;
+        // A livelocked body walks down the field (as off the pinwheel arc).
+        if(ringDiscs.empty()||livelock(u))return false;
         const int fx=u.type->footX,fz=u.type->footZ,half=8*std::max(fx,fz);
         const int64_t px=u.x.v>>16,pz=u.z.v>>16,sx=gx.v>>16,sz=gz.v>>16;
         const int64_t lx=sx-px,lz=sz-pz,ll=lx*lx+lz*lz;
@@ -9651,6 +9652,8 @@ struct LegionNavigator::Impl {
             const int64_t rc=d.r+half+16,reach=rc*3/2;
             const int64_t cx=d.cx-px,cz=d.cz-pz;
             if(cx*cx+cz*cz<=rc*rc)continue;   // inside the clearance circle: the field's way
+            // No farther than the line probe looks (kFormationLineCells past the 1.5-radii circle).
+            if(const int64_t far=int64_t(kFormationLineCells)*16+reach;cx*cx+cz*cz>far*far)continue;
             const int64_t ex=sx-d.cx,ez=sz-d.cz;
             if(ex*ex+ez*ez<=rc*rc)continue;   // the slot lies inside it
             const int64_t t=std::clamp<int64_t>(cx*lx+cz*lz,0,ll);
@@ -9663,6 +9666,20 @@ struct LegionNavigator::Impl {
         // The body in the lane's frame round the centre: along (x) and across (y).
         const int64_t len=isqrtFloor(uint64_t(ll));
         if(!len)return false;
+        {
+            // The lane up to where it meets the 1.5-radii circle must be clear of static blocks, as the
+            // line probe sweeps its whole lane: the bend only takes the body round the ring, never past
+            // a wall in front of it, which is the field's to plan. (2026-10-19 review: with no such sweep
+            // a U-shaped wall on the lane, far short of the ring, took the bend in and the field back out
+            // for good, ringbend-pocket.)
+            const int64_t cx=hit->cx-px,cz=hit->cz-pz,reach=hitR*3/2;
+            const int64_t along=(cx*lx+cz*lz)/len,across2=std::max<int64_t>(0,cx*cx+cz*cz-along*along);
+            const int64_t chord=reach*reach>across2?isqrtFloor(uint64_t(reach*reach-across2)):0,s=along-chord;
+            if(s>0) {
+                const int64_t ex=px+lx*s/len,ez=pz+lz*s/len;
+                if(!sweep(p,u,u.x,u.z,Fixed::fromInt(int32_t(ex)),Fixed::fromInt(int32_t(ez))))return false;
+            }
+        }
         const int64_t vx=px-hit->cx,vz=pz-hit->cz;
         const int64_t x=(vx*lx+vz*lz)/len;
         int64_t y=(vz*lx-vx*lz)/len;
@@ -10134,7 +10151,7 @@ struct LegionNavigator::Impl {
                 if(m.slot>=0&&formationMember(m)&&!engagesEnemies(m.kind)&&ringBend(u,g,p,gx,gz,bx,bz)) {m.bend=true;m.bendX=bx.v;m.bendZ=bz.v;}
             }
             direct=m.line;
-            if(m.bend) {aimX=Fixed::raw(m.bendX);aimZ=Fixed::raw(m.bendZ);direct=true;}
+            if(m.bend&&!livelock(u)) {aimX=Fixed::raw(m.bendX);aimZ=Fixed::raw(m.bendZ);direct=true;}
         }
         // A ring member near its own spot walks to it: band 0 is all one
         // potential, and an outer spot lies up the field from band 0. (On a
