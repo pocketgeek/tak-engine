@@ -10,7 +10,7 @@ schema unchanged since 0.8.4).
      (intro, Versions, Replays, public server, old replays);
      docs/public-server.md; docs/random-map-generation.md (generator 9);
      docs/multiplayer-design.md (protocol summary, 278 replay history, the
-     required-protocol line); docs/img/README.md (title.jpg row only); these
+     required-protocol line); docs/img/README.md (from the screenshots branch); these
      notes and the release notes. If kNetVersion moves past 278, update every
      one of them. -->
 
@@ -108,8 +108,8 @@ maps and on generated maps with Scattered Mana at None.
 
 <!-- PLACEHOLDER (LEAD): merge task-release-085-shots (db85ee61: 15 pictures
      recaptured with the 0.8.5 defaults plus the new guide/random-map-lobby.jpg,
-     docs/img/README.md rewritten; its title.jpg row is identical to the docs
-     branch's, so the merge is clean). Then summarise: recaptured title.jpg,
+     docs/img/README.md rewritten there; the docs branch leaves that file alone,
+     so the two merge cleanly). Then summarise: recaptured title.jpg,
      battle, dragons, flyers, hud, naval, generated (v9, Scattered Mana Medium),
      guide/options-graphics (SCREEN SHAKE row, 1600 x 1100 window),
      guide/tactical-dots (zoom 0.1875, no effects on the dots half),
