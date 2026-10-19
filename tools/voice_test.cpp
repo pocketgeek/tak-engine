@@ -186,6 +186,18 @@ static void testPtt() {
     p.press(false, true, false);
     check(p.release() && !p.talking(), "the release ends it");
 
+    // Voice activation: a loud frame opens the gate, which holds through short pauses.
+    voice::VoiceGate g;
+    check(!g.frame(0.05f, 0.15f) && !g.open(), "quiet frames stay closed");
+    check(g.frame(0.3f, 0.15f), "a frame at the level opens it");
+    int held = 0;
+    while (g.frame(0.0f, 0.15f)) ++held;
+    check(held == voice::VoiceGate::kHoldFrames - 1, "it holds through a pause: " + std::to_string(held) + " frames");
+    check(!g.open(), "and closes after the hold");
+    check(g.frame(0.15f, 0.15f), "exactly the level counts");
+    g.reset();
+    check(!g.open() && g.frame(0.0f, 0.0f), "reset closes it; level 0 sends everything");
+
     // The default binding and its matching rules.
     Hotkeys hk; hk.load({});
     const KeyChord c = hk.chord(Act::PushToTalk);
@@ -283,24 +295,32 @@ static void testSettings(const fs::path& dir) {
     const Settings d;
     check(!d.voiceEnabled && d.voiceOutputSameAsGame && d.voiceMicVolume == 100 && d.voiceOutputVolume == 100 &&
           d.voiceMicDevice.empty() && d.voiceOutputDevice.empty(), "voice chat is OFF by default");
+    check(!d.voiceActivation && d.voiceActivationLevel == 15, "TALK MODE defaults to push to talk");
     const fs::path file = dir / "settings.ini";
     setSettingsPath(file.string());
     {   // a file from before voice chat: still off.
         std::ofstream f(file); f << "masterVol = 200\n";
     }
     Settings old = loadSettings();
-    check(!old.voiceEnabled && old.masterVol == 200, "an older settings file loads with voice off");
+    check(!old.voiceEnabled && !old.voiceActivation && old.masterVol == 200,
+          "an older settings file loads with voice off, push to talk");
     Settings s;
     s.voiceEnabled = true; s.voiceMicDevice = "USB Mic"; s.voiceOutputSameAsGame = false;
     s.voiceOutputDevice = "Headset"; s.voiceMicVolume = 35; s.voiceOutputVolume = 70;
+    s.voiceActivation = true; s.voiceActivationLevel = 42;
     s.hotkeys["voice.ptt"] = "Ctrl+V";
     check(saveSettings(s), "save");
     const Settings back = loadSettings();
     check(back == s, "voice settings round-trip through the file");
     check(serializeSettings(Settings{}).find("voiceEnabled = 0") != std::string::npos, "the file says voiceEnabled = 0");
-    { std::ofstream f(file); f << "voiceMicVolume = 900\nvoiceOutputVolume = -4\n"; }
+    { std::ofstream f(file); f << "voiceMicVolume = 900\nvoiceOutputVolume = -4\nvoiceActivationLevel = 300\n"; }
     const Settings clamp = loadSettings();
-    check(clamp.voiceMicVolume == 100 && clamp.voiceOutputVolume == 0, "volumes clamp to 0..100");
+    check(clamp.voiceMicVolume == 100 && clamp.voiceOutputVolume == 0 && clamp.voiceActivationLevel == 100,
+          "volumes and the activation level clamp to 0..100");
+    Settings va = s;
+    va.voiceActivation = true;
+    check(!voiceDefaults(va).voiceActivation && voiceDefaults(va).voiceActivationLevel == 15,
+          "the page's DEFAULTS go back to push to talk");
     setSettingsPath("");
 }
 
@@ -465,6 +485,25 @@ static void testEngine(const fs::path& dir) {
     check(!sent.empty(), "still talking on the fallback device");
     pump(60, true, false);
 
+    // Voice activation: no key, the tone (peak 0.5) opens the gate at level 15...
+    s.voiceActivation = true; s.voiceActivationLevel = 15;
+    sent.clear();
+    pump(600, true, true);
+    check(sent.size() >= 15 && (sent.front().flags & net::kVoiceStart) && v.transmitting(),
+          "voice activation sends the tone by itself: " + std::to_string(sent.size()) + " frames");
+    // ...and not at 60, where it only meters.
+    s.voiceActivationLevel = 60;
+    pump(500, true, true);   // the gate's 400 ms hold runs out and the transmission ENDs
+    sent.clear();
+    pump(600, true, true);
+    check(sent.empty() && !v.transmitting() && v.micLevel() > 0.4f,
+          "below the activation level nothing is sent: " + std::to_string(sent.size()) + " frames");
+    // Not allowed (out of the room, voice off): never.
+    s.voiceActivationLevel = 0;
+    pump(600, true, false);
+    check(!v.transmitting(), "voice activation sends nothing where talking is not allowed");
+    s.voiceActivation = false; s.voiceActivationLevel = 15;
+
     // Switched off mid-game: everything closes at once.
     s.voiceEnabled = false;
     sent.clear();
@@ -514,7 +553,7 @@ static void testPage() {
             page.input(u, W, H);
             page.render(W, H);
         };
-        const char* rows[] = {"MIC DEVICE", "MIC VOLUME", "MIC LEVEL", "OUTPUT DEVICE", "OUTPUT VOLUME", "PUSH TO TALK"};
+        const char* rows[] = {"TALK MODE", "MIC DEVICE", "MIC VOLUME", "MIC LEVEL", "OUTPUT DEVICE", "OUTPUT VOLUME", "PUSH TO TALK"};
         shot("voice-off.png");
         check(page.rowEnabled("VOICE CHAT"), "the switch is live while off");
         for (const char* r : rows) check(!page.rowEnabled(r), std::string(r) + " is greyed while voice chat is off");
@@ -535,7 +574,25 @@ static void testPage() {
         check(s.voiceOutputVolume >= 73 && s.voiceOutputVolume <= 77, "OUTPUT VOLUME 0..100");
         click("PUSH TO TALK", 0.98f);
         check(hotkeys == 1, "PUSH TO TALK opens CONTROLS");
+        check(!s.voiceActivation && !page.rowEnabled("ACTIVATION LEVEL"),
+              "push to talk is the TALK MODE once on; ACTIVATION LEVEL is greyed");
         shot("voice-on.png");
+        // TALK MODE: pick Voice Activation (index 1) from its list.
+        click("TALK MODE", 0.9f);
+        {
+            const SDL_FRect item = page.dropItemRect(1);
+            SDL_Event e{}; e.type = SDL_MOUSEBUTTONDOWN; e.button.button = SDL_BUTTON_LEFT;
+            e.button.x = int(item.x + item.w / 2); e.button.y = int(item.y + item.h / 2);
+            page.input(e, W, H);
+            page.render(W, H);
+        }
+        check(s.voiceActivation && page.rowEnabled("ACTIVATION LEVEL") && !page.rowEnabled("PUSH TO TALK"),
+              "Voice Activation: ACTIVATION LEVEL comes alive, the key row greys");
+        click("ACTIVATION LEVEL", 0.4f);
+        check(s.voiceActivationLevel >= 38 && s.voiceActivationLevel <= 42,
+              "ACTIVATION LEVEL 0..100: " + std::to_string(s.voiceActivationLevel));
+        shot("voice-activation.png");
+        s.voiceActivation = false;
         // VOICE OUTPUT: open the list, pick System Default (index 1), not same as game.
         const SDL_FRect* out = page.rowRect("OUTPUT DEVICE");
         float micChipX = -1;

@@ -927,7 +927,7 @@ group automatically.
 | **Pause** | Pause or resume. This pauses the game for every player. |
 | **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×), 0.1× per level. A banner shows the new level, for example **GAME SPEED NORMAL** or **GAME SPEED +5**. Only the host can change it, and only if **Allow speed change** was on. |
 | **Enter** | Open chat; **Enter** sends, **Esc** cancels. |
-| **Space** (hold) | Push to talk, in multiplayer, when [voice chat](#voice-chat) is on. Never while you are typing in a text box. |
+| **Space** (hold) | Push to talk, in multiplayer, when [voice chat](#voice-chat) is on with **Talk mode** Push to Talk. Never while you are typing in a text box. |
 | **Esc** | Close a dialog, cancel placement or an armed order, clear the selection, then open the game menu. |
 
 ### Emotes
@@ -1479,8 +1479,9 @@ The [README](../README.md#multiplayer-and-replays) has the details.
 
 ## Voice chat
 
-Voice chat lets the people in a multiplayer room or game talk to each other
-while they hold a key. It is **off by default**. It works only in multiplayer:
+Voice chat lets the people in a multiplayer room or game talk to each other,
+while they hold a key (push to talk, the default) or whenever they speak (voice
+activation). It is **off by default**. It works only in multiplayer:
 single-player and campaign games, replays and the Benchmark have nobody to talk
 to, so they never send or receive voice (the Voice Chat page can still be
 opened there to test the microphone).
@@ -1507,10 +1508,12 @@ While **Voice chat** is off, every other row is greyed out and ignores clicks.
 | Option | Default | What it does |
 | --- | --- | --- |
 | **Voice chat** | Off | Turns voice chat on or off. |
-| **Push to talk** | Space | The key you hold to talk. Click the row to open **Controls** and change it. |
+| **Talk mode** | Push to Talk | **Push to Talk** sends you while you hold the push-to-talk key. **Voice Activation** sends you by itself whenever the **Mic level** reaches the **Activation level**; no key is needed. |
+| **Push to talk** | Space | The key you hold to talk. Click the row to open **Controls** and change it. Greyed out under **Voice Activation**. |
 | **Mic device** | System Default | The microphone: **System Default**, or any input device by name. |
 | **Mic volume** | 100 | How loud you are sent, 0 to 100. 100 sends the microphone as it is; lower values make you quieter. |
-| **Mic level** | | A live meter of what the microphone hears, after **Mic volume**. Speak to test it. |
+| **Mic level** | | A live meter of what the microphone hears, after **Mic volume**. Speak to test it. Under **Voice Activation** a white tick marks the **Activation level**. |
+| **Activation level** | 15 | Under **Voice Activation**: you are sent while the **Mic level** reaches this, 0 to 100, on the meter's scale (the tick). Sending carries on for 0.4 seconds after you go quiet, so pauses between words are kept, and starts with the moment just before, so the first word is not cut. Raise it if background noise sets it off; lower it if your words are cut. 0 sends all the time. Greyed out under **Push to Talk**. |
 | **Output device** | Same as Game Output | Where other players' voices play. **Same as Game Output** follows the game's own **Sound device**, also when you change it. You can instead choose **System Default** or any output device by name, for example a headset while the game plays on speakers. |
 | **Output volume** | 100 | How loud voices play, 0 to 100: one value for every speaker, stereo or surround. It is separate from the game's own volumes. |
 
@@ -1523,8 +1526,8 @@ beside a device row says when something is wrong:
 | **DEVICE LOST - USING DEFAULT** | The device went away while in use, so the system default took over. |
 | **UNAVAILABLE** | No device could be opened at all. The game tries again every few seconds. |
 
-**Defaults** resets only the voice chat settings: voice chat off, System Default
-microphone, Same as Game Output, and both volumes at 100. It does not change the
+**Defaults** resets only the voice chat settings: voice chat off, Push to Talk at
+activation level 15, System Default microphone, Same as Game Output, and both volumes at 100. It does not change the
 push-to-talk key (reset that in **Controls**), and the **Defaults** button in
 **Options** does not change voice chat.
 
@@ -1537,6 +1540,10 @@ focus, if you start typing, or if you leave the room.
 A key pressed while you are typing in a text box (the chat line, a lobby field,
 your name) is typing, never talking, so a space in a chat message is just a
 space.
+
+Under **Voice Activation** no key is needed: you are sent whenever the **Mic
+level** reaches the **Activation level**, also while you type or the window is
+in the background, and the push-to-talk key does nothing.
 
 To use another key, open **Settings → Controls** (**Esc → Controls** in a game,
 or click **Push to talk** on the Voice Chat page). **PUSH TO TALK** is under

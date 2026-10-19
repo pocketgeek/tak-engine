@@ -2,6 +2,7 @@
 
 #include "client/voicecodec.h"
 #include "client/voicejitter.h"
+#include "client/voiceptt.h"
 #include "net/protocol.h"
 
 #include <algorithm>
@@ -121,6 +122,8 @@ struct VoiceEngine::Impl {
         bool enabled = false;
         std::string mic, out;          // effective names ("" = system default)
         int micVol = 100, outVol = 100;
+        bool activation = false;       // TALK MODE voice activation (else push to talk)
+        int activationLevel = 15;      // 0..100 of the level meter
         bool operator==(const Config&) const = default;
     } cfg;
     bool configured = false;
@@ -133,6 +136,8 @@ struct VoiceEngine::Impl {
     voice::Encoder encoder;
     uint16_t seq = 0;
     bool sending = false;              // a transmission is open (START sent, END not yet)
+    voice::VoiceGate gate;             // voice activation
+    std::vector<std::array<float, voice::kFrame>> preroll;   // the frames just before the gate opened
     float level = 0;
 
     struct Talker {
@@ -151,6 +156,7 @@ struct VoiceEngine::Impl {
     void closeAll() {
         cap.close(); out.close();
         capRunning = false; pending.clear(); sending = false; level = 0;
+        gate.reset(); preroll.clear();
         talkers.clear();
     }
 };
@@ -165,6 +171,8 @@ void VoiceEngine::configure(const Settings& s, const std::string& gameOutput) {
     c.out = s.voiceOutputSameAsGame ? gameOutput : s.voiceOutputDevice;
     c.micVol = std::clamp(s.voiceMicVolume, 0, 100);
     c.outVol = std::clamp(s.voiceOutputVolume, 0, 100);
+    c.activation = s.voiceActivation;
+    c.activationLevel = std::clamp(s.voiceActivationLevel, 0, 100);
     if (p_->configured && c == p_->cfg) return;
     const bool first = !p_->configured;
     const bool micChanged = first || c.mic != p_->cfg.mic, outChanged = first || c.out != p_->cfg.out;
@@ -201,6 +209,9 @@ void VoiceEngine::update(bool inRoom, bool transmit, const Sender& send) {
     if (wantOut) p.out.maintain(now);
 
     // ---- microphone: record only while talking or metering ----
+    // In voice activation `transmit` means talking is allowed: the microphone then runs
+    // for the whole time and the gate decides which frames go out.
+    const bool activation = p.cfg.activation;
     const bool record = p.cap.dev && (transmit || p.monitoring);
     if (p.cap.dev && record != p.capRunning) {
         if (record) { SDL_ClearQueuedAudio(p.cap.dev); p.pending.clear(); }
@@ -220,34 +231,48 @@ void VoiceEngine::update(bool inRoom, bool transmit, const Sender& send) {
         p.stats.dropped += drop / voice::kFrame;
     }
     if (!p.capRunning) p.level *= 0.85f;
-    const float gain = float(p.cfg.micVol) / 100.0f;
-    while (p.pending.size() >= size_t(voice::kFrame)) {
-        float frame[voice::kFrame];
-        float peak = 0;
-        for (int i = 0; i < voice::kFrame; ++i) {
-            frame[i] = std::clamp(p.pending[size_t(i)] * gain, -1.0f, 1.0f);
-            peak = std::max(peak, std::fabs(frame[i]));
-        }
-        p.pending.erase(p.pending.begin(), p.pending.begin() + voice::kFrame);
-        p.level = std::max(peak, p.level * 0.85f);
-        if (!transmit || !send) continue;
-        if (!p.sending) p.encoder.reset();
-        Frame f;
-        f.opus = p.encoder.encode(frame);
-        if (f.opus.empty()) continue;
-        f.seq = p.seq++;
-        f.flags = p.sending ? 0 : net::kVoiceStart;
-        p.sending = true;
-        send(f);
-        ++p.stats.sent;
-    }
-    if (p.sending && !transmit) {   // released (or no longer allowed): close the transmission
+    if (!transmit || !activation) { p.gate.reset(); p.preroll.clear(); }
+    auto sendEnd = [&] {
         Frame end;
         end.seq = p.seq++;
         end.flags = net::kVoiceEnd;
         if (send) send(end);
         p.sending = false;
+    };
+    auto sendFrame = [&](const float* frame) {
+        if (!p.sending) p.encoder.reset();
+        Frame f;
+        f.opus = p.encoder.encode(frame);
+        if (f.opus.empty()) return;
+        f.seq = p.seq++;
+        f.flags = p.sending ? 0 : net::kVoiceStart;
+        p.sending = true;
+        send(f);
+        ++p.stats.sent;
+    };
+    const float gain = float(p.cfg.micVol) / 100.0f;
+    const float threshold = float(p.cfg.activationLevel) / 100.0f;
+    while (p.pending.size() >= size_t(voice::kFrame)) {
+        std::array<float, voice::kFrame> frame;
+        float peak = 0;
+        for (int i = 0; i < voice::kFrame; ++i) {
+            frame[size_t(i)] = std::clamp(p.pending[size_t(i)] * gain, -1.0f, 1.0f);
+            peak = std::max(peak, std::fabs(frame[size_t(i)]));
+        }
+        p.pending.erase(p.pending.begin(), p.pending.begin() + voice::kFrame);
+        p.level = std::max(peak, p.level * 0.85f);
+        if (!transmit || !send) continue;
+        if (activation && !p.gate.frame(peak, threshold)) {
+            if (p.sending) sendEnd();   // quiet for the hold time: the transmission ends
+            p.preroll.push_back(frame);
+            if (p.preroll.size() > size_t(voice::VoiceGate::kPreFrames)) p.preroll.erase(p.preroll.begin());
+            continue;
+        }
+        for (const auto& pre : p.preroll) sendFrame(pre.data());
+        p.preroll.clear();
+        sendFrame(frame.data());
     }
+    if (p.sending && !transmit) sendEnd();   // released (or no longer allowed): close the transmission
 
     // ---- output: mix every talker, keep ~60 ms queued ahead of the device ----
     if (p.out.dev) {

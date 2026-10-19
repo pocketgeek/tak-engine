@@ -1,6 +1,6 @@
 #pragma once
 
-// Push-to-talk as a pure state machine (no SDL), so the rules are tested directly.
+// Push-to-talk (and, below, voice activation) as a pure state machine (no SDL), so the rules are tested directly.
 // The host feeds it the presses and releases of the push-to-talk chord, and every frame
 // whether talking is allowed at all, whether a text field has keyboard focus, whether
 // the window has it, and whether the key is still physically down.
@@ -38,6 +38,28 @@ public:
 
 private:
     bool talking_ = false;
+};
+
+// Voice activation (TALK MODE), as a pure state machine fed one 20 ms frame's peak at a
+// time. A frame at or above the threshold opens the gate; it stays open kHoldFrames after
+// the last such frame, so the pauses between words do not chop a sentence into pieces.
+// The engine sends kPreFrames of the audio from just before the gate opened, so the first
+// syllable is not clipped.
+class VoiceGate {
+public:
+    static constexpr int kHoldFrames = 20;   // 400 ms
+    static constexpr int kPreFrames = 2;     // 40 ms
+    // One frame's peak (0..1, after MIC VOLUME). Returns whether this frame is sent.
+    bool frame(float peak, float threshold) {
+        if (peak >= threshold) hold_ = kHoldFrames;
+        else if (hold_ > 0) --hold_;
+        return hold_ > 0;
+    }
+    void reset() { hold_ = 0; }
+    bool open() const { return hold_ > 0; }
+
+private:
+    int hold_ = 0;
 };
 
 }  // namespace tak::voice

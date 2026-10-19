@@ -141,6 +141,8 @@ Settings loadSettings() {
         else if (key == "streamRememberKey") s.streamRememberKey = asBool();
         else if (key == "audioDevice")     s.audioDevice = val;
         else if (key == "voiceEnabled")    s.voiceEnabled = asBool();
+        else if (key == "voiceActivation") s.voiceActivation = asBool();
+        else if (key == "voiceActivationLevel") s.voiceActivationLevel = asInt(0, 100);
         else if (key == "voiceMicDevice")  s.voiceMicDevice = val;
         else if (key == "voiceOutputSameAsGame") s.voiceOutputSameAsGame = asBool();
         else if (key == "voiceOutputDevice") s.voiceOutputDevice = val;
@@ -239,6 +241,8 @@ std::string serializeSettings(const Settings& s) {
     o << "streamRememberKey = " << (s.streamRememberKey ? 1 : 0) << "\n";
     o << "audioDevice = " << s.audioDevice << "\n";
     o << "voiceEnabled = " << (s.voiceEnabled ? 1 : 0) << "\n";
+    o << "voiceActivation = " << (s.voiceActivation ? 1 : 0) << "\n";
+    o << "voiceActivationLevel = " << std::clamp(s.voiceActivationLevel, 0, 100) << "\n";
     o << "voiceMicDevice = " << s.voiceMicDevice << "\n";
     o << "voiceOutputSameAsGame = " << (s.voiceOutputSameAsGame ? 1 : 0) << "\n";
     o << "voiceOutputDevice = " << s.voiceOutputDevice << "\n";

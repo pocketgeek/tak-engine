@@ -12,8 +12,9 @@
 //
 // Devices open only while needed: the microphone while in a voice room or while the
 // VOICE CHAT screen shows its level meter (and it records only while talking or
-// metering), the output while in a voice room. With voice chat off nothing opens at all,
-// and the headless harnesses never construct an engine.
+// metering, or all the time in a voice room under voice activation), the output while
+// in a voice room. With voice chat off nothing opens at all, and the headless harnesses
+// never construct an engine.
 
 #include <SDL.h>
 
@@ -64,7 +65,9 @@ public:
     // The VOICE CHAT screen is open: keep the microphone running for its level meter.
     void setMonitoring(bool on);
     // Once per frame. inRoom: connected to a room that carries voice. transmit: push to
-    // talk is held (already gated by the host). Captured frames go out through `send`.
+    // talk is held (already gated by the host); in voice activation (TALK MODE), that
+    // talking is allowed at all -- the level then opens and closes the transmission.
+    // Captured frames go out through `send`.
     void update(bool inRoom, bool transmit, const Sender& send);
     // A frame from another player.
     void push(Incoming in);

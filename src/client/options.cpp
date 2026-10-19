@@ -188,25 +188,37 @@ void OptionsScreen::applyPendingRebuild() {
 
 // VOICE CHAT: a page of its own, separate from the game's audio. One switch, then the
 // microphone (device, volume, a live level meter), the voice output (SAME AS GAME OUTPUT,
-// the system default or any device, and ONE volume whatever its channel count), and the
-// push-to-talk key, which lives in CONTROLS with the other bindings. With voice chat off
-// every row but the switch is greyed and ignores input.
+// the system default or any device, and ONE volume whatever its channel count), and how
+// you talk: TALK MODE push to talk (the default; the key lives in CONTROLS with the other
+// bindings) or voice activation at ACTIVATION LEVEL. With voice chat off every row but
+// the switch is greyed and ignores input.
 void OptionsScreen::buildVoice() {
     refreshDevices();
     auto section = [&](const char* label) { ctls_.push_back({Control::Section, label, 0, 0, {}, {}, {}, {}, {}}); };
     auto on = [this] { return s_.voiceEnabled; };
+    auto ptt = [this] { return s_.voiceEnabled && !s_.voiceActivation; };
+    auto activation = [this] { return s_.voiceEnabled && s_.voiceActivation; };
 
     section("GENERAL");
     ctls_.push_back({Control::Toggle, "VOICE CHAT", 0, 1, [this] { return s_.voiceEnabled ? 1.0f : 0.0f; },
                      [this](float v) { s_.voiceEnabled = v > 0.5f; }, {}, {}, {}});
     ctls_.back().help = [] {
         return std::vector<std::string>{
-            "TALK TO THE OTHER PLAYERS WHILE YOU HOLD THE PUSH-TO-TALK KEY. OFF BY DEFAULT.",
+            "TALK TO THE OTHER PLAYERS, BY PUSH TO TALK OR VOICE ACTIVATION. OFF BY DEFAULT.",
             "WHO HEARS YOU IS SET PER PLAYER IN THE DIPLOMACY SCREEN'S VOICE COLUMN, LIKE CHAT."};
+    };
+    ctls_.push_back({Control::Dropdown, "TALK MODE", 0, 1, [this] { return s_.voiceActivation ? 1.0f : 0.0f; },
+                     [this](float idx) { s_.voiceActivation = idx > 0.5f; }, {}, {},
+                     [] { return std::vector<std::string>{"Push to Talk", "Voice Activation"}; }});
+    ctls_.back().enabled = on;
+    ctls_.back().help = [] {
+        return std::vector<std::string>{
+            "PUSH TO TALK (THE DEFAULT) SENDS WHILE YOU HOLD THE KEY.",
+            "VOICE ACTIVATION SENDS BY ITSELF WHILE THE MIC LEVEL REACHES THE ACTIVATION LEVEL."};
     };
 
     ctls_.push_back({Control::Button, "PUSH TO TALK", 0, 0, {}, {}, {}, [this] { if (onHotkeys_) onHotkeys_(); }, {}});
-    ctls_.back().enabled = on;
+    ctls_.back().enabled = ptt;
     ctls_.back().note = [this] {
         const KeyChord c = effectiveChord(s_.hotkeys, Act::PushToTalk);
         std::string t = chordName(c);
@@ -255,7 +267,18 @@ void OptionsScreen::buildVoice() {
                      {}, {}, {}, {}});
     ctls_.back().enabled = on;
     ctls_.back().help = [] {
-        return std::vector<std::string>{"WHAT THE MICROPHONE HEARS NOW, AFTER MIC VOLUME. SPEAK TO TEST IT."};
+        return std::vector<std::string>{"WHAT THE MICROPHONE HEARS NOW, AFTER MIC VOLUME. SPEAK TO TEST IT.",
+                                        "IN VOICE ACTIVATION THE TICK IS THE ACTIVATION LEVEL."};
+    };
+    ctls_.back().mark = [this] { return s_.voiceActivation ? float(s_.voiceActivationLevel) / 100.0f : -1.0f; };
+    ctls_.push_back({Control::Slider, "ACTIVATION LEVEL", 0, 100, [this] { return float(s_.voiceActivationLevel); },
+                     [this](float v) { s_.voiceActivationLevel = std::clamp(int(v + 0.5f), 0, 100); },
+                     [](float v) { return std::to_string(int(v + 0.5f)); }, {}, {}});
+    ctls_.back().enabled = activation;
+    ctls_.back().help = [] {
+        return std::vector<std::string>{
+            "VOICE ACTIVATION: YOU ARE SENT WHILE THE MIC LEVEL REACHES THIS (THE TICK ON THE METER).",
+            "RAISE IT IF NOISE SETS IT OFF, LOWER IT IF YOUR WORDS ARE CUT. 0 SENDS ALL THE TIME."};
     };
 
     section("OUTPUT");
@@ -914,6 +937,12 @@ void OptionsScreen::render(int winW, int winH) {
             }
             SDL_SetRenderDrawColor(ren_, live ? 130 : 70, live ? 140 : 76, live ? 170 : 92, 255);
             SDL_RenderDrawRectF(ren_, &track);
+            if (const float m = c.mark ? c.mark() : -1.0f; live && m >= 0) {
+                const float tx = track.x + track.w * std::clamp(m, 0.0f, 1.0f);
+                SDL_FRect tick{tx - 1 * u_, track.y - 3 * u_, 2 * u_, track.h + 6 * u_};
+                SDL_SetRenderDrawColor(ren_, 235, 240, 250, 255);
+                SDL_RenderFillRectF(ren_, &tick);
+            }
         } else if (c.kind == Control::PlayerName) {
             drawBlockText(ren_, c.label, c.row.x, c.row.y + 12*u_, fpx, {225,230,240,255});
             const float cw = dropWidth(c);

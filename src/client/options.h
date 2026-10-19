@@ -164,6 +164,7 @@ private:
                                                  // Button: the chip text (default "OPEN >")
         std::function<bool()> enabled;           // unset = always; false = greyed, ignores input
         std::function<std::vector<std::string>()> help;   // optional lines shown while hovered
+        std::function<float()> mark;             // Meter: a threshold tick, 0..1 (unset or < 0 = none)
         SDL_FRect row{};                          // filled by layout()
     };
 
