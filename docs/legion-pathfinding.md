@@ -2800,6 +2800,51 @@ transitive holder and the approach-side count change no fixture measured (the ha
 every legion100 fixture are those without them). The headless `--mpai` Inner Circle game (seed 1, 60 s) keeps both hashes (Retail
 b353410003e98dd5, Legion 0825aeb9e8139203): nothing there waits at a narrow passage in its first minute.
 
+### Passage lanes through wide gaps (2026-10-19, Legion ~100 round 2)
+
+`gap20-100` (100 2x2 bodies through a 20-cell gap in a 4-cell wall) swapped lanes in the gap strip 21 times over the
+gate offsets (median; 9 to 42), Retail 3: 3.5 swaps per file against Retail's 1.8, Legion taking the gap about six
+files abreast to Retail's 1.6. The passage lanes (above) are what keeps a formation's order through a gap, and they
+did not run there. A strip is one narrower than the formation's band and than `kPassageSpan` origins; a 100-body
+formation's band is 25 cells (`laneCap` 8), but the gap's 19 origins across were over the old cap of 16, which no
+measurement chose (the lanes were tuned on gaps of 14 cells and less, where 16 never bound). The cap is now 32: at or
+above the widest band a 2x2 formation gets (laneCap 10, 31 cells), so for the common footprints the band alone decides,
+and a gap wider than the band still has no lanes (a 48-body formation's band is 16 cells, so `gap20` keeps its 13
+swaps; that formation is narrower than the gap and needs no folding). The same cap marks the cross-sections that make
+a paused route serve the lanes their region (`laneTrigger`), so those reads now also start at strips of 16 to 31
+origins.
+
+Measured (Legion, gate offsets, serial; Retail untouched): of the 23 legion100 fixtures and `attackring-wall-64`,
+`doorplug-112` and `gap20`, two change. `gap20-100`: `gate.top.crossings` 21 to 0 (0 at 9 of 11 offsets, 8 and 1 at
+the others; Retail 3), `g.A.t90` 2,567 to 2,432 (Retail 4,667), done 3,259 to 3,204, `side.east.t90` 1,623 to
+1,469, `stopped_permille` 96 to 76, wall touch 19 to 14 (Retail 35). `strait-2x100`: `g.B.t90` 2,807 to 2,645, done
+3,518 to 3,172, `gate.strait.crossings` median 0 both (summed over the offsets 44 to 37). `ctest:legion_widegaplanes`
+runs `gap20-100` over the core five: median 15 swaps on the parent, none here. The 57 nightly `legion_check_*` fixtures
+that fail against `tools/scenarios/baseline.json` on the parent keep every Legion hash at the gate offsets, and the
+headless `--mpai` Inner Circle game (seed 1, 60 s) keeps both hashes (Retail b353410003e98dd5, Legion
+0825aeb9e8139203).
+
+Wall touching was measured but not changed. A split of the moving wall touches by steering site (a scratch
+instrument, not kept) gave, on `attackring-wall-100` (22 permille, Retail 17), 12 from the blocked branch (detour
+routes 4, side-step walks 2, flow-round 3), 5 from straight walks and 4 from the field descent; on `doorplug100-112`
+(15, Retail 7) 8 from straight walks to the slot and 5 blocked, nearly all within 6 cells of the door. Tried, each
+over the same 26 fixtures, none kept:
+
+* flow-round preferring a neighbour with a free cell to the wall when the body stands clear: one fixture moves by a
+  permille (`attackring-wall-100` 22 to 21);
+* the same preference also for a body already against the wall: `attackring-wall-100` 22 to 16 but reversals 371 to
+  509, `corner-4x25` touch 58 to 65 and lane swaps 2 to 8, every group of it 3-7% later, `bridges-100` A 5% later;
+  limited to attack and guard members only the two wall rings change (`attackring-wall-100` 22 to 16, summed over the
+  offsets 256 to 237, reversals 371 to 509, ring damage 1,571 to 1,534; `attackring-wall-64` 29 both) -- a ring
+  matter, left to the ring packing work;
+* refusing a straight walk whose sweep touches a wall away from both its ends: doorplug fixtures 15 to 13, 18 to 14
+  and 27 to 22, but `island-1x100`'s lane swaps 179 to 296 (the bodies passing its rock fold onto the field) and
+  `attackring-wall-64` 29 to 31;
+* the same only where the touched origin lies in a strip narrower than `kPassageSpan` (the door, not an open face):
+  `doorplug100-112` 15 to 12 and complete at 9 of 11 offsets (before 4), `doorplug100-124` 27 to 22, `maze-100` 12
+  to 8, `gap20` swaps 13 to 8, but `doorplug-112` arrives fewer (left behind median 1 to 3, t90 1,321 to 1,487) and
+  `doorplug100-124` A done 1,430 to 1,715. A trade, not taken.
+
 ### Legion 10,000: where the program left it
 
 docs/legion-10000-report.md gives the measured result against the starting revision c2c25707:
@@ -2902,7 +2947,9 @@ Rules that came out of using them:
   Legion takes gaps several abreast; since the 2026-10-14 review the passage
   lanes (above) bring the strait to 3 and gaps up to 14 cells to none, while
   a 20-cell gap, wider than a 48-body formation's band, still swaps 1.73 per
-  file (`gap20:gate.top.crossings`). Walls: an attack ring against a wall and
+  file (`gap20:gate.top.crossings`); since the 2026-10-19 wide-gap lanes a
+  100-body formation, whose band is wider than that gap, swaps none there
+  (`gap20-100`, Retail 3). Walls: an attack ring against a wall and
   the bodies queued in doorplug-112 touch the wall about twice as often as
   Retail (since the 2026-10-19 ring upkeep the 64-body wall ring touches it
   29 permille against 58 before and Retail's 20). Tails: a Move group crossing
