@@ -8,6 +8,7 @@
 #include "campaign/campaign.h"
 #include "client/appquit.h"
 #include "client/blockfont.h"
+#include "client/hidpi.h"
 #include "client/cursors.h"
 #include "client/dev.h"
 #include "client/font.h"
@@ -93,7 +94,7 @@ bool BriefingScreen::run(SDL_Renderer* ren,const hpi::Vfs& vfs,const std::string
         if(cursors.ok()) {
             const int scale=settings?settings->cursorScale:1;
             if(settings && settings->hardwareCursor && cursors.applyHardware(CursorId::Normal,scale))SDL_ShowCursor(SDL_ENABLE);
-            else {SDL_ShowCursor(SDL_DISABLE);int mx=0,my=0;SDL_GetMouseState(&mx,&my);cursors.draw(ren,CursorId::Normal,mx,my,scale);}
+            else {SDL_ShowCursor(SDL_DISABLE);int mx=0,my=0;hidpi::mousePixels(ren,mx,my);cursors.draw(ren,CursorId::Normal,mx,my,scale);}
         }else SDL_ShowCursor(SDL_ENABLE);
         if(const char* path=devEnv("TAK_SHOT_BRIEFING")) {
             std::vector<uint8_t> pixels(size_t(w)*size_t(h)*4);

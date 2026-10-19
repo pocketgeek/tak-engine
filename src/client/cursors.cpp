@@ -2,6 +2,7 @@
 
 #include "client/artscale.h"
 #include "client/cursortiming.h"
+#include "client/hidpi.h"
 #include "client/settings.h"
 #include "client/gpuvram.h"
 
@@ -237,6 +238,15 @@ bool CursorSet::applyHardware(CursorId c, int scale, SDL_Color tint) {
     const auto& frames = anims_[size_t(c)];
     if (frames.empty()) return false;
     if (scale < 1) scale = 1;
+#ifdef __APPLE__
+    // SDL2's Cocoa cursor is sized in points, so on a Retina window it already shows
+    // backing-scale times bigger than the pixel-drawn software cursor (client/hidpi.h).
+    // The scale is remembered while the pointer is outside every window, so leaving the
+    // window does not rebuild the cache.
+    static float backing = 1.0f;
+    if (SDL_Window* w = SDL_GetMouseFocus()) backing = hidpi::scale(w);
+    scale = hardwareCursorScale(scale, backing);
+#endif
 
     if (scale != hwScale_) {                    // rebuild on scale change
         releaseHardware();

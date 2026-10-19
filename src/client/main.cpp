@@ -67,6 +67,7 @@
 #include "util/relaunch.h"
 #include "util/prefpath.h"
 #include "client/settings.h"
+#include "client/hidpi.h"
 #include "client/renderdriver.h"
 #include "net/crypto.h"
 #include "net/replaywriter.h"   // recoverReplayParts
@@ -602,6 +603,13 @@ int main(int argc, char** argv) {
         SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
         tak::dpiIgnoredAtStartup() = true;
     }
+#elif defined(__APPLE__)
+    // macOS equivalent: a Retina window opts into its full backing resolution with
+    // SDL_WINDOW_ALLOW_HIGHDPI (below; Info.plist already says NSHighResolutionCapable).
+    // Without it the backbuffer is in points and the OS doubles it, a blurry stretch.
+    // The window then speaks points and the renderer pixels -- see client/hidpi.h.
+    if (mpHeadless == 0 && shot.empty() && tak::loadSettings().ignoreDpiScaling)
+        tak::dpiIgnoredAtStartup() = true;
 #endif
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -676,7 +684,11 @@ int main(int argc, char** argv) {
     std::string winTitle = std::string("Total Annihilation: Kingdoms ") + tak::kVersion;
     SDL_Window* win = SDL_CreateWindow(winTitle.c_str(), SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, winW, winH,
-                                       SDL_WINDOW_RESIZABLE);
+                                       SDL_WINDOW_RESIZABLE
+#ifdef __APPLE__
+                                       | (tak::dpiIgnoredAtStartup() ? SDL_WINDOW_ALLOW_HIGHDPI : 0)
+#endif
+                                       );
     {   // Application icon: the crown badge (src/util/appicon).
         std::vector<uint8_t> ic = tak::appicon::render(tak::appicon::Kind::Client, 64);
         if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(
@@ -750,6 +762,15 @@ int main(int argc, char** argv) {
     // SOFTWARE rasteriser, where submit and present are CPU rasterisation and say
     // nothing about a real GPU. Measuring there sent me to the wrong conclusion
     // once already.
+#ifdef __APPLE__
+    if (tak::dpiIgnoredAtStartup()) {
+        // Same one-time UI/cursor migration as Windows. macOS has no DPI number to ask
+        // for before the window exists; the backing scale is drawable / window.
+        const float osScale = tak::hidpi::scale(ren);
+        std::fprintf(stderr, "dpi: native Retina resolution; backing scale %.2f\n", osScale);
+        if (tak::applyDpiMigration(settings, osScale)) tak::saveSettings(settings);
+    }
+#endif
     // Set texture-build policy before loading art. Options hosts rebuild the current
     // interface when smoothing changes; ordinary frames reuse those textures.
     tak::applyRuntimeSettings(settings);
@@ -767,8 +788,9 @@ int main(int argc, char** argv) {
         }
     }
 
-#ifdef _WIN32
-    {   // DPI evidence: with the option on, window size == renderer output (physical pixels).
+#if defined(_WIN32) || defined(__APPLE__)
+    {   // DPI evidence: with the option on, renderer output is physical pixels (Windows:
+        // window size == output; macOS: output == window points x backing scale).
         int ww = 0, wh = 0, ow = 0, oh = 0;
         SDL_GetWindowSize(win, &ww, &wh);
         SDL_GetRendererOutputSize(ren, &ow, &oh);
@@ -1290,8 +1312,11 @@ int main(int argc, char** argv) {
             // --winsize is also used by retail-comparison captures, where clipping
             // the local palette to retail's smaller viewport is intentional.
             {
-                int minW = winSizeExplicit ? winW : gameView->minWindowWidth();
-                int minH = winSizeExplicit ? winH : 480;
+                // The HUD minimum is in output pixels; the window is sized in points
+                // (they differ only on a macOS Retina window, client/hidpi.h).
+                const float backing = tak::hidpi::scale(ren);
+                int minW = winSizeExplicit ? winW : tak::pixelsToPoints(gameView->minWindowWidth(), backing);
+                int minH = winSizeExplicit ? winH : tak::pixelsToPoints(480, backing);
                 SDL_SetWindowMinimumSize(win, minW, minH);
                 int cw, ch;
                 SDL_GetWindowSize(win, &cw, &ch);

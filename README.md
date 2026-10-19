@@ -1194,7 +1194,9 @@ cursors and build-menu portraits without a restart. On Windows, **Ignore Windows
 Display Scaling** (default **on**, applied after a restart) draws at the real
 screen resolution instead of letting Windows stretch the game blurrily; the first
 run raises UI Scale and Cursor Size to the Windows scale so the interface keeps
-its size. **Trees Sway in Wind** is selectable,
+its size. On macOS, **Native Retina Resolution** (default **on**, applied after a
+restart) does the same for a Retina display: the game draws at its full backing
+resolution instead of macOS doubling a half-size image. **Trees Sway in Wind** is selectable,
 defaults to **on**, and remembers your choice. **Tactical Dots** (default
 **on**, not in retail) draws every unit as a minimap-style player-coloured dot
 when zoomed far out, with the same fog rules as the minimap; selection works on

@@ -1,6 +1,7 @@
 #include "client/options.h"
 
 #include "client/blockfont.h"
+#include "client/hidpi.h"
 #include "client/datafolder.h"
 #include "client/gpuvram.h"
 #include "client/hotkeys.h"
@@ -428,10 +429,16 @@ void OptionsScreen::build(int channels) {
             return s_.renderer != a.inEffect ? std::string("RESTART REQUIRED") : std::string();
         };
     }
-#ifdef _WIN32
-    // Windows scales DPI-unaware programs by the display scale setting (a blurry stretch).
+#if defined(_WIN32) || defined(__APPLE__)
+    // Windows scales DPI-unaware programs by the display scale setting (a blurry stretch);
+    // macOS does the same to a window that does not ask for its Retina backing (2x).
     // ON opts out at startup: real pixels, HUD sized via UI SCALE instead.
-    toggle("IGNORE WINDOWS DISPLAY SCALING", [&] { return s_.ignoreDpiScaling ? 1.0f : 0.0f; },
+#ifdef _WIN32
+    const char* dpiLabel = "IGNORE WINDOWS DISPLAY SCALING";
+#else
+    const char* dpiLabel = "NATIVE RETINA RESOLUTION";
+#endif
+    toggle(dpiLabel, [&] { return s_.ignoreDpiScaling ? 1.0f : 0.0f; },
            [&](float v) { s_.ignoreDpiScaling = v > 0.5f; });
     ctls_.back().note = [this] {
         return s_.ignoreDpiScaling != dpiIgnoredAtStartup() ? std::string("RESTART REQUIRED") : std::string();
@@ -770,7 +777,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
             if (c.enabled && !c.enabled() && c.kind != Control::Folder) return false;   // greyed out: ignore
             if (c.kind == Control::PlayerName) {
                 nameEditing_ = true; nameSelectAll_ = true; SDL_StartTextInput();
-                SDL_Rect caret{int(c.row.x),int(c.row.y),int(c.row.w),int(c.row.h)};
+                SDL_Rect caret=hidpi::toPoints(ren_,{int(c.row.x),int(c.row.y),int(c.row.w),int(c.row.h)});
                 SDL_SetTextInputRect(&caret);
                 return false;
             }

@@ -267,6 +267,14 @@ int main() {
         tak::applyDpiMigration(h, 1.0f);
         check("dpi: 100% untouched", h.uiScale == 1.0f && h.cursorScale == 1);
         check("dpi: defaults keep flag", tak::preferenceDefaults(s).dpiMigrated);
+        // macOS Retina: points vs pixels. Every non-Retina case is an identity.
+        check("dpi: backing 1x", tak::backingScale(1280, 1280) == 1.0f && tak::backingScale(0, 0) == 1.0f);
+        check("dpi: backing 2x", tak::backingScale(1280, 2560) == 2.0f);
+        check("dpi: points 1x", tak::pixelsToPoints(1201, 1.0f) == 1201);
+        check("dpi: points 2x up", tak::pixelsToPoints(1201, 2.0f) == 601 && tak::pixelsToPoints(480, 2.0f) == 240);
+        check("dpi: hw cursor 1x", tak::hardwareCursorScale(3, 1.0f) == 3 && tak::hardwareCursorScale(0, 1.0f) == 1);
+        check("dpi: hw cursor 2x", tak::hardwareCursorScale(2, 2.0f) == 1 && tak::hardwareCursorScale(4, 2.0f) == 2 &&
+                                   tak::hardwareCursorScale(1, 2.0f) == 1);
     }
 
     // Texture Filtering migration (resolveTextureFilter; -1 = key absent). The new key

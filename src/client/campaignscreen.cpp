@@ -8,6 +8,7 @@
 
 #include "campaign/campaign.h"
 #include "client/blockfont.h"
+#include "client/hidpi.h"
 #include "client/font.h"
 #include "client/guiart.h"
 #include "client/gpuvram.h"
@@ -189,7 +190,7 @@ void CampaignScreen::render(int w,int h) {
     SDL_SetRenderDrawColor(d.ren,0,0,0,255);SDL_RenderClear(d.ren);
     d.image(lay,"BOD");
     d.image(lay,"ChangeUser",2);d.image(lay,"LoadGame",2);
-    int mx=0,my=0;SDL_GetMouseState(&mx,&my);
+    int mx=0,my=0;hidpi::mousePixels(d.ren,mx,my);
     for(const char* name:{"Previous","Play","PreviousPage","NextPage"}) {
         const bool disabled=(std::string(name)=="PreviousPage" && d.page==0) ||
             (std::string(name)=="NextPage" && d.page+1>=d.count()) ||
