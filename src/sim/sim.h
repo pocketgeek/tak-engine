@@ -2494,9 +2494,10 @@ public:
         const UnitType* type=nullptr;
         int32_t name=0,flags=0;
         // The native host's visibility inputs at the call: the unit position
-        // +0x68 (ground or flight height) and its cloak bit +0x114&4.
+        // +0x68 (ground or flight height), and whether LosOn hides it from
+        // other owners: cloaked (+0x114&4) or carried (+0x130&3).
         Fixed y;
-        bool cloaked=false;
+        bool hidden=false;
     };
     const std::vector<ScriptSound>& scriptSounds() const { return scriptSounds_; }
 

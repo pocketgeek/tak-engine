@@ -728,7 +728,7 @@
                 if (unitSoundQueue_.size() >= kMaxPendingHits) unitSoundQueue_.pop_front();
                 unitSoundQueue_.push_back({sound.tick,sound.unitId,sound.player,sound.x.toFloat(),
                     sound.z.toFloat(),sound.flags,script->name(uint32_t(sound.name)),
-                    {sound.x.v,sound.y.v,sound.z.v},sound.cloaked,sound.type});
+                    {sound.x.v,sound.y.v,sound.z.v},sound.hidden,sound.type});
             }
         }
     }
@@ -1072,13 +1072,13 @@
             frame.effectVisW,frame.effectVisH,position);
     }
 
-    bool GameView::unitSoundVisibleR(int player,bool cloaked,const tak::sim::UnitType* type,
+    bool GameView::unitSoundVisibleR(int player,bool hidden,const tak::sim::UnitType* type,
                                      const std::array<int32_t,3>& position) const {
         if (noFog_) return true;
         const auto& frame=front();
         if (frame.effectVisibility.empty() || !type) return false;
         return tak::RetailEffectVisibility::unitSoundSeen(frame.effectVisibility,frame.effectVisW,
-            frame.effectVisH,player==localPlayer_,cloaked,position,type->footX,type->footZ,type->modelTop);
+            frame.effectVisH,player==localPlayer_,hidden,position,type->footX,type->footZ,type->modelTop);
     }
 
     int GameView::frameQueuedCount(int builderId, const tak::sim::UnitType* type) const {
@@ -1145,7 +1145,7 @@
         }
         for(const auto& sound:unitSounds) {
             if(sound.name.empty() || !tak::unitSoundLive(sound.tick,cmdReplayEnd_)) continue;
-            const bool visible=unitSoundVisibleR(sound.player,sound.cloaked,sound.type,sound.position);
+            const bool visible=unitSoundVisibleR(sound.player,sound.hidden,sound.type,sound.position);
             const bool selected=std::find(selection_.begin(),selection_.end(),sound.unitId)!=selection_.end();
             playUnitSound(sound.name,sound.flags,sound.x,sound.z,visible,selected);
         }
@@ -1740,7 +1740,7 @@
                 for (auto& [piece, sfx] : a.pendingSfx) emitSfx(*u, a, piece, sfx);
             }
             if (u && u->type && !a.pendingSnd.empty()) {
-                const bool visible=unitSoundVisibleR(u->player,u->cloaked,u->type,u->worldPosition);
+                const bool visible=unitSoundVisibleR(u->player,u->cloaked || u->embarked(),u->type,u->worldPosition);
                 const bool selected=std::find(selection_.begin(),selection_.end(),id)!=selection_.end();
                 for (const auto& [index,flags]:a.pendingSnd)
                     playUnitSound(a.vm->file().name(uint32_t(index)),flags,u->x,u->z,visible,selected);

@@ -78,13 +78,13 @@ public:
         return visible(counts_,width_,height_,position);
     }
     // 4f7210 (LosOn) against this plane: the viewer's own unit always; another
-    // owner's never while cloaked (+0x114&4), else when one of the four
+    // owner's never while cloaked (+0x114&4) or carried (+0x130&3), else when one of the four
     // projected bounding-box corners (+/-footX*8, +/-footZ*8, y..y+modelTop)
     // lies on a seen cell, as World::playerSees.
     static bool unitSeen(std::span<const uint8_t> counts,int width,int height,bool owned,
-            bool cloaked,const std::array<int32_t,3>& position,int footX,int footZ,int32_t modelTop) {
+            bool hidden,const std::array<int32_t,3>& position,int footX,int footZ,int32_t modelTop) {
         if (owned) return true;
-        if (cloaked) return false;
+        if (hidden) return false;
         const int32_t hx=int32_t(uint32_t(8*footX)<<16),hz=int32_t(uint32_t(8*footZ)<<16);
         const int32_t x0=int32_t(uint32_t(position[0])-uint32_t(hx)),x1=int32_t(uint32_t(position[0])+uint32_t(hx));
         const int32_t z0=int32_t(uint32_t(position[2])-uint32_t(hz)),z1=int32_t(uint32_t(position[2])+uint32_t(hz));
@@ -96,8 +96,8 @@ public:
     // then the positional submit 50a7d0 needs the sound's own projected cell
     // seen. A dying local unit's retained stamp keeps both true for 60 ticks.
     static bool unitSoundSeen(std::span<const uint8_t> counts,int width,int height,bool owned,
-            bool cloaked,const std::array<int32_t,3>& position,int footX,int footZ,int32_t modelTop) {
-        return unitSeen(counts,width,height,owned,cloaked,position,footX,footZ,modelTop) &&
+            bool hidden,const std::array<int32_t,3>& position,int footX,int footZ,int32_t modelTop) {
+        return unitSeen(counts,width,height,owned,hidden,position,footX,footZ,modelTop) &&
                visible(counts,width,height,position);
     }
     std::span<const uint8_t> counts() const {return counts_;}
