@@ -515,6 +515,10 @@ struct LegionNavigator::Impl {
         // travel-time-plus-queue-delay costs the route was planned with (part of its sharing key). Hashed with
         // the field (the charges); the labels are a function of the build.
         bool labels=false;
+        // A tile chain built for a group of kOpeningMembers or more: its members are admitted at narrow passages
+        // (nextOpening) for as long as they steer by it, however few of the group are left (a chain records no
+        // labels; the group's stragglers walked into a passage held the other way). Hashed with the field.
+        bool chainAdmits=false;
         std::vector<std::unique_ptr<uint16_t[]>> via;
         struct Charge {uint32_t label=0,cost=0;bool operator==(const Charge&) const=default;};
         std::vector<Charge> charges;
@@ -3673,10 +3677,10 @@ struct LegionNavigator::Impl {
         uint32_t occ[2]={0,0};
         uint32_t com[2]={0,0};    // admitted bodies still before the strip, by direction (counted with occ)
         uint32_t active=kNoTick;   // the last tick a member asked for this passage (its strip is then watched)
-        // The record that holds this passage's admission (see passageOf): the lowest-numbered record whose crossing
-        // lies in this one's strip, measured with the strip (headEpoch). Derived from the record table and the
-        // static plane, never hashed.
-        uint32_t head=~0u;uint64_t headEpoch=~0ull;int headPlane=-1;
+        // The record that holds this passage's admission (see passageOf): the lowest-numbered record of its
+        // passage, measured with the strip (headEpoch, headPlane) and the narrow records known (headGen). Derived
+        // from the record table and the static plane, never hashed.
+        uint32_t head=~0u;uint64_t headEpoch=~0ull;int headPlane=-1;uint32_t headGen=0;
     };
     std::vector<uint32_t> activeOpenings;   // openings asked for in the last two ticks, ascending (derived; never hashed)
     std::vector<Opening> openings;
@@ -3723,6 +3727,7 @@ struct LegionNavigator::Impl {
             if(at==openingIndex.end()) {
                 if(openings.size()>=kMaxOpenings)continue;
                 Opening o;o.side=uint8_t(which);o.line=line;o.lo=lo;o.hi=hi;o.width=hi-lo+1;
+                if(o.width<=kNarrowWidth)++passageGen;
                 at=openingIndex.emplace(key,uint32_t(openings.size())).first;
                 openings.push_back(o);++acct.openings;
             }
@@ -3924,17 +3929,41 @@ struct LegionNavigator::Impl {
     // and both were admitted into the one strip and met head on in it (100 bodies held for the rest of the run).
     // The records whose crossing lies in a narrow opening's strip, with a span overlapping its own, are that one
     // passage; its admission (token, waits, occupants, and the strip and zone they are measured on) is held by
-    // the lowest-numbered of them. Records are only ever appended, so a passage's holder never changes while its
-    // strip stands (a later record of it has a higher number).
+    // the lowest-numbered of them. A strip is measured from its own record's width, so on a passage of varying
+    // width (taperbridge-100: 12-cell mouths, a 6-cell middle, five sector lines) one record's strip can hold
+    // another's crossing while that one's does not hold the first's: the passage is the transitive closure, the
+    // connected component of narrow records on one side with overlapping spans where either one's strip holds the
+    // other's crossing line, and its holder is the component's lowest number, the same from every record of it. A
+    // new narrow record (passageGen) re-reads the components; one that joins two passages already in use hands the
+    // higher holder's to the lower, whose token is the passage's from then.
+    uint32_t passageGen=0;   // narrow opening records so far (derived from the record table; never hashed)
     uint32_t passageOf(uint32_t idx,const Plane& p,int planeIndex) {
         Opening& o=openings[idx];
         ensureStrip(o,p,planeIndex);
-        if(o.head!=~0u&&o.headEpoch==o.stripEpoch&&o.headPlane==o.stripPlane)return o.head;
-        uint32_t head=idx;
-        for(auto it=openingIndex.lower_bound({o.side,o.stripLo-1,std::numeric_limits<int>::min(),std::numeric_limits<int>::min()});
-            it!=openingIndex.end()&&std::get<0>(it->first)==o.side&&std::get<1>(it->first)<=o.stripHi;++it)
-            if(std::get<3>(it->first)>=o.lo&&std::get<2>(it->first)<=o.hi&&openings[it->second].width<=kNarrowWidth)head=std::min(head,it->second);
-        o.head=head;o.headEpoch=o.stripEpoch;o.headPlane=o.stripPlane;
+        if(o.head!=~0u&&o.headEpoch==o.stripEpoch&&o.headPlane==o.stripPlane&&o.headGen==passageGen)return o.head;
+        const int lim=std::numeric_limits<int>::min();
+        std::vector<uint32_t> comp{idx};
+        std::set<uint32_t> seen{idx};
+        for(size_t k=0;k<comp.size();++k) {
+            const uint32_t ai=comp[k];
+            // A record whose strip holds this one's line has its own line within kStripMax + 1 of it.
+            const int side=openings[ai].side,line=openings[ai].line;
+            for(auto it=openingIndex.lower_bound({uint8_t(side),line-kStripMax-2,lim,lim});
+                it!=openingIndex.end()&&std::get<0>(it->first)==side&&std::get<1>(it->first)<=line+kStripMax+2;++it) {
+                const uint32_t bi=it->second;
+                if(seen.count(bi))continue;
+                const Opening& a=openings[ai];
+                Opening& b=openings[bi];
+                if(b.width>kNarrowWidth||b.hi<a.lo||b.lo>a.hi)continue;
+                bool linked=b.line>=a.stripLo-1&&b.line<=a.stripHi;
+                ensureStrip(b,p,planeIndex);
+                linked=linked||(a.line>=b.stripLo-1&&a.line<=b.stripHi);
+                if(!linked)continue;
+                seen.insert(bi);comp.push_back(bi);
+            }
+        }
+        const uint32_t head=*std::min_element(comp.begin(),comp.end());
+        for(const uint32_t i:comp) {Opening& c=openings[i];c.head=head;c.headEpoch=c.stripEpoch;c.headPlane=c.stripPlane;c.headGen=passageGen;}
         return head;
     }
     // The label of the next opening on member m's route from origin (ox, oz): the field's label there, or on a tile
@@ -3981,7 +4010,7 @@ struct LegionNavigator::Impl {
         ensureStrip(o,plane(g.plane),g.plane);
         if(!inZone(o,u))return false;
         if(o.active!=w.tickCounter_) {
-            if(o.active==kNoTick||w.tickCounter_-o.active>1)activeOpenings.insert(std::upper_bound(activeOpenings.begin(),activeOpenings.end(),idx),idx);
+            if(const auto at=std::lower_bound(activeOpenings.begin(),activeOpenings.end(),idx);at==activeOpenings.end()||*at!=idx)activeOpenings.insert(at,idx);
             o.active=w.tickCounter_;
         }
         const int dir=label&1;
@@ -4023,7 +4052,9 @@ struct LegionNavigator::Impl {
     }
     void admissionTick() {
         std::set<uint32_t> touched;
-        std::erase_if(activeOpenings,[&](uint32_t idx) {return openings[idx].active==kNoTick||w.tickCounter_-openings[idx].active>1;});
+        // A passage stays watched while it has a token: a straggler that never asks (a group without labels) is
+        // still an occupant once it stands in the strip, and the other way is not let in onto it.
+        std::erase_if(activeOpenings,[&](uint32_t idx) {return openings[idx].tokenDir<0&&(openings[idx].active==kNoTick||w.tickCounter_-openings[idx].active>1);});
         for(auto& o:openings)if(o.tokenDir>=0||o.waiting[0]||o.waiting[1]||o.occ[0]||o.occ[1]||o.com[0]||o.com[1]) {o.occ[0]=o.occ[1]=o.com[0]=o.com[1]=0;}
         for(auto it=passers.begin();it!=passers.end();) {
             const int id=*it;
@@ -4036,7 +4067,13 @@ struct LegionNavigator::Impl {
             // Occupants are the bodies in the narrow part itself; an admitted body still before it is committed,
             // not an occupant (a crowd waiting at the other mouth cannot hold the passage through it).
             if(inStrip(openings[idx],*u))++openings[idx].occ[m->passLabel&1];
-            else ++openings[idx].com[m->passLabel&1];
+            else {
+                // Committed: still before the strip on its own way in (dir 0 enters from below stripLo), not
+                // through it on the exit apron.
+                const Opening& o=openings[idx];
+                int a,c;openingFrame(o,*u,a,c);
+                if((m->passLabel&1)?a>o.stripHi:a<o.stripLo)++openings[idx].com[m->passLabel&1];
+            }
             touched.insert(idx);
             ++it;
         }
@@ -4772,6 +4809,7 @@ struct LegionNavigator::Impl {
             [&](int owner) {return w.allied(owner,int(uint32_t(f->command>>32)));});
         // Stage 8: a window or corridor of a group of kOpeningMembers or more records each cell's next opening and
         // carries the queue charges of its window's openings (openingCharges); a ring wide enough for the largest.
+        f->chainAdmits=plan.kind==KindChain&&g.members>=kOpeningMembers&&g.soft;
         if(plan.kind!=KindChain&&g.members>=kOpeningMembers&&g.soft) {
             f->labels=true;f->charges=openingCharges(g,box);
             if(!f->charges.empty()) {
@@ -9565,7 +9603,7 @@ struct LegionNavigator::Impl {
         }
         // Stage 8: a narrow friendly passage open the other way (admissionHold): wait before it.
         watchStrips(u,m);
-        if(f&&g.field&&(g.field->labels||(g.field->kind==KindChain&&g.members>=kOpeningMembers&&g.soft))&&m.state!=Arrived&&
+        if(f&&g.field&&(g.field->labels||(g.field->kind==KindChain&&g.soft&&(g.field->chainAdmits||g.members>=kOpeningMembers)))&&m.state!=Arrived&&
            admissionHold(u,m,g,ox,oz)) {holdStall(m);hold(u,m);return;}
         if(!m.route.empty()) {
             while(!m.route.empty()&&m.route.front()==here)m.route.erase(m.route.begin());
@@ -11953,8 +11991,8 @@ struct LegionNavigator::Impl {
             if(g.next&&g.next->kind) {h=mix(h,0x6e6b696e64ull^uint64_t(g.next->kind)<<56);h=mix(h,g.next->corridorSig);}
             // Stage 8: the queue charges a route was built with (and whether it records labels), while any.
             for(const Field* f:{g.field.get(),g.next.get()})
-                if(f&&(f->labels||!f->charges.empty())) {
-                    h=mix(h,0x6368617267ull^uint64_t(f->labels)<<40);
+                if(f&&(f->labels||f->chainAdmits||!f->charges.empty())) {
+                    h=mix(h,0x6368617267ull^uint64_t(f->labels)<<40^uint64_t(f->chainAdmits)<<41);
                     for(const auto& c:f->charges)h=mix(h,uint64_t(c.label)<<32|c.cost);
                 }
             // Stage 6: a plan held for the next build, and corridor widenings.

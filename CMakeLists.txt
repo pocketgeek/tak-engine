@@ -838,6 +838,15 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100 bridges-100 --data "${TAK_TEST_DATA}"
                    --offsets 0,-5 --min scale.arrive.n=95 --max scale.stuck_end=2)
   set_tests_properties(legion_passage_admission PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # ... and on a bridge of varying width (taperbridge-100: 12-cell mouths, a 6-cell middle, five sector lines): the
+  # passage is one admission over all its records, and a chain group's last few bodies (fewer than 8 left) still
+  # ask before walking in. On the parent the stragglers met the other army in the middle (offset 0: 21 stuck,
+  # -4: 25). Checked at 0 and -4: at most 2 stand stuck at the end.
+  add_test(NAME legion_passage_taper
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios taperbridge-100 --data "${TAK_TEST_DATA}"
+                   --offsets 0,-4 --max scale.stuck_end=2)
+  set_tests_properties(legion_passage_taper PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison
