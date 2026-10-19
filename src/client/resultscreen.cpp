@@ -9,6 +9,7 @@
 #include "util/png.h"
 #include "client/appquit.h"
 #include "client/blockfont.h"
+#include "client/hidpi.h"
 #include "client/cursors.h"
 #include "client/dev.h"
 #include "client/gpuvram.h"
@@ -177,7 +178,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
         SDL_FRect cancelR = lay.rect(g.menuBtn.x, g.menuBtn.y, g.menuBtn.w, g.menuBtn.h);
 
         int mx = 0, my = 0;
-        SDL_GetMouseState(&mx, &my);
+        hidpi::mousePixels(ren, mx, my);   // layout is in output pixels
         bool okHover = inRect(okR, float(mx), float(my));
         bool cancelHover = inRect(cancelR, float(mx), float(my));
 
@@ -193,7 +194,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
                 if (k == SDLK_r) { freeAll(); return ResultChoice::Retry; }
             }
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
-                float bx = float(e.button.x), by = float(e.button.y);
+                float bx = float(hidpi::toPixels(ren, e.button.x)), by = float(hidpi::toPixels(ren, e.button.y));
                 if (inRect(okR, bx, by)) { freeAll(); return proceed; }
                 if (inRect(cancelR, bx, by)) { freeAll(); return ResultChoice::Menu; }
             }

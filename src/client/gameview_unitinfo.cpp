@@ -12,6 +12,7 @@
 #include <cstdio>
 
 #include "client/guiart.h"
+#include "client/hidpi.h"
 #include "gui/gui.h"
 
 namespace {
@@ -74,7 +75,7 @@ const Geom& geom(const tak::hpi::Vfs& vfs) {
 // cursor wins, else the first selected unit. Returns nullptr if neither yields one.
 const tak::sim::UnitType* GameView::unitInfoSubject() const {
     int mx = 0, my = 0;
-    SDL_GetMouseState(&mx, &my);
+    tak::hidpi::mousePixels(ren_, mx, my);   // iconRects_ are output pixels
     if (selectedBuilder())
         for (const auto& [r, bt] : iconRects_)
             if (bt && float(mx) >= r.x && float(mx) <= r.x + r.w &&

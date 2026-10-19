@@ -336,10 +336,11 @@ inline std::string gpuMemoryLimitLabel(int mib) {
 // Options row can say RESTART REQUIRED when the saved choice differs.
 inline bool& dpiIgnoredAtStartup() { static bool v = false; return v; }
 
-// First run with DPI-unaware scaling switched off (Windows): the window used to be
+// First run with DPI-unaware scaling switched off (Windows, macOS): the window used to be
 // stretched by the OS scale, so keep the HUD/cursor the same apparent size by folding the
 // scale into uiScale/cursorScale (clamped to their ranges). Runs once (dpiMigrated);
-// returns true if the settings changed and should be saved. osScale = display DPI / 96.
+// returns true if the settings changed and should be saved. osScale = display DPI / 96 on
+// Windows, the Retina backing scale (drawable / window, normally 2) on macOS.
 inline bool applyDpiMigration(Settings& s, float osScale) {
     if (s.dpiMigrated) return false;
     s.dpiMigrated = true;
@@ -348,6 +349,26 @@ inline bool applyDpiMigration(Settings& s, float osScale) {
         s.cursorScale = std::clamp(int(float(s.cursorScale) * osScale + 0.5f), 1, 8);
     }
     return true;
+}
+
+// macOS Retina (client/hidpi.h). With SDL_WINDOW_ALLOW_HIGHDPI the window is measured in
+// points and the renderer in pixels; backingScale = pixels per point (1 when they agree,
+// which is every Linux and Windows window here, so all of these are then identities).
+inline float backingScale(int windowW, int outputW) {
+    return windowW > 0 && outputW > windowW ? float(outputW) / float(windowW) : 1.0f;
+}
+// A pixel extent (e.g. the HUD's minimum width) as window points, rounded up so the
+// window never ends up a pixel short of it.
+inline int pixelsToPoints(int px, float backing) {
+    if (backing <= 1.0f) return px;
+    return int(float(px) / backing + 0.999f);
+}
+// SDL2's Cocoa cursor is sized in POINTS (one surface pixel per point), unlike the
+// software cursor drawn in renderer pixels. Divide CURSOR SIZE by the backing scale so
+// both paths show the cursor at the same physical size.
+inline int hardwareCursorScale(int cursorScale, float backing) {
+    if (backing <= 1.0f) return std::max(1, cursorScale);
+    return std::max(1, int(float(cursorScale) / backing + 0.5f));
 }
 
 }  // namespace tak
