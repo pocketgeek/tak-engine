@@ -759,19 +759,21 @@ std::string startLocationsLabel(uint8_t mode) {
         slider(0, "FORESTS", genParams_.treeDensity);
         slider(1, "ROCK CLUSTERS", genParams_.rockDensity);
         slider(2, "EXTRA MANA SPOTS", genParams_.manaDensity);
-        // Neutral spots scattered by AREA (a level, not a count: the same level puts
-        // four times as many on a map twice as wide). MAX = a six-spot home's density.
-        std::string scatter = tak::mapgen::scatterName(genParams_.manaScatter);
-        for (char& ch : scatter) ch = char(std::toupper(static_cast<unsigned char>(ch)));
-        lbCycle(px, py, kBtnW, kRowH, "SCATTERED MANA:  " + scatter, true, [this](int direction) {
-            genParams_.manaScatter = uint8_t((genParams_.manaScatter + direction + tak::mapgen::kScatterLevels) %
-                                             tak::mapgen::kScatterLevels);
-            applyGenParams();
-        }); py += kRowH + kGap;
         slider(3, "WATER AMOUNT", genParams_.waterDensity, !tak::mapgen::automaticWater(genParams_.layout));
         slider(4, genParams_.layout==tak::mapgen::Highlands?"HIGHLAND AMOUNT":"AUTHORED HILLS", genParams_.reliefDensity, genParams_.layout!=tak::mapgen::Maze);
-        lbBtn(px, py, 140, kRowH, "RE-ROLL SEED", true, [this] {
+        lbBtn(px, py, 110, kRowH, "RE-ROLL SEED", true, [this] {
             genParams_.seed = genParams_.seed * 6364136223846793005ULL + 1442695040888963407ULL;
+            applyGenParams();
+        });
+        // Neutral spots scattered by AREA (a level, not a count: the same level puts
+        // four times as many on a map twice as wide). MAX = a six-spot home's density.
+        // It shares the seed row: a row of its own pushed the column past the
+        // 540-high lobby canvas and into the BACK/CREATE footer band.
+        std::string scatter = tak::mapgen::scatterName(genParams_.manaScatter);
+        for (char& ch : scatter) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+        lbCycle(px + 116, py, kBtnW - 116, kRowH, "SCATTERED MANA: " + scatter, true, [this](int direction) {
+            genParams_.manaScatter = uint8_t((genParams_.manaScatter + direction + tak::mapgen::kScatterLevels) %
+                                             tak::mapgen::kScatterLevels);
             applyGenParams();
         });
       }
