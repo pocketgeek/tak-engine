@@ -2279,6 +2279,65 @@ parent), `ctest:legion_guardstill` (guard-64 offset 0: statue under 2,000 and ha
 without the whole-route speed) and `ctest:legion_ringshuffle` (r200 offset 0: reversals under 200 and ever at least
 57; 413 on the parent and 337 without the still-window rule). Each fails on the parent and without its own part.
 
+**Fight legs' shuffles (the review's follow-up, same day).** The changes above cured fight orders only where the
+column meets its arc head on. A fight order's members still on their fight leg (before they acquire, and behind the
+arc while the bodies ahead fire) kept the facing cap on every committed flow-around shuffle: `stillTarget` covers only
+attack and guard members, and `Member::detourFlow` was set only for legs that do not engage enemies (round 2's
+"rings and melees" exception, which was never measured for fight legs). `attackring-fight-60`'s straight approach
+hid it (352 of its 353 statue ticks left at offset 0); with the target north-east of the column
+(`attackring-fight-diag-60`, a new fixture: only the target moved) the reviewer's offset-0 count was 3,070 capped
+updates from fight members with a committed shuffle, and the same happened against a target that walked off and
+then stood (`fight-moved`, a scratch fixture). The change: a fight leg's flow-around shuffle is a `detourFlow` like a
+move leg's, with the move leg's exclusions (head-on meet, admitted passage, a crowd window without gain). Attack,
+guard and patrol shuffles are unchanged. No new state; `detourFlow` is already hashed while set. Retail hashes are
+unchanged (the fight fixtures below and the --mpai game).
+
+Medians over -8..8 (local, cores 19-23), 30813a73 / round 4 before this / after / Retail. The battles spawn off
+the map past the gate offsets, so theirs are gate medians.
+
+| fixture | key | 30813a73 | before | after | Retail |
+|---|---|---|---|---|---|
+| attackring-fight-diag-60 | statue_ticks | 28,331 | 3,918 | 3 | 23 |
+| attackring-fight-diag-60 | ever_end / damage_end / t50 | 29 / 1,085 / never | 41 / 1,725 / 2,018 | 41 / 1,750 / 1,971 | 44 / 2,159 / 1,652 |
+| attackring-fight-diag-60 | reversals / stopped_permille | 27 / 337 | 53 / 442 | 49 / 458 | 79 / 426 |
+| fight-moved (scratch) | statue_ticks / ever_end / damage_end | 28,818 / 28 / 1,028 | 3,591 / 41 / 1,733 | 2 / 41 / 1,753 | 55 / 48 / 2,236 |
+| attackring-fight-60 | statue_ticks | 32,402 | 372 | 3 | 31 |
+| attackring-fight-60 | ever_end / damage_end / t50 | 36 / 1,662 / 2,472 | 40 / 2,398 / 1,512 | 40 / 2,382 / 1,476 | 44 / 2,810 / 1,210 |
+| attackring-fight-60 | reversals / stopped_permille | 28 / 477 | 42 / 625 | 52 / 631 | 86 / 577 |
+| fight-retarget | statue_ticks | 3,638 | 2,384 | 449 | 39 |
+| fight-retarget | g.F.t90 / done (of the runs done) | 2,477 / 2,764 | 2,319 / 2,655 | 2,293 / 2,629 | 2,638 / 2,723 |
+| fight-retarget | runs never done of 17 / bodies left behind | 7 / 8 | 4 / 5 | 7 / 10 | 0 / 0 |
+| aware-attack | statue_ticks / click a00, b00 t90 | 2,544 / 1,813, 1,802 | 2,544 / 1,813, 1,802 | 1,941 / 1,757, 1,827 | 18 / 2,000, 1,893 |
+| battle-field-2x60 (gate) | statue_ticks / reversals | 11,111 / 63 | 4,196 / 79 | 715 / 101 | 53 / 190 |
+| battle-field-2x60 (gate) | A dead / A arrived | 30 / 12 | 25 / 16 | 27 / 17 | 37 / 3 |
+| battle-assault (gate) | statue_ticks / reversals | 177,564 / 1,200 | 148,978 / 1,444 | 50,562 / 1,553 | 1,480 / 376 |
+| battle-assault (gate) | dead A / B / stopped_permille | 428 / 429 / 553 | 444 / 443 / 552 | 462 / 458 / 583 | 214 / 221 / 14 |
+
+The creep is gone, but a fight order's reach is not better for it: the diagonal approach still has 41 bodies ever
+in reach against Retail's 44 and 81% of its damage, as the straight one does (40 against 44). That is the missing ring
+(above), not the speed. Trades: `fight-retarget`, whose fighters re-join the convoy after the chase, has its
+stragglers settle at the edge of the packed disc. The runs never done go back to 30813a73's 7 of 17 (4 before
+this), and 10 bodies end outside the disc over the 17 runs (5 before). The outliers stand 2-8 px past the observer's
+214 px limit; Legion's crowd is looser there than Retail's (offset 0: farthest body 216 against Retail's 164). Its t90
+and its completed runs are slightly sooner. At offset 0 the left-behind body walks its last 100 px at travel speed with its stall clock past the crowd
+window (108 ticks), so not on a fight shuffle: the speed changes the crowd's history rather than walking it out. In the battles, reversals rise (battle-assault
+1,444 -> 1,553, Retail 376), stopped permille rises 552 -> 583, and both sides lose more bodies (444 / 443 -> 462 /
+458, Retail 214 / 221). `aware-attack` b00's t90 is 25 ticks later, a00's 56 sooner. All 22 legion100 fixtures are
+hash-identical to the change before it at the gate offsets (none gives a fight order). `legion_cost` passes.
+
+Tried and rejected (gate medians):
+* Speed only when the body in the way fires (`Engaged`) or stands round a still target: `attackring-fight-diag-60`
+  2,988 -> 2,944. The capped shuffles are mostly round the column's own fight members, not the shooters.
+* Speed only outside the point's area (`Point::limit`): the same as the chosen rule on the fight rings, and no better
+  on `fight-retarget` (6 of 11 never done).
+* The cap again for a fight member that its last crowd window found still (`stillSince`): `fight-retarget` 8 of 11
+  never done (5 with the chosen rule).
+
+`ctest:legion_fightshuffle` (attackring-fight-diag-60 at offset 0: statue ticks under 300; 2,988 before this).
+The Legion lines of the navigation golden (`tools/navigation_checkpoints.json`) move from tick 2,400 on (10 of 24
+checkpoints, serial equal to workers; the Retail lines agree), so `navigation_determinism` fails until the
+integration retakes them with tools/scenarios/baseline.json; neither is retaken here.
+
 ### Paused first builds (W4 C1, protocol 244)
 
 A first field used to build to done, its whole window, although its members
@@ -3228,7 +3287,8 @@ leg keeps travel speed, still unturned, as lane-discipline passes and long local
 did. Retail's mover traces round a body at its own speed. It keeps the facing cap where travel speed broke
 something, each measured:
 
-* a fight, attack, guard or patrol leg (rings and melees: no change wanted there);
+* a fight, attack, guard or patrol leg (rings and melees: no change wanted there). Round 4 (2026-10-20) gave the
+  speed to fight legs too: their columns crept round their own members standing in reach ("Fight legs' shuffles");
 * a member whose point is in a head-on meet (`Point::meet`, C1): `bridges-1000`'s two allied 500-body armies on the
   two-way 32-cell bridge interleaved into a knot, 97 bodies stuck at offset 0 (5 on the parent), and still 174 when
   only a shuffle round an oncoming blocker (its way to its goal pointing back) kept the cap;
@@ -3800,10 +3860,14 @@ Rules that came out of using them:
   ringcross-100 351 -> 144 over -8..8; Retail 45, 61, 88). Still open there: statue ticks and reversals are still
   above Retail's on the open rings (r200 380 against 155; ringcross 780 against 150); bodies stand more (stopped
   permille up to 32 above round 3 on the rings, 150-200 on fight and guard, past Retail); bodies held behind an arc
-  no longer creep round it to the far side's free spots (attackring-f1-64 ever in reach 43 -> 39, Retail 45); a fight
-  order's members still on their fight leg shuffle at the cap round the attackers ahead (352 of attackring-fight-60's
-  353 statue ticks left at offset 0); and the fight orders' attack groups never get a ring (their field starts with one member; see
-  the round-4 section). Measured by `ctest:legion_fightstill`, `ctest:legion_guardstill`, `ctest:legion_ringroute`,
+  no longer creep round it to the far side's free spots (attackring-f1-64 ever in reach 43 -> 39, Retail 45); and
+  the fight orders' attack groups never get a ring (their field starts with one member; see the round-4 section), so
+  a fight order still has fewer bodies in reach than Retail (attackring-fight-60 40 against 44,
+  attackring-fight-diag-60 41 against 44). A fight order's members on their fight leg now shuffle at travel speed
+  too (round 4's follow-up: attackring-fight-diag-60 statue ticks 3,918 -> 3, attackring-fight-60 372 -> 3; Retail
+  23 and 31); in exchange `fight-retarget`'s stragglers settle at the packed disc's edge more often (7 of 17 runs
+  never done against 4; Retail 0) and the battles reverse and lose more bodies. Measured by
+  `ctest:legion_fightstill`, `ctest:legion_fightshuffle`, `ctest:legion_guardstill`, `ctest:legion_ringroute`,
   `ctest:legion_ringshuffle`, `ctest:legion_ringupkeep`, `ctest:legion_attackwalled`, `ctest:legion_attackflush`,
   `ctest:legion_ringcross`, `ctest:legion_ringfill`, `ctest:legion_ringclosed`, `ctest:legion_ringstill`,
   `ctest:legion_ringwait`, `ctest:legion_ringshadow`, `ctest:legion_ringbend` and `ringcross:g.M.t90`.

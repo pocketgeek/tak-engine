@@ -939,9 +939,9 @@ struct LegionNavigator::Impl {
         uint32_t detourTicks=0;
         bool detourFace=true;             // side-step turns the body (keep-right) or not (shuffle)
         bool detourPass=false;            // side-step is a lane-discipline pass (moves at travel speed)
-        // The side-step is a formation member's flow-around shuffle on a move-like leg (drive's blocked
-        // branch): walked unturned at travel speed, not at the facing cap (see drive and the detour walk in
-        // move). Hashed while set.
+        // The side-step is a formation member's flow-around shuffle on a move-like or fight leg (drive's
+        // blocked branch): walked unturned at travel speed, not at the facing cap (see drive and the detour
+        // walk in move). Hashed while set.
         bool detourFlow=false;
         uint32_t passUntil=0;             // tick until which a passing body keeps its new lane
         int8_t passRX=0,passRZ=0;         // the side it moved over to
@@ -10446,9 +10446,9 @@ struct LegionNavigator::Impl {
                 const auto [ax,az]=stepAim(u,m.detour);
                 holdStall(m);
                 m.site=m.detourPass?LegionNavigator::SitePass:LegionNavigator::SiteBlocked;
-                // A formation member's flow-around shuffle on a move-like leg keeps travel speed (detourFlow,
-                // see drive), as a long detour route does. A fight, attack, guard or patrol leg's shuffles round
-                // its own melee or ring keep the facing cap, and so do a body with a goal of its own
+                // A formation member's flow-around shuffle on a move-like or fight leg keeps travel speed
+                // (detourFlow, see drive), as a long detour route does. An attack, guard or patrol leg's
+                // shuffles round its own melee or ring keep the facing cap, and so do a body with a goal of its own
                 // (crowdheld's 64 distinct goals packed at a 3-cell pitch behind a door: 60 of 64 in goal at
                 // speed, the ratchet is 61), a member whose point is in a head-on meet with another order
                 // (Point::meet: at speed the two streams interleave into a knot -- bridges-1000's two-way 32-cell
@@ -11926,7 +11926,15 @@ struct LegionNavigator::Impl {
                         // keeps facing its route while it shuffles.
                         moved=true;++stats.slides;face=false;
                         m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;m.detourPass=false;
-                        m.detourFlow=policy(m.kind).completes&&!engagesEnemies(m.kind)&&formationMember(m);
+                        // A fight leg's shuffles too (round 4, 2026-10-20): the column
+                        // of a fight order flows round its own members standing in reach
+                        // (their acquired attacks) and round each other before it
+                        // acquires, and at the facing cap it crept there whenever its
+                        // way in met the arc off its own line (attackring-fight-diag-60,
+                        // the target diagonal to the column: gate median 2,988 statue
+                        // ticks, Retail 23; at speed 3). Retail's mover traces round a
+                        // body at its own speed whatever the order.
+                        m.detourFlow=policy(m.kind).completes&&(!engagesEnemies(m.kind)||m.kind==Kind::Fight)&&formationMember(m);
                         if(arc) {m.slideCell=m.detour;m.slideFrom=oz*W+ox;}
                         else m.slideCell=-1;
                     }

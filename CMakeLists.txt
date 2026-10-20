@@ -828,6 +828,14 @@ add_test(NAME legion_ringshuffle
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-r200-64.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_ringshuffle PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reversals\":(1?[0-9]?[0-9]),.*\"reach\\.ring\\.ever_end\":(5[7-9]|6[0-4]),")
+# A fight leg's flow-around shuffles keep travel speed as a move leg's do (round 4): the column of a fight order flows
+# round its own members standing in reach and round each other, and at the facing cap it crept wherever its way in met
+# the arc off its own line (attackring-fight-diag-60, the target north-east of the column, at offset 0: 2,988 statue
+# ticks; Retail 161). Passes when the statue ticks are under 300, serial equal to workers.
+add_test(NAME legion_fightshuffle
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-fight-diag-60.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_fightshuffle PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"statue_ticks\":([12]?[0-9]?[0-9]),")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
