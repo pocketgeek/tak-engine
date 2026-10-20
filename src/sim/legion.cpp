@@ -179,9 +179,11 @@ constexpr int kLineCells=160;                  // direct-line probe reach
 constexpr int kFormationLineCells=640;         // ... for a member with a formation slot
 // Pinwheel (see pivotAim): a formation member of a command at least
 // kPivotMembers strong rounds a wall end on its own concentric arc, looking
-// kPivotChain descent cells ahead. Its arc radius is capped at 1.5 bodies
-// per sqrt(members) and kPivotMaxCells; below kPivotMinBodies bodies it
-// hugs (the inner file, as before).
+// kPivotChain descent cells ahead. Its arc radius is its file in the turn's
+// ribbon (Legion ~100 round 4): the members rounding the turn together,
+// ordered across their way in, share out a width of kRibbonNum/kRibbonDen
+// bodies per sqrt(their count) (at most kPivotMaxCells), the inner file
+// hugging.
 constexpr int kPivotMembers=16;
 constexpr int kUplinkPart=64;                  // orders the server applies per client per tick (net kCmdCapPerTick)
 constexpr size_t kSlotsPerTick=32;             // formation slots a point hands out per tick (A2)
@@ -200,7 +202,14 @@ constexpr int64_t kEntryAcross=2;
 constexpr int kEntryPending=-2;
 constexpr int kPivotChain=48;
 constexpr int kPivotMaxCells=32;
-constexpr int kPivotMinBodies=2;
+constexpr int kPivotMinBodies=2;               // a fight, attack, guard or patrol leg's arc: at least this many bodies out
+constexpr int kRibbonNum=6,kRibbonDen=5;       // ribbon width: 1.2 bodies per sqrt(members rounding the turn)
+constexpr int kRibbonChain=96;
+constexpr int kRibbonMembers=32;               // the ribbon ranks parts this strong (smaller ones keep the old pinwheel)                 // descent steps a member's own way is followed to the turn's vertex
+constexpr int kTurnClear=12;                   // no new turn within this many cells of the last one's vertex or end
+constexpr int kTurnPast=2;
+constexpr int kLaneSwapNear=24;                // slots by lane: a member this near its slot after a turn ...
+constexpr int kLaneSwapReach=16;               // ... exchanges with a member of its group this near it (laneUncross)                     // cells past the turn's end along its exit that release the hold
 constexpr int kPivotSweeps=48;                 // line probes per pivot aim (bounded work)
 constexpr int kPivotAhead=4;                   // an arc aim is at least this many descent cells ahead
 constexpr int kPivotNear=32;                   // no pinwheel within this many cells of the destination
@@ -959,6 +968,16 @@ struct LegionNavigator::Impl {
         // rounds (cells; 0 not yet measured, -1 hugs as the inner file), and
         // the arc cell it aims at from origin pivotCell.
         int16_t pivotR=0;int pivotCell=-1,pivotAim=-1;
+        // The turn the member's radius is for (the ribbon, see pivotAim): its
+        // vertex and its end (cells; -1 none), the chords into the vertex and
+        // out of the end, and its inner side (+-1). While it is set a straight
+        // walk may not cut inside the radius (the ribbon hold in steer). The
+        // last turn rounded: its vertex and end (no new turn within
+        // kTurnClear cells of them), side and radius (a next turn with the
+        // same inner side keeps the radius). Hashed while set.
+        // laneSwap: the slots-by-lane exchange was tried (laneUncross); hashed while set.
+        int turnV=-1,turnE=-1,prevV=-1,prevE=-1;bool laneSwap=false;
+        int16_t turnAx=0,turnAz=0,turnEx=0,turnEz=0,prevR=0;int8_t turnSide=0,prevSide=0;
         // The cell the body's last blocked flow-around toward its pinwheel
         // arc stepped it into, and the cell it stepped it out of (-1 none):
         // blocked again there, it does not flow straight back (see drive).
@@ -10554,6 +10573,10 @@ struct LegionNavigator::Impl {
                 if(m.slot>=0&&formationMember(m)&&!engagesEnemies(m.kind)&&ringBend(u,g,p,gx,gz,bx,bz)) {m.bend=true;m.bendX=bx.v;m.bendZ=bz.v;}
             }
             direct=m.line;
+            if(m.turnV>=0&&!engagesEnemies(m.kind))ribbonHold(u,m,ox,oz,goalX,goalZ,direct);
+            if(!m.laneSwap&&m.turnV<0&&m.prevV>=0&&m.slot>=0&&m.pt&&formationMember(m)&&std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=kLaneSwapNear) {
+                m.laneSwap=true;laneUncross(u,m);
+            }
             if(m.bend&&!livelock(u)) {aimX=Fixed::raw(m.bendX);aimZ=Fixed::raw(m.bendZ);direct=true;}
         }
         // A ring member near its own spot walks to it: band 0 is all one
@@ -11373,6 +11396,154 @@ struct LegionNavigator::Impl {
             if(!p.cell[size_t(z+j)*W+x+i]&&!loneCell(p,x+i,z+j))return true;
         return false;
     }
+    // The ribbon (Legion ~100 round 4, 2026-10-20). The pinwheel's files
+    // round a turn in the order they come in, as marching files wheel: the
+    // members of the point (every part of the click: the parts of a convoy
+    // ranked apart laid their ribbons over each other from the same wall,
+    // corner-8x56 9 swaps at the top gate and 56 fewer arrivals; together 3)
+    // that round this turn together are ranked at once, by their place across
+    // the way in (the approach chord through the vertex), inner first, and
+    // share out the ribbon's width in that order. A member's own descent
+    // (kRibbonChain steps) tells whether it rounds this vertex (within 2
+    // cells): a crowd splitting round an island ranks each side apart.
+    // Members already ranked, or past a turn this close, keep what they have.
+    // Radius under 1: the member hugs (the inner file). Ranking each member
+    // against the part's live centroid (as before) read a strung-out or split
+    // crowd's depth as width and gave a later turn the first one's ranks:
+    // files crossed at the turn and at the next one.
+    // Who ranks by the ribbon: a member of a part of kRibbonMembers or more on a move-like leg. A fight, attack, guard
+    // or patrol leg (the ring and melee rules steer it near its targets) and a smaller part (two or three files: at 20
+    // and 25 bodies the ribbon only slowed the formation, legion_mixedformation's ground +13%, corner-4x25's first
+    // group +10%, with no lane swap to save) keep the pinwheel as it was.
+    bool ribbonLeg(const Member& m) const {return !engagesEnemies(m.kind)&&partRefs(m)>=kRibbonMembers;}
+    void ribbon(Member& m,const Plane& p,RouteView f,int side,int fx,int fz,int foot) {
+        const int W=width(),V=m.turnV;
+        const int64_t ax=m.turnAx,az=m.turnAz;
+        const int64_t vx=int64_t(V%W)*16+fx*8,vz=int64_t(V/W)*16+fz*8;
+        auto clear=[&](int c) {return c<0||std::max(std::abs(c%W-V%W),std::abs(c/W-V/W))>kTurnClear;};
+        std::vector<std::pair<int64_t,int>> wave;
+        uint64_t work=0;
+        for(const int id:m.pt->ids) {
+            Member* o=member(id);const Unit* v=w.unit(id);
+            if(!o||!v||!v->type||o->pt!=m.pt||v->type->footX!=fx||v->type->footZ!=fz)continue;
+            if(o!=&m) {
+                if(o->pivotR!=0||o->goal<0||o->state==Arrived||o->slot<0||!ribbonLeg(*o)||!clear(o->prevV)||!clear(o->prevE))continue;
+                int c=footprintOrigin(v->z,fz)*W+footprintOrigin(v->x,fx);bool rounds=false;
+                if(std::max(std::abs(c%W-V%W),std::abs(c/W-V/W))>kRibbonChain)continue;   // cannot reach it in the steps
+                for(int k=0;k<kRibbonChain&&c>=0&&!rounds;++k) {
+                    ++work;
+                    rounds=std::max(std::abs(c%W-V%W),std::abs(c/W-V/W))<=2;
+                    if(!rounds)c=descend(p,f,c%W,c/W,o->goal,fx,fz,true);
+                }
+                if(!rounds)continue;
+            }
+            const int64_t px=(v->x.v>>16)-vx,pz=(v->z.v>>16)-vz;
+            wave.push_back({-side*(ax*pz-az*px),id});   // outward of the way in, in its units
+        }
+        stats.pivotWork+=work;stats.pivotPartIds+=m.pt->ids.size();
+        std::sort(wave.begin(),wave.end());
+        const int64_t n=int64_t(wave.size());
+        const int64_t span=std::min<int64_t>(kPivotMaxCells,int64_t(isqrtFloor(uint64_t(n)))*foot*kRibbonNum/kRibbonDen);
+        for(int64_t k=0;k<n;++k) {
+            Member* o=member(wave[size_t(k)].second);
+            const int64_t r=(2*k+1)*span/(2*n);
+            o->pivotR=int16_t(r>=1?r:-1);
+            if(o!=&m) {
+                o->turnV=m.turnV;o->turnE=m.turnE;o->turnSide=m.turnSide;o->turnAx=m.turnAx;o->turnAz=m.turnAz;
+                o->turnEx=m.turnEx;o->turnEz=m.turnEz;o->pivotCell=-1;o->pivotAim=-1;
+            }
+        }
+    }
+    // Slots by lane (round 4): the ribbon brings a formation round its turns
+    // in the order it came in, which after a turn of 90 degrees or more is not
+    // the order of its slots (the formation's shape, translated): the bodies
+    // then crossed over at the destination, and a late one walked round the
+    // settled crowd to a slot on its far side (gap10-100: one body 1,900 ticks
+    // after the gate, done +6%; wall-4x50's later groups t90 +12%). Once, when
+    // a member that has rounded a turn comes within kLaneSwapNear cells of its
+    // slot, it exchanges slots with the member of its group within
+    // kLaneSwapReach cells (one footprint) for which the exchange shortens
+    // their two straight ways the most, by more than a cell (a 2-opt step:
+    // crossing ways are always longer than the exchanged ones).
+    void laneUncross(const Unit& u,Member& m) {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const int64_t px=u.x.v>>16,pz=u.z.v>>16;
+        auto at=[&](int c,int64_t& x,int64_t& z) {x=int64_t(c%W)*16+fx*8;z=int64_t(c/W)*16+fz*8;};
+        auto dist=[](int64_t ax,int64_t az,int64_t bx,int64_t bz) {return isqrtFloor(uint64_t((ax-bx)*(ax-bx)+(az-bz)*(az-bz)));};
+        int64_t mx,mz;at(m.goal,mx,mz);
+        const int64_t reach=int64_t(kLaneSwapReach)*16;
+        Member* best=nullptr;int bestId=0;int64_t gain=16;
+        // The candidates in id order: the point's members, or for a point larger than the box round the body the
+        // bodies the occupancy grid holds there (the same set once filtered by reach below; bounded work).
+        std::vector<int32_t> near;
+        const uint64_t box=uint64_t(2*kLaneSwapReach+1)*uint64_t(2*kLaneSwapReach+1);
+        const uint64_t work=std::min<uint64_t>(box,m.pt->ids.size());
+        if(m.pt->ids.size()<=box)near.assign(m.pt->ids.begin(),m.pt->ids.end());
+        else {
+            const int cx=int(px>>4),cz=int(pz>>4);
+            for(int z=std::max(0,cz-kLaneSwapReach);z<=std::min(w.occH_-1,cz+kLaneSwapReach);++z)
+                for(int x=std::max(0,cx-kLaneSwapReach);x<=std::min(w.occW_-1,cx+kLaneSwapReach);++x)
+                    if(const int32_t o=occAt(size_t(z)*w.occW_+x))near.push_back(o);
+            std::sort(near.begin(),near.end());near.erase(std::unique(near.begin(),near.end()),near.end());
+        }
+        for(const int id:near) {
+            if(id==u.id)continue;
+            Member* o=member(id);const Unit* v=w.unit(id);
+            if(!o||!v||!v->type||o->point!=m.point||o->group!=m.group||o->slot<0||o->goal<0||o->state==Arrived||
+               v->type->footX!=fx||v->type->footZ!=fz)continue;
+            const int64_t vx=v->x.v>>16,vz=v->z.v>>16;
+            if(std::abs(vx-px)>reach||std::abs(vz-pz)>reach)continue;
+            int64_t ox,oz;at(o->goal,ox,oz);
+            const int64_t g=dist(px,pz,mx,mz)+dist(vx,vz,ox,oz)-dist(px,pz,ox,oz)-dist(vx,vz,mx,mz);
+            if(g>gain) {gain=g;best=o;bestId=id;}
+        }
+        stats.slotSearchCells+=work;
+        if(!best)return;
+#ifndef NDEBUG
+        if(traced(u.id)||traced(bestId))std::fprintf(stderr,"TRACE t=%u u=%d lane-exchange with=%d gain=%lld\n",w.tickCounter_,u.id,bestId,(long long)gain);
+#endif
+        // Formation slots carry no index (m.slot is 0 for every formation
+        // member: its claim is the cells under its goal, Point::cells, which
+        // the exchange leaves claimed and released by goal as before); the
+        // index goes with the goal all the same, so no table indexed by it
+        // can drift from the cells (the round's review).
+        std::swap(m.goal,best->goal);std::swap(m.slot,best->slot);
+        m.lineCell=-1;best->lineCell=-1;
+        markPass(u,m);markPass(bestId);
+    }
+    // The ribbon hold: a member ranked for a turn keeps its file through it.
+    // Its straight walk to the slot opens as soon as the line clears the wall
+    // end, grazing it, so every file left its arc there for the one line and
+    // the formation folded under the tip (mixed2: 48 bodies through 7 rows,
+    // the inner files waiting at the face for a gap in the outer ones). Until
+    // it is past the turn -- kTurnPast cells beyond its end along the exit
+    // chord, and not behind the vertex along the way in -- a straight walk
+    // whose line passes within its radius (less a body) of the vertex or the
+    // end is refused, and the member follows its arc. Past it, the turn is
+    // remembered and the member ranks again at the next one.
+    void ribbonHold(const Unit& u,Member& m,int ox,int oz,int goalX,int goalZ,bool& direct) {
+        const int W=width();
+        const int64_t ex=m.turnEx,ez=m.turnEz;
+        const int64_t el=std::max<int64_t>(1,isqrtFloor(uint64_t(ex*ex+ez*ez)));
+        const int64_t along=(int64_t(ox-m.turnE%W)*ex+int64_t(oz-m.turnE/W)*ez)/el;
+        const bool beyond=int64_t(ox-m.turnV%W)*m.turnAx+int64_t(oz-m.turnV/W)*m.turnAz>=0;
+        if(along>=kTurnPast&&beyond) {
+            m.prevV=m.turnV;m.prevE=m.turnE;m.prevSide=m.turnSide;m.prevR=m.pivotR;
+            m.turnV=m.turnE=-1;m.turnSide=0;m.turnAx=m.turnAz=m.turnEx=m.turnEz=0;
+            m.pivotR=0;m.pivotCell=-1;m.pivotAim=-1;
+            return;
+        }
+        if(!direct||m.pivotR<=0)return;
+        const int64_t R=int64_t(m.pivotR)-std::max(u.type->footX,u.type->footZ);
+        if(R<=0)return;
+        const int64_t dx=goalX-ox,dz=goalZ-oz,dd=dx*dx+dz*dz;
+        for(const int c:{m.turnV,m.turnE}) {
+            const int64_t px=ox-c%W,pz=oz-c/W;
+            const int64_t t=dd?std::clamp<int64_t>(-(px*dx+pz*dz)*1024/dd,0,1024):0;
+            const int64_t qx=px+dx*t/1024,qz=pz+dz*t/1024;
+            if(qx*qx+qz*qz<R*R) {direct=false;return;}
+        }
+    }
     // Pinwheel: a formation keeps its width round the end of a wall. The
     // field's shortest ways past a convex wall end all touch its tip, so
     // members descending it fold into one file there. Instead, when a turn
@@ -11447,14 +11618,44 @@ struct LegionNavigator::Impl {
             // chain (30 degrees or more between 6-cell chords) beside the
             // wall.
             int turn=-1;int64_t side=0;
+            const bool engaging=!ribbonLeg(m);
+            // Since round 4 (a ribbon leg, see ribbonLeg; any other keeps the
+            // rule and the rank below as they were): a turn round a wall END, with the wall on its
+            // inner side (a bend away from a face -- leaving it for the goal
+            // -- is no turn: ranking there flipped the files), and not the
+            // turn just rounded (its vertex or end within kTurnClear cells).
+            auto clear=[&](int c,int t) {return t<0||std::max(std::abs(c%W-t%W),std::abs(c/W-t/W))>kTurnClear;};
             for(int i=touch;i+12<n&&turn<0;i+=2) {
                 const int64_t ax=chain[size_t(i+6)]%W-chain[size_t(i)]%W,az=chain[size_t(i+6)]/W-chain[size_t(i)]/W;
                 const int64_t bx=chain[size_t(i+12)]%W-chain[size_t(i+6)]%W,bz=chain[size_t(i+12)]/W-chain[size_t(i+6)]/W;
                 const int64_t cross=ax*bz-az*bx;
-                if(cross*cross*4>=(ax*ax+az*az)*(bx*bx+bz*bz)) {turn=i+6;side=cross>0?1:-1;}
+                if(cross*cross*4<(ax*ax+az*az)*(bx*bx+bz*bz))continue;
+                if(engaging) {turn=i+6;side=cross>0?1:-1;continue;}
+                if(!clear(chain[size_t(i+6)],m.prevV)||!clear(chain[size_t(i+6)],m.prevE))continue;
+                const int sd=cross>0?1:-1;
+                bool inner=false;
+                for(int k=i;k<=i+12&&!inner;++k) {
+                    int vx,vz;
+                    if(wall(chain[size_t(k)],vx,vz))inner=sd*(ax*vz-az*vx)<0||sd*(bx*vz-bz*vx)<0;
+                }
+                stats.pivotWork+=13;
+                if(inner) {turn=i+6;side=sd;}
             }
             const int cap=std::min<int>(kPivotMaxCells,int(isqrtFloor(uint64_t(std::max(partRefs(m),0))))*foot*3/2);
             if(turn<0||unsure)return -1;
+            // The turn's end: the first chain cell from the vertex on after
+            // which the chain runs straight for 12 cells (two 6-cell chords
+            // within ~14.5 degrees). A turn whose end is not in view yet is
+            // ranked later (at the far end of the look-ahead a U-turn read as
+            // its first bend, and the hold let go before the wall end).
+            int end=-1;
+            for(int k=turn;!engaging&&k+12<n&&end<0;k+=2) {
+                const int64_t ax=chain[size_t(k+6)]%W-chain[size_t(k)]%W,az=chain[size_t(k+6)]/W-chain[size_t(k)]/W;
+                const int64_t bx=chain[size_t(k+12)]%W-chain[size_t(k+6)]%W,bz=chain[size_t(k+12)]/W-chain[size_t(k+6)]/W;
+                const int64_t cr=ax*bz-az*bx,dt=ax*bx+az*bz;
+                if(dt>0&&cr*cr*15<dt*dt)end=k;
+            }
+            if(!engaging) {stats.pivotWork+=uint64_t(n-turn);if(end<0)return -1;}
 #ifndef NDEBUG
             {   // W9 census (B3): the turn the guard would drop -- the 12-cell chord test fails, or the wall
                 // contact before the turn is no face (three illegal neighbours on one side).
@@ -11477,41 +11678,57 @@ struct LegionNavigator::Impl {
                                              w.tickCounter_,u.id,ox,oz,turn,touch,int(chord12),int(face),cap);
             }
 #endif
-            // Rank: the member's side offset from its part's live centroid
-            // across the way to the turn, measured from the inner (turn)
-            // side; the centre file keeps half the part's packed width.
-            auto& pt=*m.pt;
-            int64_t liveX,liveZ;
-            if(pt.partRefs.size()<=1) {
-                if(pt.liveTick!=w.tickCounter_) {
-                    int64_t sx=0,sz=0,count=0;
-                    for(const int id:pt.ids)if(const Unit* v=w.unit(id)) {sx+=v->x.v>>16;sz+=v->z.v>>16;++count;}
-                    pt.liveTick=w.tickCounter_;pt.liveX=count?sx/count:0;pt.liveZ=count?sz/count:0;
-                }
-                liveX=pt.liveX;liveZ=pt.liveZ;
-            } else {
-                // A point of several parts (one click split by the uplink,
-                // A2): each part ranks against its own centroid (C33), so
-                // the merged selection is never ranked as one. One pass
-                // over the point's ids per tick, counted as pivot work.
-                if(pt.partTick!=w.tickCounter_) {
-                    pt.partTick=w.tickCounter_;pt.partLive.clear();
-                    for(const int id:pt.ids) {
-                        const Member* mm=member(id);const Unit* v=w.unit(id);
-                        if(!mm||!v)continue;
-                        auto& a=pt.partLive[mm->part];a[0]+=v->x.v>>16;a[1]+=v->z.v>>16;++a[2];
+            if(engaging) {
+                // Rank: the member's side offset from its part's live centroid
+                // across the way to the turn, measured from the inner (turn)
+                // side; the centre file keeps half the part's packed width.
+                auto& pt=*m.pt;
+                int64_t liveX,liveZ;
+                if(pt.partRefs.size()<=1) {
+                    if(pt.liveTick!=w.tickCounter_) {
+                        int64_t sx=0,sz=0,count=0;
+                        for(const int id:pt.ids)if(const Unit* v=w.unit(id)) {sx+=v->x.v>>16;sz+=v->z.v>>16;++count;}
+                        pt.liveTick=w.tickCounter_;pt.liveX=count?sx/count:0;pt.liveZ=count?sz/count:0;
                     }
-                    stats.pivotPartIds+=pt.ids.size();
+                    liveX=pt.liveX;liveZ=pt.liveZ;
+                } else {
+                    // A point of several parts (one click split by the uplink,
+                    // A2): each part ranks against its own centroid (C33), so
+                    // the merged selection is never ranked as one. One pass
+                    // over the point's ids per tick, counted as pivot work.
+                    if(pt.partTick!=w.tickCounter_) {
+                        pt.partTick=w.tickCounter_;pt.partLive.clear();
+                        for(const int id:pt.ids) {
+                            const Member* mm=member(id);const Unit* v=w.unit(id);
+                            if(!mm||!v)continue;
+                            auto& a=pt.partLive[mm->part];a[0]+=v->x.v>>16;a[1]+=v->z.v>>16;++a[2];
+                        }
+                        stats.pivotPartIds+=pt.ids.size();
+                    }
+                    const auto found=pt.partLive.find(m.part);
+                    const int64_t count=found==pt.partLive.end()?0:found->second[2];
+                    liveX=count?found->second[0]/count:0;liveZ=count?found->second[1]/count:0;
                 }
-                const auto found=pt.partLive.find(m.part);
-                const int64_t count=found==pt.partLive.end()?0:found->second[2];
-                liveX=count?found->second[0]/count:0;liveZ=count?found->second[1]/count:0;
+                const int64_t tx=int64_t(chain[size_t(turn)]%W)*16+fx*8-liveX,tz=int64_t(chain[size_t(turn)]/W)*16+fz*8-liveZ;
+                const int64_t tl=isqrtFloor(uint64_t(tx*tx+tz*tz));
+                const int64_t lat=tl?(tx*((u.z.v>>16)-liveZ)-tz*((u.x.v>>16)-liveX))/tl:0;   // px, + right of the way
+                const int rank=int(std::clamp<int64_t>(cap/2-side*lat/16,0,cap));
+                m.pivotR=int16_t(rank>=kPivotMinBodies*foot?rank:-1);
+                if(m.pivotR<0)return -1;
             }
-            const int64_t tx=int64_t(chain[size_t(turn)]%W)*16+fx*8-liveX,tz=int64_t(chain[size_t(turn)]/W)*16+fz*8-liveZ;
-            const int64_t tl=isqrtFloor(uint64_t(tx*tx+tz*tz));
-            const int64_t lat=tl?(tx*((u.z.v>>16)-liveZ)-tz*((u.x.v>>16)-liveX))/tl:0;   // px, + right of the way
-            const int rank=int(std::clamp<int64_t>(cap/2-side*lat/16,0,cap));
-            m.pivotR=int16_t(rank>=kPivotMinBodies*foot?rank:-1);
+            else {
+                // The turn record (see Member::turnV).
+                const int V=chain[size_t(turn)],a0=chain[size_t(std::max(0,turn-6))];
+                m.turnV=V;m.turnE=chain[size_t(end)];m.turnSide=int8_t(side);
+                m.turnAx=int16_t(V%W-a0%W);m.turnAz=int16_t(V/W-a0/W);
+                m.turnEx=int16_t(chain[size_t(end+6)]%W-chain[size_t(end)]%W);m.turnEz=int16_t(chain[size_t(end+6)]/W-chain[size_t(end)]/W);
+                if(m.prevR!=0&&side==m.prevSide)m.pivotR=m.prevR;   // the same inner side as the last turn: the same file
+                else ribbon(m,p,f,side,fx,fz,foot);
+#ifndef NDEBUG
+                if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d pivot-rank at=(%d,%d) vertex=(%d,%d) end=(%d,%d) side=%d R=%d\n",
+                                             w.tickCounter_,u.id,ox,oz,V%W,V/W,m.turnE%W,m.turnE/W,int(side),int(m.pivotR));
+#endif
+            }
             if(m.pivotR<0)return -1;
         }
         const int64_t R=m.pivotR;
@@ -11552,7 +11769,7 @@ struct LegionNavigator::Impl {
             while(r<R&&open(r+1))++r;
             stats.pivotWork+=uint64_t(r)+1;   // W8 step 0: the free-width probes
             while(r>0&&!legal(p,cx+int(nx*r/len),cz+int(nz*r/len))) {--r;++stats.pivotWork;}
-            if(r<int64_t(kPivotMinBodies)*foot)continue;
+            if(r<(ribbonLeg(m)?1:int64_t(kPivotMinBodies)*foot))continue;
             const int qx=cx+int(nx*r/len),qz=cz+int(nz*r/len);
             if((qx-mx)*(qx-mx)+(qz-mz)*(qz-mz)<int64_t(kPivotLead)*kPivotLead&&j+1<n)continue;
             // Only an arc point ahead along the arc (never one beside or
@@ -12257,6 +12474,29 @@ struct LegionNavigator::Impl {
             const int bx=footprintOrigin(other.x,bfx),bz=footprintOrigin(other.z,bfz);
             return bx<gx+fx&&gx<bx+bfx&&bz<gz+fz&&gz<bz+bfz;
         };
+        // A settled arrival of this very point that stands between this body
+        // and its own formation slot, a few bodies off (Legion ~100 round 4,
+        // 2026-10-20). The field is the click's, but a formation member walks
+        // to its slot: where the slot lies across the crowd from the click,
+        // two arrivals beside it can close every step to it (one on each cell
+        // of a diagonal step's corner) with neither of them nearer the click,
+        // neither able to yield (no free cell within one of its own goal), so
+        // the body never queued and its order never ended (mixed2's second
+        // leg at gate offset +2 after the ribbon changed the arrival order:
+        // one body frozen 2.5 cells from a free slot for 2,800 ticks). Nearer
+        // the slot, centre to centre, it counts as nearer the point: the body
+        // queues, re-chooses a free slot, or settles where it stands.
+        auto beforeSlot=[&](int o,const Unit& other) {
+            if(m.slot<0||m.goal<0||!formationMember(m))return false;
+            const auto a=anchors.find(o);
+            if(a==anchors.end()||a->second.point!=m.point)return false;
+            const int64_t gx=2*int64_t(m.goal%W)+fx,gz=2*int64_t(m.goal/W)+fz;
+            const int64_t sx=2*int64_t(ox)+fx-gx,sz=2*int64_t(oz)+fz-gz;
+            if(std::max(std::abs(sx),std::abs(sz))>int64_t(6*foot))return false;
+            const int bfx=other.type->footX,bfz=other.type->footZ;
+            const int64_t bx=2*int64_t(footprintOrigin(other.x,bfx))+bfx-gx,bz=2*int64_t(footprintOrigin(other.z,bfz))+bfz-gz;
+            return bx*bx+bz*bz<sx*sx+sz*sz;
+        };
         bool queued=false,foreign=false,stranger=false;uint32_t front=kUnreached;
         const int r=foot<=5?2:1;
         uint64_t ring=0;
@@ -12271,7 +12511,7 @@ struct LegionNavigator::Impl {
             if(!other||!other->type||other->type->isStructure())continue;
             // Another player's body is no part of this crowd (an ally's settled body may yield, see requestYield).
             if(other->player!=u.player) {stranger=true;continue;}
-            if(!nearer(*other)&&!(isAnchor(o)&&onSlot(*other)))continue;
+            if(!nearer(*other)&&!(isAnchor(o)&&(onSlot(*other)||beforeSlot(o,*other))))continue;
             if(isAnchor(o)) {
                 const auto a=anchors.find(o);
                 if(!sameDestination(a->second.point))continue;
@@ -12948,6 +13188,11 @@ struct LegionNavigator::Impl {
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
             if(std::get<0>(m.point)>=0&&m.part!=std::get<1>(m.point)) {h=mix(h,0x70617274ull);h=mix(h,m.part);}
             if(m.pivotR||m.pivotCell>=0) {h=mix(h,uint64_t(uint16_t(m.pivotR)));h=mix(h,uint64_t(uint32_t(m.pivotCell))<<32|uint32_t(m.pivotAim));}
+            if(m.turnV>=0||m.prevV>=0) {
+                h=mix(h,0x726962626f6eull);h=mix(h,uint64_t(uint32_t(m.turnV))<<32|uint32_t(m.turnE));h=mix(h,uint64_t(uint32_t(m.prevV))<<32|uint32_t(m.prevE));
+                h=mix(h,uint64_t(uint16_t(m.turnAx))|uint64_t(uint16_t(m.turnAz))<<16|uint64_t(uint16_t(m.turnEx))<<32|uint64_t(uint16_t(m.turnEz))<<48);
+                h=mix(h,uint64_t(uint16_t(m.prevR))|uint64_t(uint8_t(m.turnSide))<<16|uint64_t(uint8_t(m.prevSide))<<24|uint64_t(m.laneSwap)<<32);
+            }
             if(m.slideCell>=0) {h=mix(h,0x736c696465ull);h=mix(h,uint64_t(uint32_t(m.slideCell))<<32|uint32_t(m.slideFrom));}
             if(m.meetSeen!=kNoTick) {h=mix(h,0x6d73656eull);h=mix(h,m.meetSeen);}
             if(m.passLabel) {h=mix(h,0x70617373ull);h=mix(h,m.passLabel);}
