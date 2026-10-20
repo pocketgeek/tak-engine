@@ -2512,5 +2512,8 @@ The selector is display-only: order dispatch (`0x5214b0`) does not call it. Our
 HUD had applied the range test to every unit, so a selected archer or swordsman
 showed TooFar over any enemy out of reach. `tools/re/probe_cursor_enemy_hover.py`
 runs those branches natively; `cursorCanAttackEnemy` (src/client/cursorrange.h)
-ports them, and the right-click attack order goes to exactly the selected units
-for which it returns Attack (`cursor_enemy` test, shipped types).
+ports them for the cursor only (`cursor_enemy` test, shipped types). The
+right-click on an enemy still orders every selected unit to attack, as the
+order code does not consult the selector; `World::attack` then rallies a
+factory's output at the target, keeps an out-of-range tower's order until the
+target comes in reach, and drops the order for a unit with no weapon.

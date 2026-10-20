@@ -802,7 +802,7 @@ speed keys are fixed.
 | **Shift** + select | Add to the selection. |
 | **Ctrl** + select | Remove from the selection. |
 | **Right-click** | The natural order for what is under the cursor: move, attack, guard, repair, load, reclaim and so on. |
-| **Right-click an enemy** | Attack it. As in the original, the pointer shows the attack cursor whenever a selected unit's active weapon can hurt that enemy; a unit that can move walks into range, however far away the enemy is. Only a tower or other building that cannot reach it shows the "too far" cursor. Units that cannot hurt that enemy are left alone. |
+| **Right-click an enemy** | Attack it. As in the original, the pointer shows the attack cursor whenever a selected unit's active weapon can hurt that enemy; a unit that can move walks into range, however far away the enemy is. Only a tower or other building that cannot reach it shows the "too far" cursor (it still takes the order, and fires once the enemy comes in range). A selected factory sends the units it builds after that enemy. |
 | **Shift + right-click** | Queue that order after the current ones. |
 | **Right-drag** with a reclaiming builder | Reclaim everything in the box. |
 | **Middle-drag**, or the cursor at a screen edge | Scroll the map. |

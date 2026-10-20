@@ -209,29 +209,23 @@ namespace {
                     return;
                 }
             }
-            // Only the units that show the Attack cursor over this enemy are
-            // ordered to attack it. With none, an attacker selection is showing
-            // TooFar and the click does nothing; a selection with no attacker
-            // at all (Normal cursor) moves as it would on bare ground.
-            bool attackerSelected=false;
-            if (const UnitR* target=enemy>=0 ? frameUnitP(enemy) : nullptr) {
-                int voiced=-1;
+            // Every selected unit gets the Attack order, whatever the cursor
+            // shows: retail's order code (0x5214b0) never consults the cursor
+            // selector 0x4dd780. The sim sorts the units out -- a production
+            // building rallies its output at the target, an out-of-range tower
+            // keeps the order and fires once the target arrives, and a unit
+            // with no weapon drops it (World::attack).
+            if (enemy >= 0) {
                 for (int id : selection_) {
-                    const UnitR* attacker=frameUnitP(id);
-                    if (!attacker || !isCursorAttacker(*attacker)) continue;
-                    attackerSelected=true;
-                    if (!attackerCanHitEnemy(*attacker,*target)) continue;
                     tak::net::Command c;
                     c.kind = tak::net::Cmd::Attack;
                     c.unitId = id;
                     c.targetId = enemy;
                     c.queue = queue;
                     issue(c);
-                    if (voiced<0) voiced=id;
                 }
-                if (voiced>=0) voice(voiced, "attack");
-            }
-            if (enemy < 0 || !attackerSelected) {
+                voice(selection_.front(), "attack");
+            } else {
                 voice(selection_.front(), "move");
                 // In a Legion net game the selection goes as ONE explicit order,
                 // OrderShape::Offsets at the click: the sim gives the members the
@@ -433,8 +427,8 @@ namespace {
     }
 
     // The per-unit Attack/TooFar decision over an enemy (cursorCanAttackEnemy).
-    // The hover cursor and the right-click attack order both use it, so a
-    // unit is ordered to attack exactly when it would show the Attack cursor.
+    // Cursor only: the right-click order still goes to every selected unit,
+    // as retail's order code never consults this decision.
     bool GameView::attackerCanHitEnemy(const UnitR& attacker,const UnitR& target,
                                        bool ignoreAirstrikeWeapons) const {
         return isCursorAttacker(attacker) && target.type &&
