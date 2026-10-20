@@ -2016,6 +2016,121 @@ are hash-identical. attack-100 is a chase (no disc: the target moves); its ring
 presses differently and lets more of the fleeing group through, nearer Retail
 (g.E.arrived 2 -> 4 of 10, Retail 6; damage 2562 -> 2295, Retail 1880).
 
+### Rings at ~100 bodies, round 3 (2026-10-20, task-l3-ring3)
+
+**The 0.8.6 prep gate's attack-ring regressions, bisected** (v0.8.5 .. bd7f3f6e: 30a38c9e, the round 1 parents
+5d697081 / 906339c1 / 7827f6e8 / 8e60cc60, 48c5b05c, the round 2 parents 0c820175 / 53863b04 / 96f301f6, aacb1f2c,
+the blocked-shot commits c74c7f4e / 94fb3b17 / 575a70d2). The gate quotes the W5 step-0 base, not 0.8.5: the W5 exit
+licensed these keys (`accepted_regressions`) at their exit values, so "290 -> 20,977" and "0 -> 1,669" read against
+2026-10-09, not against the release.
+
+* `attackring-r200-64:statue_ticks` (a flat map: every offset is one run) was 19,585 at 0.8.5 (the W5-exit licence),
+  25,307 at 7827f6e8 (ring upkeep), 21,303 at 8e60cc60 and 48c5b05c, 20,977 from 0c820175 (round 2) on; blocked
+  shots change nothing. A real, old cost: no body was frozen, they crept. Every statue tick was in the blocked branch
+  (`SiteBlocked`): attackers queued outside the firing arc walked their local detour routes and flow-around shuffles
+  unturned at the facing cap of an eighth (offset 0, counted with the closed-spot rule below already in: 6,921 capped detour-route updates, 6,612 shuffle updates, 381 press updates),
+  and the owners of spots the arc had closed off took the next free spot behind it, scan after scan (one member swapped
+  between two spent spots 13 times in 600 ticks). Retail's mover traces round a body at its own speed (155).
+* `attackring-f1-16:statue_ticks` 683 at 0.8.5 (licence), 1,998 from 7827f6e8 (ring upkeep), 1,669 from round 2: two
+  of the 16 bodies crept round the ring outside reach for ~750 and ~600 ticks, the same crawl. Real; fixed below (175).
+* `attackring-wall-64:g.A.arrived` / `complete_n` 2 -> 0: drift toward Retail. The base 2 is the median of the first
+  five offsets at W5 step 0; at 0.8.5 the offsets read 2, 2, 2, 0, 2, 0, 0, 0, 0, 0, 0 (gate median 0 already): at the
+  walled offsets two attackers dropped their orders at the approach point. Since 7827f6e8 ("walled targets keep
+  orders") none does, as in Retail (0 at every offset).
+* `attackring-river-64:g.A.complete_n` 1 -> 0 (all offsets): the same 7827f6e8 change, the target across the river
+  out of the attackers' region; Retail 0.
+* `attackring-struct-60:g.T.arrived` 1 -> 0: from 0c820175 (round 2) the ring kills the 30,000-HP structure (by tick
+  ~2,820, Retail ~2,850); a dead target is not "arrived". Retail 0.
+
+**The changes**, Legion only (Retail hashes unchanged on every fixture checked):
+
+* **Rings round still targets walk at speed** (`ringStanding`). An attack member of a ring round a target standing
+  still walks its local detour routes of `kBriskRoute` cells or more and its flow-around shuffles at travel speed,
+  unturned, as a formation member's already did (rounds 1 and 2 kept the cap for attack legs). A chase (a moving
+  target) keeps the cap: there the faster ring killed `attack-100`'s target with 5 bodies in reach instead of 22 and
+  the rest of the fleeing group got away (Retail 18).
+* **Closed-off spots are spent** (ringScan). The origins out to two bodies beyond the reach edge are flooded from the
+  free origins a body or more beyond it, through origins no still body covers (the ring's own held members do not
+  wall it: they move on or give their spot up), walking on only where nothing brakes a body: out of reach, in reach
+  out of the target's sight (each origin's own sight test, band 1's; see the review below), or anywhere when band 0
+  was planned without sight (`Ring::sight`). A band-0 spot whose stop point (the reach edge
+  radially out from it; the spot itself without sight) is not flooded is spent, so its owner takes a spot it can get to.
+* **Spare attackers wait outside.** A member whose spot is spent with no free unspent band-0 spot left takes the
+  nearest free outer-band spot instead of standing behind the arc. With the speed change alone the spares milled at the
+  top of `ringcross-100`'s ring, across the Move group's lanes (crossing t90 3,841 -> 4,089 at the gate offsets).
+* **Pressing flush** (pressIn). Out of sight at the box point nearest the target, a press also tries the box's far
+  edge toward it, the last sub-pixel of the origin. Retail's attacker pushing at its target against a wall is clamped
+  there (`footprintClamp`, 4db010), its float centre rounds into the next cell, and the sight cast (`losBetween`)
+  starts in that cell: pressed flush to a 1-cell wall's west or north face it fires through it
+  (`attackring-wall-100` offset 0, Retail at tick 3,000: of its 61 bodies in reach, 24 stand on the last pixel of a cell in x and 23 in z, the box's west face at x = 2015.99 and north face at z = 1215.99 among them). A press now
+  ends exactly at its point (it ended 1/16 px short, which a flush point does not survive), and a press walked out of
+  the target's sight (`pressHidden`) keeps travel speed: nothing brakes the body before its point, and at the cap a
+  press round a wall's end ran out of `kPressTicks` half way and repeated.
+
+Medians over the gate offsets (Legion before -> after, Retail):
+
+| fixture | key | before | after | Retail |
+|---|---|---|---|---|
+| attackring-r200-64 | statue_ticks | 20,977 | 480 | 155 |
+| attackring-r200-64 | reach.ring.ever_end / damage_end | 52 / 3,392 | 59 / 4,069 | 64 / 3,717 |
+| attackring-f1-16 | statue_ticks | 1,669 | 175 | 2 |
+| attackring-f1-64 / squad-64 | ever_end / damage_end / statue | 42 / 2,591 / 25,891 | 43 / 2,840 / 910 | 45 / 2,612 / 195 |
+| attackring-mob-40 | ever_end / damage_end | 36 / 2,154 | 40 / 2,638 | 39 / 2,438 |
+| attackring-mob-100 | ever_end / damage_end | 43 / 2,683 | 40 / 2,762 | 44 / 2,688 |
+| attackring-wall-64 | damage_end / t50 | 1,465 / 2,225 | 1,834 / 1,475 | 1,909 / 1,429 |
+| attackring-wall-100 | damage_end / ever_end | 1,748 / 34 | 1,795 / 33 | 1,922 / 49 |
+| attackring-wall-100 | damage at the walled offsets 0, 1, -1, -2 | 0 / 0 / 0 / 0 | 1,169 / 833 / 1,104 / 952 | 689 / 350 / 767 / 646 |
+| attackring-wall-64 | damage at the walled offsets 0, 1, -1, -2 | 0 / 0 / 0 / 0 | 1,197 / 845 / 1,169 / 782 | 781 / 240 / 860 / 647 |
+| ringcross-100 | reach.ring.ever_t1500 / t50 | 33 / 717 | 42 / 571 | 43 / 653 |
+| ringcross-100 | damage_end | 5,700 | 6,405 | 6,458 |
+| ringcross-100 | g.M.t90 / done | 3,841 / 4,252 | 3,841 / 4,365 | 3,926 / 4,166 |
+| ringcross (48/40) | g.M.t90 / done | 3,686 / 4,156 | 3,751 / 4,195 | 3,880 / 4,293 |
+| attack-100 | ever_end / damage_end | 22 / 2,152 | 20 / 2,116 | 18 / 1,880 |
+| attackring-struct-60 | t50 (killed either way) | 1,057 | 917 | 1,216 |
+
+Over the wide offsets -8..8 (Windows sweep, hashes equal to Linux; median before -> after, Retail):
+`attackring-wall-64` damage 1,484 -> 2,031 (2,104), ever 34 -> 36 (42); `attackring-wall-100` damage 1,757 -> 2,017
+(2,135), ever 35 -> 34 (41); `ringcross-100` t90 3,841 -> 3,841 (3,926; mean 3,853 -> 3,856), done 4,252 -> 4,337
+(4,173), ever by 1,500 33 -> 42 (43); `ringcross` t90 3,745 -> 3,841 (3,880; mean 3,763 -> 3,813), ever by 1,500
+36 -> 39 (45) but at the end 41 -> 39 (45); `attack-100` damage 2,254 -> 2,467 (1,880), ever 22 -> 19 (18).
+
+Statue ticks fall by 90-98% on every ring round a still target (wall-100 19,968 -> 1,412, ringcross-100 24,877 ->
+1,168), still above Retail's few hundred: presses toward reach keep the cap (pressing at speed, measured in round 2,
+let braked bodies glide on). At the walled offsets Legion now outfires Retail: its presses look for the flush points
+on every face that has one, Retail's bodies reach them only where they happen to push. Not changed: the ring offsets
+of `attackring-wall-100` keep 29-36 bodies in reach against Retail's 32-49 (Retail packs the in-sight ground between
+the arc and the wall from out of sight; a band-0 extension to spots in sight bordering band 1 was tried and moved
+nothing there: wall-100 ever 33 -> 35, wall-64 damage 1,834 -> 1,747), `attackring-mob-100` loses 3 bodies in reach
+(43 -> 40, damage up), and `attackring-river-64` (target across a river) still stands 6 against Retail's 21. Fight and
+guard rings (`attackring-fight-60`, `attackring-guard-64`) are untouched: `ringStanding` is attack only, and their
+statue ticks (32,402 and 42,133) are the next case. `battle-field-2x60` and `battle-assault` move both ways: group losses by up to six
+bodies either way (battle-field-2x60 A 34 -> 30 dead,
+battle-assault B8 44 -> 50), travel reversals 1,290 -> 1,198 in the latter. `ctest:legion_ringstill` (r200: statue < 2,000 and ever >= 57;
+20,977 / 52 on the parent), `ctest:legion_ringclosed` (ringcross-100 by tick 1,500: >= 41 in reach and t50 <= 600;
+33 / 717 on the parent, 39 / 634 with the speed change alone), `ctest:legion_ringwait` (ringcross-100 gate median t90
+under 3,950: 4,089 with the speed change alone, 3,841 on the parent and here) and `ctest:legion_attackflush`
+(attackring-wall-100 offsets 0, 1, -1: median damage >= 400; 0 on the parent). `ctest:legion_pressin` keeps no
+repeat at any gate offset.
+
+**Review: the flood's shadow** (same branch). The closed-off-spot flood first took band 1's listed spots for the
+in-reach shadow it may walk through. That list is a sample of the shadow, not the shadow: `buildRing` packs origins a
+footprint apart and stops at the cells the ring wants (`min(256, max(2n, n+8))`), so most of the shadow braked the
+flood, and bodies of two cells or more, whose band-1 origins are never 8-adjacent, crossed none of it. A target whose
+in-sight spots are reached only through in-reach shadow then had every band-0 spot spent and was never attacked. The
+flood now repeats band 1's sight test (the sight grid, target position and skip `buildRing` used, kept on the ring)
+for every in-reach origin. New fixture `attackring-gatehouse-40` (tools/scenarios): a yard walled at 6 cells, open on
+the east, inside an outer wall at 10 cells (in reach at the corridor's middles), open on the west; 40 2x2 attackers
+with range 160 from the west. At offset 0 the old flood spent all 10 band-0 spots from the first scan (damage 0); now
+1 (damage 238; Retail 557, round 2 224). Over the gate offsets the median damage is 244 (old flood 320, round 2 224,
+Retail 584) and ever in reach 15 (20, 16, 29): with every spot spent, the old flood's members fell back to outer-band
+spots, which here are band-1 spots in the corridor pressed flush to the yard's wall, and fired through it at the
+offsets where they got in. With the spots open they walk for the east beam, and the first bodies in press flush to
+the yard wall just inside the west gate and leave one cell of the 3-cell corridor, so the rest queue outside (Retail
+fills the corridor). Every other ring fixture is hash-identical at all 11 gate offsets (r200-64, f1-16, f1-64,
+squad-64, mob-40, mob-100, wall-64, wall-100, river-64, struct-60, ringcross, ringcross-100, attack-100): their
+shadow was 1x1 and fully listed, or not on the way in. `ctest:legion_ringshadow` (gatehouse offset 0, damage >= 150;
+0 before).
+
 ### Paused first builds (W4 C1, protocol 244)
 
 A first field used to build to done, its whole window, although its members
@@ -3195,24 +3310,21 @@ Rules that came out of using them:
   `taperbridge-100` (tools/scenarios) and `bridges-100` (legion100) over the
   wide offsets; `ctest:legion_passage_admission` and `ctest:legion_passage_taper`
   hold their offsets.
-* **Attack rings at ~100 bodies (after round 2, 2026-10-19).** Bodies press to
-  sub-cell points in reach, but Legion's ring still fills its edge more thinly than
-  Retail's where walls cut the sight lines: Retail's bodies in reach and out of
-  sight keep walking at the target and stand two and three deep along a wall,
-  Legion's press only one origin on. attackring-wall-100's ring offsets fire with
-  82-101% of Retail's damage and 29-35 bodies ever in reach against Retail's 32-49
-  (offsets -3 and -4: 29 / 30 against 49 / 44); against a target walled in on every
-  side Legion's ring stands round the walls but never fires (Retail's bodies pressed
-  flush against a 1-cell wall see through it: the sight cast starts in the cell
-  their float-rounded centre falls in, the wall itself), which Legion does not seek.
-  The ring also forms slower than Retail's (ringcross-100: 33 of 50 in reach by
-  tick 1500 against 43; the far side still fills one rescan at a time behind the
-  near arc). A Move group crossing a firing ring is within 4% of Retail's t90
-  (ringcross-100 4066 against 3926; ringcross 3796 against 3880) and completes at
-  every offset, about 360 ticks after Retail; the crossing stays sensitive to small
-  changes in the ring (press speed alone moved its t90 by 300 ticks). Measured by
-  `ctest:legion_ringupkeep`, `ctest:legion_attackwalled`, `ctest:legion_ringcross`,
-  `ctest:legion_ringfill`, `ctest:legion_ringbend` and `ringcross:g.M.t90`.
+* **Attack rings at ~100 bodies (after round 3, 2026-10-20).** Rings round a still target walk their detours at
+  travel speed, spend the spots their firing arc closes off, send spare attackers to the outer bands and press flush
+  against 1-cell walls the way Retail's clamped bodies end up ("Rings at ~100 bodies, round 3"). Still open: the ring
+  fills its edge more thinly than Retail's where walls cut the sight lines (attackring-wall-100's ring offsets 29-36
+  ever in reach against Retail's 32-49; Retail's bodies walk in out of sight and pack the in-sight ground between the
+  arc and the wall); a narrow corridor in reach and out of sight is plugged by the first bodies in pressing flush to
+  its inner wall at the entrance, so the rest queue outside (attackring-gatehouse-40: 15 ever in reach and 244 damage
+  over the gate offsets against Retail's 29 and 584); a ring across a river (attackring-river-64) stands 6 in reach against 21; statue ticks stay a few
+  times Retail's (presses toward reach keep the facing cap), and fight and guard rings keep the old crawl
+  (attackring-fight-60 32,402, attackring-guard-64 42,133 statue ticks, Retail a few hundred). Against a target walled
+  in on every side Legion now outfires Retail (it seeks flush points on every face that has one). A Move group crossing
+  a firing ring is level with Retail's t90 (ringcross-100 3,841 against 3,926) and completes about 200 ticks after it.
+  Measured by `ctest:legion_ringupkeep`, `ctest:legion_attackwalled`, `ctest:legion_attackflush`,
+  `ctest:legion_ringcross`, `ctest:legion_ringfill`, `ctest:legion_ringclosed`, `ctest:legion_ringstill`,
+  `ctest:legion_ringwait`, `ctest:legion_ringshadow`, `ctest:legion_ringbend` and `ringcross:g.M.t90`.
 * **The livelock fix costs some lane order (protocol 257).** A body blocked
   again after a side-step toward its arc may not step straight back, so it
   takes another field step inward or holds and side-steps: the 150 bodies
