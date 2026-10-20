@@ -5705,7 +5705,9 @@ void World::noteShotImpact(int fromId,int targetId,const Weapon& w,const std::ar
     if (hitUnit) {
         // The target itself: the line is open. Any other body neither opens
         // nor blocks it (it can be killed, or it moves).
-        if (hitUnit==targetId && u->blockedTarget==targetId) u->blockedShots=0;
+        // A hit also renews the walk budget: the line it opened is spent once
+        // the target or the shooter moves on.
+        if (hitUnit==targetId && u->blockedTarget==targetId) { u->blockedShots=0;u->repositions=0;u->searchFailed=0; }
         return;
     }
     // Short of the target and clear of it, in whole px: in front of the
@@ -5719,12 +5721,13 @@ void World::noteShotImpact(int fromId,int targetId,const Weapon& w,const std::ar
     const int64_t mx=ix-tx,mz=iz-tz;
     const bool shortOf=along<line && mx*mx+mz*mz>margin*margin;
     if (!shortOf || !impactIndestructible(w,int(impact[0]>>20),int(impact[2]>>20))) {
-        if (u->blockedTarget==targetId) u->blockedShots=0;
+        if (u->blockedTarget==targetId) { u->blockedShots=0;u->searchFailed=0; }
         return;
     }
-    if (u->blockedTarget!=targetId) { u->blockedTarget=targetId;u->blockedShots=0;u->repositions=0; }
-    if (u->blockedShots && (std::abs(sx-u->blockedX)>kBlockedSpot || std::abs(sz-u->blockedZ)>kBlockedSpot))
-        u->blockedShots=0;
+    if (u->blockedTarget!=targetId) { u->blockedTarget=targetId;u->blockedShots=0;u->repositions=0;u->searchFailed=0; }
+    if (u->blockedShots && (std::abs(sx-u->blockedX)>kBlockedSpot || std::abs(sz-u->blockedZ)>kBlockedSpot)) {
+        u->blockedShots=0;u->searchFailed=0;
+    }
     if (u->blockedShots<255) ++u->blockedShots;
     u->blockedX=int16_t(sx);u->blockedZ=int16_t(sz);
 }
@@ -5776,14 +5779,19 @@ bool World::shotChordClear(const Unit& u,Fixed fromX,Fixed fromZ,const Unit& t,i
 // at, with a clear chord (and the 2D sight test the attack fires on). A plain
 // move leg is put in front of the attack, so each pathfinding mode walks it
 // its own way and the attack resumes on arrival. Each target gets
-// kMaxRepositions walks; no spot, or the walks used up, and the unit fires
-// on as retail does.
+// kMaxRepositions walks between hits on it; with the walks used up the unit
+// fires on as retail does. A search that finds no spot writes off the
+// moment, not the target: the unit fires on, and searches again after
+// another kBlockedShots blocked shots, since the target may have moved
+// (a hit, a miss that reached the target or the shooter moving restart the
+// count as usual).
 static constexpr uint8_t kMaxRepositions=3;
 static constexpr int kRepositionReach=12;    // cells from the unit searched for a spot
 static constexpr int kRepositionChords=256;  // chord tests per search, nearest spots first
 
 bool World::repositionForShot(Unit& u,const Unit& t,int slot) {
     if (u.repositions>=kMaxRepositions) return false;
+    if (u.searchFailed && u.blockedShots<2*kBlockedShots) return false;
     const Weapon& w=u.type->weapons[size_t(slot)];
     const int foot=footCells(u.type);
     const NavGrid& grid=navFor(u.type);
@@ -5819,6 +5827,7 @@ bool World::repositionForShot(Unit& u,const Unit& t,int slot) {
         if (!pathExists(u.type,x.toFloat(),z.toFloat(),u.x.toFloat(),u.z.toFloat())) continue;
         ++u.repositions;
         u.blockedShots=0;
+        u.searchFailed=0;
         // The leg World::order builds for a point move, put in front: the
         // attack behind it keeps its own leg and resumes on arrival.
         if(u.scriptAimTarget)clearScriptWeaponTarget(u);
@@ -5838,7 +5847,11 @@ bool World::repositionForShot(Unit& u,const Unit& t,int slot) {
         noteOrders(u.id);
         return true;
     }
-    u.repositions=kMaxRepositions;   // nowhere better in reach: fire on from here
+    // Nowhere better in reach: fire on from here, still written off (the
+    // sweep keeps preferring a target it can hit), and look again after
+    // kBlockedShots more.
+    u.searchFailed=1;
+    u.blockedShots=kBlockedShots;
     return false;
 }
 
@@ -14807,7 +14820,7 @@ uint64_t World::stateHash() const {
         mix(uint32_t(u.faceRequest));
         if (u.blockedTarget) {
             mix(0x424c4b44u);mix(uint32_t(u.blockedTarget));
-            mix(uint32_t(u.blockedShots)|uint32_t(u.repositions)<<8);
+            mix(uint32_t(u.blockedShots)|uint32_t(u.repositions)<<8|uint32_t(u.searchFailed)<<16);
             mix(uint32_t(uint16_t(u.blockedX))|uint32_t(uint16_t(u.blockedZ))<<16);
         }
         mix(uint64_t(uint32_t(u.selfDestructT)));   // ticks; drives a deterministic death

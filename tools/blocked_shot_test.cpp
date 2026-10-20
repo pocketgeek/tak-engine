@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace tak;
@@ -50,7 +51,7 @@ struct Outcome {
     int targetHits = 0;      // impacts on the target
     float damage = 0;        // target HP lost
     float moved = 0;         // archer's distance from where it started
-    int repositions = 0;
+    int repositions = 0;     // most walks used at once against the target
     uint64_t legionMoves = 0; // Legion navigator move updates (Legion mode)
 };
 
@@ -98,6 +99,7 @@ Outcome run(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, Obstacle obstacle
         const sim::Unit* a = w.unit(archer);
         const sim::Unit* t = w.unit(target);
         if (!a || !t || !t->alive()) break;
+        out.repositions = std::max(out.repositions, int(a->repositions));   // a hit renews the budget
         for (const auto& h : w.hits()) {
             if (h.fromPlayer != 0) continue;
             if (h.victimId == target) { ++out.targetHits; continue; }
@@ -111,10 +113,64 @@ Outcome run(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, Obstacle obstacle
     if (a) {
         const float dx = a->x.toFloat() - sx, dz = a->z.toFloat() - sz;
         out.moved = std::sqrt(dx * dx + dz * dz);
-        out.repositions = a->repositions;
     }
     out.legionMoves = w.legionStats().moves;
     return out;
+}
+
+// A failed search writes off the spot, not the target. The archer attacks a
+// Swordsman behind a full-height campfire wall too far off to walk round
+// (no spot: it fires on), then the Swordsman walks west to stand behind the
+// short campfire row: a spot with a clear shot is in reach again, and the
+// archer must walk to it. Returns {walks, hits} after the target moved
+// (walks -1 if it walked before: the wall was meant to leave no spot).
+std::pair<int, int> runSticky(const hpi::Vfs& vfs, const sim::TypeRegistry& reg) {
+    tnt::Map map;
+    map.width = map.height = 64;
+    map.seaLevel = 0;
+    map.heights.assign(64 * 64, 30);
+    map.features.assign(64 * 64, 0xffff);
+    map.featureNames = {"ZonFireD01"};
+    for (int z = 0; z < 64; ++z) map.features[size_t(z) * 64 + 34] = 0;
+    for (int z = 20; z <= 44; ++z) map.features[size_t(z) * 64 + 19] = 0;
+    sim::World w;
+    w.setVisPlayer(-1);
+    w.setPathfindingMode(mode);
+    w.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
+    sim::registerMapFeatures(w, map, vfs, &reg);
+    w.setPathService(true);
+    const sim::UnitType* bow = reg.find("arabow");
+    const sim::UnitType* sword = reg.find("arasword");
+    if (!bow || !sword) return {0, 0};
+    const float sz = 32 * 16;
+    const int archer = w.spawn(bow, 14 * 16 + 8, sz, 0, 0);
+    const int target = w.spawn(sword, 44 * 16 + 8, sz, 0, 1);
+    w.setStance(target, 2);
+    w.unit(target)->moveState = 0;
+    w.unit(target)->fireState = 0;
+    w.unit(target)->hp = sim::Fixed::fromInt(30000);
+    w.unit(archer)->moveState = 1;
+    for (int i = 0; i < 30; ++i) w.tick(1.f / 30);
+    w.attack(archer, target, false);
+    int walks = 0, hits = 0;
+    bool wasMove = false;
+    auto step = [&](int n) {
+        for (int i = 0; i < n; ++i) {
+            w.tick(1.f / 30);
+            const sim::Unit* a = w.unit(archer);
+            for (const auto& h : w.hits())
+                if (h.fromPlayer == 0 && h.victimId == target) ++hits;
+            const bool m = a && !a->orders.empty() && a->orders.front().targetId == 0;
+            if (m && !wasMove) ++walks;
+            wasMove = m;
+        }
+    };
+    step(900);
+    const int firstWalks = walks;
+    walks = hits = 0;
+    w.order(target, 26 * 16 + 8, sz, false);
+    step(1800);
+    return {firstWalks == 0 ? walks : -1, hits};
 }
 
 std::string describe(const Outcome& o) {
@@ -156,6 +212,9 @@ int main(int argc, char** argv) {
         if (mode == sim::PathfindingMode::Legion)
             check(free.legionMoves > held.legionMoves, "the walk is Legion's", std::to_string(free.legionMoves));
     }
+    const auto [walks, hits] = runSticky(vfs, reg);
+    check(walks >= 1 && hits > 0, "a failed search does not give up on the target once a clear spot is in reach",
+          "walks=" + std::to_string(walks) + " hits=" + std::to_string(hits));
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

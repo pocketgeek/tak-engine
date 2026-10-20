@@ -1047,11 +1047,13 @@ struct alignas(64) Unit {
     // Blocked shots (engine deviation, see World::noteShotImpact): the target
     // whose last shots from here struck terrain or scenery this unit cannot
     // destroy, short of the target; how many in a row; the whole-pixel spot
-    // they were fired from; and how many firing spots it has walked to
-    // against that target. Hashed with a tag when blockedTarget is set.
+    // they were fired from; how many firing spots it has walked to against
+    // that target since it last hit it; and whether the last spot search
+    // from here found nothing. Hashed with a tag when blockedTarget is set.
     int32_t blockedTarget = 0;
     uint8_t blockedShots = 0;
     uint8_t repositions = 0;
+    uint8_t searchFailed = 0;
     int16_t blockedX = 0, blockedZ = 0;
     uint8_t reclaimEffectDelay = 0;    // worker particle cadence while actively reclaiming
     bool workScriptWorking = false; // repair/reclaim requested StartBuilding

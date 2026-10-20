@@ -837,9 +837,10 @@ before they reach its target (a hill, water, a rock or other indestructible
 scenery), it walks a short way to a spot with a clear shot and then attacks
 again. This happens after three blocked shots in a row. Shots that hit a tree or
 anything else that can be destroyed do not count, because they wear it down. A
-unit tries at most three new spots for each target. If it finds no spot within
-about twelve cells, it stays where it is and keeps firing, as in the original
-game. Units on **Hold Position**, buildings, flyers and melee units never move
+unit tries at most three new spots before it lands a hit on that target (each
+hit gives it three more). If it finds no spot within about twelve cells, it
+stays where it is and keeps firing, as in the original game, and looks again
+after three more blocked shots, in case the target has moved. Units on **Hold Position**, buildings, flyers and melee units never move
 for this. A unit that is not under an attack order stops firing at that target
 and picks another one. This is new behaviour; the original game had no such
 check.

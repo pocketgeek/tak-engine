@@ -189,8 +189,13 @@ so since this change the sim also watches where shots land
   test (a ballistic arc lies above its chord). It puts a ground-mission move
   to that spot in front of the attack, so Retail and Legion each walk it their
   own way, and the attack resumes on arrival (`repositionForShot`).
-- Three walks per target; when none is left, or no spot is found, the unit
-  fires on as retail does. Buildings, flyers, melee and Hold Position never
+- Three walks per target between hits on it (a hit renews them); when none
+  is left the unit fires on as retail does. A search that finds no spot
+  writes off the moment, not the target: the unit fires on (still counted
+  blocked, so the sweep prefers another target) and searches again after
+  three more blocked shots (`Unit::searchFailed`), so a target that moves
+  behind a different obstacle, or a long-lived one attacked later from a new
+  approach, is searched again. Buildings, flyers, melee and Hold Position never
   move. The state (`Unit::blockedTarget` and its counters) is hashed, with a
   tag, only once a blocked impact has been seen.
 
@@ -198,7 +203,9 @@ so since this change the sim also watches where shots land
 Swordsman: behind a passable ridge and behind a row of shipped `ZonFireD01`
 art, the archer on Hold Position lands 11 of 11 shots short in 30 s for no
 damage (retail); on Maneuver it lands 3 short, walks 49-88 px and kills the
-target with 5 hits.
+target with 5 hits. Its sticky case: an archer whose first search fails (a
+full-height campfire wall out of reach) walks once and lands 16 hits after the
+target moves behind the short row; before the fix it never walked again.
 
 ## After an unload the carrier stands by and lands (icd, 2026-10-12, protocol 256)
 
