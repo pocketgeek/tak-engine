@@ -1307,6 +1307,10 @@ group's field window gets the arc margin. Ranks and the aim memo are hashed;
 the work is bounded. Seen in `corner-1x48:gate.top.files_x100` (files abreast
 at the corner), `uturn:gate.top.files_x100` and the `pinwheel` world test.
 Since protocol 257 a lone tree or rock is no wall end (see "Livelock" below).
+Since Legion ~100 round 4 (2026-10-20) a part of 32 or more on a move-like leg
+takes its radius from the turn's ribbon instead of the centroid rank, holds its
+arc through the turn and ranks again at the next one (see "Lane order through
+turns: the ribbon").
 
 ### Passage gate (W8, protocol 247)
 
@@ -3464,6 +3468,142 @@ Rejected on the way (same fixtures):
   standing for good; offset 0). The passage test (both neighbours across the step illegal, at the way or the next
   one) touches only the 2-cell dead ends.
 
+### Lane order through turns: the ribbon (2026-10-20, Legion ~100 round 4)
+
+The targets were the lane swaps after turns (gate medians at 30813a73, Legion against Retail: `mixed2:gate.mid.crossings`
+38 against 0, `sbend:gate.t2.crossings` 27 against 5, `corner-1x448:gate.top.crossings` 26 against 5, `corner-8x56` 7,
+`uturn`, `gap20`, `slowturn`, `wall-4x50`) and the single file at `corner-1x100`'s corner (standing 267 permille,
+Retail 1), without giving back arrival time (t90 and done within 3% on `island-1x100`, `corner-1x100`, `corner-4x25`,
+`idle-50x50`, `many-100`, `gap10-100`, `gap20-100`, `strait-2x100`, `swap-100`).
+
+**Retail first.** Retail has no turn logic at all: each body follows its own path to its own formation offset, a
+blocked body clamps, slows and presses on, and nobody overtakes (docs/retail-engine.md, the local steerer). Its files
+keep their order because they stay in the order they started in, at a much lower speed (`mixed2` t90 7,600 against
+Legion's 6,486; `gap20-100` 4,667 against 2,207).
+
+**Where the swaps came from** (position dumps and per-member traces, offset 0):
+
+* *The straight walk cut the arcs.* `mixed2`'s ranked members had radii 4 to 17 cells, yet all of them passed under the
+  tip within 7 rows: a member's straight walk to its slot (640 cells) opens the moment its line clears the wall end, so
+  it grazes the tip, and every file left its arc there for that one line. The inner files reached the face and waited
+  for a gap in the outer ones grazing the tip below them (round 3's finding), then left on the outside.
+* *The ranks.* Each member ranked once per order, when a turn came into its look-ahead, by its offset from the part's
+  live centroid across the way to the turn (cap/2 +- offset, clamped; under 2 bodies it hugged for the whole order). A
+  strung-out or split crowd read its depth as width (`island-1x100`'s top half all ranked 15-30 cells out of an
+  island it hugged), the clamps tied the inner and outer quarters, and a later turn met the first one's ranks:
+  `sbend`'s second turn has the other inner side, so the first turn's inner files took the inner arc again, from the
+  outside of the stream.
+* *Turns.* An S-shaped octile chain or a bend away from a face (leaving it for the goal) read as a turn, and a U-turn
+  whose end lay beyond the look-ahead read as its first bend: the hold let go before the wall end.
+* *Arrival order.* After a turn of 90 degrees or more the files come in an order that is not the formation's (the
+  slots are its shape, translated), so the bodies crossed at the destination and a late one walked round the settled
+  crowd to a slot on its far side.
+
+**The change** (legion.cpp `ribbon`, `ribbonHold`, `laneUncross`, the rank in `pivotAim`; Legion only):
+
+* **The ribbon.** When a member of a part of 32 or more on a move-like leg (`ribbonLeg`) ranks for a turn, every
+  member of its point that has no rank yet and whose own descent (96 steps) passes the turn's vertex within 2 cells
+  is ranked at once: ordered by its place across the way in (the approach chord through the vertex), inner first,
+  member k of n takes radius (2k+1)/2n of the ribbon's width, 1.2 bodies per sqrt(n) (`kRibbonNum/kRibbonDen`, at most
+  `kPivotMaxCells`); under 1 cell it hugs (the inner file). A crowd that splits round an island ranks each side
+  apart; the parts of a convoy rank as one (ranked apart their ribbons lay over each other from the same wall:
+  `corner-8x56` 9 swaps against 3). The arc pursuit is the pinwheel's, down to a radius of 1.
+* **The hold** (`ribbonHold`). While a member has a turn, a straight walk whose line passes within its radius (less a
+  body) of the turn's vertex or end is refused, and it follows its arc. It is past the turn 2 cells beyond the end
+  along the exit chord and not behind the vertex along the way in; then the turn is remembered and it ranks again at
+  the next turn, keeping its radius when the inner side is the same (one file through `corner-1x100`'s two right
+  turns) and taking a new rank where it flips (`sbend`).
+* **Turns.** A turn (30 degrees or more between 6-cell chords, from the first chain cell beside a wall) needs the wall
+  on its inner side within its 12 cells, is not within 12 cells of the last turn's vertex or end, and is ranked only
+  once its end -- the first cell after which the chain runs straight for 12 cells -- is in the look-ahead.
+* **Slots by lane** (`laneUncross`). Once, when a member that has rounded a turn comes within 24 cells of its slot, it
+  exchanges slots with the member of its group within 16 cells (one footprint) for which that shortens their two
+  straight ways the most, by more than a cell (a 2-opt step; crossing ways are always the longer pair). Without it
+  `gap10-100` done rose 6% (one body 1,900 ticks behind the gate) and `wall-4x50`'s later groups' t90 12%.
+* Fight, attack, guard and patrol legs and parts under 32 keep the pinwheel as it was (at 20 and 25 bodies the ribbon
+  only slowed the formation: `legion_mixedformation`'s ground +13% with its flyers stalling, `corner-4x25`'s group A
+  +10%, no swap to save). New hashed member state: the turn and last-turn records and the exchange flag.
+
+Measured (Legion, gate medians; base 30813a73; Retail from the same runs):
+
+| fixture | key | base | ribbon | Retail |
+|---|---|---|---|---|
+| mixed2 | gate.mid.crossings | 38 | 10 | 0 |
+| sbend | gate.t2.crossings | 27 | 2 | 5 |
+| corner-1x448 | gate.top.crossings | 26 | 0 | 5 |
+| corner-8x56 | gate.top.crossings | 7 | 3 | 10 |
+| uturn / gap20 | gate.top.crossings | 5 / 5 | 2 / 2 | 2 / 2 |
+| slowturn | gate.topW400 / topW1000 crossings | 8 / 8 | 5 / 5 | 3 / 0 |
+| wall-4x50 | gate.top / strip crossings | 19 / 7 | 10 / 1 | 3 / 4 |
+| island-1x100 | gate.lane / strip crossings | 260 / 2 | 191 / 0 | 450 / 35 |
+| bridges-100 | gate.bridge1.crossings | 5 | 0 | 15 |
+| island-1x100 | g.U.t90 / done | 1,937 / 2,567 | 1,487 / 1,941 | 2,296 / 2,612 |
+| corner-1x100 | g.A.t90 / done | 4,187 / 4,862 | 4,155 / 4,760 | 5,084 / 5,547 |
+| corner-4x25 | g.D.t90 / done | 4,190 / 4,460 | 4,190 / 4,460 | 5,018 / 5,296 |
+| gap10-100 | g.A.t90 / done | 2,387 / 2,919 | 2,387 / 2,963 | 4,597 / 5,163 |
+| gap20-100 | g.A.t90 / done | 2,207 / 2,719 | 2,235 / 2,724 | 4,667 / 5,115 |
+| strait-2x100 | g.B.t90 / done | 2,057 / 2,667 | 2,050 / 2,522 | never |
+| idle-50x50, many-100, swap-100 | scale.arrive.t90 | 3,307, 687, 7,528 | equal | |
+| mixed-100 / bridges-100 | scale.arrive.t90 | 3,743 / 9,920 | 3,203 / 9,273 | |
+| mixed2 / sbend / uturn | t90 | 6,486 / 3,126 / 2,072 | 6,396 / 3,063 / 2,108 | 7,600 / 3,602 / 2,997 |
+| slowturn | W1000 / C400 t90 | 2,033 / 3,296 | 2,123 / 3,377 | |
+| wall-4x50 | A / B / C / D t90 | 1,847 / 2,388 / 3,064 / 3,678 | 1,937 / 2,388 / 3,244 / 3,470 | |
+| doubleturn | g.A.t90 | 2,342 | 2,497 | 2,865 |
+| corner-1x448 | arrived by 9,000 ticks (8 groups) | 385 | 328 | 109 |
+| corner-8x56 | arrived by 9,000 ticks | 420 | 380 | |
+
+The wide sweep (Windows, offsets -8..8, -4..8 for the corner fixtures; hashes equal to Linux) agrees: medians
+`mixed2` 38 -> 10, `sbend` 26 -> 1, `slowturn` 7/11 -> 5/5, `wall-4x50` 20 -> 11, `island-1x100` t90 -23%, `mixed-100`
+-14%, `bridges-100` -7%; `gap10-100` t90/done +1.9%/+0.9%, `gap20-100` +1.5%/+4.2% (mean done +6%), `uturn` +1.7%,
+`doubleturn` +5%. In the legion100 regression screen (all 23 fixtures, Legion, gate offsets) the fixtures not in the
+table keep their keys but `doorplug100-124` (door swaps 3 -> 1), `maze-100` (done 8,748 -> 8,703) and
+`doorplug100-112` (reversals 40 -> 41); `strait-2x100`'s swaps go 4 -> 0 and `island-1x100` stands 159 -> 54 permille.
+
+**What it costs.** The two 448-body corner stress fixtures lose throughput: `corner-1x448` (one selection, seven parts)
+arrives 328 of 448 by tick 9,000 against 385 (Retail 109), `corner-8x56` 380 against 420, for their swaps at the top
+gate (26 -> 0, 7 -> 3). The ribbon is capped at 32 cells, so a wave of more than 178 bodies (2x2) is compressed: falling
+back to the old rank for a wave the cap compresses (measured, not kept) gives `corner-1x448` 392 arrivals and 23 swaps
+and leaves `corner-8x56` at 375; a cap of 48 gives 338 and 395 (12 swaps). `mixed2`'s second leg leaves one body short of
+its slot at one offset in 17 (+2: a destination settle at the crowd's edge, `g.G.done` never there). Legion work on
+`cost-corner` rises (whole run N200 +11.5%, N400 +21.6%: more arc sweeps and traced cells; the scaling gates hold,
+steady W(4N0)/W(N0) 0.54). `legion_forestedge` counts 4.47 files abreast at the forest's end against 5.49 (the ribbon
+is narrower than the old centroid spread). The headless `--mpai` Inner Circle game (seed 1, 60 s) keeps both hashes
+(Retail b353410003e98dd5, Legion 0825aeb9e8139203); Retail is hash-identical at every gate offset of `mixed2`, `sbend`
+and `corner-1x100`.
+
+**Not fixed: `corner-1x100`'s single file** (standing 267 -> 268 permille). The single file is not at a wall end: the
+octile field's descent from the south-west climbs diagonally onto the line just above the block's top (z 55) some 20
+cells before the block, every body by the same tie-break, and runs along it to the far corner (the turn the pinwheel
+ranks for); the bodies queue to merge into it in open ground, before any turn is in their look-ahead. Lanes parallel
+to the top (a ribbon member offset from chain cells within 3 cells of an obstacle on its inner side) gave no files
+(standing +3.7%) and 29 swaps at `corner-8x56`. It needs lanes taken from the field before the merge, not at the turn.
+
+Rejected on the way (gate medians unless noted):
+
+* The hold alone, with the old ranks: `mixed2` 38 -> 11 at no cost, but `island-1x100` 260 -> 497 lane swaps (Retail
+  450) and `sbend` 27 unchanged; ranking again at every turn with the centroid rule: `sbend` 10, `corner-1x448` 9, but
+  `corner-1x100` t90 +10.7%.
+* One lateral rank per order from a whole-part snapshot, ordinal (q), reused at every turn: crossings mostly down
+  (width 0.7: `mixed2` 3, `sbend` 0, `corner-1x448` 2), but U-turn fixtures +6..+13% t90 (the snapshot read the
+  formation's depth before its stream formed, and 30% of it hugged at width 0.7).
+* Radius = the member's distance out of the line through the vertex (natural offset): every key 0-5 swaps, but
+  `gap20-100` +55%, `wall-4x50` +66% (a diagonal approach puts half the stream inside the line: one hug file and one
+  clamped outer file); the same measured from the innermost of the members near the vertex: waves of one, all hugging.
+* Arcs offset from every chain cell to the turn's outer side (not only beside walls): the open-ground cells are the
+  body's own path, so it drifted outward, `corner-1x448` 691 swaps. An exit lane past the turn's end: `sbend` t90
+  -15% but `corner-1x448` 206-437 swaps in its jam.
+* Files at footprint pitch instead of an even share: no better (`corner-4x25` A +8%, `uturn` +8%). Ribbon width 1.0
+  instead of 1.2: `corner-4x25` A +10.6%; 1.4: `slowturn` 12 swaps, `island-1x100` 233.
+* Round 3's contact-vertex search (a8a90396) on top: `island-1x100` lane swaps 48, but its t90 gain halved and
+  `corner-1x100` never done at one offset; not taken. Its target, `sbend`'s second turn, is ranked at the first one's
+  release. A turn met where the ribbon is wider than the passage left to the old rank: `gap10-100`/`gap20-100` t90 +4%
+  and `bridges-100` 13 swaps.
+* A ribbon across the orders of a player at the vertex: `gap20-100` t90 +20%; the old rank where another part or point
+  is within 24/48 cells of the vertex: `corner-8x56` arrivals 416 but 23 swaps, `wall-4x50` C/D +4%.
+
+`ctest:legion_ribbon` runs `sbend` over the core five: 18 to 29 swaps at the second turn on the parent (median 27), 1
+here (1, 2, 1, 6, 1). The prototypes' switches are on branch `task-l4-turnA-wip` (b8aa8c26).
+
 ### Legion 10,000: where the program left it
 
 docs/legion-10000-report.md gives the measured result against the starting revision c2c25707:
@@ -3587,7 +3727,10 @@ Rules that came out of using them:
   corner-1x448 26 (Retail 5), corner-8x56 8 (Retail 10), mixed2 38 (Retail 0)
   and sbend's second turn 27 (Retail 5). The pinwheel misses most turns at a
   wall end met across it (same section); a candidate fix is on branch
-  task-l3-lanes3-turnfix. Measured by
+  task-l3-lanes3-turnfix. Since round 4 (2026-10-20, "Lane order through
+  turns: the ribbon") they are 0, 3, 10 and 2, at a cost in throughput on the
+  448-body corners (corner-1x448 arrives 328 of 448 by tick 9,000 against 385,
+  corner-8x56 380 against 420). Measured by
   `corner-1x448:gate.top.crossings`, `corner-8x56:gate.top.crossings`,
   `strait-2x150:gate.strait.crossings`, `attackring-wall-64:wall_touch_permille`,
   `doorplug-112:wall_touch_permille`, `ringcross:g.M.t90`,
@@ -3629,6 +3772,9 @@ Rules that came out of using them:
   lie more than 80 cells out, between ticks 600 and 2,100, west of the
   block's corner, where a body that reached the corner first waited 1,322
   ticks to merge into the single file passing it (see the round-3 section).
+  Round 4's ribbon does not reach it: the file forms in open ground where the
+  octile descent climbs onto the line along the block's top, before any turn
+  is in the bodies' look-ahead (standing 268 permille).
 * **A narrow passage's waiting crowd stands on the other way's exit apron.**
   Until 2026-10-20 a head-on knot in a bridge's mouth was a matter of timing
   (`taperbridge-100` +1: 19 of 100 arrived): every turn of the passage put the
