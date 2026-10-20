@@ -259,6 +259,12 @@ constexpr size_t kRingCells=256;
 constexpr int32_t kNoPress=INT32_MIN;
 // A pressIn step ends after this many updates even short of its point.
 constexpr uint32_t kPressTicks=120;
+// A blind ring's press (see pressIn) stops this many px inside reach.
+constexpr int kPressDepth=4;
+// The walk on from the shadow (pressRoute): its search radius in origins, and
+// every how many held updates a body in the shadow looks for it.
+constexpr int kPressRoute=6;
+constexpr uint32_t kPressRouteEvery=16;
 // Members a reach group needs when its first field starts to plan to a ring
 // (PLAN 3.4; its exit raises it to 8 if the battles' field quota pegs).
 constexpr size_t kRingMembers=2;
@@ -8224,6 +8230,49 @@ struct LegionNavigator::Impl {
         if(!bodiesFree(u,nx,nz))return false;
         return nx==ox||nz==oz||(bodiesFree(u,nx,oz)&&bodiesFree(u,ox,nz));
     }
+    // Round 4 (2026-10-20): would a still body of u's footprint at origin
+    // (ox,oz) stand across a lane -- a corridor one body wide -- with free
+    // ground on both sides? The origins bordering the ones its footprint
+    // overlaps are walked round as a cycle: statically legal ones falling
+    // in two or more runs mean the origin lies across a lane. A run every
+    // origin of which a still body (but u) covers is closed already (a
+    // queue's front): standing there seals nothing new. Bodies alone never
+    // make a lane, so the gaps of a firing line in the open fill as before.
+    bool sealsLane(const Plane& p,const Unit& u,int ox,int oz) const {
+        const int fx=u.type->footX,fz=u.type->footZ;
+        auto still=[&](int cx,int cz) {
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)return false;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            if(!o||o==u.id)return false;
+            const Unit* v=w.unit(o);
+            if(!v||!v->type||v->type->canFly)return false;
+            const Member* mm=member(o);
+            return !mm||(mm->state!=Moving&&mm->state!=Waiting);
+        };
+        // The border ring: x in [ox-fx, ox+fx], z in [oz-fz, oz+fz], clockwise from the top-left corner.
+        std::array<std::pair<int,int>,8*15> ring;size_t n=0;   // 4*(fx+fz) origins
+        const int x0=ox-fx,x1=ox+fx,z0=oz-fz,z1=oz+fz;
+        for(int x=x0;x<x1;++x)ring[n++]={x,z0};
+        for(int z=z0;z<z1;++z)ring[n++]={x1,z};
+        for(int x=x1;x>x0;--x)ring[n++]={x,z1};
+        for(int z=z1;z>z0;--z)ring[n++]={x0,z};
+        std::array<uint8_t,8*15> legalAt{};
+        size_t start=n;
+        for(size_t i=0;i<n;++i) {legalAt[i]=legal(p,ring[i].first,ring[i].second);if(!legalAt[i])start=i;}
+        if(start==n)return false;   // no static block round it: open ground
+        int lanes=0,runs=0;bool free=false;
+        for(size_t k=1;k<=n;++k) {
+            const size_t i=(start+k)%n;
+            if(!legalAt[i]) {if(free)++lanes;free=false;continue;}
+            if(!legalAt[(i+n-1)%n])++runs;
+            if(!free) {
+                bool covered=false;
+                for(int j=0;j<fz&&!covered;++j)for(int q=0;q<fx&&!covered;++q)covered=still(ring[i].first+q,ring[i].second+j);
+                free=!covered;
+            }
+        }
+        return runs>=2&&lanes>=2;
+    }
     // Pressing in (2026-10-19): an attacker held within two bodies outside
     // its reach (or in reach out of sight) walks to a point of its own or a
     // free neighbouring origin that puts it in reach (and in sight, where its
@@ -8269,7 +8318,15 @@ struct LegionNavigator::Impl {
         const int64_t inside=(int64_t(R)<<16)-(1<<12);
         const int64_t px0=u.x.v,pz0=u.z.v,ftx=t->x.v,ftz=t->z.v;
         int64_t bestX=0,bestZ=0,bestD=-1;
+        bool needSight=los;
         auto consider=[&](int cx,int cz) {
+            // Round 4 (2026-10-20): never a press that stops the body across
+            // a lane with free ground on both sides (sealsLane): engaged
+            // there, it stood for good in the only way on. The first bodies
+            // through attackring-gatehouse-40's west gate pressed flush to
+            // the yard wall in the 3-cell corridor's mouth, and the rest
+            // queued outside while the corridors stood empty.
+            if(sealsLane(p,u,cx,cz))return;
             // The footprint-centre box of origin (cx,cz).
             const int64_t lox=(int64_t(cx)*16+(fx-1)*8)<<16,loz=(int64_t(cz)*16+(fz-1)*8)<<16,span=(int64_t(16)<<16)-(1<<12);
             const int64_t ax=std::clamp(ftx,lox,lox+span),az=std::clamp(ftz,loz,loz+span);
@@ -8278,11 +8335,33 @@ struct LegionNavigator::Impl {
                 if(qx*qx+qz*qz>inside*inside)return;
                 const int64_t wx=(x-px0)>>8,wz=(z-pz0)>>8,d=wx*wx+wz*wz;
                 if(bestD>=0&&d>=bestD)return;
-                if(los&&!sight.losBetween(Fixed::raw(int32_t(x)).toFloat(),Fixed::raw(int32_t(z)).toFloat(),t->x.toFloat(),t->z.toFloat(),std::max(fx,fz)/2,
+                if(needSight&&!sight.losBetween(Fixed::raw(int32_t(x)).toFloat(),Fixed::raw(int32_t(z)).toFloat(),t->x.toFloat(),t->z.toFloat(),std::max(fx,fz)/2,
                                           std::max(t->type->footX,t->type->footZ)/2))return;
                 bestX=x;bestZ=z;bestD=d;
             };
             const int64_t before=bestD;
+            if(!needSight) {
+                // Out of sight (a blind ring, below) nothing brakes the body
+                // in reach, so it stops on its way toward the target at the
+                // first point of the box kPressDepth inside reach (or the
+                // box's nearest point, if in reach but not that deep), not
+                // flush with the wall: stopped on the very edge, the crowd's
+                // nudges put it back out and it pressed again.
+                const int64_t sx=std::clamp(px0,lox,lox+span),sz=std::clamp(pz0,loz,loz+span);
+                auto within=[&](int64_t x,int64_t z,int64_t r) {const int64_t qx=x-ftx,qz=z-ftz;return qx*qx+qz*qz<=r*r;};
+                if(!within(ax,az,inside))return;
+                const int64_t deep=std::max<int64_t>(0,inside-(int64_t(kPressDepth)<<16));
+                if(!within(ax,az,deep)) {at(ax,az);return;}
+                auto in=[&](int64_t x,int64_t z) {return within(x,z,deep);};
+                int64_t lo=0,hi=4096;   // the first step of 1/4096 along the way that deep
+                if(in(sx,sz))hi=0;
+                while(lo<hi) {
+                    const int64_t mid=(lo+hi)/2;
+                    if(in(sx+(ax-sx)*mid/4096,sz+(az-sz)*mid/4096))hi=mid;else lo=mid+1;
+                }
+                at(sx+(ax-sx)*hi/4096,sz+(az-sz)*hi/4096);
+                return;
+            }
             at(ax,az);
             // Round 3 (2026-10-20): out of sight there, the box's far edge
             // toward the target. Retail's attacker pressing at its target
@@ -8292,19 +8371,49 @@ struct LegionNavigator::Impl {
             // wall it sees, and fires, through it (attackring-wall-100 offset
             // 0: Retail's bodies on the walls' west and north faces deal 689
             // damage, Legion's none).
-            if(los&&bestD==before) {
+            if(needSight&&bestD==before) {
                 const int64_t hx=lox+(int64_t(16)<<16)-1,hz=loz+(int64_t(16)<<16)-1;
                 if(ftx>ax)at(hx,az);
                 if(ftz>az)at(ax,hz);
                 if(ftx>ax&&ftz>az)at(hx,hz);
             }
         };
-        consider(ox,oz);
-        for(const auto& d:kDirections) {
-            const int cx=ox+d[0],cz=oz+d[1];
-            if(!step(p,ox,oz,d[0],d[1])||!stepFree(u,ox,oz,cx,cz))continue;
-            consider(cx,cz);
-        }
+        auto considerAll=[&] {
+            consider(ox,oz);
+            for(const auto& d:kDirections) {
+                const int cx=ox+d[0],cz=oz+d[1];
+                if(!step(p,ox,oz,d[0],d[1])||!stepFree(u,ox,oz,cx,cz))continue;
+                consider(cx,cz);
+            }
+        };
+        considerAll();
+        // Round 4 (2026-10-20): a ring planned without the sight test (no
+        // spot of the members' region sees the target: walled in, across a
+        // river) presses into reach out of sight too. Retail's attacker
+        // walks at such a target until a wall or a body stops it, so its
+        // ring stands as near as the ground allows (attackring-river-64:
+        // flush to the shore, two rows in reach against Legion's one row of
+        // cell centres).
+        const Group& rg=group->second;
+        // Only a body that will stay there presses so (see move's blind-ring
+        // hold): one on its own spot, or one whose spot's centre is out of
+        // reach. Held on its way to a spot in reach, it pressed in, walked on
+        // round the crowd out of reach to its spot, and pressed again from
+        // the same origin (attackring-wall-64 offset -2: 16 repeats). And it
+        // presses within its own origin only: into a neighbour's it was
+        // stopped at the origin's edge (a body came in first), walked back
+        // to its spot's centre and pressed again (offset 0: 8 repeats).
+        const bool stays=[&] {
+            if(m.goal<0||m.goal==oz*W+ox)return true;
+            const int64_t gx=int64_t(m.goal%W)*16+fx*8-tx,gz=int64_t(m.goal/W)*16+fz*8-tz;
+            return gx*gx+gz*gz>int64_t(R)*R;
+        }();
+        if(bestD<0&&los&&rg.ring.band0>0&&!rg.ring.sight&&d0>int64_t(R)*R&&stays) {needSight=false;consider(ox,oz);}
+        // Round 4 (2026-10-20): in reach out of sight with no point in sight
+        // a step away, the body walks on through the shadow to the nearest
+        // free origin in sight (pressRoute), as Retail's attacker keeps
+        // walking at its target along the wall until it has the shot.
+        if(bestD<0&&los&&d0<=int64_t(R)*R&&m.holdUpdates%kPressRouteEvery==4)return pressRoute(u,m,p,*t,R,sight);
         if(bestD<0)return false;
         m.pressX=int32_t(bestX);m.pressZ=int32_t(bestZ);m.pressTicks=0;m.lineCell=-1;
         ++stats.reachPresses;
@@ -8313,6 +8422,87 @@ struct LegionNavigator::Impl {
         const int here=oz*W+ox;
         if(m.pressFrom==here)++stats.reachPressRepeats;
         m.pressFrom=here;
+        return true;
+    }
+    // Round 4 (2026-10-20): the walk on from the shadow (see pressIn). A
+    // bounded breadth-first search (radius kPressRoute) from the body's
+    // origin over statically legal origins no still body covers, walking on
+    // only through the shadow (centre in reach, out of the target's sight:
+    // nothing brakes a body there, and a walk out of reach and back in
+    // pressed again), to the first origin whose centre is in
+    // reach and in sight and which seals no lane (sealsLane). The way is
+    // committed as a local route (walked at travel speed round a still
+    // target, see ringStanding); combat brakes the body where it gets the
+    // shot. Before it, a body of the shadow pressed only one origin on, and
+    // the ground in sight between a firing arc and a wall stood one body
+    // deep where Retail's stand two and three (attackring-wall-100 offset
+    // -3: 0 bodies in the box's west pocket against Retail's 7).
+    bool pressRoute(const Unit& u,Member& m,const Plane& p,const Unit& t,int R,const NavGrid& sight) {
+        constexpr int RR=kPressRoute,S=2*RR+1;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        const int64_t tx=t.x.v>>16,tz=t.z.v>>16;
+        const int tskip=std::max(t.type->footX,t.type->footZ)/2;
+        auto still=[&](int cx,int cz) {
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)return false;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            if(!o||o==u.id)return false;
+            const Unit* other=w.unit(o);
+            if(!other||!other->type||other->type->canFly)return false;
+            const Member* peer=member(o);
+            return !peer||(peer->state!=Moving&&peer->state!=Waiting);
+        };
+        auto open=[&](int x,int z) {
+            if(!legal(p,x,z))return false;
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)if(still(x+i,z+j))return false;
+            return true;
+        };
+        // 0 brakes nowhere (walk on), 1 the shot: centre in reach and in sight.
+        auto shot=[&](int x,int z) {
+            const int64_t cx=int64_t(x)*16+fx*8,cz=int64_t(z)*16+fz*8,dx=cx-tx,dz=cz-tz;
+            if(dx*dx+dz*dz>=int64_t(R)*R)return false;
+            return sight.losBetween(float(cx),float(cz),t.x.toFloat(),t.z.toFloat(),foot/2,tskip);
+        };
+        std::array<int16_t,size_t(S)*S> parent;parent.fill(-1);
+        std::array<int16_t,size_t(S)*S> queue;size_t tail=0;
+        const int start=RR*S+RR;parent[size_t(start)]=int16_t(start);queue[tail++]=int16_t(start);
+        // Failing a shot, the free origin of the shadow nearest the target
+        // (half a cell nearer than this one at least): Retail's body walks on
+        // at its target until a body or a wall stops it, so the shadow by a
+        // wall fills from its far end and the way in stays open behind it.
+        auto centreD2=[&](int x,int z) {const int64_t dx=int64_t(x)*16+fx*8-tx,dz=int64_t(z)*16+fz*8-tz;return dx*dx+dz*dz;};
+        const int64_t here=isqrtFloor(uint64_t(centreD2(ox,oz)));
+        int best=-1,deep=-1;int64_t deepD=(here-8)*(here-8);
+        for(size_t head=0;head<tail&&best<0;++head) {
+            const int local=queue[head];
+            const int lx=local%S,lz=local/S,x=ox+lx-RR,z=oz+lz-RR;
+            if(local!=start&&shot(x,z)) {
+                if(!sealsLane(p,u,x,z)) {best=local;break;}
+                continue;   // braked there: no further
+            }
+            if(local!=start) {
+                const int64_t d2=centreD2(x,z);
+                if(d2>int64_t(R)*R)continue;   // the walk keeps in reach (a way out and back in pressed again)
+                if(here>8&&d2<deepD&&!sealsLane(p,u,x,z)) {deep=local;deepD=d2;}
+            }
+            for(const auto& d:kDirections) {
+                const int nlx=lx+d[0],nlz=lz+d[1];
+                if(nlx<0||nlz<0||nlx>=S||nlz>=S)continue;
+                const int next=nlz*S+nlx;
+                if(parent[size_t(next)]>=0)continue;
+                if(!step(p,x,z,d[0],d[1])||!open(x+d[0],z+d[1]))continue;
+                if(d[0]&&d[1]&&(!open(x+d[0],z)||!open(x,z+d[1])))continue;
+                parent[size_t(next)]=int16_t(local);queue[tail++]=int16_t(next);
+            }
+        }
+        stats.detourCells+=tail;
+        if(best<0)best=deep;
+        if(best<0)return false;
+        std::vector<int> path;
+        for(int c=best;c!=start;c=parent[size_t(c)])path.push_back((oz+c/S-RR)*W+ox+c%S-RR);
+        std::reverse(path.begin(),path.end());
+        m.route=std::move(path);m.routeTicks=0;m.lineCell=-1;
+        ++stats.reachPressRoutes;
         return true;
     }
     // A press walked out of the target's sight (behind a wall, to a point
@@ -9711,9 +9901,20 @@ struct LegionNavigator::Impl {
                 }
             }
             for(size_t i=0;i<r.cells.size();++i) {
-                if(r.band[i]!=0)continue;
+                if(r.band[i]>1)continue;
                 const int c=r.cells[i],x=c%W,z=c/W;
                 if(!legal(p,x,z)||compAt(p,c)!=comp)continue;
+                // Round 4 (2026-10-20): a band-1 spot (in reach, out of sight:
+                // nothing brakes a body there) is spent when a still body
+                // covers it or no way from outside reach gets to it, so the
+                // waiting members below can be handed it.
+                if(r.band[i]==1) {
+                    bool used=false;
+                    for(int cz=z;cz<z+fz&&!used;++cz)for(int cx=x;cx<x+fx&&!used;++cx)used=stillAt(cx,cz);
+                    if(!used&&floodTest)used=x<bx0||x>bx1||z<bz0||z>bz1||!(open[size_t(z-bz0)*size_t(bw)+size_t(x-bx0)]&4);
+                    spent[i]=used;
+                    continue;
+                }
                 const int64_t sx=int64_t(x)*16+fx*8,sz=int64_t(z)*16+fz*8;
                 // ... and where a body walking in to it stops: on the reach
                 // edge, radially out from it.
@@ -9724,7 +9925,7 @@ struct LegionNavigator::Impl {
                 auto still=[&](int ox,int oz) {
                     for(int cz=oz;cz<oz+fz&&!used;++cz)for(int cx=ox;cx<ox+fx&&!used;++cx)used=stillAt(cx,cz);
                 };
-                still(x,z);still(eox,eoz);
+                still(x,z);if(r.sight)still(eox,eoz);
                 // Flooded: where a body walking in to it stops (on the reach
                 // edge where combat brakes it, else the spot itself).
                 if(!used&&floodTest) {
@@ -9753,7 +9954,7 @@ struct LegionNavigator::Impl {
             // unspent band-0 spot (ids ascending).
             std::vector<int> swapped;   // owners given an outer spot this scan: no band-0 spot back below
             for(size_t i=0;i<r.cells.size();++i) {
-                if(r.band[i]!=0||r.spent[i]||!r.owner[i])continue;
+                if(r.band[i]>1||r.spent[i]||!r.owner[i])continue;
                 const int owner=r.owner[i];
                 Member* mm=member(owner);const Unit* v=w.unit(owner);
                 if(!mm||!v||!v->type||mm->group!=g.id||mm->slot!=int(i)||mm->state!=Holding||heldFor(*mm)<kRingStale)continue;
@@ -9764,7 +9965,7 @@ struct LegionNavigator::Impl {
                 int taker=0;int64_t takerD=0;
                 for(const int id:g.reachIds) {
                     const Member* m2=member(id);const Unit* v2=w.unit(id);
-                    if(!m2||!v2||!v2->type||m2->group!=g.id||!ringMember(g,*m2)||m2->state==Engaged||r.owner[size_t(m2->slot)]!=id||r.band[size_t(m2->slot)]==0)continue;
+                    if(!m2||!v2||!v2->type||m2->group!=g.id||!ringMember(g,*m2)||m2->state==Engaged||r.owner[size_t(m2->slot)]!=id||r.band[size_t(m2->slot)]<=std::max<int>(1,r.band[i]))continue;
                     const int64_t d=dist(*v2);
                     if(d+body<=own&&(!taker||d<takerD)) {taker=id;takerD=d;}
                 }
@@ -9783,13 +9984,29 @@ struct LegionNavigator::Impl {
                 if(!mm||!v||!v->type||mm->group!=g.id||!ringMember(g,*mm)||mm->state==Engaged)continue;
                 if(r.owner[size_t(mm->slot)]!=id||std::find(swapped.begin(),swapped.end(),id)!=swapped.end())continue;
                 if(r.band[size_t(mm->slot)]==0&&!r.spent[size_t(mm->slot)])continue;
-                if(r.band[size_t(mm->slot)]==0&&footprintOrigin(v->z,v->type->footZ)*W+footprintOrigin(v->x,v->type->footX)==mm->goal)continue;
+                if(r.band[size_t(mm->slot)]<=1&&footprintOrigin(v->z,v->type->footZ)*W+footprintOrigin(v->x,v->type->footX)==mm->goal)continue;
+                // Round 4 (2026-10-20): a body standing in reach is where the
+                // ring wants it. Of a blind ring (no spot in sight) it keeps
+                // its place; else it may move to a free band-0 spot, but never
+                // out to wait (pressed in off its own spot, it walked back out
+                // of reach and pressed again).
+                const int64_t ddx=(v->x.v>>16)-r.tx,ddz=(v->z.v>>16)-r.tz;
+                const bool inReach=ddx*ddx+ddz*ddz<=int64_t(r.R)*r.R;
+                if(inReach&&!r.sight)continue;
+                if(inReach) {ringNearest(*v,*mm,g,p,1);continue;}
+                // Round 4 (2026-10-20): a member waiting on an outer band takes a
+                // free band-1 spot when no band-0 spot is left. On its outer spot
+                // it stood in the way into the shadow while the band-1 spot's own
+                // owner, held behind it, never got there (attackring-wall-100
+                // offset 3: 3 of the 6 band-1 spots stood empty by the box's
+                // wall, Retail's bodies packed that ground).
+                if(r.band[size_t(mm->slot)]>=2) {ringNearest(*v,*mm,g,p,2);continue;}
                 // Round 3 (2026-10-20): with no free unspent band-0 spot left,
                 // the owner of a spent one waits on the nearest free spot of
                 // the outer bands instead of behind the firing arc, where it
                 // stood in other groups' way (below, "Rings round still
                 // targets at speed").
-                if(!ringNearest(*v,*mm,g,p,1)&&r.band[size_t(mm->slot)]==0)ringNearest(*v,*mm,g,p,255);
+                if(!ringNearest(*v,*mm,g,p,1)&&r.spent[size_t(mm->slot)])ringNearest(*v,*mm,g,p,255);
             }
         }
     }
@@ -10412,7 +10629,12 @@ struct LegionNavigator::Impl {
                 const auto [ax,az]=stepAim(u,aim);
                 holdStall(m);
                 m.site=LegionNavigator::SiteBlocked;
-                const bool brisk=int(m.route.size())>=kBriskRoute&&(policy(m.kind).completes||ringStanding(m));
+                // Round 4 (2026-10-20): so does any route of a ring member out of
+                // its still target's sight (a walk on through the shadow, see
+                // pressRoute): nothing brakes it there, and at the cap its short
+                // steps crept for hundreds of ticks.
+                const bool brisk=(int(m.route.size())>=kBriskRoute&&(policy(m.kind).completes||ringStanding(m)))||
+                                 (ringStanding(m)&&pressHidden(u,m));
                 drive(u,m,p,nullptr,maximum,ax,az,false,false,false,false,brisk);
                 return;
             }
@@ -10528,6 +10750,19 @@ struct LegionNavigator::Impl {
             // in this update (no step was taken, no goal or slot changes).
             contactRefused=&m;
         }
+        // Round 4 (2026-10-20): a member of a blind ring (no spot in sight
+        // of the target) standing in reach holds there rather than walk to
+        // a goal centre out of reach: nothing brakes it in reach, so a body
+        // that pressed in off its spot walked back out, and pressed again
+        // (attackring-river-64: its bank stood 11 in reach of the 19 that
+        // had been). Retail's attacker stays where its walk at the target
+        // is stopped.
+        if(m.kind==Kind::Attack&&ringMember(g,m)&&!g.ring.sight)
+            if(const Unit* t=w.unit(g.reachTarget);t&&t->alive()&&t->type) {
+                const int64_t R=reachPx(u,t,false).first;
+                auto d2=[&](int64_t x,int64_t z) {const int64_t dx=x-(t->x.v>>16),dz=z-(t->z.v>>16);return dx*dx+dz*dz;};
+                if(R>0&&d2(u.x.v>>16,u.z.v>>16)<=R*R&&d2(gx.v>>16,gz.v>>16)>R*R) {hold(u,m);return;}
+            }
         Fixed aimX=gx,aimZ=gz;
         bool direct=false;
         if(here==m.goal)direct=true;

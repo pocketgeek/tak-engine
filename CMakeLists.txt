@@ -796,6 +796,30 @@ add_test(NAME legion_ringshadow
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-gatehouse-40.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_ringshadow PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":(1[5-9][0-9]|[2-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
+# Legion ~100 round 4 (2026-10-20): a blind ring (no spot of the members' region sees the target) presses into reach
+# out of sight, holds there instead of walking back to a spot centre out of reach, and spends no spot for a body
+# standing radially out at the reach edge (nothing brakes a body there). attackring-river-64 at offset 0: 6 bodies in
+# reach at the end before (the bank's band-0 spots spent by the row behind them; Retail 14 now, 21 ever), 17 after.
+# Passes when 15 or more are in reach at the end, serial equal to workers.
+add_test(NAME legion_ringblind
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-river-64.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_ringblind PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.now_end\":(1[5-9]|[2-9][0-9]),")
+# Round 4: a body in reach out of the target's sight walks on through the shadow to ground in sight (pressRoute), or
+# deeper toward the target, and members waiting on outer bands are handed band-1 spots, so the in-sight ground between
+# the firing arc and the box's walls fills two deep (attackring-wall-64 offsets -3, -4, 4: median 32 in reach at the
+# end before, 37 after; Retail 43 / 42 / 32). Passes at 35 or more, serial equal to workers.
+add_test(NAME legion_ringpocket
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-wall-64.scn --mode legion --offsets -3,-4,4 --json)
+set_tests_properties(legion_ringpocket PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.now_end\":(3[5-9]|[4-9][0-9]),")
+# Round 4: no press (nor walk on from the shadow) stops a body across a lane one body wide with free ground on both
+# sides (sealsLane). attackring-gatehouse-40 at offset -2: damage 320 before (2x2 bodies pressed flush in a 3-cell
+# corridor and sealed it), 539 after (Retail 584). Passes at 450 or more, serial equal to workers.
+add_test(NAME legion_ringseal
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-gatehouse-40.scn --mode legion --offsets -2 --json)
+set_tests_properties(legion_ringseal PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":(4[5-9][0-9]|[5-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
