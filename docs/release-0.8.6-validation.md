@@ -14,8 +14,7 @@ schema unchanged since 0.8.5).
      docs/img/README.md belongs to the screenshots branch. If kNetVersion moves
      past 281, update every one of them. -->
 
-<!-- LEAD: tag line, e.g. "Tagged `v0.8.6` at `<sha>` (annotated tag object `<obj>`) and published on <date> UTC." -->
-**PLACEHOLDER (lead): tag and publication line.**
+Tagged `v0.8.6` at `c82cf732` (annotated tag object `8e50363d`) and published on 2026-10-20 06:51 UTC.
 
 ## Scope and compatibility
 
@@ -432,17 +431,36 @@ referee replays).
 
 ## CI and packages
 
-<!-- LEAD: main CI on the final source (Determinism, Linux packages, Windows,
-     macOS run ids and any reruns / known flakes: macOS x64 stream_test, macOS
-     "Upload CI artifact" ENOTFOUND, Ubuntu 22.04 crusades_client_network_test);
-     tag CI run ids (determinism dispatched with gh workflow run determinism.yml
-     --ref v0.8.6); the 29 assets checked against gh release view digests; build
-     ids "0.8.6 (build v0.8.6)" on Linux, Windows 11 (oden-win) and the MacBook;
-     Authenticode Valid on the Windows files; both DMGs and apps notarized and
-     stapled; audio-input entitlement and NSHighResolutionCapable in every macOS
-     app; no libsecret/glib NEEDED in the Linux takclient; Opus static and
-     OPUS-LICENSE in every package. -->
-**PLACEHOLDER (lead): CI and packages.**
+Main CI on the final source `c82cf732` passed on the first attempt: Determinism 39376612902, macOS 39376612888, Windows 39376612979 and Linux packages 39376612908.
+
+On the exact tag (`c82cf732`, annotated tag object `8e50363d`), all four workflows passed on the first attempt. No job needed a rerun, so none of the known flakes appeared: macOS x64 `stream_test` timing, "Upload CI artifact: ENOTFOUND", the Fedora openh264 mirror, and the Ubuntu 22.04 `crusades_client_network_test` "complete replay not published".
+
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/39379440103): started manually on the tag because the workflow is path-filtered.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/39379409174): all native package jobs and the release attachment.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/39379409017): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/39379409249): both builds plus the **Sign + notarize** job for each architecture. That job replaced the unsigned macOS ZIPs and DMGs in the draft with signed, notarized and stapled ones.
+
+The release was created as a draft with these notes, and tagged CI attached the packages. All **29 assets** were downloaded after the macOS signing finished, the same set as 0.8.5. Each one matched GitHub's SHA-256 digest and byte size before publication. Every asset is within 0.4% of its 0.8.5 size, with ratios from 1.002 to 1.004.
+
+- **Build ids.** The client and server in every Linux package carry `v0.8.6`. That covers Debian 12 and 13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44 and openSUSE Leap 16.0 (each for both architectures), plus Arch and Slackware.
+  - On Linux, the x86-64 `takclient` and `takserver` from Debian 12 and 13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44, openSUSE Leap 16.0 and Slackware report `0.8.6 (build v0.8.6)`. So does the Arch `takserver`. The Arch `takclient` needs glibc 2.44, newer than the checking host's 2.43, so only its build string was checked.
+  - On Windows 11, the x64 Windows ZIP's `takclient.exe` and `takserver.exe` report `0.8.6 (build v0.8.6)`. For the ARM64 `takclient.exe` and `takserver.exe`, only the build string `v0.8.6` was checked.
+  - On the arm64 MacBook (macOS 26.6.2), `takclient` and `takserver` report `0.8.6 (build v0.8.6)` for both architectures. This holds for the bare programs from the ZIPs and for the copies inside the game app from each DMG and each ZIP. The x64 copies ran under Rosetta.
+- **Windows signatures.** `Get-AuthenticodeSignature` on oden-win reports **Valid** (CN=Curtis Edge, timestamped) for 9 signed files, the same count as 0.8.5. They are the setup `.exe`, plus `takclient.exe`, `takserver.exe`, `cartographer.exe` and `crusades_admin.exe` in both the x64 and ARM64 ZIPs. The debug ZIPs were not checked.
+- **macOS notarization.** On the MacBook, both DMGs pass `xcrun stapler validate` and `spctl` (open, primary signature) as **accepted, source=Notarized Developer ID, origin=Developer ID Application: Curtis Edge (L479Y59RN8)**.
+  - Both apps (the game and TAK Cartographer) pass both checks the same way, from each DMG and from each ZIP.
+  - Every bundled and bare `takclient`, `takserver`, `cartographer` and `crusades_admin` passes `codesign --verify --strict` (TeamIdentifier L479Y59RN8).
+  - `spctl` says the bare command-line programs do not seem to be an app. That is expected for unstapled command-line tools.
+- **Opus is static.**
+  - No packaged Linux `takclient` or `takserver` has a `NEEDED` entry beyond libc, libm and the loader (Slackware also lists libdl and libpthread), so none needs libopus. The Debian and Ubuntu packages depend only on `libc6`.
+  - No Windows `.exe` imports or names an Opus DLL, and the ZIPs ship no DLLs. The x64 import tables list only system DLLs.
+  - No macOS binary links a libopus dylib (`otool -L`).
+  - `OPUS-LICENSE.txt` is in every Debian, RPM, Arch and Slackware package, in all four release ZIPs (inside the game app's Resources on macOS) and in the four debug ZIPs.
+- **macOS microphone.** The game app's `Info.plist` carries `NSMicrophoneUsageDescription` in both DMGs and both ZIPs. The `com.apple.security.device.audio-input` entitlement is on the game app's `takclient` (DMG and ZIP, both architectures) and on the bare ZIP `takclient`. It is absent from `takserver`, `crusades_admin` and `cartographer`.
+- **macOS Retina.** `NSHighResolutionCapable` is `true` in the `Info.plist` of both apps (the game and TAK Cartographer), from both DMGs and both ZIPs.
+- As in 0.8.1 to 0.8.5, no packaged Linux `takclient` has a `NEEDED` entry for libsecret, GLib, GIO or GObject.
+
+The release was published on 2026-10-20 06:51 UTC and is the latest release.
 
 ## Screenshots
 
