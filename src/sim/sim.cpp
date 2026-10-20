@@ -5652,8 +5652,194 @@ bool World::slotInRange(const Unit& u,const Unit& t,int slot) const {
 // response alike, so a blocked target is never selected and then held.
 bool World::slotClearShot(const Unit& u,const Unit& t,int slot) const {
     const Weapon& w=u.type->weapons[size_t(slot)];
+    if (shotBlockedHere(u,t)) return false;   // its shots from here stop short (noteShotImpact)
     if (w.melee || w.range<=64 || u.type->canFly || t.type->canFly || u.type->lobs()) return true;
     return combatLineOfSight(u,t);
+}
+
+// Blocked shots (engine deviation; retail has no such test). Retail's weapon
+// update (52ae90/52fe30) admits a shot on range alone, and its projectile
+// collision (52a4d0) stops the shot on the first terrain or feature cell it
+// meets (tools/re/probe_ballistic_blocked_target.py), so a retail archer
+// behind a rock empties its quiver into the rock for ever. The 2D sight test
+// above (slotClearShot) catches walls on the nav grid; it cannot see a hill
+// crest a low arc clips, a tall feature that does not block movement, water
+// or a shot from below a ledge. So the sim watches where the shots land: an
+// impact on terrain, water or scenery this weapon cannot destroy, short of
+// the target and clear of it, counts against the target; a hit on it or a
+// miss beside it clears the count, and so does walking away from the spot.
+static constexpr uint8_t kBlockedShots=3;    // in a row before the spot is written off
+static constexpr int kBlockedSpot=16;        // px the shooter may drift and keep its count
+
+bool World::impactIndestructible(const Weapon& w,int cx,int cz) const {
+    if (cx<0 || cz<0 || cx>=terW_ || cz>=terH_) return true;
+    if (w.unitsOnly) return true;            // never touches scenery
+    int ax=cx,az=cz;
+    if (!mapPlacementCells_.empty()) {
+        const auto& cell=mapPlacementCells_[size_t(cz)*size_t(terW_)+size_t(cx)];
+        if (cell.feature==0xfffe) { ax-=cell.backX; az-=cell.backZ; }
+    }
+    if (ax<0 || az<0) return true;
+    const int id=az*terW_+ax;
+    auto destructible=[&](const FeatType& ft,bool burning) {
+        if (ft.indestructible) return false;
+        return ft.hp>0 || (w.fireStarter && ft.flamable && ft.hasBurnAnim && !burning);
+    };
+    if (const auto owner=corpseAnchors_.find(id);owner!=corpseAnchors_.end()) {
+        const auto& footprint=corpseFootprints_.at(owner->second);
+        return footprint.type<0 || size_t(footprint.type)>=featTypes_.size() ||
+            !destructible(featTypes_[size_t(footprint.type)],false);
+    }
+    if (const auto it=featureIdx_.find(id);it!=featureIdx_.end()) {
+        const Feature& f=features_[it->second];
+        if (f.alive && f.type>=0 && size_t(f.type)<featTypes_.size())
+            return !destructible(featTypes_[size_t(f.type)],f.burn!=0);
+    }
+    return true;   // bare terrain, water, or a map blocker with no feature record
+}
+
+void World::noteShotImpact(int fromId,int targetId,const Weapon& w,const std::array<int32_t,3>& impact,int hitUnit) {
+    Unit* u=unit(fromId);
+    const Unit* t=unit(targetId);
+    if (!u || !u->alive() || !u->type || !t || !t->alive() || !t->type || targetId==fromId) return;
+    if (hitUnit) {
+        // The target itself: the line is open. Any other body neither opens
+        // nor blocks it (it can be killed, or it moves).
+        if (hitUnit==targetId && u->blockedTarget==targetId) u->blockedShots=0;
+        return;
+    }
+    // Short of the target and clear of it, in whole px: in front of the
+    // target's projection on the line of fire and outside its body, a body
+    // of slack and the weapon's splash. A miss beside or beyond the target
+    // reached it.
+    const int64_t sx=u->x.floorInt(),sz=u->z.floorInt(),tx=t->x.floorInt(),tz=t->z.floorInt();
+    const int64_t ix=impact[0]>>16,iz=impact[2]>>16;
+    const int64_t along=(ix-sx)*(tx-sx)+(iz-sz)*(tz-sz),line=(tx-sx)*(tx-sx)+(tz-sz)*(tz-sz);
+    const int64_t margin=8+8*int64_t(std::max(t->type->footX,t->type->footZ))+24+int64_t(uint16_t(w.aoe))/2;
+    const int64_t mx=ix-tx,mz=iz-tz;
+    const bool shortOf=along<line && mx*mx+mz*mz>margin*margin;
+    if (!shortOf || !impactIndestructible(w,int(impact[0]>>20),int(impact[2]>>20))) {
+        if (u->blockedTarget==targetId) u->blockedShots=0;
+        return;
+    }
+    if (u->blockedTarget!=targetId) { u->blockedTarget=targetId;u->blockedShots=0;u->repositions=0; }
+    if (u->blockedShots && (std::abs(sx-u->blockedX)>kBlockedSpot || std::abs(sz-u->blockedZ)>kBlockedSpot))
+        u->blockedShots=0;
+    if (u->blockedShots<255) ++u->blockedShots;
+    u->blockedX=int16_t(sx);u->blockedZ=int16_t(sz);
+}
+
+bool World::shotBlockedHere(const Unit& u,const Unit& t) const {
+    return u.blockedTarget==t.id && u.blockedShots>=kBlockedShots &&
+        std::abs(u.x.floorInt()-u.blockedX)<=kBlockedSpot && std::abs(u.z.floorInt()-u.blockedZ)<=kBlockedSpot;
+}
+
+// Would a shot fired by `u` standing at (fromX,fromZ) reach `t`'s SweetSpot
+// clear of terrain, water and scenery? The straight chord from the muzzle to
+// the aim point, sampled every 4 px through the projectile collision's own
+// environment test (52a4d0's map half). A ballistic arc lies above its chord
+// and a straight shot flies along it, so a clear chord is a clear shot; the
+// shooter's and the target's own footprints are not sampled.
+bool World::shotChordClear(const Unit& u,Fixed fromX,Fixed fromZ,const Unit& t,int slot) {
+    if (heights_.empty() || slot<0 || size_t(slot)>=u.type->weapons.size()) return true;
+    const Weapon& w=u.type->weapons[size_t(slot)];
+    const uint32_t flags=(w.unitsOnly?0x800u:0u)|(w.groundBounce?0x1000u:0u)|(w.waterWeapon?0x2000u:0u);
+    if (flags&0x800u) return true;
+    auto ground=[&](Fixed x,Fixed z) {
+        return int64_t(retailTerrainHeight(x.v,z.v,terW_,terH_,
+            [&](int cx,int cz) { return heights_[size_t(cz)*size_t(terW_)+size_t(cx)]; }))<<16;
+    };
+    // The muzzle's height over the body's origin, as it stands now.
+    const auto muzzle=queryUnitScriptPoint(u.id,false,slot);
+    const int64_t lift=std::max<int64_t>(0,int64_t(muzzle[1])-int64_t(u.groundY.v));
+    const std::array<int64_t,3> a{fromX.v,ground(fromX,fromZ)+lift,fromZ.v};
+    const auto aim=queryUnitScriptPoint(t.id,true);
+    const std::array<int64_t,3> b{aim[0],aim[1],aim[2]};
+    const int64_t dx=(b[0]-a[0])>>16,dz=(b[2]-a[2])>>16;
+    const int64_t steps=std::max(std::abs(dx),std::abs(dz))/4+1;
+    const int64_t skipFrom=8*std::max(u.type->footX,u.type->footZ),skipTo=8*std::max(t.type->footX,t.type->footZ)+8;
+    for (int64_t i=1;i<steps;++i) {
+        const std::array<int32_t,3> point{int32_t(a[0]+(b[0]-a[0])*i/steps),int32_t(a[1]+(b[1]-a[1])*i/steps),
+                                          int32_t(a[2]+(b[2]-a[2])*i/steps)};
+        const int64_t fx=(int64_t(point[0])-a[0])>>16,fz=(int64_t(point[2])-a[2])>>16;
+        const int64_t tx=(int64_t(point[0])-b[0])>>16,tz=(int64_t(point[2])-b[2])>>16;
+        if (fx*fx+fz*fz<=skipFrom*skipFrom || tx*tx+tz*tz<=skipTo*skipTo) continue;
+        int32_t vertical=-1;
+        if (projectileEnvironment(point,vertical,flags)) return false;
+    }
+    return true;
+}
+
+// The response to a written-off spot: walk to the nearest spot within
+// kRepositionReach of the unit, in the weapon's range band of the target,
+// that the unit can stand on and reach, away from the spot it was blocked
+// at, with a clear chord (and the 2D sight test the attack fires on). A plain
+// move leg is put in front of the attack, so each pathfinding mode walks it
+// its own way and the attack resumes on arrival. Each target gets
+// kMaxRepositions walks; no spot, or the walks used up, and the unit fires
+// on as retail does.
+static constexpr uint8_t kMaxRepositions=3;
+static constexpr int kRepositionReach=12;    // cells from the unit searched for a spot
+static constexpr int kRepositionChords=256;  // chord tests per search, nearest spots first
+
+bool World::repositionForShot(Unit& u,const Unit& t,int slot) {
+    if (u.repositions>=kMaxRepositions) return false;
+    const Weapon& w=u.type->weapons[size_t(slot)];
+    const int foot=footCells(u.type);
+    const NavGrid& grid=navFor(u.type);
+    const int64_t pad=t.type->isStructure() ? 8*std::max(t.type->footX,t.type->footZ)+24 : 0;
+    const int64_t hi=int64_t(w.range)+pad-16,lo=std::max<int64_t>(int64_t(w.minRange)+16,
+        8*(std::max(t.type->footX,t.type->footZ)+foot)+8);
+    const int64_t ux=u.x.floorInt(),uz=u.z.floorInt(),tx=t.x.floorInt(),tz=t.z.floorInt();
+    const int ucx=footprintCell(u.x,foot),ucz=footprintCell(u.z,foot);
+    const bool needLoS=w.range>64 && !t.type->canFly && !u.type->lobs();
+    std::vector<std::pair<int64_t,int>> spots;
+    if (hi>lo) for (int cz=ucz-kRepositionReach;cz<=ucz+kRepositionReach;++cz)
+        for (int cx=ucx-kRepositionReach;cx<=ucx+kRepositionReach;++cx) {
+            if (cx<0 || cz<0 || cx>=terW_ || cz>=terH_) continue;
+            const int64_t px=footprintWaypoint(cx,foot).floorInt(),pz=footprintWaypoint(cz,foot).floorInt();
+            const int64_t rx=px-tx,rz=pz-tz,r2=rx*rx+rz*rz;
+            if (r2>hi*hi || r2<lo*lo) continue;
+            if (std::abs(px-u.blockedX)<=2*kBlockedSpot && std::abs(pz-u.blockedZ)<=2*kBlockedSpot) continue;
+            if (!grid.fits(cx,cz,foot) || !passable(u.type,cx,cz)) continue;
+            spots.push_back({(px-ux)*(px-ux)+(pz-uz)*(pz-uz),cz*terW_+cx});
+        }
+    std::sort(spots.begin(),spots.end());
+    int tested=0;
+    for (const auto& [d2,cell]:spots) {
+        if (tested>=kRepositionChords) break;
+        const Fixed x=footprintWaypoint(cell%terW_,foot),z=footprintWaypoint(cell/terW_,foot);
+        if (needLoS) {
+            const bool naval=u.type->domain==UnitType::Domain::Water || t.type->domain==UnitType::Domain::Water;
+            if (!(naval?navalSight_:nav_).losBetween(x.toFloat(),z.toFloat(),t.x.toFloat(),t.z.toFloat(),
+                    std::max(u.type->footX,u.type->footZ)/2,std::max(t.type->footX,t.type->footZ)/2)) continue;
+        }
+        ++tested;
+        if (!shotChordClear(u,x,z,t,slot)) continue;
+        if (!pathExists(u.type,x.toFloat(),z.toFloat(),u.x.toFloat(),u.z.toFloat())) continue;
+        ++u.repositions;
+        u.blockedShots=0;
+        // The leg World::order builds for a point move, put in front: the
+        // attack behind it keeps its own leg and resumes on arrival.
+        if(u.scriptAimTarget)clearScriptWeaponTarget(u);
+        cancelPath(u);
+        Order move{x,z,0};
+        move.clickX=x;move.clickZ=z;
+        move.groundMission=true;
+        move.mission.flags=0x3000400u;
+        move.controller=++nextMovementController_;
+        move.goal=true;
+        move.issuedTick=tickCounter_;
+        if (isLegionPathfinding(pathfindingMode_)) move.setIdentity(stampIdentity(u,ConvoyClass::Move,x,z));
+        u.orders.insert(u.orders.begin(),move);
+        resetGroundSegment(u,u.orders.front());
+        if (u.routeStamp<0 || uint32_t(u.routeStamp)<=tickCounter_-6u) u.routeStamp=0;
+        requestPath(u,x.toFloat(),z.toFloat());
+        noteOrders(u.id);
+        return true;
+    }
+    u.repositions=kMaxRepositions;   // nowhere better in reach: fire on from here
+    return false;
 }
 
 bool World::slotBadTarget(const Unit& u,int slot,const Unit& t) const {
@@ -5669,6 +5855,7 @@ bool World::sweepKeepsTarget(const Unit& u,int slot,const Unit& t) const {
     if (w.melee && t.type->canFly) return false;
     if (slotBadTarget(u,slot,t)) return false;
     if (w.status==Weapon::Status::Paralyzed && t.paralyzedFor>0) return false;
+    if (shotBlockedHere(u,t)) return false;   // engine deviation: see noteShotImpact
     return true;
 }
 
@@ -6181,6 +6368,13 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         u.routeStamp = -1;
         return;
     }
+    // Shots from here keep stopping short of the target on something they
+    // cannot destroy (noteShotImpact): a ground mover free to leave its post
+    // walks to a spot with a clear shot. Hold Position stays and fires on.
+    if (!airRun && !hovering && sel && !sel->melee && dist <= reach && mayChase && u.moveState != 0 &&
+        !u.type->canFly && !u.type->isStructure() && shotBlockedHere(u,*target) &&
+        repositionForShot(u,*target,slot))
+        return;
     if (hovering) {
         tickHoverAttack(u,*target,sel);
         groundMovementHandled=true; // the flight controller already committed movement
@@ -10953,6 +11147,7 @@ void World::tickStraightProjectiles(std::span<const int> airGrid) {
                 uint32_t(p.position[axis])+uint32_t(p.velocity[axis]));
             const auto hit=projectileCollision(p.position,p.velocity[1],flags,p.fromPlayer,airGrid);
             if(hit.code==2) {
+                noteShotImpact(p.fromId,p.targetId,w,p.position,hit.unitId);
                 applyHit(w,Fixed::raw(p.position[0]).toFloat(),Fixed::raw(p.position[2]).toFloat(),
                     p.fromPlayer,p.fromId,unit(hit.unitId),p.position);
                 p.spent=true;break;
@@ -12766,6 +12961,7 @@ void World::tick(float dt) {
             p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
             p.age=int32_t(tickCounter_-p.start);
             if(hit) {
+                noteShotImpact(p.fromId,p.targetId,*p.wsrc,p.position,hitUnit);
                 applyHit(*p.wsrc,Fixed::raw(p.position[0]).toFloat(),
                     Fixed::raw(p.position[2]).toFloat(),p.fromPlayer,p.fromId,unit(hitUnit),p.position);
                 p.spent=true;p.life=0;
@@ -12796,8 +12992,10 @@ void World::tick(float dt) {
                 if(hit.code==0)continue;
                 p.position=state.position;p.velocity=state.velocity;p.angles=state.angles;
                 p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
-                if(hit.code==2)
+                if(hit.code==2) {
+                    noteShotImpact(p.fromId,p.targetId,*p.wsrc,state.position,hit.unitId);
                     applyHit(*p.wsrc,p.x.toFloat(),p.z.toFloat(),p.fromPlayer,p.fromId,unit(hit.unitId),p.position);
+                }
                 // Native retires an out-of-map shell without damage and dispatches
                 // exactly one impact when collision returns 2.
                 p.spent=true;p.life=-1;stopped=true;break;
@@ -14607,6 +14805,11 @@ uint64_t World::stateHash() const {
         for (int32_t t : u.slotTarget) mix(uint32_t(t));
         mix(uint32_t(u.slotAuto)|uint32_t(u.slotManual)<<8);
         mix(uint32_t(u.faceRequest));
+        if (u.blockedTarget) {
+            mix(0x424c4b44u);mix(uint32_t(u.blockedTarget));
+            mix(uint32_t(u.blockedShots)|uint32_t(u.repositions)<<8);
+            mix(uint32_t(uint16_t(u.blockedX))|uint32_t(uint16_t(u.blockedZ))<<16);
+        }
         mix(uint64_t(uint32_t(u.selfDestructT)));   // ticks; drives a deterministic death
         // Stance / cloak-intent / active gate auto-acquire, cloaking and firing, so a
         // divergence in them must fault directly rather than diffusing into positions.

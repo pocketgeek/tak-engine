@@ -832,6 +832,18 @@ a left-click on the map or minimap. **Esc** disarms.
 | **D** | Diplomacy: give units, share mana, choose chat recipients. |
 | **Ctrl+Shift+D** | Self-destruct (again to cancel). |
 
+**Blocked shots.** If a unit's shots keep hitting something it cannot destroy
+before they reach its target (a hill, water, a rock or other indestructible
+scenery), it walks a short way to a spot with a clear shot and then attacks
+again. This happens after three blocked shots in a row. Shots that hit a tree or
+anything else that can be destroyed do not count, because they wear it down. A
+unit tries at most three new spots for each target. If it finds no spot within
+about twelve cells, it stays where it is and keeps firing, as in the original
+game. Units on **Hold Position**, buildings, flyers and melee units never move
+for this. A unit that is not under an attack order stops firing at that target
+and picks another one. This is new behaviour; the original game had no such
+check.
+
 ### Selection
 
 | Key | Selects |
