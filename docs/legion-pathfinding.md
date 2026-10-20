@@ -3628,7 +3628,11 @@ as first committed: `mixed2` +2 is done at 6,618 (every other offset bit-identic
 reached at +2, 1,605); `bridges-100` A done 11,056 -> 11,782 at offset -2 (medians equal); `mixed-100` T2 done 4,157 ->
 4,415 at -1 (medians equal); `idle-50x50` offset 0 done 3,947 -> 4,053 (median equal). The other 25 screened fixtures
 are bit-identical at every gate offset. Retail is hash-identical at every gate offset of `mixed2`,
-`motion-cross-100` and `churn-100`. `ctest:legion_slotwedge` (`mixed2` at offset +2: `g.G.done` -1 on the parent).
+`motion-cross-100` and `churn-100`. The wide sweep (Windows, offsets -8..8, against the ribbon's): `mixed2` done at all
+17 offsets (16 bit-identical; median done 6,666 -> 6,650), `bridges-100` A t90 median 10,223 -> 10,345 (+1.2%, mean
++0.2%; 14 of 17 offsets identical, done equal), `idle-50x50` done median 3,947 -> 4,053 (+2.7%; only offset 0 changes,
+mean +0.2%), `mixed-100` medians equal. The `--mpai` Inner Circle game (seed 1, 60 s) keeps Retail b353410003e98dd5 and
+Legion 0825aeb9e8139203. `ctest:legion_slotwedge` (`mixed2` at offset +2: `g.G.done` -1 on the parent).
 
 ### Legion 10,000: where the program left it
 
