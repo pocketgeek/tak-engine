@@ -916,6 +916,16 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios taperbridge-100 --data "${TAK_TEST_DATA}"
                    --offsets 0,-4 --max scale.stuck_end=2)
   set_tests_properties(legion_passage_taper PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # Legion ~100 round 3 (2026-10-20): a way stays open for kGreenTurns of its crossings before the other way's wait
+  # closes it, not a fixed 300 ticks. On taperbridge-100's 160-cell strip every turn cost a whole crossing and mixed
+  # the two crowds on an apron; the parent turned six or more times and ended at offset +1 with 81 bodies gridlocked
+  # in the east mouth (19 of 100 arrived), at -5 and +8 with 89 and 76 arrived. Checked at +1, -5 and +8: at least 98
+  # arrive and at most 2 stand stuck at the end.
+  add_test(NAME legion_passage_green
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios taperbridge-100 --data "${TAK_TEST_DATA}"
+                   --offsets 1,-5,8 --min scale.arrive.n=98 --max scale.stuck_end=2)
+  set_tests_properties(legion_passage_green PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
   # Head-on meets near both goals (many-100: two pairs of 25-body orders sent to each other's positions meet
   # within kPivotNear of both goals; the meet band now holds up to the destination area plus one lead): at least
   # 98 of 100 arrive, the 90th percentile within 1,000 ticks (the previous commit 96 / 1,616; Retail 92 / 1,144).

@@ -3712,6 +3712,7 @@ struct LegionNavigator::Impl {
         uint32_t waitSince[2]={kNoTick,kNoTick};bool waited[2]={false,false},waiting[2]={false,false};
         uint32_t occ[2]={0,0};
         uint32_t com[2]={0,0};    // admitted bodies still before the strip, by direction (counted with occ)
+        uint32_t cross=0;         // the longest crossing among the open way's admitted bodies, ticks (see crossTicks)
         uint32_t active=kNoTick;   // the last tick a member asked for this passage (its strip is then watched)
         // The record that holds this passage's admission (see passageOf): the lowest-numbered record of its
         // passage, measured with the strip (headEpoch, headPlane) and the narrow records known (headGen). Derived
@@ -3913,13 +3914,21 @@ struct LegionNavigator::Impl {
     // span widened as much -- is admitted when the passage is open its way or free (it takes the token), and holds
     // otherwise (order kept, stall clock stopped: a wait, not a block). Admitted, it passes (Member::passLabel) until
     // it leaves the zone on either side. The token changes once no admitted body of its direction is left in the
-    // zone and the other way waits; it closes (admits no more) once the other way has waited kAdmitGreen ticks, so
-    // a stream never starves the other. Only allies defer to each other (no enemy is asked to cooperate); a member
-    // of a group without labels (fewer than kOpeningMembers, or a tile chain) neither waits nor counts.
+    // zone and the other way waits; it closes (admits no more) once the other way has waited kAdmitGreen ticks, or
+    // kGreenTurns of the open way's crossings if that is longer (see crossTicks), so a stream never starves the other.
+    // Only allies defer to each other (no enemy is asked to cooperate); a member of a group without labels (fewer
+    // than kOpeningMembers, or a wandering type's) neither waits nor counts.
+    // Since 2026-10-20 (Legion ~100 round 3) the green scales with the crossing. Every turn costs the passage a
+    // whole crossing -- the way let in next waits until the last body let in before is through -- and a crowd waits
+    // on the apron the other way's stream comes out onto, so each turn also mixed the two crowds there. With a fixed
+    // 300 ticks a long passage turned every few bodies: taperbridge-100's 161-cell strip (over 1,000 ticks to walk)
+    // turned 2-3 times and gridlocked in the east mouth at offset +1 (19 of 100 arrived), bridges-100's 49-cell strip
+    // 6-10 times (offsets -2..2). Now they turn once and 2-4 times.
     static constexpr int kStripSlack=2,kStripMax=192,kAdmitZone=6;
     static constexpr uint32_t kAdmitGreen=300;
     static constexpr uint32_t kAdmitClear=60;   // ticks without a new admission before a clear passage turns
     static constexpr uint32_t kAdmitCommit=120; // ... and before one turns under admitted bodies still on their way to it
+    static constexpr uint32_t kGreenTurns=2;    // a way closes after the other waited this many of its crossings (or kAdmitGreen)
     std::set<int> passers;   // members with passLabel set, ascending (derived from the members; never hashed)
     bool narrowFor(const Opening& o,const UnitType&) const {return o.width<=kNarrowWidth;}
     void ensureStrip(Opening& o,const Plane& p,int planeIndex) {
@@ -3948,6 +3957,13 @@ struct LegionNavigator::Impl {
         along=o.side==0?cx:cz;across=o.side==0?cz:cx;
     }
     int admitZone(const UnitType& t) const {return kAdmitZone*(std::max(t.footX,t.footZ)+1);}
+    // The ticks body type t takes to walk passage o from its approach zone through the strip at its top speed: what
+    // every turn of the passage costs, since the way let in next waits until the last body let in before is through.
+    static uint32_t crossTicks(const Opening& o,const UnitType& t,int zone) {
+        if(t.maxVel<=Fixed())return 0;
+        const int64_t cells=int64_t(o.stripHi-o.stripLo+1)+zone;
+        return uint32_t(std::min<int64_t>(cells*16*65536/t.maxVel.v,int64_t(1)<<20));
+    }
     bool inStrip(const Opening& o,const Unit& u) const {
         int a,c;openingFrame(o,u,a,c);
         const int m=std::max(u.type->footX,u.type->footZ);
@@ -4091,7 +4107,7 @@ struct LegionNavigator::Impl {
         // A passage stays watched while it has a token: a straggler that never asks (a group without labels) is
         // still an occupant once it stands in the strip, and the other way is not let in onto it.
         std::erase_if(activeOpenings,[&](uint32_t idx) {return openings[idx].tokenDir<0&&(openings[idx].active==kNoTick||w.tickCounter_-openings[idx].active>1);});
-        for(auto& o:openings)if(o.tokenDir>=0||o.waiting[0]||o.waiting[1]||o.occ[0]||o.occ[1]||o.com[0]||o.com[1]) {o.occ[0]=o.occ[1]=o.com[0]=o.com[1]=0;}
+        for(auto& o:openings)if(o.tokenDir>=0||o.waiting[0]||o.waiting[1]||o.occ[0]||o.occ[1]||o.com[0]||o.com[1]||o.cross) {o.occ[0]=o.occ[1]=o.com[0]=o.com[1]=o.cross=0;}
         for(auto it=passers.begin();it!=passers.end();) {
             const int id=*it;
             Member* m=member(id);const Unit* u=w.unit(id);
@@ -4110,6 +4126,8 @@ struct LegionNavigator::Impl {
                 int a,c;openingFrame(o,*u,a,c);
                 if((m->passLabel&1)?a>o.stripHi:a<o.stripLo)++openings[idx].com[m->passLabel&1];
             }
+            if(openings[idx].tokenDir==int(m->passLabel&1))
+                openings[idx].cross=std::max(openings[idx].cross,crossTicks(openings[idx],*u->type,admitZone(*u->type)));
             touched.insert(idx);
             ++it;
         }
@@ -4136,7 +4154,7 @@ struct LegionNavigator::Impl {
                     if(m&&u&&(uint32_t(m->passLabel)>>1)-1==i&&int(m->passLabel&1)==cur&&!inStrip(o,*u)) {m->passLabel=0;it=passers.erase(it);}
                     else ++it;
                 }
-            } else if(o.waited[other]&&o.waitSince[other]!=kNoTick&&now-o.waitSince[other]>=kAdmitGreen&&!o.closing) {
+            } else if(o.waited[other]&&o.waitSince[other]!=kNoTick&&now-o.waitSince[other]>=std::max(kAdmitGreen,kGreenTurns*o.cross)&&!o.closing) {
                 o.closing=true;++acct.admitClosings;
             }
         }
