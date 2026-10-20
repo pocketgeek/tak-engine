@@ -960,9 +960,9 @@ struct LegionNavigator::Impl {
         uint32_t detourTicks=0;
         bool detourFace=true;             // side-step turns the body (keep-right) or not (shuffle)
         bool detourPass=false;            // side-step is a lane-discipline pass (moves at travel speed)
-        // The side-step is a formation member's flow-around shuffle on a move-like leg (drive's blocked
-        // branch): walked unturned at travel speed, not at the facing cap (see drive and the detour walk in
-        // move). Hashed while set.
+        // The side-step is a formation member's flow-around shuffle on a move-like or fight leg (drive's
+        // blocked branch): walked unturned at travel speed, not at the facing cap (see drive and the detour
+        // walk in move). Hashed while set.
         bool detourFlow=false;
         uint32_t passUntil=0;             // tick until which a passing body keeps its new lane
         int8_t passRX=0,passRZ=0;         // the side it moved over to
@@ -8407,7 +8407,7 @@ struct LegionNavigator::Impl {
     // pressed again), to the first origin whose centre is in
     // reach and in sight. The way is
     // committed as a local route (walked at travel speed round a still
-    // target, see ringStanding); combat brakes the body where it gets the
+    // target, see stillTarget); combat brakes the body where it gets the
     // shot. Before it, a body of the shadow pressed only one origin on, and
     // the ground in sight between a firing arc and a wall stood one body
     // deep where Retail's stand two and three (attackring-wall-100 offset
@@ -9503,11 +9503,19 @@ struct LegionNavigator::Impl {
         else a=along<0?2*Q+Q*(-across)/(-along-across):3*Q+Q*along/(along-across);
         return a>=2*Q?a-4*Q:a;
     }
-    // An attack member of a ring round a target standing still (see ringScan).
-    bool ringStanding(const Member& m) const {
-        if(m.kind!=Kind::Attack)return false;
+    // An attack or guard member whose target (a guard's ward) stands still: its detour routes and
+    // flow-around shuffles keep travel speed (see move) and, once it gains nothing, it stops shuffling
+    // (see drive). Round 3 (2026-10-20) cured attack rings only; round 4 (2026-10-20) drops the ring:
+    // a fight (attack-move) order's attacks are acquired one body at a time as the column comes into
+    // range, so their group's field starts with one member and never gets a ring (buildRing), and a
+    // guard has none (its 70 px stance). Both crept round the bodies ahead at the facing cap
+    // (attackring-fight-60 32,402 and attackring-guard-64 42,133 statue ticks; Retail 38 and 194,
+    // its mover tracing round a body at its own speed). A chase (a moving target or ward) keeps the
+    // cap: there the faster ring killed attack-100's target with 5 bodies in reach instead of 22.
+    bool stillTarget(const Member& m) const {
+        if(m.kind!=Kind::Attack&&m.kind!=Kind::Guard)return false;
         const auto g=groups.find(m.group);
-        if(g==groups.end()||g->second.ring.band0==0||!g->second.ring.assigned)return false;
+        if(g==groups.end())return false;
         const Unit* t=w.unit(g->second.reachTarget);
         return t&&t->alive()&&t->speed<=Fixed();
     }
@@ -10606,16 +10614,21 @@ struct LegionNavigator::Impl {
                 // next order's arrivals for good). Facing it instead spun
                 // bodies in packed crowds (sharedgoal 2000: 0 -> 3,809
                 // unit-ticks); unturned at speed, 28. A reach kind (attack,
-                // guard) keeps the shuffle: its detours are round its own ring.
+                // guard) chasing keeps the shuffle: its detours are round its
+                // own ring. Round a target standing still (stillTarget) the
+                // whole route keeps travel speed, its last cells too (round 4,
+                // 2026-10-20): at the cap the tail of each route round the
+                // ring was most of what the rings had left of the creep
+                // (attackring-wall-64 1,140 statue ticks over -8..8, 93 at
+                // speed; Retail 173).
                 const auto [ax,az]=stepAim(u,aim);
                 holdStall(m);
                 m.site=LegionNavigator::SiteBlocked;
-                // Round 4 (2026-10-20): so does any route of a ring member out of
-                // its still target's sight (a walk on through the shadow, see
-                // pressRoute): nothing brakes it there, and at the cap its short
-                // steps crept for hundreds of ticks.
-                const bool brisk=(int(m.route.size())>=kBriskRoute&&(policy(m.kind).completes||ringStanding(m)))||
-                                 (ringStanding(m)&&pressHidden(u,m));
+                // Round 4 (2026-10-20): that covers the ringwall walk on through
+                // a still target's shadow too (see pressRoute): nothing brakes
+                // it there, and at the cap its short steps crept for hundreds
+                // of ticks.
+                const bool brisk=(int(m.route.size())>=kBriskRoute&&policy(m.kind).completes)||stillTarget(m);
                 drive(u,m,p,nullptr,maximum,ax,az,false,false,false,false,brisk);
                 return;
             }
@@ -10635,9 +10648,9 @@ struct LegionNavigator::Impl {
                 const auto [ax,az]=stepAim(u,m.detour);
                 holdStall(m);
                 m.site=m.detourPass?LegionNavigator::SitePass:LegionNavigator::SiteBlocked;
-                // A formation member's flow-around shuffle on a move-like leg keeps travel speed (detourFlow,
-                // see drive), as a long detour route does. A fight, attack, guard or patrol leg's shuffles round
-                // its own melee or ring keep the facing cap, and so do a body with a goal of its own
+                // A formation member's flow-around shuffle on a move-like or fight leg keeps travel speed
+                // (detourFlow, see drive), as a long detour route does. An attack, guard or patrol leg's
+                // shuffles round its own melee or ring keep the facing cap, and so do a body with a goal of its own
                 // (crowdheld's 64 distinct goals packed at a 3-cell pitch behind a door: 60 of 64 in goal at
                 // speed, the ratchet is 61), a member whose point is in a head-on meet with another order
                 // (Point::meet: at speed the two streams interleave into a knot -- bridges-1000's two-way 32-cell
@@ -10647,8 +10660,10 @@ struct LegionNavigator::Impl {
                 // in a bridge's mouth) and a body that has gained nothing for a crowd window (kCrowdWindow): at
                 // speed its shuffles round a settled crowd carried it along the crowd's edge, out of reach of
                 // the settle rule (a production rally's last output stood 7 cells off the point for good,
-                // movement_orders_test; gen1-route-61923 240 -> 221 arrived).
-                const bool brisk=(m.detourFlow&&!m.passLabel&&!(m.pt&&m.pt->meet.tick!=kNoTick)&&stalledFor(m)<=kCrowdWindow)||ringStanding(m);
+                // movement_orders_test; gen1-route-61923 240 -> 221 arrived). An attack or guard member round
+                // a target standing still (stillTarget) keeps travel speed on any committed side-step; one
+                // that gains nothing commits no new flow-around shuffle (see drive).
+                const bool brisk=(m.detourFlow&&!m.passLabel&&!(m.pt&&m.pt->meet.tick!=kNoTick)&&stalledFor(m)<=kCrowdWindow)||stillTarget(m);
                 drive(u,m,p,nullptr,maximum,ax,az,false,false,m.detourFace,m.detourPass,brisk);
                 return;
             }
@@ -12266,8 +12281,20 @@ struct LegionNavigator::Impl {
             // (Unit::legionShuffle, World::updateLegionStill): a flow-around
             // that keeps it shuffling in place is a hold, and the hold's own
             // ways out (side-step, detour, yield, parting, settling) take over.
+            // Nor (round 4, 2026-10-20) does an attack or guard member round a
+            // target standing still (stillTarget) whose last crowd window found
+            // it still (Member::stillSince: under half a body gained on its
+            // point or its own spot). At travel speed its shuffles at the back
+            // of the firing arc went down the field's potential and its field
+            // steps came straight back up it (the string-pulled aim is tested
+            // for legality, not potential), hundreds of times: round 3's
+            // ring reversals (attackring-r200-64 413, three bodies 307 of 389
+            // at offset 0, one for 2,000 ticks; Retail 45), each shuffle a
+            // potential gain that restarted the stall clock. It holds, and the
+            // hold's ways out (a detour route round the arc, a ring re-choice
+            // after a held window) take over.
             bool moved=false,passFiltered=false;
-            if(f&&!livelock(u)) {
+            if(f&&!livelock(u)&&!(m.stillSince!=kNoTick&&stillTarget(m))) {
                 // Direct-line members measure progress toward their own goal
                 // cell; field followers by the group potential.
                 const int goalX=m.goal%W,goalZ=m.goal/W;
@@ -12312,7 +12339,15 @@ struct LegionNavigator::Impl {
                         // keeps facing its route while it shuffles.
                         moved=true;++stats.slides;face=false;
                         m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;m.detourPass=false;
-                        m.detourFlow=policy(m.kind).completes&&!engagesEnemies(m.kind)&&formationMember(m);
+                        // A fight leg's shuffles too (round 4, 2026-10-20): the column
+                        // of a fight order flows round its own members standing in reach
+                        // (their acquired attacks) and round each other before it
+                        // acquires, and at the facing cap it crept there whenever its
+                        // way in met the arc off its own line (attackring-fight-diag-60,
+                        // the target diagonal to the column: gate median 2,988 statue
+                        // ticks, Retail 23; at speed 3). Retail's mover traces round a
+                        // body at its own speed whatever the order.
+                        m.detourFlow=policy(m.kind).completes&&(!engagesEnemies(m.kind)||m.kind==Kind::Fight)&&formationMember(m);
                         if(arc) {m.slideCell=m.detour;m.slideFrom=oz*W+ox;}
                         else m.slideCell=-1;
                     }
