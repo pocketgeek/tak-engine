@@ -351,6 +351,12 @@ stopped permille 288,524 to 288,538, Legion work flat.
   each other. Attempts back off geometrically (30, 60, ... 480 updates) while
   the body sets no new record of its distance to go (the detour rules'
   record, above).
+* **Corridor mouths one body wide** (Legion ~100 round 3, 2026-10-20; "Corridor
+  mouths and own-slot arrivals" below): a member beside a passage one origin
+  wide waits for its way (`passageWay`, `updateClaim`), and no other member of
+  its group may step onto an origin covering that way that is not past it; two
+  that reach it at once ask the one farther up the field to step clear
+  (`giveWay`). Retail has neither.
 * **Settled arrivals yield**: when a unit completes, Legion records an anchor
   (the origin it completed on). A member held for 12 or more updates, with no
   detour or route, whose wanted cell is held only by settled, idle,
@@ -468,7 +474,11 @@ footprint class (mixed footprints form one group per class but share one
   in the middle of a big body, which read a step above a 2x2 or 3x3 it held
   while its cells reached farther down the field, so that body never queued
   and its order never ended (`legion_mixedsettle`; mixedfootprints 500x4 left
-  three such orders open for good, the parked W9 A1 attempt two in 200x1). It
+  three such orders open for good, the parked W9 A1 attempt two in 200x1).
+  Since round 3 (2026-10-20) a settled arrival of the point whose cells cover
+  the waiting body's own slot counts as nearer, whatever its footprint: read at
+  its origin, a body of its own footprint settled a step off its own slot,
+  uphill, never did (`legion_mixedrandom`). It
   is *queued* when one of them is a settled arrival
   of its own order at that point, an idle body of the player, or a held member
   of the same point that is itself queued, or when (a shared point) it stands
@@ -3339,6 +3349,121 @@ lowered them without the time they bought, except the turn fix on the generated 
 versions) is untouched by every lever here (hash-identical runs): their touches are the ring's press-in and the
 door's own lanes, left to the ring work; where formations round wall ends the turn fix lowers it (table).
 
+### Corridor mouths and own-slot arrivals (2026-10-20, Legion ~100 round 3)
+
+**The 0.8.6 drop, bisected.** The 0.8.6 scenario gate read `deadend-w2-n40-room-plain` (40 bodies to a room at the
+end of a 2-cell, 100-cell corridor) `g.A.complete_n` 38 -> 32 (median of offsets 0, +-1, +-2). Built at v0.8.5
+86db5d61, round 1 48c5b05c (and its parent 4fe78bdb), round 2's merges 4bef9dad (gap2), 8c729934 (ring2) and d6c559a7
+(idle2), round 2 aacb1f2c and the blocked shots 575a70d2: gap2 and ring2 leave it bit-identical, and the drop comes
+with idle2 (96f301f6, the flow-around shuffle at travel speed). Over offsets -12..36 the mean goes 28.04 -> 26.55
+and the median 33 -> 29; the blocked shots change nothing. It is a lottery over a failure that was there all
+along: at offsets +10..+16, where the column straddles the corridor's row, none of the 40 bodies ever entered, at
+every commit from 0.8.5 on.
+
+**The cause.** The corridor is one 2x2 body wide: its origins form a single row, and the origin in front of its
+mouth (98,48) is the only way into it from the open side. Two bodies of the queue reach the mouth on either side of
+that origin, at (98,47) and (98,49) -- or one beside it at (97,49) -- and each then stands on a cell of the way the
+other needs: neither can step onto it, nobody behind them moves, and every order outside stays open
+(`deadend-w2-n120-closed-plain` too: 3 of 120 complete over the gate offsets). Retail's bodies wedge there as well and
+give their orders up where they stand (120 complete, 1-3 arrived); Retail has no give-way of any kind (its blocked
+mover clamps, slows and presses on, docs/retail-engine.md).
+
+**The change** (Legion only; Retail hash-identical):
+
+* **Funnel claims** (`passageWay`, `updateClaim`, `claimedAgainst`). A member waits for a way when it stands beside
+  a passage one origin wide: the lowest neighbour origin down the field that lies in such a passage (both its
+  neighbours across the step illegal), or whose only way on does (the origin in front of a corridor's mouth). A
+  seed is never a way, and a body hugging a long wall is not beside a passage. A member standing on a cell of a way
+  its group found there waits for it too (`Group::funnelWays`, per field; a 3x3 or 4x4 covers a way from farther
+  off). While a member waits for a way, no other member of its group may step onto an origin whose footprint covers
+  that way and is not past it (nearer the goal), unless it waits for the same way and steps onto the way itself. The
+  claim is taken on the step that reaches the origin (drive), so two bodies stepping beside one way on successive
+  updates of a tick cannot both stand there; a queue in file is untouched (the body behind stands clear of the way
+  of the body ahead). `Member::claimAt` and `Group::funnelWays` are hashed.
+* **The funnel give-way** (`giveWay`, after 2 held updates). Where two bodies did reach a way at once, the one nearer
+  the goal (lower potential; at one potential the one that gave way more often, then the lower id) asks each held
+  body of its group on the way's cells, farther up the field, to step one cell clear of the way and of itself, to the
+  free legal origin with the lowest potential, keeping its order (a part with its leg, as `partLane` parts a still
+  member). All or none move; at most `kMaxGiveWays` (8) per leg, never straight back the way it last gave way. The
+  turn-taking at one potential matters: with the id alone one body gave way to a whole lane.
+* **Own-slot arrivals** (`settleWindow`, item 3 of the round). A settled arrival of the point whose cells cover the
+  waiting body's own slot counts as nearer the point, whatever its footprint. The 2026-10-14 review read a body of
+  another footprint over its cells; a body of the waiting body's own footprint was still read at its origin, so one
+  settled a step off its own slot, uphill of the waiting body and across its line, never read nearer: the waiting
+  body never queued, its yields were refused and its order stayed open. A random-formations screen
+  (`legion_mixedrandom`, seeds 0..12,799: footprints 4x4/2x2, 4x4/3x3 or 3x3/2x2, 30-100 bodies, shuffled, column order
+  or alternating rows, one click, 5,000 ticks) left 3 layouts open on the parent (two of them one layout; a 4x4 and a
+  3x3, each beside a settled body of its own size on its slot) and none after. The crowdbench `mixedfootprints` rows
+  (200x1 seed 0; 500x4 seeds 0/7/42 at 6,000 ticks) are unchanged: 200 and 2,000 complete and settled, none outside
+  the radius, stalled unit-ticks 85,239 -> 85,149 on seed 42, equal on the others.
+
+Measured on the Windows box (identical hashes to Linux), offsets -12..30 (43; deadend-multi the 11 gate offsets),
+Legion before -> after as mean / median, and Retail's median:
+
+| fixture | key | before | after | Retail |
+|---|---|---|---|---|
+| deadend-w2-n40-room-plain | complete_n (offsets all done) | 25.5 / 29 (5) | 37.7 / 40 (32) | 40 |
+| deadend-w2-n40-room-plain | arrived | 21.9 / 27 | 30.1 / 32 | 0 |
+| deadend-w2-n40-room-squad | complete_n (offsets all done) | 24.2 / 26 (7) | 36.1 / 39 (19) | 40 |
+| deadend-w2-n40-closed-plain | complete_n (offsets all done) | 28.9 / 34 (8) | 40 / 40 (43) | 40 |
+| deadend-w2-n40-closed-squad | complete_n (offsets all done) | 28.6 / 33 (13) | 40 / 40 (43) | 40 |
+| deadend-w2-n120-closed-plain | complete_n (offsets all done) | 18.5 / 7 (0) | 119.2 / 120 (40) | 120 |
+| deadend-w2-n120-closed-squad | complete_n (offsets all done) | 13.5 / 0 (0) | 119.2 / 120 (40) | 102 |
+| deadend-w2-n120-room-plain | complete_n / arrived | 19.4 / 5, 11.0 / 5 | 119.2 / 120, 34.2 / 34 | 120, 2 |
+| deadend-w2-n120-room-squad | complete_n / arrived | 18.8 / 10, 11.6 / 10 | 119.2 / 120, 30.7 / 30 | 101, 0 |
+| deadend-multi-4x120 | A complete_n (offsets all done) | 8.2 / 3 (0) | 120 / 120 (11) | 120 |
+| deadend-w2-n120-closed-plain | stopped permille | 873 / 880 | 710 / 717 | 1 |
+| deadend-w2-n40-room-plain | stopped permille | 564 / 585 | 204 / 124 | 1 |
+| deadend-w2-n120-closed-plain | wall touch permille | 135 / 72 | 299 / 302 | 33 |
+| deadend-w2-n40-room-plain | wall touch permille | 414 / 478 | 554 / 565 | 32 |
+| deadend-w2-n120-closed-plain | complete outside radius | 12.9 / 0 | 109.3 / 110 | 118 |
+
+The gate median of `deadend-w2-n40-room-plain` `complete_n` is 40 (0.8.6: 32, 0.8.5 baseline 38). The trades are
+the bodies now in the corridor: they touch its walls (wall touch permille about doubles, against Retail's 30s) and
+the queue settles back along it outside the authored radius (by design since AR-08: Retail's give up there too).
+The three offsets where 12 orders of the 120-body fixtures stay open (+28..+30) are a fixture artefact that the
+parent shows too: the column's last row spawns two cells from the map's edge and its bodies never leave Waiting.
+Screened at offset 0 over all 159 fixtures (tools/scenarios and legion100, Legion): 10 change, all of them the
+2-cell dead ends above (`deadend-w2-*`, `deadend-multi-4x120`) plus four whose hash changes with every key equal
+(`corner-1x448`, `corner-8x56`, `gen1-route-36057`, `gen1-route-65845`). Retail: identical `hash@` at every gate
+offset of the two target fixtures and in the Windows sweep's Retail rows; the headless `--mpai` Inner Circle game
+(seed 1, 60 s) keeps Retail `b353410003e98dd5` and Legion `0825aeb9e8139203`.
+`ctest:legion_funnelmouth` (the closed 120-body corridor at start offsets 0 and -1, the 40-body room at +12 and +14:
+27, 9, 0 and 0 settled on the parent, all now) and `ctest:legion_mixedrandom` (seeds 5717 and 9651).
+
+**Ties between claims** (the round's review, 2026-10-20). As first landed, a claim closed every origin covering its way
+at an equal or higher potential, to every other member. In a field of 1x1 pillars 3 cells apart (gaps 2 cells wide, one
+origin wide for a 2x2, so every origin in the field is a way) two bodies wait for neighbouring ways at one potential,
+each way covering the other: each body's step onto its own way was refused by the other's claim, no body stood on
+either way so the give-way never ran, and both held for good (a review scratch fixture, 72 2x2 bodies through 27x31
+pillars on one click: `complete_n` gate median 60 and 1-9 orders open at every gate offset; the parent 72 at all).
+Now, at one potential, a claim yields to a member that waits for a way of its own and has the lower id; a member that
+waits for no way still keeps off a claimed way at its potential (so a third body cannot slip onto it, the rejected
+exclusive-claimant failure below). The order is total, so no two waiters can each hold the other. The same fixture:
+72 at all 11 gate offsets, done at 2909-3540 ticks (Retail 2585 median). Over offsets -12..30 (Windows, hashes equal
+to Linux) `complete_n` mean / minimum / offsets with orders open after 900 still ticks: 0.8.6 (bd7f3f6e) 71.6 / 68 / 7,
+round 3 as first landed 66.1 / 45 / 35, now 72 / 72 / 0 (Retail 72 / 72 / 0); every order ends by tick 3910, at two
+offsets one body settles outside the radius. Stopped permille 112 -> 179 -> 103 (median over those offsets), wall touch 443 -> 479
+-> 441 (Retail 421). Every 2-cell dead end above
+(`deadend-w2-n120-closed-plain`, `-n40-room-plain`, `-n40-closed-plain`, `deadend-multi-4x120`) is bit-identical at
+all gate offsets, Retail too. The review's alternative, opening every equal potential (`here > v`), also lets a
+member that waits for no way step onto the claimed way itself. `ctest:legion_funneltie` (the pillar field at offsets
+0, +1 and -3: 68, 63 and 60 of 72 settled after 9,000 ticks on the parent, all now).
+
+Rejected on the way (same fixtures):
+
+* The give-way alone: `deadend-w2-n120-closed-plain` 3 -> 17 complete (gate median). Once the crowd behind packs
+  round the mouth the losing body has no free cell, and the pair forms again with the next arrivals.
+* One exclusive claimant per way, taken only by a body with a single way down: in the ticks between the claimant
+  stepping onto the way and the next waiter's update a third body edged onto a cell of it from an origin with
+  several ways down (`deadend-w2-n40-room-plain` offsets +10..+16: 2 to 29 of 40 complete; `deadend-w2-n120-closed-plain`
+  median 22).
+* A funnel as any origin against terrain with a single way down (this origin or its way beside an illegal origin;
+  without that test a body beside a seed in open ground has a single way down too): the claims chained along walls,
+  each closing a 7x7 block of origins round a 4x4 (`strait` 48 -> 13 arrived, `maze-100` 85 -> 44 with 41 bodies
+  standing for good; offset 0). The passage test (both neighbours across the step illegal, at the way or the next
+  one) touches only the 2-cell dead ends.
+
 ### Legion 10,000: where the program left it
 
 docs/legion-10000-report.md gives the measured result against the starting revision c2c25707:
@@ -3606,27 +3731,30 @@ Rules that came out of using them:
     players, at 12000 ticks, or on dynamicobstacle, rapidreplacement and
     exploration. Findings 2, 4, 5, 6, 7, 8, 10 and 11 have no dedicated test;
     `battle-field-2x60:spins` and `ctest:crowdbench_matrix` are what watch them.
-* **A body held off its own slot by settled bodies of its own footprint can
-  wait for good.** A formation member steers by the line to its own slot, while
-  the settle rule reads nearness on its class's field, which descends to the
-  nearest slot of any member of that class. Where settled arrivals stand across
-  that line uphill of the body, none reads nearer, so the body never queues and
-  its order stays open, holding with its yields refused. Since the 2026-10-14
-  review a settled body of another footprint counts when its cells reach below
-  the waiting body (section 5, Settling); bodies of its own footprint are still
-  read at their origin. In 12,800 random one-click formations of 30 to 100
-  bodies of two footprints (4x4/2x2, 4x4/3x3, 3x3/2x2, on a grid, shuffled or in
-  column order) 38 layouts kept an order open after 5,000 ticks before that
-  review and 5 after, each such a body among settled bodies of its own size.
-  Measured by `ctest:legion_mixedsettle` (the other-footprint case) and the
-  crowdbench screen's `mixedfootprints` rows (`orders_complete`).
-* **A 2-cell dead-end corridor still jams at its mouth.** A queue of 120
-  bodies into a 4-cell corridor now settles back from the crowd row by row
-  (all 120 by tick 5500), and a 615-body click into a wall pocket arrives as
-  one point (606 inside the authored radius by tick 8000). In a 2-cell
-  corridor the queue jams at the mouth before it enters, so no settled crowd
-  reaches back to it and those orders stay open
-  (`deadend-w2-n120-closed-plain:g.A.complete_n`).
+* **A body held off its own slot by settled bodies of its own footprint**
+  (resolved 2026-10-20, Legion ~100 round 3): a settled arrival covering the
+  waiting body's own slot now counts as nearer, whatever its footprint
+  ("Corridor mouths and own-slot arrivals"). The seeded screen in
+  `legion_world_test mixedrandom` (TAK_MIXRANDOM=0,12799) leaves no layout open
+  (3 on the parent; 5 in the 2026-10-14 review's own scratch screen, which is
+  gone). Measured by `ctest:legion_mixedrandom`, `ctest:legion_mixedsettle` and
+  the crowdbench `mixedfootprints` rows (`orders_complete`).
+* **A 2-cell dead-end corridor's front can settle short of its room.** Since
+  round 3 (2026-10-20) the mouth of a corridor one body wide no longer jams
+  ("Corridor mouths and own-slot arrivals": every 120-body 2-cell dead end
+  completes at 40 of 43 offsets, none did before). The 40-body room at the end
+  of one still leaves orders open at 11 of 43 offsets (`deadend-w2-n40-room-plain`,
+  24 of 43 for `-squad`): the first bodies through the corridor stop for a
+  window a few cells before the room, settle where they stand (their potential
+  is within the area's bound), and the queue settles back from them, while the
+  room's side by the door stays empty; the bodies past the explicit area's
+  ceiling then wait (the parent does the same at offset -3). In the
+  120-body fixtures at offsets +28..+30 the column's last row, spawned two cells
+  from the map's edge, never leaves Waiting (on the parent too). Measured by
+  `deadend-w2-n40-room-plain:g.A.complete_n` over wide offsets and
+  `ctest:legion_funnelmouth`. Two waiters whose ways cover each other at one
+  potential (a pillar field with gaps one origin wide) no longer hold each
+  other: the lower id goes first (`ctest:legion_funneltie`).
 * **Group partitioning depends on registration order** and on field start
   timing (a started field takes no new seeds). The 256-goal cap chunks goals
   in registration order, so an order whose unit ids are not spatially
@@ -3642,11 +3770,20 @@ Rules that came out of using them:
   (`taperbridge-100`: the second army waits for the whole first). Measured by `ctest:legion_passage_admission`
   (arrivals and stuck bodies; the time is in its run's JSON), `ctest:legion_passage_small` and `ctest:legion_choke`
   (bridges-1000).
-* **Idle enemy units never step aside.** Settled friendly Legion arrivals
-  yield and idle friendly bodies part a lane (own player and allies, since
-  2026-10-19); an enemy's idle body is a still body to route around
-  (`strait-3x80:region.east.inside`: a selection that has to pass a barrier
-  of idle bodies).
+* **Idle enemy units never step aside -- as in Retail.** Settled friendly
+  Legion arrivals yield and idle friendly bodies part a lane (own player and
+  allies, since 2026-10-19; the funnel give-way, 2026-10-20, asks only its own
+  group); an enemy's idle body is a still body to route around. Retail moves no
+  idle body at all, its own or another player's: a blocked mover only clamps,
+  slows and presses on (docs/retail-engine.md, "retail genuinely wedges"), parked
+  bodies are walls in its cell ratings, and BUGGER_OFF, the one script request to
+  clear a space, is stored and never acted on ("The build yard was hung").
+  Moving enemy bodies would be a gameplay change with no Retail behaviour to
+  port, so Legion keeps Retail's rule there (2026-10-20, Legion ~100 round 3).
+  `strait-3x80`, named here before, holds one player's fleet only; what
+  watches it is `ctest:legion_staticidle` (its part 3: another player's idle
+  body plugging the one gap in a wall stays put, and the group holds until a
+  second gap opens).
 * **Fog**: Legion plans on the static plane as Retail's mover sees it. It does
   not model unexplored terrain separately. The one place fog shows is group
   awareness, which sees an enemy mover only within sight
