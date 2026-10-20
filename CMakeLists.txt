@@ -787,6 +787,15 @@ add_test(NAME legion_attackflush
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/attackring-wall-100.scn --mode legion --offsets 0,1,-1 --json)
 set_tests_properties(legion_attackflush PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":([4-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
+# The closed-off-spot flood walks through every in-reach origin out of the target's sight, by that origin's own sight
+# test (round 3 review): it took band 1's listed spots for that shadow, a sample packed a footprint apart, so 2x2 bodies
+# crossed none of it and a yard reached only through in-reach shadow had every band-0 spot spent
+# (attackring-gatehouse-40 at offset 0: no damage; Retail 557, round 2 224). Passes when the damage is 150 or more,
+# serial equal to workers.
+add_test(NAME legion_ringshadow
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-gatehouse-40.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_ringshadow PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":(1[5-9][0-9]|[2-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is

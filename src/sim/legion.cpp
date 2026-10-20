@@ -782,6 +782,8 @@ struct LegionNavigator::Impl {
             std::vector<int> cells;std::vector<uint8_t> band;std::vector<int32_t> owner;
             std::vector<uint8_t> spent;uint32_t scanned=kNoTick;
             bool sight=false;   // band 0 was planned with the sight test: combat brakes a body on its reach edge
+            // The sight test band 0 was planned with (ringScan repeats it per origin).
+            bool naval=false;int tskip=0;float tfx=0,tfz=0;
         } ring;
     };
     // Engaged (AR-06, PLAN 3.4): tickCombat braked this attacker in reach (or a
@@ -9196,6 +9198,7 @@ struct LegionNavigator::Impl {
         int band0=0;for(const uint8_t b:band)band0+=b==0;
         if(!band0)return false;
         r.R=R;r.band0=band0;r.tx=tx;r.tz=tz;r.ax=ax;r.az=az;r.sight=los;
+        r.naval=naval;r.tskip=std::max(t->type->footX,t->type->footZ)/2;r.tfx=t->x.toFloat();r.tfz=t->z.toFloat();
         r.cells=std::move(cells);r.band=std::move(band);r.owner.assign(r.cells.size(),0);
         stats.reachSlotsBuilt+=r.cells.size();
         g.seeds.assign(r.cells.begin(),r.cells.begin()+band0);
@@ -9414,22 +9417,25 @@ struct LegionNavigator::Impl {
             const int bw=bx1-bx0+1,bh=bz1-bz0+1;
             // open: 1 a free origin, 2 also one a body walks on through (out
             // of reach, or where nothing brakes it: in reach out of sight,
-            // band 1, or no sight test at all); |4 flooded.
+            // by band 1's own sight test, or no sight test at all); |4
+            // flooded. (Band 1's listed spots, taken for the shadow at first,
+            // are only a sample of it -- packed a footprint apart, and only as
+            // many as the ring wants -- so most of the shadow braked the flood
+            // and bodies of two cells or more crossed none of it: a yard
+            // entered through in-reach shadow had every spot spent and was
+            // never attacked, attackring-gatehouse-40.)
+            const NavGrid& sightGrid=r.naval?w.navalSight_:w.nav_;   // as buildRing
             std::vector<uint8_t> open(size_t(std::max(0,bw))*size_t(std::max(0,bh)),0);
-            for(size_t i=0;i<r.cells.size();++i)if(r.band[i]==1) {
-                const int x=r.cells[i]%W,z=r.cells[i]/W;
-                if(x>=bx0&&x<=bx1&&z>=bz0&&z<=bz1)open[size_t(z-bz0)*size_t(bw)+size_t(x-bx0)]=2;
-            }
             std::vector<int> flood;
             for(int z=bz0;z<=bz1;++z)for(int x=bx0;x<=bx1;++x) {
                 const int64_t dx=int64_t(x)*16+fx*8-r.tx,dz=int64_t(z)*16+fz*8-r.tz,d2=dx*dx+dz*dz;
                 const size_t at=size_t(z-bz0)*size_t(bw)+size_t(x-bx0);
-                const bool walk=open[at]==2||!r.sight||d2>int64_t(r.R)*r.R;
-                open[at]=0;
                 if(d2>outer*outer||!legal(p,x,z)||compAt(p,z*W+x)!=comp)continue;
                 bool free=true;
                 for(int j=0;j<fz&&free;++j)for(int k=0;k<fx&&free;++k)free=!wallAt(x+k,z+j);
                 if(!free)continue;
+                const bool walk=!r.sight||d2>int64_t(r.R)*r.R||
+                    !sightGrid.losBetween(float(x*16+fx*8),float(z*16+fz*8),r.tfx,r.tfz,foot/2,r.tskip);
                 open[at]=walk?2:1;
                 if(d2>=(int64_t(r.R)+body)*(int64_t(r.R)+body)) {open[at]|=4;flood.push_back(int(at));}
             }
