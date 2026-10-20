@@ -3519,7 +3519,9 @@ Legion's 6,486; `gap20-100` 4,667 against 2,207).
 * **Slots by lane** (`laneUncross`). Once, when a member that has rounded a turn comes within 24 cells of its slot, it
   exchanges slots with the member of its group within 16 cells (one footprint) for which that shortens their two
   straight ways the most, by more than a cell (a 2-opt step; crossing ways are always the longer pair). Without it
-  `gap10-100` done rose 6% (one body 1,900 ticks behind the gate) and `wall-4x50`'s later groups' t90 12%.
+  `gap10-100` done rose 6% (one body 1,900 ticks behind the gate) and `wall-4x50`'s later groups' t90 12%. The two
+  members exchange goal and slot index together (a formation member's index is always 0 and its claim is the cells
+  under its goal, which stay claimed; the shared-goal slot tables indexed by it are never ribbon members').
 * Fight, attack, guard and patrol legs and parts under 32 keep the pinwheel as it was (at 20 and 25 bodies the ribbon
   only slowed the formation: `legion_mixedformation`'s ground +13% with its flyers stalling, `corner-4x25`'s group A
   +10%, no swap to save). New hashed member state: the turn and last-turn records and the exchange flag.
@@ -3549,8 +3551,10 @@ Measured (Legion, gate medians; base 30813a73; Retail from the same runs):
 | slowturn | W1000 / C400 t90 | 2,033 / 3,296 | 2,123 / 3,377 | |
 | wall-4x50 | A / B / C / D t90 | 1,847 / 2,388 / 3,064 / 3,678 | 1,937 / 2,388 / 3,244 / 3,470 | |
 | doubleturn | g.A.t90 | 2,342 | 2,497 | 2,865 |
-| corner-1x448 | arrived by 9,000 ticks (8 groups) | 385 | 328 | 109 |
-| corner-8x56 | arrived by 9,000 ticks | 420 | 380 | |
+| corner-1x448 | arrived by 9,000 ticks, median of the per-offset totals (sum of group medians) | 389 (385) | 326 (328) | 106 (109) |
+| corner-1x448 | g.C / g.F arrived | 53 / 28 | 28 / 4 | 5 / 1 |
+| corner-8x56 | arrived by 9,000 ticks, median of the per-offset totals (sum of group medians) | 418 (420) | 368 (380) | 114 (106) |
+| corner-8x56 | g.C / g.F arrived | 56 / 50 | 53 / 23 | 5 / 1 |
 
 The wide sweep (Windows, offsets -8..8, -4..8 for the corner fixtures; hashes equal to Linux) agrees: medians
 `mixed2` 38 -> 10, `sbend` 26 -> 1, `slowturn` 7/11 -> 5/5, `wall-4x50` 20 -> 11, `island-1x100` t90 -23%, `mixed-100`
@@ -3560,11 +3564,17 @@ table keep their keys but `doorplug100-124` (door swaps 3 -> 1), `maze-100` (don
 `doorplug100-112` (reversals 40 -> 41); `strait-2x100`'s swaps go 4 -> 0 and `island-1x100` stands 159 -> 54 permille.
 
 **What it costs.** The two 448-body corner stress fixtures lose throughput: `corner-1x448` (one selection, seven parts)
-arrives 328 of 448 by tick 9,000 against 385 (Retail 109), `corner-8x56` 380 against 420, for their swaps at the top
-gate (26 -> 0, 7 -> 3). The ribbon is capped at 32 cells, so a wave of more than 178 bodies (2x2) is compressed: falling
+arrives 326 of 448 by tick 9,000 against 389 (median of the per-offset totals; Retail 106), `corner-8x56` 368 against
+418, for their swaps at the top gate (26 -> 0, 7 -> 3). (As first written this read 328/385 and 380/420: the sums of
+the per-group medians.) The loss falls on the groups at the tail of the queue to A's top-left corner, the ones spawned
+beside A's west face (its inner files): `corner-1x448` `g.F` 28 -> 4 of 56 (0 at offset -2, at most 12) and `g.C` 53
+-> 28, so `side.east.t90` is never reached at 8 of 9 offsets (8,387 before); `corner-8x56` `g.F` 50 -> 23 (6 at -2).
+They are not held by a separate rule: at ticks 8,800-9,000 `corner-1x448`'s F bodies walk A's top at about 1.5 px a
+tick, and the queue's tail was the same before (F was the last group in, 28) and is in Retail (F 1, C 5). It is the
+corner's drain rate, spent on whoever is last. The ribbon is capped at 32 cells, so a wave of more than 178 bodies (2x2) is compressed: falling
 back to the old rank for a wave the cap compresses (measured, not kept) gives `corner-1x448` 392 arrivals and 23 swaps
-and leaves `corner-8x56` at 375; a cap of 48 gives 338 and 395 (12 swaps). `mixed2`'s second leg leaves one body short of
-its slot at one offset in 17 (+2: a destination settle at the crowd's edge, `g.G.done` never there). Legion work on
+and leaves `corner-8x56` at 375; a cap of 48 gives 338 and 395 (12 swaps). As first committed, `mixed2`'s second leg left one
+body for good at gate offset +2 (`g.G.done` -1, `g.G.arrived` 47 of 48); fixed by the slot-wedge rule below. Legion work on
 `cost-corner` rises (whole run N200 +11.5%, N400 +21.6%: more arc sweeps and traced cells; the scaling gates hold,
 steady W(4N0)/W(N0) 0.54). `legion_forestedge` counts 4.47 files abreast at the forest's end against 5.49 (the ribbon
 is narrower than the old centroid spread). The headless `--mpai` Inner Circle game (seed 1, 60 s) keeps both hashes
@@ -3603,6 +3613,22 @@ Rejected on the way (gate medians unless noted):
 
 `ctest:legion_ribbon` runs `sbend` over the core five: 18 to 29 swaps at the second turn on the parent (median 27), 1
 here (1, 2, 1, 6, 1). The prototypes' switches are on branch `task-l4-turnA-wip` (b8aa8c26).
+
+**The slot wedge** (the round's review; `settleWindow`, `beforeSlot`). At `mixed2`'s gate offset +2 the ribbon's new
+arrival order left one body (id 39) at origin (46,56), 2.5 cells from its free slot (43,54), between two settled
+arrivals of its own formation: one on the cell its straight step to the slot rounds onto (45,56), the other on the
+other side of the diagonal step's corner. Neither stands nearer the click by the field (the formation's slot lies
+across the crowd from the click), neither has a free cell within one of its own goal to yield to, so the body never
+queued, its yields were refused every tick, it went to rest and stood there from tick 6,185 to the end of the run.
+Now a settled arrival of the body's own point that is nearer the body's own formation slot (centre to centre), with
+the body within 3 footprints of that slot, counts as nearer the point, as an arrival on the slot already did (round
+3): the body queues, re-chooses a free slot or settles where it stands. Legion only; gate offsets, against the ribbon
+as first committed: `mixed2` +2 is done at 6,618 (every other offset bit-identical); `motion-cross-100` completes
+`g.u00`/`g.u02` at offset +2 that stayed open; `churn-100` B arrived median 32 -> 31 (left behind 13 -> 14; `scale.arrive.t90`
+reached at +2, 1,605); `bridges-100` A done 11,056 -> 11,782 at offset -2 (medians equal); `mixed-100` T2 done 4,157 ->
+4,415 at -1 (medians equal); `idle-50x50` offset 0 done 3,947 -> 4,053 (median equal). The other 25 screened fixtures
+are bit-identical at every gate offset. Retail is hash-identical at every gate offset of `mixed2`,
+`motion-cross-100` and `churn-100`. `ctest:legion_slotwedge` (`mixed2` at offset +2: `g.G.done` -1 on the parent).
 
 ### Legion 10,000: where the program left it
 

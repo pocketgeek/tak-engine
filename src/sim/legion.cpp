@@ -10574,7 +10574,7 @@ struct LegionNavigator::Impl {
             }
             direct=m.line;
             if(m.turnV>=0&&!engagesEnemies(m.kind))ribbonHold(u,m,ox,oz,goalX,goalZ,direct);
-            if(!m.laneSwap&&m.turnV<0&&m.prevV>=0&&m.slot>=0&&m.pt&&std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=kLaneSwapNear) {
+            if(!m.laneSwap&&m.turnV<0&&m.prevV>=0&&m.slot>=0&&m.pt&&formationMember(m)&&std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=kLaneSwapNear) {
                 m.laneSwap=true;laneUncross(u,m);
             }
             if(m.bend&&!livelock(u)) {aimX=Fixed::raw(m.bendX);aimZ=Fixed::raw(m.bendZ);direct=true;}
@@ -11502,7 +11502,12 @@ struct LegionNavigator::Impl {
 #ifndef NDEBUG
         if(traced(u.id)||traced(bestId))std::fprintf(stderr,"TRACE t=%u u=%d lane-exchange with=%d gain=%lld\n",w.tickCounter_,u.id,bestId,(long long)gain);
 #endif
-        std::swap(m.goal,best->goal);
+        // Formation slots carry no index (m.slot is 0 for every formation
+        // member: its claim is the cells under its goal, Point::cells, which
+        // the exchange leaves claimed and released by goal as before); the
+        // index goes with the goal all the same, so no table indexed by it
+        // can drift from the cells (the round's review).
+        std::swap(m.goal,best->goal);std::swap(m.slot,best->slot);
         m.lineCell=-1;best->lineCell=-1;
         markPass(u,m);markPass(bestId);
     }
@@ -12469,6 +12474,29 @@ struct LegionNavigator::Impl {
             const int bx=footprintOrigin(other.x,bfx),bz=footprintOrigin(other.z,bfz);
             return bx<gx+fx&&gx<bx+bfx&&bz<gz+fz&&gz<bz+bfz;
         };
+        // A settled arrival of this very point that stands between this body
+        // and its own formation slot, a few bodies off (Legion ~100 round 4,
+        // 2026-10-20). The field is the click's, but a formation member walks
+        // to its slot: where the slot lies across the crowd from the click,
+        // two arrivals beside it can close every step to it (one on each cell
+        // of a diagonal step's corner) with neither of them nearer the click,
+        // neither able to yield (no free cell within one of its own goal), so
+        // the body never queued and its order never ended (mixed2's second
+        // leg at gate offset +2 after the ribbon changed the arrival order:
+        // one body frozen 2.5 cells from a free slot for 2,800 ticks). Nearer
+        // the slot, centre to centre, it counts as nearer the point: the body
+        // queues, re-chooses a free slot, or settles where it stands.
+        auto beforeSlot=[&](int o,const Unit& other) {
+            if(m.slot<0||m.goal<0||!formationMember(m))return false;
+            const auto a=anchors.find(o);
+            if(a==anchors.end()||a->second.point!=m.point)return false;
+            const int64_t gx=2*int64_t(m.goal%W)+fx,gz=2*int64_t(m.goal/W)+fz;
+            const int64_t sx=2*int64_t(ox)+fx-gx,sz=2*int64_t(oz)+fz-gz;
+            if(std::max(std::abs(sx),std::abs(sz))>int64_t(6*foot))return false;
+            const int bfx=other.type->footX,bfz=other.type->footZ;
+            const int64_t bx=2*int64_t(footprintOrigin(other.x,bfx))+bfx-gx,bz=2*int64_t(footprintOrigin(other.z,bfz))+bfz-gz;
+            return bx*bx+bz*bz<sx*sx+sz*sz;
+        };
         bool queued=false,foreign=false,stranger=false;uint32_t front=kUnreached;
         const int r=foot<=5?2:1;
         uint64_t ring=0;
@@ -12483,7 +12511,7 @@ struct LegionNavigator::Impl {
             if(!other||!other->type||other->type->isStructure())continue;
             // Another player's body is no part of this crowd (an ally's settled body may yield, see requestYield).
             if(other->player!=u.player) {stranger=true;continue;}
-            if(!nearer(*other)&&!(isAnchor(o)&&onSlot(*other)))continue;
+            if(!nearer(*other)&&!(isAnchor(o)&&(onSlot(*other)||beforeSlot(o,*other))))continue;
             if(isAnchor(o)) {
                 const auto a=anchors.find(o);
                 if(!sameDestination(a->second.point))continue;

@@ -694,6 +694,15 @@ add_test(NAME legion_ribbon
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/sbend.scn --mode legion --offsets 0,1,-1,2,-2 --json)
 set_tests_properties(legion_ribbon PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.A\\.done\":[0-9]+,.*\"gate\\.t2\\.crossings\":[0-9],")
+# A way to the slot closed by arrivals (Legion ~100 round 4 review, 2026-10-20): mixed2's second leg at start offset
+# +2. The ribbon brings the formation in a new order, and one body comes to stand 2.5 cells from its free slot between
+# two settled arrivals of its own formation, one on each cell of the diagonal step's corner, neither of them nearer the
+# click nor able to yield: on the parent it never queued and stood there for the rest of the run (g.G.done -1). Passes
+# when the ground group is done, serial equal to workers.
+add_test(NAME legion_slotwedge
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/mixed2.scn --mode legion --offsets 2 --json)
+set_tests_properties(legion_slotwedge PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.G\\.done\":[0-9]+,")
 # One slot hand-out budget a tick (2026-10-14 Legion review, item 5): four 120-body clicks to four dead ends in one tick.
 # The formation slot searches had a budget per point, and none for a formation's first 32 slots or for a member
 # without a slot: on the parent they walk 602,176 ring cells in one tick (B's second part searching against the
