@@ -3131,6 +3131,25 @@ offset of the two target fixtures and in the Windows sweep's Retail rows; the he
 `ctest:legion_funnelmouth` (the closed 120-body corridor at start offsets 0 and -1, the 40-body room at +12 and +14:
 27, 9, 0 and 0 settled on the parent, all now) and `ctest:legion_mixedrandom` (seeds 5717 and 9651).
 
+**Ties between claims** (the round's review, 2026-10-20). As first landed, a claim closed every origin covering its way
+at an equal or higher potential, to every other member. In a field of 1x1 pillars 3 cells apart (gaps 2 cells wide, one
+origin wide for a 2x2, so every origin in the field is a way) two bodies wait for neighbouring ways at one potential,
+each way covering the other: each body's step onto its own way was refused by the other's claim, no body stood on
+either way so the give-way never ran, and both held for good (a review scratch fixture, 72 2x2 bodies through 27x31
+pillars on one click: `complete_n` gate median 60 and 1-9 orders open at every gate offset; the parent 72 at all).
+Now, at one potential, a claim yields to a member that waits for a way of its own and has the lower id; a member that
+waits for no way still keeps off a claimed way at its potential (so a third body cannot slip onto it, the rejected
+exclusive-claimant failure below). The order is total, so no two waiters can each hold the other. The same fixture:
+72 at all 11 gate offsets, done at 2909-3540 ticks (Retail 2585 median). Over offsets -12..30 (Windows, hashes equal
+to Linux) `complete_n` mean / minimum / offsets with orders open after 900 still ticks: 0.8.6 (bd7f3f6e) 71.6 / 68 / 7,
+round 3 as first landed 66.1 / 45 / 35, now 72 / 72 / 0 (Retail 72 / 72 / 0); every order ends by tick 3910, at two
+offsets one body settles outside the radius. Stopped permille 112 -> 179 -> 103 (median over those offsets), wall touch 443 -> 479
+-> 441 (Retail 421). Every 2-cell dead end above
+(`deadend-w2-n120-closed-plain`, `-n40-room-plain`, `-n40-closed-plain`, `deadend-multi-4x120`) is bit-identical at
+all gate offsets, Retail too. The review's alternative, opening every equal potential (`here > v`), also lets a
+member that waits for no way step onto the claimed way itself. `ctest:legion_funneltie` (the pillar field at offsets
+0, +1 and -3: 68, 63 and 60 of 72 settled after 9,000 ticks on the parent, all now).
+
 Rejected on the way (same fixtures):
 
 * The give-way alone: `deadend-w2-n120-closed-plain` 3 -> 17 complete (gate median). Once the crowd behind packs
@@ -3411,7 +3430,9 @@ Rules that came out of using them:
   120-body fixtures at offsets +28..+30 the column's last row, spawned two cells
   from the map's edge, never leaves Waiting (on the parent too). Measured by
   `deadend-w2-n40-room-plain:g.A.complete_n` over wide offsets and
-  `ctest:legion_funnelmouth`.
+  `ctest:legion_funnelmouth`. Two waiters whose ways cover each other at one
+  potential (a pillar field with gaps one origin wide) no longer hold each
+  other: the lower id goes first (`ctest:legion_funneltie`).
 * **Group partitioning depends on registration order** and on field start
   timing (a started field takes no new seeds). The 256-goal cap chunks goals
   in registration order, so an order whose unit ids are not spatially
@@ -3434,8 +3455,10 @@ Rules that came out of using them:
   clear a space, is stored and never acted on ("The build yard was hung").
   Moving enemy bodies would be a gameplay change with no Retail behaviour to
   port, so Legion keeps Retail's rule there (2026-10-20, Legion ~100 round 3).
-  No fixture measures it: `strait-3x80`, named here before, holds one player's
-  fleet only.
+  `strait-3x80`, named here before, holds one player's fleet only; what
+  watches it is `ctest:legion_staticidle` (its part 3: another player's idle
+  body plugging the one gap in a wall stays put, and the group holds until a
+  second gap opens).
 * **Fog**: Legion plans on the static plane as Retail's mover sees it. It does
   not model unexplored terrain separately. The one place fog shows is group
   awareness, which sees an enemy mover only within sight

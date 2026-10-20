@@ -3478,6 +3478,46 @@ void funnelmouth() {
     }
     check(fail.empty(),"funnelmouth: orders still open at a corridor's mouth:"+fail);
 }
+// Ties between funnel claims (Legion ~100 round 3 review, 2026-10-20). A field of 1x1 pillars 3 cells apart leaves
+// gaps 2 cells wide, one origin wide for a 2x2 body, so every origin in it is a funnel way (passageWay). Two bodies
+// waiting for neighbouring ways at one potential each cover the other's way: when an equal potential also closed a
+// way to a waiter, both held for good with no body on either way (giveWay never ran): of 72 bodies on one click,
+// 4, 9 and 12 orders were still open after 9000 ticks at offsets 0, +1 and -3. Every order must end.
+ProbeRun pillarFieldRun(bool serial) {
+    Fixture f(260,100,serial);
+    for(int x=80;x<160;x+=3)for(int z=5;z<=95;z+=3)f.wall(x,z);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int j=0;j<6;++j)for(int i=0;i<12;++i)ids.push_back(f.spawn(type,14+i*3,30+j*4));
+    f.start();
+    TypeRegistry registry;
+    const float px=220*16,pz=50*16;
+    for(int id:ids) {
+        tak::net::Command c;c.kind=tak::net::Cmd::Move;c.player=0;c.unitId=id;c.targetId=-1;c.x=px;c.z=pz;c.queue=0;
+        applyCommand(f.world,registry,c);
+    }
+    int ticks=0,open=int(ids.size());
+    for(;ticks<9000&&open;++ticks) {
+        f.world.tick(1.f/30);
+        open=0;for(int id:ids)open+=!f.world.unit(id)->orders.empty();
+    }
+    char buf[160];
+    std::snprintf(buf,sizeof buf,"pillarfield n=%zu settled=%zu ticks=%d",ids.size(),ids.size()-size_t(open),ticks);
+    return {buf,f.world.stateHash(),int(ids.size())-open};
+}
+void funneltie() {
+    std::string fail;
+    for(int shift:{0,1,-3}) {
+        g_shift=shift;
+        const auto r=pillarFieldRun(true);
+        g_shift=0;
+        std::printf("funneltie shift=%d %s hash=%016llx\n",shift,r.text.c_str(),(unsigned long long)r.hash);
+        std::fflush(stdout);
+        if(r.a<72)fail+=" @"+std::to_string(shift)+":"+std::to_string(r.a);
+    }
+    check(fail.empty(),"funneltie: orders still open in a pillar field:"+fail);
+}
 void deadend() {
     if(std::getenv("DEADEND_W")||std::getenv("DEADEND_N")) {
         const auto r=deadendRun(envInt("DEADEND_W",4),envInt("DEADEND_N",120),envInt("DEADEND_ROOM",0)!=0,envInt("DEADEND_SQUAD",0)!=0,
@@ -4268,7 +4308,7 @@ int main(int argc,char** argv) {
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
-        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"mixedrandom",mixedrandom},{"funnelmouth",funnelmouth},{"entryplanes",entryplanes},
+        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"mixedrandom",mixedrandom},{"funnelmouth",funnelmouth},{"funneltie",funneltie},{"entryplanes",entryplanes},
         {"improvedefer",improvedefer},{"chainresolve",chainresolve},{"trafficlane",trafficlane}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}

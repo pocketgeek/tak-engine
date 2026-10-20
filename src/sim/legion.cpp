@@ -7904,7 +7904,15 @@ struct LegionNavigator::Impl {
                     if(f)here=f.known(size_t(at));
                 }
                 if(!f||here==kUnreached)return true;
-                if(const uint32_t v=f.known(size_t(it->first));v==kUnreached||here>=v)return true;
+                const uint32_t v=f.known(size_t(it->first));
+                if(v==kUnreached||here>v)return true;
+                // At one potential two claims can each cover the other's way
+                // (a pillar field whose gaps are one origin wide: two bodies
+                // wait for neighbouring ways at once), and mutual exclusion
+                // would hold both for good with no body on either way (no
+                // giveWay). So between two waiters the lower id goes first;
+                // a member that waits for no way still keeps off.
+                if(here==v&&(me->claimAt<0||it->second<u.id))return true;
             }
         return false;
     }
