@@ -6,13 +6,13 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.8.5-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.8.6-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
 [Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [Map editor guide](docs/cartographer-guide.md) · [Build from source](docs/development.md)
 
-<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.5"></a>
+<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.6"></a>
 
 <table>
   <tr>
@@ -40,7 +40,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.25 to 0.8.5 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
+<sub>Captured from the 0.7.25 to 0.8.6 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
 
 </div>
 
@@ -52,7 +52,41 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.8.5
+## New in 0.8.6
+
+0.8.6 changes the simulation, so the protocol moves to **281**:
+**0.8.6 cannot play with 0.8.5 or earlier, and cannot play their replays**.
+Update the server and every player together.
+
+- **Clear shots.** A unit whose shots keep stopping on a hill, water, a rock or
+  other scenery it cannot destroy now walks a short way to a spot with a clear
+  shot and attacks again, in Retail and Legion alike. Units on Hold Position
+  and buildings stay put; a unit firing on its own picks another target. The
+  original game had no such check. See
+  [blocked shots](docs/user-guide.md#blocked-shots).
+- **The attack cursor as in the original.** With a unit that can move
+  selected, the pointer over any enemy its weapon can hurt shows Attack,
+  however far away; "too far" is left for enemies it cannot hurt and for towers
+  that cannot reach. Right-click orders are unchanged.
+- **Voice activation.** Voice chat's new **Talk Mode** can send you whenever
+  you speak instead of while you hold Space, with an **Activation Level**
+  slider marked on the mic meter. Push to Talk stays the default. See
+  [voice chat](docs/user-guide.md#the-voice-chat-page).
+- **Legion with armies of about 100.** Two armies meeting on a bridge take
+  turns instead of jamming in the middle, small squads sent to each other's
+  places pass instead of colliding, a group leaving a crowd of friendly units
+  gets out, attackers fill the whole ring round their target and step into
+  reach, groups part round another group's firing ring, a formation keeps its
+  files through a wide gap, and it flows round rocks and idle units at full
+  speed. A crowded bridge can still jam now and then. Retail is unchanged by
+  this work. See [Legion](docs/user-guide.md#legion).
+
+Saved `.kmp` maps, generated-map recipes and settings carry over. No new
+runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.8.6-notes.md) and
+[validation report](docs/release-0.8.6-validation.md).
+
+### Previously in 0.8.5
 
 0.8.5 adds a new random-map option, so the protocol moves to **278**:
 **0.8.5 cannot play with 0.8.4 or earlier, and cannot play their replays**.
@@ -897,7 +931,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.8.5 uses generator v9;
+the same named map when the game starts. Version 0.8.6 uses generator v9;
 v8 recipes still regenerate identically, older seed recipes are unsupported, and saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -905,7 +939,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.8.5 uses protocol **278** and generator version 9; generated-map recipes from 0.8.0 to 0.8.4 still work.
+Version 0.8.6 uses protocol **281** and generator version 9; generated-map recipes from 0.8.0 on still work.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -1054,7 +1088,7 @@ builders, but units they produce inherit their squad.
 | **Shift+Z** | Reset to retail’s native 1:1 zoom, keeping the same view center |
 | **+** / **−** (also **=** and keypad **+/−**) | Change game / replay speed |
 | **Enter** (also keypad Enter) | Open chat; press again to send; **Esc** cancels |
-| **Space** (hold) | Push to talk, when voice chat is on (never while typing in a text box); rebindable in **Controls** |
+| **Space** (hold) | Push to talk, when voice chat is on with Talk Mode Push to Talk (never while typing in a text box); rebindable in **Controls** |
 | **Esc** | Close unit information, cancel placement / an armed order, clear selection, then open the game menu as applicable |
 | **Shift+D** | Selected mobile units disco for 10 real seconds; with no selection, living monarch |
 | **Shift+H** | Selected mobile units headbang for 10 real seconds; with no selection, living monarch |
@@ -1131,7 +1165,9 @@ startup stages and map-list progress before opening game setup.
 **Voice chat** is off by default. Turn it on under **Settings → Voice Chat** (also in
 the in-game menu and in Options' Audio section), pick the microphone and the voice
 output (the game's own sound device unless you choose another), each with a 0–100
-volume, then hold **Space** to talk in multiplayer rooms and games. The diplomacy
+volume, then hold **Space** to talk in multiplayer rooms and games, or set **Talk
+Mode** to **Voice Activation** to be sent whenever the mic level reaches the
+**Activation Level** (0–100, default 15). The diplomacy
 screen's **Voice** column chooses who hears you, like the Chat column; everyone by
 default. Its **Volume** column sets how loud each other human player's voice plays
 for you (100% by default, reset each game; computer players have none). Voice is relayed by the server beside the game (about 3 KB/s per talker),
@@ -1191,10 +1227,10 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same network protocol and compatible game data** on every participant.
-Version **0.8.5 uses protocol 278**, including authoritative pathfinding
+Version **0.8.6 uses protocol 281**, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
-0.8.4 (protocol 277) and earlier clients cannot join 0.8.5 matches, and
-0.8.5 clients cannot join older servers: update the server and all players together.
+0.8.5 (protocol 278) and earlier clients cannot join 0.8.6 matches, and
+0.8.6 clients cannot join older servers: update the server and all players together.
 Replay format is **13** (checkpoints also carry a position digest, and the header
 records the Map Scenario option), and
 playback requires the current simulation protocol. Older recordings need the engine that recorded them.
@@ -1411,7 +1447,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.8.5 uses protocol **278**; servers and clients must all run 0.8.5 (0.8.4 uses 277).
+Version 0.8.6 uses protocol **281**; servers and clients must all run 0.8.6 (0.8.5 uses 278).
 
 
 ## License

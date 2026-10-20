@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.5** (network protocol **278**, replay format
+This guide covers **TAK Engine 0.8.6** (network protocol **281**, replay format
 **13**). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -802,7 +802,7 @@ speed keys are fixed.
 | **Shift** + select | Add to the selection. |
 | **Ctrl** + select | Remove from the selection. |
 | **Right-click** | The natural order for what is under the cursor: move, attack, guard, repair, load, reclaim and so on. |
-| **Right-click an enemy** | Attack it. As in the original, the pointer shows the attack cursor whenever a selected unit's active weapon can hurt that enemy; a unit that can move walks into range, however far away the enemy is. Only a tower or other building that cannot reach it shows the "too far" cursor (it still takes the order, and fires once the enemy comes in range). A selected factory sends the units it builds after that enemy. |
+| **Right-click an enemy** | Attack it. As in the original, the pointer shows the attack cursor whenever a selected unit's active weapon can hurt that enemy; a unit that can move walks into range, however far away the enemy is. The "too far" cursor means no selected unit can attack it from where it is: the active weapon cannot hurt that enemy (it does no damage to it, it is an anti-air weapon and the enemy is on the ground, a ground weapon and the enemy is flying, or a stoning or freezing weapon and the enemy is immune), or a tower or other building has the enemy out of range or inside its minimum range. A building still takes the order and fires once the enemy comes in range. A selected factory sends the units it builds after that enemy. |
 | **Shift + right-click** | Queue that order after the current ones. |
 | **Right-drag** with a reclaiming builder | Reclaim everything in the box. |
 | **Middle-drag**, or the cursor at a screen edge | Scroll the map. |
@@ -830,10 +830,12 @@ a left-click on the map or minimap. **Esc** disarms.
 | **W** | Cycle the active weapon. |
 | **K** | Toggle cloak. |
 | **O** | Open or close selected gates. With nothing selected, show campaign objectives. |
-| **D** | Diplomacy: give units, share mana, choose chat recipients. |
+| **D** | Diplomacy: give units, share mana, choose chat and voice recipients. |
 | **Ctrl+Shift+D** | Self-destruct (again to cancel). |
 
-**Blocked shots.** If a unit's shots keep hitting something it cannot destroy
+#### Blocked shots
+
+If a unit's shots keep hitting something it cannot destroy
 before they reach its target (a hill, water, a rock or other indestructible
 scenery), it walks a short way to a spot with a clear shot and then attacks
 again. This happens after three blocked shots in a row. Shots that hit a tree or
@@ -844,7 +846,11 @@ stays where it is and keeps firing, as in the original game, and looks again
 after three more blocked shots, in case the target has moved. Units on **Hold Position**, buildings, flyers and melee units never move
 for this. A unit that is not under an attack order stops firing at that target
 and picks another one. This is new behaviour; the original game had no such
-check.
+check, and its units fire into the hill or rock until their orders change.
+
+One rough edge: a unit standing still and choosing its own targets (no attack
+order) can keep ignoring an enemy it once found blocked, even after that enemy
+walks into the open. Give it an attack order, or move it, and it fires again.
 
 ### Selection
 
@@ -1033,8 +1039,10 @@ armies:
   door, keeps count of the units queueing for it. A group picks its way by
   travel time plus that queue, a big group can split to use two passages, and
   your own and allied units take turns through a narrow one, one direction at a
-  time. Groups entering one room by different doors each fill it from their own
-  door.
+  time. A long bridge counts as one passage, so two armies meeting at it no
+  longer both walk on and jam in the middle: one is let across while the other
+  waits at its end (0.8.6). Groups entering one room by different doors each
+  fill it from their own door.
 - **Arrivals settle.** Units take up places around the destination point, and
   once they are close they stop. Large groups do not keep shuffling forever:
   the last units of a group, pressed against the group's own crowd with no way
@@ -1052,7 +1060,9 @@ armies:
   taking the place with the fewest friends queued before it, instead of
   queueing into one file. Through a short passage, each unit keeps its place
   from side to side until it is out the far end, so the group does not cross
-  over inside it. A gap that fits only one unit is still taken in single file.
+  over inside it; since 0.8.6 that also holds for a formation of about 100
+  going through a wide gap (about 20 cells). A gap that fits only one unit is
+  still taken in single file.
 - **Rooms fill from the back.** When the way into the destination narrows just
   before it, as through a doorway, the units that come through first take the
   places furthest in, so they do not settle in the doorway and shut the others
@@ -1064,9 +1074,14 @@ armies:
   and each passes on its own right, instead of ploughing into one another.
   Groups that are on a fight, attack, guard or patrol order do not do this. The
   narrowing is slight and only starts when the two groups are about to meet.
+  Since 0.8.6 it also works when the groups meet close to their destinations,
+  for example two squads sent to each other's places.
 - **Going round obstacles.** Groups route round parked crowds of units and round
-  landed flyers instead of pushing into them. Your own idle units step aside to
-  let a group through.
+  landed flyers instead of pushing into them. Your own and your allies' idle
+  units step aside to let a group through, so a group can leave a place where
+  another army has just arrived. Formation units flow round a rock, a wall end
+  or a block of idle units at their travel speed instead of creeping sideways
+  (0.8.6).
 - **Unreachable orders end where the unit stops.** Ordered to a place it cannot
   reach, a unit walks to the nearest spot it can reach, and its order ends there,
   so it is free for the next one at once. Units queued behind their own army end
@@ -1087,7 +1102,11 @@ armies:
   and the ones behind walk round it to the next free place. A group sent
   across the battlefield plans round a crowd that is standing and firing, and
   a crowd that parks across a group's way after it has planned (20 cells or
-  more of it) makes the group plan again once. Units chasing a moving target
+  more of it) makes the group plan again once. Since 0.8.6 the ring fills all
+  the way round instead of only the near side, a unit waiting just short of
+  reach steps in until it can fire, a target in a walled-off place is still
+  surrounded from outside its walls, and a group walking past another group's
+  firing ring splits round both sides of it. Units chasing a moving target
   follow it without planning again at every step.
 - **Buildings do not hold a formation.** A building or an unfinished unit in an
   Alt+number formation no longer slows the formation to a standstill.
@@ -1128,14 +1147,20 @@ in a formation or Ctrl+number group with ground units keep station over them.
   when the group reaches it.
 - Units guarding a friend in a narrow place keep shuffling for a while, up to
   about a minute, until the crowd round it has packed.
-- A group walking through a ring of units that stand and fire goes round the
-  ring slowly, and arrives somewhat later than it would past the same units
-  in the original game.
+- A group walking through a ring of units that stand and fire arrives a
+  little later than it would past the same units in the original game.
+- Two armies of about 100 meeting head on at a bridge take turns through it,
+  but from some starting positions they can still jam in its mouth.
+- An attack ring along a wall stands thinner than in Retail, so fewer units
+  fire at once. A target walled in on every side is surrounded but never
+  fired on; in Retail units pressed against a thin wall can shoot through it.
 - When a group goes round a parked crowd, it can still pass by one side in a
   narrow file.
-- Idle units of **other players** do not step aside for you.
+- Idle units of **enemy** players do not step aside for you, nor do units
+  with orders of their own.
 - Units in a large group swap places with each other more often than in Retail
-  at corners and in long narrow passages.
+  at corners, in long narrow passages and where two streams cross after a
+  turn.
 - Units attacking next to a wall, or queued at a blocked doorway, brush against
   the wall about twice as often as in Retail.
 - From some starting positions, a single unit queued at a blocked doorway, or
@@ -1472,9 +1497,9 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.5 uses network protocol **278**. It cannot play with 0.8.4 (protocol
-277) or any earlier version: the server turns away a client whose protocol
-differs from its own, so a server and all of its players must update to 0.8.5
+Version 0.8.6 uses network protocol **281**. It cannot play with 0.8.5 (protocol
+278) or any earlier version: the server turns away a client whose protocol
+differs from its own, so a server and all of its players must update to 0.8.6
 together.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
@@ -1547,7 +1572,7 @@ push-to-talk key (reset that in **Controls**), and the **Defaults** button in
 
 ### Talking
 
-Hold **Space** to talk, in a multiplayer room before the game starts and during
+Under **Push to Talk** (the default), hold **Space** to talk, in a multiplayer room before the game starts and during
 the game. Release it to stop. Talking also stops at once if the game window loses
 focus, if you start typing, or if you leave the room.
 
@@ -1592,8 +1617,12 @@ everyone, as their chat does.
 
 - The microphone is opened only while voice chat is on, and then only in a
   multiplayer room or game, or while the Voice Chat page is open for its level
-  meter. Sound is recorded only while you hold the push-to-talk key, or while
-  that page is showing the meter. Voice is sent **only while you hold the key**.
+  meter. Under **Push to Talk**, sound is recorded only while you hold the
+  push-to-talk key, or while that page is showing the meter, and voice is sent
+  **only while you hold the key**. Under **Voice Activation** the microphone
+  listens the whole time you are in a multiplayer room or game, and voice is
+  sent only while the **Mic level** reaches the **Activation level** (and for
+  0.4 seconds after).
 - Your voice goes to the game server, which passes it straight on to the
   players you chose. It travels on the same connection as the game, so it is
   encrypted when the server uses a secure (TLS) connection, as public servers do.
@@ -1607,9 +1636,14 @@ everyone, as their chat does.
 
 ### When voice chat does not work
 
-- **Space does nothing.** Voice chat must be on, and you must be in a
+- **Space does nothing.** Voice chat must be on with **Talk mode** at **Push to
+  Talk** (under Voice Activation the key does nothing), and you must be in a
   multiplayer room or game; check that no text box has the keyboard and that
   **Push to talk** shows the key you expect.
+- **Voice activation sends noise, or cuts my words.** Watch the **Mic level**
+  meter against its tick: raise **Activation level** above the level your
+  room's background noise reaches, or lower it if your quiet words stay under
+  it.
 - **Nobody hears me.** Speak on the Voice Chat page: if **Mic level** stays
   still, the game is getting no sound from the microphone. Check **Mic device**
   and **Mic volume**, that the microphone is not muted in your system's sound
@@ -1705,8 +1739,8 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.5 plays protocol-278 recordings only, so replays recorded by
-  0.8.4 or earlier need the version that recorded them);
+  recorded it (0.8.6 plays protocol-281 recordings only, so replays recorded by
+  0.8.5 or earlier need the version that recorded them);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -1850,7 +1884,7 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together.** A server only accepts clients of
-the same protocol version (0.8.5 uses protocol 278; 0.8.4 uses 277).
+the same protocol version (0.8.6 uses protocol 281; 0.8.5 uses 278).
 
 ---
 
@@ -1955,7 +1989,7 @@ the system's permission to use the microphone.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.5 uses protocol 278, 0.8.4 uses 277). See
+one that recorded them (0.8.6 uses protocol 281, 0.8.5 uses 278). See
 [Replays](#replays).
 
 ### Where files are kept
@@ -1998,11 +2032,15 @@ differences:
 - **Modern platforms**: any resolution, UI scaling, borderless fullscreen,
   hardware cursor and smooth motion between game updates.
 - **Client-server multiplayer** with accounts, spectators, reconnecting,
-  automatic map transfer, push-to-talk voice chat and up to eight players.
+  automatic map transfer, voice chat (push to talk or voice activation) and up
+  to eight players.
 - **Gods do not appear on their own** in skirmish or multiplayer. They can still
   be conjured.
 - **Legion pathfinding** is available as an alternative; Retail remains the
   default and reproduces the original.
+- **Units walk to a clear shot** when their shots keep stopping on a hill,
+  water or indestructible scenery (see [Blocked shots](#blocked-shots)); the
+  original fires on into it.
 - **Builders clear their own building sites** of trees and rocks, and can build
   lodestones over a whole area at once.
 - **Patrolling builders repair** nearby friendly units.

@@ -415,7 +415,11 @@ address, an account and the server (a dropped one would never be repeated), but
 not from the connection's own. The client
 (`client/voice.h`) captures and plays on SDL audio devices of its own, buffers
 2–8 frames per talker, rebuilds a frame the server dropped from the next frame's
-FEC, and conceals a late one. It mixes the talkers with each one scaled by that
+FEC, and conceals a late one. It sends while the push-to-talk key is held or,
+under TALK MODE Voice Activation (0.8.6, client only, no wire change), while
+`voice::VoiceGate` (`client/voiceptt.h`) is open: a 20 ms frame whose peak
+reaches ACTIVATION LEVEL opens it, it holds 20 frames (400 ms) after the last
+such frame, and the 2 frames (40 ms) before it opened lead the transmission. It mixes the talkers with each one scaled by that
 player's diplomacy **VOLUME** slider (0-100 by player slot, 100 by default; humans
 other than yourself only, none for an AI), then applies OUTPUT VOLUME and a soft
 limiter. The sliders are local: never sent, hashed or recorded, reset to 100 each
@@ -729,7 +733,8 @@ bodies: passage admission, departures through arrived crowds and attack rings
 (Legion only). Protocol 280 is the second round at about 100 bodies: sub-cell
 presses and ring bends, passage lanes through wide gaps and flow-around at travel
 speed (Legion only). Protocol 281 makes attackers walk to a clear shot when their
-shots keep stopping on terrain or scenery they cannot destroy (all modes).
+shots keep stopping on terrain or scenery they cannot destroy (all modes);
+0.8.6 ships protocol 281.
 Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
@@ -902,7 +907,20 @@ version 9, whose one extra byte in the `~gen1~` map id carries the Scattered
 Mana level (`Params.manaScatter`); a 277 peer would refuse a v9 id, so 277
 recordings no longer play. Version-8 ids still decode as None and regenerate
 byte-identically, and authored maps are untouched, so the simulation is
-otherwise unchanged.
+otherwise unchanged. Protocol 279 (Legion only) admits one stream per narrow
+passage however many opening records it spans, lets head-on meets narrow near
+the goals, has allied settled bodies step aside for a departing order and
+keeps attack rings filled round their target; protocol 280 (Legion only) adds
+sub-cell presses into reach, ring bends round other commands' rings, passage
+lanes through gaps up to 32 origins and flow-around shuffles at travel speed.
+Retail is bit-identical under both, and 278 and 279 recordings no longer play.
+Protocol 281 (all modes) watches where shots land: three in a row on terrain,
+water or scenery the weapon cannot destroy write the target off for auto
+weapons and send an attacking ground mover off Hold Position to a nearby spot
+with a clear shot (`World::noteShotImpact`, `repositionForShot`); that state
+is hashed only once a blocked impact occurs, so the `--mpai` hashes stand as
+under 278 (60 s Retail `b353410003e98dd5`, Legion `0825aeb9e8139203`), but 280
+recordings no longer play.
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
@@ -958,6 +976,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.8.5 (peers and server) requires protocol 278; 0.8.4 required 277, 0.8.3 266,
+227. Version 0.8.6 (peers and server) requires protocol 281; 0.8.5 required 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

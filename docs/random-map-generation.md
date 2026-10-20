@@ -1,6 +1,6 @@
 # Random map generation
 
-Version 0.8.5 uses generator version 9 and network protocol 278. The map ID carries the
+Version 0.8.6 uses generator version 9 and network protocol 281. The map ID carries the
 seed, optional title and parameters in `~gen1~` followed by hexadecimal bytes;
 the first two payload bytes identify the generator version. Version 9 adds one
 byte, the scattered-mana level, before the title; it changes nothing else, so a
