@@ -19,7 +19,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 281;      // 281: attackers walk to a clear shot when their shots keep stopping on terrain or scenery
+constexpr uint32_t kNetVersion = 282;      // 282: Legion ~100 round 3: rings round still targets, passage greens scale with the crossing + small groups queue, corridor-mouth funnel claims
+                                           //      (Legion state differs from 281; 281 replays refused)
+                                           // 281: attackers walk to a clear shot when their shots keep stopping on terrain or scenery
                                            //      they cannot destroy (all pathfinding modes); 280 replays refused
                                            // 280: Legion at ~100 bodies, round 2: sub-cell presses and ring bends, passage
                                            //      lanes through wide gaps, flow-around at travel speed. Legion state

@@ -356,7 +356,7 @@ target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped longroute crowdhold replace unreachable quota pens determinism formation
     slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice wallend staticblock
     navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation flyerfront liftflyers aware b3events lanegeom
-    lonetrees slideback stillturn forestedge mixedsettle entryplanes)
+    lonetrees slideback stillturn forestedge mixedsettle entryplanes mixedrandom funnelmouth funneltie)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
   # TAK_LEGION_VERIFY (debug builds; compiled out of Release): every derived index, work list
   # and the incrementally kept soft state (W4 B2's softHash, C31) against a recompute, each tick.
@@ -753,6 +753,49 @@ add_test(NAME legion_ringbend_pocket
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/ringbend-pocket.scn --mode legion --offsets 0,1,-1 --json)
 set_tests_properties(legion_ringbend_pocket PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.M\\.done\":[1-9][0-9]*,")
+# Legion ~100 round 3 (2026-10-20). An attack ring round a target standing still walks its local detours and
+# flow-around shuffles at travel speed, as Retail's mover traces round a body at its own speed: at the facing cap of an
+# eighth the bodies queued outside the firing arc crept to and fro there (attackring-r200-64, 64 attackers with range
+# 200 on open ground: 20,977 statue ticks against Retail's 155, 52 ever in reach against 64). Passes with under 2000
+# statue ticks and at least 57 ever in reach, serial equal to workers.
+add_test(NAME legion_ringstill
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-r200-64.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_ringstill PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"statue_ticks\":(1?[0-9]?[0-9]?[0-9]),.*\"reach\\.ring\\.ever_end\":(5[7-9]|6[0-4]),")
+# A ring spot the firing arc has closed off (reached by no way from outside reach through origins free of still
+# bodies) is spent (round 3): ringcross-100's far side filled one rescan at a time, 33 of 50 attackers in reach by
+# tick 1500 and half of them at 717 (Retail 43 and 653). Passes when at least 41 are in reach by tick 1500 (39 with
+# the round's travel-speed detours alone) and half by tick 600, serial equal to workers.
+add_test(NAME legion_ringclosed
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/ringcross-100.scn --mode legion --offsets 0 --ticks 1500 --json)
+set_tests_properties(legion_ringclosed PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.t50\":([1-5][0-9][0-9]|[0-9][0-9]?|600),.*\"reach\\.ring\\.ever_end\":(4[1-9]|50),")
+# A ring member whose spot is spent with no free spot left in band 0 waits on an outer band's spot, not behind the
+# firing arc (round 3): with the travel-speed detours alone the spare attackers stood across the Move group's lanes
+# round the ring, ringcross-100's crossing t90 4089 over the gate offsets (3841 on the parent, Retail 3926). Passes
+# when the gate median t90 is under 3950, serial equal to workers.
+add_test(NAME legion_ringwait
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/ringcross-100.scn --mode legion --offsets gate --json)
+set_tests_properties(legion_ringwait PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"g\\.M\\.t90\":([1-3][0-9][0-9][0-9]),")
+# A target walled in on every side (attackring-wall-100 at offsets 0,1,-1): Retail's attackers pressing at it against a
+# 1-cell wall are clamped to the last sub-pixel of their origin, whose float centre rounds into the wall cell where the
+# sight cast starts, and fire through it (Retail 689 / 350 / 767 damage). Round 3's presses seek those flush points;
+# on the parent the ring stood round the walls and dealt none. Passes when the median damage is 400 or more, serial
+# equal to workers.
+add_test(NAME legion_attackflush
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100/attackring-wall-100.scn --mode legion --offsets 0,1,-1 --json)
+set_tests_properties(legion_attackflush PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":([4-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
+# The closed-off-spot flood walks through every in-reach origin out of the target's sight, by that origin's own sight
+# test (round 3 review): it took band 1's listed spots for that shadow, a sample packed a footprint apart, so 2x2 bodies
+# crossed none of it and a yard reached only through in-reach shadow had every band-0 spot spent
+# (attackring-gatehouse-40 at offset 0: no damage; Retail 557, round 2 224). Passes when the damage is 150 or more,
+# serial equal to workers.
+add_test(NAME legion_ringshadow
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-gatehouse-40.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_ringshadow PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":(1[5-9][0-9]|[2-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
@@ -916,6 +959,26 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios taperbridge-100 --data "${TAK_TEST_DATA}"
                    --offsets 0,-4 --max scale.stuck_end=2)
   set_tests_properties(legion_passage_taper PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # Legion ~100 round 3 (2026-10-20): a way stays open for kGreenTurns of its crossings before the other way's wait
+  # closes it, not a fixed 300 ticks. On taperbridge-100's 160-cell strip every turn cost a whole crossing and mixed
+  # the two crowds on an apron; the parent turned six or more times and ended at offset +1 with 81 bodies gridlocked
+  # in the east mouth (19 of 100 arrived), at -5 and +8 with 89 and 76 arrived. Checked at +1, -5 and +8: at least 98
+  # arrive and at most 2 stand stuck at the end.
+  add_test(NAME legion_passage_green
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios taperbridge-100 --data "${TAK_TEST_DATA}"
+                   --offsets 1,-5,8 --min scale.arrive.n=98 --max scale.stuck_end=2)
+  set_tests_properties(legion_passage_green PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # ... and a group of fewer than kOpeningMembers bodies waits its turn too (taperbridge-small: ten orders of 5 sent
+  # west, 150 ticks apart, against an army of 50 going east). On the parent the small groups' routes recorded no
+  # labels, so they walked into the strip the army held and met it head on in the 6-cell middle (offset 0: 17 of 100
+  # arrived, 83 stuck; -8: 12 / 88; gridlocked at 16 of offsets -8..8). Checked at 0 and -8: at least 95 arrive and at
+  # most 2 stand stuck at the end.
+  add_test(NAME legion_passage_small
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios taperbridge-small --data "${TAK_TEST_DATA}"
+                   --offsets 0,-8 --min scale.arrive.n=95 --max scale.stuck_end=2)
+  set_tests_properties(legion_passage_small PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
   # Head-on meets near both goals (many-100: two pairs of 25-body orders sent to each other's positions meet
   # within kPivotNear of both goals; the meet band now holds up to the destination area plus one lead): at least
   # 98 of 100 arrive, the 90th percentile within 1,000 ticks (the previous commit 96 / 1,616; Retail 92 / 1,144).

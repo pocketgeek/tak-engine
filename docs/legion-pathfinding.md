@@ -351,6 +351,12 @@ stopped permille 288,524 to 288,538, Legion work flat.
   each other. Attempts back off geometrically (30, 60, ... 480 updates) while
   the body sets no new record of its distance to go (the detour rules'
   record, above).
+* **Corridor mouths one body wide** (Legion ~100 round 3, 2026-10-20; "Corridor
+  mouths and own-slot arrivals" below): a member beside a passage one origin
+  wide waits for its way (`passageWay`, `updateClaim`), and no other member of
+  its group may step onto an origin covering that way that is not past it; two
+  that reach it at once ask the one farther up the field to step clear
+  (`giveWay`). Retail has neither.
 * **Settled arrivals yield**: when a unit completes, Legion records an anchor
   (the origin it completed on). A member held for 12 or more updates, with no
   detour or route, whose wanted cell is held only by settled, idle,
@@ -468,7 +474,11 @@ footprint class (mixed footprints form one group per class but share one
   in the middle of a big body, which read a step above a 2x2 or 3x3 it held
   while its cells reached farther down the field, so that body never queued
   and its order never ended (`legion_mixedsettle`; mixedfootprints 500x4 left
-  three such orders open for good, the parked W9 A1 attempt two in 200x1). It
+  three such orders open for good, the parked W9 A1 attempt two in 200x1).
+  Since round 3 (2026-10-20) a settled arrival of the point whose cells cover
+  the waiting body's own slot counts as nearer, whatever its footprint: read at
+  its origin, a body of its own footprint settled a step off its own slot,
+  uphill, never did (`legion_mixedrandom`). It
   is *queued* when one of them is a settled arrival
   of its own order at that point, an idle body of the player, or a held member
   of the same point that is itself queued, or when (a shared point) it stands
@@ -2016,6 +2026,121 @@ are hash-identical. attack-100 is a chase (no disc: the target moves); its ring
 presses differently and lets more of the fleeing group through, nearer Retail
 (g.E.arrived 2 -> 4 of 10, Retail 6; damage 2562 -> 2295, Retail 1880).
 
+### Rings at ~100 bodies, round 3 (2026-10-20, task-l3-ring3)
+
+**The 0.8.6 prep gate's attack-ring regressions, bisected** (v0.8.5 .. bd7f3f6e: 30a38c9e, the round 1 parents
+5d697081 / 906339c1 / 7827f6e8 / 8e60cc60, 48c5b05c, the round 2 parents 0c820175 / 53863b04 / 96f301f6, aacb1f2c,
+the blocked-shot commits c74c7f4e / 94fb3b17 / 575a70d2). The gate quotes the W5 step-0 base, not 0.8.5: the W5 exit
+licensed these keys (`accepted_regressions`) at their exit values, so "290 -> 20,977" and "0 -> 1,669" read against
+2026-10-09, not against the release.
+
+* `attackring-r200-64:statue_ticks` (a flat map: every offset is one run) was 19,585 at 0.8.5 (the W5-exit licence),
+  25,307 at 7827f6e8 (ring upkeep), 21,303 at 8e60cc60 and 48c5b05c, 20,977 from 0c820175 (round 2) on; blocked
+  shots change nothing. A real, old cost: no body was frozen, they crept. Every statue tick was in the blocked branch
+  (`SiteBlocked`): attackers queued outside the firing arc walked their local detour routes and flow-around shuffles
+  unturned at the facing cap of an eighth (offset 0, counted with the closed-spot rule below already in: 6,921 capped detour-route updates, 6,612 shuffle updates, 381 press updates),
+  and the owners of spots the arc had closed off took the next free spot behind it, scan after scan (one member swapped
+  between two spent spots 13 times in 600 ticks). Retail's mover traces round a body at its own speed (155).
+* `attackring-f1-16:statue_ticks` 683 at 0.8.5 (licence), 1,998 from 7827f6e8 (ring upkeep), 1,669 from round 2: two
+  of the 16 bodies crept round the ring outside reach for ~750 and ~600 ticks, the same crawl. Real; fixed below (175).
+* `attackring-wall-64:g.A.arrived` / `complete_n` 2 -> 0: drift toward Retail. The base 2 is the median of the first
+  five offsets at W5 step 0; at 0.8.5 the offsets read 2, 2, 2, 0, 2, 0, 0, 0, 0, 0, 0 (gate median 0 already): at the
+  walled offsets two attackers dropped their orders at the approach point. Since 7827f6e8 ("walled targets keep
+  orders") none does, as in Retail (0 at every offset).
+* `attackring-river-64:g.A.complete_n` 1 -> 0 (all offsets): the same 7827f6e8 change, the target across the river
+  out of the attackers' region; Retail 0.
+* `attackring-struct-60:g.T.arrived` 1 -> 0: from 0c820175 (round 2) the ring kills the 30,000-HP structure (by tick
+  ~2,820, Retail ~2,850); a dead target is not "arrived". Retail 0.
+
+**The changes**, Legion only (Retail hashes unchanged on every fixture checked):
+
+* **Rings round still targets walk at speed** (`ringStanding`). An attack member of a ring round a target standing
+  still walks its local detour routes of `kBriskRoute` cells or more and its flow-around shuffles at travel speed,
+  unturned, as a formation member's already did (rounds 1 and 2 kept the cap for attack legs). A chase (a moving
+  target) keeps the cap: there the faster ring killed `attack-100`'s target with 5 bodies in reach instead of 22 and
+  the rest of the fleeing group got away (Retail 18).
+* **Closed-off spots are spent** (ringScan). The origins out to two bodies beyond the reach edge are flooded from the
+  free origins a body or more beyond it, through origins no still body covers (the ring's own held members do not
+  wall it: they move on or give their spot up), walking on only where nothing brakes a body: out of reach, in reach
+  out of the target's sight (each origin's own sight test, band 1's; see the review below), or anywhere when band 0
+  was planned without sight (`Ring::sight`). A band-0 spot whose stop point (the reach edge
+  radially out from it; the spot itself without sight) is not flooded is spent, so its owner takes a spot it can get to.
+* **Spare attackers wait outside.** A member whose spot is spent with no free unspent band-0 spot left takes the
+  nearest free outer-band spot instead of standing behind the arc. With the speed change alone the spares milled at the
+  top of `ringcross-100`'s ring, across the Move group's lanes (crossing t90 3,841 -> 4,089 at the gate offsets).
+* **Pressing flush** (pressIn). Out of sight at the box point nearest the target, a press also tries the box's far
+  edge toward it, the last sub-pixel of the origin. Retail's attacker pushing at its target against a wall is clamped
+  there (`footprintClamp`, 4db010), its float centre rounds into the next cell, and the sight cast (`losBetween`)
+  starts in that cell: pressed flush to a 1-cell wall's west or north face it fires through it
+  (`attackring-wall-100` offset 0, Retail at tick 3,000: of its 61 bodies in reach, 24 stand on the last pixel of a cell in x and 23 in z, the box's west face at x = 2015.99 and north face at z = 1215.99 among them). A press now
+  ends exactly at its point (it ended 1/16 px short, which a flush point does not survive), and a press walked out of
+  the target's sight (`pressHidden`) keeps travel speed: nothing brakes the body before its point, and at the cap a
+  press round a wall's end ran out of `kPressTicks` half way and repeated.
+
+Medians over the gate offsets (Legion before -> after, Retail):
+
+| fixture | key | before | after | Retail |
+|---|---|---|---|---|
+| attackring-r200-64 | statue_ticks | 20,977 | 480 | 155 |
+| attackring-r200-64 | reach.ring.ever_end / damage_end | 52 / 3,392 | 59 / 4,069 | 64 / 3,717 |
+| attackring-f1-16 | statue_ticks | 1,669 | 175 | 2 |
+| attackring-f1-64 / squad-64 | ever_end / damage_end / statue | 42 / 2,591 / 25,891 | 43 / 2,840 / 910 | 45 / 2,612 / 195 |
+| attackring-mob-40 | ever_end / damage_end | 36 / 2,154 | 40 / 2,638 | 39 / 2,438 |
+| attackring-mob-100 | ever_end / damage_end | 43 / 2,683 | 40 / 2,762 | 44 / 2,688 |
+| attackring-wall-64 | damage_end / t50 | 1,465 / 2,225 | 1,834 / 1,475 | 1,909 / 1,429 |
+| attackring-wall-100 | damage_end / ever_end | 1,748 / 34 | 1,795 / 33 | 1,922 / 49 |
+| attackring-wall-100 | damage at the walled offsets 0, 1, -1, -2 | 0 / 0 / 0 / 0 | 1,169 / 833 / 1,104 / 952 | 689 / 350 / 767 / 646 |
+| attackring-wall-64 | damage at the walled offsets 0, 1, -1, -2 | 0 / 0 / 0 / 0 | 1,197 / 845 / 1,169 / 782 | 781 / 240 / 860 / 647 |
+| ringcross-100 | reach.ring.ever_t1500 / t50 | 33 / 717 | 42 / 571 | 43 / 653 |
+| ringcross-100 | damage_end | 5,700 | 6,405 | 6,458 |
+| ringcross-100 | g.M.t90 / done | 3,841 / 4,252 | 3,841 / 4,365 | 3,926 / 4,166 |
+| ringcross (48/40) | g.M.t90 / done | 3,686 / 4,156 | 3,751 / 4,195 | 3,880 / 4,293 |
+| attack-100 | ever_end / damage_end | 22 / 2,152 | 20 / 2,116 | 18 / 1,880 |
+| attackring-struct-60 | t50 (killed either way) | 1,057 | 917 | 1,216 |
+
+Over the wide offsets -8..8 (Windows sweep, hashes equal to Linux; median before -> after, Retail):
+`attackring-wall-64` damage 1,484 -> 2,031 (2,104), ever 34 -> 36 (42); `attackring-wall-100` damage 1,757 -> 2,017
+(2,135), ever 35 -> 34 (41); `ringcross-100` t90 3,841 -> 3,841 (3,926; mean 3,853 -> 3,856), done 4,252 -> 4,337
+(4,173), ever by 1,500 33 -> 42 (43); `ringcross` t90 3,745 -> 3,841 (3,880; mean 3,763 -> 3,813), ever by 1,500
+36 -> 39 (45) but at the end 41 -> 39 (45); `attack-100` damage 2,254 -> 2,467 (1,880), ever 22 -> 19 (18).
+
+Statue ticks fall by 90-98% on every ring round a still target (wall-100 19,968 -> 1,412, ringcross-100 24,877 ->
+1,168), still above Retail's few hundred: presses toward reach keep the cap (pressing at speed, measured in round 2,
+let braked bodies glide on). At the walled offsets Legion now outfires Retail: its presses look for the flush points
+on every face that has one, Retail's bodies reach them only where they happen to push. Not changed: the ring offsets
+of `attackring-wall-100` keep 29-36 bodies in reach against Retail's 32-49 (Retail packs the in-sight ground between
+the arc and the wall from out of sight; a band-0 extension to spots in sight bordering band 1 was tried and moved
+nothing there: wall-100 ever 33 -> 35, wall-64 damage 1,834 -> 1,747), `attackring-mob-100` loses 3 bodies in reach
+(43 -> 40, damage up), and `attackring-river-64` (target across a river) still stands 6 against Retail's 21. Fight and
+guard rings (`attackring-fight-60`, `attackring-guard-64`) are untouched: `ringStanding` is attack only, and their
+statue ticks (32,402 and 42,133) are the next case. `battle-field-2x60` and `battle-assault` move both ways: group losses by up to six
+bodies either way (battle-field-2x60 A 34 -> 30 dead,
+battle-assault B8 44 -> 50), travel reversals 1,290 -> 1,198 in the latter. `ctest:legion_ringstill` (r200: statue < 2,000 and ever >= 57;
+20,977 / 52 on the parent), `ctest:legion_ringclosed` (ringcross-100 by tick 1,500: >= 41 in reach and t50 <= 600;
+33 / 717 on the parent, 39 / 634 with the speed change alone), `ctest:legion_ringwait` (ringcross-100 gate median t90
+under 3,950: 4,089 with the speed change alone, 3,841 on the parent and here) and `ctest:legion_attackflush`
+(attackring-wall-100 offsets 0, 1, -1: median damage >= 400; 0 on the parent). `ctest:legion_pressin` keeps no
+repeat at any gate offset.
+
+**Review: the flood's shadow** (same branch). The closed-off-spot flood first took band 1's listed spots for the
+in-reach shadow it may walk through. That list is a sample of the shadow, not the shadow: `buildRing` packs origins a
+footprint apart and stops at the cells the ring wants (`min(256, max(2n, n+8))`), so most of the shadow braked the
+flood, and bodies of two cells or more, whose band-1 origins are never 8-adjacent, crossed none of it. A target whose
+in-sight spots are reached only through in-reach shadow then had every band-0 spot spent and was never attacked. The
+flood now repeats band 1's sight test (the sight grid, target position and skip `buildRing` used, kept on the ring)
+for every in-reach origin. New fixture `attackring-gatehouse-40` (tools/scenarios): a yard walled at 6 cells, open on
+the east, inside an outer wall at 10 cells (in reach at the corridor's middles), open on the west; 40 2x2 attackers
+with range 160 from the west. At offset 0 the old flood spent all 10 band-0 spots from the first scan (damage 0); now
+1 (damage 238; Retail 557, round 2 224). Over the gate offsets the median damage is 244 (old flood 320, round 2 224,
+Retail 584) and ever in reach 15 (20, 16, 29): with every spot spent, the old flood's members fell back to outer-band
+spots, which here are band-1 spots in the corridor pressed flush to the yard's wall, and fired through it at the
+offsets where they got in. With the spots open they walk for the east beam, and the first bodies in press flush to
+the yard wall just inside the west gate and leave one cell of the 3-cell corridor, so the rest queue outside (Retail
+fills the corridor). Every other ring fixture is hash-identical at all 11 gate offsets (r200-64, f1-16, f1-64,
+squad-64, mob-40, mob-100, wall-64, wall-100, river-64, struct-60, ringcross, ringcross-100, attack-100): their
+shadow was 1x1 and fully listed, or not on the way in. `ctest:legion_ringshadow` (gatehouse offset 0, damage >= 150;
+0 before).
+
 ### Paused first builds (W4 C1, protocol 244)
 
 A first field used to build to done, its whole window, although its members
@@ -2775,7 +2900,9 @@ measurements and the variants rejected, is docs/legion-10000-progress.md section
   (60) ticks; it closes after the other way waited `kAdmitGreen` (300) ticks. Only allies defer to each other; a group
   without labels neither waits nor counts. Open ground is never an opening, so nothing waits there. (Since
   2026-10-19 a tile chain's group of 8 or more is admitted too, one passage is admitted by one record, and admitted
-  bodies on their way hold the token: "Passage admission at 100 bodies" below.)
+  bodies on their way hold the token: "Passage admission at 100 bodies" below. Since 2026-10-20 a way closes after the
+  other waited two of its crossings when that is longer than 300 ticks, and every group's route records labels, so a
+  group of fewer than 8 waits too: "Passage turns and small groups" below.)
 * **Shared destination areas.** An explicit order sent within a cell of the point where an earlier explicit area of
   the same player still gathers (its point live, or its arrivals settled there) takes that area's key and exact point
   (`sharedArea` over `destArea`, hashed): one command, one formation and crowd bound, and the first order's settled
@@ -3039,6 +3166,304 @@ orders at the halves' slot centroids split 50 / 50 and entered the disc 500 tick
 speed `island-1x100` is ahead of Retail at t90 and level at the last arrival without it, so no per-band field was
 built.
 
+### Passage turns and small groups (2026-10-20, Legion ~100 round 3)
+
+After rounds 1 and 2 the narrow-passage admission still gridlocked by offset: on 0.8.6 (protocol 281),
+`taperbridge-100` (tools/scenarios; a 161-cell strip, 12-cell mouths and a 6-cell middle) ended at offset +1 with 81 of
+100 bodies stuck in the east mouth, at -5 and +8 it did not finish in 15,300 ticks (89 and 76 arrived), and over
+-8..8 and five wider offsets (+-12, -16, +16, +17) it gridlocked at 4 (`bridges-100` at 1, -12); `bridges-1000`
+(tools/scenarios/scale) at 5 of -8..8 (17-161 stuck). Retail has nothing to copy here: it gets neither army across
+either bridge (`bridges-100` 36-64 of 100 arrive, `taperbridge-100` none, at each of offsets -8..8).
+
+**The cause.** A dump of positions and of the passage's token every 50 ticks (a debug probe, not kept) at
+`taperbridge-100` +1: the east army was admitted at tick 1,484 and its last bodies were through only at 3,592, the
+west army waiting the while on the east apron, 18 cells out (the approach zone). Granted at 3,592, 22 west bodies
+were admitted at once and walked toward the mouth through the east army's tail, which was coming out through their
+crowd; none reached the strip in the 120 ticks of `kAdmitCommit`, the east army had waited the 300 ticks of
+`kAdmitGreen` since 1,704, so the token turned back at 3,712, the 22 admissions lapsed where they stood -- in the east
+mouth -- and the east army's next stream came out into them. From there one east body stood in the strip's last cell
+for good, the token could not turn, and both armies waited. The rule behind it is the fixed green: a turn costs the
+passage a whole crossing (the way let in next waits until the last body let in before is through), and each turn
+puts the next way's crowd onto the apron the last way is coming out onto, so every turn is one more chance of a knot.
+A 300-tick green turned a long passage every few bodies (`bridges-100`, a 49-cell strip: 6-10 turns at offsets -2..2;
+`taperbridge-100` 2-3, each costing over 1,000 ticks of crossing).
+
+**The change.** A way closes after the other has waited `kGreenTurns` (2) of its crossings, or `kAdmitGreen` (300)
+ticks if that is longer. Its crossing is the longest among its admitted bodies of the approach zone plus the strip at
+the body's top speed (`crossTicks`, derived every tick from the passers, like the occupant counts; the token fields it
+decides were already hashed). A door or a short gap keeps the 300 ticks; with these fixtures' slowest bodies (1.6 px
+a tick, 3x3) `bridges-100` closes after about 1,500 ticks of waiting and `taperbridge-100` after about 3,700 (in
+practice it now turns once: the first army crosses whole, then the other).
+
+Second, a group of fewer than `kOpeningMembers` (8) bodies obeys admission too. A window or corridor route recorded
+the labels admission reads (`Field::via`) only for a group of 8 or more, so a few walkers sent separately walked into a
+strip the other way held; a tile chain admitted only when built for 8 or more (`Field::chainAdmits`). Every soft
+group's route now records them; `Field::queues` (hashed with the field) keeps the rest of stage 8 -- entrant counts,
+queue charges, re-plans for drifting queues -- to groups of 8 or more as before, and a route of such a group is never
+shared with a smaller group's field that does not count its members. `taperbridge-small` (tools/scenarios, new: the
+same bridge, an army of 50 east against ten orders of 5 sent west 150 ticks apart) gridlocked at 16 of offsets -8..8
+before (12-58 of 100 arrived).
+
+Measured (Legion, serial, offsets -8..8 unless noted; medians; Retail hash-identical on both bridges at each of
+-8..8; the 157 other fixtures of tools/scenarios and legion100 keep every observer key at offset 0, 49 of their Legion
+hashes moving only by the field fold):
+
+| fixture | key | before | after | Retail |
+|---|---|---|---|---|
+| taperbridge-100 | offsets gridlocked (>= 10 stuck) | 4 of 22 measured (+1: 19 arrive) | 0 of -16..17 | none arrive (-8..8) |
+| taperbridge-100 | arrive.n min / t90 / stopped permille | 19 / 12,336 / 303 | 100 / 11,082 / 224 | 0 / never / 1 |
+| bridges-100 | offsets gridlocked | 1 of 22 measured (-12: 38 arrive) | 0 of -16..17 | 36-64 arrive (-8..8) |
+| bridges-100 | t90 / stopped permille (gate offsets) | 11,037 / 181 | 9,920 / 135 | never / 2 |
+| bridges-100 | admission turns, offsets -2..2 | 6-10 | 2-4 | |
+| bridges-1000 | arrivals summed / stuck summed / offsets with >= 10 stuck | 13,027 / 325 / 5 | 13,616 / 26 / 1 | |
+| taperbridge-small | offsets gridlocked / arrive.n median | 16 / 37 | 0 / 98 | |
+| bridges-small (scratch) | t90 / stopped permille | 8,233 / 43 | 8,546 / 62 | |
+
+`bridges-100`'s t90 is now below the old two-way crossing's 10,237 (when it did not gridlock), so two-way flow on the
+12-cell bridge was not brought back. The remaining `bridges-1000` offset (+6, 21 stuck) is its destination crowd, not a
+bridge. `bridges-small` (a scratch fixture: `bridges-100`'s river with the west army as ten orders of 5) is the cost of
+the small groups' waiting: on the 12-cell bridge they used to get through head on, and now wait their turn (+4% t90;
+its few bodies left outside the authored radius are the ten small destination areas 4 cells apart filling at once).
+`ctest:legion_passage_green` (taperbridge-100 at +1, -5 and +8: at least 98 arrive, at most 2 stuck; 19 / 81 on the
+parent) and `ctest:legion_passage_small` (taperbridge-small at 0 and -8, at least 95 arrive; 17 / 83 and 12 / 88). The
+Legion lines of tools/navigation_checkpoints.json move with the field fold (the small groups' fields now carry labels;
+`navigation_determinism` fails until the integration retakes them).
+
+Rejected on the way (same sweeps, each switched by a debug variable on the parent, none kept):
+
+* Turning only once the old way's bodies have left the far apron (the zone beyond the strip) as well as the strip:
+  they never could, because the other way's waiting crowd stands there; 7 (`bridges-100`) and 13 (`taperbridge-100`)
+  of 17 offsets gridlocked.
+* No lapse at all (an admitted body keeps the token its way however long it takes to reach the strip): `bridges-100`
+  t90 +1,000 and gridlocked at -1, `taperbridge-100` gridlocked at 5 offsets and did not finish at 11 others (as the
+  300-tick commit window measured in round 1).
+* A commit window scaled to the zone walk (1.5 and 2 times the zone at the body's top speed, since 120 ticks is shorter
+  than a slow 3x3's walk through its 24-cell zone): with the scaled green, neutral (`bridges-100` t90 9,930 to 10,013,
+  `taperbridge-100` unchanged).
+* Waiting bodies stepping out of the passage's lane sideways (a body held for admission in front of the mouth, inside
+  the passage's span, steps one cell away from the span's centre at a time): the side crowds fill and the last bodies
+  hold in the lane; the lottery moved (`taperbridge-100` +4 and +6 gridlocked instead of +1).
+
+What is left is the apron itself: the waiting crowd still stands where the other way's stream comes out, and that
+stream threads through it (most of a turn's time on `taperbridge-100`). With one or two turns it no longer knots at
+any offset measured, but a passage whose two ways both keep arriving (more turns) is still exposed. A staging rule
+that keeps the exit lane clear (the rejected step-out above, but holding bodies before they enter the lane rather than
+moving them out of it) is the next thing to try.
+
+### Lane order, walls and reversals at ~100 bodies, round 3 (2026-10-20, nothing landed)
+
+The targets were the lane swaps where streams cross after a turn (gate medians on 0.8.6: `mixed2:gate.mid.crossings`
+38, Retail 0; `sbend:gate.t2.crossings` 27, Retail 5; `corner-1x448:gate.top.crossings` 26, Retail 5), the reversals
+and standing that round 1's brisk detours and round 2's travel-speed flow-around added, and wall touching
+(`attackring-wall-64` 27 permille, Retail 20; `doorplug-112` 18, Retail 8). Every attempt below was measured
+against 0.8.6 (Legion only; Retail stays hash-identical by construction), at the gate offsets and, for the final
+candidates, over the 84 fixtures of the pinwheel's reach and at offsets -8..8 (-4..8 where the start leaves the map)
+on the Windows box. None was a clear net win, so the simulation is unchanged; the turn fix below is kept on branch
+`task-l3-lanes3-turnfix` (a8a90396) for a ruling, and the experiments' switches on `task-l3-lanes3-wip`.
+
+**Where the crossings come from.** In `mixed2` (48 bodies round the tip of a long wall, a 20-cell gap below it) 36
+of the 38 crossings are at the pinwheel site. Position dumps show the formation packed into the 7 rows under the tip
+(z 80-86) instead of on its arcs: the inner files reach the wall's face one row above the tip and wait there, up to
+180 ticks, for a gap in the stream of outer files passing under it on the passage lanes and their straight walks,
+then leave on the outside. Round 2's flow-around at travel speed made that stream continuous: with arc-aimed
+shuffles (a body flowing round a blocker toward its arc point or lane) back at the facing cap `mixed2` falls to 13,
+the protocol-279 value, with its times unchanged, but `island-1x100` t90 1,937 -> 2,387, `corner-1x100` 4,187 ->
+4,592 and `corner-1x448` 26 -> 35 crossings, so that was not taken either. `sbend`'s second-turn crossings are all
+at the straight walk to the slots, and `corner-1x448`'s mostly in the blocked branch and the field.
+
+**The pinwheel misses a turn at a wall end met across it.** `pivotAim` looked for the chain's turn from the first
+chain cell beside a wall onward, so a turn's vertex lay at least 6 cells along the wall. A descent chain that meets a
+wall END at an angle touches it where it turns; no turn is found until the body is round the end, so it is never
+ranked there and hugs the end with the inner files. In `corner-1x100` most of the 100-body formation comes at the
+block's corner across it: the bodies take their ranks only once round it (for the next turn, 40 cells on), and
+round the corner on the field into one file along the rock-ragged edge. That is the standing: 2,062 of its 2,123
+standing samples (every 30 ticks, offset 0) lie west of that corner between ticks 600 and 2,100, where a body that
+reached the corner first stood 1,322 ticks (573 -> 1,895) waiting for a gap in the file passing in front of it.
+Starting the search 6 cells earlier (the vertex may be the wall contact) ranks bodies that meet an end across it
+(sbend's second turn, the generated maps' wall ends); `corner-1x100`'s funnel stays (standing 261 -> 258), since most
+of its chains turn 10 to 40 cells before they first touch the rocks along the edge. At a bridge's mouth it
+gridlocked `bridges-100` at 5 of the 11 gate offsets (none before: its 12-cell bridge's admission lottery,
+"Passage admission at 100 bodies"), so an early vertex is no turn where the chain enters a passage strip (a
+cross-section under `kPassageSpan`) within 6 cells after it. Measured with that guard (gate medians, 0.8.6 -> fix):
+
+| fixture | key | 0.8.6 | fix | Retail |
+|---|---|---|---|---|
+| sbend | t2 crossings / t90 (offsets -8..8) | 26 / 3,126 | 4 / 3,251 | 5 / 3,602 |
+| gen1-route-61923 | arrived per group / left behind | 93, 78, 70 / 50, 54, 98 | 143, 131, 111 / 0, 1, 57 | 9, 11, - |
+| gen1-route-54772 | t90 per group | 7,611 / 7,195 / 9,051 | 7,071 / 6,412 / 8,376 | |
+| mixed-100 | arrive t90 / t99 (-8..8) | 3,728 / 4,054 | 2,996 / 3,289 | |
+| taperbridge-100 | stuck at the end / arrived, summed over the gate offsets | 81 / 1,003 | 0 / 1,087 | |
+| corner-1x100 | t90 / done / standing (-4..8; Retail at the gate offsets) | 4,176 / 4,837 / 261 | 4,309 / 4,817 / 258 | 5,084 / 5,547 / 1 |
+| island-1x100 | t90 / done (-8..8) | 1,937 / 2,477 | 1,982 / 2,540 | 2,296 / 2,552 |
+| uturn, gap20 | top crossings | 5, 5 | 7, 20 | 2, 2 |
+| slowturn | W400 / W1000 crossings | 8 / 8 | 15 / 22 | 3 / 0 |
+| corner-1x448, corner-8x56 | top crossings | 26, 8 | 41, 14 | 5, 10 |
+| wall-4x50 | top crossings / lane swaps | 19 / 1,008 | 27 / 1,487 | 3 / 426 |
+| doubleturn, farroom, uturn | wall touch permille | 69, 214, 30 | 18, 170, 11 | -, 78, 34 |
+| pocket-615-wall | arrived / reversals (-8..8) | 474 / 506 | 462 / 775 | 157 / 563 |
+
+Summed over the 84 fixtures: arrivals 9,414 -> 9,563, groups never done 106 -> 103, t90 plus done -0.2%,
+reversals -0.8%, standing -1.3%, moving wall touch -9.5%; but gate crossings 819 -> 894 and lane-probe swaps
+1,673 -> 2,188, U-turn fixtures' t90 +4..+11% (outer files walk wider arcs; still far ahead of Retail), and
+`ctest:legion_cost` fails on 19 `cost-corner` work counters (whole-run Legion work at N400 +22%: more slides,
+holds and trace cells round the corner). More ranks mean more swaps on simple turns: the pinwheel's arcs are not
+order-preserving there, and the missed turns had been hiding it. The candidate branch's test legion_turnrank
+bounds sbend's median second-turn crossings over the core five at 9 (27 on 0.8.6, 4 with the fix).
+
+Tried on top of it, each over the same crossing-sensitive set (gate medians):
+
+* Ranking again, once, when the turn is within 24 or 32 chain cells (a rank taken 40 cells out reads the formation's
+  lateral order across a way it does not keep): `mixed2` 38 -> 27 / 29 (-8..8: 29 median), `corner-1x448` 18 /
+  33, `gap20` 7 / 9, sbend 2, the flow gains mostly kept; but uturn 9 / 11, gapsweep's 20-cell gap 18 / 16,
+  `strait-2x100` 4 -> 13 (32), lane swaps still +27..35%, and `ctest:legion_mixedformation` fails either way (its 20 ground
+  bodies finish 2,315 -> 2,945 / 2,593 because a late body shuffles at the settled crowd's edge, and the flyers then
+  miss the facing bound, 5.1% against 5%, or stall one 30-tick window). Re-ranking only bodies that did not hug:
+  `corner-1x448` 63. Only ranking turns within 24 cells: `corner-1x448` 14, slowturn 14 / 4, but gap20 19, uturn
+  13 and the generated maps' gains halved.
+* One frozen frame per part (the centroid and vertex of the part's first rank at that wall end, so every member is
+  ranked across the same line): no better (`corner-1x448` 40-43, uturn 6-13).
+* Ranking from the vertex instead of the centroid (the rank without its centre offset): nearly every body ranks 0
+  and hugs, a single file -- every gate crossing key 0 (`mixed2`, sbend, uturn, gap20, slowturn, wall-4x50) at
+  +22..29% of t90 on every U-turn fixture and `doubleturn` wall touch 69 -> 245. It shows the swaps are the arcs'.
+
+**Other levers tried (gate medians, none kept):**
+
+* The corner-hug removal of W9's B3 probe (every rank wheels at least a cell off the wall): `mixed2` 38 -> 32 (-8..8:
+  38 -> 30), sbend 27 -> 19, `corner-1x448` 26 -> 20, `corner-8x56` 8 -> 4, `pocket-615-wall` wall touch 55 -> 35;
+  but `corner-8x56` g.B.t90 6,573 -> 7,449 and groups E-H 24 fewer arrivals by tick 9,000.
+* Travel speed for flow-around shuffles only within 45 or 67.5 degrees of the heading (arc-aimed, or all): `mixed2`
+  38 -> 38 / 41 / 18, sbend 24 / 21 / 9, but `island-1x100` t90 1,937 -> 2,228..2,837 and `corner-8x56` g.B.t90
+  +5..+28%. Arc shuffles at the cap only inside a passage strip: no change (mixed2's happen before the gap).
+* Giving a long-held body the right of way at a merge (a moving body does not step into the cells a body held 60
+  or 150 ticks is blocked from, when they are free but for the two of them): sbend 27 -> 10 / 12, `corner-1x448` 26
+  -> 14 / 13, moving wall touch on the corners 56 -> 29 and `pocket-615-wall` 55 -> 17 (60 ticks), but the stream
+  stops for every merge: `corner-1x100` t90 4,187 -> 5,132 / 4,997, `corner-4x25` D t90 +18..21%, `corner-1x448`'s group A never
+  done. Only for a held body nearer the goal on the same field: sbend 17, `corner-1x448` 24, `corner-8x56` g.B.t90
+  +6%.
+* Turning off the passage gate or the passage lanes in `mixed2`: 31 and 77 crossings.
+
+**Reversals and standing** are mostly what round 1's brisk routes are for (see Known weaknesses: a route backs out of
+the pocket among settled bodies the body walked into, 1-6 updates after it starts); none of the changes above
+lowered them without the time they bought, except the turn fix on the generated maps and `mixed-100` (reversals
+-1..-53% on six of them, +20% on gen1-route-36057; standing -4..-60%). **Wall touching** in `attackring-wall-64` and `doorplug-112` (and their 100-body
+versions) is untouched by every lever here (hash-identical runs): their touches are the ring's press-in and the
+door's own lanes, left to the ring work; where formations round wall ends the turn fix lowers it (table).
+
+### Corridor mouths and own-slot arrivals (2026-10-20, Legion ~100 round 3)
+
+**The 0.8.6 drop, bisected.** The 0.8.6 scenario gate read `deadend-w2-n40-room-plain` (40 bodies to a room at the
+end of a 2-cell, 100-cell corridor) `g.A.complete_n` 38 -> 32 (median of offsets 0, +-1, +-2). Built at v0.8.5
+86db5d61, round 1 48c5b05c (and its parent 4fe78bdb), round 2's merges 4bef9dad (gap2), 8c729934 (ring2) and d6c559a7
+(idle2), round 2 aacb1f2c and the blocked shots 575a70d2: gap2 and ring2 leave it bit-identical, and the drop comes
+with idle2 (96f301f6, the flow-around shuffle at travel speed). Over offsets -12..36 the mean goes 28.04 -> 26.55
+and the median 33 -> 29; the blocked shots change nothing. It is a lottery over a failure that was there all
+along: at offsets +10..+16, where the column straddles the corridor's row, none of the 40 bodies ever entered, at
+every commit from 0.8.5 on.
+
+**The cause.** The corridor is one 2x2 body wide: its origins form a single row, and the origin in front of its
+mouth (98,48) is the only way into it from the open side. Two bodies of the queue reach the mouth on either side of
+that origin, at (98,47) and (98,49) -- or one beside it at (97,49) -- and each then stands on a cell of the way the
+other needs: neither can step onto it, nobody behind them moves, and every order outside stays open
+(`deadend-w2-n120-closed-plain` too: 3 of 120 complete over the gate offsets). Retail's bodies wedge there as well and
+give their orders up where they stand (120 complete, 1-3 arrived); Retail has no give-way of any kind (its blocked
+mover clamps, slows and presses on, docs/retail-engine.md).
+
+**The change** (Legion only; Retail hash-identical):
+
+* **Funnel claims** (`passageWay`, `updateClaim`, `claimedAgainst`). A member waits for a way when it stands beside
+  a passage one origin wide: the lowest neighbour origin down the field that lies in such a passage (both its
+  neighbours across the step illegal), or whose only way on does (the origin in front of a corridor's mouth). A
+  seed is never a way, and a body hugging a long wall is not beside a passage. A member standing on a cell of a way
+  its group found there waits for it too (`Group::funnelWays`, per field; a 3x3 or 4x4 covers a way from farther
+  off). While a member waits for a way, no other member of its group may step onto an origin whose footprint covers
+  that way and is not past it (nearer the goal), unless it waits for the same way and steps onto the way itself. The
+  claim is taken on the step that reaches the origin (drive), so two bodies stepping beside one way on successive
+  updates of a tick cannot both stand there; a queue in file is untouched (the body behind stands clear of the way
+  of the body ahead). `Member::claimAt` and `Group::funnelWays` are hashed.
+* **The funnel give-way** (`giveWay`, after 2 held updates). Where two bodies did reach a way at once, the one nearer
+  the goal (lower potential; at one potential the one that gave way more often, then the lower id) asks each held
+  body of its group on the way's cells, farther up the field, to step one cell clear of the way and of itself, to the
+  free legal origin with the lowest potential, keeping its order (a part with its leg, as `partLane` parts a still
+  member). All or none move; at most `kMaxGiveWays` (8) per leg, never straight back the way it last gave way. The
+  turn-taking at one potential matters: with the id alone one body gave way to a whole lane.
+* **Own-slot arrivals** (`settleWindow`, item 3 of the round). A settled arrival of the point whose cells cover the
+  waiting body's own slot counts as nearer the point, whatever its footprint. The 2026-10-14 review read a body of
+  another footprint over its cells; a body of the waiting body's own footprint was still read at its origin, so one
+  settled a step off its own slot, uphill of the waiting body and across its line, never read nearer: the waiting
+  body never queued, its yields were refused and its order stayed open. A random-formations screen
+  (`legion_mixedrandom`, seeds 0..12,799: footprints 4x4/2x2, 4x4/3x3 or 3x3/2x2, 30-100 bodies, shuffled, column order
+  or alternating rows, one click, 5,000 ticks) left 3 layouts open on the parent (two of them one layout; a 4x4 and a
+  3x3, each beside a settled body of its own size on its slot) and none after. The crowdbench `mixedfootprints` rows
+  (200x1 seed 0; 500x4 seeds 0/7/42 at 6,000 ticks) are unchanged: 200 and 2,000 complete and settled, none outside
+  the radius, stalled unit-ticks 85,239 -> 85,149 on seed 42, equal on the others.
+
+Measured on the Windows box (identical hashes to Linux), offsets -12..30 (43; deadend-multi the 11 gate offsets),
+Legion before -> after as mean / median, and Retail's median:
+
+| fixture | key | before | after | Retail |
+|---|---|---|---|---|
+| deadend-w2-n40-room-plain | complete_n (offsets all done) | 25.5 / 29 (5) | 37.7 / 40 (32) | 40 |
+| deadend-w2-n40-room-plain | arrived | 21.9 / 27 | 30.1 / 32 | 0 |
+| deadend-w2-n40-room-squad | complete_n (offsets all done) | 24.2 / 26 (7) | 36.1 / 39 (19) | 40 |
+| deadend-w2-n40-closed-plain | complete_n (offsets all done) | 28.9 / 34 (8) | 40 / 40 (43) | 40 |
+| deadend-w2-n40-closed-squad | complete_n (offsets all done) | 28.6 / 33 (13) | 40 / 40 (43) | 40 |
+| deadend-w2-n120-closed-plain | complete_n (offsets all done) | 18.5 / 7 (0) | 119.2 / 120 (40) | 120 |
+| deadend-w2-n120-closed-squad | complete_n (offsets all done) | 13.5 / 0 (0) | 119.2 / 120 (40) | 102 |
+| deadend-w2-n120-room-plain | complete_n / arrived | 19.4 / 5, 11.0 / 5 | 119.2 / 120, 34.2 / 34 | 120, 2 |
+| deadend-w2-n120-room-squad | complete_n / arrived | 18.8 / 10, 11.6 / 10 | 119.2 / 120, 30.7 / 30 | 101, 0 |
+| deadend-multi-4x120 | A complete_n (offsets all done) | 8.2 / 3 (0) | 120 / 120 (11) | 120 |
+| deadend-w2-n120-closed-plain | stopped permille | 873 / 880 | 710 / 717 | 1 |
+| deadend-w2-n40-room-plain | stopped permille | 564 / 585 | 204 / 124 | 1 |
+| deadend-w2-n120-closed-plain | wall touch permille | 135 / 72 | 299 / 302 | 33 |
+| deadend-w2-n40-room-plain | wall touch permille | 414 / 478 | 554 / 565 | 32 |
+| deadend-w2-n120-closed-plain | complete outside radius | 12.9 / 0 | 109.3 / 110 | 118 |
+
+The gate median of `deadend-w2-n40-room-plain` `complete_n` is 40 (0.8.6: 32, 0.8.5 baseline 38). The trades are
+the bodies now in the corridor: they touch its walls (wall touch permille about doubles, against Retail's 30s) and
+the queue settles back along it outside the authored radius (by design since AR-08: Retail's give up there too).
+The three offsets where 12 orders of the 120-body fixtures stay open (+28..+30) are a fixture artefact that the
+parent shows too: the column's last row spawns two cells from the map's edge and its bodies never leave Waiting.
+Screened at offset 0 over all 159 fixtures (tools/scenarios and legion100, Legion): 10 change, all of them the
+2-cell dead ends above (`deadend-w2-*`, `deadend-multi-4x120`) plus four whose hash changes with every key equal
+(`corner-1x448`, `corner-8x56`, `gen1-route-36057`, `gen1-route-65845`). Retail: identical `hash@` at every gate
+offset of the two target fixtures and in the Windows sweep's Retail rows; the headless `--mpai` Inner Circle game
+(seed 1, 60 s) keeps Retail `b353410003e98dd5` and Legion `0825aeb9e8139203`.
+`ctest:legion_funnelmouth` (the closed 120-body corridor at start offsets 0 and -1, the 40-body room at +12 and +14:
+27, 9, 0 and 0 settled on the parent, all now) and `ctest:legion_mixedrandom` (seeds 5717 and 9651).
+
+**Ties between claims** (the round's review, 2026-10-20). As first landed, a claim closed every origin covering its way
+at an equal or higher potential, to every other member. In a field of 1x1 pillars 3 cells apart (gaps 2 cells wide, one
+origin wide for a 2x2, so every origin in the field is a way) two bodies wait for neighbouring ways at one potential,
+each way covering the other: each body's step onto its own way was refused by the other's claim, no body stood on
+either way so the give-way never ran, and both held for good (a review scratch fixture, 72 2x2 bodies through 27x31
+pillars on one click: `complete_n` gate median 60 and 1-9 orders open at every gate offset; the parent 72 at all).
+Now, at one potential, a claim yields to a member that waits for a way of its own and has the lower id; a member that
+waits for no way still keeps off a claimed way at its potential (so a third body cannot slip onto it, the rejected
+exclusive-claimant failure below). The order is total, so no two waiters can each hold the other. The same fixture:
+72 at all 11 gate offsets, done at 2909-3540 ticks (Retail 2585 median). Over offsets -12..30 (Windows, hashes equal
+to Linux) `complete_n` mean / minimum / offsets with orders open after 900 still ticks: 0.8.6 (bd7f3f6e) 71.6 / 68 / 7,
+round 3 as first landed 66.1 / 45 / 35, now 72 / 72 / 0 (Retail 72 / 72 / 0); every order ends by tick 3910, at two
+offsets one body settles outside the radius. Stopped permille 112 -> 179 -> 103 (median over those offsets), wall touch 443 -> 479
+-> 441 (Retail 421). Every 2-cell dead end above
+(`deadend-w2-n120-closed-plain`, `-n40-room-plain`, `-n40-closed-plain`, `deadend-multi-4x120`) is bit-identical at
+all gate offsets, Retail too. The review's alternative, opening every equal potential (`here > v`), also lets a
+member that waits for no way step onto the claimed way itself. `ctest:legion_funneltie` (the pillar field at offsets
+0, +1 and -3: 68, 63 and 60 of 72 settled after 9,000 ticks on the parent, all now).
+
+Rejected on the way (same fixtures):
+
+* The give-way alone: `deadend-w2-n120-closed-plain` 3 -> 17 complete (gate median). Once the crowd behind packs
+  round the mouth the losing body has no free cell, and the pair forms again with the next arrivals.
+* One exclusive claimant per way, taken only by a body with a single way down: in the ticks between the claimant
+  stepping onto the way and the next waiter's update a third body edged onto a cell of it from an origin with
+  several ways down (`deadend-w2-n40-room-plain` offsets +10..+16: 2 to 29 of 40 complete; `deadend-w2-n120-closed-plain`
+  median 22).
+* A funnel as any origin against terrain with a single way down (this origin or its way beside an illegal origin;
+  without that test a body beside a seed in open ground has a single way down too): the claims chained along walls,
+  each closing a 7x7 block of origins round a 4x4 (`strait` 48 -> 13 arrived, `maze-100` 85 -> 44 with 41 bodies
+  standing for good; offset 0). The passage test (both neighbours across the step illegal, at the way or the next
+  one) touches only the 2-cell dead ends.
+
 ### Legion 10,000: where the program left it
 
 docs/legion-10000-report.md gives the measured result against the starting revision c2c25707:
@@ -3153,9 +3578,16 @@ Rules that came out of using them:
   its group A now completes at all eleven gate offsets); a lifted flyer
   detours 5 cells against 2.
   The attempts are parked on branches task-w9-a-A1..A4 and
-  task-w9-b-b1..b6-reverted with their numbers; an unplanned probe that removes
-  the corner hug behind a turn guard brought both corner fixtures within
-  Retail and is the first lead to try. Measured by
+  task-w9-b-b1..b6-reverted with their numbers. The W9 probe that removed the
+  corner hug (B3, every rank wheels at least a cell off the wall) was retried
+  on 0.8.6 in round 3 (2026-10-20): corner-1x448 26 -> 20, corner-8x56 8 -> 4,
+  but corner-8x56's later groups no longer reach t90 in 9,000 ticks (21 fewer
+  arrivals over groups E-H), so it was not taken (see "Lane order, walls and
+  reversals at ~100 bodies, round 3"). At 0.8.6 the gate medians are
+  corner-1x448 26 (Retail 5), corner-8x56 8 (Retail 10), mixed2 38 (Retail 0)
+  and sbend's second turn 27 (Retail 5). The pinwheel misses most turns at a
+  wall end met across it (same section); a candidate fix is on branch
+  task-l3-lanes3-turnfix. Measured by
   `corner-1x448:gate.top.crossings`, `corner-8x56:gate.top.crossings`,
   `strait-2x150:gate.strait.crossings`, `attackring-wall-64:wall_touch_permille`,
   `doorplug-112:wall_touch_permille`, `ringcross:g.M.t90`,
@@ -3183,36 +3615,51 @@ Rules that came out of using them:
   turn rise (`mixed2:gate.mid.crossings` 13 -> 38, Retail 0;
   `sbend:gate.t2.crossings` 9 -> 27, Retail 5). A denser crowd jams in
   `pocket-615-wall` (`g.A.arrived` 533 -> 474, Retail 157).
-* **Narrow-passage admission still gridlocks at some offsets.** At ~100 bodies
-  a head-on knot in a bridge's mouth is a matter of timing: over offsets -8..8,
-  `bridges-100` and `taperbridge-100` each end with 44-88 bodies stuck at one
-  offset on the parent of protocol 280 (both -7) and after it (`taperbridge-100`
-  +1, a gate offset: 19 of 100 arrive). The pattern is the one "Passage
-  admission at 100 bodies" describes: an admission lapses (or a crowd waits)
-  in the mouth the other way's stream comes out of. Holding the token for
-  admitted bodies in the mouth, and parting waiting bodies for the stream,
-  each moved the gridlock to another offset (above). Measured by
-  `taperbridge-100` (tools/scenarios) and `bridges-100` (legion100) over the
-  wide offsets; `ctest:legion_passage_admission` and `ctest:legion_passage_taper`
-  hold their offsets.
-* **Attack rings at ~100 bodies (after round 2, 2026-10-19).** Bodies press to
-  sub-cell points in reach, but Legion's ring still fills its edge more thinly than
-  Retail's where walls cut the sight lines: Retail's bodies in reach and out of
-  sight keep walking at the target and stand two and three deep along a wall,
-  Legion's press only one origin on. attackring-wall-100's ring offsets fire with
-  82-101% of Retail's damage and 29-35 bodies ever in reach against Retail's 32-49
-  (offsets -3 and -4: 29 / 30 against 49 / 44); against a target walled in on every
-  side Legion's ring stands round the walls but never fires (Retail's bodies pressed
-  flush against a 1-cell wall see through it: the sight cast starts in the cell
-  their float-rounded centre falls in, the wall itself), which Legion does not seek.
-  The ring also forms slower than Retail's (ringcross-100: 33 of 50 in reach by
-  tick 1500 against 43; the far side still fills one rescan at a time behind the
-  near arc). A Move group crossing a firing ring is within 4% of Retail's t90
-  (ringcross-100 4066 against 3926; ringcross 3796 against 3880) and completes at
-  every offset, about 360 ticks after Retail; the crossing stays sensitive to small
-  changes in the ring (press speed alone moved its t90 by 300 ticks). Measured by
-  `ctest:legion_ringupkeep`, `ctest:legion_attackwalled`, `ctest:legion_ringcross`,
-  `ctest:legion_ringfill`, `ctest:legion_ringbend` and `ringcross:g.M.t90`.
+  Where the reversals come from (round 3, 2026-10-20, offset 0, each return
+  to a 16 px cell left under 90 ticks before attributed to the steering
+  branch the body was in): corner-1x100 82 = 33 walking a brisk local detour
+  route, 13 a flow-around shuffle at travel speed, 10 one at the facing cap,
+  10 field descent, 8 straight walks, 7 lane passes; corner-4x25 39 of 62 on
+  brisk routes; island-1x100 30 on routes, 19 brisk shuffles, 18 pinwheel;
+  densehead 73 straight walks (the head-on meet), 34 routes, 28 brisk
+  shuffles. A route reverses 1 to 6 updates after it starts, with 15 to 43
+  cells still to walk: it backs out of the pocket among settled bodies the
+  body walked into, which is what the route is for. corner-1x100's standing
+  is not at the goal: 2,062 of its 2,123 standing samples (every 30 ticks)
+  lie more than 80 cells out, between ticks 600 and 2,100, west of the
+  block's corner, where a body that reached the corner first waited 1,322
+  ticks to merge into the single file passing it (see the round-3 section).
+* **A narrow passage's waiting crowd stands on the other way's exit apron.**
+  Until 2026-10-20 a head-on knot in a bridge's mouth was a matter of timing
+  (`taperbridge-100` +1: 19 of 100 arrived): every turn of the passage put the
+  next way's crowd onto the apron the last way was coming out onto. A way now
+  stays open for two of its crossings ("Passage turns and small groups"), so
+  long passages turn once or twice, and over offsets -16..17 neither
+  `bridges-100` nor `taperbridge-100` gridlocks (`bridges-1000` -8..8: no bridge
+  knot). The crowd still waits there, though, and the stream threads through it;
+  a passage whose two ways keep arriving turns more often and is still exposed.
+  Holding the token for admitted bodies in the mouth, parting waiting bodies for
+  the stream, waiting until the far apron is clear, and stepping waiters out of
+  the passage's lane each moved the knot elsewhere or made it worse (above).
+  Measured by `taperbridge-100` (tools/scenarios) and `bridges-100` (legion100)
+  over the wide offsets; `ctest:legion_passage_admission`,
+  `ctest:legion_passage_taper` and `ctest:legion_passage_green` hold their
+  offsets.
+* **Attack rings at ~100 bodies (after round 3, 2026-10-20).** Rings round a still target walk their detours at
+  travel speed, spend the spots their firing arc closes off, send spare attackers to the outer bands and press flush
+  against 1-cell walls the way Retail's clamped bodies end up ("Rings at ~100 bodies, round 3"). Still open: the ring
+  fills its edge more thinly than Retail's where walls cut the sight lines (attackring-wall-100's ring offsets 29-36
+  ever in reach against Retail's 32-49; Retail's bodies walk in out of sight and pack the in-sight ground between the
+  arc and the wall); a narrow corridor in reach and out of sight is plugged by the first bodies in pressing flush to
+  its inner wall at the entrance, so the rest queue outside (attackring-gatehouse-40: 15 ever in reach and 244 damage
+  over the gate offsets against Retail's 29 and 584); a ring across a river (attackring-river-64) stands 6 in reach against 21; statue ticks stay a few
+  times Retail's (presses toward reach keep the facing cap), and fight and guard rings keep the old crawl
+  (attackring-fight-60 32,402, attackring-guard-64 42,133 statue ticks, Retail a few hundred). Against a target walled
+  in on every side Legion now outfires Retail (it seeks flush points on every face that has one). A Move group crossing
+  a firing ring is level with Retail's t90 (ringcross-100 3,841 against 3,926) and completes about 200 ticks after it.
+  Measured by `ctest:legion_ringupkeep`, `ctest:legion_attackwalled`, `ctest:legion_attackflush`,
+  `ctest:legion_ringcross`, `ctest:legion_ringfill`, `ctest:legion_ringclosed`, `ctest:legion_ringstill`,
+  `ctest:legion_ringwait`, `ctest:legion_ringshadow`, `ctest:legion_ringbend` and `ringcross:g.M.t90`.
 * **The livelock fix costs some lane order (protocol 257).** A body blocked
   again after a side-step toward its arc may not step straight back, so it
   takes another field step inward or holds and side-steps: the 150 bodies
@@ -3284,44 +3731,59 @@ Rules that came out of using them:
     players, at 12000 ticks, or on dynamicobstacle, rapidreplacement and
     exploration. Findings 2, 4, 5, 6, 7, 8, 10 and 11 have no dedicated test;
     `battle-field-2x60:spins` and `ctest:crowdbench_matrix` are what watch them.
-* **A body held off its own slot by settled bodies of its own footprint can
-  wait for good.** A formation member steers by the line to its own slot, while
-  the settle rule reads nearness on its class's field, which descends to the
-  nearest slot of any member of that class. Where settled arrivals stand across
-  that line uphill of the body, none reads nearer, so the body never queues and
-  its order stays open, holding with its yields refused. Since the 2026-10-14
-  review a settled body of another footprint counts when its cells reach below
-  the waiting body (section 5, Settling); bodies of its own footprint are still
-  read at their origin. In 12,800 random one-click formations of 30 to 100
-  bodies of two footprints (4x4/2x2, 4x4/3x3, 3x3/2x2, on a grid, shuffled or in
-  column order) 38 layouts kept an order open after 5,000 ticks before that
-  review and 5 after, each such a body among settled bodies of its own size.
-  Measured by `ctest:legion_mixedsettle` (the other-footprint case) and the
-  crowdbench screen's `mixedfootprints` rows (`orders_complete`).
-* **A 2-cell dead-end corridor still jams at its mouth.** A queue of 120
-  bodies into a 4-cell corridor now settles back from the crowd row by row
-  (all 120 by tick 5500), and a 615-body click into a wall pocket arrives as
-  one point (606 inside the authored radius by tick 8000). In a 2-cell
-  corridor the queue jams at the mouth before it enters, so no settled crowd
-  reaches back to it and those orders stay open
-  (`deadend-w2-n120-closed-plain:g.A.complete_n`).
+* **A body held off its own slot by settled bodies of its own footprint**
+  (resolved 2026-10-20, Legion ~100 round 3): a settled arrival covering the
+  waiting body's own slot now counts as nearer, whatever its footprint
+  ("Corridor mouths and own-slot arrivals"). The seeded screen in
+  `legion_world_test mixedrandom` (TAK_MIXRANDOM=0,12799) leaves no layout open
+  (3 on the parent; 5 in the 2026-10-14 review's own scratch screen, which is
+  gone). Measured by `ctest:legion_mixedrandom`, `ctest:legion_mixedsettle` and
+  the crowdbench `mixedfootprints` rows (`orders_complete`).
+* **A 2-cell dead-end corridor's front can settle short of its room.** Since
+  round 3 (2026-10-20) the mouth of a corridor one body wide no longer jams
+  ("Corridor mouths and own-slot arrivals": every 120-body 2-cell dead end
+  completes at 40 of 43 offsets, none did before). The 40-body room at the end
+  of one still leaves orders open at 11 of 43 offsets (`deadend-w2-n40-room-plain`,
+  24 of 43 for `-squad`): the first bodies through the corridor stop for a
+  window a few cells before the room, settle where they stand (their potential
+  is within the area's bound), and the queue settles back from them, while the
+  room's side by the door stays empty; the bodies past the explicit area's
+  ceiling then wait (the parent does the same at offset -3). In the
+  120-body fixtures at offsets +28..+30 the column's last row, spawned two cells
+  from the map's edge, never leaves Waiting (on the parent too). Measured by
+  `deadend-w2-n40-room-plain:g.A.complete_n` over wide offsets and
+  `ctest:legion_funnelmouth`. Two waiters whose ways cover each other at one
+  potential (a pillar field with gaps one origin wide) no longer hold each
+  other: the lower id goes first (`ctest:legion_funneltie`).
 * **Group partitioning depends on registration order** and on field start
   timing (a started field takes no new seeds). The 256-goal cap chunks goals
   in registration order, so an order whose unit ids are not spatially
   coherent can get spatially interleaved groups
   (`split-450-open:g.A.arrived`, and the 8-group `corner-8x56:g.A.arrived`).
-* **One-way admission is slower than a lucky two-way crossing.** A narrow passage (16 cells or less) is admitted one
-  direction at a time, and since 2026-10-19 tile-chain groups wait too. On `bridges-100`'s 12-cell bridge, where two
-  lanes each way fit, the old two-way crossing of the chain groups arrived sooner when it did not gridlock:
-  `bridges-100` (tools/scenarios/legion100) `scale.arrive.t90` 10,237 to 11,928 (gate median), `stopped_permille`
-  148 to 184. Groups that were never 8 strong (`kOpeningMembers`) still neither wait nor count except as occupants,
-  so a handful of separate walkers can still walk into a passage held the other way. Measured by `ctest:legion_passage_admission` (arrivals and stuck
-  bodies; the time is in its run's JSON) and `ctest:legion_choke` (bridges-1000).
-* **Idle enemy units never step aside.** Settled friendly Legion arrivals
-  yield and idle friendly bodies part a lane (own player and allies, since
-  2026-10-19); an enemy's idle body is a still body to route around
-  (`strait-3x80:region.east.inside`: a selection that has to pass a barrier
-  of idle bodies).
+* **One-way admission costs small groups on wide-enough passages.** A narrow passage (16 cells or less) is admitted
+  one direction at a time. With the green scaled to the crossing (2026-10-20) `bridges-100`'s one-way crossing beats
+  the old two-way one (`scale.arrive.t90` gate median 9,920, the two-way 10,237 when it did not gridlock, 11,037 on
+  0.8.6), so two-way flow on its 12-cell bridge, where two lanes each way fit, was not brought back. Since the same
+  day groups of fewer than 8 (`kOpeningMembers`) wait their turn too (`taperbridge-small`: no gridlock where 16 of 17
+  offsets knotted); on a 12-cell bridge, where a few walkers used to get through head on, they now wait (a scratch
+  fixture of ten orders of 5 against an army of 50: t90 +4%). The other way can wait up to two crossings plus one
+  (`taperbridge-100`: the second army waits for the whole first). Measured by `ctest:legion_passage_admission`
+  (arrivals and stuck bodies; the time is in its run's JSON), `ctest:legion_passage_small` and `ctest:legion_choke`
+  (bridges-1000).
+* **Idle enemy units never step aside -- as in Retail.** Settled friendly
+  Legion arrivals yield and idle friendly bodies part a lane (own player and
+  allies, since 2026-10-19; the funnel give-way, 2026-10-20, asks only its own
+  group); an enemy's idle body is a still body to route around. Retail moves no
+  idle body at all, its own or another player's: a blocked mover only clamps,
+  slows and presses on (docs/retail-engine.md, "retail genuinely wedges"), parked
+  bodies are walls in its cell ratings, and BUGGER_OFF, the one script request to
+  clear a space, is stored and never acted on ("The build yard was hung").
+  Moving enemy bodies would be a gameplay change with no Retail behaviour to
+  port, so Legion keeps Retail's rule there (2026-10-20, Legion ~100 round 3).
+  `strait-3x80`, named here before, holds one player's fleet only; what
+  watches it is `ctest:legion_staticidle` (its part 3: another player's idle
+  body plugging the one gap in a wall stays put, and the group holds until a
+  second gap opens).
 * **Fog**: Legion plans on the static plane as Retail's mover sees it. It does
   not model unexplored terrain separately. The one place fog shows is group
   awareness, which sees an enemy mover only within sight

@@ -3457,7 +3457,66 @@ ProbeRun deadendRun(int width,int count,bool room,bool squad,bool retail,bool se
         " farthest_settled_cells=%.1f nearest_holder_cells=%.1f",
         retail?"retail":"legion",width,int(room),int(squad),count,doneAt.size(),count,holding,moving,quantile(done,0.5),quantile(done,0.9),
         done.empty()?-1:*std::max_element(done.begin(),done.end()),farthestSettled,nearestHolder);
-    return {std::string(buf)+" | "+completionKeys(watch.keys(),"all")+t1Counters(f.world),f.world.stateHash()};
+    return {std::string(buf)+" | "+completionKeys(watch.keys(),"all")+t1Counters(f.world),f.world.stateHash(),int(doneAt.size())};
+}
+// Funnel claims and the funnel give-way (Legion ~100 round 3, 2026-10-20). A queue reaching a corridor one body
+// wide (2 cells, 2x2 bodies) arrives on both sides of the corridor's first origin; on the parent two bodies wait
+// either side of it, each standing on a cell of it, for good: no further body enters, and the orders of the
+// crowd outside never end (the closed corridor: 27 and 9 of 120 settle at start offsets 0 and -1; the room at the
+// end of one: none of 40 where the column straddles the corridor's row, offsets +12 and +14). Every order must end.
+void funnelmouth() {
+    struct Case {int count;bool room;int shift;};
+    const Case cases[]={{120,false,0},{120,false,-1},{40,true,12},{40,true,14}};
+    std::string fail;
+    for(const auto& c:cases) {
+        g_shift=c.shift;
+        const auto r=deadendRun(2,c.count,c.room,false,false,true);
+        g_shift=0;
+        std::printf("funnelmouth shift=%d %s hash=%016llx\n",c.shift,r.text.substr(0,r.text.find(" |")).c_str(),(unsigned long long)r.hash);
+        std::fflush(stdout);
+        if(r.a<c.count)fail+=" "+std::to_string(c.count)+(c.room?"room":"closed")+"@"+std::to_string(c.shift)+":"+std::to_string(r.a);
+    }
+    check(fail.empty(),"funnelmouth: orders still open at a corridor's mouth:"+fail);
+}
+// Ties between funnel claims (Legion ~100 round 3 review, 2026-10-20). A field of 1x1 pillars 3 cells apart leaves
+// gaps 2 cells wide, one origin wide for a 2x2 body, so every origin in it is a funnel way (passageWay). Two bodies
+// waiting for neighbouring ways at one potential each cover the other's way: when an equal potential also closed a
+// way to a waiter, both held for good with no body on either way (giveWay never ran): of 72 bodies on one click,
+// 4, 9 and 12 orders were still open after 9000 ticks at offsets 0, +1 and -3. Every order must end.
+ProbeRun pillarFieldRun(bool serial) {
+    Fixture f(260,100,serial);
+    for(int x=80;x<160;x+=3)for(int z=5;z<=95;z+=3)f.wall(x,z);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int j=0;j<6;++j)for(int i=0;i<12;++i)ids.push_back(f.spawn(type,14+i*3,30+j*4));
+    f.start();
+    TypeRegistry registry;
+    const float px=220*16,pz=50*16;
+    for(int id:ids) {
+        tak::net::Command c;c.kind=tak::net::Cmd::Move;c.player=0;c.unitId=id;c.targetId=-1;c.x=px;c.z=pz;c.queue=0;
+        applyCommand(f.world,registry,c);
+    }
+    int ticks=0,open=int(ids.size());
+    for(;ticks<9000&&open;++ticks) {
+        f.world.tick(1.f/30);
+        open=0;for(int id:ids)open+=!f.world.unit(id)->orders.empty();
+    }
+    char buf[160];
+    std::snprintf(buf,sizeof buf,"pillarfield n=%zu settled=%zu ticks=%d",ids.size(),ids.size()-size_t(open),ticks);
+    return {buf,f.world.stateHash(),int(ids.size())-open};
+}
+void funneltie() {
+    std::string fail;
+    for(int shift:{0,1,-3}) {
+        g_shift=shift;
+        const auto r=pillarFieldRun(true);
+        g_shift=0;
+        std::printf("funneltie shift=%d %s hash=%016llx\n",shift,r.text.c_str(),(unsigned long long)r.hash);
+        std::fflush(stdout);
+        if(r.a<72)fail+=" @"+std::to_string(shift)+":"+std::to_string(r.a);
+    }
+    check(fail.empty(),"funneltie: orders still open in a pillar field:"+fail);
 }
 void deadend() {
     if(std::getenv("DEADEND_W")||std::getenv("DEADEND_N")) {
@@ -4104,7 +4163,7 @@ void crosslong() {
 // nearer the click and covers origins 13 below it; the 2x2 last in the 3x3/2x2 crowd's fourth column stops
 // against a settled 3x3 read 1 above it, whose origins reach 8 below. Every order must end.
 struct MixedSettleRun {int done=0,last=-1;std::string open;uint64_t hash=0;};
-MixedSettleRun mixedsettleRun(std::string_view layout,int rows,int pitch) {
+MixedSettleRun mixedsettleRun(std::string_view layout,int rows,int pitch,int ticks=4000) {
     Fixture f(200,120);f.publish();
     const std::array<UnitType,4> types{mover(1),mover(2),mover(3),mover(4)};
     std::vector<int> ids;
@@ -4116,7 +4175,7 @@ MixedSettleRun mixedsettleRun(std::string_view layout,int rows,int pitch) {
     f.start();
     for(int id:ids)f.world.order(id,120*16,60*16,false);
     MixedSettleRun r;
-    for(int t=0;t<4000&&r.done<int(ids.size());++t) {
+    for(int t=0;t<ticks&&r.done<int(ids.size());++t) {
         f.world.tick(1.f/30);
         int done=0;for(int id:ids)done+=f.world.unit(id)->orders.empty();
         if(done>r.done)r.last=t;
@@ -4124,6 +4183,13 @@ MixedSettleRun mixedsettleRun(std::string_view layout,int rows,int pitch) {
     }
     for(size_t i=0;i<ids.size();++i)
         if(!f.world.unit(ids[i])->orders.empty())r.open+=" "+std::to_string(ids[i])+"("+layout[i]+"x"+layout[i]+")";
+    if(std::getenv("TAK_MIXDUMP"))   // every body at the end: id, footprint, centre px, open order, Legion state, slot
+        for(size_t i=0;i<ids.size();++i) {
+            const auto& u=*f.world.unit(ids[i]);const auto* nav=f.world.legionNavigator();
+            int32_t sx=-(1<<16),sz=-(1<<16);if(nav)nav->goalPoint(u.id,sx,sz);
+            std::printf("MIXDUMP id=%d f=%d x=%d z=%d open=%d st=%d sx=%d sz=%d\n",u.id,u.type->footX,int(u.x.v>>16),int(u.z.v>>16),
+                        int(!u.orders.empty()),nav?nav->unitState(u.id):0,sx>>16,sz>>16);
+        }
     r.hash=f.world.stateHash();
     return r;
 }
@@ -4140,6 +4206,47 @@ void mixedsettle() {
         if(!r.open.empty())open+=std::string(" ")+c.name;
     }
     check(open.empty(),"mixedsettle: an order beside settled bodies of another footprint never ended:"+open);
+}
+// Random one-click formations of two footprints (Legion ~100 round 3, 2026-10-20): the screen the 2026-10-14
+// review ran on a scratch harness (12,800 layouts), kept as a case. Layout `seed` (splitmix64): footprints
+// 4x4/2x2, 4x4/3x3 or 3x3/2x2, 30 to 100 bodies, 10-90% of the larger, shuffled, in column order (the larger
+// first) or alternating, 6 to 12 rows at a pitch of the larger footprint plus one, one click 100 cells east of
+// the column. Every order must end within 5,000 ticks. TAK_MIXRANDOM=FROM,TO screens that range of seeds and
+// reports each layout with an open order; without it the case runs the seeds listed below.
+std::string mixedRandomLayout(uint64_t seed,int& rows,int& pitch) {
+    uint64_t z=seed*0x9e3779b97f4a7c15ull+0x632be59bd9b4e019ull;
+    auto next=[&z]() {z+=0x9e3779b97f4a7c15ull;uint64_t x=z;x=(x^(x>>30))*0xbf58476d1ce4e5b9ull;x=(x^(x>>27))*0x94d049bb133111ebull;return x^(x>>31);};
+    static const char pairs[3][2]={{'4','2'},{'4','3'},{'3','2'}};
+    const auto& pair=pairs[next()%3];
+    const int n=30+int(next()%71),big=10+int(next()%81),mode=int(next()%3);
+    rows=6+int(next()%7);pitch=pair[0]-'0'+1;
+    std::string layout;
+    for(int i=0;i<n;++i)layout+=int(next()%100)<big?pair[0]:pair[1];
+    if(mode==1)std::sort(layout.begin(),layout.end(),std::greater<char>());
+    else if(mode==2)for(int i=0;i<n;++i)layout[size_t(i)]=(i/rows)%2?pair[1]:pair[0];
+    return layout;
+}
+void mixedrandom() {
+    // The two layouts the base left open (5717: a 4x4, id 4; 9651: a 3x3, id 9), each held off its own slot by a
+    // settled arrival of its own footprint standing across it.
+    std::vector<uint64_t> seeds={5717,9651};
+    if(const char* range=std::getenv("TAK_MIXRANDOM")) {
+        unsigned long long a=0,b=0;
+        if(std::sscanf(range,"%llu,%llu",&a,&b)!=2||b<a)throw std::runtime_error("TAK_MIXRANDOM=FROM,TO");
+        seeds.clear();for(unsigned long long k=a;k<=b;++k)seeds.push_back(k);
+    }
+    std::string open;
+    for(const uint64_t seed:seeds) {
+        int rows=0,pitch=0;
+        const std::string layout=mixedRandomLayout(seed,rows,pitch);
+        const auto r=mixedsettleRun(layout,rows,pitch,5000);
+        if(!r.open.empty()||!std::getenv("TAK_MIXRANDOM"))
+            std::printf("mixedrandom seed=%llu bodies=%zu rows=%d done=%d last_done=%d open:%s hash=%016llx\n",(unsigned long long)seed,
+                        layout.size(),rows,r.done,r.last,r.open.empty()?" none":r.open.c_str(),(unsigned long long)r.hash);
+        if(!r.open.empty())open+=" "+std::to_string(seed);
+        std::fflush(stdout);
+    }
+    check(open.empty(),"mixedrandom: a layout kept an order open:"+open);
 }
 
 // Slots by arrival exchange within one movement plane (2026-10-14 Legion review, after the commit review of
@@ -4201,7 +4308,7 @@ int main(int argc,char** argv) {
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
-        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"entryplanes",entryplanes},
+        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"mixedrandom",mixedrandom},{"funnelmouth",funnelmouth},{"funneltie",funneltie},{"entryplanes",entryplanes},
         {"improvedefer",improvedefer},{"chainresolve",chainresolve},{"trafficlane",trafficlane}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
