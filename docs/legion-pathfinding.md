@@ -3039,6 +3039,105 @@ orders at the halves' slot centroids split 50 / 50 and entered the disc 500 tick
 speed `island-1x100` is ahead of Retail at t90 and level at the last arrival without it, so no per-band field was
 built.
 
+### Lane order, walls and reversals at ~100 bodies, round 3 (2026-10-20, nothing landed)
+
+The targets were the lane swaps where streams cross after a turn (gate medians on 0.8.6: `mixed2:gate.mid.crossings`
+38, Retail 0; `sbend:gate.t2.crossings` 27, Retail 5; `corner-1x448:gate.top.crossings` 26, Retail 5), the reversals
+and standing that round 1's brisk detours and round 2's travel-speed flow-around added, and wall touching
+(`attackring-wall-64` 27 permille, Retail 20; `doorplug-112` 18, Retail 8). Every attempt below was measured
+against 0.8.6 (Legion only; Retail stays hash-identical by construction), at the gate offsets and, for the final
+candidates, over the 84 fixtures of the pinwheel's reach and at offsets -8..8 (-4..8 where the start leaves the map)
+on the Windows box. None was a clear net win, so the simulation is unchanged; the turn fix below is kept on branch
+`task-l3-lanes3-turnfix` (a8a90396) for a ruling, and the experiments' switches on `task-l3-lanes3-wip`.
+
+**Where the crossings come from.** In `mixed2` (48 bodies round the tip of a long wall, a 20-cell gap below it) 36
+of the 38 crossings are at the pinwheel site. Position dumps show the formation packed into the 7 rows under the tip
+(z 80-86) instead of on its arcs: the inner files reach the wall's face one row above the tip and wait there, up to
+180 ticks, for a gap in the stream of outer files passing under it on the passage lanes and their straight walks,
+then leave on the outside. Round 2's flow-around at travel speed made that stream continuous: with arc-aimed
+shuffles (a body flowing round a blocker toward its arc point or lane) back at the facing cap `mixed2` falls to 13,
+the protocol-279 value, with its times unchanged, but `island-1x100` t90 1,937 -> 2,387, `corner-1x100` 4,187 ->
+4,592 and `corner-1x448` 26 -> 35 crossings, so that was not taken either. `sbend`'s second-turn crossings are all
+at the straight walk to the slots, and `corner-1x448`'s mostly in the blocked branch and the field.
+
+**The pinwheel misses a turn at a wall end met across it.** `pivotAim` looked for the chain's turn from the first
+chain cell beside a wall onward, so a turn's vertex lay at least 6 cells along the wall. A descent chain that meets a
+wall END at an angle touches it where it turns; no turn is found until the body is round the end, so it is never
+ranked there and hugs the end with the inner files. In `corner-1x100` most of the 100-body formation comes at the
+block's corner across it: the bodies take their ranks only once round it (for the next turn, 40 cells on), and
+round the corner on the field into one file along the rock-ragged edge. That is the standing: 2,062 of its 2,123
+standing samples (every 30 ticks, offset 0) lie west of that corner between ticks 600 and 2,100, where a body that
+reached the corner first stood 1,322 ticks (573 -> 1,895) waiting for a gap in the file passing in front of it.
+Starting the search 6 cells earlier (the vertex may be the wall contact) ranks bodies that meet an end across it
+(sbend's second turn, the generated maps' wall ends); `corner-1x100`'s funnel stays (standing 261 -> 258), since most
+of its chains turn 10 to 40 cells before they first touch the rocks along the edge. At a bridge's mouth it
+gridlocked `bridges-100` at 5 of the 11 gate offsets (none before: its 12-cell bridge's admission lottery,
+"Passage admission at 100 bodies"), so an early vertex is no turn where the chain enters a passage strip (a
+cross-section under `kPassageSpan`) within 6 cells after it. Measured with that guard (gate medians, 0.8.6 -> fix):
+
+| fixture | key | 0.8.6 | fix | Retail |
+|---|---|---|---|---|
+| sbend | t2 crossings / t90 (offsets -8..8) | 26 / 3,126 | 4 / 3,251 | 5 / 3,602 |
+| gen1-route-61923 | arrived per group / left behind | 93, 78, 70 / 50, 54, 98 | 143, 131, 111 / 0, 1, 57 | 9, 11, - |
+| gen1-route-54772 | t90 per group | 7,611 / 7,195 / 9,051 | 7,071 / 6,412 / 8,376 | |
+| mixed-100 | arrive t90 / t99 (-8..8) | 3,728 / 4,054 | 2,996 / 3,289 | |
+| taperbridge-100 | stuck at the end / arrived, summed over the gate offsets | 81 / 1,003 | 0 / 1,087 | |
+| corner-1x100 | t90 / done / standing (-4..8; Retail at the gate offsets) | 4,176 / 4,837 / 261 | 4,309 / 4,817 / 258 | 5,084 / 5,547 / 1 |
+| island-1x100 | t90 / done (-8..8) | 1,937 / 2,477 | 1,982 / 2,540 | 2,296 / 2,552 |
+| uturn, gap20 | top crossings | 5, 5 | 7, 20 | 2, 2 |
+| slowturn | W400 / W1000 crossings | 8 / 8 | 15 / 22 | 3 / 0 |
+| corner-1x448, corner-8x56 | top crossings | 26, 8 | 41, 14 | 5, 10 |
+| wall-4x50 | top crossings / lane swaps | 19 / 1,008 | 27 / 1,487 | 3 / 426 |
+| doubleturn, farroom, uturn | wall touch permille | 69, 214, 30 | 18, 170, 11 | -, 78, 34 |
+| pocket-615-wall | arrived / reversals (-8..8) | 474 / 506 | 462 / 775 | 157 / 563 |
+
+Summed over the 84 fixtures: arrivals 9,414 -> 9,563, groups never done 106 -> 103, t90 plus done -0.2%,
+reversals -0.8%, standing -1.3%, moving wall touch -9.5%; but gate crossings 819 -> 894 and lane-probe swaps
+1,673 -> 2,188, U-turn fixtures' t90 +4..+11% (outer files walk wider arcs; still far ahead of Retail), and
+`ctest:legion_cost` fails on 19 `cost-corner` work counters (whole-run Legion work at N400 +22%: more slides,
+holds and trace cells round the corner). More ranks mean more swaps on simple turns: the pinwheel's arcs are not
+order-preserving there, and the missed turns had been hiding it. The candidate branch's test legion_turnrank
+bounds sbend's median second-turn crossings over the core five at 9 (27 on 0.8.6, 4 with the fix).
+
+Tried on top of it, each over the same crossing-sensitive set (gate medians):
+
+* Ranking again, once, when the turn is within 24 or 32 chain cells (a rank taken 40 cells out reads the formation's
+  lateral order across a way it does not keep): `mixed2` 38 -> 27 / 29 (-8..8: 29 median), `corner-1x448` 18 /
+  33, `gap20` 7 / 9, sbend 2, the flow gains mostly kept; but uturn 9 / 11, gapsweep's 20-cell gap 18 / 16,
+  `strait-2x100` 4 -> 13 (32), lane swaps still +27..35%, and `ctest:legion_mixedformation` fails either way (its 20 ground
+  bodies finish 2,315 -> 2,945 / 2,593 because a late body shuffles at the settled crowd's edge, and the flyers then
+  miss the facing bound, 5.1% against 5%, or stall one 30-tick window). Re-ranking only bodies that did not hug:
+  `corner-1x448` 63. Only ranking turns within 24 cells: `corner-1x448` 14, slowturn 14 / 4, but gap20 19, uturn
+  13 and the generated maps' gains halved.
+* One frozen frame per part (the centroid and vertex of the part's first rank at that wall end, so every member is
+  ranked across the same line): no better (`corner-1x448` 40-43, uturn 6-13).
+* Ranking from the vertex instead of the centroid (the rank without its centre offset): nearly every body ranks 0
+  and hugs, a single file -- every gate crossing key 0 (`mixed2`, sbend, uturn, gap20, slowturn, wall-4x50) at
+  +22..29% of t90 on every U-turn fixture and `doubleturn` wall touch 69 -> 245. It shows the swaps are the arcs'.
+
+**Other levers tried (gate medians, none kept):**
+
+* The corner-hug removal of W9's B3 probe (every rank wheels at least a cell off the wall): `mixed2` 38 -> 32 (-8..8:
+  38 -> 30), sbend 27 -> 19, `corner-1x448` 26 -> 20, `corner-8x56` 8 -> 4, `pocket-615-wall` wall touch 55 -> 35;
+  but `corner-8x56` g.B.t90 6,573 -> 7,449 and groups E-H 24 fewer arrivals by tick 9,000.
+* Travel speed for flow-around shuffles only within 45 or 67.5 degrees of the heading (arc-aimed, or all): `mixed2`
+  38 -> 38 / 41 / 18, sbend 24 / 21 / 9, but `island-1x100` t90 1,937 -> 2,228..2,837 and `corner-8x56` g.B.t90
+  +5..+28%. Arc shuffles at the cap only inside a passage strip: no change (mixed2's happen before the gap).
+* Giving a long-held body the right of way at a merge (a moving body does not step into the cells a body held 60
+  or 150 ticks is blocked from, when they are free but for the two of them): sbend 27 -> 10 / 12, `corner-1x448` 26
+  -> 14 / 13, moving wall touch on the corners 56 -> 29 and `pocket-615-wall` 55 -> 17 (60 ticks), but the stream
+  stops for every merge: `corner-1x100` t90 4,187 -> 5,132 / 4,997, `corner-4x25` D t90 +18..21%, `corner-1x448`'s group A never
+  done. Only for a held body nearer the goal on the same field: sbend 17, `corner-1x448` 24, `corner-8x56` g.B.t90
+  +6%.
+* Turning off the passage gate or the passage lanes in `mixed2`: 31 and 77 crossings.
+
+**Reversals and standing** are mostly what round 1's brisk routes are for (see Known weaknesses: a route backs out of
+the pocket among settled bodies the body walked into, 1-6 updates after it starts); none of the changes above
+lowered them without the time they bought, except the turn fix on the generated maps and `mixed-100` (reversals
+-1..-53% on six of them, +20% on gen1-route-36057; standing -4..-60%). **Wall touching** in `attackring-wall-64` and `doorplug-112` (and their 100-body
+versions) is untouched by every lever here (hash-identical runs): their touches are the ring's press-in and the
+door's own lanes, left to the ring work; where formations round wall ends the turn fix lowers it (table).
+
 ### Legion 10,000: where the program left it
 
 docs/legion-10000-report.md gives the measured result against the starting revision c2c25707:
@@ -3153,9 +3252,16 @@ Rules that came out of using them:
   its group A now completes at all eleven gate offsets); a lifted flyer
   detours 5 cells against 2.
   The attempts are parked on branches task-w9-a-A1..A4 and
-  task-w9-b-b1..b6-reverted with their numbers; an unplanned probe that removes
-  the corner hug behind a turn guard brought both corner fixtures within
-  Retail and is the first lead to try. Measured by
+  task-w9-b-b1..b6-reverted with their numbers. The W9 probe that removed the
+  corner hug (B3, every rank wheels at least a cell off the wall) was retried
+  on 0.8.6 in round 3 (2026-10-20): corner-1x448 26 -> 20, corner-8x56 8 -> 4,
+  but corner-8x56's later groups no longer reach t90 in 9,000 ticks (21 fewer
+  arrivals over groups E-H), so it was not taken (see "Lane order, walls and
+  reversals at ~100 bodies, round 3"). At 0.8.6 the gate medians are
+  corner-1x448 26 (Retail 5), corner-8x56 8 (Retail 10), mixed2 38 (Retail 0)
+  and sbend's second turn 27 (Retail 5). The pinwheel misses most turns at a
+  wall end met across it (same section); a candidate fix is on branch
+  task-l3-lanes3-turnfix. Measured by
   `corner-1x448:gate.top.crossings`, `corner-8x56:gate.top.crossings`,
   `strait-2x150:gate.strait.crossings`, `attackring-wall-64:wall_touch_permille`,
   `doorplug-112:wall_touch_permille`, `ringcross:g.M.t90`,
@@ -3183,6 +3289,20 @@ Rules that came out of using them:
   turn rise (`mixed2:gate.mid.crossings` 13 -> 38, Retail 0;
   `sbend:gate.t2.crossings` 9 -> 27, Retail 5). A denser crowd jams in
   `pocket-615-wall` (`g.A.arrived` 533 -> 474, Retail 157).
+  Where the reversals come from (round 3, 2026-10-20, offset 0, each return
+  to a 16 px cell left under 90 ticks before attributed to the steering
+  branch the body was in): corner-1x100 82 = 33 walking a brisk local detour
+  route, 13 a flow-around shuffle at travel speed, 10 one at the facing cap,
+  10 field descent, 8 straight walks, 7 lane passes; corner-4x25 39 of 62 on
+  brisk routes; island-1x100 30 on routes, 19 brisk shuffles, 18 pinwheel;
+  densehead 73 straight walks (the head-on meet), 34 routes, 28 brisk
+  shuffles. A route reverses 1 to 6 updates after it starts, with 15 to 43
+  cells still to walk: it backs out of the pocket among settled bodies the
+  body walked into, which is what the route is for. corner-1x100's standing
+  is not at the goal: 2,062 of its 2,123 standing samples (every 30 ticks)
+  lie more than 80 cells out, between ticks 600 and 2,100, west of the
+  block's corner, where a body that reached the corner first waited 1,322
+  ticks to merge into the single file passing it (see the round-3 section).
 * **Narrow-passage admission still gridlocks at some offsets.** At ~100 bodies
   a head-on knot in a bridge's mouth is a matter of timing: over offsets -8..8,
   `bridges-100` and `taperbridge-100` each end with 44-88 bodies stuck at one
