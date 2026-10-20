@@ -1107,7 +1107,15 @@ armies:
   reach steps in until it can fire, a target in a walled-off place is still
   surrounded from outside its walls, and a group walking past another group's
   firing ring splits round both sides of it. Units chasing a moving target
-  follow it without planning again at every step.
+  follow it without planning again at every step. Units round a target that
+  is standing still no longer creep along the ring, and a target walled in on
+  every side is now fired on from the nearest spots against its walls.
+- **Narrow crossings take turns.** At a bridge or other narrow crossing, the
+  time each group is let through grows with the length of the crossing, and a
+  small group waits its turn instead of pushing in among a big one. Two armies
+  of about 100 meeting head on at a bridge no longer jam in tests.
+- **Dead-end corridors.** Groups sent into a corridor one unit wide are let in
+  one at a time and settle along it instead of jamming at its mouth.
 - **Buildings do not hold a formation.** A building or an unfinished unit in an
   Alt+number formation no longer slows the formation to a standstill.
 - **No spinning.** A unit that is truly trapped stops and waits, instead of
@@ -1139,8 +1147,6 @@ in a formation or Ctrl+number group with ground units keep station over them.
 
 **Known limits of Legion:**
 
-- A large group sent into a **dead-end corridor** can leave some units
-  unsettled at the far end.
 - A crowd that parks **after** a group has already planned its route is
   avoided only if it fills 20 cells or more of the group's way (the group then
   plans again, at most once every ten seconds); a smaller one is walked round
@@ -1149,11 +1155,8 @@ in a formation or Ctrl+number group with ground units keep station over them.
   about a minute, until the crowd round it has packed.
 - A group walking through a ring of units that stand and fire arrives a
   little later than it would past the same units in the original game.
-- Two armies of about 100 meeting head on at a bridge take turns through it,
-  but from some starting positions they can still jam in its mouth.
 - An attack ring along a wall stands thinner than in Retail, so fewer units
-  fire at once. A target walled in on every side is surrounded but never
-  fired on; in Retail units pressed against a thin wall can shoot through it.
+  fire at once.
 - When a group goes round a parked crowd, it can still pass by one side in a
   narrow file.
 - Idle units of **enemy** players do not step aside for you, nor do units
