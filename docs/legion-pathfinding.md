@@ -4008,6 +4008,19 @@ again by the old rule; (2) a ranked member that makes no progress on its field f
 file and hugs (the field's own way, as the inner file) until it is past the turn: a hold that cannot be honoured is let
 go, it never freezes. Legion only; Retail hash-identical at every gate offset of `mixed2` and `corner-1x448`.
 
+The stall is counted from the member's rank (`Member::rankTick`, stamped when `ribbon()` or the same-side `prevR`
+copy gives a radius; the release reads the smaller of the stall and the time since the rank). `ribbon()` ranks
+members up to `kRibbonChain` descent steps from the vertex, queued ones included, so measured from the last progress
+alone a member that already stood 120 ticks when it was ranked lost its file at its first hold, and the wave's width
+was spread over files nobody walked (`corner-1x448` offset 0: the run's first ribbon rank at t=5,924, and u=54, about
+90 cells back, released at t=5,926 with `stalled=122`; with the rank clock it holds 414 ticks). Measured against the
+repair commit 6ec272e6 over the gate offsets: hash-identical on `corner-8x56`, `mixed2`, `sbend`, `island-1x150`,
+`wall-4x50`, `doubleturn`, `slowturn`, `uturn`, `gap20`, `gap10-100`, `corner-1x100` and `attackring-river-64`;
+`corner-1x448` differs at 2 of 9 offsets (D done at 4 offsets against 3, D t90 8,012 -> 7,967; top crossings 28 and
+arrivals 391 unchanged); `bridges-100` at every offset (B done 9,999 -> 9,932, B t90 9,461 -> 9,547, bridge1
+crossings 1 -> 3, statue ticks 39,395 -> 37,526); `corner-4x50` at 2 offsets (medians within 1%); `bridges-1000`
+(`legion_choke`) unchanged at 858/0.
+
 Measured (Legion gate medians; 30813a73 / the round-4 merge 891b35a1 / now):
 
 | fixture | key | 30813a73 | merge | now |
@@ -4023,7 +4036,7 @@ Measured (Legion gate medians; 30813a73 / the round-4 merge 891b35a1 / now):
 | sbend | t2 crossings / done / statue | 27 / 3,602 / 754 | 2 / 3,448 / 893 | 2 / 3,377 / 1,040 |
 | gap10-100 / gap20-100 | t90 | 2,387 / 2,207 | 2,387 / 2,235 | 2,432 / 2,252 |
 | mixed-100 | T2 / T3 done | 4,227 / 4,700 | 3,707 / 4,222 | 3,783 / 4,202 |
-| bridges-100 | A / B done | 11,168 / 10,156 | 10,946 / 10,140 | 10,856 / 9,999 |
+| bridges-100 | A / B done | 11,168 / 10,156 | 10,946 / 10,140 | 10,856 / 9,932 |
 
 Unchanged from the merge (hash-identical at every gate offset or equal medians): `mixed2` (mid crossings 10),
 `island-1x100` (t90 1,487, lane crossings 191), `uturn`, `gap20`, `doubleturn` (t90 2,497 against 2,342 at 30813a73),

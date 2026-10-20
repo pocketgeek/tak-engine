@@ -980,8 +980,11 @@ struct LegionNavigator::Impl {
         std::vector<int> route;           // committed local detour around still bodies
         // Pinwheel (see pivotAim): the member's distance off a wall end it
         // rounds (cells; 0 not yet measured, -1 hugs as the inner file), and
-        // the arc cell it aims at from origin pivotCell.
-        int16_t pivotR=0;int pivotCell=-1,pivotAim=-1;
+        // the arc cell it aims at from origin pivotCell. rankTick: the tick
+        // a radius was last given (the ribbon's stall release counts from
+        // it, not from a stall the member brought into the rank); hashed
+        // with pivotR.
+        int16_t pivotR=0;int pivotCell=-1,pivotAim=-1;uint32_t rankTick=0;
         // The turn the member's radius is for (the ribbon, see pivotAim): its
         // vertex and its end (cells; -1 none), the chords into the vertex and
         // out of the end, and its inner side (+-1). While it is set a straight
@@ -11679,7 +11682,7 @@ struct LegionNavigator::Impl {
         for(int64_t k=0;k<n;++k) {
             Member* o=member(wave[size_t(k)].second);
             const int64_t r=(2*k+1)*span/(2*n);
-            o->pivotR=int16_t(r>=1?r:-1);
+            o->pivotR=int16_t(r>=1?r:-1);o->rankTick=w.tickCounter_;
             if(o!=&m) {
                 o->turnV=m.turnV;o->turnE=m.turnE;o->turnSide=m.turnSide;o->turnAx=m.turnAx;o->turnAz=m.turnAz;
                 o->turnEx=m.turnEx;o->turnEz=m.turnEz;o->pivotCell=-1;o->pivotAim=-1;
@@ -11755,8 +11758,10 @@ struct LegionNavigator::Impl {
     // remembered and the member ranks again at the next one.
     // A hold that cannot be honoured is let go (the round's repair): a member
     // whose file is blocked (no new low of its field potential for
-    // kRibbonStall ticks) gives it up and hugs -- the field's own way, as the
-    // inner file -- until it is past the turn. Its file can lie across a
+    // kRibbonStall ticks, counted from its rank: a queued member a far wave
+    // ranks while it already stands keeps its file the full time) gives it
+    // up and hugs -- the field's own way, as the inner file -- until it is
+    // past the turn. Its file can lie across a
     // stream of the same crowd: corner-1x448's outer files queued below the
     // rock line at A's corner behind the inner file running over it, a
     // lattice of members standing 150 to 1,200 ticks. A turn record of a
@@ -11769,10 +11774,10 @@ struct LegionNavigator::Impl {
             m.pivotR=0;m.pivotCell=-1;m.pivotAim=-1;
             return;
         }
-        if(m.pivotR>0&&stalledFor(m)>=uint32_t(kRibbonStall)) {
+        if(m.pivotR>0&&std::min(stalledFor(m),w.tickCounter_-m.rankTick)>=uint32_t(kRibbonStall)) {
 #ifndef NDEBUG
-            if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d ribbon-release at=(%d,%d) vertex=(%d,%d) R=%d stalled=%u\n",
-                                         w.tickCounter_,u.id,ox,oz,m.turnV%W,m.turnV/W,int(m.pivotR),stalledFor(m));
+            if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d ribbon-release at=(%d,%d) vertex=(%d,%d) R=%d stalled=%u ranked=%u\n",
+                                         w.tickCounter_,u.id,ox,oz,m.turnV%W,m.turnV/W,int(m.pivotR),stalledFor(m),w.tickCounter_-m.rankTick);
 #endif
             m.pivotR=-1;m.pivotCell=-1;m.pivotAim=-1;
         }
@@ -11981,7 +11986,7 @@ struct LegionNavigator::Impl {
                 m.turnV=V;m.turnE=chain[size_t(end)];m.turnSide=int8_t(side);
                 m.turnAx=int16_t(V%W-a0%W);m.turnAz=int16_t(V/W-a0/W);
                 m.turnEx=int16_t(chain[size_t(end+6)]%W-chain[size_t(end)]%W);m.turnEz=int16_t(chain[size_t(end+6)]/W-chain[size_t(end)]/W);
-                if(m.prevR!=0&&side==m.prevSide)m.pivotR=m.prevR;   // the same inner side as the last turn: the same file
+                if(m.prevR!=0&&side==m.prevSide) {m.pivotR=m.prevR;m.rankTick=w.tickCounter_;}   // the same inner side as the last turn: the same file
                 else ribbon(m,p,f,side,fx,fz,foot);
 #ifndef NDEBUG
                 if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d pivot-rank at=(%d,%d) vertex=(%d,%d) end=(%d,%d) side=%d R=%d\n",
@@ -13467,7 +13472,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
             if(std::get<0>(m.point)>=0&&m.part!=std::get<1>(m.point)) {h=mix(h,0x70617274ull);h=mix(h,m.part);}
-            if(m.pivotR||m.pivotCell>=0) {h=mix(h,uint64_t(uint16_t(m.pivotR)));h=mix(h,uint64_t(uint32_t(m.pivotCell))<<32|uint32_t(m.pivotAim));}
+            if(m.pivotR||m.pivotCell>=0) {h=mix(h,uint64_t(uint16_t(m.pivotR))|uint64_t(m.rankTick)<<16);h=mix(h,uint64_t(uint32_t(m.pivotCell))<<32|uint32_t(m.pivotAim));}
             if(m.turnV>=0||m.prevV>=0) {
                 h=mix(h,0x726962626f6eull);h=mix(h,uint64_t(uint32_t(m.turnV))<<32|uint32_t(m.turnE));h=mix(h,uint64_t(uint32_t(m.prevV))<<32|uint32_t(m.prevE));
                 h=mix(h,uint64_t(uint16_t(m.turnAx))|uint64_t(uint16_t(m.turnAz))<<16|uint64_t(uint16_t(m.turnEx))<<32|uint64_t(uint16_t(m.turnEz))<<48);
