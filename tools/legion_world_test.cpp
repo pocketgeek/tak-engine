@@ -1998,8 +1998,11 @@ void slideback() {
 // (1.13-1.73 over five offsets). With the trees plain walls (as every
 // feature was to the pinwheel on 9f677c87: files 5.37) and now: 5.49.
 // FORESTEDGE_TREES=0 makes the trees plain walls; FORESTEDGE_REPORT
-// measures only.
-constexpr double kForestFiles=5.49,kForestFilesBand=1.20;   // median of five offsets, one-sided band
+// measures only. Legion ~100 round 4 (2026-10-20, the turn ribbon): 4.47,
+// was 5.49 -- the files round the end in their order, in a ribbon of 1.2
+// bodies per sqrt(members) from the wall out where the old ranks spread 1.5
+// round the part's centroid (a deliberate trade: lane order for width).
+constexpr double kForestFiles=4.47,kForestFilesBand=1.20;   // median of five offsets, one-sided band
 struct ForestResult {int arrived=0,total=0;double files=0;int64_t pivot=0;ToFro fro;};
 ForestResult forestRun() {
     Fixture f(200,140);
