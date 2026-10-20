@@ -1,34 +1,35 @@
 # README and user-guide screenshots
 
-Refreshed on 2026-10-18 for **0.8.5**. Every image below is actual engine output
+Refreshed on 2026-10-19 for **0.8.6**. Every image below is actual engine output
 from a release-preparation build (Debug with `-O2`, OpenGL renderer) and was
-inspected by eye. 0.8.5 changed the default graphics settings (Texture Filtering
-Everything, Smooth GUI Art and Smooth Movies on, Tactical Dots on at 0%; see
-[Capture settings](#capture-settings)), so every picture the 0.8.5 build
-re-rendered uses them. It re-rendered:
+inspected by eye. The 0.8.6 build re-rendered:
 
-- the screens whose interface changed: `title.jpg` (VERSION 0.8.5),
-  `guide/options-graphics.jpg` (the new defaults and the SCREEN SHAKE row),
-  `cartographer/random-generator.jpg` (the SCATTERED MANA field) and the new
-  `guide/random-map-lobby.jpg` (the lobby's random-map panel with its SCATTERED
-  MANA slider and SIZE and PLAYERS sharing a row);
-- `generated.jpg`, now a generator v9 map with Scattered Mana (protocol 278);
-- `guide/tactical-dots.jpg` (both halves), because effects and projectiles are
-  no longer drawn with dots and the default Tactical Dots Zoom is now 0%;
-- the gallery and guide scenes retaken each release, with the new defaults:
-  `battle.jpg`, `dragons.jpg`, `flyers.jpg`, `hud.jpg`, `naval.jpg`,
+- the screens whose interface changed: `title.jpg` (VERSION 0.8.6) and
+  `guide/voice-chat.jpg` (the new TALK MODE and ACTIVATION LEVEL rows);
+- the gallery and guide scenes retaken each release, with the 0.8.5 graphics
+  defaults: `battle.jpg`, `dragons.jpg`, `flyers.jpg`, `hud.jpg`, `naval.jpg`,
   `guide/benchmark.jpg`, `guide/scorecard.jpg`, `guide/fire-on-the-move.jpg`
   and `guide/flyers-retail-legion.jpg` (both halves). Their scenes are the same
-  runs as in 0.8.4; the units stand where they stood then.
+  runs as in 0.8.5; the Legion scenes (`flyers.jpg` and the Legion half) show
+  protocol 281 movement, and the server-AI scenes differ a little where the
+  simulation changed.
 
-Kept from the 0.8.4 build: `diplomacy.jpg` and `guide/voice-chat.jpg`. Kept from
+The enemy-hover cursor change in 0.8.6 has no picture of its own (no guide
+picture shows that cursor).
+
+Kept from the 0.8.5 build: `generated.jpg`, `guide/options-graphics.jpg`,
+`guide/tactical-dots.jpg`, `guide/random-map-lobby.jpg` and
+`cartographer/random-generator.jpg`, whose screens did not change; they use the
+0.8.5 defaults.
+
+Kept from the 0.8.4 build: `diplomacy.jpg`. Kept from
 the 0.8.3 build: the lobby pictures (`lobby.jpg`, `lobby-scenario.jpg`,
 `room.jpg`, whose screens did not change), `cartographer.png`,
 `guide/cartographer-terrain.jpg` and `guide/replay.jpg`. These, and the older
 pictures below, were taken with the old defaults (Texture Filtering Off, Smooth
 GUI Art off), so their art is drawn unfiltered.
 
-The 0.8.5 captures read the user's own retail install, read-only, through a
+The 0.8.5 and 0.8.6 captures read the user's own retail install, read-only, through a
 scratch folder that links its archives, `Maps`, `Movies` and `Music` and has
 its own empty `MapCache`, `OverrideCache` and `overrides` (holding the two empty
 example packs of the lobby captures), so nothing was written into the install.
@@ -47,7 +48,7 @@ the title, 88 for the gallery and 86 for the guide; guide images are scaled from
 window, 840 × 1024) and `guide/random-map-lobby.jpg` (from 1600 × 1000,
 1500 × 900) are cropped, not scaled. The title is cropped to its 4:3 artwork,
 `guide/selection-strip.jpg` to the information bar, and `guide/voice-chat.jpg`
-to the Voice Chat panel (840 × 570, not scaled). `cartographer.png` and
+to the Voice Chat panel (832 × 651 from 0.8.6, not scaled). `cartographer.png` and
 `guide/cartographer-terrain.jpg` are the editor's own `--shot` output at its
 921 × 691 default window; the pictures in `cartographer/` come from the capture
 driver described below. Nothing was painted into a scene. The guide's HUD picture has
@@ -81,19 +82,19 @@ added back for 0.8.1. For 0.8.4 it also opens the Voice Chat page for a menu
 capture (`--shot` builds no voice engine, so no microphone is opened and the
 level meter is empty) and leaves the diplomacy fixture with a voice engine that
 is on, so the VOLUME sliders draw live instead of greyed. For 0.8.5 the same
-patch was applied unchanged. It changes no
+patch was applied unchanged; for 0.8.6 too, less its version bump. It changes no
 simulation code. Every scene runs the normal game rules, AI and renderer.
 
 ## Gallery (`docs/img/`)
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.8.5, 1920 × 1080 window cropped to the 1440 × 1080 artwork |
-| `battle.jpg` | **Benchmark** run (Settings → Benchmark, Absurd intensity) on Ulasem Arena, 55 game seconds in. Eight server AIs fight, all five sides. The camera, at 1.3× zoom, shows Aramon (magenta) and Taros (yellow) armies, with Black Dragons, clashing at a sandy arena; damaged units of every side show health bars. A real feature with no fixture; spectator view, so no fog. Rendered by the 0.8.5 build |
-| `dragons.jpg` | **Development scene.** Five server AIs, one per side, from a stress-test start (300-unit cap) with gods on, 90 game seconds in. Creon Neo Dragons breathe fire on an Aramon siege column; health bars show for every side. Spectator view, 1.4× zoom. Rendered by the 0.8.5 build |
-| `flyers.jpg` | **Development scene, spawned.** Legion pathfinding, 22 s after one move order east-south-east. A 44-unit Zhon formation: Trolls, Stone Giants and Jungle Orcs, with Gryphons, Harpies and Drakes holding rows of stations over the front of the ground (new in 0.8.0, protocol 254; before, over its middle). `1F`, solid green, marks members of formation 1. Nothing is selected, so the information bar is empty (0.8.1). Fog off, 1.45× zoom. Rendered by the 0.8.5 build (protocol 278) |
-| `hud.jpg` | Aramon player in a local-server game, about 10 s in. **Stress-test start**: Normal AI opponent, 250-unit cap. **Scripted orders**: 45 units of eight types (Archers, Swordsmen, Knights, Catapults, Mage Archers, Cannoneers, Horsemen, Rolling Towers) were made formation 1 and selected, so the information bar shows the portrait strip (one portrait per type with its count), FORMATION 1 and 45 SELECTED, and the selected units show `1F` in solid green (new in 0.8.0). The empty right-hand bar is gone (0.8.1). Stats panel on, 1.15× zoom; its VID row reads 113 MB with the new graphics defaults (Smooth GUI Art's upscaled interface art uses more video memory) (0.8.4: 94 MB, 0.8.1: 87 MB, 0.8.0: 151 MB). Rendered by the 0.8.5 build |
-| `naval.jpg` | **Development scene, spawned.** Cairbray Coast Landing, 10 s in. Veruna Flagship, Men of War, Trebuchet Ships and Harpoon Ships fight Creon Iron Clads, Stern Wheelers and Submersibles. Nothing is selected, so the information bar is empty. 1.6× zoom, fog off. Rendered by the 0.8.5 build |
+| `title.jpg` | Title menu showing version 0.8.6, 1920 × 1080 window cropped to the 1440 × 1080 artwork |
+| `battle.jpg` | **Benchmark** run (Settings → Benchmark, Absurd intensity) on Ulasem Arena, 55 game seconds in. Eight server AIs fight, all five sides. The camera, at 1.3× zoom, shows Aramon (magenta) and Taros (yellow) armies, with Black Dragons, clashing at a sandy arena; damaged units of every side show health bars. A real feature with no fixture; spectator view, so no fog. Rendered by the 0.8.6 build |
+| `dragons.jpg` | **Development scene.** Five server AIs, one per side, from a stress-test start (300-unit cap) with gods on, 90 game seconds in. Creon Neo Dragons breathe fire on an Aramon siege column; health bars show for every side. Spectator view, 1.4× zoom. Rendered by the 0.8.6 build |
+| `flyers.jpg` | **Development scene, spawned.** Legion pathfinding, 22 s after one move order east-south-east. A 44-unit Zhon formation: Trolls, Stone Giants and Jungle Orcs, with Gryphons, Harpies and Drakes holding rows of stations over the front of the ground (new in 0.8.0, protocol 254; before, over its middle). `1F`, solid green, marks members of formation 1. Nothing is selected, so the information bar is empty (0.8.1). Fog off, 1.45× zoom. Rendered by the 0.8.6 build (protocol 281) |
+| `hud.jpg` | Aramon player in a local-server game, about 10 s in. **Stress-test start**: Normal AI opponent, 250-unit cap. **Scripted orders**: 45 units of eight types (Archers, Swordsmen, Knights, Catapults, Mage Archers, Cannoneers, Horsemen, Rolling Towers) were made formation 1 and selected, so the information bar shows the portrait strip (one portrait per type with its count), FORMATION 1 and 45 SELECTED, and the selected units show `1F` in solid green (new in 0.8.0). The empty right-hand bar is gone (0.8.1). Stats panel on, 1.15× zoom; its VID row reads 113 MB with the new graphics defaults (Smooth GUI Art's upscaled interface art uses more video memory) (0.8.4: 94 MB, 0.8.1: 87 MB, 0.8.0: 151 MB). Rendered by the 0.8.6 build |
+| `naval.jpg` | **Development scene, spawned.** Cairbray Coast Landing, 10 s in. Veruna Flagship, Men of War, Trebuchet Ships and Harpoon Ships fight Creon Iron Clads, Stern Wheelers and Submersibles. Nothing is selected, so the information bar is empty. 1.6× zoom, fog off. Rendered by the 0.8.6 build |
 | `generated.jpg` | Generated Aramon Riverlands map "Silverford" (generator v9, seed 7, 256 × 256, four players, Scattered Mana Medium: 53 mana spots where the same recipe without scattered mana has 24). Four Hard AIs at 8× speed, seven game minutes in. Spectator view of the same lake shore as before at 1×. The clearing in the middle holds a scattered neutral mana spot (its standing stones; the v8 recipe has open forest there), on which an AI has built a lodestone. Rendered by the 0.8.5 build |
 | `lobby.jpg` | Single-player create screen with Ulasem Arena selected: the preview numbers the map's eight start positions, and MAP SCENARIO under it is greyed (THIS MAP HAS NO SCENARIO). Retail pathfinding, other options at their defaults. Rendered by the 0.8.3 build, 1600 × 1000 (see *Lobby captures* below) |
 | `lobby-scenario.jpg` | Single-player create screen on King of the Hill with **MAP SCENARIO** turned on (protocol 259): the gold **S** marks the maps with a playable scenario in the list, the lines under the button say what the scenario changes, Monarch Expendable and Start Locations are greyed, and the preview numbers the four start positions. 1024 × 768, cropped to the lobby panel; the button was clicked with `TAK_SHOT_CLICKS`, then the pointer moved off the panel. Rendered by the 0.8.3 build. Used only by the user guide |
@@ -118,16 +119,16 @@ replace them. The unchanged views contain no version text.
 | `selection-strip.jpg` | **Selection still life.** Ulasem Arena, `--testbuild` with `TAK_SELPORTRAITS=arasword:9,araarch:6,arabow:4,arapal:3,arapult:2`, `TAK_SELPORTRAITS_HURT` and `TAK_SELPORTRAITS_SQUAD=3`, 1920 × 1080 at UI Scale 150%, cropped to the left of the information bar (1160 × 110, not scaled). Five full-size type portraits with counts, running out over the end-cap scroll, GROUP 3, the group's partial health and mana totals and 24 SELECTED. Re-rendered by the 0.8.1 build |
 | `side-aramon.jpg` … `side-creon.jpg` | One per side, re-rendered by the 0.8.1 build (the right-hand bars no longer draw). A local-server game with a **stress-test start** (250-unit cap, Normal AI opponent), about 10 s in. The player's Monarch is selected: Elsin, Lokken, Kirenna, Thirsha or the Sage. Each shows that side's interface and build menu |
 | `shift-queue.jpg` | From the 0.8.1 build. Elsin with a move and three Shift-queued moves (**scripted orders**), Shift held, about 3 s after the orders; the status reads MOVING. 1.7× zoom |
-| `flyers-retail-legion.jpg` | **Development scene, spawned.** From the 0.8.5 build (both halves, protocol 278). The `flyers.jpg` formation and order, 22 s in, run once in Retail (flyers far ahead) and once in Legion (flyers over the leading ground units). The same 1.05× camera is used for both, and the two captures are placed side by side with labels |
+| `flyers-retail-legion.jpg` | **Development scene, spawned.** From the 0.8.6 build (both halves, protocol 281). The `flyers.jpg` formation and order, 22 s in, run once in Retail (flyers far ahead) and once in Legion (flyers over the leading ground units). The same 1.05× camera is used for both, and the two captures are placed side by side with labels |
 | `options-graphics.jpg` | 0.8.5. Options screen in a 1600 × 1100 window, scrolled so that Display and the whole Graphics section show (the last Audio rows above, the Interface heading below), cropped to the panel: Fullscreen (OFF), VSync (ON), Max FPS (60, greyed out because VSync is on), Renderer (AUTO), Texture Filtering at EVERYTHING, Shadows, Smooth GUI Art, Smooth Movies, Trees Sway in Wind and Tactical Dots (ON), Tactical Dots Zoom (0%), the new Screen Shake (OFF), Hardware Cursor and Smooth Motion (ON) and GPU Memory Limit at AUTO (1.25 GB). A fresh profile whose only setting is `fullscreen = 0`, so the window takes the capture size; everything else, VSync included, is at its 0.8.5 default. The taller window is needed because the section gained a row. Linux build, so the Windows-only Ignore Windows Display Scaling row is absent |
-| `fire-on-the-move.jpg` | **From the 0.8.5 build. Development scene, two-player spawned.** Ulasem Arena, Retail pathfinding, 14 s after one plain move order east (**scripted orders**). 14 Aramon Archers and 2 Mage Builders were spawned in a 4-wide grid; 6 Taros Zombies and 6 Skeleton Archers (enemy, no AI) stand south of their path. Shift is held, so the move line shows. Zombies have reached the back of the column, which keeps walking and shooting; the flashes are hits, and three of the sixteen have fallen, so the information bar shows two portraits (2 Mage Builders, 11 Archers) and 13 SELECTED. 1.4× zoom, fog off |
+| `fire-on-the-move.jpg` | **From the 0.8.6 build. Development scene, two-player spawned.** Ulasem Arena, Retail pathfinding, 14 s after one plain move order east (**scripted orders**). 14 Aramon Archers and 2 Mage Builders were spawned in a 4-wide grid; 6 Taros Zombies and 6 Skeleton Archers (enemy, no AI) stand south of their path. Shift is held, so the move line shows. Zombies have reached the back of the column, which keeps walking and shooting; the flashes are hits, and three of the sixteen have fallen, so the information bar shows two portraits (2 Mage Builders, 11 Archers) and 13 SELECTED. 1.4× zoom, fog off |
 | `cartographer-terrain.jpg` | Cartographer Terrain tab on Ulasem Arena (`--shot --shot-tool terrain`, fresh editor profile, 921 × 691), from the 0.8.3 build: the grouped section browser, All sections (555 pieces, 1261 sections), with readable piece names, variant badges and the scrollbar, and five tools on the toolbar |
 | `tactical-dots.jpg` | From the 0.8.5 build. **Benchmark** run (Absurd) on Ulasem Arena, 50 game seconds in, spectator view fully zoomed out (zoom 0.1875, the floor for this map in a 1920 × 1080 window), where the 0.8.5 default Tactical Dots Zoom of 0% shows dots. The deterministic run was rendered twice at the same tick and camera, with Tactical Dots off and on in otherwise identical profiles. The same 800 × 900 region (the east of the map: the blue and red armies) is cropped from each at 1:1 and placed side by side under labels. With models, fire and spell effects show among the armies; with dots none are drawn (new in 0.8.5) |
 | `campaign-briefing.jpg` | *Book of Darien* chapter 1 briefing over the paused battlefield, from a direct mission launch. Re-rendered by the 0.8.1 build: nothing is selected, so the information bar is empty |
 | `replay.jpg` | Replay playback of a recorded local-server game, 9 s of 16 s, with the time bar. **Stress-test start**: an Aramon army given one Legion move order (**scripted orders**). Recorded and played back by the 0.8.3 build |
-| `benchmark.jpg` | From the 0.8.5 build. Benchmark run (Absurd), 55 s in; the BENCHMARKING badge counts down the remaining time (0:05 of 60 s): Zhon and Creon armies meet at the edge of a sandy clearing, with health bars for every side; scaled from 1920 × 1080 |
-| `scorecard.jpg` | From the 0.8.5 build. F4 scorecard over a benchmark battle (Absurd), 55 s in, at 1.1× zoom |
-| `voice-chat.jpg` | New in 0.8.4. The Voice Chat page opened from the menu (capture-only patch), 1600 × 900, cropped to the panel. The capture profile with `voiceEnabled = 1`; every other voice setting is at its default: PUSH TO TALK on SPACE, SYSTEM DEFAULT microphone at 100, SAME AS GAME OUTPUT at 100. No voice engine runs under `--shot`, so MIC LEVEL is empty |
+| `benchmark.jpg` | From the 0.8.6 build. Benchmark run (Absurd), 55 s in; the BENCHMARKING badge counts down the remaining time (0:05 of 60 s): Zhon and Creon armies meet at the edge of a sandy clearing, with health bars for every side; scaled from 1920 × 1080 |
+| `scorecard.jpg` | From the 0.8.6 build. F4 scorecard over a benchmark battle (Absurd), 55 s in, at 1.1× zoom |
+| `voice-chat.jpg` | New in 0.8.4; recaptured by the 0.8.6 build for TALK MODE. The Voice Chat page opened from the menu (capture-only patch), 1600 × 900, cropped to the panel. The capture profile with `voiceEnabled = 1`; every other voice setting is at its default: TALK MODE PUSH TO TALK, PUSH TO TALK on SPACE, SYSTEM DEFAULT microphone at 100, ACTIVATION LEVEL 15 (greyed out under Push to Talk), SAME AS GAME OUTPUT at 100. No voice engine runs under `--shot`, so MIC LEVEL is empty and shows no activation tick |
 | `random-map-lobby.jpg` | New in 0.8.5. Single-player create screen with **Generate Random Map** clicked, then SIZE clicked once (12 × 12), PLAYERS twice (4) and the new SCATTERED MANA slider set to HIGH (`TAK_SHOT_CLICKS`, see *Lobby captures*). SIZE and PLAYERS share a row; the preview reads MANA: 57 and SCATTERED: 33 NEUTRAL. Captured live at 1600 × 1000 with `TAK_SHOT_SIZES`, cropped to 1500 × 900, not scaled. The seed is the lobby's own random one |
 
 The guide also uses `title.jpg`, `lobby.jpg`, `room.jpg`, `campaign.jpg`,
@@ -254,7 +255,7 @@ Capture scripts, job lists and the encoder are in the release-preparation
 scratch directories, `$SCR/shared/release-0.7.26/shots`,
 `$SCR/shared/release-0.7.27/shots`, `$SCR/shared/release-0.7.28/shots`,
 `$SCR/shared/release-0.8.0/shots`, `$SCR/shared/release-0.8.1/shots`,
-`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots` and `~/tak-tmp/scratch/release-085/shots`. Raw PNGs, logs, profiles
+`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots` and `~/tak-tmp/scratch/release-086/shots`. Raw PNGs, logs, profiles
 and the SHA-256 manifest are kept locally in the worktree's ignored
 `build-o2/capture` folder. Keep retail archives, extracted assets and temporary
 capture files out of Git. When refreshing, rerender and inspect every view, then
