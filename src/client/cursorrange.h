@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace tak::client {
 
@@ -101,6 +103,49 @@ inline CursorWeaponRange cursorWeaponRange(const sim::Weapon& weapon,
         distance2 <= uint64_t(weapon.range) * uint64_t(weapon.range))
         return CursorWeaponRange::InRange;
     return CursorWeaponRange::OutOfRange;
+}
+
+// What one selected attacker contributes to the cursor over an enemy, from
+// retail selector 0x4dd780: default hover (mode 1) re-enters as ATTACK (mode 3)
+// for a `canattack` unit, and mode 3 splits on the unit's mover (unit+8).
+// A MOBILE attacker never consults weapon range -- it walks over and attacks --
+// so it shows Attack (slot 1) unless its active weapon cannot hurt the target:
+// damage 0x531e50 <= 0, notargetcategory (UnitDef+0x9a), a stoning/freezing
+// weapon against cantbestoned/cantbefrozen (UnitDef+0x268 bits 2/4),
+// toairweapon (WeaponType+0xc8 0x4000) against a target that is not airborne,
+// or noairweapon (0x8000) against an airborne one (unit+0x130 low bits 2).
+// An IMMOBILE attacker (no mover) applies the same immunity gates, then the
+// minrange check 0x52adf0 and damage+inRange 0x52ad60. Anything else is TooFar
+// (slot 3). Returns true for Attack, false for TooFar.
+// tools/re/probe_cursor_enemy_hover.py runs those branches natively.
+inline bool cursorCanAttackEnemy(const sim::UnitType& attacker, int weaponSlot,
+        const std::array<int32_t, 3>& attackerPosition, const sim::UnitType& target,
+        const std::array<int32_t, 3>& targetPosition, uint8_t targetFlightGroundMode,
+        bool ignoreAirstrikeWeapons = false) {
+    if (attacker.weapons.empty()) return false;
+    if (ignoreAirstrikeWeapons && unitHasAirstrikeCursor(attacker, weaponSlot))
+        return false;
+    const int slot = attacker.weaponSwitching
+        ? std::clamp(weaponSlot, 0, int(attacker.weapons.size()) - 1) : 0;
+    const auto& weapon = attacker.weapons[size_t(slot)];
+    const auto listed = [&](const std::vector<std::string>& cats) {
+        for (const auto& c : cats)
+            if (std::find(target.categories.begin(), target.categories.end(), c) !=
+                target.categories.end()) return true;
+        return false;
+    };
+    if (listed(attacker.noTargetCats) ||
+        (weapon.status == sim::Weapon::Status::Stoned && target.cantBeStoned) ||
+        (weapon.status == sim::Weapon::Status::Frozen && target.cantBeFrozen))
+        return false;
+    const bool airborne = targetFlightGroundMode == 2;
+    if (!attacker.isStructure())
+        return cursorDamageVs(weapon, target) > 0.0f &&
+               !(weapon.toAir && !airborne) && !(weapon.noAir && airborne);
+    if (cursorDamageVs(weapon, target) <= 0.0f || (weapon.noAir && airborne))
+        return false;
+    return cursorWeaponRange(weapon, attacker, attackerPosition, target, targetPosition,
+                             targetFlightGroundMode) != CursorWeaponRange::OutOfRange;
 }
 
 } // namespace tak::client

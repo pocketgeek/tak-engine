@@ -209,17 +209,29 @@ namespace {
                     return;
                 }
             }
-            if (enemy >= 0) {
+            // Only the units that show the Attack cursor over this enemy are
+            // ordered to attack it. With none, an attacker selection is showing
+            // TooFar and the click does nothing; a selection with no attacker
+            // at all (Normal cursor) moves as it would on bare ground.
+            bool attackerSelected=false;
+            if (const UnitR* target=enemy>=0 ? frameUnitP(enemy) : nullptr) {
+                int voiced=-1;
                 for (int id : selection_) {
+                    const UnitR* attacker=frameUnitP(id);
+                    if (!attacker || !isCursorAttacker(*attacker)) continue;
+                    attackerSelected=true;
+                    if (!attackerCanHitEnemy(*attacker,*target)) continue;
                     tak::net::Command c;
                     c.kind = tak::net::Cmd::Attack;
                     c.unitId = id;
                     c.targetId = enemy;
                     c.queue = queue;
                     issue(c);
+                    if (voiced<0) voiced=id;
                 }
-                voice(selection_.front(), "attack");
-            } else {
+                if (voiced>=0) voice(voiced, "attack");
+            }
+            if (enemy < 0 || !attackerSelected) {
                 voice(selection_.front(), "move");
                 // In a Legion net game the selection goes as ONE explicit order,
                 // OrderShape::Offsets at the click: the sim gives the members the
@@ -412,6 +424,25 @@ namespace {
         return hoverCursor(wx, wz);
     }
 
+    // A selected unit that takes part in the enemy-hover cursor: retail's
+    // `canattack` (WEAPON1 block present) on a live, finished, unembarked unit.
+    // A factory's build repeat suppresses it, as a structure's does not.
+    bool GameView::isCursorAttacker(const UnitR& u) const {
+        return u.alive() && !u.embarked() && !u.underConstruction && u.type &&
+               u.type->hasPrimaryWeaponBlock && !(u.repeatType && !u.type->isStructure());
+    }
+
+    // The per-unit Attack/TooFar decision over an enemy (cursorCanAttackEnemy).
+    // The hover cursor and the right-click attack order both use it, so a
+    // unit is ordered to attack exactly when it would show the Attack cursor.
+    bool GameView::attackerCanHitEnemy(const UnitR& attacker,const UnitR& target,
+                                       bool ignoreAirstrikeWeapons) const {
+        return isCursorAttacker(attacker) && target.type &&
+               tak::client::cursorCanAttackEnemy(*attacker.type,attacker.weaponSlot,
+                   attacker.worldPosition,*target.type,target.worldPosition,
+                   target.flightGroundMode,ignoreAirstrikeWeapons);
+    }
+
     tak::CursorId GameView::hoverCursor(float wx, float wz,bool ignoreAirstrikeWeapons) {
         const auto* first = selection_.empty() ? nullptr : frameUnitP(selection_.front());
 
@@ -478,34 +509,18 @@ namespace {
             if (enemy >= 0) {
                 const UnitR* target = frameUnitP(enemy);
                 if (!target || !target->type) return tak::CursorId::TooFar;
-                bool unknownRange = false,canAttack=false;
+                // Native 0x521cd0 keeps the lowest per-unit slot: any selected
+                // unit that can attack shows Attack, else TooFar when some
+                // selected unit is an attacker at all.
+                bool canAttack=false;
                 for (int id : selection_) {
                     const UnitR* attacker = frameUnitP(id);
-                    if (!attacker || !attacker->alive() || attacker->embarked() || attacker->underConstruction ||
-                        !attacker->type || !attacker->type->hasPrimaryWeaponBlock ||
-                        (attacker->repeatType && !attacker->type->isStructure())) continue;
+                    if (!attacker || !isCursorAttacker(*attacker)) continue;
                     canAttack=true;
-                    if (attacker->type->weapons.empty()) continue;
-                    const auto& type = *attacker->type;
-                    const int slot = type.weaponSwitching
-                        ? std::clamp(attacker->weaponSlot, 0, int(type.weapons.size()) - 1)
-                        : 0;
-                    if(ignoreAirstrikeWeapons && tak::client::unitHasAirstrikeCursor(
-                            type,attacker->weaponSlot))continue;
-                    const auto& weapon = type.weapons[size_t(slot)];
-                    if (tak::client::cursorDamageVs(weapon, *target->type) <= 0.0f ||
-                        (weapon.noAir && target->flightGroundMode == 2))
-                        continue;
-                    const auto range = tak::client::cursorWeaponRange(
-                        weapon, type, attacker->worldPosition, *target->type,
-                        target->worldPosition, target->flightGroundMode);
-                    if (range == tak::client::CursorWeaponRange::InRange)
+                    if (attackerCanHitEnemy(*attacker,*target,ignoreAirstrikeWeapons))
                         return tak::CursorId::Attack;
-                    if (range == tak::client::CursorWeaponRange::Unknown)
-                        unknownRange = true;
                 }
-                if (!canAttack) return tak::CursorId::Normal;
-                return unknownRange ? tak::CursorId::Attack : tak::CursorId::TooFar;
+                return canAttack ? tak::CursorId::TooFar : tak::CursorId::Normal;
             }
 
             for (const auto* corpse:front().live) {
