@@ -2054,7 +2054,7 @@ licensed these keys (`accepted_regressions`) at their exit values, so "290 -> 20
 
 **The changes**, Legion only (Retail hashes unchanged on every fixture checked):
 
-* **Rings round still targets walk at speed** (`ringStanding`). An attack member of a ring round a target standing
+* **Rings round still targets walk at speed** (`ringStanding`, since round 4 `stillTarget`, below). An attack member of a ring round a target standing
   still walks its local detour routes of `kBriskRoute` cells or more and its flow-around shuffles at travel speed,
   unturned, as a formation member's already did (rounds 1 and 2 kept the cap for attack legs). A chase (a moving
   target) keeps the cap: there the faster ring killed `attack-100`'s target with 5 bodies in reach instead of 22 and
@@ -2113,7 +2113,7 @@ the arc and the wall from out of sight; a band-0 extension to spots in sight bor
 nothing there: wall-100 ever 33 -> 35, wall-64 damage 1,834 -> 1,747), `attackring-mob-100` loses 3 bodies in reach
 (43 -> 40, damage up), and `attackring-river-64` (target across a river) still stands 6 against Retail's 21. Fight and
 guard rings (`attackring-fight-60`, `attackring-guard-64`) are untouched: `ringStanding` is attack only, and their
-statue ticks (32,402 and 42,133) are the next case. `battle-field-2x60` and `battle-assault` move both ways: group losses by up to six
+statue ticks (32,402 and 42,133) are the next case (done in round 4, "Fight and guard rings round still targets"). `battle-field-2x60` and `battle-assault` move both ways: group losses by up to six
 bodies either way (battle-field-2x60 A 34 -> 30 dead,
 battle-assault B8 44 -> 50), travel reversals 1,290 -> 1,198 in the latter. `ctest:legion_ringstill` (r200: statue < 2,000 and ever >= 57;
 20,977 / 52 on the parent), `ctest:legion_ringclosed` (ringcross-100 by tick 1,500: >= 41 in reach and t50 <= 600;
@@ -2140,6 +2140,144 @@ fills the corridor). Every other ring fixture is hash-identical at all 11 gate o
 squad-64, mob-40, mob-100, wall-64, wall-100, river-64, struct-60, ringcross, ringcross-100, attack-100): their
 shadow was 1x1 and fully listed, or not on the way in. `ctest:legion_ringshadow` (gatehouse offset 0, damage >= 150;
 0 before).
+
+### Fight and guard rings round still targets (2026-10-20, Legion ~100 round 4, task-l4-fight)
+
+**Where the creep was** (offset 0, every update that stepped at a facing-capped eighth of travel speed without turning,
+counted by steering branch). `attackring-fight-60` (60 attackers on a fight order, attack-move, to a still target):
+28,100 of its statue updates were attack members walking local detour routes at the cap and 1,635 their committed
+shuffles. They are attack members because combat inserts an auto-target attack in front of the fight leg
+(`World::acquireTarget`), and that leg is Legion's `Attack` kind. But round 3's cure was for rings, and this group
+has none. The column comes into acquisition range one body at a time, so the group's first member joins alone
+(t=694 at offset 0) and starts the field before a second member joins (t=732), and the 60th joins at t=1455.
+`startField` builds a ring only for a group that already has two members, and a group that grows later keeps its
+point seed (the cost note in `ringClaim`), so `ring.band0` stays 0 and `ringStanding` never applies.
+`attackring-guard-64`: 32,193 guard route updates and 9,931 shuffle updates. A guard has no ring (`buildRing`
+refuses it: its 70 px is a stance), and round 3's rule was attack-only. Retail's movers trace round a body at their
+own speed whatever their order (statue ticks 38 and 194).
+
+**Where round 3's ring reversals come from** (each return to a 16 px cell left under 90 ticks before, attributed to
+the branches that made the step out and the step back). They come from a few bodies behind the firing arc, not from
+detour routes backing out and not from spot re-choice. `attackring-r200-64` offset 0: 389 reversals, 307 of them by
+three bodies, and one body (id 11) turns back and forth inside a 6x4-cell patch from tick 900 to tick 3,000.
+The pairs are a brisk shuffle against a field step (194), field against field (49) and shuffle against shuffle (48).
+Only 21 involve a detour route, and in 65% of all 389 the member's spot had not changed in the 90 ticks before.
+
+The mechanism: blocked by the engaged bodies of the arc, the body flows round to the neighbour of lowest potential.
+From there the field's string-pulled aim cuts back across the cells it left: in one body's trace (id 25) a field
+step from a cell of potential 35 enters one of 42 (the aim's line is tested for legality, not for potential). It is
+blocked again and flows back. Each flow-around reaches a cell of lower potential, which counts as a gain, so the stall clock restarts
+every cycle and the body never holds long enough for a hold's way out (a detour route round the arc, a ring
+re-choice after a held window). At the facing cap the same shuffles crept less than a cell before the next decision,
+which is why round 3, by lifting the cap, raised reversals while it cured the creep. `ringcross` and `ringcross-100`
+have the same pattern: 79 + 60 + 59 + 58 of ringcross's 423 come from four bodies. In the wall fixtures the largest share
+(`attackring-wall-64` 85 of 252, `attackring-wall-100` 97 of 246) was between the field and a ring member's direct walk to its own spot ("A ring member near its own spot walks
+to it": the threshold flips cell by cell). That pattern was there before round 3, and Retail's reversals there are
+higher (attackring-wall-100 455).
+
+**The changes**, Legion only (Retail hashes unchanged on attackring-fight-60, -guard-64 and -r200-64 at the gate
+offsets; --mpai Inner Circle seed 1 60 s: Retail b353410003e98dd5, Legion 0825aeb9e8139203, both unchanged):
+
+* **Any attack or guard member round a target standing still** (`stillTarget`, which was `ringStanding`) walks its
+  detour routes and committed shuffles at travel speed, ring or not. A guard's target is its ward. A chase (a moving
+  target or ward) keeps the cap.
+* **A route round a still target keeps travel speed to its last cell.** Before, it did so only while `kBriskRoute`
+  (4) or more cells were left. At the cap the short tails were most of what the rings had left of the creep
+  (`attackring-wall-64` at offset 0: 1,329 statue ticks, 2 with this round's changes).
+* **A member round a still target that its last crowd window found still** (`Member::stillSince`: it gained under
+  half a body on its point, and on its own spot, over the window) **commits no new flow-around shuffle.** It holds,
+  and the hold's ways out take over. This is the same rule as the one for a livelocked body
+  (`Unit::legionShuffle`), but read from the settle rule's own window: the shuffles' potential gains kept the stall
+  clock young, and the headway clock stopped the slide round the arc as well (below). A committed shuffle still runs to its end. No new state: `stillSince` is
+  already hashed.
+
+Medians over the wide offsets -8..8 (Windows sweep of the experiment build, which is hash-identical to the commit on
+five of these fixtures at the gate offsets; Retail is the gate median):
+
+| fixture | key | before | after | Retail |
+|---|---|---|---|---|
+| attackring-fight-60 | statue_ticks | 32,402 | 372 | 38 |
+| attackring-fight-60 | reach.ring.damage_end / ever_end / t50 | 1,662 / 36 / 2,472 | 2,398 / 40 / 1,512 | 2,814 / 44 / 1,206 |
+| attackring-fight-60 | reversals / stopped_permille | 28 / 477 | 42 / 625 | 86 / 577 |
+| attackring-guard-64 | statue_ticks | 42,133 | 1 | 194 |
+| attackring-guard-64 | within 6 cells: ever_end / t50 | 61 / 1,837 | 64 / 1,271 | 63 / 1,191 |
+| attackring-guard-64 | reversals / stopped_permille | 39 / 432 | 43 / 634 | 122 / 520 |
+| attackring-r200-64 | statue_ticks / reversals | 480 / 413 | 380 / 85 | 155 / 45 |
+| attackring-r200-64 | ever_end / damage_end / stopped | 59 / 4,069 / 660 | 61 / 4,164 / 679 | 64 / 3,717 / 576 |
+| ringcross | statue_ticks / reversals | 6,663 / 420 | 780 / 200 | 150 / 61 |
+| ringcross | ever_end / damage_end / stopped | 39 / 6,097 / 615 | 41 / 6,250 / 647 | 45 / 6,435 / 641 |
+| ringcross | g.M.t90 / done (mean t90) | 3,841 / 4,214 (3,813) | 3,789 / 4,066 (3,802) | 3,880 / 3,723 |
+| ringcross-100 | statue_ticks / reversals | 1,168 / 351 | 604 / 144 | 204 / 88 |
+| ringcross-100 | ever_end / damage_end / stopped | 42 / 6,405 / 617 | 42 / 6,371 / 630 | 43 / 6,458 / 604 |
+| ringcross-100 | g.M.t90 / done (mean t90) | 3,841 / 4,337 (3,856) | 3,841 / 4,194 (3,830) | 3,926 / 4,166 |
+| attackring-wall-64 | statue_ticks / reversals | 1,140 / 335 | 98 / 133 | 173 / 195 |
+| attackring-wall-64 | ever_end / damage_end | 36 / 2,031 | 35 / 2,022 | 45 / 1,909 |
+| attackring-wall-100 | statue_ticks / reversals | 1,412 / 274 | 136 / 213 | 229 / 455 |
+| attackring-wall-100 | ever_end / damage_end | 34 / 2,017 | 37 / 1,974 | 49 / 1,922 |
+| attackring-f1-64 | statue_ticks / reversals | 910 / 489 | 228 / 131 | 195 / 111 |
+| attackring-f1-64 | ever_end / damage_end / stopped | 43 / 2,840 / 610 | 39 / 2,672 / 640 | 45 / 2,612 / 511 |
+| attackring-f1-16 | statue_ticks / reversals | 175 / 31 | 96 / 13 | 2 / 3 |
+| attackring-mob-40 | statue_ticks / reversals / ever_end | 228 / 63 / 40 | 137 / 45 / 38 | 59 / 41 / 39 |
+| attackring-mob-100 | statue_ticks / reversals / ever_end | 1,193 / 196 / 40 | 405 / 218 / 42 | 238 / 352 / 44 |
+| attackring-struct-60 | statue_ticks / reversals | 381 / 76 | 267 / 61 | 78 / 45 |
+| attackring-gatehouse-40 | statue_ticks / reversals | 1,053 / 49 | 3 / 41 | 23 / 314 |
+| attackring-gatehouse-40 | ever_end (mean) / damage_end (mean) | 22 (20) / 320 (428) | 19 (19) / 320 (416) | 29 / 584 |
+| attackring-river-64 | statue_ticks | 1,401 | 1 | 85 |
+| fight-retarget | statue_ticks / g.F.t90 | 3,638 / 2,477 | 2,384 / 2,319 | 44 / 2,638 |
+| attack-100 (a chase) | ever_end / damage_end / g.A.dead | 19 / 2,467 / 19 | 21 / 2,299 / 21 | 18 / 1,880 / 18 |
+
+The three parts measured apart over -8..8 (statue / reversals). The speed alone (fight and guard) leaves the ring
+fixtures unchanged, except `attackring-river-64`, whose group has no band-0 spot (statue 1,401 -> 139). The whole-route speed without the still-window rule raises reversals:
+`ringcross` 420 -> 551, `ringcross-100` 351 -> 388, `attackring-wall-100` 274 -> 380, `attackring-mob-100`
+196 -> 344. The still-window rule without the whole-route speed leaves the wall fixtures creeping:
+`attackring-wall-64` statue 1,709, `ringcross` 3,711.
+
+Trades. Stopped permille rises on the ring fixtures by up to 32 permille against the parent (`attackring-f1-64`
+610 -> 640, `ringcross` 615 -> 647). Bodies reach the arc sooner and stand there firing, or hold behind it instead of
+shuffling. On fight and guard it rises by 150-200 permille (477 -> 625, 432 -> 634), past Retail's 577 / 520.
+
+`attackring-f1-64` (a flat map, the same run at every offset) gets 4 fewer bodies ever in reach: 43 -> 39 against
+Retail's 45, with damage 2,840 -> 2,672 against Retail's 2,612. The free spots left at the end are on the far side
+of the ring. The bodies that held behind the west arc used to reach them only by the slow shuffle round it.
+`attackring-mob-40` and `attackring-gatehouse-40` also lose some (40 -> 38, 22 -> 19 at the median).
+
+`battle-assault` (gate offsets, local) travel reversals rise 1,200 -> 1,444 against Retail's 376, its statue ticks
+fall 177,564 -> 148,978 and deaths rise on both sides (428 / 429 -> 444 / 443). In `battle-field-2x60`, A loses 25
+bodies instead of 30 (Retail 37), and its statue ticks fall 11,111 -> 4,196 (Retail 53). The fight orders' contact
+window spends 5% more slot search (`tools/legion_cost_baseline.json`, battle-field-2x60 contact
+`work.slot_search_cells`, moved 6,001,458 -> 6,863,753 with its reason: formation ring searches 6,409,716 ->
+6,708,301 at offset 0). Its total Legion work falls.
+
+Regression screen, all 22 tools/scenarios/legion100 fixtures at the gate offsets, Legion, against 30813a73: 19 are
+hash-identical at every offset. The three ring fixtures move: `attackring-wall-100` (statue 1,412 -> 136,
+reversals 268 -> 185, damage 1,795 -> 1,843, stopped 656 -> 663, `wall_touch_near_permille` 56 -> 63),
+`ringcross-100` (statue 1,168 -> 721, reversals 264 -> 145, `g.M.done` 4,365 -> 4,231, `g.M.t50` 3,577 -> 3,584,
+damage 6,405 -> 6,371, stopped 617 -> 630) and the chase `attack-100`, through attack groups without a ring whose target stands at the
+moment (the guard part alone leaves it hash-identical). A loses 22 instead of 20 (Retail 18), 22 ever in
+reach instead of 20 (Retail 18), damage 2,116 -> 2,059 (Retail 1,880), spins 1,011 -> 1,938 (Retail 29,764) and
+reversals 13 -> 22 (Retail 390). E's arrivals go 3 -> 2 (Retail 6).
+
+Tried and rejected:
+* No flow-around once the stall clock or the headway clock (`Member::headTick`) has aged a crowd window. The stall
+  clock restarts on every shuffle's potential gain, and the headway clock stopped the slide round the arc too
+  (`attackring-f1-64` ever 43 -> 38).
+* A clock of the best distance to the member's own spot (new state). It came out close to the chosen rule
+  (`ringcross` reversals 278 against 200, `ringcross` t90 3,905 against 3,789), so the rule that needs no state was
+  kept.
+* A stalled member's shuffle measured toward its own spot instead of down the field: `attackring-gatehouse-40`
+  reversals 47 -> 480 (gate offsets).
+* Barring the step back onto the origin it last left (the `slideFrom` rule for every step): it moved the to-and-fro
+  onto longer cycles (`attackring-mob-100` 196 -> 702, gate offsets).
+
+Considered and not tried: a ring built late for a group that grows after its first field. A ring sized for its
+first two members (`want` = 10 spots) would have to serve 60 attackers, re-planning it costs a refresh per target
+(`ringClaim`'s note: +13-28% total Legion work in the battles), and ring spot generation is another track's work.
+
+`ctest:legion_fightstill` (fight-60 offset 0: statue under 2,000 and damage at least 2,000; 30,229 / 1,483 on the
+parent), `ctest:legion_guardstill` (guard-64 offset 0: statue under 2,000 and half within 6 cells by tick 1,500;
+42,133 / 1,837 on the parent), `ctest:legion_ringroute` (wall-64 offset 0: statue under 300; 1,329 on the parent and
+without the whole-route speed) and `ctest:legion_ringshuffle` (r200 offset 0: reversals under 200 and ever at least
+57; 413 on the parent and 337 without the still-window rule). Each fails on the parent and without its own part.
 
 ### Paused first builds (W4 C1, protocol 244)
 
@@ -3645,19 +3783,28 @@ Rules that came out of using them:
   over the wide offsets; `ctest:legion_passage_admission`,
   `ctest:legion_passage_taper` and `ctest:legion_passage_green` hold their
   offsets.
-* **Attack rings at ~100 bodies (after round 3, 2026-10-20).** Rings round a still target walk their detours at
+* **Attack rings at ~100 bodies (after rounds 3 and 4, 2026-10-20).** Rings round a still target walk their detours at
   travel speed, spend the spots their firing arc closes off, send spare attackers to the outer bands and press flush
   against 1-cell walls the way Retail's clamped bodies end up ("Rings at ~100 bodies, round 3"). Still open: the ring
   fills its edge more thinly than Retail's where walls cut the sight lines (attackring-wall-100's ring offsets 29-36
   ever in reach against Retail's 32-49; Retail's bodies walk in out of sight and pack the in-sight ground between the
   arc and the wall); a narrow corridor in reach and out of sight is plugged by the first bodies in pressing flush to
   its inner wall at the entrance, so the rest queue outside (attackring-gatehouse-40: 15 ever in reach and 244 damage
-  over the gate offsets against Retail's 29 and 584); a ring across a river (attackring-river-64) stands 6 in reach against 21; statue ticks stay a few
-  times Retail's (presses toward reach keep the facing cap), and fight and guard rings keep the old crawl
-  (attackring-fight-60 32,402, attackring-guard-64 42,133 statue ticks, Retail a few hundred). Against a target walled
+  over the gate offsets against Retail's 29 and 584); a ring across a river (attackring-river-64) stands 6 in reach against 21. Against a target walled
   in on every side Legion now outfires Retail (it seeks flush points on every face that has one). A Move group crossing
-  a firing ring is level with Retail's t90 (ringcross-100 3,841 against 3,926) and completes about 200 ticks after it.
-  Measured by `ctest:legion_ringupkeep`, `ctest:legion_attackwalled`, `ctest:legion_attackflush`,
+  a firing ring is level with Retail's t90 (ringcross-100 3,841 against 3,926; completion 4,194 against 4,166 since
+  round 4). Since round 4 (2026-10-20, "Fight and guard rings round still targets") fight and guard members round a
+  still target walk at speed too (attackring-fight-60 statue ticks 32,402 -> 372, attackring-guard-64 42,133 -> 1;
+  Retail 38 and 194), a route keeps speed to its end, and a member with no headway for a crowd window stops
+  shuffling, which brings round 3's reversals down (attackring-r200-64 413 -> 85, ringcross 420 -> 200,
+  ringcross-100 351 -> 144 over -8..8; Retail 45, 61, 88). Still open there: statue ticks and reversals are still
+  above Retail's on the open rings (r200 380 against 155; ringcross 780 against 150); bodies stand more (stopped
+  permille up to 32 above round 3 on the rings, 150-200 on fight and guard, past Retail); bodies held behind an arc
+  no longer creep round it to the far side's free spots (attackring-f1-64 ever in reach 43 -> 39, Retail 45); a fight
+  order's members still on their fight leg shuffle at the cap round the attackers ahead (352 of attackring-fight-60's
+  353 statue ticks left at offset 0); and the fight orders' attack groups never get a ring (their field starts with one member; see
+  the round-4 section). Measured by `ctest:legion_fightstill`, `ctest:legion_guardstill`, `ctest:legion_ringroute`,
+  `ctest:legion_ringshuffle`, `ctest:legion_ringupkeep`, `ctest:legion_attackwalled`, `ctest:legion_attackflush`,
   `ctest:legion_ringcross`, `ctest:legion_ringfill`, `ctest:legion_ringclosed`, `ctest:legion_ringstill`,
   `ctest:legion_ringwait`, `ctest:legion_ringshadow`, `ctest:legion_ringbend` and `ringcross:g.M.t90`.
 * **The livelock fix costs some lane order (protocol 257).** A body blocked

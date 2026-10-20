@@ -11873,8 +11873,8 @@ struct LegionNavigator::Impl {
             // it still (Member::stillSince: under half a body gained on its
             // point or its own spot). At travel speed its shuffles at the back
             // of the firing arc went down the field's potential and its field
-            // steps came straight back up it (the string-pulled aim crosses
-            // the charges round the held bodies), hundreds of times: round 3's
+            // steps came straight back up it (the string-pulled aim is tested
+            // for legality, not potential), hundreds of times: round 3's
             // ring reversals (attackring-r200-64 413, three bodies 307 of 389
             // at offset 0, one for 2,000 ticks; Retail 45), each shuffle a
             // potential gain that restarted the stall clock. It holds, and the
