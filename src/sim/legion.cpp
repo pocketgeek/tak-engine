@@ -798,6 +798,12 @@ struct LegionNavigator::Impl {
             std::vector<int> cells;std::vector<uint8_t> band;std::vector<int32_t> owner;
             std::vector<uint8_t> spent;uint32_t scanned=kNoTick;
             bool sight=false;   // band 0 was planned with the sight test: combat brakes a body on its reach edge
+            // Blind (round 4, 2026-10-20): the members' shot needs sight, but
+            // no spot in reach sees the target, so band 0 was planned without
+            // the test (buildRing's pass 1): nothing brakes a body in reach.
+            // Not a ring that needs no sight at all (melee, lobbers, 64 px
+            // and less), whose bodies combat brakes on the reach edge.
+            bool blind=false;
             // The sight test band 0 was planned with (ringScan repeats it per origin).
             bool naval=false;int tskip=0;float tfx=0,tfz=0;
         } ring;
@@ -8230,49 +8236,6 @@ struct LegionNavigator::Impl {
         if(!bodiesFree(u,nx,nz))return false;
         return nx==ox||nz==oz||(bodiesFree(u,nx,oz)&&bodiesFree(u,ox,nz));
     }
-    // Round 4 (2026-10-20): would a still body of u's footprint at origin
-    // (ox,oz) stand across a lane -- a corridor one body wide -- with free
-    // ground on both sides? The origins bordering the ones its footprint
-    // overlaps are walked round as a cycle: statically legal ones falling
-    // in two or more runs mean the origin lies across a lane. A run every
-    // origin of which a still body (but u) covers is closed already (a
-    // queue's front): standing there seals nothing new. Bodies alone never
-    // make a lane, so the gaps of a firing line in the open fill as before.
-    bool sealsLane(const Plane& p,const Unit& u,int ox,int oz) const {
-        const int fx=u.type->footX,fz=u.type->footZ;
-        auto still=[&](int cx,int cz) {
-            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)return false;
-            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
-            if(!o||o==u.id)return false;
-            const Unit* v=w.unit(o);
-            if(!v||!v->type||v->type->canFly)return false;
-            const Member* mm=member(o);
-            return !mm||(mm->state!=Moving&&mm->state!=Waiting);
-        };
-        // The border ring: x in [ox-fx, ox+fx], z in [oz-fz, oz+fz], clockwise from the top-left corner.
-        std::array<std::pair<int,int>,8*15> ring;size_t n=0;   // 4*(fx+fz) origins
-        const int x0=ox-fx,x1=ox+fx,z0=oz-fz,z1=oz+fz;
-        for(int x=x0;x<x1;++x)ring[n++]={x,z0};
-        for(int z=z0;z<z1;++z)ring[n++]={x1,z};
-        for(int x=x1;x>x0;--x)ring[n++]={x,z1};
-        for(int z=z1;z>z0;--z)ring[n++]={x0,z};
-        std::array<uint8_t,8*15> legalAt{};
-        size_t start=n;
-        for(size_t i=0;i<n;++i) {legalAt[i]=legal(p,ring[i].first,ring[i].second);if(!legalAt[i])start=i;}
-        if(start==n)return false;   // no static block round it: open ground
-        int lanes=0,runs=0;bool free=false;
-        for(size_t k=1;k<=n;++k) {
-            const size_t i=(start+k)%n;
-            if(!legalAt[i]) {if(free)++lanes;free=false;continue;}
-            if(!legalAt[(i+n-1)%n])++runs;
-            if(!free) {
-                bool covered=false;
-                for(int j=0;j<fz&&!covered;++j)for(int q=0;q<fx&&!covered;++q)covered=still(ring[i].first+q,ring[i].second+j);
-                free=!covered;
-            }
-        }
-        return runs>=2&&lanes>=2;
-    }
     // Pressing in (2026-10-19): an attacker held within two bodies outside
     // its reach (or in reach out of sight) walks to a point of its own or a
     // free neighbouring origin that puts it in reach (and in sight, where its
@@ -8318,15 +8281,8 @@ struct LegionNavigator::Impl {
         const int64_t inside=(int64_t(R)<<16)-(1<<12);
         const int64_t px0=u.x.v,pz0=u.z.v,ftx=t->x.v,ftz=t->z.v;
         int64_t bestX=0,bestZ=0,bestD=-1;
-        bool needSight=los;
+        bool needSight=los,blindPress=false;
         auto consider=[&](int cx,int cz) {
-            // Round 4 (2026-10-20): never a press that stops the body across
-            // a lane with free ground on both sides (sealsLane): engaged
-            // there, it stood for good in the only way on. The first bodies
-            // through attackring-gatehouse-40's west gate pressed flush to
-            // the yard wall in the 3-cell corridor's mouth, and the rest
-            // queued outside while the corridors stood empty.
-            if(sealsLane(p,u,cx,cz))return;
             // The footprint-centre box of origin (cx,cz).
             const int64_t lox=(int64_t(cx)*16+(fx-1)*8)<<16,loz=(int64_t(cz)*16+(fz-1)*8)<<16,span=(int64_t(16)<<16)-(1<<12);
             const int64_t ax=std::clamp(ftx,lox,lox+span),az=std::clamp(ftz,loz,loz+span);
@@ -8340,7 +8296,7 @@ struct LegionNavigator::Impl {
                 bestX=x;bestZ=z;bestD=d;
             };
             const int64_t before=bestD;
-            if(!needSight) {
+            if(blindPress) {
                 // Out of sight (a blind ring, below) nothing brakes the body
                 // in reach, so it stops on its way toward the target at the
                 // first point of the box kPressDepth inside reach (or the
@@ -8408,7 +8364,7 @@ struct LegionNavigator::Impl {
             const int64_t gx=int64_t(m.goal%W)*16+fx*8-tx,gz=int64_t(m.goal/W)*16+fz*8-tz;
             return gx*gx+gz*gz>int64_t(R)*R;
         }();
-        if(bestD<0&&los&&rg.ring.band0>0&&!rg.ring.sight&&d0>int64_t(R)*R&&stays) {needSight=false;consider(ox,oz);}
+        if(bestD<0&&los&&rg.ring.band0>0&&rg.ring.blind&&d0>int64_t(R)*R&&stays) {needSight=false;blindPress=true;consider(ox,oz);}
         // Round 4 (2026-10-20): in reach out of sight with no point in sight
         // a step away, the body walks on through the shadow to the nearest
         // free origin in sight (pressRoute), as Retail's attacker keeps
@@ -8430,7 +8386,7 @@ struct LegionNavigator::Impl {
     // only through the shadow (centre in reach, out of the target's sight:
     // nothing brakes a body there, and a walk out of reach and back in
     // pressed again), to the first origin whose centre is in
-    // reach and in sight and which seals no lane (sealsLane). The way is
+    // reach and in sight. The way is
     // committed as a local route (walked at travel speed round a still
     // target, see ringStanding); combat brakes the body where it gets the
     // shot. Before it, a body of the shadow pressed only one origin on, and
@@ -8476,14 +8432,11 @@ struct LegionNavigator::Impl {
         for(size_t head=0;head<tail&&best<0;++head) {
             const int local=queue[head];
             const int lx=local%S,lz=local/S,x=ox+lx-RR,z=oz+lz-RR;
-            if(local!=start&&shot(x,z)) {
-                if(!sealsLane(p,u,x,z)) {best=local;break;}
-                continue;   // braked there: no further
-            }
+            if(local!=start&&shot(x,z)) {best=local;break;}
             if(local!=start) {
                 const int64_t d2=centreD2(x,z);
                 if(d2>int64_t(R)*R)continue;   // the walk keeps in reach (a way out and back in pressed again)
-                if(here>8&&d2<deepD&&!sealsLane(p,u,x,z)) {deep=local;deepD=d2;}
+                if(here>8&&d2<deepD) {deep=local;deepD=d2;}
             }
             for(const auto& d:kDirections) {
                 const int nlx=lx+d[0],nlz=lz+d[1];
@@ -8502,6 +8455,12 @@ struct LegionNavigator::Impl {
         for(int c=best;c!=start;c=parent[size_t(c)])path.push_back((oz+c/S-RR)*W+ox+c%S-RR);
         std::reverse(path.begin(),path.end());
         m.route=std::move(path);m.routeTicks=0;m.lineCell=-1;
+        // Stopped this update; the route starts next (as a detour's does).
+        // Left held, the route branch dropped it at once (held 30 ticks or
+        // more), and with holdUpdates unchanged (pressIn's hold does not
+        // count) the search ran again every update: a body frozen for good
+        // in the shadow, attackring-wall-64 offset 0.
+        m.state=Holding;restartHold(m);
         ++stats.reachPressRoutes;
         return true;
     }
@@ -9568,7 +9527,7 @@ struct LegionNavigator::Impl {
         if(g.approach||g.reachIds.size()<kRingMembers||g.reachCentre<0||g.kind==Kind::Guard)return false;   // a guard's 70 px is a stance round its ward: no ring
         const Unit* t=w.unit(g.reachTarget);
         if(!t||!t->alive()||!t->type)return false;
-        int R=INT_MAX;bool los=false,naval=false;
+        int R=INT_MAX;bool los=false,naval=false,blind=false;
         for(const int id:g.reachIds)if(const Unit* u=w.unit(id);u&&u->type) {
             const auto [px,l]=reachPx(*u,t,g.kind==Kind::Guard);
             if(px<R) {R=px;los=l;naval=u->type->domain==UnitType::Domain::Water||t->type->domain==UnitType::Domain::Water;}
@@ -9605,7 +9564,7 @@ struct LegionNavigator::Impl {
         for(int pass=0;pass<2;++pass) {
             if(pass==1) {
                 if(!los||!cells.empty())break;
-                los=false;used.clear();
+                los=false;blind=true;used.clear();
             }
             for(int b=0;b<8&&cells.size()<want;++b) {
                 if(b==1&&!los)continue;
@@ -9645,7 +9604,7 @@ struct LegionNavigator::Impl {
         stats.slotSearchCells+=scanned;navc.ringCells+=scanned;
         int band0=0;for(const uint8_t b:band)band0+=b==0;
         if(!band0)return false;
-        r.R=R;r.band0=band0;r.tx=tx;r.tz=tz;r.ax=ax;r.az=az;r.sight=los;
+        r.R=R;r.band0=band0;r.tx=tx;r.tz=tz;r.ax=ax;r.az=az;r.sight=los;r.blind=blind;
         r.naval=naval;r.tskip=std::max(t->type->footX,t->type->footZ)/2;r.tfx=t->x.toFloat();r.tfz=t->z.toFloat();
         r.cells=std::move(cells);r.band=std::move(band);r.owner.assign(r.cells.size(),0);
         stats.reachSlotsBuilt+=r.cells.size();
@@ -9925,7 +9884,7 @@ struct LegionNavigator::Impl {
                 auto still=[&](int ox,int oz) {
                     for(int cz=oz;cz<oz+fz&&!used;++cz)for(int cx=ox;cx<ox+fx&&!used;++cx)used=stillAt(cx,cz);
                 };
-                still(x,z);if(r.sight)still(eox,eoz);
+                still(x,z);if(!r.blind)still(eox,eoz);
                 // Flooded: where a body walking in to it stops (on the reach
                 // edge where combat brakes it, else the spot itself).
                 if(!used&&floodTest) {
@@ -9989,10 +9948,13 @@ struct LegionNavigator::Impl {
                 // ring wants it. Of a blind ring (no spot in sight) it keeps
                 // its place; else it may move to a free band-0 spot, but never
                 // out to wait (pressed in off its own spot, it walked back out
-                // of reach and pressed again).
+                // of reach and pressed again). Only where the shot needs sight:
+                // in a ring that needs none (melee, lobbers, 64 px and less)
+                // combat brakes a body in reach, and the hand-out stays as it
+                // was before round 4.
                 const int64_t ddx=(v->x.v>>16)-r.tx,ddz=(v->z.v>>16)-r.tz;
-                const bool inReach=ddx*ddx+ddz*ddz<=int64_t(r.R)*r.R;
-                if(inReach&&!r.sight)continue;
+                const bool inReach=(r.sight||r.blind)&&ddx*ddx+ddz*ddz<=int64_t(r.R)*r.R;
+                if(inReach&&r.blind)continue;
                 if(inReach) {ringNearest(*v,*mm,g,p,1);continue;}
                 // Round 4 (2026-10-20): a member waiting on an outer band takes a
                 // free band-1 spot when no band-0 spot is left. On its outer spot
@@ -10757,7 +10719,7 @@ struct LegionNavigator::Impl {
         // (attackring-river-64: its bank stood 11 in reach of the 19 that
         // had been). Retail's attacker stays where its walk at the target
         // is stopped.
-        if(m.kind==Kind::Attack&&ringMember(g,m)&&!g.ring.sight)
+        if(m.kind==Kind::Attack&&ringMember(g,m)&&g.ring.blind)
             if(const Unit* t=w.unit(g.reachTarget);t&&t->alive()&&t->type) {
                 const int64_t R=reachPx(u,t,false).first;
                 auto d2=[&](int64_t x,int64_t z) {const int64_t dx=x-(t->x.v>>16),dz=z-(t->z.v>>16);return dx*dx+dz*dz;};
@@ -13108,6 +13070,7 @@ struct LegionNavigator::Impl {
             if(g.reachTarget) {h=mix(h,0x7265616368ull);h=mix(h,uint64_t(uint32_t(g.reachTarget))<<32|uint32_t(g.reachBucket));h=mix(h,uint64_t(uint32_t(g.reachCentre)));}
             if(g.ring.tried) {
                 h=mix(h,0x72696e67ull);h=mix(h,uint64_t(g.ring.assigned)|uint64_t(uint32_t(g.ring.R))<<8);h=mix(h,uint64_t(g.ring.band0));
+                if(g.ring.blind)h=mix(h,0x626c696e64ull);
                 for(size_t i=0;i<g.ring.cells.size();++i)h=mix(h,uint64_t(uint32_t(g.ring.cells[i]))<<32|uint64_t(uint32_t(g.ring.owner[i]))<<4|g.ring.band[i]);
                 if(g.ring.scanned!=kNoTick) {
                     h=mix(h,0x7370656e74ull);h=mix(h,g.ring.scanned);

@@ -2189,19 +2189,18 @@ offset):
   wall-100 before this). `work.reach_press_routes` counts them.
 * **A body in reach stays in reach** (ringScan hand-out): it may move to a free band-0 spot but is never sent out to
   an outer band; of a blind ring it keeps its place.
-* **Blind rings** (`Ring::sight` false): no spot is spent for a body standing radially out at the edge (the flood
+* **Blind rings** (`Ring::blind`: the members' shot needs sight and no spot in reach has it, so band 0 was planned
+  without the sight test): no spot is spent for a body standing radially out at the edge (the flood
   alone decides); a body held out of reach on its own spot, or whose spot's centre is out of reach, presses within its
   own origin to the first point `kPressDepth` (4 px) inside reach on its way toward the target (on the very edge the
   crowd's nudges put it back out; pressing flush to the wall raised wall touch, wall-64 28 -> 40 permille); and a
   member standing in reach holds there instead of walking to a goal centre out of reach. Presses into a neighbour
   origin and presses of a body on its way to a spot in reach were tried and made shuffles (`work.reach_press_repeats`
   8 and 16 at wall-64 offsets 0 and -2; `ctest:legion_pressin` requires none).
-* **No press across a lane** (`sealsLane`): no press, and no walk on from the shadow, ends on an origin whose footprint
-  would close a corridor one body wide with free ground on both sides (the bordering origins, walked as a cycle, fall
-  in two or more statically legal runs, two of them holding an origin no still body covers). A side already closed by
-  a still body (a queue's front) is no lane; bodies alone never make one, so a firing line in the open fills as before.
+* (A "no press across a lane" rule, `sealsLane`, landed with the first cut and was taken out by the review fixes
+  below: its measured gain was the frozen-body fault's doing.)
 
-Medians over the gate offsets, Legion (base 30813a73 -> after), Retail; `now` is in reach at the end, `ever` ever in
+Medians over the gate offsets (after the review fixes below), Legion (base 30813a73 -> after), Retail; `now` is in reach at the end, `ever` ever in
 reach (Retail's crowd jostles in and out, so its ever runs above its now):
 
 | fixture | key | base | after | Retail |
@@ -2210,28 +2209,31 @@ reach (Retail's crowd jostles in and out, so its ever runs above its now):
 | attackring-wall-100 | ever at the ring offsets 3, -3, 4, -4, 5, -5 | 30 / 32 / 29 / 33 / 32 / 33 | 37 / 35 / 29 / 36 / 32 / 33 | 40 / 49 / 32 / 44 / 35 / 35 |
 | attackring-wall-100 | now at the walled offsets 0, 1, -1, 2, -2 | 42 / 38 / 40 / 27 / 38 | 57 / 55 / 58 / 29 / 59 | 61 / 62 / 63 / 36 / 68 |
 | attackring-wall-100 | reach.ring.damage_end | 1,795 | 1,870 | 1,922 |
-| attackring-wall-100 | statue_ticks / wall_touch_permille / reversals | 1,412 / 13 / 268 | 620 / 18 / 305 | 229 / 17 / 455 |
+| attackring-wall-100 | statue_ticks / wall_touch_permille / reversals | 1,412 / 13 / 268 | 728 / 20 / 285 | 229 / 17 / 455 |
 | attackring-wall-64 | reach.ring.ever_end (11 / core five) | 34 / 45 | 39 / 56 | 45 / 62 |
 | attackring-wall-64 | reach.ring.damage_end | 1,834 | 1,836 | 1,909 |
-| attackring-wall-64 | statue_ticks / wall_touch_permille / reversals | 1,131 / 28 / 252 | 585 / 25 / 340 | 173 / 20 / 195 |
+| attackring-wall-64 | statue_ticks / wall_touch_permille / reversals | 1,131 / 28 / 252 | 585 / 32 / 305 | 173 / 20 / 195 |
 | attackring-river-64 | reach.ring.ever_end / now_end | 6 / 6 | 17 / 17 | 21 / 14 |
 | attackring-river-64 | ever at offsets 0, -1, -2, -3 | 6 / 15 / 33 / 47 | 17 / 29 / 45 / 62 | 21 / 39 / 61 / 64 |
-| attackring-river-64 | statue_ticks | 1,340 | 21 | 85 |
+| attackring-river-64 | statue_ticks | 1,340 | 22 | 85 |
 | attackring-gatehouse-40 | reach.ring.ever_end / now_end | 15 / 10 | 16 / 15 | 29 / 24 |
-| attackring-gatehouse-40 | reach.ring.damage_end | 244 | 305 | 584 |
-| attackring-gatehouse-40 | statue_ticks / wall_touch_permille / reversals | 1,053 / 54 / 47 | 22 / 69 / 164 | 23 / 68 / 314 |
+| attackring-gatehouse-40 | reach.ring.damage_end | 244 | 320 | 584 |
+| attackring-gatehouse-40 | statue_ticks / wall_touch_permille / reversals | 1,053 / 54 / 47 | 23 / 78 / 221 | 23 / 68 / 314 |
 
-Over the wide offsets -8..8 (Windows sweep of these sources, WIP ref ae0019c8, against 30813a73, median then mean; Retail in brackets):
-`attackring-wall-100` ever 34 -> 36 (41), mean 36.7 -> 40.4 (49.6), now mean 35.0 -> 40.1 (44.2), damage 2,017 ->
-2,061 (2,135); `attackring-wall-64` ever 36 -> 37 (42), mean 37.4 -> 41.2 (45.4), damage 2,031 -> 2,052 (2,104);
-`attackring-river-64` ever 6 -> 17 (21), mean 24.2 -> 28.2 (29.9); `attackring-gatehouse-40` ever 22 -> 26 (36), now
-18 -> 24 (31), damage 320 -> 649 (643), mean 428 -> 606 (711), statue ticks 1,053 -> 22 (25); `ringcross-100`
-identical at every offset (t90 3,841, Retail 3,926); `attack-100` damage 2,467 -> 2,467, ever 19 -> 19 (18), E arrived
-3 -> 4 (6). Every other ring fixture is hash-identical at all 11 gate offsets (r200-64, f1-16, f1-64, f2-64, squad-64,
-mob-40, mob-100, struct-60, ringcross, ringbend-pocket; fight-60 and guard-64 too). Trades: wall touch on
-`attackring-wall-100` 13 -> 18 permille (Retail 17; wide median 13 -> 18, Retail 11), `attackring-gatehouse-40` 54 ->
-69 (Retail 68); travel reversals up on wall-100 (268 -> 305), wall-64 (252 -> 340) and the gatehouse (47 -> 164),
-all but wall-64 still under Retail's; shadow walks are reversals by construction (in and along a wall, then braked).
+Over the wide offsets -8..8 (Windows sweep of the reviewed sources, WIP ref 397696bb, the gatehouse without
+`sealsLane`; against 30813a73, median then mean; Retail in brackets): `attackring-wall-100` ever 34 -> 36 (41), mean
+36.7 -> 40.5 (49.6), now mean 35.0 -> 40.1 (44.2), damage 2,017 -> 2,061 (2,135); `attackring-wall-64` ever 36 -> 37
+(42), mean 37.4 -> 41.5 (45.4), damage 2,031 -> 2,052 (2,104); `attackring-river-64` ever 6 -> 17 (21), mean 24.2 ->
+28.2 (29.9); `attackring-gatehouse-40` ever 22 -> 26 (36), now 18 -> 22 (31), damage 320 -> 653 (643), mean 428 ->
+612 (711), statue ticks 1,053 -> 34 (25); `ringcross-100` identical at every offset (t90 3,841, Retail 3,926);
+`attack-100` damage 2,467 -> 2,467 (mean 2,523 -> 2,538), ever 19 -> 19 (18), E arrived 3 -> 4 (6). Every other ring
+fixture is hash-identical at all 11 gate offsets (r200-64, f1-16, f1-64, f2-64, squad-64, mob-40, mob-100, struct-60,
+ringcross, ringbend-pocket; fight-60 and guard-64 too). Trades: wall touch on `attackring-wall-100` 13 -> 20 permille
+(Retail 17; wide median 13 -> 20, Retail 11), `attackring-wall-64` 28 -> 32 (Retail 20), `attackring-gatehouse-40`
+54 -> 78 (Retail 68); travel reversals up on wall-100 (268 -> 285), wall-64 (252 -> 305) and the gatehouse (47 ->
+221), all but wall-64 still under Retail's; shadow walks are reversals by construction (in and along a wall, then
+braked). `attack-100` (legion100) changes at 4 of 11 gate offsets: damage 2,116 -> 2,325, spins 1,011 -> 1,499,
+statue ticks 10,196 -> 10,330, E t90 4,334 -> 4,325 at the gate median.
 
 Still open: the box's walled offsets stand 2-7 fewer than Retail at the end (Retail fills sub-cell points of the
 corners' origins, 70 origins reach against Legion's 48 cell centres); offset -3's west pocket keeps 2-3 empty cells
@@ -2243,9 +2245,51 @@ east (2, 4, 5) lost them (gatehouse ever 20 -> 9 at the gate median, damage 331 
 nearer taker) moved nothing (wall-64 offset 2 40 -> 37). Holding every blind-ring body in reach where it stands cut the
 walled offsets back (wall-100 63 / 59 / 62 / 68 -> 51 / 51 / 53 / 61): the inner row fills from the edge's walkers.
 `ctest:legion_ringblind` (river offset 0: >= 15 in reach at the end; 6 on the parent), `ctest:legion_ringpocket`
-(wall-64 offsets -3, -4, 4: median >= 35 in reach at the end; 32 on the parent) and `ctest:legion_ringseal`
-(gatehouse offset -2: damage >= 450; 320 on the parent). Fight and guard rings (`ringStanding`, the other round-4
+(wall-64 offsets -3, -4, 4: median >= 35 in reach at the end; 32 on the parent), `ctest:legion_ringroute` and
+`ctest:legion_ringnosight` (the review fixes, below). Fight and guard rings (`ringStanding`, the other round-4
 track) are not touched; the overlap is ringScan's hand-out and pressIn, which both read.
+
+#### Review fixes (2026-10-20)
+
+An independent review of the first cut found two faults, both reproduced and fixed; fixing the first took away the
+evidence for `sealsLane`, which went too:
+
+* **The walk on from the shadow froze its body.** `pressRoute` committed a route but left the body held with its hold
+  clock running, and `hold()` does not count a hold that pressIn served. On its next update the route branch dropped
+  the route (held 30 ticks or more), and with `holdUpdates` unchanged (`% kPressRouteEvery == 4` still true) the
+  search ran again: a body that first found its way in sight after its second check re-planned every update without a
+  step, for good (`attackring-wall-64` offset 0: 3,674 walks, one body re-routed every tick for ~1,600 ticks).
+  It now stops and restarts its hold clock, as a detour's route does (`m.state=Holding; restartHold(m)`). Walks at
+  `attackring-wall-64` offsets 0 / 1 / -1 / -2: 3,674 / 4,075 / 1,798 / 4,319 -> 136 / 292 / 67 / 102; now in reach
+  at offset 0 54 -> 60; the river's offsets -3 / -4 / -5 6,335 / 14,830 / 10,768 -> 241 / 1,710 /
+  1,839. `ctest:legion_ringroute` (wall-64 offset 0: under 1,000 walks).
+* **The blind-ring rules reached rings that need no sight.** They were keyed on `!Ring::sight`, which is also false
+  for a ring whose shot needs no line of sight at all (`reachPx`: melee, lobbers, ranges of 64 px or less). Combat
+  brakes those bodies on the reach edge, so the reach-edge spend, the in-reach hold, the 4 px press and the in-reach
+  keep of the hand-out (a body in reach is never sent out to wait) were wrong there. They now key on `Ring::blind`
+  (set only by buildRing's pass 1) and the press path on its own flag; the in-reach keep applies to rings that need
+  sight (in sight or blind). `attackring-r200-64` with a 60 px gun (`tools/scenarios/sweeps/attackring-r60-64.scn`):
+  statue ticks 611 -> 1,905 on the first cut, and every gate offset hash-identical to the parent again (611); with a
+  48 px gun reversals 44 -> 60 and back to identical. `ctest:legion_ringnosight` (offset 0: under 1,000 statue
+  ticks). Blind rings fold `Ring::blind` into the state hash.
+* **`sealsLane` removed.** Its proof, `attackring-gatehouse-40` offset -2 (damage 320 -> 539), came from the frozen
+  bodies above: with them fixed, offset -2 was 318 with the rule and 320 without it (the parent's 320; the first body
+  through the west gate is braked flush in the yard's mouth by combat, which the rule never reached). Over -8..8
+  without the rule against with it: damage mean 612 against 604 (no offset better with it; -5 926 against 860, 3 368
+  against 305), now in reach 19.6 both (median 22 against 24), reversals 358 against 373, wall touch 87 against 84
+  permille; `attackring-wall-100`, `attackring-wall-64` and `attackring-river-64` hash-identical with and without it
+  at every gate offset. No clear win, so out, and its ctest (legion_ringseal) with it.
+
+What the fixes moved over the gate offsets (first cut -> fixed, Retail): ever / now in reach unchanged at the median on
+all four fixtures; `attackring-wall-64` reversals 340 -> 305 (195), wall touch 25 -> 32 permille (20), now at offset 0
+54 -> 60; `attackring-wall-100` statue ticks 620 -> 728 (229; offset 2's value), reversals 305 -> 285 (455), wall
+touch 18 -> 20 (17); `attackring-gatehouse-40` damage 305 -> 320 (584), reversals 164 -> 221 (314), wall touch 69 ->
+78 (68), now at offset -2 24 -> 18 (29), damage there 539 -> 320 (584); `attackring-river-64` 17 / 17 unchanged. Retail hash-identical to the parent at every gate offset on
+`attackring-wall-100`, `attackring-gatehouse-40` and `attackring-river-64`; every other ring fixture (fight-60 and
+guard-64 among them) and the legion100 screen are hash-identical to the first cut (`sealsLane` acts only by the
+gatehouse's walls), `attack-100` included (its first-cut
+change against the parent: damage 2,116 -> 2,325 and spins 1,011 -> 1,499 at the gate median, E t90 4,334 -> 4,325,
+at 4 of 11 offsets).
 
 ### Paused first builds (W4 C1, protocol 244)
 
@@ -3755,22 +3799,22 @@ Rules that came out of using them:
   travel speed, spend the spots their firing arc closes off, send spare attackers to the outer bands and press flush
   against 1-cell walls the way Retail's clamped bodies end up ("Rings at ~100 bodies, round 3"). Since round 4 the
   shadow by a wall fills: band-1 spots are handed to waiting members, a body in reach out of sight walks on through
-  the shadow to ground in sight, blind rings (no spot in sight) press into reach and stay, and no press stops across a
-  one-body lane ("Rings along walls, round 4"). Still open: attackring-wall-100 stands 36 ever in reach over the gate
+  the shadow to ground in sight, and blind rings (the shot needs sight, no spot has it) press into reach and stay
+  ("Rings along walls, round 4"). Still open: attackring-wall-100 stands 36 ever in reach over the gate
   offsets against Retail's 49 (58 against 82 on the core five; Retail packs sub-cell points of the box's corner
   origins and jostles bodies in and out); the gatehouse's west-gate offsets are plugged by the first body walking
   straight at a spot beyond the yard wall and braked flush in the corridor's mouth (attackring-gatehouse-40: 16 ever
-  in reach and 305 damage over the gate offsets against Retail's 29 and 584; over -8..8 its damage is level with
-  Retail's); a ring across a river stands 17 in reach against Retail's 21 ever and 14 now; statue ticks stay a few
-  times Retail's (presses toward reach keep the facing cap), wall touch is near Retail's (wall-100 18 permille against
-  17), and fight and guard rings keep the old crawl (attackring-fight-60 32,402, attackring-guard-64 42,133 statue
+  in reach and 320 damage over the gate offsets against Retail's 29 and 584; over -8..8 its damage is level with
+  Retail's at the median, 612 against 711 mean); a ring across a river stands 17 in reach against Retail's 21 ever and 14 now; statue ticks stay a few
+  times Retail's (presses toward reach keep the facing cap), wall touch is near Retail's on wall-100 (20 permille against
+  17) and above it by the box's walls and the gatehouse (wall-64 32 against 20, gatehouse 78 against 68), and fight and guard rings keep the old crawl (attackring-fight-60 32,402, attackring-guard-64 42,133 statue
   ticks, Retail a few hundred). Against a target walled in on every side Legion outfires Retail (it seeks flush
   points on every face that has one). A Move group crossing a firing ring is level with Retail's t90 (ringcross-100
   3,841 against 3,926) and completes about 200 ticks after it.
   Measured by `ctest:legion_ringupkeep`, `ctest:legion_attackwalled`, `ctest:legion_attackflush`,
   `ctest:legion_ringcross`, `ctest:legion_ringfill`, `ctest:legion_ringclosed`, `ctest:legion_ringstill`,
   `ctest:legion_ringwait`, `ctest:legion_ringshadow`, `ctest:legion_ringbend`, `ctest:legion_ringblind`,
-  `ctest:legion_ringpocket`, `ctest:legion_ringseal` and `ringcross:g.M.t90`.
+  `ctest:legion_ringpocket`, `ctest:legion_ringroute`, `ctest:legion_ringnosight` and `ringcross:g.M.t90`.
 * **The livelock fix costs some lane order (protocol 257).** A body blocked
   again after a side-step toward its arc may not step straight back, so it
   takes another field step inward or holds and side-steps: the 150 bodies

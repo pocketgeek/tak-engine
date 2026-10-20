@@ -813,13 +813,23 @@ add_test(NAME legion_ringpocket
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-wall-64.scn --mode legion --offsets -3,-4,4 --json)
 set_tests_properties(legion_ringpocket PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.now_end\":(3[5-9]|[4-9][0-9]),")
-# Round 4: no press (nor walk on from the shadow) stops a body across a lane one body wide with free ground on both
-# sides (sealsLane). attackring-gatehouse-40 at offset -2: damage 320 before (2x2 bodies pressed flush in a 3-cell
-# corridor and sealed it), 539 after (Retail 584). Passes at 450 or more, serial equal to workers.
-add_test(NAME legion_ringseal
-         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-gatehouse-40.scn --mode legion --offsets -2 --json)
-set_tests_properties(legion_ringseal PROPERTIES LABELS legion
-                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":(4[5-9][0-9]|[5-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
+# Round 4 review: a walk on from the shadow (pressRoute) restarts the hold clock, as a detour does. Left held, the
+# route branch dropped the route at once (held 30 ticks or more) and the search ran again every update: bodies frozen
+# in the shadow for the rest of the run. attackring-wall-64 at offset 0: 3,674 walks before (one body re-routed every
+# update for ~1,600 ticks), 136 after. Passes under 1,000, serial equal to workers.
+add_test(NAME legion_ringroute
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-wall-64.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_ringroute PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"work\\.reach_press_routes\\.total\":([0-9]|[1-9][0-9]|[1-9][0-9][0-9]),")
+# Round 4 review: the blind-ring rules key on Ring::blind (the shot needs sight and no spot has it), not on a ring
+# planned without the sight test: a shot of 64 px or less, a lobber's or melee needs no sight and combat brakes its
+# bodies on the reach edge. tools/scenarios/sweeps/attackring-r60-64.scn at offset 0: statue ticks 1,905
+# before, 611 after (the parent's 611: every gate offset hash-identical to it again). Passes under 1,000, serial equal
+# to workers.
+add_test(NAME legion_ringnosight
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/sweeps/attackring-r60-64.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_ringnosight PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"statue_ticks\":([0-9]|[1-9][0-9]|[1-9][0-9][0-9]),")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
