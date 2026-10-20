@@ -796,6 +796,38 @@ add_test(NAME legion_ringshadow
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-gatehouse-40.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_ringshadow PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":(1[5-9][0-9]|[2-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
+# Legion ~100 round 4 (2026-10-20): attack and guard members round a target (a ward) standing still walk their detours
+# and shuffles at travel speed whether or not their group has a ring (stillTarget). A fight (attack-move) order acquires
+# its attacks one body at a time, so their group never gets a ring, and crept round the bodies ahead at the facing cap
+# (attackring-fight-60 at offset 0: 30,229 statue ticks and 1,483 damage; Retail 38 and 2,814). Passes when the statue
+# ticks are under 2,000 and the damage 2,000 or more, serial equal to workers.
+add_test(NAME legion_fightstill
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-fight-60.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_fightstill PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"statue_ticks\":(1?[0-9]?[0-9]?[0-9]),.*\"reach\\.ring\\.damage_end\":([2-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9]+),")
+# The same for a guard round a ward standing still (no ring: its 70 px stance): attackring-guard-64 at offset 0 crept
+# 42,133 statue ticks and had half its guards within 6 cells at tick 1,837 (Retail 194 and 1,191). Passes when the
+# statue ticks are under 2,000 and half are within 6 cells by tick 1,500, serial equal to workers.
+add_test(NAME legion_guardstill
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-guard-64.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_guardstill PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"statue_ticks\":(1?[0-9]?[0-9]?[0-9]),.*\"reach\\.ring\\.t50\":(1[0-4][0-9][0-9]|1500|[1-9][0-9][0-9]|[0-9][0-9]?),")
+# A route round a still target keeps travel speed to its last cell (round 4): the short tails at the facing cap were
+# most of the rings' remaining creep (attackring-wall-64 at offset 0: 1,329 statue ticks; Retail's gate median 173).
+# Passes when the statue ticks are under 300, serial equal to workers.
+add_test(NAME legion_ringroute
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-wall-64.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_ringroute PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"statue_ticks\":([12]?[0-9]?[0-9]),")
+# A member round a still target that its last crowd window found still commits no new flow-around shuffle (round 4):
+# at travel speed its shuffles down the field's potential and its field steps back up it reversed hundreds of times
+# behind the firing arc (attackring-r200-64: 413 reversals, three bodies 307 of the 389 its steering made; Retail 45;
+# 337 with the whole-route speed alone). Passes when the reversals are under 200 and 57 or more ever got in reach,
+# serial equal to workers.
+add_test(NAME legion_ringshuffle
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-r200-64.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_ringshuffle PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reversals\":(1?[0-9]?[0-9]),.*\"reach\\.ring\\.ever_end\":(5[7-9]|6[0-4]),")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
