@@ -172,6 +172,8 @@ constexpr int kLaneSpan=8;                    // passage lane grid: strips narro
 constexpr int kPassCells=6;                    // oncoming-traffic look-ahead (cells)
 constexpr int kPartCells=16;                   // lane parting through idle bodies: look-ahead (cells)
 constexpr uint8_t kMaxParts=3;                 // parting steps per idle body
+constexpr uint8_t kMaxGiveWays=8;              // funnel give-way steps per leg (giveWay)
+constexpr uint32_t kGiveWayHeld=2;             // hold updates before a funnel give-way is asked (giveWay)
 constexpr int64_t kOncomingCos2=14;            // 100*cos^2(112 deg): goal directions this far apart are oncoming
 constexpr int kLineCells=160;                  // direct-line probe reach
 constexpr int kFormationLineCells=640;         // ... for a member with a formation slot
@@ -634,6 +636,9 @@ struct LegionNavigator::Impl {
     struct RoutePlan;
     struct Group {
         int id=0,player=0,plane=-1;
+        // Round 3 (2026-10-20, see updateClaim): the funnel ways its members found on route (field) funnelRoute.
+        // Hashed.
+        std::set<int> funnelWays;uint64_t funnelRoute=0;
         uint32_t issuedTick=0;
         int minX=0,minZ=0,maxX=0,maxZ=0;
         std::vector<int> seeds;          // sorted unique goal origins (cell index)
@@ -976,6 +981,9 @@ struct LegionNavigator::Impl {
         // Stage 8 (admission, see admissionHold): the label of the narrow opening this member was admitted
         // through (0: none), kept until it leaves the opening's zone. Hashed while set.
         uint16_t passLabel=0;
+        // Round 3 (2026-10-20, see updateClaim): the funnel way this member waits for (claimAt: an origin cell, -1
+        // none), read from origin claimFrom when the member reached it. Hashed while set.
+        int claimFrom=-1,claimAt=-1;
         // Admission's read of a tile chain's next opening (see nextOpening): the label found for the route
         // (Field::serial), the chain region the body stood in (Hierarchy::key) and the plane epoch. A function of
         // the route and the static plane: derived, never hashed.
@@ -1221,7 +1229,9 @@ struct LegionNavigator::Impl {
     IdMap<Member> members;
     Member* member(int id) const {return members.get(id);}
     void putMember(int id,const Member& m) {
-        auto& slot=members[id];const uint16_t hadCells=slot.ptCells;slot=m;slot.ptCells=hadCells;
+        auto& slot=members[id];const uint16_t hadCells=slot.ptCells;
+        if(slot.claimAt!=m.claimAt)releaseClaim(id,slot);
+        slot=m;slot.ptCells=hadCells;
         markPass(id);
         if(slot.pt) {
             auto& ids=slot.pt->ids;
@@ -1322,6 +1332,10 @@ struct LegionNavigator::Impl {
     // Committed yield steps in progress: unit id -> target origin cell.
     struct Yield {int cell=-1;uint32_t ticks=0;};
     std::map<int,Yield> yielding;
+    // Funnel waits (see updateClaim): (way origin cell, member id) for every member whose Member::claimAt is set.
+    // An index of the members' claims, kept by updateClaim and releaseClaim (leave, putMember); never hashed (the
+    // claims are).
+    std::set<std::pair<int,int>> claims;
     static constexpr uint8_t kMaxYields=3;
     // ---- static bodies (soft obstacles) ---------------------------------
     // The route field is static terrain only, so a standing block of bodies
@@ -3271,6 +3285,7 @@ struct LegionNavigator::Impl {
         auto found=members.find(id);
         if(found==members.end())return;
         if(found->second.passLabel)clearPass(id,found->second);
+        releaseClaim(id,found->second);
         if(const auto* u=w.unit(id);u&&u->type&&found->second.slot>=0&&found->second.state!=Arrived)
             slotCells(found->second,u->type->footX,u->type->footZ,false);
         if(auto point=points.find(found->second.point);point!=points.end()) {
@@ -7777,6 +7792,215 @@ struct LegionNavigator::Impl {
         }
         return false;
     }
+    // The one statically legal neighbour origin with a lower potential, or
+    // -1 (none, or several).
+    int singleWay(const Plane& p,RouteView f,int ox,int oz) const {
+        const int W=width();
+        const uint32_t here=f.known(size_t(oz*W+ox));
+        if(here==kUnreached)return -1;
+        int way=-1;
+        for(const auto& d:kDirections) {
+            if(!step(p,ox,oz,d[0],d[1]))continue;
+            const uint32_t v=f.known(size_t((oz+d[1])*W+ox+d[0]));
+            if(v==kUnreached||v>=here)continue;
+            if(way>=0)return -1;
+            way=(oz+d[1])*W+ox+d[0];
+        }
+        return way;
+    }
+    // A passage one origin wide at `cell`, entered from (fx,fz): both of its
+    // neighbour origins across the step are illegal.
+    bool narrowAt(const Plane& p,int fx,int fz,int cell) const {
+        const int W=width(),cx=cell%W,cz=cell/W,dx=cx-fx,dz=cz-fz;
+        return !legal(p,cx-dz,cz+dx)&&!legal(p,cx+dz,cz-dx);
+    }
+    // A passage's way from this origin: the lowest neighbour origin down the
+    // field (a legal step) that lies in a passage one origin wide, or whose
+    // only way on does (the origin before a corridor's mouth, one body wide)
+    // -- or -1. A body hugging a long wall has a single way down along it, but
+    // no passage; a seed (the way into a goal) is none either.
+    int passageWay(const Plane& p,RouteView f,int ox,int oz) const {
+        const int W=width();
+        const uint32_t here=f.known(size_t(oz*W+ox));
+        if(here==kUnreached)return -1;
+        int way=-1;uint32_t low=kUnreached;
+        for(const auto& d:kDirections) {
+            if(!step(p,ox,oz,d[0],d[1]))continue;
+            const int nx=ox+d[0],nz=oz+d[1];
+            const uint32_t v=f.known(size_t(nz*W+nx));
+            if(v==kUnreached||!v||v>=here||v>=low)continue;
+            const int next=narrowAt(p,ox,oz,nz*W+nx)?-1:singleWay(p,f,nx,nz);
+            if(next<0&&!narrowAt(p,ox,oz,nz*W+nx))continue;
+            if(next>=0&&!narrowAt(p,nx,nz,next))continue;
+            way=nz*W+nx;low=v;
+        }
+        return way;
+    }
+    // Funnel claims (Legion ~100 round 3, 2026-10-20). A member beside a
+    // passage one origin wide (passageWay: the origins round a corridor's
+    // mouth one body wide, and every origin inside it) waits for its way, and
+    // so does a member standing on a cell of a way its group found there
+    // (Group::funnelWays: a 3x3 or 4x4 reaches a way from farther off). No
+    // other member of its group may then step onto an origin whose footprint
+    // covers that way and that is not past it (nearer the goal), unless it
+    // waits for the same way and steps onto the way itself (bodiesFree,
+    // claimedAgainst). So a second body never comes to wait on the far side of
+    // a way, each on a cell of it, for good (see giveWay), nor edges in beside
+    // it; the waiter steps onto the way and on, and its claim goes with it. A
+    // queue in file is untouched: the body behind stands clear of the way of
+    // the body ahead. Read on the step that reaches an origin (drive) and on
+    // the member's update after any other move.
+    void releaseClaim(int id,Member& m) {
+        if(m.claimAt>=0)claims.erase({m.claimAt,id});
+        m.claimAt=-1;
+    }
+    void updateClaim(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz) {
+        const int W=width(),here=oz*W+ox;
+        if(m.claimFrom==here)return;
+        releaseClaim(u.id,m);
+        m.claimFrom=here;
+        if(!f||!policy(m.kind).completes||m.approach)return;
+        const auto g=groups.find(m.group);
+        if(g==groups.end())return;
+        auto& ways=g->second.funnelWays;
+        if(g->second.funnelRoute!=f.metric()) {ways.clear();g->second.funnelRoute=f.metric();}
+        int way=passageWay(p,f,ox,oz);
+        if(way>=0)ways.insert(way);
+        else if(!ways.empty()) {
+            // Not a funnel itself, but on a cell of a way its group found: it
+            // waits for that way too (the lowest one nearer the goal), so no
+            // body comes to wait on the far side of it.
+            const uint32_t pot=f.known(size_t(here));
+            const int fx=u.type->footX,fz=u.type->footZ;
+            uint32_t best=pot;
+            for(int zz=std::max(0,oz-fz+1);zz<=std::min(height()-1,oz+fz-1);++zz)
+                for(auto it=ways.lower_bound(zz*W+std::max(0,ox-fx+1));it!=ways.end()&&*it<=zz*W+std::min(W-1,ox+fx-1);++it)
+                    if(const uint32_t v=f.known(size_t(*it));v<best) {best=v;way=*it;}
+        }
+        m.claimAt=way;
+        if(way>=0)claims.insert({way,u.id});
+#ifndef NDEBUG
+        if(way>=0&&traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d claim way=(%d,%d) from=(%d,%d)\n",w.tickCounter_,u.id,way%W,way/W,ox,oz);
+#endif
+    }
+    // Is origin (x,z) closed to u by another member's claim: does the
+    // footprint there cover a way that a member of u's group waits for?
+    bool claimedAgainst(const Unit& u,int x,int z) const {
+        const Member* me=member(u.id);
+        if(!me)return false;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ,at=z*W+x;
+        const int x0=std::max(0,x-fx+1),x1=std::min(W-1,x+fx-1);
+        RouteView f;bool read=false;uint32_t here=kUnreached;
+        for(int zz=std::max(0,z-fz+1);zz<=std::min(height()-1,z+fz-1);++zz)
+            for(auto it=claims.lower_bound({zz*W+x0,INT_MIN});it!=claims.end()&&it->first<=zz*W+x1;++it) {
+                if(it->second==u.id||(it->first==at&&me->claimAt==at))continue;
+                const Member* a=member(it->second);
+                if(!a||a->claimAt!=it->first||a->group!=me->group)continue;
+                // An origin past the way (nearer the goal) stays open: the
+                // bodies beyond a mouth move about freely.
+                if(!read) {
+                    read=true;
+                    if(const auto g=groups.find(me->group);g!=groups.end()&&g->second.route().usable())f=g->second.route();
+                    if(f)here=f.known(size_t(at));
+                }
+                if(!f||here==kUnreached)return true;
+                if(const uint32_t v=f.known(size_t(it->first));v==kUnreached||here>=v)return true;
+            }
+        return false;
+    }
+    // The funnel give-way (Legion ~100 round 3, 2026-10-20): the way this
+    // member waits for (updateClaim) is held by held bodies of its own group
+    // that stand no nearer the goal (at the same potential: the one that gave
+    // way less often, then the higher id). Two bodies of one queue that reach
+    // a 2-cell corridor's mouth at once on either side of its first origin
+    // each stop on a cell of it and wait for the other for good: no body ever
+    // enters (deadend-w2-n120-closed-plain; deadend-w2-n40-room-plain at
+    // offsets +10..+16). A same-direction queue drains by itself only where
+    // its front body's way is clear of the bodies behind it. The member
+    // nearer the goal asks each such blocker to step one cell clear of the
+    // way and of itself, to the free legal origin with the lowest potential,
+    // keeping its order (a part with its leg, as partLane parts a still
+    // member). Every blocker must find a cell, or none moves. A body gives way
+    // at most kMaxGiveWays times per leg, never straight back the way it last
+    // gave way.
+    // Retail has no give-way at all (its blocked mover clamps, slows and
+    // presses on: docs/retail-engine.md, "retail genuinely wedges").
+    bool giveWay(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz) {
+        if(!f||!policy(m.kind).completes)return false;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const uint32_t here=f.known(size_t(oz*W+ox));
+        // The way it waits for (updateClaim, read on this update's origin).
+        const int way=m.claimFrom==oz*W+ox?m.claimAt:-1;
+        if(here==kUnreached||way<0)return false;
+        const int wx=way%W,wz=way/W;
+        std::array<int,16> ids{};int count=0;
+        for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+            const int cx=wx+i,cz=wz+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            if(!o||o==u.id)continue;
+            bool seen=false;for(int k=0;k<count;++k)seen|=ids[size_t(k)]==o;
+            if(seen)continue;
+            if(count==16)return false;
+            ids[size_t(count++)]=o;
+        }
+        if(!count)return false;
+        std::sort(ids.begin(),ids.begin()+count);
+        auto overlaps=[&](int ax,int az,int bx,int bz) {return ax<bx+fx&&bx<ax+fx&&az<bz+fz&&bz<az+fz;};
+        // Priority at one potential: the body that gave way more often on its
+        // leg, then the lower id. So two lanes meeting at a mouth take turns
+        // instead of one body giving way to the whole other lane.
+        int mine=0;
+        if(const auto own=parts.find(u.id);own!=parts.end()&&own->second.leg==m.controller)mine=own->second.count;
+        std::array<int,16> cells{};
+        for(int k=0;k<count;++k) {
+            const int id=ids[size_t(k)];
+            const Unit* b=w.unit(id);
+            const Member* peer=member(id);
+            if(!b||!b->alive()||!b->type||b->speed!=Fixed()||!peer||peer->group!=m.group||peer->state!=Holding||
+               yielding.count(id)||b->type->footX!=fx||b->type->footZ!=fz)return false;
+            const int bx=footprintOrigin(b->x,fx),bz=footprintOrigin(b->z,fz);
+            const uint32_t there=f.known(size_t(bz*W+bx));
+            const auto part=parts.find(id);
+            const bool live=part!=parts.end()&&part->second.leg==peer->controller;
+            const int gave=live?part->second.count:0;
+            if(there==kUnreached||there<here||(there==here&&(gave>mine||(gave==mine&&id<u.id))))return false;
+            if(gave>=kMaxGiveWays)return false;
+            int best=-1;uint32_t bestV=kUnreached;
+            for(const auto& d:kDirections) {
+                const int cx=bx+d[0],cz=bz+d[1];
+                if(!step(p,bx,bz,d[0],d[1]))continue;
+                if(live&&part->second.sx*d[0]+part->second.sz*d[1]<0)continue;
+                if(overlaps(cx,cz,wx,wz)||overlaps(cx,cz,ox,oz))continue;
+                bool reserved=false;
+                for(int q=0;q<k&&!reserved;++q)reserved=overlaps(cx,cz,cells[size_t(q)]%W,cells[size_t(q)]/W);
+                if(reserved)continue;
+                const uint32_t v=f.known(size_t(cz*W+cx));
+                if(v==kUnreached||(best>=0&&v>=bestV))continue;
+                if(!yieldFree(*b,cx,cz))continue;
+                if(d[0]&&d[1]&&(!yieldFree(*b,cx,bz)||!yieldFree(*b,bx,cz)))continue;
+                best=cz*W+cx;bestV=v;
+            }
+            if(best<0)return false;
+            cells[size_t(k)]=best;
+        }
+        for(int k=0;k<count;++k) {
+            const int id=ids[size_t(k)];
+            const Unit& b=*w.unit(id);
+            const int bx=footprintOrigin(b.x,fx),bz=footprintOrigin(b.z,fz);
+            const uint64_t leg=member(id)->controller;
+            auto& part=parts[id];
+            if(part.leg!=leg)part=Part{0,0,0,leg};
+            ++part.count;++stats.parts;markWatch(id);
+            part.sx=int8_t(std::clamp(cells[size_t(k)]%W-bx,-1,1));part.sz=int8_t(std::clamp(cells[size_t(k)]/W-bz,-1,1));
+            yielding[id]=Yield{cells[size_t(k)],0};
+#ifndef NDEBUG
+            if(traced(u.id)||traced(id))std::fprintf(stderr,"TRACE t=%u u=%d give-way blocker=%d to=(%d,%d) way=(%d,%d)\n",
+                                                     w.tickCounter_,u.id,id,cells[size_t(k)]%W,cells[size_t(k)]/W,wx,wz);
+#endif
+        }
+        return true;
+    }
     // The cells this member wants are held by settled friendly arrivals (the mover's own or an ally's):
     // ask each of them to step one cell clear of that footprint, staying
     // within one cell of its own goal origin. All blockers must be able to
@@ -7954,6 +8178,7 @@ struct LegionNavigator::Impl {
                 }
             }
         }
+        if(!claims.empty()&&claimedAgainst(u,x,z))return false;
         if(placementPlane())return w.mobilePlacement(u,x,z,false);
         const int foot=std::clamp(std::max(fx,fz),1,15);
         return w.cellFree(centre(x,fx),centre(z,fz),u.id,foot);
@@ -9981,6 +10206,7 @@ struct LegionNavigator::Impl {
         }
         // Stage 8: a narrow friendly passage open the other way (admissionHold): wait before it.
         watchStrips(u,m);
+        updateClaim(u,m,p,f,ox,oz);
         if(f&&g.field&&(g.field->labels||(g.field->kind==KindChain&&g.soft&&(g.field->chainAdmits||g.members>=kOpeningMembers)))&&m.state!=Arrived&&
            admissionHold(u,m,g,ox,oz)) {holdStall(m);hold(u,m);return;}
         // A pressIn step (see pressIn) walks on to its point until combat
@@ -11550,6 +11776,7 @@ struct LegionNavigator::Impl {
                 }
                 if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=12&&yieldLane(u,m,p,nx,nz)) {hold(u,m);restartHold(m);return;}
                 if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=12&&partLane(u,m,p,ox,oz,nx,nz)) {hold(u,m);restartHold(m);return;}
+                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=kGiveWayHeld&&giveWay(u,m,p,f,ox,oz)) {hold(u,m);restartHold(m);return;}
                 if(passFiltered)++stats.passFilterHolds;
                 hold(u,m);return;
             }
@@ -11560,6 +11787,15 @@ struct LegionNavigator::Impl {
         // The heading only turns with an actual step: a refused step is a
         // hold, and a held body keeps a constant heading.
         if(u.x==beforeX&&u.z==beforeZ) {hold(u,m);return;}
+        // A funnel's way is claimed on the step that reaches it (updateClaim):
+        // two bodies stepping beside one way on successive updates of a tick
+        // otherwise both stand on cells of it before either claims.
+        // (A detour, side-step or press walk drives without the field: the group's own route is read.)
+        if(const int cx=footprintOrigin(u.x,fx),cz=footprintOrigin(u.z,fz);cx!=ox||cz!=oz) {
+            RouteView rf=f;
+            if(!rf)if(const auto g=groups.find(m.group);g!=groups.end()&&g->second.route().usable())rf=g->second.route();
+            if(rf)updateClaim(u,m,p,rf,cx,cz);
+        }
         // A small dead band keeps the body from twitching left and right as
         // its string-pulled aim shifts by a cell in a crowd; motion is exact
         // regardless, and a real course change (> ~5.6 deg) still turns.
@@ -11846,6 +12082,22 @@ struct LegionNavigator::Impl {
             const int64_t dx=(int64_t(other.x.v)-px)>>16,dz=(int64_t(other.z.v)-pz)>>16;
             return dx*dx+dz*dz<dist*dist;
         };
+        // A settled arrival standing on this body's own slot (Legion ~100
+        // round 3, 2026-10-20). Read at its origin, a settled body of this
+        // footprint stands no nearer when it settled a step off its own slot,
+        // uphill of this body, across the line to this body's slot: then no
+        // ring body reads nearer, this body never queues, its yields are
+        // refused (the settled body has no free cell) and its order never
+        // ends (5 of 12,800 random one-click formations: legion_mixedrandom).
+        // Whatever its footprint, an arrival that covers this body's slot
+        // counts as nearer: the slot is taken for good, so the body queues to
+        // the crowd, re-chooses a free slot, or settles where it stands.
+        auto onSlot=[&](const Unit& other) {
+            if(m.slot<0||m.goal<0)return false;
+            const int gx=m.goal%W,gz=m.goal/W,bfx=other.type->footX,bfz=other.type->footZ;
+            const int bx=footprintOrigin(other.x,bfx),bz=footprintOrigin(other.z,bfz);
+            return bx<gx+fx&&gx<bx+bfx&&bz<gz+fz&&gz<bz+bfz;
+        };
         bool queued=false,foreign=false,stranger=false;uint32_t front=kUnreached;
         const int r=foot<=5?2:1;
         uint64_t ring=0;
@@ -11860,7 +12112,7 @@ struct LegionNavigator::Impl {
             if(!other||!other->type||other->type->isStructure())continue;
             // Another player's body is no part of this crowd (an ally's settled body may yield, see requestYield).
             if(other->player!=u.player) {stranger=true;continue;}
-            if(!nearer(*other))continue;
+            if(!nearer(*other)&&!(isAnchor(o)&&onSlot(*other)))continue;
             if(isAnchor(o)) {
                 const auto a=anchors.find(o);
                 if(!sameDestination(a->second.point))continue;
@@ -12405,6 +12657,7 @@ struct LegionNavigator::Impl {
         for(const auto& r:repairs) {h=mix(h,0x726570616972ull^uint64_t(uint32_t(r.group))<<16);h=mix(h,r.serial);h=mix(h,uint64_t(r.node));}
         for(const auto& [id,g]:groups) {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(g.player));h=mix(h,g.issuedTick);
+            if(!g.funnelWays.empty()) {h=mix(h,0x66756e6e656cull);h=mix(h,g.funnelRoute);for(const int c:g.funnelWays)h=mix(h,uint64_t(c));}
             h=mix(h,uint64_t(uint32_t(g.minX))<<32|uint32_t(g.minZ));h=mix(h,uint64_t(uint32_t(g.maxX))<<32|uint32_t(g.maxZ));
             h=mix(h,uint64_t(uint32_t(g.compCell)));h=mix(h,g.stale);h=mix(h,g.approach);h=mix(h,g.command);h=mix(h,g.soft);
             if(g.kind!=Kind::Move)h=mix(h,uint64_t(g.kind));
@@ -12539,6 +12792,7 @@ struct LegionNavigator::Impl {
             if(m.slideCell>=0) {h=mix(h,0x736c696465ull);h=mix(h,uint64_t(uint32_t(m.slideCell))<<32|uint32_t(m.slideFrom));}
             if(m.meetSeen!=kNoTick) {h=mix(h,0x6d73656eull);h=mix(h,m.meetSeen);}
             if(m.passLabel) {h=mix(h,0x70617373ull);h=mix(h,m.passLabel);}
+            if(m.claimAt>=0) {h=mix(h,0x636c61696dull);h=mix(h,uint64_t(m.claimAt));}
             if(m.gateCell>=0) {
                 h=mix(h,0x67617465ull);h=mix(h,uint32_t(m.gateCell));
                 h=mix(h,uint64_t(uint8_t(m.gateLane))|uint64_t(uint8_t(m.gateAxis))<<8|uint64_t(uint8_t(m.gateSign))<<16);
