@@ -159,6 +159,7 @@ constexpr uint32_t kCrowdWindow=45;            // no-progress window for "close 
 // stands on its own slot).
 constexpr int kSettleSlack=2,kSettleGrow=2;
 constexpr uint8_t kRechoices=3;
+constexpr uint32_t kShadowStill=4;              // still windows before a band-0 member of a shadowed ring shuffles again (shadowWalk)
 // An explicit order's queue (stage 3): its settle bound never grows past its
 // point's crowd bound (the packed area of every body the point gathers, see
 // crowdBound) scaled to the arrival disc, kExplicitSettleNum*(foot+1) /
@@ -9524,20 +9525,38 @@ struct LegionNavigator::Impl {
         return t&&t->alive()&&t->speed<=Fixed();
     }
     // A member round a still target where walls hide it: the member stands
-    // out of the target's sight (pressHidden), or its ring is shadowed
-    // (Ring::shadow). Such a body keeps its flow-around shuffles when its last
-    // crowd window found it still (see drive). The stop is for open ground,
-    // where a held body behind the firing arc has a detour route round it.
-    // Along walls the held queue had none: it stood on the crowd short of
-    // the shadow and of the pockets between the arc and the walls, and the
-    // ringwall walks there (band-1 hand-outs, pressRoute) were cut short
-    // (round 4, 2026-10-20, the ringwall and fight tracks merged): over the
-    // gate offsets attackring-wall-64's shadow walks went 35 -> 5 and its ring
-    // 39 -> 35 ever in reach (Retail 45), with one press repeated at offset 2.
+    // out of the target's sight (pressHidden), it holds a band-1 spot of a
+    // shadowed ring (Ring::shadow: in reach, out of sight), or it holds a
+    // band-0 spot of a shadowed ring and its crowd windows have found it
+    // still for kShadowStill windows running. Such a body keeps its
+    // flow-around shuffles when its last crowd window found it still (see
+    // drive). The stop is for open ground, where a held body behind the
+    // firing arc has a detour route round it. Along walls the held queue had
+    // none: it stood on the crowd short of the shadow and of the pockets
+    // between the arc and the walls, and the ringwall walks there (band-1
+    // hand-outs, pressRoute) were cut short (round 4, 2026-10-20, the
+    // ringwall and fight tracks merged): over the gate offsets
+    // attackring-wall-64's shadow walks went 35 -> 5 and its ring 39 -> 35
+    // ever in reach (Retail 45), with one press repeated at offset 2.
+    // Not every member of a shadowed ring (as first written): a band-0 or
+    // waiting member just found still is the back of the arc, as on open
+    // ground, and lifting the stop for it brought the back-of-arc shuffles
+    // back round any ring with a wall in reach even where every body
+    // reaches (copies of wall-64 with 24 and 32 attackers: reversals 31 -> 82
+    // and 66 -> 124). Band 0 is not left out altogether either: the queue
+    // bound for the free band-0 spots of the pocket south of the box then
+    // held behind the arc's engaged bodies for good (legion_ringpocket 34).
+    // The hold's own ways out (a detour, a ring re-choice after a held
+    // window) come first; four still windows is when they have had theirs.
     bool shadowWalk(const Unit& u,const Member& m) const {
         if(pressHidden(u,m))return true;
         const auto g=groups.find(m.group);
-        return g!=groups.end()&&ringMember(g->second,m)&&g->second.ring.shadow;
+        if(g==groups.end()||!ringMember(g->second,m))return false;
+        const Group::Ring& r=g->second.ring;
+        if(!r.shadow)return false;
+        const uint8_t band=r.band[size_t(m.slot)];
+        if(band==1)return true;
+        return band==0&&m.stillSince!=kNoTick&&m.windowTick-m.stillSince>=kShadowStill*kCrowdWindow;
     }
     bool ringMember(const Group& g,const Member& m) const {return g.ring.band0>0&&m.slot>=0&&size_t(m.slot)<g.ring.cells.size();}
     void ringRelease(Group& g,int id,const Member& m) {
