@@ -813,6 +813,10 @@ struct LegionNavigator::Impl {
             // Not a ring that needs no sight at all (melee, lobbers, 64 px
             // and less), whose bodies combat brakes on the reach edge.
             bool blind=false;
+            // Shadowed (round 4): blind, or band 1 lists a spot (in reach, out
+            // of sight): walls hide the target from part of the ground in
+            // reach. See shadowWalk.
+            bool shadow=false;
             // The sight test band 0 was planned with (ringScan repeats it per origin).
             bool naval=false;int tskip=0;float tfx=0,tfz=0;
         } ring;
@@ -9519,6 +9523,22 @@ struct LegionNavigator::Impl {
         const Unit* t=w.unit(g->second.reachTarget);
         return t&&t->alive()&&t->speed<=Fixed();
     }
+    // A member round a still target where walls hide it: the member stands
+    // out of the target's sight (pressHidden), or its ring is shadowed
+    // (Ring::shadow). Such a body keeps its flow-around shuffles when its last
+    // crowd window found it still (see drive). The stop is for open ground,
+    // where a held body behind the firing arc has a detour route round it.
+    // Along walls the held queue had none: it stood on the crowd short of
+    // the shadow and of the pockets between the arc and the walls, and the
+    // ringwall walks there (band-1 hand-outs, pressRoute) were cut short
+    // (round 4, 2026-10-20, the ringwall and fight tracks merged): over the
+    // gate offsets attackring-wall-64's shadow walks went 35 -> 5 and its ring
+    // 39 -> 35 ever in reach (Retail 45), with one press repeated at offset 2.
+    bool shadowWalk(const Unit& u,const Member& m) const {
+        if(pressHidden(u,m))return true;
+        const auto g=groups.find(m.group);
+        return g!=groups.end()&&ringMember(g->second,m)&&g->second.ring.shadow;
+    }
     bool ringMember(const Group& g,const Member& m) const {return g.ring.band0>0&&m.slot>=0&&size_t(m.slot)<g.ring.cells.size();}
     void ringRelease(Group& g,int id,const Member& m) {
         if(!ringMember(g,m))return;
@@ -9632,6 +9652,7 @@ struct LegionNavigator::Impl {
         int band0=0;for(const uint8_t b:band)band0+=b==0;
         if(!band0)return false;
         r.R=R;r.band0=band0;r.tx=tx;r.tz=tz;r.ax=ax;r.az=az;r.sight=los;r.blind=blind;
+        r.shadow=blind||std::find(band.begin(),band.end(),uint8_t(1))!=band.end();
         r.naval=naval;r.tskip=std::max(t->type->footX,t->type->footZ)/2;r.tfx=t->x.toFloat();r.tfz=t->z.toFloat();
         r.cells=std::move(cells);r.band=std::move(band);r.owner.assign(r.cells.size(),0);
         stats.reachSlotsBuilt+=r.cells.size();
@@ -12292,9 +12313,10 @@ struct LegionNavigator::Impl {
             // at offset 0, one for 2,000 ticks; Retail 45), each shuffle a
             // potential gain that restarted the stall clock. It holds, and the
             // hold's ways out (a detour route round the arc, a ring re-choice
-            // after a held window) take over.
+            // after a held window) take over. Not where walls hide the
+            // target (shadowWalk): there the held queue had no way round.
             bool moved=false,passFiltered=false;
-            if(f&&!livelock(u)&&!(m.stillSince!=kNoTick&&stillTarget(m))) {
+            if(f&&!livelock(u)&&!(m.stillSince!=kNoTick&&stillTarget(m)&&!shadowWalk(u,m))) {
                 // Direct-line members measure progress toward their own goal
                 // cell; field followers by the group potential.
                 const int goalX=m.goal%W,goalZ=m.goal/W;

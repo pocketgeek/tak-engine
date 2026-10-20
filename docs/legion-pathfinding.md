@@ -2343,7 +2343,8 @@ offsets; --mpai Inner Circle seed 1 60 s: Retail b353410003e98dd5, Legion 0825ae
   and the hold's ways out take over. This is the same rule as the one for a livelocked body
   (`Unit::legionShuffle`), but read from the settle rule's own window: the shuffles' potential gains kept the stall
   clock young, and the headway clock stopped the slide round the arc as well (below). A committed shuffle still runs to its end. No new state: `stillSince` is
-  already hashed.
+  already hashed. (Since task-l4-fixring, not for a member out of the target's sight or of a shadowed ring: see
+  "Rings along walls with the still-window rule".)
 
 Medians over the wide offsets -8..8 (Windows sweep of the experiment build, which is hash-identical to the commit on
 five of these fixtures at the gate offsets; Retail is the gate median):
@@ -2491,6 +2492,67 @@ Tried and rejected (gate medians):
 The Legion lines of the navigation golden (`tools/navigation_checkpoints.json`) move from tick 2,400 on (10 of 24
 checkpoints, serial equal to workers; the Retail lines agree), so `navigation_determinism` fails until the
 integration retakes them with tools/scenarios/baseline.json; neither is retaken here.
+
+### Rings along walls with the still-window rule (2026-10-20, Legion ~100 round 4, task-l4-fixring)
+
+The two round-4 ring tracks interfered when they were merged (task-l4-land). Their two speed rules do not conflict:
+fight's `stillTarget` covers ringwall's `ringStanding`, and ringwall's own route rule for the shadow walks too.
+Fight's still-window rule does conflict. A member round a still target that its last crowd window found still
+commits no new flow-around shuffle. Along a wall, the members found still are the queue on the crowd short of the
+shadow, or short of the pockets between the firing arc and the walls. A held body there has no detour route round
+the arc, so it stood. The band-1 hand-outs and the walks through the shadow (`pressRoute`) stopped short:
+`attackring-wall-64`'s walks fell from 35 to 5 (gate median), it lost 4 bodies in reach, and offset +2 repeated one
+press (`ctest:legion_pressin`). Toggling each rule of the merge back on its own showed this. Ringwall's route rule
+for ring members gave statue 918 and no depth. Without the still-window rule for ring members, the merge had
+ringwall's depth and fight's statue ticks, but `attackring-r200-64` reversals went back up to 337. With every
+rule in ringwall's form, every ring fixture was hash-identical to the ringwall binary, so turnA plays no part.
+
+**The change** (`shadowWalk`): the still-window rule skips a member that stands out of the target's sight
+(`pressHidden`), and a member of a shadowed ring. A ring is shadowed (`Ring::shadow`, set in `buildRing` from
+`blind` and the band list, so it is not hashed separately) when it is blind or band 1 lists a spot, which means
+walls hide the target from part of the ground in reach. On open ground (r200, ringcross, f1, f2, r60) nothing
+changes: those fixtures, the fight and guard fixtures, `fight-retarget`, `aware-attack`, `goalblock-fight-200`,
+`battle-field-2x60` and `mixed2` are hash-identical to task-l4-land at every gate offset. Retail is unchanged
+(attackring-wall-64 and -gatehouse-40 at the gate offsets).
+
+Gate medians, ringwall alone / task-l4-land / this change / Retail (the sums over the 11 offsets of ever / now in
+brackets):
+
+| fixture | key | ringwall | land | this | Retail |
+|---|---|---|---|---|---|
+| attackring-wall-64 | ever_end / now_end | 39 / 37 (482 / 469) | 35 / 35 (464 / 462) | 38 / 37 (475 / 468) | 45 / 42 |
+| attackring-wall-64 | now_end at -3, -4, 4 (`legion_ringpocket`, median) | 37 | 35 | 37 | 42 |
+| attackring-wall-64 | statue / reversals / press walks | 585 / 305 / 35 | 43 / 123 / 5 | 44 / 240 / 14 | 173 / 195 / - |
+| attackring-wall-100 | ever_end / now_end | 36 / 36 (468 / 460) | 36 / 36 | 37 / 37 (473 / 465) | 49 / 41 |
+| attackring-wall-100 | statue / reversals | 728 / 285 | 133 / 233 | 131 / 362 | 229 / 455 |
+| attackring-gatehouse-40 | ever_end / now_end | 16 / 15 (208 / 166) | 17 / 14 (203 / 170) | 16 / 15 (211 / 168) | 29 / 24 |
+| attackring-gatehouse-40 | statue / reversals | 23 / 221 | 3 / 169 | 11 / 221 | 23 / 314 |
+| attackring-river-64 | now_end / statue | 17 / 22 | 17 / 1 | 17 / 1 | 14 / 85 |
+| attackring-r200-64 | reversals / ever_end | 413 / 59 | 85 / 61 | 85 / 61 | 45 / 64 |
+| battle-assault | statue / reversals / spins | - | 52,040 / 1,617 / 14,372 | 49,330 / 1,515 / 14,609 | 1,480 / 376 / 40,060 |
+
+`legion_pressin` passes again (no repeat at any gate offset), and so do `legion_ringpocket`, `legion_ringroute`,
+`legion_ringroutespeed`, `legion_ringblind`, `legion_ringshadow`, `legion_ringshuffle`, `legion_fightshuffle`,
+`legion_ringnosight` and the other ring tests. The trade is reversals by the walls, which come back toward
+ringwall's: wall-64 123 -> 240 (ringwall 305, Retail 195), and wall-100 233 -> 362 (ringwall 285, Retail 455).
+
+Not cured here. `attackring-r60-64` (26 in reach, ringwall and the parent 28, Retail 27) and `attack-100` (spins
+1,657, ringwall 1,499; E arrivals 2, ringwall 4) move because of fight's own rules on open ground, not because
+of the interference. The r60 ring needs no sight, so it has no shadow and keeps the still-window rule. attack-100
+is fight's ringless `stillTarget` (with `stillTarget` limited to attack members of an assigned ring, it went back to
+spins about 1,400 and 3 arrivals, but the fight and guard cures went too). wall-64 ever in reach is 38 against
+ringwall's 39.
+
+Tried and rejected (gate medians):
+* Only `pressHidden` exempt: wall-64 38 / 38, but wall-100 35 / 35.
+* `pressHidden` or a band-1 spot (no shadowed-ring term): wall-64 40 / 38, wall-100 37, gatehouse 18 / 15, but
+  `legion_ringpocket` 34 (offset -4: 34). Queued members of unspent band-0 spots in the south pocket held behind the
+  arc's engaged bodies.
+* Every ring member exempt, and members of unspent band-0 spots exempt: attackring-r200-64 reversals 337.
+* The exemption only out of reach (a body in the shadow in reach holds, so `pressRoute` gets its held updates):
+  wall-64 37 / 35.
+* Ringwall's route speed for ring members (short in-sight tails at the cap): statue 918 on wall-64 and 1,507 on
+  wall-100, no depth gained.
 
 ### Paused first builds (W4 C1, protocol 244)
 
@@ -4182,8 +4244,11 @@ Rules that came out of using them:
   Retail's at the median, 612 against 711 mean); a ring across a river stands 17 in reach against Retail's 21 ever and 14 now; statue ticks stay a few
   times Retail's (presses toward reach keep the facing cap), wall touch is near Retail's on wall-100 (20 permille against
   17) and above it by the box's walls and the gatehouse (wall-64 32 against 20, gatehouse 78 against 68). (These
-  ring figures were measured on task-l4-ringwall alone; the integration's combined table, task-l4-land, gives them
-  with the fight track's whole-route speed too.) Against a target walled in on every side Legion outfires Retail (it
+  ring figures were measured on task-l4-ringwall alone. Merged with the fight track, its still-window rule stopped
+  the queue short of the shadow, and wall-64 fell to 35 ever in reach. Since task-l4-fixring a shadowed ring is
+  exempt from that rule ("Rings along walls with the still-window rule"). Over the gate offsets wall-64 now stands
+  38 / 37 ever / now, wall-100 37 / 37 and the gatehouse 16 / 15, with wall reversals back near ringwall's: wall-64
+  240, wall-100 362.) Against a target walled in on every side Legion outfires Retail (it
   seeks flush points on every face that has one). A Move group crossing a firing ring is level with Retail's t90
   (ringcross-100 3,841 against 3,926; completion 4,194 against 4,166 since round 4). Since round 4 (2026-10-20,
   "Fight and guard rings round still targets") fight and guard members round a
