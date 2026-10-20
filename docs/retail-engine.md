@@ -2489,3 +2489,31 @@ by their own healtime. One Divine Lodestone spent 75 one-second windows above
 16000 of its 17092 HP while taking more than 300 damage a second (up to 1800),
 because a priest returned 1066 a second. Our `tickHealAuras` matches that
 formula, so nothing there changed.
+
+## The enemy-hover cursor: a unit that can move never shows "too far" (icd, 2026-10-19)
+
+Selector `0x4dd780` (sole caller `0x521de6`, inside the selected-unit
+aggregator `0x521cd0`, which keeps the lowest slot) handles default hover
+(mode 1) over an enemy by re-entering as ATTACK (mode 3) when the unit has
+`canattack` (UnitDef+0x264 bit 0x20). Mode 3 then branches on the unit's mover
+pointer (unit+8):
+
+- **Mobile** (mover present, locally `!isStructure()`): NO range test. Attack
+  (slot 1) unless the active weapon (`0x519ac0`) cannot hurt the target: damage
+  `0x531e50` <= 0, notargetcategory (UnitDef+0x9a), a stoning/freezing weapon
+  class (vfuncs +0x1c/+0x20) against cantbestoned/cantbefrozen (UnitDef+0x268
+  bits 2/4), toairweapon (WeaponType+0xc8 0x4000) against a target that is not
+  airborne, or noairweapon (0x8000) against one in flight mode 2. Those are
+  TooFar (slot 3). Melee is not special-cased.
+- **Immobile** (no mover): the same immunity gates, then minrange `0x52adf0`
+  (`0x5306a0`) and damage+inRange `0x52ad60`: TooFar unless in range.
+
+The selector is display-only: order dispatch (`0x5214b0`) does not call it. Our
+HUD had applied the range test to every unit, so a selected archer or swordsman
+showed TooFar over any enemy out of reach. `tools/re/probe_cursor_enemy_hover.py`
+runs those branches natively; `cursorCanAttackEnemy` (src/client/cursorrange.h)
+ports them for the cursor only (`cursor_enemy` test, shipped types). The
+right-click on an enemy still orders every selected unit to attack, as the
+order code does not consult the selector; `World::attack` then rallies a
+factory's output at the target, keeps an out-of-range tower's order until the
+target comes in reach, and drops the order for a unit with no weapon.

@@ -842,6 +842,9 @@ private:
     // Plain-hover cursor: classify what is under the world point, mirroring the priority
     // in rightClickOrder() so the pointer previews the order a right-click would issue.
     tak::CursorId hoverCursor(float wx, float wz, bool ignoreAirstrikeWeapons = false);
+    bool isCursorAttacker(const UnitR& u) const;
+    bool attackerCanHitEnemy(const UnitR& attacker, const UnitR& target,
+                             bool ignoreAirstrikeWeapons = false) const;
     // Screen-space sprite hit test: the unit's projected model bounds at its
     // DRAWN position (terrain lift + flyer altitude), floored for tiny units --
     // the same region click-select uses, so the hover cursor and a click always
