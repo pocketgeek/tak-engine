@@ -815,6 +815,40 @@ add_test(NAME legion_ringshadow
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-gatehouse-40.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_ringshadow PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":(1[5-9][0-9]|[2-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
+# Legion ~100 round 4 (2026-10-20): a blind ring (no spot of the members' region sees the target) presses into reach
+# out of sight, holds there instead of walking back to a spot centre out of reach, and spends no spot for a body
+# standing radially out at the reach edge (nothing brakes a body there). attackring-river-64 at offset 0: 6 bodies in
+# reach at the end before (the bank's band-0 spots spent by the row behind them; Retail 14 now, 21 ever), 17 after.
+# Passes when 15 or more are in reach at the end, serial equal to workers.
+add_test(NAME legion_ringblind
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-river-64.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_ringblind PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.now_end\":(1[5-9]|[2-9][0-9]),")
+# Round 4: a body in reach out of the target's sight walks on through the shadow to ground in sight (pressRoute), or
+# deeper toward the target, and members waiting on outer bands are handed band-1 spots, so the in-sight ground between
+# the firing arc and the box's walls fills two deep (attackring-wall-64 offsets -3, -4, 4: median 32 in reach at the
+# end before, 37 after; Retail 43 / 42 / 32). Passes at 35 or more, serial equal to workers.
+add_test(NAME legion_ringpocket
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-wall-64.scn --mode legion --offsets -3,-4,4 --json)
+set_tests_properties(legion_ringpocket PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.now_end\":(3[5-9]|[4-9][0-9]),")
+# Round 4 review: a walk on from the shadow (pressRoute) restarts the hold clock, as a detour does. Left held, the
+# route branch dropped the route at once (held 30 ticks or more) and the search ran again every update: bodies frozen
+# in the shadow for the rest of the run. attackring-wall-64 at offset 0: 3,674 walks before (one body re-routed every
+# update for ~1,600 ticks), 136 after. Passes under 1,000, serial equal to workers.
+add_test(NAME legion_ringroute
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-wall-64.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_ringroute PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"work\\.reach_press_routes\\.total\":([0-9]|[1-9][0-9]|[1-9][0-9][0-9]),")
+# Round 4 review: the blind-ring rules key on Ring::blind (the shot needs sight and no spot has it), not on a ring
+# planned without the sight test: a shot of 64 px or less, a lobber's or melee needs no sight and combat brakes its
+# bodies on the reach edge. tools/scenarios/sweeps/attackring-r60-64.scn at offset 0: statue ticks 1,905
+# before, 611 after (the parent's 611: every gate offset hash-identical to it again). Passes under 1,000, serial equal
+# to workers.
+add_test(NAME legion_ringnosight
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/sweeps/attackring-r60-64.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_ringnosight PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"statue_ticks\":([0-9]|[1-9][0-9]|[1-9][0-9][0-9]),")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
