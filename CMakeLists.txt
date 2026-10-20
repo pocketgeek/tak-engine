@@ -959,6 +959,26 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios taperbridge-100 --data "${TAK_TEST_DATA}"
                    --offsets 0,-4 --max scale.stuck_end=2)
   set_tests_properties(legion_passage_taper PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # Legion ~100 round 3 (2026-10-20): a way stays open for kGreenTurns of its crossings before the other way's wait
+  # closes it, not a fixed 300 ticks. On taperbridge-100's 160-cell strip every turn cost a whole crossing and mixed
+  # the two crowds on an apron; the parent turned six or more times and ended at offset +1 with 81 bodies gridlocked
+  # in the east mouth (19 of 100 arrived), at -5 and +8 with 89 and 76 arrived. Checked at +1, -5 and +8: at least 98
+  # arrive and at most 2 stand stuck at the end.
+  add_test(NAME legion_passage_green
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios taperbridge-100 --data "${TAK_TEST_DATA}"
+                   --offsets 1,-5,8 --min scale.arrive.n=98 --max scale.stuck_end=2)
+  set_tests_properties(legion_passage_green PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # ... and a group of fewer than kOpeningMembers bodies waits its turn too (taperbridge-small: ten orders of 5 sent
+  # west, 150 ticks apart, against an army of 50 going east). On the parent the small groups' routes recorded no
+  # labels, so they walked into the strip the army held and met it head on in the 6-cell middle (offset 0: 17 of 100
+  # arrived, 83 stuck; -8: 12 / 88; gridlocked at 16 of offsets -8..8). Checked at 0 and -8: at least 95 arrive and at
+  # most 2 stand stuck at the end.
+  add_test(NAME legion_passage_small
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios taperbridge-small --data "${TAK_TEST_DATA}"
+                   --offsets 0,-8 --min scale.arrive.n=95 --max scale.stuck_end=2)
+  set_tests_properties(legion_passage_small PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
   # Head-on meets near both goals (many-100: two pairs of 25-body orders sent to each other's positions meet
   # within kPivotNear of both goals; the meet band now holds up to the destination area plus one lead): at least
   # 98 of 100 arrive, the 90th percentile within 1,000 ticks (the previous commit 96 / 1,616; Retail 92 / 1,144).

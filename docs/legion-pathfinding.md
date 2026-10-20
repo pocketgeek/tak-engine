@@ -2890,7 +2890,9 @@ measurements and the variants rejected, is docs/legion-10000-progress.md section
   (60) ticks; it closes after the other way waited `kAdmitGreen` (300) ticks. Only allies defer to each other; a group
   without labels neither waits nor counts. Open ground is never an opening, so nothing waits there. (Since
   2026-10-19 a tile chain's group of 8 or more is admitted too, one passage is admitted by one record, and admitted
-  bodies on their way hold the token: "Passage admission at 100 bodies" below.)
+  bodies on their way hold the token: "Passage admission at 100 bodies" below. Since 2026-10-20 a way closes after the
+  other waited two of its crossings when that is longer than 300 ticks, and every group's route records labels, so a
+  group of fewer than 8 waits too: "Passage turns and small groups" below.)
 * **Shared destination areas.** An explicit order sent within a cell of the point where an earlier explicit area of
   the same player still gathers (its point live, or its arrivals settled there) takes that area's key and exact point
   (`sharedArea` over `destArea`, hashed): one command, one formation and crowd bound, and the first order's settled
@@ -3154,6 +3156,90 @@ orders at the halves' slot centroids split 50 / 50 and entered the disc 500 tick
 speed `island-1x100` is ahead of Retail at t90 and level at the last arrival without it, so no per-band field was
 built.
 
+### Passage turns and small groups (2026-10-20, Legion ~100 round 3)
+
+After rounds 1 and 2 the narrow-passage admission still gridlocked by offset: on 0.8.6 (protocol 281),
+`taperbridge-100` (tools/scenarios; a 161-cell strip, 12-cell mouths and a 6-cell middle) ended at offset +1 with 81 of
+100 bodies stuck in the east mouth, at -5 and +8 it did not finish in 15,300 ticks (89 and 76 arrived), and over
+-8..8 and five wider offsets (+-12, -16, +16, +17) it gridlocked at 4 (`bridges-100` at 1, -12); `bridges-1000`
+(tools/scenarios/scale) at 5 of -8..8 (17-161 stuck). Retail has nothing to copy here: it gets neither army across
+either bridge (`bridges-100` 36-64 of 100 arrive, `taperbridge-100` none, at each of offsets -8..8).
+
+**The cause.** A dump of positions and of the passage's token every 50 ticks (a debug probe, not kept) at
+`taperbridge-100` +1: the east army was admitted at tick 1,484 and its last bodies were through only at 3,592, the
+west army waiting the while on the east apron, 18 cells out (the approach zone). Granted at 3,592, 22 west bodies
+were admitted at once and walked toward the mouth through the east army's tail, which was coming out through their
+crowd; none reached the strip in the 120 ticks of `kAdmitCommit`, the east army had waited the 300 ticks of
+`kAdmitGreen` since 1,704, so the token turned back at 3,712, the 22 admissions lapsed where they stood -- in the east
+mouth -- and the east army's next stream came out into them. From there one east body stood in the strip's last cell
+for good, the token could not turn, and both armies waited. The rule behind it is the fixed green: a turn costs the
+passage a whole crossing (the way let in next waits until the last body let in before is through), and each turn
+puts the next way's crowd onto the apron the last way is coming out onto, so every turn is one more chance of a knot.
+A 300-tick green turned a long passage every few bodies (`bridges-100`, a 49-cell strip: 6-10 turns at offsets -2..2;
+`taperbridge-100` 2-3, each costing over 1,000 ticks of crossing).
+
+**The change.** A way closes after the other has waited `kGreenTurns` (2) of its crossings, or `kAdmitGreen` (300)
+ticks if that is longer. Its crossing is the longest among its admitted bodies of the approach zone plus the strip at
+the body's top speed (`crossTicks`, derived every tick from the passers, like the occupant counts; the token fields it
+decides were already hashed). A door or a short gap keeps the 300 ticks; with these fixtures' slowest bodies (1.6 px
+a tick, 3x3) `bridges-100` closes after about 1,500 ticks of waiting and `taperbridge-100` after about 3,700 (in
+practice it now turns once: the first army crosses whole, then the other).
+
+Second, a group of fewer than `kOpeningMembers` (8) bodies obeys admission too. A window or corridor route recorded
+the labels admission reads (`Field::via`) only for a group of 8 or more, so a few walkers sent separately walked into a
+strip the other way held; a tile chain admitted only when built for 8 or more (`Field::chainAdmits`). Every soft
+group's route now records them; `Field::queues` (hashed with the field) keeps the rest of stage 8 -- entrant counts,
+queue charges, re-plans for drifting queues -- to groups of 8 or more as before, and a route of such a group is never
+shared with a smaller group's field that does not count its members. `taperbridge-small` (tools/scenarios, new: the
+same bridge, an army of 50 east against ten orders of 5 sent west 150 ticks apart) gridlocked at 16 of offsets -8..8
+before (12-58 of 100 arrived).
+
+Measured (Legion, serial, offsets -8..8 unless noted; medians; Retail hash-identical on both bridges at each of
+-8..8; the 157 other fixtures of tools/scenarios and legion100 keep every observer key at offset 0, 49 of their Legion
+hashes moving only by the field fold):
+
+| fixture | key | before | after | Retail |
+|---|---|---|---|---|
+| taperbridge-100 | offsets gridlocked (>= 10 stuck) | 4 of 22 measured (+1: 19 arrive) | 0 of -16..17 | none arrive (-8..8) |
+| taperbridge-100 | arrive.n min / t90 / stopped permille | 19 / 12,336 / 303 | 100 / 11,082 / 224 | 0 / never / 1 |
+| bridges-100 | offsets gridlocked | 1 of 22 measured (-12: 38 arrive) | 0 of -16..17 | 36-64 arrive (-8..8) |
+| bridges-100 | t90 / stopped permille (gate offsets) | 11,037 / 181 | 9,920 / 135 | never / 2 |
+| bridges-100 | admission turns, offsets -2..2 | 6-10 | 2-4 | |
+| bridges-1000 | arrivals summed / stuck summed / offsets with >= 10 stuck | 13,027 / 325 / 5 | 13,616 / 26 / 1 | |
+| taperbridge-small | offsets gridlocked / arrive.n median | 16 / 37 | 0 / 98 | |
+| bridges-small (scratch) | t90 / stopped permille | 8,233 / 43 | 8,546 / 62 | |
+
+`bridges-100`'s t90 is now below the old two-way crossing's 10,237 (when it did not gridlock), so two-way flow on the
+12-cell bridge was not brought back. The remaining `bridges-1000` offset (+6, 21 stuck) is its destination crowd, not a
+bridge. `bridges-small` (a scratch fixture: `bridges-100`'s river with the west army as ten orders of 5) is the cost of
+the small groups' waiting: on the 12-cell bridge they used to get through head on, and now wait their turn (+4% t90;
+its few bodies left outside the authored radius are the ten small destination areas 4 cells apart filling at once).
+`ctest:legion_passage_green` (taperbridge-100 at +1, -5 and +8: at least 98 arrive, at most 2 stuck; 19 / 81 on the
+parent) and `ctest:legion_passage_small` (taperbridge-small at 0 and -8, at least 95 arrive; 17 / 83 and 12 / 88). The
+Legion lines of tools/navigation_checkpoints.json move with the field fold (the small groups' fields now carry labels;
+`navigation_determinism` fails until the integration retakes them).
+
+Rejected on the way (same sweeps, each switched by a debug variable on the parent, none kept):
+
+* Turning only once the old way's bodies have left the far apron (the zone beyond the strip) as well as the strip:
+  they never could, because the other way's waiting crowd stands there; 7 (`bridges-100`) and 13 (`taperbridge-100`)
+  of 17 offsets gridlocked.
+* No lapse at all (an admitted body keeps the token its way however long it takes to reach the strip): `bridges-100`
+  t90 +1,000 and gridlocked at -1, `taperbridge-100` gridlocked at 5 offsets and did not finish at 11 others (as the
+  300-tick commit window measured in round 1).
+* A commit window scaled to the zone walk (1.5 and 2 times the zone at the body's top speed, since 120 ticks is shorter
+  than a slow 3x3's walk through its 24-cell zone): with the scaled green, neutral (`bridges-100` t90 9,930 to 10,013,
+  `taperbridge-100` unchanged).
+* Waiting bodies stepping out of the passage's lane sideways (a body held for admission in front of the mouth, inside
+  the passage's span, steps one cell away from the span's centre at a time): the side crowds fill and the last bodies
+  hold in the lane; the lottery moved (`taperbridge-100` +4 and +6 gridlocked instead of +1).
+
+What is left is the apron itself: the waiting crowd still stands where the other way's stream comes out, and that
+stream threads through it (most of a turn's time on `taperbridge-100`). With one or two turns it no longer knots at
+any offset measured, but a passage whose two ways both keep arriving (more turns) is still exposed. A staging rule
+that keeps the exit lane clear (the rejected step-out above, but holding bodies before they enter the lane rather than
+moving them out of it) is the next thing to try.
+
 ### Legion 10,000: where the program left it
 
 docs/legion-10000-report.md gives the measured result against the starting revision c2c25707:
@@ -3298,18 +3384,22 @@ Rules that came out of using them:
   turn rise (`mixed2:gate.mid.crossings` 13 -> 38, Retail 0;
   `sbend:gate.t2.crossings` 9 -> 27, Retail 5). A denser crowd jams in
   `pocket-615-wall` (`g.A.arrived` 533 -> 474, Retail 157).
-* **Narrow-passage admission still gridlocks at some offsets.** At ~100 bodies
-  a head-on knot in a bridge's mouth is a matter of timing: over offsets -8..8,
-  `bridges-100` and `taperbridge-100` each end with 44-88 bodies stuck at one
-  offset on the parent of protocol 280 (both -7) and after it (`taperbridge-100`
-  +1, a gate offset: 19 of 100 arrive). The pattern is the one "Passage
-  admission at 100 bodies" describes: an admission lapses (or a crowd waits)
-  in the mouth the other way's stream comes out of. Holding the token for
-  admitted bodies in the mouth, and parting waiting bodies for the stream,
-  each moved the gridlock to another offset (above). Measured by
-  `taperbridge-100` (tools/scenarios) and `bridges-100` (legion100) over the
-  wide offsets; `ctest:legion_passage_admission` and `ctest:legion_passage_taper`
-  hold their offsets.
+* **A narrow passage's waiting crowd stands on the other way's exit apron.**
+  Until 2026-10-20 a head-on knot in a bridge's mouth was a matter of timing
+  (`taperbridge-100` +1: 19 of 100 arrived): every turn of the passage put the
+  next way's crowd onto the apron the last way was coming out onto. A way now
+  stays open for two of its crossings ("Passage turns and small groups"), so
+  long passages turn once or twice, and over offsets -16..17 neither
+  `bridges-100` nor `taperbridge-100` gridlocks (`bridges-1000` -8..8: no bridge
+  knot). The crowd still waits there, though, and the stream threads through it;
+  a passage whose two ways keep arriving turns more often and is still exposed.
+  Holding the token for admitted bodies in the mouth, parting waiting bodies for
+  the stream, waiting until the far apron is clear, and stepping waiters out of
+  the passage's lane each moved the knot elsewhere or made it worse (above).
+  Measured by `taperbridge-100` (tools/scenarios) and `bridges-100` (legion100)
+  over the wide offsets; `ctest:legion_passage_admission`,
+  `ctest:legion_passage_taper` and `ctest:legion_passage_green` hold their
+  offsets.
 * **Attack rings at ~100 bodies (after round 3, 2026-10-20).** Rings round a still target walk their detours at
   travel speed, spend the spots their firing arc closes off, send spare attackers to the outer bands and press flush
   against 1-cell walls the way Retail's clamped bodies end up ("Rings at ~100 bodies, round 3"). Still open: the ring
@@ -3422,13 +3512,16 @@ Rules that came out of using them:
   in registration order, so an order whose unit ids are not spatially
   coherent can get spatially interleaved groups
   (`split-450-open:g.A.arrived`, and the 8-group `corner-8x56:g.A.arrived`).
-* **One-way admission is slower than a lucky two-way crossing.** A narrow passage (16 cells or less) is admitted one
-  direction at a time, and since 2026-10-19 tile-chain groups wait too. On `bridges-100`'s 12-cell bridge, where two
-  lanes each way fit, the old two-way crossing of the chain groups arrived sooner when it did not gridlock:
-  `bridges-100` (tools/scenarios/legion100) `scale.arrive.t90` 10,237 to 11,928 (gate median), `stopped_permille`
-  148 to 184. Groups that were never 8 strong (`kOpeningMembers`) still neither wait nor count except as occupants,
-  so a handful of separate walkers can still walk into a passage held the other way. Measured by `ctest:legion_passage_admission` (arrivals and stuck
-  bodies; the time is in its run's JSON) and `ctest:legion_choke` (bridges-1000).
+* **One-way admission costs small groups on wide-enough passages.** A narrow passage (16 cells or less) is admitted
+  one direction at a time. With the green scaled to the crossing (2026-10-20) `bridges-100`'s one-way crossing beats
+  the old two-way one (`scale.arrive.t90` gate median 9,920, the two-way 10,237 when it did not gridlock, 11,037 on
+  0.8.6), so two-way flow on its 12-cell bridge, where two lanes each way fit, was not brought back. Since the same
+  day groups of fewer than 8 (`kOpeningMembers`) wait their turn too (`taperbridge-small`: no gridlock where 16 of 17
+  offsets knotted); on a 12-cell bridge, where a few walkers used to get through head on, they now wait (a scratch
+  fixture of ten orders of 5 against an army of 50: t90 +4%). The other way can wait up to two crossings plus one
+  (`taperbridge-100`: the second army waits for the whole first). Measured by `ctest:legion_passage_admission`
+  (arrivals and stuck bodies; the time is in its run's JSON), `ctest:legion_passage_small` and `ctest:legion_choke`
+  (bridges-1000).
 * **Idle enemy units never step aside.** Settled friendly Legion arrivals
   yield and idle friendly bodies part a lane (own player and allies, since
   2026-10-19); an enemy's idle body is a still body to route around
