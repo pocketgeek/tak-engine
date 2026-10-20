@@ -204,12 +204,14 @@ constexpr int kPivotChain=48;
 constexpr int kPivotMaxCells=32;
 constexpr int kPivotMinBodies=2;               // a fight, attack, guard or patrol leg's arc: at least this many bodies out
 constexpr int kRibbonNum=6,kRibbonDen=5;       // ribbon width: 1.2 bodies per sqrt(members rounding the turn)
-constexpr int kRibbonChain=96;
-constexpr int kRibbonMembers=32;               // the ribbon ranks parts this strong (smaller ones keep the old pinwheel)                 // descent steps a member's own way is followed to the turn's vertex
+constexpr int kRibbonChain=96;                 // descent steps a member's own way is followed to the turn's vertex
+constexpr int kRibbonMembers=32;               // the ribbon ranks parts this strong (smaller ones keep the old pinwheel)
+constexpr int kRibbonMaxPoint=4*kUplinkPart;   // ... of a point this big at most (larger ones keep it too: see ribbonLeg)
+constexpr int kRibbonStall=120;                // a ranked member stalled this long (ticks) gives up its file and hugs
 constexpr int kTurnClear=12;                   // no new turn within this many cells of the last one's vertex or end
-constexpr int kTurnPast=2;
+constexpr int kTurnPast=2;                     // cells past the turn's end along its exit that release the hold
 constexpr int kLaneSwapNear=24;                // slots by lane: a member this near its slot after a turn ...
-constexpr int kLaneSwapReach=16;               // ... exchanges with a member of its group this near it (laneUncross)                     // cells past the turn's end along its exit that release the hold
+constexpr int kLaneSwapReach=16;               // ... exchanges with a member of its group this near it (laneUncross)
 constexpr int kPivotSweeps=48;                 // line probes per pivot aim (bounded work)
 constexpr int kPivotAhead=4;                   // an arc aim is at least this many descent cells ahead
 constexpr int kPivotNear=32;                   // no pinwheel within this many cells of the destination
@@ -11627,7 +11629,25 @@ struct LegionNavigator::Impl {
     // or patrol leg (the ring and melee rules steer it near its targets) and a smaller part (two or three files: at 20
     // and 25 bodies the ribbon only slowed the formation, legion_mixedformation's ground +13%, corner-4x25's first
     // group +10%, with no lane swap to save) keep the pinwheel as it was.
-    bool ribbonLeg(const Member& m) const {return !engagesEnemies(m.kind)&&partRefs(m)>=kRibbonMembers;}
+    // So does a point of more than kRibbonMaxPoint members (the round's
+    // repair, 2026-10-20): one ribbon is at most kPivotMaxCells wide, which
+    // holds some 170 bodies of 2x2 at 1.2 bodies per sqrt(n), so a crowd this
+    // big never rounds a turn in one wave. It rounds it in many (bridges-1000:
+    // 56 waves of 1 to 110 bodies, 2 to 24 cells wide), and every wave's
+    // ribbon starts again at the inner wall, so the crowd is pinned to it:
+    // both armies took the 32-cell bridge's north half and met head on there
+    // (arrived/stuck 862/0 -> 581/155), and corner-1x448 crossed A's top in
+    // 2.3 files against 3.7 (63 fewer arrivals by tick 9,000, group F 28 -> 4).
+    // Counting the turn's earlier waves into a later one's width, ranking
+    // only members whose own way comes in the turn's way, dropping a turn
+    // record its member walked away from, and falling back to the old rank
+    // for a wave the cap compresses each moved the corners back but left
+    // bridges-1000 at 590-800 arrivals (up to 250 stuck) over offsets -2..2.
+    // The point is counted as it is now: a convoy whose later clicks join it
+    // after its first members ranked leaves the ribbon then (ribbonHold).
+    bool ribbonLeg(const Member& m) const {
+        return !engagesEnemies(m.kind)&&partRefs(m)>=kRibbonMembers&&m.pt&&m.pt->ids.size()<=size_t(kRibbonMaxPoint);
+    }
     void ribbon(Member& m,const Plane& p,RouteView f,int side,int fx,int fz,int foot) {
         const int W=width(),V=m.turnV;
         const int64_t ax=m.turnAx,az=m.turnAz;
@@ -11733,8 +11753,29 @@ struct LegionNavigator::Impl {
     // whose line passes within its radius (less a body) of the vertex or the
     // end is refused, and the member follows its arc. Past it, the turn is
     // remembered and the member ranks again at the next one.
+    // A hold that cannot be honoured is let go (the round's repair): a member
+    // whose file is blocked (no new low of its field potential for
+    // kRibbonStall ticks) gives it up and hugs -- the field's own way, as the
+    // inner file -- until it is past the turn. Its file can lie across a
+    // stream of the same crowd: corner-1x448's outer files queued below the
+    // rock line at A's corner behind the inner file running over it, a
+    // lattice of members standing 150 to 1,200 ticks. A turn record of a
+    // point that has outgrown the ribbon (ribbonLeg) is dropped, and the
+    // member ranks again by the old rule.
     void ribbonHold(const Unit& u,Member& m,int ox,int oz,int goalX,int goalZ,bool& direct) {
         const int W=width();
+        if(!m.pt||m.pt->ids.size()>size_t(kRibbonMaxPoint)) {
+            m.turnV=m.turnE=-1;m.turnSide=0;m.turnAx=m.turnAz=m.turnEx=m.turnEz=0;
+            m.pivotR=0;m.pivotCell=-1;m.pivotAim=-1;
+            return;
+        }
+        if(m.pivotR>0&&stalledFor(m)>=uint32_t(kRibbonStall)) {
+#ifndef NDEBUG
+            if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d ribbon-release at=(%d,%d) vertex=(%d,%d) R=%d stalled=%u\n",
+                                         w.tickCounter_,u.id,ox,oz,m.turnV%W,m.turnV/W,int(m.pivotR),stalledFor(m));
+#endif
+            m.pivotR=-1;m.pivotCell=-1;m.pivotAim=-1;
+        }
         const int64_t ex=m.turnEx,ez=m.turnEz;
         const int64_t el=std::max<int64_t>(1,isqrtFloor(uint64_t(ex*ex+ez*ez)));
         const int64_t along=(int64_t(ox-m.turnE%W)*ex+int64_t(oz-m.turnE/W)*ez)/el;
@@ -11753,7 +11794,13 @@ struct LegionNavigator::Impl {
             const int64_t px=ox-c%W,pz=oz-c/W;
             const int64_t t=dd?std::clamp<int64_t>(-(px*dx+pz*dz)*1024/dd,0,1024):0;
             const int64_t qx=px+dx*t/1024,qz=pz+dz*t/1024;
-            if(qx*qx+qz*qz<R*R) {direct=false;return;}
+            if(qx*qx+qz*qz<R*R) {
+#ifndef NDEBUG
+                if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d ribbon-hold at=(%d,%d) vertex=(%d,%d) end=(%d,%d) R=%d stalled=%u\n",
+                                             w.tickCounter_,u.id,ox,oz,m.turnV%W,m.turnV/W,m.turnE%W,m.turnE/W,int(m.pivotR),stalledFor(m));
+#endif
+                direct=false;return;
+            }
         }
     }
     // Pinwheel: a formation keeps its width round the end of a wall. The

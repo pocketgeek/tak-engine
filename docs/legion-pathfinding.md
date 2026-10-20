@@ -3982,6 +3982,70 @@ are bit-identical at every gate offset. Retail is hash-identical at every gate o
 mean +0.2%), `mixed-100` medians equal. The `--mpai` Inner Circle game (seed 1, 60 s) keeps Retail b353410003e98dd5 and
 Legion 0825aeb9e8139203. `ctest:legion_slotwedge` (`mixed2` at offset +2: `g.G.done` -1 on the parent).
 
+**The repair: big points and blocked files** (2026-10-20, task-l4-fixturn; `ribbonLeg`, `ribbonHold`, `kRibbonMaxPoint`,
+`kRibbonStall`). As merged, the ribbon gridlocked `bridges-1000` (`ctest:legion_choke`, workers, offset 0: arrived/stuck
+862/0 -> 581/155, bisected to the ribbon commit) and cost the 448-body corners the groups at the tail of the queue.
+Why, from per-member turn records dumped every 1,000 ticks and the ribbon's waves logged as they rank:
+
+* *A point too big for one ribbon ranks in many small waves, each pinned to the inner wall.* One ribbon is at most
+  `kPivotMaxCells` (32) wide, so about 170 bodies of 2x2 at 1.2 bodies per sqrt(n). `bridges-1000`'s armies of 500 are
+  ranked in 56 waves of 1 to 110 bodies, 2 to 24 cells wide, each starting again at its turn's inner wall: both armies
+  took the 32-cell bridge's north half (their inner corners), met head on in its west mouth and stood there to the end
+  (A 166 bodies Holding against the bank, B on the bridge). On `corner-1x448` the stream over A's top fell to 2.3 files
+  against 3.7 (`gate.top.files_x100` 229 against 372, `spread_x100` 244 against 515): the corner's drain rate, 63 fewer
+  arrivals by tick 9,000, spent on the groups last in the queue (F 28 -> 4). The 0 lane swaps at the top gate were
+  that single file.
+* *A file can lie across another stream of the same crowd.* Members whose way comes to the vertex from another side
+  (the diagonal stream from the west along `corner-1x448`'s rock line) are ranked by the ranker's way in, take outer
+  radii they never walk and descend the field along the rock line; the north-bound outer files queued below it stood in
+  a lattice of Holding bodies 150 to 1,200 ticks, their arc points across that moving inner file.
+* *A turn record outlives a route change* (`bridges-1000`: B members re-routed to the 32-cell bridge still held their
+  12-cell bridge turn).
+
+The fix: (1) a point of more than `kRibbonMaxPoint` (4 uplink parts, 256) members keeps the old pinwheel, and a member
+whose point outgrows it (a convoy's later clicks joining after its first members ranked) drops its turn record and ranks
+again by the old rule; (2) a ranked member that makes no progress on its field for `kRibbonStall` (120) ticks gives up its
+file and hugs (the field's own way, as the inner file) until it is past the turn: a hold that cannot be honoured is let
+go, it never freezes. Legion only; Retail hash-identical at every gate offset of `mixed2` and `corner-1x448`.
+
+Measured (Legion gate medians; 30813a73 / the round-4 merge 891b35a1 / now):
+
+| fixture | key | 30813a73 | merge | now |
+|---|---|---|---|---|
+| bridges-1000 (workers, offsets 0, 1, -1, 2, -2) | arrived / stuck | 862/0, 853/0, 860/0, 795/1, 745/0 | 581/155 (offset 0) | 858/0, 849/0, 860/0, 795/1, 745/0 |
+| corner-1x448 | arrived by 9,000 (median of totals) / top crossings | 389 / 26 | 326 / 0 | 391 / 28 |
+| corner-1x448 | B / C t90; F arrived | 7,067 / 6,860; 28 | never / never; 4 | 7,067 / 6,860; 27 |
+| corner-8x56 | arrived / top crossings | 418 / 7 | 368 / 3 | 421 / 7 |
+| corner-8x56 | B / C done; E t90 | 8,186 / 7,609; 8,466 | never / never; never | 8,435 / 7,050; 8,601 |
+| corner-1x100 | t90 / done / statue | 4,187 / 4,862 / 2,288 | 4,155 / 4,760 / 2,704 | 3,962 / 4,532 / 2,080 |
+| slowturn | C400 t90 / statue | 3,296 / 2,785 | 3,377 / 3,433 | 3,287 / 2,991 |
+| wall-4x50 | A done / C t90 / D t90 | 2,280 / 3,064 / 3,678 | 2,403 / 3,244 / 3,470 | 2,354 / 3,019 / 3,570 |
+| sbend | t2 crossings / done / statue | 27 / 3,602 / 754 | 2 / 3,448 / 893 | 2 / 3,377 / 1,040 |
+| gap10-100 / gap20-100 | t90 | 2,387 / 2,207 | 2,387 / 2,235 | 2,432 / 2,252 |
+| mixed-100 | T2 / T3 done | 4,227 / 4,700 | 3,707 / 4,222 | 3,783 / 4,202 |
+| bridges-100 | A / B done | 11,168 / 10,156 | 10,946 / 10,140 | 10,856 / 9,999 |
+
+Unchanged from the merge (hash-identical at every gate offset or equal medians): `mixed2` (mid crossings 10),
+`island-1x100` (t90 1,487, lane crossings 191), `uturn`, `gap20`, `doubleturn` (t90 2,497 against 2,342 at 30813a73),
+`slowturn`'s W1000 (done 2,481 against 2,357), `strait-2x100`, `idle-50x50`, `corner-4x25`, and in the legion100
+screen every fixture but those in the table (`maze-100` done +0.4%, `doorplug100-124` B done +0.5%). The trade is
+the corners' lane order: `corner-1x448` 0 -> 28 swaps at the top gate (Retail 5), `corner-8x56` 3 -> 7 (Retail 10),
+for their throughput back. Still open: `wall-4x50`'s B is done at 5 of 11 offsets (30813a73 7): one or two bodies
+settle just outside the arrival disc behind the convoy's settled arrivals after a slot exchange
+(`complete_outside_radius` 1); `sbend` stands 16% more. `legion_cost`: three cost-corner entries moved
+(N100 slot search cells 30,888 -> 35,291, N200 re-choice BFS cells 14,819 -> 16,886 and slot search cells
+48,592 -> 53,619); whole-run Legion work per unit N100 15.96 -> 15.98, N200 14.51 -> 14.57, N400 11.65 -> 9.94.
+
+Tried and not taken (single offsets unless noted): a later wave's width counted over the turn's earlier waves
+(`corner-1x448` arrivals median 310; `bridges-1000` 650/19); a wave limited to members within 12 cells beyond the ranker
+or the nearest 169 (741/15, 541/264); ranking only members whose own way comes in within 45 degrees of the turn's way in
+(`corner-1x448` 377, crossings 1, but `bridges-1000` 579/212); the old rank for a wave the cap compresses; a stalled
+member released as past the turn rather than hugging (`corner-1x448` 418 arrivals but 41 swaps); these together held
+the corners at 383-418 arrivals and 6-41 swaps but left `bridges-1000` at 589-800 arrivals with up to 252 stuck over
+offsets -2..2. The stall at 60 ticks (`gap10-100` t90 +7%, `wall-4x50` C/D t90 +20%) and at 180 (`corner-1x100` 18
+swaps) were worse. Without the slots-by-lane exchange `wall-4x50`'s B was done at 7 offsets, but `gap10-100` done +3%
+and the top gate 14 swaps.
+
 ### Legion 10,000: where the program left it
 
 docs/legion-10000-report.md gives the measured result against the starting revision c2c25707:
@@ -4106,9 +4170,11 @@ Rules that came out of using them:
   and sbend's second turn 27 (Retail 5). The pinwheel misses most turns at a
   wall end met across it (same section); a candidate fix is on branch
   task-l3-lanes3-turnfix. Since round 4 (2026-10-20, "Lane order through
-  turns: the ribbon") they are 0, 3, 10 and 2, at a cost in throughput on the
-  448-body corners (corner-1x448 arrives 328 of 448 by tick 9,000 against 385,
-  corner-8x56 380 against 420). Measured by
+  turns: the ribbon") mixed2 and sbend are 10 and 2. The 448-body corners went
+  to 0 and 3 at first, at a cost in throughput (corner-1x448 326 of 448 arrived
+  by tick 9,000 against 389); since the round's repair a point of more than 256
+  keeps the old pinwheel, so they are back to 28 and 7 with 391 and 421
+  arrivals ("The repair: big points and blocked files"). Measured by
   `corner-1x448:gate.top.crossings`, `corner-8x56:gate.top.crossings`,
   `strait-2x150:gate.strait.crossings`, `attackring-wall-64:wall_touch_permille`,
   `doorplug-112:wall_touch_permille`, `ringcross:g.M.t90`,
