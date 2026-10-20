@@ -19,7 +19,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 280;      // 280: Legion at ~100 bodies, round 2: sub-cell presses and ring bends, passage
+constexpr uint32_t kNetVersion = 281;      // 281: attackers walk to a clear shot when their shots keep stopping on terrain or scenery
+                                           //      they cannot destroy (all pathfinding modes); 280 replays refused
+                                           // 280: Legion at ~100 bodies, round 2: sub-cell presses and ring bends, passage
                                            //      lanes through wide gaps, flow-around at travel speed. Legion state
                                            //      differs from 279; 279 replays refused
                                            // 279: Legion at ~100 bodies: one admission per narrow passage (chain groups
