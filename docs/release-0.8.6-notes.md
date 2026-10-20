@@ -44,10 +44,11 @@ walk through, or a corner.
   walks into range. Before, an archer or swordsman showed "too far" over every
   enemy out of reach.
 - **"Too far"** now means no selected unit can attack that enemy from where it
-  is: the weapon does no damage to it, an anti-air weapon against a unit on the
-  ground, a ground weapon against a flyer, a stoning or freezing weapon against
-  an immune unit, or a tower or other building with the enemy out of range or
-  inside its minimum range.
+  is: the weapon does no damage to it, the unit is never allowed to target that
+  kind of unit, an anti-air weapon against a unit on the ground, a ground
+  weapon against a flyer, a stoning or freezing weapon against an immune unit,
+  or a tower or other building with the enemy out of range or inside its
+  minimum range.
 - **Right-click orders are unchanged**: every selected unit is ordered to
   attack. A tower keeps the order and fires once the enemy comes in range, and
   a selected factory sends the units it builds after that enemy.
@@ -108,12 +109,13 @@ See [Legion](user-guide.md#legion) in the user guide, and
   kill on Maneuver; and the case where the first search fails),
   `cursor_enemy` (the hover decision over shipped types, which fails 9 cases
   under the old range-for-all rule) with `tools/re/probe_cursor_enemy_hover.py`,
-  `voice_test` (the voice-activation gate and page), and the Legion ctests
+  the Legion ctests
   `legion_passage_admission`, `legion_passage_records`, `legion_passage_taper`,
   `legion_meetnear`, `legion_departure`, `legion_ringupkeep`,
   `legion_attackwalled`, `legion_ringcross`, `legion_pressin`,
   `legion_ringfill`, `legion_ringbend`, `legion_ringbend_pocket`,
   `legion_widegaplanes`, `legion_flowshuffle` and `legion_flowshuffle_idle`.
+  `voice_test` (ctest `voice`) gains the voice-activation gate and page.
   `replay_test` pins protocol 281 and refuses 280, 279 and 278.
 - New ~100-body fixtures in `tools/scenarios/legion100/` (written by
   `gen_legion100.py`) plus `tools/scenarios/taperbridge-100.scn` and `ringbend-pocket.scn`.

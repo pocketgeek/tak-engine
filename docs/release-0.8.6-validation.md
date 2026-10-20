@@ -126,8 +126,8 @@ multiplayer- nor replay-compatible with 0.8.5.
      the attack cursor), and that captions were checked against the images.
      Captions that depend on the new shots: README title alt text ("version
      0.8.6") and gallery footnote ("0.7.25 to 0.8.6 builds"); the user guide's
-     voice-chat.jpg alt text (still describes the 0.8.4 page without TALK MODE;
-     update it if the page is recaptured); docs/img/README.md (header, kept-from
+     voice-chat.jpg alt text (already describes the recaptured page: Talk mode
+     Push to Talk, Activation level 15 greyed out); docs/img/README.md (header, kept-from
      lists and every "Rendered by the 0.8.x build" cell). -->
 **PLACEHOLDER (lead): screenshots.**
 

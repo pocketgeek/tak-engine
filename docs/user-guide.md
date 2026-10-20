@@ -802,7 +802,7 @@ speed keys are fixed.
 | **Shift** + select | Add to the selection. |
 | **Ctrl** + select | Remove from the selection. |
 | **Right-click** | The natural order for what is under the cursor: move, attack, guard, repair, load, reclaim and so on. |
-| **Right-click an enemy** | Attack it. As in the original, the pointer shows the attack cursor whenever a selected unit's active weapon can hurt that enemy; a unit that can move walks into range, however far away the enemy is. The "too far" cursor means no selected unit can attack it from where it is: the active weapon cannot hurt that enemy (it does no damage to it, it is an anti-air weapon and the enemy is on the ground, a ground weapon and the enemy is flying, or a stoning or freezing weapon and the enemy is immune), or a tower or other building has the enemy out of range or inside its minimum range. A building still takes the order and fires once the enemy comes in range. A selected factory sends the units it builds after that enemy. |
+| **Right-click an enemy** | Attack it. As in the original, the pointer shows the attack cursor whenever a selected unit's active weapon can hurt that enemy; a unit that can move walks into range, however far away the enemy is. The "too far" cursor means no selected unit can attack it from where it is: the active weapon cannot hurt that enemy (it does no damage to it, the unit is never allowed to target that kind of unit, it is an anti-air weapon and the enemy is on the ground, a ground weapon and the enemy is flying, or a stoning or freezing weapon and the enemy is immune), or a tower or other building has the enemy out of range or inside its minimum range. A building still takes the order and fires once the enemy comes in range. A selected factory sends the units it builds after that enemy. |
 | **Shift + right-click** | Queue that order after the current ones. |
 | **Right-drag** with a reclaiming builder | Reclaim everything in the box. |
 | **Middle-drag**, or the cursor at a screen edge | Scroll the map. |
@@ -1542,7 +1542,7 @@ player with it off cannot talk and is sent no voice at all.
 
 While **Voice chat** is off, every other row is greyed out and ignores clicks.
 
-![The Voice Chat page with voice chat on, push to talk on Space, System Default microphone at volume 100 with an empty level meter, and output Same as Game Output at volume 100](img/guide/voice-chat.jpg)
+![The Voice Chat page with voice chat on, Talk mode Push to Talk on Space, System Default microphone at volume 100 with an empty level meter, Activation level 15 greyed out, and output Same as Game Output at volume 100](img/guide/voice-chat.jpg)
 
 | Option | Default | What it does |
 | --- | --- | --- |
