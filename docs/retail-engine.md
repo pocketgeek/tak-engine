@@ -152,6 +152,61 @@ clear-shot test (retail has none); turn-rate terrain multipliers and parts of
 the stone/freeze/paralyze immunity checks are not modelled. `shootme` is: a
 human-owned shooter never auto-picks a type without it (protocol 253).
 
+## Blocked shots: retail fires on, the engine walks to a clear shot (2026-10-19)
+
+Retail has no line-of-fire test and no reposition. The common weapon update
+(`52ae90`) admits AimWeapon/FireWeapon on target lookup and the base inclusive
+2D range virtual alone (`52fe30`; `probe_weapon_gate_loss.py` drives it with a
+zeroed visibility grid and it still fires). In flight, `52a4d0` stops the shot
+at the first terrain or feature cell it meets, before the unit behind it
+(`probe_ballistic_blocked_target.py`: an Arabow arrow hits a feature at
+`(452.987,20.647,400)` and calls `529c10` with no unit; without the feature
+the same arrow hits the enemy). Nothing feeds that impact back to the shooter,
+so a retail archer behind a hill crest or a rock fires into it until the order
+changes. A destructible feature wears down and then lets the shots through.
+
+The engine already deviates with a 2D clear-shot test on the nav grid for
+ranged, non-lobbing ground weapons (`slotClearShot`, `tickCombat`'s `los`).
+That test cannot see a passable crest a low arc clips, water, a tall feature
+that does not block movement, or the corner cells its Bresenham walk skips,
+so since this change the sim also watches where shots land
+(`World::noteShotImpact`, every ballistic, straight and guided shot):
+
+- An impact on terrain, water or scenery the weapon cannot destroy
+  (`indestructible`, no `damage`, `unitsonly`; a fire starter still counts a
+  flamable feature as destructible) that lies short of the target and outside
+  its body plus one body plus half the weapon's splash counts against the
+  target. A hit on the target, or a miss beside or past it, clears the count;
+  so does moving more than 16 px from where the count started. Lobbers are
+  included: an arc that clears never counts.
+- After three in a row (`shotBlockedHere`), an auto weapon slot treats the
+  target as having no clear shot from here (the sweep drops it and picks
+  another). An attacking ground mover that is allowed to leave its post
+  (not Hold Position) searches the cells within 12 of it for the nearest spot
+  in the weapon's range band of the target that it fits on, can reach, is away
+  from the blocked spot, passes the 2D test, and has a clear straight chord
+  from its muzzle height to the target's SweetSpot through `52a4d0`'s map
+  test (a ballistic arc lies above its chord). It puts a ground-mission move
+  to that spot in front of the attack, so Retail and Legion each walk it their
+  own way, and the attack resumes on arrival (`repositionForShot`).
+- Three walks per target between hits on it (a hit renews them); when none
+  is left the unit fires on as retail does. A search that finds no spot
+  writes off the moment, not the target: the unit fires on (still counted
+  blocked, so the sweep prefers another target) and searches again after
+  three more blocked shots (`Unit::searchFailed`), so a target that moves
+  behind a different obstacle, or a long-lived one attacked later from a new
+  approach, is searched again. Buildings, flyers, melee and Hold Position never
+  move. The state (`Unit::blockedTarget` and its counters) is hashed, with a
+  tag, only once a blocked impact has been seen.
+
+`blocked_shot_test` (Retail and `--legion`) uses the shipped Aramon Archer and
+Swordsman: behind a passable ridge and behind a row of shipped `ZonFireD01`
+art, the archer on Hold Position lands 11 of 11 shots short in 30 s for no
+damage (retail); on Maneuver it lands 3 short, walks 49-88 px and kills the
+target with 5 hits. Its sticky case: an archer whose first search fails (a
+full-height campfire wall out of reach) walks once and lands 16 hits after the
+target moves behind the short row; before the fix it never walked again.
+
 ## After an unload the carrier stands by and lands (icd, 2026-10-12, protocol 256)
 
 `VTOL_UNLOAD` (`41ae20`) flies its carrier along a step-out point controller

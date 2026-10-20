@@ -1044,6 +1044,17 @@ struct alignas(64) Unit {
     int lastHitPlayer = -1; // score attribution captured at impact; mission script input
     int   lastHitBy = 0;   // id of the unit that last damaged this one (for kill XP)
     int32_t captureProg = 0; // canCapture units: ticks spent charming the current target
+    // Blocked shots (engine deviation, see World::noteShotImpact): the target
+    // whose last shots from here struck terrain or scenery this unit cannot
+    // destroy, short of the target; how many in a row; the whole-pixel spot
+    // they were fired from; how many firing spots it has walked to against
+    // that target since it last hit it; and whether the last spot search
+    // from here found nothing. Hashed with a tag when blockedTarget is set.
+    int32_t blockedTarget = 0;
+    uint8_t blockedShots = 0;
+    uint8_t repositions = 0;
+    uint8_t searchFailed = 0;
+    int16_t blockedX = 0, blockedZ = 0;
     uint8_t reclaimEffectDelay = 0;    // worker particle cadence while actively reclaiming
     bool workScriptWorking = false; // repair/reclaim requested StartBuilding
     bool buildBegun = false;   // construction site: true once the builder arrived
@@ -2928,6 +2939,12 @@ private:
     bool slotInsideMinRange(const Unit& u,const Unit& t,int slot) const;
     bool slotBadTarget(const Unit& u,int slot,const Unit& t) const;
     bool slotClearShot(const Unit& u,const Unit& t,int slot) const;
+    // Blocked shots (engine deviation, see noteShotImpact in sim.cpp).
+    void noteShotImpact(int fromId,int targetId,const Weapon& w,const std::array<int32_t,3>& impact,int hitUnit);
+    bool impactIndestructible(const Weapon& w,int cx,int cz) const;
+    bool shotBlockedHere(const Unit& u,const Unit& t) const;
+    bool shotChordClear(const Unit& u,Fixed fromX,Fixed fromZ,const Unit& t,int slot);
+    bool repositionForShot(Unit& u,const Unit& t,int slot);
     bool sweepKeepsTarget(const Unit& u,int slot,const Unit& t) const;
     void tickFireSweep(int player);
     void tickSlotWeapons(Unit& u);
