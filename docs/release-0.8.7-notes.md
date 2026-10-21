@@ -77,8 +77,9 @@ See [Legion](user-guide.md#legion) in the user guide, and
   `legion_ringstill`, `legion_ringwait`, `legion_ringclosed`,
   `legion_ringblind`, `legion_ringnosight`, `legion_ringpocket`,
   `legion_ringshadow`, `legion_ringshuffle`, `legion_ringroute`,
-  `legion_ringroutespeed`, `legion_fightstill`, `legion_fightshuffle` and
-  `legion_guardstill`. `replay_test` pins protocol 284 and refuses 283, 282
+  `legion_ringroutespeed`, `legion_fightstill`, `legion_fightshuffle`,
+  `legion_guardstill`, `legion_funnelmouth`, `legion_funneltie` and
+  `legion_mixedrandom` (23 new tests in all). `replay_test` pins protocol 284 and refuses 283, 282
   and 281.
 - New fixtures: `tools/scenarios/attackring-fight-diag-60.scn`,
   `attackring-gatehouse-40.scn`, `taperbridge-small.scn` and
