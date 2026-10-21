@@ -9,7 +9,7 @@ campaign and schema unchanged since 0.8.7).
      docs/random-map-generation.md, docs/multiplayer-design.md, these notes and
      the release notes. -->
 
-Tagged `v0.8.8` at `TODO-LEAD` (annotated tag object `TODO-LEAD`) and published on TODO-LEAD.
+Tagged `v0.8.8` at `e9a8ecaa` (annotated tag object `8cb3e02c`) and published on 2026-10-21 21:43 UTC.
 
 ## Scope and compatibility
 
@@ -72,8 +72,7 @@ Inner Circle seed 1 from the landing commits: Retail 60 s `b353410003e98dd5`
 and Legion 60 s `0825aeb9e8139203` (288's commit body), equal to 0.8.7.
 The local checks confirmed all four on Linux at `0e78b3a6`, including 300 s
 Retail `a3d953803a064191` and Legion `ce5c4ba7562e53b9`, all equal to 0.8.7.
-TODO-LEAD: `--mpai` on Windows and macOS (CI's Determinism job on main was
-green at `0e78b3a6`).
+`--mpai` on Windows and macOS was run on optimized Debug builds (`-O2`) of the tag `e9a8ecaa`, built on oden-win (MSYS2 MINGW64, GCC) and on the arm64 MacBook (Apple Clang). The release binaries reject the harness flags, so Debug builds were needed. The settings were Inner Circle, `takserver --local --no-auth --seed 1`, a scratch profile, and `TAK_LEGION=1` for Legion. All eight games ended `err=none end=timelimit` and match Linux and 0.8.7: Retail 60 s `b353410003e98dd5` (4 units), 300 s `a3d953803a064191` (13 units); Legion 60 s `0825aeb9e8139203` (4 units), 300 s `ce5c4ba7562e53b9` (18 units), on both hosts. Neither host logged a desync or referee-suspect line. The tag's dispatched Determinism run (39674610067) runs no `--mpai` game. Its cross-build check agrees on golden `dcef618cd2e4d558`.
 
 **Compatibility.** `kNetVersion` is **288** in `src/net/protocol.h` at
 `0e78b3a6`, against 284 at `v0.8.7`. `kReplayFormat` is **14** in
@@ -376,15 +375,45 @@ seat agreed with the referee at every checkpoint.
 
 ## CI and packages
 
-TODO-LEAD: main CI on the final source (Determinism, macOS, Windows, Linux packages);
-tag CI run ids (determinism dispatched with `gh workflow run determinism.yml --ref
-v0.8.8`); reruns and which known flake; asset count (0.8.7: 29), digests and sizes; build
-ids `v0.8.8` in every package; Windows Authenticode (0.8.7: 9 files Valid on oden-win);
-macOS notarization and stapling of both DMGs and apps; Opus static and
-`OPUS-LICENSE.txt`; **new: `CHAT-FONT-LICENSE.txt` in every Debian, RPM, Arch and
-Slackware package, both Linux debug tarballs, all release and debug ZIPs (the game app's
-Resources on macOS) and the Windows installer**; microphone entitlement;
-`NSHighResolutionCapable`; no libsecret/GLib `NEEDED` on Linux; publication time.
+Main CI on the final source `e9a8ecaa`: [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/39667222015), [Linux packages](https://github.com/pocketgeek/tak-engine/actions/runs/39667221996) and [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/39667221991) passed; macOS arm64 needed one rerun for the known `stream_test` timing flake. Determinism is path-filtered and last ran on main at `2c74f59c` ([39663520571](https://github.com/pocketgeek/tak-engine/actions/runs/39663520571), success); the commits after it touch only `src/client/campaignscreen.cpp`, images and docs.
+
+On the exact tag (`e9a8ecaa`, annotated tag object `8cb3e02c`), all four workflows passed on the first attempt. No job needed a rerun, so none of the known flakes appeared: macOS `stream_test` timing (x64 and arm64), "Upload CI artifact: ENOTFOUND", macOS x64 `hdiutil` "Resource busy", the Fedora openh264 mirror, the Slackware mirror `md5sum` error, `downloads.xiph.org` / `gitlab.freedesktop.org` connect failures, and the Ubuntu 22.04 `crusades_client_network_test` "complete replay not published".
+
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/39674610067): started manually on the tag because the workflow is path-filtered. `unit-tests`, `detmath` and `sim-equiv` passed. The GCC and Clang x86-64 builds at O0/O2/O3 all agree on golden `dcef618cd2e4d558` (aarch64 skipped), the same as 0.8.7. This workflow runs no `--mpai` game.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/39674611229): all 16 native package jobs and the release attachment.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/39674611157): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/39674611152): both builds plus the **Sign + notarize** job for each architecture. That job replaced the unsigned macOS ZIPs and DMGs in the draft with signed, notarized and stapled ones.
+
+The release was created as a draft with these notes, and tagged CI attached the packages. All **29 assets** were downloaded after the macOS signing finished. They are the same set as 0.8.7 with the version swapped. Each one matched GitHub's SHA-256 digest and byte size before publication. Every release asset is between 0.6% and 1.0% larger than its 0.8.7 counterpart (ratios 1.0062 to 1.0104). The debug archives grew 1.2% to 2.3%. The release `takclient` grew by 208-287 KB on every platform. That is more than the embedded Noto Sans Bold subset (about 79 KB) alone: the UI text layer, power codes and mods code are new in this release as well.
+
+- **Build ids.** The client and server in every Linux package carry `v0.8.8`. That covers Debian 12 and 13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44 and openSUSE Leap 16.0 (each for both architectures), plus Arch, Slackware and both Linux debug tarballs.
+  - On Linux, the x86-64 `takclient` and `takserver` report `0.8.8 (build v0.8.8)`. That holds for Debian 12 and 13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44, openSUSE Leap 16.0, Slackware and the x64 debug tarball. So does the Arch `takserver`. The Arch `takclient` needs glibc 2.44, newer than the checking host's 2.43, so only its build string was checked. For the arm64 binaries, only the build string `v0.8.8` was checked.
+  - On Windows 11, the x64 Windows ZIP's `takclient.exe` and `takserver.exe` report `0.8.8 (build v0.8.8)`. For the ARM64 `takclient.exe` and `takserver.exe`, only the build string `v0.8.8` was checked.
+  - On the arm64 MacBook (macOS 26.6.2), `takclient` and `takserver` report `0.8.8 (build v0.8.8)` for both architectures. This holds for the bare programs from the ZIPs and for the copies inside the game app from each DMG and each ZIP. The x64 copies ran under Rosetta.
+- **Windows signatures.** `Get-AuthenticodeSignature` on oden-win reports **Valid** (CN=Curtis Edge, timestamped) for 9 signed files, the same count as 0.8.7. They are the setup `.exe`, plus `takclient.exe`, `takserver.exe`, `cartographer.exe` and `crusades_admin.exe` in both the x64 and ARM64 ZIPs. The debug ZIPs were not checked.
+- **macOS notarization.** On the MacBook, both DMGs pass `xcrun stapler validate` and `spctl` (open, primary signature) as **accepted, source=Notarized Developer ID, origin=Developer ID Application: Curtis Edge (L479Y59RN8)**.
+  - Both apps (the game and TAK Cartographer) pass both checks the same way, from each DMG and from each ZIP.
+  - Every bundled and bare `takclient`, `takserver`, `cartographer` and `crusades_admin` passes `codesign --verify --strict` (TeamIdentifier L479Y59RN8).
+  - `spctl` says the bare command-line programs do not seem to be an app. That is expected for unstapled command-line tools.
+- **Opus is static.**
+  - No packaged Linux `takclient` or `takserver` has a `NEEDED` entry beyond libc, libm and the loader (Slackware also lists libdl and libpthread), so none needs libopus. The Debian and Ubuntu packages depend only on `libc6`, and the RPMs require only libc, libm and the loader.
+  - No Windows `.exe` imports or names an Opus DLL, and the ZIPs ship no DLLs. The x64 import tables list only system DLLs.
+  - No macOS binary links a libopus dylib (`otool -L`).
+  - `OPUS-LICENSE.txt` is in every Debian, RPM, Arch and Slackware package, in both Linux debug tarballs, in the Windows installer, in all four release ZIPs (inside the game app's Resources on macOS) and in the four debug ZIPs.
+- **Interface font licence (new).** `CHAT-FONT-LICENSE.txt` sits beside `EDITOR-FONT-LICENSE.txt` in every place the game ships:
+  - every Debian, RPM, Arch and Slackware package (`share/licenses/tak-engine`) and both Linux debug tarballs;
+  - the Windows installer, both Windows release ZIPs and both Windows debug ZIPs;
+  - both macOS debug ZIPs;
+  - the game app's `Contents/Resources` from both DMGs and both ZIPs.
+
+  TAK Cartographer's app has only `EDITOR-FONT-LICENSE.txt`. That is correct: `cartographer` does not link `tak-uifont`, and its Noto Sans Mono editor font is the one `EDITOR-FONT-LICENSE.txt` covers.
+- **Mods folder.** No package, installer, ZIP or DMG contains an `overrides/` or `mods/` directory, and none contains `click.hpi`. This matches 0.8.7, whose packages also had no `overrides/click.hpi`: the order-click archive has only ever been a repository file. At the tag it is `mods/cosmetic/click.hpi`; at `v0.8.7` it was `overrides/click.hpi`.
+- **macOS microphone.** The game app's `Info.plist` carries `NSMicrophoneUsageDescription` in both DMGs and both ZIPs. The `com.apple.security.device.audio-input` entitlement is on the game app's `takclient` (DMG and ZIP, both architectures) and on the bare ZIP `takclient`. It is absent from `takserver`, `crusades_admin` and `cartographer`.
+- **macOS Retina.** `NSHighResolutionCapable` is `true` in the `Info.plist` of both apps (the game and TAK Cartographer), from both DMGs and both ZIPs.
+- As in 0.8.1 to 0.8.7, no packaged Linux `takclient` has a `NEEDED` entry for libsecret, GLib, GIO or GObject.
+- `docs/quick-start.md`, `docs/release-0.8.8-notes.md` and this report are in the source tree at the tag. `kNetVersion` there is 288.
+
+The release was published on 2026-10-21 21:43 UTC and is the latest release.
 
 ## Screenshots
 

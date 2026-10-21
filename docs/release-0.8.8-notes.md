@@ -182,8 +182,7 @@ See [Legion](user-guide.md#legion) in the user guide, and
 - The `--mpai` Inner Circle seed 1 hashes are unchanged from 0.8.7: Retail
   60 s `b353410003e98dd5`, 300 s `a3d953803a064191`; Legion 60 s
   `0825aeb9e8139203`, 300 s `ce5c4ba7562e53b9` (the Legion changes are not met
-  in that game, and power codes are off there).
-  <!-- LEAD: confirm on the final source and on Linux, Windows and macOS. -->
+  in that game, and power codes are off there), confirmed on the tagged source on Linux, Windows and macOS.
 
 ## Known limits
 
