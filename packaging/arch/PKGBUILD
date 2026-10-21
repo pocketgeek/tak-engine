@@ -35,6 +35,7 @@ package() {
   install -Dm644 "$startdir/../../res/icons/takclient.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/tak-client.png"
   install -Dm644 "$startdir/../../STREAMING-LICENSES.txt" "$pkgdir/usr/share/licenses/$pkgname/STREAMING-LICENSES.txt"
   install -Dm644 "$startdir/../../EDITOR-FONT-LICENSE.txt" "$pkgdir/usr/share/licenses/$pkgname/EDITOR-FONT-LICENSE.txt"
+  install -Dm644 "$startdir/../../CHAT-FONT-LICENSE.txt" "$pkgdir/usr/share/licenses/$pkgname/CHAT-FONT-LICENSE.txt"
   install -Dm644 "$startdir/../../ACME-LICENSES.txt" "$pkgdir/usr/share/licenses/$pkgname/ACME-LICENSES.txt"
   install -Dm644 "$startdir/../../OPUS-LICENSE.txt" "$pkgdir/usr/share/licenses/$pkgname/OPUS-LICENSE.txt"
   install -Dm644 "$startdir/../../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"

@@ -362,7 +362,7 @@ jobs:
           cmake --build build-debug --target takclient takserver cartographer crusades_admin
           python3 tools/check-linux-architecture.py ${{ matrix.arch }} build-debug/takclient build-debug/takserver build-debug/cartographer build-debug/crusades_admin
           mkdir -p dist-linux-debug
-          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-linux-debug/
+          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-linux-debug/
           cp build-debug/takclient build-debug/takserver build-debug/cartographer build-debug/crusades_admin dist-linux-debug/
           tar -C dist-linux-debug -czf dist/tak-engine-linux-${{ matrix.arch }}-debug.tar.gz .
 

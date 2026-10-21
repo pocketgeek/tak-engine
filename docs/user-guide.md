@@ -1422,7 +1422,11 @@ is not enough room.
 The **chat box** shows multiplayer chat during a game, just above the information
 bar. Each message starts with the sender's name in their player colour (notices
 from your own game, such as a cosmetic mod left out, are gold) and wraps onto further lines instead of running off the screen.
-The text sits on a dark panel so it reads over bright sand and dark forest alike.
+The text is a clean bold sans-serif drawn at your screen's real resolution, so it
+stays sharp at every Chat Scale and UI Scale (and on a Mac Retina display), and it
+sits on a dark panel so it reads over bright sand and dark forest alike. Accented
+Latin letters (é, ñ, ß, ...) show as typed; characters outside that set, such as
+emoji or Chinese, show as **?**.
 New messages appear at the bottom; each stays for 12 seconds and then fades out
 over 2 seconds. While you type (**Enter**), the last eight messages stay up and
 your line is shown under them after **SAY:**. The box never goes under the

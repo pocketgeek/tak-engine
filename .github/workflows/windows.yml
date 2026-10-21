@@ -272,7 +272,7 @@ jobs:
         run: |
           mkdir -p dist-win
           cp build/takclient.exe build/takserver.exe build/cartographer.exe build/crusades_admin.exe dist-win/
-          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-win/
+          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-win/
 
       - name: ZIP unsigned CI build
         if: github.repository != 'pocketgeek/tak-engine' || !startsWith(github.ref, 'refs/tags/v')
@@ -334,7 +334,7 @@ jobs:
         run: |
           mkdir -p dist-win-debug
           cp build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe build-debug/crusades_admin.exe dist-win-debug/
-          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-win-debug/
+          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-win-debug/
 
       - name: ZIP unsigned CI build (debug)
         if: github.repository != 'pocketgeek/tak-engine' || !startsWith(github.ref, 'refs/tags/v')

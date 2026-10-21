@@ -10,7 +10,7 @@ Set-StrictMode -Version Latest
 $root = (Resolve-Path "$PSScriptRoot/../..").Path
 $payload = (Resolve-Path $PayloadRoot).Path
 $executables = @('takclient.exe', 'takserver.exe', 'cartographer.exe', 'crusades_admin.exe')
-$expected = @($executables) + @('STREAMING-LICENSES.txt', 'EDITOR-FONT-LICENSE.txt', 'ACME-LICENSES.txt', 'OPUS-LICENSE.txt')
+$expected = @($executables) + @('STREAMING-LICENSES.txt', 'EDITOR-FONT-LICENSE.txt', 'CHAT-FONT-LICENSE.txt', 'ACME-LICENSES.txt', 'OPUS-LICENSE.txt')
 $versionMatch = [regex]::Match((Get-Content "$root/CMakeLists.txt" -Raw), 'project\(tak-engine VERSION ([0-9]+\.[0-9]+\.[0-9]+)')
 if (!$versionMatch.Success) { throw 'Cannot read project version' }
 $version = $versionMatch.Groups[1].Value

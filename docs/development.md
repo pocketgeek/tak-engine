@@ -42,7 +42,10 @@ set `-DFETCHCONTENT_SOURCE_DIR_TAK_SQLITE=/path/to/sqlite-amalgamation-3530400`
 to an extracted copy containing `sqlite3.c` and `sqlite3.h`. It adds no runtime
 SQLite DLL/shared-library dependency. Voice chat's codec, Opus 1.5.2, is built
 the same way (`cmake/Opus.cmake`, client only, BSD licence in `OPUS-LICENSE.txt`);
-offline, set `-DFETCHCONTENT_SOURCE_DIR_TAK_OPUS=/path/to/opus-1.5.2`. The opt-in authenticated Crusades service
+offline, set `-DFETCHCONTENT_SOURCE_DIR_TAK_OPUS=/path/to/opus-1.5.2`. The in-game chat box's font, Noto Sans Bold subset to Latin-1
+(`res/chat-font`, SIL OFL 1.1), is embedded into takclient by `cmake/EmbedFiles.cmake` and
+drawn with the vendored stb_truetype (`src/vendor/stb`, public domain / MIT); both notices
+are in `CHAT-FONT-LICENSE.txt`, which ships beside the binaries. The opt-in authenticated Crusades service
 supports tactical battles, territory browsing, matchmaking, results and retained
 replays. Operators supply campaign definitions and battle-map assignments.
 Historical territory-capture and campaign-victory rules remain incomplete; see
