@@ -10,6 +10,8 @@ seat order decides it), so this is how a human picks where they open. Checked:
   refused       an occupied, AI, closed, past-capacity, out-of-range or own seat is
                 ignored -- no JoinResult, no table, for either client
   player move   a non-host moves; the host's table shows the old seat open
+  stale edits   a host edit sent before a move landed -- READY on the seat it left,
+                or a type click on a seat a player just took -- is dropped
   running       once the game runs a move is ignored
 """
 import argparse
@@ -81,6 +83,11 @@ def main():
             assert slots[0][0][0] == 0 and slots[0][1] == b'', ('slot 1 did not open', slots[0])
             assert slots[0][0][2] == 2 and slots[0][0][3] == 2, 'the opened seat did not take the old colour/team'
 
+            # stale host edit: READY on the row it just left, sent before the move
+            # reached it, must not make that open seat a clientless HUMAN.
+            host.send('SlotUpdate', bytes([0, 1, 3, 0, 0, 1, 2]))
+            quiet(host, 'a stale edit of the left seat')
+
             # joiner: the first open seat is the one the host left.
             player.send('JoinGame', struct.pack('<I', room) + auth.field(''))
             assert joined(player) == 0
@@ -113,6 +120,13 @@ def main():
             assert slots[1][0][0] == 1 and slots[1][1] == b'Bobby', ('the host does not see the move', slots[1])
             assert slots[0][0][0] == 0 and slots[0][1] == b'', 'the player\'s old seat did not open'
 
+            # stale host type click: the host's table still showed slot 2 open; AI,
+            # CLOSED or OPEN on it must not replace the player who just took it.
+            for t in (2, 3, 0):
+                host.send('SlotUpdate', bytes([1, t, 0, 1, 1, 0, 2]))
+            quiet(host, 'a type change of a seated slot')
+            quiet(player, 'a type change of a seated slot')
+
             # running: no moves once the game starts.
             v = slots[2][0]
             host.send('SlotUpdate', bytes([2, 1, v[1], v[2], v[3], 1, v[5]]))
@@ -131,7 +145,7 @@ def main():
             quiet(player, 'a running game')
             assert process.poll() is None, 'server exited'
     print('PASS: seat moves -- host and player moves, joiner sees them, refused seats, '
-          'malformed payloads, none once running')
+          'malformed payloads, stale host edits dropped, none once running')
 
 
 if __name__ == '__main__':

@@ -311,7 +311,7 @@ silently skipped.)
 | `ListGames` / `GameList` | — / entries: id, name, map, players/capacity, state (lobby/running), passworded, uptime | running games listed but unjoinable |
 | `CreateGame` | name, password?, map id, options (crusades, gods, speed, unit cap, forfeit rule) | creator becomes host |
 | `JoinGame` / `JoinResult` | game id, password? / slot or error | error: full, bad password, running |
-| `SlotUpdate` | slot #, {human/AI/closed}, faction, color, team, ready | players set their own; host sets any (host resolves conflicts, assigns AIs) |
+| `SlotUpdate` | slot #, {human/AI/closed}, faction, color, team, ready | players set their own; host sets any (host resolves conflicts, assigns AIs); only the server seats a human, so the host can neither change a seated slot's type nor make an empty one human -- such an edit (e.g. one sent before a seat move landed) is dropped |
 | `LobbyState` | full slot table + settings | broadcast on every change |
 | `SetGameOptions` | full `GameOptions` | host only; in the lobby the server adopts them and rebroadcasts `LobbyState`; in-game only `speed` takes effect (if `speedUnlock`), pushed via `SpeedUpdate` |
 | `Chat` | text | lobby and in-game |

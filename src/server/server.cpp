@@ -2713,6 +2713,14 @@ void Server::gameMsg(Client& c, const Frame& f) {
             // A player edits only their own slot; the host may edit any.
             if (!isHost && slot != c.slot) return;
             SlotInfo& s = r->slots[slot];
+            // Only the server seats a human (JoinGame, MoveSeat, leaving), so in the
+            // lobby a HUMAN slot is exactly one with a client. A host edit never
+            // changes a seated slot's type nor makes an empty one HUMAN: an edit sent
+            // before a seat move reached the sender (its table still showing the old
+            // seats) arrives as exactly that, and is dropped whole -- otherwise the
+            // host's left seat became a clientless ready HUMAN, or a seat a player had
+            // just taken became AI under them.
+            if (isHost && (r->slotClient[slot] >= 0 ? type != s.type : type == 1)) return;
             // Non-host can only touch faction/color/team/ready on their own slot.
             // Slots past the map capacity stay closed (no start position for them).
             if (isHost) {
