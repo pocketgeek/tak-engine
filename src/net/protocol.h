@@ -19,7 +19,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 284;      // 284: lobby seat moves: Msg::MoveSeat (C->S, u8 slot) -- a seated player, host included, takes an OPEN
+constexpr uint32_t kNetVersion = 285;      // 285: Legion ~100 round 5: rings press into a wall's shadow, late rings for fight columns, the reach edge in reach
+                                           //      (melee by contact), the ring's stop origin (Legion state differs from 284; 284 replays refused)
+                                           // 284: lobby seat moves: Msg::MoveSeat (C->S, u8 slot) -- a seated player, host included, takes an OPEN
                                            //      in-capacity seat before the start (the seat is the start under BY SLOT, the order under FIXED);
                                            //      answered with JoinResult(new slot) + LobbyState. Sim unchanged; 283 replays refused
                                            // 283: Legion ~100 round 4: lane order through turns (ribbon), rings along walls, fight/guard round still targets, room at a merge

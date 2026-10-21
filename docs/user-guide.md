@@ -1122,7 +1122,13 @@ armies:
   along a wall is deeper: units that find no place at the front wait just
   behind it instead of standing back, and step in when they can fire. Units
   on a fight or guard order also stop creeping round a target that stands
-  still, and walk round their friends at full speed.
+  still, and walk round their friends at full speed. After 0.8.7, units
+  waiting just outside reach of a ring along a wall step on into the ground
+  behind it that the wall hides from the target, and stay there until they can
+  fire; units on a fight-move that come upon a target standing still surround
+  it as an attack order does, instead of queueing on the near side; and a unit
+  stopped right at the edge of its weapon's reach counts as in reach, as it
+  does when firing.
 - **Narrow crossings take turns.** At a bridge or other narrow crossing, the
   time each group is let through grows with the length of the crossing, and a
   small group waits its turn instead of pushing in among a big one. Two armies
@@ -1173,8 +1179,10 @@ in a formation or Ctrl+number group with ground units keep station over them.
   arrives a little later (under 5%) than in Retail.
 - Two large groups meeting head-on at a narrow, tapering bridge can still jam
   in its mouth and take much longer to cross than in Retail.
-- An attack ring along a wall or round a gatehouse holds fewer units within
-  reach than in Retail, so fewer units fire at once.
+- An attack ring round a gatehouse, where the attackers must file through a
+  narrow gate, holds fewer units within reach than in Retail, so fewer units
+  fire at once. (Along a plain wall a ring now holds about as many units
+  within reach as in Retail and deals more damage.)
 - When a group goes round a parked crowd, it can still pass by one side in a
   narrow file.
 - Idle units of **enemy** players do not step aside for you, nor do units

@@ -2750,6 +2750,40 @@ Tried and rejected (gate medians):
 late ring) and `ctest:legion_ringedge` (f1-64 offset 0: 43 or more in reach at the end; 39 on the parent, 41 without
 the edge test). `ctest:legion_ringwait` fails with the edge test but without the stop-origin fix.
 
+### Round 5 landed together (2026-10-21, task-l5-land, protocol 285)
+
+Both round-5 changes landed: the shadow press with its pressed-only hold ("Pressing into the shadow", task-l5-ringB)
+and the late ring, the reach edge and the stop origin with the melee carve-out ("Fight rings and the reach edge",
+task-l5-fight). A third track (task-l5-ringA: ring planning for walled targets, ten families of changes such as band
+0 widened to all in-sight ground, deepest-first filling, spot hand-out by walking distance, a legal straight line for
+the near-spot walk) landed nothing: no variant was a net win and every one cost the gatehouse damage. Both parts
+change `pressIn`, but on different paths: the reach-edge test applies to a press toward sight, and the shadow press
+(like the blind one) keeps its `kPressDepth`. Together they do more on the walled rings than either alone. Gate
+medians, sums over the 11 offsets in brackets (serial; Retail hash-identical on every fixture below and the arrival
+screen):
+
+| fixture | key | Retail | 0.8.7 | ringB alone | fight alone | round 5 |
+|---|---|---|---|---|---|---|
+| attackring-gatehouse-40 | damage_end | 584 (7,172) | 320 (4,834) | 320 (4,849) | 302 (4,854) | 324 (4,998) |
+| attackring-gatehouse-40 | ever_end / now_end | 29 / 24 (298 / 264) | 18 / 15 (213 / 171) | 19 / 16 (225 / 182) | 14 / 14 (207 / 171) | 19 / 16 (224 / 190) |
+| attackring-wall-64 | damage_end | 1,909 (16,912) | 1,896 (18,612) | 1,896 (18,724) | 1,988 (19,217) | 2,033 (19,291) |
+| attackring-wall-64 | ever_end / now_end | 45 / 42 (532 / 480) | 39 / 37 (479 / 469) | 39 / 38 (490 / 486) | 39 / 38 (487 / 481) | 41 / 40 (502 / 499) |
+| attackring-wall-100 | damage_end | 1,922 (17,027) | 1,911 (18,440) | 1,913 (18,532) | 2,027 (19,355) | 2,027 (19,507) |
+| attackring-wall-100 | ever_end / now_end | 49 / 41 (609 / 518) | 38 / 37 (476 / 466) | 39 / 38 (489 / 479) | 37 / 37 (492 / 483) | 42 / 41 (503 / 497) |
+| attackring-wall-mixed-56 | damage_end | 1,285 (12,470) | 1,347 (15,177) | 1,355 (15,199) | 1,358 (14,710) | 1,413 (14,670) |
+| attackring-river-64 | ever_end / now_end | 21 / 14 (316 / 288) | 17 / 17 (287 / 286) | 20 / 20 (309 / 309) | 17 / 17 | 20 / 20 (309 / 309) |
+| attackring-fight-60 | damage_end / now_end / t50 | 2,814 / 44 / 1,206 | 2,372 / 40 / 1,505 | = 0.8.7 | 2,867 / 44 / 1,212 | 2,867 / 44 / 1,212 |
+| attackring-fight-diag-60 | damage_end / now_end / t50 | 2,167 / 44 / 1,631 | 1,729 / 41 / 2,002 | = 0.8.7 | 2,070 / 44 / 1,733 | 2,070 / 44 / 1,733 |
+| ringcross-100 | g.M.t90 / done | 3,926 / 4,166 | 3,841 / 4,231 | = 0.8.7 | 3,851 / 4,298 | 3,851 / 4,298 |
+
+The unshadowed rings are fight's alone (their rings have no shadow, so ringB is hash-identical there), and every
+arrival fixture of the screen (corner-1x100, corner-4x25, corner-1x448, corner-8x56, corner-4x50, corner-1x48,
+corner-8x30, gap20-100, bridges-100, taperbridge-100, taperbridge-small, island-1x100, idle-50x50, many-100) is
+hash-identical to 0.8.7. Trades: `attackring-wall-mixed-56` deals 507 less over the offsets than 0.8.7 (-3.3%; its
+median is up, 1,347 -> 1,413, Retail 12,470 in all). Fight's part costs it the loss: offset 0 falls 1,304 -> 977
+alone and 1,032 together. `ringcross-100`'s Move group completes 67 ticks later (+1.6%); `ringbend-pocket` stands
+28 in reach against 30 (damage level); `attackring-f2-64` deals 72 less, still above Retail.
+
 ### Paused first builds (W4 C1, protocol 244)
 
 A first field used to build to done, its whole window, although its members
@@ -4636,8 +4670,8 @@ Rules that came out of using them:
   against 1-cell walls the way Retail's clamped bodies end up ("Rings at ~100 bodies, round 3"). Since round 4 the
   shadow by a wall fills: band-1 spots are handed to waiting members, a body in reach out of sight walks on through
   the shadow to ground in sight, and blind rings (the shot needs sight, no spot has it) press into reach and stay
-  ("Rings along walls, round 4"). Still open: attackring-wall-100 stands 36 ever in reach over the gate
-  offsets against Retail's 49 (58 against 82 on the core five; Retail packs sub-cell points of the box's corner
+  ("Rings along walls, round 4"). Still open: attackring-wall-100 stood 36 ever in reach over the gate
+  offsets against Retail's 49 at round 4 (42 since round 5) (58 against 82 on the core five; Retail packs sub-cell points of the box's corner
   origins and jostles bodies in and out); the gatehouse's west-gate offsets are plugged by the first body walking
   straight at a spot beyond the yard wall and braked flush in the corridor's mouth (attackring-gatehouse-40: 16 ever
   in reach and 320 damage over the gate offsets against Retail's 29 and 584; over -8..8 its damage is level with
@@ -4649,8 +4683,11 @@ Rules that came out of using them:
   are exempt from that rule ("Rings along walls with the still-window rule"). Over the gate offsets wall-64 now
   stands 39 / 37 ever / now, wall-100 38 / 37 and the gatehouse 18 / 15, with wall reversals back near ringwall's:
   wall-64 317, wall-100 292. Since round 5, "Pressing into the shadow", bodies held just outside reach of such a ring
-  press into the shadow and hold there: wall-64 39 / 38 ever / now at the gate median, sums over the offsets 490 / 486
-  against 479 / 469, Retail 532 / 480; wall-100 39 / 38; the gatehouse 18 / 15 with its plug unchanged.) Against a
+  press into the shadow and hold there, and with the reach edge in reach ("Fight rings and the reach edge"; both
+  landed together, "Round 5 landed together") wall-64 stands 41 / 40 ever / now at the gate median, sums over the
+  offsets 502 / 499 against 479 / 469 (Retail 532 / 480), damage 19,291 against 18,612 (16,912); wall-100 42 / 41
+  (Retail 49 / 41; sums 503 / 497 against 518 now in reach), damage 19,507 (17,027); the gatehouse 19 / 16, damage
+  4,998 against 4,834 with its plug unchanged (median 324 against Retail's 584).) Against a
   target walled in on every side Legion outfires Retail (it
   seeks flush points on every face that has one). A Move group crossing a firing ring is level with Retail's t90
   (ringcross-100 3,841 against 3,926; completion 4,194 against 4,166 since round 4). Since round 4 (2026-10-20,
@@ -4676,7 +4713,8 @@ Rules that came out of using them:
   `ctest:legion_ringcross`, `ctest:legion_ringfill`, `ctest:legion_ringclosed`, `ctest:legion_ringstill`,
   `ctest:legion_ringwait`, `ctest:legion_ringshadow`, `ctest:legion_ringbend`, `ctest:legion_ringblind`,
   `ctest:legion_ringpocket`, `ctest:legion_ringroute`, `ctest:legion_ringnosight`, `ctest:legion_fightring`,
-  `ctest:legion_ringedge` and `ringcross:g.M.t90`.
+  `ctest:legion_ringedge`, `ctest:legion_ringshadowpress`, `ctest:legion_ringshadowmixed`, `ctest:legion_meleepress`
+  and `ringcross:g.M.t90`.
 * **The livelock fix costs some lane order (protocol 257).** A body blocked
   again after a side-step toward its arc may not step straight back, so it
   takes another field step inward or holds and side-steps: the 150 bodies

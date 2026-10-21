@@ -741,7 +741,9 @@ with small groups queueing, and corridor-mouth funnel claims (Legion only).
 Protocol 283 is the fourth: lane order kept through turns, deeper rings along
 walls, fight and guard members round still targets, and room at a corner's
 merge (Legion only). Protocol 284 adds the lobby seat move (`MoveSeat`) with an
-unchanged simulation; 0.8.7 ships protocol 284.
+unchanged simulation; 0.8.7 ships protocol 284. Protocol 285 is the fifth Legion
+round at about 100 bodies: attackers press into a wall's shadow, fight-move columns
+ring a still target, and a body on the reach edge counts as in reach (Legion only).
 Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
@@ -941,6 +943,14 @@ starved queue head at a corner's merge move over a lane; Retail is bit-identical
 and the `--mpai` hashes are unchanged (60 s and 300 s), but 282 recordings no longer play.
 Protocol 284 adds the lobby seat move (`MoveSeat`); the sim is 283's, but 283
 recordings no longer play.
+Protocol 285 (Legion only) is the fifth round at about 100 bodies: a body held just
+outside reach of a ring that walls hide in part presses into the shadow and, once it
+has pressed, holds there; an attack group of eight or more that got no ring at its
+first field (a fight-move column acquiring one body at a time) plans one late; a
+press may end exactly on the reach edge, where combat fires (a melee weapon keeps its
+contact test); and a ring's stop origin is the edge point's own origin. Retail is
+bit-identical and the `--mpai` hashes are unchanged (60 s and 300 s, Retail and
+Legion), but 284 recordings no longer play.
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
