@@ -804,7 +804,7 @@ speed keys are fixed.
 | Input | Action |
 | --- | --- |
 | **Left-click** | Select a unit. |
-| **Left-drag** | Box-select. |
+| **Left-drag** | Box-select your own units. If the box catches any armed mobile units, the builders and buildings in it are left out. |
 | **Shift** + select | Add to the selection. |
 | **Ctrl** + select | Remove from the selection. |
 | **Right-click** | The natural order for what is under the cursor: move, attack, guard, repair, load, reclaim and so on. |
@@ -830,9 +830,9 @@ a left-click on the map or minimap. **Esc** disarms.
 | **P** | Patrol. |
 | **G** | Guard a unit or building. |
 | **H** | Heal or repair a friendly unit or building. |
-| **L** / **U** | Load into a transport / unload at a destination. |
+| **L** / **U** | With a transport selected: click a unit to pick it up / click where to unload. (A unit boards by right-clicking your transport.) |
 | **S** | Stop: cancel all orders. |
-| **C** | Clear orders. |
+| **C** | Clear orders (the same as **S**). The command panel's **Clear** button is different: it arms reclaim. |
 | **W** | Cycle the active weapon. |
 | **K** | Toggle cloak. |
 | **O** | Open or close selected gates. With nothing selected, show campaign objectives. |
@@ -925,7 +925,7 @@ building or conjuring.
 | **Ctrl+1** … **Ctrl+0** | Make the selection a **group**. |
 | **Alt+1** … **Alt+0** | Make the selection a **formation**. |
 | **Ctrl+Shift+number** / **Alt+Shift+number** | Add the selection to a group or formation. |
-| **1** … **0** | Select that group or formation. Press again to centre the camera on it. |
+| **1** … **0** | Select that group or formation (builders in it are left out). Press again to centre the camera on it and follow it. |
 | **Ctrl+Esc** | Remove the selected units from their group or formation. |
 
 A unit belongs to one group or formation at a time. Each unit shows its number
@@ -1438,9 +1438,9 @@ player's game stays in step.
    starts the game when everyone is ready. To take a different seat, click
    **Move here** on any open slot (see [Start locations](#match-options)).
 
-![A game room with player and AI slots, the map with start markers 1 to 4 in the seated players' colours, override pack choices and the read-only match rules](img/room.jpg)
+![A game room with player and AI slots, a MOVE HERE button on each open slot, the map with start markers 1 to 4 in the seated players' colours, override pack choices and the read-only match rules](img/room.jpg)
 
-*A game room, here for a single-player game: player and AI slots, the map with each start marked in the colour of the player who starts there, override packs and the read-only match rules.*
+*A game room, here for a single-player game: player and AI slots, **Move here** on the open slots, the map with each start marked in the colour of the player who starts there, override packs and the read-only match rules.*
 
 The host can open and close empty slots, add AIs and kick players (a slot with a player in it cannot be turned into an AI or closed; kick the player first). Any seated player, the host included, can move to an open slot with **Move here** until the game starts; closed, AI and taken slots cannot be moved to, and campaign missions and Crusades battles keep their seats. Match options are
 set when the game is created, except **Allow spectators**, which the host can
