@@ -2916,6 +2916,97 @@ deadcorridor-30 12.2M -> 22.3M over the 11 offsets, nearly all field refreshes r
 (`field_work_refresh_moving` 37.0M -> 51.6M and 8.2M -> 17.6M); the per-tick maximum is unchanged on all three.
 `ctest:legion_walkononward` (deadcorridor-30 offsets 0, 1, -1: median walks <= 6; 12 before, 3 now).
 
+### Rings through narrow approaches (2026-10-21, Legion ~100 round 6, task-l6-gateB)
+
+**Where the gatehouse was lost.** `attackring-gatehouse-40` dealt 55% of Retail's damage (gate medians 324 against
+584). Its corridor is three cells wide; a 2x2 body flush to the 1-cell yard wall sees the target through it (the sight
+cast skips the cell beside the body), so combat brakes a body there as soon as it comes flush, and a braked body
+leaves no lane past it. Unit dumps of offset 0 at tick 2,999 (`--dump-units`): Retail stands seven bodies flush along
+the west corridor from its north corner to its south one, filled from the corners back; its first bodies walk on out
+of sight to the corridor's far ends and are braked where they come flush. Legion's first body through the west gate
+walked straight east at its own spot beyond the yard wall (move's "near its own spot" rule, the spot's potential the
+same 0 as every seed) and was braked flush in the mouth at tick 486; the gate behind it was shut for good. Other
+offsets plugged the same way through the field's descent to flush seeds, through straight-line hand-outs (the mouth's
+band-1 spots to the first bodies there; offset 4: a body sent to the mouth's shadow spot pressed into the shot), and
+through re-choices of a nearer spot.
+
+**The changes**, Legion only, and only on a *deep* ring (Retail hash-identical on every fixture screened; every other
+Legion fixture hash-identical too, the walled boxes of `attackring-wall-64` / `-100` / `-mixed-56` and the river
+among them):
+
+* **Deep rings** (`ringDeep`, `Ring::deep`, hashed). buildRing floods its static box from the ground beyond reach
+  (ringScan's flood start) through origins where nothing brakes a body; a band-0/1 spot's walking depth is the steps
+  to where a body walking in stops. The ring is deep when some spot's depth exceeds its straight-line depth (the reach
+  edge plus a body, less its distance) by `kRingDeepExcess` (3) bodies: the gatehouse 112-464 px at the offsets that
+  enter through the west gate (19-145 at the others), the walled boxes 11 px at most.
+* **Spots on arrival, back to front** (`ringDeepClaim`). A deep ring hands nothing out at its first claim; each member
+  claims within `kRingWaitReach` (8) bodies of reach, and ringScan re-hands spent spots and waiting members the same
+  way. The member walks (`ringWalk`: a breadth-first walk over the box from its own origin, through origins no still
+  body covers, on only where nothing brakes it, an origin with the shot reached but ending the walk) and takes the
+  nearest free unspent band-0 spot it reaches (band 1 when band 0 has none) that lies on no other candidate's way: an
+  origin of another's walk overlaps it *and* a body standing on it would leave that other unreached or more than
+  `kRingDetour` (3) bodies farther (a confirming walk with its footprint closed; a 4-cell corridor passes a body, a
+  3-cell one does not). Only when no spot is reached so, the walk through the shot (a yard entered through its gap:
+  the body is braked where it gets the shot, as Retail's). Reaching none, it waits on an outer band, never on a spot
+  beyond a wall by straight line (as first written, `attackring-gatehouse2-48` offset -4 dealt 144 against 732: bodies
+  held for good on yard spots behind bodies braked at the gap). On open ground nothing lies on another's way and this
+  is the nearest spot by walk.
+* **The walk to the spot** (`spotRoute`). Within two bodies of reach, a deep ring's member whose straight line to its
+  band-0/1 spot crosses a wall or the shot commits the walk's route (`m.route`, at travel speed round a still target)
+  instead of the direct rule or the field; through the shot only when there is no other way; with still bodies
+  walling the spot off it re-claims (ringDeepClaim) or holds (`Member::spotFrom`, hashed, keeps the search from
+  repeating at the same origin except every `kPressRouteEvery` held updates). The shot test is conservative: any
+  corner of the origin's footprint-centre box, or its centre, in reach and in sight, and half way across a step
+  (tested at the centre alone, a body walking the off-wall lane held its other axis 8 px off the centre, had the shot
+  there and was braked in the corridor's corner). `work.ring_spot_routes` counts the routes.
+* **No nearer re-choice** (ringRechoose) on a deep ring: a nearer spot is a shallower one.
+
+Gate medians (sums over the 11 offsets in brackets), before (a371ae1f) -> after, Retail:
+
+| fixture | key | before | after | Retail |
+|---|---|---|---|---|
+| attackring-gatehouse-40 | damage_end | 324 (4,998) | 708 (7,325) | 584 (7,172) |
+| attackring-gatehouse-40 | damage_t2400 | 244 (3,678) | 528 (5,405) | 424 (5,146) |
+| attackring-gatehouse-40 | ever_end / now_end | 19 / 16 (224 / 190) | 18 / 18 (242 / 215) | 29 / 24 (298 / 264) |
+| attackring-gatehouse-40 | t50 | never | never | 1,183 |
+| attackring-gatehouse-40 | damage at offsets 0, 1, -1, 2, -2, 3, -3, 4 | 167 / 250 / 84 / 357 / 324 / 370 / 235 / 153 | 473 / 708 / 479 / 770 / 517 / 768 / 229 / 323 | 557 / 482 / 590 / 750 / 584 / 526 / 571 / 449 |
+| attackring-gatehouse2-48 (new) | damage_end | 775 (9,263) | 865 (9,456) | 906 (10,404) |
+| attackring-gatehouse2-48 | ever_end / now_end | 22 / 21 (254 / 235) | 22 / 21 (256 / 237) | 27 / 25 (321 / 279) |
+
+Over -8..8 (sums of 17 offsets; Retail in brackets): gatehouse-40 damage 10,496 -> 12,823 (12,079), now in reach
+362 -> 387 (479), ever 410 -> 428 (519); gatehouse2-48 damage 16,487 -> 16,694 (17,171), now 416 -> 416 (471),
+ever 467 -> 464 (557). The gatehouse with 20 and 64 attackers instead of 40 (scratch copies, gate sums): damage
+4,142 -> 7,230 (Retail 7,155) and 4,557 -> 6,392 (7,198), now in reach 134 -> 186 (194) and 186 -> 218 (261).
+Offsets -4, 5, -5 of gatehouse-40 are not deep and unchanged. Not cured: offset -3 (the target in the yard's
+north-west corner; 229 against Retail's 571) and the units in reach (81% of Retail's at the gate; t50 never: Retail
+also packs the outside of the outer wall in reach, where Legion's waiting bands stand beyond it). Cost: a deep ring's
+walks are its own; gatehouse-40's whole-run Legion work 1.72M -> 4.28M at the gate median (walk cells 68k -> 1.38M;
+at offset 0, of 1.86M walk cells, 28% spot walks, 53% the claims' confirming walks), the busiest tick 226,519 ->
+245,535;
+every other fixture is unchanged.
+
+`ctest:legion_ringdeep` (gatehouse-40 offsets 0, 1, -1: median damage >= 400; 167 on the parent, 479 after).
+
+Tried and not kept (gate or -8..8 sums as stated):
+* The spot walk alone on every shadowed ring, holding where walled: gatehouse-40 4,998 -> 5,409 (5,707 with the
+  conservative shot test); on the walled boxes in reach at the end fell (wall-64 499 -> 491, wall-100 497 -> 492;
+  wall-mixed damage +4.9%). Kept to deep rings, where those boxes are not.
+* Spots handed at the first claim, bands 0 and 1 together, deepest (static depth) to the members nearest the target:
+  gatehouse-40 7,814 at the gate (13,283 over -8..8), but gatehouse2-48 16,487 -> 15,455 over -8..8, now in reach
+  416 -> 373: its deepest spots were shadow spots in a corridor with no shot, and the front went there. Band-1 spots
+  bordering the shot ranked with band 0, the rest after: 12,237 / 16,496. Band 0 alone at the first claim, deepest
+  first: 12,646 / 16,471 (now 388 / 391). The per-member walk above: 12,823 / 16,694 (387 / 416).
+* The on-way test without the confirming walk (any spot an origin of another's walk overlaps): 12,471 / 15,908 (now
+  383 / 381); a 4-cell corridor read as one body wide. `kRingDetour` 2 and 5: 12,823 / 16,494 and 12,674 / 16,386.
+* A deep ring's body held on its way to a deeper spot not pressing to the shot (pressIn): gatehouse-40 7,325 ->
+  6,504 at the gate, gatehouse2-48 9,456 -> 8,750. The hidden press is most of the gatehouse's damage (round 5).
+* A spot walk not repeated from the same origin until 16 held updates (cost): gatehouse-40 7,325 -> 6,897, the walk
+  cells barely lower.
+
+Overlap with other work: the ring hand-outs (assignRing, ringClaim, ringRechoose, ringScan's hand-out loop) and a
+new step in move() just before the "near its own spot" rule and the field descent (spotRoute commits a local route,
+walked like a detour's). Combat's braking, pressIn and pressRoute are untouched.
+
 ### Paused first builds (W4 C1, protocol 244)
 
 A first field used to build to done, its whole window, although its members
@@ -4824,6 +4915,9 @@ Rules that came out of using them:
   gatehouse stands 32 / 26 ever / now, damage 9,758 over the offsets (median 868; Retail 7,172, 584); since that
   section's review, which made the walk go onward only and counts only a queue that comes up to the body, 36 / 31,
   damage 12,535 (median 1,117).) Against a
+
+  4,998 against 4,834 with its plug unchanged (median 324 against Retail's 584). Since round 6, "Rings through narrow
+  approaches", the gatehouse fills back to front: damage 7,325 (median 708), 18 / 18 ever / now, sums 242 / 215.) Against a
   target walled in on every side Legion outfires Retail (it
   seeks flush points on every face that has one). A Move group crossing a firing ring is level with Retail's t90
   (ringcross-100 3,841 against 3,926; completion 4,194 against 4,166 since round 4). Since round 4 (2026-10-20,

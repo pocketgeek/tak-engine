@@ -292,6 +292,15 @@ constexpr uint8_t kWalkOnMax=6;
 // Members a reach group needs when its first field starts to plan to a ring
 // (PLAN 3.4; its exit raises it to 8 if the battles' field quota pegs).
 constexpr size_t kRingMembers=2;
+// Round 6 (see ringDeep): a ring is deep when a spot's walking depth exceeds
+// its straight-line depth by this many bodies.
+constexpr int kRingDeepExcess=3;
+// ... and hands its spots out (ringDeepClaim) to members within this many
+// bodies beyond reach: the waiting bands reach seven out.
+constexpr int kRingWaitReach=8;
+// ... and leaves a spot to later arrivals when a body standing on it would
+// put another free spot unreached or more than this many bodies farther.
+constexpr int kRingDetour=3;
 // A group that grew past one member after its first field plans its ring late
 // once it has this many (ringScan, round 5): at two, every small battle group
 // re-planned (battle-field-2x60 +29% total Legion work, battle-field-2x250
@@ -842,6 +851,9 @@ struct LegionNavigator::Impl {
             bool shadow=false;
             // The sight test band 0 was planned with (ringScan repeats it per origin).
             bool naval=false;int tskip=0;float tfx=0,tfz=0;
+            // Round 6 (2026-10-21, see ringDeep): spots lie deep through a
+            // narrow approach; the ring fills back to front (ringDeepClaim).
+            bool deep=false;
         } ring;
     };
     // Engaged (AR-06, PLAN 3.4): tickCombat braked this attacker in reach (or a
@@ -993,6 +1005,7 @@ struct LegionNavigator::Impl {
         // origin the last walk set out from (-1 none), and the walks this
         // order has taken. Hashed.
         int walkOnEnd=-1,walkOnAt=-1,walkOnFrom=-1;uint32_t walkOnTick=0;uint8_t walkOns=0;
+        int spotFrom=-1;                  // the origin of this member's last walk-to-spot search (spotRoute; -1 none). Hashed while set
         uint32_t detourTicks=0;
         bool detourFace=true;             // side-step turns the body (keep-right) or not (shuffle)
         bool detourPass=false;            // side-step is a lane-discipline pass (moves at travel speed)
@@ -8828,6 +8841,243 @@ struct LegionNavigator::Impl {
         ++stats.walkOns;
         return true;
     }
+    // Round 6 (2026-10-21, Legion ~100, task-l6-gateB): the shot, for the
+    // walks of a deep ring (ringDeep): an origin where combat brakes a body
+    // of footprint fx x fz, its centre in reach and in sight of the target
+    // (the ring's own test). Any corner of the origin's footprint-centre box
+    // (or its centre) counts: a body walking a lane holds the other axis
+    // where it was (stepAim), anywhere in the box, and sight changes within
+    // it (a 2x2 body flush to a 1-cell wall sees through it; tested at the
+    // centre alone, a body walking the off-wall lane of attackring-
+    // gatehouse-40 had the shot 8 px off the centre and was braked in the
+    // corridor's corner). Points are doubled (x2, z2) so a step's midpoint
+    // is exact.
+    bool ringShotAt(const Group::Ring& r,int foot,int64_t x2,int64_t z2) const {
+        const int64_t dx=x2-2*r.tx,dz=z2-2*r.tz,R=r.R;
+        if(dx*dx+dz*dz>4*R*R)return false;
+        const NavGrid& sightGrid=r.naval?w.navalSight_:w.nav_;   // as buildRing
+        return sightGrid.losBetween(float(x2)*0.5f,float(z2)*0.5f,r.tfx,r.tfz,foot/2,r.tskip);
+    }
+    bool ringShot(const Group::Ring& r,int fx,int fz,int x,int z) const {
+        const int foot=std::max(fx,fz);
+        const int64_t lx=int64_t(x)*16+(fx-1)*8,lz=int64_t(z)*16+(fz-1)*8;
+        return ringShotAt(r,foot,2*lx+16,2*lz+16)||ringShotAt(r,foot,2*lx,2*lz)||ringShotAt(r,foot,2*lx+30,2*lz)||
+               ringShotAt(r,foot,2*lx,2*lz+30)||ringShotAt(r,foot,2*lx+30,2*lz+30);
+    }
+    // A breadth-first walk over a deep ring's box (the target's surround out
+    // to two bodies beyond reach, as ringScan's flood, or to `reach` px) from
+    // a body's origin,
+    // through origins statically legal in the members' component that no
+    // still body covers (a moving one is no obstacle: it walks on), walking
+    // on only where nothing brakes the body (not the shot, nor half way
+    // across a step); an origin with the shot is reached but ends the walk
+    // there (combat brakes the body). With `through`, the shot is walked
+    // through too. kind: 0 unseen, 1 closed, 2 walk on, 4 the shot.
+    struct RingWalk {
+        int bx0=0,bz0=0,bx1=-1,bz1=-1,bw=0,bh=0,start=-1;
+        std::vector<uint8_t> kind;std::vector<int32_t> parent,dist,queue;
+        bool inside(int x,int z) const {return x>=bx0&&z>=bz0&&x<=bx1&&z<=bz1;}
+        int at(int x,int z) const {return (z-bz0)*bw+(x-bx0);}
+    };
+    // With block >= 0, the origins a body standing on origin `block` would
+    // cover are closed too (see ringDeepClaim).
+    bool ringWalk(const Unit& u,const Group& g,const Plane& p,int ox,int oz,bool through,RingWalk& wk,int64_t reach=0,int block=-1) {
+        const auto& r=g.ring;
+        const int W=width(),H=height(),fx=p.footX,fz=p.footZ,foot=std::max(fx,fz),body=16*foot;
+        const int64_t outer=std::max<int64_t>(reach,int64_t(r.R)+2*body);
+        const int span=int(outer/16)+foot+1,ccx=int(r.tx/16),ccz=int(r.tz/16);
+        if(wk.bw==0) {
+            wk.bx0=std::max(0,ccx-span);wk.bz0=std::max(0,ccz-span);wk.bx1=std::min(W-1,ccx+span);wk.bz1=std::min(H-1,ccz+span);
+            wk.bw=wk.bx1-wk.bx0+1;wk.bh=wk.bz1-wk.bz0+1;
+            if(wk.bw<=0||wk.bh<=0)return false;
+            wk.kind.assign(size_t(wk.bw)*size_t(wk.bh),0);
+        }
+        if(!wk.inside(ox,oz))return false;
+        const int comp=groupComp(g,p);
+        auto still=[&](int cx,int cz) {
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)return false;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            if(!o||o==u.id)return false;
+            const Unit* other=w.unit(o);
+            if(!other||!other->type||other->type->canFly)return false;
+            const Member* peer=member(o);
+            return !peer||(peer->state!=Moving&&peer->state!=Waiting);
+        };
+        auto cls=[&](int x,int z)->uint8_t {
+            uint8_t& k=wk.kind[size_t(wk.at(x,z))];
+            if(k)return k;
+            k=1;
+            if(!legal(p,x,z)||(comp>=0&&compAt(p,z*W+x)!=comp))return k;
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)if(still(x+i,z+j))return k;
+            k=ringShot(r,fx,fz,x,z)?4:2;
+            return k;
+        };
+        wk.parent.assign(wk.kind.size(),-1);wk.dist.assign(wk.kind.size(),-1);wk.queue.clear();
+        wk.start=wk.at(ox,oz);
+        wk.parent[size_t(wk.start)]=wk.start;wk.dist[size_t(wk.start)]=0;wk.queue.push_back(wk.start);
+        for(size_t head=0;head<wk.queue.size();++head) {
+            const int local=wk.queue[head],x=wk.bx0+local%wk.bw,z=wk.bz0+local/wk.bw;
+            if(local!=wk.start&&!through&&cls(x,z)==4)continue;   // braked here: no further
+            for(const auto& d:kDirections) {
+                const int nx=x+d[0],nz=z+d[1];
+                if(!wk.inside(nx,nz))continue;
+                const int next=wk.at(nx,nz);
+                if(wk.parent[size_t(next)]>=0)continue;
+                if(block>=0&&std::abs(nx-block%W)<fx&&std::abs(nz-block/W)<fz)continue;
+                const uint8_t k=cls(nx,nz);
+                if(k<2||!step(p,x,z,d[0],d[1]))continue;
+                if(d[0]&&d[1]) {
+                    const uint8_t a=cls(nx,z),b=cls(x,nz);
+                    if(through?(a<2||b<2):(a!=2||b!=2))continue;
+                }
+                // ... nor half way there (sight changes within a cell: a
+                // diagonal step round a wall's corner had the shot).
+                if(!through&&k==2&&ringShotAt(r,foot,int64_t(x+nx)*16+fx*16,int64_t(z+nz)*16+fz*16))continue;
+                wk.parent[size_t(next)]=local;wk.dist[size_t(next)]=wk.dist[size_t(local)]+1;
+                wk.queue.push_back(next);
+            }
+        }
+        stats.detourCells+=wk.queue.size();
+        return true;
+    }
+    // Round 6: the walk to a deep ring's spot. Combat brakes an attacker the
+    // moment it has the shot, so a member walking at its own spot -- in a
+    // straight line (move's "near its own spot" rule) or down the field to
+    // the nearest seed -- stops at the first ground in sight it crosses,
+    // short of its spot. In a corridor one body wide that is the corridor's
+    // mouth, and the gate behind it is shut (attackring-gatehouse-40 offset
+    // 0: the first body through the west gate walked straight east at its
+    // spot beyond the yard wall and was braked flush in the mouth at tick
+    // 486). Retail's attacker walks its path out of sight and is braked
+    // deeper in. So within two bodies of reach a member of a deep ring whose
+    // straight line to its own spot crosses a wall or the shot walks a route
+    // to it (ringWalk), or, when the spot lies through the shot only (a
+    // yard's gap), the way through it, where combat brakes it as Retail's.
+    // Returns 2 when the straight line is clean (walk it), 1 with a route
+    // committed, -1 when still bodies wall the spot off (the body holds: its
+    // hold presses in where it can, and ringScan hands the spot on), 0 when
+    // the rule does not apply.
+    int spotRoute(const Unit& u,Member& m,Group& g,const Plane& p,int ox,int oz) {
+        const auto& r=g.ring;
+        const int W=width(),here=oz*W+ox;
+        if(m.kind!=Kind::Attack||!ringMember(g,m)||!r.deep||here==m.goal)return 0;
+        if(r.band[size_t(m.slot)]>1||r.owner[size_t(m.slot)]!=u.id||g.plane<0)return 0;
+        const Unit* t=w.unit(g.reachTarget);
+        if(!t||!t->alive()||!t->type||t->speed>Fixed())return 0;
+        const int fx=u.type->footX,fz=u.type->footZ,body=16*std::max(fx,fz);
+        if(fx!=p.footX||fz!=p.footZ)return 0;
+        const int64_t outer=int64_t(r.R)+2*body;
+        const int64_t ux=(u.x.v>>16)-r.tx,uz=(u.z.v>>16)-r.tz;
+        if(ux*ux+uz*uz>outer*outer)return 0;
+        const int goalX=m.goal%W,goalZ=m.goal/W;
+        if(sweep(p,u,u.x,u.z,centre(goalX,fx),centre(goalZ,fz))&&
+           trace(u,u.x,u.z,centre(goalX,fx),centre(goalZ,fz),[&](int cx,int cz) {return (cx==goalX&&cz==goalZ)||!ringShot(r,fx,fz,cx,cz);})) {
+            m.spotFrom=-1;return 2;
+        }
+        if(m.spotFrom==here&&!(m.state==Holding&&m.holdUpdates%kPressRouteEvery==0))return -1;
+        RingWalk wk;
+        int found=-1;
+        for(int pass=0;pass<2&&found<0;++pass) {
+            if(!ringWalk(u,g,p,ox,oz,pass==1,wk)||!wk.inside(goalX,goalZ))return 0;
+            if(wk.parent[size_t(wk.at(goalX,goalZ))]>=0)found=wk.at(goalX,goalZ);
+        }
+        // Walled off: a spot the body does reach (ringDeepClaim), else hold.
+        if(found<0) {
+            if(ringDeepClaim(u,m,g,p))return 0;
+            m.spotFrom=here;return -1;
+        }
+        std::vector<int> path;
+        for(int c=found;c!=wk.start;c=wk.parent[size_t(c)])path.push_back((wk.bz0+c/wk.bw)*W+wk.bx0+c%wk.bw);
+        std::reverse(path.begin(),path.end());
+        m.route=std::move(path);m.routeTicks=0;m.lineCell=-1;m.spotFrom=-1;
+        ++stats.ringSpotRoutes;
+        return 1;
+    }
+    // Round 6: a deep ring's spot hand-out, on arrival. A member within
+    // kRingWaitReach bodies of reach walks (ringWalk) from where it stands
+    // and takes, of
+    // the free unspent band-0 spots it reaches (band 1 when band 0 has none),
+    // the nearest one that lies on no other such spot's way: a spot another
+    // one's walk passes over (and a body on it would wall that one off or
+    // send its way round by kRingDetour bodies more) is left for later, so
+    // the ring fills back to front along each member's own way in -- the
+    // deepest spot of a corridor first, as Retail's first bodies walk to the
+    // corridor's far end before they come flush (attackring-gatehouse-40
+    // offset 0 at tick 2999: Retail stands seven bodies flush along the west
+    // corridor from its north corner to its south one). On open ground no
+    // spot lies on another's way and this is the nearest by walk. Only
+    // without such a way, the walk through the shot. False: nothing reached
+    // (the caller falls back). The walk is the cost: none without a free
+    // spot, and the confirming walks only for spots on another's way.
+    bool ringDeepClaim(const Unit& u,Member& m,Group& g,const Plane& p) {
+        auto& r=g.ring;
+        if(!r.deep||u.type->footX!=p.footX||u.type->footZ!=p.footZ)return false;
+        const int W=width(),fx=p.footX,fz=p.footZ,body=16*std::max(fx,fz);
+        // Out to the waiting bands (kRingWaitReach bodies beyond the edge): a
+        // member waiting there is handed its spot by the same walk.
+        const int64_t outer=int64_t(r.R)+kRingWaitReach*body;
+        const int64_t ux=(u.x.v>>16)-r.tx,uz=(u.z.v>>16)-r.tz,d2=ux*ux+uz*uz;
+        if(d2>outer*outer)return false;
+        bool any=false;   // a free spot to walk for at all (the walk is the cost)
+        for(size_t i=0;i<r.cells.size()&&!any;++i)any=r.band[i]<=1&&ringFree(g,p,int(i),u.id);
+        if(!any)return false;
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        const int64_t reach=isqrtFloor(uint64_t(d2))+body;
+        RingWalk wk;
+        // Through the shot only when no spot is reached without it (a yard
+        // entered through its gap): the body walks at it and is braked
+        // where it gets the shot, as Retail's.
+        for(int k=0;k<4;++k) {
+            const int band=k&1;const bool through=k>=2;
+            if(band==0&&!ringWalk(u,g,p,ox,oz,through,wk,reach))return false;
+            std::vector<int> cand;   // slots, reached
+            for(size_t i=0;i<r.cells.size();++i) {
+                if(r.band[i]!=band||!ringFree(g,p,int(i),u.id))continue;
+                const int c=r.cells[i],x=c%W,z=c/W;
+                if(wk.inside(x,z)&&wk.parent[size_t(wk.at(x,z))]>=0)cand.push_back(int(i));
+            }
+            if(cand.empty())continue;
+            // On another's way: a spot whose footprint an origin of another
+            // candidate's walk (short of that spot) overlaps, and which, with
+            // a body standing on it, leaves that candidate unreached or more
+            // than kRingDetour bodies farther (a corridor wide enough to pass
+            // the body, or a short way round, is no block).
+            std::vector<uint8_t> onWay(cand.size(),0);
+            std::vector<std::vector<size_t>> behind(cand.size());
+            for(size_t a=0;a<cand.size();++a) {
+                const int c=r.cells[size_t(cand[a])];
+                for(int q=wk.parent[size_t(wk.at(c%W,c/W))];q!=wk.start&&q>=0;q=wk.parent[size_t(q)]) {
+                    const int qx=wk.bx0+q%wk.bw,qz=wk.bz0+q/wk.bw;
+                    for(size_t b=0;b<cand.size();++b) {
+                        if(b==a||(!behind[b].empty()&&behind[b].back()==a))continue;
+                        const int s=r.cells[size_t(cand[b])];
+                        if(std::abs(qx-s%W)<fx&&std::abs(qz-s/W)<fz)behind[b].push_back(a);
+                    }
+                }
+            }
+            for(size_t b=0;b<cand.size();++b) {
+                if(behind[b].empty())continue;
+                RingWalk alt;
+                if(!ringWalk(u,g,p,ox,oz,through,alt,reach,r.cells[size_t(cand[b])]))continue;
+                for(const size_t a:behind[b]) {
+                    const int c=r.cells[size_t(cand[a])],at=wk.at(c%W,c/W);
+                    const int was=wk.dist[size_t(at)],now=alt.dist[size_t(at)];
+                    if(now<0||now>was+kRingDetour*std::max(fx,fz)) {onWay[b]=1;break;}
+                }
+            }
+            int best=-1,bestD=0;
+            for(size_t a=0;a<cand.size();++a) {
+                if(onWay[a])continue;
+                const int c=r.cells[size_t(cand[a])],d=wk.dist[size_t(wk.at(c%W,c/W))];
+                if(best<0||d<bestD) {best=cand[a];bestD=d;}
+            }
+            if(best<0)continue;
+            if(m.slot>=0) {ringRelease(g,u.id,m);slotCells(m,u.type->footX,u.type->footZ,false);m.slot=-1;}
+            ringTake(g,u,m,best);
+            return true;
+        }
+        return false;
+    }
     // A press walked out of the target's sight (behind a wall, to a point
     // in sight): nothing brakes the body before the point, so it keeps
     // travel speed, unturned (round 3, 2026-10-20). At the facing cap a
@@ -10027,12 +10277,97 @@ struct LegionNavigator::Impl {
         r.naval=naval;r.tskip=std::max(t->type->footX,t->type->footZ)/2;r.tfx=t->x.toFloat();r.tfz=t->z.toFloat();
         r.cells=std::move(cells);r.band=std::move(band);r.owner.assign(r.cells.size(),0);
         stats.reachSlotsBuilt+=r.cells.size();
+        ringDeep(g,p);
         g.seeds.assign(r.cells.begin(),r.cells.begin()+band0);
         std::sort(g.seeds.begin(),g.seeds.end());
         for(const int c:g.seeds) {
             g.minX=std::min(g.minX,c%W);g.maxX=std::max(g.maxX,c%W);g.minZ=std::min(g.minZ,c/W);g.maxZ=std::max(g.maxZ,c/W);
         }
         return true;
+    }
+    // The origin where a body walking in to ring spot i stops, as ringScan's
+    // flood test reads it: for band 0 of a ring planned with sight, the reach
+    // edge radially out from the spot (where combat brakes it), when that
+    // origin is legal in the members' component; else the spot.
+    int ringStop(const Group::Ring& r,const Plane& p,int comp,size_t i) const {
+        const int W=width(),fx=p.footX,fz=p.footZ,c=r.cells[i],x=c%W,z=c/W;
+        if(r.band[i]!=0||!r.sight)return c;
+        const int64_t sx=int64_t(x)*16+fx*8,sz=int64_t(z)*16+fz*8;
+        const int64_t rx=sx-r.tx,rz=sz-r.tz,d=std::max<int64_t>(1,isqrtFloor(uint64_t(rx*rx+rz*rz)));
+        const int64_t ex=sx+rx*(r.R-d)/d,ez=sz+rz*(r.R-d)/d;
+        const int eox=int((ex-(fx-1)*8)>>4),eoz=int((ez-(fz-1)*8)>>4);
+        return legal(p,eox,eoz)&&compAt(p,eoz*W+eox)==comp?eoz*W+eox:c;
+    }
+    // Round 6 (2026-10-21, Legion ~100, task-l6-gateB): rings through a
+    // narrow approach fill back to front. Combat brakes a body where it gets
+    // the shot and nothing walks through it, so a ring whose spots lie along
+    // a corridor one body wide (attackring-gatehouse-40: 2x2 bodies in a
+    // 3-cell corridor round a walled yard) is filled from its far end or not
+    // at all: the first body to stop in the corridor's mouth shuts it, and
+    // straight-line hand-outs gave the mouth's spots to the first bodies
+    // there. Retail's first bodies walk on to the corridor's far corners
+    // (they walk at the target and are braked where they come flush). Here
+    // each band-0/1 spot's walking depth is the steps from the ground beyond
+    // reach (ringScan's flood start) to where a body walking in stops, over
+    // the static ground through origins where nothing brakes a body. A ring
+    // is deep when some spot's depth exceeds its straight-line depth (the
+    // reach edge plus a body, less its distance) by kRingDeepExcess bodies
+    // (attackring-gatehouse-40: 112 to 464 px at the offsets that enter
+    // through the west gate; the walled boxes of attackring-wall-64 and -100
+    // 11 px at most, so they are not deep). A deep ring's spots are handed
+    // out on arrival by each member's own walk (ringDeepClaim), its members
+    // walk to them by routes clear of the shot (spotRoute), and they never
+    // re-choose a nearer spot (ringRechoose).
+    void ringDeep(Group& g,const Plane& p) {
+        auto& r=g.ring;
+        r.deep=false;
+        if(!r.shadow||!r.sight||r.blind)return;
+        const int W=width(),fx=p.footX,fz=p.footZ,foot=std::max(fx,fz),body=16*foot;
+        const int comp=groupComp(g,p);
+        const int64_t outer=int64_t(r.R)+2*body,start=int64_t(r.R)+body;
+        const int span=int(outer/16)+foot+1,ccx=int(r.tx/16),ccz=int(r.tz/16);
+        const int bx0=std::max(0,ccx-span),bz0=std::max(0,ccz-span),bx1=std::min(W-1,ccx+span),bz1=std::min(height()-1,ccz+span);
+        const int bw=bx1-bx0+1,bh=bz1-bz0+1;
+        if(bw<=0||bh<=0)return;
+        const NavGrid& sightGrid=r.naval?w.navalSight_:w.nav_;
+        std::vector<uint8_t> open(size_t(bw)*size_t(bh),0);
+        std::vector<uint16_t> dist(open.size(),0xffff);
+        std::vector<int> flood;
+        for(int z=bz0;z<=bz1;++z)for(int x=bx0;x<=bx1;++x) {
+            const int64_t dx=int64_t(x)*16+fx*8-r.tx,dz=int64_t(z)*16+fz*8-r.tz,d2=dx*dx+dz*dz;
+            const size_t at=size_t(z-bz0)*size_t(bw)+size_t(x-bx0);
+            if(d2>outer*outer||!legal(p,x,z)||compAt(p,z*W+x)!=comp)continue;
+            const bool walk=d2>int64_t(r.R)*r.R||!sightGrid.losBetween(float(x*16+fx*8),float(z*16+fz*8),r.tfx,r.tfz,foot/2,r.tskip);
+            open[at]=walk?2:1;
+            if(d2>=start*start) {open[at]|=4;dist[at]=0;flood.push_back(int(at));}
+        }
+        for(size_t q=0;q<flood.size();++q) {
+            const int lx=flood[q]%bw,lz=flood[q]/bw;
+            if(!(open[size_t(flood[q])]&2))continue;
+            for(const auto& d:kDirections) {
+                const int nx=lx+d[0],nz=lz+d[1];
+                if(nx<0||nz<0||nx>=bw||nz>=bh)continue;
+                const size_t at=size_t(nz)*size_t(bw)+size_t(nx);
+                if(!open[at]||(open[at]&4))continue;
+                if(d[0]&&d[1]&&(!open[size_t(lz)*size_t(bw)+size_t(nx)]||!open[size_t(nz)*size_t(bw)+size_t(lx)]))continue;
+                open[at]|=4;dist[at]=uint16_t(std::min<int>(0xfffe,dist[size_t(flood[q])]+1));flood.push_back(int(at));
+            }
+        }
+        stats.slotSearchCells+=open.size();
+        if(flood.empty())return;
+        int64_t most=INT64_MIN;
+        for(size_t i=0;i<r.cells.size();++i) {
+            if(r.band[i]>1)continue;
+            const int q=ringStop(r,p,comp,i),qx=q%W,qz=q/W;
+            if(qx<bx0||qx>bx1||qz<bz0||qz>bz1)continue;
+            const uint16_t depth=dist[size_t(qz-bz0)*size_t(bw)+size_t(qx-bx0)];
+            if(depth==0xffff)continue;
+            const int c=r.cells[i];
+            const int64_t dx=int64_t(c%W)*16+fx*8-r.tx,dz=int64_t(c/W)*16+fz*8-r.tz;
+            const int64_t excess=int64_t(depth)*16-std::max<int64_t>(0,start-isqrtFloor(uint64_t(dx*dx+dz*dz)));
+            most=std::max(most,excess);
+        }
+        r.deep=most>=int64_t(kRingDeepExcess)*body;
     }
     // A member's angle round the target, in the ring's approach frame.
     int64_t ringAngle(const Group& g,const Unit& u) const {
@@ -10085,6 +10420,8 @@ struct LegionNavigator::Impl {
     void assignRing(Group& g,const Plane& p) {
         auto& r=g.ring;
         r.assigned=true;
+        // Round 6: a deep ring hands its spots out on arrival (ringDeepClaim).
+        if(r.deep)return;
         std::vector<std::tuple<int64_t,int,const Unit*,Member*>> list;   // distance^2, id
         for(const int id:g.reachIds) {
             Member* mm=member(id);const Unit* v=w.unit(id);
@@ -10125,13 +10462,27 @@ struct LegionNavigator::Impl {
         // refresh per target, measured +13-28% total Legion work.)
         if(g.ring.band0==0||m.slot>=0||m.state==Engaged)return;
         if(!g.route().usable()||g.field->seedKey!=seedsKey(g.seeds)||!ringReady(g,p))return;
-        if(!g.ring.assigned) {assignRing(g,p);return;}
+        if(!g.ring.assigned) {assignRing(g,p);if(!g.ring.deep)return;}
+        // Round 6: a deep ring's member claims on arrival, within
+        // kRingWaitReach bodies of reach (ringDeepClaim); farther out it
+        // walks the field on.
+        if(g.ring.deep) {
+            const int64_t body=16*std::max(p.footX,p.footZ),outer=int64_t(g.ring.R)+kRingWaitReach*body;
+            const int64_t dx=(u.x.v>>16)-g.ring.tx,dz=(u.z.v>>16)-g.ring.tz;
+            if(dx*dx+dz*dz>outer*outer||ringDeepClaim(u,m,g,p))return;
+            // Nothing reached: wait on an outer band, not on a spot beyond a
+            // wall (its straight line is no way there).
+            if(ringNearestOuter(u,m,g,p))return;
+        }
         ringNearest(u,m,g,p,255);
     }
     // The nearest free spot in a lower band, or in the same band nearer this
     // body than its own (any, if another body now stands on its own: an
     // engaged one stopped there); ties: the lower index.
     bool ringRechoose(const Unit& u,Member& m,Group& g,const Plane& p) {
+        // Round 6: a deep ring fills back to front (ringDeep): a nearer spot
+        // is a shallower one, which shuts the way to the deeper ones.
+        if(g.ring.deep)return false;
         if(g.route().paused()&&!ringReady(g,p))return false;   // (a building route: as before)
         const int W=width();
         const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
@@ -10408,6 +10759,9 @@ struct LegionNavigator::Impl {
                 const int64_t ddx=(v->x.v>>16)-r.tx,ddz=(v->z.v>>16)-r.tz;
                 const bool inReach=(r.sight||r.blind)&&ddx*ddx+ddz*ddz<=int64_t(r.R)*r.R;
                 if(inReach&&r.blind)continue;
+                // Round 6: a deep ring's member takes the spot it reaches
+                // that lies on no other's way (ringDeepClaim), as on arrival.
+                if(r.deep&&ringDeepClaim(*v,*mm,g,p))continue;
                 if(inReach) {ringNearest(*v,*mm,g,p,1);continue;}
                 // Round 4 (2026-10-20): a member waiting on an outer band takes a
                 // free band-1 spot when no band-0 spot is left. On its outer spot
@@ -10424,6 +10778,23 @@ struct LegionNavigator::Impl {
                 if(!ringNearest(*v,*mm,g,p,1)&&r.spent[size_t(mm->slot)])ringNearest(*v,*mm,g,p,255);
             }
         }
+    }
+    // The nearest free spot of the outer (waiting) bands, lowest band first
+    // (round 6: a deep ring's member that reaches no spot waits there).
+    bool ringNearestOuter(const Unit& u,Member& m,Group& g,const Plane& p) {
+        const int W=width();
+        const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
+        int best=-1;int bestBand=0;int64_t bestD=0;
+        for(size_t i=0;i<g.ring.cells.size();++i) {
+            if(g.ring.band[i]<2||!ringFree(g,p,int(i),u.id))continue;
+            const int c=g.ring.cells[i];
+            const int64_t dx=int64_t(c%W)*16+u.type->footX*8-ux,dz=int64_t(c/W)*16+u.type->footZ*8-uz,d=dx*dx+dz*dz;
+            if(best<0||g.ring.band[i]<bestBand||(g.ring.band[i]==bestBand&&d<bestD)) {best=int(i);bestBand=g.ring.band[i];bestD=d;}
+        }
+        if(best<0)return false;
+        if(m.slot>=0) {ringRelease(g,u.id,m);slotCells(m,u.type->footX,u.type->footZ,false);m.slot=-1;}
+        ringTake(g,u,m,best);
+        return true;
     }
     bool ringNearest(const Unit& u,Member& m,Group& g,const Plane& p,int below) {
         const int W=width();
@@ -11198,8 +11569,18 @@ struct LegionNavigator::Impl {
                 auto d2=[&](int64_t x,int64_t z) {const int64_t dx=x-(t->x.v>>16),dz=z-(t->z.v>>16);return dx*dx+dz*dz;};
                 if(R>0&&d2(u.x.v>>16,u.z.v>>16)<=R*R&&d2(gx.v>>16,gz.v>>16)>R*R) {hold(u,m);return;}
             }
+        // Round 6: the walk to a ring spot through a narrow approach (spotRoute).
+        const int spot=spotRoute(u,m,g,p,ox,oz);
+        if(spot==-1) {hold(u,m);return;}
+        if(spot==1) {
+            const auto [ax,az]=stepAim(u,m.route.front());
+            holdStall(m);
+            m.site=LegionNavigator::SiteBlocked;
+            drive(u,m,p,nullptr,maximum,ax,az,false,false,false,false,true);
+            return;
+        }
         Fixed aimX=gx,aimZ=gz;
-        bool direct=false;
+        bool direct=spot==2;
         if(here==m.goal)direct=true;
         else {
             if(m.lineCell!=here) {
@@ -11223,7 +11604,7 @@ struct LegionNavigator::Impl {
                 Fixed bx,bz;
                 if(m.slot>=0&&formationMember(m)&&!engagesEnemies(m.kind)&&ringBend(u,g,p,gx,gz,bx,bz)) {m.bend=true;m.bendX=bx.v;m.bendZ=bz.v;}
             }
-            direct=m.line;
+            direct=m.line||spot==2;
             if(m.turnV>=0&&!engagesEnemies(m.kind))ribbonHold(u,m,ox,oz,goalX,goalZ,direct);
             if(!m.laneSwap&&m.turnV<0&&m.prevV>=0&&m.slot>=0&&m.pt&&formationMember(m)&&std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=kLaneSwapNear) {
                 m.laneSwap=true;laneUncross(u,m);
@@ -13982,6 +14363,7 @@ struct LegionNavigator::Impl {
                 h=mix(h,0x72696e67ull);h=mix(h,uint64_t(g.ring.assigned)|uint64_t(uint32_t(g.ring.R))<<8);h=mix(h,uint64_t(g.ring.band0));
                 if(g.ring.late)h=mix(h,0x6c617465ull);
                 if(g.ring.blind)h=mix(h,0x626c696e64ull);
+                if(g.ring.deep)h=mix(h,0x64656570ull);
                 for(size_t i=0;i<g.ring.cells.size();++i)h=mix(h,uint64_t(uint32_t(g.ring.cells[i]))<<32|uint64_t(uint32_t(g.ring.owner[i]))<<4|g.ring.band[i]);
                 if(g.ring.scanned!=kNoTick) {
                     h=mix(h,0x7370656e74ull);h=mix(h,g.ring.scanned);
@@ -14048,6 +14430,7 @@ struct LegionNavigator::Impl {
             if(m.bend) {h=mix(h,0x62656e64ull);h=mix(h,uint32_t(m.bendX));h=mix(h,uint32_t(m.bendZ));}
             if(m.shadowPressed)h=mix(h,0x736861646f77ull);
             if(m.walkOnAt>=0) {h=mix(h,0x77616c6b6f6eull);h=mix(h,uint64_t(uint32_t(m.walkOnEnd))<<32|uint32_t(m.walkOnAt));h=mix(h,uint64_t(m.walkOnTick)<<8|m.walkOns);if(m.walkOnFrom>=0)h=mix(h,uint64_t(uint32_t(m.walkOnFrom)));}
+            if(m.spotFrom>=0) {h=mix(h,0x73706f74ull);h=mix(h,uint32_t(m.spotFrom));}
             if(m.pressX!=kNoPress) {h=mix(h,0x7072657373ull);h=mix(h,uint32_t(m.pressX));h=mix(h,uint32_t(m.pressZ));h=mix(h,m.pressTicks);}
             if(m.want>=0) {h=mix(h,0x77616e74ull);h=mix(h,uint64_t(uint32_t(m.want)));h=mix(h,m.wantTick);}
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);if(m.detourFlow)h=mix(h,0x666c6f77ull);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);

@@ -815,6 +815,16 @@ add_test(NAME legion_ringshadow
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-gatehouse-40.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_ringshadow PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":(1[5-9][0-9]|[2-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
+# Legion ~100 round 6 (2026-10-21): a ring whose spots lie through a corridor one body wide fills back to front. Each
+# member takes, on arrival, the spot it reaches by its own walk that lies on no other free spot's way (ringDeepClaim)
+# and walks to it clear of the shot (spotRoute). attackring-gatehouse-40 at offsets 0, 1, -1 (the west gate): the first
+# body walked straight at its spot beyond the yard wall and was braked flush in the corridor's mouth, shutting it (median
+# damage 167 on the parent; Retail 557 / 482 / 590), 479 after. Passes when the median damage is 400 or more, serial
+# equal to workers.
+add_test(NAME legion_ringdeep
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-gatehouse-40.scn --mode legion --offsets 0,1,-1 --json)
+set_tests_properties(legion_ringdeep PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":([4-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
 # Legion ~100 round 4 (2026-10-20): a blind ring (no spot of the members' region sees the target) presses into reach
 # out of sight, holds there instead of walking back to a spot centre out of reach, and spends no spot for a body
 # standing radially out at the reach edge (nothing brakes a body there). attackring-river-64 at offset 0: 6 bodies in
