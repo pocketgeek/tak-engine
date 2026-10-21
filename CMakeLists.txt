@@ -842,6 +842,16 @@ add_test(NAME legion_ringshadowpress
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-wall-64.scn --mode legion --offsets 1,-1,-3 --json)
 set_tests_properties(legion_ringshadowpress PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.now_end\":(5[7-9]|[6-9][0-9]),")
+# Round 5 review (2026-10-21): the in-reach hold out of sight of a shadowed ring holds only a member that has pressed in
+# at the target during its order (Member::shadowPressed). Holding every member standing in reach out of sight parked bodies on
+# their way through the shadow strip to spots beyond reach, in the way of a second footprint's group on the same
+# target. attackring-wall-mixed-56 offsets 0, 2, 3, damage the target lost: 1,304 / 1,415 / 1,760 before round 5,
+# 1,224 / 1,295 / 1,661 with every such member held (median 1,295), 1,293 / 1,355 / 1,707 now (median 1,355; Retail
+# 666 / 1,243 / 1,586). Passes at a median of 1,330 or more, serial equal to workers.
+add_test(NAME legion_ringshadowmixed
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-wall-mixed-56.scn --mode legion --offsets 0,2,3 --json)
+set_tests_properties(legion_ringshadowmixed PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":(13[3-9][0-9]|1[4-9][0-9][0-9]|[2-9][0-9][0-9][0-9]),")
 # Round 4 review: a walk on from the shadow (pressRoute) restarts the hold clock, as a detour does. Left held, the
 # route branch dropped the route at once (held 30 ticks or more) and the search ran again every update: bodies frozen
 # in the shadow for the rest of the run. attackring-wall-64 at offset 0: 3,674 walks before (one body re-routed every

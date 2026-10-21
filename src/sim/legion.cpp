@@ -974,6 +974,7 @@ struct LegionNavigator::Impl {
         // A pressIn step under way: the sub-cell point (16.16) the body walks to,
         // in reach of its target (kNoPress: none), and its update count.
         int32_t pressX=kNoPress,pressZ=0;uint32_t pressTicks=0;
+        bool shadowPressed=false;         // pressed in toward a shadowed ring's target (pressIn; move's in-reach hold)
         uint32_t detourTicks=0;
         bool detourFace=true;             // side-step turns the body (keep-right) or not (shuffle)
         bool detourPass=false;            // side-step is a lane-discipline pass (moves at travel speed)
@@ -8459,6 +8460,7 @@ struct LegionNavigator::Impl {
         if(bestD<0&&los&&d0<=int64_t(R)*R&&m.holdUpdates%kPressRouteEvery==4)return pressRoute(u,m,p,*t,R,sight);
         if(bestD<0)return false;
         m.pressX=int32_t(bestX);m.pressZ=int32_t(bestZ);m.pressTicks=0;m.lineCell=-1;
+        if(rg.ring.shadow)m.shadowPressed=true;   // move's in-reach hold out of sight
         ++stats.reachPresses;
         // A press from the origin of this member's last one: the step did not
         // put it in reach and it walked back out (an in/out shuffle).
@@ -10857,9 +10859,19 @@ struct LegionNavigator::Impl {
         // had been). Retail's attacker stays where its walk at the target
         // is stopped.
         // Round 5 (2026-10-21): so does a member of a shadowed ring standing
-        // in reach out of the target's sight (pressed into the shadow, see
-        // pressIn); its hold walks on through the shadow (pressRoute).
-        if(m.kind==Kind::Attack&&ringMember(g,m)&&(g.ring.blind||(g.ring.shadow&&g.ring.sight&&pressHidden(u,m))))
+        // in reach out of the target's sight that has pressed in at it
+        // (Member::shadowPressed, see pressIn); its hold walks on through the
+        // shadow (pressRoute). Only a pressed body (review): one merely
+        // walking through the shadow toward a spot beyond reach, held there
+        // too, parked for good in the strip the other bodies (a second
+        // footprint's group on the same target) walked through to their
+        // spots (a 40 1x1 + 16 2x2 attack on the attackring-wall-64 ring:
+        // damage over the 11 gate offsets 15,177 before round 5, 15,033 with
+        // every such body held, 15,199 with only the pressed ones). The mark
+        // stays for the order: cleared with a goal change, a pressed body
+        // whose spot was handed on walked back out and pressed again from
+        // the same origin (attackring-wall-64 offsets 2 / 3: 4 / 3 repeats).
+        if(m.kind==Kind::Attack&&ringMember(g,m)&&(g.ring.blind||(g.ring.shadow&&g.ring.sight&&m.shadowPressed&&pressHidden(u,m))))
             if(const Unit* t=w.unit(g.reachTarget);t&&t->alive()&&t->type) {
                 const int64_t R=reachPx(u,t,false).first;
                 auto d2=[&](int64_t x,int64_t z) {const int64_t dx=x-(t->x.v>>16),dz=z-(t->z.v>>16);return dx*dx+dz*dz;};
@@ -13712,6 +13724,7 @@ struct LegionNavigator::Impl {
             h=mix(h,m.heldSince);h=mix(h,m.stallTick);h=mix(h,m.holdUpdates);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
             h=mix(h,m.rest);if(m.rest) {h=mix(h,uint32_t(m.restX));h=mix(h,uint32_t(m.restZ));h=mix(h,uint32_t(m.restHp));h=mix(h,m.restEpoch);h=mix(h,m.restRing);}
             if(m.bend) {h=mix(h,0x62656e64ull);h=mix(h,uint32_t(m.bendX));h=mix(h,uint32_t(m.bendZ));}
+            if(m.shadowPressed)h=mix(h,0x736861646f77ull);
             if(m.pressX!=kNoPress) {h=mix(h,0x7072657373ull);h=mix(h,uint32_t(m.pressX));h=mix(h,uint32_t(m.pressZ));h=mix(h,m.pressTicks);}
             if(m.want>=0) {h=mix(h,0x77616e74ull);h=mix(h,uint64_t(uint32_t(m.want)));h=mix(h,m.wantTick);}
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);if(m.detourFlow)h=mix(h,0x666c6f77ull);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);

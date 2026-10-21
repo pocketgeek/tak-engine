@@ -2601,25 +2601,37 @@ until a wall or a body stops it, so its crowd presses up into that ground.
   press arrived, and the press was tried again from the same origin (`attackring-wall-64` offset 3: 46 repeats, one
   body). A press already at its point (out of reach by the sub-pixel the whole-pixel test drops) is no press (it ended
   at once and was tried every update: gatehouse offset -3, 29 repeats).
-* **Hold in reach out of sight.** A member of a shadowed ring standing in reach out of the target's sight holds there
-  rather than walk to a goal centre out of reach, as a blind ring's already did, and its hold walks on through the
-  shadow to the shot (`pressRoute`). Without the hold the pressed bodies walked back to their wait spots:
-  gatehouse reversals 267 -> 495 and wall-100 227 -> 334 (gate medians), wall-64 now in reach 38 -> 37.
+* **Hold in reach out of sight.** A member of a shadowed ring standing in reach out of the target's sight that has
+  pressed in at the target during this order (`Member::shadowPressed`, set by any pressIn step on a shadowed ring)
+  holds there rather than walk to a
+  goal centre out of reach, as a blind ring's already did, and its hold walks on through the shadow to the shot
+  (`pressRoute`). Without the hold the pressed bodies walked back to their wait spots: gatehouse reversals 267 -> 495
+  and wall-100 227 -> 334 (gate medians), wall-64 now in reach 38 -> 37. Only a pressed body (review): holding every
+  member standing in reach out of sight also parked bodies merely walking through the shadow strip toward spots beyond
+  reach, for good, in the way of the bodies behind them. On `attackring-wall-mixed-56` (the wall-64 ring attacked by a
+  40-body 1x1 group and a 16-body 2x2 group at once) the target's damage over the 11 offsets went 15,177 -> 15,033 with
+  every such body held (offset 0 1,304 -> 1,224, its longest out-of-reach hold 400 -> 1,641) and is 15,199 with only the
+  pressed ones (Retail 12,470; group A's now in reach 288 -> 286 -> 295); wall-64's damage sum rose with it, 18,646 ->
+  18,724 (offset 2: 1,781, before round 5 1,843, now 1,819). The mark lasts the order: tied to the goal instead, a
+  pressed body whose spot was handed on walked back out and pressed again from the same origin (wall-64 offsets 2 / 3:
+  4 / 3 repeats, `ctest:legion_pressin`). `ctest:legion_ringshadowmixed` (offsets 0, 2, 3: damage median >= 1,330;
+  1,295 with every body held, 1,355 now).
 
 Gate medians (sums over the 11 offsets in brackets), Legion 47c09924 -> after, Retail:
 
 | fixture | key | before | after | Retail |
 |---|---|---|---|---|
-| attackring-wall-64 | reach.ring.ever_end / now_end | 39 / 37 (479 / 469) | 38 / 38 (488 / 485) | 45 / 42 (532 / 480) |
+| attackring-wall-64 | reach.ring.ever_end / now_end | 39 / 37 (479 / 469) | 39 / 38 (490 / 486) | 45 / 42 (532 / 480) |
 | attackring-wall-64 | now_end at the walled offsets 1 / -1 | 55 / 54 | 61 / 58 | 55 / 54 |
-| attackring-wall-64 | damage_end / damage_t2400 (sums) | 18,612 / 12,852 | 18,646 / 12,906 | 16,912 / 11,139 |
-| attackring-wall-64 | t50 / reversals / statue / wall touch | 1,501 / 317 / 48 / 32 | 1,313 / 147 / 45 / 26 | 1,429 / 195 / 173 / 20 |
-| attackring-wall-100 | reach.ring.ever_end / now_end | 38 / 37 (476 / 466) | 39 / 38 (487 / 479) | 49 / 41 (609 / 518) |
-| attackring-wall-100 | damage_end (sum) / reversals / statue / wall touch | 18,440 / 292 / 143 / 15 | 18,533 / 227 / 161 / 18 | 17,027 / 455 / 229 / 17 |
+| attackring-wall-64 | damage_end / damage_t2400 (sums) | 18,612 / 12,852 | 18,724 / 12,964 | 16,912 / 11,139 |
+| attackring-wall-64 | t50 / reversals / statue / wall touch | 1,501 / 317 / 48 / 32 | 1,313 / 142 / 48 / 26 | 1,429 / 195 / 173 / 20 |
+| attackring-wall-100 | reach.ring.ever_end / now_end | 38 / 37 (476 / 466) | 39 / 38 (489 / 479) | 49 / 41 (609 / 518) |
+| attackring-wall-100 | damage_end (sum) / reversals / statue / wall touch | 18,440 / 292 / 143 / 15 | 18,532 / 227 / 161 / 18 | 17,027 / 455 / 229 / 17 |
 | attackring-river-64 | reach.ring.ever_end / now_end | 17 / 17 (287 / 286) | 20 / 20 (309 / 309) | 21 / 14 (316 / 288) |
 | attackring-river-64 | ever at offsets 0 / -1 / -2, reversals at -2 | 17 / 30 / 45, 1,911 | 20 / 36 / 53, 59 | -, - |
-| attackring-gatehouse-40 | reach.ring.ever_end / now_end | 18 / 15 (213 / 171) | 18 / 15 (227 / 179) | 29 / 24 (298 / 264) |
-| attackring-gatehouse-40 | damage_end (sum) / reversals / statue | 320 (4,834) / 221 / 17 | 320 (4,843) / 267 / 11 | 584 (7,172) / 314 / 23 |
+| attackring-gatehouse-40 | reach.ring.ever_end / now_end | 18 / 15 (213 / 171) | 19 / 16 (225 / 182) | 29 / 24 (298 / 264) |
+| attackring-gatehouse-40 | damage_end (sum) / reversals / statue | 320 (4,834) / 221 / 17 | 320 (4,849) / 221 / 21 | 584 (7,172) / 314 / 23 |
+| attackring-wall-mixed-56 | ever / now (sums), damage_end (sum) | 25 / 25 (294 / 288), 15,177 | 26 / 25 (303 / 295), 15,199 | 247 / 212, 12,470 (sums) |
 
 Every other ring fixture is hash-identical at all 11 gate offsets (r200-64, f1-16, f1-64, f2-64, squad-64, mob-40,
 mob-100, struct-60, fight-60, fight-diag-60, guard-64, ringcross, ringcross-100, attack-100): their rings have no
@@ -4541,7 +4553,7 @@ Rules that came out of using them:
   are exempt from that rule ("Rings along walls with the still-window rule"). Over the gate offsets wall-64 now
   stands 39 / 37 ever / now, wall-100 38 / 37 and the gatehouse 18 / 15, with wall reversals back near ringwall's:
   wall-64 317, wall-100 292. Since round 5, "Pressing into the shadow", bodies held just outside reach of such a ring
-  press into the shadow and hold there: wall-64 39 / 38 ever / now at the gate median, sums over the offsets 488 / 485
+  press into the shadow and hold there: wall-64 39 / 38 ever / now at the gate median, sums over the offsets 490 / 486
   against 479 / 469, Retail 532 / 480; wall-100 39 / 38; the gatehouse 18 / 15 with its plug unchanged.) Against a
   target walled in on every side Legion outfires Retail (it
   seeks flush points on every face that has one). A Move group crossing a firing ring is level with Retail's t90
