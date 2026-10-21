@@ -1,6 +1,7 @@
 #include "client/chatfont.h"
 
 #include "client/gpuvram.h"
+#include "client/utf8.h"
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #define STBTT_STATIC
@@ -18,22 +19,9 @@ std::vector<uint32_t> decodeUtf8Lenient(const std::string& s) {
     std::vector<uint32_t> out;
     out.reserve(s.size());
     for (size_t i = 0; i < s.size();) {
-        const unsigned char c = static_cast<unsigned char>(s[i]);
-        const int n = c >= 0xC2 && c < 0xE0 ? 1 : c >= 0xE0 && c < 0xF0 ? 2 : c >= 0xF0 && c < 0xF5 ? 3 : 0;
-        uint32_t cp = c & (0x3F >> n);
-        bool good = n > 0 && i + size_t(n) < s.size();
-        for (int k = 1; good && k <= n; ++k) {
-            const unsigned char d = static_cast<unsigned char>(s[i + size_t(k)]);
-            if ((d & 0xC0) != 0x80) good = false;
-            else cp = (cp << 6) | (d & 0x3F);
-        }
-        // Overlong forms, UTF-16 surrogates and values past U+10FFFF are not characters.
-        if (good && ((n == 2 && cp < 0x800) || (n == 3 && (cp < 0x10000 || cp > 0x10FFFF)) ||
-                     (cp >= 0xD800 && cp <= 0xDFFF)))
-            good = false;
-        if (!good) { out.push_back(c); ++i; continue; }
+        uint32_t cp;
+        i += utf8::next(s, i, &cp);
         out.push_back(cp);
-        i += size_t(n) + 1;
     }
     return out;
 }

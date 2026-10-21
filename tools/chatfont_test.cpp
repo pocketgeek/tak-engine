@@ -76,6 +76,18 @@ int main() {
     bool whole = u.size() > 1;
     for (const auto& r : u) whole = whole && r.size() % 2 == 0;
     check(whole, "a split never cuts a UTF-8 character");
+    // Stray bytes (a run of continuation bytes, or one after a valid character) are each
+    // a glyph of their own, so wrap may break between them like any other characters.
+    for (const std::string& stray : {std::string(150, '\x80'), "\xE2\x80\x8B" + std::string(150, '\x80')}) {
+        const auto sr = tak::chatbox::wrap(stray, 200, 300, width);
+        bool sfits = sr.size() > 1;
+        std::string sj;
+        for (size_t k = 0; k < sr.size(); ++k) {
+            sfits = sfits && f.width(sr[k]) <= (k == 0 ? 200 : 300);
+            sj += sr[k];
+        }
+        check(sfits && sj == stray, "a run of stray UTF-8 bytes wraps to rows that fit");
+    }
 
     // ---- UTF-8 ----
     using tak::decodeUtf8Lenient;

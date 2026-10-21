@@ -2,8 +2,11 @@
 
 // In-game chat box: the pure layout rules (word wrap, size clamp, placement), kept
 // apart from GameView so they can be tested without a renderer. GameView's
-// drawGameChat() measures text with the HUD font and draws what these return.
+// drawGameChat() measures text with the chat font (client/chatfont.h) and draws what
+// these return.
 // Display only: nothing here touches the simulation or the network.
+
+#include "client/utf8.h"
 
 #include <algorithm>
 #include <functional>
@@ -27,7 +30,8 @@ inline float lineAlpha(float age) {
 
 // Word-wrap `text` to `maxW` pixels. The first row has `firstW` pixels instead (the
 // sender's name sits in front of it). A word longer than a whole row is broken
-// between characters, never between the bytes of one UTF-8 character. Always returns
+// between characters (client/utf8.h: a well-formed UTF-8 sequence, or else one byte --
+// exactly the glyphs the chat font draws), never inside one. Always returns
 // at least one row (possibly empty).
 inline std::vector<std::string> wrap(const std::string& text, float firstW, float maxW,
                                      const std::function<float(const std::string&)>& width) {
@@ -56,8 +60,7 @@ inline std::vector<std::string> wrap(const std::string& text, float firstW, floa
         if (rows.size() == 1 && width(word) <= maxW) { rows.emplace_back(word); continue; }
         // ...and break a word that is wider than a whole row.
         for (size_t c = 0; c < word.size();) {
-            size_t n = 1;
-            while (c + n < word.size() && (static_cast<unsigned char>(word[c + n]) & 0xC0) == 0x80) ++n;
+            const size_t n = utf8::next(word, c);
             std::string ch = word.substr(c, n);
             if (!rows.back().empty() && width(rows.back() + ch) > limit()) rows.emplace_back();
             rows.back() += ch;
