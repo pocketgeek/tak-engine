@@ -421,24 +421,33 @@ Battles). Every picture was looked at after capture.
   also showing the COSMETIC MODS / GAME MODS lists) recaptured with the 0.8.7
   quick-start harness; `command-panel.jpg` has no engine text, recaptured
   byte-identical and left as the 0.8.7 file.
-- **Kept:** `campaign.jpg` (0.7.25): with UI FONT MODERN the decorative chapter
-  number "1" overlaps the word "HAPTER" on the campaign book page
-  (`src/client/campaignscreen.cpp` heading placement), so it is pending a fix
-  and a retake; the "Always-on mods" note on that page is also faint on the
-  parchment. `guide/tactical-dots.jpg` (no interface text) and the Cartographer
+- **Campaign page fixed and retaken:** with UI FONT MODERN the "HAPTER" half of
+  the campaign book's CHAPTER heading was drawn in Noto Sans Bold at the height
+  of bodfontbody's tall 'H', so every letter stood as tall as the retail initial
+  and ran into the chapter numeral. The heading (with the illuminated "C") now
+  keeps the retail lettering in both fonts, and the "Always-on mods" note, which
+  was faint on the parchment, is drawn in dark ink under MODERN
+  (`src/client/campaignscreen.cpp`). Checked at 1024 x 768, 1600 x 1000 and
+  1920 x 1080 in both fonts, on Book of Darien chapters 1 and 12 and Iron Plague
+  chapter 13: MODERN now lays out as CLASSIC, and CLASSIC renders are
+  pixel-identical before and after. `campaign.jpg` was retaken (MODERN,
+  1600 x 1000, fresh profile). As in CLASSIC and 0.8.7, the top of a two-digit
+  numeral still meets the bottom of "APTER" (the retail boxes overlap).
+- **Kept:** `guide/tactical-dots.jpg` (no interface text) and the Cartographer
   editor pictures (the editor does not use the UI font).
 - **Captions:** the README title alt text (version 0.8.8) and gallery footnote
   (0.7.25 to 0.8.8 builds), `docs/img/README.md` (header, every retaken row,
   three new rows, capture notes, the quick-start section) and the user guide's
   image lines were updated to match.
-- **Newer than the pictures:** four client commits landed on main after the
-  capture (see *Scope*). `lobby.jpg` still shows the map as "ulasem arena"
-  (now titled Ulasem Arena), `guide/options-graphics.jpg` shows GPU MEMORY
-  LIMIT "Auto (1.25 GB)" (now "1.25 GB (default)", which the guide's alt text
-  already says), and `room.jpg`, `guide/room-mods-power-codes.jpg`,
-  `cartographer/test-lobby.jpg` and `quick/lobby-move-here.jpg` show ALWAYS ON
-  above the COSMETIC MODS heading with larger pack names (now under the heading
-  at the column's text size). TODO-LEAD: retake these, or accept them.
+- **Retaken after the polish commits** (`5ace1ca8`..`b0045df3`, see *Scope*):
+  `lobby.jpg` (map titled Ulasem Arena, from the translate table),
+  `lobby-scenario.jpg`, `room.jpg` and `guide/room-mods-power-codes.jpg`
+  (ALWAYS ON: click.hpi under the COSMETIC MODS heading, pack names at the
+  column's text size), `guide/options-graphics.jpg` (GPU MEMORY LIMIT
+  "1.25 GB (default)") and `cartographer/test-lobby.jpg`; their captions in
+  `docs/img/README.md` were updated. `quick/lobby-move-here.jpg` is kept: its
+  scratch install has no always-on archive and no packs, so the room shows only
+  the two headings with their NO PACKS lines, which the polish did not change.
 
 ## Limits
 

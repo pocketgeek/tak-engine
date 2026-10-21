@@ -113,7 +113,8 @@ they differ from the original game.
   every UI Scale. Names keep their own capitals (players, maps, mod packs,
   units); labels such as **START** stay in capitals.
 - The original game's decorative lettering is kept: big messages, PAUSED,
-  briefing headings, the Unit Info labels, menu art and buttons.
+  briefing headings, the campaign book's CHAPTER heading, the Unit Info labels,
+  menu art and buttons.
 - **Options → Interface → UI Font** chooses **Modern** (the new font, the
   default) or **Classic** (the look the engine had before). It takes effect at
   once.
