@@ -87,16 +87,25 @@ inline float buildRowTop(float barTop, float barH, float buildScale) {
     return barTop - 5.0f - iconSz - 28.0f * scale;
 }
 
+// The smallest box worth drawing: two lines and the composer at the 10 px floor text
+// size (three 13.75 px rows, the pads and the rule), with `margin` above and below.
+inline float minRoom(float margin) { return 52.0f + 2 * margin; }
+
 // The lowest y the box may reach: above the information bar and the HUD drawn over it
 // -- the build row with its TRAINING line and tooltip (above), and the weapon-switch
 // row (26 px buttons 8 px over the bar). `rowTop` is the top of the build row drawn
 // this frame (0: none is up); with none up, the room a row of BUILD MENU SCALE
 // `buildScale` would take is kept anyway (buildRowTop), so the box never covers the row
 // when it appears. The two agree unless the row is shrunk to fit a narrow window, which
-// only lowers it. `hudRow` is false for a spectator, who gets no bottom HUD.
-inline float hudFloor(float barTop, float barH, float buildScale, float rowTop, bool hudRow) {
+// only lowers it. A row that is not drawn never takes the box's last `minRoom(margin)`
+// of height, though (a big build scale on a short window would otherwise reserve the
+// whole screen and hide chat with nothing there). `hudRow` is false for a spectator,
+// who gets no bottom HUD.
+inline float hudFloor(float barTop, float barH, float buildScale, float rowTop, bool hudRow,
+                      float margin) {
     if (!hudRow) return barTop;
-    const float row = rowTop > 0 ? rowTop : buildRowTop(barTop, barH, buildScale);
+    const float row = rowTop > 0 ? rowTop
+                                 : std::max(buildRowTop(barTop, barH, buildScale), minRoom(margin));
     return std::min(barTop - 34.0f, row);
 }
 

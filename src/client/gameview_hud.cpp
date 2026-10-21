@@ -2598,7 +2598,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         // (chatbox.h hudFloor): the box never covers HUD text, at any scale.
         const float barTop = float(winH - barH());
         const float bottom = cb::hudFloor(barTop, float(barH()), buildBarScale_, buildRowTop_,
-                                          !spectating_);
+                                          !spectating_, margin);
         // The box may use 45% of the play area's height, so long as it fits above the
         // HUD; higher up it would start to cover the battle rather than annotate it.
         const float maxBoxH = std::max(0.0f, std::min(barTop * 0.45f, bottom - 2 * margin));
@@ -2671,6 +2671,9 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
             --composerAt;
         }
         while (boxH() > maxBoxH && rows.size() > 1) rows.erase(rows.begin());
+        // No room at all above a build row that fills the window: idle lines wait rather
+        // than draw over the row's text (the composer, asked for, still shows at the top).
+        if (!chatTyping_ && boxH() > maxBoxH) return;
         float contentW = 0, alpha = 0;
         for (const Row& r : rows) {
             float w = r.x;

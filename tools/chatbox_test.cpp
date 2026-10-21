@@ -111,39 +111,52 @@ int main() {
         // drawPanel's row for a bar at `barTop`, `barH` tall, BUILD MENU SCALE `bs`:
         // icons (barH-10)*bs (fit over the bar), TRAINING at iconY-24*bs, tooltip at
         // iconY-28*bs. The floor must be at or above the tooltip in every case.
-        bool allClear = true, spectator = true;
+        bool allClear = true, spectator = true, room = true;
         for (float winH : {480.0f, 605.0f, 768.0f, 1080.0f, 2160.0f})
-            for (float ui : {0.5f, 1.0f, 1.5f, 2.0f, 3.0f})
-                for (float bs : {0.75f, 1.0f, 2.0f, 4.0f}) {
+            for (float ui : {0.5f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f})
+                for (float bs : {0.75f, 1.0f, 2.0f, 3.0f, 4.0f}) {
                     const float barH = float(int(72 * ui)), barTop = winH - barH;
+                    const float margin = std::round(10 * ui);
                     float iconSz = (barH - 10) * bs, s = bs;
                     const float availH = std::max(barTop - 10, 24.0f);
                     if (iconSz > availH) { s *= availH / iconSz; iconSz = availH; }
                     const float iconY = barTop - iconSz - 5;
                     const float training = iconY - 24 * s, tooltip = iconY - 28 * s;
-                    const float floorY = cb::hudFloor(barTop, barH, bs, 0, true);
-                    if (!(floorY <= tooltip && floorY <= training && floorY <= iconY - 5 &&
+                    const float floorY = cb::hudFloor(barTop, barH, bs, 0, true, margin);
+                    // With no row up there is always room for two lines and the composer
+                    // (a big build scale on a short window must not hide chat)...
+                    if (floorY - 2 * margin < 52.0f) room = false;
+                    // ...and wherever the full row leaves that room, the floor is above it.
+                    if (tooltip >= cb::minRoom(margin) &&
+                        !(floorY <= tooltip && floorY <= training && floorY <= iconY - 5 &&
                           floorY <= barTop - 34))
                         allClear = false;
                     // and a chat box placed on it, idle (one row) or typing (nine), ends above it
                     for (float h : {30.0f, 300.0f}) {
-                        auto r = cb::place(cb::Left, 300, h, 1000, floorY, 0, 10);
-                        if (floorY - 10 - h >= 0 && r.y + r.h > training) allClear = false;
+                        auto r = cb::place(cb::Left, 300, h, 1000, floorY, 0, margin);
+                        if (floorY - margin - h >= 0 && tooltip >= cb::minRoom(margin) &&
+                            r.y + r.h > training)
+                            allClear = false;
                     }
-                    if (cb::hudFloor(barTop, barH, bs, 0, false) != barTop) spectator = false;
+                    if (cb::hudFloor(barTop, barH, bs, 0, false, margin) != barTop) spectator = false;
                 }
+        check(room, "no row up: room for two lines and the composer at every scale");
         check(allClear, "floor above the build row, TRAINING line and tooltip");
         check(spectator, "a spectator (no bottom HUD): just above the bar");
         // A worked case: the 72 px bar at 605, 100%: icons 62 tall at y 466, tooltip at 438.
         check(cb::buildRowTop(533, 72, 1) == 438, "buildRowTop: 605 high window, 100%");
         // The row is reserved wherever it sits, so a one-line box at the left is lifted
         // too (the user's case: a lone line next to a right-hand build row).
-        auto lone = cb::place(cb::Left, 120, 30, 1000, cb::hudFloor(533, 72, 1, 0, true), 0, 10);
+        auto lone = cb::place(cb::Left, 120, 30, 1000, cb::hudFloor(533, 72, 1, 0, true, 10), 0, 10);
         check(lone.y + lone.h <= 428, "a lone line at the left sits above the row band");
         // A row that is up (shrunk to fit a narrow window) is used as drawn: lower than
         // the full-size estimate, never under it; and never below the weapon row.
-        check(cb::hudFloor(1000, 144, 4, 700, true) == 700, "a drawn row: its own top");
-        check(cb::hudFloor(1000, 72, 1, 990, true) == 966, "and still over the weapon row");
+        check(cb::hudFloor(1000, 144, 4, 700, true, 20) == 700, "a drawn row: its own top");
+        check(cb::hudFloor(1000, 72, 1, 990, true, 10) == 966, "and still over the weapon row");
+        // The review's case: 1024x768, UI 200%, BUILD MENU SCALE 400%, no builder. The
+        // full row would reserve the whole screen; the box keeps its minimum room instead.
+        check(cb::hudFloor(768 - 144, 144, 4, 0, true, 20) == cb::minRoom(20),
+              "a row not drawn never takes the last of the room");
     }
 
     // ---- fade ----
