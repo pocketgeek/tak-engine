@@ -27,14 +27,6 @@
     }
 
 namespace {
-// What to SHOW for a map id. A generated map's id is a "~gen1~<hex>" recipe -- the
-// whole parameter block in hex -- which is unreadable in a lobby row. Decode it to
-// the label mapgen already provides ("Random 16x16 4P Aramon"); a real map's id is
-// its name and passes through.
-std::string mapDisplayName(const std::string& id) {
-    if (!tak::mapgen::isGeneratedMapId(id)) return id;
-    return tak::mapgen::friendlyLabel(tak::mapgen::decodeMapId(id));
-}
 std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
     std::string name=tak::sim::pathfindingModeName(mode);
     for(char& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
@@ -146,7 +138,7 @@ std::string startLocationsLabel(uint8_t mode) {
             SDL_SetRenderDrawColor(ren_, hot ? 46 : 30, hot ? 52 : 34, hot ? 72 : 44, 255);
             SDL_RenderFillRectF(ren_, &row);
             blockText(g.name, x + 8, y + 8, 1.8f, {225, 228, 236, 255});
-            blockText(mapDisplayName(g.mapId), x + 220, y + 8, 1.6f, {180, 185, 195, 255});
+            blockText(mapTitle(g.mapId), x + 220, y + 8, 1.6f, {180, 185, 195, 255});
             char pc[32]; std::snprintf(pc, sizeof pc, "%d/%d", g.players, g.capacity);
             blockText(pc, x + w - 200, y + 8, 1.8f, {200, 205, 215, 255});
             if (g.passworded)
@@ -182,11 +174,13 @@ std::string startLocationsLabel(uint8_t mode) {
         resetMinimap(); mapView_.quiesce();
         vfs_.refreshMapCache(installRoot_);
         mapList_.clear();
+        mapTitlesLoaded_ = false;   // the install may have changed: read the tables again
         const auto maps=tak::hpi::listMaps(vfs_);
         size_t completed=0;
         uint64_t lastProgress=0;
         for (const auto& [name, path] : maps) {
             MapInfo mi; mi.name = name; mi.path = path;
+            std::string missionName;
             std::string otaPath = tak::vpath::replaceExtension(path,".ota");
             if (vfs_.has(otaPath)) {
                 try {
@@ -194,6 +188,7 @@ std::string startLocationsLabel(uint8_t mode) {
                     auto root = tak::tdf::parseText(std::string(b.begin(), b.end()), otaPath);
                     const auto* gh = root.child("globalheader");
                     if (gh) {
+                        missionName = gh->valueOr("missionname", "");
                         mi.players = int(gh->numberOr("numplayers", 0));
                         std::string sz = gh->valueOr("size", "");   // e.g. "16 x 16"
                         int a = 0, c = 0;
@@ -207,6 +202,7 @@ std::string startLocationsLabel(uint8_t mode) {
             }
             if (mi.players == 0)   // .ota had no numplayers: count the start positions
                 mi.players = int(tak::sim::parseStartPositions(vfs_, path).size());
+            mi.title = mapTitleFor(name, missionName);
             mapList_.push_back(std::move(mi));
             ++completed;
             if (progress && (completed==maps.size() || SDL_GetTicks64()-lastProgress>=100)) {
@@ -216,6 +212,54 @@ std::string startLocationsLabel(uint8_t mode) {
             }
         }
         sortMapList();
+    }
+
+    void GameView::loadMapTitles() {
+        mapTitlesLoaded_ = true;
+        mapTitles_.clear();
+        for (const char* path : {"translate/maps.tdf", "translate/ipmaps.tdf"}) {
+            if (!vfs_.has(path)) continue;
+            try {
+                const auto b = vfs_.read(path);
+                const auto root = tak::tdf::parseText(std::string(b.begin(), b.end()), path);
+                for (const auto& [key, node] : root.children) {
+                    const std::string* en = node.value("english");
+                    if (!en || en->empty()) continue;
+                    std::string k = key;
+                    std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+                    mapTitles_.emplace(std::move(k), *en);
+                }
+            } catch (const std::exception&) {}
+        }
+    }
+
+    // The title of a map file: retail's translated title when the tables name it (only
+    // when it is the same words -- a case change, never a different map's title), else
+    // the .ota's missionname under the same rule, else the name as the file spells it.
+    // A received map's cached copy ("ulasem arena [1e9dfbbdc674b352]") keeps its tag.
+    std::string GameView::mapTitleFor(const std::string& name, const std::string& missionName) {
+        if (!mapTitlesLoaded_) loadMapTitles();
+        auto lower = [](std::string t) { std::transform(t.begin(), t.end(), t.begin(), ::tolower); return t; };
+        std::string base = name, tag;
+        if (name.size() > 19 && name.compare(name.size() - 19, 2, " [") == 0 && name.back() == ']' &&
+            std::all_of(name.end() - 17, name.end() - 1, [](char c) { return std::isxdigit((unsigned char)c) != 0; })) {
+            base = name.substr(0, name.size() - 19); tag = name.substr(name.size() - 19);
+        }
+        const std::string key = lower(base);
+        if (auto it = mapTitles_.find(key); it != mapTitles_.end() && lower(it->second) == key) return it->second + tag;
+        if (!missionName.empty() && lower(missionName) == lower(name)) return missionName;
+        return name;
+    }
+
+    // What to SHOW for a map id. A generated map's id is a "~gen1~<hex>" recipe -- the
+    // whole parameter block in hex -- which is unreadable in a lobby row: it shows the
+    // label mapgen provides ("Random 16x16 4P Aramon"). A real map's id is its name: the
+    // map list's title for it when the list is built, else the translate tables' title.
+    std::string GameView::mapTitle(const std::string& id) {
+        if (tak::mapgen::isGeneratedMapId(id)) return tak::mapgen::friendlyLabel(tak::mapgen::decodeMapId(id));
+        for (const MapInfo& m : mapList_)
+            if (m.name == id) return m.title.empty() ? m.name : m.title;
+        return mapTitleFor(id);
     }
 
     void GameView::sortMapList() {
@@ -488,7 +532,7 @@ std::string startLocationsLabel(uint8_t mode) {
             lbField(x, y, 260, "GAME NAME", createName_, 1); y += 44;
             lbField(x, y, 260, "PASSWORD (OPTIONAL)", createPass_, 2); y += 44;
         }
-        blockText(std::string("MAP: ") + mapDisplayName(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 28;
+        blockText(std::string("MAP: ") + mapTitle(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 28;
         // Option rows (26 high at a 27 pitch): multiplayer's eleven rows, under the name
         // and password fields, are 24 high at a 25 pitch to stay clear of the BACK/CREATE
         // footer.
@@ -671,16 +715,17 @@ std::string startLocationsLabel(uint8_t mode) {
             SDL_Color rc = sel ? SDL_Color{44, 78, 44, 255}
                          : hot ? SDL_Color{40, 46, 62, 255} : SDL_Color{24, 26, 34, 255};
             SDL_SetRenderDrawColor(ren_, rc.r, rc.g, rc.b, 255); SDL_RenderFillRectF(ren_, &row);
-            std::string label = tak::uiTextFit(nm, 2.0f, nameW, false);
+            const std::string& title = m.title.empty() ? nm : m.title;
+            std::string label = tak::uiTextFit(title, 2.0f, nameW, false);
             // Keep part of a generated map's recipe suffix visible even when a
             // long title needs shortening, so duplicate titles can be told apart.
-            if (label != nm && nm.size() > 17 &&
-                nm[nm.size()-17] == '-' &&
-                std::all_of(nm.end()-16,nm.end(),[](char c) {
+            if (label != title && title.size() > 17 &&
+                title[title.size()-17] == '-' &&
+                std::all_of(title.end()-16,title.end(),[](char c) {
                     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
                 })) {
-                const std::string tail = "~" + nm.substr(nm.size()-8);
-                label = tak::uiTextFit(nm, 2.0f, nameW - blockWidth(tail, 2.0f), false) + tail;
+                const std::string tail = "~" + title.substr(title.size()-8);
+                label = tak::uiTextFit(title, 2.0f, nameW - blockWidth(tail, 2.0f), false) + tail;
             }
             blockText(label,
                       boxX + 8, row.y + (rowH - 14) / 2, 2.0f,
@@ -886,7 +931,7 @@ std::string startLocationsLabel(uint8_t mode) {
         const bool campaign = mp_->campaignRoom();
         float x = 40, y = 78;
         if (!singlePlayer_) blockText(room.name, x, y, 2.2f, {210, 210, 220, 255});
-        blockText(std::string("MAP  ") + mapDisplayName(room.mapId), x, y - 24, 1.8f, {180, 185, 195, 255});
+        blockText(std::string("MAP  ") + mapTitle(room.mapId), x, y - 24, 1.8f, {180, 185, 195, 255});
         y += 34;
         bool host = (room.hostId == mp_->myClientId());
         // MAP SCENARIO (259): the room plays its map's scenario when the option is on, or

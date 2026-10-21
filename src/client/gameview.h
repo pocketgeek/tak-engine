@@ -2253,12 +2253,23 @@ private:
     // the map's .ota GlobalHeader (a tiny text file -- no need to decompress the TNT).
     struct MapInfo {
         std::string name, path;
+        std::string title;          // what to SHOW: mapTitleFor(name, missionname)
         int players = 0;            // numplayers (else the StartPos count)
         int sizeW = 0, sizeH = 0;   // "size = W x H" (0 if the .ota omits it)
         tak::sim::ScenarioInfo scenario;   // read only when the .ota declares one (or is a Test Map copy)
         int area() const { return sizeW * sizeH; }
     };
     std::vector<MapInfo> mapList_;      // cached, sorted per mapSort_
+    // Map titles. A map's name (its .tnt stem, the wire id) is often lowercase: Iron
+    // Plague's archive stores "maps/ulasem arena.tnt". Retail shows the title from its
+    // translate tables (translate/maps.tdf, ipmaps.tdf: [ulasem arena] English = Ulasem
+    // Arena); so do the create screen, the room and the game list. Display only -- the
+    // id on the wire and in settings.ini stays the name.
+    std::unordered_map<std::string, std::string> mapTitles_;   // lowercase name -> English
+    bool mapTitlesLoaded_ = false;
+    void loadMapTitles();
+    std::string mapTitleFor(const std::string& name, const std::string& missionName = {});
+    std::string mapTitle(const std::string& id);   // any room/game map id (random maps too)
     int mapSort_ = 0;                  // 0 = name, 1 = players, 2 = size
     int mapSortDir_ = 1;              // 1 = ascending, -1 = descending
     // Create-screen map picker: a scrollable list box. mapScroll_ is the index of the
