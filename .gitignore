@@ -15,7 +15,7 @@ compile_commands.json
 # Extracted retail data — hpitool/gaftool/etc. dump into the working dir, and
 # accidental extraction outdirs have been committed before (see CLAUDE.md). Ignore
 # the known offenders plus retail asset formats anywhere so they can't slip back in.
-# (overrides/click.hpi is an intentional, project-authored override and stays tracked.)
+# (mods/cosmetic/click.hpi is an intentional, project-authored always-on mod and stays tracked.)
 /guis/
 /anims/
 /camps/
@@ -56,7 +56,7 @@ compile_commands.json
 *.gao
 *.gao2
 *.pco
-!overrides/click.hpi
+!mods/cosmetic/click.hpi
 
 # Locally-built vendored static deps: minimal FFmpeg (tools/build-ffmpeg-bink.sh) and
 # zlib/libjpeg/SDL2 (tools/build-static-deps.sh). Build output -- never committed.
