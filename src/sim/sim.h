@@ -33,6 +33,7 @@
 #include "cob/retailstate.h"
 #include "sim/simprobe.h"
 #include "sim/simpool.h"
+#include "sim/powercodes.h"
 
 #include <array>
 #include <cstddef>
@@ -2211,6 +2212,22 @@ public:
     // Call during setup, before visibility work starts. Display-only, never hashed.
     void revealTerrain() { for (auto& v : vis_) if (v == 0) v = 1; ++visGen_; }
     void setDoubleSight(bool enabled) { doubleSight_ = enabled; }
+    // Power codes (sim/powercodes.h; the room's POWER CODES option). setPowerCodes
+    // also starts every code at its off state: no damage mode, line of sight and
+    // the shroud on for every player. applyPowerCode is Cmd::PowerCode's effect, a
+    // no-op while the option is off. All of it is hashed once the option is on.
+    void setPowerCodes(bool enabled) {
+        powerCodes_ = enabled; damageMode_ = DamageMode::Normal; powerLosOff_ = powerMappingOff_ = 0;
+        visPowerForget_ = false;
+    }
+    bool powerCodes() const { return powerCodes_; }
+    void applyPowerCode(int player, PowerCode code, PowerArg arg, int unitId);
+    DamageMode damageMode() const { return damageMode_; }
+    // +LOS Off / +NowISee: `player` sees every unit on a cell it has explored
+    // (playerSees), and its display fog shows explored cells as visible.
+    bool powerLosOff(int player) const { return player >= 0 && player < 16 && (powerLosOff_ >> player & 1); }
+    // +Mapping / +NowISee: `player`'s whole map is explored (sim and display).
+    bool powerMappingOff(int player) const { return player >= 0 && player < 16 && (powerMappingOff_ >> player & 1); }
     int32_t sightDistance(const UnitType& type) const { return type.sight * (doubleSight_ ? 2 : 1); }
     int32_t radarDistance(const UnitType& type) const { return type.radar * (doubleSight_ ? 2 : 1); }
     // Monarch-expendable rule (net GameOptions): when FALSE, losing your Monarch
@@ -3034,6 +3051,15 @@ private:
     std::vector<uint8_t> vis_;
     int visPlayer_ = 0;
     bool doubleSight_ = false;  // synchronized skirmish/MP rule; campaigns use authored sight
+    // Power codes (setPowerCodes / applyPowerCode). Hashed while powerCodes_ is on.
+    bool powerCodes_ = false;
+    DamageMode damageMode_ = DamageMode::Normal;   // DoubleShot / HalfShot: every player's damage
+    uint16_t powerLosOff_ = 0, powerMappingOff_ = 0;   // per-player bits
+    // Display only (never hashed): the shroud came back for visPlayer_, so the next
+    // fog pass forgets the display's explored cells too. Set on the sim thread,
+    // consumed by visGather; visPowerPass_ is what visCompute applies.
+    bool visPowerForget_ = false;
+    struct VisPower { bool forget = false, mapped = false, losOff = false; } visPowerPass_;
     bool patrolRepairs_ = true;
     int visW_ = 0, visH_ = 0;
     // Client-local fog acceleration: the LoS-tested cell set for a (sight, radar,

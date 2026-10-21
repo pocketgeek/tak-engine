@@ -44,6 +44,12 @@ enum class Cmd : uint8_t {
     // OrderMembers / OrderCommit transaction (net/protocol.h) and the server
     // puts the committed order into ONE tick bundle, its activation tick.
     Order,
+    // A power code (sim/powercodes.h), honoured only in a match created with
+    // POWER CODES on: targetId = the sim::PowerCode (Atm..NowISee), queue = the
+    // sim::PowerArg (LOS On/Off), unitId = the unit for ManaMe (one command per
+    // selected unit). The server drops it when the room's option is off, and the
+    // sim ignores it there as well. An ordinary PlayerCommands item (base layout).
+    PowerCode,
 };
 
 struct SelectionOrder;

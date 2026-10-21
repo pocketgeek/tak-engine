@@ -33,7 +33,7 @@
 namespace tak::net {
 
 // Bump when the layout changes, and handle the older values in readReplayHeader.
-inline constexpr uint32_t kReplayFormat = 13;   // 13: records the room's MAP SCENARIO option; 12: checkpoints carry posDigest; 11: independent pathfinding mode
+inline constexpr uint32_t kReplayFormat = 14;   // 14: records the room's POWER CODES option; 13: records the room's MAP SCENARIO option; 12: checkpoints carry posDigest; 11: independent pathfinding mode
 
 // Simulation changes require the matching engine; do not emulate older rules.
 inline bool supportedReplayProtocol(uint32_t format, uint32_t protocol) {
@@ -61,6 +61,7 @@ struct ReplayHeader {
     uint8_t slotTeam[kMaxSlots] = {};
     uint8_t slotAiLevel[kMaxSlots] = {};
     uint8_t mapScenario = 0;      // format 13: the room's MAP SCENARIO option (0 in older files)
+    uint8_t powerCodes = 0;       // format 14: the room's POWER CODES option (0 in older files)
 };
 
 // One recorded (tick, hash) pair from the ORIGINAL game.
@@ -109,6 +110,7 @@ inline void writeReplayHeader(Writer& w, const ReplayHeader& h) {
         w.u8(h.slotAiLevel[i]);   // format 6: was missing, so Absurd AI lost its income
     }
     w.u8(h.mapScenario);   // format 13
+    w.u8(h.powerCodes);    // format 14
 }
 
 // Reads the header. `fmt` and `proto` come back so the caller can refuse a file it
@@ -151,6 +153,7 @@ inline bool readReplayHeader(Reader& r, ReplayHeader& h, uint32_t& fmt, uint32_t
         if (fmt >= 6) h.slotAiLevel[i] = r.u8();
     }
     h.mapScenario = fmt >= 13 ? r.u8() : 0;
+    h.powerCodes = fmt >= 14 ? r.u8() : 0;
     return r.ok;
 }
 

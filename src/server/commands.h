@@ -1,5 +1,6 @@
 #pragma once
 #include "net/protocol.h"
+#include "sim/powercodes.h"
 #include <cmath>
 
 namespace tak::srv {
@@ -14,9 +15,14 @@ inline bool parsePlayerCommands(const std::vector<uint8_t>& payload, std::vector
     parsed.reserve(count);
     for (uint32_t i=0;i<count && reader.ok;++i) {
         const auto c=reader.cmd();
-        if (uint8_t(c.kind)>uint8_t(tak::net::Cmd::BuildManaArea) ||
+        // Every ordinary verb, and the power codes (an unknown code or argument is
+        // forged: the client sends only the seven the sim applies).
+        const bool power=c.kind==tak::net::Cmd::PowerCode;
+        if ((uint8_t(c.kind)>uint8_t(tak::net::Cmd::BuildManaArea) && !power) ||
             !coordinate(c.x) || !coordinate(c.z) ||
             !coordinate(c.x2) || !coordinate(c.z2)) return false;
+        if (power && (!tak::sim::simPowerCode(c.targetId) || c.queue>uint8_t(tak::sim::PowerArg::Invalid)))
+            return false;
         // Ctrl+Shift requests ten units, the largest client production batch.
         // A forged INT_MAX count would otherwise allocate billions of entries
         // in World::train before another network/resource check could run.

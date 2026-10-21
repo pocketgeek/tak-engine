@@ -47,7 +47,7 @@ static GameOptions fxOpts(uint8_t stress) {
     o.crusades = 3; o.forfeitSelfDestruct = 4; o.gameMods = 2; o.speed = 17; o.speedUnlock = 5;   // gameMods: a raw byte here (0/1 in use) so the golden bytes stay
     o.unitCap = 0xBEEF; o.monarchExpendable = 6; o.stressTest = stress; o.fogExplored = 8;
     o.benchmark = 11; o.randomStarts = 9; o.doubleSight = 10; o.pathfindingMode = tak::sim::PathfindingMode::Legion;
-    o.allowSpectators = 12; o.mapScenario = 13;
+    o.allowSpectators = 12; o.mapScenario = 13; o.powerCodes = 14;
     return o;
 }
 // Humans, an Absurd AI (2x income), a passive AI, open and closed gaps, the last
@@ -73,9 +73,9 @@ static void fxSlots(SlotInfo (&s)[kMaxSlots], bool empty) {
 
 static std::string dumpCfg(const tak::sim::MatchConfig& c) {
     std::string s; char t[256];
-    std::snprintf(t, sizeof t, "cap=%d mx=%d ds=%d pm=%d st=%d si=%d bm=%d rs=%d seed=%u crt=%d ms=%d mana=%a pr=%d svp=%d n=%zu;",
+    std::snprintf(t, sizeof t, "cap=%d mx=%d ds=%d pm=%d st=%d si=%d bm=%d rs=%d seed=%u crt=%d ms=%d pc=%d mana=%a pr=%d svp=%d n=%zu;",
         c.unitCap, c.monarchExpendable, c.doubleSight, int(c.pathfindingMode), c.stressTest, c.stressImmediate,
-        c.benchmark, int(c.startMode), c.startSeed, c.loadCrt, c.mapScenario, double(c.startMana), c.patrolRepairs, c.scenarioViewPlayer, c.slots.size());
+        c.benchmark, int(c.startMode), c.startSeed, c.loadCrt, c.mapScenario, c.powerCodes, double(c.startMana), c.patrolRepairs, c.scenarioViewPlayer, c.slots.size());
     s += t;
     for (const auto& m : c.slots) {
         uint32_t bits; std::memcpy(&bits, &m.manaMult, 4);
@@ -91,7 +91,7 @@ static bool sameOpts(const GameOptions& a, const GameOptions& b) {
            a.unitCap == b.unitCap && a.monarchExpendable == b.monarchExpendable && a.stressTest == b.stressTest &&
            a.fogExplored == b.fogExplored && a.benchmark == b.benchmark && a.randomStarts == b.randomStarts &&
            a.doubleSight == b.doubleSight && a.pathfindingMode == b.pathfindingMode &&
-           a.allowSpectators == b.allowSpectators && a.mapScenario == b.mapScenario;
+           a.allowSpectators == b.allowSpectators && a.mapScenario == b.mapScenario && a.powerCodes == b.powerCodes;
 }
 static bool sameSlot(const SlotInfo& a, const SlotInfo& b) {
     return a.type == b.type && a.faction == b.faction && a.color == b.color && a.team == b.team &&
@@ -102,8 +102,9 @@ static void optionsCodec() {
     const GameOptions o = fxOpts(7);
     Writer w; put(w, o);
     // CreateGame / SetGameOptions carry exactly these bytes; LobbyState/GameStarting embed them.
-    // Protocol 258 appended allowSpectators (0c) after the pathfinder byte; 259 mapScenario (0d).
-    golden(w.b, "0304021105efbe00000607080b090a040c0d", "GameOptions wire bytes");
+    // Protocol 258 appended allowSpectators (0c) after the pathfinder byte; 259 mapScenario (0d);
+    // 288 powerCodes (0e).
+    golden(w.b, "0304021105efbe00000607080b090a040c0d0e", "GameOptions wire bytes");
     GameOptions back; back.gameMods = 0; back.speed = 0; back.fogExplored = 0; back.allowSpectators = 0;
     Reader r(w.b.data(), w.b.size()); get(r, back);
     check(r.ok && r.p == r.end && sameOpts(o, back), "GameOptions round trip");
@@ -125,7 +126,7 @@ static void slotCodec() {
     Writer w; w.u32(0x01020304); w.str("room name"); w.str("Inner Circle"); w.str("");
     put(w, fxOpts(7)); w.u32(0xA0B0C0D0); w.u8(1);
     for (const auto& s : slots) put(w, s);
-    golden(w.b, "040302010900726f6f6d206e616d650c00496e6e657220436972636c6500000304021105efbe00000607080b090a040c0dd0c0b0a0010107030101090500616c7068610204090000040600414920626f740002050601000000020301020000070070617373697665030108050003000002010703010101007800090204000200000300000700020000", "LobbyState slot table bytes");
+    golden(w.b, "040302010900726f6f6d206e616d650c00496e6e657220436972636c6500000304021105efbe00000607080b090a040c0d0ed0c0b0a0010107030101090500616c7068610204090000040600414920626f740002050601000000020301020000070070617373697665030108050003000002010703010101007800090204000200000300000700020000", "LobbyState slot table bytes");
     for (const auto& s : slots) {
         Writer one; put(one, s); Reader r(one.b.data(), one.b.size()); SlotInfo back; back.aiLevel = 77;
         get(r, back);
@@ -159,7 +160,7 @@ static void replayHeaders() {
         h.engineVersion = "9.9.9";   // version-neutral golden: the release and protocol are not pinned here
         Writer w; writeReplayHeader(w, h);
         for (int i = 8; i < 12; ++i) w.b[size_t(i)] = 0;
-        golden(w.b, *mission ? "54414b520d000000000000000c00496e6e657220436972636c65030402efbe000006073412ed5e090b060063616d7030330500392e392e3988776655443322110a40006d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d40006f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f0408010703010902040900040002050600020301020003010805030201070301000902040203000007020d" : "54414b520d000000000000000c00496e6e657220436972636c65030402efbe000006073412ed5e090b00000500392e392e3988776655443322110a40006d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d40006f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f0408010703010902040900040002050600020301020003010805030201070301000902040203000007020d", *mission ? "mission replay header bytes" : "replay header bytes");
+        golden(w.b, *mission ? "54414b520e000000000000000c00496e6e657220436972636c65030402efbe000006073412ed5e090b060063616d7030330500392e392e3988776655443322110a40006d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d40006f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f0408010703010902040900040002050600020301020003010805030201070301000902040203000007020d0e" : "54414b520e000000000000000c00496e6e657220436972636c65030402efbe000006073412ed5e090b00000500392e392e3988776655443322110a40006d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d40006f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f0408010703010902040900040002050600020301020003010805030201070301000902040203000007020d0e", *mission ? "mission replay header bytes" : "replay header bytes");
     }
     // Header -> inputs -> config is the live config (every recorded field carried across).
     for (bool empty : {false, true}) {
@@ -175,12 +176,12 @@ static void replayHeaders() {
 static void matchConfigs() {
     SlotInfo full[kMaxSlots], empty[kMaxSlots]; fxSlots(full, false); fxSlots(empty, true);
     struct { uint8_t stress; bool empty; const char* want; } cases[] = {
-        {1, false, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {1, true, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
-        {2, false, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {2, true, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
-        {0, false, "cap=48879 mx=1 ds=1 pm=4 st=0 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {0, true, "cap=48879 mx=1 ds=1 pm=4 st=0 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
+        {1, false, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {1, true, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
+        {2, false, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {2, true, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
+        {0, false, "cap=48879 mx=1 ds=1 pm=4 st=0 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {0, true, "cap=48879 mx=1 ds=1 pm=4 st=0 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
     };
     for (const auto& c : cases) {
         const std::string got = dumpCfg(matchConfigFor(fxOpts(c.stress), c.empty ? empty : full, 0x5EED1234));
@@ -194,10 +195,10 @@ static void replayLoader() {
     const fs::path path = fs::temp_directory_path() / ("tak-match-codec-" + tak::crypto::toHex(tak::crypto::randomVec(8)) + ".takrep");
     SlotInfo slots[kMaxSlots]; fxSlots(slots, false);
     struct { const char* mission; uint8_t stress; const char* want; } cases[] = {
-        {"", 1, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {"", 2, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {"camp03", 1, "cap=48879 mx=1 ds=0 pm=0 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {"camp03", 2, "cap=48879 mx=1 ds=0 pm=0 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {"", 1, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {"", 2, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {"camp03", 1, "cap=48879 mx=1 ds=0 pm=0 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=0 pc=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {"camp03", 2, "cap=48879 mx=1 ds=0 pm=0 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=0 pc=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
     };
     for (const auto& c : cases) {
         GameOptions o = fxOpts(c.stress); o.doubleSight = 1;

@@ -1501,6 +1501,9 @@ add_test(NAME exploration_parallel COMMAND exploration_parallel_test)
 add_executable(simpool_passes_test tools/simpool_passes_test.cpp)
 target_link_libraries(simpool_passes_test PRIVATE tak-formats)
 add_test(NAME simpool_passes COMMAND simpool_passes_test)
+add_executable(power_codes_test tools/power_codes_test.cpp)
+target_link_libraries(power_codes_test PRIVATE tak-formats)
+add_test(NAME power_codes COMMAND power_codes_test)
 add_executable(vision_rules_test tools/vision_rules_test.cpp)
 target_link_libraries(vision_rules_test PRIVATE tak-formats)
 add_test(NAME vision_rules COMMAND vision_rules_test)
@@ -2931,6 +2934,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_command_flood_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_command_flood PROPERTIES TIMEOUT 60)
+    add_test(NAME server_power_codes COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_power_codes_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(server_power_codes PROPERTIES TIMEOUT 120)
     add_test(NAME server_orders_network COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_orders_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")

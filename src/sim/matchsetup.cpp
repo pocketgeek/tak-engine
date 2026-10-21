@@ -93,7 +93,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
     const auto* producer=world.unit(c.unitId);
     const bool repeatingMobile = producer && producer->type &&
         !producer->type->isStructure() && producer->repeatType;
-    if (repeatingMobile && c.kind!=Cmd::Stop && c.kind!=Cmd::Move && c.kind!=Cmd::Patrol && c.kind!=Cmd::GiveUnit && c.kind!=Cmd::ShareMana && c.kind!=Cmd::Disco && c.kind!=Cmd::Headbang) return;
+    if (repeatingMobile && c.kind!=Cmd::Stop && c.kind!=Cmd::Move && c.kind!=Cmd::Patrol && c.kind!=Cmd::GiveUnit && c.kind!=Cmd::ShareMana && c.kind!=Cmd::Disco && c.kind!=Cmd::Headbang && c.kind!=Cmd::PowerCode) return;
     auto owns = [&](int id) {
         const auto* u = world.unit(id);
         return u && u->player == int(c.player);
@@ -221,6 +221,10 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             if (owns(c.unitId)) world.setSquad(c.unitId, c.targetId);
             break;
         case Cmd::Order:   // applied by applySelectionOrder() above
+            break;
+        case Cmd::PowerCode:   // the World checks the room's option and ownership
+            if (simPowerCode(c.targetId) && c.queue <= uint8_t(PowerArg::Invalid))
+                world.applyPowerCode(int(c.player), PowerCode(c.targetId), PowerArg(c.queue), c.unitId);
             break;
     }
 }
@@ -718,6 +722,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     world.setUnitCap(cfg.unitCap);
     world.setMonarchExpendable(cfg.monarchExpendable);
     world.setDoubleSight(cfg.doubleSight);
+    world.setPowerCodes(cfg.powerCodes);
 
     // Cartographer scenarios use authored placements instead of skirmish monarchs.
     // Read the same map-local CRT on every peer, before any default units spawn.
@@ -1271,6 +1276,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     const tdf::Node* gh = root.child("globalheader");
     if (!gh) { std::fprintf(stderr, "setupMission: %s no [GlobalHeader]\n", stem.c_str()); return false; }
     world.setBallisticGravityRaw(retailBallisticGravityRaw(gh->numberOr("gravity",112.0)));
+    world.setPowerCodes(false);   // retail 0x499610: never in a campaign
 
     // Map the .ota's sparse, 1-based Player<N> ids to compact 0-based World slots in
     // ascending N order, so gaps (e.g. Player1,2,9,10) don't collide when clamped into

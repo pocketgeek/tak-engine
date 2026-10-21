@@ -48,6 +48,7 @@ static ReplayHeader sample() {
     h.seed = 0xabcdef01u;
     h.dataHash = 0x0123456789abcdefull;
     h.mapScenario = 1;
+    h.powerCodes = 1;
     for (int i = 0; i < kMaxSlots; ++i) {
         h.slotType[i] = uint8_t(i % 3);
         h.slotFaction[i] = uint8_t(i % 5);
@@ -88,6 +89,7 @@ int main() {
         check(out.stressTest == in.stressTest, "stressTest");
         check(out.gameMods == in.gameMods, "gameMods");
         check(out.mapScenario == in.mapScenario, "MAP SCENARIO (format 13)");
+        check(out.powerCodes == in.powerCodes, "POWER CODES (format 14)");
         bool slotsOk = true;
         for (int i = 0; i < kMaxSlots; ++i)
             slotsOk &= out.slotType[i] == in.slotType[i] &&
@@ -103,12 +105,26 @@ int main() {
               std::to_string(out.slotAiLevel[4]));
     }
 
+    std::printf("format 13 (before POWER CODES):\n");
+    {
+        // A format-13 file is a format-14 header without its trailing option byte.
+        Writer w;
+        writeReplayHeader(w, sample());   // powerCodes = 1
+        w.b.pop_back();
+        w.b[4] = 13;
+        Reader r(w.b.data() + 4, w.b.size() - 4);
+        ReplayHeader out; out.powerCodes = 7;
+        uint32_t fmt = 0, proto = 0;
+        check(readReplayHeader(r, out, fmt, proto) && fmt == 13 && out.mapScenario == 1 && out.powerCodes == 0 &&
+              r.p == r.end, "a format-13 header reads exactly, with POWER CODES off");
+    }
+
     std::printf("format 12 (before MAP SCENARIO):\n");
     {
-        // A format-12 file is a format-13 header without its trailing option byte.
+        // A format-12 file is a format-14 header without its two trailing option bytes.
         Writer w;
         writeReplayHeader(w, sample());   // mapScenario = 1
-        w.b.pop_back();
+        w.b.pop_back(); w.b.pop_back();
         w.b[4] = 12;
         Reader r(w.b.data() + 4, w.b.size() - 4);
         ReplayHeader out; out.mapScenario = 7;
@@ -121,7 +137,7 @@ int main() {
     for (auto mode : {tak::sim::PathfindingMode::Retail, tak::sim::PathfindingMode::Legion}) {
         auto in = sample(); in.mission.clear(); in.pathfindingMode = mode;
         Writer w; writeReplayHeader(w, in);
-        const size_t modeAt = w.b.size() - size_t(kMaxSlots) * 5 - 3;   // ... mode, count, slots, mapScenario
+        const size_t modeAt = w.b.size() - size_t(kMaxSlots) * 5 - 4;   // ... mode, count, slots, mapScenario, powerCodes
         ReplayHeader out; uint32_t fmt=0, proto=0;
         Reader r(w.b.data()+4,w.b.size()-4);
         check(readReplayHeader(r,out,fmt,proto) && out.pathfindingMode==mode,
@@ -270,7 +286,7 @@ int main() {
         Writer probe;
         ReplayHeader h = sample();
         writeReplayHeader(probe, h);
-        size_t countAt = probe.b.size() - size_t(kMaxSlots) * 5 - 2;   // ... count, slots, mapScenario
+        size_t countAt = probe.b.size() - size_t(kMaxSlots) * 5 - 3;   // ... count, slots, mapScenario, powerCodes
         w.b[countAt] = uint8_t(kMaxSlots + 9);
         Reader r(w.b.data() + 4, w.b.size() - 4);
         ReplayHeader out;

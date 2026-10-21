@@ -466,6 +466,11 @@ constexpr uint32_t kNetVersion = 287;      // 287: mods replace overrides: GameO
                                            // 10: reclaimable features in sim + Cmd::Reclaim (area-clear)
 constexpr uint32_t kMaxFrame = 1u << 18;   // 256 KB frame cap (hardening) -- headroom for a
                                            // big tick bundle when many units are ordered at once
+// Power codes (Cmd::PowerCode, GameOptions::powerCodes): the protocol that carries
+// them. UNASSIGNED: the wire change ships without a kNetVersion bump; the lead sets
+// both this and kNetVersion to the landing protocol. Until then it equals the
+// current version, so a strict replay read of this build accepts the command.
+constexpr uint32_t kPowerCodesProtocol = kNetVersion;
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
 constexpr int kServerHz = 30;              // sim/tick rate
 constexpr int kHashPeriod = 30;            // ticks between StateHash reports; the
@@ -852,6 +857,14 @@ struct GameOptions {
     // campaign battle rooms are always 0. A Test Map copy's [TAKPlaytest] opt-in plays
     // its scenario even with this 0.
     uint8_t mapScenario = 0;
+    // POWER CODES (retail's "Power Codes" battle-room box, GameOptions+0x18): 1 lets
+    // every player type the nine +codes (sim/powercodes.h) in the chat box. Host-set
+    // when the room is created, fixed after (SetGameOptions keeps it). The server
+    // clears it for campaign missions and Crusades battles -- retail's gate 0x499610
+    // refuses codes in a campaign -- and drops every Cmd::PowerCode while it is 0.
+    // Sim-affecting (MatchConfig::powerCodes, replay format 14); outside the Crusades
+    // rules digest.
+    uint8_t powerCodes = 0;
 };
 
 // A sim-affecting server decision, sequenced inside a TickBundle so every peer

@@ -20,7 +20,8 @@ Writer recording(uint32_t protocol=kNetVersion,const Command& command=Command{},
  header.pathfindingMode=mode;header.mission=mission;
  header.slotType[0]=header.slotType[1]=1;header.slotFaction[1]=1;header.slotTeam[1]=1;
  writeReplayHeader(file,header);for(int i=0;i<4;++i)file.b[8+i]=uint8_t(protocol>>(8*i));
- // Formats before 13 end the header at the slot table (no MAP SCENARIO byte).
+ // Formats before 14 end without the POWER CODES byte, before 13 at the slot table (no MAP SCENARIO byte).
+ if(format<14 || protocol==219){file.b.pop_back();file.b[4]=uint8_t(std::min<uint32_t>(format,13));}
  if(format<13 || protocol==219){file.b.pop_back();file.b[4]=uint8_t(std::min<uint32_t>(format,12));}
  if(protocol==219){file.b.erase(file.b.end()-kMaxSlots*5-2);file.b[4]=10;}
  Writer bundle;bundle.u32(0);bundle.u32(1);bundle.cmd(command);bundle.u32(event?1:0);
@@ -67,8 +68,11 @@ void run(){
  check(!load(recording(kNetVersion,Command{},255)),"unknown event accepted");
  check(load(recording(kNetVersion,Command{},uint8_t(Event::Kind::CampaignForfeit))),"real campaign forfeit event refused");
  // Format 12: the checkpoint carries posDigest. A format-11 file (12-byte records) still loads, digest absent.
- // Format 13 adds the room's MAP SCENARIO byte; a format-12 file reads it as off.
- check(load(recording(),&decoded)&&decoded.formatVersion==13&&decoded.checks.size()==1&&decoded.checks[0].hash==1234&&
+ // Format 13 adds the room's MAP SCENARIO byte; a format-12 file reads it as off. Format 14
+ // adds POWER CODES; a format-13 file reads it as off.
+ check(load(recording(kNetVersion,Command{},0,false,tak::sim::PathfindingMode::Retail,"",13),&decoded)&&
+       decoded.formatVersion==13&&!decoded.cfg.powerCodes,"format 13 recording refused or misread");
+ check(load(recording(),&decoded)&&decoded.formatVersion==14&&decoded.checks.size()==1&&decoded.checks[0].hash==1234&&
        decoded.checks[0].posDigest==5678,"format 12 checkpoint lost its position digest");
  check(load(recording(kNetVersion,Command{},0,false,tak::sim::PathfindingMode::Retail,"",12),&decoded)&&decoded.formatVersion==12&&
        !decoded.cfg.mapScenario&&decoded.checks.size()==1&&decoded.checks[0].posDigest==5678,"format 12 recording refused or misread");

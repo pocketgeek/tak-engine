@@ -151,6 +151,7 @@ void put(Writer& w, const GameOptions& o) {
     putRules(w, o);
     w.u8(o.allowSpectators);   // 258: room admission, outside the rules digest
     w.u8(o.mapScenario);       // 259: map scenario, outside the rules digest
+    w.u8(o.powerCodes);        // kPowerCodesProtocol: power codes, outside the rules digest
 }
 
 void get(Reader& r, GameOptions& o) {
@@ -163,6 +164,7 @@ void get(Reader& r, GameOptions& o) {
     o.pathfindingMode = sim::PathfindingMode(pathMode);
     o.allowSpectators = r.u8();
     o.mapScenario = r.u8();
+    o.powerCodes = r.u8();
 }
 
 void put(Writer& w, const SlotInfo& s) {
@@ -201,7 +203,8 @@ bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict, uint32_t pro
     // at least 35 bytes and an event 2, so a corrupt count cannot ask for gigabytes.
     const uint32_t nc = r.u32();
     if (uint64_t(nc) * 35 > uint64_t(r.end - r.p)) return false;
-    const auto maxKind = proto >= 267 ? Cmd::Order : proto >= 221 ? Cmd::BuildManaArea : Cmd::ShareMana;
+    const auto maxKind = proto >= kPowerCodesProtocol ? Cmd::PowerCode : proto >= 267 ? Cmd::Order
+                       : proto >= 221 ? Cmd::BuildManaArea : Cmd::ShareMana;
     for (uint32_t i = 0; i < nc && r.ok; ++i) {
         auto c = r.cmd();
         if (strict && (uint8_t(c.kind) > uint8_t(maxKind) || c.player >= kMaxSlots ||

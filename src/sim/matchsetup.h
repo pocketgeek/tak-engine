@@ -54,6 +54,9 @@ struct MatchConfig {
     // copy's [TAKPlaytest] opt-in runs them regardless (unchanged). Off by default, so
     // fixtures and every pre-259 game keep plain skirmish setup.
     bool mapScenario = false;
+    // The room's POWER CODES option (GameOptions::powerCodes): World::applyPowerCode
+    // honours Cmd::PowerCode only when it is on. Never on for a campaign mission.
+    bool powerCodes = false;
     ScenarioScript::TraceSink scenarioTrace; // local diagnostics only, installed before initial rules
     int scenarioViewPlayer = -1;     // cosmetic message filtering only; never hashed
     float startMana = 2800;

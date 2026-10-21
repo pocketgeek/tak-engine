@@ -4792,7 +4792,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         float armour = std::max(e.vetMul() * e.armBuff * e.scenarioArmor, 0.01f);
         float scaledDamage = w.damageVs(e.type) * atkMul / armour * scale;
         damageCrtUsed_ = true;
-        const int dealt = retailDamageWithSpread(scaledDamage, crtRand(0x52a3ba));
+        const int dealt = retailDamageWithSpread(scaledDamage, crtRand(0x52a3ba), uint8_t(damageMode_));
         e.hp -= Fixed::fromInt(dealt);
         // Retail 409f7a..409fb2 routes the local monarch's hit to AlarmMon.
         // Keep ownership at impact, including splash and fatal hits; no visibility
@@ -10655,6 +10655,10 @@ bool World::playerSees(int player,const Unit& u) const {
     if (viewCounts_.empty() || !cells) return true;
     if (player<0 || (size_t(player)+1)*cells>viewCounts_.size()) return false;
     const uint16_t* plane=viewCounts_.data()+size_t(player)*cells;
+    // LosOn off (+LOS Off, +NowISee): a unit counts as seen where its cell is
+    // explored. Retail tests the VIEW player's explored bit there (4223f0); a
+    // power code here is one player's, so it tests that player's own bit.
+    const bool explored=powerLosOff(player) && navigationExplored_.size()==cells;
     // Bounding-box corners in non-legacy bounds (4c1410): +/-footX*8,
     // +/-footZ*8, y..y+modelTop, as wrapping 16.16. A corner's cell is the
     // projected (x>>5, (z-(y>>1))>>5) of its whole-pixel words.
@@ -10666,10 +10670,80 @@ bool World::playerSees(int player,const Unit& u) const {
     auto seen=[&](int32_t x,int32_t cy,int32_t z) {
         const int px=int16_t(uint32_t(x)>>16),py=int16_t(uint32_t(cy)>>16),pz=int16_t(uint32_t(z)>>16);
         const int cx=px>>5,cz=(pz-(py>>1))>>5;
-        return uint32_t(cx)<uint32_t(width) && uint32_t(cz)<uint32_t(height) &&
-            plane[size_t(cz)*width+cx]!=0;
+        if (uint32_t(cx)>=uint32_t(width) || uint32_t(cz)>=uint32_t(height)) return false;
+        const size_t cell=size_t(cz)*width+cx;
+        return explored ? (navigationExplored_[cell]>>player & 1)!=0 : plane[cell]!=0;
     };
     return seen(x0,top,z0) || seen(x1,top,z0) || seen(x1,bottom,z1) || seen(x0,bottom,z1);
+}
+
+// Power codes (sim/powercodes.h), Cmd::PowerCode's effect on every peer and the
+// referee at the same tick. Retail applies each to the machine that typed it; here
+// the money and vision codes act for the issuing player alone, and the damage
+// codes for the whole game (what retail single player does).
+void World::applyPowerCode(int player,PowerCode code,PowerArg arg,int unitId) {
+    if (!powerCodes_ || player<0 || size_t(player)>=players_.size() || player>=16) return;
+    const uint16_t bit=uint16_t(1u<<player);
+    Player& owner=players_[size_t(player)];
+    switch (code) {
+        case PowerCode::Atm: {
+            // 425d30: d = capacity - stored (float); stored += d and the lifetime
+            // produced total += d. Income and the history are untouched.
+            if (owner.retailResources) {
+                auto& r=*owner.retailResources;
+                const float d=r.capacity-r.stored;
+                r.stored=float(r.stored+d);r.totalProduced+=double(d);
+                owner.mana=r.stored;
+            } else {
+                owner.mana=double(owner.manaCapacity());
+            }
+            break;
+        }
+        case PowerCode::ManaMe: {
+            // 426390: mana += 999999.0f, clamped to the type's maximum, on each of the
+            // typer's selected units (one command per unit); units without a
+            // personal pool are unchanged.
+            Unit* u=unit(unitId);
+            if (!u || !u->alive() || !u->type || u->player!=player || u->underConstruction ||
+                u->type->maxMana<=0) break;
+            u->mana=double(std::min(float(u->mana)+999999.0f,u->type->maxMana));
+            break;
+        }
+        case PowerCode::DoubleShot:
+            damageMode_=damageMode_==DamageMode::Double ? DamageMode::Normal : DamageMode::Double;
+            break;
+        case PowerCode::HalfShot:
+            damageMode_=damageMode_==DamageMode::Half ? DamageMode::Normal : DamageMode::Half;
+            break;
+        case PowerCode::Los:
+            // 4258e0: no argument toggles LosOn; "On"/"Off" set it; any other word
+            // changes nothing.
+            if (arg==PowerArg::Invalid) break;
+            if (arg==PowerArg::On || (arg==PowerArg::None && (powerLosOff_ & bit))) powerLosOff_&=uint16_t(~bit);
+            else powerLosOff_|=bit;
+            break;
+        case PowerCode::Mapping:
+        case PowerCode::NowISee: {
+            const bool reveal=code==PowerCode::NowISee || !(powerMappingOff_ & bit);
+            if (code==PowerCode::NowISee) powerLosOff_|=bit;
+            if (reveal) {
+                // MappingOn off: the whole map explored for this player.
+                powerMappingOff_|=bit;
+                for (auto& mask:navigationExplored_) mask|=bit;
+            } else {
+                // 425980 refills the explored grid with 0: past exploration is
+                // forgotten, and sight explores again from the next pass (every
+                // footprint that explores for this player starts afresh).
+                powerMappingOff_&=uint16_t(~bit);
+                for (auto& mask:navigationExplored_) mask&=uint16_t(~bit);
+                for (auto& u:units_)
+                    if (u.type && allied(u.player,player)) u.sightFootprint={};
+                if (player==visPlayer_) visPowerForget_=true;
+            }
+            break;
+        }
+        default: break;   // Radar and MakePoster are the client's
+    }
 }
 
 // 411700: the player's visible-enemy (+5) and visible-ally (+0x15) lists, in
@@ -10743,6 +10817,9 @@ void World::visGather() {
     // clearing mid-pass would desync the placeholder dedup. Fog is client-only display (the
     // referee returned above), so NONE of this is hashed.
     if (visMaskCache_.size() >= 8192) visMaskCache_.clear();
+    // The local player's power codes, as this pass applies them (display only).
+    visPowerPass_ = {visPowerForget_, powerMappingOff(visPlayer_), powerLosOff(visPlayer_)};
+    visPowerForget_ = false;
     std::vector<Reveal>& reveals = visReveals_;
     std::vector<Miss>&   misses  = visMisses_;
     reveals.clear();
@@ -10791,9 +10868,12 @@ void World::visCompute() {
     static float EYE = [] {
         const char* e = std::getenv("TAK_FOG_EYE"); return e ? float(std::atof(e)) : 40.0f;
     }();
-    // Losing current sight never erases terrain exploration.
+    // Losing current sight never erases terrain exploration -- except when the
+    // shroud power code comes back (+Mapping), which forgets it; with the shroud
+    // off every cell is explored.
+    const VisPower power = visPowerPass_;
     for (auto& v : visBack_)
-        if (v == 2) v = 1;
+        v = power.forget ? 0 : v == 2 ? 1 : v == 0 && power.mapped ? 1 : v;
     // PASS 1b (PARALLEL): the O(r^3) LoS ray-march for each new mask -- the expensive part
     // a moving army keeps retriggering. Each computes independently, reading only the
     // immutable heightmap into a local buffer (no shared-map writes); we install them
@@ -10889,6 +10969,10 @@ void World::visCompute() {
         stamp(0, std::min(n, chunk));
         for (auto& t : th) t.join();
     }
+    // Line of sight off (+LOS Off, +NowISee): every explored cell is in view.
+    if (power.losOff)
+        for (auto& v : visBack_)
+            if (v == 1) v = 2;
 }
 
 void World::summonReadyGods() {
@@ -14560,6 +14644,10 @@ uint64_t World::stateHash() const {
     if(isLegionPathfinding(pathfindingMode_)) {mix(0x4c4547494f4e0000ull);if(legion_)mix(legion_->checksum());}
     if(!convoys_.empty()) {mix(0x434f4e564f590000ull);mix(convoys_.checksum());}
     if (doubleSight_) mix(0x44424c5349474854ull);
+    if (powerCodes_) {   // only in a POWER CODES match, so every other hash is unchanged
+        mix(0x504f574552434f44ull);
+        mix(uint8_t(damageMode_));mix(powerLosOff_);mix(powerMappingOff_);
+    }
     if (patrolRepairs_) mix(0x5054524c52455052ull);
     mix(nextMovementController_);
     mix(navigationExplored_.size());

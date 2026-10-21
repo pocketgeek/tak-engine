@@ -1666,6 +1666,7 @@ bool Server::createCampaignBattle(Client& c,const std::string& campaign,uint32_t
         room.seed=fixedSeedSet_?fixedSeed_:uint32_t(randToken());room.opts.crusades=1;room.opts.gameMods=0;
         room.opts.fogExplored=0;room.opts.forfeitSelfDestruct=1;room.opts.allowSpectators=0; // never watched (Spectate refuses)
         room.opts.mapScenario=0; // a campaign battle is a plain skirmish (outside the rules digest)
+        room.opts.powerCodes=0;  // and never plays with power codes
         room.campaignId=campaign;room.campaignTerritory=territory;room.campaignAccounts[0]=caller;room.campaignAccounts[1]=opponent;
         room.campaignRoomToken=campaignSession_+":"+std::to_string(room.id);
         room.campaignExpires=campaignNow()+600;
@@ -1952,6 +1953,8 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             o.doubleSight = o.doubleSight ? 1 : 0;
             o.allowSpectators = o.allowSpectators ? 1 : 0;
             if (!mission.empty()) { o.pathfindingMode = tak::sim::PathfindingMode::Retail; o.doubleSight = 0; }
+            // POWER CODES: on or off, never in a campaign mission (retail 0x499610).
+            o.powerCodes = o.powerCodes && mission.empty() ? 1 : 0;
             // MAP SCENARIO: only an ordinary file-map room can play a map's scenario. The map
             // itself is checked at START -- its package has not arrived yet.
             o.mapScenario = (o.mapScenario && mission.empty() && !tak::mapgen::isGeneratedMapId(mapId) &&
@@ -2851,6 +2854,8 @@ void Server::gameMsg(Client& c, const Frame& f) {
             // MAP SCENARIO is creation-only too: players chose seats, sides and READY for the
             // game it makes, and the room's open seats were sized for it at CreateGame.
             o.mapScenario = r->opts.mapScenario;
+            // POWER CODES is creation-only as well: the players joined a room with that rule.
+            o.powerCodes = r->opts.powerCodes;
             if (o.stressTest || o.benchmark) o.mapScenario = 0;   // as CreateGame clears it
             if (o.mapScenario) o.randomStarts = 0;
             if (!r->mission.empty()) o.doubleSight = 0;
@@ -2975,6 +2980,10 @@ void Server::gameMsg(Client& c, const Frame& f) {
                 return;
             }
             for(auto& cmd:parsed) {
+                // POWER CODES off: a code does nothing (retail 0x428f10 skips the
+                // handler), so it never reaches a bundle. Not a fault: the chat line
+                // that carried it is ordinary chat.
+                if(cmd.kind==tak::net::Cmd::PowerCode && !r->opts.powerCodes) continue;
                 cmd.player=uint8_t(c.slot);
                 c.cmdQueue.push_back(cmd);
             }

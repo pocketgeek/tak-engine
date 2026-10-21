@@ -35,7 +35,7 @@ import crusades_auth_network_test as auth
 from crusades_battle_network_test import OPTIONS_BYTES, Peer, lobby
 from server_public_test import login, options, server
 
-SCENARIO = OPTIONS_BYTES - 1   # mapScenario, the last GameOptions byte (protocol 259)
+SCENARIO = OPTIONS_BYTES - 2   # mapScenario (protocol 259), before powerCodes
 RANDOM = 13                    # randomStarts
 SEAT_TWO = b'Seat player 2 in the lobby to play this scenario'
 

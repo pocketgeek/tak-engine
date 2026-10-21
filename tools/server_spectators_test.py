@@ -29,8 +29,8 @@ from crusades_battle_network_test import OPTIONS_BYTES, lobby
 from server_public_test import login, options, server
 
 REASON = b'spectators are not allowed in this game'
-ALLOW = OPTIONS_BYTES - 2   # allowSpectators, before mapScenario (protocol 259)
-SCENARIO = OPTIONS_BYTES - 1   # mapScenario is the last GameOptions byte
+ALLOW = OPTIONS_BYTES - 3   # allowSpectators, before mapScenario (protocol 259) and powerCodes
+SCENARIO = OPTIONS_BYTES - 2   # mapScenario, before powerCodes (the last GameOptions byte)
 
 
 def recipe():
