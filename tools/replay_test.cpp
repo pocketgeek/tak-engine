@@ -153,8 +153,10 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 281, "replay format 11 is kept under protocol 281");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 281");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 282, "replay format 11 is kept under protocol 282");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 282");
+    // 282 changes Legion movement at ~100 bodies, round 3 (rings round still targets, passage greens and small-group queueing, corridor-mouth funnel claims; hashed state).
+    check(!supportedReplayProtocol(13, 281), "previous protocol without the Legion round 3 rules is refused");
     // 281 makes attackers reposition when shots keep stopping on indestructible terrain or features (hashed state).
     check(!supportedReplayProtocol(13, 280), "previous protocol without blocked-shot repositioning is refused");
     // 280 changes Legion movement at ~100 bodies, round 2 (sub-cell presses, ring bends, wide-gap lanes, flow-around speed; hashed state).

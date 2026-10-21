@@ -734,7 +734,9 @@ bodies: passage admission, departures through arrived crowds and attack rings
 presses and ring bends, passage lanes through wide gaps and flow-around at travel
 speed (Legion only). Protocol 281 makes attackers walk to a clear shot when their
 shots keep stopping on terrain or scenery they cannot destroy (all modes);
-0.8.6 ships protocol 281.
+0.8.6 ships protocol 281. Protocol 282 is the third Legion round at about 100
+bodies: rings round still targets, passage greens that scale with the crossing
+with small groups queueing, and corridor-mouth funnel claims (Legion only).
 Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
@@ -921,6 +923,11 @@ with a clear shot (`World::noteShotImpact`, `repositionForShot`); that state
 is hashed only once a blocked impact occurs, so the `--mpai` hashes stand as
 under 278 (60 s Retail `b353410003e98dd5`, Legion `0825aeb9e8139203`), but 280
 recordings no longer play.
+Protocol 282 (Legion only) is the third round at about 100 bodies: attackers round
+a still target stop creeping, passage greens scale with the crossing and small
+groups queue for their turn, and single-file corridor mouths hand out claims; Retail
+is bit-identical and the 60 s `--mpai` hashes are unchanged, but 281 recordings no
+longer play.
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
