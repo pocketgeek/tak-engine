@@ -1477,6 +1477,7 @@ available on your system appear.
 
 | Option | Default | What it does |
 | --- | --- | --- |
+| **UI Font** | Modern | The lettering of the interface's text. **Modern** is a clean bold sans-serif (the chat box's), sharp at every UI Scale; **Classic** is the game's original look: the blocky pixel font in the menus, rooms and Options, and the original serif faces in the HUD, scoreboard, briefings and Unit Info. The original decorative lettering (big messages, PAUSED, briefing headings, Unit Info labels, the title doors) is the same with either. Takes effect at once. |
 | **F4 Scorecard Scale** | 100% | Size of the F4 player panel (50–200%). |
 | **UI Scale** | 100% | Size of the in-game interface (50–200%). |
 | **Health Bars** | Damaged | Off, only on damaged units, or always. |
@@ -1509,6 +1510,10 @@ them. **Chat Scale** multiplies UI Scale, so 200% UI Scale with 150% Chat Scale
 gives three times the 100% size; on a small window a very large box is shrunk
 until it fits, and a long line you are typing scrolls so its end stays in view. Both options take effect at once, also during a game. They are
 saved as `chatScale` and `chatAlign` (0 left, 1 centred) in `settings.ini`.
+
+**UI Font** is saved as `uiFont = modern` or `uiFont = classic` in `settings.ini`; a
+file without it uses Modern. With Modern, names keep their own capitals (players, maps,
+mod packs, units), while labels such as **START** stay in capitals.
 
 ### Camera
 
