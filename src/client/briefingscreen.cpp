@@ -28,9 +28,9 @@ bool BriefingScreen::run(SDL_Renderer* ren,const hpi::Vfs& vfs,const std::string
     gui::Gui ui;
     try {ui=gui::parse(vfs.read("guis/briefing.gui"),"guis/briefing.gui");}catch(...){}
     Font heading,bold,body;
-    try{heading=Font(ren,vfs,"fonts/font48.gaf");}catch(...){}
-    try{bold=Font(ren,vfs,"fonts/b_times new roman (100b).gaf");}catch(...){}
-    try{body=Font(ren,vfs,"fonts/b_times new roman (100).gaf");}catch(...){}
+    try{heading=Font(ren,vfs,"fonts/font48.gaf",FontRole::Art);}catch(...){}
+    try{bold=Font(ren,vfs,"fonts/b_times new roman (100b).gaf",FontRole::Text);}catch(...){}
+    try{body=Font(ren,vfs,"fonts/b_times new roman (100).gaf",FontRole::Text);}catch(...){}
     struct Cleanup {Font& a;Font& b;Font& c;~Cleanup(){a.destroyGlyphs();b.destroyGlyphs();c.destroyGlyphs();}} cleanup{heading,bold,body};
     CursorSet cursors;cursors.load(ren,vfs,settings);
     SDL_PumpEvents();SDL_FlushEvents(SDL_MOUSEBUTTONDOWN,SDL_MOUSEBUTTONUP);

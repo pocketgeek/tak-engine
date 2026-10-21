@@ -57,6 +57,7 @@ int main() {
     flips("buildBarScale",   [](Settings& s) { s.buildBarScale += 0.25f; });
     flips("chatScale",       [](Settings& s) { s.chatScale += 0.5f; });
     flips("chatAlign",       [](Settings& s) { s.chatAlign = 0; });
+    flips("uiFont",          [](Settings& s) { s.uiFont = 1; });
     flips("treeSway",        [](Settings& s) { s.treeSway = !s.treeSway; });
     flips("screenShake",    [](Settings& s) { s.screenShake = !s.screenShake; });
     flips("tacticalDots",    [](Settings& s) { s.tacticalDots = !s.tacticalDots; });
@@ -184,6 +185,7 @@ int main() {
         cur.screenShake = true;
         cur.renderer = "opengles2";
         cur.gpuMemoryLimit = 768;
+        cur.uiFont = 1;
 
         const Settings d = tak::preferenceDefaults(cur);
         if (!(d.gameCreate == cur.gameCreate)) ++g_fail;
@@ -231,6 +233,7 @@ int main() {
         reset("tacticalDotsZoom", d.tacticalDotsZoom == fresh.tacticalDotsZoom && d.tacticalDotsZoom == 0);
         reset("renderer",         d.renderer == fresh.renderer && d.renderer.empty());
         reset("gpuMemoryLimit",   d.gpuMemoryLimit == fresh.gpuMemoryLimit && d.gpuMemoryLimit == 0);
+        reset("uiFont",           d.uiFont == fresh.uiFont && d.uiFont == 0);
 
         // And the two questions must agree: after a reset we ARE at defaults, which is
         // the invariant that broke when the preserve list and atDefaults() diverged.

@@ -246,9 +246,9 @@ void LoadScreen::draw() {
     // block font so a missing font GAF costs legibility, not the whole screen.
     if (!fontTried_) {
         fontTried_ = true;
-        try { font_ = Font(ren_, *vfs_, "fonts/b_times new roman (100).gaf"); } catch (...) {}
+        try { font_ = Font(ren_, *vfs_, "fonts/b_times new roman (100).gaf", FontRole::Text); } catch (...) {}
         if (!font_.ok())
-            try { font_ = Font(ren_, *vfs_, "fonts/times new roman (100).gaf"); } catch (...) {}
+            try { font_ = Font(ren_, *vfs_, "fonts/times new roman (100).gaf", FontRole::Text); } catch (...) {}
     }
     const Font& font = font_;
     // Font::draw lifts each glyph by its own y-offset, so a naive y clips the text

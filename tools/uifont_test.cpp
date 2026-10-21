@@ -11,9 +11,13 @@
 // The text API, in both styles: what uiTextWidth() measures is what uiText() advances
 // (ink starts at x and ends within it), the caps sit in the cell band [y, y + 7 px],
 // fit and wrap stay within their widths on whole characters, and switching the style
-// switches both measuring and drawing.
+// switches both measuring and drawing. UI FONT: MODERN by default and for a settings
+// file without the key, round-trips CLASSIC, is visible to the DEFAULTS button and is
+// reset by it, and applyRuntimeSettings() applies it.
 
 #include "client/chatbox.h"
+#include "client/runtimesettings.h"
+#include "client/settings.h"
 #include "client/uifont.h"
 #include "client/uitext.h"
 
@@ -287,6 +291,44 @@ int main() {
         SDL_DestroyRenderer(tr);
     }
     if (ts) SDL_FreeSurface(ts);
+
+    // ---- the UI FONT setting ----
+    {
+        namespace fs = std::filesystem;
+        std::mt19937_64 rng(std::random_device{}());
+        const fs::path dir = fs::temp_directory_path() / ("tak-uifont-" + std::to_string(rng()));
+        fs::create_directories(dir);
+        const fs::path file = dir / "settings.ini";
+        tak::setSettingsPath(file.string());
+        check(tak::Settings{}.uiFont == 0, "default: MODERN");
+        std::ofstream(file) << "uiScale = 1.5\n";
+        check(tak::loadSettings().uiFont == 0, "a settings file without the key: MODERN");
+        tak::Settings s;
+        s.uiFont = 1;
+        check(tak::saveSettings(s), "save");
+        check(tak::loadSettings().uiFont == 1, "CLASSIC round-trips");
+        {
+            std::ifstream in(file);
+            const std::string text((std::istreambuf_iterator<char>(in)), {});
+            check(text.find("uiFont = classic\n") != std::string::npos, "written as uiFont = classic");
+        }
+        s.uiFont = 0;
+        tak::saveSettings(s);
+        check(tak::loadSettings().uiFont == 0, "MODERN round-trips");
+        std::ofstream(file) << "uiFont = 7\n";
+        check(tak::loadSettings().uiFont == 0, "an unknown value: MODERN");
+        tak::Settings a, b;
+        b.uiFont = 1;
+        check(!(a == b), "visible to operator== (the DEFAULTS button)");
+        check(tak::preferenceDefaults(b).uiFont == 0, "DEFAULTS resets it to MODERN");
+        tak::applyRuntimeSettings(b);
+        check(tak::uiFontStyle() == tak::UiFontStyle::Classic, "applyRuntimeSettings applies CLASSIC");
+        tak::applyRuntimeSettings(a);
+        check(tak::uiFontStyle() == tak::UiFontStyle::Modern, "...and MODERN");
+        tak::setSettingsPath("");
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+    }
 
     std::printf(g_fail ? "uifont_test: %d FAILED\n" : "uifont_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;

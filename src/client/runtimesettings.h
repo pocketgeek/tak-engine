@@ -20,6 +20,7 @@
 #include "client/dev.h"
 #include "client/gpuvram.h"
 #include "client/settings.h"
+#include "client/uitext.h"
 #include "client/videofilter.h"
 
 namespace tak {
@@ -40,6 +41,8 @@ inline void applyRuntimeSettings(const Settings& s) {
     // to a lowered one from the next frame (gpuvram.h). Unchanged = a no-op, so a
     // post-failure tightening survives the other options being tweaked.
     gpuvram::setLimit(gpuMemoryLimitBytes(s.gpuMemoryLimit));
+    // UI FONT is live: text is measured and drawn in the chosen face from the next frame.
+    setUiFontStyle(s.uiFont == 1 ? UiFontStyle::Classic : UiFontStyle::Modern);
 #ifndef NDEBUG
     // Render benchmark only (tools/render_benchmark.py "constrained"): a cap that
     // actually binds. The Options minimum (512 MiB) and the policy floor (384 MiB)

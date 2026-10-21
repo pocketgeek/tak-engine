@@ -553,6 +553,13 @@ void OptionsScreen::build(int channels) {
 
     // INTERFACE: on-screen HUD -- its size, and the game overlays.
     section("INTERFACE");
+    // UI FONT: the face of every plain interface text -- menus, rooms, Options, HUD
+    // readouts, briefings, the scoreboard. MODERN is Noto Sans Bold (the chat box's
+    // face); CLASSIC is the block font and retail text faces the game always had. The
+    // retail art lettering (big messages, Unit Info labels, the doors) stays either way.
+    slider("UI FONT", 0, 1, [&] { return float(s_.uiFont); },
+           [&](float v) { s_.uiFont = std::clamp(int(v + 0.5f), 0, 1); },
+           [](float v) { return std::string(v >= 0.5f ? "CLASSIC" : "MODERN"); });
     slider("F4 SCORECARD SCALE", 0.5f, 2.0f, [&] { return s_.scorecardScale; },
            [&](float v) { s_.scorecardScale = v; }, [](float v) { return pctOf(v, 1); });
     slider("UI SCALE", 0.5f, 2.0f, [&] { return s_.uiScale; },

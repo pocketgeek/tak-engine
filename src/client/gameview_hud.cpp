@@ -1045,16 +1045,18 @@ namespace {
     }
 
     void GameView::loadInterfaceFonts() {
-        auto load = [&](Font& font, const char* path) {
+        // By role (client/font.h): bodfontbody and the Times faces are reading text and
+        // follow UI FONT; font48 is retail lettering and always draws its art.
+        auto load = [&](Font& font, const char* path, FontRole role) {
             font.destroyGlyphs();
-            try { font = Font(ren_, vfs_, path); }
+            try { font = Font(ren_, vfs_, path, role); }
             catch (const std::exception& e) { std::fprintf(stderr, "font load: %s\n", e.what()); }
         };
-        load(hudFont_, "fonts/bodfontbody.gaf");
-        load(bigFont_, "fonts/font48.gaf");
-        load(statFont_, "fonts/b_times new roman (100b).gaf");
-        if (!statFont_.ok()) load(statFont_, "fonts/ig_times new roman (100).gaf");
-        load(scoreboardFont_, "fonts/ig_times new roman (100).gaf");
+        load(hudFont_, "fonts/bodfontbody.gaf", FontRole::Text);
+        load(bigFont_, "fonts/font48.gaf", FontRole::Art);
+        load(statFont_, "fonts/b_times new roman (100b).gaf", FontRole::Text);
+        if (!statFont_.ok()) load(statFont_, "fonts/ig_times new roman (100).gaf", FontRole::Text);
+        load(scoreboardFont_, "fonts/ig_times new roman (100).gaf", FontRole::Text);
         scoreboardFont_.setLetterSpacing(0);
         // The embedded TrueType face (client/uifont.h) is not art; only its glyph sheets
         // go, and the next draw rebuilds them.

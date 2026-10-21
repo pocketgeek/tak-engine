@@ -43,7 +43,10 @@
     void GameView::guiSmoothTest() {
         const auto hash = world_.stateHash();
         const auto initial = smoothArt_;
-        tak::Settings s; s.hardwareCursor = false; s.smoothArt = false;
+        // The HUD face's GLYPH ART is what is checked below: UI FONT = CLASSIC draws it
+        // (MODERN draws the TrueType face over the same metrics).
+        const auto initialFont = tak::uiFontStyle();
+        tak::Settings s; s.hardwareCursor = false; s.smoothArt = false; s.uiFont = 1;
         applySettings(s);
         cursorsInit_ = true; cursors_.load(ren_, vfs_, &s);
         const auto bytes = gpuvram::bytes(), count = gpuvram::count();
@@ -107,6 +110,7 @@
             }
         }
         s.smoothArt = initial; applySettings(s);
+        tak::setUiFontStyle(initialFont);
         std::puts("PASS: HUD smoothing applies live, keeps layout/state and releases textures");
         std::puts("PASS: solid HUD text is one flat colour in the glyph shapes");
     }

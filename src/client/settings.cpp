@@ -119,6 +119,7 @@ Settings loadSettings() {
         else if (key == "buildBarScale")   s.buildBarScale = asFloat(0.75f, 4.0f);
         else if (key == "chatScale")       s.chatScale = asFloat(0.5f, 3.0f);
         else if (key == "chatAlign")       s.chatAlign = asInt(0, 1);
+        else if (key == "uiFont")          s.uiFont = val == "classic" ? 1 : 0;
         else if (key == "treeSway")        s.treeSway = asBool();
         else if (key == "tacticalDots")    s.tacticalDots = asBool();
         else if (key == "screenShake")     s.screenShake = asBool();
@@ -221,6 +222,7 @@ std::string serializeSettings(const Settings& s) {
     o << "buildBarScale = " << s.buildBarScale << "\n";
     o << "chatScale = " << std::clamp(s.chatScale, 0.5f, 3.0f) << "\n";
     o << "chatAlign = " << std::clamp(s.chatAlign, 0, 1) << "\n";
+    o << "uiFont = " << (s.uiFont == 1 ? "classic" : "modern") << "\n";
     o << "treeSway = " << (s.treeSway ? 1 : 0) << "\n";
     o << "tacticalDots = " << (s.tacticalDots ? 1 : 0) << "\n";
     o << "screenShake = " << (s.screenShake ? 1 : 0) << "\n";

@@ -65,7 +65,7 @@ struct CrusadesScreen::Impl {
  enum class Command {Back,Reconnect,Refresh,Campaign,More,Honor,Terror,Issue,Find,CancelSearch,Join,Cancel,PrevBattle,NextBattle,History,PrevHistory,NextHistory,Watch,CancelDownload};
  struct Button {SDL_Rect rect;std::string label;Command command;bool enabled;};std::vector<Button> buttons;
  Impl(SDL_Renderer* r,const hpi::Vfs& v,net::MpClient& client):ren(r),mp(client),local(crusadesmap::loadPresentation(v)){
-  for(const char* path:{"fonts/b_times new roman (100).gaf","fonts/bodfontbody.gaf"})try{font=Font(r,v,path);if(font.ok())break;}catch(...){}
+  for(const char* path:{"fonts/b_times new roman (100).gaf","fonts/bodfontbody.gaf"})try{font=Font(r,v,path,FontRole::Text);if(font.ok())break;}catch(...){}
   if(font.ok())fontScale=14.f/std::max(1,font.height());
   else if(auto* surface=SDL_CreateRGBSurfaceWithFormat(0,96,64,32,SDL_PIXELFORMAT_RGBA32)){
    SDL_FillRect(surface,nullptr,SDL_MapRGBA(surface->format,0,0,0,0));

@@ -2,10 +2,13 @@
 
 #include "client/gpuvram.h"
 #include "client/artscale.h"
+#include "client/uifont.h"
+#include "client/uitext.h"
 #include "gaf/gaf.h"
 #include "hpi/hpi.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <utility>
 
@@ -17,10 +20,11 @@ Font& Font::operator=(Font&& other) noexcept {
     for (size_t i=0;i<256;++i) glyphs_[i]=std::exchange(other.glyphs_[i],{});
     ok_=std::exchange(other.ok_,false);
     letterSpacing_=other.letterSpacing_;
+    role_=other.role_; capH_=other.capH_; baseOff_=other.baseOff_; base_=other.base_;
     return *this;
 }
 
-Font::Font(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& gafPath) {
+Font::Font(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& gafPath, FontRole role) {
     std::filesystem::path pcx = gafPath;
     pcx.replace_extension(".pcx");
     auto pal = tak::gaf::Palette::fromBytes(vfs.read(pcx.generic_string()),
@@ -50,22 +54,61 @@ Font::Font(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& gafPa
         loaded.glyphs_[i] = g;
     }
     loaded.ok_ = true;
+    if (role == FontRole::Text) {
+        // The size and line the MODERN face takes: the cap height and baseline of the
+        // first of these the face has.
+        for (unsigned char c : {'H', 'E', 'A', '0'})
+            if (c < frames.size() && frames[c].height > 0) {
+                loaded.capH_ = float(frames[c].height);
+                loaded.baseOff_ = float(frames[c].height - frames[c].yoff);
+                break;
+            }
+        // The typical colour: the mean of the brighter half of the glyphs' opaque
+        // pixels (the art is shaded, often with a dark rim).
+        double sum[3] = {}, n = 0;
+        int maxL = 0;
+        auto lum = [](const std::vector<uint8_t>& p, size_t i) { return p[i] * 3 + p[i + 1] * 6 + p[i + 2]; };
+        for (const auto& f : frames)
+            for (size_t p = 0; p + 3 < f.rgba.size(); p += 4)
+                if (f.rgba[p + 3] > 128) maxL = std::max(maxL, lum(f.rgba, p));
+        for (const auto& f : frames)
+            for (size_t p = 0; p + 3 < f.rgba.size(); p += 4)
+                if (f.rgba[p + 3] > 128 && lum(f.rgba, p) * 2 >= maxL) {
+                    for (size_t k = 0; k < 3; ++k) sum[k] += f.rgba[p + k];
+                    n += 1;
+                }
+        if (n > 0) loaded.base_ = {Uint8(sum[0] / n), Uint8(sum[1] / n), Uint8(sum[2] / n), 255};
+        if (loaded.capH_ > 0) loaded.role_ = FontRole::Text;
+    }
     *this = std::move(loaded);
 }
 
+bool Font::modern() const { return role_ == FontRole::Text && tak::modernUiText() && tak::uiFont().ok(); }
+
 int Font::width(const std::string& text, float scale) const {
+    if (modern()) return int(std::ceil(tak::uiFont().width(text, tak::uiFontScaleForCap(capH_ * scale))));
     float x = 0;
     for (unsigned char c : text) x += advance(glyphs_[c]) * scale;
     return int(x);
 }
 
 int Font::height(float scale) const {
+    if (modern()) return int(tak::uiFont().pixelSize(tak::uiFontScaleForCap(capH_ * scale)) + 0.5f);
     int h = 0;
     for (const Glyph& g : glyphs_) if (g.h > h) h = g.h;
     return int(h * scale);
 }
 
 void Font::vbounds(const std::string& text, float scale, float& topOff, float& h) const {
+    if (modern()) {
+        // UiFont's bounds are below its line top, which drawWith puts ascent above the
+        // GAF baseline (y + baseOff_ * scale).
+        const tak::UiFont& f = tak::uiFont();
+        const float sc = tak::uiFontScaleForCap(capH_ * scale);
+        f.vbounds(text, sc, topOff, h);
+        topOff += baseOff_ * scale - f.ascentFrac() * f.pixelSize(sc);
+        return;
+    }
     bool any = false; float top = 0, bot = 0;
     for (unsigned char c : text) {
         const Glyph& g = glyphs_[c];
@@ -90,6 +133,15 @@ void Font::drawSolid(SDL_Renderer* ren, const std::string& text, float x, float 
 
 void Font::drawWith(SDL_Renderer* ren, const std::string& text, float x, float y,
                     float scale, SDL_Color tint, bool solid) const {
+    if (modern()) {
+        SDL_Color c = tint;
+        if (!solid)
+            c = {Uint8(base_.r * tint.r / 255), Uint8(base_.g * tint.g / 255), Uint8(base_.b * tint.b / 255), tint.a};
+        const tak::UiFont& f = tak::uiFont();
+        const float sc = tak::uiFontScaleForCap(capH_ * scale);
+        f.drawSolid(ren, text, x, y + baseOff_ * scale - f.ascentFrac() * f.pixelSize(sc), sc, c);
+        return;
+    }
     for (unsigned char c : text) {
         const Glyph& g = glyphs_[c];
         // Some fonts have a visible space glyph (a dot) — never draw it.

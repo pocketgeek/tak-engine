@@ -145,10 +145,10 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
     if (stats) for (const auto& row : stats->rows)
         logos.push_back(gafTexture(ren, vfs, "colorlogos2", factionLogoSequence(row.side), row.colorSlot));
     Font head, body, deco;
-    try { head = Font(ren, vfs, "fonts/lombardic (cd).gaf"); } catch (...) {}
-    try { deco = Font(ren, vfs, "fonts/decorativesm.gaf"); } catch (...) {}
-    try { body = Font(ren, vfs, "fonts/b_times new roman (100).gaf"); } catch (...) {}
-    if (!body.ok()) try { body = Font(ren, vfs, "fonts/times new roman (100).gaf"); } catch (...) {}
+    try { head = Font(ren, vfs, "fonts/lombardic (cd).gaf", FontRole::Art); } catch (...) {}
+    try { deco = Font(ren, vfs, "fonts/decorativesm.gaf", FontRole::Art); } catch (...) {}
+    try { body = Font(ren, vfs, "fonts/b_times new roman (100).gaf", FontRole::Text); } catch (...) {}
+    if (!body.ok()) try { body = Font(ren, vfs, "fonts/times new roman (100).gaf", FontRole::Text); } catch (...) {}
     const Font& heading = head.ok() ? head : body;
     auto freeAll = [&] {
         if (bg) gpuvram::destroy(bg);

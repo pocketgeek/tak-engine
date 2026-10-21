@@ -89,9 +89,9 @@ struct CampaignScreen::Impl {
                         chapters.push_back(art::makeTexture(ren,frame.rgba,frame.width,frame.height));
             }catch(...) {}
         }
-        try{body=Font(ren,vfs,"fonts/bodfontbody.gaf");}catch(...){}
-        try{decor=Font(ren,vfs,"fonts/bodfontdecor.gaf");}catch(...){}
-        try{label=Font(ren,vfs,"fonts/b_times new roman (100b).gaf");}catch(...){}
+        try{body=Font(ren,vfs,"fonts/bodfontbody.gaf",FontRole::Text);}catch(...){}
+        try{decor=Font(ren,vfs,"fonts/bodfontdecor.gaf",FontRole::Art);}catch(...){}
+        try{label=Font(ren,vfs,"fonts/b_times new roman (100b).gaf",FontRole::Text);}catch(...){}
         selectCampaign(initial);
     }
     ~Impl() {

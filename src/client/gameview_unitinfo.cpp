@@ -130,12 +130,12 @@ void GameView::drawUnitInfo(int winW, int winH) {
     }
 
     if (!unitInfoLabelFont_.ok()) {
-        try { unitInfoLabelFont_ = Font(ren_, vfs_, "fonts/lombardic (cd).gaf"); }
+        try { unitInfoLabelFont_ = Font(ren_, vfs_, "fonts/lombardic (cd).gaf", FontRole::Art); }
         catch (...) {}
         unitInfoLabelFont_.setLetterSpacing(0);
     }
     if (!unitInfoValueFont_.ok()) {
-        try { unitInfoValueFont_ = Font(ren_, vfs_, "fonts/b_times new roman (100).gaf"); }
+        try { unitInfoValueFont_ = Font(ren_, vfs_, "fonts/b_times new roman (100).gaf", FontRole::Text); }
         catch (...) {}
         unitInfoValueFont_.setLetterSpacing(0);
     }

@@ -48,6 +48,11 @@ struct Settings {
     // where it sits over the play area: 0 = left, 1 = centered.
     float chatScale = 1.0f;
     int   chatAlign = 1;
+    // UI FONT (client/uitext.h): the face of the interface's plain text. 0 = MODERN (Noto
+    // Sans Bold, the default), 1 = CLASSIC (the 5x7 block font and the retail text
+    // faces). Retail art lettering is the same either way. Applied live. Persisted as
+    // uiFont = modern | classic; absent (a settings file from before it) = MODERN.
+    int   uiFont = 0;
     bool  treeSway   = true;       // animated tree and shadow sway; default on
     bool  tacticalDots = true;     // zoomed far out, draw units as minimap-style dots
     int   tacticalDotsZoom = 0;    // when: 0 = only fully zoomed out .. 100 = from normal size
@@ -184,7 +189,7 @@ struct Settings {
         return a.fullscreen == b.fullscreen && a.vsync == b.vsync && a.maxFps == b.maxFps
             && a.scorecardScale == b.scorecardScale && a.uiScale == b.uiScale && a.textureFilter == b.textureFilter
             && a.buildBarAlign == b.buildBarAlign && a.buildBarScale == b.buildBarScale
-            && a.chatScale == b.chatScale && a.chatAlign == b.chatAlign
+            && a.chatScale == b.chatScale && a.chatAlign == b.chatAlign && a.uiFont == b.uiFont
             && a.treeSway == b.treeSway && a.tacticalDots == b.tacticalDots
             && a.tacticalDotsZoom == b.tacticalDotsZoom && a.screenShake == b.screenShake
             && a.unitShadows == b.unitShadows && a.smoothArt == b.smoothArt

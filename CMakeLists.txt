@@ -1916,7 +1916,7 @@ if(TAK_BUILD_CLIENT)
     # The interface font: metrics, measuring, wrapping with it, UTF-8 (invalid bytes too),
     # glyph sheets built once per pixel size and bounded (on SDL's software renderer),
     # and the text API in both UI FONT styles (measure and draw agree, fit, wrap).
-    add_executable(uifont_test tools/uifont_test.cpp)
+    add_executable(uifont_test tools/uifont_test.cpp src/client/settings.cpp)
     target_compile_definitions(uifont_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(uifont_test PRIVATE tak-uifont ${_tak_sdl2})
     add_test(NAME uifont COMMAND uifont_test)
