@@ -909,6 +909,22 @@ add_test(NAME legion_fightshuffle
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-fight-diag-60.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_fightshuffle PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"statue_ticks\":([12]?[0-9]?[0-9]),")
+# A late ring (round 5): a fight order's attack group starts its field with one member (its column acquires the target
+# one body at a time), so it had no ring and the column queued on the near arc (attackring-fight-60 at offset 0: half
+# the attackers in reach at tick 1,526, Retail's gate median 1,206; 1,510 with the in-reach press edge alone). Passes
+# when half are in reach by tick 1,300, serial equal to workers.
+add_test(NAME legion_fightring
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-fight-60.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_fightring PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.t50\":(1[0-2][0-9][0-9]|1300|[1-9][0-9][0-9]),")
+# A press may end exactly on the reach edge (round 5): combat fires there, but pressIn wanted a point a sixteenth of a
+# pixel inside, so bodies held flush on their origins' edges 1-2 px out of reach (attackring-f1-64 at offset 0: 39 in
+# reach at the end, Retail's gate median 43; 41 with the late ring and the stop-origin rounding alone). Passes when 43
+# or more are in reach at the end, serial equal to workers.
+add_test(NAME legion_ringedge
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-f1-64.scn --mode legion --offsets 0 --json)
+set_tests_properties(legion_ringedge PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.now_end\":(4[3-9]|[5-9][0-9]),")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is

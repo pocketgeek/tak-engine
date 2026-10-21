@@ -287,6 +287,12 @@ constexpr uint32_t kPressRouteEvery=16;
 // Members a reach group needs when its first field starts to plan to a ring
 // (PLAN 3.4; its exit raises it to 8 if the battles' field quota pegs).
 constexpr size_t kRingMembers=2;
+// A group that grew past one member after its first field plans its ring late
+// once it has this many (ringScan, round 5): at two, every small battle group
+// re-planned (battle-field-2x60 +29% total Legion work, battle-field-2x250
+// +48%); at eight the battles' work is the parent's (+0.6%, +0.5%, -1%) and a
+// fight column still rings its target.
+constexpr size_t kLateRingMembers=8;
 // A production exit without headway for this many crowd windows, its
 // birthplace clear, is done (twice as many hand it over to a rally).
 constexpr uint8_t kExitWindows=1;
@@ -813,6 +819,8 @@ struct LegionNavigator::Impl {
         // upkeep scan (ringScan, scanned at that tick; kNoTick: none yet).
         struct Ring {
             bool tried=false,assigned=false;
+            // A ring built after the group's first field (round 5, see ringScan): tried once.
+            bool late=false;
             int R=0,band0=0;int64_t tx=0,tz=0,ax=0,az=0;   // px: target centre, approach axis
             std::vector<int> cells;std::vector<uint8_t> band;std::vector<int32_t> owner;
             std::vector<uint8_t> spent;uint32_t scanned=kNoTick;
@@ -8324,7 +8332,19 @@ struct LegionNavigator::Impl {
         // In 16.16 throughout: the corner of a cell's box can lie a fraction
         // of a pixel inside reach (the box is the whole origin, its far edge
         // a sixteenth of a pixel in).
+        // A point is in reach as tickCombat tests it (round 5, 2026-10-21):
+        // its float distance to the target no more than the float reach. A
+        // sixteenth of a pixel short of reach before, a body held flush on
+        // the edge of its origin exactly at reach (the nearest point of a
+        // cell's box, an integer distance away on an axis) found no point:
+        // combat brakes and fires there, and Retail's ring packs those
+        // points (attackring-fight-diag-60 offset 1 at the end: two of
+        // Retail's south arc stand on the top edge of the cell row 96 px
+        // below the target, where Legion's bodies held 1-2 px out; 40 in
+        // reach against 44 on attackring-fight-60, 39 against 45 on
+        // attackring-f1-64). The blind press below keeps its own depth.
         const int64_t inside=(int64_t(R)<<16)-(1<<12);
+        const float reachF=reachFloat(u,t);
         const int64_t px0=u.x.v,pz0=u.z.v,ftx=t->x.v,ftz=t->z.v;
         int64_t bestX=0,bestZ=0,bestD=-1;
         bool needSight=los,blindPress=false;
@@ -8334,7 +8354,10 @@ struct LegionNavigator::Impl {
             const int64_t ax=std::clamp(ftx,lox,lox+span),az=std::clamp(ftz,loz,loz+span);
             auto at=[&](int64_t x,int64_t z) {
                 const int64_t qx=x-ftx,qz=z-ftz;
-                if(qx*qx+qz*qz>inside*inside)return;
+                if(!blindPress) {
+                    const float fdx=Fixed::raw(int32_t(ftx-x)).toFloat(),fdz=Fixed::raw(int32_t(ftz-z)).toFloat();
+                    if(std::sqrt(fdx*fdx+fdz*fdz)>reachF)return;
+                } else if(qx*qx+qz*qz>inside*inside)return;
                 const int64_t wx=(x-px0)>>8,wz=(z-pz0)>>8,d=wx*wx+wz*wz;
                 if(bestD>=0&&d>=bestD)return;
                 if(needSight&&!sight.losBetween(Fixed::raw(int32_t(x)).toFloat(),Fixed::raw(int32_t(z)).toFloat(),t->x.toFloat(),t->z.toFloat(),std::max(fx,fz)/2,
@@ -9562,6 +9585,16 @@ struct LegionNavigator::Impl {
         const bool los=best>64.0f&&!t->type->canFly&&!u.type->lobs();
         return {int(best+pad),los};
     }
+    // tickCombat's own reach (float), as reachPx before its floor.
+    float reachFloat(const Unit& u,const Unit* t) const {
+        if(!t||!t->type||!u.type||u.type->weapons.empty())return 0.0f;
+        const int slot=std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1);
+        const bool all=!u.type->weaponSwitching&&u.type->weapons.size()>1;
+        const Weapon& sel=u.type->weapons[size_t(slot)];
+        const float best=all?u.type->maxRange():sel.range;
+        const float pad=t->type->maxVel<=Fixed()?8.0f*float(std::max(t->type->footX,t->type->footZ))+24.0f:0.0f;
+        return best+pad;
+    }
     static constexpr int64_t kQuarterTurn=65536;   // pseudoAngle's 90 degrees
     // Monotonic integer pseudo-angle of (along, across) in [-2^17, 2^17):
     // 0 along +along, counterclockwise positive (a diamond angle, no atan2).
@@ -9886,6 +9919,30 @@ struct LegionNavigator::Impl {
         const uint32_t now=w.tickCounter_;
         if(now%kRingScan!=kRingScan-1)return;
         ringDiscs.clear();
+        // Round 5 (2026-10-21): a late ring. A fight (attack-move) order's
+        // attacks are acquired one body at a time as its column comes into
+        // range, so the group's first field starts with one member and
+        // startField builds no ring for it (attackring-fight-60: the first
+        // joins at t=694 alone, the 60th at t=1455). Down that point seed
+        // the column queued on the near arc and filled the far side one
+        // body at a time: half of it in reach at t=1505 against Retail's
+        // 1206, 18 bodies in reach at t=1200 against 29, and 2372 damage
+        // against 2814. So an attack group of kLateRingMembers or more round a
+        // target standing still, with no ring, plans one here once (its
+        // finished field, as ringScan's re-seed) and refreshes to its band 0;
+        // the members claim spots as they next move (ringClaim). A chase is
+        // left alone (a moving target re-seeds its group in place). Only
+        // once per group: re-planning a ring per target as groups grew cost
+        // the battles +13-28% total Legion work (ringClaim's note).
+        for(auto& [gid,g]:groups) {
+            auto& r=g.ring;
+            if(g.kind!=Kind::Attack||r.band0!=0||r.late||g.approach||g.reachIds.size()<kLateRingMembers)continue;
+            if(!g.field||!g.field->done||g.next||g.stale||g.plane<0)continue;
+            const Unit* t=w.unit(g.reachTarget);
+            if(!t||!t->alive()||t->speed>Fixed())continue;
+            r.late=true;r.tried=false;
+            if(buildRing(g)) {g.stale=true;g.demand=true;++stats.ringReseeds;listGroup(g);}
+        }
         for(const auto& [gid,g]:groups) {
             if(g.ring.band0==0||!g.ring.assigned||g.plane<0)continue;
             // A ring round a target on the move (a chase) stands nowhere for long.
@@ -10010,8 +10067,18 @@ struct LegionNavigator::Impl {
                 // ... and where a body walking in to it stops: on the reach
                 // edge, radially out from it.
                 const int64_t rx=sx-r.tx,rz=sz-r.tz,d=std::max<int64_t>(1,isqrtFloor(uint64_t(rx*rx+rz*rz)));
+                // The origin holding that point as a body's centre
+                // (footprintOrigin; round 5, 2026-10-21). Taken half a cell
+                // toward -x/-z before (as if the point were a cell's centre),
+                // the stop origin on the north and west arcs could lie a cell
+                // out (on the south and east a cell in), out of reach and free
+                // while the arc in front stood full, so
+                // the spot behind it never read spent: its owner held on the
+                // edge in other groups' lanes instead of waiting outside
+                // (ringcross-100 with pressIn's in-reach edge, below: the Move
+                // group's gate median t90 3,841 -> 4,066; 3,851 with this).
                 const int64_t ex=sx+rx*(r.R-d)/d,ez=sz+rz*(r.R-d)/d;
-                const int eox=int((ex-fx*8)>>4),eoz=int((ez-fz*8)>>4);
+                const int eox=int((ex-(fx-1)*8)>>4),eoz=int((ez-(fz-1)*8)>>4);
                 bool used=false;
                 auto still=[&](int ox,int oz) {
                     for(int cz=oz;cz<oz+fz&&!used;++cz)for(int cx=ox;cx<ox+fx&&!used;++cx)used=stillAt(cx,cz);
@@ -13659,6 +13726,7 @@ struct LegionNavigator::Impl {
             if(g.reachTarget) {h=mix(h,0x7265616368ull);h=mix(h,uint64_t(uint32_t(g.reachTarget))<<32|uint32_t(g.reachBucket));h=mix(h,uint64_t(uint32_t(g.reachCentre)));}
             if(g.ring.tried) {
                 h=mix(h,0x72696e67ull);h=mix(h,uint64_t(g.ring.assigned)|uint64_t(uint32_t(g.ring.R))<<8);h=mix(h,uint64_t(g.ring.band0));
+                if(g.ring.late)h=mix(h,0x6c617465ull);
                 if(g.ring.blind)h=mix(h,0x626c696e64ull);
                 for(size_t i=0;i<g.ring.cells.size();++i)h=mix(h,uint64_t(uint32_t(g.ring.cells[i]))<<32|uint64_t(uint32_t(g.ring.owner[i]))<<4|g.ring.band[i]);
                 if(g.ring.scanned!=kNoTick) {

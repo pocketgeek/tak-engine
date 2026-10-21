@@ -2425,7 +2425,7 @@ Tried and rejected:
 * Barring the step back onto the origin it last left (the `slideFrom` rule for every step): it moved the to-and-fro
   onto longer cycles (`attackring-mob-100` 196 -> 702, gate offsets).
 
-Considered and not tried: a ring built late for a group that grows after its first field. A ring sized for its
+Considered and not tried (built in round 5, "Fight rings and the reach edge"): a ring built late for a group that grows after its first field. A ring sized for its
 first two members (`want` = 10 spots) would have to serve 60 attackers, re-planning it costs a refresh per target
 (`ringClaim`'s note: +13-28% total Legion work in the battles), and ring spot generation is another track's work.
 
@@ -2653,6 +2653,96 @@ walled ring points through the wall (offset 0: it walked in place for 2,400 tick
 Damage over the offsets 4,834 -> 5,190, but offset 0 167 -> 83, the median unchanged at 320, and wall-100 lost 2
 ever in reach. A fix needs the ring's spots filled deepest first and a way to a far spot through a flat band-0 field,
 not steering alone.
+
+### Fight rings and the reach edge (2026-10-21, Legion ~100 round 5, task-l5-fight)
+
+Judged by damage, not reversals (the user's ruling: fight jitter matters only where it costs damage). **Where the
+damage was lost** (offset 0, per attacker per tick: in reach by the observer's test, moving, ordered at another
+target, the weapon ready but not firing, and the shots counted from its reload). On `attackring-fight-60` Legion
+had 69,083 body-ticks in reach and fired 2,319 shots, Retail 79,873 and 2,677. In both one shot per 30 ticks in
+reach, the only in-reach ticks moving are the braking tick (40 against 50), none in reach on another target, none
+with a ready weapon held. No damage was lost to shuffling, retargeting or reloads reset by movement; all of it was
+time out of reach: bodies in reach by tick, sampled every 100 ticks from 800, Legion 3 6 10 14 18 20 25 28 32 37 39
+40 (then 40 to the end) against Retail 1 4 10 16 22 29 36 41 44. Two causes:
+
+* **No ring for a fight order.** Its column acquires the target one body at a time (round 4's note: the first
+  joins at t=694 alone), so `startField` saw one member and built none. Down the point seed the column queued on
+  the near arc. On `attackring-fight-diag-60` (offset 1) acquisition times match Retail's (the 15 quantiles 1,157 ..
+  1,536 against 1,161 .. 1,549), but the later half took 201-435 ticks from acquisition into reach against 168-352.
+* **A held body 1-2 px out.** At the end the ring stood one body thick at 94-96 px in both builds, but Legion held
+  6-7 bodies at 96-98 px against Retail's in reach there. `pressIn` wanted a point a sixteenth of a pixel inside
+  reach. A body flush on the edge of its origin, exactly at reach (the nearest point of the cell's box, an integer
+  distance on an axis), found no point, while combat brakes and fires at that distance (`dist > reach` is the
+  out-of-reach test). In the diagonal fixture at offset 1, two of Retail's south arc stand on the top edge of the cell
+  row 96 px below the target. Legion's bodies held a cell further out.
+
+**The changes**, Legion only (Retail hash-identical on every fixture of the screen below):
+
+* **A late ring** (`ringScan`, `Ring::late`, hashed). An attack group of `kLateRingMembers` (8) or more round a
+  target standing still, with no ring, a finished field and no refresh pending, plans its ring once (`buildRing`
+  as before) and refreshes to band 0; members claim spots as they next move. A chase is left alone. At two members
+  every small battle group re-planned (whole-run Legion work at offset 0: battle-field-2x60 +29%,
+  battle-field-2x250 +48%, battle-assault +34%); at eight it is the parent's (+0.6%, +0.5%, -1%) and the cost gates
+  pass unchanged.
+* **The reach edge is in reach** (`pressIn`, `reachFloat`). A candidate point is tested as `tickCombat` tests it:
+  its float distance to the target against the float reach. The blind press (nothing brakes the body) keeps its
+  `kPressDepth`.
+* **The stop origin is the point's own origin** (`ringScan`'s spent test). The reach-edge point radially out from a
+  band-0 spot was turned into an origin as if it were a cell's centre, `(e - f*8) >> 4`, which is half a cell toward
+  -x/-z: on the north and west arcs the stop origin could lie a cell out, out of reach and free while the arc in front
+  stood full, so the spot behind it never read spent. Now `footprintOrigin`'s `(e - (f-1)*8) >> 4`. With the edge
+  change alone, the spares of `ringcross-100`'s ring owned such spots and held on the north edge in the Move
+  group's lanes (gate median t90 3,841 -> 4,066, `ctest:legion_ringwait` failed); with this, 3,851.
+
+Gate medians, before (47c09924) -> after, Retail:
+
+| fixture | key | before | after | Retail |
+|---|---|---|---|---|
+| attackring-fight-60 | damage_end / damage_t2400 | 2,372 / 1,561 | 2,867 / 1,967 | 2,814 / 1,934 |
+| attackring-fight-60 | ever_end / now_end / t50 | 40 / 40 / 1,505 | 44 / 44 / 1,212 | 44 / 44 / 1,206 |
+| attackring-fight-diag-60 | damage_end / damage_t2400 | 1,729 / 910 | 2,070 / 1,172 | 2,167 / 1,287 |
+| attackring-fight-diag-60 | ever_end / t50 | 41 / 2,002 | 44 / 1,733 | 44 / 1,631 |
+| attackring-fight-60, -diag-60 | statue_ticks / reversals | 4 / 46, 3 / 51 | 178 / 83, 199 / 106 | 38 / 86, 23 / 84 |
+| fight-retarget | g.F.t90 / done | 2,293 / 2,684 | 2,208 / 2,631 | 2,638 / 2,730 |
+| attackring-f1-64 (= squad-64) | damage_end / ever_end | 2,672 / 39 | 2,919 / 44 | 2,612 / 45 |
+| attackring-mob-100 | damage_end / ever_end | 2,775 / 42 | 3,026 / 47 | 2,688 / 44 |
+| attackring-mob-40 | damage_end / ever_end | 2,639 / 38 | 2,640 / 40 | 2,438 / 39 |
+| attackring-r200-64 | damage_end / ever_end | 4,164 / 61 | 4,207 / 63 | 3,717 / 64 |
+| attackring-f1-16 | damage_end / reversals | 1,102 / 13 | 1,112 / 3 | 1,078 / 3 |
+| attackring-f2-64 | damage_end / ever_end | 1,059 / 16 | 987 / 15 | 912 / 14 |
+| attackring-wall-64 | damage_end / now_end / reversals | 1,896 / 37 / 317 | 1,988 / 38 / 144 | 1,909 / 42 / 195 |
+| attackring-wall-100 | damage_end / ever_end / reversals | 1,911 / 38 / 292 | 2,027 / 37 / 173 | 1,922 / 49 / 455 |
+| attackring-gatehouse-40 | damage_end / ever_end / now_end | 320 / 18 / 15 | 302 / 14 / 14 | 584 / 29 / 24 |
+| ringcross | damage_end / ever_end | 6,250 / 41 | 6,816 / 46 | 6,435 / 45 |
+| ringcross | g.M.t90 / done | 3,821 / 4,066 | 3,661 / 3,989 | 3,880 / 4,293 |
+| ringcross-100 | damage_end / ever_end | 6,371 / 42 | 6,493 / 44 | 6,458 / 43 |
+| ringcross-100 | g.M.t90 / done | 3,841 / 4,231 | 3,851 / 4,298 | 3,926 / 4,166 |
+| attack-100 (a chase) | damage_end / g.E.arrived | 2,054 / 2 | 2,417 / 4 | 1,880 / 6 |
+
+Hash-identical at every gate offset: `attackring-guard-64` (a guard has no ring and no damage to deal there; its
+proximity keys are round 4's), `goalblock-fight-200`, `aware-attack`, `mixed2` and 19 of the 22 legion100 fixtures
+(corner-1x100 and corner-4x25 differ at 2 offsets with equal medians; ringcross-100 and attack-100 above).
+Trades: on the fight rings statue ticks and reversals rise toward and past Retail's (more bodies press the last
+pixel; cosmetic by the ruling). `attackring-gatehouse-40`'s median ever in reach falls 18 -> 14 (its sums over the
+11 offsets are level: damage 4,834 -> 4,854, now in reach 171 -> 171), `attackring-f2-64` (2x2 bodies) deals 72
+less, still above Retail. `ringcross-100`'s Move group completes 67 ticks later (+1.6%), its t90 10 later.
+`battle-assault` reverses 1,515 -> 1,531 and its group losses move by up to 6 bodies either way;
+`battle-field-2x60` A loses 26 instead of 27 (Retail 37).
+
+Overlap with other work: the edge test is inside `pressIn` (press-in, the settle-into-reach area) and the stop
+origin inside `ringScan`'s spent test (ring upkeep). Ring planning (`buildRing`'s bands and spots) and
+`shadowWalk` are untouched.
+
+Tried and rejected (gate medians):
+* The late ring at two members (the first form): fight-60 2,879, diag 2,140, but the battle costs above. At four:
+  2,872 / 2,087, +4-5% battle work. At sixteen: fight-60 2,803 (43 in reach).
+* The late ring sized for `kRingCells` spots instead of the members it has: the same medians (2,655 against 2,664).
+* The stop point a pixel inside reach as well as the origin fix: diag 2,137, mob-100 3,050, but f1-64 2,833 (42 in
+  reach), wall-64 1,983 and ringcross-100 41 in reach (damage 6,243).
+
+`ctest:legion_fightring` (fight-60 offset 0: half in reach by tick 1,300; 1,526 on the parent, 1,510 without the
+late ring) and `ctest:legion_ringedge` (f1-64 offset 0: 43 or more in reach at the end; 39 on the parent, 41 without
+the edge test). `ctest:legion_ringwait` fails with the edge test but without the stop-origin fix.
 
 ### Paused first builds (W4 C1, protocol 244)
 
@@ -4566,9 +4656,12 @@ Rules that came out of using them:
   above Retail's on the open rings (r200 380 against 155; ringcross 780 against 150); bodies stand more (stopped
   permille up to 32 above round 3 on the rings, 150-200 on fight and guard, past Retail); bodies held behind an arc
   no longer creep round it to the far side's free spots (attackring-f1-64 ever in reach 43 -> 39, Retail 45); and
-  the fight orders' attack groups never get a ring (their field starts with one member; see the round-4 section), so
-  a fight order still has fewer bodies in reach than Retail (attackring-fight-60 40 against 44,
-  attackring-fight-diag-60 41 against 44). A fight order's members on their fight leg now shuffle at travel speed
+  the fight orders' attack groups got no ring (their field starts with one member; see the round-4 section), so
+  a fight order had fewer bodies in reach than Retail (attackring-fight-60 40 against 44,
+  attackring-fight-diag-60 41 against 44). Since round 5 ("Fight rings and the reach edge") a group that grows to
+  eight plans a late ring, and a press may end exactly on the reach edge: 44 in reach on both, fight-60 deals 2,867
+  damage against Retail's 2,814 and the diagonal approach 2,070 against 2,167, still later into reach there (t50
+  1,733 against 1,631), while statue ticks and reversals on the fight rings rise toward and past Retail's. A fight order's members on their fight leg now shuffle at travel speed
   too (round 4's follow-up: attackring-fight-diag-60 statue ticks 3,918 -> 3, attackring-fight-60 372 -> 3; Retail
   23 and 31); in exchange `fight-retarget`'s stragglers settle at the packed disc's edge more often (7 of 17 runs
   never done against 4; Retail 0) and the battles reverse and lose more bodies. Measured by
@@ -4576,7 +4669,8 @@ Rules that came out of using them:
   `ctest:legion_ringshuffle`, `ctest:legion_ringupkeep`, `ctest:legion_attackwalled`, `ctest:legion_attackflush`,
   `ctest:legion_ringcross`, `ctest:legion_ringfill`, `ctest:legion_ringclosed`, `ctest:legion_ringstill`,
   `ctest:legion_ringwait`, `ctest:legion_ringshadow`, `ctest:legion_ringbend`, `ctest:legion_ringblind`,
-  `ctest:legion_ringpocket`, `ctest:legion_ringroute`, `ctest:legion_ringnosight` and `ringcross:g.M.t90`.
+  `ctest:legion_ringpocket`, `ctest:legion_ringroute`, `ctest:legion_ringnosight`, `ctest:legion_fightring`,
+  `ctest:legion_ringedge` and `ringcross:g.M.t90`.
 * **The livelock fix costs some lane order (protocol 257).** A body blocked
   again after a side-step toward its arc may not step straight back, so it
   takes another field step inward or holds and side-steps: the 150 bodies
