@@ -2,8 +2,8 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.7** (network protocol **284**, replay format
-**13**). It is written for three kinds of reader:
+This guide covers **TAK Engine 0.8.8** (network protocol **288**, replay format
+**14**). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
   the game;
@@ -274,7 +274,7 @@ change in the room, until the game starts.
 | **Game mods** | Multiplayer only, default **Off**. When on, the host ticks game mod packs in the room and they are sent to every player. Single player always has them. See [Mods](#mods). |
 | **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. The host can change it in the room by clicking it, until the game starts; then it is fixed. See [Spectating](#spectating). |
 | **Spectate (Watch AIs)** | Single-player only: fill every slot with AIs and watch. |
-| **Power codes** | **Off** (the default) or **On**. On lets every player in the game type the original game's cheat codes in the chat box, such as **+ATM** and **+NowISee**. See [Power codes](#power-codes). Not offered in campaigns. It cannot be changed in the room. |
+| **Power codes** | **Off** (the default) or **On**. On lets every player in the game type the original game's cheat codes in the chat box, such as **+ATM** and **+NowISee**. See [Power codes](#power-codes). Always off in campaigns and Crusades battles. It cannot be changed in the room. |
 | **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered when game mods are available (always in single player, with **Game mods: On** in multiplayer), if you have a game mod pack, with the warning *PACK NEEDED:* and the unit, in case a selected pack supplies it. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
 
 Your choices are remembered for next time, except passwords, Spectate and Map
@@ -1195,14 +1195,14 @@ armies:
   along a wall is deeper: units that find no place at the front wait just
   behind it instead of standing back, and step in when they can fire. Units
   on a fight or guard order also stop creeping round a target that stands
-  still, and walk round their friends at full speed. After 0.8.7, units
+  still, and walk round their friends at full speed. Since 0.8.8 units
   waiting just outside reach of a ring along a wall step on into the ground
   behind it that the wall hides from the target, and stay there until they can
   fire; units on a fight-move that come upon a target standing still surround
   it as an attack order does, instead of queueing on the near side; and a unit
   stopped right at the edge of its weapon's reach counts as in reach, as it
   does when firing. Units attacking through a narrow gate, such as the corridor
-  round a gatehouse, now fill the corridor from its far end, as in Retail:
+  round a gatehouse, fill the corridor from its far end, as in Retail:
   the first units walk on past the first place they could fire from instead
   of stopping in the gate and shutting it, so at least as many units fire at once
   as in Retail (before, under three quarters as many).
@@ -1254,6 +1254,9 @@ in a formation or Ctrl+number group with ground units keep station over them.
 - Legion units stand and wait in a crowd more than units in Retail do,
   although they usually arrive sooner. In a few test layouts a group still
   arrives a little later (under 5%) than in Retail.
+- Units attacking through a narrow gate or corridor now keep more of their
+  number within reach than in Retail, so they deal more damage there: in the
+  test layouts from about 1.2 to 2.2 times as much.
 - Two large groups meeting head-on at a narrow, tapering bridge can still jam
   in its mouth and take much longer to cross than in Retail.
 - When a group goes round a parked crowd, it can still pass by one side in a
@@ -1630,9 +1633,9 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.7 uses network protocol **284**. It cannot play with 0.8.6 (protocol
-281) or any earlier version: the server turns away a client whose protocol
-differs from its own, so a server and all of its players must update to 0.8.7
+Version 0.8.8 uses network protocol **288**. It cannot play with 0.8.7 (protocol
+284) or any earlier version: the server turns away a client whose protocol
+differs from its own, so a server and all of its players must update to 0.8.8
 together.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
@@ -1872,8 +1875,8 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.7 plays protocol-284 recordings only, so replays recorded by
-  0.8.6 or earlier need the version that recorded them);
+  recorded it (0.8.8 plays protocol-288 recordings only, so replays recorded by
+  0.8.7 or earlier need the version that recorded them);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -1930,11 +1933,15 @@ then ticked cosmetic packs.
   the host ticks them; they are sent to the server and to every player
   automatically, and everyone checks they have the same package before the game
   starts. Transfers are limited to 256 MB.
-- **Campaigns** use the original game data plus your always-on cosmetic
-  archives only: no game packs and no ticked cosmetic packs.
+- **Campaigns** and **Crusades battles** use the original game data plus your
+  always-on cosmetic archives only: no game packs and no ticked cosmetic packs.
 
 The old `overrides/` folder is no longer read. Nothing in it is moved or
-changed; move your packs into `mods/cosmetic/` or `mods/game/` yourself.
+changed; move your packs into `mods/cosmetic/` or `mods/game/` yourself, each
+in its own folder. A pack you used in **Cosmetic** mode goes in
+`mods/cosmetic/<pack>/`; a pack you used in **Full** mode, or any pack that
+changes units or rules, goes in `mods/game/<pack>/`. Your old pack choices are
+not carried over, so tick the packs again in the room.
 
 ---
 
@@ -2039,7 +2046,7 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together.** A server only accepts clients of
-the same protocol version (0.8.7 uses protocol 284; 0.8.6 uses 281).
+the same protocol version (0.8.8 uses protocol 288; 0.8.7 uses 284).
 
 ---
 
@@ -2144,7 +2151,7 @@ the system's permission to use the microphone.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.7 uses protocol 284, 0.8.6 uses 281). See
+one that recorded them (0.8.8 uses protocol 288, 0.8.7 uses 284). See
 [Replays](#replays).
 
 ### Where files are kept

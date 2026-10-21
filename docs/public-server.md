@@ -46,8 +46,8 @@ enter `tcp://hostname` (and an optional `:port`). Bare menu hostnames always use
 TLS, with no plaintext fallback. Automatically launched single-player servers
 keep their private loopback connection. Debug command-line harness connections
 retain their explicit transport behavior. Old clients cannot connect to a TLS
-listener. Version 0.8.7 uses gameplay protocol 284, so 0.8.6 clients (protocol 281) and older
-cannot join a 0.8.7 server, nor 0.8.7 clients an older one; update the server and all clients
+listener. Version 0.8.8 uses gameplay protocol 288, so 0.8.7 clients (protocol 284) and older
+cannot join a 0.8.8 server, nor 0.8.8 clients an older one; update the server and all clients
 together.
 
 The login exchange alone is not session encryption. Do not expose the old

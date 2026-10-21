@@ -763,7 +763,7 @@ narrow approach walks on past the shot, and deep rings fill back to front (Legio
 Protocol 287 replaces override packs with mods: the host-only game-mods flag replaces the
 override tier, and cosmetic mods are never sent; the simulation is 286's.
 Protocol 288 adds power codes: the POWER CODES room option and `Cmd::PowerCode`; with
-the option off the simulation is 287's.
+the option off the simulation is 287's; 0.8.8 ships protocol 288.
 Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
@@ -1054,6 +1054,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.8.7 (peers and server) requires protocol 284; 0.8.6 required 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.8.8 (peers and server) requires protocol 288; 0.8.7 required 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

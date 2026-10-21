@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.8.7-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.8.8-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -53,7 +53,50 @@ assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data. New players can start with the
 [quick-start controls reference](docs/quick-start.md).
 
-## New in 0.8.7
+## New in 0.8.8
+
+0.8.8 changes the simulation, the match options and the replay format, so the
+protocol moves to **288** and replays to format **14**: **0.8.8 cannot play
+with 0.8.7 or earlier, and cannot play their replays**. Update the server and
+every player together. Retail pathfinding plays exactly as in 0.8.7.
+
+- **Mods replace overrides.** Packs now go in `mods/cosmetic/<pack>/` (art and
+  sound, each player's own choice, never sent) or `mods/game/<pack>/` (units
+  and rules: always available in single player; in multiplayer when the host
+  turns **Game mods** on, and only the host picks them). A `.hpi` placed
+  directly in `mods/cosmetic/` is always on, in every game. The old
+  `overrides/` folder is no longer read and nothing in it is moved: move your
+  packs yourself. See [Mods](docs/user-guide.md#mods).
+- **Power codes.** A new **Power codes** match option, in single player and
+  multiplayer, lets players type the original game's cheat codes in chat:
+  **+ATM**, **+ManaMe**, **+DoubleShot**, **+HalfShot**, **+LOS**,
+  **+Mapping**, **+NowISee**, **+Radar** and **+MakePoster** (a picture of the
+  whole map, also on **Print Screen**). Off in campaigns and Crusades battles.
+  See [Power codes](docs/user-guide.md#power-codes).
+- **A chat box you can read.** In-game chat is clear bold text on a dark
+  panel, with names in player colours and long lines wrapped. **Chat Scale**
+  (50–300%) and **Chat Position** (Left or Centered) are in **Options →
+  Interface**.
+- **A new interface font.** Menus, rooms, Options, HUD text, briefings and
+  Unit Info now use Noto Sans Bold; the original decorative lettering is kept.
+  **Options → Interface → UI Font: Classic** brings back the earlier look.
+- **Legion rings along walls and through gates.** Attackers held just outside
+  reach press into the ground a wall hides from the target, fight-move columns
+  surround a still target as an attack does, and attackers through a narrow
+  gate fill the corridor from its far end instead of plugging it. Rings along
+  a wall now hold about as many attackers in reach as Retail's. See
+  [Legion](docs/user-guide.md#legion).
+
+Legion units still stand and wait in crowds more than Retail's, though they
+usually arrive sooner, and attackers through a narrow gate now deal more damage
+than Retail's. Saved `.kmp` maps, generated-map recipes and settings carry
+over, except the old override-pack choices: tick your packs again in the room.
+The interface font's licence, `CHAT-FONT-LICENSE.txt`, ships with every
+package. No new runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.8.8-notes.md) and
+[validation report](docs/release-0.8.8-validation.md).
+
+### Previously in 0.8.7
 
 0.8.7 changes the simulation and the lobby, so the protocol moves to **284**:
 **0.8.7 cannot play with 0.8.6 or earlier, and cannot play their replays**.
@@ -978,7 +1021,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.8.7 uses generator v9;
+the same named map when the game starts. Version 0.8.8 uses generator v9;
 v8 recipes still regenerate identically, older seed recipes are unsupported, and saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -986,7 +1029,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.8.7 uses protocol **284** and generator version 9; generated-map recipes from 0.8.0 on still work.
+Version 0.8.8 uses protocol **288** and generator version 9; generated-map recipes from 0.8.0 on still work.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -1275,12 +1318,12 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same network protocol and compatible game data** on every participant.
-Version **0.8.7 uses protocol 284**, including authoritative pathfinding
-selection, shared override-pack transfer, and Darien Crusades campaign messages.
-0.8.6 (protocol 281) and earlier clients cannot join 0.8.7 matches, and
-0.8.7 clients cannot join older servers: update the server and all players together.
-Replay format is **13** (checkpoints also carry a position digest, and the header
-records the Map Scenario option), and
+Version **0.8.8 uses protocol 288**, including authoritative pathfinding
+selection, shared game-mod pack transfer, and Darien Crusades campaign messages.
+0.8.7 (protocol 284) and earlier clients cannot join 0.8.8 matches, and
+0.8.8 clients cannot join older servers: update the server and all players together.
+Replay format is **14** (checkpoints also carry a position digest, and the header
+records the Map Scenario and Power Codes options), and
 playback requires the current simulation protocol. Older recordings need the engine that recorded them.
 The connection checks gameplay definitions, scripts, and models. Selected map
 contents are verified separately and transferred automatically when needed.
@@ -1302,7 +1345,10 @@ your login name.
 Use **Options** to adjust audio, shadows, health bars, UI scale, cursor size,
 and camera behavior. **UI Scale** and **F4 Scorecard Scale** (the player
 scorecard, set independently) range from 50–200% and are remembered between
-sessions. Fullscreen, VSync, Shadows, Smooth GUI Art, Smooth Movies, Trees Sway
+sessions. **UI Font** picks **Modern** (Noto Sans Bold, the default) or
+**Classic** (the engine's earlier look) for plain interface text, and **Chat
+Position** (Left or Centered, the default) and **Chat Scale** (50–300%) place
+and size the in-game chat box. Fullscreen, VSync, Shadows, Smooth GUI Art, Smooth Movies, Trees Sway
 in Wind, Stats Panel, Tactical Dots, Hardware Cursor and Smooth Motion default
 to **on**; **Screen Shake** (the camera shake of heavy impacts and mission
 earthquakes) defaults to **off**. **Max FPS** caps the frame rate only while
@@ -1502,12 +1548,12 @@ HPI/UFO/KMP archives:
   files.
 
 Other files directly in `mods/`, `mods/cosmetic/` or `mods/game/` never load.
-Campaigns use neither game packs nor ticked cosmetic packs. Alphabetically later
+Campaigns and Crusades battles use neither game packs nor ticked cosmetic packs. Alphabetically later
 pack names win file conflicts; game packs load first, then the always-on
 archives, then ticked cosmetic packs. Pack choices are remembered. The old
 `overrides/` folder is no longer read and is left untouched. See
 [mod details](docs/user-guide.md#mods).
-Version 0.8.7 uses protocol **284**; servers and clients must all run 0.8.7 (0.8.6 uses 281).
+Version 0.8.8 uses protocol **288**; servers and clients must all run 0.8.8 (0.8.7 uses 284).
 
 
 ## License
