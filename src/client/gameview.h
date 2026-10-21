@@ -2957,6 +2957,9 @@ private:
     std::map<std::pair<std::string, int>, SDL_Texture*> modelIcons_;  // model-rendered fallback icons
     std::vector<std::pair<SDL_FRect, const tak::sim::UnitType*>> iconRects_;
     SDL_FRect buildMenuRect_{};
+    // The top of what the build row draws this frame (its tooltip line, over the
+    // TRAINING line); 0 when no row is up. The chat box stays above it.
+    float buildRowTop_ = 0;
     bool overBuildMenu(float mx, float my) const;
     // The info bar's multi-selection strip (client/selportraits.h): one hit rect per
     // drawn type portrait (type id) plus the overflow tile (empty id), rebuilt each draw.

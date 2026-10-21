@@ -71,22 +71,47 @@ inline std::vector<std::string> wrap(const std::string& text, float firstW, floa
     return rows;
 }
 
+// The top of the conjure (build) row GameView::drawPanel draws above the information
+// bar for a selected builder, mirroring its sizing: icons (barH - 10) x BUILD MENU SCALE
+// tall (shrunk to fit over the bar), 5 px above it, the TRAINING line drawn at
+// 24 x scale over the icons and a hovered icon's tooltip at 28 x scale, the highest.
+// `barTop` is the bar's top, `barH` its height. The row spans the screen's width at
+// most and may sit left, centre or right, so the band is the whole width.
+inline float buildRowTop(float barTop, float barH, float buildScale) {
+    float iconSz = (barH - 10.0f) * buildScale, scale = buildScale;
+    const float availH = std::max(barTop - 10.0f, 24.0f);
+    if (iconSz > availH) {
+        scale *= availH / iconSz;
+        iconSz = availH;
+    }
+    return barTop - 5.0f - iconSz - 28.0f * scale;
+}
+
+// The lowest y the box may reach: above the information bar and the HUD drawn over it
+// -- the build row with its TRAINING line and tooltip (above), and the weapon-switch
+// row (26 px buttons 8 px over the bar). `rowTop` is the top of the build row drawn
+// this frame (0: none is up); with none up, the room a row of BUILD MENU SCALE
+// `buildScale` would take is kept anyway (buildRowTop), so the box never covers the row
+// when it appears. The two agree unless the row is shrunk to fit a narrow window, which
+// only lowers it. `hudRow` is false for a spectator, who gets no bottom HUD.
+inline float hudFloor(float barTop, float barH, float buildScale, float rowTop, bool hudRow) {
+    if (!hudRow) return barTop;
+    const float row = rowTop > 0 ? rowTop : buildRowTop(barTop, barH, buildScale);
+    return std::min(barTop - 34.0f, row);
+}
+
 // Where the box goes. `areaW` is the width of the play area (left of the command
-// panel), `bottom` the y the box must stay above (the information bar's top), `top`
-// the highest it may reach. `avoid` (w > 0) is a HUD strip to stay clear of -- the
-// conjure/build row -- which the box moves up over when they would overlap.
+// panel), `bottom` the y the box must stay above (hudFloor), `top` the highest it may
+// reach; the box keeps `margin` clear of the play area's sides and of `bottom`.
 struct Rect { float x = 0, y = 0, w = 0, h = 0; };
 inline Rect place(int align, float boxW, float boxH, float areaW, float bottom, float top,
-                  float margin, Rect avoid) {
+                  float margin) {
     Rect r;
     r.w = std::min(boxW, std::max(0.0f, areaW - 2 * margin));
     r.h = boxH;
     r.x = align == Centered ? (areaW - r.w) / 2 : margin;
     r.x = std::max(r.x, margin);
-    float b = bottom - margin;
-    if (avoid.w > 0 && r.x < avoid.x + avoid.w && avoid.x < r.x + r.w && b > avoid.y - margin)
-        b = avoid.y - margin;
-    r.y = std::max(top, b - r.h);
+    r.y = std::max(top, bottom - margin - r.h);
     return r;
 }
 

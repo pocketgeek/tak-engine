@@ -2259,6 +2259,7 @@ namespace {
         // a user preference (Options "BUILD MENU": left / centered / right).
         iconRects_.clear();
         buildMenuRect_ = {};
+        buildRowTop_ = 0;
         const auto* b = selectedBuilder();
         if (b) {
             const auto menu = conjureMenu(b->type->id);   // mission-filtered
@@ -2298,9 +2299,12 @@ namespace {
                      : buildBarAlign_ == 2 ? float(winW) - rowW - 10.0f
                                            : 10.0f;
             x0 = std::max(x0, 10.0f);               // a huge menu never runs off-screen left
+            // (tak::chatbox::buildRowTop mirrors this sizing: the chat box's floor while
+            // no row is up.)
             float iconY = bar.y - iconSz - 5;       // sit just above the bar
             float x = x0;
             if (n > 0) buildMenuRect_ = {x0 - 5, iconY - 5, rowW + 10, iconSz + 10};
+            if (n > 0) buildRowTop_ = iconY - 28 * bScale;   // the tooltip's top (TRAINING: 24)
             // A recessed container behind the row so the conjure menu reads as one HUD
             // strip (matching the InfoPanel bar's dark inset + bronze frame).
             if (n > 0 && guiBar) {
@@ -2575,7 +2579,8 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
     // colour with a drop shadow, over one translucent dark panel, so it reads over
     // bright sand and dark forest alike. Size is UI SCALE x CHAT SCALE; the box sits
     // left or centred over the play area (never under the command panel), above the
-    // information bar, and lifts over the build row when the two would overlap.
+    // information bar and the build row's band with its TRAINING line, whether or not
+    // a builder's row is up (chatbox.h hudFloor).
     void GameView::drawGameChat(int winW, int winH) {
         // The embedded face; the HUD font only if it ever failed to load.
         if (tak::uiFont().ok()) drawGameChatIn(tak::uiFont(), winW, winH);
@@ -2589,10 +2594,14 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
 
         const float areaW = float(mapViewW(winW));
         const float margin = std::round(10 * uiScale_);
-        const float bottom = float(winH - barH());
-        // The box may use the lower 45% of the play area; above that it would start to
-        // cover the battle rather than annotate it.
-        const float maxBoxH = bottom * 0.45f;
+        // Above the information bar AND the build row, its TRAINING line and tooltip
+        // (chatbox.h hudFloor): the box never covers HUD text, at any scale.
+        const float barTop = float(winH - barH());
+        const float bottom = cb::hudFloor(barTop, float(barH()), buildBarScale_, buildRowTop_,
+                                          !spectating_);
+        // The box may use 45% of the play area's height, so long as it fits above the
+        // HUD; higher up it would start to cover the battle rather than annotate it.
+        const float maxBoxH = std::max(0.0f, std::min(barTop * 0.45f, bottom - 2 * margin));
 
         float top1 = 0, h1 = 0;
         font.vbounds("Hdgjpqy", 1, top1, h1);
@@ -2671,8 +2680,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         }
         // While typing the box keeps its full width, so it does not grow under the caret.
         const float boxW = (chatTyping_ ? wrapW : contentW) + 2 * pad;
-        cb::Rect avoid{buildMenuRect_.x, buildMenuRect_.y, buildMenuRect_.w, buildMenuRect_.h};
-        const cb::Rect box = cb::place(chatAlign_, boxW, boxH(), areaW, bottom, 0, margin, avoid);
+        const cb::Rect box = cb::place(chatAlign_, boxW, boxH(), areaW, bottom, 0, margin);
 
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         SDL_FRect bg{box.x, box.y, box.w, box.h};
