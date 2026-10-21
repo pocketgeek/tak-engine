@@ -3357,6 +3357,7 @@
                 }
                 return true;
             case tak::Act::ToggleCounts: showCounts_ = !showCounts_; return true;
+            case tak::Act::MakePoster: if (powerCodesOn()) startPoster(); return true;   // +MakePoster
             case tak::Act::UnitInfo: toggleUnitInfo(); return true;
             case tak::Act::RetailZoom: {
                 // Retail draws the map at native 1:1 scale. Preserve the centre

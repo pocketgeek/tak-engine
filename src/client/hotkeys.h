@@ -39,6 +39,7 @@ enum class Act {
     SelfDestruct,
     GiveUnits, ToggleCounts, UnitInfo, FullScreenRadar, Disco, Headbang, RetailZoom,
     PushToTalk,
+    MakePoster,
     Count
 };
 

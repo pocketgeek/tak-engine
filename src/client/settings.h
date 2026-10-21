@@ -123,6 +123,7 @@ struct Settings {
         bool crusades = false, doubleSight = false, speedUnlock = false;
         bool monarchExpendable = false;
         bool allowSpectators = true;   // multiplayer ALLOW SPECTATORS (on, as every room was before it)
+        bool powerCodes = false;       // POWER CODES (net::GameOptions::powerCodes), off as in retail
         bool generated = false;
         bool gameMods = false;         // multiplayer GAME MODS toggle (single player is always on)
         sim::PathfindingMode pathfindingMode = sim::PathfindingMode::Retail;

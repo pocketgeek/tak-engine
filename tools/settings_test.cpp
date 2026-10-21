@@ -101,6 +101,7 @@ int main() {
     flips("gameCreate.randomStarts", [](Settings& s) { s.gameCreate.randomStarts = (s.gameCreate.randomStarts + 1) % 3; });
     flips("gameCreate.randomStarts 2", [](Settings& s) { s.gameCreate.randomStarts = 2; });
     flips("gameCreate.allowSpectators", [](Settings& s) { s.gameCreate.allowSpectators = !s.gameCreate.allowSpectators; });
+    flips("gameCreate.powerCodes", [](Settings& s) { s.gameCreate.powerCodes = !s.gameCreate.powerCodes; });
     flips("gameCreate.generated", [](Settings& s) { s.gameCreate.generated = !s.gameCreate.generated; });
     flips("gameCreate.unitCap", [](Settings& s) { ++s.gameCreate.unitCap; });
     flips("gameCreate.fog", [](Settings& s) { ++s.gameCreate.fog; });

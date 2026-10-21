@@ -161,6 +161,8 @@
             unitSoundQueue_.clear();
         }
         resetDiplomacy(room);
+        radarCode_ = false;   // power codes start off in every match
+        poster_.reset();
         // A room field (SAY, a password) focused when the host started is let go: the game
         // has no such field, and its text input would otherwise hold push to talk off.
         if (lbField_) { lbField_ = 0; SDL_StopTextInput(); }
@@ -1082,6 +1084,7 @@ void GameView::autoplayStep() {
         if (!mp_->poll()) { netError_ = mp_->error(); return false; }
         S st = mp_->state();
         if (st == S::Done) { if (netError_.empty()) netError_ = mp_->error(); return false; }
+        if (st == S::InGame) powerScriptStep();   // TAK_POWER_SCRIPT (debug builds)
         // A START the server refused ends a harness run, with the reason as its error. Only
         // the auto-start paths set mpStarted_; a player in the room reads the refusal there.
         if (st == S::InRoom && mpStarted_ && !mp_->startError().empty()) {
@@ -1125,6 +1128,9 @@ void GameView::autoplayStep() {
             // TAK_NO_SPECTATORS=1: the room refuses watchers (ALLOW SPECTATORS off), so
             // a --mpspectate client can be shown the server's refusal.
             o.allowSpectators = tak::devFlag("TAK_NO_SPECTATORS") ? 0 : 1;
+            // TAK_POWER_CODES=1: the room plays with POWER CODES on (the server clears it
+            // for a mission), so a harness can type codes (TAK_POWER_SCRIPT).
+            o.powerCodes = tak::devFlag("TAK_POWER_CODES") ? 1 : 0;
             // TAK_MP_WATCH: host creates the game as a spectator (no slot) so every
             // slot can be an AI -- an all-AI game to watch.
             if (benchmarkMode_) o.benchmark = uint8_t(benchmarkLevel_);   // menu Benchmark: intensity level
@@ -1167,6 +1173,7 @@ void GameView::autoplayStep() {
                 tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
             o.gameMods = mods_.game ? 1 : 0;   // room game mods = this host's --mods
                 o.mapScenario = tak::devFlag("TAK_MAP_SCENARIO") ? 1 : 0;   // as for modes 1/4/7
+                o.powerCodes = tak::devFlag("TAK_POWER_CODES") ? 1 : 0;
                 mp_->createGame(mapId, "", mapId, o, mpCapacity(o.mapScenario != 0));
             }
             if (!mpFirstListMs_) mpFirstListMs_ = SDL_GetTicks64();

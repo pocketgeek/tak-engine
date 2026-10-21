@@ -180,7 +180,7 @@
             if (e.type == SDL_KEYDOWN) {
                 SDL_Keycode k = e.key.keysym.sym;
                 if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
-                    if (mp_ && !chatDraft_.empty()) mp_->chat(chatDraft_,chatRecipients_);
+                    if (mp_ && !chatDraft_.empty()) submitChat(chatDraft_);
                     chatDraft_.clear(); chatTyping_ = false; SDL_StopTextInput();
                 } else if (k == SDLK_ESCAPE) {
                     chatDraft_.clear(); chatTyping_ = false; SDL_StopTextInput();

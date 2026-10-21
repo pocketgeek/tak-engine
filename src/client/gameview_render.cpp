@@ -3116,6 +3116,8 @@
 
         // Restore the un-shaken camera so the HUD/panel stays rock-steady.
         if (shaking) mapView_.setOffset(shakeBaseX, shakeBaseY);
+        // A MakePoster tile (posterStep) is the world alone.
+        if (posterFrame_) { SDL_RenderSetClipRect(ren_, nullptr); return; }
 
         // Done with world-space: drop the clip and draw the right-hand panel and
         // its minimap + order column on a solid strip (never over the map).

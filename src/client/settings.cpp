@@ -162,6 +162,7 @@ Settings loadSettings() {
         else if (key == "gameCreate.randomStarts")   // was a bool: "true"/"on" meant RANDOM
             s.gameCreate.randomStarts = val == "true" || val == "on" ? 1 : asInt(0, 2);
         else if (key == "gameCreate.allowSpectators") s.gameCreate.allowSpectators = asBool();
+        else if (key == "gameCreate.powerCodes") s.gameCreate.powerCodes = asBool();
         else if (key == "gameCreate.generated") s.gameCreate.generated = asBool();
         else if (key == "gameCreate.unitCap") s.gameCreate.unitCap = asInt(250, 2000);
         else if (key == "gameCreate.fog") s.gameCreate.fog = asInt(0, 2);
@@ -259,6 +260,7 @@ std::string serializeSettings(const Settings& s) {
     o << "gameCreate.monarchExpendable = " << s.gameCreate.monarchExpendable << "\n";
     o << "gameCreate.randomStarts = " << s.gameCreate.randomStarts << "\n";
     o << "gameCreate.allowSpectators = " << s.gameCreate.allowSpectators << "\n";
+    o << "gameCreate.powerCodes = " << s.gameCreate.powerCodes << "\n";
     o << "gameCreate.generated = " << s.gameCreate.generated << "\n";
     o << "gameCreate.unitCap = " << s.gameCreate.unitCap << "\n";
     o << "gameCreate.fog = " << s.gameCreate.fog << "\n";

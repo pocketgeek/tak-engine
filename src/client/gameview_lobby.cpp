@@ -409,6 +409,7 @@ std::string startLocationsLabel(uint8_t mode) {
         pref.monarchExpendable = createMonarchExp_;
         pref.randomStarts = createStartMode_;
         pref.allowSpectators = createAllowSpectators_;
+        pref.powerCodes = createPowerCodes_;
         pref.unitCap = createUnitCap_;
         pref.fog = createFog_;
         if (!singlePlayer_) pref.gameMods = createGameMods_;   // SP is always on: keep the MP choice
@@ -459,6 +460,7 @@ std::string startLocationsLabel(uint8_t mode) {
             createMonarchExp_ = pref.monarchExpendable;
             createStartMode_ = uint8_t(std::clamp(pref.randomStarts, 0, 2));
             createAllowSpectators_ = pref.allowSpectators;
+            createPowerCodes_ = pref.powerCodes;
             spSpectate_ = false;  // Opt in for each skirmish; never restore from settings.
             createUnitCap_ = pref.unitCap == 250 || pref.unitCap == 500 || pref.unitCap == 1000 || pref.unitCap == 2000
                 ? uint16_t(pref.unitCap) : 2000;
@@ -489,16 +491,17 @@ std::string startLocationsLabel(uint8_t mode) {
             lbField(x, y, 260, "PASSWORD (optional)", createPass_, 2); y += 44;
         }
         blockText(std::string("MAP: ") + mapDisplayName(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 28;
-        // Option rows (26 high): a 27 pitch keeps all ten multiplayer rows clear of the
-        // BACK/CREATE footer.
-        const float kRow = 27;
-        lbCycle(x, y, 170, 26, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
+        // Option rows (26 high at a 27 pitch): multiplayer's eleven rows, under the name
+        // and password fields, are 24 high at a 25 pitch to stay clear of the BACK/CREATE
+        // footer.
+        const float kRow = singlePlayer_ ? 27 : 25, kRowH = singlePlayer_ ? 26 : 24;
+        lbCycle(x, y, 170, kRowH, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
               [this](int) { createCrusades_ = !createCrusades_; }); y += kRow;
-        lbCycle(x, y, 240, 26, createDoubleSight_ ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF", true,
+        lbCycle(x, y, 240, kRowH, createDoubleSight_ ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF", true,
               [this](int) { createDoubleSight_ = !createDoubleSight_; }); y += kRow;
-        lbCycle(x, y, 280, 26, pathfindingLabel(createPathfindingMode_), true,
+        lbCycle(x, y, 280, kRowH, pathfindingLabel(createPathfindingMode_), true,
               [this](int direction) { createPathfindingMode_=tak::sim::cyclePathfindingMode(createPathfindingMode_,direction); }); y += kRow;
-        lbCycle(x,y,240,26,"UNIT CAP: " + std::to_string(createUnitCap_),true,[this](int direction) {
+        lbCycle(x,y,240,kRowH,"UNIT CAP: " + std::to_string(createUnitCap_),true,[this](int direction) {
             static constexpr uint16_t limits[]={250,500,1000,2000};
             auto at=std::find(std::begin(limits),std::end(limits),createUnitCap_);
             int index=at==std::end(limits) ? 0 : int(at-std::begin(limits));
@@ -506,23 +509,27 @@ std::string startLocationsLabel(uint8_t mode) {
         }); y+=kRow;
         // When OFF, losing your Monarch loses the game (retail commander rule); ON
         // makes the Monarch just another unit.
-        lbCycle(x, y, 240, 26, scenarioOn ? "MONARCH EXPENDABLE: SCENARIO"
+        lbCycle(x, y, 240, kRowH, scenarioOn ? "MONARCH EXPENDABLE: SCENARIO"
                              : createMonarchExp_ ? "MONARCH EXPENDABLE: ON"
                                                  : "MONARCH EXPENDABLE: OFF", !scenarioOn,
               [this](int) { createMonarchExp_ = !createMonarchExp_; }); y += kRow;
-        lbCycle(x, y, 240, 26, createSpeedUnlock_ ? "ALLOW SPEED CHANGE: ON"
+        lbCycle(x, y, 240, kRowH, createSpeedUnlock_ ? "ALLOW SPEED CHANGE: ON"
                                               : "ALLOW SPEED CHANGE: OFF", true,
               [this](int) { createSpeedUnlock_ = !createSpeedUnlock_; }); y += kRow;
+        // POWER CODES (retail's battle-room box): the +codes typed in the chat box work
+        // for every player of this game. Off by default, as in retail.
+        lbCycle(x, y, 240, kRowH, createPowerCodes_ ? "POWER CODES: ON" : "POWER CODES: OFF", true,
+              [this](int) { createPowerCodes_ = !createPowerCodes_; }); y += kRow;
         // SP only: spectate mode -- you take no slot and just watch the AIs fight.
         // Seat AIs in the slots below, then START.
         if (singlePlayer_) {
-            lbCycle(x, y, 240, 26, spSpectate_ ? "SPECTATE (WATCH AIS): ON"
+            lbCycle(x, y, 240, kRowH, spSpectate_ ? "SPECTATE (WATCH AIS): ON"
                                              : "SPECTATE (WATCH AIS): OFF", true,
                   [this](int) { spSpectate_ = !spSpectate_; }); y += kRow;
         } else {
             // MP only: may others WATCH this game once it runs? The server enforces it;
             // the host can still flip it in the room until START.
-            lbCycle(x, y, 240, 26, createAllowSpectators_ ? "ALLOW SPECTATORS: ON"
+            lbCycle(x, y, 240, kRowH, createAllowSpectators_ ? "ALLOW SPECTATORS: ON"
                                                         : "ALLOW SPECTATORS: OFF", true,
                   [this](int) { createAllowSpectators_ = !createAllowSpectators_; }); y += kRow;
         }
@@ -531,7 +538,7 @@ std::string startLocationsLabel(uint8_t mode) {
         // rule, so it stays fair. The room displays this choice as information.
         {
             static const char* kFogName[3] = {"NOT EXPLORED", "EXPLORED", "FULL VISION"};
-            lbCycle(x, y, 240, 26,
+            lbCycle(x, y, 240, kRowH,
                   std::string("FOG OF WAR: ") + kFogName[std::min<int>(createFog_, 2)], true,
                   [this](int direction) { createFog_ = uint8_t((createFog_ + direction + 3) % 3); });
             y += kRow;
@@ -541,13 +548,13 @@ std::string startLocationsLabel(uint8_t mode) {
         // empty slots are skipped, as in retail; RANDOM = the starts are shuffled for
         // the match; BY SLOT (not retail) = slot N always takes the map's Nth start.
         // A MAP SCENARIO plays on fixed starts.
-        lbCycle(x, y, 240, 26, startLocationsLabel(scenarioOn ? tak::net::kStartsFixed : createStartMode_), !scenarioOn,
+        lbCycle(x, y, 240, kRowH, startLocationsLabel(scenarioOn ? tak::net::kStartsFixed : createStartMode_), !scenarioOn,
               [this](int direction) { createStartMode_ = uint8_t((createStartMode_ + direction + 3) % 3); }); y += kRow;
         // GAME MODS (multiplayer only): lets the host tick mods/game packs in the room,
         // which are then sent to every player. Single player always has them;
         // cosmetic mods need no switch (every player picks their own in the room).
         if (!singlePlayer_) {
-            lbCycle(x, y, 240, 26, createGameMods_ ? "GAME MODS: ON" : "GAME MODS: OFF", true,
+            lbCycle(x, y, 240, kRowH, createGameMods_ ? "GAME MODS: ON" : "GAME MODS: OFF", true,
                   [this](int) { createGameMods_ = !createGameMods_; }); y += 44;
         }
         // Footer buttons, symmetric: BACK at the bottom-left and CREATE at the
@@ -563,6 +570,7 @@ std::string startLocationsLabel(uint8_t mode) {
             o.speedUnlock = createSpeedUnlock_ ? 1 : 0;
             o.unitCap = createUnitCap_;
             o.monarchExpendable = createMonarchExp_ ? 1 : 0;
+            o.powerCodes = createPowerCodes_ ? 1 : 0;
             o.fogExplored = std::min<uint8_t>(createFog_, 2);
             // MAP SCENARIO: an offerable map's own scenario, when chosen. A Test Map copy
             // plays its scenario through its opt-in and sends 0 (the server checks the
@@ -1173,6 +1181,8 @@ std::string startLocationsLabel(uint8_t mode) {
         info(2,1,std::string("FOG OF WAR: ")+fogNames[std::min<int>(room.opts.fogExplored,2)]);
         info(3,0,startLocationsLabel(room.opts.randomStarts));
         info(4,0,pathfindingLabel(room.opts.pathfindingMode));
+        if(!campaign && room.mission.empty())
+            info(4,1,std::string("POWER CODES: ")+onOff(room.opts.powerCodes));
         // ALLOW SPECTATORS is the one room rule the host may still flip here: it only
         // decides who may WATCH once the game runs, so no player has planned around it.
         // The server adopts it until START and refuses Spectate while it is off.

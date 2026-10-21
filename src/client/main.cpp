@@ -1953,6 +1953,7 @@ int main(int argc, char** argv) {
             }
 #endif
             gameView->pumpVoice();   // voice chat: frames in and out, push-to-talk upkeep
+            gameView->posterStep(w, h);   // a MakePoster tile, drawn and read back before the frame
             gameView->draw(w, h);
 #ifndef NDEBUG
             if(studyQuery) {

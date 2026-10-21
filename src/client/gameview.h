@@ -2214,6 +2214,7 @@ private:
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false;
     bool createDoubleSight_ = false;
+    bool createPowerCodes_ = false;   // POWER CODES (GameOptions::powerCodes)
     tak::sim::PathfindingMode createPathfindingMode_ = tak::sim::PathfindingMode::Retail;
     bool createSpeedUnlock_ = false;
     uint16_t createUnitCap_ = tak::net::GameOptions{}.unitCap;
@@ -2313,8 +2314,46 @@ private:
     // In-game chat: press Enter to compose, lines fade after a while. Kept apart
     // from the lobby chatLog_ so the in-game overlay and lobby panel don't mix.
     bool chatTyping_ = false;
-    struct GameChat { std::string who, text; float age = 0; bool notice = false; };   // notice: raised by this client (gold name)
+    // notice: raised by this client (gold name); who "" = a local system line, drawn
+    // without a name in the notice gold (power codes, the poster).
+    struct GameChat { std::string who, text; float age = 0; bool notice = false; };
     std::vector<GameChat> gameChat_;
+    // ---- power codes (sim/powercodes.h; gameview_powercodes.cpp) ----
+    // This match has POWER CODES on and this client plays in it (not a replay, a
+    // spectator or a campaign mission).
+    bool powerCodesOn() const;
+    // A chat line that named a code: the sim codes go out as Cmd::PowerCode, Radar
+    // and MakePoster act here. Nothing while the match has POWER CODES off.
+    void powerCode(const tak::sim::PowerCodeInput& in);
+    void systemChat(const std::string& text) { gameChat_.push_back({std::string(), text, 0, true}); }
+    // The chat composer's Enter: a +CODE line acts when the match has POWER CODES on,
+    // and every line is sent as chat.
+    void submitChat(const std::string& line);
+    // TAK_POWER_SCRIPT="TICK:LINE;..." (debug builds): type these
+    // chat lines at those ticks; a ManaMe line selects every own unit first.
+    void powerScriptStep();
+    bool radarCode_ = false;   // +Radar: the minimap shows every unit (reset each match)
+    // +MakePoster / MAKE POSTER: the whole map at native scale, one screen-sized tile
+    // rendered per frame (posterStep, before the frame's own draw), then written as a
+    // PNG off the main thread. The view is the local player's (its fog included).
+    struct PosterJob {
+        int width = 0, height = 0;          // the map in world pixels = the image
+        int tileW = 0, tileH = 0, cols = 0, rows = 0, next = 0;
+        std::shared_ptr<std::vector<uint8_t>> rgb;
+        std::string path;
+        uint64_t startMs = 0;
+        double maxTileMs = 0;   // the worst frame cost of one tile (logged)
+    };
+    std::unique_ptr<PosterJob> poster_;
+    bool posterFrame_ = false;   // draw(): the world only, none of the HUD
+    // Lines from poster writer threads (they may outlive a match), shown as chat.
+    struct PosterNotes { std::mutex m; std::vector<std::string> lines; };
+    std::shared_ptr<PosterNotes> posterNotes_ = std::make_shared<PosterNotes>();
+    std::string posterFolder() const;
+public:
+    void startPoster();
+    void posterStep(int winW, int winH);   // main loop, before draw(): one tile, if a poster is due
+private:
     uint64_t chatLastMs_ = 0;
     struct LobbyHot {
         SDL_FRect rect;

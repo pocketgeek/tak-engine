@@ -832,7 +832,9 @@ namespace {
         for (const UnitR* _up : front().live) { const UnitR& u = *_up;
             // A spectator (noFog_) sees every unit on the radar; a player sees only
             // allied units and enemies currently in view. (Shared with Tactical Dots.)
-            if (!radarVisible(u)) continue;
+            // The +Radar power code shows them all here, on the minimap only (retail's
+            // one reader of the flag is the minimap dot pass, 0x4f9561).
+            if (radarCode_ ? !u.alive() || u.embarked() || !u.type : !radarVisible(u)) continue;
             SDL_FPoint p = toMini(u.x, u.z);
             SDL_Color tc = playerColor(u.player);
             pushQuad(overlayBatch_, p.x - 1.5f, p.y - 1.5f, 3, 3, tc);
@@ -2690,9 +2692,13 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         for (auto it = gameChat_.rbegin(); it != gameChat_.rend() && int(msgs.size()) < maxMsgs; ++it)
             if (chatTyping_ || cb::lineAlpha(it->age) > 0) msgs.push_back(&*it);
         std::reverse(msgs.begin(), msgs.end());
-        for (const GameChat* m : msgs)
-            addMessage(m->who + ": ", chatSenderColor(m->who, m->notice), m->text, bodyColor,
-                       chatTyping_ ? 1.0f : cb::lineAlpha(m->age), false);
+        for (const GameChat* m : msgs) {
+            const float a = chatTyping_ ? 1.0f : cb::lineAlpha(m->age);
+            if (m->who.empty())   // a local system line (power codes, the poster): no name, all gold
+                addMessage("", chatSenderColor(m->who, true), m->text, chatSenderColor(m->who, true), a, false);
+            else
+                addMessage(m->who + ": ", chatSenderColor(m->who, m->notice), m->text, bodyColor, a, false);
+        }
         const size_t firstComposer = rows.size();
         if (chatTyping_) addMessage("SAY: ", {255, 214, 120, 255}, chatDraft_ + "_", {255, 248, 225, 255}, 1, true);
         if (rows.empty()) return;
