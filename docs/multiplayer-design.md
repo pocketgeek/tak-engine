@@ -762,6 +762,8 @@ Protocol 286 is the sixth, for gatehouse corridors: an attacker that would plug 
 narrow approach walks on past the shot, and deep rings fill back to front (Legion only).
 Protocol 287 replaces override packs with mods: the host-only game-mods flag replaces the
 override tier, and cosmetic mods are never sent; the simulation is 286's.
+Protocol 288 adds power codes: the POWER CODES room option and `Cmd::PowerCode`; with
+the option off the simulation is 287's.
 Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
@@ -985,6 +987,18 @@ with the same ids and the offer label `"mods"`. The replay header keeps the same
 byte as `gameMods` and the digest as `modDigest`. Cosmetic mods (selected pack
 folders and the always-on `mods/cosmetic/*.hpi` archives) stay local to each player
 and are never sent. The simulation is 286's, but 286 recordings no longer play.
+Protocol 288 adds power codes. `GameOptions` gains a `powerCodes` byte after
+`mapScenario` (0 or 1, default 0, outside the Crusades rules digest): set when the
+room is created and kept by later option updates, and forced off by the server in
+campaigns and Crusades battles. `Cmd::PowerCode` (28, after `Order`) carries one of
+the seven simulation codes (`targetId` the code, `queue` the +LOS argument,
+`unitId` the +ManaMe unit); the server drops it while the room's option is off and
+treats an unknown code or argument as a forgery. Strict replay reads accept it from
+protocol 288. Replay format 14 appends the POWER CODES byte after the MAP SCENARIO
+byte: bit 0 the option, bit 1 the map started revealed (FOG OF WAR Explored or Full
+Vision, which +Mapping starts from); a format-13 file reads it as 0. With power codes
+off the simulation and the `--mpai` hashes are 287's, but 287 recordings no longer
+play.
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when

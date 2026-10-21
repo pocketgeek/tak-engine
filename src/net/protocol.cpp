@@ -151,7 +151,7 @@ void put(Writer& w, const GameOptions& o) {
     putRules(w, o);
     w.u8(o.allowSpectators);   // 258: room admission, outside the rules digest
     w.u8(o.mapScenario);       // 259: map scenario, outside the rules digest
-    w.u8(o.powerCodes);        // kPowerCodesProtocol: power codes, outside the rules digest
+    w.u8(o.powerCodes);        // 288: power codes, outside the rules digest
 }
 
 void get(Reader& r, GameOptions& o) {

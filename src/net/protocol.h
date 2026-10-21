@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 287;      // 287: mods replace overrides: GameOptions byte 3 overridePolicy (0/1/2) -> gameMods (0/1, host-only game
+constexpr uint32_t kNetVersion = 288;      // 288: power codes: GameOptions powerCodes byte (appended after mapScenario, creation-only, forced 0 in
+                                           //      campaigns and Crusades battles); Cmd::PowerCode = 28 (server-validated, dropped while off); replay
+                                           //      format 14 adds the POWER CODES byte (bit0 on, bit1 map started revealed). Sim unchanged with power
+                                           //      codes off; 287 replays refused
+                                           // 287: mods replace overrides: GameOptions byte 3 overridePolicy (0/1/2) -> gameMods (0/1, host-only game
                                            //      packs, forced 0 in campaigns); Msg::Override* -> Mod* (same ids), offer label "mods", replay header
                                            //      gameMods/modDigest in the same slots; cosmetic mods never sent. Sim unchanged; 286 replays refused
                                            // 286: Legion ~100 round 6: gatehouse corridors -- a braked attacker walks on past the shot rather than plug a
@@ -466,11 +470,9 @@ constexpr uint32_t kNetVersion = 287;      // 287: mods replace overrides: GameO
                                            // 10: reclaimable features in sim + Cmd::Reclaim (area-clear)
 constexpr uint32_t kMaxFrame = 1u << 18;   // 256 KB frame cap (hardening) -- headroom for a
                                            // big tick bundle when many units are ordered at once
-// Power codes (Cmd::PowerCode, GameOptions::powerCodes): the protocol that carries
-// them. UNASSIGNED: the wire change ships without a kNetVersion bump; the lead sets
-// both this and kNetVersion to the landing protocol. Until then it equals the
-// current version, so a strict replay read of this build accepts the command.
-constexpr uint32_t kPowerCodesProtocol = kNetVersion;
+// Power codes (Cmd::PowerCode, GameOptions::powerCodes): the first protocol that
+// carries them. A strict replay read accepts Cmd::PowerCode from here on.
+constexpr uint32_t kPowerCodesProtocol = 288;
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
 constexpr int kServerHz = 30;              // sim/tick rate
 constexpr int kHashPeriod = 30;            // ticks between StateHash reports; the

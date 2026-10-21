@@ -169,8 +169,13 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 287, "replay format 11 is kept under protocol 287");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 287");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 288, "replay format 11 is kept under protocol 288");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 288");
+    check(supportedReplayProtocol(14, kNetVersion) && kReplayFormat == 14, "replay format 14 is written under protocol 288");
+    check(!supportedReplayProtocol(15, kNetVersion), "a newer replay format is refused");
+    // 288 adds power codes (GameOptions powerCodes byte, Cmd::PowerCode 28, replay format 14 POWER CODES byte); the sim is 287's with them off.
+    check(!supportedReplayProtocol(13, 287), "previous protocol without power codes is refused");
+    check(!supportedReplayProtocol(14, 287), "a format-14 file claiming protocol 287 is refused");
     // 287 replaces overrides with mods (GameOptions/replay byte gameMods, Mod* messages); the sim is 286's.
     check(!supportedReplayProtocol(13, 286), "previous protocol without mods is refused");
     // 286 changes Legion movement at ~100 bodies, round 6 (gatehouse corridors: walk on past the shot, deep rings fill back to front; hashed state).
