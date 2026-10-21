@@ -228,6 +228,22 @@ The native dialogs (the first-start folder picker, *Not a game folder*,
 *Recover map* and *Restart failed*) belong to the operating system and are not
 pictured.
 
+## Quick start (`docs/img/quick/`)
+
+New in 0.8.7, for [quick-start.md](../quick-start.md). Rendered by the 0.8.7
+build with the same capture patch plus press, move and release entries for
+`TAK_SHOT_CLICKS` (for the drag). The game pictures are development scenes on
+Ulasem Arena, local server, 1600 × 900 at 1× zoom, cropped and scaled.
+
+| Image | Scene |
+| --- | --- |
+| `box-select.jpg` | **Spawned.** 17 Aramon units (Swordsmen, Archers, Knights, Catapults); a left-drag box drawn round them, before release. Crop, not scaled |
+| `selected.jpg` | The same army after release: green selection rings, four type portraits with counts 2, 3, 6 and 6, 17 SELECTED and the command panel. Taros units stand to the east. 75% |
+| `attack-cursor.jpg` | The army selected, the pointer over a Taros unit: the crossed-swords attack cursor, at Cursor Size 2×. 80% |
+| `command-panel.jpg` | A Mage Builder's command panel at 200%, labelled MOVE (M), PATROL (P), ATTACK (A), GUARD (G), HEAL (H), CLEAR and STOP (S). Which icon is which was checked by arming each key and seeing which button darkened |
+| `build-placement.jpg` | **Spawned** Mage Builder selected, its build menu along the bottom, the Barracks icon chosen and the Barracks ghost with its label under the pointer. 80% |
+| `lobby-move-here.jpg` | Single-player room opened from the menu with the default map, 1600 × 900: the player in slot 1, a Normal AI in slot 2, MOVE HERE on open slots 3 to 5, slots 6 to 8 closed, the preview numbering starts 1 to 5. 72% |
+
 ## Capture settings
 
 Captures use isolated SDL preference directories (`XDG_DATA_HOME` and
