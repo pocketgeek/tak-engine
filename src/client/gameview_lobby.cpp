@@ -247,7 +247,7 @@ std::string startLocationsLabel(uint8_t mode) {
         }
         const std::string key = lower(base);
         if (auto it = mapTitles_.find(key); it != mapTitles_.end() && lower(it->second) == key) return it->second + tag;
-        if (!missionName.empty() && lower(missionName) == lower(name)) return missionName;
+        if (!missionName.empty() && lower(missionName) == key) return missionName + tag;
         return name;
     }
 
