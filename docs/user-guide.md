@@ -795,8 +795,8 @@ build menus unchanged.
 
 ## Controls
 
-These are the default bindings. Command, selection, view, emote and
-push-to-talk keys can be changed in **Settings → Controls** (or **Esc →
+These are the default bindings. Command, selection, view, emote,
+push-to-talk and poster (**MAKE POSTER**) keys can be changed in **Settings → Controls** (or **Esc →
 Controls** in a game): click a row and press the new key;
 right-click a row to unbind it. Number-key squads, **Esc**, chat, pause and game
 speed keys are fixed.
@@ -1492,8 +1492,10 @@ game time, the speed the game is actually running at (as a game-speed level: NOR
 is not enough room.
 
 The **chat box** shows multiplayer chat during a game, just above the information
-bar. Each message starts with the sender's name in their player colour (notices
-from your own game, such as a cosmetic mod left out, are gold) and wraps onto further lines instead of running off the screen.
+bar; in single player it shows what you type, such as [power codes](#power-codes).
+Each message starts with the sender's name in their player colour (notices
+from your own game, such as a cosmetic mod left out, are gold; power code and
+poster lines are gold with no name) and wraps onto further lines instead of running off the screen.
 The text is a clean bold sans-serif drawn at your screen's real resolution, so it
 stays sharp at every Chat Scale and UI Scale (and on a Mac Retina display), and it
 sits on a dark panel so it reads over bright sand and dark forest alike. Accented
