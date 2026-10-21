@@ -1,5 +1,6 @@
 // Power codes (sim/powercodes.h): the chat parser, and each sim code's effect
 // through Cmd::PowerCode -- refused while the match has POWER CODES off.
+#include "net/matchconfig.h"
 #include "net/protocol.h"
 #include "server/commands.h"
 #include "sim/matchsetup.h"
@@ -176,6 +177,16 @@ static void simCodes() {
     check(c.stateHash() == d.stateHash(), "with POWER CODES off a code changes nothing");
     World e; e.setSerialThreads(true); e.setPlayerCount(2); e.setTerrain(std::vector<uint8_t>(128 * 128, 0), 128, 128, 0);
     check(c.stateHash() == e.stateHash(), "POWER CODES off hashes exactly like a world that never heard of it");
+    // A room that starts with the map revealed starts +Mapping with the shroud off (retail
+    // seeds MappingOn from Map Revealed): the first +Mapping brings the shroud back.
+    World m; m.setSerialThreads(true); m.setPlayerCount(2); m.setTerrain(std::vector<uint8_t>(128 * 128, 0), 128, 128, 0);
+    m.setPowerCodes(true, true);
+    check(m.powerMappingOff(0) && m.powerMappingOff(1) && !m.powerLosOff(0), "map revealed: the shroud starts off, LOS on");
+    applyCommand(m, reg, code(PowerCode::Mapping, 0));
+    check(!m.powerMappingOff(0) && m.powerMappingOff(1), "map revealed: the first Mapping re-shrouds the issuer only");
+    World off; off.setSerialThreads(true); off.setPlayerCount(2); off.setTerrain(std::vector<uint8_t>(128 * 128, 0), 128, 128, 0);
+    off.setPowerCodes(false, true);
+    check(!off.powerMappingOff(0) && off.stateHash() == e.stateHash(), "map revealed means nothing with POWER CODES off");
 }
 
 static void wire() {
@@ -203,6 +214,22 @@ static void wire() {
     tak::net::Reader orr(ow.b.data(), ow.b.size());
     tak::net::GameOptions back; tak::net::get(orr, back);
     check(orr.ok && orr.p == orr.end && back.powerCodes == 1, "GameOptions carries POWER CODES");
+    // The replay byte carries the option (bit 0) and the room's map-revealed start (bit 1),
+    // so playback seeds +Mapping as the game did.
+    tak::net::SlotInfo slots[tak::net::kMaxSlots] = {};
+    for (uint8_t fog : {uint8_t(0), uint8_t(1), uint8_t(2)}) {
+        tak::net::GameOptions g; g.powerCodes = 1; g.fogExplored = fog;
+        const auto live = tak::net::matchConfigFor(g, slots, 1, false);
+        const auto h = tak::net::replayHeaderFor(g, "m", "", slots, 1);
+        tak::net::GameOptions replayed; tak::net::SlotInfo rs[tak::net::kMaxSlots];
+        tak::net::matchInputsFrom(h, replayed, rs);
+        const auto again = tak::net::matchConfigFor(replayed, rs, 1, false);
+        check(live.powerCodes && live.powerMapRevealed == (fog >= 1) && again.powerCodes &&
+              again.powerMapRevealed == live.powerMapRevealed, "a replay seeds +Mapping as the game did");
+    }
+    tak::net::GameOptions plain; plain.fogExplored = 1;
+    check(tak::net::replayHeaderFor(plain, "m", "", slots, 1).powerCodes == 0 &&
+          !tak::net::matchConfigFor(plain, slots, 1, false).powerMapRevealed, "POWER CODES off records 0");
 }
 
 int main() {

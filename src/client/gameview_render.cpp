@@ -119,7 +119,8 @@
         // frame, so the whole world jolts; the offset is restored at the end so
         // the camera and UI stay put. shakemagnitude ~3 => a few px of jolt.
         float shakeBaseX = mapView_.offX(), shakeBaseY = mapView_.offY();
-        bool shaking = shakeTime_ > 0 && shakeDur_ > 0;
+        // A MakePoster tile is pasted at its unshaken offset (posterStep): no shake.
+        bool shaking = !posterFrame_ && shakeTime_ > 0 && shakeDur_ > 0;
         if (shaking) {
             float decay = shakeTime_ / shakeDur_;
             float amp = shakeMag_ * 3.0f * decay;    // pixels
@@ -2703,7 +2704,11 @@
             profFogMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
                           (double(SDL_GetPerformanceFrequency()) / 1000.0);
         }
-        if (manaBuildDrag_ && placing_ && (std::abs(mouseX_-bdSx0_)>=6 || std::abs(mouseY_-bdSy0_)>=6)) {
+        // A MakePoster tile has no cursor: no placement ghosts or drag boxes, which
+        // would repeat at the same screen spot in every tile.
+        if (posterFrame_) {
+            // nothing at the cursor
+        } else if (manaBuildDrag_ && placing_ && (std::abs(mouseX_-bdSx0_)>=6 || std::abs(mouseY_-bdSy0_)>=6)) {
             SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_BLEND);
             SDL_FRect box{std::min(bdSx0_,mouseX_),std::min(bdSy0_,mouseY_),
                 std::abs(mouseX_-bdSx0_),std::abs(mouseY_-bdSy0_)};
@@ -2724,7 +2729,7 @@
         } else if (placing_) {
             drawGhost();
         }
-        if (reclaimDrag_ && (std::abs(mouseX_ - rdSx0_) >= 6.0f ||
+        if (!posterFrame_ && reclaimDrag_ && (std::abs(mouseX_ - rdSx0_) >= 6.0f ||
                              std::abs(mouseY_ - rdSy0_) >= 6.0f)) {
             // Screen-space "clear this area" box, with a marker on every reclaimable
             // feature it currently catches. Same 6px arming threshold as the
@@ -3001,8 +3006,9 @@
                                int(overlayBatch_.size()), nullptr, 0);
         }
 
-        // Self-destruct countdown: a pulsing red number over each armed unit.
-        if (hudFont_.ok())
+        // Self-destruct countdown: a pulsing red number over each armed unit. This and
+        // the squad numbers and production bars below are UI, left out of a poster.
+        if (hudFont_.ok() && !posterFrame_)
             overlayPass(1, unitpass::selfDestructBand(overlayView), [&](const UnitR& u, bool draw) {
                 if (!u.alive() || u.embarked() || !u.type || u.selfDestructT < 0) return false;
                 if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) return false;
@@ -3022,7 +3028,7 @@
         // The number is the recall key (squad 10 shows as "0"). Skipped when zoomed
         // far out so it doesn't clutter the field. Drawn in FLAT green: tinting the
         // shaded tan glyph art gave a dark, mottled outline that was hard to read.
-        if (hudFont_.ok() && zm > 0.55f)
+        if (hudFont_.ok() && zm > 0.55f && !posterFrame_)
             overlayPass(2, unitpass::squadMarkerBand(overlayView, footMin, footMax), [&](const UnitR& u, bool draw) {
                 if (!u.alive() || u.embarked() || !u.type || u.player != localPlayer_ ||
                     u.squad == 0)
@@ -3047,7 +3053,7 @@
         // state-changing FillRects per building broke the render batch each time,
         // and map-wide AI production drew bars at off-screen coordinates).
         overlayBatch_.clear();
-        if (!dotsFrame_)   // Tactical Dots: no per-unit bars
+        if (!dotsFrame_ && !posterFrame_)   // Tactical Dots: no per-unit bars
             overlayPass(3, unitpass::productionBarBand(overlayView, footMin, footMax), [&](const UnitR& u, bool draw) {
             if (!u.alive() || u.buildQueue.empty() || !u.type) return false;
             if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) return false;
@@ -3072,7 +3078,7 @@
 
         // Player mana bar top left (legacy; only without the bottom bar). A spectator
         // isn't a player -- no personal mana readout.
-        if (!panelTex_ && !spectating_) {
+        if (!panelTex_ && !spectating_ && !posterFrame_) {
             const PlayerR& tm = framePlayer(localPlayer_);
             float cap = std::max(tm.storage, 1.0f);
             SDL_FRect bg{10, 10, 180, 12};

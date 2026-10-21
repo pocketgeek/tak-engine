@@ -73,9 +73,9 @@ static void fxSlots(SlotInfo (&s)[kMaxSlots], bool empty) {
 
 static std::string dumpCfg(const tak::sim::MatchConfig& c) {
     std::string s; char t[256];
-    std::snprintf(t, sizeof t, "cap=%d mx=%d ds=%d pm=%d st=%d si=%d bm=%d rs=%d seed=%u crt=%d ms=%d pc=%d mana=%a pr=%d svp=%d n=%zu;",
+    std::snprintf(t, sizeof t, "cap=%d mx=%d ds=%d pm=%d st=%d si=%d bm=%d rs=%d seed=%u crt=%d ms=%d pc=%d pmr=%d mana=%a pr=%d svp=%d n=%zu;",
         c.unitCap, c.monarchExpendable, c.doubleSight, int(c.pathfindingMode), c.stressTest, c.stressImmediate,
-        c.benchmark, int(c.startMode), c.startSeed, c.loadCrt, c.mapScenario, c.powerCodes, double(c.startMana), c.patrolRepairs, c.scenarioViewPlayer, c.slots.size());
+        c.benchmark, int(c.startMode), c.startSeed, c.loadCrt, c.mapScenario, c.powerCodes, c.powerMapRevealed, double(c.startMana), c.patrolRepairs, c.scenarioViewPlayer, c.slots.size());
     s += t;
     for (const auto& m : c.slots) {
         uint32_t bits; std::memcpy(&bits, &m.manaMult, 4);
@@ -160,7 +160,8 @@ static void replayHeaders() {
         h.engineVersion = "9.9.9";   // version-neutral golden: the release and protocol are not pinned here
         Writer w; writeReplayHeader(w, h);
         for (int i = 8; i < 12; ++i) w.b[size_t(i)] = 0;
-        golden(w.b, *mission ? "54414b520e000000000000000c00496e6e657220436972636c65030402efbe000006073412ed5e090b060063616d7030330500392e392e3988776655443322110a40006d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d40006f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f0408010703010902040900040002050600020301020003010805030201070301000902040203000007020d0e" : "54414b520e000000000000000c00496e6e657220436972636c65030402efbe000006073412ed5e090b00000500392e392e3988776655443322110a40006d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d40006f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f0408010703010902040900040002050600020301020003010805030201070301000902040203000007020d0e", *mission ? "mission replay header bytes" : "replay header bytes");
+        // The last byte, POWER CODES, is 03: on (bit 0), map revealed at start (bit 1).
+        golden(w.b, *mission ? "54414b520e000000000000000c00496e6e657220436972636c65030402efbe000006073412ed5e090b060063616d7030330500392e392e3988776655443322110a40006d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d40006f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f0408010703010902040900040002050600020301020003010805030201070301000902040203000007020d03" : "54414b520e000000000000000c00496e6e657220436972636c65030402efbe000006073412ed5e090b00000500392e392e3988776655443322110a40006d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d40006f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f0408010703010902040900040002050600020301020003010805030201070301000902040203000007020d03", *mission ? "mission replay header bytes" : "replay header bytes");
     }
     // Header -> inputs -> config is the live config (every recorded field carried across).
     for (bool empty : {false, true}) {
@@ -176,12 +177,12 @@ static void replayHeaders() {
 static void matchConfigs() {
     SlotInfo full[kMaxSlots], empty[kMaxSlots]; fxSlots(full, false); fxSlots(empty, true);
     struct { uint8_t stress; bool empty; const char* want; } cases[] = {
-        {1, false, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {1, true, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
-        {2, false, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {2, true, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
-        {0, false, "cap=48879 mx=1 ds=1 pm=4 st=0 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {0, true, "cap=48879 mx=1 ds=1 pm=4 st=0 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
+        {1, false, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {1, true, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
+        {2, false, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {2, true, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
+        {0, false, "cap=48879 mx=1 ds=1 pm=4 st=0 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {0, true, "cap=48879 mx=1 ds=1 pm=4 st=0 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
     };
     for (const auto& c : cases) {
         const std::string got = dumpCfg(matchConfigFor(fxOpts(c.stress), c.empty ? empty : full, 0x5EED1234));
@@ -195,10 +196,10 @@ static void replayLoader() {
     const fs::path path = fs::temp_directory_path() / ("tak-match-codec-" + tak::crypto::toHex(tak::crypto::randomVec(8)) + ".takrep");
     SlotInfo slots[kMaxSlots]; fxSlots(slots, false);
     struct { const char* mission; uint8_t stress; const char* want; } cases[] = {
-        {"", 1, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {"", 2, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {"camp03", 1, "cap=48879 mx=1 ds=0 pm=0 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=0 pc=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {"camp03", 2, "cap=48879 mx=1 ds=0 pm=0 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=0 pc=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {"", 1, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {"", 2, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {"camp03", 1, "cap=48879 mx=1 ds=0 pm=0 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=0 pc=0 pmr=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {"camp03", 2, "cap=48879 mx=1 ds=0 pm=0 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=0 pc=0 pmr=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
     };
     for (const auto& c : cases) {
         GameOptions o = fxOpts(c.stress); o.doubleSight = 1;

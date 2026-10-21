@@ -955,7 +955,7 @@ group automatically.
 | **Pause** | Pause or resume. This pauses the game for every player. |
 | **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×), 0.1× per level. A banner shows the new level, for example **GAME SPEED NORMAL** or **GAME SPEED +5**. Only the host can change it, and only if **Allow speed change** was on. |
 | **Enter** | Open chat; **Enter** sends, **Esc** cancels. Also where you type [power codes](#power-codes). |
-| **Print Screen** | Make a poster: save a picture of the whole map. Only in a game with **Power codes** on. See [Power codes](#power-codes). |
+| **Print Screen** | Make a poster: save a picture of the whole map. Only in a game with **Power codes** on. If your desktop takes the key for its own screenshots, or your keyboard has none (Mac), set another key for **MAKE POSTER** in **CONTROLS**. See [Power codes](#power-codes). |
 | **Space** (hold) | Push to talk, in multiplayer, when [voice chat](#voice-chat) is on with **Talk mode** Push to Talk. Never while you are typing in a text box. |
 | **Esc** | Close a dialog, cancel placement or an armed order, clear the selection, then open the game menu. |
 
@@ -977,10 +977,11 @@ battle, and not while you watch a game or a replay.
 
 To use one, press **Enter**, type the code and press **Enter**. Capital letters
 do not matter (**+atm**, **+ATM** and **+Atm** are the same), and spaces around
-the code are ignored. As in the original game, the line is also sent as chat to
-every player, so everyone sees what you typed. With power codes off the line is
-only chat and does nothing else. Anything else that starts with **+** is
-ordinary chat.
+the code are ignored. As in the original game, a code line is also sent as chat
+to every player, whoever your chat is set to reach, so everyone sees what you
+typed. With power codes off a code line is ordinary chat: it goes only to the
+players your chat reaches and does nothing else. Anything else that starts with
+**+** is ordinary chat.
 
 | Code | What it does |
 | --- | --- |
@@ -989,15 +990,26 @@ ordinary chat.
 | **+DoubleShot** | Doubles all damage in the game, by every player's units. Type it again to turn it off. It turns **+HalfShot** off. |
 | **+HalfShot** | Halves all damage in the game. Type it again to turn it off. It turns **+DoubleShot** off. |
 | **+LOS** | Turns line of sight off or on for you. With it off, you see every unit on ground you have explored, and your units can attack them there. **+LOS Off** and **+LOS On** set it instead of switching it. |
-| **+Mapping** | Turns the map on or off for you. The first time, the whole map is revealed. The next time, the map is hidden again, and the ground you had explored is forgotten; your units explore it again as they see it. |
+| **+Mapping** | Turns the map on or off for you. With **Fog of war: Not Explored**, the first time reveals the whole map. The next time hides it again, and the ground you had explored is forgotten; your units explore it again as they see it. With **Explored** or **Full Vision** the map starts revealed, so the first **+Mapping** hides it. |
 | **+NowISee** | Turns line of sight and the map off for you: you see the whole map and every unit. Typing it again changes nothing; use **+LOS** and **+Mapping** to bring the fog back. |
 | **+Radar** | Your minimap shows every unit on the map. Type it again to turn it off. |
 | **+MakePoster** | Saves a picture of the whole map at full size, as **BIGSHOT0001.png**, **BIGSHOT0002.png** and so on, in a **screenshots** folder inside your game data folder. If that folder cannot be written, it uses the folder your settings are kept in. A chat line says when it starts and where the file was saved. **Print Screen** does the same. You can change that key in **CONTROLS** (**MAKE POSTER**). |
 
 **+MakePoster** shows the map as you see it, including your fog of war. Type
-**+NowISee** first to put everything in the picture. The game keeps running
+**+NowISee** first to put everything in the picture. Selection rings, health
+bars, squad numbers, building outlines and other markers are left out. The game keeps running
 while the picture is made. A big map takes a few seconds to save and needs a lot
 of memory; Ulasem Arena makes a 10,240 × 10,240 picture of about 100 MB.
+
+With **Fog of war: Full Vision** you already see the whole map and every unit,
+so **+LOS**, **+Mapping** and **+NowISee** change nothing on your screen. They
+still change which units your units can see and attack.
+
+**Print Screen** reaches the game only if nothing else takes it first. Some
+desktops use it for their own screenshot tool (KDE's Spectacle, or Windows 11
+with *Use the Print screen key to open screen capture* on), and Mac keyboards
+have no Print Screen key. Then set another key for **MAKE POSTER** in
+**CONTROLS**, or type **+MakePoster**.
 
 **+ATM**, **+ManaMe**, **+LOS**, **+Mapping** and **+NowISee** affect only the
 player who types them. **+DoubleShot** and **+HalfShot** affect the whole game.
@@ -1020,6 +1032,9 @@ These differ from the original game:
   game to the next. Here every game starts with them off.
 - The original said nothing when a poster was saved. Here a chat line says where
   it is.
+- The original sent every line that starts with **+** to every player, even with
+  power codes off. Here only a code line in a game with power codes on goes to
+  everyone; otherwise the line goes to the players your chat reaches.
 - Only these nine codes are available. The original's other console commands,
   such as **+View**, are not.
 

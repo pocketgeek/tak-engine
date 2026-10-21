@@ -1135,7 +1135,7 @@ builders, but units they produce inherit their squad.
 | **Shift+Z** | Reset to retail’s native 1:1 zoom, keeping the same view center |
 | **+** / **−** (also **=** and keypad **+/−**) | Change game / replay speed |
 | **Enter** (also keypad Enter) | Open chat; press again to send; **Esc** cancels. With **Power Codes** on, also where [power codes](docs/user-guide.md#power-codes) are typed |
-| **Print Screen** | Make a whole-map poster in the screenshots folder (only with **Power Codes** on); rebindable in **Controls** as MAKE POSTER |
+| **Print Screen** | Make a whole-map poster in the screenshots folder (only with **Power Codes** on); rebindable in **Controls** as MAKE POSTER (do that if your desktop takes Print Screen for its own screenshots, or on a Mac keyboard, which has none) |
 | **Space** (hold) | Push to talk, when voice chat is on with Talk Mode Push to Talk (never while typing in a text box); rebindable in **Controls** |
 | **Esc** | Close unit information, cancel placement / an armed order, clear selection, then open the game menu as applicable |
 | **Shift+D** | Selected mobile units disco for 10 real seconds; with no selection, living monarch |

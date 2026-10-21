@@ -2333,13 +2333,14 @@ private:
     // chat lines at those ticks; a ManaMe line selects every own unit first.
     void powerScriptStep();
     bool radarCode_ = false;   // +Radar: the minimap shows every unit (reset each match)
-    // +MakePoster / MAKE POSTER: the whole map at native scale, one screen-sized tile
-    // rendered per frame (posterStep, before the frame's own draw), then written as a
-    // PNG off the main thread. The view is the local player's (its fog included).
+    // +MakePoster / MAKE POSTER: the whole map at native scale, one tile (the window,
+    // at most 2048 x 1152) rendered per frame (posterStep, before the frame's own
+    // draw), then written as a PNG off the main thread. The view is the local player's (its fog included).
     struct PosterJob {
         int width = 0, height = 0;          // the map in world pixels = the image
         int tileW = 0, tileH = 0, cols = 0, rows = 0, next = 0;
         std::shared_ptr<std::vector<uint8_t>> rgb;
+        std::vector<uint8_t> readback;      // one tile's RGBA, reused tile to tile
         std::string path;
         uint64_t startMs = 0;
         double maxTileMs = 0;   // the worst frame cost of one tile (logged)

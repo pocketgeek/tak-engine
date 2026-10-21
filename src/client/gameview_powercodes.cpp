@@ -6,18 +6,49 @@
 // them (it drops them while the room has POWER CODES off); Radar and MakePoster are
 // local display.
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
+#include <mutex>
 #include <thread>
+#include <vector>
+
+namespace {
+    // Poster writer threads outlive the match that made them (leaving to the menu
+    // does not wait for a 100 MB PNG), but not the process: the destructor of this
+    // static joins any still writing, so quitting finishes the file instead of
+    // killing the thread mid-write. Each writes to a .part name and renames it when
+    // complete, so a file that is somehow cut short never looks like a poster.
+    struct PosterWriters {
+        std::mutex m;
+        std::vector<std::thread> threads;
+        void start(std::function<void()> work) {
+            std::lock_guard<std::mutex> lock(m);
+            threads.emplace_back(std::move(work));
+        }
+        ~PosterWriters() {
+            std::lock_guard<std::mutex> lock(m);
+            for (auto& t : threads)
+                if (t.joinable()) t.join();
+        }
+    };
+    PosterWriters& posterWriters() {
+        static PosterWriters writers;
+        return writers;
+    }
+}
 
     void GameView::submitChat(const std::string& line) {
         // Retail's chat handler 0x4b4fb0 runs a '+' line through the command table and
         // then sends it as chat anyway, to every human (not the chosen recipients) --
-        // so everyone sees a code typed, whether or not it did anything.
+        // so everyone sees a code typed. Here only a code that can act goes to all:
+        // with POWER CODES off a +line is ordinary chat to the chosen recipients.
         const auto code = tak::sim::parsePowerCode(line);
-        if (code) powerCode(*code);
-        mp_->chat(line, code ? uint8_t(0xff) : chatRecipients_);
+        const bool acts = code && powerCodesOn();
+        if (acts) powerCode(*code);
+        mp_->chat(line, acts ? uint8_t(0xff) : chatRecipients_);
     }
 
     void GameView::powerScriptStep() {
@@ -119,7 +150,9 @@
         for (const auto& entry : fs::directory_iterator(fs::u8path(folder), ec)) {
             const auto name = entry.path().filename().string();
             int n = 0;
-            if (name.size() == 15 && (name.rfind("BIGSHOT", 0) == 0) && std::sscanf(name.c_str() + 7, "%4d", &n) == 1)
+            // BIGSHOTnnnn.png, or .png.part while an earlier poster is still writing.
+            if ((name.size() == 15 || name.size() == 20) && name.rfind("BIGSHOT", 0) == 0 &&
+                std::sscanf(name.c_str() + 7, "%4d", &n) == 1)
                 highest = std::max(highest, n);
         }
         char file[32];
@@ -149,11 +182,16 @@
         if (!poster_ || inLobbyPhase() || loadScreen_) return;
         PosterJob& job = *poster_;
         const int mvw = mapViewW(winW);
+        if (mvw <= 0 || winH <= 0) return;   // minimised: wait for a window to draw in
         if (!job.tileW) {
-            job.tileW = std::min(mvw, job.width);
-            job.tileH = std::min(winH, job.height);
+            // At most 2048 x 1152 a tile, whatever the window: reading pixels back is
+            // the cost of a tile (a 7475 x 2160 one read in about 42 ms, a hitch every
+            // frame of the poster), and a smaller read keeps each frame close to normal.
+            job.tileW = std::min({mvw, job.width, 2048});
+            job.tileH = std::min({winH, job.height, 1152});
             job.cols = (job.width + job.tileW - 1) / job.tileW;
             job.rows = (job.height + job.tileH - 1) / job.tileH;
+            job.next = 0;   // a new grid starts over: its tiles are not the old ones
         }
         if (mvw < job.tileW || winH < job.tileH) { job.tileW = 0; return; }   // the window shrank: retile
         // One tile: the world at native scale (retail draws the poster 1:1), with the
@@ -175,9 +213,17 @@
         posterFrame_ = true;
         draw(winW, winH);
         posterFrame_ = false;
-        std::vector<uint8_t> px(size_t(mvw) * winH * 4);
-        const SDL_Rect area{0, 0, mvw, winH};
-        const bool read = SDL_RenderReadPixels(ren_, &area, SDL_PIXELFORMAT_RGBA32, px.data(), mvw * 4) == 0;
+        // Read back only the tile's own rectangle (the edge tiles are smaller than the
+        // window), into a buffer kept from tile to tile.
+        const int rx0 = std::clamp(x0 - ox, 0, mvw), ry0 = std::clamp(y0 - oy, 0, winH);
+        const int rx1 = std::clamp(x1 - ox, 0, mvw), ry1 = std::clamp(y1 - oy, 0, winH);
+        const int rw = rx1 - rx0, rh = ry1 - ry0;
+        bool read = false;
+        if (rw > 0 && rh > 0) {
+            job.readback.resize(size_t(rw) * rh * 4);
+            const SDL_Rect area{rx0, ry0, rw, rh};
+            read = SDL_RenderReadPixels(ren_, &area, SDL_PIXELFORMAT_RGBA32, job.readback.data(), rw * 4) == 0;
+        }
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
         SDL_RenderClear(ren_);   // the frame's own draw follows; nothing of the tile shows
         mapView_.setZoom(camZoom);
@@ -188,11 +234,11 @@
             auto& rgb = *job.rgb;
             for (int y = y0; y < y1; ++y) {
                 const int sy = y - oy;
-                if (sy < 0 || sy >= winH) continue;
+                if (sy < ry0 || sy >= ry1) continue;
                 for (int x = x0; x < x1; ++x) {
                     const int sx = x - ox;
-                    if (sx < 0 || sx >= mvw) continue;
-                    const uint8_t* s = px.data() + (size_t(sy) * mvw + sx) * 4;
+                    if (sx < rx0 || sx >= rx1) continue;
+                    const uint8_t* s = job.readback.data() + (size_t(sy - ry0) * rw + (sx - rx0)) * 4;
                     uint8_t* d = rgb.data() + (size_t(y) * job.width + x) * 3;
                     d[0] = s[0]; d[1] = s[1]; d[2] = s[2];
                 }
@@ -206,12 +252,15 @@
         std::fprintf(stderr, "poster: %dx%d in %d tiles of %dx%d, rendered in %llu ms, worst tile %.1f ms\n",
                      job.width, job.height, job.cols * job.rows, job.tileW, job.tileH, (unsigned long long)renderMs,
                      job.maxTileMs);
-        std::thread([rgb = job.rgb, path = job.path, w = job.width, h = job.height, notes = posterNotes_] {
+        posterWriters().start([rgb = job.rgb, path = job.path, w = job.width, h = job.height, notes = posterNotes_] {
             std::vector<std::string> lines;
+            const auto file = std::filesystem::u8path(path);
+            auto part = file;
+            part += ".part";
             try {
                 const auto t0 = std::chrono::steady_clock::now();
-                const auto file = std::filesystem::u8path(path);
-                tak::png::writeRgb(file, w, h, *rgb);
+                tak::png::writeRgb(part, w, h, *rgb);
+                std::filesystem::rename(part, file);
                 std::fprintf(stderr, "poster: wrote %s in %lld ms\n", path.c_str(), (long long)
                     std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
                 // The name, then the folder on a line of its own (a full path is wider
@@ -220,10 +269,12 @@
                 lines.push_back("POSTER SAVED: " + std::string(name.begin(), name.end()));
                 lines.push_back("IN " + std::string(folder.begin(), folder.end()));
             } catch (const std::exception& e) {
+                std::error_code ec;
+                std::filesystem::remove(part, ec);
                 lines.push_back(std::string("POSTER NOT SAVED: ") + e.what());
             }
             std::lock_guard<std::mutex> lock(notes->m);
             for (auto& line : lines) notes->lines.push_back(std::move(line));
-        }).detach();
+        });
         poster_.reset();
     }

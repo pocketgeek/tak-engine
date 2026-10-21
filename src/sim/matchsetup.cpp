@@ -722,7 +722,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     world.setUnitCap(cfg.unitCap);
     world.setMonarchExpendable(cfg.monarchExpendable);
     world.setDoubleSight(cfg.doubleSight);
-    world.setPowerCodes(cfg.powerCodes);
+    world.setPowerCodes(cfg.powerCodes, cfg.powerMapRevealed);
 
     // Cartographer scenarios use authored placements instead of skirmish monarchs.
     // Read the same map-local CRT on every peer, before any default units spawn.

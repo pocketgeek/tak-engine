@@ -2213,11 +2213,15 @@ public:
     void revealTerrain() { for (auto& v : vis_) if (v == 0) v = 1; ++visGen_; }
     void setDoubleSight(bool enabled) { doubleSight_ = enabled; }
     // Power codes (sim/powercodes.h; the room's POWER CODES option). setPowerCodes
-    // also starts every code at its off state: no damage mode, line of sight and
-    // the shroud on for every player. applyPowerCode is Cmd::PowerCode's effect, a
-    // no-op while the option is off. All of it is hashed once the option is on.
-    void setPowerCodes(bool enabled) {
-        powerCodes_ = enabled; damageMode_ = DamageMode::Normal; powerLosOff_ = powerMappingOff_ = 0;
+    // also starts every code at its off state: no damage mode, line of sight on for
+    // every player, and the shroud on unless the room starts with the map revealed
+    // (FOG OF WAR: EXPLORED or FULL VISION). Retail seeds MappingOn from the room's
+    // Map Revealed box the same way, so the first +Mapping there brings the shroud
+    // back. applyPowerCode is Cmd::PowerCode's effect, a no-op while the option is
+    // off. All of it is hashed once the option is on.
+    void setPowerCodes(bool enabled, bool mapRevealed = false) {
+        powerCodes_ = enabled; damageMode_ = DamageMode::Normal; powerLosOff_ = 0;
+        powerMappingOff_ = enabled && mapRevealed ? uint16_t(0xffff) : uint16_t(0);
         visPowerForget_ = false;
     }
     bool powerCodes() const { return powerCodes_; }

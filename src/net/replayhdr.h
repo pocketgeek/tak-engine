@@ -61,7 +61,7 @@ struct ReplayHeader {
     uint8_t slotTeam[kMaxSlots] = {};
     uint8_t slotAiLevel[kMaxSlots] = {};
     uint8_t mapScenario = 0;      // format 13: the room's MAP SCENARIO option (0 in older files)
-    uint8_t powerCodes = 0;       // format 14: the room's POWER CODES option (0 in older files)
+    uint8_t powerCodes = 0;       // format 14: bit 0 the room's POWER CODES option, bit 1 its map revealed at start (0 in older files)
 };
 
 // One recorded (tick, hash) pair from the ORIGINAL game.

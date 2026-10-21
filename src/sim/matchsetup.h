@@ -57,6 +57,10 @@ struct MatchConfig {
     // The room's POWER CODES option (GameOptions::powerCodes): World::applyPowerCode
     // honours Cmd::PowerCode only when it is on. Never on for a campaign mission.
     bool powerCodes = false;
+    // The room starts with the map revealed (FOG OF WAR: EXPLORED or FULL VISION), so
+    // +Mapping starts with the shroud off (World::setPowerCodes). Only read with
+    // powerCodes on; replays carry it in the POWER CODES byte (bit 1).
+    bool powerMapRevealed = false;
     ScenarioScript::TraceSink scenarioTrace; // local diagnostics only, installed before initial rules
     int scenarioViewPlayer = -1;     // cosmetic message filtering only; never hashed
     float startMana = 2800;

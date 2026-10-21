@@ -156,7 +156,9 @@ pointer.*
 | **Esc** | In order: close Unit Info, cancel placement or an armed order, clear the selection, open the game menu (Resume, Options, Controls, Voice Chat, Quit…). |
 
 **Print Screen** makes a whole-map poster only in a game created with *Power
-Codes* on. There is no other in-game screenshot key.
+Codes* on. There is no other in-game screenshot key. If your desktop takes Print
+Screen for its own screenshots, or your keyboard has none (Mac), set another key
+for *MAKE POSTER* in *Controls*.
 
 **Power codes**, typed in chat when the game has *Power Codes* on (capitals do
 not matter): **+ATM** (fill your mana), **+ManaMe** (fill your selected units'
