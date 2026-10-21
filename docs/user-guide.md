@@ -1475,6 +1475,8 @@ available on your system appear.
 
 ### Interface
 
+![Options, Interface section: UI Font Modern, F4 Scorecard Scale and UI Scale 100%, Health Bars Damaged, Stats Panel on, Build Menu Center at 100%, Chat Position Centered and Chat Scale 100%](img/guide/options-interface.jpg)
+
 | Option | Default | What it does |
 | --- | --- | --- |
 | **UI Font** | Modern | The lettering of the interface's text. **Modern** is a clean bold sans-serif (the chat box's), sharp at every UI Scale; **Classic** is the look this engine had before: its blocky pixel font in the menus, rooms and Options, and the game's original serif faces in the HUD, scoreboard, briefings and Unit Info. The original decorative lettering (big messages, PAUSED, briefing headings, Unit Info labels, the title doors) is the same with either. Takes effect at once. |
@@ -1510,6 +1512,8 @@ them. **Chat Scale** multiplies UI Scale, so 200% UI Scale with 150% Chat Scale
 gives three times the 100% size; on a small window a very large box is shrunk
 until it fits, and a long line you are typing scrolls so its end stays in view. Both options take effect at once, also during a game. They are
 saved as `chatScale` and `chatAlign` (0 left, 1 centred) in `settings.ini`.
+
+![The in-game chat box centred over the battlefield on its dark panel: four messages, each starting with the sender's name in their player colour, and a line being typed after SAY:](img/guide/chat-box.jpg)
 
 **UI Font** is saved as `uiFont = modern` or `uiFont = classic` in `settings.ini`; a
 file without it uses Modern. With Modern, names keep their own capitals (players, maps,
@@ -1914,6 +1918,8 @@ In the game room you tick the packs you want (up to 64 of each kind). Packs of
 one kind load in alphabetical order of their folder names; later names win when
 they change the same file. Game packs load first, then the always-on archives,
 then ticked cosmetic packs.
+
+![A single-player room with Power Codes: On among the match rules; beside the map, ALWAYS ON: click.hpi, then the COSMETIC MODS list with Classic Sounds ticked and the GAME MODS list with Big Battles ticked](img/guide/room-mods-power-codes.jpg)
 
 - **Cosmetic packs** are each player's own choice, in single player and in
   multiplayer, host or not. They change only what that player sees and hears,
