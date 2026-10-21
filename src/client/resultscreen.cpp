@@ -8,7 +8,7 @@
 
 #include "util/png.h"
 #include "client/appquit.h"
-#include "client/blockfont.h"
+#include "client/uitext.h"
 #include "client/hidpi.h"
 #include "client/cursors.h"
 #include "client/dev.h"
@@ -220,11 +220,11 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
             if (s.empty()) return;
             float sc = lay.scale * (r.h / 20.0f);
             if (!f.ok()) sc = lay.scale * 1.6f;
-            float tw = f.ok() ? float(f.width(s, sc)) : blockTextWidth(s, sc);
+            float tw = f.ok() ? float(f.width(s, sc)) : uiTextWidth(s, sc);
             const float available = std::max(1.0f, (r.w - 2) * lay.scale);
             if (tw > available) {
                 sc *= available / tw;
-                tw = f.ok() ? float(f.width(s, sc)) : blockTextWidth(s, sc);
+                tw = f.ok() ? float(f.width(s, sc)) : uiTextWidth(s, sc);
             }
             float x = lay.px(r.x) + (rightAlign ? (r.w * lay.scale - tw) : 0);
             // draw() takes a baseline, not the gadget's top. Use common font
@@ -233,7 +233,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
             if (f.ok()) f.vbounds("Ag0123456789", sc, top, height);
             float y = lay.py(r.y) + (r.h * lay.scale - height) * 0.5f - top;
             if (f.ok()) f.draw(ren, s, x, y, sc, c);
-            else drawBlockText(ren, s, x, y, sc, c);
+            else uiText(ren, s, x, y, sc, c);
         };
 
         // Column headers, then one row per player.
@@ -285,7 +285,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
             // scale to a little under the band height or the word laps the help line.
             float sc = deco.ok() ? lay.scale * (g.title.h / 40.0f) : lay.scale * 1.6f;
             const Font& tf = deco.ok() ? deco : head;
-            float tw = tf.ok() ? float(tf.width(big, sc)) : blockTextWidth(big, sc * 2);
+            float tw = tf.ok() ? float(tf.width(big, sc)) : uiTextWidth(big, sc * 2);
             if (tw > g.title.w * lay.scale && tw > 0) {
                 sc *= (g.title.w * lay.scale) / tw;
                 tw = tf.ok() ? float(tf.width(big, sc)) : tw;
@@ -295,10 +295,10 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
             if (tf.ok()) tf.vbounds(big, sc, top, th);
             float y = lay.py(g.title.y) + (g.title.h * lay.scale - th) / 2 - top;
             if (tf.ok()) tf.draw(ren, big, x, y, sc, gold);
-            else drawBlockText(ren, big, x, lay.py(g.title.y), sc * 2, gold);
+            else uiText(ren, big, x, lay.py(g.title.y), sc * 2, gold);
             if (!title.empty() && stats) {
                 float tsc = lay.scale;
-                float ttw = body.ok() ? float(body.width(title, tsc)) : blockTextWidth(title, tsc);
+                float ttw = body.ok() ? float(body.width(title, tsc)) : uiTextWidth(title, tsc);
                 text(body, title, {(640 - ttw / lay.scale) / 2, g.title.y - 26, ttw / lay.scale, 20}, dim);
             }
         }
@@ -312,7 +312,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
             SDL_SetRenderDrawColor(ren, 150, 132, 84, 255);
             SDL_RenderDrawRectF(ren, &r);
             float px = std::max(1.0f, lay.scale * 1.2f);
-            drawBlockText(ren, fallback, r.x + (r.w - blockTextWidth(fallback, px)) / 2,
+            uiText(ren, fallback, r.x + (r.w - uiTextWidth(fallback, px)) / 2,
                           r.y + (r.h - 7 * px) / 2, px, gold);
         };
         button(cancelTex, cancelR, cancelHover, "MENU");

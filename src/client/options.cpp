@@ -1,6 +1,6 @@
 #include "client/options.h"
 
-#include "client/blockfont.h"
+#include "client/uitext.h"
 #include "client/hidpi.h"
 #include "client/datafolder.h"
 #include "client/gpuvram.h"
@@ -873,7 +873,7 @@ void OptionsScreen::drawHelp(const Control& c) {
     SDL_SetRenderDrawColor(ren_, 14, 16, 24, 250); SDL_RenderFillRectF(ren_, &box);
     SDL_SetRenderDrawColor(ren_, 150, 160, 195, 255); SDL_RenderDrawRectF(ren_, &box);
     for (size_t i = 0; i < lines.size(); ++i)
-        drawBlockText(ren_, lines[i].first, box.x + pad, box.y + pad + float(i) * lineH, px,
+        uiText(ren_, lines[i].first, box.x + pad, box.y + pad + float(i) * lineH, px,
                       lines[i].second ? SDL_Color{235, 225, 180, 255} : SDL_Color{185, 192, 210, 255});
 }
 
@@ -891,7 +891,7 @@ void OptionsScreen::render(int winW, int winH) {
 
     const char* title = page_ == OptionsPage::Voice ? "VOICE CHAT" : "OPTIONS";
     float tpx = 3.4f * u_;
-    drawBlockText(ren_, title, panel_.x + (panel_.w - blockTextWidth(title, tpx)) / 2,
+    uiText(ren_, title, panel_.x + (panel_.w - uiTextWidth(title, tpx)) / 2,
                   panel_.y + 13 * u_, tpx, {235, 225, 180, 255});
 
     // Clip the scrollable region to between the title and the footer so rows don't
@@ -905,14 +905,14 @@ void OptionsScreen::render(int winW, int winH) {
     for (auto& c : ctls_) {
         if (c.row.y + c.row.h < clip.y || c.row.y > clip.y + clip.h) continue;   // off-screen
         if (c.kind == Control::Section) {
-            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, 2.2f * u_, {150, 200, 235, 255});
+            uiText(ren_, c.label, c.row.x, c.row.y + 12 * u_, 2.2f * u_, {150, 200, 235, 255});
             SDL_SetRenderDrawColor(ren_, 70, 78, 96, 255);
             SDL_FRect ln{c.row.x, c.row.y + c.row.h - 3 * u_, c.row.w, 1.5f * u_};
             SDL_RenderFillRectF(ren_, &ln);
         } else if (c.kind == Control::Toggle) {
             bool on = c.get() > 0.5f;
             const bool live = !c.enabled || c.enabled();   // greyed when its master switch is off
-            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
+            uiText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
                           live ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
             SDL_FRect pill{c.row.x + c.row.w - 78 * u_, c.row.y + 7 * u_, 78 * u_, 20 * u_};
             if (live) SDL_SetRenderDrawColor(ren_, on ? 60 : 44, on ? 120 : 48, on ? 90 : 58, 255);
@@ -922,14 +922,14 @@ void OptionsScreen::render(int winW, int winH) {
             else SDL_SetRenderDrawColor(ren_, 70, 76, 92, 255);
             SDL_RenderDrawRectF(ren_, &pill);
             const char* t = on ? "ON" : "OFF";
-            drawBlockText(ren_, t, pill.x + (pill.w - blockTextWidth(t, 2.0f * u_)) / 2,
+            uiText(ren_, t, pill.x + (pill.w - uiTextWidth(t, 2.0f * u_)) / 2,
                           pill.y + (pill.h - 7 * 2.0f * u_) / 2, 2.0f * u_,
                           !live ? SDL_Color{105, 110, 122, 255}
                           : on ? SDL_Color{210, 240, 215, 255} : SDL_Color{170, 175, 185, 255});
         } else if (c.kind == Control::Meter) {
             // A live level bar (the VOICE CHAT microphone): green, amber near the top.
             const bool live = !c.enabled || c.enabled();
-            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
+            uiText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
                           live ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
             const float cw = dropWidth(c);
             SDL_FRect track{c.row.x + c.row.w - cw, c.row.y + 11 * u_, cw, 12 * u_};
@@ -952,7 +952,7 @@ void OptionsScreen::render(int winW, int winH) {
                 SDL_RenderFillRectF(ren_, &tick);
             }
         } else if (c.kind == Control::PlayerName) {
-            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12*u_, fpx, {225,230,240,255});
+            uiText(ren_, c.label, c.row.x, c.row.y + 12*u_, fpx, {225,230,240,255});
             const float cw = dropWidth(c);
             SDL_FRect field{c.row.x+c.row.w-cw,c.row.y+5*u_,cw,24*u_};
             SDL_SetRenderDrawColor(ren_,nameEditing_ && nameSelectAll_ ? 65 : 35,55,80,255);
@@ -961,23 +961,23 @@ void OptionsScreen::render(int winW, int winH) {
             SDL_RenderDrawRectF(ren_, &field);
             std::string text = s_.playerName.empty() && !nameEditing_ ? "player" : s_.playerName;
             if (nameEditing_ && !nameSelectAll_) text += "_";
-            const float px = std::min(1.6f*u_, (field.w-12*u_)/std::max(1.0f,blockTextWidth(text,1)));
-            drawBlockText(ren_,text,field.x+6*u_,field.y+(field.h-7*px)/2,px,{225,230,240,255});
+            const float px = std::min(1.6f*u_, (field.w-12*u_)/std::max(1.0f,uiTextWidth(text,1)));
+            uiText(ren_,text,field.x+6*u_,field.y+(field.h-7*px)/2,px,{225,230,240,255});
         } else if (c.kind == Control::Folder) {
             drawFolderRow(c);
         } else if (c.kind == Control::Button) {
             const bool live = !c.enabled || c.enabled();
-            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
+            uiText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
                           live ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
             const std::string t = c.note ? c.note() : std::string("OPEN >");
-            const float tw = blockTextWidth(t, 2.0f * u_);
+            const float tw = uiTextWidth(t, 2.0f * u_);
             const float bw = std::max(96 * u_, tw + 20 * u_);
             SDL_FRect chip{c.row.x + c.row.w - bw, c.row.y + 5 * u_, bw, 24 * u_};
             SDL_SetRenderDrawColor(ren_, live ? 52 : 34, live ? 60 : 38, live ? 82 : 46, 255);
             SDL_RenderFillRectF(ren_, &chip);
             SDL_SetRenderDrawColor(ren_, live ? 130 : 70, live ? 140 : 76, live ? 170 : 92, 255);
             SDL_RenderDrawRectF(ren_, &chip);
-            drawBlockText(ren_, t, chip.x + (chip.w - tw) / 2,
+            uiText(ren_, t, chip.x + (chip.w - tw) / 2,
                           chip.y + (chip.h - 7 * 2.0f * u_) / 2, 2.0f * u_,
                           live ? SDL_Color{215, 225, 245, 255} : SDL_Color{110, 115, 125, 255});
         } else if (c.kind == Control::Dropdown) {
@@ -985,7 +985,7 @@ void OptionsScreen::render(int winW, int winH) {
             // downward arrow on the right. The open pop-up list is drawn in a second
             // pass below (un-clipped, on top of everything).
             const bool live = !c.enabled || c.enabled();
-            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
+            uiText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
                           live ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
             float cw = dropWidth(c);
             SDL_FRect chip{c.row.x + c.row.w - cw, c.row.y + 5 * u_, cw, 24 * u_};
@@ -1000,14 +1000,14 @@ void OptionsScreen::render(int winW, int winH) {
             float dpx = 1.6f * u_;
             int maxCh = int((chip.w - 30 * u_) / (6 * dpx));   // block glyph = 6px; leave room for the arrow
             if (int(t.size()) > maxCh && maxCh > 0) t = t.substr(0, size_t(maxCh));
-            drawBlockText(ren_, t, chip.x + 6 * u_, chip.y + (chip.h - 7 * dpx) / 2, dpx,
+            uiText(ren_, t, chip.x + 6 * u_, chip.y + (chip.h - 7 * dpx) / 2, dpx,
                           live ? SDL_Color{215, 225, 245, 255} : SDL_Color{110, 115, 125, 255});
             if (c.note && live) {   // e.g. RESTART REQUIRED: small, amber, right-aligned before the caret
                 std::string n = c.note();
-                float npx = 1.3f * u_, nw = blockTextWidth(n, npx);
+                float npx = 1.3f * u_, nw = uiTextWidth(n, npx);
                 float nx = chip.x + chip.w - 26 * u_ - nw;
-                if (!n.empty() && nx > chip.x + 6 * u_ + blockTextWidth(t, dpx) + 8 * u_)
-                    drawBlockText(ren_, n, nx, chip.y + (chip.h - 7 * npx) / 2, npx,
+                if (!n.empty() && nx > chip.x + 6 * u_ + uiTextWidth(t, dpx) + 8 * u_)
+                    uiText(ren_, n, nx, chip.y + (chip.h - 7 * npx) / 2, npx,
                                   {240, 190, 90, 255});
             }
             // Down-caret: a filled triangle at the chip's right edge (a real glyph, not "V").
@@ -1022,11 +1022,11 @@ void OptionsScreen::render(int winW, int winH) {
         } else if (c.kind == Control::Slider) {
             float val = c.get();
             const bool on = !c.enabled || c.enabled();   // greyed out when its toggle is off
-            drawBlockText(ren_, c.label, c.row.x, c.row.y + 4 * u_, fpx,
+            uiText(ren_, c.label, c.row.x, c.row.y + 4 * u_, fpx,
                           on ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
             if (c.fmt) {
                 std::string vs = c.fmt(val);
-                drawBlockText(ren_, vs, c.row.x + c.row.w - blockTextWidth(vs, fpx),
+                uiText(ren_, vs, c.row.x + c.row.w - uiTextWidth(vs, fpx),
                               c.row.y + 4 * u_, fpx,
                               on ? SDL_Color{150, 195, 235, 255} : SDL_Color{90, 100, 115, 255});
             }
@@ -1077,7 +1077,7 @@ void OptionsScreen::render(int winW, int winH) {
         SDL_SetRenderDrawColor(ren_, on ? 130 : 70, on ? 140 : 76, on ? 170 : 92, 255);
         SDL_RenderDrawRectF(ren_, &r);
         float bpx = 2.2f * u_;
-        drawBlockText(ren_, label, r.x + (r.w - blockTextWidth(label, bpx)) / 2,
+        uiText(ren_, label, r.x + (r.w - uiTextWidth(label, bpx)) / 2,
                       r.y + (r.h - 7 * bpx) / 2, bpx,
                       on ? SDL_Color{228, 232, 242, 255} : SDL_Color{110, 115, 125, 255});
     };
@@ -1108,7 +1108,7 @@ void OptionsScreen::render(int winW, int winH) {
             if (int(i) == sel) { SDL_SetRenderDrawColor(ren_, 52, 74, 96, 255); SDL_RenderFillRectF(ren_, &it); }
             std::string t = opts[i];
             if (int(t.size()) > maxCh && maxCh > 0) t = t.substr(0, size_t(maxCh));
-            drawBlockText(ren_, t, it.x + 6 * u_, it.y + (itemH - 7 * dpx) / 2, dpx,
+            uiText(ren_, t, it.x + 6 * u_, it.y + (itemH - 7 * dpx) / 2, dpx,
                           int(i) == sel ? SDL_Color{215, 235, 245, 255} : SDL_Color{200, 205, 220, 255});
         }
         // A list longer than its pop-up gets a scrollbar thumb, so the rows past the
@@ -1180,7 +1180,7 @@ std::string OptionsScreen::folderStatusText() const {
 void OptionsScreen::drawFolderRow(const Control& c) {
     const bool on = folder_.locked.empty();
     const float fpx = 2.0f * u_, dpx = 1.6f * u_, npx = 1.3f * u_;
-    drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
+    uiText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
                   on ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
     // CHANGE button at the right; the folder in use in a chip to its left, elided at
     // its START (the end of a path is the part that tells installs apart).
@@ -1191,14 +1191,14 @@ void OptionsScreen::drawFolderRow(const Control& c) {
     SDL_SetRenderDrawColor(ren_, on ? 35 : 30, on ? 40 : 33, on ? 56 : 42, 255); SDL_RenderFillRectF(ren_, &chip);
     SDL_SetRenderDrawColor(ren_, on ? 110 : 70, on ? 120 : 76, on ? 150 : 92, 255); SDL_RenderDrawRectF(ren_, &chip);
     const size_t pathCh = size_t(std::max(4.0f, (chip.w - 12 * u_) / (6 * dpx)));
-    drawBlockText(ren_, elidePathStart(folder_.inUse, pathCh), chip.x + 6 * u_, chip.y + (chip.h - 7 * dpx) / 2,
+    uiText(ren_, elidePathStart(folder_.inUse, pathCh), chip.x + 6 * u_, chip.y + (chip.h - 7 * dpx) / 2,
                   dpx, on ? SDL_Color{215, 225, 245, 255} : SDL_Color{120, 126, 140, 255});
     const bool busy = folderPick_.busy();
     SDL_SetRenderDrawColor(ren_, on && !busy ? 52 : 34, on && !busy ? 60 : 38, on && !busy ? 82 : 46, 255);
     SDL_RenderFillRectF(ren_, &btn);
     SDL_SetRenderDrawColor(ren_, on ? 130 : 70, on ? 140 : 76, on ? 170 : 92, 255); SDL_RenderDrawRectF(ren_, &btn);
     const char* t = "CHANGE";
-    drawBlockText(ren_, t, btn.x + (btn.w - blockTextWidth(t, fpx)) / 2, btn.y + (btn.h - 7 * fpx) / 2, fpx,
+    uiText(ren_, t, btn.x + (btn.w - uiTextWidth(t, fpx)) / 2, btn.y + (btn.h - 7 * fpx) / 2, fpx,
                   on && !busy ? SDL_Color{215, 225, 245, 255} : SDL_Color{110, 115, 125, 255});
     // Status line under it: why it is greyed, what the last pick did, or a pending restart.
     const size_t maxCh = size_t(std::max(8.0f, c.row.w / (6 * npx)));
@@ -1214,7 +1214,7 @@ void OptionsScreen::drawFolderRow(const Control& c) {
         note = head + elidePathStart(s_.dataDir, maxCh > head.size() + 8 ? maxCh - head.size() : 8);
     }
     if (note.size() > maxCh) note = note.substr(0, maxCh - 3) + "...";
-    drawBlockText(ren_, note, c.row.x, c.row.y + 38 * u_, npx, col);
+    uiText(ren_, note, c.row.x, c.row.y + 38 * u_, npx, col);
 }
 
 void OptionsScreen::drawRestartPrompt(int winW, int winH) {
@@ -1230,10 +1230,10 @@ void OptionsScreen::drawRestartPrompt(int winW, int winH) {
     SDL_SetRenderDrawColor(ren_, 30, 33, 44, 252); SDL_RenderFillRectF(ren_, &box);
     SDL_SetRenderDrawColor(ren_, 170, 180, 210, 255); SDL_RenderDrawRectF(ren_, &box);
     const char* title = "GAME DATA FOLDER CHANGED";
-    drawBlockText(ren_, title, box.x + (box.w - blockTextWidth(title, tpx)) / 2, box.y + 14 * u_, tpx,
+    uiText(ren_, title, box.x + (box.w - uiTextWidth(title, tpx)) / 2, box.y + 14 * u_, tpx,
                   {235, 225, 180, 255});
     for (size_t i = 0; i < lines.size(); ++i)
-        drawBlockText(ren_, lines[i], box.x + (box.w - blockTextWidth(lines[i], lpx)) / 2,
+        uiText(ren_, lines[i], box.x + (box.w - uiTextWidth(lines[i], lpx)) / 2,
                       box.y + 40 * u_ + float(i) * 14 * u_, lpx,
                       i == 1 ? SDL_Color{150, 200, 235, 255} : SDL_Color{205, 210, 222, 255});
     const float bw = 170 * u_, bh = 32 * u_, gap = 18 * u_, by = box.y + box.h - bh - 14 * u_;
@@ -1245,7 +1245,7 @@ void OptionsScreen::drawRestartPrompt(int winW, int winH) {
         SDL_SetRenderDrawColor(ren_, 130, 140, 170, 255); SDL_RenderDrawRectF(ren_, &r);
         const char* label = i ? "LATER" : "RESTART NOW";
         const float bpx = 2.2f * u_;
-        drawBlockText(ren_, label, r.x + (r.w - blockTextWidth(label, bpx)) / 2, r.y + (r.h - 7 * bpx) / 2, bpx,
+        uiText(ren_, label, r.x + (r.w - uiTextWidth(label, bpx)) / 2, r.y + (r.h - 7 * bpx) / 2, bpx,
                       {228, 232, 242, 255});
     }
 }

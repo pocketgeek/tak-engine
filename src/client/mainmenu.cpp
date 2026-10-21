@@ -2,7 +2,7 @@
 #include "client/presentationpacer.h"
 #include "client/mainmenu.h"
 #include "client/renderdriver.h"
-#include "client/blockfont.h"
+#include "client/uitext.h"
 #include "client/dooranimation.h"
 #include "client/videofilter.h"
 #include "client/runtimesettings.h"
@@ -533,7 +533,6 @@ struct MainMenu::Impl {
         Settings s = current; s.hardwareCursor = false;
         s.smoothArt = false; applyArtSettings(s);
         cursorsInit_ = true; cursors_.load(ren, vfs, &s);
-        const auto bytes = gpuvram::bytes(), count = gpuvram::count();
         auto capture = [&] {
             render(width, height);
             std::vector<uint8_t> pixels(size_t(width) * height * 4);
@@ -542,6 +541,9 @@ struct MainMenu::Impl {
             return pixels;
         };
         const auto original = capture();
+        // Counted after the first frame: it builds the interface font's glyph sheets
+        // (client/uitext.h), which the following frames reuse.
+        const auto bytes = gpuvram::bytes(), count = gpuvram::count();
         for (int i = 0; i < 3; ++i) {
             s.smoothArt = true; applyArtSettings(s);
             check(capture() != original, "title art smoothing did not apply live");
@@ -878,62 +880,10 @@ struct MainMenu::Impl {
         return serverCustom() ? serverText : serverItems[size_t(serverSel)];
     }
 
-    static const uint8_t* glyph5x7(char c) {
-        static const std::unordered_map<char, std::array<uint8_t, 5>> F = {
-            {'0',{0x3E,0x51,0x49,0x45,0x3E}},{'1',{0x00,0x42,0x7F,0x40,0x00}},
-            {'2',{0x42,0x61,0x51,0x49,0x46}},{'3',{0x21,0x41,0x45,0x4B,0x31}},
-            {'4',{0x18,0x14,0x12,0x7F,0x10}},{'5',{0x27,0x45,0x45,0x45,0x39}},
-            {'6',{0x3C,0x4A,0x49,0x49,0x30}},{'7',{0x01,0x71,0x09,0x05,0x03}},
-            {'8',{0x36,0x49,0x49,0x49,0x36}},{'9',{0x06,0x49,0x49,0x29,0x1E}},
-            {'A',{0x7E,0x11,0x11,0x11,0x7E}},{'B',{0x7F,0x49,0x49,0x49,0x36}},
-            {'C',{0x3E,0x41,0x41,0x41,0x22}},{'D',{0x7F,0x41,0x41,0x22,0x1C}},
-            {'E',{0x7F,0x49,0x49,0x49,0x41}},{'F',{0x7F,0x09,0x09,0x09,0x01}},
-            {'G',{0x3E,0x41,0x49,0x49,0x7A}},{'H',{0x7F,0x08,0x08,0x08,0x7F}},
-            {'I',{0x00,0x41,0x7F,0x41,0x00}},{'J',{0x20,0x40,0x41,0x3F,0x01}},
-            {'K',{0x7F,0x08,0x14,0x22,0x41}},{'L',{0x7F,0x40,0x40,0x40,0x40}},
-            {'M',{0x7F,0x02,0x0C,0x02,0x7F}},{'N',{0x7F,0x04,0x08,0x10,0x7F}},
-            {'O',{0x3E,0x41,0x41,0x41,0x3E}},{'P',{0x7F,0x09,0x09,0x09,0x06}},
-            {'Q',{0x3E,0x41,0x51,0x21,0x5E}},{'R',{0x7F,0x09,0x19,0x29,0x46}},
-            {'S',{0x46,0x49,0x49,0x49,0x31}},{'T',{0x01,0x01,0x7F,0x01,0x01}},
-            {'U',{0x3F,0x40,0x40,0x40,0x3F}},{'V',{0x1F,0x20,0x40,0x20,0x1F}},
-            {'W',{0x7F,0x20,0x18,0x20,0x7F}},{'X',{0x63,0x14,0x08,0x14,0x63}},
-            {'Y',{0x07,0x08,0x70,0x08,0x07}},{'Z',{0x61,0x51,0x49,0x45,0x43}},
-            {'.',{0x00,0x60,0x60,0x00,0x00}},{':',{0x00,0x36,0x36,0x00,0x00}},
-            {'-',{0x08,0x08,0x08,0x08,0x08}},
-            // Account names allow '_', and the login messages need sentence
-            // punctuation; without these they render as gaps.
-            {'_',{0x40,0x40,0x40,0x40,0x40}},{',',{0x00,0x50,0x30,0x00,0x00}},
-            {'!',{0x00,0x00,0x5F,0x00,0x00}},{'\'',{0x00,0x00,0x03,0x00,0x00}},
-            {'?',{0x02,0x01,0x51,0x09,0x06}},{'(',{0x00,0x1C,0x22,0x41,0x00}},
-            {')',{0x00,0x41,0x22,0x1C,0x00}},{'/',{0x20,0x10,0x08,0x04,0x02}},
-            {'*',{0x14,0x08,0x3E,0x08,0x14}},{'+',{0x08,0x08,0x3E,0x08,0x08}},
-        };
-        auto it = F.find(c);
-        return it == F.end() ? nullptr : it->second.data();
-    }
-    void blockText(const std::string& str, float x, float y, float px, SDL_Color c) {
-        SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
-        float sx, sy;
-        blockScale(ren, sx, sy);
-        float cx = x;
-        for (char ch : str) {
-            const uint8_t* cols = glyph5x7(char(std::toupper((unsigned char)ch)));
-            if (!cols) { cx += 4 * px; continue; }
-            for (int col = 0; col < 5; ++col)
-                for (int row = 0; row < 7; ++row)
-                    if (cols[col] & (1 << row)) {
-                        SDL_FRect r = blockPixel(cx + col * px, y + row * px, px, sx, sy);
-                        SDL_RenderFillRectF(ren, &r);
-                    }
-            cx += 6 * px;
-        }
-    }
-    // Block text with a 1px dark drop-shadow so it stays legible over any menu art.
-    void shadowText(const std::string& s, float x, float y, float px, SDL_Color c) {
-        float o = std::max(1.0f, px * 0.4f);
-        blockText(s, x + o, y + o, px, {0, 0, 0, 170});
-        blockText(s, x, y, px, c);
-    }
+    // Plain text in the chosen UI FONT (client/uitext.h), and with a dark drop shadow
+    // so it stays legible over any menu art.
+    void blockText(const std::string& str, float x, float y, float px, SDL_Color c) { uiText(ren, str, x, y, px, c); }
+    void shadowText(const std::string& s, float x, float y, float px, SDL_Color c) { uiTextShadow(ren, s, x, y, px, c); }
 
     void renderServerSelect(int winW, int winH) {
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);

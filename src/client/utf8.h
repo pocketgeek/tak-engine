@@ -3,7 +3,7 @@
 // One UTF-8 character at a time, under the chat box's rule: only a well-formed
 // sequence (no overlongs, surrogates or values past U+10FFFF) is one character; any
 // other byte is a character on its own and stands for itself (Latin-1). The chat
-// font's decoder (client/chatfont.h) and the chat word-wrap (client/chatbox.h) both
+// font's decoder (client/uifont.h) and the chat word-wrap (client/chatbox.h) both
 // step with this, so wrap can break wherever the font draws a separate glyph.
 
 #include <cstddef>

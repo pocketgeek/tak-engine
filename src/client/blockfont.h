@@ -1,9 +1,10 @@
 #pragma once
 
-// A tiny 5x7 vector block font drawn as filled rects -- crisp at any scale, no GAF
-// needed. Shared by the Options screen; MainMenu/GameView keep their own copies for
-// now. Advance is a uniform 6*px per glyph (space/unknown render blank), so
-// blockTextWidth() is exact for centring.
+// The CLASSIC interface text: a tiny 5x7 vector block font drawn as filled rects --
+// crisp at any scale, no GAF needed. The one copy of it: everything draws and measures
+// text through client/uitext.h (uiText / uiTextWidth), which comes here when UI FONT is
+// CLASSIC. A glyph advances 6 * px (5 + a 1 px gap); a space, or a character the font
+// lacks, advances 4 * px and draws nothing. Letters draw as capitals.
 
 #include <SDL.h>
 
@@ -38,7 +39,7 @@ inline const uint8_t* blockGlyph(char c) {
         {'Y',{0x07,0x08,0x70,0x08,0x07}},{'Z',{0x61,0x51,0x49,0x45,0x43}},
         {'.',{0x00,0x60,0x60,0x00,0x00}},{':',{0x00,0x36,0x36,0x00,0x00}},
         {'-',{0x08,0x08,0x08,0x08,0x08}},{'+',{0x08,0x08,0x3E,0x08,0x08}},
-        {'%',{0x62,0x64,0x08,0x13,0x23}},{'/',{0x20,0x10,0x08,0x04,0x02}},
+        {'%',{0x63,0x13,0x08,0x64,0x63}},{'/',{0x20,0x10,0x08,0x04,0x02}},
         {'(',{0x00,0x1C,0x22,0x41,0x00}},{')',{0x00,0x41,0x22,0x1C,0x00}},
         // An unknown glyph renders blank but still advances, so anything missing is
         // silently swallowed. '_' is legal in an account name (auth::validUsername).
@@ -52,7 +53,14 @@ inline const uint8_t* blockGlyph(char c) {
     return it == F.end() ? nullptr : it->second.data();
 }
 
-inline float blockTextWidth(const std::string& s, float px) { return float(s.size()) * 6 * px; }
+inline float classicBlockAdvance(char c, float px) {
+    return blockGlyph(char(std::toupper((unsigned char)c))) ? 6 * px : 4 * px;
+}
+inline float classicBlockWidth(const std::string& s, float px) {
+    float w = 0;
+    for (char c : s) w += classicBlockAdvance(c, px);
+    return w;
+}
 
 // One block-glyph pixel, snapped to whole DEVICE pixels (at the renderer's current
 // scale). OpenGL fills the pixels whose centres fall inside a fractional rect, but
@@ -74,20 +82,20 @@ inline void blockScale(SDL_Renderer* r, float& sx, float& sy) {
     if (!(sy > 0)) sy = 1;
 }
 
-inline void drawBlockText(SDL_Renderer* r, const std::string& s, float x, float y, float px, SDL_Color c) {
+inline void drawClassicBlock(SDL_Renderer* r, const std::string& s, float x, float y, float px, SDL_Color c) {
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
     float sx, sy;
     blockScale(r, sx, sy);
     float cx = x;
     for (char ch : s) {
         const uint8_t* cols = blockGlyph(char(std::toupper((unsigned char)ch)));
-        if (cols)
-            for (int col = 0; col < 5; ++col)
-                for (int row = 0; row < 7; ++row)
-                    if (cols[col] & (1 << row)) {
-                        SDL_FRect q = blockPixel(cx + col * px, y + row * px, px, sx, sy);
-                        SDL_RenderFillRectF(r, &q);
-                    }
+        if (!cols) { cx += 4 * px; continue; }   // space / unknown
+        for (int col = 0; col < 5; ++col)
+            for (int row = 0; row < 7; ++row)
+                if (cols[col] & (1 << row)) {
+                    SDL_FRect q = blockPixel(cx + col * px, y + row * px, px, sx, sy);
+                    SDL_RenderFillRectF(r, &q);
+                }
         cx += 6 * px;
     }
 }

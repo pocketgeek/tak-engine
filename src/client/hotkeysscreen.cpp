@@ -1,6 +1,6 @@
 #include "client/hotkeysscreen.h"
 
-#include "client/blockfont.h"
+#include "client/uitext.h"
 
 #include <algorithm>
 
@@ -136,7 +136,7 @@ void HotkeysScreen::render(int winW, int winH) {
 
     const char* title = "HOTKEYS";
     float tpx = 3.4f * u_;
-    drawBlockText(ren_, title, panel_.x + (panel_.w - blockTextWidth(title, tpx)) / 2,
+    uiText(ren_, title, panel_.x + (panel_.w - uiTextWidth(title, tpx)) / 2,
                   panel_.y + 13 * u_, tpx, {235, 225, 180, 255});
 
     float titleH = 3.4f * 7 * u_ + 26 * u_, footerH = 52 * u_;
@@ -149,18 +149,18 @@ void HotkeysScreen::render(int winW, int winH) {
         Row& r = rows_[i];
         if (r.rect.y + r.rect.h < clip.y || r.rect.y > clip.y + clip.h) continue;
         if (r.section) {
-            drawBlockText(ren_, r.label, r.rect.x, r.rect.y + 12 * u_, 2.2f * u_, {150, 200, 235, 255});
+            uiText(ren_, r.label, r.rect.x, r.rect.y + 12 * u_, 2.2f * u_, {150, 200, 235, 255});
             SDL_SetRenderDrawColor(ren_, 70, 78, 96, 255);
             SDL_FRect ln{r.rect.x, r.rect.y + r.rect.h - 3 * u_, r.rect.w, 1.5f * u_};
             SDL_RenderFillRectF(ren_, &ln);
             continue;
         }
-        drawBlockText(ren_, r.label, r.rect.x, r.rect.y + 10 * u_, fpx, {225, 230, 240, 255});
+        uiText(ren_, r.label, r.rect.x, r.rect.y + 10 * u_, fpx, {225, 230, 240, 255});
         // The binding chip on the right: the current chord, or "PRESS A KEY" while armed.
         bool armed = capture_ == int(i);
         KeyChord c = effectiveChord(s_.hotkeys, r.act);
         std::string val = armed ? "PRESS A KEY" : chordName(c);
-        float chipW = std::max(120 * u_, blockTextWidth(val, fpx) + 20 * u_);
+        float chipW = std::max(120 * u_, uiTextWidth(val, fpx) + 20 * u_);
         SDL_FRect chip{r.rect.x + r.rect.w - chipW, r.rect.y + 4 * u_, chipW, 24 * u_};
         if (armed) SDL_SetRenderDrawColor(ren_, 90, 80, 40, 255);
         else if (!c.bound()) SDL_SetRenderDrawColor(ren_, 60, 40, 44, 255);   // unbound: reddish
@@ -171,7 +171,7 @@ void HotkeysScreen::render(int winW, int winH) {
         SDL_Color tc = armed ? SDL_Color{245, 225, 150, 255}
                      : !c.bound() ? SDL_Color{225, 150, 155, 255}
                                   : SDL_Color{175, 205, 235, 255};
-        drawBlockText(ren_, val, chip.x + (chip.w - blockTextWidth(val, fpx)) / 2,
+        uiText(ren_, val, chip.x + (chip.w - uiTextWidth(val, fpx)) / 2,
                       chip.y + (chip.h - 7 * fpx) / 2, fpx, tc);
     }
     SDL_RenderSetClipRect(ren_, nullptr);
@@ -188,8 +188,8 @@ void HotkeysScreen::render(int winW, int winH) {
     // A hint line above the footer: how to unbind -- or why the last key was refused.
     {
         const std::string hint = !refused_.empty() ? refused_ : "CLICK TO REBIND   RIGHT-CLICK TO CLEAR";
-        float hpx = std::min(1.5f * u_, (panel_.w - 20 * u_) / std::max(1.0f, blockTextWidth(hint, 1)));
-        drawBlockText(ren_, hint, panel_.x + (panel_.w - blockTextWidth(hint, hpx)) / 2,
+        float hpx = std::min(1.5f * u_, (panel_.w - 20 * u_) / std::max(1.0f, uiTextWidth(hint, 1)));
+        uiText(ren_, hint, panel_.x + (panel_.w - uiTextWidth(hint, hpx)) / 2,
                       panel_.y + panel_.h - footerH - 16 * u_, hpx,
                       !refused_.empty() ? SDL_Color{235, 190, 110, 255} : SDL_Color{130, 140, 160, 255});
     }
@@ -200,7 +200,7 @@ void HotkeysScreen::render(int winW, int winH) {
         SDL_SetRenderDrawColor(ren_, on ? 130 : 70, on ? 140 : 76, on ? 170 : 92, 255);
         SDL_RenderDrawRectF(ren_, &r);
         float bpx = 2.2f * u_;
-        drawBlockText(ren_, label, r.x + (r.w - blockTextWidth(label, bpx)) / 2,
+        uiText(ren_, label, r.x + (r.w - uiTextWidth(label, bpx)) / 2,
                       r.y + (r.h - 7 * bpx) / 2, bpx,
                       on ? SDL_Color{228, 232, 242, 255} : SDL_Color{110, 115, 125, 255});
     };

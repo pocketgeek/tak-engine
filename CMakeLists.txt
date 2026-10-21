@@ -1872,7 +1872,7 @@ set_tests_properties(credstore PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/font.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/client/streaming.cpp)
+    add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/client/streaming.cpp)
     # Local dev/test harness (standalone scenario/demo/FFA setup, --testbuild/--firetest...):
     # debug builds only. The file is also wrapped in #ifndef NDEBUG, as are its callers, so
     # this just skips an empty TU when the config's flags define NDEBUG.
@@ -1895,28 +1895,32 @@ if(TAK_BUILD_CLIENT)
     else()
       set(_tak_sdl2 SDL2::SDL2)
     endif()
-    # The chat box's face (client/chatfont.h): Noto Sans Bold, subset to Latin-1
-    # (res/chat-font, CHAT-FONT-LICENSE.txt), embedded as a byte array so nothing new
-    # ships beside the binary, and rasterized by stb_truetype (src/vendor/stb).
+    # The interface's text (client/uitext.h, client/font.h) and its TrueType face
+    # (client/uifont.h): Noto Sans Bold, subset to Latin-1 (res/chat-font,
+    # CHAT-FONT-LICENSE.txt), embedded as a byte array so nothing new ships beside the
+    # binary, and rasterized by stb_truetype (src/vendor/stb). The chat box always uses
+    # it; UI FONT = MODERN routes every plain interface text through it too.
     set(TAK_CHATFONTS_INC "${CMAKE_BINARY_DIR}/generated/chatfonts.inc")
     set(_tak_chatfont_ttf "${CMAKE_SOURCE_DIR}/res/chat-font/NotoSans-Bold.ttf")
     add_custom_command(OUTPUT "${TAK_CHATFONTS_INC}"
         COMMAND ${CMAKE_COMMAND} "-DOUT=${TAK_CHATFONTS_INC}" "-DFILES=kNotoSansBold=${_tak_chatfont_ttf}"
                 -P "${CMAKE_SOURCE_DIR}/cmake/EmbedFiles.cmake"
         DEPENDS "${_tak_chatfont_ttf}" "${CMAKE_SOURCE_DIR}/cmake/EmbedFiles.cmake"
-        COMMENT "Embedding the chat-box font" VERBATIM)
-    add_library(tak-chatfont STATIC src/client/chatfont.cpp "${TAK_CHATFONTS_INC}")
-    target_include_directories(tak-chatfont PUBLIC src PRIVATE "${CMAKE_BINARY_DIR}/generated")
-    target_include_directories(tak-chatfont SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/vendor/stb")
-    target_link_libraries(tak-chatfont PUBLIC ${_tak_sdl2})
-    target_link_libraries(takclient PRIVATE tak-chatfont)
-    # The chat font: metrics, measuring, wrapping with it, UTF-8 (invalid bytes too), and
-    # a glyph sheet built once per pixel size (on SDL's software renderer).
-    add_executable(chatfont_test tools/chatfont_test.cpp)
-    target_compile_definitions(chatfont_test PRIVATE SDL_MAIN_HANDLED)
-    target_link_libraries(chatfont_test PRIVATE tak-chatfont ${_tak_sdl2})
-    add_test(NAME chatfont COMMAND chatfont_test)
-    set_tests_properties(chatfont PROPERTIES TIMEOUT 60 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+        COMMENT "Embedding the interface font" VERBATIM)
+    add_library(tak-uifont STATIC src/client/uifont.cpp src/client/uitext.cpp src/client/font.cpp
+        "${TAK_CHATFONTS_INC}")
+    target_include_directories(tak-uifont PUBLIC src PRIVATE "${CMAKE_BINARY_DIR}/generated")
+    target_include_directories(tak-uifont SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/vendor/stb")
+    target_link_libraries(tak-uifont PUBLIC tak-formats ${_tak_sdl2})
+    target_link_libraries(takclient PRIVATE tak-uifont)
+    # The interface font: metrics, measuring, wrapping with it, UTF-8 (invalid bytes too),
+    # glyph sheets built once per pixel size and bounded (on SDL's software renderer),
+    # and the text API in both UI FONT styles (measure and draw agree, fit, wrap).
+    add_executable(uifont_test tools/uifont_test.cpp)
+    target_compile_definitions(uifont_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(uifont_test PRIVATE tak-uifont ${_tak_sdl2})
+    add_test(NAME uifont COMMAND uifont_test)
+    set_tests_properties(uifont PROPERTIES TIMEOUT 60 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     # MakePoster: the MAKE POSTER hotkey and the streaming RGB PNG writer.
     add_executable(poster_test tools/poster_test.cpp src/client/hotkeys.cpp)
     target_compile_definitions(poster_test PRIVATE SDL_MAIN_HANDLED)
@@ -1936,7 +1940,7 @@ if(TAK_BUILD_CLIENT)
     add_executable(voice_test tools/voice_test.cpp src/client/options.cpp src/client/settings.cpp
       src/client/hotkeys.cpp)
     target_compile_definitions(voice_test PRIVATE SDL_MAIN_HANDLED)
-    target_link_libraries(voice_test PRIVATE tak-voice tak-formats ${_tak_sdl2})
+    target_link_libraries(voice_test PRIVATE tak-voice tak-uifont tak-formats ${_tak_sdl2})
     add_test(NAME voice COMMAND voice_test)
     set_tests_properties(voice PROPERTIES TIMEOUT 60 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     if(UNIX AND NOT APPLE)
@@ -1957,23 +1961,23 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(chatbox_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(chatbox_test PRIVATE tak-formats ${_tak_sdl2})
     add_test(NAME chatbox COMMAND chatbox_test)
-    add_executable(crusades_ui_test tools/crusades_ui_test.cpp src/client/crusadesscreen.cpp src/client/font.cpp)
+    add_executable(crusades_ui_test tools/crusades_ui_test.cpp src/client/crusadesscreen.cpp)
     target_compile_definitions(crusades_ui_test PRIVATE SDL_MAIN_HANDLED)
-    target_link_libraries(crusades_ui_test PRIVATE tak-crusades-map ${_tak_sdl2})
+    target_link_libraries(crusades_ui_test PRIVATE tak-crusades-map tak-uifont ${_tak_sdl2})
     add_test(NAME crusades_ui COMMAND crusades_ui_test)
     set_tests_properties(crusades_ui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 60)
     add_executable(crusades_effective_audit tools/crusades_effective_audit.cpp)
     target_compile_definitions(crusades_effective_audit PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(crusades_effective_audit PRIVATE tak-formats ${_tak_sdl2})
     add_executable(stream_capture_test tools/stream_capture_test.cpp src/client/streaming.cpp src/video/stream.cpp)
-    target_link_libraries(stream_capture_test PRIVATE tak-formats tak-credstore tak_ffmpeg ${_tak_sdl2})
+    target_link_libraries(stream_capture_test PRIVATE tak-uifont tak-formats tak-credstore tak_ffmpeg ${_tak_sdl2})
     target_compile_definitions(stream_capture_test PRIVATE SDL_MAIN_HANDLED)
     add_test(NAME streaming_capture COMMAND stream_capture_test)
     set_tests_properties(streaming_capture PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 15)
     # Remember Key logic and panel against a fake credential store (never the real one).
     add_executable(stream_key_test tools/stream_key_test.cpp src/client/streaming.cpp src/video/stream.cpp
                    src/client/settings.cpp)
-    target_link_libraries(stream_key_test PRIVATE tak-formats tak-credstore tak_ffmpeg ${_tak_sdl2})
+    target_link_libraries(stream_key_test PRIVATE tak-uifont tak-formats tak-credstore tak_ffmpeg ${_tak_sdl2})
     target_compile_definitions(stream_key_test PRIVATE SDL_MAIN_HANDLED)
     add_test(NAME stream_key COMMAND stream_key_test)
     set_tests_properties(stream_key PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 30)
@@ -2442,7 +2446,7 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(audio_device_test PRIVATE SDL_MAIN_HANDLED
       SDL_GetNumAudioDevices=TAK_Test_GetNumAudioDevices
       SDL_OpenAudioDevice=TAK_Test_OpenAudioDevice)
-    target_link_libraries(audio_device_test PRIVATE tak-formats ${_tak_sdl2})
+    target_link_libraries(audio_device_test PRIVATE tak-uifont tak-formats ${_tak_sdl2})
     add_test(NAME audio_device COMMAND audio_device_test)
     add_executable(renderdriver_test tools/renderdriver_test.cpp)
     target_include_directories(renderdriver_test PRIVATE src)
@@ -2516,15 +2520,15 @@ if(TAK_BUILD_CLIENT)
     add_test(NAME distant_models COMMAND distant_models_test)
     set_tests_properties(distant_models PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     add_executable(campaign_presentation_test tools/campaign_presentation_test.cpp
-        src/client/campaignscreen.cpp src/client/font.cpp src/client/guiart.cpp)
+        src/client/campaignscreen.cpp src/client/guiart.cpp)
     target_compile_definitions(campaign_presentation_test PRIVATE SDL_MAIN_HANDLED)
-    target_link_libraries(campaign_presentation_test PRIVATE tak-formats ${_tak_sdl2})
+    target_link_libraries(campaign_presentation_test PRIVATE tak-uifont tak-formats ${_tak_sdl2})
     add_test(NAME campaign_presentation COMMAND campaign_presentation_test)
     add_executable(screen_lifecycle_test tools/screen_lifecycle_test.cpp
         src/client/loadscreen.cpp src/client/resultscreen.cpp src/client/campaignscreen.cpp
-        src/client/font.cpp src/client/guiart.cpp src/client/cursors.cpp src/video/bink.cpp)
+        src/client/guiart.cpp src/client/cursors.cpp src/video/bink.cpp)
     target_compile_definitions(screen_lifecycle_test PRIVATE SDL_MAIN_HANDLED)
-    target_link_libraries(screen_lifecycle_test PRIVATE tak-formats tak_ffmpeg ${_tak_sdl2})
+    target_link_libraries(screen_lifecycle_test PRIVATE tak-uifont tak-formats tak_ffmpeg ${_tak_sdl2})
     if(TAK_TEST_DATA)
       add_test(NAME screen_lifecycle COMMAND screen_lifecycle_test "${TAK_TEST_DATA}")
       set_tests_properties(screen_lifecycle PROPERTIES

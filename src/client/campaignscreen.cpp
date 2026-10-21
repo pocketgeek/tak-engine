@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "campaign/campaign.h"
-#include "client/blockfont.h"
+#include "client/uitext.h"
 #include "client/hidpi.h"
 #include "client/font.h"
 #include "client/guiart.h"
@@ -127,14 +127,14 @@ struct CampaignScreen::Impl {
               SDL_FRect box,bool centered=true,float size=1) {
         if(value.empty())return;
         float scale=lay.scale*size;
-        float width=font.ok()?float(font.width(value,scale)):blockTextWidth(value,scale);
+        float width=font.ok()?float(font.width(value,scale)):uiTextWidth(value,scale);
         if(width>box.w && width>0){scale*=box.w/width;width=box.w;}
         float top=0,height=7*scale;
         if(font.ok())font.vbounds(value,scale,top,height);
         float x=box.x+(centered?(box.w-width)*.5f:0);
         float y=box.y+(box.h-height)*.5f-top;
         if(font.ok())font.draw(ren,value,x,y,scale);
-        else drawBlockText(ren,value,x,y,scale,{238,225,196,255});
+        else uiText(ren,value,x,y,scale,{238,225,196,255});
     }
     void click(const char* name) {
         if(!playSound)return;
@@ -228,7 +228,7 @@ void CampaignScreen::render(int w,int h) {
     std::vector<std::string> lines;std::istringstream words(title);std::string word,line;
     while(words>>word) {
         const auto next=line.empty()?word:line+" "+word;
-        const float width=d.body.ok()?float(d.body.width(next,lay.scale)):blockTextWidth(next,lay.scale);
+        const float width=d.body.ok()?float(d.body.width(next,lay.scale)):uiTextWidth(next,lay.scale);
         if(!line.empty() && width>box.w){lines.push_back(line);line=word;}else line=next;
     }
     if(!line.empty())lines.push_back(line);
@@ -251,7 +251,7 @@ void CampaignScreen::render(int w,int h) {
         const auto names=lay.rect(100,310,220,12);
         const auto fits=[&](const std::string& t){
             const float scale=lay.scale*kSize;
-            return (d.label.ok()?float(d.label.width(t,scale)):blockTextWidth(t,scale))<=names.w;};
+            return (d.label.ok()?float(d.label.width(t,scale)):uiTextWidth(t,scale))<=names.w;};
         std::string line=d.alwaysOn;
         while(line.size()>8 && !fits(line))line=line.substr(0,line.size()-4)+"...";
         d.text(lay,d.label,"Always-on mods:",lay.rect(100,298,220,12),true,kSize);

@@ -1,4 +1,4 @@
-#include "client/chatfont.h"
+#include "client/uifont.h"
 
 #include "client/gpuvram.h"
 #include "client/utf8.h"
@@ -40,7 +40,7 @@ uint32_t slotCp(int i) {
 }
 }  // namespace
 
-int ChatFont::slot(uint32_t cp) {
+int UiFont::slot(uint32_t cp) {
     if (cp >= 32 && cp < 127) return int(cp - 32);
     if (cp >= 160 && cp < 256) return 95 + int(cp - 160);
     for (int i = 0; i < int(std::size(kExtras)); ++i)
@@ -48,13 +48,13 @@ int ChatFont::slot(uint32_t cp) {
     return slot('?');
 }
 
-uint32_t ChatFont::mapped(uint32_t cp) { return slotCp(slot(cp)); }
+uint32_t UiFont::mapped(uint32_t cp) { return slotCp(slot(cp)); }
 
-// ---- ChatFont -------------------------------------------------------------------------
+// ---- UiFont ---------------------------------------------------------------------------
 
-ChatFont::ChatFont() : ChatFont(kNotoSansBold, kNotoSansBold_size, 16) {}
+UiFont::UiFont() : UiFont(kNotoSansBold, kNotoSansBold_size, 16) {}
 
-ChatFont::ChatFont(const unsigned char* data, size_t size, float basePx) : basePx_(basePx) {
+UiFont::UiFont(const unsigned char* data, size_t size, float basePx) : basePx_(basePx) {
     auto info = std::make_unique<stbtt_fontinfo>();
     if (!data || size < 12) return;
     const int offset = stbtt_GetFontOffsetForIndex(data, 0);
@@ -70,23 +70,28 @@ ChatFont::ChatFont(const unsigned char* data, size_t size, float basePx) : baseP
         stbtt_GetGlyphHMetrics(info.get(), m.glyph, &m.advance, &lsb);
         m.box = stbtt_GetGlyphBox(info.get(), m.glyph, &x0, &m.y0, &x1, &m.y1) != 0;
     }
-    glyphs_.resize(kSlots);
+    if (int x0, y0, x1, y1; stbtt_GetCodepointBox(info.get(), 'H', &x0, &y0, &x1, &y1))
+        capFrac_ = float(y1) / float(ascent_ - descent_);
     info_ = info.release();
 }
 
-ChatFont::~ChatFont() {
+float UiFont::ascentFrac() const {
+    return ok() ? float(ascent_) / float(ascent_ - descent_) : 0.75f;
+}
+
+UiFont::~UiFont() {
     destroyGlyphs();
     delete info_;
 }
 
-float ChatFont::pixelSize(float scale) const {
+float UiFont::pixelSize(float scale) const {
     return std::max(1.0f, std::round(basePx_ * scale * 4) / 4);
 }
-float ChatFont::sc(float px) const {
+float UiFont::sc(float px) const {
     return px / float(ascent_ - descent_);   // == stbtt_ScaleForPixelHeight
 }
 
-float ChatFont::kern(int a, int b) const {
+float UiFont::kern(int a, int b) const {
     const uint32_t key = uint32_t(a) * kSlots + uint32_t(b);
     if (auto it = kern_.find(key); it != kern_.end()) return it->second;
     const int k = stbtt_GetGlyphKernAdvance(info_, metrics_[size_t(a)].glyph, metrics_[size_t(b)].glyph);
@@ -95,7 +100,7 @@ float ChatFont::kern(int a, int b) const {
     return float(k);
 }
 
-float ChatFont::width(const std::string& text, float scale) const {
+float UiFont::width(const std::string& text, float scale) const {
     if (!ok()) return 0;
     const float s = sc(pixelSize(scale));
     float pen = 0;
@@ -109,7 +114,7 @@ float ChatFont::width(const std::string& text, float scale) const {
     return pen;
 }
 
-void ChatFont::vbounds(const std::string& text, float scale, float& topOff, float& h) const {
+void UiFont::vbounds(const std::string& text, float scale, float& topOff, float& h) const {
     if (!ok()) { topOff = 0; h = 0; return; }
     const float s = sc(pixelSize(scale));
     bool any = false;
@@ -126,26 +131,40 @@ void ChatFont::vbounds(const std::string& text, float scale, float& topOff, floa
     h = float(y1max - y0min) * s;
 }
 
-bool ChatFont::ensureSheet(SDL_Renderer* ren, float px) const {
+const UiFont::Sheet* UiFont::sheet(SDL_Renderer* ren, float px) const {
     const int key = int(px * 4);
-    if (key == key_ && ren == texRen_) return tex_ != nullptr;
-    gpuvram::destroy(tex_);
-    tex_ = nullptr;
-    key_ = key;
-    texRen_ = ren;
+    ++clock_;
+    for (Sheet& sh : sheets_)
+        if (sh.key == key && sh.ren == ren) {
+            sh.used = clock_;
+            return sh.tex ? &sh : nullptr;
+        }
+    // A new size: make room (the least recently used goes), then build it once.
+    if (int(sheets_.size()) >= kMaxSheets) {
+        auto old = std::min_element(sheets_.begin(), sheets_.end(),
+                                    [](const Sheet& a, const Sheet& b) { return a.used < b.used; });
+        gpuvram::destroy(old->tex);
+        sheets_.erase(old);
+    }
+    sheets_.emplace_back();
+    Sheet& sh = sheets_.back();
+    sh.key = key;
+    sh.ren = ren;
+    sh.used = clock_;
+    sh.glyphs.resize(kSlots);
     ++builds_;
     const float s = sc(px);
     // Under 32 px a third of a pixel of pen position shows; above, one phase is enough
     // and keeps the sheet small (~200 glyphs of up to 130 px at 300% x UI 200%: 3.6 MB).
-    phases_ = px < 32 ? kMaxPhases : 1;
+    sh.phases = px < 32 ? kMaxPhases : 1;
     struct Box { int x0, y0, x1, y1; };
     std::vector<std::array<Box, kMaxPhases>> boxes(kSlots);
     double area = 0;
     for (int i = 0; i < kSlots; ++i)
-        for (int ph = 0; ph < phases_; ++ph) {
+        for (int ph = 0; ph < sh.phases; ++ph) {
             Box& b = boxes[size_t(i)][size_t(ph)];
             stbtt_GetGlyphBitmapBoxSubpixel(info_, metrics_[size_t(i)].glyph, s, s,
-                                            float(ph) / float(phases_), 0, &b.x0, &b.y0, &b.x1, &b.y1);
+                                            float(ph) / float(sh.phases), 0, &b.x0, &b.y0, &b.x1, &b.y1);
             area += double(b.x1 - b.x0 + 1) * double(b.y1 - b.y0 + 1);
         }
     // A roughly square power-of-two-wide sheet, within the renderer's texture limit.
@@ -153,12 +172,12 @@ bool ChatFont::ensureSheet(SDL_Renderer* ren, float px) const {
     int maxW = 4096;
     if (ren && SDL_GetRendererInfo(ren, &ri) == 0 && ri.max_texture_width > 0)
         maxW = std::min(maxW, ri.max_texture_width);
-    int W = 256;
+    int W = 128;
     while (W < maxW && double(W) * double(W) < area * 1.3) W *= 2;
     // Shelf-pack every (glyph, phase) box, 1 px apart.
     int x = 1, y = 1, rowH = 0;
     for (int i = 0; i < kSlots; ++i)
-        for (int ph = 0; ph < phases_; ++ph) {
+        for (int ph = 0; ph < sh.phases; ++ph) {
             const Box& b = boxes[size_t(i)][size_t(ph)];
             Glyph g;
             g.w = std::min(b.x1 - b.x0, W - 2);
@@ -172,68 +191,79 @@ bool ChatFont::ensureSheet(SDL_Renderer* ren, float px) const {
                 x += g.w + 1;
                 rowH = std::max(rowH, g.h);
             } else g.w = g.h = 0;
-            glyphs_[size_t(i)][size_t(ph)] = g;
+            sh.glyphs[size_t(i)][size_t(ph)] = g;
         }
     const int H = y + rowH + 1;
-    std::vector<unsigned char> cov(size_t(W) * size_t(H), 0);
-    for (int i = 0; i < kSlots; ++i)
-        for (int ph = 0; ph < phases_; ++ph) {
-            const Glyph& g = glyphs_[size_t(i)][size_t(ph)];
-            if (g.w > 0)
-                stbtt_MakeGlyphBitmapSubpixel(info_, cov.data() + size_t(g.sy) * size_t(W) + size_t(g.sx),
-                                              g.w, g.h, W, s, s, float(ph) / float(phases_), 0,
-                                              metrics_[size_t(i)].glyph);
-        }
     sheetW_ = W;
     sheetH_ = H;
-    if (!ren) return false;
-    if (H > (ri.max_texture_height > 0 ? ri.max_texture_height : 16384)) return false;
+    if (!ren || H > (ri.max_texture_height > 0 ? ri.max_texture_height : 16384)) return nullptr;
+    std::vector<unsigned char> cov(size_t(W) * size_t(H), 0);
+    for (int i = 0; i < kSlots; ++i)
+        for (int ph = 0; ph < sh.phases; ++ph) {
+            const Glyph& g = sh.glyphs[size_t(i)][size_t(ph)];
+            if (g.w > 0)
+                stbtt_MakeGlyphBitmapSubpixel(info_, cov.data() + size_t(g.sy) * size_t(W) + size_t(g.sx),
+                                              g.w, g.h, W, s, s, float(ph) / float(sh.phases), 0,
+                                              metrics_[size_t(i)].glyph);
+        }
     std::vector<uint8_t> rgba(cov.size() * 4);
     for (size_t i = 0; i < cov.size(); ++i) {
         rgba[i * 4] = rgba[i * 4 + 1] = rgba[i * 4 + 2] = 255;
         rgba[i * 4 + 3] = cov[i];
     }
-    tex_ = gpuvram::create(ren, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, W, H);
-    if (!tex_) return false;
-    SDL_UpdateTexture(tex_, nullptr, rgba.data(), W * 4);
-    SDL_SetTextureBlendMode(tex_, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(tex_, SDL_ScaleModeNearest);   // drawn 1:1
-    return true;
+    sh.tex = gpuvram::create(ren, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, W, H);
+    if (!sh.tex) return nullptr;
+    SDL_UpdateTexture(sh.tex, nullptr, rgba.data(), W * 4);
+    SDL_SetTextureBlendMode(sh.tex, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(sh.tex, SDL_ScaleModeNearest);   // drawn 1:1 in device pixels
+    return &sh;
 }
 
-void ChatFont::drawSolid(SDL_Renderer* ren, const std::string& text, float x, float y,
-                         float scale, SDL_Color color) const {
-    if (!ok()) return;
-    const float px = pixelSize(scale);
-    if (!ensureSheet(ren, px)) return;
-    const float s = sc(px);
-    SDL_SetTextureColorMod(tex_, color.r, color.g, color.b);
-    SDL_SetTextureAlphaMod(tex_, color.a);
-    const float baseline = std::round(y + float(ascent_) * s);
+void UiFont::drawSolid(SDL_Renderer* ren, const std::string& text, float x, float y,
+                       float scale, SDL_Color color) const {
+    if (!ok() || text.empty()) return;
+    // Device pixels per logical unit: the sheet is set at the device size and drawn
+    // back at 1/k, so it lands 1:1 on screen; the pen walks the LOGICAL advances that
+    // width() adds up.
+    float kx = 1, ky = 1;
+    SDL_RenderGetScale(ren, &kx, &ky);
+    if (!(kx > 0)) kx = 1;
+    if (!(ky > 0)) ky = 1;
+    const float ls = sc(pixelSize(scale));
+    const Sheet* sh = sheet(ren, std::max(1.0f, std::round(basePx_ * scale * ky * 4) / 4));
+    if (!sh) return;
+    SDL_SetTextureColorMod(sh->tex, color.r, color.g, color.b);
+    SDL_SetTextureAlphaMod(sh->tex, color.a);
+    const float baseline = std::round((y + float(ascent_) * ls) * ky);   // device pixels
     float pen = x;
     int prev = -1;
     for (uint32_t cp : decodeUtf8Lenient(text)) {
         const int i = slot(cp);
-        if (prev >= 0) pen += kern(prev, i) * s;
-        const float fx = std::floor(pen);
-        const int phase = std::min(phases_ - 1, int((pen - fx) * float(phases_)));
-        const Glyph& g = glyphs_[size_t(i)][size_t(phase)];
+        if (prev >= 0) pen += kern(prev, i) * ls;
+        const float dp = pen * kx;
+        const float fx = std::floor(dp);
+        const int phase = std::min(sh->phases - 1, int((dp - fx) * float(sh->phases)));
+        const Glyph& g = sh->glyphs[size_t(i)][size_t(phase)];
         if (g.w > 0) {
             SDL_Rect src{g.sx, g.sy, g.w, g.h};
-            SDL_FRect dst{fx + float(g.xoff), baseline + float(g.yoff), float(g.w), float(g.h)};
-            SDL_RenderCopyF(ren, tex_, &src, &dst);
+            SDL_FRect dst{(fx + float(g.xoff)) / kx, (baseline + float(g.yoff)) / ky,
+                          float(g.w) / kx, float(g.h) / ky};
+            SDL_RenderCopyF(ren, sh->tex, &src, &dst);
         }
-        pen += float(metrics_[size_t(i)].advance) * s;
+        pen += float(metrics_[size_t(i)].advance) * ls;
         prev = i;
     }
 }
 
-void ChatFont::destroyGlyphs() {
-    gpuvram::destroy(tex_);
-    tex_ = nullptr;
-    texRen_ = nullptr;
-    key_ = -1;
+void UiFont::destroyGlyphs() {
+    for (Sheet& sh : sheets_) gpuvram::destroy(sh.tex);
+    sheets_.clear();
     sheetW_ = sheetH_ = 0;
+}
+
+UiFont& uiFont() {
+    static UiFont& f = *new UiFont;   // never destroyed: it outlives the renderer at exit
+    return f;
 }
 
 }  // namespace tak

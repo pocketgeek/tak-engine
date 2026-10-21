@@ -7,7 +7,7 @@
 
 #include "campaign/campaign.h"
 #include "client/appquit.h"
-#include "client/blockfont.h"
+#include "client/uitext.h"
 #include "client/hidpi.h"
 #include "client/cursors.h"
 #include "client/dev.h"
@@ -52,7 +52,7 @@ bool BriefingScreen::run(SDL_Renderer* ren,const hpi::Vfs& vfs,const std::string
             std::istringstream words(objective);std::string line,word;
             while(words>>word) {
                 const auto next=line.empty()?word:line+" "+word;
-                const float width=body.ok()?float(body.width(next,lay.scale)):blockTextWidth(next,lay.scale);
+                const float width=body.ok()?float(body.width(next,lay.scale)):uiTextWidth(next,lay.scale);
                 if(!line.empty() && width>textRect.w){lines.push_back(line);line=word;}else line=next;
             }
             if(!line.empty() || objective.empty())lines.push_back(line);
@@ -78,13 +78,13 @@ bool BriefingScreen::run(SDL_Renderer* ren,const hpi::Vfs& vfs,const std::string
         SDL_SetRenderDrawColor(ren,0,0,0,170);SDL_RenderFillRect(ren,nullptr);
         auto text=[&](const Font& font,const std::string& value,SDL_FRect r,bool center=false) {
             float scale=lay.scale;
-            float width=font.ok()?float(font.width(value,scale)):blockTextWidth(value,scale);
+            float width=font.ok()?float(font.width(value,scale)):uiTextWidth(value,scale);
             if(width>r.w && width>0){scale*=r.w/width;width=r.w;}
             float top=0,height=7*scale;
             if(font.ok())font.vbounds("Ag0123456789",scale,top,height);
             const float x=r.x+(center?(r.w-width)*.5f:0),y=r.y+(r.h-height)*.5f-top;
             if(font.ok())font.draw(ren,value,x,y,scale);
-            else drawBlockText(ren,value,x,y,scale,{255,255,255,255});
+            else uiText(ren,value,x,y,scale,{255,255,255,255});
         };
         text(heading,"Paused",rect("Static0",{0,0,510,63}),true);
         text(bold,chapter>0?"Chapter "+std::to_string(chapter):"",rect("Line0",{35,79,440,20}));

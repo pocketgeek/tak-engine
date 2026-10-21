@@ -11,7 +11,7 @@
 #include "util/png.h"
 #include "client/appquit.h"
 #include "client/dev.h"
-#include "client/blockfont.h"
+#include "client/uitext.h"
 #include "client/font.h"
 #include "client/gpuvram.h"
 #include "client/appglobals.h"
@@ -264,7 +264,7 @@ void LoadScreen::draw() {
             font.draw(ren_, s, lay.px(r.x), y, sc, c);
         } else {
             float px = std::max(1.0f, lay.scale * 1.6f);
-            drawBlockText(ren_, s, lay.px(r.x), lay.py(r.y) + (r.h * lay.scale - 7 * px) / 2, px, c);
+            uiText(ren_, s, lay.px(r.x), lay.py(r.y) + (r.h * lay.scale - 7 * px) / 2, px, c);
         }
     };
 

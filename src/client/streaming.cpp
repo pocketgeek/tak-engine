@@ -1,5 +1,5 @@
 #include "client/streaming.h"
-#include "client/blockfont.h"
+#include "client/uitext.h"
 #include "client/gpuvram.h"
 #include "client/settings.h"
 #include "client/streamkey.h"
@@ -227,8 +227,8 @@ struct Streaming::Impl {
         if(!visible) {
             if(s.active || s.state.starts_with("FAILED")) {
                 std::string text="STREAM " + s.state + " - F9";
-                SDL_SetRenderDrawColor(ren,10,12,18,230);SDL_FRect r{10,10,std::min(float(w-20),blockTextWidth(text,1.5f)+20),30};SDL_RenderFillRectF(ren,&r);
-                drawBlockText(ren,text,20,20,1.5f,{255,210,100,255});
+                SDL_SetRenderDrawColor(ren,10,12,18,230);SDL_FRect r{10,10,std::min(float(w-20),uiTextWidth(text,1.5f)+20),30};SDL_RenderFillRectF(ren,&r);
+                uiText(ren,text,20,20,1.5f,{255,210,100,255});
             }
             return;
         }
@@ -237,7 +237,7 @@ struct Streaming::Impl {
         const bool storeOk=keys->state()==StreamKeyMemory::State::Available;
         SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren,12,17,26,248);SDL_FRect panel{x,y,640*u,515*u};SDL_RenderFillRectF(ren,&panel);
-        auto text=[&](const std::string& t,float px,float py,SDL_Color col=SDL_Color{235,235,235,255}) {drawBlockText(ren,t,x+px*u,y+py*u,1.5f*u,col);};
+        auto text=[&](const std::string& t,float px,float py,SDL_Color col=SDL_Color{235,235,235,255}) {uiText(ren,t,x+px*u,y+py*u,1.5f*u,col);};
         text("YOUTUBE STREAMING",20,20);
         text(storeOk&&keys->remember()?"GAME VIDEO AND AUDIO - KEY SAVED IN PASSWORD STORE":
                                        "GAME VIDEO AND AUDIO - KEY IS NOT SAVED",20,45);
@@ -254,7 +254,7 @@ struct Streaming::Impl {
         for(int i=0;i<6;++i) {
             auto r=row(i);if(i==0)r.w=490*u;
             SDL_SetRenderDrawColor(ren,i==0&&editing?55:35,45,60,255);SDL_RenderFillRectF(ren,&r);
-            drawBlockText(ren,labels[i],r.x+10*u,r.y+11*u,1.5f*u,{240,235,210,255});
+            uiText(ren,labels[i],r.x+10*u,r.y+11*u,1.5f*u,{240,235,210,255});
         }
         // REMEMBER KEY: greyed out, with the reason, when there is no usable store.
         const auto remember=rememberRect();
@@ -266,15 +266,15 @@ struct Streaming::Impl {
             SDL_FRect tick{box.x+5*u,box.y+5*u,10*u,10*u};
             SDL_SetRenderDrawColor(ren,storeOk?255:90,storeOk?210:95,storeOk?100:100,255);SDL_RenderFillRectF(ren,&tick);
         }
-        drawBlockText(ren,"REMEMBER KEY",remember.x+42*u,remember.y+11*u,1.5f*u,storeOk?live:grey);
+        uiText(ren,"REMEMBER KEY",remember.x+42*u,remember.y+11*u,1.5f*u,storeOk?live:grey);
         const std::string where=keys->state()==StreamKeyMemory::State::Unavailable?keys->reason():
             !storeOk?std::string("CHECKING PASSWORD STORE"):keys->busy()?std::string("SAVING..."):keys->storeName();
-        drawBlockText(ren,where,remember.x+remember.w-10*u-blockTextWidth(where,1.5f*u),remember.y+11*u,1.5f*u,
+        uiText(ren,where,remember.x+remember.w-10*u-uiTextWidth(where,1.5f*u),remember.y+11*u,1.5f*u,
                       storeOk?SDL_Color{170,175,180,255}:grey);
         const auto paste=pasteRect();
         SDL_SetRenderDrawColor(ren,s.active?35:50,s.active?40:65,s.active?45:85,255);
         SDL_RenderFillRectF(ren,&paste);
-        drawBlockText(ren,"PASTE",paste.x+27*u,paste.y+11*u,1.5f*u,
+        uiText(ren,"PASTE",paste.x+27*u,paste.y+11*u,1.5f*u,
                       s.active?SDL_Color{110,115,120,255}:SDL_Color{240,235,210,255});
         text(s.state,20,397,{255,210,100,255});
         text(s.encoder+"  FRAMES "+std::to_string(s.frames)+"  DROPPED "+std::to_string(s.dropped),20,420);

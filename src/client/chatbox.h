@@ -2,7 +2,7 @@
 
 // In-game chat box: the pure layout rules (word wrap, size clamp, placement), kept
 // apart from GameView so they can be tested without a renderer. GameView's
-// drawGameChat() measures text with the chat font (client/chatfont.h) and draws what
+// drawGameChat() measures text with the chat font (client/uifont.h) and draws what
 // these return.
 // Display only: nothing here touches the simulation or the network.
 

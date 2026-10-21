@@ -4674,7 +4674,7 @@
         bigFont_.destroyGlyphs();
         statFont_.destroyGlyphs();
         scoreboardFont_.destroyGlyphs();
-        chatFont_.destroyGlyphs();
+        tak::releaseUiTextGlyphs();   // the TrueType face's sheets (client/uitext.h)
         for (auto& [name, texture] : scoreboardLogos_) if (texture) gpuvram::destroy(texture);
         scoreboardLogos_.clear();
     }

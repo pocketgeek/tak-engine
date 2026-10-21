@@ -1,4 +1,5 @@
 #include "client/campaignscreen.h"
+#include "client/uitext.h"
 #include "client/settings.h"
 #include "client/gpuvram.h"
 #include "campaign/campaign.h"
@@ -91,6 +92,7 @@ int main(int argc,char** argv) {
                 check(screen.pickedStem()==camps[tab].missions[1].stem,"chapter paging chose wrong mission");
                 check(sounds==std::vector<std::string>{"ok.wav"},"Play must route authored GUI click sound");
             }
+            tak::releaseUiTextGlyphs();   // the shared interface-font cache, not the screen's
             check(gpuvram::count()==before,"campaign screen leaked authored textures");
         }
         {
@@ -99,7 +101,7 @@ int main(int argc,char** argv) {
             e.key.keysym.sym=SDLK_RETURN;screen.input(e,960,720);
             const auto& c=camps[1];check(screen.pickedStem()==(c.altFinal.empty()?c.missions.back().stem:c.altFinal),"last chapter/alternate inaccessible");
         }
-        SDL_DestroyRenderer(ren);SDL_FreeSurface(surface);SDL_Quit();
+        tak::releaseUiTextGlyphs();SDL_DestroyRenderer(ren);SDL_FreeSurface(surface);SDL_Quit();
         std::puts("PASS: campaign book assets, chapter input, all chapters accessible, texture teardown and score accounting");return 0;
     }catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}
 }

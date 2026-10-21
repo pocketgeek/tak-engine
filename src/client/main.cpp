@@ -20,6 +20,7 @@
 #include "campaign/campaign.h"
 #include <utility>
 #include "client/streaming.h"
+#include "client/uitext.h"
 #include "client/serveraddress.h"
 #include "client/presentationpacer.h"
 #include "client/briefingscreen.h"
@@ -768,7 +769,7 @@ int main(int argc, char** argv) {
                 rp.fallback = true;
                 rp.reason = ren ? std::string("SDL created '") + (got ? got : "?") + "' instead"
                                 : std::string("creation failed: ") + SDL_GetError();
-                if (ren) { SDL_DestroyRenderer(ren); ren = nullptr; }
+                if (ren) { tak::releaseUiTextGlyphs(); SDL_DestroyRenderer(ren); ren = nullptr; }
             } else {
                 renState.inEffect = rp.hint;
             }
@@ -871,7 +872,7 @@ int main(int argc, char** argv) {
         }
         bool victory = tak::devEnv("TAK_SHOT_RESULT_LOSE") == nullptr;
         tak::ResultScreen::run(ren, vfs, victory, "MISSION 7", false, &settings, nullptr, &st);
-        SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
+        tak::releaseUiTextGlyphs(); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
         return 0;
     }
     // Retail intro: play the logo movie once at startup (scaled to the window), then
@@ -1003,7 +1004,7 @@ int main(int argc, char** argv) {
             }
         }
         if (choice == tak::MainMenu::Choice::Restart) { restartApp = true; quitApp = true; break; }
-        if (!shot.empty() && choice == tak::MainMenu::Choice::None) { menuMusic.stop(); menuMusic.setAudioTap(nullptr,nullptr); streamingOwner.reset(); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
+        if (!shot.empty() && choice == tak::MainMenu::Choice::None) { menuMusic.stop(); menuMusic.setAudioTap(nullptr,nullptr); streamingOwner.reset(); tak::releaseUiTextGlyphs(); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
         if (choice != tak::MainMenu::Choice::SinglePlayer &&
             choice != tak::MainMenu::Choice::Multiplayer &&
             choice != tak::MainMenu::Choice::Benchmark &&
@@ -1712,6 +1713,9 @@ int main(int argc, char** argv) {
             // reset). Rebuild the baked atlases so sprites don't blink out.
             if (e.type == SDL_RENDER_TARGETS_RESET || e.type == SDL_RENDER_DEVICE_RESET)
                 targetsReset = true;
+            // A device reset loses every texture; the UI font's glyph sheets rebuild on
+            // their next draw.
+            if (e.type == SDL_RENDER_DEVICE_RESET) tak::releaseUiTextGlyphs();
             if (e.type == SDL_WINDOWEVENT &&
                 (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED || e.window.event == SDL_WINDOWEVENT_RESIZED))
                 windowResized = true;
@@ -2680,7 +2684,7 @@ int main(int argc, char** argv) {
     menuMusic.setAudioTap(nullptr,nullptr);
     streamingOwner.reset();
     voiceOwner.reset();   // closes the voice devices before SDL goes
-    SDL_DestroyRenderer(ren);
+    tak::releaseUiTextGlyphs(); SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
     if (restartApp) {

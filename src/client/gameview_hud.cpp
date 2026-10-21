@@ -8,7 +8,7 @@
 #include "client/reclaimpick.h"
 #include "client/gpuvram.h"
 #include "client/renderdriver.h"
-#include "client/blockfont.h"
+#include "client/uitext.h"
 #include "client/chatbox.h"
 #include "client/statsfit.h"
 #include "net/protocol.h"
@@ -1056,9 +1056,9 @@ namespace {
         if (!statFont_.ok()) load(statFont_, "fonts/ig_times new roman (100).gaf");
         load(scoreboardFont_, "fonts/ig_times new roman (100).gaf");
         scoreboardFont_.setLetterSpacing(0);
-        // The chat box's face is embedded (client/chatfont.h), not art; only its glyph
-        // sheet goes, and the next draw rebuilds it.
-        chatFont_.destroyGlyphs();
+        // The embedded TrueType face (client/uifont.h) is not art; only its glyph sheets
+        // go, and the next draw rebuilds them.
+        tak::releaseUiTextGlyphs();
     }
 
     void GameView::reloadInterfaceArt(const tak::Settings& s) {
@@ -1995,25 +1995,6 @@ namespace {
         return tex;
     }
 
-    void GameView::blockText(const std::string& s, float x, float y, float px, SDL_Color c) {
-        SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, c.a);
-        float sx, sy;
-        tak::blockScale(ren_, sx, sy);
-        float cx = x;
-        for (char ch : s) {
-            char u = char(std::toupper((unsigned char)ch));
-            const uint8_t* cols = glyph5x7(u);
-            if (!cols) { cx += 4 * px; continue; }   // space / unknown
-            for (int col = 0; col < 5; ++col)
-                for (int row = 0; row < 7; ++row)
-                    if (cols[col] & (1 << row)) {
-                        SDL_FRect r = tak::blockPixel(cx + col * px, y + row * px, px, sx, sy);
-                        SDL_RenderFillRectF(ren_, &r);
-                    }
-            cx += 6 * px;
-        }
-    }
-
     void GameView::colorSwatch(float x, float y, float s, int color, std::function<void(int)> action) {
         SDL_FRect r{x, y, s, s};
         SDL_Color c = playerColors_[color % 10];
@@ -2558,43 +2539,6 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         sounds_.play(t, gain, rate);
     }
 
-    const uint8_t* GameView::glyph5x7(char c) {
-        static const std::map<char, std::array<uint8_t, 5>> F = {
-            {'0',{0x3E,0x51,0x49,0x45,0x3E}}, {'1',{0x00,0x42,0x7F,0x40,0x00}},
-            {'2',{0x42,0x61,0x51,0x49,0x46}}, {'3',{0x21,0x41,0x45,0x4B,0x31}},
-            {'4',{0x18,0x14,0x12,0x7F,0x10}}, {'5',{0x27,0x45,0x45,0x45,0x39}},
-            {'6',{0x3C,0x4A,0x49,0x49,0x30}}, {'7',{0x01,0x71,0x09,0x05,0x03}},
-            {'8',{0x36,0x49,0x49,0x49,0x36}}, {'9',{0x06,0x49,0x49,0x29,0x1E}},
-            {'A',{0x7E,0x11,0x11,0x11,0x7E}}, {'B',{0x7F,0x49,0x49,0x49,0x36}},
-            {'C',{0x3E,0x41,0x41,0x41,0x22}}, {'D',{0x7F,0x41,0x41,0x22,0x1C}},
-            {'E',{0x7F,0x49,0x49,0x49,0x41}}, {'F',{0x7F,0x09,0x09,0x09,0x01}},
-            {'G',{0x3E,0x41,0x49,0x49,0x7A}}, {'H',{0x7F,0x08,0x08,0x08,0x7F}},
-            {'I',{0x00,0x41,0x7F,0x41,0x00}}, {'J',{0x20,0x40,0x41,0x3F,0x01}},
-            {'K',{0x7F,0x08,0x14,0x22,0x41}}, {'L',{0x7F,0x40,0x40,0x40,0x40}},
-            {'M',{0x7F,0x02,0x0C,0x02,0x7F}}, {'N',{0x7F,0x04,0x08,0x10,0x7F}},
-            {'O',{0x3E,0x41,0x41,0x41,0x3E}}, {'P',{0x7F,0x09,0x09,0x09,0x06}},
-            {'Q',{0x3E,0x41,0x51,0x21,0x5E}}, {'R',{0x7F,0x09,0x19,0x29,0x46}},
-            {'S',{0x46,0x49,0x49,0x49,0x31}}, {'T',{0x01,0x01,0x7F,0x01,0x01}},
-            {'U',{0x3F,0x40,0x40,0x40,0x3F}}, {'V',{0x1F,0x20,0x40,0x20,0x1F}},
-            {'W',{0x7F,0x20,0x18,0x20,0x7F}}, {'X',{0x63,0x14,0x08,0x14,0x63}},
-            {'Y',{0x07,0x08,0x70,0x08,0x07}}, {'Z',{0x61,0x51,0x49,0x45,0x43}},
-            {'/',{0x20,0x10,0x08,0x04,0x02}}, {'+',{0x08,0x08,0x3E,0x08,0x08}},
-            {'-',{0x08,0x08,0x08,0x08,0x08}}, {':',{0x00,0x36,0x36,0x00,0x00}},
-            {'.',{0x00,0x60,0x60,0x00,0x00}}, {'%',{0x63,0x13,0x08,0x64,0x63}},
-            // An unknown glyph advances like a space, so anything missing here is
-            // silently SWALLOWED rather than shown wrong. '_' is legal in an account
-            // name (see auth::validUsername) and this table drew the lobby's player
-            // list, so "pocket_geek" read as "pocket geek"; the rest is the sentence
-            // punctuation chat needs for the same reason.
-            {'_',{0x40,0x40,0x40,0x40,0x40}}, {',',{0x00,0x50,0x30,0x00,0x00}},
-            {'!',{0x00,0x00,0x5F,0x00,0x00}}, {'\'',{0x00,0x00,0x03,0x00,0x00}},
-            {'?',{0x02,0x01,0x51,0x09,0x06}}, {'(',{0x00,0x1C,0x22,0x41,0x00}},
-            {')',{0x00,0x41,0x22,0x1C,0x00}}, {'*',{0x14,0x08,0x3E,0x08,0x14}},
-        };
-        auto it = F.find(c);
-        return it == F.end() ? nullptr : it->second.data();
-    }
-
     // A chat sender's name colour: their player colour when the name is a seated
     // player's, a warm gold for this client's own notices, a neutral grey otherwise
     // (spectators). Dark player colours are lifted so a name never sinks into the
@@ -2629,7 +2573,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
     // information bar, and lifts over the build row when the two would overlap.
     void GameView::drawGameChat(int winW, int winH) {
         // The embedded face; the HUD font only if it ever failed to load.
-        if (chatFont_.ok()) drawGameChatIn(chatFont_, winW, winH);
+        if (tak::uiFont().ok()) drawGameChatIn(tak::uiFont(), winW, winH);
         else drawGameChatIn(hudFont_, winW, winH);
     }
 

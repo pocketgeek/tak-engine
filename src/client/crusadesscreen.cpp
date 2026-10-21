@@ -1,7 +1,8 @@
 #include "client/crusadesscreen.h"
 #include "client/crusadesmap.h"
 #include "client/font.h"
-#include "client/blockfont.h"
+#include "client/blockfont.h"   // blockGlyph: the fallback glyph atlas
+#include "client/uitext.h"
 #include "client/gpuvram.h"
 #include "net/client.h"
 #include "net/auth.h"
@@ -94,7 +95,7 @@ struct CrusadesScreen::Impl {
  int textWidth(const std::string& s)const{return font.ok()?font.width(s,fontScale):int(s.size()*8.4f);}
  void text(const std::string& value,int x,int y,int maxWidth,SDL_Color c=ink){
   auto s=glyphs(value,font.ok());while(!s.empty()&&textWidth(s)>maxWidth)s.pop_back();
-  if(font.ok()){float top,h;font.vbounds(s,fontScale,top,h);font.draw(ren,s,float(x),float(y)-top,fontScale,c);}else if(fallbackFont){SDL_SetTextureColorMod(fallbackFont,c.r,c.g,c.b);float at=float(x);for(unsigned char ch:s){const int code=ch<128?ch:'?';SDL_Rect source{code%16*6,code/16*8,6,8};SDL_FRect destination{at,float(y),8.4f,11.2f};SDL_RenderCopyF(ren,fallbackFont,&source,&destination);at+=8.4f;}}else drawBlockText(ren,s,float(x),float(y),1.4f,c);
+  if(font.ok()){float top,h;font.vbounds(s,fontScale,top,h);font.draw(ren,s,float(x),float(y)-top,fontScale,c);}else if(fallbackFont){SDL_SetTextureColorMod(fallbackFont,c.r,c.g,c.b);float at=float(x);for(unsigned char ch:s){const int code=ch<128?ch:'?';SDL_Rect source{code%16*6,code/16*8,6,8};SDL_FRect destination{at,float(y),8.4f,11.2f};SDL_RenderCopyF(ren,fallbackFont,&source,&destination);at+=8.4f;}}else uiText(ren,s,float(x),float(y),1.4f,c);
  }
  void button(SDL_Rect r,std::string label,Command command,bool enabled=true){buttons.push_back({r,label,command,enabled});rect(r,enabled?SDL_Color{65,65,57,255}:SDL_Color{37,40,39,255});SDL_SetRenderDrawColor(ren,enabled?155:75,enabled?139:77,enabled?96:69,255);SDL_RenderDrawRect(ren,&r);text(label,r.x+7,r.y+7,r.w-14,enabled?ink:muted);}
  void focusOn(Focus f){focus=f;if(f==Focus::None)SDL_StopTextInput();else SDL_StartTextInput();}

@@ -4,6 +4,10 @@
 #include "client/campaignscreen.h"
 #include "client/settings.h"
 #include "client/gpuvram.h"
+// The interface font's glyph sheets (client/uitext.h) are one cache shared by every
+// screen, kept between them and freed at session teardown; the screens own the rest,
+// so the sheets are released before each count.
+#include "client/uitext.h"
 #include "hpi/hpi.h"
 #include <cstdio>
 #include <stdexcept>
@@ -23,7 +27,7 @@ int main(int argc,char** argv) try {
         const auto bytes=gpuvram::bytes(),count=gpuvram::count();
         for(int i=0;i<3;++i) {
             { tak::LoadScreen screen(renderer,vfs,"Ulasem Arena");screen.draw(); }
-            check(gpuvram::bytes()==bytes && gpuvram::count()==count,
+            tak::releaseUiTextGlyphs();check(gpuvram::bytes()==bytes && gpuvram::count()==count,
                   "loading screen leaves glyphs/textures behind");
             {
                 Font font(renderer,vfs,"fonts/b_times new roman (100).gaf");
@@ -32,13 +36,13 @@ int main(int argc,char** argv) try {
                 font=Font(renderer,vfs,"fonts/b_times new roman (100).gaf");
                 check(gpuvram::bytes()==loaded,"font replacement leaks glyphs");
             }
-            check(gpuvram::bytes()==bytes && gpuvram::count()==count,"font scope leaks glyphs");
+            tak::releaseUiTextGlyphs();check(gpuvram::bytes()==bytes && gpuvram::count()==count,"font scope leaks glyphs");
             {
                 tak::Settings settings;
                 tak::CampaignScreen campaign(renderer,vfs,settings);
                 campaign.render(640,480);
             }
-            check(gpuvram::bytes()==bytes && gpuvram::count()==count,"campaign screen leaks textures");
+            tak::releaseUiTextGlyphs();check(gpuvram::bytes()==bytes && gpuvram::count()==count,"campaign screen leaks textures");
             // Missing heading font exercises the results screen's fallback to
             // its body font without giving two owners the same glyph textures.
             auto files=std::make_shared<tak::hpi::Vfs::Files>();
@@ -53,9 +57,9 @@ int main(int argc,char** argv) try {
             }
             tak::ResultScreen::run(renderer,vfs,true,"",false,nullptr,nullptr,&stats);
             vfs.setMapFiles({});
-            check(gpuvram::bytes()==bytes && gpuvram::count()==count,"results screen leaks textures");
+            tak::releaseUiTextGlyphs();check(gpuvram::bytes()==bytes && gpuvram::count()==count,"results screen leaks textures");
         }
-        SDL_DestroyRenderer(renderer);
+        tak::releaseUiTextGlyphs();SDL_DestroyRenderer(renderer);
     }
     SDL_DestroyWindow(window);SDL_Quit();
     std::puts("PASS: repeated loading/results screens, font replacement and renderer lifetimes");

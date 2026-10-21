@@ -61,7 +61,8 @@
 #include "client/unitindex.h"
 #include "client/unittypetable.h"
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
-#include "client/chatfont.h"  // the chat box's embedded TrueType face
+#include "client/uifont.h"    // the embedded TrueType face (chat box, MODERN UI FONT)
+#include "client/uitext.h"    // plain interface text in the chosen UI FONT
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
 #include "client/modelpiece.h"
 #include "client/modelmath.h"   // Tri/Xform/scriptRot (shared by GameView + model viewer)
@@ -3401,14 +3402,11 @@ private:
     // units render/appear on the minimap through fog just like your own.)
     bool alliedToLocal(int player) const { return worldTables().allied(player, localPlayer_); }
 
-    // A built-in 5x7 pixel font (uppercase, digits, a few symbols), drawn as
-    // solid blocks — unmistakably legible at any size, unlike the game's small
-    // decorative fonts. Each glyph is 5 columns; bit 0 of a column is the top.
-    static const uint8_t* glyph5x7(char c);
-
-    // Draw text in the built-in block font. `px` is the size of one font pixel.
-    void blockText(const std::string& s, float x, float y, float px, SDL_Color c);
-    float blockWidth(const std::string& s, float px) const { return s.size() * 6 * px; }
+    // Plain interface text in the chosen UI FONT (client/uitext.h): `px` is the size of
+    // one block-font cell pixel (caps 7 * px tall from y), and blockWidth is exactly
+    // what blockText advances.
+    void blockText(const std::string& s, float x, float y, float px, SDL_Color c) { tak::uiText(ren_, s, x, y, px, c); }
+    float blockWidth(const std::string& s, float px) const { return tak::uiTextWidth(s, px); }
 
     // A top-of-screen status line (network error, notice, pending-order prompt).
     // These print coloured text straight over the terrain, where it can be nearly
@@ -3864,7 +3862,6 @@ private:
     float amphibLandX_ = 0, amphibLandZ_ = 0, amphibSeaX_ = 0, amphibSeaZ_ = 0;
 #endif
     Font hudFont_, bigFont_, statFont_, scoreboardFont_;
-    tak::ChatFont chatFont_;   // the chat box: embedded Noto Sans Bold (client/chatfont.h)
     std::unordered_map<std::string, SDL_Texture*> scoreboardLogos_;
     std::string scoreboardSides_[8];
 
