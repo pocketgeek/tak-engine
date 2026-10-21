@@ -1411,11 +1411,26 @@ available on your system appear.
 | **Stats Panel** | On | Live statistics in the space under the minimap. |
 | **Build Menu** | Center | Where the build icons sit: left, centre or right. |
 | **Build Menu Scale** | 100% | Extra size for the build icons (75–400%). |
+| **Chat Position** | Centered | Where the in-game chat box sits: left, or centred over the battlefield. |
+| **Chat Scale** | 100% | Size of the in-game chat box, on top of UI Scale (50–300%, in 10% steps). |
 
 The **stats panel** shows your units, kills and score, the clock, real time,
 game time, the speed the game is actually running at (as a game-speed level: NORMAL,
 +5, -3), client and server processor use and GPU use. It drops rows when there
 is not enough room.
+
+The **chat box** shows multiplayer chat during a game, just above the information
+bar. Each message starts with the sender's name in their player colour (server
+notices are gold) and wraps onto further lines instead of running off the screen.
+The text sits on a dark panel so it reads over bright sand and dark forest alike.
+New messages appear at the bottom; each stays for 12 seconds and then fades out
+over 2 seconds. While you type (**Enter**), the last eight messages stay up and
+your line is shown under them after **SAY:**. The box never goes under the
+command panel, and when a builder's build icons are in the way it moves up above
+them. **Chat Scale** multiplies UI Scale, so 200% UI Scale with 150% Chat Scale
+gives three times the 100% size; on a small window a very large box is shrunk
+until it fits. Both options take effect at once, also during a game. They are
+saved as `chatScale` and `chatAlign` (0 left, 1 centred) in `settings.ini`.
 
 ### Camera
 

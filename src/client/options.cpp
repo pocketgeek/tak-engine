@@ -575,6 +575,14 @@ void OptionsScreen::build(int channels) {
     // Extra scale for the build icon row, applied ON TOP of UI SCALE (same range).
     slider("BUILD MENU SCALE", 0.75f, 4.0f, [&] { return s_.buildBarScale; },
            [&](float v) { s_.buildBarScale = v; }, [](float v) { return pctOf(v, 1); });
+    // The in-game chat box: where it sits over the play area, and its size ON TOP of
+    // UI SCALE, in 10% steps (client/chatbox.h).
+    slider("CHAT POSITION", 0, 1, [&] { return float(s_.chatAlign); },
+           [&](float v) { s_.chatAlign = std::clamp(int(v + 0.5f), 0, 1); },
+           [](float v) { return std::string(v >= 0.5f ? "CENTERED" : "LEFT"); });
+    slider("CHAT SCALE", 0.5f, 3.0f, [&] { return s_.chatScale; },
+           [&](float v) { s_.chatScale = std::clamp(std::round(v * 10) / 10, 0.5f, 3.0f); },
+           [](float v) { return pctOf(std::round(v * 10) / 10, 1); });
 
     section("CAMERA");
     slider("MOUSE ZOOM SPEED", 0.25f, 4.0f, [&] { return s_.mouseZoomSpeed; },

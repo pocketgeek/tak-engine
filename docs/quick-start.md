@@ -149,7 +149,7 @@ pointer.*
 | **D** | Diplomacy: give units, share mana, chat and voice recipients. |
 | **Pause** | Pause / resume, for every player. |
 | **+** / **−** | Game speed. Host only, and only with *Allow Speed Change* on. |
-| **Enter** | Chat (multiplayer): Enter sends, Esc cancels. |
+| **Enter** | Chat (multiplayer): Enter sends, Esc cancels. Chat box size and position: **Options → Interface**. |
 | **Space** (hold) | Push to talk, in a multiplayer game with voice chat on. |
 | **Shift+D** / **Shift+H** | Emotes: disco / headbang. |
 | **Esc** | In order: close Unit Info, cancel placement or an armed order, clear the selection, open the game menu (Resume, Options, Controls, Voice Chat, Quit…). |

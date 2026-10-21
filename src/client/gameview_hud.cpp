@@ -8,6 +8,7 @@
 #include "client/gpuvram.h"
 #include "client/renderdriver.h"
 #include "client/blockfont.h"
+#include "client/chatbox.h"
 #include "client/statsfit.h"
 #include "net/protocol.h"
 #include "sim/retailtransport.h"
@@ -1052,6 +1053,11 @@ namespace {
         if (!statFont_.ok()) load(statFont_, "fonts/ig_times new roman (100).gaf");
         load(scoreboardFont_, "fonts/ig_times new roman (100).gaf");
         scoreboardFont_.setLetterSpacing(0);
+        // The bold Times again for the chat box, with the letters set closer than the
+        // HUD's default 2 px: at the larger CHAT SCALEs that gap reads as s p a c e d.
+        load(chatFont_, "fonts/b_times new roman (100b).gaf");
+        if (!chatFont_.ok()) load(chatFont_, "fonts/ig_times new roman (100).gaf");
+        chatFont_.setLetterSpacing(0.5f);
     }
 
     void GameView::reloadInterfaceArt(const tak::Settings& s) {
@@ -2586,4 +2592,146 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         };
         auto it = F.find(c);
         return it == F.end() ? nullptr : it->second.data();
+    }
+
+    // A chat sender's name colour: their player colour when the name is a seated
+    // player's, a warm gold for the server's own notices, a neutral grey otherwise
+    // (spectators). Dark player colours are lifted so a name never sinks into the
+    // box's dark backing.
+    SDL_Color GameView::chatSenderColor(const std::string& who) const {
+        auto same = [](const std::string& a, const std::string& b) {
+            return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+                return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+            });
+        };
+        if (who == "SYSTEM" || who == "SERVER") return {255, 214, 120, 255};
+        SDL_Color c{200, 205, 215, 255};
+        for (int i = 0; i < 8; ++i)
+            if (!playerName_[i].empty() && same(playerName_[i], who)) { c = playerColor(i); break; }
+        // Too dark to read on black (the blue player is): mix toward white, keeping the hue.
+        const float lum = 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+        if (lum < 160) {
+            const float k = std::min(0.6f, (160 - lum) / (255 - lum));
+            c = {Uint8(c.r + (255 - c.r) * k), Uint8(c.g + (255 - c.g) * k), Uint8(c.b + (255 - c.b) * k), 255};
+        }
+        return c;
+    }
+
+    // The in-game chat box. Received lines read oldest to newest downwards, the newest
+    // just above the composer; each starts with the sender's name in their colour and
+    // wraps to the box width. The text is the HUD's plain Times face drawn in flat
+    // colour with a drop shadow, over one translucent dark panel, so it reads over
+    // bright sand and dark forest alike. Size is UI SCALE x CHAT SCALE; the box sits
+    // left or centred over the play area (never under the command panel), above the
+    // information bar, and lifts over the build row when the two would overlap.
+    void GameView::drawGameChat(int winW, int winH) {
+        namespace cb = tak::chatbox;
+        const Font& font = chatFont_.ok() ? chatFont_ : hudFont_;
+        if (!mp_ || !font.ok() || (!chatTyping_ && gameChat_.empty())) return;
+
+        const float areaW = float(mapViewW(winW));
+        const float margin = std::round(10 * uiScale_);
+        const float bottom = float(winH - barH());
+        // The box may use the lower 45% of the play area; above that it would start to
+        // cover the battle rather than annotate it.
+        const float maxBoxH = bottom * 0.45f;
+
+        float top1 = 0, h1 = 0;
+        font.vbounds("Hdgjpqy", 1, top1, h1);
+        h1 = std::max(h1, 1.0f);
+        // Text ~16 px tall at 100%, never under 10 px (unreadable); and never so big that
+        // three rows (two lines and the composer) cannot fit in the room there is.
+        float s = uiScale_ * chatScale_;
+        auto rowH = [&](float sc) { return std::max(10.0f, 16.0f * sc) + 6.0f * sc; };
+        while (s > 0.25f && 3 * rowH(s) + 16 * s > maxBoxH) s *= 0.9f;
+        const float textH = std::max(10.0f, 16.0f * s);
+        const float fs = textH / h1;          // font scale
+        const float lineH = rowH(s), pad = std::round(8 * s), indent = std::round(14 * s);
+        const float shadow = std::max(1.0f, std::round(fs * 0.6f));
+        const float wrapW = std::max(80.0f, std::min(areaW - 2 * margin, 760 * s) - 2 * pad);
+        auto width = [&](const std::string& t) { return float(font.width(t, fs)); };
+
+        struct Seg { std::string text; SDL_Color color; };
+        struct Row { std::vector<Seg> segs; float x = 0, alpha = 1; bool composer = false; };
+        std::vector<Row> rows;
+        auto addMessage = [&](const std::string& head, SDL_Color headColor, const std::string& body,
+                              SDL_Color bodyColor, float alpha, bool composer) {
+            const float headW = width(head);
+            const auto parts = cb::wrap(body, std::max(wrapW - headW, wrapW * 0.25f), wrapW - indent, width);
+            for (size_t i = 0; i < parts.size(); ++i) {
+                Row r;
+                r.alpha = alpha;
+                r.composer = composer;
+                if (i == 0) {
+                    r.segs.push_back({head, headColor});
+                    r.x = 0;
+                } else r.x = indent;
+                r.segs.push_back({parts[i], bodyColor});
+                rows.push_back(std::move(r));
+            }
+        };
+        const SDL_Color bodyColor{238, 234, 222, 255};
+        // While typing, the recent history is shown in full; otherwise only lines still
+        // inside their hold + fade time.
+        const int maxMsgs = chatTyping_ ? 8 : 6;
+        std::vector<const GameChat*> msgs;
+        for (auto it = gameChat_.rbegin(); it != gameChat_.rend() && int(msgs.size()) < maxMsgs; ++it)
+            if (chatTyping_ || cb::lineAlpha(it->age) > 0) msgs.push_back(&*it);
+        std::reverse(msgs.begin(), msgs.end());
+        for (const GameChat* m : msgs)
+            addMessage(m->who + ": ", chatSenderColor(m->who), m->text, bodyColor,
+                       chatTyping_ ? 1.0f : cb::lineAlpha(m->age), false);
+        const size_t firstComposer = rows.size();
+        if (chatTyping_) addMessage("SAY: ", {255, 214, 120, 255}, chatDraft_ + "_", {255, 248, 225, 255}, 1, true);
+        if (rows.empty()) return;
+
+        // Too tall: drop the oldest rows (the composer always stays).
+        const float sepH = chatTyping_ && firstComposer > 0 ? std::round(6 * s) : 0;
+        auto boxH = [&] { return float(rows.size()) * lineH + 2 * pad - 6 * s + sepH; };
+        size_t composerAt = firstComposer;
+        while (boxH() > maxBoxH && composerAt > 0) {
+            rows.erase(rows.begin());
+            --composerAt;
+        }
+        float contentW = 0, alpha = 0;
+        for (const Row& r : rows) {
+            float w = r.x;
+            for (const Seg& g : r.segs) w += width(g.text);
+            contentW = std::max(contentW, w);
+            alpha = std::max(alpha, r.alpha);
+        }
+        // While typing the box keeps its full width, so it does not grow under the caret.
+        const float boxW = (chatTyping_ ? wrapW : contentW) + 2 * pad;
+        cb::Rect avoid{buildMenuRect_.x, buildMenuRect_.y, buildMenuRect_.w, buildMenuRect_.h};
+        const cb::Rect box = cb::place(chatAlign_, boxW, boxH(), areaW, bottom, 0, margin, avoid);
+
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        SDL_FRect bg{box.x, box.y, box.w, box.h};
+        SDL_SetRenderDrawColor(ren_, 8, 8, 12, Uint8(200 * alpha));
+        SDL_RenderFillRectF(ren_, &bg);
+        SDL_SetRenderDrawColor(ren_, 96, 84, 60, Uint8(200 * alpha));   // the HUD's bronze frame
+        SDL_RenderDrawRectF(ren_, &bg);
+
+        // Clip so a row can never draw outside the box (a long unbroken name, say).
+        SDL_Rect clip{int(box.x), int(box.y), int(std::ceil(box.w)), int(std::ceil(box.h))};
+        SDL_RenderSetClipRect(ren_, &clip);
+        float y = box.y + pad;
+        for (size_t i = 0; i < rows.size(); ++i) {
+            const Row& r = rows[i];
+            if (r.composer && i == composerAt && i > 0) {   // a rule between history and composer
+                SDL_SetRenderDrawColor(ren_, 96, 84, 60, 200);
+                SDL_RenderDrawLineF(ren_, box.x + pad, y + sepH / 2 - 3 * s, box.x + box.w - pad, y + sepH / 2 - 3 * s);
+                y += sepH;
+            }
+            float x = box.x + pad + r.x;
+            const float baseY = y - top1 * fs;
+            for (const Seg& g : r.segs) {
+                const Uint8 a = Uint8(255 * r.alpha);
+                font.drawSolid(ren_, g.text, x + shadow, baseY + shadow, fs, {0, 0, 0, a});
+                font.drawSolid(ren_, g.text, x, baseY, fs, {g.color.r, g.color.g, g.color.b, a});
+                x += width(g.text);
+            }
+            y += lineH;
+        }
+        SDL_RenderSetClipRect(ren_, nullptr);
     }

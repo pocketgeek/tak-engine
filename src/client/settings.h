@@ -44,6 +44,10 @@ struct Settings {
     int   textureFilter = 2;
     int   buildBarAlign = 1;       // conjure/build icon row: 0=left, 1=center, 2=right
     float buildBarScale = 1.0f;    // extra scale on the build icon row, ON TOP of uiScale; 0.75..4.0
+    // The in-game chat box (client/chatbox.h): its size, ON TOP of uiScale (0.5..3.0), and
+    // where it sits over the play area: 0 = left, 1 = centered.
+    float chatScale = 1.0f;
+    int   chatAlign = 1;
     bool  treeSway   = true;       // animated tree and shadow sway; default on
     bool  tacticalDots = true;     // zoomed far out, draw units as minimap-style dots
     int   tacticalDotsZoom = 0;    // when: 0 = only fully zoomed out .. 100 = from normal size
@@ -179,6 +183,7 @@ struct Settings {
         return a.fullscreen == b.fullscreen && a.vsync == b.vsync && a.maxFps == b.maxFps
             && a.scorecardScale == b.scorecardScale && a.uiScale == b.uiScale && a.textureFilter == b.textureFilter
             && a.buildBarAlign == b.buildBarAlign && a.buildBarScale == b.buildBarScale
+            && a.chatScale == b.chatScale && a.chatAlign == b.chatAlign
             && a.treeSway == b.treeSway && a.tacticalDots == b.tacticalDots
             && a.tacticalDotsZoom == b.tacticalDotsZoom && a.screenShake == b.screenShake
             && a.unitShadows == b.unitShadows && a.smoothArt == b.smoothArt

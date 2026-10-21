@@ -1640,6 +1640,8 @@ public:
 private:
     int buildBarAlign_ = 1;     // conjure/build row: 0=left 1=center 2=right (Options)
     float buildBarScale_ = 1.0f;   // extra row scale on top of uiScale_ (Options)
+    float chatScale_ = 1.0f;       // chat box scale on top of uiScale_ (Options)
+    int chatAlign_ = 1;            // chat box: 0=left 1=centered (Options)
     // TEXTURE FILTERING (Options; client/texturefilter.h). Units and above = retail's
     // BiLinearFilter on the unit and unit-shadow pages; Everything also turns terrain,
     // feature, effect and ground-shadow sprites LINEAR while zoomed in (worldLinear_,
@@ -2065,6 +2067,10 @@ private:
     // Push to talk for one key event; true when it consumed the event.
     bool voiceKey(const SDL_Event& e);
     void drawVoiceIndicator(int winW, int winH);
+    // The in-game chat box: received lines (fading) and the composer while typing, over
+    // the play area at the CHAT SCALE / CHAT POSITION options. Layout: client/chatbox.h.
+    void drawGameChat(int winW, int winH);
+    SDL_Color chatSenderColor(const std::string& who) const;
     std::optional<uint8_t> requestedManaSharing_;
     std::array<bool,8> eligibleGiftRecipients();
     std::array<bool,8> giftEligibleLast_{};   // its answer when the worker held the world
@@ -3799,6 +3805,7 @@ private:
     float amphibLandX_ = 0, amphibLandZ_ = 0, amphibSeaX_ = 0, amphibSeaZ_ = 0;
 #endif
     Font hudFont_, bigFont_, statFont_, scoreboardFont_;
+    Font chatFont_;   // the chat box: statFont_'s bold Times, set closer (drawGameChat)
     std::unordered_map<std::string, SDL_Texture*> scoreboardLogos_;
     std::string scoreboardSides_[8];
 

@@ -55,6 +55,8 @@ int main() {
     flips("textureFilter 0", [](Settings& s) { s.textureFilter = 0; });
     flips("buildBarAlign",   [](Settings& s) { s.buildBarAlign = (s.buildBarAlign + 1) % 3; });
     flips("buildBarScale",   [](Settings& s) { s.buildBarScale += 0.25f; });
+    flips("chatScale",       [](Settings& s) { s.chatScale += 0.5f; });
+    flips("chatAlign",       [](Settings& s) { s.chatAlign = 0; });
     flips("treeSway",        [](Settings& s) { s.treeSway = !s.treeSway; });
     flips("screenShake",    [](Settings& s) { s.screenShake = !s.screenShake; });
     flips("tacticalDots",    [](Settings& s) { s.tacticalDots = !s.tacticalDots; });

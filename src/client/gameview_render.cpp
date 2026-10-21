@@ -3288,34 +3288,7 @@
 
         drawVoiceIndicator(winW, winH);   // who is talking (voice chat), top-left
 
-        // In-game chat: recent lines bottom-left, plus a composer while typing.
-        if (mp_ && hudFont_.ok() && (chatTyping_ || !gameChat_.empty())) {
-            const float kFade = 10.0f;   // seconds a line stays up when not typing
-            // Gather what will be drawn (bottom-up) so we can back it with one
-            // translucent strip -- readable over bright terrain.
-            std::vector<std::pair<std::string, SDL_Color>> lines;
-            if (chatTyping_)
-                lines.push_back({"SAY> " + chatDraft_ + "_", {255, 245, 180, 255}});
-            int shown = 0;
-            for (auto it = gameChat_.rbegin(); it != gameChat_.rend() && shown < 6; ++it) {
-                if (!chatTyping_ && it->age > kFade) continue;
-                lines.push_back({it->who + ": " + it->text, {225, 228, 236, 255}});
-                ++shown;
-            }
-            float x = 14, y = float(winH) - barH() - 14;
-            float wMax = 0;
-            for (auto& l : lines) wMax = std::max(wMax, float(hudFont_.width(l.first, 1.7f)));
-            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-            SDL_FRect bg{x - 8, y - float(lines.size()) * 21 + 4,
-                         std::min(wMax + 16, float(winW) - x), float(lines.size()) * 21 + 6};
-            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 140);
-            SDL_RenderFillRectF(ren_, &bg);
-            for (auto& l : lines) {           // lines[0] is the composer / newest
-                float sc = (&l == &lines.front() && chatTyping_) ? 1.8f : 1.6f;
-                hudFont_.draw(ren_, l.first, x, y, sc, l.second);
-                y -= 21;
-            }
-        }
+        drawGameChat(winW, winH);   // in-game chat box (Options: CHAT POSITION / SCALE)
 
         // In-game exit menu overlay -- drawn last so it sits above the HUD. Screen
         // space (like the game-over banner); hit-rects are rebuilt here each frame
@@ -4689,6 +4662,7 @@
         bigFont_.destroyGlyphs();
         statFont_.destroyGlyphs();
         scoreboardFont_.destroyGlyphs();
+        chatFont_.destroyGlyphs();
         for (auto& [name, texture] : scoreboardLogos_) if (texture) gpuvram::destroy(texture);
         scoreboardLogos_.clear();
     }

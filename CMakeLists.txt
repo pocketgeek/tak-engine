@@ -1920,6 +1920,12 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(datafolder_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(datafolder_test PRIVATE tak-formats ${_tak_sdl2})
     add_test(NAME datafolder COMMAND datafolder_test)
+    # The in-game chat box (client/chatbox.h): wrap, placement, fade, and its two
+    # Options keys (chatScale / chatAlign) through a private settings file.
+    add_executable(chatbox_test tools/chatbox_test.cpp src/client/settings.cpp)
+    target_compile_definitions(chatbox_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(chatbox_test PRIVATE tak-formats ${_tak_sdl2})
+    add_test(NAME chatbox COMMAND chatbox_test)
     add_executable(crusades_ui_test tools/crusades_ui_test.cpp src/client/crusadesscreen.cpp src/client/font.cpp)
     target_compile_definitions(crusades_ui_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(crusades_ui_test PRIVATE tak-crusades-map ${_tak_sdl2})

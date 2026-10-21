@@ -11,6 +11,7 @@
 #include "client/gaitpace.h"
 #include "client/retaildeathsfx.h"
 #include "client/runtimesettings.h"
+#include "client/chatbox.h"
 #include "sim/retailmotion.h"
 #include <cmath>
 #include <cstdlib>
@@ -216,6 +217,8 @@
         screenShake_ = s.screenShake;                     // Options: camera shake
         buildBarAlign_ = std::clamp(s.buildBarAlign, 0, 2);   // Options: build-menu row
         buildBarScale_ = std::clamp(s.buildBarScale, 0.75f, 4.0f);
+        chatScale_ = std::clamp(s.chatScale, tak::chatbox::kMinScale, tak::chatbox::kMaxScale);   // Options: chat box
+        chatAlign_ = std::clamp(s.chatAlign, 0, 1);
         setTextureFilter(s.textureFilter);
         healthBars_ = std::clamp(s.healthBars, 0, 2);
         statsPanel_ = s.statsPanel;                       // Options: minimap-strip readout
