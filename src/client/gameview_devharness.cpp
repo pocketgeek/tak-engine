@@ -854,6 +854,20 @@
             check(plainOrder(),"31x31 px is still a click");
             reset();rightDrag(px,py,px+250,py+10);
             check(plainOrder(),"a long 10 px sliver is a click");
+            // A click orders at the press, not where a twitch released it.
+            {
+                float tx,tz;pickWorld(px,py,tx,tz);
+                reset();
+                std::vector<tak::net::Command> cmds;
+                {
+                    ClickScope outer(*this);
+                    rightDrag(px,py,px+20,py+20);
+                    cmds=click_->cmds;
+                }
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::Move &&
+                      std::fabs(cmds[0].x-tx)<1 && std::fabs(cmds[0].z-tz)<1,
+                      "a 20 px twitch orders at the pressed ground");
+            }
             reset();
             float wx0,wz0,wx1,wz1;pickWorld(px,py,wx0,wz0);pickWorld(px+60,py+50,wx1,wz1);
             rightDrag(px,py,px+60,py+50);
@@ -889,7 +903,8 @@
                 int ow=0,oh=0;SDL_GetRendererOutputSize(ren_,&ow,&oh);
                 std::vector<uint8_t> px4(size_t(ow)*size_t(oh)*4);
                 const bool read=SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px4.data(),ow*4)==0;
-                if (read) {
+                check(read,"the drawn frame reads back");
+                {
                     if (const char* cap=tak::devEnv("TAK_AREA_DRAG_CAPTURE")) tak::png::write(cap,ow,oh,px4);
                     const auto outline=[&](int x,int y) {
                         const uint8_t* q=&px4[(size_t(y)*size_t(ow)+size_t(x))*4];
@@ -935,6 +950,49 @@
             event(SDL_MOUSEMOTION,0,ax-40,ay-40);   // box: pressed ground (ax-100) .. ax-40
             event(SDL_MOUSEBUTTONUP,SDL_BUTTON_LEFT,ax-40,ay-40);
             check(selection_==std::vector<int>{soldier},"marquee after a pan selects inside the drawn box");
+            // A click-select held through a pan picks the unit pressed on, not the
+            // ground the pan moved under the held pointer.
+            reset();selection_.clear();publish();
+            {
+                const SDL_FPoint s1=unitScreen(*frameUnitP(soldier));
+                event(SDL_MOUSEBUTTONDOWN,SDL_BUTTON_LEFT,s1.x,s1.y);
+                mapView_.setOffset(baseX+150,baseZ+120);publish();
+                event(SDL_MOUSEBUTTONUP,SDL_BUTTON_LEFT,s1.x,s1.y);
+                check(selection_==std::vector<int>{soldier},"click-select across a pan picks the pressed unit");
+            }
+            // The lodestone box through input(): under the threshold one lodestone at
+            // the release, at or over it a box -- also after a pan mid-drag.
+            if (const auto* lode=registry_.find("aralode")) {
+                const auto leftDrag=[&](float qx,float qy,float panX,float panZ) {
+                    reset();placing_=lode;
+                    std::vector<tak::net::Command> cmds;
+                    {
+                        ClickScope outer(*this);
+                        event(SDL_MOUSEBUTTONDOWN,SDL_BUTTON_LEFT,px,py);
+                        if (panX!=0 || panZ!=0) mapView_.setOffset(mapView_.offX()+panX,mapView_.offY()+panZ);
+                        event(SDL_MOUSEMOTION,0,qx,qy);
+                        event(SDL_MOUSEBUTTONUP,SDL_BUTTON_LEFT,qx,qy);
+                        cmds=click_->cmds;click_->cmds.clear();
+                    }
+                    placing_=nullptr;
+                    return cmds;
+                };
+                const auto boxed=[](const std::vector<tak::net::Command>& c) {
+                    return c.size()==1 && c[0].kind==tak::net::Cmd::BuildManaArea;
+                };
+                check(!boxed(leftDrag(px+12,py+9,0,0)),"lodestone: a 12x9 twitch is not a box");
+                check(!boxed(leftDrag(px+31,py+31,0,0)),"lodestone: 31x31 is not a box");
+                check(boxed(leftDrag(px+40,py+40,0,0)),"lodestone: 40x40 is a box");
+                check(!boxed(leftDrag(px,py,100,80)),"lodestone: a pan alone is not a box");
+                reset();float lx0,lz0;pickWorld(px,py,lx0,lz0);
+                const auto c=leftDrag(px+50,py+40,80,60);
+                float lx1,lz1;pickWorld(px+50,py+40,lx1,lz1);
+                check(boxed(c) && std::fabs(c[0].x-lx0)<1 && std::fabs(c[0].z-lz0)<1 &&
+                      std::fabs(c[0].x2-lx1)<1 && std::fabs(c[0].z2-lz1)<1,
+                      "lodestone: a panned box runs from the pressed ground to the release");
+            } else {
+                check(false,"fixture has a lodestone type");
+            }
             reset();
             SDL_SetModState(savedMod);
             std::fprintf(stderr,"PASS: area drag threshold %.0f UI px both ways, map-anchored boxes\n",

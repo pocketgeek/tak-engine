@@ -380,10 +380,18 @@
             // threshold, measured from where the press's ground is drawn NOW, so a pan
             // mid-drag counts as the box the player sees); anything less was a click ->
             // the ordinary contextual order.
-            if (areaBoxAt(rdAnchor_, ex, ey))
+            // A click orders at the PRESS, as a plain right-click does on press: a
+            // twitch (now up to the area threshold) must not move the target off what
+            // was clicked. Units are picked where the pressed ground is drawn now.
+            if (areaBoxAt(rdAnchor_, ex, ey)) {
                 issueReclaimBox(rdX0_, rdZ0_, ewx, ewz, queue);
-            else
-                rightClickOrder(ewx, ewz, queue);
+            } else {
+                const auto a = dragStartOnScreen(rdAnchor_);
+                const float mx = mouseX_, my = mouseY_;
+                mouseX_ = a.x; mouseY_ = a.y;
+                rightClickOrder(rdX0_, rdZ0_, queue);
+                mouseX_ = mx; mouseY_ = my;
+            }
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT &&
                    placing_) {
             placing_ = nullptr;
@@ -420,8 +428,11 @@
             if (isClick) {
                 // Pick the unit nearest the cursor in SCREEN space (matching the
                 // render lift + flyer altitude), so a unit on a lifted wall top or a
-                // Monarch cruising overhead is selected where it's drawn.
-                float ccx = (a.x + dragX1_) / 2, ccy = (a.y + dragY1_) / 2;
+                // Monarch cruising overhead is selected where it's drawn. The click is
+                // at the press (re-projected), so a unit pressed on near the screen edge
+                // is still the one selected after edge scroll moved it under a held
+                // pointer.
+                float ccx = a.x, ccy = a.y;
                 int hit = -1;
                 float best = 1e30f;
                 for (const UnitR* _up : front().live) {

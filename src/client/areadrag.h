@@ -9,11 +9,13 @@
 // corners are world points re-projected every frame (KINGDOMS.icd 0x5202c0).
 //
 // Click or area. An area command needs BOTH: the pointer really dragged (moved at
-// least kAreaCommandMinPx on both screen axes since the press) AND the box drawn from
-// the re-projected anchor to the pointer is that big on both sides. So a pan alone
-// (edge scroll while clicking near the edge) never turns a click into an area clear,
-// a drag that the camera follows (pointer kept over the pressed ground) does not make
-// a sliver either, and the preview shows exactly when the release will be an area.
+// least kAreaCommandMinPx on the screen since the press, on either axis) AND the box
+// drawn from the re-projected anchor to the pointer is that big on BOTH sides. So a
+// pan alone (edge scroll while clicking near the edge) never turns a click into an
+// area clear, a drag that the camera follows (pointer kept over the pressed ground)
+// does not make one either, a box stretched along one axis by edge scroll while the
+// pointer runs along the edge still counts, and the preview shows exactly when the
+// release will be an area. Below it the release is a click AT THE PRESS.
 // Retail's test (0x527bf0) is 32 world pixels on EITHER axis, or a press held 25
 // clock ticks; a twitch sideways then made a sliver box, so here both sides count.
 #pragma once
@@ -24,7 +26,7 @@
 namespace tak::client::areadrag {
 
 // Smallest side, in UI pixels at 100% UI scale, of a dragged box that becomes an area
-// command (area clear, lodestone box). Retail's distance, required on both axes.
+// command (area clear, lodestone box). Retail's distance, required of both sides.
 inline constexpr float kAreaCommandMinPx = 32.0f;
 // The selection marquee keeps its own small click/box split: a thin box is still a
 // real selection, and a click must stay a click under a few pixels of jitter.
@@ -67,7 +69,7 @@ inline bool eitherAxis(float ax, float ay, float bx, float by, float t) {
 // current screen (toScreen).
 inline bool isAreaBox(const Anchor& a, ScreenPoint now, float px, float py, float uiScale) {
     const float t = threshold(kAreaCommandMinPx, uiScale);
-    return bothAxes(a.sx, a.sy, px, py, t) && bothAxes(now.x, now.y, px, py, t);
+    return eitherAxis(a.sx, a.sy, px, py, t) && bothAxes(now.x, now.y, px, py, t);
 }
 
 // The marquee is a box select rather than a click select: the same two tests, with

@@ -48,6 +48,10 @@ int main() try {
     // pressed ground): the drawn box is empty.
     const ScreenPoint followed = toScreen(a, 960, 1960, 1);   // the pressed ground at 440,340
     check(!area(followed, 440, 340), "a drag the camera followed is no area either");
+    // A box stretched by edge scroll: the pointer runs 150 px along the bottom edge
+    // while the map scrolls 300 px down -- a real 150x310 area though the pointer
+    // moved only 10 px vertically.
+    check(area(toScreen(a, 1000, 2300, 1), 550, 310), "a box extended by edge scroll is an area");
     // A real drag with a pan: the box covers the pressed ground to the pointer.
     check(area(panned, 450, 350), "real drag across a pan is an area");
     // A pan back under the pointer shrinks the drawn box below the area: a click.
