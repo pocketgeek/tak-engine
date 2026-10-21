@@ -153,8 +153,10 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 283, "replay format 11 is kept under protocol 283");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 283");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 284, "replay format 11 is kept under protocol 284");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 284");
+    // 284 adds the lobby seat move (Msg::MoveSeat); the sim is 283's.
+    check(!supportedReplayProtocol(13, 283), "previous protocol without the lobby seat move is refused");
     // 283 changes Legion movement at ~100 bodies, round 4 (lane order through turns, rings along walls, fight/guard round still targets, room at a merge; hashed state).
     check(!supportedReplayProtocol(13, 282), "previous protocol without the Legion round 4 rules is refused");
     // 282 changes Legion movement at ~100 bodies, round 3 (rings round still targets, passage greens and small-group queueing, corridor-mouth funnel claims; hashed state).

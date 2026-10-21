@@ -316,7 +316,7 @@ silently skipped.)
 | `SetGameOptions` | full `GameOptions` | host only; in the lobby the server adopts them and rebroadcasts `LobbyState`; in-game only `speed` takes effect (if `speedUnlock`), pushed via `SpeedUpdate` |
 | `Chat` | text | lobby and in-game |
 | `Kick` | slot # | host only |
-| `MoveSeat` | slot # | a seated player (the host too) takes an OPEN seat inside the map capacity, lobby only; not in a Crusades battle or campaign mission room; side, colour, team and ready move with the player, the old seat opens with the target's colour and team; the server answers the mover with `JoinResult` (its new slot), then broadcasts `LobbyState`; anything else is ignored (protocol 283) |
+| `MoveSeat` | slot # | a seated player (the host too) takes an OPEN seat inside the map capacity, lobby only; not in a Crusades battle or campaign mission room; side, colour, team and ready move with the player, the old seat opens with the target's colour and team; the server answers the mover with `JoinResult` (its new slot), then broadcasts `LobbyState`; anything else is ignored (protocol 284) |
 | `StartGame` | — | host only; server validates: every human ready, colors unique, players ≤ map start positions |
 | `GameStarting` | final slot table, map id, options, per-AI RNG seeds, resume token | clients load and report `Loaded`; server starts when all humans are loaded; a `Loaded` timeout kicks that player back to the lobby and re-opens the slot (host decides: re-fill or start without) |
 
@@ -938,6 +938,8 @@ deeper and walk on through a still target's shadow, fight and guard members roun
 still target stop creeping and flow round at travel speed, and members passing a
 starved queue head at a corner's merge move over a lane; Retail is bit-identical
 and the `--mpai` hashes are unchanged (60 s and 300 s), but 282 recordings no longer play.
+Protocol 284 adds the lobby seat move (`MoveSeat`); the sim is 283's, but 283
+recordings no longer play.
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
