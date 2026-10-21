@@ -1032,7 +1032,7 @@ std::string startLocationsLabel(uint8_t mode) {
                 const float fpx = tak::uiTextFitPx(t, px, colW * 0.97f, px * 0.7f);
                 blockText(tak::uiTextFit(t, fpx, colW), cx, cy + (px - fpx) * 3.5f, fpx, c);
             };
-            cell(typeName[s.type % 4], x + 34, y + 8, 1.6f, 62, tcol);
+            cell(typeName[s.type % 4], x + 34, y + 8, 1.6f, 56, tcol);
             if (host && !campaign && s.type != 1) {
                 // Host cycles an empty slot OPEN -> AI -> CLOSED. AI opponents are
                 // seated (and run) on the server; this is how you set up multi-AI
