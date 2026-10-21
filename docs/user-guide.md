@@ -1922,7 +1922,7 @@ one kind load in alphabetical order of their folder names; later names win when
 they change the same file. Game packs load first, then the always-on archives,
 then ticked cosmetic packs.
 
-![A single-player room with Power Codes: On among the match rules; beside the map, ALWAYS ON: click.hpi, then the COSMETIC MODS list with Classic Sounds ticked and the GAME MODS list with Big Battles ticked](img/guide/room-mods-power-codes.jpg)
+![A single-player room with Power Codes: On among the match rules; below the map, the COSMETIC MODS list with ALWAYS ON: click.hpi under its heading and Classic Sounds ticked and the GAME MODS list with Big Battles ticked](img/guide/room-mods-power-codes.jpg)
 
 - **Cosmetic packs** are each player's own choice, in single player and in
   multiplayer, host or not. They change only what that player sees and hears,

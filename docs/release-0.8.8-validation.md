@@ -431,8 +431,9 @@ Battles). Every picture was looked at after capture.
   1920 x 1080 in both fonts, on Book of Darien chapters 1 and 12 and Iron Plague
   chapter 13: MODERN now lays out as CLASSIC, and CLASSIC renders are
   pixel-identical before and after. `campaign.jpg` was retaken (MODERN,
-  1600 x 1000, fresh profile). As in CLASSIC and 0.8.7, the top of a two-digit
-  numeral still meets the bottom of "APTER" (the retail boxes overlap).
+  1600 x 1000, fresh profile). As in CLASSIC and 0.8.7, the top of the
+  chapter numeral (wider for two digits) still meets the bottom of "APTER" (the
+  retail boxes overlap).
 - **Kept:** `guide/tactical-dots.jpg` (no interface text) and the Cartographer
   editor pictures (the editor does not use the UI font).
 - **Captions:** the README title alt text (version 0.8.8) and gallery footnote
