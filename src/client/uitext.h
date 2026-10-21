@@ -47,6 +47,10 @@ void uiTextShadow(SDL_Renderer* r, const std::string& s, float x, float y, float
 // face can reach below the baseline (descenders) and above the cap line (accents).
 float uiTextDescent(float px);
 float uiTextAscent(float px);
+// How far `s`'s own ink reaches below the baseline: 0 for text without descenders (and
+// always 0 in CLASSIC), so a box can keep caps-only labels where they always sat and
+// make room only when a 'g' or 'y' is there to need it.
+float uiTextInkDescent(const std::string& s, float px);
 
 // The cell size, at most `px` and at least `minPx`, at which `s` fits `maxW`.
 float uiTextFitPx(const std::string& s, float px, float maxW, float minPx = 1);

@@ -87,6 +87,14 @@ UiFont::~UiFont() {
 float UiFont::pixelSize(float scale) const {
     return std::max(1.0f, std::round(basePx_ * scale * 4) / 4);
 }
+float UiFont::sheetPx(float devicePx) {
+    // Whole device pixels, and coarser past 48 (2 px) and 96 (4 px): within ~2% of the
+    // exact size, invisible in the glyphs (pens still walk the exact logical advances),
+    // while a window-edge drag or a UI SCALE drag, which moves every text size a little
+    // each frame, crosses a sheet boundary every few frames instead of every frame.
+    const float step = devicePx < 48 ? 1.0f : devicePx < 96 ? 2.0f : 4.0f;
+    return std::max(1.0f, std::round(devicePx / step) * step);
+}
 float UiFont::sc(float px) const {
     return px / float(ascent_ - descent_);   // == stbtt_ScaleForPixelHeight
 }
@@ -230,7 +238,7 @@ void UiFont::drawSolid(SDL_Renderer* ren, const std::string& text, float x, floa
     if (!(kx > 0)) kx = 1;
     if (!(ky > 0)) ky = 1;
     const float ls = sc(pixelSize(scale));
-    const Sheet* sh = sheet(ren, std::max(1.0f, std::round(basePx_ * scale * ky * 4) / 4));
+    const Sheet* sh = sheet(ren, sheetPx(basePx_ * scale * ky));
     if (!sh) return;
     SDL_SetTextureColorMod(sh->tex, color.r, color.g, color.b);
     SDL_SetTextureAlphaMod(sh->tex, color.a);

@@ -149,6 +149,13 @@ int main() {
         check(f.sheetBuilds() == 2, "a size within the same quarter pixel does not");
         f.drawSolid(ren, hello, 10, 10, 1, {255, 255, 255, 255});
         check(f.sheetBuilds() == 2, "going back to the first size builds nothing (both kept)");
+        {
+            // A live resize: every frame a slightly different size (16 -> 17.6 px over a
+            // hundred frames) draws from whole-pixel sheets, not one sheet per frame.
+            const int b0 = f.sheetBuilds();
+            for (int i = 0; i <= 100; ++i) f.drawSolid(ren, hello, 10, 70, 1.0f + 0.001f * float(i), {255, 255, 255, 255});
+            check(f.sheetBuilds() - b0 <= 2, "a size that creeps each frame rebuilds only at whole pixels");
+        }
         for (int i = 0; i < 40; ++i) f.drawSolid(ren, hello, 10, 10, 0.5f + 0.25f * float(i), {255, 255, 255, 255});
         check(f.sheetCount() <= tak::UiFont::kMaxSheets, "forty sizes: the cache stays within its bound");
         const int before = f.sheetBuilds();
@@ -245,6 +252,11 @@ int main() {
         const Ink g = inkOf("gjpqy", 20, 40, px);
         check(modern ? (g.y1 + 1 > 54 && float(g.y1 + 1) <= 54 + tak::uiTextDescent(px) + 1)
                      : tak::uiTextDescent(px) == 0 && g.y1 + 1 <= 54, what);
+        std::snprintf(what, sizeof what, "%s: a text's own descent: none for caps, the ink's for 'gjpqy'", tag);
+        const float gd = tak::uiTextInkDescent("gjpqy", px);
+        check(tak::uiTextInkDescent(line, px) == 0 &&
+                  (modern ? gd > 0 && gd <= tak::uiTextDescent(px) && std::fabs(54 + gd - float(g.y1 + 1)) <= 1.5f
+                          : gd == 0), what);
         // Fit: whole characters, within the width, "..." when cut.
         const std::string longName = "Lord Kirenna's Great Northern Expanse (8 players)";
         const std::string cut = tak::uiTextFit(longName, px, 200);

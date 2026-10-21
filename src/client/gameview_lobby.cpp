@@ -92,7 +92,7 @@ std::string startLocationsLabel(uint8_t mode) {
         if (!mp_) return;
         auto st = mp_->state();
         if (st == tak::net::MpClient::State::Connecting) {
-            blockText("connecting to server...", cx - 120, winH / 2.0f, 2.0f, {200, 200, 210, 255});
+            blockText("CONNECTING TO SERVER...", cx - 120, winH / 2.0f, 2.0f, {200, 200, 210, 255});
             return;
         }
         if (st == tak::net::MpClient::State::Done) {
@@ -139,7 +139,7 @@ std::string startLocationsLabel(uint8_t mode) {
         y += 20;
         const auto& games = mp_->games();
         if (games.empty())
-            blockText("no games -- create one, or refresh", x + 8, y + 10, 1.8f, {150, 150, 160, 255});
+            blockText("NO GAMES -- CREATE ONE, OR REFRESH", x + 8, y + 10, 1.8f, {150, 150, 160, 255});
         for (const auto& g : games) {
             SDL_FRect row{x, y, w, 30};
             bool hot = lbHot(row) && !g.running;
@@ -168,12 +168,12 @@ std::string startLocationsLabel(uint8_t mode) {
         // Why the server turned the last JOIN / WATCH away (wrong password, game full,
         // spectators not allowed...) -- until the next request clears it.
         if (!mp_->joinError().empty()) {
-            std::string why = "CANNOT JOIN: " + mp_->joinError();
-            for (char& ch : why) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+            // The server's reason in its own case (as the CONNECT dialog shows server text).
+            const std::string why = "CANNOT JOIN: " + mp_->joinError();
             blockText(tak::uiTextFit(why, 1.6f, winW - 2 * x), x, winH - 98.0f, 1.6f, {255, 130, 110, 255});
         }
         // password entry for locked games
-        lbField(x, winH - 70.0f, 200, "PASSWORD (for locked games)", joinPass_, 3);
+        lbField(x, winH - 70.0f, 200, "PASSWORD (FOR LOCKED GAMES)", joinPass_, 3);
         lbBtn(winW - 140.0f, winH - 40.0f, 120, 30, "BACK", true, [this] { menuRequested_ = true; });
     }
 
@@ -486,7 +486,7 @@ std::string startLocationsLabel(uint8_t mode) {
         // A private single-player game needs no name or password.
         if (!singlePlayer_) {
             lbField(x, y, 260, "GAME NAME", createName_, 1); y += 44;
-            lbField(x, y, 260, "PASSWORD (optional)", createPass_, 2); y += 44;
+            lbField(x, y, 260, "PASSWORD (OPTIONAL)", createPass_, 2); y += 44;
         }
         blockText(std::string("MAP: ") + mapDisplayName(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 28;
         // Option rows (26 high at a 27 pitch): multiplayer's eleven rows, under the name
@@ -727,7 +727,7 @@ std::string startLocationsLabel(uint8_t mode) {
         const float kSliderH = 30;   // label (11) + 5 + bar (14)
         const float kHalfW = (kBtnW - kGap) / 2;
         float px = lx, py = hy + 46;   // aligns with the map list's box top
-        lbField(px, py, kBtnW, "MAP NAME (optional)", genParams_.name, 5); py += 44;
+        lbField(px, py, kBtnW, "MAP NAME (OPTIONAL)", genParams_.name, 5); py += 44;
         lbCycle(px, py, kBtnW, kRowH, std::string("TYPE:  ") + kTypeName[genParams_.mapType % tak::mapgen::kMapTypes],
               true, [this](int direction) { genParams_.mapType = uint8_t((genParams_.mapType + direction + tak::mapgen::kMapTypes) % tak::mapgen::kMapTypes);
                              if(genParams_.layout>=tak::mapgen::Maze) genParams_.layout=tak::mapgen::themedLayout(genParams_.mapType);
@@ -1163,8 +1163,7 @@ std::string startLocationsLabel(uint8_t mode) {
                 bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
         // Why the server refused the last START (a needed seat, setupMatch's refusal...).
         if (!mp_->startError().empty()) {
-            std::string why = "CANNOT START: " + mp_->startError();
-            for (char& ch : why) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+            const std::string why = "CANNOT START: " + mp_->startError();
             blockText(tak::uiTextFit(why, 1.1f, winW - 360.0f), x, y + 33, 1.1f, {255, 130, 110, 255});
         }
         // Creation settings are read-only here and come from the room, not
@@ -1472,9 +1471,14 @@ std::string startLocationsLabel(uint8_t mode) {
         SDL_RenderDrawRectF(ren_, &r);
         // Shrink the label if it would overflow the button (keeps long captions like
         // "START LOCATIONS: BY SLOT" inside their box), measured, with 6 px clear each side.
-        const float px = tak::uiTextFitPx(label, 2.0f, w - 12.0f);
+        // Height too: a label with descenders (a mod pack's "Big Battles") keeps its ink
+        // 2 px inside the border, and centres caps plus descenders; caps-only labels
+        // centre their caps as always.
+        float px = tak::uiTextFitPx(label, 2.0f, w - 12.0f);
+        if (const float ink = 7 * px + tak::uiTextInkDescent(label, px); ink > h - 4)
+            px *= (h - 4) / ink;
         float tw = blockWidth(label, px);
-        blockText(label, x + (w - tw) / 2, y + (h - 7 * px) / 2, px,
+        blockText(label, x + (w - tw) / 2, y + (h - 7 * px - tak::uiTextInkDescent(label, px)) / 2, px,
                   enabled ? SDL_Color{225, 230, 240, 255} : SDL_Color{110, 115, 125, 255});
         if (enabled && action) lobbyHots_.push_back({r, std::move(action)});
     }

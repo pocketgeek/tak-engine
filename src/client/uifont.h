@@ -26,8 +26,9 @@
 // paste produces; any other character (CJK, emoji, control codes) draws as '?', one
 // glyph per code point, so a line's measured and drawn widths always agree.
 //
-// Glyph sheets. One texture per device pixel size, built on the first draw at that
-// size and kept: an interface draws a dozen sizes a frame, so they are cached together
+// Glyph sheets. One texture per device pixel size (whole pixels; 2 or 4 px steps for
+// big text, within ~2%, so a live resize rebuilds rarely), built on the first draw at
+// that size and kept: an interface draws a dozen sizes a frame, so they are cached together
 // (least recently used goes first past kMaxSheets), never rebuilt per frame or per
 // colour. destroyGlyphs() frees them all (renderer reset, session teardown, exit); the
 // next draw rebuilds what it needs. Display only: nothing here touches the simulation.
@@ -98,12 +99,13 @@ private:
     struct Sheet {
         SDL_Texture* tex = nullptr;
         SDL_Renderer* ren = nullptr;
-        int key = -1;                  // device pixel size * 4
+        int key = -1;                  // sheet pixel size * 4 (sheetPx)
         int phases = 1;
         uint64_t used = 0;             // last-use stamp, for eviction
         std::vector<std::array<Glyph, kMaxPhases>> glyphs;   // per slot
     };
     static int slot(uint32_t mappedCp);         // index into metrics_ (mapped code points)
+    static float sheetPx(float devicePx);       // the sheet size a device size draws from
     float sc(float px) const;                   // stbtt scale for a pixel height
     float kern(int a, int b) const;             // font units between two slots
     const Sheet* sheet(SDL_Renderer* ren, float devicePx) const;

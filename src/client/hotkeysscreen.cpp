@@ -149,7 +149,9 @@ void HotkeysScreen::render(int winW, int winH) {
         Row& r = rows_[i];
         if (r.rect.y + r.rect.h < clip.y || r.rect.y > clip.y + clip.h) continue;
         if (r.section) {
-            uiText(ren_, r.label, r.rect.x, r.rect.y + 12 * u_, 2.2f * u_, {150, 200, 235, 255});
+            // Caps end 7 * 2.2 = 15.4 below y, the divider 3 px above the row's bottom:
+            // y + 9 leaves a clear gap (descenders included) above it, as in Options.
+            uiText(ren_, r.label, r.rect.x, r.rect.y + 9 * u_, 2.2f * u_, {150, 200, 235, 255});
             SDL_SetRenderDrawColor(ren_, 70, 78, 96, 255);
             SDL_FRect ln{r.rect.x, r.rect.y + r.rect.h - 3 * u_, r.rect.w, 1.5f * u_};
             SDL_RenderFillRectF(ren_, &ln);

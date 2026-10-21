@@ -38,6 +38,10 @@ public:
 
     // Tallest glyph cell, for sizing a backing panel behind a line of text.
     int height(float scale = 1) const;
+    // The GAF's tallest glyph cell in EITHER style: a size reference that does not
+    // move with UI FONT (MODERN draws at the GAF's own cap height, so a scale set
+    // from this gives the same caps in both; height() above is MODERN's taller line).
+    int glyphHeight(float scale = 1) const;
 
     // Where `text` actually renders vertically, relative to the `y` passed to draw():
     // its pixels occupy [y + topOff, y + topOff + h]. draw() lifts each glyph by its

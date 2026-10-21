@@ -1743,14 +1743,17 @@ namespace {
             }
             // The name row: the unit's name (in its own capitals under MODERN) or the
             // squad label, shrunk to stop short of the conjured target's name to its right
-            // and, with its descenders, of the health bar below it.
+            // and, with any descenders it has, of the health bar below it.
             auto nameText = [&](int slot, const std::string& text, int rightSlot, int barSlot) {
                 const SDL_FRect nr = place(slot);
                 float px = tpx;
                 if (rightSlot >= 0)
                     px = std::min(px, tpx * (place(rightSlot).x - nr.x - 3 * tpx) / std::max(1.0f, blockWidth(text, tpx)));
+                // Its own descenders only (a "g" or "y" in the name; caps-only names keep
+                // the full row), a UI-scaled pixel clear of the bar.
                 if (barSlot >= 0)
-                    px = std::min(px, tpx * (place(barSlot).y - 2 - nr.y) / (7 * tpx + tak::uiTextDescent(tpx)));
+                    px = std::min(px, tpx * (place(barSlot).y - std::max(1.0f, vs) - nr.y)
+                                          / (7 * tpx + tak::uiTextInkDescent(text, tpx)));
                 blockText(text, nr.x, nr.y, std::max(1.0f, px), {236, 226, 192, 255});
             };
             if (int t1 = guiIdxLeft("UnitText"); u && !multi && t1 >= 0)
@@ -2160,7 +2163,7 @@ namespace {
             blockText(text, x0 + 14, y, s, {240, 242, 248, 255});
             y += lh;
         }
-        blockText("[O] hide", x0, y + 4, s, {190, 198, 212, 255});
+        blockText("[O] HIDE", x0, y + 4, s, {190, 198, 212, 255});
     }
 
     void GameView::drawPanel(int winW, int winH) {

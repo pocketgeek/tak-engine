@@ -898,8 +898,10 @@ struct MainMenu::Impl {
             // Two lines at most, wrapped to the panel (the second cut with "...").
             auto lines = uiTextWrap(serverError, 1.8f, pw - 60);
             if (lines.size() > 2) lines[1] = uiTextFit(lines[1] + " " + lines[2], 1.8f, pw - 60);
+            // 14 apart clears the block caps; MODERN's descenders need their depth too.
+            const float step = std::max(14.0f, 7 * 1.8f + tak::uiTextDescent(1.8f) + 1);
             for (size_t k = 0; k < lines.size() && k < 2; ++k)
-                blockText(lines[k], x0 + 30, y0 + 50 + 14 * float(k), 1.8f, {235, 120, 110, 255});
+                blockText(lines[k], x0 + 30, y0 + 50 + step * float(k), 1.8f, {235, 120, 110, 255});
         }
         // Dropdown rows: the default server, remembered servers, then CUSTOM.
         serverRects.clear();
@@ -1114,10 +1116,8 @@ struct MainMenu::Impl {
             by += bh + gap;
         }
         if (!replayError_.empty()) {
-            std::string e = replayError_;
-            std::transform(e.begin(), e.end(), e.begin(),
-                           [](unsigned char c) { return char(std::toupper(c)); });
-            e = uiTextFit(e, 1.6f, pw - pad * 2);
+            // The loader's message in its own case, like the server's sentences.
+            const std::string e = uiTextFit(replayError_, 1.6f, pw - pad * 2);
             blockText(e, px0 + (pw - tw(e, 1.6f)) / 2, by + 2, 1.6f, {235, 130, 110, 255});
             by += 22;
         }

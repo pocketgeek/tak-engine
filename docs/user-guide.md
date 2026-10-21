@@ -1477,7 +1477,7 @@ available on your system appear.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| **UI Font** | Modern | The lettering of the interface's text. **Modern** is a clean bold sans-serif (the chat box's), sharp at every UI Scale; **Classic** is the game's original look: the blocky pixel font in the menus, rooms and Options, and the original serif faces in the HUD, scoreboard, briefings and Unit Info. The original decorative lettering (big messages, PAUSED, briefing headings, Unit Info labels, the title doors) is the same with either. Takes effect at once. |
+| **UI Font** | Modern | The lettering of the interface's text. **Modern** is a clean bold sans-serif (the chat box's), sharp at every UI Scale; **Classic** is the look this engine had before: its blocky pixel font in the menus, rooms and Options, and the game's original serif faces in the HUD, scoreboard, briefings and Unit Info. The original decorative lettering (big messages, PAUSED, briefing headings, Unit Info labels, the title doors) is the same with either. Takes effect at once. |
 | **F4 Scorecard Scale** | 100% | Size of the F4 player panel (50–200%). |
 | **UI Scale** | 100% | Size of the in-game interface (50–200%). |
 | **Health Bars** | Damaged | Off, only on damaged units, or always. |

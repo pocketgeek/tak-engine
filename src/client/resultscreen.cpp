@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include "util/png.h"
@@ -216,7 +217,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
         const SDL_Color gold{236, 214, 160, 255};
         const SDL_Color dim{196, 178, 138, 255};
         auto text = [&](const Font& f, const std::string& s, const Rect& r, SDL_Color c,
-                        bool rightAlign = false) {
+                        bool rightAlign = false, bool overArt = false) {
             if (s.empty()) return;
             float sc = lay.scale * (r.h / 20.0f);
             if (!f.ok()) sc = lay.scale * 1.6f;
@@ -232,6 +233,13 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
             float top = 0, height = 7 * sc;
             if (f.ok()) f.vbounds("Ag0123456789", sc, top, height);
             float y = lay.py(r.y) + (r.h * lay.scale - height) * 0.5f - top;
+            // Over the mural, MODERN's flat face needs the dark rim the Times art carries
+            // in its glyphs, or tan text on tan paint all but vanishes.
+            if (overArt && f.ok() && tak::modernUiText()) {
+                const float o = std::max(1.0f, lay.scale);
+                for (const auto& [dx, dy] : {std::pair{-o, 0.0f}, {o, 0.0f}, {0.0f, -o}, {0.0f, o}, {o, o}})
+                    f.drawSolid(ren, s, x + dx, y + dy, sc, {24, 16, 8, 220});
+            }
             if (f.ok()) f.draw(ren, s, x, y, sc, c);
             else uiText(ren, s, x, y, sc, c);
         };
@@ -299,10 +307,10 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
             if (!title.empty() && stats) {
                 float tsc = lay.scale;
                 float ttw = body.ok() ? float(body.width(title, tsc)) : uiTextWidth(title, tsc);
-                text(body, title, {(640 - ttw / lay.scale) / 2, g.title.y - 26, ttw / lay.scale, 20}, dim);
+                text(body, title, {(640 - ttw / lay.scale) / 2, g.title.y - 26, ttw / lay.scale, 20}, dim, false, true);
             }
         }
-        text(body, proceedHint, g.help, dim);
+        text(body, proceedHint, g.help, dim, false, true);
 
         auto button = [&](SDL_Texture** tex, const SDL_FRect& r, bool hover, const char* fallback) {
             SDL_Texture* t = tex[hover && tex[1] ? 1 : 0];

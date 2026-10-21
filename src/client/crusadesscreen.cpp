@@ -66,7 +66,7 @@ struct CrusadesScreen::Impl {
  struct Button {SDL_Rect rect;std::string label;Command command;bool enabled;};std::vector<Button> buttons;
  Impl(SDL_Renderer* r,const hpi::Vfs& v,net::MpClient& client):ren(r),mp(client),local(crusadesmap::loadPresentation(v)){
   for(const char* path:{"fonts/b_times new roman (100).gaf","fonts/bodfontbody.gaf"})try{font=Font(r,v,path,FontRole::Text);if(font.ok())break;}catch(...){}
-  if(font.ok())fontScale=14.f/std::max(1,font.height());
+  if(font.ok())fontScale=14.f/std::max(1,font.glyphHeight());   // the same caps under either UI FONT
   else if(auto* surface=SDL_CreateRGBSurfaceWithFormat(0,96,64,32,SDL_PIXELFORMAT_RGBA32)){
    SDL_FillRect(surface,nullptr,SDL_MapRGBA(surface->format,0,0,0,0));
    for(int c=0;c<128;++c)if(const auto* bits=blockGlyph(char(std::toupper(c))))for(int x=0;x<5;++x)for(int y=0;y<7;++y)if(bits[x]&(1<<y)){

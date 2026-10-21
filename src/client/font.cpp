@@ -94,6 +94,10 @@ int Font::width(const std::string& text, float scale) const {
 
 int Font::height(float scale) const {
     if (modern()) return int(tak::uiFont().pixelSize(tak::uiFontScaleForCap(capH_ * scale)) + 0.5f);
+    return glyphHeight(scale);
+}
+
+int Font::glyphHeight(float scale) const {
     int h = 0;
     for (const Glyph& g : glyphs_) if (g.h > h) h = g.h;
     return int(h * scale);

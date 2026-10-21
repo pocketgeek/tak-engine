@@ -62,6 +62,18 @@ float uiTextAscent(float px) {
     return std::max(0.0f, f.ascentFrac() * f.pixelSize(cellScale(px)) - 7 * px);
 }
 
+float uiTextInkDescent(const std::string& s, float px) {
+    if (!modernUiText() || !uiFont().ok()) return 0;
+    const UiFont& f = uiFont();
+    const float scale = cellScale(px);
+    float top = 0, h = 0;
+    f.vbounds(s, scale, top, h);
+    // vbounds measures from the line top; the baseline sits ascent below it. Round
+    // letters (S, O, C) overshoot the baseline by ~1.5% of the cap height: not a descent.
+    const float d = top + h - f.ascentFrac() * f.pixelSize(scale);
+    return d > 0.05f * 7 * px ? d : 0.0f;
+}
+
 float uiTextFitPx(const std::string& s, float px, float maxW, float minPx) {
     const float w = uiTextWidth(s, px);
     return w <= maxW || w <= 0 ? px : std::max(minPx, px * maxW / w);
