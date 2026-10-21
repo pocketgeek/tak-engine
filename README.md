@@ -871,6 +871,11 @@ for layout, archive precedence, and troubleshooting a rejected folder.
 
 - **Skirmish:** up to eight slots, five factions, teams, generated maps,
   retail or Crusades balance, and five AI difficulty levels.
+- **Power codes:** the original game's cheat codes (**+ATM**, **+ManaMe**,
+  **+DoubleShot**, **+HalfShot**, **+LOS**, **+Mapping**, **+NowISee**, **+Radar**,
+  **+MakePoster**), typed in chat in single-player or multiplayer games created
+  with **Power Codes** on; **Print Screen** saves a whole-map poster. See
+  [Power codes](docs/user-guide.md#power-codes).
 - **Multiplayer:** hosted games, shared allied vision, spectators, reconnects,
   and a server referee running the same deterministic simulation as the clients.
 - **Darien Crusades:** territory browsing, two-player tactical battles, verified
@@ -1129,7 +1134,8 @@ builders, but units they produce inherit their squad.
 | **Pause** | Pause / resume the game or replay |
 | **Shift+Z** | Reset to retail’s native 1:1 zoom, keeping the same view center |
 | **+** / **−** (also **=** and keypad **+/−**) | Change game / replay speed |
-| **Enter** (also keypad Enter) | Open chat; press again to send; **Esc** cancels |
+| **Enter** (also keypad Enter) | Open chat; press again to send; **Esc** cancels. With **Power Codes** on, also where [power codes](docs/user-guide.md#power-codes) are typed |
+| **Print Screen** | Make a whole-map poster in the screenshots folder (only with **Power Codes** on); rebindable in **Controls** as MAKE POSTER |
 | **Space** (hold) | Push to talk, when voice chat is on with Talk Mode Push to Talk (never while typing in a text box); rebindable in **Controls** |
 | **Esc** | Close unit information, cancel placement / an armed order, clear selection, then open the game menu as applicable |
 | **Shift+D** | Selected mobile units disco for 10 real seconds; with no selection, living monarch |

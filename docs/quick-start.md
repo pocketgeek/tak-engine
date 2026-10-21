@@ -9,7 +9,7 @@ difficulty, side, colour or team to change them. Click **START**. The game opens
 on your Monarch: select it, build a lodestone on a mana spot, then a production
 building. Losing your Monarch loses the game unless *Monarch Expendable* is on.
 
-These are the default keys. Order, selection, view, emote and push-to-talk keys
+These are the default keys. Order, selection, view, emote, push-to-talk and poster keys
 can be changed in **CONTROLS** (the main menu's lower-right Settings button, or
 **Esc → CONTROLS** in a game): click a row and press a key; right-click a row to
 unbind it. The number keys, Esc, Enter, Pause, **+**/**−**, F9 and the arrow keys
@@ -149,12 +149,21 @@ pointer.*
 | **D** | Diplomacy: give units, share mana, chat and voice recipients. |
 | **Pause** | Pause / resume, for every player. |
 | **+** / **−** | Game speed. Host only, and only with *Allow Speed Change* on. |
-| **Enter** | Chat (multiplayer): Enter sends, Esc cancels. Chat box size and position: **Options → Interface**. |
+| **Enter** | Chat: Enter sends, Esc cancels. Chat box size and position: **Options → Interface**. With *Power Codes* on, type a code such as **+ATM**, **+NowISee** or **+MakePoster** (see [Power codes](user-guide.md#power-codes)). |
+| **Print Screen** | Save a picture of the whole map to the *screenshots* folder. Only with *Power Codes* on. |
 | **Space** (hold) | Push to talk, in a multiplayer game with voice chat on. |
 | **Shift+D** / **Shift+H** | Emotes: disco / headbang. |
 | **Esc** | In order: close Unit Info, cancel placement or an armed order, clear the selection, open the game menu (Resume, Options, Controls, Voice Chat, Quit…). |
 
-There is no in-game screenshot key.
+**Print Screen** makes a whole-map poster only in a game created with *Power
+Codes* on. There is no other in-game screenshot key.
+
+**Power codes**, typed in chat when the game has *Power Codes* on (capitals do
+not matter): **+ATM** (fill your mana), **+ManaMe** (fill your selected units'
+mana), **+DoubleShot** / **+HalfShot** (all damage ×2 / ×½), **+LOS** (line of
+sight off/on; **+LOS Off**, **+LOS On**), **+Mapping** (reveal / hide the map),
+**+NowISee** (see everything), **+Radar** (every unit on your minimap) and
+**+MakePoster** (whole-map picture).
 
 ## Lobby
 

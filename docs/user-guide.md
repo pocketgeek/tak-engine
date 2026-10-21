@@ -274,6 +274,7 @@ change in the room, until the game starts.
 | **Game mods** | Multiplayer only, default **Off**. When on, the host ticks game mod packs in the room and they are sent to every player. Single player always has them. See [Mods](#mods). |
 | **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. The host can change it in the room by clicking it, until the game starts; then it is fixed. See [Spectating](#spectating). |
 | **Spectate (Watch AIs)** | Single-player only: fill every slot with AIs and watch. |
+| **Power codes** | **Off** (the default) or **On**. On lets every player in the game type the original game's cheat codes in the chat box, such as **+ATM** and **+NowISee**. See [Power codes](#power-codes). Not offered in campaigns. It cannot be changed in the room. |
 | **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered when game mods are available (always in single player, with **Game mods: On** in multiplayer), if you have a game mod pack, with the warning *PACK NEEDED:* and the unit, in case a selected pack supplies it. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
 
 Your choices are remembered for next time, except passwords, Spectate and Map
@@ -953,7 +954,8 @@ group automatically.
 | **F9** | YouTube streaming setup. |
 | **Pause** | Pause or resume. This pauses the game for every player. |
 | **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×), 0.1× per level. A banner shows the new level, for example **GAME SPEED NORMAL** or **GAME SPEED +5**. Only the host can change it, and only if **Allow speed change** was on. |
-| **Enter** | Open chat; **Enter** sends, **Esc** cancels. |
+| **Enter** | Open chat; **Enter** sends, **Esc** cancels. Also where you type [power codes](#power-codes). |
+| **Print Screen** | Make a poster: save a picture of the whole map. Only in a game with **Power codes** on. See [Power codes](#power-codes). |
 | **Space** (hold) | Push to talk, in multiplayer, when [voice chat](#voice-chat) is on with **Talk mode** Push to Talk. Never while you are typing in a text box. |
 | **Esc** | Close a dialog, cancel placement or an armed order, clear the selection, then open the game menu. |
 
@@ -965,6 +967,61 @@ group automatically.
 | **Shift+H** | Headbang: the selected units (or your Monarch) headbang for ten seconds. |
 
 Everyone in the game sees and hears emotes.
+
+### Power codes
+
+Power codes are the original game's cheat codes. They work only in a game
+created with **Power codes: On** (see [Match options](#match-options)), in
+single player or multiplayer. They never work in a campaign or a Crusades
+battle, and not while you watch a game or a replay.
+
+To use one, press **Enter**, type the code and press **Enter**. Capital letters
+do not matter (**+atm**, **+ATM** and **+Atm** are the same), and spaces around
+the code are ignored. As in the original game, the line is also sent as chat to
+every player, so everyone sees what you typed. With power codes off the line is
+only chat and does nothing else. Anything else that starts with **+** is
+ordinary chat.
+
+| Code | What it does |
+| --- | --- |
+| **+ATM** | Fills your mana pool up to your storage. |
+| **+ManaMe** | Fills the personal mana of your selected units, such as spellcasters. Units without mana of their own are not changed. |
+| **+DoubleShot** | Doubles all damage in the game, by every player's units. Type it again to turn it off. It turns **+HalfShot** off. |
+| **+HalfShot** | Halves all damage in the game. Type it again to turn it off. It turns **+DoubleShot** off. |
+| **+LOS** | Turns line of sight off or on for you. With it off, you see every unit on ground you have explored, and your units can attack them there. **+LOS Off** and **+LOS On** set it instead of switching it. |
+| **+Mapping** | Turns the map on or off for you. The first time, the whole map is revealed. The next time, the map is hidden again, and the ground you had explored is forgotten; your units explore it again as they see it. |
+| **+NowISee** | Turns line of sight and the map off for you: you see the whole map and every unit. Typing it again changes nothing; use **+LOS** and **+Mapping** to bring the fog back. |
+| **+Radar** | Your minimap shows every unit on the map. Type it again to turn it off. |
+| **+MakePoster** | Saves a picture of the whole map at full size, as **BIGSHOT0001.png**, **BIGSHOT0002.png** and so on, in a **screenshots** folder inside your game data folder. If that folder cannot be written, it uses the folder your settings are kept in. A chat line says when it starts and where the file was saved. **Print Screen** does the same. You can change that key in **CONTROLS** (**MAKE POSTER**). |
+
+**+MakePoster** shows the map as you see it, including your fog of war. Type
+**+NowISee** first to put everything in the picture. The game keeps running
+while the picture is made. A big map takes a few seconds to save and needs a lot
+of memory; Ulasem Arena makes a 10,240 × 10,240 picture of about 100 MB.
+
+**+ATM**, **+ManaMe**, **+LOS**, **+Mapping** and **+NowISee** affect only the
+player who types them. **+DoubleShot** and **+HalfShot** affect the whole game.
+**+Radar** and **+MakePoster** change only your own screen. Every code starts off
+in each new game. Codes are recorded in replays, so a replay plays back as the
+game was played.
+
+These differ from the original game:
+
+- In the original, every code changed the game on the computer of the player who
+  typed it. In single player that meant **+LOS**, **+Mapping** and **+NowISee**
+  also lifted the fog for the computer players. Here they lift it for you only,
+  in single player and multiplayer alike. **+DoubleShot** and **+HalfShot**
+  change everyone's damage, as in the original single player.
+- The original saved posters as BMP files and froze the game while it made one.
+  Without the word **all** (**+MakePoster all**) it pictured 3,200 × 2,400 pixels
+  around your view and hid the fog. Here a poster is always the whole map, as you
+  see it, saved as PNG, and the game keeps running.
+- The original kept **+DoubleShot**, **+HalfShot** and **+Radar** on from one
+  game to the next. Here every game starts with them off.
+- The original said nothing when a poster was saved. Here a chat line says where
+  it is.
+- Only these nine codes are available. The original's other console commands,
+  such as **+View**, are not.
 
 ---
 
@@ -2121,6 +2178,9 @@ differences:
 - **Boat shadows** and shadows on every lodestone.
 - **A random map generator**, a modern map editor and **mod packs**.
 - **Emotes** (Disco and Headbang).
+- **Power codes** act for the player who types them, posters are PNG pictures of
+  the whole map, and the game keeps running while one is made. See
+  [Power codes](#power-codes).
 
 Everything else, such as unit statistics, weapons, the economy, the AI's
 choices and the campaign scripts, aims to behave as it did in 1999. If you find
