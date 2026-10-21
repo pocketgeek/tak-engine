@@ -167,6 +167,19 @@ int main(){
     check(client.gameModPacks()==std::vector<std::string>({"Alpha","Zeta"}),"stale or duplicate game packs are dropped from the selection");
     auto built=net::mods::build(root,client.gameModPacks());check(built->files->count("units/test.fbi"),"the filtered selection builds");
   }
+  {   // The room's status line: GAME MODS VERIFIED only when the verified package
+      // carries a pack; progress and errors whatever the selection.
+    using C=net::MpClient;const std::string ok="GAME MODS VERIFIED";
+    auto none=net::mods::build(root,{});auto one=net::mods::build(root,{"Alpha"});
+    check(C::roomModStatus(ok,one.get())==ok,"verified packs are reported");
+    check(C::roomModStatus(ok,none.get()).empty(),"an empty verified selection says nothing");
+    check(C::roomModStatus(ok,nullptr).empty(),"no package, no verified line");
+    check(C::roomModStatus("",one.get()).empty(),"no status, no line");
+    for(const char* busy:{"APPLYING PACK SELECTION","VERIFYING GAME MODS","DOWNLOADING GAME MODS","GAME MODS: mod package checksum mismatch"})
+      check(C::roomModStatus(busy,none.get())==busy && C::roomModStatus(busy,nullptr)==busy,"progress and errors always show");
+    const std::string saveFailed="GAME MODS VERIFIED; SAVE FAILED: disk full";
+    check(C::roomModStatus(saveFailed,none.get())==saveFailed,"a cache failure still shows");
+  }
   check(snapshot()==legacyBefore,"the legacy overrides/ folder is left byte-identical");
  }catch(const std::exception& e){std::cerr<<e.what()<<'\n';++failures;}
  std::error_code ec;std::filesystem::remove_all(root,ec);std::cout<<"mod packs: "<<failures<<" failures\n";return failures?1:0;

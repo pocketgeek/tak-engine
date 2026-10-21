@@ -1049,7 +1049,10 @@ float createOptionPx(float maxW) {
                     if(names.empty())names=mp_->modPackage()?"NONE SELECTED":"WAITING FOR THE HOST";
                     blockText(tak::uiTextFit("HOST: "+names,1.3f,280),winW-296.0f,py,1.3f,{180,190,205,255});py+=22;
                 }
-                if(gameOn){const auto status=tak::uiTextFit(mp_->modStatus(),1.2f,280);blockText(status,winW-296.0f,py+3,1.2f,{205,190,135,255});py+=23;}
+                // The transfer's progress, an error, or GAME MODS VERIFIED when packs are in
+                // play (MpClient::roomModStatus: nothing to say for an empty selection).
+                if(const auto status=mp_->roomModStatus();gameOn && !status.empty()){
+                    blockText(tak::uiTextFit(status,1.2f,280),winW-296.0f,py+3,1.2f,{205,190,135,255});py+=23;}
             }
             modBottom=py+8;
         }

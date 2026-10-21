@@ -57,6 +57,16 @@ public:
     const std::vector<std::string>& gameModPacks() const { return gameModPacks_; }
     const std::shared_ptr<mods::Package>& modPackage() const {return modPackage_;}
     const std::string& modStatus() const {return modStatus_;}
+    // The game-mod status a room shows: a transfer in progress or an error always, but
+    // the plain "GAME MODS VERIFIED" only when the verified package carries a pack. An
+    // empty selection is verified too (so every peer agrees there are none), yet saying
+    // so would read as if game packs were in play.
+    std::string roomModStatus() const {return roomModStatus(modStatus_,modPackage_.get());}
+    static std::string roomModStatus(const std::string& status,const mods::Package* package) {
+        // A package's mapPath names its packs ("A, B"); it is empty when it has none.
+        if(status=="GAME MODS VERIFIED" && (!package || package->mapPath.empty()))return {};
+        return status;
+    }
     bool modPending() const {return modPendingAt_!=0;}
     bool modBusy() const {return modSend_.package || modReceive_.size;}
     // The VFS a game in this room mounts: the room's verified game-mod package
