@@ -938,6 +938,22 @@ if(TAK_TEST_DATA)
   set_tests_properties(legion_meleepress PROPERTIES LABELS legion SKIP_RETURN_CODE 77
                        PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":(2[5-9][0-9][0-9][0-9]|[3-9][0-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9][0-9]+),")
 endif()
+# Round 6 (2026-10-21): the walk on past the shot (walkOnShot). In attackring-gatehouse-40's 3-cell corridor the first
+# 2x2 body combat braked plugged the way single file and the queue behind it stood out of reach; now a ring member
+# whose braked footprint would cut its queue off from ground with the shot walks on to the farthest such origin first.
+# Offsets 0, 1, -1, damage the target lost: 167 / 250 / 84 before (median 167), 984 / 782 / 881 now (median 881;
+# Retail 557 / 482 / 590). Passes at a median of 600 or more, serial equal to workers.
+add_test(NAME legion_gatewalkon
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-gatehouse-40.scn --mode legion --offsets 0,1,-1 --json)
+set_tests_properties(legion_gatewalkon PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":([6-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
+# The same on a second layout (attackring-gateyard-36: a 4-cell corridor, gates on the west and the south, 2x2 and 3x3
+# bodies, the yard open on the north). Offsets -2, -3, -5: 326 / 180 / 1,001 before (median 326), 871 / 613 / 1,919 now
+# (median 871; Retail 521 / 400 / 1,052). Passes at a median of 600 or more, serial equal to workers.
+add_test(NAME legion_gateyard
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-gateyard-36.scn --mode legion --offsets -2,-3,-5 --json)
+set_tests_properties(legion_gateyard PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":([6-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is

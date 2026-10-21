@@ -6441,7 +6441,13 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     const Bam want = request ? *request : u.type->canFly ? fxAtan2(Fixed::fromFloat(dx),Fixed::fromFloat(dz))
         : retailDirection(target->x-u.x,target->z-u.z);
     const int32_t diff = bamDiff(want, u.heading);
-    if (!u.type->canFly && !u.type->isStructure()) {
+    // Legion only: a ring member whose braked body would plug a narrow approach
+    // walks on past the shot to deeper ground first (LegionNavigator::walkOnShot).
+    const bool walkOn=!u.type->canFly && !u.type->isStructure() &&
+        legion_ && isLegionPathfinding(pathfindingMode_) && legion_->walkOnShot(u);
+    if (walkOn) {
+        // movement walks the route on; the weapons below still fire if they aim
+    } else if (!u.type->canFly && !u.type->isStructure()) {
         if (legion_ && isLegionPathfinding(pathfindingMode_)) legion_->noteEngaged(u);   // W5 step 0 counter
         if (u.type->domain==UnitType::Domain::Water && !u.type->turnInPlaceRate) {
             // Ships commonly specify only turnrate. Once in firing range they

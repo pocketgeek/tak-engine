@@ -284,6 +284,11 @@ constexpr int kPressDepth=4;
 // every how many held updates a body in the shadow looks for it.
 constexpr int kPressRoute=6;
 constexpr uint32_t kPressRouteEvery=16;
+// The walk on past the shot (walkOnShot): its search radius in origins, the
+// ticks between two looks from one origin, and its walks per order.
+constexpr int kWalkOn=10;
+constexpr uint32_t kWalkOnEvery=30;
+constexpr uint8_t kWalkOnMax=6;
 // Members a reach group needs when its first field starts to plan to a ring
 // (PLAN 3.4; its exit raises it to 8 if the battles' field quota pegs).
 constexpr size_t kRingMembers=2;
@@ -983,6 +988,10 @@ struct LegionNavigator::Impl {
         // in reach of its target (kNoPress: none), and its update count.
         int32_t pressX=kNoPress,pressZ=0;uint32_t pressTicks=0;
         bool shadowPressed=false;         // pressed in toward a shadowed ring's target (pressIn; move's in-reach hold)
+        // A walk on past the shot under way (walkOnShot): the last origin of
+        // its route (-1 none), the origin and tick of the last look, and the
+        // walks this order has taken. Hashed.
+        int walkOnEnd=-1,walkOnAt=-1;uint32_t walkOnTick=0;uint8_t walkOns=0;
         uint32_t detourTicks=0;
         bool detourFace=true;             // side-step turns the body (keep-right) or not (shuffle)
         bool detourPass=false;            // side-step is a lane-discipline pass (moves at travel speed)
@@ -8582,6 +8591,181 @@ struct LegionNavigator::Impl {
         ++stats.reachPressRoutes;
         return true;
     }
+    // Round 6 (2026-10-21, Legion ~100): the walk on past the shot. Combat
+    // brakes an attacker the moment it has the shot; where that is in a
+    // narrow approach (attackring-gatehouse-40: a 3-cell corridor round a
+    // walled yard, its 2x2 bodies single file, the origins flush with the
+    // yard's wall seeing the target through it) the first braked body shut
+    // the corridor and the queue behind it stood out of reach for good,
+    // while Retail's corridor filled from its far end (its first body walked
+    // the corridor's out-of-sight lane to the corner before it got the shot).
+    // So a ring member that combat would brake, with members of its own
+    // group behind it, walks on when its footprint cuts them off from ground
+    // with the shot: a bounded search (radius kWalkOn) over statically legal
+    // origins no still body covers (the group's moving and held members do
+    // not count, they are the queue) from those members, round this body's
+    // footprint, against one from this body. A shot origin (centre in reach
+    // and in sight) only this body reaches is ground it would plug; it walks
+    // to the farthest of them as a local route (no brake on the way), and
+    // the next body comes up behind it. True: do not brake this tick.
+    bool walkOnShot(const Unit& u) {
+        if(!u.type||u.type->canFly||u.type->domain==UnitType::Domain::Water)return false;
+        Member* found=member(u.id);
+        if(!found||found->kind!=Kind::Attack)return false;
+        Member& m=*found;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz),here=oz*W+ox;
+        // A walk under way: not braked until its route's last origin.
+        if(m.walkOnEnd>=0) {
+            if(!m.route.empty()&&m.route.back()==m.walkOnEnd&&here!=m.walkOnEnd)return true;
+            m.walkOnEnd=-1;
+        }
+        if(m.walkOns>=kWalkOnMax||(m.walkOnAt==here&&w.tickCounter_-m.walkOnTick<kWalkOnEvery))return false;
+        const auto group=groups.find(m.group);
+        if(group==groups.end())return false;
+        const Group& g=group->second;
+        if(g.ring.band0<=0||g.plane<0||!stillTarget(m))return false;
+        if(u.orders.empty()||u.orders.front().targetId!=g.reachTarget)return false;
+        const Unit* t=w.unit(g.reachTarget);
+        if(!t||!t->alive()||!t->type||t->type->canFly)return false;
+        const auto [R,los]=reachPx(u,t,false);
+        if(R<=0||!los||reachFloat(u,t)<=0.0f)return false;
+        const Plane& p=planes[size_t(g.plane)];
+        // Only where walls pinch the approach: the legal origins of the ring
+        // round this footprint (those touching it without overlapping) fall
+        // in two or more runs, so a body here can cut the ground behind it
+        // from the ground ahead. A body braked in the open, or against one
+        // wall, leaves the way round it to the bodies behind.
+        {
+            int runs=0;bool first=false,prev=false;
+            const int x0=ox-fx,x1=ox+fx,z0=oz-fz,z1=oz+fz;
+            const int n=2*(x1-x0)+2*(z1-z0);
+            for(int k=0;k<n;++k) {
+                int x,z;
+                if(k<x1-x0) {x=x0+k;z=z0;}
+                else if(k<(x1-x0)+(z1-z0)) {x=x1;z=z0+k-(x1-x0);}
+                else if(k<2*(x1-x0)+(z1-z0)) {x=x1-(k-(x1-x0)-(z1-z0));z=z1;}
+                else {x=x0;z=z1-(k-2*(x1-x0)-(z1-z0));}
+                const bool ok=legal(p,x,z);
+                if(k==0)first=ok;
+                else if(ok&&!prev)++runs;
+                prev=ok;
+            }
+            if(first&&!prev)++runs;   // the run through the start (cyclic)
+            else if(first&&prev&&runs==0)runs=1;
+            if(runs<2)return false;
+        }
+        m.walkOnAt=here;m.walkOnTick=w.tickCounter_;
+        constexpr int RR=kWalkOn,S=2*RR+1;
+        auto box=[&](int x,int z) {return x>=ox-RR&&x<=ox+RR&&z>=oz-RR&&z<=oz+RR;};
+        auto local=[&](int x,int z) {return (z-oz+RR)*S+x-ox+RR;};
+        // The queue: members of this group, moving, waiting or held, whose
+        // bodies stand in the box (cells in index order).
+        std::vector<int> sources;
+        for(int z=std::max(0,oz-RR);z<=std::min(w.occH_-1,oz+RR);++z)for(int x=std::max(0,ox-RR);x<=std::min(w.occW_-1,ox+RR);++x) {
+            const int32_t o=occAt(size_t(z)*w.occW_+x);
+            if(!o||o==u.id)continue;
+            const Member* peer=member(o);
+            if(!peer||peer->group!=m.group||(peer->state!=Moving&&peer->state!=Waiting&&peer->state!=Holding))continue;
+            const Unit* pu=w.unit(o);
+            if(!pu||!pu->type)continue;
+            const int px=footprintOrigin(pu->x,fx),pz=footprintOrigin(pu->z,fz);
+            if(!box(px,pz))continue;
+            const int c=local(px,pz);
+            if(std::find(sources.begin(),sources.end(),c)==sources.end())sources.push_back(c);
+        }
+#ifndef NDEBUG
+        if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d walkon-look at=(%d,%d) sources=%zu\n",w.tickCounter_,u.id,ox,oz,sources.size());
+#endif
+        if(sources.empty())return false;
+        auto still=[&](int cx,int cz) {
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)return false;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            if(!o||o==u.id)return false;
+            const Unit* other=w.unit(o);
+            if(!other||!other->type||other->type->canFly)return false;
+            const Member* peer=member(o);
+            return !peer||(peer->state!=Moving&&peer->state!=Waiting&&!(peer->group==m.group&&peer->state==Holding));
+        };
+        auto open=[&](int x,int z) {
+            if(!box(x,z)||!legal(p,x,z))return false;
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)if(still(x+i,z+j))return false;
+            return true;
+        };
+        auto mine=[&](int x,int z) {return std::abs(x-ox)<fx&&std::abs(z-oz)<fz;};
+        std::array<int16_t,size_t(S)*S> parent;
+        std::array<int16_t,size_t(S)*S> queue;
+        size_t cells=0;
+        auto search=[&](bool round,auto&& visit) {
+            parent.fill(-1);size_t tail=0;
+            if(round) {
+                for(const int c:sources) {
+                    const int x=ox+c%S-RR,z=oz+c/S-RR;
+                    if(mine(x,z)||!open(x,z))continue;
+                    parent[size_t(c)]=int16_t(c);queue[tail++]=int16_t(c);
+                }
+            } else {const int c=local(ox,oz);parent[size_t(c)]=int16_t(c);queue[tail++]=int16_t(c);}
+            for(size_t head=0;head<tail;++head) {
+                const int c=queue[head];
+                const int x=ox+c%S-RR,z=oz+c/S-RR;
+                visit(c,x,z);
+                for(const auto& d:kDirections) {
+                    const int nx=x+d[0],nz=z+d[1];
+                    if(!box(nx,nz))continue;
+                    const int next=local(nx,nz);
+                    if(parent[size_t(next)]>=0)continue;
+                    if(round&&(mine(nx,nz)||(d[0]&&d[1]&&(mine(nx,z)||mine(x,nz)))))continue;
+                    if(!step(p,x,z,d[0],d[1])||!open(nx,nz))continue;
+                    if(d[0]&&d[1]&&(!open(nx,z)||!open(x,nz)))continue;
+                    parent[size_t(next)]=int16_t(c);queue[tail++]=int16_t(next);
+                }
+            }
+            cells+=tail;
+        };
+        std::array<bool,size_t(S)*S> reached{};
+        search(true,[&](int c,int,int) {reached[size_t(c)]=true;});
+        const bool naval=t->type->domain==UnitType::Domain::Water;
+        const NavGrid& sight=naval?w.navalSight_:w.nav_;
+        const int tskip=std::max(t->type->footX,t->type->footZ)/2;
+        // The shot as pressIn finds it: the point of the origin's
+        // footprint-centre box nearest the target in reach as tickCombat
+        // tests it, in sight from there or from the box's far edge toward
+        // the target (flush with a 1-cell wall a big body sees through it).
+        const float reachF=reachFloat(u,t);
+        const int64_t ftx=t->x.v,ftz=t->z.v;
+        auto shot=[&](int x,int z) {
+            const int64_t lox=(int64_t(x)*16+(fx-1)*8)<<16,loz=(int64_t(z)*16+(fz-1)*8)<<16,span=(int64_t(16)<<16)-(1<<12);
+            const int64_t ax=std::clamp(ftx,lox,lox+span),az=std::clamp(ftz,loz,loz+span);
+            {
+                const float fdx=Fixed::raw(int32_t(ftx-ax)).toFloat(),fdz=Fixed::raw(int32_t(ftz-az)).toFloat();
+                if(std::sqrt(fdx*fdx+fdz*fdz)>reachF)return false;
+            }
+            auto sees=[&](int64_t px,int64_t pz) {
+                return sight.losBetween(Fixed::raw(int32_t(px)).toFloat(),Fixed::raw(int32_t(pz)).toFloat(),t->x.toFloat(),t->z.toFloat(),foot/2,tskip);
+            };
+            if(sees(ax,az))return true;
+            const int64_t hx=lox+(int64_t(16)<<16)-1,hz=loz+(int64_t(16)<<16)-1;
+            return (ftx>ax&&sees(hx,az))||(ftz>az&&sees(ax,hz))||(ftx>ax&&ftz>az&&sees(hx,hz));
+        };
+        int best=-1;
+        search(false,[&](int c,int x,int z) {
+            if(mine(x,z)||reached[size_t(c)]||!shot(x,z))return;
+            best=c;   // breadth first: the last one found is the farthest
+        });
+        stats.detourCells+=cells;
+#ifndef NDEBUG
+        if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d walkon-search cells=%zu best=(%d,%d)\n",w.tickCounter_,u.id,cells,
+                                     best<0?-1:ox+best%S-RR,best<0?-1:oz+best/S-RR);
+#endif
+        if(best<0)return false;
+        std::vector<int> path;
+        for(int c=best;parent[size_t(c)]!=c;c=parent[size_t(c)])path.push_back((oz+c/S-RR)*W+ox+c%S-RR);
+        std::reverse(path.begin(),path.end());
+        m.route=std::move(path);m.routeTicks=0;m.lineCell=-1;m.pressX=kNoPress;m.detour=-1;
+        m.walkOnEnd=m.route.back();++m.walkOns;
+        ++stats.walkOns;
+        return true;
+    }
     // A press walked out of the target's sight (behind a wall, to a point
     // in sight): nothing brakes the body before the point, so it keeps
     // travel speed, unturned (round 3, 2026-10-20). At the facing cap a
@@ -13801,6 +13985,7 @@ struct LegionNavigator::Impl {
             h=mix(h,m.rest);if(m.rest) {h=mix(h,uint32_t(m.restX));h=mix(h,uint32_t(m.restZ));h=mix(h,uint32_t(m.restHp));h=mix(h,m.restEpoch);h=mix(h,m.restRing);}
             if(m.bend) {h=mix(h,0x62656e64ull);h=mix(h,uint32_t(m.bendX));h=mix(h,uint32_t(m.bendZ));}
             if(m.shadowPressed)h=mix(h,0x736861646f77ull);
+            if(m.walkOnAt>=0) {h=mix(h,0x77616c6b6f6eull);h=mix(h,uint64_t(uint32_t(m.walkOnEnd))<<32|uint32_t(m.walkOnAt));h=mix(h,uint64_t(m.walkOnTick)<<8|m.walkOns);}
             if(m.pressX!=kNoPress) {h=mix(h,0x7072657373ull);h=mix(h,uint32_t(m.pressX));h=mix(h,uint32_t(m.pressZ));h=mix(h,m.pressTicks);}
             if(m.want>=0) {h=mix(h,0x77616e74ull);h=mix(h,uint64_t(uint32_t(m.want)));h=mix(h,m.wantTick);}
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);if(m.detourFlow)h=mix(h,0x666c6f77ull);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
@@ -14015,6 +14200,7 @@ int LegionNavigator::unitGroup(int id) const {
     return found==impl_->members.end()?0:found->second.group;
 }
 void LegionNavigator::noteEngaged(const Unit& u) {impl_->engaged(u);}
+bool LegionNavigator::walkOnShot(const Unit& u) {return impl_->walkOnShot(u);}
 LegionNavigator::ClaimsAudit LegionNavigator::claimsAudit() const {return impl_->claimsAudit();}
 bool LegionNavigator::arrivalPoint(int id,int32_t& x,int32_t& z,int& count) const {
     const auto found=impl_->anchors.find(id);

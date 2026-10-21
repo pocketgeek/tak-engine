@@ -2784,6 +2784,91 @@ median is up, 1,347 -> 1,413, Retail 12,470 in all). Fight's part costs it the l
 alone and 1,032 together. `ringcross-100`'s Move group completes 67 ticks later (+1.6%); `ringbend-pocket` stands
 28 in reach against 30 (damage level); `attackring-f2-64` deals 72 less, still above Retail.
 
+### The walk on past the shot (2026-10-21, Legion ~100 round 6, task-l6-gateA)
+
+**Where the damage was lost.** On `attackring-gatehouse-40` the corridor round the yard is 3 cells wide, so its 2x2
+bodies are single file. The origins flush with the 1-cell yard wall see the target through it (the sight cast skips
+the cell beside a big body). Combat brakes a body as soon as it has the shot, so the first body to come flush stood in
+the corridor's mouth, and the queue behind it stood out of reach for good (gridlock from about tick 1,500 at some
+offsets). The planning round before this one (task-l5-ringA) found three ways the first body comes flush there: the
+ring's near-spot direct rule, field descent to flush seeds, and pressIn's press toward sight. It tried ten
+ring-planning changes; none was a net win. Retail brakes on the shot too, but its corridor fills deep-first: its first
+body walks the corridor's out-of-sight lane to the corner before it comes flush, and the next is braked behind it.
+
+**The change** (`walkOnShot`, called by `tickCombat` in Legion mode just before it would brake a ground attacker in
+reach and in sight; Retail is hash-identical): a member of an attack group with a ring, round a still target, whose
+weapon needs sight and is radial, walks on instead of braking when all of the following hold.
+
+* **Walls pinch it.** The legal origins of the ring round its footprint (origins touching it without overlapping it)
+  fall in two or more runs. This test uses static legality only, so a body braked in the open, or against a single
+  wall, is never tested further. Without this test, open firing lines also counted as cuts, because their engaged
+  neighbours are still bodies: bodies walked through them deeper into the ring. That rule ran on every ring.
+  Measured, it raised damage on wall-mixed-56 (14,670 -> 18,496), wall-100 (19,507 -> 20,742) and ringcross-100
+  (71,423 -> 76,692), but it was not Retail's behaviour (Retail brakes at the first shot point in the open) and cost
+  +20-70% Legion work on those fixtures. Rejected.
+* **Its queue stands behind it.** Members of its own group that are moving, waiting or held stand within a
+  `kWalkOn` (10) origin box.
+* **It plugs ground with the shot.** Two bounded searches run over statically legal origins that no still body
+  covers. The group's own held members do not count as still: they are the queue. One search starts from the queue
+  and goes round this footprint; a diagonal step that cuts its corner is refused too. The other starts from this
+  body. A shot origin that only this body reaches is ground it would plug. The shot test is pressIn's: the point of
+  the origin's footprint-centre box nearest the target is in reach as `tickCombat` tests it, and the target is in
+  sight from that point or from the box's far edge. Tested at origin centres instead (first try), the west corridor
+  at offset 4 had no shot origin at all: its column stands exactly at reach, 160 px, from the target. That offset
+  stayed at 153 damage and 0 walk-ons, and the plug stayed.
+
+The body walks to the farthest such origin (breadth-first) as a local route at travel speed, and combat does not brake
+it until the route's last origin. The next body comes up behind it and does the same, so the corridor fills from its
+far end. A look is repeated from the same origin every `kWalkOnEvery` (30) ticks, since the queue arrives after the
+first brake. A member takes at most `kWalkOnMax` (6) walks per order (`work.walk_ons`; `Member::walkOn*` are hashed).
+
+Gate medians (sums over the 11 offsets in brackets), 0.8.7 + round 5 (a371ae1f) -> after, Retail:
+
+| fixture | key | before | after | Retail |
+|---|---|---|---|---|
+| attackring-gatehouse-40 | damage_end | 324 (4,998) | 868 (9,758) | 584 (7,172) |
+| attackring-gatehouse-40 | damage_t2400 | 244 (3,678) | 550 (6,531) | 424 (5,146) |
+| attackring-gatehouse-40 | ever_end / now_end | 19 / 16 (224 / 190) | 32 / 26 (340 / 285) | 29 / 24 (298 / 264) |
+| attackring-gatehouse-40 | t50 | -1 (reached at 4 of 11) | 876 (10 of 11) | 1,040 (8 of 11) |
+| attackring-gateyard-36 | damage_end | 396 (4,857) | 602 (7,539) | 521 (5,655) |
+| attackring-gateyard-36 | damage_t2400 | 276 (3,517) | 393 (5,359) | 381 (4,095) |
+| attackring-gateyard-36 | ever_end / now_end | 12 / 11 (147 / 139) | 17 / 17 (200 / 190) | 20 / 19 (232 / 207) |
+
+Damage on gatehouse-40, by offset 0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5:
+
+* Before: 167 / 250 / 84 / 357 / 324 / 370 / 235 / 153 / 1,107 / 1,025 / 926
+* After: 984 / 782 / 881 / 868 / 636 / 764 / 549 / 850 / 1,095 / 1,120 / 1,229
+* Retail: 557 / 482 / 590 / 750 / 584 / 526 / 571 / 449 / 894 / 940 / 829
+
+`attackring-gateyard-36` is a second gatehouse, added so the fix is not tuned to one map. Its corridor is 4 cells
+wide; the outer wall has gates on the west and the south; the yard opens on the north; it has 24 2x2 and 12 3x3
+attackers. Its offsets 1 and -1 are unchanged (403 / 434 against Retail's 929 / 580). There the 3x3 group holds out
+of sight in the south corridor, short of any shot, so nothing brakes it and the walk on never applies (its bodies flush
+with the yard's south wall have no sight through it). That is the shadow's open problem (pressRoute), not a plug.
+
+Hash-identical in both modes at every gate offset: attackring-wall-64, legion100/attackring-wall-100,
+attackring-wall-mixed-56, attackring-river-64, attackring-fight-60, attackring-fight-diag-60, attackring-guard-64,
+attackring-r200-64, attackring-struct-60, attackring-melee-30, ringbend-pocket, ringcross, legion100/ringcross-100,
+legion100/attack-100, and the arrival screen: legion100/corner-1x100, legion100/gap20-100, legion100/bridges-100,
+taperbridge-100, doorplug-112, doorplug-124, legion100/doorplug100-112, legion100/doorplug100-124,
+deadend-multi-4x120 and five deadend-w* variants. None of their braked bodies stands in a static pinch with a queue
+behind it and plugged ground ahead.
+
+Trades:
+
+* Gatehouse Legion work over the 11 offsets is 24.1M -> 47.3M. The crowd no longer stands frozen, so field refreshes
+  round moving bodies rise (`field_work_refresh_moving` 14.7M -> 37.0M). The walk-on searches themselves add 0.7M
+  `detour_cells`. The per-tick maximum is unchanged.
+* Gateyard reversals rise 310 -> 475 (Retail 294). This is cosmetic by the ruling.
+
+Overlap with approach B (path-aware spot hand-out and the direct rule by path, worked on in parallel): none in code. This
+change touches only `tickCombat`'s brake (one call) and a new `walkOnShot`. It does not change spot hand-out, the
+direct rule, field seeds or pressIn. It cures the plug where it forms, whichever of the three ways brought the first
+body flush.
+
+`ctest:legion_gatewalkon` (gatehouse-40 offsets 0, 1, -1: damage median >= 600; 167 before, 881 after) and
+`ctest:legion_gateyard` (gateyard-36 offsets -2, -3, -5: median >= 600; 326 before, 871 after).
+
 ### Paused first builds (W4 C1, protocol 244)
 
 A first field used to build to done, its whole window, although its members
@@ -4687,7 +4772,9 @@ Rules that came out of using them:
   landed together, "Round 5 landed together") wall-64 stands 41 / 40 ever / now at the gate median, sums over the
   offsets 502 / 499 against 479 / 469 (Retail 532 / 480), damage 19,291 against 18,612 (16,912); wall-100 42 / 41
   (Retail 49 / 41; sums 503 / 497 against 518 now in reach), damage 19,507 (17,027); the gatehouse 19 / 16, damage
-  4,998 against 4,834 with its plug unchanged (median 324 against Retail's 584).) Against a
+  4,998 against 4,834 with its plug unchanged (median 324 against Retail's 584). Since round 6, "The walk on past the
+  shot", a braked body that would plug a pinched approach walks on to the farthest ground with the shot first: the
+  gatehouse stands 32 / 26 ever / now, damage 9,758 over the offsets (median 868; Retail 7,172, 584).) Against a
   target walled in on every side Legion outfires Retail (it
   seeks flush points on every face that has one). A Move group crossing a firing ring is level with Retail's t90
   (ringcross-100 3,841 against 3,926; completion 4,194 against 4,166 since round 4). Since round 4 (2026-10-20,
@@ -4713,7 +4800,7 @@ Rules that came out of using them:
   `ctest:legion_ringcross`, `ctest:legion_ringfill`, `ctest:legion_ringclosed`, `ctest:legion_ringstill`,
   `ctest:legion_ringwait`, `ctest:legion_ringshadow`, `ctest:legion_ringbend`, `ctest:legion_ringblind`,
   `ctest:legion_ringpocket`, `ctest:legion_ringroute`, `ctest:legion_ringnosight`, `ctest:legion_fightring`,
-  `ctest:legion_ringedge`, `ctest:legion_ringshadowpress`, `ctest:legion_ringshadowmixed`, `ctest:legion_meleepress`
+  `ctest:legion_ringedge`, `ctest:legion_ringshadowpress`, `ctest:legion_ringshadowmixed`, `ctest:legion_meleepress`, `ctest:legion_gatewalkon`, `ctest:legion_gateyard`
   and `ringcross:g.M.t90`.
 * **The livelock fix costs some lane order (protocol 257).** A body blocked
   again after a side-step toward its arc may not step straight back, so it

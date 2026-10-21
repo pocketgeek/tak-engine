@@ -139,6 +139,7 @@ public:
         uint64_t reachPresses=0;  // held attackers stepping into a free origin in reach (pressIn)
         uint64_t reachPressRepeats=0;   // pressIn steps from the same origin as the member's previous one (an in/out shuffle; 0 expected)
         uint64_t reachPressRoutes=0;    // pressIn walks of more than one origin through the target's shadow to ground in sight (pressRoute)
+        uint64_t walkOns=0;       // attackers walking on past the shot rather than plug a narrow approach (walkOnShot)
         uint64_t ringSwaps=0;     // ring upkeep: a buried owner's spot swapped with a nearer waiting member's
         // ---- W7 step 0 instruments (observation only, never hashed) ----------
         // parts: bodies a parting shifted aside (one per body per part).
@@ -232,7 +233,7 @@ public:
         array("move_calls_by_state",s.moveCallsByState,8);f("join_iterations",s.joinIterations);
         f("midroute_completions",s.midrouteCompletions);f("outside_area_completions",s.outsideAreaCompletions);
         array("completion_dist",s.completionDist,10);f("completion_dist_sum",s.completionDistSum);f("completion_dist_max",s.completionDistMax);
-        f("engaged_now",s.engagedNow);f("reach_slots_built",s.reachSlotsBuilt);f("soft_replans",s.softReplans);f("ring_reseeds",s.ringReseeds);f("reach_presses",s.reachPresses);f("reach_press_repeats",s.reachPressRepeats);f("reach_press_routes",s.reachPressRoutes);f("ring_swaps",s.ringSwaps);
+        f("engaged_now",s.engagedNow);f("reach_slots_built",s.reachSlotsBuilt);f("soft_replans",s.softReplans);f("ring_reseeds",s.ringReseeds);f("reach_presses",s.reachPresses);f("reach_press_repeats",s.reachPressRepeats);f("reach_press_routes",s.reachPressRoutes);f("ring_swaps",s.ringSwaps);f("walk_ons",s.walkOns);
         f("reseeds_in_place",s.reseedsInPlace);f("brisk_steps",s.briskSteps);
         f("parts",s.parts);f("aware_encounters",s.awareEncounters);f("aware_replans",s.awareReplans);f("aware_builds",s.awareBuilds);f("aware_work",s.awareWork);
         f("aware_latency_max",s.awareLatencyMax);f("aware_latency_sum",s.awareLatencySum);f("aware_latency_n",s.awareLatencyN);
@@ -334,6 +335,11 @@ public:
     // target: counted into Stats::engagedNow when Legion routes it, and its member is
     // Engaged (settled and still to local steering) until its next move() (AR-06).
     void noteEngaged(const Unit&);
+    // Round 6: tickCombat is about to brake this attacker in reach and in sight. True
+    // when its body would plug ground with the shot that members of its group queued
+    // behind it cannot reach round it: it walks on to the farthest such origin as a
+    // local route instead (not braked, not Engaged, until the route's end).
+    bool walkOnShot(const Unit&);
     // W5 step 0 (the claims invariant, read-only, never hashed): audit every member's
     // claimed arrival slot against its point's claimed cells. `overlaps` counts cells two
     // members of a point both claim, `missing` claimed footprint cells the point does not
