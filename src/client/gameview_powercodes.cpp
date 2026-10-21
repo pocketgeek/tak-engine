@@ -207,18 +207,23 @@
                      job.width, job.height, job.cols * job.rows, job.tileW, job.tileH, (unsigned long long)renderMs,
                      job.maxTileMs);
         std::thread([rgb = job.rgb, path = job.path, w = job.width, h = job.height, notes = posterNotes_] {
-            std::string line;
+            std::vector<std::string> lines;
             try {
                 const auto t0 = std::chrono::steady_clock::now();
-                tak::png::writeRgb(std::filesystem::u8path(path), w, h, *rgb);
+                const auto file = std::filesystem::u8path(path);
+                tak::png::writeRgb(file, w, h, *rgb);
                 std::fprintf(stderr, "poster: wrote %s in %lld ms\n", path.c_str(), (long long)
                     std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
-                line = "POSTER SAVED: " + path;
+                // The name, then the folder on a line of its own (a full path is wider
+                // than the chat overlay).
+                const auto name = file.filename().u8string(), folder = file.parent_path().u8string();
+                lines.push_back("POSTER SAVED: " + std::string(name.begin(), name.end()));
+                lines.push_back("IN " + std::string(folder.begin(), folder.end()));
             } catch (const std::exception& e) {
-                line = std::string("POSTER NOT SAVED: ") + e.what();
+                lines.push_back(std::string("POSTER NOT SAVED: ") + e.what());
             }
             std::lock_guard<std::mutex> lock(notes->m);
-            notes->lines.push_back(line);
+            for (auto& line : lines) notes->lines.push_back(std::move(line));
         }).detach();
         poster_.reset();
     }

@@ -1167,8 +1167,11 @@ std::string startLocationsLabel(uint8_t mode) {
         // this client's saved preferences. Keep every rule visible with 8 slots.
         y += 44;
         const SDL_Color infoColor{205,210,225,255};
+        // Six rows of two columns at a 16.5 pitch (POWER CODES is the sixth), above the
+        // MAP SCENARIO rules (from y+99) or a generated map's recipe (from y+98).
+        constexpr float kInfoPitch = 16.5f;
         auto info = [&](int row, int column, const std::string& label) {
-            blockText(label,x+column*300.0f,y+row*20.0f,1.6f,infoColor);
+            blockText(label,x+column*300.0f,y+row*kInfoPitch,1.6f,infoColor);
         };
         auto onOff = [](bool value) { return value ? "ON" : "OFF"; };
         info(0,0,std::string("CRUSADES: ")+onOff(room.opts.crusades));
@@ -1182,7 +1185,7 @@ std::string startLocationsLabel(uint8_t mode) {
         info(3,0,startLocationsLabel(room.opts.randomStarts));
         info(4,0,pathfindingLabel(room.opts.pathfindingMode));
         if(!campaign && room.mission.empty())
-            info(4,1,std::string("POWER CODES: ")+onOff(room.opts.powerCodes));
+            info(5,0,std::string("POWER CODES: ")+onOff(room.opts.powerCodes));
         // ALLOW SPECTATORS is the one room rule the host may still flip here: it only
         // decides who may WATCH once the game runs, so no player has planned around it.
         // The server adopts it until START and refuses Spectate while it is off.
@@ -1190,8 +1193,8 @@ std::string startLocationsLabel(uint8_t mode) {
         // hint that this line of the read-only list is a toggle.
         if(!singlePlayer_ && !campaign) {
             const std::string label=std::string("ALLOW SPECTATORS: ")+onOff(room.opts.allowSpectators);
-            const SDL_FRect hit{x+300.0f,y+80.0f-2,blockWidth(label,1.6f),18};
-            blockText(label,hit.x,y+80.0f,1.6f,host && lbHot(hit) ? SDL_Color{180,200,240,255} : infoColor);
+            const SDL_FRect hit{x+300.0f,y+4*kInfoPitch-2,blockWidth(label,1.6f),18};
+            blockText(label,hit.x,y+4*kInfoPitch,1.6f,host && lbHot(hit) ? SDL_Color{180,200,240,255} : infoColor);
             if(host) lobbyHots_.push_back({hit,[this](int) {
                 auto o=mpRoom().opts; o.allowSpectators=o.allowSpectators?0:1; mp_->setGameOptions(o); }});
         }
@@ -1215,9 +1218,9 @@ std::string startLocationsLabel(uint8_t mode) {
             // but the copy's opt-in applies the list (not in a stress or benchmark room).
             const bool testUseOnly=mp_->mapPackage() && scenarioLobby_.marker && !scenarioLobby_.hasScenario &&
                                    scenarioLobby_.useOnlyTypes>=0 && !room.opts.stressTest && !room.opts.benchmark;
-            // Three rows between the grid's last row (it ends near y+91) and the canvas edge.
+            // Three rows between the grid's last row (it ends near y+94) and the canvas edge.
             auto rule=[&](int row,int column,const std::string& text,bool warning=false) {
-                blockText(text,x+column*300.0f,y+96+row*12.5f,1.2f,warning ? amber : infoColor);
+                blockText(text,x+column*300.0f,y+99+row*12.5f,1.2f,warning ? amber : infoColor);
             };
             rule(0,0,testCopy ? "MAP SCENARIO: ON (TEST MAP)" : wanted ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF");
             if(testUseOnly && !wanted) rule(0,1,"TEST MAP: "+tak::sim::scenarioUseOnlyLine(scenarioLobby_,false));
