@@ -410,7 +410,7 @@
             }
         }
         const bool dismissed=tak::BriefingScreen::run(ren_,vfs_,stem,title,settings_,nullptr,
-            background.get(),[this]{return mp_->poll();},chapterNumber);
+            background.get(),[this]{return mp_->poll();},chapterNumber,alwaysOnNote());
         briefingPaused_=true;
         loadScreen_=std::move(loading);
 #ifndef NDEBUG

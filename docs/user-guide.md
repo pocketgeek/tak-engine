@@ -1802,10 +1802,15 @@ placed directly in `mods/` or `mods/game/` are never loaded.**
 `mods/cosmetic/`, for example `mods/cosmetic/click.hpi`, is always loaded, in
 every game: skirmish, multiplayer, campaigns, map scenarios and replays. It is
 filtered like any cosmetic mod, so it can only change what you see and hear. It
-is not listed for ticking; the game room and the campaign screen show an
-**ALWAYS ON** line naming them instead. To turn one off, move it out of the
+is not listed for ticking; the game room, the campaign screen and the mission
+briefing name them instead (**ALWAYS ON**). To turn one off, move it out of the
 folder. Only `.hpi` files count: other files directly in `mods/cosmetic/` are
 ignored.
+
+A cosmetic mod never stops a game. If an always-on archive or a ticked cosmetic
+pack cannot be loaded (a damaged archive, or more than 256 MB of mods), or its
+animation art would change game timing (for example the frame timing of a
+storm effect), it is left out of that game and the game's chat says so.
 
 In the game room you tick the packs you want (up to 64 of each kind). Packs of
 one kind load in alphabetical order of their folder names; later names win when
@@ -1826,22 +1831,6 @@ then ticked cosmetic packs.
 
 The old `overrides/` folder is no longer read. Nothing in it is moved or
 changed; move your packs into `mods/cosmetic/` or `mods/game/` yourself.
-
---- | --- |
-| **Off** | Nothing. No packs are loaded. |
-| **Cosmetic** | Textures, sprites, sounds, music, fonts and interface art. |
-| **Full** | Everything, including units, weapons, build menus, maps, scripts and models. |
-
-In the lobby, players tick the packs they want (up to 64). Packs load in
-alphabetical order of their folder names; later names win when they change the
-same file.
-
-- In **Cosmetic** mode, each player chooses their own packs; they change only
-  what that player sees and hears.
-- In **Full** mode, the host's packs are sent to the server and to every player
-  automatically, and everyone checks they have the same package before the game
-  starts. Transfers are limited to 256 MB.
-- Campaigns always use the original game data.
 
 ---
 

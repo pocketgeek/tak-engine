@@ -114,11 +114,13 @@ def main():
                 with contextlib.closing(login(port,h,'Bob')) as q:
                     q.send('JoinGame',struct.pack('<I',rid)+auth.field(''))
                     assert q.receive('JoinResult').num('<B')==1
-                    offer(q);error=q.receive('ModError');assert error.num('<I')==rid;assert b'only the host' in error.field()
                     q.send('ModChunk',struct.pack('<II',rid,0)+bytes(16))
                     error=q.receive('ModError');assert error.num('<I')==rid;assert b'only the host' in error.field()
-                    q.send('Ping');q.receive('Pong')
-                    assert 'refused game-mod upload from client' in (root/'log').read_text()
+                    # A stream of refused offers and chunks is answered (and logged)
+                    # once per 5 s: the next reply here must be the Pong.
+                    for _ in range(200):q.send('ModChunk',struct.pack('<II',rid,0)+bytes(16))
+                    offer(q);q.send('Ping');q.receive('Pong')
+                    assert (root/'log').read_text().count('refused game-mod upload from client')==2,'refused uploads are not rate-limited'
                 p.send('Ping');p.receive('Pong');assert process.poll() is None
         with server(a.server.resolve(),a.data.resolve(),root,'--closed-registration') as (port,h,process):
             with contextlib.closing(login(port,h,'Alice')) as p:

@@ -923,7 +923,7 @@ std::string startLocationsLabel(uint8_t mode) {
                 if(names.empty()){blockText(empty,winW-296.0f,py,1.3f,{150,155,165,255});py+=22;}
                 for(size_t i=page*perPage;i<std::min(names.size(),page*perPage+perPage);++i){
                     const auto name=names[i];const bool enabled=std::find(selected.begin(),selected.end(),name)!=selected.end();
-                    std::string label=name;if(label.size()>26)label=label.substr(0,23)+"...";
+                    std::string label=name;if(label.size()>17)label=label.substr(0,14)+"...";   // centered clear of the checkbox
                     lbBtn(winW-300.0f,py,280,20,label,!busy,[selected,name,enabled,apply]{
                         auto selection=selected;
                         if(enabled)selection.erase(std::remove(selection.begin(),selection.end(),name),selection.end());else if(selection.size()<64)selection.push_back(name);
@@ -969,7 +969,7 @@ std::string startLocationsLabel(uint8_t mode) {
                     // The host's packs, as named by the verified package (read-only here).
                     std::string names=mp_->modPackage()?mp_->modPackage()->mapPath:"";
                     if(names.empty())names=mp_->modPackage()?"NONE SELECTED":"WAITING FOR THE HOST";
-                    if(names.size()>34)names=names.substr(0,31)+"...";
+                    if(names.size()>29)names=names.substr(0,26)+"...";   // "HOST: " + 29 = the 35 that fit
                     blockText("HOST: "+names,winW-296.0f,py,1.3f,{180,190,205,255});py+=22;
                 }
                 if(gameOn){auto status=mp_->modStatus();if(status.size()>34)status=status.substr(0,31)+"...";blockText(status,winW-296.0f,py+3,1.2f,{205,190,135,255});py+=23;}

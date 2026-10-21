@@ -232,7 +232,7 @@ int main() {
         check(info.seatOneArmy() && info.offerable(), "a rules-only map keeps its Monarchs");
         c = good; c.name = "player 1's army is a type this install lacks"; c.scenario.units[0].objectName = "npckrell";
         info = expect(c, ScenarioStatus::MissingType);
-        check(info.seatOneArmy(), "an unknown type may come from an override pack");
+        check(info.seatOneArmy(), "an unknown type may come from a game mod pack");
     }
 
     std::printf("outcomes:\n");

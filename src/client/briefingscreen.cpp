@@ -21,8 +21,10 @@
 namespace tak {
 bool BriefingScreen::run(SDL_Renderer* ren,const hpi::Vfs& vfs,const std::string& stem,
                         const std::string& title,Settings* settings,MenuMusic* music,
-                        SDL_Texture* background,std::function<bool()> idle,int chapter) {
-    const auto objectives=loadObjectives(vfs,stem);
+                        SDL_Texture* background,std::function<bool()> idle,int chapter,
+                        const std::string& note) {
+    auto objectives=loadObjectives(vfs,stem);
+    if(!note.empty()){objectives.push_back("");objectives.push_back(note);}
     gui::Gui ui;
     try {ui=gui::parse(vfs.read("guis/briefing.gui"),"guis/briefing.gui");}catch(...){}
     Font heading,bold,body;
@@ -53,7 +55,7 @@ bool BriefingScreen::run(SDL_Renderer* ren,const hpi::Vfs& vfs,const std::string
                 const float width=body.ok()?float(body.width(next,lay.scale)):blockTextWidth(next,lay.scale);
                 if(!line.empty() && width>textRect.w){lines.push_back(line);line=word;}else line=next;
             }
-            if(!line.empty())lines.push_back(line);
+            if(!line.empty() || objective.empty())lines.push_back(line);
         }
         scroll=std::clamp(scroll,0,std::max(0,int(lines.size())-9));
         SDL_Event e;

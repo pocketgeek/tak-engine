@@ -268,6 +268,7 @@ struct Client {
     // cannot go out of order.
     WorkBudget lobbyWork,uploadWork,commandBytes,commandCount;
     uint64_t commandLogAt=0, validationId=0;
+    uint64_t modRefusedAt=0;   // last refused game-mod upload answered (Server::modMsg)
     std::optional<Frame> deferredMapOffer;
     uint64_t mapReceiveStarted=0,mapReceiveProgress=0;
     bool replaying = false;
@@ -2369,8 +2370,15 @@ void Server::modMsg(Client& c,const Frame& f) {
             : !room->opts.gameMods && f.kind==Msg::ModOffer ? "game mods are off in this game" : nullptr;
         if(refused) {
             if(room->hostId!=c.id)c.modReceive={};
-            Writer error;error.u32(room->id);error.str(refused);c.conn.send(Msg::ModError,error);
-            std::fprintf(stderr,"game %u: refused game-mod upload from client %u: %s\n",room->id,c.id,refused);
+            // One answer (and one log line, within the shared log budget) per
+            // client every 5 s: a stream of refused chunks costs no more than one.
+            const uint64_t now=nowMs();
+            if(!c.modRefusedAt || now-c.modRefusedAt>=5000) {
+                c.modRefusedAt=now;
+                Writer error;error.u32(room->id);error.str(refused);c.conn.send(Msg::ModError,error);
+                if(commandLogs_.take(now,4))
+                    std::fprintf(stderr,"game %u: refused game-mod upload from client %u: %s\n",room->id,c.id,refused);
+            }
             return;
         }
     }

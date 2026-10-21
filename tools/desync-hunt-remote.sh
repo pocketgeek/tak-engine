@@ -202,7 +202,7 @@ note_server() { printf '%s\t%s\n' "$1" "$2" >>"$PIDFILE"; }
 
 # Files moved aside on a remote for the negative test, as "host<TAB>path<TAB>backup".
 # Recorded BEFORE the move and restored by cleanup() however we exit -- an interrupted
-# run must not leave a host missing a gameplay override, or every later full-tier run
+# run must not leave a host missing a game-mod file, or every later game-mods run
 # there fails for a reason that has nothing to do with what it is testing.
 MOVEDFILE="$OUT/moved-aside"
 : >"$MOVEDFILE"
@@ -215,7 +215,7 @@ NETEM_EXPIRY="${TAK_NETEM_EXPIRY:-1800}"   # remote self-revert, seconds
 NETEM_OWNER="/tmp/tak-netem-owner"
 # Keep a record until its file is VERIFIABLY back. Clearing the list regardless of
 # whether the restore worked destroys the only thing that could retry it: an ssh drop
-# mid-restore would leave the shared install missing a gameplay override and no record
+# mid-restore would leave the shared install missing a game-mod file and no record
 # that it ever moved. Entries that fail are kept, so the EXIT trap tries again, and the
 # failure is propagated rather than swallowed.
 restore_moved() {

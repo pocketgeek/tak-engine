@@ -64,7 +64,13 @@ public:
     // (every room), then this player's own ticked cosmetic packs (every room but
     // a campaign mission or Crusades battle; packs no longer on disk are skipped).
     // `withCosmetic` false (debug --mods none|game) leaves every cosmetic layer out.
-    hpi::Vfs modVfs(const std::vector<std::string>& cosmeticPacks, bool withCosmetic = true) const;
+    // A cosmetic layer that cannot load or would change the gameplay hash is left
+    // out and named in `skipped` (hpi::mountPlayVfs).
+    hpi::Vfs modVfs(const std::vector<std::string>& cosmeticPacks, bool withCosmetic = true,
+                    std::vector<std::string>* skipped = nullptr) const;
+    // The room's game data without any cosmetic layer (map packages, generated
+    // maps): the host's game packs, or a guest's copy of the host's package.
+    hpi::Vfs roomDataVfs() const;
     const std::string& mapStatus() const { return mapStatus_; }
     bool connect(const std::string& host, uint16_t port, const std::string& name);
     void disconnect(const std::string& reason = "bye");

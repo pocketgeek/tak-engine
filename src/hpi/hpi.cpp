@@ -1025,13 +1025,66 @@ Vfs::Files alwaysOnModFiles(const std::filesystem::path& root) {
         collect(MountSet(dir,MountConfig{false,{".hpi"},cosmeticKeep,{MountSet::key(name)}}),files,total);
     return files;
 }
-Vfs::Files playModFiles(const std::filesystem::path& root,Vfs::Files files,std::vector<std::string> cosmeticPacks) {
-    for(auto& [path,bytes]:alwaysOnModFiles(root))files[path]=std::move(bytes);
+Vfs mountPlayVfs(const std::filesystem::path& root,Vfs::Files gameFiles,std::vector<std::string> cosmeticPacks,
+                 bool withCosmetic,std::vector<std::string>* skipped) {
+    Vfs vfs=mountRetailRoot(root);
+    auto base=std::make_shared<const Vfs::Files>(std::move(gameFiles));
+    vfs.setModFiles(base);
+    if(!withCosmetic)return vfs;
+    struct Layer {std::string name;Vfs::Files files;bool anims=false;};
+    std::vector<Layer> layers;
+    auto skip=[&](const std::string& name,const std::string& why){if(skipped)skipped->push_back(name+" ("+why+")");};
+    auto add=[&](const std::string& name,auto&& load) {
+        try {Layer layer{name,load(),false};
+            for(const auto& [path,bytes]:layer.files)if(path.starts_with("anims/")){layer.anims=true;break;}
+            layers.push_back(std::move(layer));
+        }catch(const std::exception& e){skip(name,e.what());}
+    };
+    const auto dir=modDirectory(root,ModKind::Cosmetic);
+    // One MountSet per archive: inside one set a conflict goes to the newest entry
+    // date, but these layer alphabetically like the pack folders (later name wins).
+    for(const auto& name:alwaysOnMods(root))
+        add(name,[&]{Vfs::Files files;size_t total=0;
+            collect(MountSet(dir,MountConfig{false,{".hpi"},cosmeticKeep,{MountSet::key(name)}}),files,total);return files;});
     // Remember unavailable selections, but a removed cosmetic pack must not stop a game.
     const auto available=modPacks(root,ModKind::Cosmetic);
+    std::sort(cosmeticPacks.begin(),cosmeticPacks.end());
+    cosmeticPacks.erase(std::unique(cosmeticPacks.begin(),cosmeticPacks.end()),cosmeticPacks.end());
     std::erase_if(cosmeticPacks,[&](const auto& name){return !std::binary_search(available.begin(),available.end(),name);});
-    for(auto& [path,bytes]:modFiles(root,ModKind::Cosmetic,cosmeticPacks))files[path]=std::move(bytes);
-    return files;
+    if(cosmeticPacks.size()>64)cosmeticPacks.resize(64);
+    for(const auto& name:cosmeticPacks)add(name,[&]{return modFiles(root,ModKind::Cosmetic,{name});});
+    // The cosmetic layers together share one budget; past it the later ones drop.
+    {   size_t total=0,count=0;
+        std::erase_if(layers,[&](const Layer& layer){
+            size_t bytes=0;for(const auto& [path,data]:layer.files)bytes+=data.size();
+            if(total+bytes>(256u<<20) || count+layer.files.size()>65536){skip(layer.name,"mod selection too large");return true;}
+            total+=bytes;count+=layer.files.size();return false;});
+    }
+    auto merged=[&](const std::vector<bool>& use) {
+        auto files=std::make_shared<Vfs::Files>(*base);
+        for(size_t i=0;i<layers.size();++i)if(use[i])for(const auto& [path,bytes]:layers[i].files)(*files)[path]=bytes;
+        return files;
+    };
+    // The cosmetic filter keeps out every file the sim reads EXCEPT anims/ art,
+    // whose frame timing and availability gameplayHash (and the sim) read too.
+    // Only a layer carrying anims/ can change the hash: check those against the
+    // room's data, and drop each one that changes it.
+    std::vector<bool> keep(layers.size(),true);
+    if(std::any_of(layers.begin(),layers.end(),[](const Layer& l){return l.anims;})) {
+        const uint64_t want=gameplayHash(vfs);
+        auto hashWith=[&](const std::vector<bool>& use){vfs.setModFiles(merged(use));return gameplayHash(vfs);};
+        auto drop=[&](size_t i){keep[i]=false;skip(layers[i].name,"its anims/ art changes gameplay timing");};
+        if(hashWith(keep)!=want) {
+            for(size_t i=0;i<layers.size();++i)if(layers[i].anims) {
+                std::vector<bool> only(layers.size(),false);only[i]=true;
+                if(hashWith(only)!=want)drop(i);
+            }
+            // Two layers that are each harmless can still combine into a change.
+            if(hashWith(keep)!=want)for(size_t i=0;i<layers.size();++i)if(keep[i] && layers[i].anims)drop(i);
+        }
+    }
+    vfs.setModFiles(merged(keep));
+    return vfs;
 }
 
 Vfs mountRetailRoot(const std::filesystem::path& root, const std::vector<std::string>& gamePacks, const std::vector<std::string>& cosmeticPacks) {

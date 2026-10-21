@@ -277,11 +277,17 @@ Vfs::Files modFiles(const std::filesystem::path& root, ModKind kind,
 // case-insensitively; that is also their layer order (later names win).
 std::vector<std::string> alwaysOnMods(const std::filesystem::path& root);
 Vfs::Files alwaysOnModFiles(const std::filesystem::path& root);
-// A game's merged mod layer: `gameFiles` (the room's verified game-mod package,
-// or nothing), then the always-on archives, then this player's ticked cosmetic
-// packs (packs no longer on disk are skipped). Each later layer wins.
-Vfs::Files playModFiles(const std::filesystem::path& root, Vfs::Files gameFiles,
-                        std::vector<std::string> cosmeticPacks);
+// A game's VFS: the retail mount, `gameFiles` over it (the room's verified
+// game-mod package, or nothing), then -- with `withCosmetic` -- the always-on
+// archives and this player's ticked cosmetic packs (packs no longer on disk are
+// skipped silently). Each later layer wins. A cosmetic layer is its own choice
+// and must never stop a game, so one that cannot load (a damaged archive, past
+// the 256 MiB / 65536-file budget) or that would change gameplayHash (anims/
+// frame timing or availability the sim reads: storms, nimbus, feature burns) is
+// left out and named, with the reason, in `skipped`.
+Vfs mountPlayVfs(const std::filesystem::path& root, Vfs::Files gameFiles,
+                 std::vector<std::string> cosmeticPacks, bool withCosmetic = true,
+                 std::vector<std::string>* skipped = nullptr);
 // True when <root> still has a legacy overrides/ folder (only stat()ed).
 bool hasLegacyOverridesDir(const std::filesystem::path& root);
 

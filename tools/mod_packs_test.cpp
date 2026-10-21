@@ -1,4 +1,6 @@
 #include "net/modpackage.h"
+#include "net/client.h"
+#include <cstring>
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -70,19 +72,50 @@ int main(){
     auto plain=hpi::mountRetailRoot(root,{"Alpha"});
     check(!plain.has("sounds/always.wav"),"mountRetailRoot (handshake hash, map packages) never adds always-on archives");
     // A campaign game: no packs at all, the always-on archives still load.
-    hpi::Vfs campaign=hpi::mountRetailRoot(root);campaign.setModFiles(std::make_shared<const hpi::Vfs::Files>(hpi::playModFiles(root,{},{})));
+    std::vector<std::string> skipped;
+    hpi::Vfs campaign=hpi::mountPlayVfs(root,{},{},true,&skipped);
+    check(skipped.empty(),"harmless cosmetic layers are never left out");
     check(campaign.has("sounds/always.wav") && campaign.read("sounds/test.wav")==bytesOf("hb"),"always-on archives load with no packs selected");
     check(!campaign.has("sounds/legacy-click.wav"),"a legacy overrides/ archive is never loaded");
     check(hpi::gameplayHash(campaign)==hpi::gameplayHash(empty),"always-on archives never change the gameplay hash");
     // A skirmish/MP game: game files, then always-on, then the ticked cosmetic packs.
-    hpi::Vfs play=hpi::mountRetailRoot(root);
-    play.setModFiles(std::make_shared<const hpi::Vfs::Files>(hpi::playModFiles(root,hpi::modFiles(root,hpi::ModKind::Game,{"Alpha","Zeta"}),{"Zeta","Gone"})));
+    hpi::Vfs play=hpi::mountPlayVfs(root,hpi::modFiles(root,hpi::ModKind::Game,{"Alpha","Zeta"}),{"Zeta","Gone"});
     check(play.read("sounds/test.wav")==bytesOf("z"),"cosmetic pack folders win over always-on archives");
     check(play.read("sounds/always.wav")==bytesOf("b") && play.has("sounds/only-game.wav") && play.has("units/test.fbi"),"always-on archives sit over game packs");
     check(hpi::gameplayHash(play)==hpi::gameplayHash(game),"always-on + cosmetic layers keep the game-mods hash");
-    hpi::Vfs over=hpi::mountRetailRoot(root);
-    over.setModFiles(std::make_shared<const hpi::Vfs::Files>(hpi::playModFiles(root,hpi::modFiles(root,hpi::ModKind::Game,{"Zeta"}),{})));
+    hpi::Vfs over=hpi::mountPlayVfs(root,hpi::modFiles(root,hpi::ModKind::Game,{"Zeta"}),{});
     check(over.read("sounds/test.wav")==bytesOf("hb"),"always-on archives win over game packs");
+    check(!hpi::mountPlayVfs(root,{},{"Zeta"},false).has("sounds/always.wav"),"--mods none|game leaves the always-on archives out");
+    {   // A cosmetic layer never stops a game: a damaged always-on archive loads nothing.
+      put("mods/cosmetic/broken.hpi","not an archive");skipped.clear();
+      auto vfs=hpi::mountPlayVfs(root,{},{"Zeta"},true,&skipped);
+      check(vfs.has("sounds/always.wav") && vfs.read("sounds/test.wav")==bytesOf("z"),
+            "a damaged always-on archive never stops the other mods loading");
+      std::filesystem::remove(root/"mods/cosmetic/broken.hpi");
+    }
+    {   // anims/ art passes the cosmetic filter, but a storm's frame timing is
+        // gameplay: an always-on archive (or a ticked pack) that changes it is
+        // left out, so the player's Loaded hash still matches the referee's.
+      auto gaf=[](uint32_t delay,uint8_t pixel){   // one 1x1 frame named "stormfx"
+        std::vector<uint8_t> art(89);auto word=[&](size_t at,uint32_t v,int n){for(int i=0;i<n;++i)art[at+size_t(i)]=uint8_t(v>>(i*8));};
+        word(0,0x10100,4);word(4,1,4);word(12,16,4);word(16,1,2);word(18,1,2);std::memcpy(art.data()+24,"stormfx",7);
+        word(56,64,4);word(60,delay,4);word(64,1,2);word(66,1,2);word(80,88,4);art.back()=pixel;return std::string(art.begin(),art.end());};
+      put("mods/game/Storm/units/storm.fbi","[WEAPON1]\n{\nwanderstartart=stormfx;\n}\n");put("mods/game/Storm/anims/stormfx.gaf",gaf(3,1));
+      archive("mods/cosmetic/fx.hpi",{{"anims/stormfx.gaf",gaf(9,1)},{"sounds/fx.wav","fx"}});
+      archive("mods/cosmetic/recolor.hpi",{{"anims/stormfx.gaf",gaf(3,77)}});
+      put("mods/cosmetic/Timing/anims/stormfx.gaf",gaf(5,1));
+      const auto storm=hpi::modFiles(root,hpi::ModKind::Game,{"Storm"});
+      hpi::Vfs room=hpi::mountRetailRoot(root,{"Storm"});
+      skipped.clear();auto vfs=hpi::mountPlayVfs(root,storm,{"Timing"},true,&skipped);
+      check(hpi::gameplayHash(vfs)==hpi::gameplayHash(room),"cosmetic layers never change the game-mods hash, even with anims/ timing");
+      auto named=[&](const char* n){return std::any_of(skipped.begin(),skipped.end(),[&](const auto& s){return s.starts_with(std::string(n)+" (");});};
+      check(named("fx.hpi") && named("Timing") && !named("recolor.hpi") && skipped.size()==2,"only the timing-changing cosmetic layers are left out");
+      check(!vfs.has("sounds/fx.wav") && vfs.read("anims/stormfx.gaf")==bytesOf(gaf(3,77)),"a timing-preserving recolor still loads");
+      skipped.clear();vfs=hpi::mountPlayVfs(root,{},{"Timing"},true,&skipped);
+      check(skipped.empty() && vfs.has("sounds/fx.wav"),"anims/ art no unit uses keeps the layer");
+      for(const char* f:{"mods/cosmetic/fx.hpi","mods/cosmetic/recolor.hpi"})std::filesystem::remove(root/f);
+      std::filesystem::remove_all(root/"mods/cosmetic/Timing");std::filesystem::remove_all(root/"mods/game/Storm");
+    }
     std::filesystem::remove(root/"mods/cosmetic/link.hpi",ec);
   }
   auto p=net::mods::build(root,{"Zeta","Alpha"});auto q=net::mods::build(root,{"Alpha","Zeta"});check(p->digest==q->digest,"selection order does not affect package digest");
@@ -127,6 +160,13 @@ int main(){
     check(!std::filesystem::exists(root/"ModCache"/(fresh->digest+".takmods")),"quota rejection left a partial entry");
   }
   auto base=hpi::mountRetailRoot(root);hpi::Vfs roomA(&base),roomB(&base);roomA.setModFiles(p->files);check(roomA.has("units/test.fbi")&&!roomB.has("units/test.fbi"),"room mods do not leak");
+  {   // A saved game-pack selection naming a folder since removed is dropped, so a
+      // stale settings entry can never stop single-player games from building.
+    net::MpClient client;client.setMapRoot(root);
+    client.setGameModPacks({"Zeta","Removed","Alpha","Zeta"});
+    check(client.gameModPacks()==std::vector<std::string>({"Alpha","Zeta"}),"stale or duplicate game packs are dropped from the selection");
+    auto built=net::mods::build(root,client.gameModPacks());check(built->files->count("units/test.fbi"),"the filtered selection builds");
+  }
   check(snapshot()==legacyBefore,"the legacy overrides/ folder is left byte-identical");
  }catch(const std::exception& e){std::cerr<<e.what()<<'\n';++failures;}
  std::error_code ec;std::filesystem::remove_all(root,ec);std::cout<<"mod packs: "<<failures<<" failures\n";return failures?1:0;

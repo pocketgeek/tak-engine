@@ -2284,7 +2284,12 @@ private:
     std::map<std::string, std::vector<uint8_t>> kingdomPals_;  // kingdom -> RGBA palette (256*4)
     std::vector<std::string> availableGameMods_, availableCosmeticMods_;   // mods/game, mods/cosmetic
     std::vector<std::string> alwaysOnMods_;   // mods/cosmetic/*.hpi: loaded in every game, only named
+    std::vector<std::string> alwaysOnLoaded_;   // the always-on archives the current game mounted (remountMods)
     bool modPacksScanned_=false;
+    std::string alwaysOnNote() const {   // the campaign briefing's line naming them
+        std::string note;for(const auto& name:alwaysOnLoaded_)note+=(note.empty()?"Always-on mods: ":", ")+name;
+        return note;
+    }
     void scanModPacks();   // fills availableGameMods_ / availableCosmeticMods_ / alwaysOnMods_ once
     size_t gameModPage_=0, cosmeticModPage_=0;
     bool createGameMods_ = false;   // multiplayer create-dialog GAME MODS toggle (default off)

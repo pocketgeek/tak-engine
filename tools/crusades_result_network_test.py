@@ -76,7 +76,7 @@ def verify_replay(root, identity, digest, fingerprint):
     replay.field(); replay.field()  # mission, engine version
     assert replay.num('<Q') == fingerprint
     replay.num('<B'); replay.field()  # sight, map digest
-    assert replay.field() == b""  # campaigns do not load override packs
+    assert replay.field() == b""  # campaigns carry no game-mod package (modDigest)
     assert replay.num('<B') == 0  # campaign pathfinding is always Retail
     slot_count = replay.num('<B')
     replay.pos += 5 * slot_count

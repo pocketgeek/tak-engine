@@ -837,8 +837,7 @@ void MpClient::onFrame(const Frame& f) {
                 mapReadyRoom_ = room_.id; mapStatus_ = "MAP READY";
             } else if (room_.hostId == myId_ && mapOfferedRoom_ != room_.id) {
                 try {
-                    if (!mapPackage_) mapPackage_ = maps::build(hpi::mountRetailRoot(mapRoot_,
-                        room_.opts.gameMods?gameModPacks_:std::vector<std::string>{}), room_.mapId);
+                    if (!mapPackage_) mapPackage_ = maps::build(roomDataVfs(), room_.mapId);
                     send(Msg::MapOffer, maps::offer(room_.id, room_.mapId, *mapPackage_));
                     mapOfferedRoom_ = room_.id; mapStatus_ = "CHECKING MAP WITH SERVER";
                 } catch (const std::exception& e) {
@@ -882,8 +881,7 @@ void MpClient::onFrame(const Frame& f) {
             gameSpeed_ = room_.opts.speed;
             if (room_.mission.empty() && mapgen::isGeneratedMapId(room_.mapId)) {
                 try {
-                    const auto data = hpi::mountRetailRoot(mapRoot_,
-                        room_.opts.gameMods?gameModPacks_:std::vector<std::string>{});
+                    const auto data = roomDataVfs();
                     maps::saveGenerated(mapRoot_, data, room_.mapId);
                 } catch (const std::exception& e) {
                     mapStatus_ = std::string("MAP SAVE FAILED: ") + e.what();
@@ -1217,8 +1215,7 @@ void MpClient::mapFrame(const Frame& f) {
             mapReadyRoom_ = 0; mapReceive_.begin(id, size, digest);
             if (auto cached = maps::loadCache(mapRoot_, digest)) { acceptMap(std::move(cached), id); return; }
             try {
-                auto local = maps::build(hpi::mountRetailRoot(mapRoot_,
-                    room_.opts.gameMods?gameModPacks_:std::vector<std::string>{}), mapId);
+                auto local = maps::build(roomDataVfs(), mapId);
                 if (local->digest == digest) { acceptMap(std::move(local), id); return; }
             } catch (const std::exception&) {} // Missing/different map: request the host's copy.
             Writer request; request.u32(id); send(Msg::MapRequest, request);
@@ -1265,7 +1262,13 @@ void MpClient::resetMapTransfer() {
     startSent_ = false; startError_.clear();
 }
 void MpClient::setGameModPacks(std::vector<std::string> names) {
-    std::sort(names.begin(),names.end());if(names==gameModPacks_)return;
+    // Only packs still on disk: a saved selection naming a pack folder since
+    // removed or renamed must not stop every game from building its package
+    // (the room lists only the packs that exist, so it could not be unticked).
+    const auto have=hpi::modPacks(mapRoot_,hpi::ModKind::Game);
+    std::erase_if(names,[&](const auto& n){return !std::binary_search(have.begin(),have.end(),n);});
+    std::sort(names.begin(),names.end());names.erase(std::unique(names.begin(),names.end()),names.end());
+    if(names==gameModPacks_)return;
     if(modBusy())return;
     gameModPacks_=std::move(names);modOfferedRoom_=0;
     if(state_==State::InRoom && room_.hostId==myId_ && room_.opts.gameMods) {
@@ -1281,16 +1284,23 @@ void MpClient::offerMods() {
         send(Msg::ModOffer,maps::offer(room_.id,"mods",*modPackage_));modStatus_="VERIFYING GAME MODS";
     }catch(const std::exception& e){modPackage_.reset();modStatus_=std::string("GAME MODS: ")+e.what();}
 }
-hpi::Vfs MpClient::modVfs(const std::vector<std::string>& cosmetic,bool withCosmetic) const {
-    auto vfs=hpi::mountRetailRoot(mapRoot_);
+hpi::Vfs MpClient::modVfs(const std::vector<std::string>& cosmetic,bool withCosmetic,std::vector<std::string>* skipped) const {
     hpi::Vfs::Files game;
     if(room_.opts.gameMods){if(!modPackage_)throw std::runtime_error("game mods not verified");game=*modPackage_->files;}
     // This player's own cosmetic mods on top (they cannot change the gameplay
     // hash): the always-on archives in every room, the ticked pack folders in
     // every room but a campaign one.
     const bool campaign=!room_.mission.empty() || campaignRoom();
-    vfs.setModFiles(std::make_shared<const hpi::Vfs::Files>(withCosmetic
-        ? hpi::playModFiles(mapRoot_,std::move(game),campaign?std::vector<std::string>{}:cosmetic) : std::move(game)));
+    return hpi::mountPlayVfs(mapRoot_,std::move(game),campaign?std::vector<std::string>{}:cosmetic,withCosmetic,skipped);
+}
+hpi::Vfs MpClient::roomDataVfs() const {
+    // The room's game data for a map package or a generated map: the host's own
+    // selection, or for a guest the host's verified game-mod package. A guest's
+    // saved packs (from its own single-player games) never stand in for the host's.
+    if(!room_.opts.gameMods)return hpi::mountRetailRoot(mapRoot_);
+    if(room_.hostId==myId_)return hpi::mountRetailRoot(mapRoot_,gameModPacks_);
+    auto vfs=hpi::mountRetailRoot(mapRoot_);
+    if(modPackage_)vfs.setModFiles(modPackage_->files);
     return vfs;
 }
 void MpClient::acceptMods(std::shared_ptr<mods::Package> package,uint32_t room) {

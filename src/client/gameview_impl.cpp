@@ -2673,17 +2673,26 @@
         // The always-on mods/cosmetic/*.hpi archives load in every game, campaigns
         // included (--mods none|game leaves them out with the cosmetic packs).
         const auto cosmetic=mods_.cosmetic && settings_?settings_->cosmeticModPacks:std::vector<std::string>{};
-        if(mp_) vfs_=mp_->modVfs(cosmetic,mods_.cosmetic);
+        std::vector<std::string> skipped;
+        if(mp_) vfs_=mp_->modVfs(cosmetic,mods_.cosmetic,&skipped);
         else {
             // Debug local harnesses (no server): this launch's own ticked packs.
             const auto root=std::filesystem::u8path(installRoot_);
             auto game=mods_.game && settings_?settings_->gameModPacks:std::vector<std::string>{};
             const auto have=tak::hpi::modPacks(root,tak::hpi::ModKind::Game);
             std::erase_if(game,[&](const auto& n){return !std::binary_search(have.begin(),have.end(),n);});
-            auto files=tak::hpi::modFiles(root,tak::hpi::ModKind::Game,game);
-            if(mods_.cosmetic)files=tak::hpi::playModFiles(root,std::move(files),missionStem_.empty()?cosmetic:std::vector<std::string>{});
-            vfs_ = tak::hpi::mountRetailRoot(root);
-            vfs_.setModFiles(std::make_shared<const tak::hpi::Vfs::Files>(std::move(files)));
+            vfs_=tak::hpi::mountPlayVfs(root,tak::hpi::modFiles(root,tak::hpi::ModKind::Game,game),
+                missionStem_.empty()?cosmetic:std::vector<std::string>{},mods_.cosmetic,&skipped);
+        }
+        // A cosmetic mod left out (it cannot load, or its anims/ art would change
+        // gameplay timing) is named in the game's chat rather than stopping it.
+        alwaysOnLoaded_.clear();
+        if(mods_.cosmetic)for(const auto& name:tak::hpi::alwaysOnMods(std::filesystem::u8path(installRoot_)))
+            if(std::none_of(skipped.begin(),skipped.end(),[&](const std::string& why){return why.starts_with(name+" (");}))
+                alwaysOnLoaded_.push_back(name);
+        for(const auto& why:skipped) {
+            std::fprintf(stderr,"mods: cosmetic mod left out: %s\n",why.c_str());
+            gameChat_.push_back({"SYSTEM","COSMETIC MOD LEFT OUT: "+why,0});
         }
         // Lobby choices are applied before match setup; discard art/audio cached
         // while the lobby still used the previous data set.

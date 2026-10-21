@@ -322,21 +322,25 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     // digest); this viewer's own cosmetic mods go on top -- the always-on
     // mods/cosmetic/*.hpi archives, plus the ticked packs unless it is a campaign
     // replay (they never change the gameplay hash, so the data check below holds).
-    auto rvfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot));
-    {
-        tak::hpi::Vfs::Files game;
-        if(!rf.modDigest.empty()) {
-            auto pack=tak::net::mods::loadCache(dataRoot,rf.modDigest);
-            if(!pack)throw std::runtime_error("the verified game mods for this replay are missing");
-            game=*pack->files;
-        }
-        auto files=std::make_shared<tak::hpi::Vfs::Files>(std::move(game));
-        try {
-            *files=tak::hpi::playModFiles(std::filesystem::u8path(dataRoot),*files,
-                rf.mission.empty()?settings.cosmeticModPacks:std::vector<std::string>{});
-        } catch (const std::exception& e) { std::fprintf(stderr,"replay: cosmetic mods skipped: %s\n",e.what()); }
-        if(!files->empty())rvfs.setModFiles(std::move(files));
+    tak::hpi::Vfs::Files game;
+    if(!rf.modDigest.empty()) {
+        auto pack=tak::net::mods::loadCache(dataRoot,rf.modDigest);
+        // A single-player room always verifies a game-mod package, an empty one
+        // when no game pack was ticked; that one any install can rebuild.
+        if(!pack) try {
+            auto empty=tak::net::mods::build(std::filesystem::u8path(dataRoot),{});
+            if(empty->digest==rf.modDigest)pack=std::move(empty);
+        } catch (const std::exception&) {}
+        if(!pack)throw std::runtime_error("the verified game mods for this replay are missing");
+        game=*pack->files;
     }
+    // A campaign mission or a Crusades battle (the read-only Crusades replay,
+    // requireMatchingData) loads no ticked cosmetic packs, as the live game did.
+    const bool campaignReplay=!rf.mission.empty() || requireMatchingData;
+    std::vector<std::string> skippedMods;
+    auto rvfs = tak::hpi::mountPlayVfs(std::filesystem::u8path(dataRoot),std::move(game),
+        campaignReplay?std::vector<std::string>{}:settings.cosmeticModPacks,true,&skippedMods);
+    for(const auto& why:skippedMods)std::fprintf(stderr,"replay: cosmetic mod left out: %s\n",why.c_str());
     std::string mapPath;
     if (!rf.mapDigest.empty()) {
         auto package = tak::net::maps::loadCache(dataRoot, rf.mapDigest);
