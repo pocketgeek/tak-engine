@@ -2580,6 +2580,68 @@ Tried and rejected (gate medians):
 * Ringwall's route speed for ring members (short in-sight tails at the cap): statue 918 on wall-64 and 1,507 on
   wall-100, no depth gained.
 
+### Pressing into the shadow (2026-10-21, Legion ~100 round 5, task-l5-ringB)
+
+**Where the queue stood.** With every in-sight spot along a wall taken, the members waiting behind the firing arc of
+a shadowed ring (`Ring::shadow`: walls hide the target from part of the ground in reach; blind rings too) stood a few
+pixels out of reach for good. A held body's presses (pressIn) went only to a point in sight, or, on a blind ring,
+within its own origin; the walk on through the shadow (`pressRoute`) starts only from a body already in reach. A
+body whose own origin lay wholly beyond the reach edge, next to free in-reach shadow, had no way in
+(`attackring-wall-64` at offset -3, ticks 2,950-2,999: of 30 held bodies that found no press, 22 stood out of reach,
+most walled in by bodies; those beside free ground in reach out of sight had no way onto it). Retail's attacker walks on at its target
+until a wall or a body stops it, so its crowd presses up into that ground.
+
+**The change**, Legion only (Retail hash-identical on `attackring-wall-64`, `attackring-wall-100`,
+`attackring-gatehouse-40` and `attackring-river-64` at every gate offset):
+
+* **Press into the shadow** (pressIn). A body held out of reach of a shadowed or blind ring, with no point in sight
+  a step away, that will stay there (on its own spot, or its spot's centre out of reach: the blind press's `stays`)
+  presses to the first point `kPressDepth` inside reach of its own origin or of a free neighbouring origin. Into a
+  neighbour only where no moving member stands in or next to that origin: a body walking past took it back before the
+  press arrived, and the press was tried again from the same origin (`attackring-wall-64` offset 3: 46 repeats, one
+  body). A press already at its point (out of reach by the sub-pixel the whole-pixel test drops) is no press (it ended
+  at once and was tried every update: gatehouse offset -3, 29 repeats).
+* **Hold in reach out of sight.** A member of a shadowed ring standing in reach out of the target's sight holds there
+  rather than walk to a goal centre out of reach, as a blind ring's already did, and its hold walks on through the
+  shadow to the shot (`pressRoute`). Without the hold the pressed bodies walked back to their wait spots:
+  gatehouse reversals 267 -> 495 and wall-100 227 -> 334 (gate medians), wall-64 now in reach 38 -> 37.
+
+Gate medians (sums over the 11 offsets in brackets), Legion 47c09924 -> after, Retail:
+
+| fixture | key | before | after | Retail |
+|---|---|---|---|---|
+| attackring-wall-64 | reach.ring.ever_end / now_end | 39 / 37 (479 / 469) | 38 / 38 (488 / 485) | 45 / 42 (532 / 480) |
+| attackring-wall-64 | now_end at the walled offsets 1 / -1 | 55 / 54 | 61 / 58 | 55 / 54 |
+| attackring-wall-64 | damage_end / damage_t2400 (sums) | 18,612 / 12,852 | 18,646 / 12,906 | 16,912 / 11,139 |
+| attackring-wall-64 | t50 / reversals / statue / wall touch | 1,501 / 317 / 48 / 32 | 1,313 / 147 / 45 / 26 | 1,429 / 195 / 173 / 20 |
+| attackring-wall-100 | reach.ring.ever_end / now_end | 38 / 37 (476 / 466) | 39 / 38 (487 / 479) | 49 / 41 (609 / 518) |
+| attackring-wall-100 | damage_end (sum) / reversals / statue / wall touch | 18,440 / 292 / 143 / 15 | 18,533 / 227 / 161 / 18 | 17,027 / 455 / 229 / 17 |
+| attackring-river-64 | reach.ring.ever_end / now_end | 17 / 17 (287 / 286) | 20 / 20 (309 / 309) | 21 / 14 (316 / 288) |
+| attackring-river-64 | ever at offsets 0 / -1 / -2, reversals at -2 | 17 / 30 / 45, 1,911 | 20 / 36 / 53, 59 | -, - |
+| attackring-gatehouse-40 | reach.ring.ever_end / now_end | 18 / 15 (213 / 171) | 18 / 15 (227 / 179) | 29 / 24 (298 / 264) |
+| attackring-gatehouse-40 | damage_end (sum) / reversals / statue | 320 (4,834) / 221 / 17 | 320 (4,843) / 267 / 11 | 584 (7,172) / 314 / 23 |
+
+Every other ring fixture is hash-identical at all 11 gate offsets (r200-64, f1-16, f1-64, f2-64, squad-64, mob-40,
+mob-100, struct-60, fight-60, fight-diag-60, guard-64, ringcross, ringcross-100, attack-100): their rings have no
+shadow. `ctest:legion_ringshadowpress` (wall-64 offsets 1, -1, -3: median now in reach >= 57; 54 before, 58 after).
+`ctest:legion_pressin` keeps no repeat at any gate offset.
+
+**Not cured: the gatehouse plug.** The damage gap is the west-gate offsets' plug (0, +-1, 2, 3: 167 / 332 / 84 / 152 /
+368 against Retail's 557 / 482 / 590 / 750 / 526), where the corridor is single file for its 2x2 bodies. A sight map
+of offset 0 (origins in reach and in sight, from ringScan's own test) shows why the first bodies stop in the mouth:
+the origins flush with the yard's west wall see the target through it (the sight cast skips the cell beside a 2x2
+body), the ones a cell off it do not, and the field's shortest way along the corridor is the flush column. Combat
+brakes the first body there, before its spot, and the gate behind it is shut. Retail's bodies walk the corridor out
+of sight and are braked further in. Tried and not kept ("shot avoidance"): a member of a shadowed ring on its way to
+an unreached band-0 spot within two bodies of reach steered down the field, flowed round and walked straight lines
+only through origins without the shot (its own spot excepted), and did not press into the shot for 90 held ticks.
+The first body then walked the out-of-sight column, but met the next one head on: a body bound for a spot beyond the
+yard reaches the nearest seed, where band 0's field is flat, and walks its seed set toward its own spot, which in a
+walled ring points through the wall (offset 0: it walked in place for 2,400 ticks and plugged the south corridor).
+Damage over the offsets 4,834 -> 5,190, but offset 0 167 -> 83, the median unchanged at 320, and wall-100 lost 2
+ever in reach. A fix needs the ring's spots filled deepest first and a way to a far spot through a flat band-0 field,
+not steering alone.
+
 ### Paused first builds (W4 C1, protocol 244)
 
 A first field used to build to done, its whole window, although its members
@@ -4478,7 +4540,10 @@ Rules that came out of using them:
   the queue short of the shadow, and wall-64 fell to 35 ever in reach. Since task-l4-fixring the members walls stand in the way of
   are exempt from that rule ("Rings along walls with the still-window rule"). Over the gate offsets wall-64 now
   stands 39 / 37 ever / now, wall-100 38 / 37 and the gatehouse 18 / 15, with wall reversals back near ringwall's:
-  wall-64 317, wall-100 292.) Against a target walled in on every side Legion outfires Retail (it
+  wall-64 317, wall-100 292. Since round 5, "Pressing into the shadow", bodies held just outside reach of such a ring
+  press into the shadow and hold there: wall-64 39 / 38 ever / now at the gate median, sums over the offsets 488 / 485
+  against 479 / 469, Retail 532 / 480; wall-100 39 / 38; the gatehouse 18 / 15 with its plug unchanged.) Against a
+  target walled in on every side Legion outfires Retail (it
   seeks flush points on every face that has one). A Move group crossing a firing ring is level with Retail's t90
   (ringcross-100 3,841 against 3,926; completion 4,194 against 4,166 since round 4). Since round 4 (2026-10-20,
   "Fight and guard rings round still targets") fight and guard members round a

@@ -8410,6 +8410,48 @@ struct LegionNavigator::Impl {
             return gx*gx+gz*gz>int64_t(R)*R;
         }();
         if(bestD<0&&los&&rg.ring.band0>0&&rg.ring.blind&&d0>int64_t(R)*R&&stays) {needSight=false;blindPress=true;consider(ox,oz);}
+        // Round 5 (2026-10-21, Legion ~100): held out of reach by a shadowed
+        // ring (Ring::shadow: walls hide the target from part of the ground
+        // in reach; a blind ring too) with no point in sight a step away, a
+        // body that will stay there (`stays`) presses into the shadow: the
+        // first point kPressDepth inside reach of its own or a free
+        // neighbouring origin. Nothing brakes it there; it holds in reach
+        // (see move) and its hold walks on through the shadow to the shot
+        // (pressRoute), as Retail's attacker walks on at its target along
+        // the wall until it has the shot or a body stops it. Before, a
+        // waiting body whose own origin lay wholly beyond reach stood a few
+        // pixels out of the shadow for good: only the shot pulled a body
+        // in, and only within its own origin on a blind ring
+        // (attackring-wall-64 offsets 1 / -1: 55 / 54 in reach at the end,
+        // now 61 / 58; Retail 55 / 54. attackring-river-64 offset -2: 45, now
+        // 53, its reversals 1,911 -> 59).
+        if(bestD<0&&los&&rg.ring.band0>0&&rg.ring.shadow&&d0>int64_t(R)*R&&stays) {
+            needSight=false;blindPress=true;
+            consider(ox,oz);
+            // Into a neighbour only where no mover of the crowd stands next
+            // to it: a body walking past took the origin back before the
+            // press got there, and the press was tried again from the same
+            // origin (attackring-wall-64 offset 3: 46 such repeats).
+            auto calm=[&](int cx,int cz) {
+                for(int j=-1;j<=fz;++j)for(int i=-1;i<=fx;++i) {
+                    const int x=cx+i,z=cz+j;
+                    if(x<0||z<0||x>=w.occW_||z>=w.occH_)continue;
+                    const int32_t o=occAt(size_t(z)*w.occW_+x);
+                    if(!o||o==u.id)continue;
+                    if(const Member* peer=member(o);peer&&peer->state==Moving)return false;
+                }
+                return true;
+            };
+            for(const auto& d:kDirections) {
+                const int cx=ox+d[0],cz=oz+d[1];
+                if(!step(p,ox,oz,d[0],d[1])||!stepFree(u,ox,oz,cx,cz)||!calm(cx,cz))continue;
+                consider(cx,cz);
+            }
+            // Already there (out of reach by the sub-pixel the whole-pixel
+            // test drops): no press, which would end at once and be tried
+            // again every update.
+            if(bestD==0)bestD=-1;
+        }
         // Round 4 (2026-10-20): in reach out of sight with no point in sight
         // a step away, the body walks on through the shadow to the nearest
         // free origin in sight (pressRoute), as Retail's attacker keeps
@@ -10814,7 +10856,10 @@ struct LegionNavigator::Impl {
         // (attackring-river-64: its bank stood 11 in reach of the 19 that
         // had been). Retail's attacker stays where its walk at the target
         // is stopped.
-        if(m.kind==Kind::Attack&&ringMember(g,m)&&g.ring.blind)
+        // Round 5 (2026-10-21): so does a member of a shadowed ring standing
+        // in reach out of the target's sight (pressed into the shadow, see
+        // pressIn); its hold walks on through the shadow (pressRoute).
+        if(m.kind==Kind::Attack&&ringMember(g,m)&&(g.ring.blind||(g.ring.shadow&&g.ring.sight&&pressHidden(u,m))))
             if(const Unit* t=w.unit(g.reachTarget);t&&t->alive()&&t->type) {
                 const int64_t R=reachPx(u,t,false).first;
                 auto d2=[&](int64_t x,int64_t z) {const int64_t dx=x-(t->x.v>>16),dz=z-(t->z.v>>16);return dx*dx+dz*dz;};

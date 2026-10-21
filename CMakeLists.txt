@@ -832,6 +832,16 @@ add_test(NAME legion_ringpocket
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-wall-64.scn --mode legion --offsets -3,-4,4 --json)
 set_tests_properties(legion_ringpocket PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.now_end\":(3[5-9]|[4-9][0-9]),")
+# Legion ~100 round 5 (2026-10-21): a body held a few pixels out of reach of a shadowed or blind ring (walls hide the
+# target from part of the ground in reach) presses into the shadow, out of sight, and holds there in reach; its hold
+# walks on through the shadow to the shot (pressRoute). Before, a waiting body whose own origin lay wholly beyond reach
+# stood outside for good (only the shot pulled a body in). attackring-wall-64 offsets 1, -1, -3: 55 / 54 / 37 in reach
+# at the end before (median 54), 61 / 58 / 40 after (Retail 55 / 54 / 43). Passes at 57 or more, serial equal to
+# workers.
+add_test(NAME legion_ringshadowpress
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-wall-64.scn --mode legion --offsets 1,-1,-3 --json)
+set_tests_properties(legion_ringshadowpress PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.now_end\":(5[7-9]|[6-9][0-9]),")
 # Round 4 review: a walk on from the shadow (pressRoute) restarts the hold clock, as a detour does. Left held, the
 # route branch dropped the route at once (held 30 ticks or more) and the search ran again every update: bodies frozen
 # in the shadow for the rest of the run. attackring-wall-64 at offset 0: 3,674 walks before (one body re-routed every
