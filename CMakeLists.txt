@@ -925,6 +925,16 @@ add_test(NAME legion_ringedge
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-f1-64.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_ringedge PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.now_end\":(4[3-9]|[5-9][0-9]),")
+# A melee press tests contact, not the TDF range (round 5 review): melee fires on footprint adjacency (meleeInRange),
+# but the reach-edge press read reachFloat's TDF range (300 px for araknigh), so every point was "in reach" and a held
+# body re-pressed to its own origin instead of stepping into contact (attackring-melee-30 at offset 0: 14,433 damage,
+# 2,453 of 2,454 presses repeats; 28,153 before the reach-edge press, Retail 27,351). Passes when the damage at the
+# end is 25,000 or more, serial equal to workers.
+add_test(NAME legion_meleepress
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-melee-30.scn --mode legion --offsets 0 --json
+                 --data "${TAK_TEST_DATA}")
+set_tests_properties(legion_meleepress PROPERTIES LABELS legion SKIP_RETURN_CODE 77
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":(2[5-9][0-9][0-9][0-9]|[3-9][0-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9][0-9]+),")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is

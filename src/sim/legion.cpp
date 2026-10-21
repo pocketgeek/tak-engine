@@ -8342,9 +8342,15 @@ struct LegionNavigator::Impl {
         // Retail's south arc stand on the top edge of the cell row 96 px
         // below the target, where Legion's bodies held 1-2 px out; 40 in
         // reach against 44 on attackring-fight-60, 39 against 45 on
-        // attackring-f1-64). The blind press below keeps its own depth.
+        // attackring-f1-64). The blind press below keeps its own depth. A
+        // melee weapon is not radial (meleeInRange: footprint adjacency, its
+        // TDF range ignored), so a melee body keeps the integer test against
+        // reachPx's contact distance: reachFloat's TDF range (300 px for the
+        // beasts) made every point "in reach" and the body re-pressed to its
+        // own origin instead of stepping into contact.
         const int64_t inside=(int64_t(R)<<16)-(1<<12);
         const float reachF=reachFloat(u,t);
+        const bool radialF=reachF>0.0f;
         const int64_t px0=u.x.v,pz0=u.z.v,ftx=t->x.v,ftz=t->z.v;
         int64_t bestX=0,bestZ=0,bestD=-1;
         bool needSight=los,blindPress=false;
@@ -8354,7 +8360,7 @@ struct LegionNavigator::Impl {
             const int64_t ax=std::clamp(ftx,lox,lox+span),az=std::clamp(ftz,loz,loz+span);
             auto at=[&](int64_t x,int64_t z) {
                 const int64_t qx=x-ftx,qz=z-ftz;
-                if(!blindPress) {
+                if(!blindPress&&radialF) {
                     const float fdx=Fixed::raw(int32_t(ftx-x)).toFloat(),fdz=Fixed::raw(int32_t(ftz-z)).toFloat();
                     if(std::sqrt(fdx*fdx+fdz*fdz)>reachF)return;
                 } else if(qx*qx+qz*qz>inside*inside)return;
@@ -9585,12 +9591,14 @@ struct LegionNavigator::Impl {
         const bool los=best>64.0f&&!t->type->canFly&&!u.type->lobs();
         return {int(best+pad),los};
     }
-    // tickCombat's own reach (float), as reachPx before its floor.
+    // tickCombat's own radial reach (float), as reachPx before its floor;
+    // 0 for melee (not radial: see meleeInRange) or no weapon.
     float reachFloat(const Unit& u,const Unit* t) const {
         if(!t||!t->type||!u.type||u.type->weapons.empty())return 0.0f;
         const int slot=std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1);
         const bool all=!u.type->weaponSwitching&&u.type->weapons.size()>1;
         const Weapon& sel=u.type->weapons[size_t(slot)];
+        if(sel.melee)return 0.0f;
         const float best=all?u.type->maxRange():sel.range;
         const float pad=t->type->maxVel<=Fixed()?8.0f*float(std::max(t->type->footX,t->type->footZ))+24.0f:0.0f;
         return best+pad;

@@ -2686,7 +2686,13 @@ time out of reach: bodies in reach by tick, sampled every 100 ticks from 800, Le
   pass unchanged.
 * **The reach edge is in reach** (`pressIn`, `reachFloat`). A candidate point is tested as `tickCombat` tests it:
   its float distance to the target against the float reach. The blind press (nothing brakes the body) keeps its
-  `kPressDepth`.
+  `kPressDepth`. A melee weapon is not radial (`meleeInRange`: footprint adjacency, its TDF range ignored), so
+  `reachFloat` returns 0 for it and a melee body keeps the integer test against `reachPx`'s contact distance. As
+  first landed it read the TDF range (300 px for araknigh, zonwolf, lifwolf, zontroll): every point was in reach,
+  a held body re-pressed to its own origin for ever (`attackring-melee-30` at offset 0: 2,453 of 2,454 presses
+  repeats, damage 28,153 -> 14,433, Retail 27,351), and a melee weapon ranged below contact (the Sailor's 10) found
+  no point at all. With the melee carve-out the four melee fixtures of the review (attack/fight x 30/60 araknigh)
+  are hash-identical to 47c09924 in both modes; `ctest:legion_meleepress` guards it.
 * **The stop origin is the point's own origin** (`ringScan`'s spent test). The reach-edge point radially out from a
   band-0 spot was turned into an origin as if it were a cell's centre, `(e - f*8) >> 4`, which is half a cell toward
   -x/-z: on the north and west arcs the stop origin could lie a cell out, out of reach and free while the arc in front
