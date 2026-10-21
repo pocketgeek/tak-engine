@@ -93,7 +93,7 @@ std::optional<wire::ReplayMetadata> metadata(File& file,const IssuedBattle& batt
         bytes[0]!='T'||bytes[1]!='A'||bytes[2]!='K'||bytes[3]!='R')return {};
     net::Reader reader(bytes.data()+4,count-4);net::ReplayHeader header;uint32_t format=0,protocol=0;
     if(!net::readReplayHeader(reader,header,format,protocol) || (format<10 || format>net::kReplayFormat) ||
-        !net::supportedReplayProtocol(format,protocol) || header.crusades!=1 || header.pathfindingMode!=sim::PathfindingMode::Retail || header.overridePolicy!=0 || !header.overrideDigest.empty() ||
+        !net::supportedReplayProtocol(format,protocol) || header.crusades!=1 || header.pathfindingMode!=sim::PathfindingMode::Retail || header.gameMods!=0 || !header.modDigest.empty() ||
         !header.mission.empty() || header.mapScenario!=0 || header.mapId!=battle.context.mapIdentifier ||
         header.mapDigest!=battle.context.mapDigest || header.dataHash!=result.gameplayFingerprint)return {};
     return wire::ReplayMetadata{result.replayDigest,file.size(),format,protocol,header.mapDigest,header.dataHash};

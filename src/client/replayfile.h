@@ -13,12 +13,12 @@
 #include "sim/matchsetup.h"    // tak::sim::MatchConfig
 
 struct ReplayFile {
-    std::string mapId, mapDigest, overrideDigest;
+    std::string mapId, mapDigest, modDigest;
     std::string mission;          // campaign mission stem ("" = skirmish)
     std::string engineVersion;    // build that recorded it
     std::string error;            // why a load was refused (shown to the user)
     bool crusades = false;
-    uint8_t overridePolicy = 1;   // override tier the recorded game ran under
+    uint8_t gameMods = 0;   // 1 = the recorded game ran the host's game mods
     uint32_t formatVersion = 0, protocolVersion = 0;
     uint64_t dataHash = 0;        // gameplay data the recording ran on
     tak::sim::MatchConfig cfg;
@@ -94,5 +94,5 @@ bool loadReplayFile(const std::string& path, ReplayFile& out);
 //
 // `gameplayHash` is the fingerprint of the data the GAME ran on (the client's
 // gameDataHash(), what it reports at Loaded) -- NOT the pure-retail handshake hash,
-// which differs under a Full-tier override.
+// which differs when game mods are on.
 tak::net::ReplayHeader clientReplayHeader(const tak::net::MpClient& mp, uint64_t gameplayHash);

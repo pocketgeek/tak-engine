@@ -41,10 +41,10 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
     }
     out.mapId = h.mapId;
     out.mapDigest = h.mapDigest;
-    out.overrideDigest = h.overrideDigest;
+    out.modDigest = h.modDigest;
     out.mission = h.mission;
     out.crusades = h.crusades != 0;
-    out.overridePolicy = h.overridePolicy;
+    out.gameMods = h.gameMods;
     out.dataHash = h.dataHash;
     out.engineVersion = h.engineVersion;
     // The same builder the referee and the live clients use (net/matchconfig.h), fed
@@ -95,10 +95,10 @@ tak::net::ReplayHeader clientReplayHeader(const tak::net::MpClient& mp, uint64_t
     const tak::net::RoomView& room = mp.room();
     // Header shared with the server writer and the loader -- see net/matchconfig.h.
     tak::net::ReplayHeader h = tak::net::replayHeaderFor(room.opts, room.mapId, room.mission, mp.startSlots(), mp.startSeed());
-    if (mp.overridePackage()) h.overrideDigest = mp.overridePackage()->digest;
+    if (mp.modPackage()) h.modDigest = mp.modPackage()->digest;
     if (mp.mapPackage()) h.mapDigest = mp.mapPackage()->digest;
-    // The hash of the data this GAME ran on, at its override tier -- not the
-    // pure-retail fingerprint the handshake uses. Under a Full-tier game the two
+    // The hash of the data this GAME ran on, with its game mods -- not the
+    // pure-retail fingerprint the handshake uses. With game mods on the two
     // differ, and it is the effective one a replay has to be checked against.
     h.dataHash = gameplayHash;
     return h;

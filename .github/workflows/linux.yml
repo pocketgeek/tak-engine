@@ -227,7 +227,7 @@ jobs:
           # Every target the Linux install() rules reference, or cpack fails at
           # package time with "file INSTALL cannot find build/<target>" -- which is
           # exactly how 0.6.0 broke when cartographer joined those rules.
-          cmake --build build --target acme_test server_address_test server_commands_test room_worker_test override_packs_test tls_test crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_matchmaking_test crusades_result_test crusades_history_test crusades_replay_files_test replay_file_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test spectator_client_test crusades_presentation_test crusades_ui_test crusades_import crusades_admin crusades_admin_test crusades_servicelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test cartographer_placement_test datafolder_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test
+          cmake --build build --target acme_test server_address_test server_commands_test room_worker_test mod_packs_test tls_test crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_matchmaking_test crusades_result_test crusades_history_test crusades_replay_files_test replay_file_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test spectator_client_test crusades_presentation_test crusades_ui_test crusades_import crusades_admin crusades_admin_test crusades_servicelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test cartographer_placement_test datafolder_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test
 
       - name: Crusades model and durable store
         run: |
@@ -239,7 +239,7 @@ jobs:
           ./build/server_address_test
           ./build/server_commands_test
           ./build/room_worker_test
-          ./build/override_packs_test
+          ./build/mod_packs_test
           ./build/crusades_campaign_test
           ./build/crusades_store_test
           ./build/crusades_allegiance_test
@@ -266,8 +266,8 @@ jobs:
 
       - name: Rendering, navigation and validation regressions
         run: |
-          cmake --build build --target tdf_limits_test validationworker_test order_trail_test retail_search_scratch_test navigation_checkpoint_test navigation_telemetry_test override_settings_test replay_test scenario_info_test simpool_passes_test fire_sweep_test
-          bash tools/run-ctest-selection.sh build tdf_limits validationworker order_trail retail_search_scratch navigation_determinism crowdbench_matrix navigation_telemetry override_settings replay scenario_info simpool_passes fire_sweep_vision fire_sweep_switch fire_sweep_retaliation pref_guard_lint
+          cmake --build build --target tdf_limits_test validationworker_test order_trail_test retail_search_scratch_test navigation_checkpoint_test navigation_telemetry_test mod_settings_test replay_test scenario_info_test simpool_passes_test fire_sweep_test
+          bash tools/run-ctest-selection.sh build tdf_limits validationworker order_trail retail_search_scratch navigation_determinism crowdbench_matrix navigation_telemetry mod_settings replay scenario_info simpool_passes fire_sweep_vision fire_sweep_switch fire_sweep_retaliation pref_guard_lint
 
       # The per-commit Legion selection (PLAN 3.0 / T8 A8, <= 45 s on 4 cores): the World
       # cases, the instrument selftests, the asset-free scenarios of label legion (the

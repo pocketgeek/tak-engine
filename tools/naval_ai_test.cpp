@@ -16,7 +16,7 @@ static bool waterFighter(const sim::UnitType* t) {
 
 int main(int argc,char** argv) {
     if (argc!=2) return 2;
-    auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
+    auto vfs=hpi::mountRetailRoot(argv[1]);
     const auto retailProfile=ai::loadProfile(vfs);
     int failures=0,cases=0;
     auto check=[&](bool ok,const char* label) {

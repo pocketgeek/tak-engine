@@ -33,12 +33,12 @@ static ReplayHeader sample() {
     ReplayHeader h;
     h.mapId = "Inner Circle";
     h.mapDigest = std::string(64, 'a');
-    h.overrideDigest = std::string(64, 'b');
+    h.modDigest = std::string(64, 'b');
     h.mission = "camp03";
     h.engineVersion = "9.9.9";
     h.crusades = 1;
     h.forfeitSelfDestruct = 1;
-    h.overridePolicy = 2;
+    h.gameMods = 1;
     h.unitCap = 1234;
     h.monarchExpendable = 1;
     h.stressTest = 1;
@@ -75,7 +75,7 @@ int main() {
         check(proto == kNetVersion, "protocol version survives", std::to_string(proto));
         check(out.mapId == in.mapId, "mapId");
         check(out.mapDigest == in.mapDigest, "verified map copy survives recording");
-        check(out.overrideDigest == in.overrideDigest, "verified override copy survives recording");
+        check(out.modDigest == in.modDigest, "verified game mod copy survives recording");
         check(out.mission == in.mission, "mission (a campaign replay is not a skirmish)");
         check(out.engineVersion == in.engineVersion, "engine version");
         check(out.seed == in.seed, "seed (was recorded, then discarded by the loader)");
@@ -86,7 +86,7 @@ int main() {
         check(out.unitCap == in.unitCap, "unitCap");
         check(out.monarchExpendable == in.monarchExpendable, "monarchExpendable");
         check(out.stressTest == in.stressTest, "stressTest");
-        check(out.overridePolicy == in.overridePolicy, "overridePolicy");
+        check(out.gameMods == in.gameMods, "gameMods");
         check(out.mapScenario == in.mapScenario, "MAP SCENARIO (format 13)");
         bool slotsOk = true;
         for (int i = 0; i < kMaxSlots; ++i)

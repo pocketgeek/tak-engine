@@ -44,7 +44,7 @@ static void golden(const std::vector<uint8_t>& got, const char* want, const char
 // Every field distinct and off its default, so a dropped or swapped field shows.
 static GameOptions fxOpts(uint8_t stress) {
     GameOptions o;
-    o.crusades = 3; o.forfeitSelfDestruct = 4; o.overridePolicy = 2; o.speed = 17; o.speedUnlock = 5;
+    o.crusades = 3; o.forfeitSelfDestruct = 4; o.gameMods = 2; o.speed = 17; o.speedUnlock = 5;   // gameMods: a raw byte here (0/1 in use) so the golden bytes stay
     o.unitCap = 0xBEEF; o.monarchExpendable = 6; o.stressTest = stress; o.fogExplored = 8;
     o.benchmark = 11; o.randomStarts = 9; o.doubleSight = 10; o.pathfindingMode = tak::sim::PathfindingMode::Legion;
     o.allowSpectators = 12; o.mapScenario = 13;
@@ -87,7 +87,7 @@ static std::string dumpCfg(const tak::sim::MatchConfig& c) {
 
 static bool sameOpts(const GameOptions& a, const GameOptions& b) {
     return a.crusades == b.crusades && a.forfeitSelfDestruct == b.forfeitSelfDestruct &&
-           a.overridePolicy == b.overridePolicy && a.speed == b.speed && a.speedUnlock == b.speedUnlock &&
+           a.gameMods == b.gameMods && a.speed == b.speed && a.speedUnlock == b.speedUnlock &&
            a.unitCap == b.unitCap && a.monarchExpendable == b.monarchExpendable && a.stressTest == b.stressTest &&
            a.fogExplored == b.fogExplored && a.benchmark == b.benchmark && a.randomStarts == b.randomStarts &&
            a.doubleSight == b.doubleSight && a.pathfindingMode == b.pathfindingMode &&
@@ -104,7 +104,7 @@ static void optionsCodec() {
     // CreateGame / SetGameOptions carry exactly these bytes; LobbyState/GameStarting embed them.
     // Protocol 258 appended allowSpectators (0c) after the pathfinder byte; 259 mapScenario (0d).
     golden(w.b, "0304021105efbe00000607080b090a040c0d", "GameOptions wire bytes");
-    GameOptions back; back.overridePolicy = 0; back.speed = 0; back.fogExplored = 0; back.allowSpectators = 0;
+    GameOptions back; back.gameMods = 0; back.speed = 0; back.fogExplored = 0; back.allowSpectators = 0;
     Reader r(w.b.data(), w.b.size()); get(r, back);
     check(r.ok && r.p == r.end && sameOpts(o, back), "GameOptions round trip");
     // unitCap travels as a u32; the raw get() keeps the low 16 bits (the server clamps).
@@ -145,7 +145,7 @@ static void crusadesDigest() {
 
 static ReplayHeader header(const GameOptions& o, const SlotInfo* slots, const std::string& mission) {
     ReplayHeader h = replayHeaderFor(o, "Inner Circle", mission, slots, 0x5EED1234);
-    h.overrideDigest = std::string(64, 'o');
+    h.modDigest = std::string(64, 'o');
     h.mapDigest = std::string(64, 'm');
     h.dataHash = 0x1122334455667788ull;
     return h;

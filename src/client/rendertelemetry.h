@@ -37,7 +37,7 @@
 //                             SDL_Texture*, GL buffer or atlas placement is
 //                             only meaningful under the generation it was made.
 //       assetGeneration    -- model / texture / palette registration lifetime
-//                             (override remount, model reload).
+//                             (mod remount, model reload).
 //       snapshotGeneration -- the published sim snapshot the render pinned.
 //   * Revision: a per-entry counter that increments when that entry's OUTPUT
 //     changes. Stages each own one: pose, material (body appearance), shadow

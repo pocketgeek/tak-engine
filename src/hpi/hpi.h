@@ -135,14 +135,14 @@ std::string describe(const HeaderInfo& info);
 // behaviour (loose files override; *.hpi then *.ufo). The runtime data-root
 // model overrides these: the retail-install ROOT layer sets includeLoose=false
 // and archiveExts={".hpi"} (only the shipped archives are read from the root),
-// while a Maps/ layer adds ".kmp" (single-map HPIs) and an overrides/ layer
-// keeps loose+archive with the widest extension set.
+// while a Maps/ layer adds ".kmp" (single-map HPIs) and a mods/ pack keeps
+// loose+archive with the widest extension set.
 struct MountConfig {
     bool includeLoose = true;                                   // loose file overrides archives
     std::vector<std::string> archiveExts{".hpi", ".ufo"};       // scanned as ordered groups
     // Optional path filter: an entry (archive or loose) is exposed only if keep()
-    // returns true. Empty = keep everything. Used for the cosmetic override tier,
-    // which excludes gameplay-affecting files so they can't diverge in MP.
+    // returns true. Empty = keep everything. Used for cosmetic mod packs, which
+    // exclude gameplay-affecting files so they can't diverge in MP.
     std::function<bool(const std::string&)> keep;
     // Optional archive-name whitelist (LOWERCASED filenames incl. extension). When
     // non-empty, ONLY archives whose filename is listed are mounted -- so the retail
@@ -190,7 +190,9 @@ private:
 // exposed under a virtual path prefix, resolved highest-precedence-first. This is
 // how a retail install directory is presented to the loaders as one namespace:
 //
-//   overrides/<selected pack>/ (loose + archives)   <- selected packs only
+//   mods/cosmetic/<selected pack>/ (loose + archives, cosmetic files only)
+//   mods/cosmetic/*.hpi            (always on in a game, cosmetic files only)
+//   mods/game/<selected pack>/     (loose + archives, everything)
 //   Maps/        (*.kmp single-map HPIs + loose)     -> kmap/<name>.*
 //   <root>/      (*.hpi only, no loose)              -> the base game + expansions
 //   Boneyards/Metagame/ (five allowlisted campaign presentation files only)
@@ -204,7 +206,7 @@ public:
     Vfs() = default;
     // A room-local view: no downloaded resource can affect another running room.
     explicit Vfs(const Vfs* base, bool skipMapResources = false) : base_(base), skipMaps_(skipMapResources) {}
-    void setOverrideFiles(std::shared_ptr<const Files> files) { overrideFiles_ = std::move(files); }
+    void setModFiles(std::shared_ptr<const Files> files) { modFiles_ = std::move(files); }
     void setMapFiles(std::shared_ptr<const Files> files) { mapFiles_ = std::move(files); }
     // Downloaded maps are discoverable but their resources remain archive-local.
     void refreshMapCache(const std::filesystem::path& root);
@@ -226,37 +228,62 @@ private:
     bool skipMaps_ = false;
     struct CachedMap { std::shared_ptr<Archive> archive; std::string path; };
     std::map<std::string, CachedMap> cachedMaps_;
-    std::shared_ptr<const Files> mapFiles_, overrideFiles_;
+    std::shared_ptr<const Files> mapFiles_, modFiles_;
     struct Layer { MountSet ms; std::string prefix; bool mapResources = false; };   // prefix keyed, "" or trailing '/'
     std::vector<Layer> layers_;                          // back = highest precedence
 };
 
-// Which override files a game will mount (Phase 3 multiplayer policy). None: no
-// overrides. Cosmetic: only files that cannot affect the deterministic sim
-// (textures/sprites/sound/music/fonts/gui). Full: every override, including
-// gameplay data (*.fbi, weapon/side/game *.tdf, canbuild, features, maps).
-enum class OverridePolicy { None, Cosmetic, Full };
+// The two kinds of mod pack under <install>/mods/. Cosmetic packs live in
+// mods/cosmetic/ and expose only files that cannot affect the deterministic sim
+// (textures/sprites/sound/music/fonts/gui), so every player may pick their own.
+// Game packs live in mods/game/ and expose everything, including gameplay data
+// (*.fbi, weapon/side/game *.tdf, canbuild, features, maps); in multiplayer only
+// the host picks them and they are transferred to everyone.
+enum class ModKind { Cosmetic, Game };
+// Which kinds of mod pack a launch may use (the debug `--mods none|cosmetic|game|all`
+// switch; a release build always uses both). Which packs are ticked is a setting.
+struct ModUse { bool game = true, cosmetic = true; };
 
 // True if an internal path names a file our deterministic sim consumes -- so it
 // must be identical across multiplayer peers (folded into the agreed data hash)
-// and is excluded from the "cosmetic" override tier. Everything else is cosmetic.
+// and is excluded from cosmetic mod packs. Everything else is cosmetic.
 bool affectsGameplay(const std::string& path);
 
 // A 64-bit fingerprint of the gameplay data the sim consumes (unit stats, weapon/
 // side/game data, build lists, features, scripts/models) as resolved from the VFS -- NOT maps
 // (per-game) and NOT cosmetic files. Multiplayer peers must agree on this: it
-// verifies the shipped gameplay files are unmodified, and (under the Full override
-// tier, where gameplay overrides are mounted) that every player has the same ones.
+// verifies the shipped gameplay files are unmodified, and (when game mods are
+// mounted) that every player has the same ones.
 uint64_t gameplayHash(const Vfs& vfs);
 
 // Build the runtime VFS for a retail install root (see the layer diagram above).
+// Game packs are layered over the original data and cosmetic packs over those
+// (cosmetic wins), each kind alphabetical by pack name (later names win). The
+// always-on archives are NOT added here (this mount also feeds the handshake
+// hash and map packages); a game's VFS adds them through playModFiles().
+// The old <install>/overrides/ folder is never read (nor touched).
 Vfs mountRetailRoot(const std::filesystem::path& root,
-                    OverridePolicy overrides = OverridePolicy::Full,
-                    const std::vector<std::string>& packs = {});
-// Only immediate, real subdirectories are packs; root files are never mounted.
-std::vector<std::string> overridePacks(const std::filesystem::path& root);
-Vfs::Files overrideFiles(const std::filesystem::path& root, OverridePolicy policy,
-                         const std::vector<std::string>& packs);
+                    const std::vector<std::string>& gamePacks = {},
+                    const std::vector<std::string>& cosmeticPacks = {});
+// Only immediate, real subdirectories of mods/cosmetic/ or mods/game/ are packs;
+// files directly in mods/ or mods/game/ are never mounted.
+std::vector<std::string> modPacks(const std::filesystem::path& root, ModKind kind);
+Vfs::Files modFiles(const std::filesystem::path& root, ModKind kind,
+                    const std::vector<std::string>& packs);
+// The always-on cosmetic archives: every real *.hpi file (any case; not .ufo,
+// .kmp, loose files or folders) directly in mods/cosmetic/. They are mounted in
+// every game of every kind (campaigns included), filtered like a cosmetic pack,
+// per player, never sent anywhere, and never listed for selection. Sorted
+// case-insensitively; that is also their layer order (later names win).
+std::vector<std::string> alwaysOnMods(const std::filesystem::path& root);
+Vfs::Files alwaysOnModFiles(const std::filesystem::path& root);
+// A game's merged mod layer: `gameFiles` (the room's verified game-mod package,
+// or nothing), then the always-on archives, then this player's ticked cosmetic
+// packs (packs no longer on disk are skipped). Each later layer wins.
+Vfs::Files playModFiles(const std::filesystem::path& root, Vfs::Files gameFiles,
+                        std::vector<std::string> cosmeticPacks);
+// True when <root> still has a legacy overrides/ folder (only stat()ed).
+bool hasLegacyOverridesDir(const std::filesystem::path& root);
 
 // The canonical root HPI archives of a TA:Kingdoms install (base game + Iron Plague +
 // the official map packs), lowercased. mountRetailRoot mounts ONLY these from the root;

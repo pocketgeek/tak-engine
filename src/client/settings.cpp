@@ -92,11 +92,11 @@ Settings loadSettings() {
         auto asFloat = [&](float lo, float hi) { return clampv(float(std::atof(val.c_str())), lo, hi); };
         auto asBool  = [&] { return val == "1" || val == "true" || val == "on"; };
 
-        if(key=="overrides.hostPack" || key=="overrides.cosmeticPack") {
+        if(key=="mods.gamePack" || key=="mods.cosmeticPack") {
             std::string name;bool valid=val.size()%2==0 && val.size()<=256;
             auto digit=[](char c){return c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:-1;};
             for(size_t i=0;valid && i<val.size();i+=2){int a=digit(val[i]),b=digit(val[i+1]);if(a<0 || b<0)valid=false;else name+=char(a*16+b);}
-            auto& names=key=="overrides.hostPack"?s.hostOverridePacks:s.cosmeticOverridePacks;
+            auto& names=key=="mods.gamePack"?s.gameModPacks:s.cosmeticModPacks;
             if(valid && !name.empty() && name.find_first_of("/\\\r\n") == name.npos && name.find('\0')==name.npos && names.size()<64 && std::find(names.begin(),names.end(),name)==names.end())names.push_back(name);
             continue;
         }
@@ -163,7 +163,7 @@ Settings loadSettings() {
         else if (key == "gameCreate.generated") s.gameCreate.generated = asBool();
         else if (key == "gameCreate.unitCap") s.gameCreate.unitCap = asInt(250, 2000);
         else if (key == "gameCreate.fog") s.gameCreate.fog = asInt(0, 2);
-        else if (key == "gameCreate.overrides") s.gameCreate.overrides = asInt(0, 2);
+        else if (key == "gameCreate.gameMods") s.gameCreate.gameMods = asBool();
         else if (key == "gameCreate.mapSort") s.gameCreate.mapSort = asInt(0, 2);
         else if (key == "gameCreate.mapSortDir") s.gameCreate.mapSortDir = (asInt(-1, 1) < 0 ? -1 : 1);
         else if (key == "gameCreate.name") s.gameCreate.name = val;
@@ -258,7 +258,7 @@ std::string serializeSettings(const Settings& s) {
     o << "gameCreate.generated = " << s.gameCreate.generated << "\n";
     o << "gameCreate.unitCap = " << s.gameCreate.unitCap << "\n";
     o << "gameCreate.fog = " << s.gameCreate.fog << "\n";
-    o << "gameCreate.overrides = " << s.gameCreate.overrides << "\n";
+    o << "gameCreate.gameMods = " << s.gameCreate.gameMods << "\n";
     o << "gameCreate.mapSort = " << s.gameCreate.mapSort << "\n";
     o << "gameCreate.mapSortDir = " << s.gameCreate.mapSortDir << "\n";
     o << "gameCreate.name = " << s.gameCreate.name << "\n";
@@ -267,8 +267,8 @@ std::string serializeSettings(const Settings& s) {
         static constexpr char hex[]="0123456789abcdef";
         for(const auto& name:names){o<<key<<" = ";for(unsigned char c:name)o<<hex[c>>4]<<hex[c&15];o<<"\n";}
     };
-    writePacks("overrides.hostPack",s.hostOverridePacks);
-    writePacks("overrides.cosmeticPack",s.cosmeticOverridePacks);
+    writePacks("mods.gamePack",s.gameModPacks);
+    writePacks("mods.cosmeticPack",s.cosmeticModPacks);
     o << "lastMap = " << s.lastMap << "\n";
     if (!s.knownServers.empty()) {
         o << "knownServers = ";

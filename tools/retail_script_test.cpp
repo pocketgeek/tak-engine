@@ -128,7 +128,7 @@ struct Host {
 int main(int argc,char** argv) {
     if (argc==3 && std::string(argv[1])=="--features") {
         using namespace tak::sim;
-        auto vfs=tak::hpi::mountRetailRoot(argv[2],tak::hpi::OverridePolicy::None);
+        auto vfs=tak::hpi::mountRetailRoot(argv[2]);
         std::map<std::string,tak::tdf::Node> defs;
         int spacing=4;
         for(const auto& path:vfs.list("features")) {
@@ -192,7 +192,7 @@ int main(int argc,char** argv) {
     }
     if (argc==5 && std::string(argv[1])=="--gate-timeline") {
         using namespace tak::sim;
-        auto vfs=tak::hpi::mountRetailRoot(argv[2],tak::hpi::OverridePolicy::None);
+        auto vfs=tak::hpi::mountRetailRoot(argv[2]);
         TypeRegistry registry;setupRegistry(registry,vfs,std::stoi(argv[4])!=0);
         const auto* type=registry.find(argv[3]);
         if (!type || !type->gate || !type->script()) return 2;
@@ -212,7 +212,7 @@ int main(int argc,char** argv) {
     }
     if (argc==3 && std::string(argv[1])=="--gates") {
         using namespace tak::sim;
-        auto vfs=tak::hpi::mountRetailRoot(argv[2],tak::hpi::OverridePolicy::None);
+        auto vfs=tak::hpi::mountRetailRoot(argv[2]);
         unsigned count=0;
         for (bool crusades:{false,true}) {
             TypeRegistry registry;setupRegistry(registry,vfs,crusades);
@@ -315,7 +315,7 @@ int main(int argc,char** argv) {
     }
     if (argc==3 && (std::string(argv[1])=="--factories" || std::string(argv[1])=="--units")) {
         const bool allUnits=std::string(argv[1])=="--units";
-        auto vfs=tak::hpi::mountRetailRoot(argv[2],tak::hpi::OverridePolicy::None);
+        auto vfs=tak::hpi::mountRetailRoot(argv[2]);
         tak::sim::TypeRegistry registry; tak::sim::setupRegistry(registry,vfs,false);
         unsigned count=0;
         for (const auto& [id,type]:registry.types()) {

@@ -62,7 +62,7 @@ int main(int argc,char** argv) {
                 std::ofstream f(artRoot / "bOnEyArDs" / "mEtAgAmE" / file); f << "synthetic";
             }
             {
-                auto artVfs = tak::hpi::mountRetailRoot(artRoot, tak::hpi::OverridePolicy::None);
+                auto artVfs = tak::hpi::mountRetailRoot(artRoot);
                 for (const char* file : {"Darien.def", "Borders.png", "HonorMap.png", "TerrorMap.png", "ContestedMap.png"}) {
                     const auto path = std::string("Boneyards/Metagame/") + file;
                     require(artVfs.has(path, true), "campaign cosmetic case-insensitive mount");

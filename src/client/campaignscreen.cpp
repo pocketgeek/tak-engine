@@ -31,9 +31,15 @@ struct CampaignScreen::Impl {
     bool picked=false;
     std::string stem,campaign;
     std::function<void(const std::string&)> playSound;
+    // Not retail: the always-on mods/cosmetic/*.hpi archives every game loads,
+    // campaigns included, named on the left page (they cannot be switched off here).
+    std::string alwaysOn;
 
-    Impl(SDL_Renderer* r,const hpi::Vfs& vfs,const Settings& s,int initial)
+    Impl(SDL_Renderer* r,const hpi::Vfs& vfs,const Settings& s,int initial,const std::filesystem::path& install)
         :ren(r),settings(s),camps(loadCampaigns(vfs)) {
+        if(!install.empty())try {
+            for(const auto& name:hpi::alwaysOnMods(install))alwaysOn+=(alwaysOn.empty()?"":", ")+name;
+        }catch(...) {}
         try {ui=gui::parse(vfs.read("guis/bod.gui"),"guis/bod.gui");}catch(...) {}
         std::map<std::string,std::vector<gaf::Sequence>> banks;
         auto frameFor=[&](const gui::ImgRef& ref)->const gaf::Frame* {
@@ -146,8 +152,9 @@ struct CampaignScreen::Impl {
     }
 };
 CampaignScreen::CampaignScreen(SDL_Renderer* r,const hpi::Vfs& v,const Settings& s,int tab,
-                               std::function<void(const std::string&)> sound)
-    :d_(std::make_unique<Impl>(r,v,s,tab)){d_->playSound=std::move(sound);}
+                               std::function<void(const std::string&)> sound,
+                               const std::filesystem::path& install)
+    :d_(std::make_unique<Impl>(r,v,s,tab,install)){d_->playSound=std::move(sound);}
 CampaignScreen::~CampaignScreen()=default;
 bool CampaignScreen::picked()const{return d_->picked;}
 const std::string& CampaignScreen::pickedStem()const{return d_->stem;}
@@ -237,5 +244,18 @@ void CampaignScreen::render(int w,int h) {
     std::string help="Enter: Play    Esc: Back";
     if(d.settings.missionCompleted(c.id,alternate?kAltMission:d.page))help="Completed - "+help;
     d.text(lay,d.label,help,d.rect(lay,"HelpText"),true,1.f);
+    if(!d.alwaysOn.empty()) {
+        // Two short lines on the left page, under the chapter title; the names
+        // shorten with "..." rather than shrink past legibility.
+        constexpr float kSize=.8f;
+        const auto names=lay.rect(100,310,220,12);
+        const auto fits=[&](const std::string& t){
+            const float scale=lay.scale*kSize;
+            return (d.label.ok()?float(d.label.width(t,scale)):blockTextWidth(t,scale))<=names.w;};
+        std::string line=d.alwaysOn;
+        while(line.size()>8 && !fits(line))line=line.substr(0,line.size()-4)+"...";
+        d.text(lay,d.label,"Always-on mods:",lay.rect(100,298,220,12),true,kSize);
+        d.text(lay,d.label,line,names,true,kSize);
+    }
 }
 } // namespace tak

@@ -423,7 +423,7 @@ RUNS=(
   "h-lake|Lake Lokken|TAK_STRESS=1||human|heavy"
   "h-random-starts|Sand River Plain|TAK_RANDOM_STARTS=1||human|light"
   "h-monarch-exp|Ulasem Arena|TAK_MONARCH_EXPENDABLE=1 TAK_GODS=1||human|light"
-  "h-overrides-full|Ulasem Arena||--overrides full|human|light"
+  "h-mods-all|Ulasem Arena||--mods all|human|light"
   "h-everything|Tarosian Plain|TAK_GODS=1 TAK_STRESS=1 TAK_AI_LEVEL=4 TAK_FOG=1|--crusades|human|heavy"
   "h-speed-1x|Ulasem Arena|TAK_SPEED=10||human|light"
   "h-two-castles|Two Castles|TAK_GODS=1|--crusades|human|light"
@@ -499,8 +499,8 @@ if [ -n "${ONLY:-}" ]; then
 fi
 
 # Validate the table before running anything. An entry with the wrong field count
-# shifts every field right: --overrides full once landed in the SEAT slot, so the run
-# never mounted the overrides it was named for and still reported "ok". A sweep that
+# shifts every field right: --overrides full (now --mods all) once landed in the SEAT
+# slot, so the run never mounted the packs it was named for and still reported "ok". A sweep that
 # quietly tests the wrong configuration is worse than one that fails.
 for _spec in "${RUNS[@]}"; do
   _n=$(awk -F'|' '{print NF}' <<<"$_spec")
@@ -1020,14 +1020,14 @@ echo "== validating the detector with a PLANTED desync (TAK_FAKE_DESYNC=900) on 
     exit 1
   fi
 
-  # Full packs now transfer automatically. Test the load-hash gate after that
-  # transfer, rather than moving files in anybody's installed overrides.
-  echo "== validating shared override transfer and loaded-hash rejection on $vhost =="
-  _negdata="$OUT/override-gate"
+  # Game mods transfer automatically. Test the load-hash gate after that
+  # transfer, rather than moving files in anybody's installed mods.
+  echo "== validating game mod transfer and loaded-hash rejection on $vhost =="
+  _negdata="$OUT/mod-gate"
   mkdir -p "$_negdata/host" "$_negdata/peer"
   for _side in host peer; do
     for _e in "$LDATA"/*; do
-      case "$(basename "$_e" | tr '[:upper:]' '[:lower:]')" in overrides|overridecache|mapcache) continue;; esac
+      case "$(basename "$_e" | tr '[:upper:]' '[:lower:]')" in overrides|mods|modcache|overridecache|mapcache) continue;; esac
       ln -s "$(realpath "$_e")" "$_negdata/$_side/$(basename "$_e")"
     done
   done
@@ -1035,16 +1035,16 @@ echo "== validating the detector with a PLANTED desync (TAK_FAKE_DESYNC=900) on 
   [ -n "$npid" ] && note_server "$vhost" "$npid"
   for _ in $(seq 60); do "${VSSH[@]}" "$RUSER@$vhost" "grep -q listening /tmp/tak-neg-$NEGATIVE_PORT.log 2>/dev/null" && break; sleep 2; done
   _gate=0
-  timeout -k 20 150 "$(dirname "$CLIENT")/override_transfer_test" "$NEGATIVE_PORT" "$_negdata/host" "$_negdata/peer" "$vhost" --bad-loaded >"$OUT/negative.client.log" 2>&1 && _gate=1
+  timeout -k 20 150 "$(dirname "$CLIENT")/mod_transfer_test" "$NEGATIVE_PORT" "$_negdata/host" "$_negdata/peer" "$vhost" --bad-loaded >"$OUT/negative.client.log" 2>&1 && _gate=1
   "${VSSH[@]}" "$RUSER@$vhost" "cat /tmp/tak-neg-$NEGATIVE_PORT.log" >"$OUT/negative.server.log" 2>/dev/null
   [ -n "$npid" ] && "${VSSH[@]}" "$RUSER@$vhost" "kill $npid 2>/dev/null; true" >/dev/null 2>&1
   if [ "$_gate" != 1 ] || ! grep -q 'rejected at load' "$OUT/negative.server.log"; then
-    echo "   FAIL -- shared override load-hash gate failed; see $OUT/negative.*.log" >&2
+    echo "   FAIL -- game mod load-hash gate failed; see $OUT/negative.*.log" >&2
     exit 1
   fi
-  echo "   PASS -- verified packs transferred and incorrect loaded gameplay rejected"
+  echo "   PASS -- verified game mods transferred and incorrect loaded gameplay rejected"
 
-  if [ "$VALONLY" = "1" ]; then echo "all gates passed (build id, desync detector, override mismatch)"; exit 0; fi
+  if [ "$VALONLY" = "1" ]; then echo "all gates passed (build id, desync detector, game mod mismatch)"; exit 0; fi
 fi
 
 # Dispatch. Each host drains its own queue at its own concurrency, so a 2-core box

@@ -968,7 +968,7 @@ inline std::unique_ptr<Built> build(const Scenario& s, const BuildOptions& opt) 
         setupRegistry(b->registry, *opt.install, opt.crusades || s.crusades);
     } else if (opt.data) {
         b->vfs = std::make_unique<tak::hpi::Vfs>(
-            tak::hpi::mountRetailRoot(opt.data, tak::hpi::OverridePolicy::None));
+            tak::hpi::mountRetailRoot(opt.data));
         setupRegistry(b->registry, *b->vfs, opt.crusades || s.crusades);
     } else {
         b->vfs = std::make_unique<tak::hpi::Vfs>();

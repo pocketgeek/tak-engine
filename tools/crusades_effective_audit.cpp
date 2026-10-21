@@ -98,7 +98,7 @@ int main(int argc,char** argv) {
     if(argc!=2){std::cerr<<"usage: crusades_effective_audit RETAIL_ROOT\n";return 2;}
     SDL_SetMainReady();
     try {
-        auto mounts=tak::hpi::mountRetailRoot(argv[1],tak::hpi::OverridePolicy::None);
+        auto mounts=tak::hpi::mountRetailRoot(argv[1]);
         tak::hpi::Vfs vfs(&mounts,true);std::set<std::string> builders;
         if(vfs.list("unitscb").empty())throw std::runtime_error("no Crusades unit overlay");
         if(vfs.list("canbuildcb").empty())throw std::runtime_error("no Crusades menu overlay");

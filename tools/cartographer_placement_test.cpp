@@ -492,12 +492,12 @@ int terrainWorkflow(const std::string& data,std::vector<std::string> worlds) {
 
 // The feature TDF fields the report breaks placements down by.
 // Where a definition comes from: the install's own archives (world / shared),
-// an override pack (override / overridden), or only a downloaded map in Maps/
+// a mod pack (mod / modded), or only a downloaded map in Maps/
 // (downloaded-map; downloaded-map-shadowed when such a map replaces a retail
 // file). Retail mounts every Maps/ archive globally, so the browser offers them.
 std::string definitionSource(const tak::hpi::Vfs& vfs,const tak::hpi::Vfs& plain,const std::string& path,const std::string& sharedDir) {
     const auto full=vfs.tryRead(path),installed=vfs.tryRead(path,true),retail=plain.tryRead(path,true);
-    return !installed?"downloaded-map":*installed!=full?"downloaded-map-shadowed":!retail?"override":*retail!=*installed?"overridden":
+    return !installed?"downloaded-map":*installed!=full?"downloaded-map-shadowed":!retail?"mod":*retail!=*installed?"modded":
         !sharedDir.empty() && path.starts_with(sharedDir)?"shared":"world";
 }
 struct FeatureTraits {bool animated=false,reclaimable=false,blocking=false;int height=0;std::string source;};
@@ -523,7 +523,7 @@ std::map<std::string,FeatureTraits> featureTraits(const tak::hpi::Vfs& vfs,const
 // resolves each name with the browser's footprint.
 bool featureSession(const std::string& data,const std::string& world,Tally& tally) {
     const auto root=tempRoot("features");isolateProfile(root);
-    const auto traits=featureTraits(tak::hpi::mountRetailRoot(fs::u8path(data)),tak::hpi::mountRetailRoot(fs::u8path(data),tak::hpi::OverridePolicy::None),world);
+    const auto traits=featureTraits(tak::hpi::mountRetailRoot(fs::u8path(data)),tak::hpi::mountRetailRoot(fs::u8path(data)),world);
     enum {START,SEARCH,PICK,PLACED,UNDONE,REDONE,ERASED,RESTORED,REOPENED} phase=START;
     size_t item=0;int cellX=0,cellZ=0;BrowserPick pick;tak::tnt::Map expected,prior;
     std::vector<std::pair<cart::FeatureRef,size_t>> placed;   // browser entry, cell
@@ -627,7 +627,7 @@ int featuresWorkflow(const std::string& data,std::vector<std::string> worlds) {
 // click, undo; then save, reopen and compare (the .crt round trip).
 bool unitSession(const std::string& data,const std::string& world,Tally& tally) {
     const auto root=tempRoot("units");isolateProfile(root);
-    tak::hpi::Vfs plain=tak::hpi::mountRetailRoot(fs::u8path(data),tak::hpi::OverridePolicy::None);
+    tak::hpi::Vfs plain=tak::hpi::mountRetailRoot(fs::u8path(data));
     enum {START,WATER,WATERED,SEARCH,PICK,PLACED,UNDONE,REDONE,ERASED,RESTORED,REOPENED} phase=START;
     size_t item=0;int water=-1;BrowserPick pick;tak::tnt::Map expectedMap;
     std::vector<cart::PlacedUnit> expected;std::vector<bool> legal;

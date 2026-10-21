@@ -318,12 +318,24 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     ReplayFile rf;
     if (!loadReplayFile(path, rf))
         throw std::runtime_error(rf.error.empty() ? "cannot read that replay" : rf.error);
-    const auto rpol = tak::hpi::OverridePolicy(rf.overridePolicy <= 2 ? rf.overridePolicy : 2);
-    auto rvfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), rpol);
-    if(!rf.overrideDigest.empty()) {
-        auto pack=tak::net::overrides::loadCache(dataRoot,rf.overrideDigest);
-        if(!pack)throw std::runtime_error("the verified override packs for this replay are missing");
-        rvfs.setOverrideFiles(pack->files);
+    // The replay's game mods come from the verified package it recorded (the
+    // digest); this viewer's own cosmetic mods go on top -- the always-on
+    // mods/cosmetic/*.hpi archives, plus the ticked packs unless it is a campaign
+    // replay (they never change the gameplay hash, so the data check below holds).
+    auto rvfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot));
+    {
+        tak::hpi::Vfs::Files game;
+        if(!rf.modDigest.empty()) {
+            auto pack=tak::net::mods::loadCache(dataRoot,rf.modDigest);
+            if(!pack)throw std::runtime_error("the verified game mods for this replay are missing");
+            game=*pack->files;
+        }
+        auto files=std::make_shared<tak::hpi::Vfs::Files>(std::move(game));
+        try {
+            *files=tak::hpi::playModFiles(std::filesystem::u8path(dataRoot),*files,
+                rf.mission.empty()?settings.cosmeticModPacks:std::vector<std::string>{});
+        } catch (const std::exception& e) { std::fprintf(stderr,"replay: cosmetic mods skipped: %s\n",e.what()); }
+        if(!files->empty())rvfs.setModFiles(std::move(files));
     }
     std::string mapPath;
     if (!rf.mapDigest.empty()) {
@@ -350,7 +362,7 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
                      (unsigned long long)rf.dataHash, (unsigned long long)myDataHash);
     }
     auto view = std::make_unique<GameView>(ren, std::move(rvfs), mapPath, dataRoot,
-        rpol, false, false, true, "ara", "tar", rf.crusades);
+        tak::hpi::ModUse{}, false, false, true, "ara", "tar", rf.crusades);
     view->applySettings(settings); view->setSettings(&settings);
     if (canReturn) view->setCanReturnToMenu();
     std::fprintf(stderr, "replay: %s -- map '%s', %zu ticks%s (format %u, recorded by %s, %zu hash checkpoints)\n",
@@ -399,7 +411,7 @@ int main(int argc, char** argv) {
             "  Launches the game and its front-end menu.\n"
             "  --play-map <snapshot.kmp>   open a Cartographer snapshot in a private lobby\n"
             "  --version, -v   print version and exit\n"
-            "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ overrides/.\n");
+            "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ mods/.\n");
 #else
             "usage: takclient [mode] --data <retail-install-dir> [options]\n"
             "  With no mode (or only flags), launches the front-end MENU.\n"
@@ -408,9 +420,9 @@ int main(int argc, char** argv) {
             "    game multiplayer:   add --server host [--serverport N] [--name X].\n"
             "    game --campaign <stem>: play a campaign mission (e.g. takmission01_mt).\n"
             "    game <stem> --mission: legacy alias for the same campaign launch.\n"
-            "  common: [--side X --aiside Y] [--overrides none|cosmetic|full] [--shot out.png]\n"
+            "  common: [--side X --aiside Y] [--mods none|cosmetic|game|all] [--shot out.png]\n"
             "  (debug build: all dev/test flags below are available.)\n"
-            "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ overrides/.\n");
+            "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ mods/.\n");
 #endif
         return 0;
     }
@@ -444,7 +456,7 @@ int main(int argc, char** argv) {
     // model mode: --statics <bitmask> seeds the VM's static slots (bit i -> static i).
     // Walk/attack scripts gate on an "am I moving" static whose SLOT differs per unit.
     uint32_t staticMask = 1;
-    std::string serverHost, playerName, dataRoot, overridesArg, playMap;
+    std::string serverHost, playerName, dataRoot, modsArg, playMap;
     // Multiplayer account (menu-entered, or --user/--pass for the harnesses). The
     // password is used once and wiped; it is never written to settings.
     std::string loginUser, loginPass;
@@ -513,7 +525,7 @@ int main(int argc, char** argv) {
         else if (a == "--selonly") selonly = true;
 
         else if (a == "--data" && i + 1 < argc) dataRoot = argv[++i];
-        else if (a == "--overrides" && i + 1 < argc) overridesArg = argv[++i];
+        else if (a == "--mods" && i + 1 < argc) modsArg = argv[++i];
         else if (a == "--server" && i + 1 < argc) serverHost = argv[++i];
         else if (a == "--serverport" && i + 1 < argc) serverPort = std::atoi(argv[++i]);
         else if (a == "--name" && i + 1 < argc) playerName = argv[++i];
@@ -563,13 +575,20 @@ int main(int argc, char** argv) {
     (void)hostPort; (void)joinPort; (void)joinAddr;   // --host/--join retired (see --server)
 
     // The runtime data set: a retail install directory (root *.hpi + Maps/ +
-    // Music/ + overrides/). This is the ONLY way the engine reads game files. It
+    // Music/ + mods/). This is the ONLY way the engine reads game files. It
     // must outlive the views (GameView/MapView hold a reference), so it lives here
     // at function scope for the whole render loop, and is built BEFORE connecting
     // so the Hello can carry this install's gameplay-data fingerprint.
-    tak::hpi::OverridePolicy pol = tak::hpi::OverridePolicy::Full;
-    if (overridesArg == "none") pol = tak::hpi::OverridePolicy::None;
-    else if (overridesArg == "cosmetic") pol = tak::hpi::OverridePolicy::Cosmetic;
+    // --mods (debug): which kinds of ticked mod pack this launch may mount.
+    // all (default) = game + cosmetic, game, cosmetic, or none (pure retail).
+    tak::hpi::ModUse modUse;
+    if (modsArg == "none") modUse = {false, false};
+    else if (modsArg == "cosmetic") modUse = {false, true};
+    else if (modsArg == "game") modUse = {true, false};
+    else if (!modsArg.empty() && modsArg != "all") {
+        std::fprintf(stderr, "--mods: expected none|cosmetic|game|all, got '%s'\n", modsArg.c_str());
+        return 2;
+    }
     tak::hpi::Vfs vfs;   // mounted AFTER the data folder is resolved (below, post-settings)
 
     // The engine is client-server only: every real game runs on a server, and AIs
@@ -652,8 +671,14 @@ int main(int argc, char** argv) {
             SDL_Quit();
             return 1;
         }
-        vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), pol);
+        vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot));
         gInstallRoot = dataRoot;   // the loading screen reads Movies/Gui from here
+        // The legacy overrides/ folder is left exactly as it is, just no longer read.
+        static bool legacyNoted = false;
+        if (!legacyNoted && tak::hpi::hasLegacyOverridesDir(std::filesystem::u8path(dataRoot))) {
+            legacyNoted = true;
+            std::fprintf(stderr, "overrides/ is no longer read; put packs in mods/cosmetic or mods/game\n");
+        }
     }
     std::shared_ptr<tak::ScenarioTraceLog> playtestTrace;
     if (!playMap.empty()) {
@@ -1066,12 +1091,12 @@ int main(int argc, char** argv) {
     if (!serverHost.empty()) {
         mp = std::make_unique<tak::net::MpClient>();
         mp->setMapRoot(std::filesystem::u8path(dataRoot));
-        mp->setHostOverridePacks(settings.hostOverridePacks);
+        mp->setGameModPacks(modUse.game ? settings.gameModPacks : std::vector<std::string>{});
         if (playerName.empty()) playerName = settings.playerName;
         if (playerName.empty()) playerName = "player";
-        // Hello carries the PURE-RETAIL gameplay fingerprint (no overrides), so the
-        // base game files are checked regardless of anyone's tier; the room's tier
-        // and its gameplay overrides are agreed later, at load. The install is
+        // Hello carries the PURE-RETAIL gameplay fingerprint (no mods), so the
+        // base game files are checked regardless of anyone's mods; the room's game
+        // mods are agreed later, at load. The install is
         // immutable while the game runs, so the fingerprint (a mount + a read of
         // every gameplay file) is computed once and reused across menu->Play loops.
         if (lobbyLoading) lobbyLoading->step("Checking game data",20);
@@ -1079,7 +1104,7 @@ int main(int argc, char** argv) {
         if (!dataRoot.empty()) {
             if (!retailHash)
                 retailHash = tak::hpi::gameplayHash(
-                    tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), tak::hpi::OverridePolicy::None));
+                    tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot)));
             mp->setDataHash(retailHash);
         }
         // A freshly-spawned local server takes a moment to mount + listen (~0.25s
@@ -1252,8 +1277,8 @@ int main(int argc, char** argv) {
                                                   // Campaign result/progression and the next
                                                   // session still need the front-end catalog.
                                                   (fromMenu || !campaignStem.empty())
-                                                      ? tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), pol) : std::move(vfs),
-                                                  mapPath, dataRoot, pol, demo,
+                                                      ? tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot)) : std::move(vfs),
+                                                  mapPath, dataRoot, modUse, demo,
                                                   scenario,
                                                   navy || amphib || firetest || facetest || mp,
                                                   side, aiSide, crusades);

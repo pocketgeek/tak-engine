@@ -28,7 +28,7 @@ bool MpClient::connect(const std::string& host, uint16_t port, const std::string
     auth_ = Auth::None; account_.clear(); pend_ = PendingAuth{};
     deriveDone_.store(false, std::memory_order_relaxed);
     conn_ = Conn{}; err_.clear();
-    resetOverrideTransfer();resetMapTransfer();
+    resetModTransfer();resetMapTransfer();
     room_=RoomView{};roomRequestPending_=false;
     voice_.clear(); voiceListenSent_ = 0;   // a new connection starts unheard: the server default is off
     pingsOut_.clear(); voiceBaseRtt_ = UINT32_MAX;
@@ -101,12 +101,12 @@ bool MpClient::poll() {
         clearCampaignCache();
         return false;
     }
-    if(overridePendingAt_ && nowMs()>=overridePendingAt_ && !overrideBusy() && state_==State::InRoom && room_.opts.overridePolicy==2)
-        offerOverrides();
-    overrideSend_.pump(conn_,Msg::OverrideChunk);
+    if(modPendingAt_ && nowMs()>=modPendingAt_ && !modBusy() && state_==State::InRoom && room_.opts.gameMods)
+        offerMods();
+    modSend_.pump(conn_,Msg::ModChunk);
     mapSend_.pump(conn_);
-    if (startRequested_ && !overridePendingAt_ && state_ == State::InRoom && room_.mapsReady &&
-        (room_.opts.overridePolicy!=2 || (overridePackage_ && overrideReadyRoom_==room_.id))) {
+    if (startRequested_ && !modPendingAt_ && state_ == State::InRoom && room_.mapsReady &&
+        (!room_.opts.gameMods || (modPackage_ && modReadyRoom_==room_.id))) {
         send(Msg::StartGame); startRequested_ = false; startSent_ = true;
     }
     pumpDerive();          // the login's PBKDF2 finished on its worker: send the proof
@@ -815,22 +815,22 @@ void MpClient::onFrame(const Frame& f) {
             }
             break;
         }
-        case Msg::OverrideOffer: case Msg::OverrideRequest: case Msg::OverrideChunk: case Msg::OverrideError:
-            overrideFrame(f); break;
+        case Msg::ModOffer: case Msg::ModRequest: case Msg::ModChunk: case Msg::ModError:
+            modFrame(f); break;
         case Msg::MapOffer: case Msg::MapRequest: case Msg::MapChunk: case Msg::MapError:
             mapFrame(f); break;
         case Msg::LobbyState: {
             roomRequestPending_=false;
-            const auto oldPolicy=room_.opts.overridePolicy;
+            const auto oldGameMods=room_.opts.gameMods;
             int keep = room_.mySlot;
             RoomView incoming;
             readSlots(r, incoming);
             if (!r.ok) break;
             room_ = std::move(incoming);
             room_.mySlot = keep;
-            if(oldPolicy!=room_.opts.overridePolicy && room_.hostId==myId_){mapPackage_.reset();mapOfferedRoom_=mapReadyRoom_=0;}
-            if(room_.opts.overridePolicy!=2)resetOverrideTransfer();
-            else if(room_.hostId==myId_ && overrideOfferedRoom_!=room_.id)offerOverrides();
+            if(oldGameMods!=room_.opts.gameMods && room_.hostId==myId_){mapPackage_.reset();mapOfferedRoom_=mapReadyRoom_=0;}
+            if(!room_.opts.gameMods)resetModTransfer();
+            else if(room_.hostId==myId_ && modOfferedRoom_!=room_.id)offerMods();
             gameSpeed_ = room_.opts.speed;
             if (state_ == State::Lobby) state_ = State::InRoom;
             if (!room_.mission.empty() || mapgen::isGeneratedMapId(room_.mapId)) {
@@ -838,7 +838,7 @@ void MpClient::onFrame(const Frame& f) {
             } else if (room_.hostId == myId_ && mapOfferedRoom_ != room_.id) {
                 try {
                     if (!mapPackage_) mapPackage_ = maps::build(hpi::mountRetailRoot(mapRoot_,
-                        (room_.opts.overridePolicy==2?hpi::OverridePolicy::Full:hpi::OverridePolicy::None), hostOverridePacks_), room_.mapId);
+                        room_.opts.gameMods?gameModPacks_:std::vector<std::string>{}), room_.mapId);
                     send(Msg::MapOffer, maps::offer(room_.id, room_.mapId, *mapPackage_));
                     mapOfferedRoom_ = room_.id; mapStatus_ = "CHECKING MAP WITH SERVER";
                 } catch (const std::exception& e) {
@@ -870,7 +870,7 @@ void MpClient::onFrame(const Frame& f) {
         case Msg::GameStarting: {
             roomRequestPending_=false;
             RoomView check; Reader header(f.payload.data(), f.payload.size()); readSlots(header, check);
-            if (header.ok && ((check.opts.overridePolicy==2 && overrideReadyRoom_!=check.id) || (check.mission.empty() && !mapgen::isGeneratedMapId(check.mapId) && mapReadyRoom_ != check.id))) {
+            if (header.ok && ((check.opts.gameMods && modReadyRoom_!=check.id) || (check.mission.empty() && !mapgen::isGeneratedMapId(check.mapId) && mapReadyRoom_ != check.id))) {
                 pendingMapStart_ = f; return;
             }
             int keep = room_.mySlot;
@@ -883,7 +883,7 @@ void MpClient::onFrame(const Frame& f) {
             if (room_.mission.empty() && mapgen::isGeneratedMapId(room_.mapId)) {
                 try {
                     const auto data = hpi::mountRetailRoot(mapRoot_,
-                        (room_.opts.overridePolicy==2?hpi::OverridePolicy::Full:hpi::OverridePolicy::None), hostOverridePacks_);
+                        room_.opts.gameMods?gameModPacks_:std::vector<std::string>{});
                     maps::saveGenerated(mapRoot_, data, room_.mapId);
                 } catch (const std::exception& e) {
                     mapStatus_ = std::string("MAP SAVE FAILED: ") + e.what();
@@ -979,12 +979,12 @@ void MpClient::createGame(const std::string& name, const std::string& password,
                           bool spectate, bool priv, const std::string& mission) {
     if(roomRequestPending_)return;
     joinError_.clear();
-    resetOverrideTransfer();resetMapTransfer();
+    resetModTransfer();resetMapTransfer();
     mapStatus_ = "CHECKING MAP";
     if (mission.empty() && !mapgen::isGeneratedMapId(mapId)) {
         try {
             mapPackage_ = maps::build(hpi::mountRetailRoot(mapRoot_,
-                (o.overridePolicy==2?hpi::OverridePolicy::Full:hpi::OverridePolicy::None), hostOverridePacks_), mapId);
+                o.gameMods?gameModPacks_:std::vector<std::string>{}), mapId);
         } catch (const std::exception& e) { err_ = mapStatus_ = e.what(); return; }
     }
     Writer w; w.str(name); w.str(password); w.str(mapId); w.str(mission);
@@ -1007,7 +1007,7 @@ void MpClient::joinGame(uint32_t id, const std::string& password) {
 void MpClient::leaveGame() {
     roomRequestPending_=false;
     send(Msg::LeaveGame);
-    resetOverrideTransfer();resetMapTransfer();
+    resetModTransfer();resetMapTransfer();
     room_ = RoomView{};
     state_ = State::Lobby;
 }
@@ -1218,7 +1218,7 @@ void MpClient::mapFrame(const Frame& f) {
             if (auto cached = maps::loadCache(mapRoot_, digest)) { acceptMap(std::move(cached), id); return; }
             try {
                 auto local = maps::build(hpi::mountRetailRoot(mapRoot_,
-                    (room_.opts.overridePolicy==2?hpi::OverridePolicy::Full:hpi::OverridePolicy::None), hostOverridePacks_), mapId);
+                    room_.opts.gameMods?gameModPacks_:std::vector<std::string>{}), mapId);
                 if (local->digest == digest) { acceptMap(std::move(local), id); return; }
             } catch (const std::exception&) {} // Missing/different map: request the host's copy.
             Writer request; request.u32(id); send(Msg::MapRequest, request);
@@ -1256,71 +1256,69 @@ void MpClient::mapFrame(const Frame& f) {
 }
 
 namespace tak::net {
-void MpClient::resetOverrideTransfer() {
-    overridePackage_.reset();overrideReceive_={};overrideSend_={};overrideOfferedRoom_=overrideReadyRoom_=0;overrideStatus_.clear();overridePendingAt_=0;
+void MpClient::resetModTransfer() {
+    modPackage_.reset();modReceive_={};modSend_={};modOfferedRoom_=modReadyRoom_=0;modStatus_.clear();modPendingAt_=0;
 }
 void MpClient::resetMapTransfer() {
     mapPackage_.reset(); mapReceive_ = {}; mapSend_ = {};
     mapReadyRoom_ = mapOfferedRoom_ = 0; startRequested_ = false; pendingMapStart_.reset(); mapStatus_.clear();
     startSent_ = false; startError_.clear();
 }
-void MpClient::setHostOverridePacks(std::vector<std::string> names) {
-    std::sort(names.begin(),names.end());if(names==hostOverridePacks_)return;
-    if(overrideBusy())return;
-    hostOverridePacks_=std::move(names);overrideOfferedRoom_=0;
-    if(state_==State::InRoom && room_.hostId==myId_ && room_.opts.overridePolicy==2) {
+void MpClient::setGameModPacks(std::vector<std::string> names) {
+    std::sort(names.begin(),names.end());if(names==gameModPacks_)return;
+    if(modBusy())return;
+    gameModPacks_=std::move(names);modOfferedRoom_=0;
+    if(state_==State::InRoom && room_.hostId==myId_ && room_.opts.gameMods) {
         // Coalesce checkbox clicks into one transfer once selection settles.
-        overridePendingAt_=nowMs()+500;overrideOfferedRoom_=room_.id;
-        room_.mapsReady=false;overrideStatus_="APPLYING PACK SELECTION";
+        modPendingAt_=nowMs()+500;modOfferedRoom_=room_.id;
+        room_.mapsReady=false;modStatus_="APPLYING PACK SELECTION";
     }
 }
-void MpClient::offerOverrides() {
-    overridePendingAt_=0;room_.mapsReady=false;
-    overrideOfferedRoom_=room_.id;overrideReadyRoom_=0;mapPackage_.reset();mapOfferedRoom_=mapReadyRoom_=0;
-    try {overridePackage_=overrides::build(mapRoot_,hostOverridePacks_);
-        send(Msg::OverrideOffer,maps::offer(room_.id,"overrides",*overridePackage_));overrideStatus_="VERIFYING OVERRIDE PACKS";
-    }catch(const std::exception& e){overridePackage_.reset();overrideStatus_=std::string("OVERRIDES: ")+e.what();}
+void MpClient::offerMods() {
+    modPendingAt_=0;room_.mapsReady=false;
+    modOfferedRoom_=room_.id;modReadyRoom_=0;mapPackage_.reset();mapOfferedRoom_=mapReadyRoom_=0;
+    try {modPackage_=mods::build(mapRoot_,gameModPacks_);
+        send(Msg::ModOffer,maps::offer(room_.id,"mods",*modPackage_));modStatus_="VERIFYING GAME MODS";
+    }catch(const std::exception& e){modPackage_.reset();modStatus_=std::string("GAME MODS: ")+e.what();}
 }
-hpi::Vfs MpClient::overrideVfs(hpi::OverridePolicy policy,const std::vector<std::string>& local) const {
-    auto vfs=hpi::mountRetailRoot(mapRoot_,hpi::OverridePolicy::None);
-    auto files=std::make_shared<hpi::Vfs::Files>();
-    if(room_.opts.overridePolicy==2){if(!overridePackage_)throw std::runtime_error("override packs not verified");*files=*overridePackage_->files;}
-    if(policy!=hpi::OverridePolicy::None && room_.opts.overridePolicy!=0) {
-        // Remember unavailable selections, but a removed local cosmetic pack
-        // must not prevent joining a game.
-        const auto available=hpi::overridePacks(mapRoot_);
-        auto present=local;
-        std::erase_if(present,[&](const auto& name){return !std::binary_search(available.begin(),available.end(),name);});
-        for(auto& [path,bytes]:hpi::overrideFiles(mapRoot_,hpi::OverridePolicy::Cosmetic,present))(*files)[path]=std::move(bytes);
-    }
-    vfs.setOverrideFiles(std::move(files));return vfs;
+hpi::Vfs MpClient::modVfs(const std::vector<std::string>& cosmetic,bool withCosmetic) const {
+    auto vfs=hpi::mountRetailRoot(mapRoot_);
+    hpi::Vfs::Files game;
+    if(room_.opts.gameMods){if(!modPackage_)throw std::runtime_error("game mods not verified");game=*modPackage_->files;}
+    // This player's own cosmetic mods on top (they cannot change the gameplay
+    // hash): the always-on archives in every room, the ticked pack folders in
+    // every room but a campaign one.
+    const bool campaign=!room_.mission.empty() || campaignRoom();
+    vfs.setModFiles(std::make_shared<const hpi::Vfs::Files>(withCosmetic
+        ? hpi::playModFiles(mapRoot_,std::move(game),campaign?std::vector<std::string>{}:cosmetic) : std::move(game)));
+    return vfs;
 }
-void MpClient::acceptOverrides(std::shared_ptr<overrides::Package> package,uint32_t room) {
-    overridePackage_=std::move(package);overrideReceive_={};overrideReadyRoom_=room;
-    overrideStatus_="OVERRIDE PACKS VERIFIED";
+void MpClient::acceptMods(std::shared_ptr<mods::Package> package,uint32_t room) {
+    modPackage_=std::move(package);modReceive_={};modReadyRoom_=room;
+    modStatus_="GAME MODS VERIFIED";
     // Like acceptMap: the package is verified, so a cache failure (full disk)
     // is reported but must not reject it.
-    try {overrides::saveCache(mapRoot_,*overridePackage_);}
-    catch(const std::exception& e){overrideStatus_=std::string("OVERRIDE PACKS VERIFIED; SAVE FAILED: ")+e.what();chat_.push_back({"SYSTEM",overrideStatus_});std::fprintf(stderr,"%s\n",overrideStatus_.c_str());}
-    Writer w;w.u32(room);w.str(overridePackage_->digest);send(Msg::OverrideReady,w);
+    try {mods::saveCache(mapRoot_,*modPackage_);}
+    catch(const std::exception& e){modStatus_=std::string("GAME MODS VERIFIED; SAVE FAILED: ")+e.what();chat_.push_back({"SYSTEM",modStatus_});std::fprintf(stderr,"%s\n",modStatus_.c_str());}
+    Writer w;w.u32(room);w.str(modPackage_->digest);send(Msg::ModReady,w);
     if(pendingMapStart_){auto start=std::move(*pendingMapStart_);pendingMapStart_.reset();onFrame(start);}
 }
-void MpClient::overrideFrame(const Frame& f) {
+void MpClient::modFrame(const Frame& f) {
     try {
         Reader r(f.payload.data(),f.payload.size());
-        if(f.kind==Msg::OverrideOffer){
+        if(f.kind==Msg::ModOffer){
             auto id=r.u32();auto label=r.str(),digest=r.str();auto size=r.u32();
-            if(!r.ok || r.p!=r.end || !id || label!="overrides" || (room_.id && id!=room_.id))throw std::runtime_error("invalid override offer");
-            overrideReceive_.begin(id,size,digest);overrideReadyRoom_=0;
-            if(overridePackage_ && overridePackage_->digest==digest && overridePackage_->bytes.size()==size){acceptOverrides(overridePackage_,id);return;}
-            if(auto cached=overrides::loadCache(mapRoot_,digest)){if(cached->bytes.size()!=size)throw std::runtime_error("override size mismatch");acceptOverrides(std::move(cached),id);return;}
-            Writer w;w.u32(id);w.str(digest);send(Msg::OverrideRequest,w);overrideStatus_="DOWNLOADING OVERRIDE PACKS";
-        }else if(f.kind==Msg::OverrideRequest){
-            auto id=r.u32();if(!r.ok || r.p!=r.end || id!=room_.id || room_.hostId!=myId_ || !overridePackage_ || overrideSend_.package)throw std::runtime_error("invalid override upload request");
-            overrideSend_={id,0,overridePackage_};overrideStatus_="UPLOADING OVERRIDE PACKS";
-        }else if(f.kind==Msg::OverrideChunk){
-            if(overrideReceive_.append(r)){auto id=overrideReceive_.room;acceptOverrides(overrides::decode(std::move(overrideReceive_.bytes),overrideReceive_.digest),id);}
-        }else if(f.kind==Msg::OverrideError){auto id=r.u32();auto why=r.str();if(r.ok && id==room_.id){overrideStatus_="OVERRIDES: "+why;overrideReceive_={};overrideSend_={};overrideReadyRoom_=0;}}
-    }catch(const std::exception& e){overrideStatus_=std::string("OVERRIDES: ")+e.what();overrideReceive_={};overrideSend_={};overrideReadyRoom_=0;Writer w;w.u32(room_.id);w.str(overrideStatus_);send(Msg::OverrideError,w);}
+            if(!r.ok || r.p!=r.end || !id || label!="mods" || (room_.id && id!=room_.id))throw std::runtime_error("invalid game mod offer");
+            modReceive_.begin(id,size,digest);modReadyRoom_=0;
+            if(modPackage_ && modPackage_->digest==digest && modPackage_->bytes.size()==size){acceptMods(modPackage_,id);return;}
+            if(auto cached=mods::loadCache(mapRoot_,digest)){if(cached->bytes.size()!=size)throw std::runtime_error("game mod size mismatch");acceptMods(std::move(cached),id);return;}
+            Writer w;w.u32(id);w.str(digest);send(Msg::ModRequest,w);modStatus_="DOWNLOADING GAME MODS";
+        }else if(f.kind==Msg::ModRequest){
+            auto id=r.u32();if(!r.ok || r.p!=r.end || id!=room_.id || room_.hostId!=myId_ || !modPackage_ || modSend_.package)throw std::runtime_error("invalid game mod upload request");
+            modSend_={id,0,modPackage_};modStatus_="UPLOADING GAME MODS";
+        }else if(f.kind==Msg::ModChunk){
+            if(modReceive_.append(r)){auto id=modReceive_.room;acceptMods(mods::decode(std::move(modReceive_.bytes),modReceive_.digest),id);}
+        }else if(f.kind==Msg::ModError){auto id=r.u32();auto why=r.str();if(r.ok && id==room_.id){modStatus_="GAME MODS: "+why;modReceive_={};modSend_={};modReadyRoom_=0;}}
+    }catch(const std::exception& e){modStatus_=std::string("GAME MODS: ")+e.what();modReceive_={};modSend_={};modReadyRoom_=0;Writer w;w.u32(room_.id);w.str(modStatus_);send(Msg::ModError,w);}
 }
 }

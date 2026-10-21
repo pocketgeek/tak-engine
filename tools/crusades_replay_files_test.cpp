@@ -24,7 +24,7 @@ struct Sample {
         battle.context.mapIdentifier="one.ota";battle.context.mapDigest=std::string(64,'a');
         result.gameplayFingerprint=UINT64_C(0x8000000000000001);
         header.mapId=battle.context.mapIdentifier;header.mapDigest=battle.context.mapDigest;
-        header.crusades=1;header.overridePolicy=0;header.engineVersion="synthetic-build";
+        header.crusades=1;header.gameMods=0;header.engineVersion="synthetic-build";
         header.dataHash=result.gameplayFingerprint;header.unitCap=2000;
         header.slotType[0]=header.slotType[1]=1;header.slotFaction[1]=1;header.slotTeam[1]=1;
     }
@@ -83,7 +83,7 @@ void identityAndHeader(const fs::path& root){
         if(kind==1)header.mapDigest=std::string(64,'b');
         if(kind==2)header.dataHash^=1;
         if(kind==3)header.crusades=0;
-        if(kind==4)header.overridePolicy=1;
+        if(kind==4)header.gameMods=1;
         if(kind==5)header.mission="camp01";
         // 1-3: the removed Flowfield, Cooperative and Retail+ identities.
         if(kind>=12&&kind<=14)header.pathfindingMode=tak::sim::PathfindingMode(kind-11);

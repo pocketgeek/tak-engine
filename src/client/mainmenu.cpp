@@ -778,7 +778,8 @@ struct MainMenu::Impl {
             case FailTo::CampaignPicker:
                 if (settings)
                     campaign_ = std::make_unique<CampaignScreen>(ren, vfs, *settings, 0,
-                        [this](const std::string& sound) { loadSfx(sound); playSfx(sound); });
+                        [this](const std::string& sound) { loadSfx(sound); playSfx(sound); },
+                        std::filesystem::u8path(install));
                 break;
             case FailTo::Notice: case FailTo::Exit: break;
         }
@@ -1312,7 +1313,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             // rows and the next-up highlight (nothing is locked either way).
             if (tab == 1)
                 for (int i = 0; i < 12; ++i) tmp.campaignCompleted["the iron plague"].insert(i);
-            CampaignScreen cs(d_->ren, d_->vfs, tmp, tab);
+            CampaignScreen cs(d_->ren, d_->vfs, tmp, tab, {}, std::filesystem::u8path(d_->install));
             cs.render(w, h);
         }
         // Debug: TAK_SHOT_SERVER captures the CONNECT dropdown (2 = CUSTOM selected,
@@ -1683,7 +1684,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     // Open the campaign / mission picker in place; a picked mission
                     // returns Choice::Campaign (handled by the campaign_ router above).
                     d_->campaign_ = std::make_unique<CampaignScreen>(d_->ren, d_->vfs, *settings,0,
-                        [this](const std::string& sound){d_->loadSfx(sound);d_->playSfx(sound);});
+                        [this](const std::string& sound){d_->loadSfx(sound);d_->playSfx(sound);},
+                        std::filesystem::u8path(d_->install));
                 }
                 else if (c != Choice::None && c != Choice::Campaign) {
                     d_->flushSfx(w, h);   // let the click sound finish before we tear down

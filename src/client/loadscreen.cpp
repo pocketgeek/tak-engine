@@ -25,7 +25,7 @@ namespace {
 
 // The gadget rects we care about, in the .gui's 640x480 space. Parsed from
 // guis/loadscreen.gui at construction; these are the shipped values, used when the
-// file is missing (a cosmetic-overrides-only install, say) so the screen still works.
+// file is missing (a cosmetic-mods-only install, say) so the screen still works.
 struct Rect { float x, y, w, h; };
 
 struct Geom {

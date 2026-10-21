@@ -141,7 +141,7 @@ bool validOrder(const SelectionOrder& o) {
 // exactly these bytes (match_codec_test pins it) and an issued battle's stored digest
 // must still match after an upgrade. Append new fields in put(), not here.
 static void putRules(Writer& w, const GameOptions& o) {
-    w.u8(o.crusades); w.u8(o.forfeitSelfDestruct); w.u8(o.overridePolicy);
+    w.u8(o.crusades); w.u8(o.forfeitSelfDestruct); w.u8(o.gameMods);
     w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap); w.u8(o.monarchExpendable);
     w.u8(o.stressTest); w.u8(o.fogExplored); w.u8(o.benchmark); w.u8(o.randomStarts);
     w.u8(o.doubleSight); w.u8(uint8_t(o.pathfindingMode));
@@ -154,7 +154,7 @@ void put(Writer& w, const GameOptions& o) {
 }
 
 void get(Reader& r, GameOptions& o) {
-    o.crusades = r.u8(); o.forfeitSelfDestruct = r.u8(); o.overridePolicy = r.u8();
+    o.crusades = r.u8(); o.forfeitSelfDestruct = r.u8(); o.gameMods = r.u8();
     o.speed = r.u8(); o.speedUnlock = r.u8(); o.unitCap = uint16_t(r.u32()); o.monarchExpendable = r.u8();
     o.stressTest = r.u8(); o.fogExplored = r.u8(); o.benchmark = r.u8(); o.randomStarts = r.u8();
     o.doubleSight = r.u8();

@@ -155,7 +155,7 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     editorFont.emplace(ren);
 
     try {
-        vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), tak::hpi::OverridePolicy::Full);
+        vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot));
     } catch (const std::exception& e) {
         std::fprintf(stderr, "mount %s: %s\n", dataRoot.c_str(), e.what());
         throw Exit{1};

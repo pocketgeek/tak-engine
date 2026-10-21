@@ -69,7 +69,7 @@ int main(int argc,char**argv) {
         music.stop();
         if(music.playing())throw std::runtime_error("stopped music still owns audio");
         if(argc==2) {
-            auto vfs=tak::hpi::mountRetailRoot(argv[1],tak::hpi::OverridePolicy::None);
+            auto vfs=tak::hpi::mountRetailRoot(argv[1]);
             capture.pcm.clear();
             music.setVolume(256,256);music.start(vfs,15);
             if(!music.playing())throw std::runtime_error("retail title track failed to start");

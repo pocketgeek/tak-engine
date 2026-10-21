@@ -19,7 +19,7 @@ using namespace tak::sim;
 
 int main(int argc,char** argv) {
     if (argc==4 && std::strcmp(argv[1],"--map-features")==0) {
-        auto vfs=tak::hpi::mountRetailRoot(argv[2],tak::hpi::OverridePolicy::None);
+        auto vfs=tak::hpi::mountRetailRoot(argv[2]);
         const auto path=tak::hpi::findMap(vfs,argv[3]);
         const auto map=tak::tnt::Map::load(vfs.read(path),path);
         World world;

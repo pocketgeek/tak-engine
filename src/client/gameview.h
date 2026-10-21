@@ -185,7 +185,7 @@ public:
     void finishReplayRecording(bool ownLog = true);
 
     GameView(SDL_Renderer* ren, tak::hpi::Vfs vfs, const std::string& mapPath,
-             const std::string& installRoot, tak::hpi::OverridePolicy policy,
+             const std::string& installRoot, tak::hpi::ModUse mods,
              bool demo, bool scenario,
              bool bare, const std::string& side = "ara", const std::string& aiSide = "tar",
              bool crusades = false);
@@ -1868,12 +1868,12 @@ private:
     SDL_Renderer* ren_;
     // vfs_ is declared BEFORE mapView_ so its Compositor can borrow it; it is owned
     // here (not a reference) so a multiplayer client can REMOUNT to the room's
-    // override tier at game start -- move-assigning vfs_ keeps every borrowed
+    // mods at game start -- move-assigning vfs_ keeps every borrowed
     // pointer (MapView's Compositor) valid because the object itself is reused.
     tak::hpi::Vfs vfs_;          // retail-root read-path (the only way we read files)
     MapView mapView_;
-    std::string installRoot_;    // retail install dir (for remounting to a new tier)
-    tak::hpi::OverridePolicy policy_ = tak::hpi::OverridePolicy::Full;
+    std::string installRoot_;    // retail install dir (for remounting with the room's mods)
+    tak::hpi::ModUse mods_;      // which mod kinds this launch may use (--mods)
     std::string mapPath_;        // VFS path to the map .tnt (start positions, siblings)
     // VFS read helpers -- the engine's only game-file access.
     std::vector<uint8_t> vread(const std::string& p) const { return vfs_.read(p); }
@@ -1881,15 +1881,12 @@ private:
     tak::tdf::Node vtdf(const std::string& p) const;
     // A map's sibling scenario file (map.tnt -> map.ota/.cob/.tdf/.txt/.crt).
     std::string mapSibling(const char* ext) const;
-    // Remount the data set to a multiplayer room's override tier and rebuild the
-    // gameplay registry, so this client's sim reads the same gameplay data the
-    // referee does. Cosmetics already loaded stay (harmless local display).
-    void remountPolicy(uint8_t p);
-    // Fingerprint of the gameplay data THIS client will feed its sim (current tier).
+    // Remount the data set with the room's game mods (its verified package) and
+    // this player's own cosmetic mods, and rebuild the gameplay registry, so this
+    // client's sim reads the same gameplay data the referee does.
+    void remountMods();
+    // Fingerprint of the gameplay data THIS client will feed its sim (current mods).
     uint64_t gameDataHash() const { return tak::hpi::gameplayHash(vfs_); }
-public:
-    uint8_t overridePolicy() const { return uint8_t(policy_); }
-private:
     bool crusades_ = false; // which balance registry_ currently holds
     std::string side_ = "ara";
     // Retail loading screen. Alive from the start of world setup until the first
@@ -2230,16 +2227,18 @@ private:
     tak::sim::ScenarioInfo createScenario_;   // the selected map's scenario facts (with registry check)
     void syncCreateScenario();
     bool createScenarioOn() const;            // the create choice plays the map's scenario
-    // Whether the create screen offers a map's scenario. With the FULL override tier a
-    // placed or custom unit type this install lacks may come from an override pack the
-    // host selects in the room, so MissingType is offered there (with a warning) when
+    // Whether the create screen offers a map's scenario. With game mods on a placed
+    // or custom unit type this install lacks may come from a game mod pack the host
+    // selects in the room, so MissingType is offered there (with a warning) when
     // this install has a pack to select; the server's START refuses it if no selected
     // pack supplies the type. (A Use Only entry never needs a pack: a MAP SCENARIO game
-    // leaves out the names no unit answers to.) Call after scanOverridePacks().
-    bool scenarioOffered(const tak::sim::ScenarioInfo& s, uint8_t overrideTier) const {
-        return s.offerable() || (overrideTier == 2 && !s.marker && s.status == tak::sim::ScenarioStatus::MissingType &&
-                                 s.seatOneArmy() && !availableOverridePacks_.empty());
+    // leaves out the names no unit answers to.) Call after scanModPacks().
+    bool scenarioOffered(const tak::sim::ScenarioInfo& s, bool gameModsOn) const {
+        return s.offerable() || (gameModsOn && !s.marker && s.status == tak::sim::ScenarioStatus::MissingType &&
+                                 s.seatOneArmy() && !availableGameMods_.empty());
     }
+    // The room being created runs game mods: always in single player, else the toggle.
+    bool createGameModsOn() const { return singlePlayer_ || createGameMods_; }
     // One selectable map plus the attributes the picker can sort by, read once from
     // the map's .ota GlobalHeader (a tiny text file -- no need to decompress the TNT).
     struct MapInfo {
@@ -2283,11 +2282,12 @@ private:
     std::vector<std::pair<float, float>> mapPreviewStarts_;
     float mapPreviewWorldW_ = 0, mapPreviewWorldH_ = 0;
     std::map<std::string, std::vector<uint8_t>> kingdomPals_;  // kingdom -> RGBA palette (256*4)
-    std::vector<std::string> availableOverridePacks_;
-    bool overridePacksScanned_=false;
-    void scanOverridePacks();   // fills availableOverridePacks_ once
-    size_t overridePage_=0;
-    uint8_t createOverride_ = 1;   // create-dialog override tier (default cosmetic)
+    std::vector<std::string> availableGameMods_, availableCosmeticMods_;   // mods/game, mods/cosmetic
+    std::vector<std::string> alwaysOnMods_;   // mods/cosmetic/*.hpi: loaded in every game, only named
+    bool modPacksScanned_=false;
+    void scanModPacks();   // fills availableGameMods_ / availableCosmeticMods_ / alwaysOnMods_ once
+    size_t gameModPage_=0, cosmeticModPage_=0;
+    bool createGameMods_ = false;   // multiplayer create-dialog GAME MODS toggle (default off)
     std::string mpMapId_;   // set from the launched map basename
     std::string missionStem_;   // campaign mission to host (headless --mpmission)
     // Per-mission unit whitelist from missions/<stem>.tdf (lowercased ids). When set,

@@ -89,7 +89,7 @@ bool cart::Session::saveBundle(const std::string& path) {return saveDocument(pat
 
 bool cart::Editor::openDocument(const std::string& request) {
     try {
-        auto nextVfs=tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot),tak::hpi::OverridePolicy::Full);
+        auto nextVfs=tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot));
         std::string path,chosen=request;
         const auto disk=std::filesystem::u8path(request);
         if(std::filesystem::is_regular_file(disk)) {

@@ -102,13 +102,13 @@ int main() {
     flips("gameCreate.generated", [](Settings& s) { s.gameCreate.generated = !s.gameCreate.generated; });
     flips("gameCreate.unitCap", [](Settings& s) { ++s.gameCreate.unitCap; });
     flips("gameCreate.fog", [](Settings& s) { ++s.gameCreate.fog; });
-    flips("gameCreate.overrides", [](Settings& s) { ++s.gameCreate.overrides; });
+    flips("gameCreate.gameMods", [](Settings& s) { s.gameCreate.gameMods = !s.gameCreate.gameMods; });
     flips("gameCreate.mapSort", [](Settings& s) { ++s.gameCreate.mapSort; });
     flips("gameCreate.mapSortDir", [](Settings& s) { ++s.gameCreate.mapSortDir; });
     flips("gameCreate.name", [](Settings& s) { s.gameCreate.name = "test"; });
     flips("gameCreate.generator", [](Settings& s) { s.gameCreate.generator = "test"; });
-    flips("hostOverridePacks", [](Settings& s){s.hostOverridePacks={"Pack A"};});
-    flips("cosmeticOverridePacks", [](Settings& s){s.cosmeticOverridePacks={"Pack B"};});
+    flips("gameModPacks", [](Settings& s){s.gameModPacks={"Pack A"};});
+    flips("cosmeticModPacks", [](Settings& s){s.cosmeticModPacks={"Pack B"};});
     flips("lastMap",         [](Settings& s) { s.lastMap = "Inner Circle"; });
     flips("dataDir",         [](Settings& s) { s.dataDir = "/somewhere/else"; });
     flips("dataManifest",    [](Settings& s) { s.dataManifest = "deadbeef"; });

@@ -11,7 +11,7 @@ static void check(bool ok,const char* message) {
 }
 int main(int argc,char** argv) {
     if (argc!=2) return 2;
-    auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
+    auto vfs=hpi::mountRetailRoot(argv[1]);
     for (bool crusades:{false,true}) {
         sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,crusades);
         for (const char* race:{"ara","tar","ver","zon","cre"}) {

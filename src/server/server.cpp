@@ -13,7 +13,7 @@
 // server is a pure relay and clients cross-check hashes among themselves (M3).
 
 #include "net/mappackage.h"
-#include "net/overridepackage.h"
+#include "net/modpackage.h"
 #include "server/commands.h"
 #include "server/orders.h"
 #include "server/acme.h"
@@ -221,10 +221,10 @@ struct Client {
     WorkBudget campaignWork, campaignReplayWork;
     uint64_t campaignLimitedWindow = 0;
     bool campaignLimitNotified = false;
-    tak::net::maps::Receiver overrideReceive;
-    tak::net::maps::Sender overrideSend;
-    std::string overrideReady,overrideOffered;
-    uint64_t overrideStarted=0,overrideProgress=0;
+    tak::net::maps::Receiver modReceive;
+    tak::net::maps::Sender modSend;
+    std::string modReady,modOffered;
+    uint64_t modStarted=0,modProgress=0;
     tak::net::maps::Receiver mapReceive;
     tak::net::maps::Sender mapSend;
 
@@ -317,7 +317,7 @@ static_assert(tak::srv::TickPacer::kHz == kServerHz, "TickPacer paces kServerHz 
     };
 
 struct Room {
-    std::unique_ptr<DataSet> overrideData; // outlives the referee and room VFS
+    std::unique_ptr<DataSet> modData; // outlives the referee and room VFS
     uint32_t id = 0;
     std::string name, password, mapId;
     std::shared_ptr<tak::net::maps::Package> mapPackage;
@@ -396,7 +396,7 @@ struct Room {
     int pausePlayer = -1;                       // which dropped player paused it
     uint64_t pauseStartMs = 0;                  // when the current pause began
     uint64_t pauseBudgetMs[kMaxSlots] = {};     // remaining pause budget per player
-    std::shared_ptr<tak::net::overrides::Package> overridePackage;
+    std::shared_ptr<tak::net::mods::Package> modPackage;
     std::future<TickResult> tickJob;
     std::array<bool,kMaxSlots> defeated{}; // last completed tick; safe during a worker tick
     std::string simulationError;
@@ -484,11 +484,11 @@ public:
     }
     // `dataRoot` is never empty -- main() refuses to start without --data.
     Server(uint16_t port, const std::string& dataRoot,const std::string& mapRoot) : port_(port), dataRoot_(dataRoot),mapRoot_(mapRoot.empty()?dataRoot:mapRoot) {
-        // The referee reads the retail install directly, per the ROOM's override
-        // tier. Build the pure-retail set eagerly (the connection-level Hello
-        // check + the common none/cosmetic game); the Full set is built lazily
-        // the first time a Full game starts.
-        buildDataSet(retail_, tak::hpi::OverridePolicy::None);
+        // The referee reads the retail install directly, plus the ROOM's game
+        // mods. Build the pure-retail set eagerly (the connection-level Hello
+        // check + every game without game mods); a game-mod set is built lazily
+        // per room the first time such a game starts.
+        buildDataSet(retail_);
         aiProfile_ = tak::ai::loadProfile(retail_.vfs);
         aiNames_ = loadAiNames(retail_.vfs);
         haveCb_ = retail_.haveCb;
@@ -532,10 +532,10 @@ private:
     void relayVoice(Client& c, Room& r, const Frame& f);
     bool voiceBehind(Client& listener, const Room& r, uint64_t now);
     bool allowLobbyWork(Client& c,const Frame& f);
-    bool canRead(const Client& c,uint64_t now) const {return c.commandBytes.available(now,4u<<20) && commandBytes_.available(now,32u<<20) && ((!c.mapReceive.size && !c.overrideReceive.size) || (c.uploadWork.available(now,4096,64) && uploadGlobalWork_.available(now,16384,64)));}
+    bool canRead(const Client& c,uint64_t now) const {return c.commandBytes.available(now,4u<<20) && commandBytes_.available(now,32u<<20) && ((!c.mapReceive.size && !c.modReceive.size) || (c.uploadWork.available(now,4096,64) && uploadGlobalWork_.available(now,16384,64)));}
     size_t mapMemory() const;
     struct Validation {
-        uint64_t id; uint32_t client,room,size; bool overrides,cache;
+        uint64_t id; uint32_t client,room,size; bool mods,cache;
         std::string digest,map;
         tak::StopSource stop;
         std::future<std::shared_ptr<tak::net::maps::Package>> result;
@@ -543,7 +543,7 @@ private:
     std::vector<Validation> validations_;
     uint64_t nextValidation_=1;
     tak::srv::ValidationWorker validationWorker_;
-    void validatePackage(Client& c,Room& room,bool overrides,bool cache);
+    void validatePackage(Client& c,Room& room,bool mods,bool cache);
     void finishValidations();
     SharedWorkBudget campaignWorkKeys_, campaignReplayKeys_;
     SharedWorkBudget loginWorkKeys_{tak::srv::LoginThrottle::kForgetMs};
@@ -582,9 +582,9 @@ private:
     std::pair<std::string,std::string> saveCampaignReplay(Room& room);
     Writer replayBytes(Room& room);
     tak::srv::LoginThrottle throttle_;
-    // A mounted data set at one override tier: the VFS, its base + Crusades
+    // A mounted data set (retail, or retail + one room's game mods): the VFS, its base + Crusades
     // registries, and the gameplay-data fingerprint peers are held to.
-    DataSet retail_;                   // shared immutable retail data; Full is room-local
+    DataSet retail_;                   // shared immutable retail data; game-mod sets are room-local
     bool haveCb_ = false;
     tak::ai::Profile aiProfile_;
     // Per-mission build profiles (ai/<name>.txt), cached by name -- a Controller
@@ -624,8 +624,8 @@ private:
         static std::mt19937 rng{std::random_device{}()};
         r.slots[slot].name = *avail[rng() % avail.size()];
     }
-    void buildDataSet(DataSet& ds, tak::hpi::OverridePolicy pol) {
-        ds.vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot_), pol);
+    void buildDataSet(DataSet& ds) {
+        ds.vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot_));
         if(mapRoot_!=dataRoot_)ds.vfs.refreshMapCache(std::filesystem::u8path(mapRoot_));
         tak::sim::setupRegistry(ds.reg, ds.vfs, false);
         if (!ds.vfs.list("unitscb").empty()) {
@@ -699,8 +699,8 @@ private:
     // A START the server will not run: the host is told why (Msg::MapError, which the
     // room shows under its buttons) and the log says so.
     void refuseStart(Client& c, const Room& r, const std::string& why);
-    void overrideMsg(Client& c,const Frame& f);
-    DataSet& roomData(Room& r) {return r.overrideData ? *r.overrideData : retail_;}
+    void modMsg(Client& c,const Frame& f);
+    DataSet& roomData(Room& r) {return r.modData ? *r.modData : retail_;}
     void closeTick(Room& r, bool multipleGames);
     void finishTick(Room& r);
     bool canAdvance(const Room& r) const;   // false = wait for a lagging player (flow control)
@@ -756,7 +756,7 @@ Writer Server::replayBytes(Room& r) {
     // compare its own hashes against what actually happened. The header records the
     // START slot table, not the forfeited end state.
     tak::net::ReplayHeader h = tak::net::replayHeaderFor(r.opts, r.mapId, r.mission, r.startSlots, r.seed);
-    if (r.overridePackage) h.overrideDigest=r.overridePackage->digest;
+    if (r.modPackage) h.modDigest=r.modPackage->digest;
     if (r.mapPackage) h.mapDigest = r.mapPackage->digest;
     h.dataHash = roomData(r).hash;
     Writer w;
@@ -817,13 +817,13 @@ void Server::handshake(Client& c, const Frame& f) {
         return;
     }
     // Gameplay-data agreement: every peer must feed its sim byte-identical gameplay
-    // data (verifies the retail files are unmodified, and that Full-override players
-    // share the same overrides). The referee's own hash is the authority -- there is
+    // data (verifies the retail files are unmodified, and that every player of a
+    // game-mods room shares the host's game mods). The referee's own hash is the authority -- there is
     // no relay mode adopting the first client's any more, which could only ever hold
     // peers to whatever the earliest arrival happened to have.
     // The Hello hash is the client's PURE-RETAIL gameplay fingerprint (mounted with
-    // no overrides), so the base game files must match regardless of anyone's
-    // override tier. (Full-tier gameplay overrides are checked per game at Loaded.)
+    // no mods), so the base game files must match regardless of anyone's mods.
+    // (Game mods are checked per game at Loaded.)
     const uint64_t want = retail_.hash;
     if (dataHash != want) {
         char msg[128];
@@ -1662,7 +1662,7 @@ bool Server::createCampaignBattle(Client& c,const std::string& campaign,uint32_t
         Room room;room.id=nextRoomId_++;roomId=room.id;room.hostId=c.id;room.name="Crusades battle";
         room.mapId=*map;room.mapPackage=std::move(package);room.mapVfs=std::make_unique<tak::hpi::Vfs>(&retail_.vfs);
         room.mapVfs->setMapFiles(room.mapPackage->files);room.cap=2;room.createdMs=nowMs();
-        room.seed=fixedSeedSet_?fixedSeed_:uint32_t(randToken());room.opts.crusades=1;room.opts.overridePolicy=0;
+        room.seed=fixedSeedSet_?fixedSeed_:uint32_t(randToken());room.opts.crusades=1;room.opts.gameMods=0;
         room.opts.fogExplored=0;room.opts.forfeitSelfDestruct=1;room.opts.allowSpectators=0; // never watched (Spectate refuses)
         room.opts.mapScenario=0; // a campaign battle is a plain skirmish (outside the rules digest)
         room.campaignId=campaign;room.campaignTerritory=territory;room.campaignAccounts[0]=caller;room.campaignAccounts[1]=opponent;
@@ -1767,7 +1767,7 @@ void Server::sendGameStarting(Client& c, Room& r, uint8_t slot, uint64_t token, 
             c.mapReadyRoom = 0; c.mapOfferedRoom = r.id;
             c.conn.send(Msg::MapOffer, tak::net::maps::offer(r.id, r.mapId, *r.mapPackage));
         }
-        if(r.overridePackage)c.conn.send(Msg::OverrideOffer,tak::net::maps::offer(r.id,"overrides",*r.overridePackage));
+        if(r.modPackage)c.conn.send(Msg::ModOffer,tak::net::maps::offer(r.id,"mods",*r.modPackage));
     }
     c.conn.send(Msg::GameStarting, w);
     if (catchUp) { c.replaying = true; c.replayPos = 0; }
@@ -1794,10 +1794,10 @@ void Server::broadcastLobby(Room& r) {
         }
     }
 
-    if(r.opts.overridePolicy==2 && r.overridePackage)for(auto& [id,peer]:clients_) {
-        if(peer->roomId==r.id && peer->overrideOffered!=r.overridePackage->digest){
-            peer->conn.send(Msg::OverrideOffer,tak::net::maps::offer(r.id,"overrides",*r.overridePackage));
-            peer->overrideOffered=r.overridePackage->digest;
+    if(r.opts.gameMods && r.modPackage)for(auto& [id,peer]:clients_) {
+        if(peer->roomId==r.id && peer->modOffered!=r.modPackage->digest){
+            peer->conn.send(Msg::ModOffer,tak::net::maps::offer(r.id,"mods",*r.modPackage));
+            peer->modOffered=r.modPackage->digest;
         }
     }
 
@@ -1934,8 +1934,8 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             GameOptions o; get(r, o);
             if (!tak::sim::validPathfindingMode(uint8_t(o.pathfindingMode))) { sendReject(c,"invalid pathfinding mode"); return; }
             // Sanitise the raw options (get() checks only the pathfinder byte).
-            o.overridePolicy = std::min<uint8_t>(o.overridePolicy,2);
-            if(!mission.empty())o.overridePolicy=0;
+            o.gameMods = o.gameMods ? 1 : 0;
+            if(!mission.empty())o.gameMods=0;   // campaigns never run game mods
             if (o.speed < 1) o.speed = 10;
             o.unitCap = clampUnitCap(o.unitCap);
             o.monarchExpendable = o.monarchExpendable ? 1 : 0;
@@ -2203,7 +2203,7 @@ bool Server::handleOrderFrame(Client& c, Room& r, const Frame& f) {
 }
 
 void Server::dropPendingCommands(Client& c, Room& r) {
-    c.overrideSend={};c.overrideReceive={};c.overrideReady.clear();c.overrideOffered.clear();
+    c.modSend={};c.modReceive={};c.modReady.clear();c.modOffered.clear();
     c.mapSend = {}; c.mapReceive = {}; c.mapReadyRoom = c.mapOfferedRoom = 0;
     c.clearCommands();
     c.cmdDropped = 0;
@@ -2273,9 +2273,9 @@ void Server::leaveRoom(Client& c, const char* reason) {
 }
 
 bool Server::mapsReady(const Room& r) const {
-    if(r.opts.overridePolicy==2){
-        if(!r.overridePackage)return false;
-        for(const auto& [id,peer]:clients_)if(peer->roomId==r.id && peer->overrideReady!=r.overridePackage->digest)return false;
+    if(r.opts.gameMods){
+        if(!r.modPackage)return false;
+        for(const auto& [id,peer]:clients_)if(peer->roomId==r.id && peer->modReady!=r.modPackage->digest)return false;
     }
     if (!r.mission.empty() || tak::mapgen::isGeneratedMapId(r.mapId)) return true;
     if (!r.mapPackage) return false;
@@ -2283,25 +2283,25 @@ bool Server::mapsReady(const Room& r) const {
         if (peer->roomId == r.id && peer->mapReadyRoom != r.id) return false;
     return true;
 }
-void Server::validatePackage(Client& c,Room& room,bool overrides,bool cache) {
+void Server::validatePackage(Client& c,Room& room,bool mods,bool cache) {
     if(validations_.size()>=3)throw std::runtime_error("map validation capacity reached; retry later");
-    auto& receive=overrides?c.overrideReceive:c.mapReceive;
+    auto& receive=mods?c.modReceive:c.mapReceive;
     if(!receive.size || mapMemory()>limits_.mapMemory)throw std::runtime_error("server map memory budget reached");
-    Validation job{nextValidation_++,c.id,room.id,receive.size,overrides,cache,receive.digest,room.mapId,{}, {}};
+    Validation job{nextValidation_++,c.id,room.id,receive.size,mods,cache,receive.digest,room.mapId,{}, {}};
     const auto token=job.stop.get_token();
     const auto root=std::filesystem::u8path(mapRoot_);
     const auto digest=job.digest;const auto size=job.size;const auto quota=limits_.mapDisk;
-    job.result=validationWorker_.submit([root,digest,size,quota,overrides,cache,token,bytes=std::move(receive.bytes)]() mutable {
+    job.result=validationWorker_.submit([root,digest,size,quota,mods,cache,token,bytes=std::move(receive.bytes)]() mutable {
         if(token.stop_requested())throw std::runtime_error("map validation cancelled");
         std::shared_ptr<tak::net::maps::Package> package;
-        if(cache)package=overrides?tak::net::overrides::loadCache(root,digest,size,size):tak::net::maps::loadCache(root,digest,size,size,token);
+        if(cache)package=mods?tak::net::mods::loadCache(root,digest,size,size):tak::net::maps::loadCache(root,digest,size,size,token);
         else {
             if(bytes.size()!=size)throw std::runtime_error("uploaded package size mismatch");
-            package=overrides?tak::net::overrides::decode(std::move(bytes),digest):tak::net::maps::decode(std::move(bytes),digest,token);
+            package=mods?tak::net::mods::decode(std::move(bytes),digest):tak::net::maps::decode(std::move(bytes),digest,token);
         }
         if(token.stop_requested())throw std::runtime_error("map validation cancelled");
         if(package && !cache) {
-            if(overrides)tak::net::overrides::saveCache(root,*package,quota);
+            if(mods)tak::net::mods::saveCache(root,*package,quota);
             else tak::net::maps::saveCache(root,*package,quota);
         }
         return package;
@@ -2315,7 +2315,7 @@ void Server::finishValidations() {
         const bool valid=peer!=clients_.end() && room!=rooms_.end() &&
             peer->second->validationId==it->id && peer->second->roomId==it->room &&
             room->second.hostId==it->client && !room->second.running && room->second.mapId==it->map &&
-            (!it->overrides || room->second.opts.overridePolicy==2);
+            (!it->mods || room->second.opts.gameMods);
         if(!valid)it->stop.request_stop();
         if(it->result.wait_for(std::chrono::seconds(0))!=std::future_status::ready) {++it;continue;}
         auto job=std::move(*it);it=validations_.erase(it);
@@ -2325,26 +2325,26 @@ void Server::finishValidations() {
             auto& c=*peer->second;auto& r=room->second;c.validationId=0;
             if(!package && job.cache) {
                 if(uint64_t(mapMemory())+uint64_t(job.size)*2>limits_.mapMemory)throw std::runtime_error("server map memory budget reached");
-                auto& receive=job.overrides?c.overrideReceive:c.mapReceive;
+                auto& receive=job.mods?c.modReceive:c.mapReceive;
                 receive.begin(job.room,job.size,job.digest);
-                if(job.overrides)c.overrideStarted=c.overrideProgress=nowMs();
+                if(job.mods)c.modStarted=c.modProgress=nowMs();
                 else c.mapReceiveStarted=c.mapReceiveProgress=nowMs();
-                Writer request;request.u32(job.room);c.conn.send(job.overrides?Msg::OverrideRequest:Msg::MapRequest,request);
+                Writer request;request.u32(job.room);c.conn.send(job.mods?Msg::ModRequest:Msg::MapRequest,request);
                 continue;
             }
             if(!package || package->bytes.size()!=job.size || uint64_t(mapMemory())+uint64_t(package->bytes.size())*2>limits_.mapMemory)
                 throw std::runtime_error("package size/budget mismatch");
-            if(job.overrides) {
-                r.overridePackage=std::move(package);broadcastLobby(r);
+            if(job.mods) {
+                r.modPackage=std::move(package);broadcastLobby(r);
             } else acceptMap(r,std::move(package));
         } catch(const std::exception& e) {
             if(valid) {
                 auto& c=*peer->second;c.validationId=0;
-                Writer error;error.u32(job.room);error.str(e.what());c.conn.send(job.overrides?Msg::OverrideError:Msg::MapError,error);
+                Writer error;error.u32(job.room);error.str(e.what());c.conn.send(job.mods?Msg::ModError:Msg::MapError,error);
             }
         }
     }
-    for(auto& [id,peer]:clients_)if(!peer->validationId && !peer->overrideReceive.size && peer->deferredMapOffer) {
+    for(auto& [id,peer]:clients_)if(!peer->validationId && !peer->modReceive.size && peer->deferredMapOffer) {
         auto frame=std::move(*peer->deferredMapOffer);peer->deferredMapOffer.reset();
         mapMsg(*peer,frame);
     }
@@ -2358,40 +2358,55 @@ void Server::acceptMap(Room& room, std::shared_ptr<tak::net::maps::Package> pack
     room.mapVfs->setMapFiles(room.mapPackage->files);
     broadcastLobby(room);
 }
-void Server::overrideMsg(Client& c,const Frame& f) {
-    Room* room=roomOf(c);if(!room || !room->mission.empty() || !room->campaignBattleId.empty())return;
+void Server::modMsg(Client& c,const Frame& f) {
+    Room* room=roomOf(c);if(!room)return;
+    // Only the host of a skirmish room with GAME MODS on may upload game packs.
+    // Anyone else (a guest, or any player of a campaign/Crusades room) is refused
+    // outright, with an error rather than silence, so a modified client learns it.
+    if(f.kind==Msg::ModOffer || f.kind==Msg::ModChunk) {
+        const char* refused=!room->mission.empty() || !room->campaignBattleId.empty() ? "game mods are not allowed in campaigns"
+            : room->hostId!=c.id ? "only the host selects game mods"
+            : !room->opts.gameMods && f.kind==Msg::ModOffer ? "game mods are off in this game" : nullptr;
+        if(refused) {
+            if(room->hostId!=c.id)c.modReceive={};
+            Writer error;error.u32(room->id);error.str(refused);c.conn.send(Msg::ModError,error);
+            std::fprintf(stderr,"game %u: refused game-mod upload from client %u: %s\n",room->id,c.id,refused);
+            return;
+        }
+    }
+    if(!room->mission.empty() || !room->campaignBattleId.empty())return;
     try {
         Reader rd(f.payload.data(),f.payload.size());
-        if(f.kind==Msg::OverrideOffer){
-            if(room->running || room->hostId!=c.id || room->opts.overridePolicy!=2 || c.overrideReceive.size || c.validationId)return;
+        if(f.kind==Msg::ModOffer){
+            if(room->running || c.modReceive.size || c.validationId)return;
             const auto id=rd.u32();const auto label=rd.str(),digest=rd.str();const auto count=rd.u32();
-            if(!rd.ok || rd.p!=rd.end || id!=room->id || label!="overrides")throw std::runtime_error("invalid override offer");
-            if(count>tak::net::maps::kMaxBytes || uint64_t(mapMemory())+uint64_t(count)*2>limits_.mapMemory)throw std::runtime_error("server override memory budget reached");
-            c.overrideReceive.begin(id,count,digest);c.overrideStarted=c.overrideProgress=nowMs();
-            room->overrideData.reset();room->overridePackage.reset();
+            if(!rd.ok || rd.p!=rd.end || id!=room->id || label!="mods")throw std::runtime_error("invalid game mod offer");
+            if(count>tak::net::maps::kMaxBytes || uint64_t(mapMemory())+uint64_t(count)*2>limits_.mapMemory)throw std::runtime_error("server game mod memory budget reached");
+            c.modReceive.begin(id,count,digest);c.modStarted=c.modProgress=nowMs();
+            room->modData.reset();room->modPackage.reset();
             room->mapVfs.reset();room->mapPackage.reset();
             for(auto& [pid,peer]:clients_)if(peer->roomId==id){peer->mapReadyRoom=peer->mapOfferedRoom=0;peer->mapSend={};peer->mapReceive={};peer->validationId=0;peer->deferredMapOffer.reset();}
-            for(auto& [pid,peer]:clients_)if(peer->roomId==id){peer->overrideReady.clear();peer->overrideOffered.clear();peer->overrideSend={};if(pid!=c.id)peer->overrideReceive={};}
+            for(auto& [pid,peer]:clients_)if(peer->roomId==id){peer->modReady.clear();peer->modOffered.clear();peer->modSend={};if(pid!=c.id)peer->modReceive={};}
             broadcastLobby(*room);
             validatePackage(c,*room,true,true);
-        }else if(f.kind==Msg::OverrideChunk){
-            if(room->running || room->hostId!=c.id || room->opts.overridePolicy!=2)return;
-            c.overrideProgress=nowMs();if(c.overrideReceive.append(rd))validatePackage(c,*room,true,false);
-        }else if(f.kind==Msg::OverrideRequest){
+        }else if(f.kind==Msg::ModChunk){
+            if(room->running || !room->opts.gameMods)return;   // a late chunk after GAME MODS went off
+            c.modProgress=nowMs();if(c.modReceive.append(rd))validatePackage(c,*room,true,false);
+        }else if(f.kind==Msg::ModRequest){
             auto id=rd.u32();auto digest=rd.str();
-            if(!rd.ok || rd.p!=rd.end || id!=room->id || !room->overridePackage || digest!=room->overridePackage->digest || c.overrideSend.package)return;
-            c.overrideSend={id,0,room->overridePackage};
-        }else if(f.kind==Msg::OverrideReady){
+            if(!rd.ok || rd.p!=rd.end || id!=room->id || !room->modPackage || digest!=room->modPackage->digest || c.modSend.package)return;
+            c.modSend={id,0,room->modPackage};
+        }else if(f.kind==Msg::ModReady){
             auto id=rd.u32();auto digest=rd.str();
-            if(!rd.ok || rd.p!=rd.end || id!=room->id)throw std::runtime_error("override verification failed");
-            if(!room->overridePackage || digest!=room->overridePackage->digest)return;
-            c.overrideReady=digest;if(!room->running)broadcastLobby(*room);
-        }else if(f.kind==Msg::OverrideError){
-            auto id=rd.u32();auto why=rd.str();if(rd.ok && rd.p==rd.end && id==room->id && why.size()<=512){c.overrideReady.clear();c.overrideSend={};c.overrideReceive={};}
+            if(!rd.ok || rd.p!=rd.end || id!=room->id)throw std::runtime_error("game mod verification failed");
+            if(!room->modPackage || digest!=room->modPackage->digest)return;
+            c.modReady=digest;if(!room->running)broadcastLobby(*room);
+        }else if(f.kind==Msg::ModError){
+            auto id=rd.u32();auto why=rd.str();if(rd.ok && rd.p==rd.end && id==room->id && why.size()<=512){c.modReady.clear();c.modSend={};c.modReceive={};}
         }
     }catch(const std::exception& e){
-        c.validationId=0;c.overrideReceive={};c.overrideSend={};c.overrideReady.clear();
-        Writer error;error.u32(room->id);error.str(e.what());c.conn.send(Msg::OverrideError,error);
+        c.validationId=0;c.modReceive={};c.modSend={};c.modReady.clear();
+        Writer error;error.u32(room->id);error.str(e.what());c.conn.send(Msg::ModError,error);
     }
 }
 
@@ -2406,9 +2421,9 @@ void Server::mapMsg(Client& c, const Frame& f) {
             if (!rd.ok || rd.p != rd.end || id != room->id || name != room->mapId ||
                 !room->mission.empty() || tak::mapgen::isGeneratedMapId(name))
                 throw std::runtime_error("invalid map offer");
-            // Clients pipeline their map offer behind override chunks. Hold one
-            // bounded offer until the asynchronous override validation finishes.
-            if(c.validationId || c.overrideReceive.size) {
+            // Clients pipeline their map offer behind game-mod chunks. Hold one
+            // bounded offer until the asynchronous game-mod validation finishes.
+            if(c.validationId || c.modReceive.size) {
                 if(f.payload.size()>2048)throw std::runtime_error("map offer too large");
                 c.deferredMapOffer=f;return;
             }
@@ -2484,7 +2499,7 @@ void Server::tryStart(Client& c) {
     }
     // setupMatch's own gate, read from the package: every scenario file it will read must
     // be IN the verified package. A file the package leaves out would come from each
-    // machine's own install (an override pack can supply a map's .tdf), which the package
+    // machine's own install (a game mod pack can supply a map's .tdf), which the package
     // digest does not cover -- so the referee and the peers could play different rules.
     // (A damaged or misnamed file in the package is setupMatch's to refuse, by name.)
     const bool setupReads = r->mission.empty() && !r->opts.stressTest && !r->opts.benchmark && r->mapPackage &&
@@ -2516,16 +2531,16 @@ void Server::tryStart(Client& c) {
     // Failing here used to leave r->ref null and the game carried on as a relay --
     // silently giving up the canonical hash and, for a mission, the strategic AI.
     // A game that cannot be refereed does not start; the host is told why.
-    if(r->opts.overridePolicy==2 && !r->overrideData) {
-        if(!r->overridePackage){sendReject(c,"waiting for override packs");return;}
+    if(r->opts.gameMods && !r->modData) {
+        if(!r->modPackage){sendReject(c,"waiting for game mods");return;}
         try {
             auto ds=std::make_unique<DataSet>();ds->vfs=tak::hpi::Vfs(&retail_.vfs);
-            ds->vfs.setOverrideFiles(r->overridePackage->files);
+            ds->vfs.setModFiles(r->modPackage->files);
             tak::sim::setupRegistry(ds->reg,ds->vfs,false);
             if(retail_.haveCb){tak::sim::setupRegistry(ds->regCb,ds->vfs,true);ds->haveCb=true;}
-            ds->hash=tak::hpi::gameplayHash(ds->vfs);ds->built=true;r->overrideData=std::move(ds);
-            if(r->mapPackage){r->mapVfs=std::make_unique<tak::hpi::Vfs>(&r->overrideData->vfs);r->mapVfs->setMapFiles(r->mapPackage->files);}
-        }catch(const std::exception& e){sendReject(c,std::string("cannot load override packs: ")+e.what());return;}
+            ds->hash=tak::hpi::gameplayHash(ds->vfs);ds->built=true;r->modData=std::move(ds);
+            if(r->mapPackage){r->mapVfs=std::make_unique<tak::hpi::Vfs>(&r->modData->vfs);r->mapVfs->setMapFiles(r->mapPackage->files);}
+        }catch(const std::exception& e){sendReject(c,std::string("cannot load game mods: ")+e.what());return;}
     }
     DataSet& dataSet = roomData(*r);
     const bool wantMission = !r->mission.empty();
@@ -2557,9 +2572,9 @@ void Server::tryStart(Client& c) {
     for (int i = 0; i < kMaxSlots; ++i) r->startSlots[i] = r->slots[i];   // for the replay
     // Build the referee sim (and AI controllers) if we have game data. The world
     // is built by the SAME setupMatch the clients use, so its hash is canonical.
-    // Everything the referee reads comes from the data set for THIS game's override
-    // tier (retail for none/cosmetic, full for full), so the referee's sim matches
-    // the clients that adopted the same tier.
+    // Everything the referee reads comes from the data set for THIS game (retail,
+    // or retail + the room's game mods), so the referee's sim matches the clients
+    // that mounted the same game mods.
     DataSet* ds = &dataSet;
     const bool isMission = wantMission;
     // A campaign mission builds its own world (placements + the in-sim god script) and
@@ -2811,7 +2826,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             Reader rd(f.payload.data(), f.payload.size());
             GameOptions o; get(rd, o);
             if (!tak::sim::validPathfindingMode(uint8_t(o.pathfindingMode))) { sendReject(c,"invalid pathfinding mode"); return; }
-            // Sanitise the raw options (overridePolicy and speed are handled below).
+            // Sanitise the raw options (gameMods and speed are handled below).
             o.unitCap = clampUnitCap(o.unitCap); o.monarchExpendable = o.monarchExpendable ? 1 : 0;
             o.stressTest = std::min<uint8_t>(o.stressTest, kStressStaged);
             o.fogExplored = std::min<uint8_t>(o.fogExplored, 2);   // 0/1/2, see CreateGame
@@ -2838,12 +2853,14 @@ void Server::gameMsg(Client& c, const Frame& f) {
                 // The unit limit is fixed when the room is created.
                 o.unitCap = r->opts.unitCap;
                 // Lobby: adopt the remaining options and rebroadcast the slot table.
-                o.overridePolicy = std::min<uint8_t>(o.overridePolicy,2);
-                if(o.overridePolicy!=r->opts.overridePolicy){
-                    r->overrideData.reset();r->overridePackage.reset();
+                o.gameMods = o.gameMods ? 1 : 0;
+                // Campaign and Crusades rooms never run game mods.
+                if(!r->mission.empty() || !r->campaignBattleId.empty())o.gameMods=0;
+                if(o.gameMods!=r->opts.gameMods){
+                    r->modData.reset();r->modPackage.reset();
                     r->mapVfs.reset();r->mapPackage.reset();
                     for(auto& [id,peer]:clients_)if(peer->roomId==r->id){peer->mapReadyRoom=peer->mapOfferedRoom=0;peer->mapSend={};peer->mapReceive={};peer->validationId=0;peer->deferredMapOffer.reset();}
-                    for(auto& [id,peer]:clients_)if(peer->roomId==r->id){peer->overrideReady.clear();peer->overrideOffered.clear();peer->overrideSend={};peer->overrideReceive={};}
+                    for(auto& [id,peer]:clients_)if(peer->roomId==r->id){peer->modReady.clear();peer->modOffered.clear();peer->modSend={};peer->modReceive={};}
                 }
                 r->opts = o;
                 broadcastLobby(*r);
@@ -2861,9 +2878,9 @@ void Server::gameMsg(Client& c, const Frame& f) {
         }
         case Msg::StartGame: tryStart(c); break;
         case Msg::Loaded: {
-            // The client reports its gameplay-data fingerprint at the room's override
-            // tier. With referee data we hold it to the tier's canonical hash, so a
-            // Full-tier player missing (or differing on) a gameplay override is caught
+            // The client reports its gameplay-data fingerprint with the room's game
+            // mods mounted. With referee data we hold it to the room's canonical hash,
+            // so a player missing (or differing on) a game mod is caught
             // here, before the first tick, instead of desyncing mid-game.
             Reader rd(f.payload.data(), f.payload.size());
             uint64_t clientHash = rd.u64();
@@ -2879,15 +2896,15 @@ void Server::gameMsg(Client& c, const Frame& f) {
                 if (clientHash != want) {
                     char msg[176];
                     std::snprintf(msg, sizeof msg,
-                        "gameplay-override mismatch (tier %d: server %016llx, you %016llx) -- "
-                        "you don't have the same gameplay overrides as the host",
-                        int(r->opts.overridePolicy), (unsigned long long)want,
+                        "game data mismatch (game mods %s: server %016llx, you %016llx) -- "
+                        "you don't have the same game mods as the host",
+                        r->opts.gameMods ? "on" : "off", (unsigned long long)want,
                         (unsigned long long)clientHash);
                     sendReject(c, msg);
                     c.conn.fail("gamedatahash");
-                    std::fprintf(stderr, "game %u: client %u rejected at load: %016llx != %016llx (tier %d)\n",
+                    std::fprintf(stderr, "game %u: client %u rejected at load: %016llx != %016llx (game mods %d)\n",
                         r->id, c.id, (unsigned long long)clientHash, (unsigned long long)want,
-                        int(r->opts.overridePolicy));
+                        int(r->opts.gameMods));
                     return;
                 }
             }
@@ -3328,10 +3345,10 @@ bool Server::allowCampaignWork(Client& c,const Frame& f) {
 bool Server::allowLobbyWork(Client& c,const Frame& f) {
     unsigned cost=1;
     switch(f.kind) {
-        case Msg::OverrideChunk: case Msg::MapChunk:return true; // upload reads are paced before recv(), not discarded
-        case Msg::CreateGame: case Msg::StartGame: case Msg::OverrideOffer: case Msg::MapOffer: cost=16;break;
+        case Msg::ModChunk: case Msg::MapChunk:return true; // upload reads are paced before recv(), not discarded
+        case Msg::CreateGame: case Msg::StartGame: case Msg::ModOffer: case Msg::MapOffer: cost=16;break;
         case Msg::ListGames: case Msg::JoinGame: case Msg::Spectate:
-        case Msg::OverrideRequest: case Msg::OverrideReady: case Msg::OverrideError:
+        case Msg::ModRequest: case Msg::ModReady: case Msg::ModError:
         case Msg::Chat: case Msg::MapRequest: case Msg::MapReady: case Msg::MapError:
         case Msg::Ping: case Msg::Pong: case Msg::SlotUpdate: case Msg::MoveSeat: case Msg::SetGameOptions:
         case Msg::LeaveGame: case Msg::Rejoin: case Msg::Kick: case Msg::SetPause:
@@ -3358,9 +3375,9 @@ bool Server::allowLobbyWork(Client& c,const Frame& f) {
 size_t Server::mapMemory() const {
     size_t used=0;
     for(const auto& job:validations_)used+=size_t(job.size)*2;
-    for(const auto& [id,peer]:clients_)used+=(size_t(peer->mapReceive.size)+peer->overrideReceive.size)*2;
+    for(const auto& [id,peer]:clients_)used+=(size_t(peer->mapReceive.size)+peer->modReceive.size)*2;
     for(const auto& [id,room]:rooms_)if(room.mapPackage)used+=room.mapPackage->bytes.size()*2;
-    for(const auto& [id,room]:rooms_)if(room.overridePackage)used+=room.overridePackage->bytes.size()*2;
+    for(const auto& [id,room]:rooms_)if(room.modPackage)used+=room.modPackage->bytes.size()*2;
     return used;
 }
 
@@ -3425,7 +3442,7 @@ void Server::onFrame(Client& c, const Frame& f) {
         }
         return;
     }
-    if(c.state==Client::InGame && f.kind>=Msg::OverrideOffer && f.kind<=Msg::OverrideError){overrideMsg(c,f);return;}
+    if(c.state==Client::InGame && f.kind>=Msg::ModOffer && f.kind<=Msg::ModError){modMsg(c,f);return;}
     if (c.state == Client::InGame && (f.kind == Msg::MapOffer || f.kind == Msg::MapRequest ||
         f.kind == Msg::MapChunk || f.kind == Msg::MapReady || f.kind == Msg::MapError)) {
         mapMsg(c, f); return;
@@ -3529,7 +3546,7 @@ int Server::run() {
         // deadline in.
         for (const auto& [id, c] : clients_) {
             if (c->conn.bufferedInput() && canRead(*c,now))soonest=now;
-            if ((c->replaying || c->mapSend.package || c->mapReceive.size || c->overrideSend.package || c->overrideReceive.size ||
+            if ((c->replaying || c->mapSend.package || c->mapReceive.size || c->modSend.package || c->modReceive.size ||
                  c->conn.lowWaiting()) && now + 10 < soonest) soonest = now + 10;
         }
         int timeout = int(soonest > now ? soonest - now : 0);
@@ -3600,7 +3617,7 @@ int Server::run() {
             Client& c = *it->second;
             if(!canRead(c,now) && (pfds[i].revents & (POLLHUP|POLLERR))) {dead.push_back(id);continue;}
             if (((pfds[i].revents & (POLLIN | POLLHUP | POLLERR)) || c.conn.bufferedInput()) && canRead(c,now)) {
-                const bool uploading=c.mapReceive.size!=0 || c.overrideReceive.size!=0;
+                const bool uploading=c.mapReceive.size!=0 || c.modReceive.size!=0;
                 if(uploading) {c.uploadWork.take(now,4096,64);uploadGlobalWork_.take(now,16384,64);}
                 if (!c.conn.recv(uploading?65536:1u<<20)) { dead.push_back(id); continue; }
                 Frame fr;
@@ -3748,10 +3765,10 @@ int Server::run() {
             if(c->mapReceive.size && (now-c->mapReceiveProgress>30000 || now-c->mapReceiveStarted>300000)) {
                 c->mapReceive={};c->conn.fail("map upload deadline exceeded");dead.push_back(id);continue;
             }
-            if(c->overrideReceive.size && (now-c->overrideProgress>30000 || now-c->overrideStarted>300000)){
-                c->overrideReceive={};c->conn.fail("override upload deadline exceeded");dead.push_back(id);continue;
+            if(c->modReceive.size && (now-c->modProgress>30000 || now-c->modStarted>300000)){
+                c->modReceive={};c->conn.fail("game mod upload deadline exceeded");dead.push_back(id);continue;
             }
-            c->overrideSend.pump(c->conn,Msg::OverrideChunk);
+            c->modSend.pump(c->conn,Msg::ModChunk);
             c->mapSend.pump(c->conn);
             if (!c->conn.flushWrite()) { dead.push_back(id); continue; }
             if (c->state != Client::Handshake && now - c->lastRecvMs > kPingIdleMs &&

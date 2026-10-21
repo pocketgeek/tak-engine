@@ -39,7 +39,7 @@ ReplayHeader replayHeaderFor(const GameOptions& o, const std::string& mapId, con
     h.engineVersion = tak::kVersion;
     h.crusades = o.crusades;
     h.forfeitSelfDestruct = o.forfeitSelfDestruct;
-    h.overridePolicy = o.overridePolicy;
+    h.gameMods = o.gameMods;
     h.unitCap = o.unitCap;
     h.monarchExpendable = o.monarchExpendable;
     h.doubleSight = o.doubleSight;
@@ -64,7 +64,7 @@ void matchInputsFrom(const ReplayHeader& h, GameOptions& o, SlotInfo* slots) {
     o = GameOptions{};
     o.crusades = h.crusades;
     o.forfeitSelfDestruct = h.forfeitSelfDestruct;
-    o.overridePolicy = h.overridePolicy;
+    o.gameMods = h.gameMods;
     o.unitCap = uint16_t(h.unitCap);
     o.monarchExpendable = h.monarchExpendable;
     o.doubleSight = h.doubleSight;

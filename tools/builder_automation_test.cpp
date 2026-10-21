@@ -278,7 +278,7 @@ void areaCommandPolicy(const sim::TypeRegistry& registry) {
     check(w.unit(id)->orders.empty(),"area command rejects a lodestone absent from the builder's build menu");
 }
 void realLodestones(const char* install) {
-    auto vfs=hpi::mountRetailRoot(install,hpi::OverridePolicy::None);
+    auto vfs=hpi::mountRetailRoot(install);
     for(bool crusades:{false,true}) {
         sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,crusades);
         areaCommandPolicy(registry);

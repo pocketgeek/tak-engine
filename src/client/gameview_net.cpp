@@ -195,15 +195,15 @@
         // Build the world through the SHARED setup so the server's referee sim and
         // every client produce a bit-identical world (and hash). Client-only bits
         // (colours, camera, local player, panel) stay here.
-        // The game's balance AND override tier are the ROOM's (lobby choices), which
-        // may differ from how this client was launched. Remount to the room's tier
-        // (so gameplay overrides -- or their absence -- match the referee) and
+        // The game's balance AND game mods are the ROOM's (lobby choices), which
+        // may differ from how this client was launched. Remount with the room's
+        // game mods (so gameplay data -- or its absence -- matches the referee) and
         // rebuild the registry, so our world and hash agree with the server's
-        // referee. remountPolicy already rebuilds the registry for the current
+        // referee. remountMods already rebuilds the registry for the current
         // crusades setting; handle a crusades-only change separately.
         resetMinimap();
         mapView_.quiesce();
-        remountPolicy(room.opts.overridePolicy);
+        remountMods();
         vfs_.setMapFiles(mp_ && mp_->mapPackage() && room.mission.empty() &&
             !tak::mapgen::isGeneratedMapId(room.mapId) ? mp_->mapPackage()->files : room.mission.empty()
                 ? std::make_shared<const tak::hpi::Vfs::Files>() : nullptr);
@@ -1089,7 +1089,7 @@ void GameView::autoplayStep() {
         }
         if (st == S::Lobby && (autoMode == 1 || autoMode == 4 || autoMode == 7 || autoMode == 8)) {
             tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
-            o.overridePolicy = uint8_t(policy_);   // room tier = this host's launch tier
+            o.gameMods = mods_.game ? 1 : 0;   // room game mods = this host's --mods
             // TAK_SPEED: set the game speed in tenths (10 = 1x) for headless timing
             // tests -- re-cadences the server without touching the (deterministic) sim.
             if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, tak::net::kMaxDevGameSpeed));
@@ -1165,7 +1165,7 @@ void GameView::autoplayStep() {
             if (!mp_->games().empty()) mp_->joinGame(mp_->games().front().id, "");
             else if (autoMode == 3 && mpListMs_ && SDL_GetTicks64() - mpFirstListMs_ > 800) {
                 tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
-            o.overridePolicy = uint8_t(policy_);   // room tier = this host's launch tier
+            o.gameMods = mods_.game ? 1 : 0;   // room game mods = this host's --mods
                 o.mapScenario = tak::devFlag("TAK_MAP_SCENARIO") ? 1 : 0;   // as for modes 1/4/7
                 mp_->createGame(mapId, "", mapId, o, mpCapacity(o.mapScenario != 0));
             }

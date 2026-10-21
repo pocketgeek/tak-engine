@@ -87,7 +87,7 @@ static int constructionFlightTrace(int argc,char** argv) {
     const int32_t siteX=number(argv[12]),siteZ=number(argv[13]);
     const int32_t speed=number(argv[14]);
 
-    hpi::Vfs vfs=hpi::mountRetailRoot(argv[2],hpi::OverridePolicy::None);
+    hpi::Vfs vfs=hpi::mountRetailRoot(argv[2]);
     sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,false);
     const auto* monarch=registry.find("zonhunt");
     if(!monarch || !monarch->canFly) return 2;
@@ -146,7 +146,7 @@ static int persistentConstructionFlightTrace(int argc,char** argv) {
     const int32_t siteX=number(argv[9]),siteZ=number(argv[10]);
     const int32_t speed=number(argv[11]);
     const uint32_t seed=uint32_t(number(argv[12]));
-    hpi::Vfs vfs=hpi::mountRetailRoot(argv[2],hpi::OverridePolicy::None);
+    hpi::Vfs vfs=hpi::mountRetailRoot(argv[2]);
     sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,false);
     const auto* monarch=registry.find("zonhunt");const auto* output=registry.find("zonter");
     if(!monarch || !output || !monarch->canFly) return 2;

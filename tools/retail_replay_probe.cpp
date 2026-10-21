@@ -689,7 +689,7 @@ int main(int argc, char** argv) {
     using namespace tak::sim;
     if (argc==3 && std::string(argv[1])=="--ground-owner") return RetailReplayProbe::groundOwner(argv[2]);
     if (argc==7 && std::string(argv[2])=="--crowd-movement") {
-        auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
+        auto vfs=hpi::mountRetailRoot(argv[1]);
         TypeRegistry registry;setupRegistry(registry,vfs,std::stoi(argv[4])!=0);
         MatchConfig config;config.vfs=&vfs;config.mapPath=hpi::findMap(vfs,argv[3]);config.slots.resize(1);
         World world;setupMatch(world,registry,config);world.setVisPlayer(-1);
@@ -714,7 +714,7 @@ int main(int argc, char** argv) {
         // Input: count rounds budget base crt unitCap, then "x z legs gx gz..."
         // per unit; legs after the first are queued. unitCap sizes the
         // production pools (World::entityPoolCapacity).
-        auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
+        auto vfs=hpi::mountRetailRoot(argv[1]);
         TypeRegistry registry;setupRegistry(registry,vfs,std::stoi(argv[4])!=0);
         MatchConfig config;config.vfs=&vfs;config.mapPath=hpi::findMap(vfs,argv[3]);config.slots.resize(1);
         config.pathfindingMode=PathfindingMode::Retail;
@@ -765,7 +765,7 @@ int main(int argc, char** argv) {
         const int parkLossAt=park?std::stoi(argv[7]):0,parkFollowAt=park?std::stoi(argv[8]):0;
         const int replaceAt=replace?std::stoi(argv[7]):0;
         const int replaceX=argc==10?std::stoi(argv[8]):512,replaceZ=argc==10?std::stoi(argv[9]):696;
-        auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
+        auto vfs=hpi::mountRetailRoot(argv[1]);
         TypeRegistry registry;setupRegistry(registry,vfs,std::stoi(argv[4])!=0);
         const auto* gateType=registry.find(argv[3]);const auto* moverType=registry.find("verpult");
         const int rounds=std::stoi(argv[5]);const int32_t base=std::stoi(argv[6]);
@@ -846,7 +846,7 @@ int main(int argc, char** argv) {
              std::string(argv[4])=="--search-movement" ||
              std::string(argv[4])=="--placement-queries" || std::string(argv[4])=="--feature-map" ||
              std::string(argv[4])=="--corpse-features");
-        auto vfs = hpi::mountRetailRoot(argv[1], hpi::OverridePolicy::None);
+        auto vfs = hpi::mountRetailRoot(argv[1]);
         TypeRegistry registry;
         unsigned crusades=0;
         if (version>=34 && (!(input>>crusades) || crusades>1))

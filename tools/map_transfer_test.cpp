@@ -24,7 +24,7 @@ static void write(const std::filesystem::path& path, const std::vector<uint8_t>&
     std::ofstream out(path, std::ios::binary); out.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
 }
 static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) {
-    auto original=hpi::mountRetailRoot(hostRoot,hpi::OverridePolicy::None);
+    auto original=hpi::mountRetailRoot(hostRoot);
     const auto stock=net::maps::build(original,"Ulasem Arena");
     const auto starts=sim::parseStartPositions(original,stock->mapPath);
     check(!starts.empty(),"solo fixture needs a start");
@@ -62,8 +62,8 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
     const std::string restriction="[ARAKING]{}\n";
     entries.push_back({"kmap/solo authored.tdf",{restriction.begin(),restriction.end()}});
     write(std::filesystem::path(hostRoot)/"Maps"/"solo-authored.kmp",hpi::pack(entries));
-    auto hostData=hpi::mountRetailRoot(hostRoot,hpi::OverridePolicy::None);
-    auto peerData=hpi::mountRetailRoot(peerRoot,hpi::OverridePolicy::None);
+    auto hostData=hpi::mountRetailRoot(hostRoot);
+    auto peerData=hpi::mountRetailRoot(peerRoot);
     net::MpClient host,observer;host.setMapRoot(hostRoot);observer.setMapRoot(peerRoot);
     host.setDataHash(hpi::gameplayHash(hostData));observer.setDataHash(hpi::gameplayHash(peerData));
     check(host.connect("127.0.0.1",port,"solo-author"),"solo host connect");
@@ -97,7 +97,7 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
     while(std::chrono::steady_clock::now()<until) {
         check(host.poll(),host.error().c_str());
         if(!created && host.state()==net::MpClient::State::Lobby) {
-            net::GameOptions opts;opts.crusades=1;opts.overridePolicy=0;
+            net::GameOptions opts;opts.crusades=1;opts.gameMods=0;
             host.createGame("solo authored test","","Solo Authored",opts,2);created=true;
         }
         if(!ready && host.room().id) {host.setSlot(0,1,0,0,0,1);ready=true;}
@@ -156,7 +156,7 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
 
 int main(int argc, char** argv) try {
     if(argc>=4 && argc<=6 && std::string(argv[1])=="--export-package") {
-        auto data=hpi::mountRetailRoot(argv[2],hpi::OverridePolicy::None);
+        auto data=hpi::mountRetailRoot(argv[2]);
         const auto package=net::maps::build(data,argc>=5 ? argv[4] : "Ulasem Arena");
         if(argc==6) {
             // A crafted host's package: the same map with one companion (argv[5] is its
@@ -179,7 +179,7 @@ int main(int argc, char** argv) try {
         const auto port = uint16_t(std::stoi(argv[2]));
         const bool diplomacy=std::getenv("TAK_DIPLOMACY_NETWORK")!=nullptr;
         if (argc == 5) {
-            auto original = hpi::mountRetailRoot(argv[3], hpi::OverridePolicy::None);
+            auto original = hpi::mountRetailRoot(argv[3]);
             auto package = net::maps::build(original, "Ulasem Arena");
             std::vector<hpi::PackFile> entries;
             for (const auto& [name,data] : *package->files) {
@@ -228,8 +228,8 @@ int main(int argc, char** argv) try {
                 write(std::filesystem::path(argv[4])/"Maps"/"different-copy.kmp",hpi::pack(entries));
             }
         }
-        hpi::Vfs hostData = hpi::mountRetailRoot(argv[3], hpi::OverridePolicy::None);
-        hpi::Vfs peerData = hpi::mountRetailRoot(argv[4], hpi::OverridePolicy::None);
+        hpi::Vfs hostData = hpi::mountRetailRoot(argv[3]);
+        hpi::Vfs peerData = hpi::mountRetailRoot(argv[4]);
         net::MpClient host, peer, spectator;
         host.setMapRoot(argv[3]); peer.setMapRoot(argv[4]); spectator.setMapRoot(std::getenv("TAK_MAP_TEST_SPECTATOR_ROOT") ? std::getenv("TAK_MAP_TEST_SPECTATOR_ROOT") : argv[4]);
         host.setDataHash(hpi::gameplayHash(hostData));
@@ -274,7 +274,7 @@ int main(int argc, char** argv) try {
         while (std::chrono::steady_clock::now() < until) {
             check(host.poll(), host.error().c_str()); check(peer.poll(), peer.error().c_str());
             if (!created && host.state() == net::MpClient::State::Lobby) {
-                net::GameOptions opts; opts.crusades = 1; opts.overridePolicy = 0;
+                net::GameOptions opts; opts.crusades = 1; opts.gameMods = 0;
                 host.createGame("map transfer test", "", mapId, opts, diplomacy ? 3 : 2); created = true;
             }
             if (!joined && host.room().id && peer.state() == net::MpClient::State::Lobby) {
@@ -538,7 +538,7 @@ int main(int argc, char** argv) try {
     hpi::Vfs legacy; legacy.setMapFiles(legacyFiles);
     check(net::maps::build(legacy,"test")->files->size()==2,"map without companions rejected");
     if (argc == 2) {
-        auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
+        auto vfs=hpi::mountRetailRoot(argv[1]);
         {
             // MAP SCENARIO (259) on the shipped maps, read from the very packages a room
             // verifies: what the create screens offer and the seats the room requires.

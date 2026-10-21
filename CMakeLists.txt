@@ -161,7 +161,7 @@ add_library(tak-formats
   src/net/client.cpp
   src/net/replaywriter.cpp
   src/net/mappackage.cpp
-  src/net/overridepackage.cpp
+  src/net/modpackage.cpp
   src/net/auth.cpp
   src/util/png.cpp
   src/util/appicon.cpp
@@ -1278,11 +1278,11 @@ add_executable(selection_order_test tools/selection_order_test.cpp)
 target_link_libraries(selection_order_test PRIVATE tak-formats)
 add_test(NAME selection_order COMMAND selection_order_test)
 set_tests_properties(selection_order PROPERTIES LABELS legion)
-add_executable(override_transfer_test tools/override_transfer_test.cpp)
-target_link_libraries(override_transfer_test PRIVATE tak-formats)
-add_executable(override_packs_test tools/override_packs_test.cpp)
-target_link_libraries(override_packs_test PRIVATE tak-formats)
-add_test(NAME override_packs COMMAND override_packs_test)
+add_executable(mod_transfer_test tools/mod_transfer_test.cpp)
+target_link_libraries(mod_transfer_test PRIVATE tak-formats)
+add_executable(mod_packs_test tools/mod_packs_test.cpp)
+target_link_libraries(mod_packs_test PRIVATE tak-formats)
+add_test(NAME mod_packs COMMAND mod_packs_test)
 add_executable(room_worker_test tools/room_worker_test.cpp src/server/roomtick.cpp src/ai/ai.cpp)
 target_link_libraries(room_worker_test PRIVATE tak-formats)
 add_test(NAME room_worker COMMAND room_worker_test)
@@ -1909,9 +1909,9 @@ if(TAK_BUILD_CLIENT)
     add_test(NAME voice COMMAND voice_test)
     set_tests_properties(voice PROPERTIES TIMEOUT 60 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     if(UNIX AND NOT APPLE)
-      add_executable(override_settings_test tools/override_settings_test.cpp src/client/settings.cpp)
-      target_link_libraries(override_settings_test PRIVATE tak-formats ${_tak_sdl2})
-      add_test(NAME override_settings COMMAND override_settings_test)
+      add_executable(mod_settings_test tools/mod_settings_test.cpp src/client/settings.cpp)
+      target_link_libraries(mod_settings_test PRIVATE tak-formats ${_tak_sdl2})
+      add_test(NAME mod_settings COMMAND mod_settings_test)
     endif()
     # GAME DATA FOLDER (client/datafolder.h): precedence, picks, elision, restart
     # arguments for takclient and Cartographer, the Windows restart command line, and
@@ -2892,9 +2892,9 @@ endif()
 if(TAK_TEST_DATA)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
-    add_test(NAME override_transfer COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/override_transfer_test.py"
-      --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:override_transfer_test>" --data "${TAK_TEST_DATA}")
-    set_tests_properties(override_transfer PROPERTIES TIMEOUT 150)
+    add_test(NAME mod_transfer COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/mod_transfer_test.py"
+      --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:mod_transfer_test>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(mod_transfer PROPERTIES TIMEOUT 150)
     add_test(NAME crusades_hardening_network COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/crusades_hardening_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --admin "$<TARGET_FILE:crusades_admin>")

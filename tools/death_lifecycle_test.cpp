@@ -10,7 +10,7 @@ using namespace tak;
 
 int main(int argc,char** argv) {
     if(argc!=2) return 2;
-    const auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
+    const auto vfs=hpi::mountRetailRoot(argv[1]);
     int failures=0, cases=0;
     for(bool balance:{false,true}) {
         sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,balance);

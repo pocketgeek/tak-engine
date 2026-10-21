@@ -120,8 +120,9 @@ struct Settings {
         bool monarchExpendable = false;
         bool allowSpectators = true;   // multiplayer ALLOW SPECTATORS (on, as every room was before it)
         bool generated = false;
+        bool gameMods = false;         // multiplayer GAME MODS toggle (single player is always on)
         sim::PathfindingMode pathfindingMode = sim::PathfindingMode::Retail;
-        int unitCap = 2000, fog = 1, overrides = 1;
+        int unitCap = 2000, fog = 1;
         // START LOCATIONS, net::GameOptions::randomStarts: 0 FIXED, 1 RANDOM, 2 BY SLOT.
         // Saved under the same key it had as a RANDOM on/off toggle, so 0 and 1 keep
         // their meaning.
@@ -130,7 +131,10 @@ struct Settings {
         std::string name = "game", generator;
         friend bool operator==(const GameCreate&, const GameCreate&) = default;
     } gameCreate;
-    std::vector<std::string> hostOverridePacks, cosmeticOverridePacks;
+    // Ticked mod packs, by folder name: mods/game/<pack> (single player, and the
+    // multiplayer host with GAME MODS on) and mods/cosmetic/<pack> (always, every
+    // player, never sent anywhere). Saved as mods.gamePack / mods.cosmeticPack.
+    std::vector<std::string> gameModPacks, cosmeticModPacks;
     std::string lastMap;           // last map picked in the create/SP lobby (remembered)
     // Servers that connected successfully (most recent first, capped at 8). The
     // menu's CONNECT dropdown lists these under the default server.
@@ -187,7 +191,7 @@ struct Settings {
             && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion
             && a.playerName == b.playerName && a.accountName == b.accountName
             && a.streamRememberKey == b.streamRememberKey
-            && a.hostOverridePacks == b.hostOverridePacks && a.cosmeticOverridePacks == b.cosmeticOverridePacks
+            && a.gameModPacks == b.gameModPacks && a.cosmeticModPacks == b.cosmeticModPacks
             && a.lastMap == b.lastMap && a.gameCreate == b.gameCreate
             && a.dataDir == b.dataDir && a.dataManifest == b.dataManifest
             && a.knownServers == b.knownServers
@@ -256,7 +260,7 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.streamRememberKey = cur.streamRememberKey;
     d.lastMap = cur.lastMap;
     d.gameCreate = cur.gameCreate;
-    d.hostOverridePacks=cur.hostOverridePacks;d.cosmeticOverridePacks=cur.cosmeticOverridePacks;
+    d.gameModPacks=cur.gameModPacks;d.cosmeticModPacks=cur.cosmeticModPacks;
     d.hotkeys = cur.hotkeys;                      // reset from the Hotkeys screen
     d.dataDir = cur.dataDir;
     d.dataManifest = cur.dataManifest;

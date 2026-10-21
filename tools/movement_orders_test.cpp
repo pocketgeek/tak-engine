@@ -440,7 +440,7 @@ uint64_t queuedGroupMoves(PathfindingMode mode,bool serial) {
     return w.stateHash();
 }
 void mazeProduction(const char* data) {
-    auto vfs=tak::hpi::mountRetailRoot(data,tak::hpi::OverridePolicy::None);
+    auto vfs=tak::hpi::mountRetailRoot(data);
     TypeRegistry registry;setupRegistry(registry,vfs,true);
     constexpr auto recipe="~gen1~0800f0a981b8b476a2cb010008000808ffffff67ff034a616e6b204d617a65207631";
     auto generated=tak::mapgen::generate(tak::mapgen::decodeMapId(recipe),vfs);
@@ -518,7 +518,7 @@ uint64_t trollRally(const TypeRegistry& registry,bool serial,const tak::hpi::Vfs
 // `open`: only the open-ground cohorts. `maze`: only the generated-maze
 // cohort, serial and threaded.
 void trollProduction(const char* data,bool open=false,bool mazeOnly=false) {
-    auto vfs=tak::hpi::mountRetailRoot(data,tak::hpi::OverridePolicy::None);
+    auto vfs=tak::hpi::mountRetailRoot(data);
     for(bool crusades:{false,true}) {
         TypeRegistry registry;setupRegistry(registry,vfs,crusades);
         if(mazeOnly&&!crusades)continue;

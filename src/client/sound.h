@@ -68,7 +68,7 @@ public:
     }
     void init(const tak::hpi::Vfs& vfs) {
         vfs_ = &vfs;
-        // Index the sounds/ namespace by stem (user overrides already win via the
+        // Index the sounds/ namespace by stem (user mods already win via the
         // VFS). A missing sounds dir must NOT skip audio init (music shares the
         // device); just index whatever's there.
         for (const std::string& path : vfs.list("sounds")) {
@@ -117,9 +117,9 @@ public:
     // Live output-device switch from Options: re-open on the now-current device.
     void reopenDevice() { openOutput(); }
 
-    // (User sound overrides -- e.g. overrides/click.hpi replacing the faction
-    // order tones -- now arrive through the VFS's overrides layer, which wins the
-    // sounds/ namespace automatically, so no separate override loader is needed.)
+    // (User sound mods -- e.g. the always-on mods/cosmetic/click.hpi replacing the
+    // faction order tones -- arrive through the VFS's mod layer, which wins the
+    // sounds/ namespace automatically, so no separate sound loader is needed.)
 
     bool has(const std::string& name) const {
         std::string n = name;

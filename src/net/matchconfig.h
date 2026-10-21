@@ -29,7 +29,7 @@ sim::MatchConfig matchConfigFor(const GameOptions& o, const SlotInfo* slots, uin
                                 bool mission = false);
 
 // The replay header for a game started from these inputs (the server's writer and the
-// client's). The caller adds what only it knows: the map and override digests and the
+// client's). The caller adds what only it knows: the map and mod digests and the
 // gameplay-data hash the game ran on.
 ReplayHeader replayHeaderFor(const GameOptions& o, const std::string& mapId, const std::string& mission,
                              const SlotInfo* startSlots, uint32_t seed);

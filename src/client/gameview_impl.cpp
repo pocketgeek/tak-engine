@@ -21,14 +21,14 @@
 // methods stay inline in the header. Grouping is by name heuristic.
 
     GameView::GameView(SDL_Renderer* ren, tak::hpi::Vfs vfs, const std::string& mapPath,
-             const std::string& installRoot, tak::hpi::OverridePolicy policy,
+             const std::string& installRoot, tak::hpi::ModUse mods,
              bool demo, bool scenario,
              bool bare, const std::string& side, const std::string& aiSide,
              bool crusades)
         // (side_ initialized below before loadPanel uses it; vfs_ must precede
         //  mapView_ in the member list so the Compositor can borrow it)
         : ren_(ren), vfs_(std::move(vfs)), mapView_(ren, vfs_, mapPath),
-          installRoot_(installRoot), policy_(policy),
+          installRoot_(installRoot), mods_(mods),
           mapPath_(mapPath), crusades_(crusades), side_(side), aiSide_(aiSide) {
         if(vfs_.has(mapSibling(".ota"))) {
             const auto ota=vtdf(mapSibling(".ota"));
@@ -2666,17 +2666,25 @@
         return tak::vpath::replaceExtension(mapPath_,ext);
     }
 
-    void GameView::remountPolicy(uint8_t p) {
-        auto pol = tak::hpi::OverridePolicy(p <= 2 ? p : 2);
+    void GameView::remountMods() {
         if (installRoot_.empty()) return;
-        policy_ = pol;
-        if(mp_) {
-            const bool host=mp_->room().hostId==mp_->myClientId();
-            const auto localPolicy=pol==tak::hpi::OverridePolicy::None
-                ? tak::hpi::OverridePolicy::None : tak::hpi::OverridePolicy::Cosmetic;
-            const auto local=host?mp_->hostOverridePacks():settings_?settings_->cosmeticOverridePacks:std::vector<std::string>{};
-            vfs_=mp_->overrideVfs(localPolicy,local);
-        } else vfs_ = tak::hpi::mountRetailRoot(std::filesystem::u8path(installRoot_), pol,settings_?settings_->hostOverridePacks:std::vector<std::string>{});
+        // Cosmetic mods are this player's own (never sent, never hashed); game mods
+        // come from the room's verified package (multiplayer and single player alike).
+        // The always-on mods/cosmetic/*.hpi archives load in every game, campaigns
+        // included (--mods none|game leaves them out with the cosmetic packs).
+        const auto cosmetic=mods_.cosmetic && settings_?settings_->cosmeticModPacks:std::vector<std::string>{};
+        if(mp_) vfs_=mp_->modVfs(cosmetic,mods_.cosmetic);
+        else {
+            // Debug local harnesses (no server): this launch's own ticked packs.
+            const auto root=std::filesystem::u8path(installRoot_);
+            auto game=mods_.game && settings_?settings_->gameModPacks:std::vector<std::string>{};
+            const auto have=tak::hpi::modPacks(root,tak::hpi::ModKind::Game);
+            std::erase_if(game,[&](const auto& n){return !std::binary_search(have.begin(),have.end(),n);});
+            auto files=tak::hpi::modFiles(root,tak::hpi::ModKind::Game,game);
+            if(mods_.cosmetic)files=tak::hpi::playModFiles(root,std::move(files),missionStem_.empty()?cosmetic:std::vector<std::string>{});
+            vfs_ = tak::hpi::mountRetailRoot(root);
+            vfs_.setModFiles(std::make_shared<const tak::hpi::Vfs::Files>(std::move(files)));
+        }
         // Lobby choices are applied before match setup; discard art/audio cached
         // while the lobby still used the previous data set.
         destroyGpuTextures();anims_.clear();cobCache_.clear();visuals_.clear();

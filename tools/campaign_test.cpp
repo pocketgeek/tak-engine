@@ -21,7 +21,7 @@ int main(int argc,char** argv) {
           "alternate finale has authored title and no next chapter");
     check(!tak::campaignChapter(campaign,"") && !tak::campaignChapter(campaign,"unknown"),"unknown chapter cannot advance progress");
     if(argc>1) {
-        const auto vfs=tak::hpi::mountRetailRoot(argv[1],tak::hpi::OverridePolicy::None);
+        const auto vfs=tak::hpi::mountRetailRoot(argv[1]);
         const auto campaigns=tak::loadCampaigns(vfs);
         int chapters=0;
         for(const auto& c:campaigns) {

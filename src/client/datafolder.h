@@ -15,7 +15,7 @@
 // mounts the install once at startup and a great deal hangs off that mount: the
 // retail gameplay-data fingerprint sent in every multiplayer Hello (computed once per
 // process), the menu's GUI art, music and door videos, the campaign list, the map
-// catalogue and its verified-map cache, the hotkey and override-pack state. Cartographer
+// catalogue and its verified-map cache, the hotkey and mod-pack state. Cartographer
 // likewise keeps its unit registry, unit-type list, section catalogue and the open
 // document's VFS. Swapping all of that live is a long list of places to get exactly
 // right; a fresh process gets every one of them right by construction.

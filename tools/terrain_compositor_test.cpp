@@ -1,5 +1,5 @@
 // terrain::Compositor section lifetime and CPU budget (rendering workstream J).
-// Synthetic sections (JPEGs encoded here, served through VFS override files), so
+// Synthetic sections (JPEGs encoded here, served through VFS mod files), so
 // the test needs no game data. Checks: a pinned image survives clear() and
 // eviction; eviction is least-recently-used among unpinned images with a
 // high/low watermark; pinned images are never evicted; redecodes are counted;
@@ -84,7 +84,7 @@ struct Fixture {
             reference[k] = tak::jpeg::load(data);
             (*files)[path(k)] = std::move(data);
         }
-        vfs.setOverrideFiles(files);
+        vfs.setModFiles(files);
         bytes = reference.begin()->second.rgba.capacity();
     }
     bool same(uint32_t key, const SectionRef& image) const {

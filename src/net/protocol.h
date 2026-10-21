@@ -685,7 +685,7 @@ enum class Msg : uint8_t {
     CrusadesTerritoryHistory,    // S->C: verified metadata, opaque replay availability
     CrusadesGetReplayChunk,      // C->S: battle ID + bounded offset/limit
     CrusadesReplayChunk,         // S->C: request-bound immutable replay bytes
-    OverrideOffer, OverrideRequest, OverrideChunk, OverrideReady, OverrideError,
+    ModOffer, ModRequest, ModChunk, ModReady, ModError,
     Progress,           // C->S: u32 tick (last tick PROCESSED), u32 rttMs (the client's smoothed ping)
                         // [, u32 received: the newest tick whose bundle has ARRIVED, >= tick;
                         // protocol 276, optional]. Flow control only (WE S3), every
@@ -787,11 +787,12 @@ constexpr uint8_t normalizeStartMode(uint8_t v) {
 struct GameOptions {
     uint8_t crusades = 0;
     uint8_t forfeitSelfDestruct = 0;   // 0=units go inert on forfeit, 1=self-destruct
-    // Override tier for this game (hpi::OverridePolicy): 0=none (pure retail),
-    // 1=cosmetic (art/sound overrides allowed, never affect the sim), 2=full
-    // (gameplay overrides allowed but every player must share the same ones).
-    // MP defaults to cosmetic. Every player mounts the room's tier at game start.
-    uint8_t overridePolicy = 1;
+    // Game mods for this game: 0=off (no game packs), 1=on (the host's selected
+    // mods/game packs are transferred to and mounted by every player). Cosmetic
+    // mods are each player's own choice and never travel. MP defaults to off; a
+    // single-player room always sends 1. (Was the 0/1/2 override tier before the
+    // mods rework: same byte, new meaning.)
+    uint8_t gameMods = 0;
     // Game speed in tenths (10 = 1.0x). Changes the server's tick CADENCE (and the
     // client's playout rate); the per-tick dt stays 1/kServerHz so the sim math is
     // identical -- only how fast ticks happen in wall-clock changes. Deterministic.
@@ -884,7 +885,7 @@ struct Writer {
         b.insert(b.end(), q, q + m);
     }
     void bytes(const std::vector<uint8_t>& v) { bytes(v.data(), v.size()); }
-    // Whole-file payloads (override package entries): u32 length + payload,
+    // Whole-file payloads (mod package entries): u32 length + payload,
     // never truncated. Not for login fields -- those keep str()/bytes() and their
     // 4 KiB cap. The caller bounds the total (e.g. maps::kMaxBytes).
     void blob(const std::vector<uint8_t>& v) {

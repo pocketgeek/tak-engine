@@ -51,7 +51,7 @@ int main(int argc,char**argv) {
     const bool manifest=argc==3 && std::string(argv[2])=="--manifest";
     if(argc!=2 && !manifest){std::cerr<<"usage: crusades_balance_audit <retail-data-root> [--manifest]\n";return 2;}
     try {
-        auto root=tak::hpi::mountRetailRoot(argv[1],tak::hpi::OverridePolicy::None);
+        auto root=tak::hpi::mountRetailRoot(argv[1]);
         tak::hpi::Vfs vfs(&root,true); // downloaded map resources cannot change this audit
         if(manifest) {
             tak::hpi::MountSet sources(argv[1],tak::hpi::MountConfig{

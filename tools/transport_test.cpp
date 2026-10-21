@@ -2476,7 +2476,7 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
                                          const char* carrierName=nullptr,
                                          const char* passengerName=nullptr,
                                          bool crusades=false) {
-    auto vfs=tak::hpi::mountRetailRoot(retailRoot,tak::hpi::OverridePolicy::None);
+    auto vfs=tak::hpi::mountRetailRoot(retailRoot);
     const std::string mapPath=tak::hpi::findMap(vfs,mapName);
     if(mapPath.empty()) throw std::runtime_error(std::string("map not found: ")+mapName);
     const auto map=tak::tnt::Map::load(vfs.read(mapPath),mapPath);
@@ -2757,7 +2757,7 @@ static bool surfaceUnloadMapTravelFixture(const char* retailRoot,const char* map
                                           const char* carrierName=nullptr,
                                           const char* passengerName=nullptr,
                                           bool crusades=false,bool loadOrder=false) {
-    auto vfs=tak::hpi::mountRetailRoot(retailRoot,tak::hpi::OverridePolicy::None);
+    auto vfs=tak::hpi::mountRetailRoot(retailRoot);
     const std::string mapPath=tak::hpi::findMap(vfs,mapName);
     if(mapPath.empty()) throw std::runtime_error(std::string("map not found: ")+mapName);
     const auto map=tak::tnt::Map::load(vfs.read(mapPath),mapPath);
@@ -3039,7 +3039,7 @@ static void airUnloadFlightTraceFixture(unsigned steps,bool heightStep=false,
 static void airUnloadMapFlightTraceFixture(const char* retailRoot,const char* mapName,
         const char* carrierName,const char* passengerName,int startCellX,int startCellZ,
         int targetCellX,int targetCellZ,unsigned steps,bool crusades) {
-    auto vfs=tak::hpi::mountRetailRoot(retailRoot,tak::hpi::OverridePolicy::None);
+    auto vfs=tak::hpi::mountRetailRoot(retailRoot);
     const std::string mapPath=tak::hpi::findMap(vfs,mapName);
     if(mapPath.empty()) throw std::runtime_error(std::string("map not found: ")+mapName);
     const auto map=tak::tnt::Map::load(vfs.read(mapPath),mapPath);

@@ -327,7 +327,7 @@ void shipyardProductionCases(const hpi::Vfs& vfs,const sim::TypeRegistry& reg) {
 int main(int argc, char** argv) {
     if (argc < 2) { std::printf("usage: placement_test <retail-install>\n"); return 2; }
     std::printf("placement_test -- no unit starts on ground it cannot stand on\n");
-    auto vfs = hpi::mountRetailRoot(argv[1], hpi::OverridePolicy::None);
+    auto vfs = hpi::mountRetailRoot(argv[1]);
     for (bool crusades:{false,true}) {
         sim::TypeRegistry reg;
         sim::setupRegistry(reg, vfs, crusades);

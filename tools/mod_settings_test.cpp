@@ -16,8 +16,8 @@ int main() {
         const auto path=fs::path(tak::settingsPath());
         if(path.string().find(root.string()+"/")!=0)throw std::runtime_error("settings not isolated");
         tak::Settings s;
-        s.hostOverridePacks={"Sound Pack #1","Textures", "Accents-é"};
-        s.cosmeticOverridePacks={"My local art"};
+        s.gameModPacks={"Sound Pack #1","Textures", "Accents-é"};
+        s.cosmeticModPacks={"My local art"};
         using PathMode=tak::sim::PathfindingMode;
         // Stable identities: 1-3 belonged to the removed Flowfield,
         // Cooperative and Retail+ modes and are invalid.
@@ -36,12 +36,23 @@ int main() {
         if(s.gameCreate.pathfindingMode!=PathMode::Retail)
             throw std::runtime_error("new create preferences must default to Retail");
         s.gameCreate.pathfindingMode=PathMode::Legion;
-        s.gameCreate.overrides=0;
+        s.gameCreate.gameMods=true;
         s.uiScale=0.5f;s.scorecardScale=1.75f;
         if(!tak::saveSettings(s))throw std::runtime_error("save failed");
         const auto loaded=tak::loadSettings();
-        if(loaded.hostOverridePacks!=s.hostOverridePacks || loaded.cosmeticOverridePacks!=s.cosmeticOverridePacks || loaded.gameCreate.overrides!=0)
-            throw std::runtime_error("pack selections did not survive save/load while off");
+        if(loaded.gameModPacks!=s.gameModPacks || loaded.cosmeticModPacks!=s.cosmeticModPacks || !loaded.gameCreate.gameMods)
+            throw std::runtime_error("mod selections or the GAME MODS toggle did not survive save/load");
+        {   // Written under the new keys; the old override keys are neither written nor read.
+            std::ifstream saved(path);std::string text((std::istreambuf_iterator<char>(saved)),{});
+            if(text.find("mods.gamePack = ")==text.npos || text.find("mods.cosmeticPack = ")==text.npos || text.find("gameCreate.gameMods = 1\n")==text.npos)
+                throw std::runtime_error("mod selections not written under the mods.* keys");
+            if(text.find("overrides")!=text.npos)throw std::runtime_error("an old overrides key is still written");
+            std::ofstream(path)<<"overrides.hostPack = 4f6c64\noverrides.cosmeticPack = 4f6c64\ngameCreate.overrides = 2\n";
+            const auto old=tak::loadSettings();
+            if(!old.gameModPacks.empty() || !old.cosmeticModPacks.empty() || old.gameCreate.gameMods)
+                throw std::runtime_error("old overrides keys must be ignored (no migration)");
+            if(tak::Settings{}.gameCreate.gameMods)throw std::runtime_error("GAME MODS must default off");
+        }
         if(loaded.uiScale!=0.5f || loaded.scorecardScale!=1.75f)
             throw std::runtime_error("independent scorecard scale did not persist");
         if(loaded.gameCreate.pathfindingMode!=PathMode::Legion)
@@ -235,6 +246,6 @@ int main() {
         s.textureFilter=2;s.smoothArt=s.videoDeblock=true;
         if(!tak::saveSettings(s))throw std::runtime_error("save failed");
         graphicsDefaults(tak::loadSettings());
-        fs::remove_all(root);std::cout<<"PASS: independent host/guest selections persist while Off\n";return 0;
+        fs::remove_all(root);std::cout<<"PASS: game and cosmetic mod selections persist; old override keys ignored\n";return 0;
     }catch(const std::exception& e){fs::remove_all(root);std::cerr<<e.what()<<'\n';return 1;}
 }

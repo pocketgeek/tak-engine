@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import time
 import crusades_auth_network_test as auth
-from crusades_battle_network_test import Peer
+from crusades_battle_network_test import Peer, lobby
 
 @contextlib.contextmanager
 def server(binary, data, root, *options):
@@ -100,13 +100,25 @@ def main():
                 assert b'chunk' in error.field()
                 p.send('LeaveGame');p.send('Ping');p.receive('Pong')
                 create(p);rid=room(p)
-                full=bytearray(options());full[2]=2
-                p.send('SetGameOptions',full)
-                cache=root/'maps'/'OverrideCache'/('1'*64+'.takoverrides')
+                offer=lambda c,size=1000:c.send('ModOffer',struct.pack('<I',rid)+auth.field('mods')+auth.field('1'*64)+struct.pack('<I',size))
+                # GAME MODS off (the default): even the host's game packs are refused.
+                offer(p);error=p.receive('ModError');assert error.num('<I')==rid;assert b'off' in error.field()
+                mods=bytearray(options());mods[2]=1
+                p.send('SetGameOptions',mods)
+                cache=root/'maps'/'ModCache'/('1'*64+'.takmods')
                 cache.parent.mkdir(parents=True,exist_ok=True);cache.write_bytes(bytes(600000))
-                p.send('OverrideOffer',struct.pack('<I',rid)+auth.field('overrides')+auth.field('1'*64)+struct.pack('<I',1000))
-                error=p.receive('OverrideError');assert error.num('<I')==rid
+                offer(p)
+                error=p.receive('ModError');assert error.num('<I')==rid
                 assert b'mismatch' in error.field() and cache.exists()
+                # Only the host selects game mods: a guest's offer (and chunk) is refused.
+                with contextlib.closing(login(port,h,'Bob')) as q:
+                    q.send('JoinGame',struct.pack('<I',rid)+auth.field(''))
+                    assert q.receive('JoinResult').num('<B')==1
+                    offer(q);error=q.receive('ModError');assert error.num('<I')==rid;assert b'only the host' in error.field()
+                    q.send('ModChunk',struct.pack('<II',rid,0)+bytes(16))
+                    error=q.receive('ModError');assert error.num('<I')==rid;assert b'only the host' in error.field()
+                    q.send('Ping');q.receive('Pong')
+                    assert 'refused game-mod upload from client' in (root/'log').read_text()
                 p.send('Ping');p.receive('Pong');assert process.poll() is None
         with server(a.server.resolve(),a.data.resolve(),root,'--closed-registration') as (port,h,process):
             with contextlib.closing(login(port,h,'Alice')) as p:
@@ -147,10 +159,27 @@ def main():
                 p.send('ListGames');assert p.receive('GameList').num('<I')==0
                 p.send('Ping');p.receive('Pong')
                 assert process.poll() is None
+        # Campaign rooms never run game mods: not at creation, not by SetGameOptions,
+        # and an upload is refused (a local test server, where missions are allowed).
+        local=root/'local-campaign';local.mkdir()
+        with server(a.server.resolve(),a.data.resolve(),local,'--no-auth') as (port,h,process):
+            with contextlib.closing(Peer(port)) as p:
+                p.send('Hello',struct.pack('<I',auth.VERSION)+auth.field('mods-test')+struct.pack('<Q',h)+auth.field('Local'))
+                p.receive('Welcome')
+                mods=bytearray(options());mods[2]=1
+                p.send('CreateGame',auth.field('test')+auth.field('')+auth.field('King of the Hill')+auth.field('camp01')+bytes(mods)+bytes([8,0,0]))
+                r=p.receive('JoinResult');assert r.num('<B')==1;r.num('<B');r.field()
+                state=lobby(p.receive('LobbyState'));rid=state[0]
+                assert state[2][2]==0,'a campaign room adopted GAME MODS at creation'
+                p.send('SetGameOptions',bytes(mods))
+                state=lobby(p.receive('LobbyState'));assert state[2][2]==0,'a campaign room adopted GAME MODS later'
+                p.send('ModOffer',struct.pack('<I',rid)+auth.field('mods')+auth.field('1'*64)+struct.pack('<I',1000))
+                error=p.receive('ModError');assert error.num('<I')==rid;assert b'campaigns' in error.field()
+                p.send('Ping');p.receive('Pong');assert process.poll() is None
         denied=subprocess.run([str(a.server.resolve()),'--data',str(a.data.resolve())],capture_output=True,timeout=10)
         assert denied.returncode!=0 and b'public listeners require' in denied.stderr
         for value in ['0','-1','not-a-number','18446744073709551616']:
             denied=subprocess.run([str(a.server.resolve()),'--max-games',value,'--local','--data',str(a.data.resolve())],capture_output=True,timeout=10)
             assert denied.returncode!=0 and b'invalid server resource limit' in denied.stderr
-    print('PASS: public game modes, room admission, upload reservation, registration, request floods and ordinary lobby traffic, TLS login and secure startup defaults')
+    print('PASS: public game modes, room admission, upload reservation, registration, request floods and ordinary lobby traffic, TLS login and secure startup defaults, game mods host-only and never in campaigns')
 if __name__=='__main__':main()

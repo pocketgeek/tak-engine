@@ -23,7 +23,7 @@ int main(int argc,char** argv) {
     if(argc!=2)return 2;
     SDL_SetMainReady();
     try {
-        auto mounts=tak::hpi::mountRetailRoot(argv[1],tak::hpi::OverridePolicy::None);
+        auto mounts=tak::hpi::mountRetailRoot(argv[1]);
         tak::hpi::Vfs vfs(&mounts,true);
         int failures=0,checks=0,units=0,menus=0,weapons=0,explosions=0,overrides=0;
         auto check=[&](bool ok,const std::string& context) {

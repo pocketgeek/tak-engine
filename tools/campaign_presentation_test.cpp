@@ -61,7 +61,7 @@ int main(int argc,char** argv) {
             world.resetForReplay();check(!world.scoreAutomaticDisabled(),"replay reset must restore automatic scoring");
         }
         if(argc<2) {std::puts("PASS: native score accumulation and one-shot death accounting");return 0;}
-        const auto vfs=tak::hpi::mountRetailRoot(argv[1],tak::hpi::OverridePolicy::None);
+        const auto vfs=tak::hpi::mountRetailRoot(argv[1]);
         const auto camps=tak::loadCampaigns(vfs);check(camps.size()>=2,"campaign roster absent");
         for(bool crusades:{false,true}) {
             TypeRegistry types;setupRegistry(types,vfs,crusades);

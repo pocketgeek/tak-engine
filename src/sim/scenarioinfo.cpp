@@ -118,7 +118,7 @@ ScenarioInfo inspectScenario(const hpi::Vfs& vfs, const std::string& mapPath, co
                     if (everyone || creates(size_t(p) + 1)) info.armySeats |= uint8_t(1u << p);
                 for (const auto& unit : scenario.units) {
                     if (unit.player < 0 || unit.player >= kMaxPlayers) continue;
-                    // A type this install lacks may come from an override pack (MissingType
+                    // A type this install lacks may come from a game mod pack (MissingType
                     // already refuses or warns): it is not held against the seat.
                     const auto* type = reg->find(lower(unit.objectName));
                     if (!type) { info.armySeats |= uint8_t(1u << unit.player); continue; }

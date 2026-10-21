@@ -22,7 +22,7 @@
 #include "net/crusades.h"
 #include "net/crypto.h"
 #include "net/mappackage.h"
-#include "net/overridepackage.h"
+#include "net/modpackage.h"
 #include "net/conn.h"
 #include "net/protocol.h"
 #include "net/replayhdr.h"
@@ -47,18 +47,24 @@ public:
 
     // Set the local gameplay-data fingerprint (hpi::gameplayHash) BEFORE connect;
     // it goes in the Hello so the server can reject a peer whose retail gameplay
-    // data (or, under Full overrides, gameplay overrides) doesn't match.
+    // data doesn't match.
     void setDataHash(uint64_t h) { dataHash_ = h; }
 
     void setMapRoot(const std::filesystem::path& root) { mapRoot_ = root; }
     const std::shared_ptr<maps::Package>& mapPackage() const { return mapPackage_; }
-    void setHostOverridePacks(std::vector<std::string> names);
-    const std::vector<std::string>& hostOverridePacks() const { return hostOverridePacks_; }
-    const std::shared_ptr<overrides::Package>& overridePackage() const {return overridePackage_;}
-    const std::string& overrideStatus() const {return overrideStatus_;}
-    bool overridePending() const {return overridePendingAt_!=0;}
-    bool overrideBusy() const {return overrideSend_.package || overrideReceive_.size;}
-    hpi::Vfs overrideVfs(hpi::OverridePolicy localPolicy,const std::vector<std::string>& localPacks) const;
+    // The host's selected mods/game packs (sent only when the room has game mods on).
+    void setGameModPacks(std::vector<std::string> names);
+    const std::vector<std::string>& gameModPacks() const { return gameModPacks_; }
+    const std::shared_ptr<mods::Package>& modPackage() const {return modPackage_;}
+    const std::string& modStatus() const {return modStatus_;}
+    bool modPending() const {return modPendingAt_!=0;}
+    bool modBusy() const {return modSend_.package || modReceive_.size;}
+    // The VFS a game in this room mounts: the room's verified game-mod package
+    // (when game mods are on), then the always-on mods/cosmetic/*.hpi archives
+    // (every room), then this player's own ticked cosmetic packs (every room but
+    // a campaign mission or Crusades battle; packs no longer on disk are skipped).
+    // `withCosmetic` false (debug --mods none|game) leaves every cosmetic layer out.
+    hpi::Vfs modVfs(const std::vector<std::string>& cosmeticPacks, bool withCosmetic = true) const;
     const std::string& mapStatus() const { return mapStatus_; }
     bool connect(const std::string& host, uint16_t port, const std::string& name);
     void disconnect(const std::string& reason = "bye");
@@ -257,9 +263,9 @@ public:
     }
     uint32_t gameId() const { return room_.id; }
     uint64_t resumeToken() const { return resumeToken_; }
-    // `dataHash` = this client's gameplay-data fingerprint at the ROOM's tier
-    // (after adopting its override policy); the server rejects it if it doesn't
-    // match the room's expected data, so a Full-tier override mismatch is caught
+    // `dataHash` = this client's gameplay-data fingerprint with the ROOM's game
+    // mods mounted; the server rejects it if it doesn't match the room's expected
+    // data, so a game-mod mismatch is caught
     // before the game starts, not as a mid-game desync.
     void reportLoaded(uint64_t dataHash = 0);
     // Reconnect to a held slot: connect() first, then rejoin() with the game id
@@ -340,19 +346,19 @@ private:
     void send(Msg kind, const Writer& w) { conn_.send(kind, w); }
     void send(Msg kind) { conn_.send(kind); }
 
-    void overrideFrame(const Frame& f);
-    void offerOverrides();
-    void acceptOverrides(std::shared_ptr<overrides::Package> package,uint32_t room);
-    void resetOverrideTransfer();   // drop all override package/transfer state
+    void modFrame(const Frame& f);
+    void offerMods();
+    void acceptMods(std::shared_ptr<mods::Package> package,uint32_t room);
+    void resetModTransfer();   // drop all mod package/transfer state
     void resetMapTransfer();        // ... and the map package/transfer state
-    std::vector<std::string> hostOverridePacks_;
-    std::shared_ptr<overrides::Package> overridePackage_;
-    maps::Receiver overrideReceive_;
-    maps::Sender overrideSend_;
+    std::vector<std::string> gameModPacks_;
+    std::shared_ptr<mods::Package> modPackage_;
+    maps::Receiver modReceive_;
+    maps::Sender modSend_;
     bool roomRequestPending_=false;
-    uint32_t overrideOfferedRoom_=0,overrideReadyRoom_=0;
-    uint64_t overridePendingAt_=0;
-    std::string overrideStatus_;
+    uint32_t modOfferedRoom_=0,modReadyRoom_=0;
+    uint64_t modPendingAt_=0;
+    std::string modStatus_;
     void mapFrame(const Frame& f);
     void acceptMap(std::shared_ptr<maps::Package> package, uint32_t room);
     std::filesystem::path mapRoot_;

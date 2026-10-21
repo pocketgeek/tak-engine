@@ -43,11 +43,11 @@ inline bool supportedReplayProtocol(uint32_t format, uint32_t protocol) {
 
 struct ReplayHeader {
     std::string mapId;
-    std::string mapDigest, overrideDigest;
+    std::string mapDigest, modDigest;
     std::string mission;          // campaign mission stem ("" = skirmish)
     std::string engineVersion;    // tak::kVersion of the build that recorded it
     uint8_t crusades = 0, forfeitSelfDestruct = 0;
-    uint8_t overridePolicy = 1;
+    uint8_t gameMods = 0;          // 1 = the room ran the host's game mods (modDigest)
     uint32_t unitCap = 0;
     uint8_t monarchExpendable = 0, stressTest = 0, randomStarts = 0;
     sim::PathfindingMode pathfindingMode = sim::PathfindingMode::Retail;
@@ -85,7 +85,7 @@ inline void writeReplayHeader(Writer& w, const ReplayHeader& h) {
     w.str(h.mapId);
     w.u8(h.crusades);
     w.u8(h.forfeitSelfDestruct);
-    w.u8(h.overridePolicy);
+    w.u8(h.gameMods);
     w.u32(h.unitCap);
     w.u8(h.monarchExpendable);
     w.u8(h.stressTest);
@@ -98,7 +98,7 @@ inline void writeReplayHeader(Writer& w, const ReplayHeader& h) {
     w.u64(h.dataHash);
     w.u8(h.doubleSight);
     w.str(h.mapDigest);
-    w.str(h.overrideDigest);
+    w.str(h.modDigest);
     w.u8(uint8_t(h.pathfindingMode));
     w.u8(uint8_t(kMaxSlots));
     for (int i = 0; i < kMaxSlots; ++i) {
@@ -121,7 +121,7 @@ inline bool readReplayHeader(Reader& r, ReplayHeader& h, uint32_t& fmt, uint32_t
     h.mapId = r.str();
     h.crusades = r.u8();
     h.forfeitSelfDestruct = r.u8();
-    if (fmt >= 2) h.overridePolicy = r.u8();
+    if (fmt >= 2) h.gameMods = r.u8();
     h.unitCap = 0;                       // fmt<3 ran without a unit cap
     if (fmt >= 3) h.unitCap = r.u32();
     h.monarchExpendable = 1;             // fmt<4 ran monarch-expendable
@@ -137,7 +137,7 @@ inline bool readReplayHeader(Reader& r, ReplayHeader& h, uint32_t& fmt, uint32_t
     }
     h.doubleSight = fmt >= 8 ? r.u8() : 0;
     h.mapDigest = fmt >= 9 ? r.str() : "";
-    h.overrideDigest = fmt >= 10 ? r.str() : "";
+    h.modDigest = fmt >= 10 ? r.str() : "";
     const auto pathMode = fmt >= 11 ? r.u8() : 0;
     if (!sim::validPathfindingMode(pathMode)) return false;
     h.pathfindingMode = h.mission.empty() ? sim::PathfindingMode(pathMode) : sim::PathfindingMode::Retail;

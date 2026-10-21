@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Full-pack transfer with distinct host, server and guest data/cache roots."""
+"""Game-mod transfer with distinct host, server and guest data/cache roots."""
 import argparse
 from pathlib import Path
 import subprocess
@@ -8,12 +8,12 @@ from server_public_test import server
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--server',type=Path,required=True);p.add_argument('--client',type=Path,required=True);p.add_argument('--data',type=Path,required=True);a=p.parse_args()
-    with tempfile.TemporaryDirectory(prefix='tak-override-net-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='tak-mod-net-') as tmp:
         root=Path(tmp)
         def install(name):
             target=root/name;target.mkdir()
             for f in a.data.resolve().iterdir():
-                if f.name.lower() in ('overrides','overridecache','mapcache'):continue
+                if f.name.lower() in ('overrides','mods','modcache','overridecache','mapcache'):continue
                 (target/f.name).symlink_to(f,target_is_directory=f.is_dir())
             return target
         host,peer,referee=[install(n) for n in ('host','peer','server')]
@@ -24,6 +24,8 @@ def main():
             assert process.poll() is None
             log=(root/'log').read_text()
             assert 'DESYNCED' not in log and 'REFEREE SUSPECT' not in log,log
-            assert list((root/'server-cache'/'OverrideCache').glob('*.takoverrides'))
-            assert not (referee/'overrides').exists()
+            assert list((root/'server-cache'/'ModCache').glob('*.takmods'))
+            assert not (referee/'mods').exists() and not (referee/'overrides').exists()
+            # The host's legacy overrides/ pack is still there, untouched.
+            assert (host/'overrides'/'Gamma'/'units'/'araking.fbi').is_file()
 if __name__=='__main__':main()

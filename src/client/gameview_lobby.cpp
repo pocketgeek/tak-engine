@@ -411,7 +411,7 @@ std::string startLocationsLabel(uint8_t mode) {
         pref.allowSpectators = createAllowSpectators_;
         pref.unitCap = createUnitCap_;
         pref.fog = createFog_;
-        pref.overrides = createOverride_;
+        if (!singlePlayer_) pref.gameMods = createGameMods_;   // SP is always on: keep the MP choice
         pref.name = createName_;
         pref.generated = tak::mapgen::isGeneratedMapId(mpMapId_);
         pref.generator = tak::mapgen::encodeMapId(genParams_);
@@ -432,14 +432,20 @@ std::string startLocationsLabel(uint8_t mode) {
             createScenario_ = mapScenarioInfo(mapPath_);
     }
 
-    void GameView::scanOverridePacks() {
-        if(!overridePacksScanned_){availableOverridePacks_=tak::hpi::overridePacks(std::filesystem::u8path(installRoot_));overridePacksScanned_=true;}
+    void GameView::scanModPacks() {
+        if(!modPacksScanned_){
+            const auto root=std::filesystem::u8path(installRoot_);
+            availableGameMods_=mods_.game?tak::hpi::modPacks(root,tak::hpi::ModKind::Game):std::vector<std::string>{};
+            availableCosmeticMods_=mods_.cosmetic?tak::hpi::modPacks(root,tak::hpi::ModKind::Cosmetic):std::vector<std::string>{};
+            alwaysOnMods_=mods_.cosmetic?tak::hpi::alwaysOnMods(root):std::vector<std::string>{};
+            modPacksScanned_=true;
+        }
     }
 
     bool GameView::createScenarioOn() const {
         if (createScenarioFor_ != mapPath_ || tak::mapgen::isGeneratedMapId(mpMapId_)) return false;
         // An offerable map plays its scenario when chosen; a Test Map copy always does.
-        return createScenario_.active(createMapScenario_ && scenarioOffered(createScenario_, createOverride_));
+        return createScenario_.active(createMapScenario_ && scenarioOffered(createScenario_, createGameModsOn()));
     }
 
     void GameView::drawCreate(int winW, int winH) {
@@ -456,7 +462,7 @@ std::string startLocationsLabel(uint8_t mode) {
             spSpectate_ = false;  // Opt in for each skirmish; never restore from settings.
             createUnitCap_ = pref.unitCap == 250 || pref.unitCap == 500 || pref.unitCap == 1000 || pref.unitCap == 2000
                 ? uint16_t(pref.unitCap) : 2000;
-            createFog_ = uint8_t(pref.fog); createOverride_ = uint8_t(pref.overrides);
+            createFog_ = uint8_t(pref.fog); createGameMods_ = pref.gameMods;
             createName_ = pref.name;
             mapSort_ = pref.mapSort; mapSortDir_ = pref.mapSortDir;
             if (!mapList_.empty()) sortMapList();
@@ -468,7 +474,7 @@ std::string startLocationsLabel(uint8_t mode) {
             }
             createPrefApplied_ = true;
         }
-        scanOverridePacks();   // scenarioOffered: may a pack supply a missing unit type?
+        scanModPacks();   // scenarioOffered: may a game pack supply a missing unit type?
         syncCreateScenario();
         // While the map's scenario is on, it owns how the game ends and where each seat's
         // forces start: those two rows read SCENARIO / FIXED and are not clickable (retail
@@ -537,17 +543,21 @@ std::string startLocationsLabel(uint8_t mode) {
         // A MAP SCENARIO plays on fixed starts.
         lbCycle(x, y, 240, 26, startLocationsLabel(scenarioOn ? tak::net::kStartsFixed : createStartMode_), !scenarioOn,
               [this](int direction) { createStartMode_ = uint8_t((createStartMode_ + direction + 3) % 3); }); y += kRow;
-        static const char* kTier[] = {"OFF", "COSMETIC", "FULL"};
-        lbCycle(x, y, 240, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
-              [this](int direction) { createOverride_ = uint8_t((createOverride_ + direction + 3) % 3); }); y += 44;
+        // GAME MODS (multiplayer only): lets the host tick mods/game packs in the room,
+        // which are then sent to every player. Single player always has them;
+        // cosmetic mods need no switch (every player picks their own in the room).
+        if (!singlePlayer_) {
+            lbCycle(x, y, 240, 26, createGameMods_ ? "GAME MODS: ON" : "GAME MODS: OFF", true,
+                  [this](int) { createGameMods_ = !createGameMods_; }); y += 44;
+        }
         // Footer buttons, symmetric: BACK at the bottom-left and CREATE at the
         // bottom-right, both inset by `x` from their side and at the same height.
         // BROWSER (MP only) sits just left of CREATE.
         const float by = kLobbyH - 40, bw = 120;
         lbBtn(kLobbyW - x - bw, by, bw, 30, "CREATE", !createName_.empty() && genPreviewError_.empty(), [this] {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0;
-            o.overridePolicy = createOverride_;
-            if(settings_)mp_->setHostOverridePacks(settings_->hostOverridePacks);
+            o.gameMods = createGameModsOn() ? 1 : 0;
+            if(settings_)mp_->setGameModPacks(mods_.game?settings_->gameModPacks:std::vector<std::string>{});
             o.doubleSight = createDoubleSight_ ? 1 : 0;
             o.pathfindingMode = createPathfindingMode_;
             o.speedUnlock = createSpeedUnlock_ ? 1 : 0;
@@ -558,7 +568,7 @@ std::string startLocationsLabel(uint8_t mode) {
             // plays its scenario through its opt-in and sends 0 (the server checks the
             // verified package either way). Seats and rule regions follow fixed starts.
             o.mapScenario = !tak::mapgen::isGeneratedMapId(mpMapId_) && createScenarioFor_ == mapPath_ &&
-                scenarioOffered(createScenario_, createOverride_) && createMapScenario_ ? 1 : 0;
+                scenarioOffered(createScenario_, createGameModsOn()) && createMapScenario_ ? 1 : 0;
             o.randomStarts = createScenarioOn() ? tak::net::kStartsFixed : createStartMode_;
             // A private single-player room is never listed, so the rule means nothing
             // there; leave it at the default rather than a remembered MP choice.
@@ -674,7 +684,7 @@ std::string startLocationsLabel(uint8_t mode) {
             blockText(info, infoX, row.y + (rowH - 11) / 2, 1.5f,
                       sel ? SDL_Color{170, 210, 170, 255} : SDL_Color{150, 160, 178, 255});
             // MAP SCENARIO: a gold S marks a map with a playable scenario (or a Test Map copy).
-            if (scenarioOffered(m.scenario, createOverride_) || (m.scenario.marker && m.scenario.runnable()))
+            if (scenarioOffered(m.scenario, createGameModsOn()) || (m.scenario.marker && m.scenario.runnable()))
                 blockText("S", infoX - 14, row.y + (rowH - 11) / 2, 1.5f, {230, 200, 120, 255});
             lobbyHots_.push_back({row, [this, nm, pth] {
                 mpMapId_ = nm; mapPath_ = pth;
@@ -830,7 +840,7 @@ std::string startLocationsLabel(uint8_t mode) {
             // (hasscenario stays 0) plays no scenario, but its opt-in still applies the list.
             const bool testUseOnly = createScenario_.marker && !createScenario_.hasScenario &&
                                      createScenario_.useOnlyTypes >= 0;
-            const bool offered = scenarioOffered(createScenario_, createOverride_);
+            const bool offered = scenarioOffered(createScenario_, createGameModsOn());
             lbCycle(pvx, y0, pvW, 26, (createMapScenario_ && offered) || testCopy ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF",
                     offered, [this](int) { createMapScenario_ = !createMapScenario_; });
             std::vector<std::pair<std::string, SDL_Color>> lines;
@@ -846,7 +856,7 @@ std::string startLocationsLabel(uint8_t mode) {
             } else if (!offered) {
                 for (const auto& l : tak::sim::scenarioReason(createScenario_)) lines.push_back({l, grey});
             } else {
-                // Offered only because an override pack may supply a missing unit type.
+                // Offered only because a game mod pack may supply a missing unit type.
                 if (!createScenario_.offerable()) {
                     std::string pack = "PACK NEEDED: " + createScenario_.detail;
                     for (char& ch : pack) ch = char(std::toupper(static_cast<unsigned char>(ch)));
@@ -888,43 +898,83 @@ std::string startLocationsLabel(uint8_t mode) {
         // before the package is verified); the rule cells that follow it agree with it.
         const bool scenarioShown = fileMap && !campaign && (room.opts.mapScenario != 0 || scenarioOn);
         // The room's map, with its starts numbered and coloured by who opens there,
-        // heads the right column; the override packs and the chat sit below it.
+        // heads the right column; the mod packs and the chat sit below it.
         const bool roomMap = !campaign && room.mission.empty();
         const float kRoomMap = 140, mapDrop = roomMap ? kRoomMap + 5 : 0;
-        float overrideBottom=112+mapDrop;
-        if(!campaign && room.mission.empty()) {
-            scanOverridePacks();
-            static const char* tiers[]={"OFF","COSMETIC","FULL"};
-            const auto tier=std::min<uint8_t>(room.opts.overridePolicy,2);
-            blockText(std::string("OVERRIDES: ")+tiers[tier],
-                      winW-296.0f,87+mapDrop,1.6f,{205,210,225,255});
-            if(tier) {
-                auto selected=host?mp_->hostOverridePacks():settings_?settings_->cosmeticOverridePacks:std::vector<std::string>{};
-                auto names=availableOverridePacks_;for(const auto& n:selected)if(std::find(names.begin(),names.end(),n)==names.end())names.push_back(n);
+        float modBottom=112+mapDrop;
+        {
+            // MODS, in the right column under the map. ALWAYS ON: the mods/cosmetic/*.hpi
+            // archives every game loads (campaigns included); named, never ticked.
+            // COSMETIC: every player ticks their own mods/cosmetic packs (not in a
+            // campaign room); they are never sent anywhere and cannot change the game.
+            // GAME: only the host of a skirmish room with GAME MODS on ticks mods/game
+            // packs, which are sent to every player; everyone else sees the host's choice.
+            scanModPacks();
+            const bool gameRoom=!campaign && room.mission.empty();
+            const bool gameOn=gameRoom && room.opts.gameMods;
+            const size_t perPage=gameOn && host?3:5;
+            float py=87+mapDrop;
+            auto packList=[&](const std::vector<std::string>& available,const std::vector<std::string>& selected,
+                              size_t& page,bool busy,const char* empty,const char* pageLabel,
+                              std::function<void(std::vector<std::string>)> apply) {
+                auto names=available;for(const auto& n:selected)if(std::find(names.begin(),names.end(),n)==names.end())names.push_back(n);
                 std::sort(names.begin(),names.end());
-                const size_t pages=std::max<size_t>(1,(names.size()+4)/5);overridePage_=std::min(overridePage_,pages-1);
-                float py=112+mapDrop;blockText(host?"SELECT PACKS":"COSMETIC FILES ONLY",winW-296.0f,py,1.4f,{180,190,205,255});py+=22;
-                if(names.empty()){blockText("NO PACK SUBFOLDERS",winW-296.0f,py,1.3f,{150,155,165,255});py+=24;}
-                for(size_t i=overridePage_*5;i<std::min(names.size(),overridePage_*5+5);++i){
+                const size_t pages=std::max<size_t>(1,(names.size()+perPage-1)/perPage);page=std::min(page,pages-1);
+                if(names.empty()){blockText(empty,winW-296.0f,py,1.3f,{150,155,165,255});py+=22;}
+                for(size_t i=page*perPage;i<std::min(names.size(),page*perPage+perPage);++i){
                     const auto name=names[i];const bool enabled=std::find(selected.begin(),selected.end(),name)!=selected.end();
                     std::string label=name;if(label.size()>26)label=label.substr(0,23)+"...";
-                    lbBtn(winW-300.0f,py,280,23,label,!mp_->overrideBusy(),[this,host,name,enabled]{
-                        auto selection=host?mp_->hostOverridePacks():settings_?settings_->cosmeticOverridePacks:std::vector<std::string>{};
+                    lbBtn(winW-300.0f,py,280,20,label,!busy,[selected,name,enabled,apply]{
+                        auto selection=selected;
                         if(enabled)selection.erase(std::remove(selection.begin(),selection.end(),name),selection.end());else if(selection.size()<64)selection.push_back(name);
-                        if(host){mp_->setHostOverridePacks(selection);if(settings_)settings_->hostOverridePacks=selection;}
-                        else if(settings_)settings_->cosmeticOverridePacks=selection;
-                        if(settings_)saveSettings(*settings_);
+                        apply(std::move(selection));
                     });
-                    SDL_FRect checkBox{winW-291.0f,py+6,11,11};
+                    SDL_FRect checkBox{winW-291.0f,py+4.5f,11,11};
                     SDL_SetRenderDrawColor(ren_,190,205,220,255);
                     SDL_RenderDrawRectF(ren_,&checkBox);
                     if(enabled){checkBox.x+=3;checkBox.y+=3;checkBox.w-=6;checkBox.h-=6;SDL_RenderFillRectF(ren_,&checkBox);}
-                    py+=25;
+                    py+=22;
                 }
-                if(pages>1){lbCycle(winW-300.0f,py,280,23,"PACK PAGE "+std::to_string(overridePage_+1)+" / "+std::to_string(pages),true,[this,pages](int d){overridePage_=(overridePage_+pages+d)%pages;});py+=25;}
-                if(room.opts.overridePolicy==2){auto status=mp_->overrideStatus();if(status.size()>34)status=status.substr(0,31)+"...";blockText(status,winW-296.0f,py+3,1.2f,{205,190,135,255});py+=23;}
-                overrideBottom=py+8;
+                if(pages>1){lbCycle(winW-300.0f,py,280,20,std::string(pageLabel)+" "+std::to_string(page+1)+" / "+std::to_string(pages),true,[&page,pages](int d){page=(page+pages+d)%pages;});py+=22;}
+            };
+            if(!alwaysOnMods_.empty()) {
+                // As many names as fit on one line (35 characters), then "+N".
+                std::string line="ALWAYS ON: ";
+                const size_t n=alwaysOnMods_.size();size_t shown=0;
+                for(;shown<n;++shown){
+                    const std::string next=(shown?", ":"")+alwaysOnMods_[shown];
+                    if(line.size()+next.size()+(shown+1<n?4:0)>35)break;
+                    line+=next;
+                }
+                if(!shown){line+=alwaysOnMods_[0].substr(0,n>1?17:21)+"...";shown=1;}
+                if(shown<n)line+=" +"+std::to_string(n-shown);
+                blockText(line,winW-296.0f,py,1.3f,{170,200,170,255});py+=20;
             }
+            if(gameRoom) {
+                blockText("COSMETIC MODS",winW-296.0f,py,1.6f,{205,210,225,255});py+=22;
+                packList(availableCosmeticMods_,settings_?settings_->cosmeticModPacks:std::vector<std::string>{},cosmeticModPage_,false,
+                         "NO PACKS IN MODS/COSMETIC","COSMETIC PAGE",[this](std::vector<std::string> selection){
+                    if(!settings_)return;
+                    settings_->cosmeticModPacks=std::move(selection);saveSettings(*settings_);
+                });
+                py+=4;
+                blockText(gameOn?"GAME MODS":"GAME MODS: OFF",winW-296.0f,py,1.6f,{205,210,225,255});py+=22;
+                if(gameOn && host) {
+                    packList(availableGameMods_,mp_->gameModPacks(),gameModPage_,mp_->modBusy(),"NO PACKS IN MODS/GAME","GAME PAGE",
+                             [this](std::vector<std::string> selection){
+                        mp_->setGameModPacks(selection);
+                        if(settings_){settings_->gameModPacks=std::move(selection);saveSettings(*settings_);}
+                    });
+                } else if(gameOn) {
+                    // The host's packs, as named by the verified package (read-only here).
+                    std::string names=mp_->modPackage()?mp_->modPackage()->mapPath:"";
+                    if(names.empty())names=mp_->modPackage()?"NONE SELECTED":"WAITING FOR THE HOST";
+                    if(names.size()>34)names=names.substr(0,31)+"...";
+                    blockText("HOST: "+names,winW-296.0f,py,1.3f,{180,190,205,255});py+=22;
+                }
+                if(gameOn){auto status=mp_->modStatus();if(status.size()>34)status=status.substr(0,31)+"...";blockText(status,winW-296.0f,py+3,1.2f,{205,190,135,255});py+=23;}
+            }
+            modBottom=py+8;
         }
         // SP spectate ("watch the AIs"): the instant the host lands in the room, fill
         // every open capacity slot with an AI -- each on its own team/colour and a
@@ -1079,8 +1129,8 @@ std::string startLocationsLabel(uint8_t mode) {
         if (roomMap) drawRoomPreview({winW - 300.0f, 84, kRoomMap, kRoomMap}, scenarioOn && scenarioLobby_.placed > 0);
         // A room playing its map's scenario may start solo, once every seat the scenario
         // needs is played; ordinary skirmishes need two.
-        bool canStart = host && startValid(room, scenarioOn, needSeats) && room.mapsReady && !mp_->overridePending() &&
-            (room.opts.overridePolicy!=2 || bool(mp_->overridePackage()));
+        bool canStart = host && startValid(room, scenarioOn, needSeats) && room.mapsReady && !mp_->modPending() &&
+            (!room.opts.gameMods || bool(mp_->modPackage()));
         lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); },
               {70, 110, 70, 255});
         lbBtn(bx + 142, y, 120, 30, "LEAVE", true, [this] {
@@ -1090,11 +1140,11 @@ std::string startLocationsLabel(uint8_t mode) {
             else lobbyScreen_ = singlePlayer_ ? LobbyScreen::Create : LobbyScreen::Browser;
             spSpectate_ = false;
             mpReadied_ = false; mpStarted_ = false; specAutoSeated_ = false; });
-        // Room readiness also includes override packs and other players. A
+        // Room readiness also includes game mods and other players. A
         // completed local map is not progress to display while packs change;
         // their status is already shown beside the pack list.
         const auto& mapStatus = mp_->mapStatus();
-        if (!room.mapsReady && !mp_->overridePending() && !mp_->overrideBusy() &&
+        if (!room.mapsReady && !mp_->modPending() && !mp_->modBusy() &&
             mapStatus != "MAP READY" && mapStatus != "MAP VERIFIED")
             blockText(mapStatus.empty() ? "WAITING FOR MAP VERIFICATION" : mapStatus,
                 bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
@@ -1204,7 +1254,7 @@ std::string startLocationsLabel(uint8_t mode) {
         }
         // chat panel on the right (multiplayer only -- there's no one to chat with in SP)
         if (!singlePlayer_) {
-            float chx = winW - 300.0f, chy = overrideBottom, chw = 280;
+            float chx = winW - 300.0f, chy = modBottom, chw = 280;
             SDL_SetRenderDrawColor(ren_, 22, 24, 32, 255);
             SDL_FRect cp{chx, chy, chw, std::max(50.0f,winH - chy - 72.0f)}; SDL_RenderFillRectF(ren_, &cp);
             blockText("CHAT", chx + 8, chy + 6, 1.8f, {160, 165, 180, 255});
@@ -1401,7 +1451,7 @@ std::string startLocationsLabel(uint8_t mode) {
         SDL_SetRenderDrawColor(ren_, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
         SDL_RenderDrawRectF(ren_, &r);
         // Shrink the label if it would overflow the button (keeps long captions like
-        // "OVERRIDES: COSMETIC" inside their box). 8px total horizontal padding.
+        // "START LOCATIONS: BY SLOT" inside their box). 8px total horizontal padding.
         float px = 2.0f;
         float fit = (w - 8.0f) / std::max<size_t>(1, label.size()) / 6.0f;
         if (fit < px) px = std::max(fit, 1.0f);

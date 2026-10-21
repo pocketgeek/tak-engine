@@ -7,7 +7,7 @@
 using namespace tak;
 int main(int argc,char** argv) {
     if (argc!=2) return 2;
-    auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
+    auto vfs=hpi::mountRetailRoot(argv[1]);
     int failures=0;
     auto check=[&](bool ok,const char* message) {
         if (!ok) {++failures;std::fprintf(stderr,"FAIL: %s\n",message);}
