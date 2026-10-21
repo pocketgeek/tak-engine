@@ -150,6 +150,9 @@ public:
     void setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
                  uint8_t team, uint8_t ready, uint8_t aiLevel = 2);
     void kick(int slot);
+    // Take another OPEN seat in the lobby (Msg::MoveSeat). The server answers with
+    // a JoinResult naming the new seat, so mySlot follows it, then the LobbyState.
+    void moveSeat(int slot);
     void chat(const std::string& text, uint8_t recipients = 0xff);
     void startGame();
     // Host: change room options. In the lobby the server rebroadcasts them; in-game

@@ -711,6 +711,12 @@ enum class Msg : uint8_t {
                         // (which is never combined with START).
     VoiceDown,          // S->C: u32 talker client id | u8 talker slot (0xFF = spectator) | u16 seq |
                         // u8 flags | u16 len | len bytes | str name (only with kVoiceHasName).
+    MoveSeat,           // C->S: u8 slot. A seated player (the host too) takes that OPEN seat
+                        // (type 0, inside the map capacity), in the lobby only and never in a
+                        // Crusades battle or campaign mission room; anything else is ignored.
+                        // Side, colour, team and READY move with the player; the old seat
+                        // opens with the target's colour and team. The server answers the
+                        // mover with JoinResult (ok, new slot) and then broadcasts LobbyState.
 };
 
 // Voice chat (Msg::VoiceUp / VoiceDown): Opus, 48 kHz mono, one 20 ms frame per message.

@@ -316,6 +316,7 @@ silently skipped.)
 | `SetGameOptions` | full `GameOptions` | host only; in the lobby the server adopts them and rebroadcasts `LobbyState`; in-game only `speed` takes effect (if `speedUnlock`), pushed via `SpeedUpdate` |
 | `Chat` | text | lobby and in-game |
 | `Kick` | slot # | host only |
+| `MoveSeat` | slot # | a seated player (the host too) takes an OPEN seat inside the map capacity, lobby only; not in a Crusades battle or campaign mission room; side, colour, team and ready move with the player, the old seat opens with the target's colour and team; the server answers the mover with `JoinResult` (its new slot), then broadcasts `LobbyState`; anything else is ignored (protocol 283) |
 | `StartGame` | — | host only; server validates: every human ready, colors unique, players ≤ map start positions |
 | `GameStarting` | final slot table, map id, options, per-AI RNG seeds, resume token | clients load and report `Loaded`; server starts when all humans are loaded; a `Loaded` timeout kicks that player back to the lobby and re-opens the slot (host decides: re-fill or start without) |
 

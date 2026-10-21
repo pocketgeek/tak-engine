@@ -800,6 +800,14 @@ void MpClient::onFrame(const Frame& f) {
             }
             if (ok) {
                 joinError_.clear();
+                // A seat move (Msg::MoveSeat) in this room: mirror the server's swap
+                // until its LobbyState lands, so nothing drawn or sent in between reads
+                // the open seat's old values as this player's.
+                const int was = room_.mySlot;
+                if (state_ == State::InRoom && was >= 0 && was < kMaxSlots && slot < kMaxSlots && int(slot) != was) {
+                    std::swap(room_.slots[was], room_.slots[slot]);
+                    room_.slots[was].type = 0; room_.slots[was].name.clear(); room_.slots[was].ready = 0;
+                }
                 // 0xFF = the host created the game as a slot-less spectator.
                 room_.mySlot = (slot == 0xFF) ? -1 : int(slot);
                 spectator_ = (slot == 0xFF);
@@ -1019,6 +1027,8 @@ void MpClient::setGameOptions(const GameOptions& o) {
 void MpClient::setPause(bool want) { Writer w; w.u8(want ? 1 : 0); send(Msg::SetPause, w); }
 
 void MpClient::kick(int slot) { Writer w; w.u8(uint8_t(slot)); send(Msg::Kick, w); }
+
+void MpClient::moveSeat(int slot) { Writer w; w.u8(uint8_t(slot)); send(Msg::MoveSeat, w); }
 
 void MpClient::chat(const std::string& text, uint8_t recipients) {
     Writer w; w.str(text); w.u8(recipients); send(Msg::Chat, w);

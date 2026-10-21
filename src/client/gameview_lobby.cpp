@@ -1050,6 +1050,12 @@ std::string startLocationsLabel(uint8_t mode) {
             if (host && !campaign && s.type == 1 && !mine) {
                 lbBtn(x + row.w - 54, y + 3, 50, 22, "KICK", true, [this, i] { mp_->kick(i); });
             }
+            // Any seated player may take an OPEN seat (Msg::MoveSeat): the seat is the
+            // start under BY SLOT, and the order under FIXED. Open seats are always
+            // inside the map's capacity (the server closes the rest). Not in a campaign
+            // mission or a Crusades battle, whose seats are given.
+            if (!campaign && room.mission.empty() && room.mySlot >= 0 && s.type == 0)
+                lbBtn(x + row.w - 94, y + 3, 90, 22, "MOVE HERE", true, [this, i] { mp_->moveSeat(i); });
             y += 30;   // slot row pitch: 8 rows must leave room for the option toggles below
         }
         y += 10;

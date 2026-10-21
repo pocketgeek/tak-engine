@@ -2732,6 +2732,35 @@ void Server::gameMsg(Client& c, const Frame& f) {
             broadcastLobby(*r);
             break;
         }
+        case Msg::MoveSeat: {
+            // A seated human takes another seat: only an OPEN one inside the map's
+            // capacity, only in the lobby. Under START LOCATIONS: BY SLOT the seat is
+            // the start position, and under FIXED the seat order decides it, so this
+            // is how a player picks where they open. Never in a Crusades battle (its
+            // two seats are the issued participants) or a campaign mission (the
+            // mission says which seat is the player's).
+            Reader rd(f.payload.data(), f.payload.size());
+            const int to = int(rd.u8());
+            if (!rd.ok || rd.p != rd.end || r->running || !r->campaignBattleId.empty() || !r->mission.empty()) return;
+            const int from = c.slot;
+            if (from < 0 || from >= kMaxSlots || r->slotClient[from] != int(c.id)) return;   // spectators have no seat
+            if (to < 0 || to >= kMaxSlots || to == from || to >= r->cap) return;
+            if (r->slots[to].type != 0 || r->slotClient[to] >= 0) return;
+            // The player's side, colour, team and READY travel with them; the seat
+            // they leave opens with the target's old colour and team, so the room's
+            // defaults (slot N: colour N, team N) stay distinct.
+            std::swap(r->slots[from], r->slots[to]);
+            r->slots[from].type = 0; r->slots[from].name.clear(); r->slots[from].ready = 0;
+            r->slotClient[to] = int(c.id); r->slotClient[from] = -1;
+            c.slot = to;
+            // The mover learns its new seat the way it learned the first one, before
+            // the table that shows it there.
+            Writer jr; jr.u8(1); jr.u8(uint8_t(to)); jr.str("");
+            c.conn.send(Msg::JoinResult, jr);
+            broadcastLobby(*r);
+            std::fprintf(stderr, "client %u moved from slot %d to slot %d in game %u\n", c.id, from, to, r->id);
+            break;
+        }
         case Msg::Kick: {
             if(!r->campaignBattleId.empty())return;
             if (r->hostId != c.id || r->running) return;
@@ -3296,7 +3325,7 @@ bool Server::allowLobbyWork(Client& c,const Frame& f) {
         case Msg::ListGames: case Msg::JoinGame: case Msg::Spectate:
         case Msg::OverrideRequest: case Msg::OverrideReady: case Msg::OverrideError:
         case Msg::Chat: case Msg::MapRequest: case Msg::MapReady: case Msg::MapError:
-        case Msg::Ping: case Msg::Pong: case Msg::SlotUpdate: case Msg::SetGameOptions:
+        case Msg::Ping: case Msg::Pong: case Msg::SlotUpdate: case Msg::MoveSeat: case Msg::SetGameOptions:
         case Msg::LeaveGame: case Msg::Rejoin: case Msg::Kick: case Msg::SetPause:
         case Msg::VoiceListen: break;
         default:return true; // Login, campaign and command queues have their own budgets.

@@ -230,6 +230,10 @@ In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
    The lobby's map numbers each start position and colours it for the player who
    starts there. With **Random** start locations the markers stay dark, because
    nobody knows who starts where until the game begins.
+   To start somewhere else, click **Move here** on an open slot: you take that
+   slot with your side, colour and team, and your old slot opens. With **By slot**
+   start locations slot N starts at position N, so this picks your start; with
+   **Fixed** it changes your place in the order.
 5. Set each other slot to an AI, choose its side and **difficulty**, or close
    the slot. **Easy** is a good first opponent.
 6. Click **Start**.
@@ -1426,13 +1430,14 @@ player's game stays in step.
 4. In the game browser, **create** a game or **join** one. Password-protected
    games ask for the password.
 5. In the room, choose your side, colour and team, then click **Ready**. The host
-   starts the game when everyone is ready.
+   starts the game when everyone is ready. To take a different seat, click
+   **Move here** on any open slot (see [Start locations](#match-options)).
 
 ![A game room with player and AI slots, the map with start markers 1 to 4 in the seated players' colours, override pack choices and the read-only match rules](img/room.jpg)
 
 *A game room, here for a single-player game: player and AI slots, the map with each start marked in the colour of the player who starts there, override packs and the read-only match rules.*
 
-The host can open and close slots, add AIs and kick players. Match options are
+The host can open and close slots, add AIs and kick players. Any seated player, the host included, can move to an open slot with **Move here** until the game starts; closed, AI and taken slots cannot be moved to, and campaign missions and Crusades battles keep their seats. Match options are
 set when the game is created, except **Allow spectators**, which the host can
 click in the room's rules to turn on or off until the game starts. It lights up
 under the host's pointer; for everyone else it is read-only. See
