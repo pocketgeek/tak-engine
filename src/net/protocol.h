@@ -19,7 +19,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 286;      // 286: Legion ~100 round 6: gatehouse corridors -- a braked attacker walks on past the shot rather than plug a
+constexpr uint32_t kNetVersion = 287;      // 287: mods replace overrides: GameOptions byte 3 overridePolicy (0/1/2) -> gameMods (0/1, host-only game
+                                           //      packs, forced 0 in campaigns); Msg::Override* -> Mod* (same ids), offer label "mods", replay header
+                                           //      gameMods/modDigest in the same slots; cosmetic mods never sent. Sim unchanged; 286 replays refused
+                                           // 286: Legion ~100 round 6: gatehouse corridors -- a braked attacker walks on past the shot rather than plug a
                                            //      pinched approach (onward only), deep rings through narrow approaches fill back to front (Legion state
                                            //      differs from 285; 285 replays refused)
                                            // 285: Legion ~100 round 5: rings press into a wall's shadow, late rings for fight columns, the reach edge in reach

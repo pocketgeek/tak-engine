@@ -760,6 +760,8 @@ round at about 100 bodies: attackers press into a wall's shadow, fight-move colu
 ring a still target, and a body on the reach edge counts as in reach (Legion only).
 Protocol 286 is the sixth, for gatehouse corridors: an attacker that would plug a
 narrow approach walks on past the shot, and deep rings fill back to front (Legion only).
+Protocol 287 replaces override packs with mods: the host-only game-mods flag replaces the
+override tier, and cosmetic mods are never sent; the simulation is 286's.
 Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
@@ -975,6 +977,14 @@ comes up to it; and a ring that a narrow approach feeds hands out its spots deep
 first by walk, so the approach fills from its far end as Retail's does. Retail is
 bit-identical and the `--mpai` hashes are unchanged (60 s and 300 s, Retail and
 Legion), but 285 recordings no longer play.
+Protocol 287 replaces override packs with mods. `GameOptions` byte 3 is now
+`gameMods` (0 or 1, default 0; was the 0/1/2 override tier): only the host selects
+game packs, the server refuses them from anyone else and forces the flag off in
+campaigns and Crusades battles, and the `Override*` messages are renamed `Mod*`
+with the same ids and the offer label `"mods"`. The replay header keeps the same
+byte as `gameMods` and the digest as `modDigest`. Cosmetic mods (selected pack
+folders and the always-on `mods/cosmetic/*.hpi` archives) stay local to each player
+and are never sent. The simulation is 286's, but 286 recordings no longer play.
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
