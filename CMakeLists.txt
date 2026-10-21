@@ -941,19 +941,29 @@ endif()
 # Round 6 (2026-10-21): the walk on past the shot (walkOnShot). In attackring-gatehouse-40's 3-cell corridor the first
 # 2x2 body combat braked plugged the way single file and the queue behind it stood out of reach; now a ring member
 # whose braked footprint would cut its queue off from ground with the shot walks on to the farthest such origin first.
-# Offsets 0, 1, -1, damage the target lost: 167 / 250 / 84 before (median 167), 984 / 782 / 881 now (median 881;
-# Retail 557 / 482 / 590). Passes at a median of 600 or more, serial equal to workers.
+# Offsets 0, 1, -1, damage the target lost: 167 / 250 / 84 before (median 167), 1,395 / 1,369 / 1,312 now (median
+# 1,369; Retail 557 / 482 / 590). Passes at a median of 600 or more, serial equal to workers.
 add_test(NAME legion_gatewalkon
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-gatehouse-40.scn --mode legion --offsets 0,1,-1 --json)
 set_tests_properties(legion_gatewalkon PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":([6-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
 # The same on a second layout (attackring-gateyard-36: a 4-cell corridor, gates on the west and the south, 2x2 and 3x3
-# bodies, the yard open on the north). Offsets -2, -3, -5: 326 / 180 / 1,001 before (median 326), 871 / 613 / 1,919 now
-# (median 871; Retail 521 / 400 / 1,052). Passes at a median of 600 or more, serial equal to workers.
+# bodies, the yard open on the north). Offsets -2, -3, -5: 326 / 180 / 1,001 before (median 326), 857 / 791 / 1,541 now
+# (median 857; Retail 521 / 400 / 1,052). Passes at a median of 600 or more, serial equal to workers.
 add_test(NAME legion_gateyard
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-gateyard-36.scn --mode legion --offsets -2,-3,-5 --json)
 set_tests_properties(legion_gateyard PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.damage_end\":([6-9][0-9][0-9]|[1-9][0-9][0-9][0-9]+),")
+# The walk on goes onward (review, 2026-10-21). In attackring-deadcorridor-30 (a straight dead-end corridor) a body
+# between two braked neighbours walked back and forth till its 6 walks ran out: its queue counted members outside the
+# corridor wall, so the ground either side looked like its own. Now only members whose ground comes up to the body
+# (this target's braked attackers passable) queue, and a later walk never ends nearer where the last set out. Offsets
+# 0, 1, -1, walks: 12 / 8 / 12 before (median 12; 9 of offset 0's 12 went back), 5 / 3 / 3 now (median 3, none back);
+# damage 275 / 445 / 338 -> 526 / 362 / 271. Passes at a median of 6 walks or fewer, serial equal to workers.
+add_test(NAME legion_walkononward
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-deadcorridor-30.scn --mode legion --offsets 0,1,-1 --json)
+set_tests_properties(legion_walkononward PROPERTIES LABELS legion
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"work\\.walk_ons\\.total\":[0-6],")
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is

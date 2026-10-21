@@ -989,9 +989,10 @@ struct LegionNavigator::Impl {
         int32_t pressX=kNoPress,pressZ=0;uint32_t pressTicks=0;
         bool shadowPressed=false;         // pressed in toward a shadowed ring's target (pressIn; move's in-reach hold)
         // A walk on past the shot under way (walkOnShot): the last origin of
-        // its route (-1 none), the origin and tick of the last look, and the
-        // walks this order has taken. Hashed.
-        int walkOnEnd=-1,walkOnAt=-1;uint32_t walkOnTick=0;uint8_t walkOns=0;
+        // its route (-1 none), the origin and tick of the last look, the
+        // origin the last walk set out from (-1 none), and the walks this
+        // order has taken. Hashed.
+        int walkOnEnd=-1,walkOnAt=-1,walkOnFrom=-1;uint32_t walkOnTick=0;uint8_t walkOns=0;
         uint32_t detourTicks=0;
         bool detourFace=true;             // side-step turns the body (keep-right) or not (shuffle)
         bool detourPass=false;            // side-step is a lane-discipline pass (moves at travel speed)
@@ -8599,15 +8600,16 @@ struct LegionNavigator::Impl {
     // the corridor and the queue behind it stood out of reach for good,
     // while Retail's corridor filled from its far end (its first body walked
     // the corridor's out-of-sight lane to the corner before it got the shot).
-    // So a ring member that combat would brake, with members of its own
-    // group behind it, walks on when its footprint cuts them off from ground
+    // So a ring member that combat would brake, with attackers of its target
+    // queued behind it, walks on when its footprint cuts them off from ground
     // with the shot: a bounded search (radius kWalkOn) over statically legal
     // origins no still body covers (the group's moving and held members do
     // not count, they are the queue) from those members, round this body's
     // footprint, against one from this body. A shot origin (centre in reach
     // and in sight) only this body reaches is ground it would plug; it walks
     // to the farthest of them as a local route (no brake on the way), and
-    // the next body comes up behind it. True: do not brake this tick.
+    // the next body comes up behind it. A later walk only goes onward (see
+    // walkOnFrom). True: do not brake this tick.
     bool walkOnShot(const Unit& u) {
         if(!u.type||u.type->canFly||u.type->domain==UnitType::Domain::Water)return false;
         Member* found=member(u.id);
@@ -8659,14 +8661,22 @@ struct LegionNavigator::Impl {
         constexpr int RR=kWalkOn,S=2*RR+1;
         auto box=[&](int x,int z) {return x>=ox-RR&&x<=ox+RR&&z>=oz-RR&&z<=oz+RR;};
         auto local=[&](int x,int z) {return (z-oz+RR)*S+x-ox+RR;};
-        // The queue: members of this group, moving, waiting or held, whose
-        // bodies stand in the box (cells in index order).
+        // The queue: attackers of this target (this group's members, or
+        // another group's on the same target: two groups through one gate
+        // jam it alike), moving, waiting or held, whose bodies stand in the
+        // box (cells in index order).
+        auto ours=[&](const Member& peer) {
+            if(peer.group==m.group)return true;
+            if(peer.kind!=Kind::Attack)return false;
+            const auto other=groups.find(peer.group);
+            return other!=groups.end()&&other->second.reachTarget==g.reachTarget;
+        };
         std::vector<int> sources;
         for(int z=std::max(0,oz-RR);z<=std::min(w.occH_-1,oz+RR);++z)for(int x=std::max(0,ox-RR);x<=std::min(w.occW_-1,ox+RR);++x) {
             const int32_t o=occAt(size_t(z)*w.occW_+x);
             if(!o||o==u.id)continue;
             const Member* peer=member(o);
-            if(!peer||peer->group!=m.group||(peer->state!=Moving&&peer->state!=Waiting&&peer->state!=Holding))continue;
+            if(!peer||(peer->state!=Moving&&peer->state!=Waiting&&peer->state!=Holding)||!ours(*peer))continue;
             const Unit* pu=w.unit(o);
             if(!pu||!pu->type)continue;
             const int px=footprintOrigin(pu->x,fx),pz=footprintOrigin(pu->z,fz);
@@ -8678,6 +8688,11 @@ struct LegionNavigator::Impl {
         if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d walkon-look at=(%d,%d) sources=%zu\n",w.tickCounter_,u.id,ox,oz,sources.size());
 #endif
         if(sources.empty())return false;
+        // A still body: anything standing that is not the queue (see ours).
+        // In the queue's own reach (relaxed) braked attackers of this target do
+        // not count either: they are the queue's front, and each is looked
+        // at in turn (the deepest walks first, then the next).
+        bool relaxed=false;
         auto still=[&](int cx,int cz) {
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)return false;
             const int32_t o=occAt(size_t(cz)*w.occW_+cx);
@@ -8685,7 +8700,9 @@ struct LegionNavigator::Impl {
             const Unit* other=w.unit(o);
             if(!other||!other->type||other->type->canFly)return false;
             const Member* peer=member(o);
-            return !peer||(peer->state!=Moving&&peer->state!=Waiting&&!(peer->group==m.group&&peer->state==Holding));
+            if(!peer)return true;
+            if(peer->state==Moving||peer->state==Waiting)return false;
+            return !((relaxed||peer->state==Holding)&&ours(*peer));
         };
         auto open=[&](int x,int z) {
             if(!box(x,z)||!legal(p,x,z))return false;
@@ -8695,13 +8712,18 @@ struct LegionNavigator::Impl {
         auto mine=[&](int x,int z) {return std::abs(x-ox)<fx&&std::abs(z-oz)<fz;};
         std::array<int16_t,size_t(S)*S> parent;
         std::array<int16_t,size_t(S)*S> queue;
+        // The round searches' seeds, joined where their ground meets.
+        std::array<int16_t,size_t(S)*S> seed;
+        std::vector<int16_t> joined;
+        auto rootOf=[&](int k) {while(joined[size_t(k)]!=k)k=joined[size_t(k)]=joined[size_t(joined[size_t(k)])];return k;};
         size_t cells=0;
         auto search=[&](bool round,auto&& visit) {
-            parent.fill(-1);size_t tail=0;
+            parent.fill(-1);size_t tail=0;joined.clear();
             if(round) {
                 for(const int c:sources) {
                     const int x=ox+c%S-RR,z=oz+c/S-RR;
                     if(mine(x,z)||!open(x,z))continue;
+                    seed[size_t(c)]=int16_t(joined.size());joined.push_back(int16_t(joined.size()));
                     parent[size_t(c)]=int16_t(c);queue[tail++]=int16_t(c);
                 }
             } else {const int c=local(ox,oz);parent[size_t(c)]=int16_t(c);queue[tail++]=int16_t(c);}
@@ -8713,15 +8735,46 @@ struct LegionNavigator::Impl {
                     const int nx=x+d[0],nz=z+d[1];
                     if(!box(nx,nz))continue;
                     const int next=local(nx,nz);
-                    if(parent[size_t(next)]>=0)continue;
+                    if(!round&&parent[size_t(next)]>=0)continue;
                     if(round&&(mine(nx,nz)||(d[0]&&d[1]&&(mine(nx,z)||mine(x,nz)))))continue;
                     if(!step(p,x,z,d[0],d[1])||!open(nx,nz))continue;
                     if(d[0]&&d[1]&&(!open(nx,z)||!open(x,nz)))continue;
+                    if(round&&parent[size_t(next)]>=0) {   // met another seed's ground
+                        const int a=rootOf(seed[size_t(c)]),b=rootOf(seed[size_t(next)]);
+                        if(a!=b)joined[size_t(std::max(a,b))]=int16_t(std::min(a,b));
+                        continue;
+                    }
+                    if(round)seed[size_t(next)]=seed[size_t(c)];
                     parent[size_t(next)]=int16_t(c);queue[tail++]=int16_t(next);
                 }
             }
             cells+=tail;
         };
+        // Only a member whose ground comes up to this footprint queues
+        // behind it: a member beyond a wall does not. Counting such members
+        // made every shot origin here "only this body's", so the body walked
+        // to the far end, looked again and walked back (review, 2026-10-21).
+        // First the queue's reach with this target's braked attackers passable:
+        // the seeds whose ground touches the ring round this footprint.
+        {
+            relaxed=true;
+            std::vector<int> found;
+            search(true,[&](int c,int,int) {found.push_back(c);});
+            relaxed=false;
+            std::vector<bool> touches(joined.size(),false);
+            for(const int c:found) {
+                const int x=ox+c%S-RR,z=oz+c/S-RR;
+                if(std::abs(x-ox)<=fx&&std::abs(z-oz)<=fz)touches[size_t(rootOf(seed[size_t(c)]))]=true;
+            }
+            std::vector<int> queued;
+            for(const int c:sources)if(parent[size_t(c)]==c&&touches[size_t(rootOf(seed[size_t(c)]))])queued.push_back(c);
+#ifndef NDEBUG
+            if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d walkon-queue sources=%zu queued=%zu\n",w.tickCounter_,u.id,sources.size(),queued.size());
+#endif
+            if(queued.empty()) {stats.detourCells+=cells;return false;}
+            sources=std::move(queued);
+        }
+        // Then the ground the queue reaches as it stands, round this body.
         std::array<bool,size_t(S)*S> reached{};
         search(true,[&](int c,int,int) {reached[size_t(c)]=true;});
         const bool naval=t->type->domain==UnitType::Domain::Water;
@@ -8747,9 +8800,18 @@ struct LegionNavigator::Impl {
             const int64_t hx=lox+(int64_t(16)<<16)-1,hz=loz+(int64_t(16)<<16)-1;
             return (ftx>ax&&sees(hx,az))||(ftz>az&&sees(ax,hz))||(ftx>ax&&ftz>az&&sees(hx,hz));
         };
+        // Onward only: once a walk has set out, a later one never ends
+        // nearer the origin it set out from than this body stands now. The
+        // queue meets a body in a column from whichever end its members
+        // stand at, and the ground at the other end looks unreached from
+        // either; without this the body walked back and forth between the
+        // two (review, 2026-10-21).
+        const int fromX=m.walkOnFrom<0?0:m.walkOnFrom%W,fromZ=m.walkOnFrom<0?0:m.walkOnFrom/W;
+        auto cheb=[&](int x,int z) {return std::max(std::abs(x-fromX),std::abs(z-fromZ));};
+        const int away=m.walkOnFrom<0?-1:cheb(ox,oz);
         int best=-1;
         search(false,[&](int c,int x,int z) {
-            if(mine(x,z)||reached[size_t(c)]||!shot(x,z))return;
+            if(mine(x,z)||reached[size_t(c)]||cheb(x,z)<=away||!shot(x,z))return;
             best=c;   // breadth first: the last one found is the farthest
         });
         stats.detourCells+=cells;
@@ -8762,7 +8824,7 @@ struct LegionNavigator::Impl {
         for(int c=best;parent[size_t(c)]!=c;c=parent[size_t(c)])path.push_back((oz+c/S-RR)*W+ox+c%S-RR);
         std::reverse(path.begin(),path.end());
         m.route=std::move(path);m.routeTicks=0;m.lineCell=-1;m.pressX=kNoPress;m.detour=-1;
-        m.walkOnEnd=m.route.back();++m.walkOns;
+        m.walkOnEnd=m.route.back();m.walkOnFrom=here;++m.walkOns;
         ++stats.walkOns;
         return true;
     }
@@ -13985,7 +14047,7 @@ struct LegionNavigator::Impl {
             h=mix(h,m.rest);if(m.rest) {h=mix(h,uint32_t(m.restX));h=mix(h,uint32_t(m.restZ));h=mix(h,uint32_t(m.restHp));h=mix(h,m.restEpoch);h=mix(h,m.restRing);}
             if(m.bend) {h=mix(h,0x62656e64ull);h=mix(h,uint32_t(m.bendX));h=mix(h,uint32_t(m.bendZ));}
             if(m.shadowPressed)h=mix(h,0x736861646f77ull);
-            if(m.walkOnAt>=0) {h=mix(h,0x77616c6b6f6eull);h=mix(h,uint64_t(uint32_t(m.walkOnEnd))<<32|uint32_t(m.walkOnAt));h=mix(h,uint64_t(m.walkOnTick)<<8|m.walkOns);}
+            if(m.walkOnAt>=0) {h=mix(h,0x77616c6b6f6eull);h=mix(h,uint64_t(uint32_t(m.walkOnEnd))<<32|uint32_t(m.walkOnAt));h=mix(h,uint64_t(m.walkOnTick)<<8|m.walkOns);if(m.walkOnFrom>=0)h=mix(h,uint64_t(uint32_t(m.walkOnFrom)));}
             if(m.pressX!=kNoPress) {h=mix(h,0x7072657373ull);h=mix(h,uint32_t(m.pressX));h=mix(h,uint32_t(m.pressZ));h=mix(h,m.pressTicks);}
             if(m.want>=0) {h=mix(h,0x77616e74ull);h=mix(h,uint64_t(uint32_t(m.want)));h=mix(h,m.wantTick);}
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);if(m.detourFlow)h=mix(h,0x666c6f77ull);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);

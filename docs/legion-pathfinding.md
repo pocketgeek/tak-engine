@@ -2869,6 +2869,53 @@ body flush.
 `ctest:legion_gatewalkon` (gatehouse-40 offsets 0, 1, -1: damage median >= 600; 167 before, 881 after) and
 `ctest:legion_gateyard` (gateyard-36 offsets -2, -3, -5: median >= 600; 326 before, 871 after).
 
+#### Review: the walk on went back and forth (2026-10-21)
+
+The review found that the walk on had no sense of direction. Its queue was every member of the group that was moving,
+waiting or held inside the 10-origin box, including members beyond the corridor's wall, and members shut in behind
+braked bodies. Such a queue reaches none of the ground round the body, so every shot origin the body reached counted
+as "only this body's". The body walked to the farthest one, looked again from there, found the same, and walked back.
+It stopped only when its 6 walks ran out. While walking it is not braked or turned to the target, so it fired only
+when its heading happened to line up. Reproduced at 8bd3f895: gatehouse-40 body 34 at offset 0 walked (93,87) ->
+(103,87) -> (93,87) -> (103,87) from tick 1,648. Counting a walk as "back" when it ends within 2 origins of an
+earlier look origin of the same body, 121 of gatehouse-40's 379 walks over the 11 offsets went back. On a straight
+dead-end corridor (`attackring-deadcorridor-30`, the review's repro) 9 of offset 0's 12 walks went back.
+
+Three changes:
+
+* **Only a queue that comes up to the body.** A first round search finds which queue members' ground touches the
+  ring round this footprint. Only those members are the queue; the second search, the one that finds what the queue
+  reaches, starts from them alone. In the first search the braked attackers of this target are passable: they are the
+  queue's front, not a wall, and each is looked at in turn. Without that, a body whose queue stood behind a braked
+  neighbour never walked, and gateyard-36 fell 7,539 -> 6,523.
+* **Other groups on the same target are queue too.** In gateyard-36 the 2x2 group held in the west gate and the 3x3
+  group came up behind it. Counted as still bodies, the 2x2s shut the 3x3s' queue off from the corridor.
+* **Onward only.** A walk records the origin it set out from (`Member::walkOnFrom`, hashed). A later walk never ends
+  nearer that origin (Chebyshev) than the body stands now. In a column the queue can meet a body from either end, and
+  the ground at the other end then looks unreached; this rule stops the body walking back to it.
+
+Over the 11 gate offsets (sums; medians in brackets), 8bd3f895 -> now, Retail:
+
+| fixture | key | 8bd3f895 | now | Retail |
+|---|---|---|---|---|
+| attackring-gatehouse-40 | damage_end | 9,758 (868) | 12,535 (1,117) | 7,172 (584) |
+| attackring-gatehouse-40 | damage_t2400 | 6,531 (550) | 8,447 (764) | 5,146 (424) |
+| attackring-gatehouse-40 | ever_end / now_end | 340 / 285 | 379 / 334 | 298 / 264 |
+| attackring-gatehouse-40 | ring t50 | 876 (10 of 11) | 1,191 (11 of 11) | 1,040 (8 of 11) |
+| attackring-gatehouse-40 | walks / back | 379 / 121 | 362 / 6 | - |
+| attackring-gateyard-36 | damage_end | 7,539 (602) | 7,822 (602) | 5,655 (521) |
+| attackring-gateyard-36 | damage_t2400 | 5,359 | 5,425 | 4,095 |
+| attackring-gateyard-36 | ever_end / now_end | 200 / 190 | 204 / 189 | 232 / 207 |
+| attackring-deadcorridor-30 | damage_end | 3,790 (275) | 5,077 (436) | 2,262 (179) |
+| attackring-deadcorridor-30 | ever_end / now_end | 123 / 110 | 130 / 117 | 110 / 102 |
+| attackring-deadcorridor-30 | walks | 80 | 37 | - |
+
+Every other watched fixture (the list above) is hash-identical to 8bd3f895 in Legion mode at every gate offset, and
+Retail is hash-identical on gatehouse-40 and wall-64. Trades: gatehouse-40 Legion work 47.3M -> 63.4M and
+deadcorridor-30 12.2M -> 22.3M over the 11 offsets, nearly all field refreshes round moving bodies
+(`field_work_refresh_moving` 37.0M -> 51.6M and 8.2M -> 17.6M); the per-tick maximum is unchanged on all three.
+`ctest:legion_walkononward` (deadcorridor-30 offsets 0, 1, -1: median walks <= 6; 12 before, 3 now).
+
 ### Paused first builds (W4 C1, protocol 244)
 
 A first field used to build to done, its whole window, although its members
@@ -4774,7 +4821,9 @@ Rules that came out of using them:
   (Retail 49 / 41; sums 503 / 497 against 518 now in reach), damage 19,507 (17,027); the gatehouse 19 / 16, damage
   4,998 against 4,834 with its plug unchanged (median 324 against Retail's 584). Since round 6, "The walk on past the
   shot", a braked body that would plug a pinched approach walks on to the farthest ground with the shot first: the
-  gatehouse stands 32 / 26 ever / now, damage 9,758 over the offsets (median 868; Retail 7,172, 584).) Against a
+  gatehouse stands 32 / 26 ever / now, damage 9,758 over the offsets (median 868; Retail 7,172, 584); since that
+  section's review, which made the walk go onward only and counts only a queue that comes up to the body, 36 / 31,
+  damage 12,535 (median 1,117).) Against a
   target walled in on every side Legion outfires Retail (it
   seeks flush points on every face that has one). A Move group crossing a firing ring is level with Retail's t90
   (ringcross-100 3,841 against 3,926; completion 4,194 against 4,166 since round 4). Since round 4 (2026-10-20,
@@ -4800,7 +4849,7 @@ Rules that came out of using them:
   `ctest:legion_ringcross`, `ctest:legion_ringfill`, `ctest:legion_ringclosed`, `ctest:legion_ringstill`,
   `ctest:legion_ringwait`, `ctest:legion_ringshadow`, `ctest:legion_ringbend`, `ctest:legion_ringblind`,
   `ctest:legion_ringpocket`, `ctest:legion_ringroute`, `ctest:legion_ringnosight`, `ctest:legion_fightring`,
-  `ctest:legion_ringedge`, `ctest:legion_ringshadowpress`, `ctest:legion_ringshadowmixed`, `ctest:legion_meleepress`, `ctest:legion_gatewalkon`, `ctest:legion_gateyard`
+  `ctest:legion_ringedge`, `ctest:legion_ringshadowpress`, `ctest:legion_ringshadowmixed`, `ctest:legion_meleepress`, `ctest:legion_gatewalkon`, `ctest:legion_gateyard`, `ctest:legion_walkononward`
   and `ringcross:g.M.t90`.
 * **The livelock fix costs some lane order (protocol 257).** A body blocked
   again after a side-step toward its arc may not step straight back, so it
