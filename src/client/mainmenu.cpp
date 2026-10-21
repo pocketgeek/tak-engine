@@ -724,10 +724,10 @@ struct MainMenu::Impl {
         // the "Version" static (174,408,295,14) shows the build version, and its
         // "HelpText" sibling (172,441,296,31) shows the hovered gadget's caption --
         // a fixed help/status line, the retail convention, not a floating tooltip.
-        // (blockText covers A-Z/0-9/.:- ; spaces render as a gap.)
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
         auto placard = [&](const std::string& text, int dx, int dw, int dy, float dpx, SDL_Color c) {
-            float tw = float(text.size()) * 6 * dpx;                        // design-space width
+            dpx = uiTextFitPx(text, dpx, float(dw));                       // within the static
+            const float tw = uiTextWidth(text, dpx);                        // design-space width
             shadowText(text, ox + (dx + (dw - tw) / 2) * s, oy + dy * s, dpx * s, c);
         };
         placard(std::string("VERSION ") + tak::kVersion, 174, 295, 409, 2.0f, {185, 180, 160, 220});
@@ -797,16 +797,9 @@ struct MainMenu::Impl {
         SDL_FRect dim{0, 0, float(winW), float(winH)};
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 150);
         SDL_RenderFillRectF(ren, &dim);
-        const float px = 1.8f, cw = 6 * px, pad = 30, pw = 620;
-        const size_t perLine = size_t((pw - pad * 2) / cw);
-        std::vector<std::string> lines;
-        std::string rest = notice_.substr(0, perLine * 5);
-        while (!rest.empty()) {
-            size_t cut = rest.size() <= perLine ? rest.size() : rest.rfind(' ', perLine);
-            if (cut == std::string::npos || cut == 0) cut = std::min(perLine, rest.size());
-            lines.push_back(rest.substr(0, cut));
-            rest.erase(0, cut < rest.size() && rest[cut] == ' ' ? cut + 1 : cut);
-        }
+        const float px = 1.8f, pad = 30, pw = 620;
+        std::vector<std::string> lines = uiTextWrap(notice_, px, pw - pad * 2);
+        if (lines.size() > 5) { lines.resize(5); lines[4] = uiTextFit(lines[4] + " ...", px, pw - pad * 2); }
         const float titlePx = 3.0f, lineH = 7 * px + 8;
         const float ph = pad * 2 + 7 * titlePx + 18 + float(lines.size()) * lineH + 20;
         const float x0 = (winW - pw) / 2, y0 = (winH - ph) / 2;
@@ -902,12 +895,11 @@ struct MainMenu::Impl {
         if (!serverError.empty()) {
             // Server messages ("that password is not right") are sentences, so wrap
             // rather than truncating mid-word at the panel edge.
-            std::string e = serverError.substr(0, 96);
-            size_t cut = e.size() > 46 ? e.rfind(' ', 46) : std::string::npos;
-            blockText(e.substr(0, cut == std::string::npos ? 46 : cut), x0 + 30, y0 + 50, 1.8f,
-                      {235, 120, 110, 255});
-            if (cut != std::string::npos)
-                blockText(e.substr(cut + 1), x0 + 30, y0 + 64, 1.8f, {235, 120, 110, 255});
+            // Two lines at most, wrapped to the panel (the second cut with "...").
+            auto lines = uiTextWrap(serverError, 1.8f, pw - 60);
+            if (lines.size() > 2) lines[1] = uiTextFit(lines[1] + " " + lines[2], 1.8f, pw - 60);
+            for (size_t k = 0; k < lines.size() && k < 2; ++k)
+                blockText(lines[k], x0 + 30, y0 + 50 + 14 * float(k), 1.8f, {235, 120, 110, 255});
         }
         // Dropdown rows: the default server, remembered servers, then CUSTOM.
         serverRects.clear();
@@ -921,7 +913,7 @@ struct MainMenu::Impl {
             SDL_RenderDrawRectF(ren, &r);
             std::string label = i < int(serverItems.size()) ? serverItems[size_t(i)]
                                                             : std::string("CUSTOM...");
-            blockText(label, r.x + 14, r.y + 9, 2.4f,
+            blockText(uiTextFit(label, 2.4f, r.w - (i == 0 ? 140 : 28)), r.x + 14, r.y + 9, 2.4f,
                       sel ? SDL_Color{235, 240, 250, 255} : SDL_Color{175, 180, 195, 255});
             if (i == 0)   // mark the official default server
                 blockText("DEFAULT", r.x + r.w - 110, r.y + 13, 1.6f, {150, 165, 145, 255});
@@ -934,9 +926,10 @@ struct MainMenu::Impl {
             SDL_SetRenderDrawColor(ren, 16, 18, 26, 255);
             SDL_FRect box{x0 + 30, ry + 4, pw - 60, 46}; SDL_RenderFillRectF(ren, &box);
             SDL_SetRenderDrawColor(ren, 120, 140, 180, 255); SDL_RenderDrawRectF(ren, &box);
-            blockText(serverText, box.x + 12, box.y + 14, 3.0f, {230, 235, 245, 255});
+            const std::string shown = uiTextFitStart(serverText, 3.0f, box.w - 30);
+            blockText(shown, box.x + 12, box.y + 14, 3.0f, {230, 235, 245, 255});
             if ((SDL_GetTicks() / 500) % 2 == 0) {   // blinking caret
-                float cx = box.x + 12 + float(serverText.size()) * 6 * 3.0f;
+                float cx = box.x + 12 + uiTextWidth(shown, 3.0f) + 2;
                 SDL_SetRenderDrawColor(ren, 230, 235, 245, 255);
                 SDL_FRect car{cx, box.y + 12, 3, 22}; SDL_RenderFillRectF(ren, &car);
             }
@@ -960,6 +953,7 @@ struct MainMenu::Impl {
             SDL_RenderDrawRectF(ren, &box);
             const float px = 2.8f, adv = 6 * px;
             float tx = box.x + 12;
+            const std::string shown = mask ? text : uiTextFitStart(text, px, box.w - 30);
             if (mask) {
                 // Draw the password as filled pips rather than glyphs: a real
                 // character would be readable over someone's shoulder, and the
@@ -970,10 +964,10 @@ struct MainMenu::Impl {
                     SDL_RenderFillRectF(ren, &pip);
                 }
             } else {
-                blockText(text, tx, box.y + 12, px, {230, 235, 245, 255});
+                blockText(shown, tx, box.y + (box.h - 7 * px - uiTextDescent(px)) / 2, px, {230, 235, 245, 255});
             }
             if (focused && (SDL_GetTicks() / 500) % 2 == 0) {
-                float cx = tx + float(text.size()) * adv;
+                float cx = tx + (mask ? float(text.size()) * adv : uiTextWidth(shown, px) + 2);
                 SDL_SetRenderDrawColor(ren, 230, 235, 245, 255);
                 SDL_FRect car{cx, box.y + 10, 3, 22}; SDL_RenderFillRectF(ren, &car);
             }
@@ -994,8 +988,8 @@ struct MainMenu::Impl {
             SDL_SetRenderDrawColor(ren, bright ? 160 : 110, bright ? 185 : 120,
                                    bright ? 235 : 150, 255);
             SDL_RenderDrawRectF(ren, &b);
-            float tw = float(std::strlen(label)) * 6 * 2.2f;
-            blockText(label, b.x + (b.w - tw) / 2 + 2, b.y + 11, 2.2f,
+            const float tw = uiTextWidth(label, 2.2f);
+            blockText(label, b.x + (b.w - tw) / 2, b.y + 11, 2.2f,
                       bright ? SDL_Color{230, 238, 250, 255} : SDL_Color{185, 190, 205, 255});
             out = b;
         };
@@ -1021,8 +1015,7 @@ struct MainMenu::Impl {
         SDL_FRect panel{px0, py0, pw, ph};
         SDL_SetRenderDrawColor(ren, 26, 28, 36, 240); SDL_RenderFillRectF(ren, &panel);
         SDL_SetRenderDrawColor(ren, 120, 130, 160, 255); SDL_RenderDrawRectF(ren, &panel);
-        // blockText advances 6*px per glyph (5 + 1 gap); estimate width for centring.
-        auto tw = [](const std::string& s, float px) { return s.empty() ? 0.0f : (s.size() * 6.0f - 1.0f) * px; };
+        auto tw = [](const std::string& s, float px) { return uiTextWidth(s, px); };
         shadowText("SETTINGS", px0 + (pw - tw("SETTINGS", titlePx)) / 2, py0 + pad, titlePx, {235, 225, 180, 255});
         int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
         { float lx, ly; SDL_RenderWindowToLogical(ren, mx, my, &lx, &ly); mx = int(lx); my = int(ly); }
@@ -1036,7 +1029,7 @@ struct MainMenu::Impl {
             SDL_RenderFillRectF(ren, &r);
             SDL_SetRenderDrawColor(ren, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
             SDL_RenderDrawRectF(ren, &r);
-            float lpx = 2.5f, lw = tw(labels[i], lpx);
+            const float lpx = uiTextFitPx(labels[i], 2.5f, bw - 16), lw = tw(labels[i], lpx);
             blockText(labels[i], r.x + (bw - lw) / 2, r.y + (bh - 7 * lpx) / 2, lpx, {228, 232, 242, 255});
             by += bh + gap;
         }
@@ -1091,7 +1084,7 @@ struct MainMenu::Impl {
         SDL_FRect panel{px0, py0, pw, ph};
         SDL_SetRenderDrawColor(ren, 26, 28, 36, 240); SDL_RenderFillRectF(ren, &panel);
         SDL_SetRenderDrawColor(ren, 120, 130, 160, 255); SDL_RenderDrawRectF(ren, &panel);
-        auto tw = [](const std::string& t, float px) { return t.empty() ? 0.0f : (t.size() * 6.0f - 1.0f) * px; };
+        auto tw = [](const std::string& t, float px) { return uiTextWidth(t, px); };
         shadowText("LOAD REPLAY", px0 + (pw - tw("LOAD REPLAY", titlePx)) / 2, py0 + pad,
                    titlePx, {235, 225, 180, 255});
         int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
@@ -1114,11 +1107,9 @@ struct MainMenu::Impl {
             SDL_RenderFillRectF(ren, &r);
             SDL_SetRenderDrawColor(ren, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
             SDL_RenderDrawRectF(ren, &r);
-            std::string name = std::filesystem::path(full).stem().string();
-            std::transform(name.begin(), name.end(), name.begin(),
-                           [](unsigned char c) { return char(std::toupper(c)); });
-            float lpx = 1.9f;
-            if (tw(name, lpx) > bw - 20) name = name.substr(0, size_t((bw - 20) / (6 * lpx)));
+            // The file's own name (its own capitals under MODERN), cut to the button.
+            const float lpx = 1.9f;
+            const std::string name = uiTextFit(std::filesystem::path(full).stem().string(), lpx, bw - 24);
             blockText(name, r.x + 12, r.y + (bh - 7 * lpx) / 2, lpx, {228, 232, 242, 255});
             by += bh + gap;
         }
@@ -1126,7 +1117,7 @@ struct MainMenu::Impl {
             std::string e = replayError_;
             std::transform(e.begin(), e.end(), e.begin(),
                            [](unsigned char c) { return char(std::toupper(c)); });
-            if (tw(e, 1.6f) > pw - pad * 2) e = e.substr(0, size_t((pw - pad * 2) / (6 * 1.6f)));
+            e = uiTextFit(e, 1.6f, pw - pad * 2);
             blockText(e, px0 + (pw - tw(e, 1.6f)) / 2, by + 2, 1.6f, {235, 130, 110, 255});
             by += 22;
         }
@@ -1152,7 +1143,7 @@ struct MainMenu::Impl {
         SDL_FRect panel{px0, py0, pw, ph};
         SDL_SetRenderDrawColor(ren, 26, 28, 36, 240); SDL_RenderFillRectF(ren, &panel);
         SDL_SetRenderDrawColor(ren, 120, 130, 160, 255); SDL_RenderDrawRectF(ren, &panel);
-        auto tw = [](const std::string& s, float px) { return s.empty() ? 0.0f : (s.size() * 6.0f - 1.0f) * px; };
+        auto tw = [](const std::string& s, float px) { return uiTextWidth(s, px); };
         shadowText("BENCHMARK", px0 + (pw - tw("BENCHMARK", titlePx)) / 2, py0 + pad, titlePx, {235, 225, 180, 255});
         int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
         { float lx, ly; SDL_RenderWindowToLogical(ren, mx, my, &lx, &ly); mx = int(lx); my = int(ly); }
@@ -1169,7 +1160,7 @@ struct MainMenu::Impl {
             SDL_RenderFillRectF(ren, &r);
             SDL_SetRenderDrawColor(ren, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
             SDL_RenderDrawRectF(ren, &r);
-            float lpx = 1.9f, lw = tw(labels[i], lpx);
+            const float lpx = uiTextFitPx(labels[i], 1.9f, bw - 16), lw = tw(labels[i], lpx);
             blockText(labels[i], r.x + (bw - lw) / 2, r.y + (bh - 7 * lpx) / 2, lpx, {228, 232, 242, 255});
             by += bh + gap;
         }

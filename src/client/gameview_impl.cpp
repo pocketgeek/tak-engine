@@ -3644,15 +3644,21 @@
 
     void GameView::lbField(float x, float y, float w, const std::string& label,
                  const std::string& value, int id) {
-        blockText(label, x, y, 1.6f, {150, 155, 170, 255});
+        // MODERN's descenders: the label rises by part of them to stay off the box, and
+        // the value is a size smaller so ascenders and descenders both sit inside it.
+        blockText(label, x, y - tak::uiTextDescent(1.6f) * 0.6f, 1.6f, {150, 155, 170, 255});
         SDL_FRect r{x, y + 14, w, 22};
+        const float vpx = tak::modernUiText() ? 1.6f : 1.8f;
         bool active = (lbField_ == id);
         SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255);
         SDL_RenderFillRectF(ren_, &r);
         SDL_SetRenderDrawColor(ren_, active ? 200 : 90, active ? 210 : 100, active ? 130 : 130, 255);
         SDL_RenderDrawRectF(ren_, &r);
-        std::string shown = value + (active ? "_" : "");
-        blockText(shown, x + 6, y + 20, 1.8f, {225, 230, 240, 255});
+        // The END of a long value shows (where typing happens), and the text sits in
+        // the box with its descenders (MODERN) clear of the border.
+        const std::string shown = tak::uiTextFitStart(value + (active ? "_" : ""), vpx, w - 12);
+        const float ty = tak::modernUiText() ? r.y + (r.h - 7 * vpx - tak::uiTextDescent(vpx)) / 2 : y + 20;
+        blockText(shown, x + 6, ty, vpx, {225, 230, 240, 255});
         lobbyHots_.push_back({r, [this, id] { lbField_ = id; SDL_StartTextInput(); }});
     }
 

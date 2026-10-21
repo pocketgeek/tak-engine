@@ -62,6 +62,11 @@ float uiTextAscent(float px) {
     return std::max(0.0f, f.ascentFrac() * f.pixelSize(cellScale(px)) - 7 * px);
 }
 
+float uiTextFitPx(const std::string& s, float px, float maxW, float minPx) {
+    const float w = uiTextWidth(s, px);
+    return w <= maxW || w <= 0 ? px : std::max(minPx, px * maxW / w);
+}
+
 std::string uiTextFit(const std::string& s, float px, float maxW, bool ellipsis) {
     if (uiTextWidth(s, px) <= maxW) return s;
     const std::string tail = ellipsis ? "..." : "";

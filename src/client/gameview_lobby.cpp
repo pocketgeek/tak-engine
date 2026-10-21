@@ -105,13 +105,11 @@ std::string startLocationsLabel(uint8_t mode) {
             std::string why = mp_->error().empty() ? std::string("the server closed the connection")
                                                    : mp_->error();
             // Long reasons (version-mismatch text) wrap onto two centred lines.
-            std::string l1 = why, l2;
-            if (why.size() > 56) {
-                size_t cut = why.rfind(' ', why.size() / 2 + 12);
-                if (cut == std::string::npos) cut = why.size() / 2;
-                l1 = why.substr(0, cut);
-                l2 = why.substr(cut + 1);
-            }
+            auto rows = tak::uiTextWrap(why, 1.8f, 600);
+            const std::string l1 = rows[0];
+            std::string l2;
+            for (size_t k = 1; k < rows.size(); ++k) l2 += (k > 1 ? " " : "") + rows[k];
+            l2 = tak::uiTextFit(l2, 1.8f, 600);
             blockText(l1, cx - blockWidth(l1, 1.8f) / 2, my + 34, 1.8f, {215, 218, 228, 255});
             if (!l2.empty())
                 blockText(l2, cx - blockWidth(l2, 1.8f) / 2, my + 56, 1.8f, {215, 218, 228, 255});
@@ -172,7 +170,7 @@ std::string startLocationsLabel(uint8_t mode) {
         if (!mp_->joinError().empty()) {
             std::string why = "CANNOT JOIN: " + mp_->joinError();
             for (char& ch : why) ch = char(std::toupper(static_cast<unsigned char>(ch)));
-            blockText(why, x, winH - 98.0f, 1.6f, {255, 130, 110, 255});
+            blockText(tak::uiTextFit(why, 1.6f, winW - 2 * x), x, winH - 98.0f, 1.6f, {255, 130, 110, 255});
         }
         // password entry for locked games
         lbField(x, winH - 70.0f, 200, "PASSWORD (for locked games)", joinPass_, 3);
@@ -660,7 +658,7 @@ std::string startLocationsLabel(uint8_t mode) {
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &box);
         const float rowW = boxW - sbW - 4;
         const float infoW = 108;                    // right-side "S 2P 8x8" column
-        const int maxCh = int((rowW - infoW - 12) / 12);   // name chars that fit at px 2.0
+        const float nameW = rowW - infoW - 12;      // the name column, at px 2.0
         for (int r = 0; r < mapVisRows_; ++r) {
             int i = mapScroll_ + r;
             if (i >= total) break;
@@ -673,14 +671,17 @@ std::string startLocationsLabel(uint8_t mode) {
             SDL_Color rc = sel ? SDL_Color{44, 78, 44, 255}
                          : hot ? SDL_Color{40, 46, 62, 255} : SDL_Color{24, 26, 34, 255};
             SDL_SetRenderDrawColor(ren_, rc.r, rc.g, rc.b, 255); SDL_RenderFillRectF(ren_, &row);
-            std::string label = nm.substr(0, size_t(maxCh));
+            std::string label = tak::uiTextFit(nm, 2.0f, nameW, false);
             // Keep part of a generated map's recipe suffix visible even when a
             // long title needs shortening, so duplicate titles can be told apart.
-            if (nm.size() > size_t(maxCh) && maxCh > 9 && nm.size() > 17 &&
+            if (label != nm && nm.size() > 17 &&
                 nm[nm.size()-17] == '-' &&
                 std::all_of(nm.end()-16,nm.end(),[](char c) {
                     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-                })) label = nm.substr(0,size_t(maxCh-9)) + "~" + nm.substr(nm.size()-8);
+                })) {
+                const std::string tail = "~" + nm.substr(nm.size()-8);
+                label = tak::uiTextFit(nm, 2.0f, nameW - blockWidth(tail, 2.0f), false) + tail;
+            }
             blockText(label,
                       boxX + 8, row.y + (rowH - 14) / 2, 2.0f,
                       sel ? SDL_Color{200, 240, 200, 255} : SDL_Color{220, 225, 235, 255});
@@ -866,9 +867,8 @@ std::string startLocationsLabel(uint8_t mode) {
             } else {
                 // Offered only because a game mod pack may supply a missing unit type.
                 if (!createScenario_.offerable()) {
-                    std::string pack = "PACK NEEDED: " + createScenario_.detail;
-                    for (char& ch : pack) ch = char(std::toupper(static_cast<unsigned char>(ch)));
-                    lines.push_back({pack.substr(0, 26), amber});
+                    // The pack's own name (its capitals under MODERN), cut to the column.
+                    lines.push_back({tak::uiTextFit("PACK NEEDED: " + createScenario_.detail, 1.2f, 190), amber});
                 }
                 for (const auto& l : tak::sim::scenarioSummary(createScenario_, true))
                     lines.push_back({l.text, !createMapScenario_ ? dim : l.warning ? amber : normal});
@@ -931,7 +931,7 @@ std::string startLocationsLabel(uint8_t mode) {
                 if(names.empty()){blockText(empty,winW-296.0f,py,1.3f,{150,155,165,255});py+=22;}
                 for(size_t i=page*perPage;i<std::min(names.size(),page*perPage+perPage);++i){
                     const auto name=names[i];const bool enabled=std::find(selected.begin(),selected.end(),name)!=selected.end();
-                    std::string label=name;if(label.size()>17)label=label.substr(0,14)+"...";   // centered clear of the checkbox
+                    const std::string label=tak::uiTextFit(name,2.0f,220);   // centered clear of the checkbox
                     lbBtn(winW-300.0f,py,280,20,label,!busy,[selected,name,enabled,apply]{
                         auto selection=selected;
                         if(enabled)selection.erase(std::remove(selection.begin(),selection.end(),name),selection.end());else if(selection.size()<64)selection.push_back(name);
@@ -946,15 +946,16 @@ std::string startLocationsLabel(uint8_t mode) {
                 if(pages>1){lbCycle(winW-300.0f,py,280,20,std::string(pageLabel)+" "+std::to_string(page+1)+" / "+std::to_string(pages),true,[&page,pages](int d){page=(page+pages+d)%pages;});py+=22;}
             };
             if(!alwaysOnMods_.empty()) {
-                // As many names as fit on one line (35 characters), then "+N".
+                // As many names as fit on one line (280 px), then "+N".
+                constexpr float kLineW=280;
                 std::string line="ALWAYS ON: ";
                 const size_t n=alwaysOnMods_.size();size_t shown=0;
                 for(;shown<n;++shown){
                     const std::string next=(shown?", ":"")+alwaysOnMods_[shown];
-                    if(line.size()+next.size()+(shown+1<n?4:0)>35)break;
+                    if(blockWidth(line+next+(shown+1<n?" +99":""),1.3f)>kLineW)break;
                     line+=next;
                 }
-                if(!shown){line+=alwaysOnMods_[0].substr(0,n>1?17:21)+"...";shown=1;}
+                if(!shown){line=tak::uiTextFit(line+alwaysOnMods_[0],1.3f,kLineW-(n>1?blockWidth(" +99",1.3f):0));shown=1;}
                 if(shown<n)line+=" +"+std::to_string(n-shown);
                 blockText(line,winW-296.0f,py,1.3f,{170,200,170,255});py+=20;
             }
@@ -977,10 +978,9 @@ std::string startLocationsLabel(uint8_t mode) {
                     // The host's packs, as named by the verified package (read-only here).
                     std::string names=mp_->modPackage()?mp_->modPackage()->mapPath:"";
                     if(names.empty())names=mp_->modPackage()?"NONE SELECTED":"WAITING FOR THE HOST";
-                    if(names.size()>29)names=names.substr(0,26)+"...";   // "HOST: " + 29 = the 35 that fit
-                    blockText("HOST: "+names,winW-296.0f,py,1.3f,{180,190,205,255});py+=22;
+                    blockText(tak::uiTextFit("HOST: "+names,1.3f,280),winW-296.0f,py,1.3f,{180,190,205,255});py+=22;
                 }
-                if(gameOn){auto status=mp_->modStatus();if(status.size()>34)status=status.substr(0,31)+"...";blockText(status,winW-296.0f,py+3,1.2f,{205,190,135,255});py+=23;}
+                if(gameOn){const auto status=tak::uiTextFit(mp_->modStatus(),1.2f,280);blockText(status,winW-296.0f,py+3,1.2f,{205,190,135,255});py+=23;}
             }
             modBottom=py+8;
         }
@@ -1026,7 +1026,13 @@ std::string startLocationsLabel(uint8_t mode) {
             SDL_Color tcol = s.type == 1 ? SDL_Color{200, 230, 200, 255}
                            : s.type == 2 ? SDL_Color{230, 220, 150, 255}
                                          : SDL_Color{130, 135, 150, 255};
-            blockText(typeName[s.type % 4], x + 34, y + 8, 1.6f, tcol);
+            // Each column's text fits its column (x+34 type, x+100 name, x+178 level,
+            // x+260 faction), shrinking rather than running into the next.
+            auto cell = [&](const std::string& t, float cx, float cy, float px, float colW, SDL_Color c) {
+                const float fpx = tak::uiTextFitPx(t, px, colW * 0.97f, px * 0.7f);
+                blockText(tak::uiTextFit(t, fpx, colW), cx, cy + (px - fpx) * 3.5f, fpx, c);
+            };
+            cell(typeName[s.type % 4], x + 34, y + 8, 1.6f, 62, tcol);
             if (host && !campaign && s.type != 1) {
                 // Host cycles an empty slot OPEN -> AI -> CLOSED. AI opponents are
                 // seated (and run) on the server; this is how you set up multi-AI
@@ -1038,12 +1044,11 @@ std::string startLocationsLabel(uint8_t mode) {
                     const auto& s2 = mpRoom().slots[i];
                     mp_->setSlot(i, nt, s2.faction, s2.color, s2.team, 0, s2.aiLevel); }});
             }
-            if (s.type == 1) blockText(s.name, x + 100, y + 8, 1.8f, {225, 228, 236, 255});
+            if (s.type == 1) cell(s.name, x + 100, y + 8, 1.8f, 154, {225, 228, 236, 255});
             else if ((s.type == 0 || s.type == 3) && (needSeats >> i & 1))
                 blockText("NEEDED BY SCENARIO", x + 100, y + 9, 1.4f, {235, 205, 120, 255});
             else if (s.type == 2) {
-                blockText(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f,
-                          {210, 200, 150, 255});
+                cell(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f, 74, {210, 200, 150, 255});
                 // AI difficulty (host cycles DEFENSIVE -> EASY -> NORMAL -> HARD -> ABSURD
                 // -> ABSURDLY DEFENSIVE, the wire aiLevel order).
                 constexpr int kLevels = tak::ai::kAiLevels;
@@ -1076,7 +1081,7 @@ std::string startLocationsLabel(uint8_t mode) {
             }
             // faction / color / team edit: your own row, or (host) any AI row.
             bool canEdit = !campaign && (mine || (host && s.type == 2));
-            blockText(factionName(s.faction), x + 260, y + 8, 1.6f, {200, 205, 215, 255});
+            cell(factionName(s.faction), x + 260, y + 8, 1.6f, 94, {200, 205, 215, 255});
             if (canEdit) { SDL_FRect fb{x + 260, y + 6, 90, 18};
                 lobbyHots_.push_back({fb, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
                     mp_->setSlot(i, s2.type, (s2.faction + direction + 5) % 5, s2.color, s2.team, s2.ready, s2.aiLevel); }}); }
@@ -1160,8 +1165,7 @@ std::string startLocationsLabel(uint8_t mode) {
         if (!mp_->startError().empty()) {
             std::string why = "CANNOT START: " + mp_->startError();
             for (char& ch : why) ch = char(std::toupper(static_cast<unsigned char>(ch)));
-            if (why.size() > 84) why = why.substr(0, 81) + "...";
-            blockText(why, x, y + 33, 1.1f, {255, 130, 110, 255});
+            blockText(tak::uiTextFit(why, 1.1f, winW - 360.0f), x, y + 33, 1.1f, {255, 130, 110, 255});
         }
         // Creation settings are read-only here and come from the room, not
         // this client's saved preferences. Keep every rule visible with 8 slots.
@@ -1271,12 +1275,15 @@ std::string startLocationsLabel(uint8_t mode) {
             SDL_SetRenderDrawColor(ren_, 22, 24, 32, 255);
             SDL_FRect cp{chx, chy, chw, std::max(50.0f,winH - chy - 72.0f)}; SDL_RenderFillRectF(ren_, &cp);
             blockText("CHAT", chx + 8, chy + 6, 1.8f, {160, 165, 180, 255});
+            // Newest at the bottom; each message wraps to the panel's width (measured,
+            // so it fits in either UI FONT), and the oldest rows go off the top.
             float ly = chy + cp.h - 20;
             for (auto it = chatLog_.rbegin(); it != chatLog_.rend() && ly > chy + 26; ++it) {
-                std::string line = it->first + ": " + it->second;
-                if (line.size() > 40) line = line.substr(0, 40);
-                blockText(line, chx + 8, ly, 1.4f, {200, 205, 215, 255});
-                ly -= 16;
+                const auto rows = tak::uiTextWrap(it->first + ": " + it->second, 1.4f, chw - 16);
+                for (auto r = rows.rbegin(); r != rows.rend() && ly > chy + 26; ++r) {
+                    blockText(*r, chx + 8, ly, 1.4f, {200, 205, 215, 255});
+                    ly -= 16;
+                }
             }
             lbField(chx, winH - 66.0f, chw - 70, "SAY", chatDraft_, 4);
             lbBtn(chx + chw - 62, winH - 52.0f, 56, 24, "SEND", !chatDraft_.empty(), [this] {
@@ -1464,10 +1471,8 @@ std::string startLocationsLabel(uint8_t mode) {
         SDL_SetRenderDrawColor(ren_, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
         SDL_RenderDrawRectF(ren_, &r);
         // Shrink the label if it would overflow the button (keeps long captions like
-        // "START LOCATIONS: BY SLOT" inside their box). 8px total horizontal padding.
-        float px = 2.0f;
-        float fit = (w - 8.0f) / std::max<size_t>(1, label.size()) / 6.0f;
-        if (fit < px) px = std::max(fit, 1.0f);
+        // "START LOCATIONS: BY SLOT" inside their box), measured, with 6 px clear each side.
+        const float px = tak::uiTextFitPx(label, 2.0f, w - 12.0f);
         float tw = blockWidth(label, px);
         blockText(label, x + (w - tw) / 2, y + (h - 7 * px) / 2, px,
                   enabled ? SDL_Color{225, 230, 240, 255} : SDL_Color{110, 115, 125, 255});

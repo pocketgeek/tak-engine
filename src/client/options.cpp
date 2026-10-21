@@ -1,6 +1,7 @@
 #include "client/options.h"
 
 #include "client/uitext.h"
+#include "client/chatbox.h"   // wrap
 #include "client/hidpi.h"
 #include "client/datafolder.h"
 #include "client/gpuvram.h"
@@ -17,6 +18,18 @@
 #include <memory>
 
 namespace tak {
+
+namespace {
+// A folder path elided at its START (elidePathStart's rule: prefer a cut on a
+// separator) to the most characters that fit `maxW` in the UI font.
+std::string fitPath(const std::string& path, float px, float maxW) {
+    for (size_t n = path.size(); n > 3; --n) {
+        std::string t = elidePathStart(path, n);
+        if (uiTextWidth(t, px) <= maxW) return t;
+    }
+    return "...";
+}
+}  // namespace
 
 namespace {
 
@@ -322,9 +335,9 @@ void OptionsScreen::buildVoice() {
     ctls_.back().help = [] {
         return std::vector<std::string>{"ONE VOLUME FOR EVERY SPEAKER, STEREO OR SURROUND. SEPARATE FROM THE GAME'S VOLUMES."};
     };
-    voiceLabelChars_ = 0;
+    voiceLabelW_ = 0;
     for (const auto& c : ctls_)
-        if (c.kind == Control::Dropdown || c.kind == Control::Meter) voiceLabelChars_ = std::max(voiceLabelChars_, c.label.size());
+        if (c.kind == Control::Dropdown || c.kind == Control::Meter) voiceLabelW_ = std::max(voiceLabelW_, uiTextWidth(c.label, 2.0f));
 }
 
 void OptionsScreen::build(int channels) {
@@ -844,33 +857,17 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
 }
 
 void OptionsScreen::drawHelp(const Control& c) {
-    // Word-wrapped to the row width in the block font; below the row, or above it when
-    // the footer is in the way. Lines starting "> " mark the current choice.
+    // Word-wrapped to the row width (measured in the UI font, so it fits in either
+    // style); continuation lines are indented. Below the row, or above it when the
+    // footer is in the way. Lines starting "> " mark the current choice.
     const float px = 1.4f * u_, pad = 6 * u_, lineH = 10 * px;
-    const int maxCh = std::max(8, int((c.row.w - 2 * pad) / (6 * px)));
+    const float maxW = c.row.w - 2 * pad, indent = uiTextWidth("    ", px);
+    auto width = [px](const std::string& t) { return uiTextWidth(t, px); };
     std::vector<std::pair<std::string, bool>> lines;
     for (const std::string& text : c.help()) {
         const bool mark = text.rfind("> ", 0) == 0;
-        std::string line;
-        size_t at = 0;
-        while (at < text.size()) {
-            size_t end = text.find(' ', at + 1);
-            if (end == std::string::npos) end = text.size();
-            std::string word = text.substr(at, end - at);
-            if (int(word.size()) > maxCh - 4) {
-                // Longer than any line (a folder path): break it wherever the line ends.
-                while (!word.empty()) {
-                    const size_t room = size_t(std::max(1, maxCh - int(line.size())));
-                    line += word.substr(0, room);
-                    word.erase(0, std::min(room, word.size()));
-                    if (!word.empty()) { lines.push_back({line, mark}); line = "    "; }
-                }
-            } else if (!line.empty() && int(line.size() + word.size()) > maxCh) {
-                lines.push_back({line, mark}); line = "    " + word.substr(word[0] == ' ' ? 1 : 0);
-            } else line += word;
-            at = end;
-        }
-        lines.push_back({line, mark});
+        const auto rows = chatbox::wrap(text, maxW, maxW - indent, width);
+        for (size_t i = 0; i < rows.size(); ++i) lines.push_back({(i ? "    " : "") + rows[i], mark});
     }
     const float h = float(lines.size()) * lineH + 2 * pad - (lineH - 7 * px);
     const float footerTop = panel_.y + panel_.h - 52 * u_;
@@ -912,7 +909,9 @@ void OptionsScreen::render(int winW, int winH) {
     for (auto& c : ctls_) {
         if (c.row.y + c.row.h < clip.y || c.row.y > clip.y + clip.h) continue;   // off-screen
         if (c.kind == Control::Section) {
-            uiText(ren_, c.label, c.row.x, c.row.y + 12 * u_, 2.2f * u_, {150, 200, 235, 255});
+            // Caps end 7 * 2.2 = 15.4 below y, the divider 3 px above the row's bottom:
+            // y + 9 leaves a clear gap (descenders included) above it.
+            uiText(ren_, c.label, c.row.x, c.row.y + 9 * u_, 2.2f * u_, {150, 200, 235, 255});
             SDL_SetRenderDrawColor(ren_, 70, 78, 96, 255);
             SDL_FRect ln{c.row.x, c.row.y + c.row.h - 3 * u_, c.row.w, 1.5f * u_};
             SDL_RenderFillRectF(ren_, &ln);
@@ -1005,8 +1004,7 @@ void OptionsScreen::render(int winW, int winH) {
             int sel = int(c.get ? c.get() : 0.0f);
             std::string t = (sel >= 0 && sel < int(opts.size())) ? opts[size_t(sel)] : std::string();
             float dpx = 1.6f * u_;
-            int maxCh = int((chip.w - 30 * u_) / (6 * dpx));   // block glyph = 6px; leave room for the arrow
-            if (int(t.size()) > maxCh && maxCh > 0) t = t.substr(0, size_t(maxCh));
+            t = uiTextFit(t, dpx, chip.w - 30 * u_);   // leave room for the arrow
             uiText(ren_, t, chip.x + 6 * u_, chip.y + (chip.h - 7 * dpx) / 2, dpx,
                           live ? SDL_Color{215, 225, 245, 255} : SDL_Color{110, 115, 125, 255});
             if (c.note && live) {   // e.g. RESTART REQUIRED: small, amber, right-aligned before the caret
@@ -1029,12 +1027,13 @@ void OptionsScreen::render(int winW, int winH) {
         } else if (c.kind == Control::Slider) {
             float val = c.get();
             const bool on = !c.enabled || c.enabled();   // greyed out when its toggle is off
-            uiText(ren_, c.label, c.row.x, c.row.y + 4 * u_, fpx,
+            // y + 2: the caps end 2u above the handle's top (y + 18), descenders short of it.
+            uiText(ren_, c.label, c.row.x, c.row.y + 2 * u_, fpx,
                           on ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
             if (c.fmt) {
                 std::string vs = c.fmt(val);
                 uiText(ren_, vs, c.row.x + c.row.w - uiTextWidth(vs, fpx),
-                              c.row.y + 4 * u_, fpx,
+                              c.row.y + 2 * u_, fpx,
                               on ? SDL_Color{150, 195, 235, 255} : SDL_Color{90, 100, 115, 255});
             }
             // track + fill + handle
@@ -1107,14 +1106,12 @@ void OptionsScreen::render(int winW, int winH) {
         // Clip the rows to the viewport so a list taller than the panel scrolls under it.
         SDL_Rect clip{int(x), int(y0), int(cw) + 1, int(viewH) + 1};
         SDL_RenderSetClipRect(ren_, &clip);
-        int maxCh = int((cw - 16 * u_) / (6 * dpx));
         for (size_t i = 0; i < opts.size(); ++i) {
             float iy = y0 + float(i) * itemH - dropScroll_;
             if (iy + itemH < y0 || iy > y0 + viewH) continue;   // fully scrolled out
             SDL_FRect it{x, iy, cw, itemH};
             if (int(i) == sel) { SDL_SetRenderDrawColor(ren_, 52, 74, 96, 255); SDL_RenderFillRectF(ren_, &it); }
-            std::string t = opts[i];
-            if (int(t.size()) > maxCh && maxCh > 0) t = t.substr(0, size_t(maxCh));
+            const std::string t = uiTextFit(opts[i], dpx, cw - 16 * u_);
             uiText(ren_, t, it.x + 6 * u_, it.y + (itemH - 7 * dpx) / 2, dpx,
                           int(i) == sel ? SDL_Color{215, 235, 245, 255} : SDL_Color{200, 205, 220, 255});
         }
@@ -1197,8 +1194,7 @@ void OptionsScreen::drawFolderRow(const Control& c) {
     SDL_FRect chip{btn.x - gap - cw, c.row.y + 5 * u_, cw, 24 * u_};
     SDL_SetRenderDrawColor(ren_, on ? 35 : 30, on ? 40 : 33, on ? 56 : 42, 255); SDL_RenderFillRectF(ren_, &chip);
     SDL_SetRenderDrawColor(ren_, on ? 110 : 70, on ? 120 : 76, on ? 150 : 92, 255); SDL_RenderDrawRectF(ren_, &chip);
-    const size_t pathCh = size_t(std::max(4.0f, (chip.w - 12 * u_) / (6 * dpx)));
-    uiText(ren_, elidePathStart(folder_.inUse, pathCh), chip.x + 6 * u_, chip.y + (chip.h - 7 * dpx) / 2,
+    uiText(ren_, fitPath(folder_.inUse, dpx, chip.w - 12 * u_), chip.x + 6 * u_, chip.y + (chip.h - 7 * dpx) / 2,
                   dpx, on ? SDL_Color{215, 225, 245, 255} : SDL_Color{120, 126, 140, 255});
     const bool busy = folderPick_.busy();
     SDL_SetRenderDrawColor(ren_, on && !busy ? 52 : 34, on && !busy ? 60 : 38, on && !busy ? 82 : 46, 255);
@@ -1208,7 +1204,6 @@ void OptionsScreen::drawFolderRow(const Control& c) {
     uiText(ren_, t, btn.x + (btn.w - uiTextWidth(t, fpx)) / 2, btn.y + (btn.h - 7 * fpx) / 2, fpx,
                   on && !busy ? SDL_Color{215, 225, 245, 255} : SDL_Color{110, 115, 125, 255});
     // Status line under it: why it is greyed, what the last pick did, or a pending restart.
-    const size_t maxCh = size_t(std::max(8.0f, c.row.w / (6 * npx)));
     std::string note = folderStatusText();
     SDL_Color col{130, 140, 160, 255};
     if (!on) col = {150, 155, 170, 255};
@@ -1218,9 +1213,9 @@ void OptionsScreen::drawFolderRow(const Control& c) {
     else if (dataFolderNeedsRestart(s_.dataDir, folder_.inUse)) {
         col = {240, 190, 90, 255};
         const std::string head = "RESTART TO USE: ";
-        note = head + elidePathStart(s_.dataDir, maxCh > head.size() + 8 ? maxCh - head.size() : 8);
+        note = head + fitPath(s_.dataDir, npx, c.row.w - uiTextWidth(head, npx));
     }
-    if (note.size() > maxCh) note = note.substr(0, maxCh - 3) + "...";
+    note = uiTextFit(note, npx, c.row.w);
     uiText(ren_, note, c.row.x, c.row.y + 38 * u_, npx, col);
 }
 
@@ -1230,7 +1225,7 @@ void OptionsScreen::drawRestartPrompt(int winW, int winH) {
     SDL_FRect dim{0, 0, float(winW), float(winH)}; SDL_RenderFillRectF(ren_, &dim);
     const float w = std::min(panel_.w - 40 * u_, 560 * u_), lpx = 1.6f * u_, tpx = 2.4f * u_;
     std::vector<std::string> lines = {"THE GAME WILL USE", "", "AFTER IT RESTARTS. CARTOGRAPHER USES IT TOO."};
-    lines[1] = elidePathStart(s_.dataDir, size_t(std::max(8.0f, (w - 40 * u_) / (6 * lpx))));
+    lines[1] = fitPath(s_.dataDir, lpx, w - 40 * u_);
     if (dirty_) lines.push_back("YOUR UNSAVED OPTIONS ARE SAVED FIRST.");
     const float h = 40 * u_ + float(lines.size()) * 14 * u_ + 64 * u_;
     SDL_FRect box{panel_.x + (panel_.w - w) / 2, panel_.y + (panel_.h - h) / 2, w, h};

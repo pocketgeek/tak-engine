@@ -48,6 +48,8 @@ void uiTextShadow(SDL_Renderer* r, const std::string& s, float x, float y, float
 float uiTextDescent(float px);
 float uiTextAscent(float px);
 
+// The cell size, at most `px` and at least `minPx`, at which `s` fits `maxW`.
+float uiTextFitPx(const std::string& s, float px, float maxW, float minPx = 1);
 // `s` cut to fit `maxW`: whole characters only, ending in "..." when cut (and the "..."
 // counts against maxW). fitStart keeps the END instead ("...tail", for folder paths).
 std::string uiTextFit(const std::string& s, float px, float maxW, bool ellipsis = true);

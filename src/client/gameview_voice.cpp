@@ -119,8 +119,7 @@
         const float px = 1.8f, rowH = 7 * px + 8, icon = 7 * px + 10;
         float w = 0;
         for (auto& r : rows) {
-            for (char& ch : r.text) ch = char(std::toupper(static_cast<unsigned char>(ch)));
-            if (r.text.size() > 20) r.text = r.text.substr(0, 20);
+            r.text = tak::uiTextFit(r.text, px, 20 * 6 * px);   // a player's own capitals under MODERN
             w = std::max(w, blockWidth(r.text, px));
         }
         const float x = 12, y0 = panelTex_ ? 12.0f : 60.0f;

@@ -14,6 +14,7 @@
 
 #include "client/datafolderpick.h"
 #include "client/settings.h"
+#include "client/uitext.h"
 
 namespace tak {
 
@@ -189,11 +190,11 @@ private:
     // One source of truth shared by the closed chip, the open list, and hit-testing so
     // they line up.
     // The VOICE CHAT page lines its two device chips and the level meter up on one column,
-    // clear of its longest label (voiceLabelChars_, set by buildVoice()).
+    // clear of its widest label (voiceLabelW_, measured by buildVoice()).
     float dropWidth(const Control& c) const {
-        float label = std::max(150.0f, float(c.label.size()) * 6 * 2.0f + 6);   // labels draw at 2.0u
-        if (page_ == OptionsPage::Voice) label = std::max(label, float(voiceLabelChars_) * 6 * 2.0f + 24);
-        label *= u_;
+        // Labels draw at 2.0u; keep the chip 18u clear of the label's measured width.
+        float label = std::max(150 * u_, uiTextWidth(c.label, 2.0f * u_) + 18 * u_);
+        if (page_ == OptionsPage::Voice) label = std::max(label, voiceLabelW_ * u_ + 24 * u_);
         return std::clamp(c.row.w - label, 220.0f * u_, 560.0f * u_);
     }
 
@@ -253,7 +254,7 @@ private:
     VoicePageHooks voice_;
     int channels_ = 2;                  // the speaker count build() last laid out
     bool showVoice_ = false, voiceRequested_ = false;
-    size_t voiceLabelChars_ = 0;   // longest chip/meter row label on the VOICE CHAT page
+    float voiceLabelW_ = 0;   // widest chip/meter row label on the VOICE CHAT page, at 2.0 (per u)
     float u_ = 1.0f;        // layout unit (scaled to window)
     SDL_FRect panel_{};     // the panel rect (for scroll clamping)
     SDL_FRect defaultsRect_{}, saveRect_{}, backRect_{};   // footer buttons (filled by layout())

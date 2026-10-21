@@ -775,16 +775,19 @@ namespace {
         rows.push_back({"VID", b});
         rows.push_back({"RENDERER", tak::renderdriver::shortLabel(tak::renderdriver::active().created)});
 
-        // The block font the mana readout uses (5x7 cells, blockWidth = chars * 6 * px),
-        // so the panel matches the HUD it sits in rather than introducing a second face.
+        // The face the mana readout uses (client/uitext.h), so the panel matches the HUD
+        // it sits in rather than introducing a second face.
         //
         // Fixed size follows UI scale. Reserve ten label characters (SERVER CPU),
-        // one separator and seven value characters without overlapping columns.
+        // one separator and seven value characters without overlapping columns: the
+        // per-character budget is the block cell (6), or the UI font's average over
+        // such a row when that is wider, so the columns never meet in either face.
         constexpr int kColBudget = 18;
         const float px = 1.7f * uiScale_;
+        const float glyphW = std::max(6.0f, blockWidth("SERVER CPU 9999 MB", 1.0f) / float(kColBudget));
         const tak::hud::StatsFit fit =
             tak::hud::fitStats(int(rows.size()), availW, availH, kColBudget,
-                               /*glyphW=*/6.0f, /*glyphH=*/7.0f, px,
+                               glyphW, /*glyphH=*/7.0f, px,
                                // Breathing room between rows. The gap under the minimap
                                // runs to hundreds of pixels while nine rows need barely a
                                // hundred, so there is room to spare -- and this only ever
@@ -1738,19 +1741,22 @@ namespace {
                 const float room = tak::selportraits::room(0, pr.x, margin);
                 drawSelPortraits(pr, room, gap, 1.5f * vs);
             }
-            if (int t1 = guiIdxLeft("UnitText"); u && !multi && t1 >= 0) {
-                SDL_FRect nr = place(t1);
-                blockText(u->displayName(), nr.x, nr.y, tpx, {236, 226, 192, 255});
-            } else if (const std::string sq = multi ? selSquadLabel() : std::string();
-                       !sq.empty() && t1 >= 0) {
-                // "FORMATION 2" outruns a short name: shrink it to stop short of the
-                // conjured target's name to its right.
-                SDL_FRect nr = place(t1);
+            // The name row: the unit's name (in its own capitals under MODERN) or the
+            // squad label, shrunk to stop short of the conjured target's name to its right
+            // and, with its descenders, of the health bar below it.
+            auto nameText = [&](int slot, const std::string& text, int rightSlot, int barSlot) {
+                const SDL_FRect nr = place(slot);
                 float px = tpx;
-                if (int t2 = guiIdxRight("UnitText"); t2 >= 0)
-                    px = std::min(px, (place(t2).x - nr.x) / (6.0f * float(sq.size()) + 3.0f));
-                blockText(sq, nr.x, nr.y, std::max(1.0f, px), {236, 226, 192, 255});
-            }
+                if (rightSlot >= 0)
+                    px = std::min(px, tpx * (place(rightSlot).x - nr.x - 3 * tpx) / std::max(1.0f, blockWidth(text, tpx)));
+                if (barSlot >= 0)
+                    px = std::min(px, tpx * (place(barSlot).y - 2 - nr.y) / (7 * tpx + tak::uiTextDescent(tpx)));
+                blockText(text, nr.x, nr.y, std::max(1.0f, px), {236, 226, 192, 255});
+            };
+            if (int t1 = guiIdxLeft("UnitText"); u && !multi && t1 >= 0)
+                nameText(t1, u->displayName(), guiIdxRight("UnitText"), guiIdxLeft("HealthBar"));
+            else if (const std::string sq = multi ? selSquadLabel() : std::string(); !sq.empty() && t1 >= 0)
+                nameText(t1, sq, guiIdxRight("UnitText"), guiIdxLeft("HealthBar"));
             // HP with anything selected; mana only for a pool (the group's casters).
             if (multi) {
                 const auto t = selTotals();
@@ -1780,9 +1786,8 @@ namespace {
                     const SDL_FRect a = place(lh), m = place(lm), b = place(rh);
                     const float l = std::max(a.x + a.w, m.x + m.w), gap = b.x - l;
                     if (gap > 0 && !st.empty()) {
-                        px = std::max(1.0f, std::min(tpx, (gap - 2 * tpx) / (6.0f * float(st.size()))));
-                        // The glyph cell is 6 px wide with 1 px of trailing space.
-                        x = l + (gap - (blockWidth(st, px) - px)) * 0.5f;
+                        px = std::max(1.0f, std::min(tpx, tpx * (gap - 2 * tpx) / std::max(1.0f, blockWidth(st, tpx))));
+                        x = l + (gap - blockWidth(st, px)) * 0.5f;
                         y = (std::min(a.y, m.y) + std::max(a.y + a.h, m.y + m.h) - 7 * px) * 0.5f;
                     }
                 }
@@ -1792,11 +1797,7 @@ namespace {
             // --- UnitInfo2: the conjured target, only while there is one ---
             // Name + progress; its ManaBar spot stays empty (a target has no pool to show).
             if (!tName.empty()) {
-                if (int t2 = guiIdxRight("UnitText"); t2 >= 0) {
-                    SDL_FRect nr = place(t2);
-                    std::transform(tName.begin(), tName.end(), tName.begin(), ::toupper);
-                    blockText(tName, nr.x, nr.y, tpx, {236, 226, 192, 255});
-                }
+                if (int t2 = guiIdxRight("UnitText"); t2 >= 0) nameText(t2, tName, -1, guiIdxRight("HealthBar"));
                 bar(guiIdxRight("HealthBar"), std::clamp(tProg, 0.0f, 1.0f), {210, 70, 60, 255});
             }
         }
@@ -1900,13 +1901,12 @@ namespace {
             selPortraitRects_.push_back({r, std::string()});
         }
         if (!tip.empty()) {   // the hovered portrait's unit name, just above the bar
-            std::transform(tip.begin(), tip.end(), tip.begin(), ::toupper);
-            const float tpx = std::max(1.0f, px), tw = blockWidth(tip, tpx);
+            const float tpx = std::max(1.0f, px), tw = blockWidth(tip, tpx), dh = tak::uiTextDescent(tpx);
             const float tx = std::clamp(tipAt.x + tipAt.w / 2 - tw / 2, 6.0f,
                                         std::max(6.0f, float(winW_) - tw - 6));
-            const float ty = float(winH_ - barH()) - 7 * tpx - 10;
+            const float ty = float(winH_ - barH()) - 7 * tpx - dh - 10;
             SDL_SetRenderDrawColor(ren_, 0, 0, 0, 210);
-            SDL_FRect tb{tx - 5, ty - 4, tw + 10, 7 * tpx + 8};
+            SDL_FRect tb{tx - 5, ty - 4, tw + 10, 7 * tpx + dh + 8};
             SDL_RenderFillRectF(ren_, &tb);
             blockText(tip, tx, ty, tpx, {255, 240, 190, 255});
         }
