@@ -219,11 +219,10 @@ constexpr int kPivotNear=32;                   // no pinwheel within this many c
 constexpr int kPivotLead=6;                    // pursuit distance along the arc (cells)
 // Room at a merge (Legion ~100 round 4, see makeRoom): a queue head held kRoomHeld ticks or more is given room by
 // the members of its group passing it; a passing member reads kRoomLook origins ahead along its step; a
-// head's recorded want stays readable kRoomFresh ticks (a rested holder decides every kRestStride ticks); and a
+// head's recorded want stays readable gRestStride ticks (a rested holder decides every gRestStride ticks); and a
 // member within kRoomArea times its destination area's bound does not move over (its crowd packs into slots).
 constexpr uint32_t kRoomHeld=60;
 constexpr int kRoomLook=24;
-constexpr uint32_t kRoomFresh=2;
 constexpr uint32_t kRoomArea=2;
 // The lanes' stated region (stage 5): the key past a body that the passage
 // gate (its chain to kGateCommit + kGateRun + 3 cells), the passage lanes
@@ -8664,7 +8663,7 @@ struct LegionNavigator::Impl {
         // arrival, and the body is seen standing at its point in between).
         u.speed=Fixed();u.turnReqBam=0;
         if(m.state!=Trapped) {
-            m.state=Trapped;m.trappedSince=w.tickCounter_;m.trappedEpoch=epoch;++stats.trapped;
+            m.state=Trapped;m.trappedSince=w.tickCounter_;m.trappedEpoch=epoch;++stats.trapped;setWant(u.id,m,-1);
             return;
         }
         if(w.tickCounter_-m.trappedSince<(m.approach?kApproachRetire:kTrappedRetire))return;
@@ -10271,7 +10270,7 @@ struct LegionNavigator::Impl {
                 m->slot=-1;m->goal=m->requested;m->lineCell=-1;markPass(u,*m);
             }
         }
-        m->state=Engaged;m->pressX=kNoPress;
+        m->state=Engaged;m->pressX=kNoPress;setWant(u.id,*m,-1);
     }
     // Round 2 (2026-10-19): the firing rings as discs, for ringBend. Rebuilt
     // by ringScan every kRingScan ticks from the groups in id order: the
@@ -12481,8 +12480,9 @@ struct LegionNavigator::Impl {
                 }
             }
             if(!moved&&corner)moved=cornerStep();
-            // Room at a merge: a held body heading its queue records the origin it waits for (see makeRoom).
-            if(!moved)setWant(u.id,m,f&&roomKind(m)&&queueHead(u,m,p,f,ox,oz)?nz*W+nx:-1);
+            // Room at a merge: a held body heading its queue records the origin it waits for (see makeRoom): its
+            // own blocked step's (nx0,nz0), not the last flow-around option tried above.
+            if(!moved)setWant(u.id,m,f&&roomKind(m)&&queueHead(u,m,p,f,ox,oz)?nz0*W+nx0:-1);
             if(!moved) {
                 if(contactRefused!=&m&&contactArrival(u,m)) {complete(u,m,true);return;}
                 if(f&&m.detour<0)sidestep(u,m,p,f,ox,oz,nx,nz);
@@ -12637,7 +12637,7 @@ struct LegionNavigator::Impl {
                 if(it->second==u.id||covers(it->first,ox,oz))continue;
                 const Member* peer=member(it->second);
                 if(!peer||peer->want!=it->first||peer->group!=m.group||peer->state!=Holding)continue;
-                if(w.tickCounter_-peer->wantTick>kRoomFresh||heldFor(*peer)<kRoomHeld||heldFor(*peer)<=heldFor(m))continue;
+                if(w.tickCounter_-peer->wantTick>gRestStride||heldFor(*peer)<kRoomHeld||heldFor(*peer)<=heldFor(m))continue;
                 for(int j=1;j<=reach&&(!bestJ||j<bestJ);++j)
                     if(covers(it->first,ox+tx*j,oz+tz*j)) {bestJ=j;want=it->first;break;}
             }
