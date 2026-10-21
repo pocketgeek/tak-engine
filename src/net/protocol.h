@@ -19,7 +19,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 282;      // 282: Legion ~100 round 3: rings round still targets, passage greens scale with the crossing + small groups queue, corridor-mouth funnel claims
+constexpr uint32_t kNetVersion = 283;      // 283: Legion ~100 round 4: lane order through turns (ribbon), rings along walls, fight/guard round still targets, room at a merge
+                                           //      (Legion state differs from 282; 282 replays refused)
+                                           // 282: Legion ~100 round 3: rings round still targets, passage greens scale with the crossing + small groups queue, corridor-mouth funnel claims
                                            //      (Legion state differs from 281; 281 replays refused)
                                            // 281: attackers walk to a clear shot when their shots keep stopping on terrain or scenery
                                            //      they cannot destroy (all pathfinding modes); 280 replays refused

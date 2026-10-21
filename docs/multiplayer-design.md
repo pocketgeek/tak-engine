@@ -737,6 +737,9 @@ shots keep stopping on terrain or scenery they cannot destroy (all modes);
 0.8.6 ships protocol 281. Protocol 282 is the third Legion round at about 100
 bodies: rings round still targets, passage greens that scale with the crossing
 with small groups queueing, and corridor-mouth funnel claims (Legion only).
+Protocol 283 is the fourth: lane order kept through turns, deeper rings along
+walls, fight and guard members round still targets, and room at a corner's
+merge (Legion only).
 Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
@@ -928,6 +931,12 @@ a still target stop creeping, passage greens scale with the crossing and small
 groups queue for their turn, and single-file corridor mouths hand out claims; Retail
 is bit-identical and the 60 s `--mpai` hashes are unchanged, but 281 recordings no
 longer play.
+Protocol 283 (Legion only) is the fourth round at about 100 bodies: a formation keeps
+its lanes through turns (the turn ribbon and lane exchange), rings along walls stand
+deeper and walk on through a still target's shadow, fight and guard members round a
+still target stop creeping and flow round at travel speed, and members passing a
+starved queue head at a corner's merge move over a lane; Retail is bit-identical
+and the `--mpai` hashes are unchanged (60 s and 300 s), but 282 recordings no longer play.
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when

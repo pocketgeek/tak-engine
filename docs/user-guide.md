@@ -1053,7 +1053,10 @@ armies:
   a wall, it swings round in several ranks instead of narrowing to single file.
   It drops to single file only when the gap really is too narrow. A single tree
   or rock (or a small clump) is not a wall end: the group walks past it. A wood
-  too dense to walk through still is.
+  too dense to walk through still is. Units now keep their places side by side
+  through a turn instead of crossing over each other's lanes, and a crowd
+  squeezing round a corner merges faster: units walking past one that has
+  waited a while move over a lane to let it in, instead of filing past it.
 - **Groups take gaps several abreast.** A large group (16 or more) sent through
   a short gap in a wall or a doorway that is wide enough for two or three units
   now splits across the gap and goes through two or three abreast, each unit
@@ -1109,7 +1112,11 @@ armies:
   firing ring splits round both sides of it. Units chasing a moving target
   follow it without planning again at every step. Units round a target that
   is standing still no longer creep along the ring, and a target walled in on
-  every side is now fired on from the nearest spots against its walls.
+  every side is now fired on from the nearest spots against its walls. A ring
+  along a wall is deeper: units that find no place at the front wait just
+  behind it instead of standing back, and step in when they can fire. Units
+  on a fight or guard order also stop creeping round a target that stands
+  still, and walk round their friends at full speed.
 - **Narrow crossings take turns.** At a bridge or other narrow crossing, the
   time each group is let through grows with the length of the crossing, and a
   small group waits its turn instead of pushing in among a big one. Two armies
