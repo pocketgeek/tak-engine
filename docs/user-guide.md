@@ -2063,7 +2063,7 @@ settings used. Unit limits still apply, so the highest intensities may not
 reach their requested unit counts. A slow machine can take longer than 60 real
 seconds.
 
-![A benchmark battle between Zhon and Creon armies at the edge of a sandy clearing, with health bars over the damaged units](img/guide/benchmark.jpg)
+![A benchmark battle: several armies meet at the edge of a sandy clearing, with health bars over the damaged units and the BENCHMARKING countdown at the top](img/guide/benchmark.jpg)
 
 *A benchmark run at Absurd intensity, 55 seconds in. The badge at the top counts down the time remaining.*
 
