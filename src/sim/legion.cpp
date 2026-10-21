@@ -301,6 +301,9 @@ constexpr int kRingWaitReach=8;
 // ... and leaves a spot to later arrivals when a body standing on it would
 // put another free spot unreached or more than this many bodies farther.
 constexpr int kRingDetour=3;
+// ... and lets the owner of an unspent band-1 spot look for a better one by
+// walk every this many scans (ringScan; round 6 review).
+constexpr uint32_t kRingDeepRechoose=2;
 // A group that grew past one member after its first field plans its ring late
 // once it has this many (ringScan, round 5): at two, every small battle group
 // re-planned (battle-field-2x60 +29% total Legion work, battle-field-2x250
@@ -9009,7 +9012,10 @@ struct LegionNavigator::Impl {
     // without such a way, the walk through the shot. False: nothing reached
     // (the caller falls back). The walk is the cost: none without a free
     // spot, and the confirming walks only for spots on another's way.
-    bool ringDeepClaim(const Unit& u,Member& m,Group& g,const Plane& p) {
+    // With `keep` (ringScan, a member owning an unspent band-1 spot), the
+    // member keeps its spot unless the walk reaches a free one of a lower
+    // band, or of its own band strictly nearer by walk (true either way).
+    bool ringDeepClaim(const Unit& u,Member& m,Group& g,const Plane& p,bool keep=false) {
         auto& r=g.ring;
         if(!r.deep||u.type->footX!=p.footX||u.type->footZ!=p.footZ)return false;
         const int W=width(),fx=p.footX,fz=p.footZ,body=16*std::max(fx,fz);
@@ -9072,6 +9078,13 @@ struct LegionNavigator::Impl {
                 if(best<0||d<bestD) {best=cand[a];bestD=d;}
             }
             if(best<0)continue;
+            if(keep&&m.slot>=0&&r.owner[size_t(m.slot)]==u.id&&r.band[size_t(m.slot)]<=band) {
+                const int c=r.cells[size_t(m.slot)];
+                if(wk.inside(c%W,c/W)) {
+                    const int cur=wk.dist[size_t(wk.at(c%W,c/W))];
+                    if(cur>=0&&bestD>=cur)return true;
+                }
+            }
             if(m.slot>=0) {ringRelease(g,u.id,m);slotCells(m,u.type->footX,u.type->footZ,false);m.slot=-1;}
             ringTake(g,u,m,best);
             return true;
@@ -10702,6 +10715,7 @@ struct LegionNavigator::Impl {
             stats.slotSearchCells+=visits;
             r.scanned=now;
             std::sort(seeds.begin(),seeds.end());
+            std::vector<uint8_t> wasSpent=std::move(r.spent);   // the scan before (round 6 review, below)
             r.spent=std::move(spent);
             if(!seeds.empty()&&seeds!=g.seeds) {
                 g.seeds=std::move(seeds);
@@ -10761,7 +10775,19 @@ struct LegionNavigator::Impl {
                 if(inReach&&r.blind)continue;
                 // Round 6: a deep ring's member takes the spot it reaches
                 // that lies on no other's way (ringDeepClaim), as on arrival.
-                if(r.deep&&ringDeepClaim(*v,*mm,g,p))continue;
+                // Round 6 review: the owner of an unspent band-1 spot keeps it
+                // unless the walk finds a band-0 spot or a nearer one by walk,
+                // and looks only every kRingDeepRechoose scans (by id). Handed
+                // the nearest by walk afresh every scan as it walked in, a
+                // member changed spots scan after scan, and those walks (with
+                // their confirming walks) on one scan tick were the busiest
+                // ticks: attackring-gatehouse-40 offset -2 peaked at 627k
+                // units of work (226k before round 6), 332k with this.
+                if(r.deep) {
+                    const bool kept=r.band[size_t(mm->slot)]==1&&!r.spent[size_t(mm->slot)];
+                    if(kept&&(uint32_t(id)+now/kRingScan)%kRingDeepRechoose!=0)continue;
+                    if(ringDeepClaim(*v,*mm,g,p,kept))continue;
+                }
                 if(inReach) {ringNearest(*v,*mm,g,p,1);continue;}
                 // Round 4 (2026-10-20): a member waiting on an outer band takes a
                 // free band-1 spot when no band-0 spot is left. On its outer spot
@@ -10775,7 +10801,16 @@ struct LegionNavigator::Impl {
                 // the outer bands instead of behind the firing arc, where it
                 // stood in other groups' way (below, "Rings round still
                 // targets at speed").
-                if(!ringNearest(*v,*mm,g,p,1)&&r.spent[size_t(mm->slot)])ringNearest(*v,*mm,g,p,255);
+                if(ringNearest(*v,*mm,g,p,1)||!r.spent[size_t(mm->slot)])continue;
+                // Round 6 review: a deep ring's member gives its band-0/1 spot
+                // up to wait outside only when the spot read spent on the scan
+                // before too. A held body pressing in from the next spot
+                // covers it every other scan; given a waiting spot then and
+                // the spot back by ringDeepClaim on the next scan, the member
+                // walked to and fro between them to the end
+                // (attackring-gatehouse-40 offset -2: unit 9, t=2069-2999).
+                if(r.deep&&r.band[size_t(mm->slot)]<=1&&size_t(mm->slot)<wasSpent.size()&&!wasSpent[size_t(mm->slot)])continue;
+                ringNearest(*v,*mm,g,p,255);
             }
         }
     }

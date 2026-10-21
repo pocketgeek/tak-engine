@@ -3007,6 +3007,37 @@ Overlap with other work: the ring hand-outs (assignRing, ringClaim, ringRechoose
 new step in move() just before the "near its own spot" rule and the field descent (spotRoute commits a local route,
 walked like a detour's). Combat's braking, pressIn and pressRoute are untouched.
 
+**Review: hand-out churn and its cost.** As first landed, ringScan's hand-out loop re-ran ringDeepClaim for every
+deep-ring member not standing on an unspent band-0 spot, every scan. Two faults came of it:
+
+* A member swung between two spots for good. `attackring-gatehouse-40` offset -2, unit 9 from t=2069 to the end:
+  its band-1 spot (slot 24) read spent on every other scan -- a body of the ring held beside it (unit 16) pressed in
+  over its cells and back -- so the fallback (`ringNearest(...,255)`) gave it a waiting spot, and the next scan's
+  ringDeepClaim gave it slot 24 back: 31 scans running, walking to and fro. Now a deep ring's member gives its
+  band-0/1 spot up to wait outside only when the spot read spent on the scan before too (the previous scan's
+  `Ring::spent`, kept for the loop; no new state).
+* Members changed spots scan after scan as they walked in (the nearest by walk changes with every step), and each
+  change paid the walk and its confirming walks again, all on the scan tick. The owner of an unspent band-1 spot now
+  keeps it unless the walk reaches a band-0 spot, or one of its own band strictly nearer by walk than its own, and it
+  looks only every `kRingDeepRechoose` (2) scans, by id. At offset -2 the hand-out loop changed 258 slots in the run
+  (unit 9's swing alone 33); after, members whose slot changed on two scans running: 3, never three running.
+
+Gate sums (11 offsets), as landed -> after the review: gatehouse-40 damage 7,325 -> 7,091 (Retail 7,172),
+damage_t2400 5,405 -> 5,231 (5,146), now in reach 215 -> 220 (264), ever 242 -> 243 (298); the busiest tick (sum of
+the offsets' peaks) 3.76M -> 2.68M, at offset -2 627,023 -> 331,673, -3 602,270 -> 302,351, -1 469,812 ->
+243,771, 4 414,770 -> 225,670 (before round 6 about 226k at each); the whole-run work at the gate median 4.28M ->
+3.69M. Per offset -5..5: 926 / 1,107 / 296 / 229 / 399 / 475 / 711 / 768 / 767 / 388 / 1,025 (offset -3 229 -> 296,
+-2 517 -> 229). Over -8..8 (17 offsets): gatehouse-40 damage 12,823 -> 12,589 (12,079), now in reach 387 -> 392, ever 428 -> 429, the sum of peaks 5.10M -> 4.01M; gatehouse2-48 damage 16,694 -> 16,984, now in
+reach 416 -> 421, ever 464 -> 468, the sum of peaks 5.47M -> 4.16M. Every non-deep fixture is hash-identical, Retail
+too. `ctest:legion_ringdeepchurn` (gatehouse-40 offset -2: busiest tick under 400,000; 627,023 before).
+
+Tried in the review and not kept (gate sums, gatehouse-40 / gatehouse2-48 over -8..8):
+* A band-1 owner keeping its spot unless a band-0 spot is reached (no same-band re-choice at all): churn and peak
+  gone (offset -2 225,352) but gatehouse-40 6,998 at the gate, offset -3 229 -> 81: re-choosing a deeper spot as the
+  front fills is how its bodies got in. Allowing the re-choice to held members only: 6,881.
+* The nearer-by-walk keep without the every-other-scan stagger: 7,182 at the gate, now 220, gatehouse2-48 16,593;
+  the peak stayed (offset -2 649,967). With a stagger of 3 scans: 7,010, gatehouse2-48 16,855, peak at -2 254,247.
+
 ### Paused first builds (W4 C1, protocol 244)
 
 A first field used to build to done, its whole window, although its members
