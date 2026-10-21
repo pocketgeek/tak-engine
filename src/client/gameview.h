@@ -511,6 +511,12 @@ public:
     // golden-hash test: use it to prove clients agree with each other and the referee,
     // never to compare a hash against a previous run.
     void autoplayStep();
+    // TAK_BUILDLINE_NET: shift-drag build lines in a server game (see gameview_net.cpp).
+    void buildlineNetProbe();
+    struct NetLine {const tak::sim::UnitType* type; std::vector<std::pair<float, float>> sites;};
+    std::vector<NetLine> netLines_;
+    uint32_t netLinesTick_ = 0;
+    bool netLinesDone_ = false;
 #endif
     void selectOnly(int id) { if (spectating_) return; selection_.clear(); selection_.push_back(id); }
 
@@ -2010,6 +2016,12 @@ private:
     bool manaBuildDrag_ = false;      // plain left-drag places lodestones in a box
     float bdX0_ = 0, bdZ0_ = 0;       // build-drag start (world)
     tak::client::areadrag::Anchor bdAnchor_;   // lodestone-box start on the map plane
+    // Empty cells between the sites of a shift-drag line: 0 = footprints touching.
+    // The wheel changes it mid-drag; it holds for the rest of the game (any building
+    // type) and startMpGame resets it, so it never outlives a game or reaches settings.
+    int buildLineGap_ = 0;
+    float buildLineWheel_ = 0;        // fractional wheel travel not yet a gap step
+    float buildLineGapShown_ = 0;     // seconds left on the GAP label near the cursor
     bool bdQueue_ = false;
     bool reclaimDrag_ = false;        // right-drag box: a builder clears the area
     float rdX0_ = 0, rdZ0_ = 0;       // reclaim-drag start (world)
@@ -3597,7 +3609,8 @@ private:
     int fogMeshW_ = 0, fogMeshH_ = 0, fogMeshWinW_ = 0, fogMeshWinH_ = 0;
     float fogMeshX_ = 0, fogMeshY_ = 0, fogMeshZoom_ = 0;
 
-    // Positions along a build-drag line, spaced by the building's footprint.
+    // Positions along a build-drag line: cell-snapped footprints, buildLineGap_ apart
+    // (client/buildline.h).
     std::vector<std::pair<float, float>> buildLinePositions(
         float x0, float z0, float x1, float z1) const;
 

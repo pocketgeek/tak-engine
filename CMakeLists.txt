@@ -1380,6 +1380,9 @@ add_test(NAME reclaim_pick COMMAND reclaim_pick_test)
 add_executable(area_drag_test tools/area_drag_test.cpp)
 target_include_directories(area_drag_test PRIVATE src)
 add_test(NAME area_drag COMMAND area_drag_test)
+add_executable(buildline_test tools/buildline_test.cpp)
+target_link_libraries(buildline_test PRIVATE tak-formats)
+add_test(NAME buildline COMMAND buildline_test)
 add_executable(navigation_checkpoint_test tools/navigation_checkpoint_test.cpp)
 target_link_libraries(navigation_checkpoint_test PRIVATE tak-formats)
 # Legion mission goals (attack, chase, guard, fight-move, patrol, group patrol,
@@ -2005,6 +2008,15 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/area-drag.png")
       set_tests_properties(area_drag_input PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: area drag threshold")
+      # Shift-drag build lines through real mouse/wheel input: every previewed site is
+      # queued and then built, touching at gap 0, wheel gap held and clamped.
+      add_test(NAME buildline_harness COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_BUILDLINE_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/buildline-test-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/buildline-test-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/buildline.png")
+      set_tests_properties(buildline_harness PROPERTIES TIMEOUT 300)
       add_test(NAME render_texture_reuse COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
           TAK_SHADOW_BENCH=16 TAK_SHADOW_BENCH_TYPE=arakeep TAK_PROFILE_ZOOM=0.5

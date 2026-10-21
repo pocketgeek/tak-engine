@@ -102,7 +102,7 @@ and cloakers a cloak button; units with several weapons get weapon buttons.*
 | Open the build menu | Select **one** builder (or one production building). Its icons appear along the bottom. |
 | Place a building | Click an icon, then left-click the map. The ghost shows the building where it would go. |
 | Cancel placement | Right-click or **Esc**. |
-| Queue several / a line | Hold **Shift**: Shift-click sites one by one, or Shift-drag a line of them. Release Shift to stop placing. |
+| Queue several / a line | Hold **Shift**: Shift-click sites one by one, or Shift-drag a line of them. A line packs the buildings edge to edge; turn the mouse wheel during the drag to add a gap (it stays for the rest of the game). Release Shift to stop placing. |
 | Lodestones on many mana spots | Pick the lodestone, then drag a box: the builder takes every free mana spot in it. |
 | Train at a production building | Left-click an icon: +1. Shift: +5. Ctrl+Shift: +10. Right-click (same modifiers) removes. |
 | Endless production | Ctrl + left-click an icon (again to stop). |

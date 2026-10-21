@@ -458,7 +458,15 @@ Select a builder and its build menu appears along the bottom of the screen.
 - **Structures**: click an icon, then click the map to place it. Placement shows
   whether the spot is valid. Right-click or **Esc** cancels.
 - **Lines and queues**: hold **Shift** while placing to queue several sites, or
-  Shift-drag to lay a line of walls or towers.
+  Shift-drag to lay a line of walls or towers. A line starts tight: each
+  building touches the last, with no gap (corner to corner on a diagonal). Turn
+  the **mouse wheel** while still holding Shift and the left button to space
+  them out, one empty cell per notch (wheel down tightens again); a small
+  **GAP** label by the pointer shows the spacing. The spacing you choose stays
+  for the rest of the game, for any building, and every new game starts tight.
+  The builder works along the line from one side, first stepping round to
+  that side when it needs to (you may see an extra waypoint in its queue), so
+  it never walls itself off from the next site.
 - **Lodestone areas**: choose a lodestone, then **drag a box** (at least about
   32 pixels each way; anything smaller places a single lodestone) over the map. The
   builder visits every free mana spot in the box, closest first: after each spot
@@ -820,6 +828,7 @@ speed keys are fixed.
 | **Right-drag** with a reclaiming builder | Reclaim everything in the box. |
 | **Middle-drag**, or the cursor at a screen edge | Scroll the map. |
 | **Mouse wheel** | Zoom in and out, towards the cursor. Far out, **Options → Tactical Dots** can draw units as minimap-style dots. |
+| **Mouse wheel** during a Shift-drag build line | Space the buildings out (up) or pack them tighter (down), one cell per notch. The camera does not zoom. |
 | **Minimap left-click / drag** | Move the camera. With an order armed, issue it there instead. |
 | **Minimap right-click** | Move the selection there. Shift queues it. |
 | **Right-click a cycling setting** | Go back one choice (left-click goes forward). Works in menus and options. |

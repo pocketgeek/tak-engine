@@ -2,6 +2,7 @@
 #include "client/retailaim.h"
 #include "gaf/nimbus.h"
 #include "client/gameview.h"
+#include "client/buildline.h"
 #include "client/gamespeed.h"
 #include "client/crusadesscreen.h"
 #include "client/shadowmask.h"
@@ -1382,6 +1383,7 @@
         // FEATURE, which never worked: corpse defs are object= models with no
         // sprite art, so addFeature always bailed before drawing anything.)
         if (noticeTimer_ > 0) noticeTimer_ -= dt;
+        if (buildLineGapShown_ > 0) buildLineGapShown_ -= dt;
 
         // (T-tracking / edge-scroll / shake now run per-frame in cameraFrame, so
         // the camera stays smooth when the net sim stalls.)
@@ -3679,18 +3681,11 @@
 
     std::vector<std::pair<float, float>> GameView::buildLinePositions(
         float x0, float z0, float x1, float z1) const {
-        std::vector<std::pair<float, float>> out;
-        if (!placing_) return out;
-        // Full footprint width plus a one-cell gap: edge-to-edge spacing lets integer
-        // cell rounding of the un-aligned drag tip adjacent sites into a shared
-        // footprint cell, which makes canPlace reject every other one.
-        float sp = (std::max({placing_->footX, placing_->footZ, 1}) + 1) * 16.0f;
-        float dx = x1 - x0, dz = z1 - z0, len = std::sqrt(dx * dx + dz * dz);
-        int n = int(len / sp);
-        float ux = len > 1e-3f ? dx / len : 0, uz = len > 1e-3f ? dz / len : 0;
-        for (int i = 0; i <= n; ++i)
-            out.push_back({x0 + ux * sp * i, z0 + uz * sp * i});
-        return out;
+        if (!placing_) return {};
+        // Snapped to the cells canPlace tests, so gap 0 really is edge to edge: the
+        // old un-snapped spacing needed a spare cell to stop rounding pushing two
+        // neighbours into one shared cell.
+        return tak::client::buildLineSites(placing_->footX, placing_->footZ, buildLineGap_, x0, z0, x1, z1);
     }
 
     void GameView::voice(int unitId, const std::string& event) {

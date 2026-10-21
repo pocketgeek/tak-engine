@@ -1,4 +1,5 @@
 #include "client/gameview.h"
+#include "client/buildline.h"
 
 // Out-of-line GameView method definitions (input concern), split from the
 // class body in gameview.h so editing a body recompiles only this translation
@@ -219,6 +220,18 @@
         } else if (e.type == SDL_KEYDOWN && handleKey(e.key.keysym.sym,
                                                        SDL_GetModState())) {
             // handled by the hotkey dispatcher
+        } else if (e.type == SDL_MOUSEWHEEL && buildDrag_) {
+            // Shift + left held on a build line: the wheel spaces the sites (up =
+            // wider), one empty cell per notch, and leaves the camera alone.
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+            float delta = e.wheel.preciseY;
+#else
+            float delta = float(e.wheel.y);
+#endif
+            if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) delta = -delta;
+            buildLineGap_ = std::clamp(buildLineGap_ + tak::client::buildLineWheelSteps(delta, buildLineWheel_),
+                                       0, tak::client::kBuildLineMaxGap);
+            buildLineGapShown_ = 1.5f;
         } else if (e.type == SDL_MOUSEWHEEL) {
             // Zoom toward the cursor: keep the world point under the mouse fixed.
             float wx = mapView_.offX() + mouseX_ / mapView_.zoom();
@@ -685,10 +698,118 @@
         // Lock the sim ONCE for the whole line: a build-line drag is often dozens of sites,
         // and O(N) separate canPlaceLocked() calls would each risk waiting a full tick.
         const auto live = liveWorld();
-        for (auto& [x, z] : buildLinePositions(x0, z0, x1, z1)) {
+        const auto sites = buildLinePositions(x0, z0, x1, z1);
+        const int fx = placing_->footX, fz = placing_->footZ;
+        // A walking builder heads for the cell of the site's build rectangle nearest
+        // to where it stands (RetailRectGoal::navigationCell, retail 4e38e0). In a
+        // tight line, after building one site it stands beside it, and for the next
+        // site that nearest cell can lie inside the building it has just made -- when
+        // it works along the line's axis or down a diagonal -- where it pushes for good
+        // (the old one-cell gap trapped it the same way). So keep it on ONE side of the
+        // line: where that nearest cell would overlap the line or sit on the far side,
+        // a queued move first takes it to the nearest rectangle cell on its side that
+        // is clear of the whole line, and it builds from there. Consecutive side cells
+        // are a footprint apart along the line, so it never has to round a corner.
+        const auto* b = live->unit(builderId);
+        const auto* bt = b ? b->type : nullptr;
+        const bool walks = bt && !bt->canFly && bt->footX > 0 && bt->footZ > 0;
+        int px = 0, pz = 0;   // the builder's footprint origin when this line's work starts
+        if (walks) {
+            // Where its queue leaves it (a build order's point is its approach cell).
+            const auto at = b->orders.empty() ? std::pair{b->x, b->z}
+                                              : std::pair{b->orders.back().x, b->orders.back().z};
+            px = tak::sim::footprintOrigin(at.first, bt->footX);
+            pz = tak::sim::footprintOrigin(at.second, bt->footZ);
+        }
+        std::vector<std::pair<int, int>> line;   // site footprint origins
+        for (const auto& [x, z] : sites)
+            line.push_back({tak::sim::footprintOrigin(x, fx), tak::sim::footprintOrigin(z, fz)});
+        const auto overlaps = [&](const std::vector<std::pair<int, int>>& set, int x, int z) {
+            for (const auto& [ox, oz] : set)
+                if (x < ox + fx && ox < x + bt->footX && z < oz + fz && oz < z + bt->footZ) return true;
+            return false;
+        };
+        // Which side of the line the builder works from: the one it starts on.
+        const float ldx = sites.back().first - sites.front().first, ldz = sites.back().second - sites.front().second;
+        const auto sideOf = [&](int x, int z) {
+            const float vx = float(x * 16 + bt->footX * 8) - sites.front().first;
+            const float vz = float(z * 16 + bt->footZ * 8) - sites.front().second;
+            const float cross = ldx * vz - ldz * vx;
+            return cross > 0 ? 1 : cross < 0 ? -1 : 0;
+        };
+        int side = walks ? (sideOf(px, pz) ? sideOf(px, pz) : 1) : 0;
+        const auto standable = [&](int x, int z) {
+            const auto& nav = live->navFor(bt);
+            for (int j = 0; j < bt->footZ; ++j)
+                for (int i = 0; i < bt->footX; ++i)
+                    if (!nav.walkable(x + i, z + j)) return false;
+            return true;
+        };
+        // A straight walk from cell (ax,az) to (bx,bz) that never clips a site already
+        // queued: the mover does not round a building's corner it cuts, it stalls on it.
+        std::vector<std::pair<int, int>> queued;
+        const auto clearWalk = [&](int ax, int az, int bx, int bz) {
+            const int steps = 4 * std::max({std::abs(bx - ax), std::abs(bz - az), 1});
+            for (int i = 0; i <= steps; ++i) {
+                const float cx = float(ax) + float(bx - ax) * float(i) / float(steps);
+                const float cz = float(az) + float(bz - az) * float(i) / float(steps);
+                const int x0 = int(std::floor(cx)), z0 = int(std::floor(cz));
+                const int x1 = int(std::ceil(cx)), z1 = int(std::ceil(cz));
+                if (overlaps(queued, x0, z0) || overlaps(queued, x1, z0) ||
+                    overlaps(queued, x0, z1) || overlaps(queued, x1, z1)) return false;
+            }
+            return true;
+        };
+        const auto move = [&](int x, int z) {
+            tak::net::Command m;
+            m.kind = tak::net::Cmd::Move;
+            m.unitId = builderId;
+            m.x = float(x * 16 + bt->footX * 8);
+            m.z = float(z * 16 + bt->footZ * 8);
+            m.queue = true;
+            issue(m);
+        };
+        for (size_t k = 0; k < sites.size(); ++k) {
+            const auto [x, z] = sites[k];
             std::vector<int> clearing;
             if (!live->canPlace(placing_,x,z,localPlayer_) &&
                 !live->clearableForPlacement(placing_,x,z,clearing,localPlayer_)) continue;
+            if (walks && sites.size() > 1) {
+                const auto [sx, sz] = line[k];
+                const tak::sim::RetailRectGoal rect{sx - bt->footX, sx + fx, sz - bt->footZ, sz + fz};
+                auto [tx, tz] = rect.navigationCell(px, pz);
+                if (overlaps(line, tx, tz) || sideOf(tx, tz) != side || !clearWalk(px, pz, tx, tz)) {
+                    // The nearest clear cell on our side, walked to directly or by one
+                    // square corner (along one axis, then the other).
+                    int best = -1, bx = 0, bz = 0, wx = 0, wz = 0;
+                    bool via = false;
+                    // Our side first; past a long building that side may only be reached
+                    // round its far end, so then the other side, and stay there.
+                    for (int pass = 0; pass < 2 && best < 0; ++pass, side = -side)
+                    rect.enumerate([&](int x2, int z2) {
+                        if (overlaps(line, x2, z2) || sideOf(x2, z2) != side || !standable(x2, z2)) return;
+                        const int dx = std::abs(x2 - px), dz = std::abs(z2 - pz);
+                        int d = 16 * std::max(dx, dz) + 6 * std::min(dx, dz);
+                        bool corner = false;
+                        int cx = 0, cz = 0;
+                        if (!clearWalk(px, pz, x2, z2)) {
+                            d = 16 * (dx + dz);
+                            if (standable(x2, pz) && clearWalk(px, pz, x2, pz) && clearWalk(x2, pz, x2, z2)) { cx = x2; cz = pz; }
+                            else if (standable(px, z2) && clearWalk(px, pz, px, z2) && clearWalk(px, z2, x2, z2)) { cx = px; cz = z2; }
+                            else return;
+                            corner = true;
+                        }
+                        if (best < 0 || d < best) { best = d; bx = x2; bz = z2; via = corner; wx = cx; wz = cz; }
+                    });
+                    if (best >= 0) {
+                        side = -side;   // undo the loop's last flip: the side we found it on
+                        if (via) move(wx, wz);
+                        move(bx, bz);
+                        tx = bx; tz = bz;
+                    }
+                }
+                px = tx; pz = tz;
+            }
             tak::net::Command c;
             c.kind = tak::net::Cmd::Build;
             c.unitId = builderId;
@@ -697,6 +818,7 @@
             c.queue = true;   // all queued; the first starts if the builder is free
             std::snprintf(c.type, sizeof c.type, "%s", placing_->id.c_str());
             issue(c);
+            queued.push_back(line[k]);
             placed=true;
         }
         return placed;

@@ -17,6 +17,7 @@
 #include "client/retailmovementcallbacks.h"
 #include "client/retaildeathsfx.h"
 #include "client/runtimesettings.h"
+#include "client/buildline.h"
 #include "sim/retailmotion.h"
 #include <cmath>
 #include <cstdlib>
@@ -997,6 +998,248 @@
             SDL_SetModState(savedMod);
             std::fprintf(stderr,"PASS: area drag threshold %.0f UI px both ways, map-anchored boxes\n",
                          tak::client::areadrag::kAreaCommandMinPx);
+            return;
+        }
+        // TAK_BUILDLINE_SHOT=dx,dy[,notches]: a monarch mid shift-drag of a wall line,
+        // dx,dy screen px from (300,300) at zoom 1.5, the wheel turned `notches` --
+        // left in progress so --shot captures the preview (and its GAP label).
+        if (const char* spec=tak::devEnv("TAK_BUILDLINE_SHOT")) {
+            noFog_=true;edgeScrollOn_=false;
+            winW_=1024;winH_=768;   // --winsize 1024 768: the renderer has no size yet
+            int dx=0,dy=0,notches=0;std::sscanf(spec,"%d,%d,%d",&dx,&dy,&notches);
+            const auto* wall=registry_.find("arawall");
+            if(!wall)throw std::runtime_error("buildline shot needs arawall");
+            const float cx0=float(mapView_.map().blocksX)*16.0f,cz0=float(mapView_.map().blocksY)*16.0f;
+            const float zoom=1.0f;mapView_.setZoom(zoom);
+            float wx=0,wz=0;bool open=false;
+            for(int i=0;i<1600 && !open;++i) {
+                wx=cx0-2000+float(i%40)*100;wz=cz0-2000+float(i/40)*100;open=true;
+                for(float z=wz-120;open && z<=wz+360;z+=24)for(float x=wx-120;open && x<=wx+360;x+=24)
+                    if(!world_.canPlace(wall,x,z,localPlayer_))open=false;
+            }
+            if(!open)throw std::runtime_error("buildline shot found no open ground");
+            mapView_.setOffset(wx-300/zoom,wz-300/zoom);
+            const int monarch=spawn("araking",wx-60,wz+90,0,localPlayer_);
+            captureFrame();beginFrame();cosmeticStep(0);
+            selection_={monarch};placing_=wall;SDL_SetModState(KMOD_LSHIFT);
+            SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=300;e.button.y=300;input(e,winW_,winH_);
+            SDL_Event m{};m.type=SDL_MOUSEMOTION;m.motion.x=300+dx;m.motion.y=300+dy;m.motion.state=SDL_BUTTON_LMASK;input(m,winW_,winH_);
+            SDL_PushEvent(&m);   // again through the loop, after the window's own first motion
+            for(int i=0;i<notches;++i){SDL_Event w{};w.type=SDL_MOUSEWHEEL;w.wheel.y=1;
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+                w.wheel.preciseY=1;
+#endif
+                input(w,winW_,winH_);}
+            std::fprintf(stderr,"buildline shot: %dx%d drag %d gap %d\n",winW_,winH_,int(buildDrag_),buildLineGap_);
+            return;
+        }
+        // Shift-drag build lines through real mouse/wheel events: every site the preview
+        // shows is queued, and after the local sim plays the builders out every one of
+        // them stands finished on its own cells -- no site refused for a neighbour in
+        // its own line. Gap 0 touching, a wheel-widened gap, the gap held across later
+        // drags and building types, clamped at 0, and the camera untouched by the wheel.
+        if (tak::devFlag("TAK_BUILDLINE_TEST")) {
+            noFog_=true;edgeScrollOn_=false;
+            winW_=1280;winH_=960;
+            mapView_.setZoom(1);
+            const auto publish=[&] {captureFrame();beginFrame();cosmeticStep(0);};
+            const auto fail=[](const std::string& m) {throw std::runtime_error("buildline: "+m);};
+            // The monarch's menu: the smallest building, a non-square one and a 4x4-ish
+            // square, so the lines cover different footprints in both proportions.
+            const tak::sim::UnitType *small=nullptr,*oblong=nullptr,*square=nullptr;
+            const auto area=[](const tak::sim::UnitType* t) {return t->footX*t->footZ;};
+            for (const auto& id:registry_.buildable("araking")) {
+                const auto* t=registry_.find(id);
+                if (!t || !t->isStructure() || t->onMana || t->footX<1 || t->footZ<1) continue;
+                if (!t->yardMap.empty() && t->yardMap.find_first_of("wWCY")!=std::string::npos) continue;
+                if (!small || area(t)<area(small)) small=t;
+                if (t->footX!=t->footZ && (!oblong || area(t)<area(oblong))) oblong=t;
+                if (t->footX==t->footZ && (!square || std::abs(area(t)-16)<std::abs(area(square)-16))) square=t;
+            }
+            if (!small || !oblong || !square) fail("araking's menu lacks the footprints this test needs");
+            for (const auto* t:{small,oblong,square})
+                std::fprintf(stderr,"buildline: type %s footprint %dx%d\n",t->id.c_str(),t->footX,t->footZ);
+            struct Case {const tak::sim::UnitType* type;int dx,dy;int wheel;int gap;const char* name;};
+            // Screen-pixel drags at zoom 1; wheel = notches during the drag; gap = expected.
+            std::vector<Case> cases={
+                {small,  240,  0,  0, 0, "small horizontal"},
+                {small,    0,240,  0, 0, "small vertical"},
+                {small,  220,220,  0, 0, "small diagonal"},
+                {oblong, 300,  0,  0, 0, "oblong horizontal"},
+                {oblong,   0,300,  0, 0, "oblong vertical"},
+                {oblong, 300,170,  0, 0, "oblong shallow diagonal"},
+                {square, 300,-300, 0, 0, "square anti-diagonal"},
+                {small,  300,  0,  3, 3, "small horizontal, wheel up 3"},
+                {oblong, 300,  0,  0, 3, "oblong horizontal, gap held from the last drag"},
+                {square,-260,130,  0, 3, "square leftward, gap held"},
+                {small,  200,  0, -9, 0, "small horizontal, wheel down past 0"},
+            };
+            // TAK_BUILDLINE_PROBE=dx,dy,wheel,bx,bz[,type]: just one drag (type 0 small, 1
+            // oblong, 2 square), its monarch at (bx,bz) px from the line's start -- for
+            // sweeping approaches.
+            float probeBx=-40,probeBz=-60;
+            if (const char* pr=tak::devEnv("TAK_BUILDLINE_PROBE")) {
+                int dx=0,dy=0,w=0,t=0;std::sscanf(pr,"%d,%d,%d,%f,%f,%d",&dx,&dy,&w,&probeBx,&probeBz,&t);
+                cases={{t==1?oblong:t==2?square:small,dx,dy,w,std::max(0,w),"probe"}};
+            }
+            const float cx0=float(mapView_.map().blocksX)*16.0f,cz0=float(mapView_.map().blocksY)*16.0f;
+            struct Line {int builder;const tak::sim::UnitType* type;std::vector<std::pair<float,float>> sites;int gap;std::string name;};
+            std::vector<Line> lines;
+            const auto savedMod=SDL_GetModState();
+            const auto send=[&](uint32_t kind,int x,int y) {
+                SDL_Event e{};e.type=kind;
+                if (kind==SDL_MOUSEMOTION) {e.motion.x=x;e.motion.y=y;e.motion.state=SDL_BUTTON_LMASK;}
+                else {e.button.button=SDL_BUTTON_LEFT;e.button.x=x;e.button.y=y;}
+                input(e,winW_,winH_);
+            };
+            const auto wheel=[&](float notches) {
+                SDL_Event e{};e.type=SDL_MOUSEWHEEL;e.wheel.y=notches>0?1:-1;
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+                e.wheel.preciseY=notches;
+#endif
+                e.wheel.direction=SDL_MOUSEWHEEL_NORMAL;input(e,winW_,winH_);
+            };
+            // Camera on a patch of open ground, clear of the earlier (queued, not yet
+            // built) lines, where this drag's sites can all go; wx,wz its start.
+            const auto findPatch=[&](const tak::sim::UnitType* type,int gap,int sx,int sy,int dx,int dy,float& wx,float& wz) {
+                const int across=int(cx0*2/100)-4,down=int(cz0*2/100)-4;
+                for (int i=0;i<across*down;++i) {
+                    wx=200+float(i%across)*100;wz=200+float(i/across)*100;
+                    mapView_.setOffset(wx-float(sx),wz-float(sy));
+                    float x0,z0,x1,z1;pickWorld(float(sx),float(sy),x0,z0);pickWorld(float(sx+dx),float(sy+dy),x1,z1);
+                    bool open=true;
+                    const auto sites=tak::client::buildLineSites(type->footX,type->footZ,gap,x0,z0,x1,z1);
+                    for (const auto& [x,z]:sites) {
+                        if (!world_.canPlace(type,x,z,localPlayer_)) open=false;
+                        for (const auto& l:lines) for (const auto& [px,pz]:l.sites)
+                            if (std::abs(px-x)<400 && std::abs(pz-z)<400) open=false;
+                        if (!open) break;
+                    }
+                    // Open ground all round the line too, so nothing but the line itself
+                    // stands between a monarch and its sites.
+                    const float lx=std::min(x0,x1)-160,hx=std::max(x0,x1)+160,lz=std::min(z0,z1)-160,hz=std::max(z0,z1)+160;
+                    for (float z=lz;open && z<=hz;z+=32)
+                        for (float x=lx;open && x<=hx;x+=32)
+                            if (!world_.canPlace(small,x,z,localPlayer_)) open=false;
+                    if (open) return true;
+                }
+                return false;
+            };
+            for (size_t k=0;k<cases.size();++k) {
+                const auto& c=cases[k];
+                // Each line gets its own patch of open ground, clear of the earlier
+                // (queued, not yet built) lines, and its own monarch.
+                const int sx=c.dx<0?560:220,sy=c.dy<0?560:220;
+                float wx,wz;
+                if (!findPatch(c.type,c.gap,sx,sy,c.dx,c.dy,wx,wz)) fail(std::string(c.name)+": no open patch for the line");
+                const int builder=spawn("araking",wx+probeBx,wz+probeBz,0,localPlayer_);
+                if (builder<0) fail("could not spawn a monarch");
+                publish();
+                selection_={builder};placing_=c.type;shiftBuildPlaced_=false;
+                SDL_SetModState(KMOD_LSHIFT);
+                send(SDL_MOUSEBUTTONDOWN,sx,sy);
+                if (!buildDrag_) fail(std::string(c.name)+": shift-press did not start a line");
+                send(SDL_MOUSEMOTION,sx+c.dx,sy+c.dy);
+                const float zoomBefore=mapView_.zoom(),offBefore=mapView_.offX();
+                if (c.wheel>0) {wheel(0.5f);wheel(0.5f);for (int i=1;i<c.wheel;++i) wheel(1);}   // two half notches = one
+                for (int i=0;i<-c.wheel;++i) wheel(-1);
+                if (mapView_.zoom()!=zoomBefore || mapView_.offX()!=offBefore)
+                    fail(std::string(c.name)+": the wheel moved the camera during the drag");
+                if (buildLineGap_!=c.gap)
+                    fail(std::string(c.name)+": gap "+std::to_string(buildLineGap_)+", expected "+std::to_string(c.gap));
+                float ex,ez;pickWorld(float(sx+c.dx),float(sy+c.dy),ex,ez);
+                const auto sites=buildLinePositions(bdX0_,bdZ0_,ex,ez);
+                if (sites.size()<2) fail(std::string(c.name)+": the drag shows fewer than two sites");
+                for (const auto& [x,z]:sites) {
+                    std::vector<int> clearing;
+                    if (!world_.canPlace(c.type,x,z,localPlayer_) &&
+                        !world_.clearableForPlacement(c.type,x,z,clearing,localPlayer_))
+                        fail(std::string(c.name)+": the fixture patch is not open ground");
+                }
+                send(SDL_MOUSEBUTTONUP,sx+c.dx,sy+c.dy);
+                SDL_SetModState(KMOD_NONE);
+                {SDL_Event e{};e.type=SDL_KEYUP;e.key.keysym.sym=SDLK_LSHIFT;e.key.keysym.mod=KMOD_NONE;input(e,winW_,winH_);}
+                size_t builds=0;
+                for (const auto& o:world_.unit(builder)->orders) builds+=o.buildType==c.type;
+                if (builds!=sites.size())
+                    fail(std::string(c.name)+": "+std::to_string(builds)+" builds queued for "+std::to_string(sites.size())+" sites");
+                lines.push_back({builder,c.type,sites,c.gap,c.name});
+                std::fprintf(stderr,"buildline: %s: %zu sites queued, gap %d\n",c.name,sites.size(),c.gap);
+            }
+            {   // Out of a drag the wheel still zooms the camera.
+                const float z=mapView_.zoom();wheel(1);
+                if (mapView_.zoom()==z) fail("the wheel no longer zooms outside a line drag");
+                mapView_.setZoom(1);
+            }
+            {   // A single shift-click is still one building, at the tight default.
+                float wx,wz;
+                if (!findPatch(small,0,220,220,0,0,wx,wz)) fail("no open patch for a single building");
+                const int builder=spawn("araking",wx-40,wz-60,0,localPlayer_);publish();
+                selection_={builder};placing_=small;SDL_SetModState(KMOD_LSHIFT);
+                send(SDL_MOUSEBUTTONDOWN,220,220);send(SDL_MOUSEBUTTONUP,220,220);SDL_SetModState(KMOD_NONE);
+                float x,z;pickWorld(220,220,x,z);
+                if (world_.unit(builder)->orders.size()!=1)fail("a shift-click did not queue exactly one building");
+                lines.push_back({builder,small,buildLinePositions(x,z,x,z),0,"single shift-click"});
+            }
+            placing_=nullptr;shiftBuildPlaced_=false;SDL_SetModState(savedMod);selection_.clear();
+            // Play the builders out: mana topped up so cost never stalls a site.
+            const auto busy=[&] {
+                for (const auto& l:lines) if (!world_.unit(l.builder)->orders.empty()) return true;
+                for (const auto& u:world_.units()) if (u.alive() && u.underConstruction) return true;
+                return false;
+            };
+            int ticks=0;
+            for (;ticks<30*60*30 && busy();++ticks) {
+                if (ticks%15==0) {
+                    auto& p=writableWorld().player(localPlayer_);p.mana=std::max(p.mana,50000.0);
+                    if (p.retailResources) p.retailResources->stored=float(p.mana);
+                }
+                simStep(1.0f/30.0f);
+            }
+            int built=0,expected=0;
+            for (const auto& l:lines) {
+                std::vector<std::pair<int,int>> cells;
+                for (const auto& [x,z]:l.sites) {
+                    ++expected;
+                    const int ox=tak::sim::footprintOrigin(x,l.type->footX),oz=tak::sim::footprintOrigin(z,l.type->footZ);
+                    bool found=false;
+                    for (const auto& u:world_.units())
+                        if (u.alive() && u.type==l.type && !u.underConstruction && int(u.player)==localPlayer_ &&
+                            tak::sim::footprintOrigin(u.x,l.type->footX)==ox && tak::sim::footprintOrigin(u.z,l.type->footZ)==oz)
+                            found=true;
+                    if (!found) {
+                        const auto* b=world_.unit(l.builder);
+                        std::string lineCells;
+                        for (const auto& [sx2,sz2]:l.sites)
+                            lineCells+=" "+std::to_string(tak::sim::footprintOrigin(sx2,l.type->footX))+","+
+                                       std::to_string(tak::sim::footprintOrigin(sz2,l.type->footZ));
+                        if (b && !b->orders.empty()) {
+                            const auto& o=b->orders.front();
+                            std::fprintf(stderr,"DBG builder foot %dx%d origin %d,%d front order buildType %s build %.1f,%.1f goal %.1f,%.1f stage %d site %d canPlace %d path? reclaim %d wait %d\n",
+                                b->type->footX,b->type->footZ,tak::sim::footprintOrigin(b->x,b->type->footX),tak::sim::footprintOrigin(b->z,b->type->footZ),
+                                o.buildType?o.buildType->id.c_str():"-",o.buildX.toFloat()/16,o.buildZ.toFloat()/16,o.x.toFloat()/16,o.z.toFloat()/16,
+                                int(o.mission.stage),b->buildSiteId,int(world_.canPlace(l.type,x,z,localPlayer_)),o.reclaimFeat,int(o.wait));
+                        }
+                        fail(l.name+": the site at cells "+std::to_string(ox)+","+std::to_string(oz)+
+                             " was not built ("+std::to_string(ticks)+" ticks; line"+lineCells+"; builder "+
+                             (b?std::to_string(b->x.toFloat()/16)+","+std::to_string(b->z.toFloat()/16)+" orders "+
+                                std::to_string(b->orders.size()):std::string("gone"))+")");
+                    }
+                    if (!cells.empty()) {
+                        const int dx=std::abs(ox-cells.back().first),dz=std::abs(oz-cells.back().second);
+                        if (std::max(dx-l.type->footX,dz-l.type->footZ)!=l.gap)
+                            fail(l.name+": built neighbours are not "+std::to_string(l.gap)+" cells apart");
+                    }
+                    cells.push_back({ox,oz});++built;
+                }
+            }
+            std::fprintf(stderr,"PASS: %zu shift-drag lines, %d/%d sites queued and built in %d ticks; "
+                         "gap 0 touching, wheel gap held across drags and clamped, camera still on drag\n",
+                         lines.size(),built,expected,ticks);
+            // --shot frames the first (tight, small, horizontal) line.
+            mapView_.setZoom(1.5f);
+            mapView_.setOffset(lines.front().sites.front().first-160,lines.front().sites.front().second-300);
+            publish();
             return;
         }
         if (tak::devFlag("TAK_CURSOR_TEST")) {

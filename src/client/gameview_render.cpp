@@ -2733,6 +2733,19 @@
             pickWorld(mouseX_, mouseY_, mx, mz);
             for (auto& [x, z] : buildLinePositions(bdX0_, bdZ0_, mx, mz))
                 drawGhostAt(placing_, x, z, !canPlacePreview(placing_, x, z));
+            // The spacing, beside the cursor: for a moment after the wheel changes it,
+            // and for the whole drag while it is not the tight default.
+            if (buildLineGap_ > 0 || buildLineGapShown_ > 0) {
+                const std::string gap = "GAP " + std::to_string(buildLineGap_);
+                const float px = 1.8f, tw = blockWidth(gap, px);
+                // Above and right of the pointer: below it, the build strip would cover it.
+                const float lx = mouseX_ + 18, ly = std::max(4.0f, mouseY_ - 34);
+                SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawColor(ren_, 0, 0, 0, 190);
+                SDL_FRect tb{lx - 4, ly - 4, tw + 8, 20};
+                SDL_RenderFillRectF(ren_, &tb);
+                blockText(gap, lx, ly, px, {230, 230, 200, 255});
+            }
         } else if (placing_) {
             drawGhost();
         }

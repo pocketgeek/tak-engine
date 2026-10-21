@@ -162,6 +162,8 @@
         }
         resetDiplomacy(room);
         radarCode_ = false;   // power codes start off in every match
+        buildLineGap_ = 0;    // so does the tight shift-drag line spacing
+        buildLineWheel_ = 0;
         poster_.reset();
         // A room field (SAY, a password) focused when the host started is let go: the game
         // has no such field, and its text input would otherwise hold push to talk off.
@@ -968,6 +970,88 @@ void GameView::speedProbe() {
     }
 }
 
+// TAK_BUILDLINE_NET: the local player's monarch lays three build lines of its smallest
+// building through placeBuildLine (the code a shift-drag release runs) -- horizontal and
+// diagonal at the tight default, vertical at gap 2 -- so the Build/Move orders travel the
+// real path through the server and come back in tick bundles. Every site must then stand
+// finished: BUILDLINE_NET prints sites/built once all are, or at the deadline.
+void GameView::buildlineNetProbe() {
+    if (!tak::devFlag("TAK_BUILDLINE_NET") || netLinesDone_ || spectating_ || localPlayer_ < 0) return;
+    if (netLines_.empty()) {
+        if (netTick_ < 90) return;
+        int monarch = -1;
+        const tak::sim::UnitType* small = nullptr;
+        std::vector<std::vector<std::pair<float, float>>> plans;
+        float mx = 0, mz = 0;
+        {
+            const auto live = liveWorld();
+            for (const auto& u : live->units())
+                if (u.alive() && int(u.player) == localPlayer_ && u.type && u.type->commander && u.type->isBuilder) {
+                    monarch = u.id; mx = u.x.toFloat(); mz = u.z.toFloat(); break;
+                }
+            if (monarch < 0) { netLinesDone_ = true; std::fprintf(stderr, "BUILDLINE_NET no monarch\n"); return; }
+            for (const auto& id : registry_.buildable(live->unit(monarch)->type->id)) {
+                const auto* t = registry_.find(id);
+                if (t && t->isStructure() && !t->onMana && t->yardMap.find_first_of("wWCY") == std::string::npos &&
+                    (!small || t->footX * t->footZ < small->footX * small->footZ)) small = t;
+            }
+            if (!small) { netLinesDone_ = true; std::fprintf(stderr, "BUILDLINE_NET no building\n"); return; }
+            const float drags[3][3] = {{128, 0, 0}, {112, 112, 0}, {0, 160, 2}};
+            for (const auto& d : drags) {
+                bool found = false;
+                for (int r = 4; r < 40 && !found; ++r)
+                    for (int i = -r; i <= r && !found; ++i)
+                        for (int j = -r; j <= r && !found; ++j) {
+                            if (std::max(std::abs(i), std::abs(j)) != r) continue;
+                            const float x0 = mx + float(i) * 32, z0 = mz + float(j) * 32;
+                            bool open = true;
+                            for (float z = z0 - 96; open && z <= z0 + d[1] + 96; z += 32)
+                                for (float x = x0 - 96; open && x <= x0 + d[0] + 96; x += 32)
+                                    if (!live->canPlace(small, x, z, localPlayer_)) open = false;
+                            for (const auto& l : plans) for (const auto& [px, pz] : l)
+                                if (std::abs(px - x0) < 300 && std::abs(pz - z0) < 300) open = false;
+                            if (open) { plans.push_back({{x0, z0}, {x0 + d[0], z0 + d[1]}}); found = true; }
+                        }
+            }
+        }
+        if (plans.size() != 3) { netLinesDone_ = true; std::fprintf(stderr, "BUILDLINE_NET no open ground\n"); return; }
+        const float gaps[3] = {0, 0, 2};
+        for (size_t k = 0; k < plans.size(); ++k) {
+            ClickScope click(*this);
+            selection_ = {monarch}; placing_ = small; buildLineGap_ = int(gaps[k]);
+            const auto [x0, z0] = plans[k][0];
+            const auto [x1, z1] = plans[k][1];
+            netLines_.push_back({small, buildLinePositions(x0, z0, x1, z1)});
+            placeBuildLine(x0, z0, x1, z1);
+        }
+        placing_ = nullptr; buildLineGap_ = 0;
+        netLinesTick_ = netTick_;
+        size_t n = 0; for (const auto& l : netLines_) n += l.sites.size();
+        std::fprintf(stderr, "BUILDLINE_NET queued %zu sites of %s (%dx%d) at tick %u\n", n, small->id.c_str(),
+                     small->footX, small->footZ, netTick_);
+        return;
+    }
+    if ((netTick_ - netLinesTick_) % 150 != 0) return;
+    size_t sites = 0, built = 0;
+    {
+        const auto live = liveWorld();
+        for (const auto& l : netLines_)
+            for (const auto& [x, z] : l.sites) {
+                ++sites;
+                const int ox = tak::sim::footprintOrigin(x, l.type->footX), oz = tak::sim::footprintOrigin(z, l.type->footZ);
+                for (const auto& u : live->units())
+                    if (u.alive() && u.type == l.type && !u.underConstruction && int(u.player) == localPlayer_ &&
+                        tak::sim::footprintOrigin(u.x, l.type->footX) == ox && tak::sim::footprintOrigin(u.z, l.type->footZ) == oz) {
+                        ++built; break;
+                    }
+            }
+    }
+    if (built == sites || netTick_ - netLinesTick_ >= 30u * 600u) {
+        std::fprintf(stderr, "BUILDLINE_NET sites=%zu built=%zu after %u ticks\n", sites, built, netTick_ - netLinesTick_);
+        netLinesDone_ = true;
+    }
+}
+
 // See gameview.h. Issues ordinary Move / AttackMove orders through GameView::issue,
 // so they travel the real path -- outbox -> sendCommands -> server -> bundle -> every
 // peer -- rather than being applied locally, which would desync by construction.
@@ -1305,6 +1389,7 @@ void GameView::autoplayStep() {
         } else if (st == S::InGame) {
 #ifndef NDEBUG
             autoplayStep();   // TAK_AUTOPLAY: headless humans that actually give orders
+            buildlineNetProbe();
             // Exercise defeat through the ordinary synchronized Ctrl+D command.
             if (tak::devFlag("TAK_DEFEAT_TEST") && !debugDefeatSent_ && netTick_ >= 60) {
                 for (const auto* u : front().live) {
