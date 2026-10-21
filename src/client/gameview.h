@@ -1,4 +1,5 @@
 #pragma once
+#include "client/areadrag.h"
 #include "client/emotetiming.h"
 #include "client/retailmodellighting.h"
 
@@ -2008,13 +2009,25 @@ private:
     bool buildDrag_ = false;          // shift-drag placing a line of buildings
     bool manaBuildDrag_ = false;      // plain left-drag places lodestones in a box
     float bdX0_ = 0, bdZ0_ = 0;       // build-drag start (world)
-    float bdSx0_ = 0, bdSy0_ = 0;
+    tak::client::areadrag::Anchor bdAnchor_;   // lodestone-box start on the map plane
     bool bdQueue_ = false;
     bool reclaimDrag_ = false;        // right-drag box: a builder clears the area
     float rdX0_ = 0, rdZ0_ = 0;       // reclaim-drag start (world)
-    float rdSx0_ = 0, rdSy0_ = 0;     // reclaim-drag start (screen; click-vs-drag test)
+    tak::client::areadrag::Anchor rdAnchor_;   // reclaim-drag start on the map plane
     bool draggingMinimap_ = false;
-    float dragX0_ = 0, dragY0_ = 0, dragX1_ = 0, dragY1_ = 0;
+    tak::client::areadrag::Anchor dragAnchor_; // marquee start on the map plane
+    float dragX1_ = 0, dragY1_ = 0;            // marquee pointer end (screen)
+    // A drag start's point on today's screen (the camera may have moved since).
+    tak::client::areadrag::ScreenPoint dragStartOnScreen(const tak::client::areadrag::Anchor& a) const {
+        return tak::client::areadrag::toScreen(a, mapView_.offX(), mapView_.offY(), mapView_.zoom());
+    }
+    tak::client::areadrag::Anchor dragAnchorAt(float sx, float sy) const {
+        return tak::client::areadrag::anchorAt(sx, sy, mapView_.offX(), mapView_.offY(), mapView_.zoom());
+    }
+    // The pointer has dragged a box big enough to be an area command (see areadrag.h).
+    bool areaBoxAt(const tak::client::areadrag::Anchor& a, float sx, float sy) const {
+        return tak::client::areadrag::isAreaBox(a, dragStartOnScreen(a), sx, sy, uiScale_);
+    }
     char pendingCmd_ = 0;   // armed order awaiting a click: 'f' fight-move,
                             // 'm' move, 'a' attack, 'p' patrol, 'g' guard
     bool paused_ = false;

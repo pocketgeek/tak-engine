@@ -325,11 +325,10 @@ namespace {
             });
             return tak::cursorForBuildPlacement(true,selectedBuilder);
         }
-        // Right-drag "clear this area": show the broom only once the pointer has moved
-        // enough to actually be a box (the same 6px threshold that tells a right-CLICK
-        // from a box on release). Before that, keep the ordinary hover cursor.
-        if (reclaimDrag_ &&
-            (std::fabs(mouseX_ - rdSx0_) >= 6.0f || std::fabs(mouseY_ - rdSy0_) >= 6.0f))
+        // Right-drag "clear this area": show the broom only once the box is big enough
+        // to be an area command (the test that tells a right-CLICK from a box on
+        // release). Before that, keep the ordinary hover cursor.
+        if (reclaimDrag_ && areaBoxAt(rdAnchor_, mouseX_, mouseY_))
             return tak::CursorId::Reclaim;
         if (dragging_) return tak::CursorId::Normal;       // box-select drag
         if (pendingCmd_)  {

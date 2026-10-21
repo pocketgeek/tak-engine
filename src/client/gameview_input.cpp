@@ -305,7 +305,7 @@
             pickWorld(float(e.button.x), float(e.button.y), wx, wz);
             if (placing_->onMana) {
                 manaBuildDrag_=true;buildDrag_=false;
-                bdX0_=wx;bdZ0_=wz;bdSx0_=float(e.button.x);bdSy0_=float(e.button.y);
+                bdX0_=wx;bdZ0_=wz;bdAnchor_=dragAnchorAt(float(e.button.x),float(e.button.y));
                 bdQueue_=(SDL_GetModState() & KMOD_SHIFT)!=0;
             } else if (SDL_GetModState() & KMOD_SHIFT) {
                 // Shift: begin a drag — a whole line of these gets queued on
@@ -339,8 +339,8 @@
                    manaBuildDrag_) {
             manaBuildDrag_=false;
             float wx,wz;pickWorld(float(e.button.x),float(e.button.y),wx,wz);
-            const bool box=std::abs(float(e.button.x)-bdSx0_)>=6 ||
-                std::abs(float(e.button.y)-bdSy0_)>=6;
+            // Under the area threshold this is a single lodestone placement.
+            const bool box=areaBoxAt(bdAnchor_,float(e.button.x),float(e.button.y));
             if (box) {
                 if (placeManaBuildBox(bdX0_,bdZ0_,wx,wz,bdQueue_) && bdQueue_)
                     shiftBuildPlaced_=true;
@@ -376,11 +376,14 @@
             bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
             float ex = float(e.button.x), ey = float(e.button.y), ewx, ewz;
             pickWorld(ex, ey, ewx, ewz);
-            // A tiny drag was really a click -> the ordinary contextual order.
-            if (std::fabs(ex - rdSx0_) < 6.0f && std::fabs(ey - rdSy0_) < 6.0f)
-                rightClickOrder(ewx, ewz, queue);
-            else
+            // Only a deliberate box clears an area (both sides at least the area
+            // threshold, measured from where the press's ground is drawn NOW, so a pan
+            // mid-drag counts as the box the player sees); anything less was a click ->
+            // the ordinary contextual order.
+            if (areaBoxAt(rdAnchor_, ex, ey))
                 issueReclaimBox(rdX0_, rdZ0_, ewx, ewz, queue);
+            else
+                rightClickOrder(ewx, ewz, queue);
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT &&
                    placing_) {
             placing_ = nullptr;
@@ -389,8 +392,9 @@
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    !spectating_) {   // a spectator watches only -- no unit selection
             dragging_ = true;
-            dragX0_ = dragX1_ = float(e.button.x);
-            dragY0_ = dragY1_ = float(e.button.y);
+            dragAnchor_ = dragAnchorAt(float(e.button.x), float(e.button.y));
+            dragX1_ = float(e.button.x);
+            dragY1_ = float(e.button.y);
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT &&
                    draggingMinimap_) {
             draggingMinimap_ = false;
@@ -406,15 +410,18 @@
             uint16_t selMod = SDL_GetModState();
             bool addSel = (selMod & KMOD_SHIFT) != 0;   // Shift: add to the selection
             bool subSel = (selMod & KMOD_CTRL) != 0;    // Ctrl:  remove from it
-            float sx0 = std::min(dragX0_, dragX1_), sx1 = std::max(dragX0_, dragX1_);
-            float sy0 = std::min(dragY0_, dragY1_), sy1 = std::max(dragY0_, dragY1_);
-            bool isClick = (sx1 - sx0) < 6 && (sy1 - sy0) < 6;
+            // The press corner is kept on the map: after a pan mid-drag the box
+            // selects what was drawn, from the press's ground to the pointer.
+            const auto a = dragStartOnScreen(dragAnchor_);
+            float sx0 = std::min(a.x, dragX1_), sx1 = std::max(a.x, dragX1_);
+            float sy0 = std::min(a.y, dragY1_), sy1 = std::max(a.y, dragY1_);
+            bool isClick = !tak::client::areadrag::isSelectBox(dragAnchor_, a, dragX1_, dragY1_, uiScale_);
             std::vector<int> matched;
             if (isClick) {
                 // Pick the unit nearest the cursor in SCREEN space (matching the
                 // render lift + flyer altitude), so a unit on a lifted wall top or a
                 // Monarch cruising overhead is selected where it's drawn.
-                float ccx = (dragX0_ + dragX1_) / 2, ccy = (dragY0_ + dragY1_) / 2;
+                float ccx = (a.x + dragX1_) / 2, ccy = (a.y + dragY1_) / 2;
                 int hit = -1;
                 float best = 1e30f;
                 for (const UnitR* _up : front().live) {
@@ -477,7 +484,7 @@
             if (haveReclaimer()) {
                 reclaimDrag_ = true;
                 rdX0_ = wx; rdZ0_ = wz;
-                rdSx0_ = float(e.button.x); rdSy0_ = float(e.button.y);
+                rdAnchor_ = dragAnchorAt(float(e.button.x), float(e.button.y));
                 return;
             }
             rightClickOrder(wx, wz, (SDL_GetModState() & KMOD_SHIFT) != 0);

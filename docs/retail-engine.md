@@ -2572,3 +2572,16 @@ right-click on an enemy still orders every selected unit to attack, as the
 order code does not consult the selector; `World::attack` then rallies a
 factory's output at the target, keeps an out-of-range tower's order until the
 target comes in reach, and drops the order for a unit with no weapon.
+
+## Drag boxes: world-anchored corners and the 32-pixel test (icd, 2026-10-21)
+
+Retail keeps a map drag box as two WORLD points (game state `+0x175fc..+0x17614`,
+16.16 x/y/z each) and projects them to the screen every time it needs the rectangle
+(`0x5202c0`: subtract the camera, lift by height/2). A pan during the drag therefore
+leaves the press corner on its ground. The "is this a box, not a click" predicate
+(`0x527bf0`) is true when the drag flag is set and either a press held 25 game-clock
+units (`0x53ff20`) has elapsed, or the two corners differ by 32 or more world pixels
+on EITHER axis (retail has no zoom, so world and screen pixels agree). Our client
+(`src/client/areadrag.h`) keeps the world anchoring and the 32-pixel distance, but
+requires it on BOTH axes and from a real pointer movement, and drops the held-time
+rule, so a twitch or a pause never becomes an area clear.

@@ -799,6 +799,148 @@
             std::fprintf(stderr,"PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column, volume sliders, eligibility, gift and selection cleanup\n");
             return;
         }
+        if (tak::devFlag("TAK_AREA_DRAG_TEST")) {
+            // Map drags through the real input() and draw(): a small right-drag with a
+            // reclaimer is the ordinary order, only a deliberate box clears an area,
+            // and a pan mid-drag keeps the box (drawn and commanded) on the ground the
+            // press was on. See client/areadrag.h.
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("area drag: "+what);
+                std::fprintf(stderr,"PASS: area drag: %s\n",what.c_str());
+            };
+            constexpr int W=1000,H=700;
+            winW_=W;winH_=H;noFog_=true;edgeScrollOn_=false;uiScale_=1.0f;
+            writableWorld().setPlayerCount(2);
+            const float cx=float(mapView_.map().blocksX)*16.0f,cz=float(mapView_.map().blocksY)*16.0f;
+            const int builder=spawn("araking",cx,cz,0,localPlayer_);
+            const int soldier=spawn("arasword",cx-150,cz-100,0,localPlayer_);
+            check(world_.unit(builder) && world_.unit(builder)->type->canReclaim,"fixture has a reclaimer");
+            mapView_.setZoom(1);
+            const float baseX=cx-400,baseZ=cz-300;
+            const auto publish=[&] {captureFrame();beginFrame();cosmeticStep(0);};
+            const auto event=[&](uint32_t kind,uint8_t button,float x,float y) {
+                SDL_Event e{};e.type=kind;
+                if (kind==SDL_MOUSEMOTION) {e.motion.x=int(x);e.motion.y=int(y);}
+                else {e.button.button=button;e.button.x=int(x);e.button.y=int(y);}
+                input(e,W,H);
+            };
+            const auto savedMod=SDL_GetModState();SDL_SetModState(KMOD_NONE);
+            const auto reset=[&] {
+                mapView_.setOffset(baseX,baseZ);
+                writableWorld().stop(builder);writableWorld().unit(builder)->orders.clear();
+                selection_={builder};publish();
+            };
+            const auto areaOrder=[&]()->const tak::sim::RetailReclaimArea* {
+                const auto& orders=world_.unit(builder)->orders;
+                return !orders.empty() && orders.front().reclaimArea ? &*orders.front().reclaimArea : nullptr;
+            };
+            const auto plainOrder=[&] {
+                const auto& orders=world_.unit(builder)->orders;
+                return !orders.empty() && !orders.front().reclaimArea;
+            };
+            // Right-press at P, optional camera move, pointer to Q, release at Q.
+            const auto rightDrag=[&](float px,float py,float qx,float qy,float panX=0,float panZ=0) {
+                event(SDL_MOUSEBUTTONDOWN,SDL_BUTTON_RIGHT,px,py);
+                if (panX!=0 || panZ!=0) mapView_.setOffset(mapView_.offX()+panX,mapView_.offY()+panZ);
+                event(SDL_MOUSEMOTION,0,qx,qy);
+                event(SDL_MOUSEBUTTONUP,SDL_BUTTON_RIGHT,qx,qy);
+            };
+            const float px=400,py=300;
+            reset();rightDrag(px,py,px,py);
+            check(plainOrder(),"right-click with a reclaimer is the ordinary order");
+            reset();rightDrag(px,py,px+12,py+9);
+            check(plainOrder(),"a 12x9 px twitch is the ordinary order, not a tiny clear");
+            reset();rightDrag(px,py,px+31,py+31);
+            check(plainOrder(),"31x31 px is still a click");
+            reset();rightDrag(px,py,px+250,py+10);
+            check(plainOrder(),"a long 10 px sliver is a click");
+            reset();
+            float wx0,wz0,wx1,wz1;pickWorld(px,py,wx0,wz0);pickWorld(px+60,py+50,wx1,wz1);
+            rightDrag(px,py,px+60,py+50);
+            {
+                const auto* area=areaOrder();
+                check(area!=nullptr,"a 60x50 px box is an area clear");
+                const auto near=[](int32_t v,float f) {return std::fabs(tak::sim::Fixed::raw(v).toFloat()-f)<1.0f;};
+                check(near(area->minX,std::min(wx0,wx1)) && near(area->maxX,std::max(wx0,wx1)) &&
+                      near(area->minZ,std::min(wz0,wz1)) && near(area->maxZ,std::max(wz0,wz1)),
+                      "the clear covers press to release on the ground");
+            }
+            uiScale_=2.0f;reset();rightDrag(px,py,px+50,py+50);
+            check(plainOrder(),"at 200% UI a 50 px box is under the (64 px) threshold");
+            reset();rightDrag(px,py,px+70,py+70);
+            check(areaOrder()!=nullptr,"at 200% UI a 70 px box clears");
+            uiScale_=1.0f;
+            // Pan alone (the pointer never moves) is still a click.
+            reset();rightDrag(px,py,px,py,120,90);
+            check(plainOrder(),"a pan with the pointer held still is a click");
+            // A pan mid-drag: the clear starts at the PRESSED ground, not at the press's
+            // screen point on the panned map.
+            reset();pickWorld(px,py,wx0,wz0);
+            event(SDL_MOUSEBUTTONDOWN,SDL_BUTTON_RIGHT,px,py);
+            mapView_.setOffset(baseX+80,baseZ+60);   // as edge scroll / keys / minimap do
+            event(SDL_MOUSEMOTION,0,px+50,py+40);
+            {
+                const auto a=dragStartOnScreen(rdAnchor_);
+                check(std::fabs(a.x-(px-80))<0.01f && std::fabs(a.y-(py-60))<0.01f,
+                      "the box corner moved with the map");
+                check(areaBoxAt(rdAnchor_,px+50,py+40),"the panned box is shown as an area");
+                // The box as drawn: its top edge runs from the re-projected corner.
+                captureFrame();beginFrame();cosmeticStep(0);prepare(W,H);draw(W,H);
+                int ow=0,oh=0;SDL_GetRendererOutputSize(ren_,&ow,&oh);
+                std::vector<uint8_t> px4(size_t(ow)*size_t(oh)*4);
+                const bool read=SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px4.data(),ow*4)==0;
+                if (read) {
+                    if (const char* cap=tak::devEnv("TAK_AREA_DRAG_CAPTURE")) tak::png::write(cap,ow,oh,px4);
+                    const auto outline=[&](int x,int y) {
+                        const uint8_t* q=&px4[(size_t(y)*size_t(ow)+size_t(x))*4];
+                        return q[0]>=215 && q[1]>=155 && q[1]<=210 && q[2]<=110;
+                    };
+                    const auto edge=[&](float y,float xa,float xb) {
+                        int hit=0,n=0;
+                        for (int x=int(xa)+3;x<=int(xb)-3;++x,++n) hit+=outline(x,int(y));
+                        return n>0 && hit*10>=n*9;
+                    };
+                    check(edge(py-60,px-80,px+50),"drawn top edge starts on the pressed ground");
+                    check(!edge(py,px,px+50),"no box edge at the stale screen press point");
+                }
+                endFrame();
+            }
+            event(SDL_MOUSEBUTTONUP,SDL_BUTTON_RIGHT,px+50,py+40);
+            {
+                pickWorld(px+50,py+40,wx1,wz1);
+                const auto* area=areaOrder();
+                check(area!=nullptr,"the panned drag clears");
+                const auto near=[](int32_t v,float f) {return std::fabs(tak::sim::Fixed::raw(v).toFloat()-f)<1.0f;};
+                check(near(area->minX,std::min(wx0,wx1)) && near(area->minZ,std::min(wz0,wz1)) &&
+                      near(area->maxX,std::max(wx0,wx1)) && near(area->maxZ,std::max(wz0,wz1)),
+                      "the panned clear covers what the box showed");
+            }
+            // A zoom mid-drag keeps the corner on its ground as well.
+            reset();
+            event(SDL_MOUSEBUTTONDOWN,SDL_BUTTON_RIGHT,px,py);
+            mapView_.setZoom(0.5f);
+            {
+                const auto a=dragStartOnScreen(rdAnchor_);
+                const float ex=(baseX+px-mapView_.offX())*0.5f,ey=(baseZ+py-mapView_.offY())*0.5f;
+                check(std::fabs(a.x-ex)<0.01f && std::fabs(a.y-ey)<0.01f,"zoom: the corner stays on its ground");
+            }
+            event(SDL_MOUSEBUTTONUP,SDL_BUTTON_RIGHT,px,py);
+            mapView_.setZoom(1);
+            // The selection marquee: a pan mid-drag selects what the drawn box covers.
+            reset();selection_.clear();publish();
+            const SDL_FPoint s0=unitScreen(*frameUnitP(soldier));
+            const float ax=s0.x-30,ay=s0.y-30;   // press just up-left of the soldier
+            event(SDL_MOUSEBUTTONDOWN,SDL_BUTTON_LEFT,ax,ay);
+            mapView_.setOffset(baseX+100,baseZ+100);publish();   // soldier now 100 px up-left
+            event(SDL_MOUSEMOTION,0,ax-40,ay-40);   // box: pressed ground (ax-100) .. ax-40
+            event(SDL_MOUSEBUTTONUP,SDL_BUTTON_LEFT,ax-40,ay-40);
+            check(selection_==std::vector<int>{soldier},"marquee after a pan selects inside the drawn box");
+            reset();
+            SDL_SetModState(savedMod);
+            std::fprintf(stderr,"PASS: area drag threshold %.0f UI px both ways, map-anchored boxes\n",
+                         tak::client::areadrag::kAreaCommandMinPx);
+            return;
+        }
         if (tak::devFlag("TAK_CURSOR_TEST")) {
             noFog_=true;edgeScrollOn_=false;
             writableWorld().setPlayerCount(8);

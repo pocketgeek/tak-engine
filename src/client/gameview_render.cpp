@@ -2712,10 +2712,13 @@
         // would repeat at the same screen spot in every tile.
         if (posterFrame_) {
             // nothing at the cursor
-        } else if (manaBuildDrag_ && placing_ && (std::abs(mouseX_-bdSx0_)>=6 || std::abs(mouseY_-bdSy0_)>=6)) {
+        } else if (manaBuildDrag_ && placing_ && areaBoxAt(bdAnchor_,mouseX_,mouseY_)) {
+            // Drawn from where the press's ground is now, so a pan mid-drag keeps the
+            // box on the map (see client/areadrag.h).
             SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_BLEND);
-            SDL_FRect box{std::min(bdSx0_,mouseX_),std::min(bdSy0_,mouseY_),
-                std::abs(mouseX_-bdSx0_),std::abs(mouseY_-bdSy0_)};
+            const auto a=dragStartOnScreen(bdAnchor_);
+            SDL_FRect box{std::min(a.x,mouseX_),std::min(a.y,mouseY_),
+                std::abs(mouseX_-a.x),std::abs(mouseY_-a.y)};
             SDL_SetRenderDrawColor(ren_,100,220,255,40);SDL_RenderFillRectF(ren_,&box);
             SDL_SetRenderDrawColor(ren_,130,230,255,220);SDL_RenderDrawRectF(ren_,&box);
             float mx,mz;pickWorld(mouseX_,mouseY_,mx,mz);
@@ -2733,15 +2736,17 @@
         } else if (placing_) {
             drawGhost();
         }
-        if (!posterFrame_ && reclaimDrag_ && (std::abs(mouseX_ - rdSx0_) >= 6.0f ||
-                             std::abs(mouseY_ - rdSy0_) >= 6.0f)) {
-            // Screen-space "clear this area" box, with a marker on every reclaimable
-            // feature it currently catches. Same 6px arming threshold as the
-            // marquee: a plain right-click order shouldn't flash the box.
+        if (!posterFrame_ && reclaimDrag_ && areaBoxAt(rdAnchor_, mouseX_, mouseY_)) {
+            // "Clear this area" box, with a marker on every reclaimable feature it
+            // currently catches. Shown only once the release would be an area clear
+            // (client/areadrag.h), so a right-click order never flashes it. The press
+            // corner is re-projected from the map, so it stays on its ground when the
+            // camera moves mid-drag.
             float zm = mapView_.zoom();
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-            float x0 = std::min(rdSx0_, mouseX_), y0 = std::min(rdSy0_, mouseY_);
-            float x1 = std::max(rdSx0_, mouseX_), y1 = std::max(rdSy0_, mouseY_);
+            const auto a = dragStartOnScreen(rdAnchor_);
+            float x0 = std::min(a.x, mouseX_), y0 = std::min(a.y, mouseY_);
+            float x1 = std::max(a.x, mouseX_), y1 = std::max(a.y, mouseY_);
             SDL_FRect box{x0, y0, x1 - x0, y1 - y0};
             SDL_SetRenderDrawColor(ren_, 255, 170, 40, 40);
             SDL_RenderFillRectF(ren_, &box);
@@ -3242,13 +3247,14 @@
                       {220, 220, 230, 255});
         }
 
-        // Marquee only once the drag covers real area: under the same 6px
+        // Marquee only once the drag covers real area: under the same small
         // threshold the release is treated as a CLICK-select, so a couple of
-        // pixels of hand jitter shouldn't flash a box.
-        if (dragging_ && (std::abs(dragX1_ - dragX0_) >= 6.0f ||
-                          std::abs(dragY1_ - dragY0_) >= 6.0f)) {
-            SDL_FRect r{std::min(dragX0_, dragX1_), std::min(dragY0_, dragY1_),
-                        std::abs(dragX1_ - dragX0_), std::abs(dragY1_ - dragY0_)};
+        // pixels of hand jitter shouldn't flash a box. Its press corner stays on
+        // the map when the camera moves (client/areadrag.h).
+        if (const auto a = dragStartOnScreen(dragAnchor_);
+            dragging_ && tak::client::areadrag::isSelectBox(dragAnchor_, a, dragX1_, dragY1_, uiScale_)) {
+            SDL_FRect r{std::min(a.x, dragX1_), std::min(a.y, dragY1_),
+                        std::abs(dragX1_ - a.x), std::abs(dragY1_ - a.y)};
             SDL_SetRenderDrawColor(ren_, 120, 255, 150, 200);
             SDL_RenderDrawRectF(ren_, &r);
         }

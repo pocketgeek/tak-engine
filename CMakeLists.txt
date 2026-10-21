@@ -1377,6 +1377,9 @@ add_test(NAME order_trail COMMAND order_trail_test)
 add_executable(reclaim_pick_test tools/reclaim_pick_test.cpp)
 target_link_libraries(reclaim_pick_test PRIVATE tak-formats)
 add_test(NAME reclaim_pick COMMAND reclaim_pick_test)
+add_executable(area_drag_test tools/area_drag_test.cpp)
+target_include_directories(area_drag_test PRIVATE src)
+add_test(NAME area_drag COMMAND area_drag_test)
 add_executable(navigation_checkpoint_test tools/navigation_checkpoint_test.cpp)
 target_link_libraries(navigation_checkpoint_test PRIVATE tak-formats)
 # Legion mission goals (attack, chase, guard, fight-move, patrol, group patrol,
@@ -1994,6 +1997,14 @@ if(TAK_BUILD_CLIENT)
           $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
           --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/build-controls.png")
       set_tests_properties(build_controls PROPERTIES TIMEOUT 90)
+      add_test(NAME area_drag_input COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_AREA_DRAG_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/area-drag-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/area-drag-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/area-drag.png")
+      set_tests_properties(area_drag_input PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: area drag threshold")
       add_test(NAME render_texture_reuse COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
           TAK_SHADOW_BENCH=16 TAK_SHADOW_BENCH_TYPE=arakeep TAK_PROFILE_ZOOM=0.5

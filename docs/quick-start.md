@@ -28,7 +28,7 @@ sans-serif, as in these pictures) or *Classic* (the engine's old lettering).
 | Ctrl + click or drag | Remove from the selection. |
 | Right-click | The order for what is under the pointer (see below). |
 | Shift + right-click | Queue that order after the current ones. |
-| Right-drag (a reclaiming builder selected) | Reclaim every tree, rock and wreck in the box. |
+| Right-drag (a reclaiming builder selected) | Reclaim every tree, rock and wreck in the box. A drag under about 32 pixels each way is a normal right-click. |
 | Middle-drag | Scroll the map. |
 | Pointer at a screen edge | Scroll the map (Options → Edge Scrolling). |
 | Mouse wheel | Zoom in and out, towards the pointer. |

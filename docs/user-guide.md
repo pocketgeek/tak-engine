@@ -459,7 +459,8 @@ Select a builder and its build menu appears along the bottom of the screen.
   whether the spot is valid. Right-click or **Esc** cancels.
 - **Lines and queues**: hold **Shift** while placing to queue several sites, or
   Shift-drag to lay a line of walls or towers.
-- **Lodestone areas**: choose a lodestone, then **drag a box** over the map. The
+- **Lodestone areas**: choose a lodestone, then **drag a box** (at least about
+  32 pixels each way; anything smaller places a single lodestone) over the map. The
   builder visits every free mana spot in the box, closest first: after each spot
   it moves on to the nearest one left, scouting unexplored spots on the way and
   preferring spots it can walk to. A Shift-queued area starts from where the
@@ -508,7 +509,11 @@ A builder that can reclaim turns trees, rocks and wrecks into mana.
 - Right-click a single object to reclaim it.
 - **Right-drag a box** to reclaim a whole area. The builder works through it
   closest first, picking the nearest remaining object again after each one, as
-  the original game does. Mana spots are left alone.
+  the original game does. Mana spots are left alone. The box has to be at least
+  about 32 pixels wide and 32 tall (at 100% UI scale); a smaller or thinner
+  drag is an ordinary right-click order. The orange box and the broom cursor
+  appear once the drag is big enough, and the box stays on the ground you
+  pressed if the view scrolls while you drag.
 
 ### Repairing and healing
 
