@@ -26,7 +26,7 @@ struct CampaignScreen::Impl {
     struct Image {SDL_Texture* texture=nullptr;int width=0,height=0;};
     std::map<std::string,std::vector<Image>> art;
     std::vector<SDL_Texture*> chapters;
-    Font body,decor,label;
+    Font body,heading,decor,label;
     int tab=0,page=0;
     bool picked=false;
     std::string stem,campaign;
@@ -90,6 +90,11 @@ struct CampaignScreen::Impl {
             }catch(...) {}
         }
         try{body=Font(ren,vfs,"fonts/bodfontbody.gaf",FontRole::Text);}catch(...){}
+        // The CHAPTER heading is lettering: "C" (bodfontdecor) and "HAPTER" (bodfontbody)
+        // are one word sized to sit over the chapter numeral, so it keeps the retail art
+        // under UI FONT MODERN too; Noto's caps stand taller than its small capitals and
+        // ran into the numeral. The title below stays reading text.
+        try{heading=Font(ren,vfs,"fonts/bodfontbody.gaf",FontRole::Art);}catch(...){}
         try{decor=Font(ren,vfs,"fonts/bodfontdecor.gaf",FontRole::Art);}catch(...){}
         try{label=Font(ren,vfs,"fonts/b_times new roman (100b).gaf",FontRole::Text);}catch(...){}
         selectCampaign(initial);
@@ -97,7 +102,7 @@ struct CampaignScreen::Impl {
     ~Impl() {
         for(auto& [name,frames]:art)for(auto& image:frames)if(image.texture)gpuvram::destroy(image.texture);
         for(auto* texture:chapters)if(texture)gpuvram::destroy(texture);
-        body.destroyGlyphs();decor.destroyGlyphs();label.destroyGlyphs();
+        body.destroyGlyphs();heading.destroyGlyphs();decor.destroyGlyphs();label.destroyGlyphs();
     }
     int count() const {return camps.empty()?0:camps[size_t(tab)].count()+!camps[size_t(tab)].altFinal.empty();}
     void selectCampaign(int index) {
@@ -124,7 +129,7 @@ struct CampaignScreen::Impl {
         }
     }
     void text(const GuiLayout& lay,const Font& font,const std::string& value,
-              SDL_FRect box,bool centered=true,float size=1) {
+              SDL_FRect box,bool centered=true,float size=1,SDL_Color ink={}) {
         if(value.empty())return;
         float scale=lay.scale*size;
         float width=font.ok()?float(font.width(value,scale)):uiTextWidth(value,scale);
@@ -133,7 +138,10 @@ struct CampaignScreen::Impl {
         if(font.ok())font.vbounds(value,scale,top,height);
         float x=box.x+(centered?(box.w-width)*.5f:0);
         float y=box.y+(box.h-height)*.5f-top;
-        if(font.ok())font.draw(ren,value,x,y,scale);
+        // ink: MODERN's flat face in this colour (the Times art's own tan, made for dark
+        // panels, is faint on the parchment); CLASSIC keeps the glyph art.
+        if(font.ok() && ink.a && modernUiText())font.drawSolid(ren,value,x,y,scale,ink);
+        else if(font.ok())font.draw(ren,value,x,y,scale);
         else uiText(ren,value,x,y,scale,{238,225,196,255});
     }
     void click(const char* name) {
@@ -221,7 +229,7 @@ void CampaignScreen::render(int w,int h) {
         if(d.chapters[size_t(image)])SDL_RenderCopyF(d.ren,d.chapters[size_t(image)],nullptr,&dst);
     }
     d.text(lay,d.decor,"C",d.rect(lay,"C"));
-    d.text(lay,d.body,"HAPTER",d.rect(lay,"Hapter"));
+    d.text(lay,d.heading,"HAPTER",d.rect(lay,"Hapter"));
     d.text(lay,d.decor,std::to_string(chapter),d.rect(lay,"ChapterNumber"));
     const std::string title=alternate?c.altTitle:c.missions[size_t(d.page)].title;
     const auto box=d.rect(lay,"ChapterText");
@@ -248,14 +256,15 @@ void CampaignScreen::render(int w,int h) {
         // Two short lines on the left page, under the chapter title; the names
         // shorten with "..." rather than shrink past legibility.
         constexpr float kSize=.8f;
+        constexpr SDL_Color kInk{72,56,32,255};   // darker than the title's ink: smaller text
         const auto names=lay.rect(100,310,220,12);
         const auto fits=[&](const std::string& t){
             const float scale=lay.scale*kSize;
             return (d.label.ok()?float(d.label.width(t,scale)):uiTextWidth(t,scale))<=names.w;};
         std::string line=d.alwaysOn;
         while(line.size()>8 && !fits(line))line=line.substr(0,line.size()-4)+"...";
-        d.text(lay,d.label,"Always-on mods:",lay.rect(100,298,220,12),true,kSize);
-        d.text(lay,d.label,line,names,true,kSize);
+        d.text(lay,d.label,"Always-on mods:",lay.rect(100,298,220,12),true,kSize,kInk);
+        d.text(lay,d.label,line,names,true,kSize,kInk);
     }
 }
 } // namespace tak
