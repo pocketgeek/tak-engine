@@ -40,6 +40,26 @@ std::string startLocationsLabel(uint8_t mode) {
     default: return "START LOCATIONS: FIXED";
     }
 }
+const char* const kFogName[3] = {"NOT EXPLORED", "EXPLORED", "FULL VISION"};
+// The create screen's option column draws every label at one size: the largest at
+// which every caption any row can show (every state of every row, single player and
+// multiplayer) fits `maxW`. The column then reads as one list, no label needs its own
+// shrink, and cycling a row never resizes its text. Measured in the current UI FONT.
+float createOptionPx(float maxW) {
+    static const char* const kCaptions[] = {
+        "CRUSADES: ON", "CRUSADES: OFF", "DOUBLE SIGHT/RADAR: ON", "DOUBLE SIGHT/RADAR: OFF",
+        "UNIT CAP: 250", "UNIT CAP: 500", "UNIT CAP: 1000", "UNIT CAP: 2000",
+        "MONARCH EXPENDABLE: SCENARIO", "MONARCH EXPENDABLE: ON", "MONARCH EXPENDABLE: OFF",
+        "ALLOW SPEED CHANGE: ON", "ALLOW SPEED CHANGE: OFF", "POWER CODES: ON", "POWER CODES: OFF",
+        "SPECTATE (WATCH AIS): ON", "SPECTATE (WATCH AIS): OFF",
+        "ALLOW SPECTATORS: ON", "ALLOW SPECTATORS: OFF", "GAME MODS: ON", "GAME MODS: OFF"};
+    float px = tak::uiTextFitPx(pathfindingLabel(tak::sim::PathfindingMode::Retail), 2.0f, maxW);
+    px = tak::uiTextFitPx(pathfindingLabel(tak::sim::PathfindingMode::Legion), px, maxW);
+    for (uint8_t mode = 0; mode < 3; ++mode) px = tak::uiTextFitPx(startLocationsLabel(mode), px, maxW);
+    for (const char* fog : kFogName) px = tak::uiTextFitPx(std::string("FOG OF WAR: ") + fog, px, maxW);
+    for (const char* caption : kCaptions) px = tak::uiTextFitPx(caption, px, maxW);
+    return std::floor(px * 20) / 20;   // a 0.05 step, so rounding never re-overflows
+}
 }  // namespace
 
     void GameView::openCrusades(uint32_t territory) {
@@ -535,69 +555,68 @@ std::string startLocationsLabel(uint8_t mode) {
         blockText(std::string("MAP: ") + mapTitle(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 28;
         // Option rows (26 high at a 27 pitch): multiplayer's eleven rows, under the name
         // and password fields, are 24 high at a 25 pitch to stay clear of the BACK/CREATE
-        // footer.
+        // footer. One column: every row kOptW wide (clear of the map list at x 400) and
+        // every label at optPx (createOptionPx), whatever it says.
         const float kRow = singlePlayer_ ? 27 : 25, kRowH = singlePlayer_ ? 26 : 24;
-        lbCycle(x, y, 170, kRowH, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
-              [this](int) { createCrusades_ = !createCrusades_; }); y += kRow;
-        lbCycle(x, y, 240, kRowH, createDoubleSight_ ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF", true,
-              [this](int) { createDoubleSight_ = !createDoubleSight_; }); y += kRow;
-        lbCycle(x, y, 280, kRowH, pathfindingLabel(createPathfindingMode_), true,
-              [this](int direction) { createPathfindingMode_=tak::sim::cyclePathfindingMode(createPathfindingMode_,direction); }); y += kRow;
-        lbCycle(x,y,240,kRowH,"UNIT CAP: " + std::to_string(createUnitCap_),true,[this](int direction) {
+        constexpr float kOptW = 300;
+        const float optPx = createOptionPx(kOptW - 12);
+        auto option = [&](const std::string& label, bool enabled, std::function<void(int)> cycle) {
+            lbCycle(x, y, kOptW, kRowH, label, enabled, std::move(cycle), optPx);
+            y += kRow;
+        };
+        option(createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
+               [this](int) { createCrusades_ = !createCrusades_; });
+        option(createDoubleSight_ ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF", true,
+               [this](int) { createDoubleSight_ = !createDoubleSight_; });
+        option(pathfindingLabel(createPathfindingMode_), true,
+               [this](int direction) { createPathfindingMode_=tak::sim::cyclePathfindingMode(createPathfindingMode_,direction); });
+        option("UNIT CAP: " + std::to_string(createUnitCap_),true,[this](int direction) {
             static constexpr uint16_t limits[]={250,500,1000,2000};
             auto at=std::find(std::begin(limits),std::end(limits),createUnitCap_);
             int index=at==std::end(limits) ? 0 : int(at-std::begin(limits));
             createUnitCap_=limits[(index+direction+4)%4];
-        }); y+=kRow;
+        });
         // When OFF, losing your Monarch loses the game (retail commander rule); ON
         // makes the Monarch just another unit.
-        lbCycle(x, y, 240, kRowH, scenarioOn ? "MONARCH EXPENDABLE: SCENARIO"
-                             : createMonarchExp_ ? "MONARCH EXPENDABLE: ON"
-                                                 : "MONARCH EXPENDABLE: OFF", !scenarioOn,
-              [this](int) { createMonarchExp_ = !createMonarchExp_; }); y += kRow;
-        lbCycle(x, y, 240, kRowH, createSpeedUnlock_ ? "ALLOW SPEED CHANGE: ON"
-                                              : "ALLOW SPEED CHANGE: OFF", true,
-              [this](int) { createSpeedUnlock_ = !createSpeedUnlock_; }); y += kRow;
+        option(scenarioOn ? "MONARCH EXPENDABLE: SCENARIO"
+               : createMonarchExp_ ? "MONARCH EXPENDABLE: ON"
+                                   : "MONARCH EXPENDABLE: OFF", !scenarioOn,
+               [this](int) { createMonarchExp_ = !createMonarchExp_; });
+        option(createSpeedUnlock_ ? "ALLOW SPEED CHANGE: ON" : "ALLOW SPEED CHANGE: OFF", true,
+               [this](int) { createSpeedUnlock_ = !createSpeedUnlock_; });
         // POWER CODES (retail's battle-room box): the +codes typed in the chat box work
         // for every player of this game. Off by default, as in retail.
-        lbCycle(x, y, 240, kRowH, createPowerCodes_ ? "POWER CODES: ON" : "POWER CODES: OFF", true,
-              [this](int) { createPowerCodes_ = !createPowerCodes_; }); y += kRow;
+        option(createPowerCodes_ ? "POWER CODES: ON" : "POWER CODES: OFF", true,
+               [this](int) { createPowerCodes_ = !createPowerCodes_; });
         // SP only: spectate mode -- you take no slot and just watch the AIs fight.
         // Seat AIs in the slots below, then START.
         if (singlePlayer_) {
-            lbCycle(x, y, 240, kRowH, spSpectate_ ? "SPECTATE (WATCH AIS): ON"
-                                             : "SPECTATE (WATCH AIS): OFF", true,
-                  [this](int) { spSpectate_ = !spSpectate_; }); y += kRow;
+            option(spSpectate_ ? "SPECTATE (WATCH AIS): ON" : "SPECTATE (WATCH AIS): OFF", true,
+                   [this](int) { spSpectate_ = !spSpectate_; });
         } else {
             // MP only: may others WATCH this game once it runs? The server enforces it;
             // the host can still flip it in the room until START.
-            lbCycle(x, y, 240, kRowH, createAllowSpectators_ ? "ALLOW SPECTATORS: ON"
-                                                        : "ALLOW SPECTATORS: OFF", true,
-                  [this](int) { createAllowSpectators_ = !createAllowSpectators_; }); y += kRow;
+            option(createAllowSpectators_ ? "ALLOW SPECTATORS: ON" : "ALLOW SPECTATORS: OFF", true,
+                   [this](int) { createAllowSpectators_ = !createAllowSpectators_; });
         }
         // Fog of war: a room rule, so it is picked here and not only after the
         // room exists. Display-only (never hashed) -- every peer applies the same
         // rule, so it stays fair. The room displays this choice as information.
-        {
-            static const char* kFogName[3] = {"NOT EXPLORED", "EXPLORED", "FULL VISION"};
-            lbCycle(x, y, 240, kRowH,
-                  std::string("FOG OF WAR: ") + kFogName[std::min<int>(createFog_, 2)], true,
-                  [this](int direction) { createFog_ = uint8_t((createFog_ + direction + 3) % 3); });
-            y += kRow;
-        }
+        option(std::string("FOG OF WAR: ") + kFogName[std::min<int>(createFog_, 2)], true,
+               [this](int direction) { createFog_ = uint8_t((createFog_ + direction + 3) % 3); });
         // Start Locations: also a room rule, picked here like fog so it is set before
         // the room exists. FIXED = the seated slots take the map's starts in order and
         // empty slots are skipped, as in retail; RANDOM = the starts are shuffled for
         // the match; BY SLOT (not retail) = slot N always takes the map's Nth start.
         // A MAP SCENARIO plays on fixed starts.
-        lbCycle(x, y, 240, kRowH, startLocationsLabel(scenarioOn ? tak::net::kStartsFixed : createStartMode_), !scenarioOn,
-              [this](int direction) { createStartMode_ = uint8_t((createStartMode_ + direction + 3) % 3); }); y += kRow;
+        option(startLocationsLabel(scenarioOn ? tak::net::kStartsFixed : createStartMode_), !scenarioOn,
+               [this](int direction) { createStartMode_ = uint8_t((createStartMode_ + direction + 3) % 3); });
         // GAME MODS (multiplayer only): lets the host tick mods/game packs in the room,
         // which are then sent to every player. Single player always has them;
         // cosmetic mods need no switch (every player picks their own in the room).
         if (!singlePlayer_) {
-            lbCycle(x, y, 240, kRowH, createGameMods_ ? "GAME MODS: ON" : "GAME MODS: OFF", true,
-                  [this](int) { createGameMods_ = !createGameMods_; }); y += 44;
+            option(createGameMods_ ? "GAME MODS: ON" : "GAME MODS: OFF", true,
+                   [this](int) { createGameMods_ = !createGameMods_; });
         }
         // Footer buttons, symmetric: BACK at the bottom-left and CREATE at the
         // bottom-right, both inset by `x` from their side and at the same height.
