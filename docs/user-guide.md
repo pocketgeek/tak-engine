@@ -2,6 +2,8 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
+New to the controls? The one-page [quick start and controls reference](quick-start.md) has every mouse action and key.
+
 This guide covers **TAK Engine 0.8.6** (network protocol **281**, replay format
 **13**). It is written for three kinds of reader:
 
