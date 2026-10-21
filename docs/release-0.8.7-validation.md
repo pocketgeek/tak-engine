@@ -15,7 +15,7 @@ schema unchanged since 0.8.6).
      were bumped with the recaptured pictures. If kNetVersion moves past 284,
      update every one of them. -->
 
-Tagged `v0.8.7` at `TODO-LEAD` (annotated tag object `TODO-LEAD`) and published on TODO-LEAD.
+Tagged `v0.8.7` at `47c09924` (annotated tag object `6ba21d88`) and published on 2026-10-21 06:00 UTC.
 
 ## Scope and compatibility
 
@@ -421,13 +421,37 @@ Logs: `~/tak-tmp/scratch/release-087/rs/remote/` (`{retail,legion}.sweep.log`,
 
 ## CI and packages
 
-TODO-LEAD: main CI on the final source (Determinism, macOS, Windows, Linux packages);
-tag CI run ids (determinism dispatched with `gh workflow run determinism.yml --ref
-v0.8.7`); reruns and which known flake; asset count (0.8.6: 29), digests and sizes; build
-ids `v0.8.7` in every package; Windows Authenticode (0.8.6: 9 files Valid on oden-win);
-macOS notarization and stapling of both DMGs and apps; Opus static and
-`OPUS-LICENSE.txt`; microphone entitlement; `NSHighResolutionCapable`; no
-libsecret/GLib `NEEDED` on Linux; publication time.
+Main CI on the final source `47c09924` passed on the first attempt: Windows 39547793293, Linux packages 39547793294 and macOS 39547793307. Determinism is path-filtered and was not triggered by that notes-only commit; it ran on the tag (below).
+
+On the exact tag (`47c09924`, annotated tag object `6ba21d88`), all four workflows passed on the first attempt. No job needed a rerun, so none of the known flakes appeared: macOS x64 `stream_test` timing, "Upload CI artifact: ENOTFOUND", macOS x64 `hdiutil` "Resource busy", the Fedora openh264 mirror, and the Ubuntu 22.04 `crusades_client_network_test` "complete replay not published".
+
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/39547815025): started manually on the tag because the workflow is path-filtered.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/39547815459): all native package jobs and the release attachment.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/39547815496): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/39547815464): both builds plus the **Sign + notarize** job for each architecture. That job replaced the unsigned macOS ZIPs and DMGs in the draft with signed, notarized and stapled ones.
+
+The release was created as a draft with these notes, and tagged CI attached the packages. All **29 assets** were downloaded after the macOS signing finished, the same set as 0.8.6. Each one matched GitHub's SHA-256 digest and byte size before publication. Every asset is within 0.4% of its 0.8.6 size, with ratios from 1.0015 to 1.0036.
+
+- **Build ids.** The client and server in every Linux package carry `v0.8.7`. That covers Debian 12 and 13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44 and openSUSE Leap 16.0 (each for both architectures), plus Arch, Slackware and both Linux debug tarballs.
+  - On Linux, the x86-64 `takclient` and `takserver` report `0.8.7 (build v0.8.7)`. That holds for Debian 12 and 13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44, openSUSE Leap 16.0, Slackware and the x64 debug tarball. So does the Arch `takserver`. The Arch `takclient` needs glibc 2.44, newer than the checking host's 2.43, so only its build string was checked. For the arm64 binaries, only the build string `v0.8.7` was checked.
+  - On Windows 11, the x64 Windows ZIP's `takclient.exe` and `takserver.exe` report `0.8.7 (build v0.8.7)`. For the ARM64 `takclient.exe` and `takserver.exe`, only the build string `v0.8.7` was checked.
+  - On the arm64 MacBook (macOS 26.6.2), `takclient` and `takserver` report `0.8.7 (build v0.8.7)` for both architectures. This holds for the bare programs from the ZIPs and for the copies inside the game app from each DMG and each ZIP. The x64 copies ran under Rosetta.
+- **Windows signatures.** `Get-AuthenticodeSignature` on oden-win reports **Valid** (CN=Curtis Edge, timestamped) for 9 signed files, the same count as 0.8.6. They are the setup `.exe`, plus `takclient.exe`, `takserver.exe`, `cartographer.exe` and `crusades_admin.exe` in both the x64 and ARM64 ZIPs. The debug ZIPs were not checked.
+- **macOS notarization.** On the MacBook, both DMGs pass `xcrun stapler validate` and `spctl` (open, primary signature) as **accepted, source=Notarized Developer ID, origin=Developer ID Application: Curtis Edge (L479Y59RN8)**.
+  - Both apps (the game and TAK Cartographer) pass both checks the same way, from each DMG and from each ZIP.
+  - Every bundled and bare `takclient`, `takserver`, `cartographer` and `crusades_admin` passes `codesign --verify --strict` (TeamIdentifier L479Y59RN8).
+  - `spctl` says the bare command-line programs do not seem to be an app. That is expected for unstapled command-line tools.
+- **Opus is static.**
+  - No packaged Linux `takclient` or `takserver` has a `NEEDED` entry beyond libc, libm and the loader (Slackware also lists libdl and libpthread), so none needs libopus. The Debian and Ubuntu packages depend only on `libc6`, and the RPMs require only libc, libm and the loader.
+  - No Windows `.exe` imports or names an Opus DLL, and the ZIPs ship no DLLs. The x64 import tables list only system DLLs.
+  - No macOS binary links a libopus dylib (`otool -L`).
+  - `OPUS-LICENSE.txt` is in every Debian, RPM, Arch and Slackware package, in both Linux debug tarballs, in all four release ZIPs (inside the game app's Resources on macOS) and in the four debug ZIPs.
+- **macOS microphone.** The game app's `Info.plist` carries `NSMicrophoneUsageDescription` in both DMGs and both ZIPs. The `com.apple.security.device.audio-input` entitlement is on the game app's `takclient` (DMG and ZIP, both architectures) and on the bare ZIP `takclient`. It is absent from `takserver`, `crusades_admin` and `cartographer`.
+- **macOS Retina.** `NSHighResolutionCapable` is `true` in the `Info.plist` of both apps (the game and TAK Cartographer), from both DMGs and both ZIPs.
+- As in 0.8.1 to 0.8.6, no packaged Linux `takclient` has a `NEEDED` entry for libsecret, GLib, GIO or GObject.
+- The new `docs/quick-start.md` controls reference is in the source tree at the tag (`git show v0.8.7:docs/quick-start.md`).
+
+The release was published on 2026-10-21 06:00 UTC and is the latest release.
 
 ## Screenshots
 
