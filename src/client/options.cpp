@@ -548,7 +548,7 @@ void OptionsScreen::build(int channels) {
     ctls_.back().note = [] { return gpuvram::tightened() ? std::string("LOWERED FOR NOW") : std::string(); };
     ctls_.back().help = [] {
         std::vector<std::string> out = {
-            "THE MOST VIDEO MEMORY THE GAME'S OWN TEXTURES MAY USE. AUTO IS 1.25 GB. TAKES EFFECT AT ONCE.",
+            "THE MOST VIDEO MEMORY THE GAME'S OWN TEXTURES MAY USE. 1.25 GB IS THE DEFAULT. TAKES EFFECT AT ONCE.",
             "LOWER: LESS OF THE MAP IS KEPT READY OFF-SCREEN, SO AFTER A PAN OR A MINIMAP JUMP THE "
             "TERRAIN CAN LOOK BLURRY FOR A MOMENT BEFORE IT SHARPENS, AND BIG BATTLES MAY DRAW A "
             "LITTLE SLOWER WITH SLIGHTLY FLATTER BUILDING SHADING. UNITS ARE NEVER HIDDEN.",

@@ -1336,10 +1336,10 @@ particles, explosions, beams, lightning and every projectile are not drawn
 while dots show, so they no longer bury the dots. **Tactical Dots Zoom**
 (default **0%**) sets how far out: 0% means only fully zoomed out, 100% means
 from normal size outwards.
-**GPU Memory Limit** (default **Auto**, 1.25 GB; also 512 MB to 4 GB or
+**GPU Memory Limit** (default **1.25 GB**; also 512 MB to 4 GB or
 **Unlimited**) caps the video memory the game's own textures may use and
 applies at once. It is a safety net: every part of the renderer also has its own
-fixed allowance and typical games stay well under Auto. Lowering it keeps less
+fixed allowance and typical games stay well under the default. Lowering it keeps less
 terrain ready off-screen (a brief blur after panning, more often) and caches
 less building shading; units are never hidden. See the
 [user guide](docs/user-guide.md#graphics).

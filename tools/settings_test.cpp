@@ -232,7 +232,7 @@ int main() {
         reset("screenShake",      d.screenShake == fresh.screenShake && !d.screenShake);
         reset("tacticalDotsZoom", d.tacticalDotsZoom == fresh.tacticalDotsZoom && d.tacticalDotsZoom == 0);
         reset("renderer",         d.renderer == fresh.renderer && d.renderer.empty());
-        reset("gpuMemoryLimit",   d.gpuMemoryLimit == fresh.gpuMemoryLimit && d.gpuMemoryLimit == 0);
+        reset("gpuMemoryLimit",   d.gpuMemoryLimit == fresh.gpuMemoryLimit && d.gpuMemoryLimit == 1280);
         reset("uiFont",           d.uiFont == fresh.uiFont && d.uiFont == 0);
 
         // And the two questions must agree: after a reset we ARE at defaults, which is
@@ -301,35 +301,44 @@ int main() {
         check("tf: 0.7.24 bilinear", resolveTextureFilter(-1, -1, 1, -1) == 1 && resolveTextureFilter(-1, -1, 0, -1) == 0);
     }
 
-    // GPU MEMORY LIMIT values (parseGpuMemoryLimit / snap / write / label). AUTO is the
-    // default and what any unreadable value falls back to; a hand-edited size snaps to
-    // the nearest listed choice so the Options dropdown always shows what is in effect.
+    // GPU MEMORY LIMIT values (parseGpuMemoryLimit / snap / write / label). 1280 MiB is the
+    // default and what any unreadable value falls back to -- as is "auto" (and a stored 0),
+    // the pre-0.8.8 default -- and a hand-edited size snaps to the nearest listed choice so
+    // the Options dropdown always shows what is in effect.
     {
         auto check = [&](const char* what, bool ok) {
             std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
             if (!ok) ++g_fail;
         };
         using tak::parseGpuMemoryLimit; using tak::gpuMemoryLimitValue; using tak::gpuMemoryLimitLabel;
-        check("gpu: default Auto", Settings{}.gpuMemoryLimit == 0);
-        check("gpu: words", parseGpuMemoryLimit("auto") == 0 && parseGpuMemoryLimit("AUTO") == 0 &&
-                            parseGpuMemoryLimit("unlimited") == -1 && parseGpuMemoryLimit("Unlimited") == -1);
-        check("gpu: listed sizes", parseGpuMemoryLimit("512") == 512 && parseGpuMemoryLimit("1536") == 1536 &&
-                                   parseGpuMemoryLimit("4096") == 4096);
+        check("gpu: default 1280", Settings{}.gpuMemoryLimit == 1280 && tak::kGpuMemoryDefaultMiB == 1280);
+        check("gpu: old auto -> 1280", parseGpuMemoryLimit("auto") == 1280 && parseGpuMemoryLimit("AUTO") == 1280 &&
+                                       parseGpuMemoryLimit("0") == 1280 && tak::snapGpuMemoryLimit(0) == 1280);
+        check("gpu: unlimited", parseGpuMemoryLimit("unlimited") == -1 && parseGpuMemoryLimit("Unlimited") == -1 &&
+                                parseGpuMemoryLimit("-1") == -1);
+        check("gpu: listed sizes", parseGpuMemoryLimit("512") == 512 && parseGpuMemoryLimit("1280") == 1280 &&
+                                   parseGpuMemoryLimit("1536") == 1536 && parseGpuMemoryLimit("4096") == 4096);
         check("gpu: snaps sizes", parseGpuMemoryLimit("900") == 1024 && parseGpuMemoryLimit("100") == 512 &&
-                                  parseGpuMemoryLimit("99999") == 4096 && parseGpuMemoryLimit("1300") == 1536);
-        check("gpu: junk -> Auto", parseGpuMemoryLimit("") == 0 && parseGpuMemoryLimit("lots") == 0 &&
-                                   parseGpuMemoryLimit("1 GB") == 0 && parseGpuMemoryLimit("-7") == 0 &&
-                                   parseGpuMemoryLimit("0") == 0);
-        check("gpu: -1 -> Unlimited", parseGpuMemoryLimit("-1") == -1);
-        bool roundTrip = true;
-        for (int mib : tak::kGpuMemoryLimits) roundTrip = roundTrip && parseGpuMemoryLimit(gpuMemoryLimitValue(mib)) == mib;
+                                  parseGpuMemoryLimit("99999") == 4096 && parseGpuMemoryLimit("1300") == 1280 &&
+                                  parseGpuMemoryLimit("1450") == 1536);
+        check("gpu: junk -> 1280", parseGpuMemoryLimit("") == 1280 && parseGpuMemoryLimit("lots") == 1280 &&
+                                   parseGpuMemoryLimit("1 GB") == 1280 && parseGpuMemoryLimit("-7") == 1280);
+        bool roundTrip = true, listed = false;
+        for (int mib : tak::kGpuMemoryLimits) {
+            roundTrip = roundTrip && parseGpuMemoryLimit(gpuMemoryLimitValue(mib)) == mib;
+            listed = listed || mib == tak::kGpuMemoryDefaultMiB;
+        }
         check("gpu: every choice round-trips", roundTrip);
-        check("gpu: written forms", gpuMemoryLimitValue(0) == "auto" && gpuMemoryLimitValue(-1) == "unlimited" &&
-                                    gpuMemoryLimitValue(768) == "768");
-        check("gpu: labels", gpuMemoryLimitLabel(0) == "Auto (1.25 GB)" && gpuMemoryLimitLabel(768) == "768 MB" &&
-                             gpuMemoryLimitLabel(1536) == "1.5 GB" && gpuMemoryLimitLabel(3072) == "3 GB" &&
-                             gpuMemoryLimitLabel(-1) == "Unlimited");
-        check("gpu: AUTO is 1.25 GiB", tak::kGpuMemoryAutoMiB == 1280);
+        check("gpu: default is listed", listed);
+        check("gpu: written forms", gpuMemoryLimitValue(1280) == "1280" && gpuMemoryLimitValue(0) == "1280" &&
+                                    gpuMemoryLimitValue(-1) == "unlimited" && gpuMemoryLimitValue(768) == "768");
+        check("gpu: labels", gpuMemoryLimitLabel(1280) == "1.25 GB (default)" && gpuMemoryLimitLabel(768) == "768 MB" &&
+                             gpuMemoryLimitLabel(1024) == "1 GB" && gpuMemoryLimitLabel(1536) == "1.5 GB" &&
+                             gpuMemoryLimitLabel(3072) == "3 GB" && gpuMemoryLimitLabel(-1) == "Unlimited");
+        bool noAuto = true;
+        for (int mib : tak::kGpuMemoryLimits)
+            noAuto = noAuto && gpuMemoryLimitLabel(mib).find("Auto") == std::string::npos;
+        check("gpu: no Auto entry", noAuto);
     }
 
     std::printf(g_fail ? "settings_test: %d FAILURE(S)\n" : "settings_test: all passed\n",

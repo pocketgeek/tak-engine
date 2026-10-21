@@ -172,7 +172,7 @@ int main(int argc,char** argv) try {
                     if(s.visible && s.ready==s.visible)break;
                     check(SDL_GetTicks()-start<120000,"terrain failed to settle under the limit");SDL_Delay(1);
                 }
-                gpuvram::setLimit(gpuvram::kAutoLimit);gpuvram::removeBuffer(pretend);
+                gpuvram::setLimit(gpuvram::kDefaultLimit);gpuvram::removeBuffer(pretend);
                 return holes;
             };
             check(run(Params{})==0,"K: stand-ins survive memory pressure (no hole)");

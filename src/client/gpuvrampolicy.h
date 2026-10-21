@@ -9,7 +9,7 @@
 namespace gpuvram {
 
 inline constexpr size_t   kMiB        = size_t(1) << 20;
-inline constexpr size_t   kAutoLimit  = 1280 * kMiB;   // Options GPU MEMORY LIMIT = AUTO (1.25 GiB)
+inline constexpr size_t   kDefaultLimit = 1280 * kMiB; // Options GPU MEMORY LIMIT default (1.25 GiB)
 inline constexpr size_t   kFloor      = 384 * kMiB;    // no limit or tightening goes below this
 inline constexpr size_t   kUnlimited  = SIZE_MAX;      // Options UNLIMITED: only the per-subsystem ceilings remain
 inline constexpr uint64_t kBackoffMs  = 3000;          // bakes pause this long after ANY failed create
@@ -17,8 +17,8 @@ inline constexpr uint64_t kRelaxMs    = 60000;         // a tightening lifts aft
 inline constexpr uint64_t kRelaxMaxMs = 8 * 60000;     // ...doubling per re-tightening, up to 8 minutes
 
 struct Policy {
-    size_t   limit = kAutoLimit;     // the ceiling the player chose
-    size_t   cap   = kAutoLimit;     // in force now: the limit, or a temporary tightening below it
+    size_t   limit = kDefaultLimit;  // the ceiling the player chose
+    size_t   cap   = kDefaultLimit;  // in force now: the limit, or a temporary tightening below it
     uint64_t backoffUntil = 0;       // ms: bakes skip until then
     uint64_t relaxAt = 0;            // ms: when a tightened cap returns to the limit; 0 = not tightened
     uint64_t relaxWait = kRelaxMs;   // the next tightening's wait

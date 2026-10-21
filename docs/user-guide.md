@@ -1356,7 +1356,7 @@ missed are silent while the game catches up.
 
 ### Display
 
-![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, then Renderer set to Auto, Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Screen Shake off, Hardware Cursor and Smooth Motion on, and GPU Memory Limit set to Auto (1.25 GB)](img/guide/options-graphics.jpg)
+![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, then Renderer set to Auto, Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Screen Shake off, Hardware Cursor and Smooth Motion on, and GPU Memory Limit set to 1.25 GB (default)](img/guide/options-graphics.jpg)
 
 *Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on. The picture was taken in a window, so Fullscreen shows Off.*
 
@@ -1383,7 +1383,7 @@ missed are silent while the game catches up.
 | **Screen Shake** | Off | Shakes the camera on heavy impacts (weapons that shake the screen in the original game) and on mission earthquakes. Applies at once. |
 | **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. |
 | **Smooth Motion** | On | Units glide between the game's 30 updates per second instead of stepping. Adds about 33 ms of visual delay. |
-| **GPU Memory Limit** | Auto (1.25 GB) | The most video memory the game's own textures may use: Auto, 512 MB, 768 MB, 1 GB, 1.5 GB, 2 GB, 3 GB, 4 GB or Unlimited. Applies at once. See below. |
+| **GPU Memory Limit** | 1.25 GB | The most video memory the game's own textures may use: 512 MB, 768 MB, 1 GB, 1.25 GB (the default), 1.5 GB, 2 GB, 3 GB, 4 GB or Unlimited. Applies at once. See below. |
 
 **Texture Filtering** applies at once. At **Off** every texture is drawn with
 sharp square pixels, which is how the original game looked: it had no camera
@@ -1401,24 +1401,24 @@ movies have their own settings (Smooth GUI Art, Smooth Movies). Saved settings
 from an older version keep their look: Bilinear Filtering off becomes Off, on
 becomes Units.
 
-**GPU Memory Limit** is a safety net, not a quality setting. At Auto a typical
-game uses 0.4–0.7 GB of it and even a huge map with a big battle stays under
-about 0.75 GB, so on most machines it never comes into play. Each part of the
-game (terrain, building shading, shadows) also has its own fixed allowance, so
-**raising** the limit or picking **Unlimited** changes nothing unless the game
-actually needs more. **Lowering** it takes effect immediately: the game drops
-the terrain it keeps ready off-screen and stops caching extra building shading
-and shadows. You may see the map look blurry for a moment more often after you
-pan or click the minimap before it sharpens, and very large battles may draw a
-little more slowly with slightly flatter building shading. Units are never
-hidden by the limit. The count only covers the game's own textures, not the
-screen itself or what the graphics driver adds, so real video memory use is
-higher. If the graphics driver reports that it has run out of memory (this
-can happen with Direct3D on Windows and Metal on macOS), the game lowers its
-limit for a while, shows **LOWERED FOR NOW** next to the option, and returns to
-your choice after a minute without another error (longer if it keeps happening,
-up to eight minutes). The help text shown while
-the pointer is over the option says how much is in use right now.
+**GPU Memory Limit** is a safety net, not a quality setting. At the default 1.25
+GB a typical game uses 0.4–0.7 GB of it and even a huge map with a big battle
+stays under about 0.75 GB, so on most machines it never comes into play. Each
+part of the game (terrain, building shading, shadows) also has its own fixed
+allowance, so **raising** the limit or picking **Unlimited** changes nothing
+unless the game actually needs more. **Lowering** it takes effect immediately:
+the game drops the terrain it keeps ready off-screen and stops caching extra
+building shading and shadows. You may see the map look blurry for a moment more
+often after you pan or click the minimap before it sharpens, and very large
+battles may draw a little more slowly with slightly flatter building shading.
+Units are never hidden by the limit. The count only covers the game's own
+textures, not the screen itself or what the graphics driver adds, so real video
+memory use is higher. If the graphics driver reports that it has run out of
+memory (this can happen with Direct3D on Windows and Metal on macOS), the game
+lowers its limit for a while, shows **LOWERED FOR NOW** next to the option, and
+returns to your choice after a minute without another error (longer if it keeps
+happening, up to eight minutes). The help text shown while the pointer is over
+the option says how much is in use right now.
 
 **Tactical Dots Zoom** sets when dots take over; it is greyed out and cannot be
 changed while Tactical Dots is off. It is a position along your zoom-out range:

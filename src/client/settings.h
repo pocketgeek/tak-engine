@@ -70,10 +70,10 @@ struct Settings {
                                    // frame. Changing it reloads the current interface
                                    // textures immediately; no restart required.
     // GPU MEMORY LIMIT (client/gpuvram.h): the ceiling on the video memory the game's own
-    // textures and buffers may use, in MiB. 0 = AUTO (1.25 GiB), -1 = UNLIMITED (only each
-    // subsystem's own ceiling applies); otherwise one of kGpuMemoryLimits. Applied live.
-    // Persisted as gpuMemoryLimit = auto | unlimited | <MiB>.
-    int   gpuMemoryLimit = 0;
+    // textures and buffers may use, in MiB: one of kGpuMemoryLimits, 1280 (1.25 GiB) by
+    // default, or -1 = UNLIMITED (only each subsystem's own ceiling applies). Applied live.
+    // Persisted as gpuMemoryLimit = <MiB> | unlimited (an older file's "auto" reads as 1280).
+    int   gpuMemoryLimit = 1280;
     bool  unitShadows = true;      // projected unit shadows (retail Glide casts them; the
                                    // single largest cost in a crowded frame, so it is worth
                                    // being able to turn off on a slow machine)
@@ -321,41 +321,44 @@ inline int resolveTextureFilter(int textureFilter, int bilinearFilter, int legac
     return Settings{}.textureFilter;
 }
 
-// GPU MEMORY LIMIT choices, in Options order (MiB; 0 = AUTO, -1 = UNLIMITED).
-inline constexpr int kGpuMemoryLimits[] = {0, 512, 768, 1024, 1536, 2048, 3072, 4096, -1};
-inline constexpr int kGpuMemoryAutoMiB = 1280;   // what AUTO means (gpuvram::kAutoLimit)
+// GPU MEMORY LIMIT choices, in Options order (MiB; -1 = UNLIMITED). 1280 is the default.
+inline constexpr int kGpuMemoryLimits[] = {512, 768, 1024, 1280, 1536, 2048, 3072, 4096, -1};
+inline constexpr int kGpuMemoryDefaultMiB = 1280;   // gpuvram::kDefaultLimit
 
-// Any stored value onto a listed choice: 0 and -1 stay; another number of MiB becomes the
-// nearest listed size (a hand-edited 900 -> 1024, 100 -> 512); other negatives are AUTO.
+// Any stored value onto a listed choice: -1 stays; a number of MiB becomes the nearest
+// listed size (a hand-edited 900 -> 1024, 100 -> 512); 0 (what AUTO was stored as before
+// 0.8.8) and other negatives are the default.
 inline int snapGpuMemoryLimit(int mib) {
-    if (mib == 0 || mib == -1) return mib;
-    if (mib < 0) return 0;
+    if (mib == -1) return mib;
+    if (mib <= 0) return kGpuMemoryDefaultMiB;
     int best = 512;
     for (int c : kGpuMemoryLimits)
         if (c > 0 && std::abs(c - mib) < std::abs(best - mib)) best = c;
     return best;
 }
-// The settings-file value: "auto" (or anything unreadable) = 0, "unlimited" = -1, a whole
-// number of MiB = snapped. Case-insensitive.
+// The settings-file value: "unlimited" = -1, a whole number of MiB = snapped; "auto" (the
+// pre-0.8.8 default) or anything unreadable = the default. Case-insensitive.
 inline int parseGpuMemoryLimit(std::string v) {
     std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return char(std::tolower(c)); });
     if (v == "unlimited") return -1;
     int mib = 0;
     const auto [end, ec] = std::from_chars(v.data(), v.data() + v.size(), mib);
-    if (v.empty() || ec != std::errc() || end != v.data() + v.size()) return 0;
+    if (v.empty() || ec != std::errc() || end != v.data() + v.size()) return kGpuMemoryDefaultMiB;
     return snapGpuMemoryLimit(mib);
 }
 inline std::string gpuMemoryLimitValue(int mib) {
     mib = snapGpuMemoryLimit(mib);
-    return mib == 0 ? "auto" : mib < 0 ? "unlimited" : std::to_string(mib);
+    return mib < 0 ? "unlimited" : std::to_string(mib);
 }
+// "512 MB", "1 GB", "1.25 GB (default)", "1.5 GB", "Unlimited".
 inline std::string gpuMemoryLimitLabel(int mib) {
     mib = snapGpuMemoryLimit(mib);
-    if (mib == 0) return "Auto (1.25 GB)";
     if (mib < 0) return "Unlimited";
-    if (mib < 1024) return std::to_string(mib) + " MB";
-    return mib % 1024 ? std::to_string(mib / 1024) + "." + std::to_string(mib % 1024 * 10 / 1024) + " GB"
-                      : std::to_string(mib / 1024) + " GB";
+    const std::string suffix = mib == kGpuMemoryDefaultMiB ? " (default)" : "";
+    if (mib < 1024) return std::to_string(mib) + " MB" + suffix;
+    std::string frac = std::to_string(100 + mib % 1024 * 100 / 1024).substr(1);   // hundredths
+    while (!frac.empty() && frac.back() == '0') frac.pop_back();
+    return std::to_string(mib / 1024) + (frac.empty() ? "" : "." + frac) + " GB" + suffix;
 }
 
 // What the running process started with (set once in main before SDL_Init), so the

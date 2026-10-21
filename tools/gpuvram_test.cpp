@@ -21,8 +21,8 @@ int main() {
     constexpr size_t M = kMiB;
     {
         Policy p;
-        check("default: AUTO limit is the cap", p.limit == kAutoLimit && p.cap == kAutoLimit && !p.tightened());
-        check("fits up to the cap, not past it", p.fits(kAutoLimit - M, M) && !p.fits(kAutoLimit, 1));
+        check("default: the default limit is the cap", p.limit == kDefaultLimit && p.cap == kDefaultLimit && !p.tightened());
+        check("fits up to the cap, not past it", p.fits(kDefaultLimit - M, M) && !p.fits(kDefaultLimit, 1));
         check("fits is overflow-safe", !p.fits(SIZE_MAX - 1, 2) && !p.fits(2, SIZE_MAX));
         check("not blocked before any failure", !p.blocked(0) && !p.blocked(123456));
     }
@@ -37,7 +37,7 @@ int main() {
     }
     {
         Policy p;
-        check("small failure: no tightening", !p.fail(300 * M, 1000) && p.cap == kAutoLimit && !p.tightened());
+        check("small failure: no tightening", !p.fail(300 * M, 1000) && p.cap == kDefaultLimit && !p.tightened());
         check("...but bakes back off 3 s", p.blocked(1000) && p.blocked(3999) && !p.blocked(4000));
     }
     {
@@ -45,7 +45,7 @@ int main() {
         check("failure tightens to 87.5% held", p.fail(800 * M, 1000) && p.cap == 700 * M && p.tightened());
         check("tightened cap refuses growth", !p.fits(690 * M, 20 * M));
         check("not relaxed before 60 s", !p.relax(1000 + kRelaxMs - 1) && p.cap == 700 * M);
-        check("relaxes to the limit after 60 s", p.relax(1000 + kRelaxMs) && p.cap == kAutoLimit && !p.tightened());
+        check("relaxes to the limit after 60 s", p.relax(1000 + kRelaxMs) && p.cap == kDefaultLimit && !p.tightened());
         check("relax is one-shot", !p.relax(1000 + 2 * kRelaxMs));
         // Second and later tightenings wait twice as long each, up to the maximum.
         uint64_t t = 200000;
@@ -69,7 +69,7 @@ int main() {
     {
         Policy p;
         p.fail(800 * M, 1000);
-        check("re-applying the same limit keeps a tightening", !p.setLimit(kAutoLimit) && p.cap == 700 * M);
+        check("re-applying the same limit keeps a tightening", !p.setLimit(kDefaultLimit) && p.cap == 700 * M);
         check("a new limit replaces a tightening", p.setLimit(3072 * M) && p.cap == 3072 * M && !p.tightened());
         p.fail(1000 * M, 5000);
         check("relax returns to the NEW limit", p.relax(5000 + 2 * kRelaxMs) && p.cap == 3072 * M);

@@ -25,7 +25,7 @@
 //   GeometrySubmit 64 MiB per retained buffer         colour atlases ~10.7 MiB per slot
 // which add up to ~1 GiB in a pathological game; typical games account 0.4-0.7 GiB.
 // The cap is the backstop above all of them (and for any future allocator) and the
-// player's Options GPU MEMORY LIMIT (setLimit; AUTO = 1.25 GiB, UNLIMITED = no cap).
+// player's Options GPU MEMORY LIMIT (setLimit; 1.25 GiB by default, UNLIMITED = no cap).
 //
 // WHO OBEYS IT. Growable caches check wouldFit() (and blocked()) before allocating and
 // fall back when told no: terrain chunks and sections evict their own LRU first (and

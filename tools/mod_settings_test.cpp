@@ -113,7 +113,8 @@ int main() {
                 throw std::runtime_error("texture filtering is not written as textureFilter");
         }
         // GPU MEMORY LIMIT: every choice persists under its own key, a file from before
-        // the option loads as Auto, and a hand-edited value is snapped or falls back.
+        // the option (or one still saying "auto") loads as the 1280 MiB default, which is
+        // saved as its number, and a hand-edited value is snapped or falls back.
         for(int mib:tak::kGpuMemoryLimits) {
             auto limited=s;limited.gpuMemoryLimit=mib;
             if(!tak::saveSettings(limited) || tak::loadSettings().gpuMemoryLimit!=mib)
@@ -124,15 +125,16 @@ int main() {
             std::ifstream saved(path);std::string text((std::istreambuf_iterator<char>(saved)),{});
             if(text.find("\ngpuMemoryLimit = unlimited\n")==text.npos)throw std::runtime_error("Unlimited must be written as 'gpuMemoryLimit = unlimited'");
             limited.gpuMemoryLimit=0;tak::saveSettings(limited);
-            std::ifstream again(path);std::string autoText((std::istreambuf_iterator<char>(again)),{});
-            if(autoText.find("\ngpuMemoryLimit = auto\n")==autoText.npos)throw std::runtime_error("Auto must be written as 'gpuMemoryLimit = auto'");
+            std::ifstream again(path);std::string defText((std::istreambuf_iterator<char>(again)),{});
+            if(defText.find("\ngpuMemoryLimit = 1280\n")==defText.npos)throw std::runtime_error("the default must be written as 'gpuMemoryLimit = 1280'");
         }
         std::ofstream(path)<<"vsync = 1\n";
-        if(tak::loadSettings().gpuMemoryLimit!=0)throw std::runtime_error("pre-option file must load GPU memory limit as Auto");
+        if(tak::loadSettings().gpuMemoryLimit!=1280)throw std::runtime_error("pre-option file must load GPU memory limit as 1280");
         struct GpuCase { const char* text; int expected; };
         for(const GpuCase& c:std::initializer_list<GpuCase>{
                 {"gpuMemoryLimit = 2048\n",2048},{"gpuMemoryLimit =  UNLIMITED \n",-1},{"gpuMemoryLimit = 900\n",1024},
-                {"gpuMemoryLimit = 64\n",512},{"gpuMemoryLimit = lots\n",0},{"gpuMemoryLimit =\n",0}}) {
+                {"gpuMemoryLimit = 64\n",512},{"gpuMemoryLimit = lots\n",1280},{"gpuMemoryLimit =\n",1280},
+                {"gpuMemoryLimit = auto\n",1280},{"gpuMemoryLimit = AUTO\n",1280},{"gpuMemoryLimit = 0\n",1280}}) {
             std::ofstream(path)<<c.text;
             if(tak::loadSettings().gpuMemoryLimit!=c.expected)
                 throw std::runtime_error(std::string("GPU memory limit value not normalised: ")+c.text);

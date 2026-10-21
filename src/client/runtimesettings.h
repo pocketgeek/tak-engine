@@ -27,7 +27,7 @@ namespace tak {
 
 inline size_t gpuMemoryLimitBytes(int mib) {
     mib = snapGpuMemoryLimit(mib);
-    return mib == 0 ? gpuvram::kAutoLimit : mib < 0 ? gpuvram::kUnlimited : size_t(mib) * gpuvram::kMiB;
+    return mib < 0 ? gpuvram::kUnlimited : size_t(mib) * gpuvram::kMiB;
 }
 
 inline void applyRuntimeSettings(const Settings& s) {

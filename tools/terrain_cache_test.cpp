@@ -224,7 +224,7 @@ int main(int argc,char** argv) try {
             check(fresh.chunkStats().bytes<held,"a lowered limit sheds off-screen chunks");
             check(fresh.chunkStats().ready==fresh.chunkStats().visible,"...but keeps every visible one");
             check(holes()==0,"...and leaves no hole");
-            gpuvram::setLimit(gpuvram::kAutoLimit);gpuvram::removeBuffer(pretend);
+            gpuvram::setLimit(gpuvram::kDefaultLimit);gpuvram::removeBuffer(pretend);
         }
         // Workstream J: a decoded-section budget far below what the map decodes to
         // (Ulasem Arena ~64 MiB) evicts and re-decodes, yet every finished frame is
