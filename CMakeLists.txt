@@ -1892,6 +1892,28 @@ if(TAK_BUILD_CLIENT)
     else()
       set(_tak_sdl2 SDL2::SDL2)
     endif()
+    # The chat box's face (client/chatfont.h): Noto Sans Bold, subset to Latin-1
+    # (res/chat-font, CHAT-FONT-LICENSE.txt), embedded as a byte array so nothing new
+    # ships beside the binary, and rasterized by stb_truetype (src/vendor/stb).
+    set(TAK_CHATFONTS_INC "${CMAKE_BINARY_DIR}/generated/chatfonts.inc")
+    set(_tak_chatfont_ttf "${CMAKE_SOURCE_DIR}/res/chat-font/NotoSans-Bold.ttf")
+    add_custom_command(OUTPUT "${TAK_CHATFONTS_INC}"
+        COMMAND ${CMAKE_COMMAND} "-DOUT=${TAK_CHATFONTS_INC}" "-DFILES=kNotoSansBold=${_tak_chatfont_ttf}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/EmbedFiles.cmake"
+        DEPENDS "${_tak_chatfont_ttf}" "${CMAKE_SOURCE_DIR}/cmake/EmbedFiles.cmake"
+        COMMENT "Embedding the chat-box font" VERBATIM)
+    add_library(tak-chatfont STATIC src/client/chatfont.cpp "${TAK_CHATFONTS_INC}")
+    target_include_directories(tak-chatfont PUBLIC src PRIVATE "${CMAKE_BINARY_DIR}/generated")
+    target_include_directories(tak-chatfont SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/vendor/stb")
+    target_link_libraries(tak-chatfont PUBLIC ${_tak_sdl2})
+    target_link_libraries(takclient PRIVATE tak-chatfont)
+    # The chat font: metrics, measuring, wrapping with it, UTF-8 (invalid bytes too), and
+    # a glyph sheet built once per pixel size (on SDL's software renderer).
+    add_executable(chatfont_test tools/chatfont_test.cpp)
+    target_compile_definitions(chatfont_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(chatfont_test PRIVATE tak-chatfont ${_tak_sdl2})
+    add_test(NAME chatfont COMMAND chatfont_test)
+    set_tests_properties(chatfont PROPERTIES TIMEOUT 60 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     # Voice chat (client/voice.h): the engine and the Opus codec, built from a pinned
     # source release (cmake/Opus.cmake). Client only -- takserver relays voice frames as
     # opaque bytes and never links Opus.
@@ -3025,7 +3047,7 @@ if(UNIX AND NOT APPLE)
   install(FILES packaging/systemd/takserver-acme.conf packaging/systemd/takserver-settings.conf
                 packaging/systemd/README.md
           DESTINATION share/doc/tak-engine/systemd)
-  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt DESTINATION share/licenses/tak-engine)
+  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt DESTINATION share/licenses/tak-engine)
   install(TARGETS takserver crusades_admin RUNTIME DESTINATION bin)
   if(TARGET takclient)
     install(TARGETS takclient RUNTIME DESTINATION bin)
@@ -3079,7 +3101,7 @@ if(UNIX AND NOT APPLE)
 
   include(CPack)
 elseif(WIN32)
-  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt DESTINATION .)
+  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt DESTINATION .)
   # Windows installer (NSIS via CPack; the CI's MSYS2 job runs `cpack -G NSIS`).
   # Binaries install into the chosen folder root (no bin/), with Start-menu
   # shortcuts and an uninstaller. The static build has no DLLs to carry.

@@ -1,4 +1,5 @@
 #include <ctime>
+#include <type_traits>
 #include "client/guiart.h"
 #include "client/gameview.h"
 #include "client/gamespeed.h"
@@ -1053,11 +1054,9 @@ namespace {
         if (!statFont_.ok()) load(statFont_, "fonts/ig_times new roman (100).gaf");
         load(scoreboardFont_, "fonts/ig_times new roman (100).gaf");
         scoreboardFont_.setLetterSpacing(0);
-        // The bold Times again for the chat box, with the letters set closer than the
-        // HUD's default 2 px: at the larger CHAT SCALEs that gap reads as s p a c e d.
-        load(chatFont_, "fonts/b_times new roman (100b).gaf");
-        if (!chatFont_.ok()) load(chatFont_, "fonts/ig_times new roman (100).gaf");
-        chatFont_.setLetterSpacing(0.5f);
+        // The chat box's face is embedded (client/chatfont.h), not art; only its glyph
+        // sheet goes, and the next draw rebuilds it.
+        chatFont_.destroyGlyphs();
     }
 
     void GameView::reloadInterfaceArt(const tak::Settings& s) {
@@ -2627,8 +2626,14 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
     // left or centred over the play area (never under the command panel), above the
     // information bar, and lifts over the build row when the two would overlap.
     void GameView::drawGameChat(int winW, int winH) {
+        // The embedded face; the HUD font only if it ever failed to load.
+        if (chatFont_.ok()) drawGameChatIn(chatFont_, winW, winH);
+        else drawGameChatIn(hudFont_, winW, winH);
+    }
+
+    template <class Face>
+    void GameView::drawGameChatIn(const Face& font, int winW, int winH) {
         namespace cb = tak::chatbox;
-        const Font& font = chatFont_.ok() ? chatFont_ : hudFont_;
         if (!mp_ || !font.ok() || (!chatTyping_ && gameChat_.empty())) return;
 
         const float areaW = float(mapViewW(winW));
@@ -2651,7 +2656,10 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         const float textH = 16.0f * s;
         const float fs = textH / h1;          // font scale
         const float lineH = rowH(s), pad = std::round(8 * s), indent = std::round(14 * s);
-        const float shadow = std::max(1.0f, std::round(fs * 0.6f));
+        // The drop shadow follows the box scale (1 px at 100%, 2 px from 200%); the GAF
+        // fallback keeps its font-relative one.
+        const float shadow = std::is_same_v<Face, Font> ? std::max(1.0f, std::round(fs * 0.6f))
+                                                        : std::max(1.0f, std::round(0.8f * s));
         const float wrapW = std::max(80.0f, std::min(areaW - 2 * margin, 760 * s) - 2 * pad);
         auto width = [&](const std::string& t) { return float(font.width(t, fs)); };
 

@@ -61,6 +61,7 @@
 #include "client/unitindex.h"
 #include "client/unittypetable.h"
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
+#include "client/chatfont.h"  // the chat box's embedded TrueType face
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
 #include "client/modelpiece.h"
 #include "client/modelmath.h"   // Tri/Xform/scriptRot (shared by GameView + model viewer)
@@ -2070,6 +2071,7 @@ private:
     // The in-game chat box: received lines (fading) and the composer while typing, over
     // the play area at the CHAT SCALE / CHAT POSITION options. Layout: client/chatbox.h.
     void drawGameChat(int winW, int winH);
+    template <class Face> void drawGameChatIn(const Face& font, int winW, int winH);
     SDL_Color chatSenderColor(const std::string& who, bool notice) const;
     std::optional<uint8_t> requestedManaSharing_;
     std::array<bool,8> eligibleGiftRecipients();
@@ -3805,7 +3807,7 @@ private:
     float amphibLandX_ = 0, amphibLandZ_ = 0, amphibSeaX_ = 0, amphibSeaZ_ = 0;
 #endif
     Font hudFont_, bigFont_, statFont_, scoreboardFont_;
-    Font chatFont_;   // the chat box: statFont_'s bold Times, set closer (drawGameChat)
+    tak::ChatFont chatFont_;   // the chat box: embedded Noto Sans Bold (client/chatfont.h)
     std::unordered_map<std::string, SDL_Texture*> scoreboardLogos_;
     std::string scoreboardSides_[8];
 
