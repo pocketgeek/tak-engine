@@ -922,6 +922,7 @@ std::string startLocationsLabel(uint8_t mode) {
             const bool gameOn=gameRoom && room.opts.gameMods;
             const size_t perPage=gameOn && host?3:5;
             float py=87+mapDrop;
+            constexpr float kPackPx=1.3f;   // the column's list text (ALWAYS ON, HOST:)
             auto packList=[&](const std::vector<std::string>& available,const std::vector<std::string>& selected,
                               size_t& page,bool busy,const char* empty,const char* pageLabel,
                               std::function<void(std::vector<std::string>)> apply) {
@@ -931,20 +932,25 @@ std::string startLocationsLabel(uint8_t mode) {
                 if(names.empty()){blockText(empty,winW-296.0f,py,1.3f,{150,155,165,255});py+=22;}
                 for(size_t i=page*perPage;i<std::min(names.size(),page*perPage+perPage);++i){
                     const auto name=names[i];const bool enabled=std::find(selected.begin(),selected.end(),name)!=selected.end();
-                    const std::string label=tak::uiTextFit(name,2.0f,220);   // centered clear of the checkbox
+                    // A pack's name at the size of the column's other lines (ALWAYS ON, the
+                    // joiner's HOST: list), centered clear of the checkbox.
+                    const std::string label=tak::uiTextFit(name,kPackPx,220);
                     lbBtn(winW-300.0f,py,280,20,label,!busy,[selected,name,enabled,apply]{
                         auto selection=selected;
                         if(enabled)selection.erase(std::remove(selection.begin(),selection.end(),name),selection.end());else if(selection.size()<64)selection.push_back(name);
                         apply(std::move(selection));
-                    });
+                    },{60,66,86,255},kPackPx);
                     SDL_FRect checkBox{winW-291.0f,py+4.5f,11,11};
                     SDL_SetRenderDrawColor(ren_,190,205,220,255);
                     SDL_RenderDrawRectF(ren_,&checkBox);
                     if(enabled){checkBox.x+=3;checkBox.y+=3;checkBox.w-=6;checkBox.h-=6;SDL_RenderFillRectF(ren_,&checkBox);}
                     py+=22;
                 }
-                if(pages>1){lbCycle(winW-300.0f,py,280,20,std::string(pageLabel)+" "+std::to_string(page+1)+" / "+std::to_string(pages),true,[&page,pages](int d){page=(page+pages+d)%pages;});py+=22;}
+                if(pages>1){lbCycle(winW-300.0f,py,280,20,std::string(pageLabel)+" "+std::to_string(page+1)+" / "+std::to_string(pages),true,[&page,pages](int d){page=(page+pages+d)%pages;},kPackPx);py+=22;}
             };
+            // COSMETIC MODS heads the always-on archives and the ticked packs alike (a
+            // campaign room shows the heading only when it has always-on archives to list).
+            if(gameRoom || !alwaysOnMods_.empty()){blockText("COSMETIC MODS",winW-296.0f,py,1.6f,{205,210,225,255});py+=22;}
             if(!alwaysOnMods_.empty()) {
                 // As many names as fit on one line (280 px), then "+N".
                 constexpr float kLineW=280;
@@ -960,7 +966,6 @@ std::string startLocationsLabel(uint8_t mode) {
                 blockText(line,winW-296.0f,py,1.3f,{170,200,170,255});py+=20;
             }
             if(gameRoom) {
-                blockText("COSMETIC MODS",winW-296.0f,py,1.6f,{205,210,225,255});py+=22;
                 packList(availableCosmeticMods_,settings_?settings_->cosmeticModPacks:std::vector<std::string>{},cosmeticModPage_,false,
                          "NO PACKS IN MODS/COSMETIC","COSMETIC PAGE",[this](std::vector<std::string> selection){
                     if(!settings_)return;
@@ -1460,7 +1465,7 @@ std::string startLocationsLabel(uint8_t mode) {
     }
 
     void GameView::lbBtn(float x, float y, float w, float h, const std::string& label, bool enabled,
-               std::function<void()> action, SDL_Color base) {
+               std::function<void()> action, SDL_Color base, float labelPx) {
         SDL_FRect r{x, y, w, h};
         bool hot = enabled && lbHot(r);
         SDL_Color c = enabled ? (hot ? SDL_Color{90, 110, 150, 255} : base)
@@ -1474,7 +1479,7 @@ std::string startLocationsLabel(uint8_t mode) {
         // Height too: a label with descenders (a mod pack's "Big Battles") keeps its ink
         // 2 px inside the border, and centres caps plus descenders; caps-only labels
         // centre their caps as always.
-        float px = tak::uiTextFitPx(label, 2.0f, w - 12.0f);
+        float px = tak::uiTextFitPx(label, labelPx, w - 12.0f);
         if (const float ink = 7 * px + tak::uiTextInkDescent(label, px); ink > h - 4)
             px *= (h - 4) / ink;
         float tw = blockWidth(label, px);

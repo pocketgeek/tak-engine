@@ -3428,13 +3428,18 @@ private:
     static constexpr float kLobbyW = 960.0f;
     static constexpr float kLobbyH = 540.0f;
     bool lbHot(const SDL_FRect& r) const;
-    // A clickable button: panel + centered label; registers its action.
+    // A clickable button: panel + centered label; registers its action. The label is
+    // drawn at labelPx (the cell size, uitext.h), or smaller when it would not fit the
+    // box -- never larger: a list of names (the room's mod packs) passes the size of the
+    // text around it rather than the 2.0 of a caps command button.
+    static constexpr float kBtnLabelPx = 2.0f;
     void lbBtn(float x, float y, float w, float h, const std::string& label, bool enabled,
-               std::function<void()> action, SDL_Color base = {60, 66, 86, 255});
+               std::function<void()> action, SDL_Color base = {60, 66, 86, 255},
+               float labelPx = kBtnLabelPx);
     // Only selectors accept right-click; ordinary actions stay left-click only.
     void lbCycle(float x, float y, float w, float h, const std::string& label, bool enabled,
-                 std::function<void(int)> cycle) {
-        lbBtn(x, y, w, h, label, enabled, {});
+                 std::function<void(int)> cycle, float labelPx = kBtnLabelPx) {
+        lbBtn(x, y, w, h, label, enabled, {}, {60, 66, 86, 255}, labelPx);
         if (enabled && cycle) lobbyHots_.emplace_back(SDL_FRect{x,y,w,h}, std::move(cycle));
     }
     // A text-input field: label + box; clicking activates it (id != 0).
