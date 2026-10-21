@@ -33,7 +33,7 @@ For the controls, hotkeys and mouse actions on one page, with pictures, see the
 13. [Voice chat](#voice-chat)
 14. [Campaigns](#campaigns)
 15. [Replays](#replays)
-16. [Overrides](#overrides)
+16. [Mods](#mods)
 17. [Map editor](#map-editor)
 18. [Running a server](#running-a-server)
 19. [Benchmark](#benchmark)
@@ -151,14 +151,14 @@ takclient --data /path/to/your/kingdoms/install
 | `meta.hpi`, `boneyards.hpi`, `boneyards2.hpi`, `jersey.hpi`, `v2rocket.hpi`, `v3rocket.hpi` | Official patches and map/unit packs, if you have them. |
 | `Maps/` | Extra maps you downloaded (`.kmp` files). |
 | `Music/` | The soundtrack (`track*.wav`). |
-| `overrides/` | Optional content packs; see [Overrides](#overrides). |
+| `mods/` | Optional content packs, in `mods/cosmetic/` and `mods/game/`; see [Mods](#mods). |
 
 The door videos on the main menu are read from the install's movie files. If
 they are missing, the menu shows still door art instead.
 
 Only the official archives listed above are loaded from the install folder. Any
 other `.hpi` file dropped into that folder, and any loose file there, is ignored.
-Put custom content in a pack folder under `overrides/` instead.
+Put custom content in a pack folder under `mods/` instead.
 
 **Install Iron Plague if you can.** Without it, you have the four original sides
 and the base campaign. The Creon side and the Iron Plague campaign need the
@@ -171,7 +171,8 @@ wins:
 
 - Inside one layer, loose files beat archive entries. Between archives, the
   entry with the newest stored date wins, as in the original game.
-- Selected override packs beat installed maps, which beat the official archives.
+- Ticked cosmetic packs beat the always-on cosmetic archives, which beat ticked
+  game packs. All of them beat installed maps, which beat the official archives.
 - A map shared for the current match beats all of these for that match.
 
 The `hpitool where <install> <path>` command, built with the engine, shows which
@@ -270,10 +271,10 @@ change in the room, until the game starts.
 | **Unit cap** | The most units each player may have alive: 250, 500, 1,000 or 2,000 (the default). Production pauses at the cap. |
 | **Allow speed change** | Lets the host change game speed during the match, from −9 (0.1×) to +10 (2×). |
 | **Pathfinding** | **Retail** (the default) or **Legion**. See [Pathfinding](#pathfinding-retail-and-legion). |
-| **Overrides** | Off, Cosmetic or Full. See [Overrides](#overrides). |
+| **Game mods** | Multiplayer only, default **Off**. When on, the host ticks game mod packs in the room and they are sent to every player. Single player always has them. See [Mods](#mods). |
 | **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. The host can change it in the room by clicking it, until the game starts; then it is fixed. See [Spectating](#spectating). |
 | **Spectate (Watch AIs)** | Single-player only: fill every slot with AIs and watch. |
-| **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered under **Overrides: Full**, if you have an override pack, with the warning *PACK NEEDED:* and the unit, in case a selected pack supplies it. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
+| **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered when game mods are available (always in single player, with **Game mods: On** in multiplayer), if you have a game mod pack, with the warning *PACK NEEDED:* and the unit, in case a selected pack supplies it. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
 
 Your choices are remembered for next time, except passwords, Spectate and Map
 scenario.
@@ -1448,9 +1449,9 @@ player's game stays in step.
    starts the game when everyone is ready. To take a different seat, click
    **Move here** on any open slot (see [Start locations](#match-options)).
 
-![A game room with player and AI slots, a MOVE HERE button on each open slot, the map with start markers 1 to 4 in the seated players' colours, override pack choices and the read-only match rules](img/room.jpg)
+![A game room with player and AI slots, a MOVE HERE button on each open slot, the map with start markers 1 to 4 in the seated players' colours, mod pack choices and the read-only match rules](img/room.jpg)
 
-*A game room, here for a single-player game: player and AI slots, **Move here** on the open slots, the map with each start marked in the colour of the player who starts there, override packs and the read-only match rules.*
+*A game room, here for a single-player game: player and AI slots, **Move here** on the open slots, the map with each start marked in the colour of the player who starts there, mod packs and the read-only match rules.*
 
 The host can open and close empty slots, add AIs and kick players (a slot with a player in it cannot be turned into an AI or closed; kick the player first). Any seated player, the host included, can move to an open slot with **Move here** until the game starts; closed, AI and taken slots cannot be moved to, and campaign missions and Crusades battles keep their seats. Match options are
 set when the game is created, except **Allow spectators**, which the host can
@@ -1782,20 +1783,51 @@ games, if its operator turns that on.
 
 ---
 
-## Overrides
+## Mods
 
-Override packs replace game files: new sounds, textures, interface art, or, in
-**Full** mode, new units and rules.
+Mods replace game files. There are two kinds, each in its own folder inside
+`mods/` in your install folder:
 
-Put each pack in its own folder inside `overrides/` in your install folder, for
-example `overrides/New Sounds/sounds/click.wav`. A pack can hold loose files or
-`.hpi`, `.ufo` and `.kmp` archives. **Files placed directly in `overrides/` are
-never loaded.**
+| Folder | Kind | What it may change |
+| --- | --- | --- |
+| `mods/cosmetic/` | **Cosmetic mods** | Textures, sprites, sounds, music, fonts and interface art. Never units, rules or anything else that changes the game. |
+| `mods/game/` | **Game mods** | Everything, including units, weapons, build menus, maps, scripts and models. |
 
-The game creator picks the override mode on the setup screen:
+Put each pack in its own folder, for example
+`mods/cosmetic/New Sounds/sounds/click.wav` or `mods/game/Big Units/units/...`.
+A pack can hold loose files or `.hpi`, `.ufo` and `.kmp` archives. **Files
+placed directly in `mods/` or `mods/game/` are never loaded.**
 
-| Mode | What packs may change |
-| --- | --- |
+**Always-on cosmetic mods.** A `.hpi` archive placed directly in
+`mods/cosmetic/`, for example `mods/cosmetic/click.hpi`, is always loaded, in
+every game: skirmish, multiplayer, campaigns, map scenarios and replays. It is
+filtered like any cosmetic mod, so it can only change what you see and hear. It
+is not listed for ticking; the game room and the campaign screen show an
+**ALWAYS ON** line naming them instead. To turn one off, move it out of the
+folder. Only `.hpi` files count: other files directly in `mods/cosmetic/` are
+ignored.
+
+In the game room you tick the packs you want (up to 64 of each kind). Packs of
+one kind load in alphabetical order of their folder names; later names win when
+they change the same file. Game packs load first, then the always-on archives,
+then ticked cosmetic packs.
+
+- **Cosmetic packs** are each player's own choice, in single player and in
+  multiplayer, host or not. They change only what that player sees and hears,
+  are never sent to the server or to other players, and players in one game may
+  use different ones.
+- **Game packs** in single player are always available: tick them in the room.
+- **Game packs** in multiplayer need **Game mods: On** on the setup screen. Only
+  the host ticks them; they are sent to the server and to every player
+  automatically, and everyone checks they have the same package before the game
+  starts. Transfers are limited to 256 MB.
+- **Campaigns** use the original game data plus your always-on cosmetic
+  archives only: no game packs and no ticked cosmetic packs.
+
+The old `overrides/` folder is no longer read. Nothing in it is moved or
+changed; move your packs into `mods/cosmetic/` or `mods/game/` yourself.
+
+--- | --- |
 | **Off** | Nothing. No packs are loaded. |
 | **Cosmetic** | Textures, sprites, sounds, music, fonts and interface art. |
 | **Full** | Everything, including units, weapons, build menus, maps, scripts and models. |
@@ -2079,7 +2111,7 @@ differences:
 - **Sound fades with distance** from the camera instead of using one off-screen
   volume.
 - **Boat shadows** and shadows on every lodestone.
-- **A random map generator**, a modern map editor and **override packs**.
+- **A random map generator**, a modern map editor and **mod packs**.
 - **Emotes** (Disco and Headbang).
 
 Everything else, such as unit statistics, weapons, the economy, the AI's

@@ -58,8 +58,10 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
   standalone simulation or any debug hooks. So all the CLI-driven flows below need the DEBUG `build-dbg/` binaries.
 - Play (debug build): `./build-dbg/takclient game "<map name>" --data <retail-install-dir> [--side X --aiside Y]`
   — the engine reads a retail install directly (root `*.hpi` + `Maps/` + `Music/`
-  + `overrides/`); maps are referenced by NAME, resolved via the VFS. `--overrides
-  none|cosmetic|full` picks which of `overrides/` are mounted. README lists all options.
+  + `mods/`); maps are referenced by NAME, resolved via the VFS. `--mods
+  none|cosmetic|game|all` (default all) picks which kinds of ticked `mods/` packs a
+  debug launch may mount (`mods/cosmetic/*.hpi` are always on unless cosmetic is
+  excluded). README lists all options.
   (A release `build/takclient --data <dir>` plays the same games through the menu.)
 - Headless determinism / smoke test — DEBUG binaries (the harness flags + `TAK_HEADLESS`
   are debug-only). The server needs `--data` to run the referee + AI, and enforces a

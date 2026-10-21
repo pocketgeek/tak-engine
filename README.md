@@ -31,7 +31,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
     <td width="50%"><a href="docs/img/lobby.jpg"><img src="docs/img/lobby.jpg" alt="The create-game screen with map selection and a preview with numbered start positions"></a><br><sub>Maps and match setup</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/img/room.jpg"><img src="docs/img/room.jpg" alt="Game lobby with AI slots, MOVE HERE buttons on the open slots, start markers in the players' colours, override-pack selections and read-only match settings"></a><br><sub>Lobby settings and override packs</sub></td>
+    <td width="50%"><a href="docs/img/room.jpg"><img src="docs/img/room.jpg" alt="Game lobby with AI slots, MOVE HERE buttons on the open slots, start markers in the players' colours, mod-pack selections and read-only match settings"></a><br><sub>Lobby settings and mod packs</sub></td>
     <td width="50%"><a href="docs/img/campaign.jpg"><img src="docs/img/campaign.jpg" alt="The Book of Darien campaign mission picker"></a><br><sub>Campaign selection</sub></td>
   </tr>
   <tr>
@@ -861,8 +861,9 @@ takclient --data /path/to/tak_install
 
 Release builds otherwise use the menus; `--version` prints the installed
 version. Custom maps belong in the installation's `Maps/` folder, and custom
-content belongs in named pack subfolders of `overrides/` (files directly in that
-folder are never loaded). Unknown archives dropped into the installation
+content belongs in named pack subfolders of `mods/cosmetic/` or `mods/game/`
+(files directly in those folders are never loaded, except always-on `.hpi`
+archives directly in `mods/cosmetic/`). Unknown archives dropped into the installation
 root are not loaded. See the [game-data guide](docs/user-guide.md#game-data)
 for layout, archive precedence, and troubleshooting a rejected folder.
 
@@ -1373,7 +1374,7 @@ wreck. Buildings also use the authored palette shading and per-piece shadow
 flags observed in retail Glide.
 
 Game-create choices are remembered between sessions: balance, sight/radar, unit
-cap, pathfinding, monarch rule, speed changes, fog, start locations, overrides,
+cap, pathfinding, monarch rule, speed changes, fog, start locations, game mods,
 game name, map selection/sorting, and random-map settings (including the seed).
 Spectate starts off for each skirmish setup. Game passwords are not saved.
 
@@ -1475,19 +1476,31 @@ Bug reports are most useful with the engine version, platform, map, balance
 setting, steps to reproduce, and a replay or screenshot where relevant.
 Do not attach retail game archives or executables.
 
-### Selectable override packs
+### Mods
 
-Place each pack under `<data>/overrides/<pack name>/`, containing loose game
-files or HPI/UFO/KMP archives. Files directly in `overrides/` never load.
-Choose Off/Cosmetic/Full on the game-create screen. The skirmish/multiplayer
-lobby displays the mode and supports multiple checked packs; Off hides the list.
-Pack choices are remembered.
-Alphabetically later pack names win file conflicts.
+Mods live in `<data>/mods/`, one folder per pack, as loose game files or
+HPI/UFO/KMP archives:
 
-Guests select their own cosmetic packs separately. Full host packs transfer
-automatically to the server and all players, with checksum verification before
-start. Downloads stay in `OverrideCache/`; they do not replace installed files.
-Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
+- `mods/cosmetic/<pack>/`: art and sound only (gameplay files are filtered
+  out). Every player ticks their own in the skirmish or multiplayer room; they
+  are never sent anywhere and never change the gameplay data hash.
+- `mods/cosmetic/*.hpi`: archives directly in `mods/cosmetic/` are **always on**
+  in every game, campaigns and replays included, with the same cosmetic filter.
+  They are not listed for ticking; the rooms and the campaign screen name them
+  on an ALWAYS ON line.
+- `mods/game/<pack>/`: everything, including units and rules. Single player
+  always offers them in the room. In multiplayer the host turns **GAME MODS**
+  on at the create screen, then only the host ticks packs; they transfer
+  automatically to the server and all players, with checksum verification
+  before start. Downloads stay in `ModCache/`; they do not replace installed
+  files.
+
+Other files directly in `mods/`, `mods/cosmetic/` or `mods/game/` never load.
+Campaigns use neither game packs nor ticked cosmetic packs. Alphabetically later
+pack names win file conflicts; game packs load first, then the always-on
+archives, then ticked cosmetic packs. Pack choices are remembered. The old
+`overrides/` folder is no longer read and is left untouched. See
+[mod details](docs/user-guide.md#mods).
 Version 0.8.7 uses protocol **284**; servers and clients must all run 0.8.7 (0.8.6 uses 281).
 
 

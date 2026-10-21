@@ -160,29 +160,41 @@ canonical state hash for attribution — with one humility rule (§4, referee
 suspicion): when everyone disagrees with the referee but agrees with each
 other, the referee suspects *itself*.
 
-### Game-data agreement + override policy
+### Game-data agreement + mods
 
 Every peer reads its game files through a VFS over a retail install directory
-(`hpi::mountRetailRoot`: root `*.hpi` + `Maps/*.kmp` + `Music/` + `overrides/`,
-resolved by the retail newest-date rule). Lockstep needs every sim to feed on
-byte-identical *gameplay* data, so that's fingerprinted and agreed:
+(`hpi::mountRetailRoot`: root `*.hpi` + `Maps/*.kmp` + `Music/`, resolved by the
+retail newest-date rule, plus one merged mod layer from `mods/`). Lockstep needs
+every sim to feed on byte-identical *gameplay* data, so that's fingerprinted and
+agreed:
 
 - **`hpi::gameplayHash(vfs)`** — a content hash over just the files the sim reads
   (unit `.fbi`, weapon/side/game `.tdf`, build lists, features; **not** maps, which
   are per-game, and **not** cosmetics — art, models, animation, sound, music, GUI).
-- Each game carries an **override tier** (`GameOptions.overridePolicy`): `none`
-  (pure retail), `cosmetic` (art/sound overrides allowed, never hashed, may differ
-  per player), or `full` (gameplay overrides allowed but everyone must have the
-  same ones). The host picks it; joiners **adopt** it, remounting their VFS to the
-  tier at game start so their registry matches the referee's.
+- Each game carries a **game-mods flag** (`GameOptions.gameMods`, 0/1). When on,
+  the host's ticked `mods/game/<pack>` folders are packaged and transferred (see
+  [Per-room game mods](#per-room-game-mods)); every player mounts that verified
+  package at game start so its registry matches the referee's. A single-player
+  room always sends 1; a multiplayer room defaults to 0 (the create screen's GAME
+  MODS toggle); campaign missions and Crusades battles are forced to 0.
+- **Cosmetic mods are per player and never travel.** Each client lays on top of
+  the room's package its own always-on `mods/cosmetic/*.hpi` archives (every
+  room) and its ticked `mods/cosmetic/<pack>` folders (every room but a campaign
+  one), through the cosmetic keep-filter (`!affectsGameplay`, no `features/`, no
+  `ai/`). That filter strips everything `gameplayHash` reads, so the Loaded hash
+  is unchanged by them. The handshake mount, the referee data and map packages
+  (`maps::build`) never include any cosmetic layer, so a cosmetic `maps/*.tdf`
+  cannot reach a map digest.
 - Enforcement is two-stage. The **`Hello`** carries the client's *pure-retail*
-  gameplay hash (mounted with no overrides), so the base game files must match for
-  everyone regardless of tier — a modified retail file is rejected at connect. At
-  **`Loaded`** the client sends its gameplay hash *at the room's tier*, and the
-  referee (mounted at that tier) rejects a mismatch — so a `full`-tier player
-  lacking or differing on a gameplay override is caught before tick 0 rather than
-  as a mid-game desync. A pure relay (no `--data`) has no referee hash and falls
-  back to the live `StateHash` cross-check.
+  gameplay hash (mounted with no mods), so the base game files must match for
+  everyone regardless of mods — a modified retail file is rejected at connect. At
+  **`Loaded`** the client sends its gameplay hash *with the room's game mods*, and
+  the referee (mounted with the same package) rejects a mismatch — so a player
+  lacking or differing on a game mod is caught before tick 0 rather than as a
+  mid-game desync. A pure relay (no `--data`) has no referee hash and falls back
+  to the live `StateHash` cross-check.
+- The old `overrides/` folder is never read. A client that finds one logs one
+  line at startup and leaves it untouched.
 
 ### Determinism contract (explicit)
 
@@ -674,18 +686,20 @@ The `room_worker` regression checks independent progress with a blocked worker,
 serial/worker/client checksum equivalence, replay-budget rejection, and worker
 exception recovery. It runs without networking or retail assets.
 
-### Per-room override packs
+### Per-room game mods
 
-Protocol 213 adds OverrideOffer/Request/Chunk/Ready/Error alongside map transfer.
-The host selects named immediate subfolders of `overrides/`; root-level files
-are excluded. Full selections are merged in alphabetical order into a bounded,
-SHA-256-addressed package. Server and peers verify it before room readiness.
-Each Full room owns its own VFS and registries, leaving other rooms unchanged.
-Cosmetic local selections exclude all gameplay, feature-definition and AI files.
-Selections persist separately for hosts and guests. Off suppresses both lists
-and local files. Replay format 10 records the shared package digest and loads
-it from `OverrideCache/`; format 9 / protocol 212 remains readable.
-
+Protocol 213 added the pack transfer messages alongside map transfer; they are
+now ModOffer/ModRequest/ModChunk/ModReady/ModError (same ids, same order; the
+offer label is `"mods"`). The host selects named immediate subfolders of
+`mods/game/`; files directly in `mods/` or `mods/game/` are excluded. Selections
+are merged in alphabetical order into a bounded, SHA-256-addressed package (no
+cosmetic file ever goes in it). Server and peers verify it before room
+readiness. Each game-mods room owns its own VFS and registries, leaving other
+rooms unchanged. The server takes a package only from the host of a skirmish
+room with game mods on: an offer or chunk from a guest or in a campaign or
+Crusades room, and an offer while game mods are off, are answered with ModError. Replay
+format 10 records the shared package digest (`ReplayHeader::modDigest`, with the
+`gameMods` byte where `overridePolicy` was) and loads it from `ModCache/`.
 
 ### Match pathfinding selection
 
@@ -808,8 +822,8 @@ the Crusades rules digest (`putRules` keeps 257's bytes); Crusades battle rooms
 carry 0, and the Crusades replay archive refuses a recording that has it on. The
 map package carries every map's `.ota`, `.crt` and `.tdf`, and its digest covers
 the files it contains. A package may leave a companion out, though, and
-setupMatch would then read each machine's own copy (from `maps.hpi`, or from an
-override pack, since `maps/*.tdf` is not gameplay data), which no digest covers.
+setupMatch would then read each machine's own copy (from `maps.hpi`, or from a
+mod pack, since `maps/*.tdf` is not gameplay data), which no digest covers.
 So at START the server refuses a room whose setup will read a scenario file the
 package lacks: the `.crt` of a declared scenario, or the named Use Only list
 ("the map package leaves out its Use Only list"). A damaged or misnamed file

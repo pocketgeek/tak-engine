@@ -1103,9 +1103,10 @@ such as "hold the hill for five minutes to win".
 >   fight, build or move (animals, villagers, monsters and unarmed buildings such
 >   as lodestones do not count) or a rule that creates units for it. Many
 >   downloaded maps used the scenario editor only to place scenery or wildlife,
->   and play as ordinary skirmish maps. With **Overrides: Full**, a map that needs
+>   and play as ordinary skirmish maps. When game mods are available (always in
+>   single player, with **Game mods: On** in multiplayer), a map that needs
 >   a unit type this install lacks is offered with the warning *PACK NEEDED:*
->   and the unit, when the install has an override pack the host could select in
+>   and the unit, when the install has a game mod pack the host could select in
 >   the room; if no selected pack supplies the unit, the game refuses to start
 >   and says which unit is missing. Maps with a playable scenario carry a gold
 >   **S** in the map list.
@@ -1890,7 +1891,8 @@ Start Cartographer from its shortcut and choose **Recover**. See
 - **Re-saving downloaded maps.** If a downloaded map came with its own terrain
   images or feature files, re-saving it in Cartographer writes only the map's
   own files, not that extra art.
-- **Override packs** are not loaded in the editor.
+- **Mods** (`mods/` packs, including the always-on `mods/cosmetic/*.hpi`
+  archives) are not loaded in the editor.
 - **Display names** are cut to 31 bytes in the game.
 - **Text.** The editor's own font covers Latin (including Vietnamese), Greek,
   Cyrillic, Armenian and Georgian letters, common symbols, Japanese kana, Korean

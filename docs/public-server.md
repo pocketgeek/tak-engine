@@ -180,7 +180,7 @@ allocation (32 per IP and 128 globally per second). Upload reads apply
 backpressure at 4 MiB/s per connection and 16 MiB/s globally; fast legitimate
 senders are paced rather than disconnected.
 
-Map and override validation uses one background worker and at most two waiting
+Map and game-mod validation uses one background worker and at most two waiting
 jobs. Admission reserves twice the advertised package size for canonical and
 extracted bytes, including jobs whose sender disconnects. Cached file sizes are
 checked before allocation and must match the offer; uploaded lengths and final
@@ -586,7 +586,7 @@ and [systemd execution sandbox](https://github.com/systemd/systemd/blob/main/man
 Run the parser, worker, command, package and local server tests with:
 
 ```sh
-ctest --test-dir build --output-on-failure -R '^(tdf_limits|validationworker|server_commands|server_command_flood|map_transfer|map_transfer_data|override_packs|override_transfer|server_public|acme)$'
+ctest --test-dir build --output-on-failure -R '^(tdf_limits|validationworker|server_commands|server_command_flood|map_transfer|map_transfer_data|mod_packs|mod_transfer|server_public|acme)$'
 ```
 
 Data-backed tests require CMake's `TAK_TEST_DATA` to point to a retail installation.
