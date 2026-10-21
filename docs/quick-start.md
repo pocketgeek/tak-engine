@@ -15,6 +15,9 @@ can be changed in **CONTROLS** (the main menu's lower-right Settings button, or
 unbind it. The number keys, Esc, Enter, Pause, **+**/**−**, F9 and the arrow keys
 are fixed.
 
+**UI Font** (**Options → Interface**): *Modern* (the default, a clean bold
+sans-serif, as in these pictures) or *Classic* (the engine's old lettering).
+
 ## Mouse
 
 | Input | Does |
@@ -149,23 +152,38 @@ pointer.*
 | **D** | Diplomacy: give units, share mana, chat and voice recipients. |
 | **Pause** | Pause / resume, for every player. |
 | **+** / **−** | Game speed. Host only, and only with *Allow Speed Change* on. |
-| **Enter** | Chat: Enter sends, Esc cancels. Chat box size and position: **Options → Interface**. With *Power Codes* on, type a code such as **+ATM**, **+NowISee** or **+MakePoster** (see [Power codes](user-guide.md#power-codes)). |
+| **Enter** | Chat: Enter sends, Esc cancels. With *Power Codes* on, also where you type a [power code](#power-codes). |
 | **Print Screen** | Save a picture of the whole map to the *screenshots* folder. Only with *Power Codes* on. |
 | **Space** (hold) | Push to talk, in a multiplayer game with voice chat on. |
 | **Shift+D** / **Shift+H** | Emotes: disco / headbang. |
 | **Esc** | In order: close Unit Info, cancel placement or an armed order, clear the selection, open the game menu (Resume, Options, Controls, Voice Chat, Quit…). |
 
-**Print Screen** makes a whole-map poster only in a game created with *Power
-Codes* on. There is no other in-game screenshot key. If your desktop takes Print
-Screen for its own screenshots, or your keyboard has none (Mac), set another key
-for *MAKE POSTER* in *Controls*.
+**Chat Scale** (50–300%, default 100%) and **Chat Position** (*Left* or
+*Centered*, the default) set the chat box's size and place: **Options →
+Interface**.
 
-**Power codes**, typed in chat when the game has *Power Codes* on (capitals do
-not matter): **+ATM** (fill your mana), **+ManaMe** (fill your selected units'
-mana), **+DoubleShot** / **+HalfShot** (all damage ×2 / ×½), **+LOS** (line of
-sight off/on; **+LOS Off**, **+LOS On**), **+Mapping** (reveal / hide the map),
-**+NowISee** (see everything), **+Radar** (every unit on your minimap) and
-**+MakePoster** (whole-map picture).
+**Print Screen** has no other use: there is no ordinary screenshot key. If your
+desktop takes Print Screen for itself, or your keyboard has none (Mac), set
+another key for *MAKE POSTER* in *Controls*.
+
+### Power codes
+
+Only in a game created with **Power Codes** on (single player or multiplayer;
+never in campaigns or Crusades). Press **Enter**, type the code, press
+**Enter**; capitals do not matter. Every player sees the code typed.
+
+| Code | Does |
+| --- | --- |
+| **+ATM** | Fill your mana pool to its storage. |
+| **+ManaMe** | Fill your selected units' own mana. |
+| **+DoubleShot** / **+HalfShot** | All damage in the game ×2 / ×½ (again: normal). |
+| **+LOS** | Your line of sight off / on (**+LOS Off**, **+LOS On** set it). |
+| **+Mapping** | Reveal the map / hide it again (forgetting what was explored). |
+| **+NowISee** | Line of sight and map both off: you see everything. |
+| **+Radar** | Every unit on your minimap (again: off). |
+| **+MakePoster** | Whole-map picture, **BIGSHOTnnnn.png** in *screenshots* (same as Print Screen). |
+
+More in the user guide's [Power codes](user-guide.md#power-codes).
 
 ## Lobby
 
