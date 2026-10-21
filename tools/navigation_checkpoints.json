@@ -33,11 +33,11 @@
     "mode=4 boat=0 tick=1500 hash=ae34d5269736a0ef",
     "mode=4 boat=0 tick=1800 hash=f1d79ee014347c26",
     "mode=4 boat=0 tick=2100 hash=7df4307cb791100c",
-    "mode=4 boat=0 tick=2400 hash=fd01256838a46f13",
-    "mode=4 boat=0 tick=2700 hash=a3371f4a8a62b7e5",
-    "mode=4 boat=0 tick=3000 hash=1c82aaaa09140a98",
-    "mode=4 boat=0 tick=3300 hash=4d50f40aee40bf08",
-    "mode=4 boat=0 tick=3600 hash=c7282e862f6d6adc",
+    "mode=4 boat=0 tick=2400 hash=0dc4115fdf951c5a",
+    "mode=4 boat=0 tick=2700 hash=1f0eda4797740e0e",
+    "mode=4 boat=0 tick=3000 hash=a587af14034380ed",
+    "mode=4 boat=0 tick=3300 hash=0c1fac3a97ea7958",
+    "mode=4 boat=0 tick=3600 hash=75cb4ef0f2483384",
     "mode=4 boat=1 tick=300 hash=dc8e3d2a8ae3513d",
     "mode=4 boat=1 tick=600 hash=c3245a05fe587343",
     "mode=4 boat=1 tick=900 hash=b40352ecd55beeb9",
@@ -45,10 +45,10 @@
     "mode=4 boat=1 tick=1500 hash=0009b48cd98bdec5",
     "mode=4 boat=1 tick=1800 hash=505a44a386167225",
     "mode=4 boat=1 tick=2100 hash=210896292556df84",
-    "mode=4 boat=1 tick=2400 hash=d86537304b3a6afc",
-    "mode=4 boat=1 tick=2700 hash=7c9331165548c752",
-    "mode=4 boat=1 tick=3000 hash=61f20766546aace4",
-    "mode=4 boat=1 tick=3300 hash=ed6068a561036333",
-    "mode=4 boat=1 tick=3600 hash=57f5578f7348fe3c"
+    "mode=4 boat=1 tick=2400 hash=bbbbbd8a4c07285f",
+    "mode=4 boat=1 tick=2700 hash=2df4257d297a78da",
+    "mode=4 boat=1 tick=3000 hash=913c8240659501ed",
+    "mode=4 boat=1 tick=3300 hash=4f36702f3e21b6f3",
+    "mode=4 boat=1 tick=3600 hash=3768af17c6af76c9"
   ]
 }
