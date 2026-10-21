@@ -1171,6 +1171,8 @@ in a formation or Ctrl+number group with ground units keep station over them.
 - Legion units stand and wait in a crowd more than units in Retail do,
   although they usually arrive sooner. In a few test layouts a group still
   arrives a little later (under 5%) than in Retail.
+- Two large groups meeting head-on at a narrow, tapering bridge can still jam
+  in its mouth and take much longer to cross than in Retail.
 - An attack ring along a wall or round a gatehouse holds fewer units within
   reach than in Retail, so fewer units fire at once.
 - When a group goes round a parked crowd, it can still pass by one side in a

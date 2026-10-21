@@ -481,9 +481,9 @@ looked at after capture.
   floor names two without baseline entries where the gap is larger than the
   notes' "under 5%": `taperbridge-100` (`scale.complete.t90` 11,029 against
   Retail's 6,038) and `taperbridge-small` (9,999 against 8,114).
-  <!-- LEAD: decide before tagging whether to baseline taperbridge-100,
-       taperbridge-small, attackring-gatehouse-40, attackring-fight-diag-60
-       and ringbend-pocket, or reword the notes' and the guide's "under 5%". -->
+  Lead decision: not baselined. The taperbridge gap is the bridge lottery carried over
+  from 0.8.6 and is now named in the notes and the guide; the gatehouse and fight-diag
+  rows are round 5's target, so they get baselines after that round.
 - Carried over: the Legion 10,000 program still does not meet its own success
   criterion for congested workloads, and many-10000, scatter-10000 and
   mixed-10000 still run over the 33.3 ms tick budget in part of their ticks;

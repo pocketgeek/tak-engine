@@ -104,6 +104,11 @@ See [Legion](user-guide.md#legion) in the user guide, and
 - In a few test fixtures a Legion group still arrives a little later (under
   5%) than in Retail, and a group crossing a firing ring arrives a little later
   than in Retail.
+- Carried over from 0.8.6: **Legion bridges are still a lottery at about 100
+  units.** Two armies meeting at a narrow, tapering bridge can still jam in its
+  mouth and take far longer than Retail to cross (in the test fixtures,
+  `taperbridge-100` finishes in about 1.8 times Retail's time and
+  `taperbridge-small` in about 1.2 times).
 - Carried over from 0.8.6: a stationary unit choosing its own targets can keep
   ignoring an enemy it once found blocked; the clear-shot search looks only
   about twelve cells round the unit. The Legion 10,000-unit workloads still
