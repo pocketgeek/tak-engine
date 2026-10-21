@@ -19,7 +19,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 285;      // 285: Legion ~100 round 5: rings press into a wall's shadow, late rings for fight columns, the reach edge in reach
+constexpr uint32_t kNetVersion = 286;      // 286: Legion ~100 round 6: gatehouse corridors -- a braked attacker walks on past the shot rather than plug a
+                                           //      pinched approach (onward only), deep rings through narrow approaches fill back to front (Legion state
+                                           //      differs from 285; 285 replays refused)
+                                           // 285: Legion ~100 round 5: rings press into a wall's shadow, late rings for fight columns, the reach edge in reach
                                            //      (melee by contact), the ring's stop origin (Legion state differs from 284; 284 replays refused)
                                            // 284: lobby seat moves: Msg::MoveSeat (C->S, u8 slot) -- a seated player, host included, takes an OPEN
                                            //      in-capacity seat before the start (the seat is the start under BY SLOT, the order under FIXED);

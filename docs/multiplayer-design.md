@@ -744,6 +744,8 @@ merge (Legion only). Protocol 284 adds the lobby seat move (`MoveSeat`) with an
 unchanged simulation; 0.8.7 ships protocol 284. Protocol 285 is the fifth Legion
 round at about 100 bodies: attackers press into a wall's shadow, fight-move columns
 ring a still target, and a body on the reach edge counts as in reach (Legion only).
+Protocol 286 is the sixth, for gatehouse corridors: an attacker that would plug a
+narrow approach walks on past the shot, and deep rings fill back to front (Legion only).
 Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
@@ -951,6 +953,14 @@ press may end exactly on the reach edge, where combat fires (a melee weapon keep
 contact test); and a ring's stop origin is the edge point's own origin. Retail is
 bit-identical and the `--mpai` hashes are unchanged (60 s and 300 s, Retail and
 Legion), but 284 recordings no longer play.
+Protocol 286 (Legion only) is the sixth round at about 100 bodies, for attack rings
+reached through a narrow approach (a gatehouse corridor): a ring member that combat
+would brake where it plugs the approach, with the queue behind it out of reach, walks
+on first to the farthest ground with the shot, only onward and only past a queue that
+comes up to it; and a ring that a narrow approach feeds hands out its spots deepest
+first by walk, so the approach fills from its far end as Retail's does. Retail is
+bit-identical and the `--mpai` hashes are unchanged (60 s and 300 s, Retail and
+Legion), but 285 recordings no longer play.
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when

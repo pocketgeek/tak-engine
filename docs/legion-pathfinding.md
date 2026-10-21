@@ -3038,6 +3038,48 @@ Tried in the review and not kept (gate sums, gatehouse-40 / gatehouse2-48 over -
 * The nearer-by-walk keep without the every-other-scan stagger: 7,182 at the gate, now 220, gatehouse2-48 16,593;
   the peak stayed (offset -2 649,967). With a stagger of 3 scans: 7,010, gatehouse2-48 16,855, peak at -2 254,247.
 
+### Round 6 landed together (2026-10-21, task-l6-land, protocol 286)
+
+Both round-6 tracks landed, with their reviews: the walk on past the shot ("The walk on past the shot", task-l6-gateA)
+and deep rings that fill back to front ("Rings through narrow approaches", task-l6-gateB). They touch different code:
+gateA's `walkOnShot` runs in `tickCombat` just before combat would brake a body, gateB's deep-ring hand-outs and
+`spotRoute` run in the ring upkeep and in move(). The merge only joined their Member fields, hash lines and Stats
+counters. Re-measured serially at the gate offsets, cores 4-23, on four builds: 285 (a371ae1f), gateA alone, gateB
+alone, and both. Gate medians, sums over the 11 offsets in brackets:
+
+| fixture | key | Retail | 285 | gateA | gateB | round 6 (both) |
+|---|---|---|---|---|---|---|
+| attackring-gatehouse-40 | damage_end | 584 (7,172) | 324 (4,998) | 1,117 (12,535) | 711 (7,091) | 1,157 (11,719) |
+| attackring-gatehouse-40 | damage_t2400 | 424 (5,146) | 244 (3,678) | 764 (8,447) | 531 (5,231) | 796 (8,123) |
+| attackring-gatehouse-40 | ever_end / now_end | 29 / 24 (298 / 264) | 19 / 16 (224 / 190) | 36 / 31 (379 / 334) | 18 / 18 (243 / 220) | 30 / 28 (333 / 312) |
+| attackring-gatehouse-40 | t50 | 1,183 | never | 1,191 | never | 984 |
+| attackring-gateyard-36 | damage_end | 521 (5,655) | 396 (4,857) | 602 (7,822) | 474 (5,785) | 787 (8,678) |
+| attackring-gateyard-36 | ever_end / now_end | 20 / 19 (232 / 207) | 12 / 11 (147 / 139) | 18 / 18 (204 / 189) | 16 / 16 (174 / 162) | 22 / 21 (241 / 230) |
+| attackring-gateyard-36 | t50 | 1,312 | never | 1,933 | never | 1,198 |
+| attackring-gatehouse2-48 | damage_end | 906 (10,404) | 775 (9,263) | 975 (11,690) | 944 (9,795) | 1,010 (12,183) |
+| attackring-gatehouse2-48 | ever_end / now_end | 27 / 25 (321 / 279) | 22 / 21 (254 / 235) | 29 / 26 (302 / 284) | 22 / 21 (256 / 239) | 26 / 23 (310 / 294) |
+| attackring-gatehouse2-48 | t50 | 1,245 | never | 1,696 | never | 1,808 |
+| attackring-deadcorridor-30 | damage_end | 179 (2,262) | 181 (2,588) | 436 (5,077) | 181 (2,588) | 436 (5,077) |
+| attackring-deadcorridor-30 | ever_end / now_end | 4 / 4 (110 / 102) | 4 / 4 (108 / 91) | 8 / 8 (130 / 117) | = 285 | = gateA |
+
+gateA alone does best on gatehouse-40 (damage 12,535 against 11,719 together, now 334 against 312), but together they
+do best on the other two gate layouts (gateyard-36 8,678 / 230 against 7,822 / 189; gatehouse2-48 12,183 / 294 against
+11,690 / 284), on the four summed (damage 37,657 against 37,124, now in reach 953 against 924), reach half the
+gatehouse ring soonest (984), and on every gate layout stand at least Retail's sum now in reach. gateB is
+hash-identical to 285 on deadcorridor (no deep ring there). The worst gatehouse-40 offsets together are -3 (552, Retail
+571) and -2 (687, 584). Every watched fixture is Legion hash-identical to 285 on all four builds at every gate offset
+(the walled, river, fight, guard, r200, struct, melee, f1/f2, mob and squad rings, ringbend-pocket, ringcross and
+ringcross-100, attack-100, fight-retarget, and the arrival screen: corner-1x100, corner-4x25, corner-1x448, corner-8x56,
+corner-4x50, corner-1x48, corner-8x30, gap20-100, bridges-100, taperbridge-100 / -small, doorplug-112 / -124,
+doorplug100-112 / -124, island-1x100, idle-50x50, deadend-multi-4x120 and all 24 deadend-w* fixtures); Retail is
+hash-identical on every fixture.
+
+Trades: Legion work on the gatehouse layouts rises, the bodies keep moving instead of standing gridlocked (whole-run
+`legion_total` at the gate median: gatehouse-40 1.72M -> 6.49M, gateA 5.79M, gateB 3.69M; gateyard-36 3.73M ->
+6.12M; gatehouse2-48 3.22M -> 4.53M), and gateB's deep-ring claims raise the busiest tick there (gatehouse-40 max over
+the offsets 229,327 -> 331,673; gatehouse2-48 222,777 -> 295,062; gateyard-36 304,574 -> 314,113). The walled rings'
+busiest ticks move by under 1,000. `tools/legion_cost_baseline.json` does not cover the gatehouse and is unchanged.
+
 ### Paused first builds (W4 C1, protocol 244)
 
 A first field used to build to done, its whole window, although its members
@@ -4926,10 +4968,10 @@ Rules that came out of using them:
   the shadow to ground in sight, and blind rings (the shot needs sight, no spot has it) press into reach and stay
   ("Rings along walls, round 4"). Still open: attackring-wall-100 stood 36 ever in reach over the gate
   offsets against Retail's 49 at round 4 (42 since round 5) (58 against 82 on the core five; Retail packs sub-cell points of the box's corner
-  origins and jostles bodies in and out); the gatehouse's west-gate offsets are plugged by the first body walking
+  origins and jostles bodies in and out); until round 6 the gatehouse's west-gate offsets were plugged by the first body walking
   straight at a spot beyond the yard wall and braked flush in the corridor's mouth (attackring-gatehouse-40: 16 ever
-  in reach and 320 damage over the gate offsets against Retail's 29 and 584; over -8..8 its damage is level with
-  Retail's at the median, 612 against 711 mean); a ring across a river stands 17 in reach against Retail's 21 ever and 14 now; statue ticks stay a few
+  in reach and 320 damage over the gate offsets against Retail's 29 and 584; fixed by round 6, "Round 6 landed
+  together"); a ring across a river stands 17 in reach against Retail's 21 ever and 14 now; statue ticks stay a few
   times Retail's (presses toward reach keep the facing cap), wall touch is near Retail's on wall-100 (20 permille against
   17) and above it by the box's walls and the gatehouse (wall-64 32 against 20, gatehouse 78 against 68). (These
   ring figures were measured on task-l4-ringwall alone. Merged with the fight track, its still-window rule stopped
@@ -4942,13 +4984,12 @@ Rules that came out of using them:
   offsets 502 / 499 against 479 / 469 (Retail 532 / 480), damage 19,291 against 18,612 (16,912); wall-100 42 / 41
   (Retail 49 / 41; sums 503 / 497 against 518 now in reach), damage 19,507 (17,027); the gatehouse 19 / 16, damage
   4,998 against 4,834 with its plug unchanged (median 324 against Retail's 584). Since round 6, "The walk on past the
-  shot", a braked body that would plug a pinched approach walks on to the farthest ground with the shot first: the
-  gatehouse stands 32 / 26 ever / now, damage 9,758 over the offsets (median 868; Retail 7,172, 584); since that
-  section's review, which made the walk go onward only and counts only a queue that comes up to the body, 36 / 31,
-  damage 12,535 (median 1,117).) Against a
-
-  4,998 against 4,834 with its plug unchanged (median 324 against Retail's 584). Since round 6, "Rings through narrow
-  approaches", the gatehouse fills back to front: damage 7,325 (median 708), 18 / 18 ever / now, sums 242 / 215.) Against a
+  shot", a braked body that would plug a pinched approach walks on to the farthest ground with the shot first (after
+  that section's review, onward only and only past a queue that comes up to the body: 36 / 31 ever / now, damage
+  12,535 over the offsets alone), and with "Rings through narrow approaches" (deep rings fill back to front; 18 / 18,
+  damage 7,091 alone) both landed together ("Round 6 landed together"): the gatehouse stands 30 / 28 ever / now at
+  the gate median, sums 333 / 312 (Retail 298 / 264), damage 11,719 (median 1,157; Retail 7,172, 584), half its
+  bodies in reach by tick 984 (Retail 1,183).) Against a
   target walled in on every side Legion outfires Retail (it
   seeks flush points on every face that has one). A Move group crossing a firing ring is level with Retail's t90
   (ringcross-100 3,841 against 3,926; completion 4,194 against 4,166 since round 4). Since round 4 (2026-10-20,
@@ -4974,7 +5015,8 @@ Rules that came out of using them:
   `ctest:legion_ringcross`, `ctest:legion_ringfill`, `ctest:legion_ringclosed`, `ctest:legion_ringstill`,
   `ctest:legion_ringwait`, `ctest:legion_ringshadow`, `ctest:legion_ringbend`, `ctest:legion_ringblind`,
   `ctest:legion_ringpocket`, `ctest:legion_ringroute`, `ctest:legion_ringnosight`, `ctest:legion_fightring`,
-  `ctest:legion_ringedge`, `ctest:legion_ringshadowpress`, `ctest:legion_ringshadowmixed`, `ctest:legion_meleepress`, `ctest:legion_gatewalkon`, `ctest:legion_gateyard`, `ctest:legion_walkononward`
+  `ctest:legion_ringedge`, `ctest:legion_ringshadowpress`, `ctest:legion_ringshadowmixed`, `ctest:legion_meleepress`, `ctest:legion_gatewalkon`, `ctest:legion_gateyard`, `ctest:legion_walkononward`,
+  `ctest:legion_ringdeep`, `ctest:legion_ringdeepchurn`
   and `ringcross:g.M.t90`.
 * **The livelock fix costs some lane order (protocol 257).** A body blocked
   again after a side-step toward its arc may not step straight back, so it
