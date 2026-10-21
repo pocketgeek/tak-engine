@@ -47,7 +47,13 @@ namespace {
         // with POWER CODES off a +line is ordinary chat to the chosen recipients.
         const auto code = tak::sim::parsePowerCode(line);
         const bool acts = code && powerCodesOn();
-        if (acts) powerCode(*code);
+        if (acts) {
+            if (chatEchoMs_) flushSystemChat();   // an earlier code's echo is overdue
+            chatEcho_ = line;
+            chatEchoMs_ = std::max<uint64_t>(SDL_GetTicks64(), 1);
+            powerCode(*code);
+            if (heldSystemChat_.empty()) { chatEchoMs_ = 0; chatEcho_.clear(); }   // nothing to hold
+        }
         mp_->chat(line, acts ? uint8_t(0xff) : chatRecipients_);
     }
 

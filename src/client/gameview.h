@@ -2325,7 +2325,24 @@ private:
     // A chat line that named a code: the sim codes go out as Cmd::PowerCode, Radar
     // and MakePoster act here. Nothing while the match has POWER CODES off.
     void powerCode(const tak::sim::PowerCodeInput& in);
-    void systemChat(const std::string& text) { gameChat_.push_back({std::string(), text, 0, true}); }
+    // A local system line. While this client's own +CODE line is on its way to the
+    // server and back, the lines it raised wait (heldSystemChat_) so they are drawn
+    // under the line that caused them; flushSystemChat releases them on the echo, or
+    // after kChatEchoWaitMs if the echo never comes.
+    void systemChat(const std::string& text) {
+        if (chatEchoMs_) heldSystemChat_.push_back(text);
+        else gameChat_.push_back({std::string(), text, 0, true});
+    }
+    void flushSystemChat() {
+        chatEchoMs_ = 0;
+        chatEcho_.clear();
+        for (auto& text : heldSystemChat_) gameChat_.push_back({std::string(), text, 0, true});
+        heldSystemChat_.clear();
+    }
+    static constexpr uint64_t kChatEchoWaitMs = 2000;
+    std::string chatEcho_;                     // the +CODE line awaiting its echo
+    uint64_t chatEchoMs_ = 0;                  // when it was sent (0 = none awaited)
+    std::vector<std::string> heldSystemChat_;
     // The chat composer's Enter: a +CODE line acts when the match has POWER CODES on,
     // and every line is sent as chat.
     void submitChat(const std::string& line);
