@@ -1105,6 +1105,16 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100 idle-50x50 --data "${TAK_TEST_DATA}"
                    --offsets 0,1,-1 --max scale.arrive.t99=3650 --min scale.arrive.t99=1)
   set_tests_properties(legion_flowshuffle_idle PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # Room at a merge (2026-10-20, Legion ~100 round 4): a formation descending into a ragged convex corner packed into
+  # the wedge beside one moving file, and the corner's front bodies waited 1,000+ ticks for a gap in it. Members passing
+  # (or about to pass) a queue head held 60 ticks move over a lane instead. corner-1x100 at offsets 0, 1, -1: no body
+  # stands 900 ticks, stopped permille at most 245 and t90 at most 4,100 (the previous commit 28-36 bodies, 267-282
+  # and 4,157-4,367; now 0, 221-238 and 3,888-4,013).
+  add_test(NAME legion_cornermerge
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100 corner-1x100 --data "${TAK_TEST_DATA}"
+                   --offsets 0,1,-1 --max still900_ever=0 --max stopped_permille=245 --max g.A.t90=4100 --min g.A.done=1)
+  set_tests_properties(legion_cornermerge PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison

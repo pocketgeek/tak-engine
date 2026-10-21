@@ -4147,6 +4147,127 @@ offsets -2..2. The stall at 60 ticks (`gap10-100` t90 +7%, `wall-4x50` C/D t90 +
 swaps) were worse. Without the slots-by-lane exchange `wall-4x50`'s B was done at 7 offsets, but `gap10-100` done +3%
 and the top gate 14 swaps.
 
+### Room at a merge: the corner funnel, round 4 (2026-10-20, task-l4-funnelB)
+
+The target was the single file at `corner-1x100`'s corner (tools/scenarios/legion100: block A with stray rocks 1-3
+cells off its top and west faces; the way meets A's top-left corner diagonally, runs along A's top, then turns round
+wall B's south end): Legion stopped permille 267 against Retail's 1, front bodies waiting 1,000+ ticks to merge into
+the file, `corner-4x25` 251 against 1, without giving back the arrival lead (t90 4,187 against Retail's 5,084) or more
+than 3% of t90 or done on `corner-1x100`, `corner-4x25`, `island-1x100`, `gap10-100`, `gap20-100`, `idle-50x50`,
+`many-100`, `strait-2x100`, `swap-100` and `maze-100`. This track's direction was the merging and hold rules.
+
+**Retail first.** Retail has no merge rule: each body follows its own path to its own formation offset, a blocked
+body clamps, slows and presses on. Its bodies never converge on one line: at offset 0 they cross the column x = 90 over
+A's top on rows 18 to 47 (Legion: 72 of 100 in one row, the first clear of the face's rocks), 51 of them in the
+300 ticks after tick 900, and none queues. It is slower over the whole way (t90 5,084).
+
+**The cause** (offset 0; positions every 10 ticks, and every hold's blocking bodies with their state and speed, a
+debug trace kept as the `hold` TRACE line). The formation reaches the corner at tick 599 as a block (x 47-80, z 55-74)
+whose north edge is the shortest line past the corner, origin row 55. Its north rows walk that line east in one file;
+every other body descends into the wedge between the line and the rock comb on A's west face, and packs there (a
+lattice of held bodies, x 60-79, z 57-72, from tick 600 to 1,800). The corner's front bodies have one legal way down,
+north into the file (the rocks close east and north-east): body 50 at origin (77,57) asked for (77,56) on every update
+from tick 561 to 1,839, refused each time by a file body, moving or stopped. The file is a stop-and-go queue (1.1 px a
+tick at x 60-80, a third of its samples held behind the body ahead), and it is fed at its open upstream end: after the
+16 bodies already on the line, the next to pass the corner were 22, 32, 41, 51, 31, 61, 71, 81 -- the crowd's rear, which
+stood at x 46-61 at tick 599 and stepped north onto the line at x 54-60, where nobody passes. The front bodies (50, 40,
+30, 60, 80) passed last, at 1,899-1,969. Nothing in the hold rules favours them: a moving body never makes room, the
+yield rules ask only settled bodies, and a local detour routes through moving bodies and is dropped after 30 held
+ticks. One file passes the corner about every 30 ticks (8-13 per 300 until tick 1,500), the crowd behind it waits, and
+the rows north of the line (z 53 and up) stay empty all the while. Turn B's "pocket among the stray rocks" is the east
+end of this lattice: its bodies are the inner files, queued behind the front. (A second, smaller loss is the pinwheel
+at (82,55): 54 of the 100 bodies rank there for the turn at A's far corner and aim 18 cells north for one cell, so each
+turns north and back at the facing cap, 5-10 ticks each; that is turn work, not changed here.)
+
+**The change: room at a merge** (`makeRoom`, `queueHead`, `Member::want`). A held formation member on a move-like leg
+whose every way down the field is covered by members of its group that have waited less than it -- a stream passing,
+or its own queue behind -- heads its queue and records the origin it is blocked from (hashed; indexed in `wants`).
+Once it has waited `kRoomHeld` (60) ticks, a member of its group that passes it -- moving, outside twice its
+destination area's bound, its step this update leading on within `kRoomLook` (24) origins onto that origin -- moves
+over a lane instead: one step forward and outward (or straight outward), away from the head, no higher on the field,
+as a committed flow shuffle at travel speed. The head steps into the lane the passer left, and the passers walk the
+next lane out, so the file past the corner becomes lanes. Passage admissions, head-on meets and passage lanes keep
+their own lanes. Retail is untouched (hash-identical: corner-1x100 and corner-4x25 at offsets 0, +1, -1; the
+`--mpai` Inner Circle game, seed 1, 60 s, keeps Retail `b353410003e98dd5` and Legion `0825aeb9e8139203`).
+
+**Preempting** (the user's idea: shape the stream before the corner is in a body's own look-ahead). The route ahead is
+known static terrain (Legion plans on the whole plane; fog is local display and nothing here reads it), so a passer
+reads the head's want 24 origins ahead along its step and moves over before it gets there. That look-ahead is most of
+the effect: at `kRoomHeld` 60, gate medians (t90 and done against 30813a73, then stopped permille):
+
+| look-ahead (origins) | corner-1x100 (standing 267) | corner-4x25, group means (standing 251) | corner-1x448 t90, group mean |
+|---|---|---|---|
+| 1 (the next origin only) | +0.0% / -0.8% / 264 | -2.6% / -0.7% / 235 | -4.8% |
+| 12 | -6.4% / -4.8% / 225 | -6.1% / -4.7% / 215 | -10.5% |
+| 24 (kept) | -5.4% / -6.5% / 232 | -8.0% / -7.1% / 216 | -12.1% |
+
+**Measured** (Legion, Windows, offsets -8..8, corner fixtures -4..8, `corner-1x448`, `corner-8x56` and
+`strait-2x100` at their gate offsets; medians; hashes equal to Linux):
+
+| fixture | key | 30813a73 | room at a merge | Retail |
+|---|---|---|---|---|
+| corner-1x100 | g.A.t90 / done / stopped permille | 4,176 / 4,837 / 261 | 3,962 / 4,561 / 232 | 5,084 / 5,547 / 1 |
+| corner-1x100 | bodies still 900 ticks (still900_ever) | 4 | 0 | |
+| corner-4x25 | t90 / done (mean of the groups' medians) / standing | 3,813 / 4,127 / 251 | 3,552 / 3,806 / 217 | |
+| corner-4x50 | t90 / done (group mean) / standing / still900 | 5,758 / 6,596 / 390 / 65 | 5,161 / 5,790 / 359 / 10 | |
+| corner-8x56 | t90 / done / standing / top crossings | 6,644 / 7,663 / 544 / 7 | 6,333 / 7,069 / 522 / 11 | |
+| corner-1x448 | t90 / done / standing / top crossings | 6,992 / 8,357 / 581 / 26 | 6,166 / 7,772 / 546 / 28 | |
+| gen1-route-36057 | g_zonter t90 / done / standing / still900 | 7,926 / 8,556 / 238 / 67 | 7,341 / 7,935 / 201 / 3 | |
+| gen1-route-45941 | g_zonter t90 / done / standing / still900 | 8,035 / 8,926 / 237 / 45 | 7,572 / 8,453 / 205 / 0 | |
+| gen1-route-65845 | g_zonter t90 / standing / still900 | 8,286 / 197 / 46 | 7,701 / 166 / 0 | |
+| sbend | t90 / done / t2 crossings | 3,126 / 3,547 / 26 | 2,927 / 3,262 / 17 | |
+| island-1x100 | t90 / done / lane crossings | 1,937 / 2,477 / 233 | 1,952 / 2,480 / 236 | |
+| gap10-100, gap20-100 | t90 | 2,387, 2,218 | 2,367, 2,236 | |
+| strait-2x100 | g.B.t90 / done | 2,057 / 2,667 | 2,095 / 2,578 | |
+| idle-50x50, many-100, swap-100, maze-100 | arrival t90 | 3,270, 687, 7,527, 8,290 | equal | |
+
+The merge waits themselves, from the hold trace (the longest run of updates a body is held with a moving body among
+its blockers; offsets 0, +1, -1): `corner-1x100` 705-938 -> 301-390 ticks, bodies over 500 ticks 11-18 -> 0;
+`corner-4x25` 587-718 -> 357-507, over 500 6-12 -> 0-1. The longest standing of any body on its way (every 10 ticks)
+falls from 1,230-1,510 to 750-830 on `corner-1x100`: those are the inner files' queue inside the rock comb, not merges.
+In the legion100 regression screen (all 23 fixtures, gate offsets) the largest moves elsewhere are `mixed-100`'s T3
+done (+3.1%) and `doorplug100-124`'s A t90 (+2.9%). `ctest:legion_cornermerge` (corner-1x100 at 0,
++1, -1: nobody still 900 ticks, stopped permille at most 245, t90 at most 4,100; the parent 28-36, 267-282 and
+4,157-4,367).
+
+**What it costs.** `wall-4x50` (four orders of 50 round a wall end to one point): groups A and B finish later (done
+medians 2,280 -> 2,387 and 2,828 -> 3,108) while more groups finish at all (36 -> 31 of 68 group-offsets never done);
+`gen1-route-54772`'s worst group done +4%; `corner-8x56`'s top crossings 7 -> 11 and `island-1x150`'s lane crossings
+309 -> 318. One `legion_cost` entry moved: cost-corner N200 trace cells 4,646,605 -> 4,725,163 (+1.7%, the passers
+walk more distinct origins, each a straight-line probe; the old band was already within 1%); whole-run Legion work
+N400 9,546,699 -> 9,380,028. The standing is down 11-14% on the corners, not to Retail's: the crowd still packs into
+the wedge before the corner, and the corner's head still passes in one file.
+
+Rejected on the way (gate medians on Linux unless said; each switched by a debug variable, none kept):
+
+* *A zipper* (a moving body does not step into the origin a queue head held 20 ticks waits for): the stream stops for
+  each merge, as round 3's yield did; the longest standing stays 1,240-1,950 ticks (bodies over 500: 13-38 against
+  44-52), t90 4,148-4,553 against 4,157-4,502 -- the crowd behind still drains through one file.
+* *Moving over for any held body* (no head test, 10 ticks, no look-ahead): `corner-1x100` t90 -7.5%, standing 217;
+  `many-100` arrival t90 +10.6% and `gap10-100` done +4.5%. With the head test and no look-ahead: -4.4% / 232.
+* *A 10-tick head with a 12-origin look-ahead* (the first candidate, branch task-l4-funnelB-c3): the best corner
+  numbers on the wide sweep (`corner-1x100` t90 -9.4%, done -7.9%, standing 261 -> 198; `corner-4x25` -12%;
+  `corner-4x50` -20%; the generated maps -9..-10%; worst `wall-4x50` A done +4.7%), but two round-2 checks fail:
+  `ctest:legion_mixedformation` (its 20 ground bodies at their wall end 2,315 -> 2,609 ticks, a flyer stalls one
+  window) and `ctest:legion_landedflyers` (the 3x3 block's stand median 389 against the bound 276; the 2x2 block's
+  1,760 -> 1,102). Moving over for 10-tick holds acts on the ordinary stop and go of a crowd. 30 and 45 ticks with
+  24 origins: `ctest:legion_flowshuffle` (island-1x100 done 3,106 > 3,000 at one offset) and, at 45,
+  `ctest:legion_lonetrees` (two to-and-fro runs) fail; at 45 `gap10-100` done +5.8% (wide). 50/32 passes the checks
+  but `island-1x100` done +5.3%.
+* *No moving over while on a pinwheel arc* (it fixes mixedformation at 10 ticks): `wall-4x50` B done +42% (wide).
+* *Only heads pinned against terrain* (a statically closed neighbour): landedflyers as the parent, but `corner-1x100`
+  t90 -6.2% and `gap10-100` done +4.7%, `wall-4x50` +8% (wide).
+* *Keeping the new lane* (for 200 ticks a passer that moved over does not flow back inward): island-1x100 crossings
+  -29..-56, but `wall-4x50` done +7%, `uturn` +6.7% (wide).
+* *A yield when there is no room to move over*, *four times the destination area*, *a second free lane outward* and
+  *no moving over next to a body outside the navigator*: no better, or no effect.
+* *The pinwheel off* (a measurement): the file passes at a steady 12-14 per 300 ticks, all on one row, the last body at
+  3,079 against 2,899 -- the ranks are what put a few bodies on outer rows late in the base run.
+
+What is left: merge waits of 300-500 ticks (the ~200 aimed at is not met), the crowd's packing before the corner
+(standing 232 against Retail's 1; lanes formed before the corner, or a clearance cost on the field that keeps the inner
+files out of the rock comb, are the other directions), and the pinwheel's one-cell aim at (82,55).
+
 ### Legion 10,000: where the program left it
 
 docs/legion-10000-report.md gives the measured result against the starting revision c2c25707:
@@ -4320,6 +4441,10 @@ Rules that came out of using them:
   Round 4's ribbon does not reach it: the file forms in open ground where the
   octile descent climbs onto the line along the block's top, before any turn
   is in the bodies' look-ahead (standing 268 permille).
+  Round 4's room at a merge does ("Room at a merge"): members passing a
+  queue head held 60 ticks move over a lane: corner-1x100 standing 261 -> 232 (wide sweep),
+  merge waits 705-938 -> 301-390 ticks; the crowd still packs into the
+  wedge before the corner, measured by `ctest:legion_cornermerge`.
 * **A narrow passage's waiting crowd stands on the other way's exit apron.**
   Until 2026-10-20 a head-on knot in a bridge's mouth was a matter of timing
   (`taperbridge-100` +1: 19 of 100 arrived): every turn of the passage put the

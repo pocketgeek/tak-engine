@@ -217,6 +217,14 @@ constexpr int kPivotSweeps=48;                 // line probes per pivot aim (bou
 constexpr int kPivotAhead=4;                   // an arc aim is at least this many descent cells ahead
 constexpr int kPivotNear=32;                   // no pinwheel within this many cells of the destination
 constexpr int kPivotLead=6;                    // pursuit distance along the arc (cells)
+// Room at a merge (Legion ~100 round 4, see makeRoom): a queue head held kRoomHeld ticks or more is given room by
+// the members of its group passing it; a passing member reads kRoomLook origins ahead along its step; a
+// head's recorded want stays readable kRoomFresh ticks (a rested holder decides every kRestStride ticks); and a
+// member within kRoomArea times its destination area's bound does not move over (its crowd packs into slots).
+constexpr uint32_t kRoomHeld=60;
+constexpr int kRoomLook=24;
+constexpr uint32_t kRoomFresh=2;
+constexpr uint32_t kRoomArea=2;
 // The lanes' stated region (stage 5): the key past a body that the passage
 // gate (its chain to kGateCommit + kGateRun + 3 cells), the passage lanes
 // (kGateRun along the strip) and the pinwheel (kPivotChain cells of chain,
@@ -919,6 +927,9 @@ struct LegionNavigator::Impl {
         // only the detour, yield, part and side-step back-offs read it.
         uint32_t heldSince=kNoTick,stallTick=0,progress=0xffffffffu;
         uint32_t holdUpdates=0;
+        // Room at a merge (makeRoom): the origin this held member heads a queue for -- every body covering a
+        // way down from it has waited less than it -- and the tick it last found so; -1 none. Hashed while set.
+        int want=-1;uint32_t wantTick=0;
         // The measure `progress` is in (see move): 1 the potential x64 of the
         // field whose serial is progressSerial, 2 squared cells to the own
         // goal (0: none yet). A new measure re-baselines progress without
@@ -1280,7 +1291,9 @@ struct LegionNavigator::Impl {
     void putMember(int id,const Member& m) {
         auto& slot=members[id];const uint16_t hadCells=slot.ptCells;
         if(slot.claimAt!=m.claimAt)releaseClaim(id,slot);
+        if(slot.want!=m.want)setWant(id,slot,-1);
         slot=m;slot.ptCells=hadCells;
+        if(slot.want>=0)wants.insert({slot.want,id});   // a copy that carries a want keeps its index entry
         markPass(id);
         if(slot.pt) {
             auto& ids=slot.pt->ids;
@@ -1385,6 +1398,9 @@ struct LegionNavigator::Impl {
     // An index of the members' claims, kept by updateClaim and releaseClaim (leave, putMember); never hashed (the
     // claims are).
     std::set<std::pair<int,int>> claims;
+    // Queue heads waiting for room (see makeRoom): (want origin cell, member id) for every member whose
+    // Member::want is set. An index kept by setWant (leave, putMember); never hashed (the wants are).
+    std::set<std::pair<int,int>> wants;
     static constexpr uint8_t kMaxYields=3;
     // ---- static bodies (soft obstacles) ---------------------------------
     // The route field is static terrain only, so a standing block of bodies
@@ -3335,6 +3351,7 @@ struct LegionNavigator::Impl {
         if(found==members.end())return;
         if(found->second.passLabel)clearPass(id,found->second);
         releaseClaim(id,found->second);
+        setWant(id,found->second,-1);
         if(const auto* u=w.unit(id);u&&u->type&&found->second.slot>=0&&found->second.state!=Arrived)
             slotCells(found->second,u->type->footX,u->type->footZ,false);
         if(auto point=points.find(found->second.point);point!=points.end()) {
@@ -11054,6 +11071,23 @@ struct LegionNavigator::Impl {
     };
     const char* dbgWhy="";   // why the last requestYield refused (trace only)
     bool dbgRefusal=false;   // a requestYield refused for a spent yield budget or no free cell (A2's refusal)
+#ifndef NDEBUG
+    // Trace only: the bodies covering the footprint at origin (x,z) for u, as id:state:speed (px x100).
+    std::string dbgOccupants(const Unit& u,int x,int z) const {
+        std::string out;std::vector<int32_t> seen;
+        for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
+            const int cx=x+i,cz=z+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            if(!o||o==u.id||std::find(seen.begin(),seen.end(),o)!=seen.end())continue;
+            seen.push_back(o);
+            const Unit* other=w.unit(o);const Member* pm=member(o);
+            out+=std::to_string(o)+":"+std::to_string(pm?int(pm->state):-1)+":"+
+                 std::to_string(other?int(int64_t(other->speed.v)*100>>16):-1)+" ";
+        }
+        return out;
+    }
+#endif
     static bool traced(int id) {
         return !gTrace.empty()&&(std::find(gTrace.begin(),gTrace.end(),id)!=gTrace.end()||std::find(gTrace.begin(),gTrace.end(),-1)!=gTrace.end());
     }
@@ -12447,6 +12481,8 @@ struct LegionNavigator::Impl {
                 }
             }
             if(!moved&&corner)moved=cornerStep();
+            // Room at a merge: a held body heading its queue records the origin it waits for (see makeRoom).
+            if(!moved)setWant(u.id,m,f&&roomKind(m)&&queueHead(u,m,p,f,ox,oz)?nz*W+nx:-1);
             if(!moved) {
                 if(contactRefused!=&m&&contactArrival(u,m)) {complete(u,m,true);return;}
                 if(f&&m.detour<0)sidestep(u,m,p,f,ox,oz,nx,nz);
@@ -12479,9 +12515,21 @@ struct LegionNavigator::Impl {
                 if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=12&&partLane(u,m,p,ox,oz,nx,nz)) {hold(u,m);restartHold(m);return;}
                 if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=kGiveWayHeld&&giveWay(u,m,p,f,ox,oz)) {hold(u,m);restartHold(m);return;}
                 if(passFiltered)++stats.passFilterHolds;
+#ifndef NDEBUG
+                if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d hold at=(%d,%d) want=(%d,%d) corner=%d by=[%s] held=%u head=%d\n",
+                    w.tickCounter_,u.id,ox,oz,nx,nz,int(corner),dbgOccupants(u,nx,nz).c_str(),heldFor(m),int(m.want>=0));
+#endif
                 hold(u,m);return;
             }
         }
+        // Room at a merge: a step toward the origin a queue head of the group waits for moves over instead.
+        if(!wants.empty()&&!pass&&f&&(nx!=ox||nz!=oz)&&roomKind(m)&&!m.passLabel&&!(m.pt&&m.pt->meet.tick!=kNoTick)&&
+           m.site!=LegionNavigator::SiteGate)
+            if(const auto turn=makeRoom(u,m,p,f,ox,oz,nx-ox,nz-oz,speed)) {
+                std::tie(sx,sz)=std::pair{turn->first,turn->second};
+                nx=footprintOrigin(u.x+sx,fx);nz=footprintOrigin(u.z+sz,fz);face=false;
+            }
+        if(m.want>=0)setWant(u.id,m,-1);
         u.speed=speed;
         const Fixed beforeX=u.x,beforeZ=u.z;
         w.commitGroundStep(u,sx,sz,true);
@@ -12507,6 +12555,122 @@ struct LegionNavigator::Impl {
         // A reach member leaving its ring spot, or a member leaving a jam (stage 7), is no soft obstacle any more.
         if(m.state==Holding)unstamp(u.id);
         m.state=Moving;m.heldSince=kNoTick;m.holdUpdates=0;
+    }
+    // Room at a merge (Legion ~100 round 4, 2026-10-20). A formation descending its field into a convex corner
+    // packs into the wedge between the corner and the shortest line past it: its outer files walk that line in
+    // one moving file, and the bodies beside it, their other ways down closed by the corner's rocks or by the
+    // crowd, wait for a gap in a file that has none (corner-1x100: the corner's front bodies held 1,100-1,500
+    // ticks while the crowd's rear joined the file at its open upstream end). A held member whose every way down
+    // is covered by bodies that have waited less than it (queueHead: a stream passing, or its own queue behind)
+    // heads its queue and records the origin it was blocked from (Member::want, indexed in `wants`). A member of
+    // its group passing it -- held less long, outside its destination area, its step this update leading on
+    // within kRoomLook origins onto that origin -- once the head has waited kRoomHeld ticks moves over a lane
+    // instead: one step forward and outward (or straight outward), away from the head, no higher on the field,
+    // a committed flow shuffle at travel speed (Member::detourFlow). The head steps into the lane the passer
+    // left; the passers walk the next lane out, so the file becomes lanes and the head never waits for a gap.
+    // It reads ahead: the passer moves over up to kRoomLook origins before it reaches the head (the route ahead
+    // is known); read only on its next origin, the rule did almost nothing (corner-1x100 t90 +0.0% against -5.4%,
+    // gate medians). A head is given room only after kRoomHeld ticks: shorter waits are the ordinary stop and go
+    // of a moving crowd, and moving over for them (10 ticks) slowed legion_mixedformation's 20 ground bodies at
+    // their wall end by 13% and stood landedflyers' stream against the flyers longer.
+    // Not inside a passage admission, a head-on meet or a passage lane, which keep their own lanes.
+    bool roomKind(const Member& m) const {return policy(m.kind).completes&&!engagesEnemies(m.kind)&&formationMember(m);}
+    void setWant(int id,Member& m,int cell) {
+        if(cell>=0)m.wantTick=w.tickCounter_;
+        if(m.want==cell)return;
+        if(m.want>=0)wants.erase({m.want,id});
+        m.want=cell;
+        if(cell>=0)wants.insert({cell,id});
+    }
+    // Does this held body head its queue: is every body covering one of its legal steps down the field a member
+    // of its group (not settled, trapped or engaged) that has been held less long than it -- at least one such?
+    bool queueHead(const Unit& u,const Member& m,const Plane& p,RouteView f,int ox,int oz) const {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const uint32_t here=f.estimate(size_t(oz*W+ox));
+        if(here==kUnreached)return false;
+        const uint32_t mine=heldFor(m);
+        bool any=false;
+        for(const auto& d:kDirections) {
+            if(!step(p,ox,oz,d[0],d[1]))continue;
+            const uint32_t v=f.estimate(size_t((oz+d[1])*W+ox+d[0]));
+            if(v==kUnreached||v>=here)continue;
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+                const int cx=ox+d[0]+i,cz=oz+d[1]+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+                if(!o||o==u.id)continue;
+                const Member* peer=member(o);
+                if(!peer||peer->group!=m.group||peer->state==Arrived||peer->state==Trapped||peer->state==Engaged)return false;
+                if(peer->state==Holding&&heldFor(*peer)>=mine)return false;
+                any=true;
+            }
+        }
+        return any;
+    }
+    // The move-over step (see above) of a member at (ox,oz) whose step this update changes its origin by
+    // (sx,sz): the step's proposal (16.16) if it moves over, else nothing. Commits the shuffle (Member::detour)
+    // when it does.
+    std::optional<std::pair<Fixed,Fixed>> makeRoom(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz,
+                                                   int sx0,int sz0,Fixed speed) {
+        const int W=width(),H=height(),fx=u.type->footX,fz=u.type->footZ;
+        const int tx=std::clamp(sx0,-1,1),tz=std::clamp(sz0,-1,1);   // the step's direction
+        if(!tx&&!tz)return std::nullopt;
+        const uint32_t level=f.estimate(size_t(oz*W+ox));
+        if(level==kUnreached)return std::nullopt;
+        {
+            const auto g=groups.find(m.group);
+            if(g==groups.end()||uint64_t(level)<=uint64_t(kRoomArea)*areaBound(g->second,m,fx,fz,int64_t(std::max(fx,fz))*16))
+                return std::nullopt;
+        }
+        // The look-ahead: origins (ox,oz)+j*(tx,tz), j = 1..reach, up to the first statically illegal one.
+        int reach=0;
+        while(reach<kRoomLook&&legal(p,ox+tx*(reach+1),oz+tz*(reach+1)))++reach;
+        if(!reach)return std::nullopt;
+        // The nearest head along it: least j whose origin newly covers its want (the walk's own origin does not).
+        // A group is one plane, so the head's footprint is this body's.
+        auto covers=[&](int want,int x,int z) {const int wx=want%W,wz=want/W;return std::abs(x-wx)<fx&&std::abs(z-wz)<fz;};
+        const int x0=std::min(ox+tx,ox+tx*reach),x1=std::max(ox+tx,ox+tx*reach);
+        const int z0=std::min(oz+tz,oz+tz*reach),z1=std::max(oz+tz,oz+tz*reach);
+        int bestJ=0,want=-1;
+        for(int zz=std::max(0,z0-fz+1);zz<=std::min(H-1,z1+fz-1);++zz)
+            for(auto it=wants.lower_bound({zz*W+std::max(0,x0-fx+1),INT_MIN});it!=wants.end()&&it->first<=zz*W+std::min(W-1,x1+fx-1);++it) {
+                if(it->second==u.id||covers(it->first,ox,oz))continue;
+                const Member* peer=member(it->second);
+                if(!peer||peer->want!=it->first||peer->group!=m.group||peer->state!=Holding)continue;
+                if(w.tickCounter_-peer->wantTick>kRoomFresh||heldFor(*peer)<kRoomHeld||heldFor(*peer)<=heldFor(m))continue;
+                for(int j=1;j<=reach&&(!bestJ||j<bestJ);++j)
+                    if(covers(it->first,ox+tx*j,oz+tz*j)) {bestJ=j;want=it->first;break;}
+            }
+        if(want<0)return std::nullopt;
+        const int wx=want%W,wz=want/W;
+        // Outward: across the travel octant, away from the head's want (none when it lies straight ahead).
+        int px=-tz,pz=tx;
+        const int64_t side=int64_t(px)*(ox-wx)+int64_t(pz)*(oz-wz);
+        if(!side)return std::nullopt;
+        if(side<0) {px=-px;pz=-pz;}
+        const std::array<std::array<int,2>,2> steps{{{std::clamp(tx+px,-1,1),std::clamp(tz+pz,-1,1)},{px,pz}}};
+        for(const auto& d:steps) {
+            const int cx=ox+d[0],cz=oz+d[1];
+            if(covers(want,cx,cz))continue;
+            if(!step(p,ox,oz,d[0],d[1])||!stepFree(u,ox,oz,cx,cz))continue;
+            const uint32_t v=f.estimate(size_t(cz*W+cx));
+            if(v==kUnreached||v>level)continue;
+            const auto [ax,az]=stepAim(u,cz*W+cx);
+            const int64_t sdx=int64_t(ax.v)-u.x.v,sdz=int64_t(az.v)-u.z.v;
+            const int64_t length=isqrtFloor(uint64_t(sdx*sdx+sdz*sdz));
+            if(!length)continue;
+            const int64_t travel=std::min<int64_t>(speed.v,length);
+            const Fixed sx=Fixed::raw(int32_t(sdx*travel/length)),sz=Fixed::raw(int32_t(sdz*travel/length));
+            if(!stepFree(u,ox,oz,footprintOrigin(u.x+sx,fx),footprintOrigin(u.z+sz,fz)))continue;
+            m.detour=cz*W+cx;m.detourTicks=0;m.detourFace=false;m.detourPass=false;m.detourFlow=true;m.slideCell=-1;
+            ++stats.slides;
+#ifndef NDEBUG
+            if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d make-room want=(%d,%d) ahead=%d at=(%d,%d) to=(%d,%d)\n",
+                                         w.tickCounter_,u.id,wx,wz,bestJ,ox,oz,cx,cz);
+#endif
+            return std::pair{sx,sz};
+        }
+        return std::nullopt;
     }
     // A hold that starts over (a detour planned, a lane asked for): the
     // clocks run from the next tick, as a hold begun by the next update
@@ -13504,6 +13668,7 @@ struct LegionNavigator::Impl {
             h=mix(h,m.rest);if(m.rest) {h=mix(h,uint32_t(m.restX));h=mix(h,uint32_t(m.restZ));h=mix(h,uint32_t(m.restHp));h=mix(h,m.restEpoch);h=mix(h,m.restRing);}
             if(m.bend) {h=mix(h,0x62656e64ull);h=mix(h,uint32_t(m.bendX));h=mix(h,uint32_t(m.bendZ));}
             if(m.pressX!=kNoPress) {h=mix(h,0x7072657373ull);h=mix(h,uint32_t(m.pressX));h=mix(h,uint32_t(m.pressZ));h=mix(h,m.pressTicks);}
+            if(m.want>=0) {h=mix(h,0x77616e74ull);h=mix(h,uint64_t(uint32_t(m.want)));h=mix(h,m.wantTick);}
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);if(m.detourFlow)h=mix(h,0x666c6f77ull);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillSince);
             if(m.windowGoal>=0) {h=mix(h,0x77736c6f74ull);h=mix(h,uint64_t(m.windowSlotDist));h=mix(h,uint64_t(uint32_t(m.windowGoal)));}
