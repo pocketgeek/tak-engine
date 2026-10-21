@@ -740,7 +740,8 @@ bodies: rings round still targets, passage greens that scale with the crossing
 with small groups queueing, and corridor-mouth funnel claims (Legion only).
 Protocol 283 is the fourth: lane order kept through turns, deeper rings along
 walls, fight and guard members round still targets, and room at a corner's
-merge (Legion only).
+merge (Legion only). Protocol 284 adds the lobby seat move (`MoveSeat`) with an
+unchanged simulation; 0.8.7 ships protocol 284.
 Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
@@ -995,6 +996,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.8.6 (peers and server) requires protocol 281; 0.8.5 required 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.8.7 (peers and server) requires protocol 284; 0.8.6 required 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

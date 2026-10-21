@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.6** (network protocol **281**, replay format
+This guide covers **TAK Engine 0.8.7** (network protocol **284**, replay format
 **13**). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -13,6 +13,8 @@ This guide covers **TAK Engine 0.8.6** (network protocol **281**, replay format
 
 If you only want to get going, read [Installing](#installing), [Game data](#game-data)
 and [Your first skirmish](#your-first-skirmish), then come back to the rest.
+For the controls, hotkeys and mouse actions on one page, with pictures, see the
+[quick-start controls reference](quick-start.md).
 
 ## Contents
 
@@ -264,7 +266,7 @@ change in the room, until the game starts.
 | **Double Sight/Radar** | Doubles every unit's sight and radar range. Weapon range is unchanged. |
 | **Monarch Expendable** | **Off** (the original rule): losing your Monarch loses the game. **On**: the Monarch is an ordinary unit and you lose only when everything is gone. |
 | **Fog of war** | **Not Explored**: the map starts hidden. **Explored**: the map starts revealed but enemies are hidden outside your sight. **Full Vision**: no fog. Terrain you have seen stays visible after your units leave. |
-| **Start locations** | **Fixed** gives the occupied slots the map's start positions in order, top slot first. Empty slots are skipped, as in the original game: a player in slot 1 and an AI in slot 8 start at positions 1 and 2. **Random** shuffles them. **By slot** always starts slot N at the map's position N, empty slots or not: slots 1 and 8 start at positions 1 and 8. It is not in the original game. A room normally opens one slot per position; a slot without a position of its own takes the lowest position that no occupied slot has by number, or a spot near the map centre, and the room shows which under the player's name. |
+| **Start locations** | **Fixed** gives the occupied slots the map's start positions in order, top slot first. Empty slots are skipped, as in the original game: a player in slot 1 and an AI in slot 8 start at positions 1 and 2. **Random** shuffles them. **By slot** always starts slot N at the map's position N, empty slots or not: slots 1 and 8 start at positions 1 and 8. It is not in the original game. In the room, a player picks a slot, and so a start, with **Move here** (0.8.7). A room normally opens one slot per position; a slot without a position of its own takes the lowest position that no occupied slot has by number, or a spot near the map centre, and the room shows which under the player's name. |
 | **Unit cap** | The most units each player may have alive: 250, 500, 1,000 or 2,000 (the default). Production pauses at the cap. |
 | **Allow speed change** | Lets the host change game speed during the match, from −9 (0.1×) to +10 (2×). |
 | **Pathfinding** | **Retail** (the default) or **Legion**. See [Pathfinding](#pathfinding-retail-and-legion). |
@@ -1057,7 +1059,7 @@ armies:
   a wall, it swings round in several ranks instead of narrowing to single file.
   It drops to single file only when the gap really is too narrow. A single tree
   or rock (or a small clump) is not a wall end: the group walks past it. A wood
-  too dense to walk through still is. Units now keep their places side by side
+  too dense to walk through still is. Since 0.8.7 units keep their places side by side
   through a turn instead of crossing over each other's lanes, and a crowd
   squeezing round a corner merges faster: units walking past one that has
   waited a while move over a lane to let it in, instead of filing past it.
@@ -1114,7 +1116,7 @@ armies:
   reach steps in until it can fire, a target in a walled-off place is still
   surrounded from outside its walls, and a group walking past another group's
   firing ring splits round both sides of it. Units chasing a moving target
-  follow it without planning again at every step. Units round a target that
+  follow it without planning again at every step. Since 0.8.7 units round a target that
   is standing still no longer creep along the ring, and a target walled in on
   every side is now fired on from the nearest spots against its walls. A ring
   along a wall is deeper: units that find no place at the front wait just
@@ -1124,9 +1126,9 @@ armies:
 - **Narrow crossings take turns.** At a bridge or other narrow crossing, the
   time each group is let through grows with the length of the crossing, and a
   small group waits its turn instead of pushing in among a big one. Two armies
-  of about 100 meeting head on at a bridge no longer jam in tests.
+  of about 100 meeting head on at a bridge no longer jam in tests (0.8.7).
 - **Dead-end corridors.** Groups sent into a corridor one unit wide are let in
-  one at a time and settle along it instead of jamming at its mouth.
+  one at a time and settle along it instead of jamming at its mouth (0.8.7).
 - **Buildings do not hold a formation.** A building or an unfinished unit in an
   Alt+number formation no longer slows the formation to a standstill.
 - **No spinning.** A unit that is truly trapped stops and waits, instead of
@@ -1166,8 +1168,11 @@ in a formation or Ctrl+number group with ground units keep station over them.
   about a minute, until the crowd round it has packed.
 - A group walking through a ring of units that stand and fire arrives a
   little later than it would past the same units in the original game.
-- An attack ring along a wall stands thinner than in Retail, so fewer units
-  fire at once.
+- Legion units stand and wait in a crowd more than units in Retail do,
+  although they usually arrive sooner. In a few test layouts a group still
+  arrives a little later (under 5%) than in Retail.
+- An attack ring along a wall or round a gatehouse holds fewer units within
+  reach than in Retail, so fewer units fire at once.
 - When a group goes round a parked crowd, it can still pass by one side in a
   narrow file.
 - Idle units of **enemy** players do not step aside for you, nor do units
@@ -1437,7 +1442,7 @@ player's game stays in step.
 
 *A game room, here for a single-player game: player and AI slots, the map with each start marked in the colour of the player who starts there, override packs and the read-only match rules.*
 
-The host can open and close slots, add AIs and kick players. Any seated player, the host included, can move to an open slot with **Move here** until the game starts; closed, AI and taken slots cannot be moved to, and campaign missions and Crusades battles keep their seats. Match options are
+The host can open and close empty slots, add AIs and kick players (a slot with a player in it cannot be turned into an AI or closed; kick the player first). Any seated player, the host included, can move to an open slot with **Move here** until the game starts; closed, AI and taken slots cannot be moved to, and campaign missions and Crusades battles keep their seats. Match options are
 set when the game is created, except **Allow spectators**, which the host can
 click in the room's rules to turn on or off until the game starts. It lights up
 under the host's pointer; for everyone else it is read-only. See
@@ -1512,9 +1517,9 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.6 uses network protocol **281**. It cannot play with 0.8.5 (protocol
-278) or any earlier version: the server turns away a client whose protocol
-differs from its own, so a server and all of its players must update to 0.8.6
+Version 0.8.7 uses network protocol **284**. It cannot play with 0.8.6 (protocol
+281) or any earlier version: the server turns away a client whose protocol
+differs from its own, so a server and all of its players must update to 0.8.7
 together.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
@@ -1754,8 +1759,8 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.6 plays protocol-281 recordings only, so replays recorded by
-  0.8.5 or earlier need the version that recorded them);
+  recorded it (0.8.7 plays protocol-284 recordings only, so replays recorded by
+  0.8.6 or earlier need the version that recorded them);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -1899,7 +1904,7 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together.** A server only accepts clients of
-the same protocol version (0.8.6 uses protocol 281; 0.8.5 uses 278).
+the same protocol version (0.8.7 uses protocol 284; 0.8.6 uses 281).
 
 ---
 
@@ -2004,7 +2009,7 @@ the system's permission to use the microphone.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.6 uses protocol 281, 0.8.5 uses 278). See
+one that recorded them (0.8.7 uses protocol 284, 0.8.6 uses 281). See
 [Replays](#replays).
 
 ### Where files are kept

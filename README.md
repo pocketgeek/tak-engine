@@ -6,11 +6,11 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.8.6-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.8.7-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
-[Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [Map editor guide](docs/cartographer-guide.md) · [Build from source](docs/development.md)
+[Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [Quick-start controls](docs/quick-start.md) · [User guide](docs/user-guide.md) · [Map editor guide](docs/cartographer-guide.md) · [Build from source](docs/development.md)
 
 <a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.6"></a>
 
@@ -50,9 +50,47 @@ interface art, and sound directly from its installation.
 
 **You need your own copy of Total Annihilation: Kingdoms.** No retail game
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
-the GOG edition, supplies the game data.
+the GOG edition, supplies the game data. New players can start with the
+[quick-start controls reference](docs/quick-start.md).
 
-## New in 0.8.6
+## New in 0.8.7
+
+0.8.7 changes the simulation and the lobby, so the protocol moves to **284**:
+**0.8.7 cannot play with 0.8.6 or earlier, and cannot play their replays**.
+Update the server and every player together. Retail pathfinding plays exactly
+as in 0.8.6.
+
+- **Pick your seat in the lobby.** Every open slot in a single-player or
+  multiplayer room has a **Move here** button: click it to take that slot with
+  your side, colour, team and ready state, and your old slot opens. With
+  **Start locations: By slot** the slot is your start position, so this picks
+  where you begin. The host can move too. Campaign missions and Crusades
+  battles keep their seats. See
+  [your first skirmish](docs/user-guide.md#your-first-skirmish).
+- **Legion formations keep their lanes through turns.** A formation rounding a
+  corner keeps its units side by side instead of crossing over each other, and
+  a crowd squeezing round a corner merges much faster: units walking past one
+  that has waited move over a lane to let it in. Round a corner, Legion now
+  gets an army of 100 through clearly sooner than Retail.
+- **Legion attack, fight and guard rings round a still target.** Units round a
+  target that stands still no longer creep along the ring, a ring along a wall
+  stands deeper (units with no place at the front wait just behind it and step
+  in when they can fire), spots that are closed off are skipped, spare attackers take outer places, and a target
+  walled in on every side is fired on from the nearest spots against its walls.
+- **Legion bridges and corridors.** The time each group is let across a bridge
+  or narrow crossing grows with its length, small groups wait their turn
+  instead of pushing in, and groups sent into a corridor one unit wide go in
+  one at a time instead of jamming at its mouth. Two armies of about 100
+  meeting at a bridge no longer jam in the tests.
+
+Legion units still stand and wait in crowds more than Retail's, though they
+usually arrive sooner, and rings along walls hold fewer attackers in reach than
+Retail's. Saved `.kmp` maps, generated-map recipes and settings carry over. No
+new runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.8.7-notes.md) and
+[validation report](docs/release-0.8.7-validation.md).
+
+### Previously in 0.8.6
 
 0.8.6 changes the simulation, so the protocol moves to **281**:
 **0.8.6 cannot play with 0.8.5 or earlier, and cannot play their replays**.
@@ -812,6 +850,9 @@ for count definitions and monitoring details.
    or campaign to browse the missions.
 4. Pick your map, faction, opponents, and balance settings, then start playing.
 
+New to the game? The [quick-start controls reference](docs/quick-start.md)
+shows the mouse actions, hotkeys and orders on one page, with pictures.
+
 You can also supply the data folder explicitly:
 
 ```sh
@@ -931,7 +972,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.8.6 uses generator v9;
+the same named map when the game starts. Version 0.8.7 uses generator v9;
 v8 recipes still regenerate identically, older seed recipes are unsupported, and saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -939,7 +980,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.8.6 uses protocol **281** and generator version 9; generated-map recipes from 0.8.0 on still work.
+Version 0.8.7 uses protocol **284** and generator version 9; generated-map recipes from 0.8.0 on still work.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -1227,10 +1268,10 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same network protocol and compatible game data** on every participant.
-Version **0.8.6 uses protocol 281**, including authoritative pathfinding
+Version **0.8.7 uses protocol 284**, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
-0.8.5 (protocol 278) and earlier clients cannot join 0.8.6 matches, and
-0.8.6 clients cannot join older servers: update the server and all players together.
+0.8.6 (protocol 281) and earlier clients cannot join 0.8.7 matches, and
+0.8.7 clients cannot join older servers: update the server and all players together.
 Replay format is **13** (checkpoints also carry a position digest, and the header
 records the Map Scenario option), and
 playback requires the current simulation protocol. Older recordings need the engine that recorded them.
@@ -1447,7 +1488,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.8.6 uses protocol **281**; servers and clients must all run 0.8.6 (0.8.5 uses 278).
+Version 0.8.7 uses protocol **284**; servers and clients must all run 0.8.7 (0.8.6 uses 281).
 
 
 ## License
