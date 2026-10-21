@@ -22,7 +22,7 @@ int main(){
   put("overrides/Alpha/sounds/legacy.wav","legacy");put("overrides/Alpha/units/legacy.fbi","legacy");archive("overrides/click.hpi",{{"sounds/legacy-click.wav","legacy"}});put("overrides/OldPack/sounds/old.wav","old");
   auto snapshot=[&]{std::map<std::string,std::string> all;for(const auto& e:std::filesystem::recursive_directory_iterator(root/"overrides")){
     std::string bytes;if(e.is_regular_file()){std::ifstream in(e.path(),std::ios::binary);bytes.assign(std::istreambuf_iterator<char>(in),{});}
-    all[e.path().lexically_relative(root).generic_string()]=bytes+"|"+std::to_string(std::filesystem::last_write_time(e.path()).time_since_epoch().count());}return all;};
+    all[e.path().lexically_relative(root).generic_string()]=bytes+"|"+std::to_string(static_cast<long long>(std::filesystem::last_write_time(e.path()).time_since_epoch().count()));}return all;};
   const auto legacyBefore=snapshot();
   // Files directly in mods/, mods/cosmetic/ and mods/game/ are never packs.
   put("mods/root-only.wav","forbidden");put("mods/cosmetic/root-only.wav","forbidden");put("mods/game/root-only.wav","forbidden");
