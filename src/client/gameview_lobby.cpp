@@ -1239,8 +1239,9 @@ float createOptionPx(float maxW) {
         // this client's saved preferences. Keep every rule visible with 8 slots.
         y += 44;
         const SDL_Color infoColor{205,210,225,255};
-        // Six rows of two columns at a 16.5 pitch (POWER CODES is the sixth), above the
-        // MAP SCENARIO rules (from y+99) or a generated map's recipe (from y+98).
+        // Six rows of two columns at a 16.5 pitch (POWER CODES and MAP SCENARIO are the
+        // sixth), above a MAP SCENARIO's details (from y+99) or a generated map's recipe
+        // (from y+98).
         constexpr float kInfoPitch = 16.5f;
         auto info = [&](int row, int column, const std::string& label) {
             blockText(label,x+column*300.0f,y+row*kInfoPitch,1.6f,infoColor);
@@ -1290,31 +1291,37 @@ float createOptionPx(float maxW) {
             // but the copy's opt-in applies the list (not in a stress or benchmark room).
             const bool testUseOnly=mp_->mapPackage() && scenarioLobby_.marker && !scenarioLobby_.hasScenario &&
                                    scenarioLobby_.useOnlyTypes>=0 && !room.opts.stressTest && !room.opts.benchmark;
-            // Three rows between the grid's last row (it ends near y+94) and the canvas edge.
-            auto rule=[&](int row,int column,const std::string& text,bool warning=false) {
-                blockText(text,x+column*300.0f,y+99+row*12.5f,1.2f,warning ? amber : infoColor);
+            // The rule itself is a grid line like the others: the right column's last, under
+            // SPECTATE (single player) or ALLOW SPECTATORS (multiplayer).
+            info(singlePlayer_ ? 4 : 5,1,testCopy ? "MAP SCENARIO: ON (TEST MAP)" : wanted ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF");
+            // Its details, in reading order across two columns, in the three rows between
+            // the grid's last row (it ends near y+94) and the canvas edge.
+            int detail=0;
+            auto rule=[&](const std::string& text,bool warning=false) {
+                if(detail>=6)return;
+                blockText(text,x+float(detail%2)*300.0f,y+99+float(detail/2)*12.5f,1.2f,warning ? amber : infoColor);
+                ++detail;
             };
-            rule(0,0,testCopy ? "MAP SCENARIO: ON (TEST MAP)" : wanted ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF");
-            if(testUseOnly && !wanted) rule(0,1,"TEST MAP: "+tak::sim::scenarioUseOnlyLine(scenarioLobby_,false));
-            else if(wanted && !mp_->mapPackage()) rule(0,1,"CHECKING SCENARIO...");
+            if(testUseOnly && !wanted) rule("TEST MAP: "+tak::sim::scenarioUseOnlyLine(scenarioLobby_,false));
+            else if(wanted && !mp_->mapPackage()) rule("CHECKING SCENARIO...");
             else if(wanted && !scenarioOn && !room.opts.stressTest && !room.opts.benchmark) {
                 const auto why=tak::sim::scenarioReason(scenarioLobby_);
-                rule(0,1,why.empty() ? std::string("NO SCENARIO TO PLAY") : why.front(),true);
+                rule(why.empty() ? std::string("NO SCENARIO TO PLAY") : why.front(),true);
             } else if(scenarioOn) {
                 const auto lines=tak::sim::scenarioSummary(scenarioLobby_,false);   // placed, seats, use only, endings
                 bool missing=false;
                 for(int i=0;i<tak::net::kMaxSlots;++i)
                     if((needSeats>>i & 1) && room.slots[i].type!=1 && room.slots[i].type!=2) missing=true;
-                if(lines.size()>0) rule(0,1,lines[0].text);
-                if(lines.size()>1) rule(1,0,lines[1].text,missing);
-                if(lines.size()>2) rule(1,1,lines[2].text);
-                if(lines.size()>3) rule(2,0,lines[3].text,lines[3].warning);
+                if(lines.size()>0) rule(lines[0].text);
+                if(lines.size()>1) rule(lines[1].text,missing);
+                if(lines.size()>2) rule(lines[2].text);
+                if(lines.size()>3) rule(lines[3].text,lines[3].warning);
                 // Placements replace Monarchs, so a seated player the scenario gives no
                 // units starts with nothing.
                 uint8_t empty=0;
                 for(int i=0;i<tak::net::kMaxSlots;++i)
                     if((room.slots[i].type==1 || room.slots[i].type==2) && !(scenarioLobby_.placedSeats>>i & 1)) empty|=uint8_t(1u<<i);
-                if(scenarioLobby_.placed>0 && empty) rule(2,1,"NO PLACED UNITS: PLAYER "+tak::sim::seatList(empty),true);
+                if(scenarioLobby_.placed>0 && empty) rule("NO PLACED UNITS: PLAYER "+tak::sim::seatList(empty),true);
             }
         }
         if(tak::mapgen::isGeneratedMapId(room.mapId)) {
