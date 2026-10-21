@@ -108,7 +108,7 @@
         // Pull any chat that arrived and age the overlay on a real wall clock, so
         // it fades even while the game is paused or catching up on ticks.
         if (mp_) {
-            for (auto& m : mp_->takeChat()) gameChat_.push_back({m.first, m.second, 0});
+            for (auto& m : mp_->takeChat()) gameChat_.push_back({m.first, m.second, 0, false});
             uint64_t nowMs = SDL_GetTicks64();
             float cdt = chatLastMs_ ? (nowMs - chatLastMs_) / 1000.0f : 0;
             chatLastMs_ = nowMs;

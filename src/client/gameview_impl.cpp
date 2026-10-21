@@ -2695,7 +2695,7 @@
                 alwaysOnLoaded_.push_back(name);
         for(const auto& why:skipped) {
             std::fprintf(stderr,"mods: cosmetic mod left out: %s\n",why.c_str());
-            gameChat_.push_back({"SYSTEM","COSMETIC MOD LEFT OUT: "+why,0});
+            gameChat_.push_back({"SYSTEM","COSMETIC MOD LEFT OUT: "+why,0,true});
         }
         // Lobby choices are applied before match setup; discard art/audio cached
         // while the lobby still used the previous data set.

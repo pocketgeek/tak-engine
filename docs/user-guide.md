@@ -1420,8 +1420,8 @@ game time, the speed the game is actually running at (as a game-speed level: NOR
 is not enough room.
 
 The **chat box** shows multiplayer chat during a game, just above the information
-bar. Each message starts with the sender's name in their player colour (server
-notices are gold) and wraps onto further lines instead of running off the screen.
+bar. Each message starts with the sender's name in their player colour (notices
+from your own game, such as a cosmetic mod left out, are gold) and wraps onto further lines instead of running off the screen.
 The text sits on a dark panel so it reads over bright sand and dark forest alike.
 New messages appear at the bottom; each stays for 12 seconds and then fades out
 over 2 seconds. While you type (**Enter**), the last eight messages stay up and
@@ -1429,7 +1429,7 @@ your line is shown under them after **SAY:**. The box never goes under the
 command panel, and when a builder's build icons are in the way it moves up above
 them. **Chat Scale** multiplies UI Scale, so 200% UI Scale with 150% Chat Scale
 gives three times the 100% size; on a small window a very large box is shrunk
-until it fits. Both options take effect at once, also during a game. They are
+until it fits, and a long line you are typing scrolls so its end stays in view. Both options take effect at once, also during a game. They are
 saved as `chatScale` and `chatAlign` (0 left, 1 centred) in `settings.ini`.
 
 ### Camera

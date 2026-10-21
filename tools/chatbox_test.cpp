@@ -83,6 +83,13 @@ int main() {
         check(r.size() == 3 && r[0] == "abcde" && r[2] == "kl", "an over-long word breaks between characters");
         r = cb::wrap("\xc3\xa9\xc3\xa9\xc3\xa9", 25, 25, w10);   // three 2-byte characters
         check(r.size() == 3 && r[0] == "\xc3\xa9", "never splits a UTF-8 character");
+        r = cb::wrap("abcdefgh", 30, 100, w10);
+        check(r.size() == 2 && r[0].empty() && r[1] == "abcdefgh",
+              "a word too wide for the first row but not a continuation row moves down whole");
+        r = cb::wrap("hi abcdefgh", 30, 100, w10);
+        check(r.size() == 2 && r[0] == "hi" && r[1] == "abcdefgh", "...also after a short first word");
+        r = cb::wrap("abcdefghijkl", 30, 100, w10);
+        check(r.size() == 2 && r[0] == "abc" && r[1] == "defghijkl", "a word wider than any row still breaks after the name");
         r = cb::wrap("", 50, 50, w10);
         check(r.size() == 1 && r[0].empty(), "empty text is one empty row");
     }

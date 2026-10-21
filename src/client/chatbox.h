@@ -51,6 +51,9 @@ inline std::vector<std::string> wrap(const std::string& text, float firstW, floa
             rows.emplace_back();
         }
         if (width(word) <= limit()) { rows.back() = word; continue; }
+        // An empty first row is narrower (the name sits there): a word that fits a whole
+        // continuation row goes there whole rather than being broken after the name.
+        if (rows.size() == 1 && width(word) <= maxW) { rows.emplace_back(word); continue; }
         // ...and break a word that is wider than a whole row.
         for (size_t c = 0; c < word.size();) {
             size_t n = 1;

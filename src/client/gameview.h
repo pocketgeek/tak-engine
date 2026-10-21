@@ -2070,7 +2070,7 @@ private:
     // The in-game chat box: received lines (fading) and the composer while typing, over
     // the play area at the CHAT SCALE / CHAT POSITION options. Layout: client/chatbox.h.
     void drawGameChat(int winW, int winH);
-    SDL_Color chatSenderColor(const std::string& who) const;
+    SDL_Color chatSenderColor(const std::string& who, bool notice) const;
     std::optional<uint8_t> requestedManaSharing_;
     std::array<bool,8> eligibleGiftRecipients();
     std::array<bool,8> giftEligibleLast_{};   // its answer when the worker held the world
@@ -2311,7 +2311,7 @@ private:
     // In-game chat: press Enter to compose, lines fade after a while. Kept apart
     // from the lobby chatLog_ so the in-game overlay and lobby panel don't mix.
     bool chatTyping_ = false;
-    struct GameChat { std::string who, text; float age = 0; };
+    struct GameChat { std::string who, text; float age = 0; bool notice = false; };   // notice: raised by this client (gold name)
     std::vector<GameChat> gameChat_;
     uint64_t chatLastMs_ = 0;
     struct LobbyHot {

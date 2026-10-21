@@ -2595,16 +2595,18 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
     }
 
     // A chat sender's name colour: their player colour when the name is a seated
-    // player's, a warm gold for the server's own notices, a neutral grey otherwise
+    // player's, a warm gold for this client's own notices, a neutral grey otherwise
     // (spectators). Dark player colours are lifted so a name never sinks into the
     // box's dark backing.
-    SDL_Color GameView::chatSenderColor(const std::string& who) const {
+    SDL_Color GameView::chatSenderColor(const std::string& who, bool notice) const {
         auto same = [](const std::string& a, const std::string& b) {
             return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
                 return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
             });
         };
-        if (who == "SYSTEM" || who == "SERVER") return {255, 214, 120, 255};
+        // Gold only for notices this client raised itself: a relayed sender name is
+        // whatever the other end chose, so "SERVER" from the wire gets no special look.
+        if (notice) return {255, 214, 120, 255};
         SDL_Color c{200, 205, 215, 255};
         for (int i = 0; i < 8; ++i)
             if (!playerName_[i].empty() && same(playerName_[i], who)) { c = playerColor(i); break; }
@@ -2639,12 +2641,14 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         float top1 = 0, h1 = 0;
         font.vbounds("Hdgjpqy", 1, top1, h1);
         h1 = std::max(h1, 1.0f);
-        // Text ~16 px tall at 100%, never under 10 px (unreadable); and never so big that
-        // three rows (two lines and the composer) cannot fit in the room there is.
-        float s = uiScale_ * chatScale_;
-        auto rowH = [&](float sc) { return std::max(10.0f, 16.0f * sc) + 6.0f * sc; };
-        while (s > 0.25f && 3 * rowH(s) + 16 * s > maxBoxH) s *= 0.9f;
-        const float textH = std::max(10.0f, 16.0f * s);
+        // Text 16 px tall at 100%, exactly as chosen; but never so big that three rows
+        // (two lines and the composer) cannot fit in the room there is. That shrink stops
+        // at 10 px text (or the chosen size, if smaller), below which it would be unreadable.
+        const float sChosen = uiScale_ * chatScale_, sFloor = std::min(sChosen, 10.0f / 16.0f);
+        float s = sChosen;
+        auto rowH = [&](float sc) { return 16.0f * sc + 6.0f * sc; };
+        while (s > sFloor && 3 * rowH(s) + 16 * s > maxBoxH) s = std::max(sFloor, s * 0.9f);
+        const float textH = 16.0f * s;
         const float fs = textH / h1;          // font scale
         const float lineH = rowH(s), pad = std::round(8 * s), indent = std::round(14 * s);
         const float shadow = std::max(1.0f, std::round(fs * 0.6f));
@@ -2679,20 +2683,22 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
             if (chatTyping_ || cb::lineAlpha(it->age) > 0) msgs.push_back(&*it);
         std::reverse(msgs.begin(), msgs.end());
         for (const GameChat* m : msgs)
-            addMessage(m->who + ": ", chatSenderColor(m->who), m->text, bodyColor,
+            addMessage(m->who + ": ", chatSenderColor(m->who, m->notice), m->text, bodyColor,
                        chatTyping_ ? 1.0f : cb::lineAlpha(m->age), false);
         const size_t firstComposer = rows.size();
         if (chatTyping_) addMessage("SAY: ", {255, 214, 120, 255}, chatDraft_ + "_", {255, 248, 225, 255}, 1, true);
         if (rows.empty()) return;
 
-        // Too tall: drop the oldest rows (the composer always stays).
-        const float sepH = chatTyping_ && firstComposer > 0 ? std::round(6 * s) : 0;
-        auto boxH = [&] { return float(rows.size()) * lineH + 2 * pad - 6 * s + sepH; };
+        // Too tall: drop the oldest rows; then, for a draft taller than the room on its
+        // own, scroll the composer so its last rows (the caret's) stay in view.
         size_t composerAt = firstComposer;
+        auto sepH = [&] { return chatTyping_ && composerAt > 0 ? std::round(6 * s) : 0.0f; };
+        auto boxH = [&] { return float(rows.size()) * lineH + 2 * pad - 6 * s + sepH(); };
         while (boxH() > maxBoxH && composerAt > 0) {
             rows.erase(rows.begin());
             --composerAt;
         }
+        while (boxH() > maxBoxH && rows.size() > 1) rows.erase(rows.begin());
         float contentW = 0, alpha = 0;
         for (const Row& r : rows) {
             float w = r.x;
@@ -2720,8 +2726,8 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
             const Row& r = rows[i];
             if (r.composer && i == composerAt && i > 0) {   // a rule between history and composer
                 SDL_SetRenderDrawColor(ren_, 96, 84, 60, 200);
-                SDL_RenderDrawLineF(ren_, box.x + pad, y + sepH / 2 - 3 * s, box.x + box.w - pad, y + sepH / 2 - 3 * s);
-                y += sepH;
+                SDL_RenderDrawLineF(ren_, box.x + pad, y + sepH() / 2 - 3 * s, box.x + box.w - pad, y + sepH() / 2 - 3 * s);
+                y += sepH();
             }
             float x = box.x + pad + r.x;
             const float baseY = y - top1 * fs;
