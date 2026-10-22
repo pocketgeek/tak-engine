@@ -23,11 +23,21 @@ fs::path Playtest::clientPath(const fs::path& directory) {
     const auto sibling=directory/"takclient";
 #endif
     if(fs::is_regular_file(sibling))return sibling;
-#ifdef __APPLE__
-    const auto bundled=directory.parent_path().parent_path().parent_path()/
-        "Total Annihilation - Kingdoms.app"/"Contents"/"MacOS"/"takclient";
-    if(fs::is_regular_file(bundled))return bundled;
-#endif
+    // Packaged macOS layout: the base path is inside TAK Cartographer.app (Contents/Resources
+    // or Contents/MacOS), so look beside that bundle for the game app (DMG) or the bare
+    // takclient (ZIP). Path-only, so it is a no-op wherever no .app ancestor exists.
+    auto folder=directory.lexically_normal();
+    while(folder.has_filename() || folder.has_relative_path()) {
+        if(!folder.has_filename()) {folder=folder.parent_path();continue;}
+        const bool bundle=folder.extension()==".app";
+        folder=folder.parent_path();
+        if(!bundle)continue;
+        const auto bundled=folder/"Total Annihilation - Kingdoms.app"/"Contents"/"MacOS"/"takclient";
+        if(fs::is_regular_file(bundled))return bundled;
+        const auto beside=folder/"takclient";
+        if(fs::is_regular_file(beside))return beside;
+        break;
+    }
     throw std::runtime_error("Cannot find takclient beside Cartographer. Install both applications together.");
 }
 void Playtest::cleanup() {

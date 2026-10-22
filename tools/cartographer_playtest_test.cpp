@@ -22,6 +22,27 @@ static int runTest(int argc,char** argv) try {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         return 0;
     }
+    {
+        // clientPath: macOS bundle layouts (DMG: two apps; ZIP: apps plus bare takclient).
+        const auto top=fs::temp_directory_path()/fs::u8path("tak clientpath ü");
+        std::error_code ec;fs::remove_all(top,ec);
+        const auto editor=top/"dmg"/"TAK Cartographer.app"/"Contents";
+        const auto game=top/"dmg"/"Total Annihilation - Kingdoms.app"/"Contents"/"MacOS";
+        fs::create_directories(editor/"Resources");fs::create_directories(editor/"MacOS");fs::create_directories(game);
+        auto touch=[](const fs::path& f){std::ofstream(f)<<"x";};
+        auto fails=[](const fs::path& d){try{cart::Playtest::clientPath(d);}catch(const std::runtime_error&){return true;}return false;};
+        check(fails(editor/"Resources"/""),"clientPath found a game that is not there");
+        touch(game/"takclient");
+        check(cart::Playtest::clientPath(editor/"Resources"/"")==game/"takclient","Resources base path did not find the game app");
+        check(cart::Playtest::clientPath(editor/"MacOS")==game/"takclient","MacOS base path did not find the game app");
+        fs::create_directories(top/"zip"/"TAK Cartographer.app"/"Contents"/"Resources");
+        check(fails(top/"zip"/"TAK Cartographer.app"/"Contents"/"Resources"/""),"clientPath found a game in the wrong folder");
+        touch(top/"zip"/"takclient");
+        check(cart::Playtest::clientPath(top/"zip"/"TAK Cartographer.app"/"Contents"/"Resources"/"")==top/"zip"/"takclient","bare takclient beside the bundle not found");
+        touch(top/"zip"/"takclient");fs::create_directories(top/"plain");touch(top/"plain"/"takclient");
+        check(cart::Playtest::clientPath(top/"plain"/"")==top/"plain"/"takclient","sibling takclient lookup changed");
+        fs::remove_all(top,ec);
+    }
     cart::Playtest test;
     tak::tnt::Map map;map.width=map.height=32;map.blocksX=map.blocksY=16;
     map.heights.assign(1024,40);map.features.assign(1024,0xffff);

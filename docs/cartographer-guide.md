@@ -100,11 +100,11 @@ Every TAK Engine package installs Cartographer beside the game:
 | System | How to start it |
 | --- | --- |
 | Windows | **TAK Cartographer** in the Start menu (installer), or `cartographer.exe` in the same folder as `takclient.exe` (portable ZIP). |
-| macOS | **TAK Cartographer.app**, which the disk image places next to **Total Annihilation - Kingdoms.app**. Keep both apps in the same folder, for example Applications. (Test Map from the app cannot find the game yet; see [Known limits](#known-limits).) |
+| macOS | **TAK Cartographer.app**, which the disk image places next to **Total Annihilation - Kingdoms.app**. Keep both apps in the same folder, for example Applications. |
 | Linux | **Cartographer** (Map Editor) in your application menu, or `cartographer` in a terminal. |
 
-Test Map starts the game from the folder Cartographer runs from, so keep the
-two programs installed together.
+Test Map starts the game from the folder Cartographer runs from (on macOS, the
+folder holding TAK Cartographer.app), so keep the two programs installed together.
 
 ### The game data folder
 
@@ -1862,12 +1862,6 @@ Start Cartographer from its shortcut and choose **Recover**. See
   ready state. Moving is refused once the game is running, in Crusades battles
   and in campaign missions. Close the seats your scenario does not need before
   others join, so that they land in seats that have units.
-- **Test Map on macOS.** Started from **TAK Cartographer.app**, Test Map looks
-  for the game in the wrong place and reports *Cannot find takclient beside
-  Cartographer*, even with both apps in the same folder. Save the map and open
-  it with `takclient --play-map` instead (see
-  [Sharing a scenario](#sharing-a-scenario)). The macOS ZIP, which keeps
-  `cartographer` and `takclient` in one folder, is not affected.
 - **No height brush.** Heights come with terrain sections; there is no tool for
   raising or lowering ground directly.
 - **Terrain is never flipped.** Symmetry uses twin sections, which are found by
