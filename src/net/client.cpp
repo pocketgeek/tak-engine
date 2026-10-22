@@ -65,6 +65,12 @@ void MpClient::forgetResume() {
 
 uint64_t MpClient::clockMs() { return nowMs(); }
 
+uint64_t MpClient::reconnectWindowMs() const {
+    if (!ownWaitRunning_) return ownWaitMs_;
+    const uint64_t spent = nowMs() - ownWaitAt_;
+    return spent < ownWaitMs_ ? ownWaitMs_ - spent : 0;
+}
+
 bool MpClient::canReconnect() const {
     return lostInGame_ && !reconnectRefused_ && !spectator_ && !desynced_ && !host_.empty() &&
            room_.id && resumeToken_ && (loginUser_.empty() || haveResumeKeys_);
@@ -988,6 +994,7 @@ void MpClient::onFrame(const Frame& f) {
             resumeToken_ = r.u64();
             replayTicks_ = r.u32();   // bundles logged before we joined (0 = none)
             nextBundleTick_ = 0; waiting_.clear();
+            ownWaitAt_ = 0; ownWaitMs_ = kDropWaitMs; ownWaitRunning_ = false;
             // 0xFF marks a spectator (no slot); map it to -1.
             room_.mySlot = !r.ok ? keep : (mySlot == 0xFF ? -1 : int(mySlot));
             // Record a replay of every game we take part in -- playing or spectating
@@ -1028,7 +1035,12 @@ void MpClient::onFrame(const Frame& f) {
                 Wait w; w.slot = r.u8(); w.untilMs = now + r.u32();
                 if (r.ok && w.slot < kMaxSlots) list.push_back(w);
             }
-            if (r.ok) waiting_ = std::move(list);
+            const bool running = r.u8() != 0;
+            const uint32_t own = r.u32();
+            if (r.ok) {
+                waiting_ = std::move(list);
+                ownWaitAt_ = now; ownWaitMs_ = own; ownWaitRunning_ = running;
+            }
             break;
         }
         case Msg::Reseated: {

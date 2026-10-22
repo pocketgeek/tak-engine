@@ -299,8 +299,11 @@ link `sim`, `tdf`, `net`, and the new `ai` module only.
     no `Waiting` for it. The accounting is the server's alone and is not sim
     state: peers see it only as the `ms left` in `Waiting` (which they count
     down) and the `AiTakeover` tick, which the replay records like any event, so
-    clients, referee and replay agree without it crossing the wire. No message
-    changed for it (protocol 289 still).
+    clients, referee and replay agree. Each `Waiting` also ends with the
+    recipient's own budget (`running`, `ms`: its running countdown, else what
+    its seat has left), so a client whose link drops counts down and retries
+    for as long as the server will really wait, not a fresh 30 s. `Waiting`
+    is not recorded and no sim state changed, so protocol 289 still.
   - *Coming back.* Talking again on the same connection inside the window (a
     frozen frame, a hitch, a Wi-Fi blip TCP rode out) ends that seat's wait. A
     client whose link actually dropped reconnects by itself: a new connection,
@@ -388,7 +391,7 @@ silently skipped.)
 | `StateHash` | tick u32, hash u64 | client → server, every 30 ticks |
 | `Desynced` | tick, reason | server → one client; its game ends (no reconnect) |
 | `Pause` / `Resume` | cause, player | the host's pause (`SetPause`): server stops closing ticks, never expires |
-| `Waiting` | n × (slot, ms left) | protocol 289: the seats the room is waiting for (§4 disconnect policy); no tick closes while n > 0 |
+| `Waiting` | n × (slot, ms left), own (running, ms) | protocol 289: the seats the room is waiting for (§4 disconnect policy); no tick closes while n > 0 |
 | `SpeedUpdate` | speed (tenths, 10 = 1×) | server → all; host changed speed mid-game (needs `speedUnlock`); re-cadences tick pacing, not the per-tick `dt`, so the sim stays deterministic |
 | `PlayerStatus` | slot, {connected, dropped, left} + ping | informational only — never sim-affecting (sim-affecting lifecycle is an Event in the bundle) |
 | `Rejoin` | game id, resume token, fromTick | protocol 289: a reconnect inside the disconnect wait → `Reseated` (slot, rotated token, fromTick, logEnd), then the bundles from fromTick → live bundles |

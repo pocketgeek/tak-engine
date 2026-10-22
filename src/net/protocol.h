@@ -763,11 +763,14 @@ enum class Msg : uint8_t {
                         // opens with the target's colour and team. The server answers the
                         // mover with JoinResult (ok, new slot) and then broadcasts LobbyState.
     // Disconnect wait (protocol 289; docs/multiplayer-design.md section 4).
-    Waiting,            // S->C: u8 n, then n x (u8 slot, u32 ms left). The seated players the
-                        // room is waiting for, each with its own countdown to the AI takeover;
-                        // sent to the whole room whenever the set changes (n = 0: nobody, the
-                        // game goes on) and to a spectator or a reseated player as it arrives.
-                        // While n > 0 the server closes no tick.
+    Waiting,            // S->C: u8 n, then n x (u8 slot, u32 ms left), then u8 running, u32 ms.
+                        // The seated players the room is waiting for, each with its own
+                        // countdown to the AI takeover; sent to the whole room whenever the set
+                        // changes (n = 0: nobody, the game goes on) and to a spectator or a
+                        // reseated player as it arrives. While n > 0 the server closes no tick.
+                        // The tail is the recipient's own wait budget: running 1 = its seat is
+                        // being waited for and ms is that countdown, else ms is what its seat
+                        // has left to spend (the window its client reconnects within).
     Reseated,           // S->C: u8 slot, u64 rotated resume token, u32 fromTick, u32 logEnd. The
                         // answer to a good Rejoin: the client keeps its world, and the bundles
                         // from fromTick follow (those before logEnd are history it catches up on).

@@ -1184,7 +1184,7 @@ void GameView::autoplayStep() {
 #endif
 
     // The disconnect wait (protocol 289), the client's side. The server holds a seat it
-    // stopped hearing from for kDropWaitMs; a player whose link dropped reconnects
+    // stopped hearing from for what is left of its kDropWaitMs budget; a player whose link dropped reconnects
     // inside that window and carries on from the first bundle it lacks, its world
     // intact. Only a seated player in a game still being played, and only with another
     // human seated -- alone in the room (single-player), the server ends the game when
@@ -1197,7 +1197,9 @@ void GameView::autoplayStep() {
             others |= i != mine && mp_->startSlots()[i].type == 1;
         if (!others) return false;
         const uint64_t now = SDL_GetTicks64();
-        reconnectUntilMs_ = now + tak::net::kDropWaitMs;
+        // What the server will really wait for us (the budget is per game), but long
+        // enough for one attempt, so a spent budget still hears why from the server.
+        reconnectUntilMs_ = now + std::max<uint64_t>(mp_->reconnectWindowMs(), 2000);
         reconnectNextMs_ = now;
         std::fprintf(stderr, "connection lost (%s) -- reconnecting\n", mp_->error().c_str());
         return true;

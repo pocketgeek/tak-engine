@@ -290,6 +290,9 @@ public:
     struct Wait { uint8_t slot = 0; uint64_t untilMs = 0; };   // untilMs on clockMs()
     const std::vector<Wait>& waiting() const { return waiting_; }
     static uint64_t clockMs();   // the monotonic clock the client paces by
+    // How long the server will still wait for our seat if the link goes now: our
+    // running countdown, else what is left of our seat's budget for the game.
+    uint64_t reconnectWindowMs() const;
     // This seated player's link dropped mid-game (not a Reject, a Bye, a desync or a
     // deliberate disconnect()), so reconnect() may get the seat back inside the wait.
     bool canReconnect() const;
@@ -466,6 +469,9 @@ private:
     uint16_t port_ = 0;
     uint32_t nextBundleTick_ = 0;
     std::vector<Wait> waiting_;
+    // Our own seat's wait budget from the last Msg::Waiting (reconnectWindowMs).
+    uint64_t ownWaitAt_ = 0, ownWaitMs_ = kDropWaitMs;
+    bool ownWaitRunning_ = false;
     bool lostInGame_ = false, reconnectRefused_ = false, reconnecting_ = false, rejoinSent_ = false;
     bool reseated_ = false;
     uint32_t reseatFrom_ = 0, reseatEnd_ = 0;

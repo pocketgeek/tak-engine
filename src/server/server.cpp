@@ -3372,6 +3372,16 @@ void Server::sendWaiting(Client& c, const Room& r) {
             w.u8(uint8_t(i));
             w.u32(uint32_t(r.waitDeadline[i] > now ? std::min<uint64_t>(r.waitDeadline[i] - now, UINT32_MAX) : 0));
         }
+    // The recipient's own budget, so a player whose link goes counts down what the room
+    // will really wait for it: what its running wait has left, else what its seat has
+    // left to spend (all of it for a spectator).
+    const int s = c.slot;
+    const bool mine = s >= 0 && s < kMaxSlots && r.waitDeadline[s];
+    uint64_t own = gDropWaitMs;
+    if (mine) own = r.waitDeadline[s] > now ? r.waitDeadline[s] - now : 0;
+    else if (s >= 0 && s < kMaxSlots) own = gDropWaitMs - std::min<uint64_t>(r.waitSpentMs[s], gDropWaitMs);
+    w.u8(mine ? 1 : 0);
+    w.u32(uint32_t(std::min<uint64_t>(own, UINT32_MAX)));
     c.conn.send(Msg::Waiting, w);
 }
 

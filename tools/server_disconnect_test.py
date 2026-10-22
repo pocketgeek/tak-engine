@@ -18,7 +18,8 @@ wait (TAK_STALL_MS / TAK_DROP_WAIT_MS) so nothing here waits the real 30 s:
   leave      an explicit LeaveGame is a Leave event at once, with no wait.
   budget     the wait is a budget per seat per game, charged in whole seconds: Bob back
              1.2 s into his first wait has spent 2 s of the 3, so his second wait counts
-             down from 1 s and he is taken over when it runs out, not 3 s later.
+             down from 1 s (his own client is told so) and he is taken over when it
+             runs out, not 3 s later.
   spent      Bob back in the last second of his wait has spent it all: his next stall
              is taken over at once, without the room waiting for him.
 """
@@ -100,6 +101,7 @@ class Player:
         elif kind == auth.MSG['Waiting']:
             n = body[0]
             self.waits.append((time.monotonic(), [struct.unpack_from('<BI', body, 1 + 5 * i) for i in range(n)]))
+            self.own = struct.unpack_from('<BI', body, 1 + 5 * n)   # (running, ms): our seat's budget
         elif kind == auth.MSG['Bye']:
             self.bye = body[2:2 + struct.unpack_from('<H', body, 0)[0]]
         else:
@@ -314,6 +316,8 @@ def scenario_budget(port, h):
     _room, alice, bob = start(port, h, 'Alice', 'Bob')
     try:
         stall_and_return(alice, bob, 1.2)   # charged 2 s: 1 s of the budget left
+        # Bob's own client is told what is left, the window it would reconnect within.
+        assert getattr(bob, 'own', None) == (0, WAIT_MS - 2000), ('Bob was not told his budget', getattr(bob, 'own', None))
         # Bob goes silent again: the countdown starts from what is left, and runs out.
         assert alice.pump(10, waiting_for(1)), 'the second stall did not make the room wait'
         began, waits = alice.waits[-1]
