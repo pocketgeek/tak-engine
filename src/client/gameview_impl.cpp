@@ -259,25 +259,6 @@
         options_->offerVoicePage();
     }
 
-    void GameView::writeResume(uint32_t gid, uint64_t tok) const {
-        if (mpResumePath_.empty()) return;
-        if (FILE* f = std::fopen(mpResumePath_.c_str(), "w")) {
-            std::fprintf(f, "%u %llu\n", gid, (unsigned long long)tok);
-            std::fclose(f);
-        }
-    }
-
-    bool GameView::readResume(uint32_t& gid, uint64_t& tok) const {
-        if (mpResumePath_.empty()) return false;
-        FILE* f = std::fopen(mpResumePath_.c_str(), "r");
-        if (!f) return false;
-        unsigned long long t = 0;
-        bool ok = std::fscanf(f, "%u %llu", &gid, &t) == 2;
-        std::fclose(f);
-        tok = t;
-        return ok;
-    }
-
     bool GameView::haveReclaimer() {
         for (int id : selection_)
             if (const auto* u = frameUnitP(id))
@@ -422,7 +403,7 @@
 #endif
             const auto& bd = replayBundles_[replayTick_];
             for (const auto& c : bd.cmds) apply(c);
-            for (const auto& e : bd.events) applyEvent(e);
+            for (const auto& e : bd.events) { noteEvent(e); applyEvent(e); }
             writableWorld().tick(1.0f / 30.0f);
             captureTransportEffects();
             ++replayTick_;

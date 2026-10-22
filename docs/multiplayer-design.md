@@ -22,8 +22,10 @@ substrate underneath it is kept.
 - **Named games with optional passwords**, chosen by the host.
 - **Game browser:** the server lists joinable (lobby-state) games and live
   (running, unjoinable) games.
-- **Durable sessions:** a dropped player's slot is held; they can rejoin and
-  the client catches up automatically.
+- **Durable sessions:** a player the server stops hearing from holds the game
+  for 30 seconds (everyone sees the countdown); back in time -- the same
+  connection, or an automatic reconnect -- the game goes on, otherwise a
+  server AI (Normal) takes the seat over (§4, protocol 289).
 
 The current implementation supports spectators and [verified map transfer](map-transfer.md).
 
@@ -82,12 +84,13 @@ in between) degrades to a no-op via the existing `owns()`/unit-lookup checks in
 sim at the closing tick, so accept/reject is identical on every sim.
 
 **Sequenced server events.** Anything that affects sim state but originates
-from wall-clock server decisions — a player forfeiting when their reconnect
-grace expires, a player leaving voluntarily, (later) an alliance change — is
+from wall-clock server decisions — an AI taking over the seat of a player
+whose disconnect wait ran out, a player leaving voluntarily, (later) an
+alliance change — is
 **not** a side-band notice: it is an *event record inside the TickBundle*,
 executing at that bundle's tick on every sim, and therefore part of the log.
 This is what keeps three properties simultaneously true: the log replays to
-the same end state, a rejoiner reconstructs the same world as live clients,
+the same end state, a spectator reconstructs the same world as live clients,
 and the referee's hash stays comparable. (Purely informational notices —
 connected/dropped indicators, ping — remain side-band `PlayerStatus`
 messages; they don't touch the sim.) The bundle format carries its (possibly
@@ -102,18 +105,18 @@ Why this model (vs. authoritative state replication):
 - **AI-on-server falls out for free**: the server already runs a sim per game
   (as referee), so an AI player is just another command source feeding the
   sequencer — exactly like a human, subject to the same validation.
-- **Reconnect nearly falls out for free**: the sequenced bundle log *is* the
-  game; a rejoining client can replay it headless to catch up (§4 for the
-  honest cost model and the snapshot fallback). A log written to disk is a
-  replay file.
+- **Catch-up nearly falls out for free**: the sequenced bundle log *is* the
+  game; a spectator replays it headless to catch up, and a reconnecting
+  player takes it from the first tick it lacks (§4). A log written to disk is
+  a replay file.
 
 Clients never gate on *each other*. A slow or stalled client only delays
 itself — the server keeps closing ticks on schedule and other clients are
 unaffected. Honestly stated, though: that client's own command-to-effect
 latency equals its lag (10 s behind ⇒ its orders visibly land ~10 s later on
-its own screen), so the client HUD shows a "behind by N s" indicator, and past
-a threshold (default ~10 s of unacknowledged ticks) the server drops it into
-the reconnect flow rather than let it play unplayably.
+its own screen), so the client HUD shows a "behind by N s" indicator. A client
+that goes SILENT (nothing at all for `kStallMs`, 8 s) is another matter: the
+game stops and waits for it (§4).
 
 **Client jitter buffer + adaptive playout.** Bundles are sequenced by the server
 but *arrive* unevenly (network jitter, TCP retransmits). Draining "play every
@@ -257,8 +260,9 @@ link `sim`, `tdf`, `net`, and the new `ai` module only.
 - **Desync referee.** Clients send `StateHash` every 30 ticks. Clients lag the
   referee by RTT + buffering, so the server keeps a bounded ring of its own
   per-tick hashes to compare against late-arriving client hashes. A
-  mismatching client gets a `Desynced` notice and enters the reconnect flow —
-  which *is* the recovery, since replay reconstructs correct state.
+  mismatching client gets a `Desynced` notice and its game ends (a reconnect
+  would only continue its wrong world, so it never reconnects); when its
+  connection goes, the disconnect wait below runs and an AI takes the seat.
   **Referee suspicion rule:** if a hash round shows the clients agreeing with
   each other and disagreeing with the referee, the server suspects its own sim
   (e.g. a server-only AI code path bug), logs loudly, stops dropping clients,
@@ -266,32 +270,60 @@ link `sim`, `tdf`, `net`, and the new `ai` module only.
 - **Hash breadth.** To attribute desyncs quickly, the extended `stateHash`
   (§6) also folds in projectile owner + quantized position and order targets —
   counts alone let same-count divergences hide until damage lands.
-- **Disconnect & pause policy.** On disconnect the slot is held and the
-  player's empire runs itself — this needs **no sim work** (all unit behavior,
-  auto-acquire, repeat-train, economy already lives in `World::tick`; the
-  client only ever issued commands). Consequence owned: a dropped player's
-  repeat-train keeps spending their mana during the grace window. The game
-  **auto-pauses** on a human drop with a per-player pause budget (default
-  2 min of pause per player per game) and a host "resume now" override — so a
-  flaky client cannot repeatedly freeze seven other people, and past the budget the
-  game continues without them. Reconnect grace (slot held, default 5 min,
-  host-configurable) keeps counting during pause. Grace expiry emits a
-  sequenced **Forfeit** event (§3) — from that tick, on every sim, the
-  player's units become inert or self-destruct per lobby setting, and defeat
-  logic proceeds.
-- **Reconnect.** A rejoining client authenticates with the game id + a resume
-  token: **≥128-bit CSPRNG**, single-use (rotated on every rejoin), and the
-  server kills any prior half-open socket for that slot on success. It then
-  receives the log and fast-forwards headless while buffering live bundles.
-  **Honest cost model:** replay time ≈ elapsed ticks × average tick cost;
-  late-game ticks measurably reach several ms (the sim's own stall telemetry
-  triggers at 15 ms), so a 30-minute game may replay in minutes, not seconds —
-  measured in M5, and mitigated by the planned fallback: **periodic
-  server-side state snapshots** (World serialization written only by the
-  referee, read only by rejoiners — a far smaller ask than full state
-  replication, and invisible to the protocol). Non-convergence is detected: a
-  client whose replay throughput stays below ~2× live rate is told plainly
-  "machine too slow to catch up" instead of drop-reconnect-looping forever.
+- **Disconnect policy (protocol 289).** The rule: if a player effectively
+  stops communicating, the game waits 30 seconds for them, paused, with a
+  countdown; if they are still not communicating after that, they are dropped
+  and an AI at Normal plays their units.
+  - *Stopping.* A seated human in a running game (past tick 0, not defeated)
+    stops communicating when the server has received nothing from it for
+    `kStallMs` (8 s; a healthy client reports progress every few ticks and
+    answers the server's 5 s keepalive ping, and the game client pings once a
+    second), or at once when its connection closes without a `LeaveGame`. The
+    server then sets that seat's wait deadline (`kDropWaitMs`, 30 s) and closes
+    no tick while any seat is waiting -- every peer freezes on the same tick.
+    `Msg::Waiting` (the seats and each one's milliseconds left) goes to the
+    whole room whenever the set changes, and to a spectator or a reconnected
+    player as it arrives; clients draw `WAITING FOR <name> 27`, one line and
+    countdown per seat, so several stalls each run their own clock. A player
+    alone in the room (single-player) gets no wait: nobody else is affected, and
+    when its link goes the room ends as before.
+  - *Coming back.* Talking again on the same connection inside the window (a
+    frozen frame, a hitch, a Wi-Fi blip TCP rode out) ends that seat's wait. A
+    client whose link actually dropped reconnects by itself: a new connection,
+    the same login (the client keeps the login's SCRAM keys for the session;
+    the password itself is gone), then `Rejoin{game, resume token, fromTick}`,
+    `fromTick` being the first tick whose bundle it never received. The server
+    answers `Reseated{slot, rotated token, fromTick, logEnd}` and streams the
+    log from `fromTick`; the client keeps its world (no rebuild from tick 0)
+    and treats the ticks before `logEnd` as history -- its own orders wait and
+    its acknowledgements are not counted until it is through them. A `Rejoin`
+    also replaces a seat's old connection the server has not seen go yet.
+    The resume token is ≥64-bit random and single-use (rotated on every
+    reconnect).
+  - *Taken over.* When a wait runs out the seat's connection, if still open,
+    is closed (`Bye`: an AI took over your seat), and from the next tick the
+    seat is a server AI at Normal: the same player id, units, buildings and
+    mana. A sequenced `Event::AiTakeover{player}` in that tick's bundle marks
+    the player computer-owned (`Player::automaticGates`, hashed) on every peer,
+    the referee and the replay; the server adds an `ai::Controller` for the
+    seat (only with no tick in flight, since the worker owns the controllers
+    while one runs), which reads the empire afresh every think -- home is its
+    buildings' centroid, producers and army are whatever it has -- so starting
+    mid-game needs nothing from the opening. Its commands enter the bundles
+    like any AI seat's, so peers and replays simply apply them. A reconnect
+    after that is refused: "the wait ran out: an AI took over your seat".
+    Issued Crusades battles are the exception: a duel between two accounts does
+    not go on with a stand-in, so the absent participant forfeits
+    (`CampaignForfeit`) when the wait runs out, as before.
+  - *Leaving on purpose* is unchanged: `LeaveGame` (the game client sends it
+    when the player quits a running game from the menu) is a `Leave` event at
+    once -- the units go inert, no wait. A defeated player's departure never
+    waits either.
+  - Replaced (0.8.9 and earlier): the slot held for 5 minutes, the 2-minute
+    per-player auto-pause budget with its grace-expiry `Forfeit`, and the long
+    rejoin that rebuilt the world from tick 0 by replaying the whole bundle log
+    (with its resume-ticket file and `--mprejoin`). Spectators still catch up
+    that way; seated players no longer do.
 - **Log format.** Bundles including events, prefixed by a header: format
   version, build id, data checksum, and the full `GameStarting` payload (slot
   table, map, options, per-AI seeds) — that header is exactly what makes a log
@@ -340,11 +372,12 @@ silently skipped.)
 | `OrderBegin` / `OrderMembers` / `OrderCommit` / `OrderAbort` | serial, template Command, shape, count / serial, member deltas (≤ 2,048) / serial, count, digest / serial | client → server (protocol 267): one explicit selection order as a transaction; the server puts the committed order whole into ONE TickBundle (`Cmd::Order`, its activation tick). Legion clients send their selection verbs this way, Retail clients keep per-unit commands. `net/protocol.h` beside `kOrderMaxMembers`, `server/orders.h`, docs/legion-pathfinding.md "Legion 10,000 stage 3" |
 | `TickBundle` | tick u32, n × Command (ascending player, then arrival order), m × Event | server → all clients, 30/s; empty bundles are the clock; the event section exists from day one (§3) |
 | `StateHash` | tick u32, hash u64 | client → server, every 30 ticks |
-| `Desynced` | tick, reason | server → one client; client auto-reconnects |
-| `Pause` / `Resume` | cause (host / drop-grace), pausing player | server stops closing ticks; budgets in §4 |
+| `Desynced` | tick, reason | server → one client; its game ends (no reconnect) |
+| `Pause` / `Resume` | cause, player | the host's pause (`SetPause`): server stops closing ticks, never expires |
+| `Waiting` | n × (slot, ms left) | protocol 289: the seats the room is waiting for (§4 disconnect policy); no tick closes while n > 0 |
 | `SpeedUpdate` | speed (tenths, 10 = 1×) | server → all; host changed speed mid-game (needs `speedUnlock`); re-cadences tick pacing, not the per-tick `dt`, so the sim stays deterministic |
 | `PlayerStatus` | slot, {connected, dropped, left} + ping | informational only — never sim-affecting (sim-affecting lifecycle is an Event in the bundle) |
-| `Rejoin` | game id, resume token | then `LogChunk`* (compressed) → live bundles |
+| `Rejoin` | game id, resume token, fromTick | protocol 289: a reconnect inside the disconnect wait → `Reseated` (slot, rotated token, fromTick, logEnd), then the bundles from fromTick → live bundles |
 | `Bye` | reason | clean shutdown both ways |
 
 ### Voice chat (protocol 276)
@@ -443,8 +476,11 @@ page, the per-player mix), `diplomacy_ui` (the VOLUME sliders), `voice_client_te
 (routing, budgets, abuse against a real server), `server_voice_slow_test.py`
 (slow listeners do not hold up the game), `conn_test` (the low-priority queue).
 
-Bundle **Event** records (u8 kind + payload): `Forfeit{player}` (grace expired
-or explicit surrender), `Leave{player}` (voluntary, units per forfeit rule),
+Bundle **Event** records (u8 kind + payload): `Forfeit{player}` (explicit
+surrender), `Leave{player}` (voluntary, units per forfeit rule),
+`CampaignForfeit{player}` (an issued Crusades battle), `AiTakeover{player}`
+(protocol 289: the disconnect wait ran out; a server Normal AI plays the seat
+from this tick, the player becomes computer-owned),
 reserved: `AllianceChange` (v2 diplomacy). Defeat itself is *not* an event —
 it's derived deterministically inside the sim from unit state, so every sim
 concludes it independently on the same tick.
@@ -570,8 +606,9 @@ interface before the server exists.
   start). Players edit their own row; host edits any.
 - **In-game:** allied units render through shared fog and show on the minimap;
   score/status panel grows to 8 players with team grouping; net status HUD
-  (tick, ping, **behind-by indicator**, paused-by, reconnecting-player
-  banners); chat overlay.
+  (tick, ping, **behind-by indicator**, paused-by, the disconnect wait's
+  `WAITING FOR <name> 27` countdowns and the own `RECONNECTING` line); chat
+  overlay.
 - The `--host`/`--join` peer mode is removed once the server path works
   (`net::Session` retired); `--server`, `--name` added. LAN play = run
   `takserver` on any machine on the LAN.
@@ -608,8 +645,9 @@ design and none block v1:
 - **God-game chance:** retail rolled a 10% chance a multiplayer game is
   god-enabled (`gods.tdf GameChance=0.1`). Ours deliberately does not: gods do
   not appear in multiplayer (see `src/sim/matchsetup.cpp`).
-- **Rejoin snapshots:** referee-written World snapshots to cut rejoin time for
-  long games (the log header/format anticipates them).
+- **Spectator snapshots:** referee-written World snapshots to cut a late
+  spectator's catch-up in long games (the log header/format anticipates them).
+  Seated players no longer rebuild from the log (§4 disconnect policy).
 - Host migration is a non-issue by construction (the server owns the game; the
   "host" is a player with lobby permissions — pre-start they pass to the next
   human, in-game they matter only for pause/kick powers).
@@ -647,7 +685,10 @@ Each lands independently, keeps single-player green, and is verifiable.
   clean `Bye`, replay-to-disk, replay-throughput guard ("machine too slow").
   *Verify: kill -9 a client mid-game, rejoin, finish hash-clean; measure
   replay time vs. game length (decides the snapshot backlog item's priority);
-  forfeit fires as a logged event and replays identically.*
+  forfeit fires as a logged event and replays identically.* (Protocol 289
+  replaced the hold, the budgets and the log-replay rejoin with the 30 s
+  disconnect wait and the AI takeover, §4; tests `server_disconnect` and
+  `disconnect_client`.)
 - **M6 — Polish.** In-game team/status UI at 8 players, chat overlay, det-math
   shim (`sim/detmath`) for cross-build play, spectator/map-transfer
   groundwork, docs + server deployment notes (systemd unit, TLS proxy
@@ -765,8 +806,11 @@ override tier, and cosmetic mods are never sent; the simulation is 286's.
 Protocol 288 adds power codes: the POWER CODES room option and `Cmd::PowerCode`; with
 the option off the simulation is 287's; 0.8.8 ships protocol 288, and so does 0.8.9
 (client-only changes; it plays with 0.8.8 and its replays).
+Protocol 289 replaces the disconnect hold and the log-replay rejoin with the 30 s
+disconnect wait and the AI takeover (§4): `Waiting`, `Reseated`, `Rejoin` with its
+`fromTick`, and `Event::AiTakeover`; the simulation is 288's until a takeover.
 Game options
-and every lobby/start/rejoin snapshot carry the choice. The server validates the
+and every lobby/start/spectate snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
 host sends later option updates. Both clients and the referee apply that choice
 through shared match setup. Campaign missions and Crusades battle rooms remain
@@ -780,7 +824,7 @@ in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each
 game"). `Spectate` is the only way into a room without a slot, so this one check
 covers the browser's watch request, a seated player who left and asks to watch,
 and a dropped watcher reconnecting (watchers hold no resume token, and `Rejoin`
-seats only held slots). The host changes the rule in the lobby. In a running
+seats only seated players). The host changes the rule in the lobby. In a running
 game `SetGameOptions` adopts only speed, so the rule is fixed at start and an
 admitted watcher is never stranded. The only lobby spectator is a host who
 created the room to watch it. The rule governs who else may watch, so that host

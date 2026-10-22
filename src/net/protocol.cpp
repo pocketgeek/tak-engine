@@ -214,9 +214,10 @@ bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict, uint32_t pro
     }
     const uint32_t ne = r.u32();
     if (!r.ok || uint64_t(ne) * 2 > uint64_t(r.end - r.p)) return false;
+    const auto maxEvent = proto >= kAiTakeoverProtocol ? Event::Kind::AiTakeover : Event::Kind::CampaignForfeit;
     for (uint32_t i = 0; i < ne && r.ok; ++i) {
         Event e; e.kind = Event::Kind(r.u8()); e.player = r.u8();
-        if (strict && (e.player >= kMaxSlots || uint8_t(e.kind) < 1 || uint8_t(e.kind) > uint8_t(Event::Kind::CampaignForfeit))) return false;
+        if (strict && (e.player >= kMaxSlots || uint8_t(e.kind) < 1 || uint8_t(e.kind) > uint8_t(maxEvent))) return false;
         out.events.push_back(e);
     }
     return r.ok && (!strict || r.p == r.end);   // truncated or trailing inner data

@@ -232,6 +232,11 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
 void applyEvent(World& world, const tak::net::Event& e) {
     int p = e.player;
     if (p < 0 || p >= world.numPlayers()) return;
+    // A server AI takes over a seat whose player stopped communicating: the empire
+    // plays on with its orders intact, and from this tick it is computer-owned, as an
+    // AI seat is from the start (MatchSlot::automaticGates: gates open themselves, no
+    // human death sights).
+    if (e.kind == tak::net::Event::Kind::AiTakeover) { world.player(p).automaticGates = true; return; }
     if (e.kind == tak::net::Event::Kind::CampaignForfeit ||
         (world.hasScenarioOutcomes() && (e.kind == tak::net::Event::Kind::Forfeit ||
                                        e.kind == tak::net::Event::Kind::Leave)))

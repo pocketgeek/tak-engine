@@ -239,13 +239,25 @@ Spectating is a per-room rule. The host's **Allow spectators** setting
 in the game list. When it is off, the server refuses every `Spectate` into that
 room with "spectators are not allowed in this game". That covers a browser's
 watch request, a player who left the game and asks to watch, and a reconnecting
-client, because `Spectate` is the only way to join a room without a slot. Seated
-players' `Rejoin` with their resume token is unaffected. Only the host may change
+client, because `Spectate` is the only way to join a room without a slot. A seated
+player's reconnect (`Rejoin` with its resume token) is unaffected. Only the host may change
 the rule, in the lobby; if the host leaves the lobby, the player who inherits the
 room inherits the rule too. Once the game starts, it is fixed: an in-game
 `SetGameOptions` changes only speed. A host who created the room to watch it
 keeps that seat. Crusades battle rooms never allow spectators.
 `server_spectators_test.py` checks each of these against a real server.
+
+A seated player the server stops hearing from (nothing for 8 seconds, or a
+connection closed without leaving) stops the game for everyone for 30 seconds,
+with a countdown on every screen. A player back in time, on the same connection
+or by the client's automatic reconnect (`Rejoin`, which streams only the ticks it
+missed), carries on; otherwise the server closes that connection and its own AI,
+at Normal, plays the seat for the rest of the game. A player who quits the game
+deliberately leaves at once, without a wait. In an issued Crusades battle the
+absent participant forfeits instead. The two times can be shortened for tests
+with `TAK_STALL_MS` and `TAK_DROP_WAIT_MS` (milliseconds) in the server's
+environment; `server_disconnect_test.py` checks the wait, the takeover, a
+resume and a reconnect against a real server.
 
 Voice chat (protocol 276) is relayed, never stored or recorded: a client's
 frames go only to the room members that have switched voice chat on and that
@@ -447,7 +459,7 @@ Counts include private games and enabled Crusades games. `running_games`
 includes started games that are loading or paused; `lobby_games` counts rooms
 that have not started. `connected_clients` counts established player, spectator,
 and game-browser sessions. It excludes unfinished handshakes/logins, disconnected
-players retained for rejoining, AI players, and status queries themselves.
+players' seats held for the disconnect wait, AI players, and status queries themselves.
 
 No `--data`, account, or certificate arguments are needed. The server binds a
 small status listener to **127.0.0.1 UDP** on the game TCP port's numeric value

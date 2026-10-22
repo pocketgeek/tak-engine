@@ -148,7 +148,7 @@ def run(binary, data):
             alice.close()
             dropped = bob.receive('PlayerStatus')
             assert (dropped.num('<B'), dropped.num('<B')) == (0, 1)
-            other.send('Rejoin', struct.pack('<IQ', room, stolen_token))
+            other.send('Rejoin', struct.pack('<IQI', room, stolen_token, 0))
             denied = other.receive('JoinResult')
             assert denied.num('<B') == 0
             denied.num('<B')
@@ -156,11 +156,9 @@ def run(binary, data):
             resumed = stack.enter_context(contextlib.closing(Peer(port)))
             resumed.hello(fingerprint)
             resumed.login('Alice', secrets)
-            resumed.send('Rejoin', struct.pack('<IQ', room, stolen_token))
-            restored = resumed.receive('GameStarting')
-            assert lobby(restored)[0] == room
+            resumed.send('Rejoin', struct.pack('<IQI', room, stolen_token, 0))
+            restored = resumed.receive('Reseated')
             assert restored.num('<B') == 0
-            restored.num('<I')
             assert restored.num('<Q') != stolen_token
             resumed.send('LeaveGame')
             auth.request(resumed)

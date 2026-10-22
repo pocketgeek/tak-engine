@@ -169,8 +169,11 @@ constexpr uint64_t kFlowRetryMs = 5;
 // server tick) always survives, small enough that a flooder cannot make the server
 // hold an unbounded queue on its behalf.
 constexpr size_t kCmdQueueMax = size_t(tak::net::kCmdQueueCap);
-uint64_t kGraceMs = 300000;     // hold a dropped slot this long (5 min)
-uint64_t kPauseBudgetMs = 120000;  // total auto-pause a player may cause
+// The disconnect wait (net/protocol.h): how long a seated player may be silent before
+// the room stops for it, and how long it then waits before a server AI takes the seat.
+// A test server shortens both (TAK_STALL_MS, TAK_DROP_WAIT_MS).
+uint64_t gStallMs = tak::net::kStallMs;
+uint64_t gDropWaitMs = tak::net::kDropWaitMs;
 
 // A resume token (unguessable per session; not sim state, so no determinism or
 // cross-platform concern). std::random_device is entropy where available; mix in
@@ -302,10 +305,6 @@ constexpr unsigned kVoiceAbusePerSec = 300;
 constexpr unsigned kVoiceGlobalFramesPerSec = 4000;   // all talkers on this server
 constexpr uint32_t kVoiceNameEvery = 25;
 
-// pausePlayer sentinel for a player-REQUESTED pause: distinct from any real slot,
-// so the disconnect budget sweep and the rejoin-resume path both ignore it.
-static constexpr int kPauseByRequest = -2;
-
 using tak::srv::TickResult;
 static_assert(tak::srv::TickPacer::kHz == kServerHz, "TickPacer paces kServerHz ticks per second at 1x");
 
@@ -384,19 +383,23 @@ struct Room {
     std::vector<tak::net::ReplayCheck> replayChecks;
     bool refSuspect = false;                    // referee itself suspected desynced
     int8_t missionOutcomeSent = 0;              // campaign result already broadcast (0 = none)
-    // durability (M5): the full bundle log for reconnect/replay, per-slot resume
-    // tokens, and drop-hold / auto-pause state.
+    // durability (M5): the full bundle log for spectators, reconnects and the replay,
+    // per-slot resume tokens, and the disconnect wait (protocol 289).
     size_t logBytes=0;
     bool resourceLimited=false;
     std::vector<std::vector<uint8_t>> log;      // serialized TickBundle payload per tick
     SlotInfo startSlots[kMaxSlots];             // slot config at game start (for the replay)
     uint64_t slotToken[kMaxSlots] = {};         // resume token per human slot (0 = none)
-    bool slotDropped[kMaxSlots] = {};           // slot held after a mid-game disconnect
-    uint64_t graceDeadline[kMaxSlots] = {};     // forfeit time for a dropped slot
-    bool paused = false;                        // a drop paused the game (ticks stop)
-    int pausePlayer = -1;                       // which dropped player paused it
-    uint64_t pauseStartMs = 0;                  // when the current pause began
-    uint64_t pauseBudgetMs[kMaxSlots] = {};     // remaining pause budget per player
+    // The disconnect wait: when each seat the room is waiting for goes to the AI (0 =
+    // not waiting). The seat's connection may still be open (silent past gStallMs) or
+    // gone (slotClient -1, held for a reconnect). While any is set, no tick closes.
+    uint64_t waitDeadline[kMaxSlots] = {};
+    // The token a seat had when an AI took it over, so a late reconnect is told why.
+    uint64_t takenToken[kMaxSlots] = {};
+    // Where each slot started (for an AI that takes a seat over mid-game: the enemy
+    // starts it marches on, as a seated AI is given at the start).
+    std::vector<std::pair<float, float>> slotPos;
+    bool paused = false;                        // the host paused the game (Msg::SetPause)
     std::shared_ptr<tak::net::mods::Package> modPackage;
     std::future<TickResult> tickJob;
     std::array<bool,kMaxSlots> defeated{}; // last completed tick; safe during a worker tick
@@ -406,6 +409,11 @@ struct Room {
     std::unique_ptr<tak::srv::RoomWorker> worker;
     Room() { for (int i = 0; i < kMaxSlots; ++i) slotClient[i] = -1; }
     int capacity() const { return cap; }
+    bool waiting() const {
+        for (int i = 0; i < kMaxSlots; ++i) if (waitDeadline[i]) return true;
+        return false;
+    }
+    bool held() const { return paused || waiting(); }   // no tick closes
     int usedSlots() const {
         int n = 0;
         for (int i = 0; i < kMaxSlots; ++i) if (slots[i].type == 1 || slots[i].type == 2) ++n;
@@ -707,13 +715,25 @@ private:
     bool canAdvance(const Room& r) const;   // false = wait for a lagging player (flow control)
     void checkHashes(Room& r, uint32_t tick);
     void dropClient(uint32_t id, const char* reason);
+    // The disconnect wait (protocol 289). beginWait stops the room for a seat it no
+    // longer hears from (kept if it is already waiting: the countdown never restarts);
+    // endWait lets it go on; takeOver hands the seat to a server Normal AI once the wait
+    // runs out. Each tells the room (Msg::Waiting).
+    void beginWait(Room& r, int slot, const char* why);
+    void endWait(Room& r, int slot);
+    void takeOver(Room& r, int slot);
+    void sendWaiting(Client& c, const Room& r);
+    void broadcastWaiting(Room& r);
+    // Detach a connection from its seat without the leave path (no Leave event): the
+    // seat is being given to a reconnect or an AI. Closes it with `reason`.
+    void unseat(Client& c, const char* reason);
     void writeSlots(Writer& w, Room& r, bool fromStart = false);
     void sendGameStarting(Client& c, Room& r, uint8_t slot, uint64_t token, bool catchUp);
     void writeReplay(Room& r);
 };
 
 // A running game is abandoned once nobody is left to watch it. Normally that means
-// no human slot has a live or held (dropped-within-grace) client. A game created by
+// no human slot has a live or held (disconnected, inside the wait) client. A game created by
 // a SPECTATOR host to watch the AIs fight (single-player spectate / TAK_MP_WATCH) has
 // NO human slots at all, so it also stays alive while a spectator is connected and at
 // least one AI is still playing -- otherwise the server would tear it down the instant
@@ -721,22 +741,21 @@ private:
 static bool roomActive(const Room& r) {
     bool aiPresent = false;
     for (int i = 0; i < kMaxSlots; ++i) {
-        if (r.slots[i].type == 1 && (r.slotClient[i] >= 0 || r.slotDropped[i])) return true;
+        if (r.slots[i].type == 1 && (r.slotClient[i] >= 0 || r.waitDeadline[i])) return true;
         if (r.slots[i].type == 2) aiPresent = true;
     }
     return aiPresent && !r.spectators.empty();
 }
 
 // True while SOMEBODY is still connected to the room -- a live seated player or a
-// spectator. A HELD slot does not count: holding it is what lets a player rejoin,
+// spectator. A HELD slot does not count: holding it is what lets a player reconnect,
 // but if every other human has gone too then nobody is left watching, and the room
-// would otherwise keep its referee sim and AIs running for the whole drop grace
-// (or until the auto-pause budget ran out and it resumed at full speed) with not a
-// single client attached. Games are meant to stop when the last human leaves, so a
-// room that empties is torn down immediately rather than ticking on unattended.
-// Note this deliberately gives up the rejoin window when the LAST player drops:
-// there is nobody for a paused game to be unfair to, and a ghost game costs the
-// server a sim + AI per room.
+// would otherwise keep its referee sim and AIs running with not a single client
+// attached. Games are meant to stop when the last human leaves, so a room that
+// empties is torn down immediately rather than ticking on unattended. Note this
+// deliberately gives up the reconnect window when the LAST player drops: there is
+// nobody for a paused game to be unfair to, and a ghost game costs the server a sim
+// + AI per room.
 static bool roomOccupied(const Room& r) {
     for (int i = 0; i < kMaxSlots; ++i)
         if (r.slotClient[i] >= 0) return true;
@@ -1732,11 +1751,11 @@ static uint16_t clampUnitCap(uint16_t v) {
 }
 
 // `fromStart` writes the table the game BEGAN with instead of the live one. A
-// rejoining client replays the whole bundle log from tick 0, so it must rebuild the
-// world from the START configuration: hand it the current table and a slot closed
-// since (a forfeit, or a drop that ran out its budget) reads as unused, so that
-// player's opening units never spawn and the rebuilt world diverges from the game it
-// is rejoining -- and any replay that client saves records the wrong match.
+// spectator replays the whole bundle log from tick 0, so it must rebuild the world
+// from the START configuration: hand it the current table and a slot closed since (a
+// forfeit) reads as unused, or one an AI took over reads as an AI seat from the start,
+// so the rebuilt world diverges from the game it is watching -- and any replay that
+// client saves records the wrong match.
 void Server::writeSlots(Writer& w, Room& r, bool fromStart) {
     w.u32(r.id);
     w.str(r.name);
@@ -1750,8 +1769,8 @@ void Server::writeSlots(Writer& w, Room& r, bool fromStart) {
 
 // GameStarting: the START slot table + options, then your slot (0xFF = spectator),
 // the seed, your resume token and where the bundle log ends. At a fresh start the
-// log is empty and the start table is the live one. `catchUp` (a rejoin or a
-// spectate) re-offers the room's packages first and then streams the whole log to
+// log is empty and the start table is the live one. `catchUp` (a spectate)
+// re-offers the room's packages first and then streams the whole log to
 // this client from tick 0, paced by txPending(). Flow control starts over; each
 // caller sets `loaded` itself.
 void Server::sendGameStarting(Client& c, Room& r, uint8_t slot, uint64_t token, bool catchUp) {
@@ -1759,7 +1778,7 @@ void Server::sendGameStarting(Client& c, Room& r, uint8_t slot, uint64_t token, 
     w.u8(slot); w.u32(r.seed); w.u64(token);
     // Where the HISTORY ends. The client must not send -- or treat its own
     // commands coming back as acknowledgements -- until it has consumed
-    // every bundle logged before it rejoined. It cannot work that out
+    // every bundle logged before it arrived. It cannot work that out
     // locally: the replay is streamed in chunks paced by the socket, so its
     // receive buffer legitimately runs dry BETWEEN chunks while history is
     // still coming, and a buffer-depth guess releases the gate early.
@@ -2051,8 +2070,12 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             break;
         }
         case Msg::Rejoin: {
+            // A quick reconnect inside the disconnect wait (protocol 289). The client
+            // kept its world: it names the first tick it has no bundle for and gets the
+            // log from there, not a rebuild from tick 0 (the long rejoin that replayed
+            // the whole game is gone -- past the wait an AI has the seat).
             Reader r(f.payload.data(), f.payload.size());
-            uint32_t gid = r.u32(); uint64_t token = r.u64();
+            uint32_t gid = r.u32(); uint64_t token = r.u64(); uint32_t fromTick = r.u32();
             if (!r.ok || r.p!=r.end) return;
             auto it = rooms_.find(gid);
             auto reject = [&](const std::string& why) {
@@ -2062,8 +2085,14 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             Room& room = it->second;
             int slot = -1;
             for (int i = 0; i < kMaxSlots; ++i)
-                if (room.slotDropped[i] && token != 0 && room.slotToken[i] == token) { slot = i; break; }
-            if (slot < 0) { reject("invalid or expired resume token"); break; }
+                if (room.slots[i].type == 1 && token != 0 && room.slotToken[i] == token) { slot = i; break; }
+            if (slot < 0) {
+                bool taken = false;
+                for (int i = 0; i < kMaxSlots; ++i) taken |= token != 0 && room.takenToken[i] == token;
+                reject(taken ? "the wait ran out: an AI took over your seat" : "invalid or expired resume token");
+                break;
+            }
+            if (fromTick > room.log.size()) { reject("the game has no such tick"); break; }
             if(!room.campaignBattleId.empty()) {
                 if(room.campaignResult || room.campaignFault || room.campaignResultRecorded) {
                     reject("campaign battle has ended");break;
@@ -2074,30 +2103,35 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
                 try { (void)crusades_->authorizeBattleReport(room.campaignBattleId,room.campaignRoomToken,campaignContext(room,false),campaignNow()); }
                 catch(const std::exception&) {reject("campaign battle is no longer eligible");break;}
             }
+            // The seat's old connection, when the server has not seen it go yet (a
+            // client that lost its link first): this one replaces it.
+            if (int old = room.slotClient[slot]; old >= 0 && uint32_t(old) != c.id) {
+                auto oit = clients_.find(uint32_t(old));
+                if (oit != clients_.end()) unseat(*oit->second, "replaced by a reconnect");
+            }
             // Re-seat the client and rotate the token (single use).
             room.slotClient[slot] = int(c.id);
-            room.slotDropped[slot] = false;
             if(!room.campaignBattleId.empty() && slot<2)room.campaignDisconnected[slot]=false;
             room.slotToken[slot] = randToken();
-            room.desyncFlagged.clear();   // fresh sim; old desync flags are stale
             c.clearCommands();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = gid; c.slot = slot; c.loaded = true;
-            // GameStarting rebuilds the client's world; then the whole bundle log
-            // replays it up to now, after which it receives live bundles. Because that
-            // rebuild starts at tick 0, it needs the START slot table -- see writeSlots.
-            sendGameStarting(c, room, uint8_t(slot), room.slotToken[slot], /*catchUp=*/true);
-            // Unpause if this was the player we were waiting on.
-            if (room.paused && room.pausePlayer == slot) {
-                room.pauseBudgetMs[slot] -= std::min(room.pauseBudgetMs[slot], nowMs() - room.pauseStartMs);
-                room.paused = false; room.pausePlayer = -1;
-                room.rebasePace(nowUs());   // rebase the tick clock (no burst)
-                Writer rw; rw.u8(0); rw.u8(uint8_t(slot));
-                broadcastRoom(room, Msg::Resume, rw);
-            }
+            // It has the map, the game mods and the world already.
+            c.mapReadyRoom = c.mapOfferedRoom = room.id;
+            if (room.modPackage) c.modReady = c.modOffered = room.modPackage->digest;
+            Writer w; w.u8(uint8_t(slot)); w.u64(room.slotToken[slot]); w.u32(fromTick); w.u32(uint32_t(room.log.size()));
+            c.conn.send(Msg::Reseated, w);
+            // The bundles it is missing, streamed like a spectator's catch-up. Flow
+            // control resumes from where it says it is (a client that lies only paces
+            // the room for itself, as a lying Progress could).
+            c.replaying = fromTick < room.log.size(); c.replayPos = fromTick;
+            c.ackTick = c.arrivedTick = fromTick ? fromTick - 1 : 0; c.leadTicks = kMaxLeadTicks;
+            const bool waited = room.waitDeadline[slot] != 0;
+            if (waited) endWait(room, slot);
+            else sendWaiting(c, room);
             Writer ps; ps.u8(uint8_t(slot)); ps.u8(0 /*connected*/); ps.u32(0);
             broadcastRoom(room, Msg::PlayerStatus, ps, c.id);
-            std::fprintf(stderr, "game %u: client %u REJOINED slot %d (replaying %zu ticks)\n",
-                         room.id, c.id, slot, room.log.size());
+            std::fprintf(stderr, "game %u: client %u RESEATED slot %d from tick %u (%zu ticks to send)%s\n",
+                         room.id, c.id, slot, fromTick, room.log.size() - fromTick, waited ? ", wait over" : "");
             break;
         }
         case Msg::Spectate: {
@@ -2114,7 +2148,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             // The host's ALLOW SPECTATORS rule. This is the ONLY way into a room without
             // a slot after creation, so refusing it here covers a browser's WATCH, a
             // seated player who left and asks to watch, and a dropped spectator coming
-            // back (spectators hold no resume token; Rejoin seats only held slots).
+            // back (spectators hold no resume token; Rejoin seats only seated players).
             // Checked before the password so a locked room still says why.
             if (!room.opts.allowSpectators) {
                 reject("spectators are not allowed in this game");
@@ -2130,9 +2164,10 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             c.state = Client::InGame; c.roomId = gid; c.slot = -1; c.loaded = true;
             // GameStarting (slot 0xFF = spectator) rebuilds the world; the whole
             // bundle log replays it to now, then live bundles stream via broadcast.
-            // Same reason as the rejoin above: that rebuild starts at tick 0, so it
-            // needs the START table, not one with mid-game forfeits already applied.
+            // That rebuild starts at tick 0, so it needs the START table, not one with
+            // mid-game forfeits and AI takeovers already applied (see writeSlots).
             sendGameStarting(c, room, 0xFF, 0, /*catchUp=*/true);
+            if (room.waiting()) sendWaiting(c, room);   // a countdown already running
             std::fprintf(stderr, "game %u: client %u SPECTATING (replaying %zu ticks)\n",
                          room.id, c.id, room.log.size());
             break;
@@ -2149,16 +2184,16 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
 //
 // The SCHEDULED ones matter for a different reason. With server input delay
 // (TAK_SRV_DELAY > 0) a departing player's commands sit in pendingAt buckets
-// several ticks out, which puts them in bundles AFTER the replay boundary a
-// rejoin is handed -- so they arrive looking like acknowledgements for commands
-// sent after the rejoin. Safe to purge: nothing here has been bundled or
+// several ticks out, which puts them in bundles AFTER the tick a reconnect
+// catches up from -- so they arrive looking like acknowledgements for commands
+// sent after the reconnect. Safe to purge: nothing here has been bundled or
 // broadcast yet, so every peer still agrees. A player who just dropped should not
 // have orders fire seconds later in any case.
 //
 // Called from BOTH disconnect paths. It first lived only in leaveRoom, which a
 // seated player disconnecting from a running game never reaches -- that takes the
-// slot-preserving branch of dropClient, which is exactly the rejoin path this is
-// meant to protect. The fix ran everywhere except where it was needed.
+// slot-preserving branch of dropClient, which is exactly the reconnect path this
+// is meant to protect. The fix ran everywhere except where it was needed.
 bool Server::takeInputBudget(Client& c, uint64_t now, unsigned bytes, unsigned count) {
     const auto key = c.account.empty() ? "ip:" + c.peer : "user:" + tak::auth::foldUsername(c.account);
     if (!(c.commandBytes.available(now, 4u << 20, bytes) && commandByteKeys_.available(key, now, 4u << 20, bytes) &&
@@ -2258,6 +2293,7 @@ void Server::leaveRoom(Client& c, const char* reason) {
             // sim disposes the units in lockstep).
             r->slots[c.slot].type = 3;
             r->pendingEvents.push_back({r->campaignBattleId.empty()?tak::net::Event::Kind::Leave:tak::net::Event::Kind::CampaignForfeit, uint8_t(c.slot)});
+            endWait(*r, c.slot);   // it was silent, came back and left: nothing to wait for
         }
     }
     uint32_t rid = r->id;
@@ -2636,6 +2672,7 @@ void Server::tryStart(Client& c) {
                     r->ai.emplace_back(slot, *r->reg, prof, r->seed + uint32_t(slot),
                                        tak::ai::Difficulty::Normal, std::move(enemyStarts));
                 }
+                r->slotPos = ms.slotPos;
                 if (!ms.aiSlots.empty())
                     std::fprintf(stderr, "takserver: mission '%s' -- %zu strategic AI player(s)%s\n",
                                  r->mission.c_str(), ms.aiSlots.size(),
@@ -2665,6 +2702,7 @@ void Server::tryStart(Client& c) {
                     if (k < int(spots.size())) slotPos[size_t(i)] = spots[size_t(k)];
                     ++k;
                 }
+            r->slotPos = slotPos;
             r->ai.reserve(size_t(maxSlot + 1));
             for (int i = 0; i <= maxSlot; ++i)
                 if (r->slots[i].type == 2) {
@@ -2697,9 +2735,9 @@ void Server::tryStart(Client& c) {
         }
     }
     // GameStarting: final slot table + options + seed + a per-slot resume token
-    // (used to rejoin the held slot after a disconnect).
+    // (used to reconnect to the seat inside the disconnect wait).
     for (int i = 0; i < kMaxSlots; ++i) {
-        r->pauseBudgetMs[i] = kPauseBudgetMs;
+        r->waitDeadline[i] = r->takenToken[i] = 0;
         if (r->slotClient[i] < 0) continue;
         r->slotToken[i] = randToken();
         auto it = clients_.find(uint32_t(r->slotClient[i]));
@@ -2811,20 +2849,19 @@ void Server::gameMsg(Client& c, const Frame& f) {
         case Msg::SetPause: {
             if(!r->campaignBattleId.empty())return; // Issued matches cannot be held indefinitely by a host.
             // A player asking to pause. Only the host may (in single-player the host
-            // IS the only human), and only in a running game. Unlike the drop-driven
-            // pause this one has NO budget: nobody has disconnected, so nothing should
-            // forfeit -- pausePlayer stays at the sentinel so the budget sweep and the
-            // rejoin-resume both skip it.
+            // IS the only human), and only in a running game. Unlike the disconnect
+            // wait this one never runs out: nobody has disconnected.
             if (!r || !r->running || r->hostId != c.id) return;
             Reader rd(f.payload.data(), f.payload.size());
             bool want = rd.u8() != 0;
             if (want && !r->paused) {
-                r->paused = true; r->pausePlayer = kPauseByRequest; r->pauseStartMs = nowMs();
+                r->paused = true;
                 Writer pw; pw.u8(1); pw.u8(0);
                 broadcastRoom(*r, Msg::Pause, pw);
                 std::fprintf(stderr, "game %u: paused by request\n", r->id);
-            } else if (!want && r->paused && r->pausePlayer == kPauseByRequest) {
-                r->paused = false; r->pausePlayer = -1; r->rebasePace(nowUs());
+            } else if (!want && r->paused) {
+                r->paused = false;
+                if (!r->held()) r->rebasePace(nowUs());
                 Writer rw; rw.u8(1); rw.u8(0);
                 broadcastRoom(*r, Msg::Resume, rw);
                 std::fprintf(stderr, "game %u: resumed by request\n", r->id);
@@ -3284,35 +3321,125 @@ void Server::dropClient(uint32_t id, const char* reason) {
     Client& c = *it->second;
     Room* r = c.roomId ? roomOf(c) : nullptr;
     // Defeated players normally disconnect from the result screen. Their
-    // departure must not pause the surviving players for reconnect grace.
+    // departure must not stop the surviving players for the disconnect wait.
     const bool defeated = r && c.slot >= 0 && c.slot < kMaxSlots && r->defeated[size_t(c.slot)];
     if (r && r->running && c.slot >= 0 && c.slot < kMaxSlots &&
         r->slots[c.slot].type == 1 && !defeated) {
-        // A disconnect from a running game HOLDS the slot: the player may rejoin
-        // with their resume token within the grace window. Auto-pause (budget
-        // permitting) so nobody is fighting a frozen empire meanwhile.
+        // A disconnect from a running game without a Leave HOLDS the seat: the game
+        // stops and waits gDropWaitMs for the player to reconnect (Msg::Rejoin with
+        // the resume token), then an AI takes the seat (takeOver). A seat already
+        // waiting (it went silent first) keeps its countdown.
         int s = c.slot;
         if(!r->campaignBattleId.empty() && s<2)r->campaignDisconnected[s]=true;
-        dropPendingCommands(c, *r);   // the slot is HELD; its in-flight orders are not
-        r->slotDropped[s] = true;
+        dropPendingCommands(c, *r);   // the seat is HELD; its in-flight orders are not
         r->slotClient[s] = -1;
-        r->graceDeadline[s] = nowMs() + kGraceMs;
-        if (r->pauseBudgetMs[s] > 0 && !r->paused) {
-            r->paused = true; r->pausePlayer = s; r->pauseStartMs = nowMs();
-            Writer pw; pw.u8(1 /*drop-grace*/); pw.u8(uint8_t(s));
-            broadcastRoom(*r, Msg::Pause, pw);
-        }
+        beginWait(*r, s, "disconnected");
         Writer w; w.u8(uint8_t(s)); w.u8(1 /*dropped*/); w.u32(0);
         broadcastRoom(*r, Msg::PlayerStatus, w);
-        std::fprintf(stderr, "game %u: client %u dropped -- slot %d held (grace %llus)%s\n",
-                     r->id, id, s, (unsigned long long)(kGraceMs / 1000),
-                     r->paused ? ", paused" : "");
     } else if (r) {
         leaveRoom(c, reason);
     }
     std::fprintf(stderr, "client %u dropped (%s)\n", id, reason);
     if(!c.account.empty() && campaignMatchQueue_.erase(tak::auth::foldUsername(c.account)))++campaignMatchGeneration_;
     clients_.erase(it);
+}
+
+void Server::unseat(Client& c, const char* reason) {
+    if (Room* r = c.roomId ? roomOf(c) : nullptr) {
+        dropPendingCommands(c, *r);
+        if (c.slot >= 0 && c.slot < kMaxSlots && r->slotClient[c.slot] == int(c.id)) r->slotClient[c.slot] = -1;
+    }
+    c.replaying = false; c.validationId = 0; c.deferredMapOffer.reset();
+    c.state = Client::Lobby; c.roomId = 0; c.slot = -1; c.loaded = false;
+    Writer w; w.str(reason); c.conn.send(Msg::Bye, w);
+    c.conn.fail(reason);
+}
+
+void Server::sendWaiting(Client& c, const Room& r) {
+    const uint64_t now = nowMs();
+    Writer w;
+    uint8_t n = 0;
+    for (int i = 0; i < kMaxSlots; ++i) n += r.waitDeadline[i] != 0;
+    w.u8(n);
+    for (int i = 0; i < kMaxSlots; ++i)
+        if (r.waitDeadline[i]) {
+            w.u8(uint8_t(i));
+            w.u32(uint32_t(r.waitDeadline[i] > now ? std::min<uint64_t>(r.waitDeadline[i] - now, UINT32_MAX) : 0));
+        }
+    c.conn.send(Msg::Waiting, w);
+}
+
+void Server::broadcastWaiting(Room& r) {
+    for (auto& [id, peer] : clients_) {
+        (void)id;
+        if (peer->roomId == r.id && peer->state == Client::InGame) sendWaiting(*peer, r);
+    }
+}
+
+void Server::beginWait(Room& r, int slot, const char* why) {
+    if (r.waitDeadline[slot]) return;
+    r.waitDeadline[slot] = nowMs() + gDropWaitMs;
+    broadcastWaiting(r);
+    std::fprintf(stderr, "game %u: slot %d %s -- waiting %llus for it, then an AI takes over\n",
+                 r.id, slot, why, (unsigned long long)(gDropWaitMs / 1000));
+}
+
+void Server::endWait(Room& r, int slot) {
+    if (!r.waitDeadline[slot]) return;
+    r.waitDeadline[slot] = 0;
+    if (!r.held()) r.rebasePace(nowUs());   // rebase the tick clock (no burst)
+    broadcastWaiting(r);
+    std::fprintf(stderr, "game %u: slot %d is back -- wait over\n", r.id, slot);
+}
+
+// The wait ran out. The seat's connection, if it is still open, is closed; the seat
+// becomes a server AI at Normal from the next tick, sequenced as Event::AiTakeover so
+// every peer, the referee and the replay mark the player computer-owned on the same
+// tick. The AI starts from the world as it is: it reads the empire afresh every think
+// (home = its buildings, its producers, its army), so nothing about the first ticks of
+// the game is needed. Only called with no tick job in flight (r.ai belongs to the
+// worker while one runs).
+void Server::takeOver(Room& r, int slot) {
+    if (r.slots[slot].type != 1 || r.defeated[size_t(slot)]) { endWait(r, slot); return; }
+    r.waitDeadline[slot] = 0;
+    if (int cid = r.slotClient[slot]; cid >= 0) {
+        auto it = clients_.find(uint32_t(cid));
+        if (it != clients_.end()) unseat(*it->second, "you stopped responding: an AI took over your seat");
+        r.slotClient[slot] = -1;
+    }
+    r.takenToken[slot] = r.slotToken[slot];
+    r.slotToken[slot] = 0;
+    if (!r.campaignBattleId.empty()) {
+        // An issued Crusades battle is a duel between two accounts: it does not go on
+        // with a stand-in. The absent participant times out and forfeits, as before.
+        if (slot < 2) r.campaignTimeout[slot] = true;
+        r.slots[slot].type = 3;
+        r.pendingEvents.push_back({tak::net::Event::Kind::CampaignForfeit, uint8_t(slot)});
+        std::fprintf(stderr, "game %u: player %d FORFEIT (disconnect wait ran out)\n", r.id, slot);
+    } else {
+        r.slots[slot].type = 2;
+        r.slots[slot].aiLevel = uint8_t(tak::ai::Difficulty::Normal);
+        r.pendingEvents.push_back({tak::net::Event::Kind::AiTakeover, uint8_t(slot)});
+        if (r.ref) {
+            std::vector<std::pair<float, float>> enemyStarts;
+            for (int j = 0; j < int(r.slotPos.size()); ++j) {
+                if (j == slot || (r.slots[j].type != 1 && r.slots[j].type != 2)) continue;
+                if (r.ref->allied(slot, j)) continue;
+                if (r.slotPos[size_t(j)].first == 0.0f && r.slotPos[size_t(j)].second == 0.0f) continue;
+                enemyStarts.push_back(r.slotPos[size_t(j)]);
+            }
+            r.ai.emplace_back(slot, *r.reg, aiProfile_, r.seed + uint32_t(slot),
+                              tak::ai::Difficulty::Normal, std::move(enemyStarts));
+        }
+        std::fprintf(stderr, "game %u: player %d stopped communicating -- AI (Normal) takes over\n", r.id, slot);
+    }
+    // The host's in-game controls (pause, speed) pass to a player still connected.
+    const auto host = clients_.find(r.hostId);
+    if (host == clients_.end() || host->second->roomId != r.id || !host->second->conn.ok())
+        for (int i = 0; i < kMaxSlots; ++i)
+            if (r.slots[i].type == 1 && r.slotClient[i] >= 0) { r.hostId = uint32_t(r.slotClient[i]); break; }
+    if (!r.held()) r.rebasePace(nowUs());
+    broadcastWaiting(r);
 }
 
 bool Server::allowCampaignWork(Client& c,const Frame& f) {
@@ -3555,7 +3682,7 @@ int Server::run() {
             // Round the deadline UP to the poll's millisecond, so the wake-up is never
             // early (an early wake finds nothing due and polls again with timeout 0).
             const uint64_t dueMs = (r.nextTickUs() + 999) / 1000;
-            if (r.running && !r.paused && dueMs < soonest) soonest = dueMs;
+            if (r.running && !r.held() && dueMs < soonest) soonest = dueMs;
         }
         // A client still streaming catch-up needs servicing regardless of the
         // tick clock -- otherwise resuming into a PAUSED game would feed it one
@@ -3667,31 +3794,32 @@ int Server::run() {
             pruneCampaignSearches();retryCampaignMatches();
             for(auto& [id,peer]:clients_) {(void)id;refreshCampaignSnapshot(*peer);refreshCampaignMatchmaking(*peer);}
         }
-        // Grace / pause-budget expiry: a held slot that isn't reclaimed in time,
-        // or a pause that outlasts its budget, forfeits the player. The forfeit is
-        // a SEQUENCED event so every sim (and the replay) disposes their units on
-        // the same tick.
+        // The disconnect wait. A seated player the room has heard nothing from for
+        // gStallMs stops the game (the same as a closed connection, see dropClient); one
+        // that talks again, on the same connection, lets it go on; one still away when
+        // its countdown runs out has its seat taken over by an AI. Only once the game
+        // has ticked (loading has its own deadlines) and only with someone else still
+        // connected to wait with: a player alone in the room (single-player) keeps the
+        // plain timeout below, and the room ends when it goes.
         now = nowMs();
         for (auto& [rid, r] : rooms_) {
-            if (!r.running) continue;
-            bool budgetOut = r.paused && r.pausePlayer >= 0 &&
-                             now - r.pauseStartMs >= r.pauseBudgetMs[r.pausePlayer];
+            (void)rid;
+            if (!r.running || r.tick == 0) continue;
             for (int i = 0; i < kMaxSlots; ++i) {
-                if (!r.slotDropped[i]) continue;
-                bool forfeit = now >= r.graceDeadline[i] ||
-                               (budgetOut && i == r.pausePlayer);
-                if (!forfeit) continue;
-                r.slotDropped[i] = false;
-                if(!r.campaignBattleId.empty() && i<2)r.campaignTimeout[i]=true;
-                r.slots[i].type = 3;   // slot closed; the player is out
-                r.pendingEvents.push_back({r.campaignBattleId.empty()?tak::net::Event::Kind::Forfeit:tak::net::Event::Kind::CampaignForfeit, uint8_t(i)});
-                std::fprintf(stderr, "game %u: player %d FORFEIT (grace/budget expired)\n", rid, i);
-                if (r.paused && r.pausePlayer == i) {
-                    r.paused = false; r.pausePlayer = -1; r.rebasePace(nowUs());
-                    Writer rw; rw.u8(0); rw.u8(uint8_t(i));
-                    broadcastRoom(r, Msg::Resume, rw);
-                }
+                if (r.slots[i].type != 1 || r.defeated[size_t(i)] || r.slotClient[i] < 0) continue;
+                auto it = clients_.find(uint32_t(r.slotClient[i]));
+                if (it == clients_.end() || !it->second->loaded || !it->second->conn.ok()) continue;
+                const bool silent = now - it->second->lastRecvMs >= gStallMs;
+                if (!silent) { endWait(r, i); continue; }
+                if (r.waitDeadline[i]) continue;
+                bool others = !r.spectators.empty();
+                for (int j = 0; j < kMaxSlots && !others; ++j)
+                    others = j != i && r.slotClient[j] >= 0;
+                if (others) beginWait(r, i, "stopped responding");
             }
+            if (r.tickJob.valid()) continue;   // r.ai belongs to the worker until it lands
+            for (int i = 0; i < kMaxSlots; ++i)
+                if (r.waitDeadline[i] && now >= r.waitDeadline[i]) takeOver(r, i);
         }
         // Tear down abandoned running games (everyone left/forfeited): write the
         // replay, then erase.
@@ -3734,7 +3862,7 @@ int Server::run() {
         size_t running=0;for(const auto& [id,room]:rooms_) {(void)id;running+=room.running;}
         for(auto& [id,room]:rooms_) {
             (void)id;
-            if(!room.running || room.paused || room.tickJob.valid() || room.campaignResult ||
+            if(!room.running || room.held() || room.tickJob.valid() || room.campaignResult ||
                room.campaignFault || room.resourceLimited || !room.simulationError.empty() ||
                !roomOccupied(room) || !roomActive(room) || room.nextTickUs()>nowTickUs)continue;
             if(!canAdvance(room)) {room.rebasePace(nowTickUs+kFlowRetryMs*1000);continue;}
@@ -3796,7 +3924,13 @@ int Server::run() {
             bool spectator = c->state == Client::InGame && c->slot < 0;
             if((c->state==Client::Handshake || c->state==Client::Auth) && now-c->connectedMs>kLoginDeadlineMs)
                 dead.push_back(id);
-            if (now - c->lastRecvMs > (spectator ? kSpectatorTimeoutMs : kTimeoutMs))
+            // A seat the room is waiting for is the wait's to end (takeOver), not this
+            // timeout's: closing it here would only restart nothing and lose the chance
+            // of the same connection coming back.
+            const Room* in = c->state == Client::InGame && c->slot >= 0 ? roomOf(*c) : nullptr;
+            const bool waitedFor = in && c->slot < kMaxSlots && in->waitDeadline[c->slot] &&
+                                   in->slotClient[c->slot] == int(id);
+            if (!waitedFor && now - c->lastRecvMs > (spectator ? kSpectatorTimeoutMs : kTimeoutMs))
                 dead.push_back(id);
         }
         for (uint32_t id : dead) dropClient(id, "disconnected");
@@ -3807,9 +3941,9 @@ int Server::run() {
 }  // namespace
 
 static int serverMain(int argc, char** argv) {
-    // Test overrides for the reconnect timers (seconds).
-    if (const char* g = std::getenv("TAK_GRACE_MS")) kGraceMs = uint64_t(std::atoll(g));
-    if (const char* b = std::getenv("TAK_PAUSE_BUDGET_MS")) kPauseBudgetMs = uint64_t(std::atoll(b));
+    // Test overrides for the disconnect wait (milliseconds).
+    if (const char* g = std::getenv("TAK_STALL_MS")) gStallMs = uint64_t(std::max(100ll, std::atoll(g)));
+    if (const char* b = std::getenv("TAK_DROP_WAIT_MS")) gDropWaitMs = uint64_t(std::max(100ll, std::atoll(b)));
     uint16_t port = 7677;
     std::string dataRoot, replayDir,tlsCert,tlsKey,mapRoot;
     tak::srv::AcmeOptions acme;acme.state="takserver-acme";

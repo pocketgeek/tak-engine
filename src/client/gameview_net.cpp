@@ -439,9 +439,24 @@
         }
 
         pumpReplayRecording();
-        if (!mp_->poll()) { netError_ = mp_->error().empty() ? "disconnected" : mp_->error(); return false; }
+        if (reconnectUntilMs_) {
+            if (!reconnectStep()) return false;
+            if (reconnectUntilMs_) return true;   // still away: nothing to send or simulate
+        } else if (!mp_->poll()) {
+            if (beginReconnect()) return true;
+            netError_ = mp_->error().empty() ? "disconnected" : mp_->error();
+            return false;
+        }
         if (mp_->desynced()) { netError_ = mp_->desyncReason(); return false; }
 #ifndef NDEBUG
+        // TAK_DROP_LINK_AT_TICK=N: lose the connection at tick N (no Bye, no Leave), once,
+        // so a harness can watch the reconnect inside the disconnect wait.
+        if (const char* e = tak::devEnv("TAK_DROP_LINK_AT_TICK"); e && !linkDropped_ && netTick_ >= uint32_t(std::atoi(e))) {
+            linkDropped_ = true;
+            std::fprintf(stderr, "drop-link: closing the connection at tick %u\n", netTick_);
+            mp_->dropLink();
+            return true;
+        }
         // Regression probe: an eliminated, non-acking client must not stall survivors.
         if (outcome_ < 0 && tak::devFlag("TAK_DEFEAT_STALL")) return true;
         speedProbe();
@@ -582,6 +597,7 @@
                     }
 #endif
                 }
+            for (const auto& e : bd.events) noteEvent(e);   // display only (the sim applies it below)
             if (useSimThread_) {
                 // Hand this tick's bundle to the sim worker (FIFO == lockstep tick order).
                 // world_ is simulated there; the state hash comes back via simOutbox_ and is
@@ -1167,11 +1183,80 @@ void GameView::autoplayStep() {
 }
 #endif
 
+    // The disconnect wait (protocol 289), the client's side. The server holds a seat it
+    // stopped hearing from for kDropWaitMs; a player whose link dropped reconnects
+    // inside that window and carries on from the first bundle it lacks, its world
+    // intact. Only a seated player in a game still being played, and only with another
+    // human seated -- alone in the room (single-player), the server ends the game when
+    // the link goes, so there is nothing to come back to.
+    bool GameView::beginReconnect() {
+        if (!mp_ || !mp_->canReconnect() || spectating_ || replayMode_ || outcome_ != 0) return false;
+        const int mine = mp_->room().mySlot;
+        bool others = false;
+        for (int i = 0; i < tak::net::kMaxSlots; ++i)
+            others |= i != mine && mp_->startSlots()[i].type == 1;
+        if (!others) return false;
+        const uint64_t now = SDL_GetTicks64();
+        reconnectUntilMs_ = now + tak::net::kDropWaitMs;
+        reconnectNextMs_ = now;
+        std::fprintf(stderr, "connection lost (%s) -- reconnecting\n", mp_->error().c_str());
+        return true;
+    }
+
+    bool GameView::reconnectStep() {
+        using S = tak::net::MpClient::State;
+        const uint64_t now = SDL_GetTicks64();
+        if (mp_->state() != S::Done) mp_->poll();
+        uint32_t from = 0, end = 0;
+        if (mp_->takeReseated(from, end)) {
+            reconnectUntilMs_ = 0;
+            // What was in flight when the link went never comes back: the server dropped
+            // it with the old connection. The bundles from `from` to `end` are history
+            // (the ticks played before the game stopped for us): hold our orders and
+            // acknowledgements through them, as a spectator's catch-up does.
+            cmdInFlight_ = 0;
+            orderWindow_.clear();
+            cmdReplayEnd_ = end;
+            cmdCatchUp_ = netTick_ < end;
+            netError_.clear();
+            notice_ = "RECONNECTED"; noticeTimer_ = 3.0f;
+            std::fprintf(stderr, "reconnected -- catching up from tick %u (log at %u)\n", from, end);
+            return true;
+        }
+        if (mp_->state() == S::Done) {
+            if (!mp_->canReconnect() || now >= reconnectUntilMs_) {
+                reconnectUntilMs_ = 0;
+                netError_ = mp_->error().empty() ? "disconnected" : mp_->error();
+                return false;
+            }
+            if (now >= reconnectNextMs_) { reconnectNextMs_ = now + 2000; mp_->reconnect(); }
+        }
+        return true;
+    }
+
+    // Display side of a bundle's lifecycle events (main thread; the sim applies them).
+    void GameView::noteEvent(const tak::net::Event& e) {
+        if (e.kind != tak::net::Event::Kind::AiTakeover || e.player >= 8) return;
+        playerAi_[e.player] = true;
+        const std::string& name = playerName_[e.player];
+        notice_ = (name.empty() ? "PLAYER " + std::to_string(e.player + 1) : name) +
+                  " STOPPED RESPONDING: AN AI (NORMAL) TAKES OVER";
+        noticeTimer_ = 6.0f;
+        std::fprintf(stderr, "player %d: AI takeover at tick %u\n", int(e.player), netTick_);
+    }
+
     bool GameView::mpAutoStep(int autoMode, const std::string& mapId, bool crusades) {
         using S = tak::net::MpClient::State;
-        if (!mp_->poll()) { netError_ = mp_->error(); return false; }
+        // Reconnecting after the link dropped mid-game: mpStep owns it (a reconnect
+        // passes through Lobby, which must not read as the lobby branches below).
+        if (reconnectUntilMs_) return mpStep();
+        if (!mp_->poll()) { if (beginReconnect()) return true; netError_ = mp_->error(); return false; }
         S st = mp_->state();
-        if (st == S::Done) { if (netError_.empty()) netError_ = mp_->error(); return false; }
+        if (st == S::Done) {
+            if (beginReconnect()) return true;
+            if (netError_.empty()) netError_ = mp_->error();
+            return false;
+        }
         if (st == S::InGame) powerScriptStep();   // TAK_POWER_SCRIPT (debug builds)
         // A START the server refused ends a harness run, with the reason as its error. Only
         // the auto-start paths set mpStarted_; a player in the room reads the refusal there.
@@ -1240,11 +1325,6 @@ void GameView::autoplayStep() {
             std::string createMap = benchmarkMode_ ? std::string("Ulasem Arena") : mapId;
             mp_->createGame(benchmarkMode_ ? "Benchmark" : (priv ? "Single Player" : "headless"),
                             "", createMap, o, cap, watch, priv, mission);
-        } else if (st == S::Lobby && autoMode == 5) {
-            // Rejoin: read the resume ticket the original session saved and
-            // reconnect to the held slot.
-            uint32_t gid = 0; uint64_t tok = 0;
-            if (readResume(gid, tok) && gid) { mp_->rejoin(gid, tok); mpReadied_ = true; }
         } else if (st == S::Lobby && autoMode == 6) {
             // Spectate: poll the list and watch the first running game. Ask once
             // per refusal, not every frame: a room with ALLOW SPECTATORS off says no,
@@ -1345,13 +1425,12 @@ void GameView::autoplayStep() {
                 const char* w = tak::devEnv("TAK_MP_WAIT"); return w ? std::atoi(w) : 2;
             }();
             if (ready >= wantReady && mp_->room().mapsReady) { mp_->startGame(); mpStarted_ = true; }
-        } else if (mp_->isRejoin()) {
-            // Rejoin OR spectate (checked BEFORE the state branches -- the replayed
-            // bundles may already have flipped the state to InGame): reset the sim
-            // and replay from tick 0. The server has queued the whole bundle log
-            // after the GameStarting; mpStep drains it, fast-forwarding to now.
-            bool spec = mp_->isSpectator();
-            mp_->clearRejoin();
+        } else if (mp_->isCatchUp()) {
+            // Spectate (checked BEFORE the state branches -- the replayed bundles may
+            // already have flipped the state to InGame): reset the sim and replay from
+            // tick 0. The server has queued the whole bundle log after the
+            // GameStarting; mpStep drains it, fast-forwarding to now.
+            mp_->clearCatchUp();
             // Unit ids restart at 1: snapshots from here on carry a new world epoch,
             // so render caches never take a new unit for the old one with its id.
             worldEpoch_.fetch_add(1, std::memory_order_release);
@@ -1368,15 +1447,9 @@ void GameView::autoplayStep() {
             outbox_.clear();   // pre-disconnect orders are moot; the server dropped them
             outboxHead_ = 0;
             startMpGame(mp_->startRoom(), mp_->startSeed());
-            if (spec) {
-                beginSpectating();   // watch-only: no fog, no control, no resume
-            } else {
-                mp_->reportLoaded(gameDataHash_);
-                writeResume(mp_->gameId(), mp_->resumeToken());
-            }
+            beginSpectating();   // watch-only: no fog, no control
             mpSetupDone_ = true;
-            std::fprintf(stderr, spec ? "spectating -- replaying to catch up...\n"
-                                      : "rejoined -- replaying to catch up...\n");
+            std::fprintf(stderr, "spectating -- replaying to catch up...\n");
             mpStep();   // drain the replay this frame
         } else if (mp_->starting() && !mpSetupDone_) {
             startMpGame(mp_->startRoom(), mp_->startSeed());
@@ -1387,7 +1460,6 @@ void GameView::autoplayStep() {
                 beginSpectating();
             } else {
                 mp_->reportLoaded(gameDataHash_);
-                writeResume(mp_->gameId(), mp_->resumeToken());   // reconnect ticket
             }
             mpSetupDone_ = true;
         } else if (st == S::InGame) {

@@ -23,7 +23,13 @@ constexpr uint32_t kNetVersion = 289;      // 289: campaign human seat: the .ota
                                            //      (retail 0x4d290c), so takx22_mt/takx24_mt no longer give the player an AI and an Aramon team;
                                            //      hashed state changes for those two missions only (skirmish unchanged).
                                            //      Target-score turn penalty uses the terrain-scaled turn rate (412a77: road, else water
-                                           //      multiplier under mover bits 11/12); hashed sim changes, 288 replays refused
+                                           //      multiplier under mover bits 11/12); hashed sim changes.
+                                           //      Disconnect wait + AI takeover: a seated player the server stops hearing from (silent
+                                           //      kStallMs, or closed without a Leave) pauses the room for kDropWaitMs with Msg::Waiting
+                                           //      (appended) counting down; back in time it resumes (same connection, or Rejoin u32 fromTick
+                                           //      -> Msg::Reseated, catching up from fromTick, no world rebuild), else Event::Kind::AiTakeover
+                                           //      (= 4, sets Player::automaticGates) and a server Normal AI plays the seat. The full-log
+                                           //      seated rejoin, the 5 min hold and the pause budget are gone; 288 replays refused
                                            // 288: power codes: GameOptions powerCodes byte (appended after mapScenario, creation-only, forced 0 in
                                            //      campaigns and Crusades battles); Cmd::PowerCode = 28 (server-validated, dropped while off); replay
                                            //      format 14 adds the POWER CODES byte (bit0 on, bit1 map started revealed). Sim unchanged with power
@@ -478,10 +484,21 @@ constexpr uint32_t kMaxFrame = 1u << 18;   // 256 KB frame cap (hardening) -- he
 // Power codes (Cmd::PowerCode, GameOptions::powerCodes): the first protocol that
 // carries them. A strict replay read accepts Cmd::PowerCode from here on.
 constexpr uint32_t kPowerCodesProtocol = 288;
+// Event::Kind::AiTakeover: the first protocol that carries it (a strict replay read
+// refuses it before).
+constexpr uint32_t kAiTakeoverProtocol = 289;
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
 constexpr int kServerHz = 30;              // sim/tick rate
 constexpr int kHashPeriod = 30;            // ticks between StateHash reports; the
                                            // referee hashes only these ticks too
+// The disconnect wait (protocol 289). The server stops the room when it has heard
+// nothing from a seated player for kStallMs (a healthy client is never that quiet: it
+// reports progress every few ticks and answers a ping within the ping interval), or at
+// once when the connection closes without a Leave, and waits kDropWaitMs for it to come
+// back before a server AI takes the seat. A test server may shorten both
+// (TAK_STALL_MS, TAK_DROP_WAIT_MS); the client reconnects within the same window.
+constexpr uint32_t kStallMs = 8000;
+constexpr uint32_t kDropWaitMs = 30000;
 // Commands one client may land in one tick. The server enforces it as flood
 // protection and DISCARDS the excess, so the client has to know it too and spread
 // a bigger batch over several ticks -- otherwise ordering a large selection
@@ -636,16 +653,19 @@ enum class Msg : uint8_t {
     Desynced,           // S->C: tick, reason
     PlayerStatus,       // S->C: slot, status, ping (informational)
     // durability (M5)
-    Rejoin,             // C->S: gameId, resume token -> GameStarting + bundle log
-    Pause,              // S->C: cause, player (game paused; ticks stop)
+    Rejoin,             // C->S: u32 gameId, u64 resume token, u32 fromTick (289: the first tick whose
+                        // bundle this client does not have). Only a seat still held for the
+                        // disconnect wait (or still seated: the old connection is replaced) ->
+                        // Reseated, then the bundles from fromTick; refused with JoinResult.
+    Pause,              // S->C: cause, player (host-requested pause; ticks stop)
     Resume,             // S->C: cause, player (game resumes)
     Spectate,           // C->S: gameId, password -> GameStarting (slot 0xFF) + log
     SetGameOptions,     // C->S (host): full GameOptions (lobby: rebroadcast; in-game: speed)
     SpeedUpdate,        // S->C: game speed changed in-game (speed byte) -> client re-paces
     MissionOutcome,     // S->C: campaign mission won/lost (int8: +1 victory, -1 defeat)
     SetPause,           // C->S (host/only-human): u8 want -- pause or resume the game.
-                        // Distinct from the drop-driven pause above: it never expires,
-                        // because nobody is disconnected and nothing should forfeit.
+                        // Distinct from the disconnect wait (Msg::Waiting): it never
+                        // expires, because nobody is disconnected.
     // account login (SCRAM-SHA-256; see src/net/auth.h). APPENDED, not slotted in
     // beside Hello where they belong logically: these values are written into
     // replay files, so renumbering the existing ones would break every replay
@@ -740,6 +760,15 @@ enum class Msg : uint8_t {
                         // Side, colour, team and READY move with the player; the old seat
                         // opens with the target's colour and team. The server answers the
                         // mover with JoinResult (ok, new slot) and then broadcasts LobbyState.
+    // Disconnect wait (protocol 289; docs/multiplayer-design.md section 4).
+    Waiting,            // S->C: u8 n, then n x (u8 slot, u32 ms left). The seated players the
+                        // room is waiting for, each with its own countdown to the AI takeover;
+                        // sent to the whole room whenever the set changes (n = 0: nobody, the
+                        // game goes on) and to a spectator or a reseated player as it arrives.
+                        // While n > 0 the server closes no tick.
+    Reseated,           // S->C: u8 slot, u64 rotated resume token, u32 fromTick, u32 logEnd. The
+                        // answer to a good Rejoin: the client keeps its world, and the bundles
+                        // from fromTick follow (those before logEnd are history it catches up on).
 };
 
 // Voice chat (Msg::VoiceUp / VoiceDown): Opus, 48 kHz mono, one 20 ms frame per message.
@@ -879,7 +908,10 @@ struct GameOptions {
 struct Event {
     // CampaignForfeit is emitted only by an issued campaign room. Ordinary
     // skirmish Leave/Forfeit keep their existing inert-army behavior.
-    enum class Kind : uint8_t { Forfeit = 1, Leave = 2, CampaignForfeit = 3 };
+    // AiTakeover (protocol 289): the player stopped communicating and the disconnect
+    // wait ran out, so a server-run Normal AI plays the seat from this tick. The units
+    // keep their orders; the sim only marks the player computer-owned (automaticGates).
+    enum class Kind : uint8_t { Forfeit = 1, Leave = 2, CampaignForfeit = 3, AiTakeover = 4 };
     Kind kind = Kind::Forfeit;
     uint8_t player = 0;
 };

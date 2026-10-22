@@ -8,7 +8,7 @@ the Spectate check shows exactly which admission paths it leaves open:
   refused       OFF: a WATCH is refused with the reason, and the in-game options
                 message cannot turn it back on (fixed once the game starts)
   reconnect     OFF: a dropped player's new connection cannot come back as a
-                watcher, while its seated Rejoin still works
+                watcher, while its seated reconnect (Rejoin) still works
   switch        OFF: a seated player who leaves the running game cannot watch it
   lobby toggle  the host flips it in the lobby; the last value is what the game
                 starts with and what the list reports
@@ -158,10 +158,12 @@ def scenario_reconnect(port, h):
         host.close()   # a dropped seated player: the slot is held for a rejoin
         back = stack.enter_context(contextlib.closing(login(port, h, 'Alice')))
         expect_refused(back, state[0], 'reconnecting as a spectator')
-        # The seat itself is not a spectator path: the resume token still works.
-        back.send('Rejoin', struct.pack('<IQ', state[0], token))
-        _, slot, rotated = starting(back)
-        assert slot == 0 and rotated and rotated != token, 'seated rejoin broke with spectators off'
+        # The seat itself is not a spectator path: the resume token still works (a
+        # reconnect inside the disconnect wait, from the first tick it lacks).
+        back.send('Rejoin', struct.pack('<IQI', state[0], token, 0))
+        reseated = back.receive('Reseated')
+        slot, rotated = reseated.num('<B'), reseated.num('<Q')
+        assert slot == 0 and rotated and rotated != token, 'seated reconnect broke with spectators off'
 
 
 def scenario_switch(port, h):

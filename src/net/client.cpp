@@ -25,6 +25,8 @@ bool MpClient::connect(const std::string& host, uint16_t port, const std::string
     clearCampaignCache();
     crypto::wipe(keys_.clientKey.data(), keys_.clientKey.size());
     crypto::wipe(keys_.serverKey.data(), keys_.serverKey.size());
+    forgetResume();
+    host_ = host; port_ = port;
     auth_ = Auth::None; account_.clear(); pend_ = PendingAuth{};
     deriveDone_.store(false, std::memory_order_relaxed);
     conn_ = Conn{}; err_.clear();
@@ -50,6 +52,48 @@ MpClient::~MpClient() {
     cancelCampaignReplayDownload();
     if (derive_.joinable()) derive_.join();   // never outlive the key-derivation worker
     crypto::wipe(loginPass_);
+    forgetResume();
+}
+
+void MpClient::forgetResume() {
+    crypto::wipe(resumeKeys_.clientKey.data(), resumeKeys_.clientKey.size());
+    crypto::wipe(resumeKeys_.serverKey.data(), resumeKeys_.serverKey.size());
+    crypto::wipe(resumeKeys_.storedKey.data(), resumeKeys_.storedKey.size());
+    haveResumeKeys_ = false; resumeSalt_.clear(); resumeIters_ = 0;
+    lostInGame_ = reconnecting_ = rejoinSent_ = reconnectRefused_ = reseated_ = false;
+}
+
+uint64_t MpClient::clockMs() { return nowMs(); }
+
+bool MpClient::canReconnect() const {
+    return lostInGame_ && !reconnectRefused_ && !spectator_ && !desynced_ && !host_.empty() &&
+           room_.id && resumeToken_ && (loginUser_.empty() || haveResumeKeys_);
+}
+
+bool MpClient::reconnect() {
+    if (!canReconnect() || state_ != State::Done) return false;
+    if (derive_.joinable()) derive_.join();
+    // A new connection for the SAME game: the room, the recording, the received
+    // bundles and the resume token stay; only the link and the login start over.
+    auth_ = Auth::None; pend_ = PendingAuth{};
+    deriveDone_.store(false, std::memory_order_relaxed);
+    conn_ = Conn{}; err_.clear();
+    voice_.clear(); voiceListenSent_ = 0;
+    pingsOut_.clear(); voiceBaseRtt_ = UINT32_MAX;
+    voiceHeld_ = voiceOpen_ = voiceRestart_ = voiceSlowRtt_ = false;
+    waiting_.clear();
+    // A short connect timeout: this runs on the render thread, and is retried.
+    if (!conn_.connect(host_, port_, 1500)) { err_ = conn_.error(); state_ = State::Done; return false; }
+    state_ = State::Connecting;
+    reconnecting_ = true; rejoinSent_ = false;
+    Writer w;
+    w.u32(kNetVersion);
+    w.str("");
+    w.u64(dataHash_);
+    w.str(name_);
+    send(Msg::Hello, w);
+    lastRecvMs_ = nowMs();
+    return true;
 }
 
 void MpClient::setLogin(const std::string& user, const std::string& password) {
@@ -62,6 +106,13 @@ void MpClient::disconnect(const std::string& reason) {
     conn_.closeNow();
     clearCampaignCache();
     state_ = State::Done;
+    forgetResume();   // a deliberate close is never reconnected
+}
+
+void MpClient::leaveRunningGame() {
+    if (state_ != State::InGame || !conn_.ok()) return;
+    send(Msg::LeaveGame);
+    conn_.flushWrite();
 }
 
 bool MpClient::poll() {
@@ -80,6 +131,9 @@ bool MpClient::poll() {
     // buffered and then thrown away, leaving only a bare "peer closed" to explain a
     // rejection the server had actually spelled out.
     const uint64_t readAt = nowMs();
+    // A seated player whose link goes now may reconnect (canReconnect) -- unless the
+    // server itself ended it (Reject, Bye), which the handlers below record.
+    const bool inGame = state_ == State::InGame && !spectator_;
     const bool recvOk = conn_.recv();
     Frame f;
     if (recvOk)
@@ -98,6 +152,7 @@ bool MpClient::poll() {
                        "mismatch (this client speaks v" + std::to_string(kNetVersion) + ")";
         }
         state_ = State::Done;
+        if (inGame) lostInGame_ = true;
         clearCampaignCache();
         return false;
     }
@@ -149,7 +204,10 @@ bool MpClient::poll() {
     if (now - lastRecvMs_ > timeoutMs) { if (err_.empty()) err_ = "server timeout"; state_ = State::Done; }
     if (!conn_.flushWrite()) { if (err_.empty()) err_ = conn_.error(); state_ = State::Done; }
     if (!conn_.ok() && err_.empty()) { err_ = conn_.error(); state_ = State::Done; }
-    if (state_ == State::Done) clearCampaignCache();
+    if (state_ == State::Done) {
+        if (inGame) lostInGame_ = true;
+        clearCampaignCache();
+    }
     return state_ != State::Done;
 }
 
@@ -546,6 +604,7 @@ void MpClient::campaignFrame(const Frame& f) {
 
 void MpClient::failAuth(const std::string& why) {
     auth_ = Auth::Failed;
+    if (reconnecting_) reconnectRefused_ = true;   // the same login will not do better next time
     if (err_.empty()) err_ = why;
     // Settle the key-derivation worker before touching anything it writes. This
     // can cost the tail of one PBKDF2 run, which is a fine price on a path that
@@ -598,6 +657,19 @@ void MpClient::onAuthChallenge(Reader& r) {
     // a trivial one to weaken the derivation. Neither is worth entertaining.
     if (pend_.iters < 1000 || pend_.iters > 5000000) {
         failAuth("the server asked for an unreasonable password work factor");
+        return;
+    }
+    if (reconnecting_) {
+        // Signing in again for a reconnect: the password is long gone, but the keys it
+        // gave are kept for exactly this. Only for the same account, salt and work
+        // factor -- anything else is not the login we made.
+        if (!haveResumeKeys_ || pend_.newAccount || pend_.salt != resumeSalt_ || pend_.iters != resumeIters_) {
+            failAuth("cannot sign in again to reconnect");
+            return;
+        }
+        pend_.challenged = true;
+        keys_ = resumeKeys_;
+        deriveDone_.store(true, std::memory_order_release);   // pumpDerive sends the proof
         return;
     }
     if (pend_.newAccount) {
@@ -694,6 +766,9 @@ void MpClient::onAuthResult(Reader& r) {
     }
     account_ = loginUser_;
     auth_ = status == AuthStatus::Created ? Auth::Created : Auth::Ok;
+    // Kept (until disconnect() or the next connect()) so a game whose link drops can
+    // sign in again and reconnect inside the disconnect wait without the password.
+    resumeKeys_ = keys_; resumeSalt_ = pend_.salt; resumeIters_ = pend_.iters; haveResumeKeys_ = true;
     crypto::wipe(keys_.clientKey.data(), keys_.clientKey.size());
     crypto::wipe(keys_.serverKey.data(), keys_.serverKey.size());
     // The server follows this with a Welcome, which moves us into the lobby.
@@ -737,6 +812,13 @@ void MpClient::onFrame(const Frame& f) {
             // shown as its owner spelled it, not as they happened to type it.
             if (auth_ != Auth::None && !name_.empty()) account_ = name_;
             state_ = State::Lobby;
+            if (reconnecting_) {
+                // Back in: ask for the seat, catching up from the first bundle we lack.
+                reconnecting_ = false; rejoinSent_ = true;
+                Writer w; w.u32(room_.id); w.u64(resumeToken_); w.u32(nextBundleTick_);
+                send(Msg::Rejoin, w);
+                break;
+            }
             if (campaignAuthenticated()) {
                 listCampaigns();
                 if (!campaignSubscription_.empty()) {
@@ -752,6 +834,7 @@ void MpClient::onFrame(const Frame& f) {
             roomRequestPending_=false;
             err_ = r.str();
             state_ = State::Done;
+            reconnectRefused_ = true;   // the server ended it: not a link to restore
             break;
         case Msg::Ping: send(Msg::Pong); break;
         case Msg::Pong:
@@ -773,7 +856,7 @@ void MpClient::onFrame(const Frame& f) {
                 voiceProbe(now, int64_t(atLeast));
             }
             break;
-        case Msg::Bye: err_ = r.str(); state_ = State::Done; break;
+        case Msg::Bye: err_ = r.str(); state_ = State::Done; reconnectRefused_ = true; break;
         case Msg::GameList: {
             games_.clear();
             uint32_t n = r.u32();
@@ -796,7 +879,12 @@ void MpClient::onFrame(const Frame& f) {
                 // set, a refused watch made the NEXT ordinary join's GameStarting
                 // read as a spectator start.
                 joinError_ = why.empty() ? std::string("the server refused the request") : why;
-                expectingSpectate_ = expectingRejoin_ = false;
+                expectingSpectate_ = false;
+                if (rejoinSent_) {   // the seat is gone (the wait ran out) or never was
+                    rejoinSent_ = false; reconnectRefused_ = true;
+                    err_ = joinError_; state_ = State::Done;
+                    break;
+                }
             }
             if (ok) {
                 joinError_.clear();
@@ -899,11 +987,12 @@ void MpClient::onFrame(const Frame& f) {
             startSeed_ = r.u32();
             resumeToken_ = r.u64();
             replayTicks_ = r.u32();   // bundles logged before we joined (0 = none)
+            nextBundleTick_ = 0; waiting_.clear();
             // 0xFF marks a spectator (no slot); map it to -1.
             room_.mySlot = !r.ok ? keep : (mySlot == 0xFF ? -1 : int(mySlot));
             // Record a replay of every game we take part in -- playing or spectating
             // (an all-AI watch game included). Started here rather than when the view
-            // sets up, because the backlog a rejoin/spectate receives arrives
+            // sets up, because the backlog a spectate receives arrives
             // immediately after this message -- any later and the recording would be
             // missing its first ticks. A spectator's replay carries no hash
             // checkpoints (see sendHash); the view skips saving for the Benchmark.
@@ -912,13 +1001,13 @@ void MpClient::onFrame(const Frame& f) {
             // Any 0xFF start is a spectator (a create-as-spectator host, or spectate()).
             spectator_ = expectingSpectate_ || (r.ok && mySlot == 0xFF);
             // Route EVERY spectator through the "set up before the state branches" path
-            // (isRejoin): a spectator never reports Loaded, so the server starts sending
+            // (isCatchUp): a spectator never reports Loaded, so the server starts sending
             // TickBundles immediately and the client's state can flip Starting->InGame
             // before the normal starting-branch runs -- which would skip world setup and
             // leave the spectator watching an empty sim. A host-spectator whose game is
             // just starting simply has an empty backlog to "replay".
-            rejoin_ = expectingRejoin_ || expectingSpectate_ || spectator_;
-            expectingRejoin_ = expectingSpectate_ = false;
+            catchUp_ = expectingSpectate_ || spectator_;
+            expectingSpectate_ = false;
             state_ = State::Starting;
             break;
         }
@@ -931,6 +1020,27 @@ void MpClient::onFrame(const Frame& f) {
         }
         case Msg::Pause: paused_ = true; break;
         case Msg::Resume: paused_ = false; break;
+        case Msg::Waiting: {
+            const uint64_t now = nowMs();
+            std::vector<Wait> list;
+            const uint8_t n = r.u8();
+            for (uint8_t i = 0; i < n && r.ok; ++i) {
+                Wait w; w.slot = r.u8(); w.untilMs = now + r.u32();
+                if (r.ok && w.slot < kMaxSlots) list.push_back(w);
+            }
+            if (r.ok) waiting_ = std::move(list);
+            break;
+        }
+        case Msg::Reseated: {
+            const uint8_t slot = r.u8(); const uint64_t token = r.u64();
+            const uint32_t from = r.u32(), end = r.u32();
+            if (!r.ok || !rejoinSent_ || slot >= kMaxSlots) break;
+            rejoinSent_ = false; lostInGame_ = false;
+            room_.mySlot = slot; resumeToken_ = token;
+            reseated_ = true; reseatFrom_ = from; reseatEnd_ = end;
+            state_ = State::InGame;
+            break;
+        }
         case Msg::TickBundle: {
             // Record the payload VERBATIM, before parsing: the server logs this exact
             // buffer, so replaying our copy reproduces the game bit-for-bit. Parsing
@@ -940,6 +1050,7 @@ void MpClient::onFrame(const Frame& f) {
             uint32_t tk = 0;
             Bundle bd;
             if (getBundle(r, tk, bd, /*strict=*/false)) {
+                nextBundleTick_ = std::max(nextBundleTick_, tk + 1);
                 uint64_t delay = receiveDelayMs();
                 if (delay > 0) {   // model the link: hold, then release later
                     jitterHeld_.push_back({nowMs() + delay, tk, std::move(bd)});
@@ -1118,15 +1229,6 @@ void MpClient::startGame() { startRequested_ = true; startError_.clear(); }
 
 void MpClient::reportLoaded(uint64_t dataHash) { Writer w; w.u64(dataHash); send(Msg::Loaded, w); }
 
-void MpClient::rejoin(uint32_t gameId, uint64_t token) {
-    if(roomRequestPending_)return;
-    roomRequestPending_=true;
-    joinError_.clear();
-    expectingRejoin_ = true;
-    Writer w; w.u32(gameId); w.u64(token);
-    send(Msg::Rejoin, w);
-}
-
 void MpClient::spectate(uint32_t gameId, const std::string& password) {
     if(roomRequestPending_)return;
     roomRequestPending_=true;
@@ -1209,7 +1311,7 @@ void MpClient::mapFrame(const Frame& f) {
         if (f.kind == Msg::MapOffer) {
             auto id = r.u32(); auto mapId = r.str(), digest = r.str(); auto size = r.u32();
             if (!r.ok || r.p != r.end) throw std::runtime_error("invalid map offer");
-            if (room_.id && room_.id != id && !expectingSpectate_ && !expectingRejoin_) return;
+            if (room_.id && room_.id != id && !expectingSpectate_) return;
             if (mapReceive_.room == id && mapReceive_.digest == digest) return;
             if (mapPackage_ && mapPackage_->digest == digest) { acceptMap(mapPackage_, id); return; }
             mapReadyRoom_ = 0; mapReceive_.begin(id, size, digest);

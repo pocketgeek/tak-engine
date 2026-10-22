@@ -3216,6 +3216,7 @@
             if (!netError_.empty())
                 hudBanner("NETWORK: " + netError_, 150, 2.0f, {255, 140, 120, 255}, winW);
         }
+        if (mp_ && !replayMode_) drawNetWaiting(winW);
         if (pendingCmd_ && hudFont_.ok()) {
             const char* msg = pendingCmd_ == 'a'   ? "ATTACK: CLICK TARGET"
                               : pendingCmd_ == 'f' ? "FIGHT-MOVE: CLICK DESTINATION"
@@ -7977,6 +7978,37 @@
             const PieceMeta* cm = (ci < meta->children.size()) ? &meta->children[ci] : nullptr;
             collect(out, atlas, o.children[ci], xf, anim, heading, player, mirror, false,
                     shadow, ext, cm, shadowCull, prepared ? &prepared->children[ci] : nullptr,paletteLighting);
+        }
+    }
+
+    // The disconnect wait on screen: one line per seat the server is waiting for, each
+    // counting down to the AI takeover, and our own line while we reconnect. UI font,
+    // centred on a dark panel, in the band below the status lines.
+    void GameView::drawNetWaiting(int winW) {
+        const uint64_t now = SDL_GetTicks64(), wall = tak::net::MpClient::clockMs();
+        std::vector<std::string> lines;
+        auto secs = [](uint64_t at, uint64_t t) { return at > t ? int((at - t + 999) / 1000) : 0; };
+        if (reconnectUntilMs_)
+            lines.push_back("CONNECTION LOST -- RECONNECTING  " + std::to_string(secs(reconnectUntilMs_, now)));
+        else
+            for (const auto& w : mp_->waiting()) {
+                if (w.slot >= 8) continue;
+                const std::string& name = playerName_[w.slot];
+                lines.push_back("WAITING FOR " + (name.empty() ? "PLAYER " + std::to_string(w.slot + 1) : name) +
+                                "  " + std::to_string(secs(w.untilMs, wall)));
+            }
+        const float px = 3.0f, padX = 14, padY = 10;
+        float y = 200;
+        for (const auto& line : lines) {
+            const float tw = blockWidth(line, px), th = 7 * px + tak::uiTextInkDescent(line, px);
+            const SDL_FRect bg{(float(winW) - tw) / 2 - padX, y, tw + 2 * padX, th + 2 * padY};
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 190);
+            SDL_RenderFillRectF(ren_, &bg);
+            SDL_SetRenderDrawColor(ren_, 255, 255, 255, 40);
+            SDL_RenderDrawRectF(ren_, &bg);
+            blockText(line, (float(winW) - tw) / 2, y + padY, px, {255, 214, 110, 255});
+            y += bg.h + 8;
         }
     }
 

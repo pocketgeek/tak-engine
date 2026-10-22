@@ -217,7 +217,6 @@ public:
     void setMpMapId(const std::string& id) { mpMapId_ = id; }
     void setScenarioTrace(tak::sim::ScenarioScript::TraceSink sink) {scenarioTrace_=std::move(sink);}
     void setMissionStem(const std::string& s) { missionStem_ = s; }
-    void setResumePath(const std::string& p) { mpResumePath_ = p; }
     // Single-player from the menu: it's a private local game, so open the lobby on
     // the Create screen (the browser is empty by design) and mark it single-player
     // (labels change, no password / no game browser).
@@ -258,10 +257,17 @@ public:
     void pumpVoice();
     // The VOICE CHAT screen, in the same overlay as Options (Esc menu > VOICE CHAT).
     void openVoiceOptions();
-    // Persist / read the resume ticket (gameId + rotating token) so a killed
-    // client can rejoin its held slot on restart.
-    void writeResume(uint32_t gid, uint64_t tok) const;
-    bool readResume(uint32_t& gid, uint64_t& tok) const;
+    // The disconnect wait, the client's side (protocol 289): beginReconnect starts
+    // reconnecting when a seated player's link drops mid-game (false: nothing to come
+    // back to), reconnectStep drives it each frame (false: given up, netError_ says why).
+    bool beginReconnect();
+    bool reconnectStep();
+    // A bundle's lifecycle event, display side (main thread): an AI takeover's notice
+    // and HUD label. The sim applies the event itself.
+    void noteEvent(const tak::net::Event& e);
+    // The WAITING FOR <name> countdowns (MpClient::waiting) and, while reconnecting,
+    // our own; above the HUD.
+    void drawNetWaiting(int winW);
     // The map's player capacity = its start-position count (2..8). The server has
     // no map data, so a creating client tells it how many slots the map supports.
     // A room that plays its map's scenario (`mapScenario`: the room's MAP SCENARIO
@@ -2357,7 +2363,6 @@ private:
     std::vector<std::string> missionAllowed_;
     std::vector<std::string> missionObjectives_;   // in-game objectives panel lines
     bool showObjectives_ = true;                   // panel visible (toggle with O)
-    std::string mpResumePath_;   // where the resume ticket is saved (for reconnect)
     std::vector<std::pair<std::string, std::string>> chatLog_;
     // In-game chat: press Enter to compose, lines fade after a while. Kept apart
     // from the lobby chatLog_ so the in-game overlay and lobby panel don't mix.
@@ -2662,8 +2667,12 @@ private:
     uint32_t lastSendTick_ = 0;     // tick the send credit was last accrued for
     int cmdCredit_ = tak::net::kCmdCapPerTick;   // rate: commands we may send now
     int cmdInFlight_ = 0;   // window: sent, not yet seen back in a bundle
-    bool cmdCatchUp_ = false;   // replaying a rejoin's bundle log: hold orders, ignore acks
+    bool cmdCatchUp_ = false;   // replaying history (a spectate, a reconnect's missed ticks): hold orders, ignore acks
     uint32_t cmdReplayEnd_ = 0;  // server-declared tick where that history ends
+    // Reconnecting inside the disconnect wait (beginReconnect): the local time it gives
+    // up (0 = not reconnecting) and of the next attempt.
+    uint64_t reconnectUntilMs_ = 0, reconnectNextMs_ = 0;
+    bool linkDropped_ = false;   // TAK_DROP_LINK_AT_TICK fired (debug harness)
     std::string netError_;
     // --- Sim/render decouple: the sim worker thread (Stage B1c) ----------------------
     // The worker runs the heavy sim tick (apply commands/events + world_.tick + captureFrame)

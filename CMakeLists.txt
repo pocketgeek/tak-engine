@@ -3011,6 +3011,12 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_spectators_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_spectators PROPERTIES TIMEOUT 120)
+    # The disconnect wait (protocol 289): a silent or dropped seat stops the game, then a
+    # server Normal AI takes it over; resume, reconnect and an explicit leave.
+    add_test(NAME server_disconnect COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_disconnect_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(server_disconnect PROPERTIES TIMEOUT 180)
     add_test(NAME server_seat_move COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_seat_move_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
@@ -3066,6 +3072,14 @@ if(TAK_TEST_DATA)
         "${CMAKE_SOURCE_DIR}/tools/replay_always_test.py"
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
       set_tests_properties(replay_always PROPERTIES TIMEOUT 300)
+      if(NOT WIN32)
+        # The disconnect wait end to end (SIGSTOP): AI takeover with no desync and a replay
+        # that verifies, resume and reconnect inside the wait ending on the same hash.
+        add_test(NAME disconnect_client COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_SOURCE_DIR}/tools/disconnect_client_test.py"
+          --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
+        set_tests_properties(disconnect_client PROPERTIES TIMEOUT 300)
+      endif()
     endif()
     if(TARGET takclient AND CMAKE_BUILD_TYPE STREQUAL "Debug" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
       add_test(NAME crusades_ui_network COMMAND "${Python3_EXECUTABLE}"

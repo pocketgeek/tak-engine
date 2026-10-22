@@ -131,7 +131,7 @@ int main() {
         server.send(net::Msg::GameStarting, gameStarting(12, 1, 1), client);
         check(client.starting(), "game starting");
         check(!client.isSpectator(), "a refused watch turned the next seated start into a spectator start");
-        check(!client.isRejoin(), "a seated fresh start reads as a rejoin/spectate catch-up");
+        check(!client.isCatchUp(), "a seated fresh start reads as a spectate catch-up");
         check(client.room().mySlot == 1 && client.room().opts.allowSpectators == 1, "start keeps the slot and the rule");
     } catch (const std::exception& e) {
         std::printf("  FAIL %s\n", e.what()); ++failures;

@@ -191,14 +191,14 @@ public:
 
     const std::vector<GameInfo>& games() const { return games_; }
     const RoomView& room() const { return room_; }
-    // Why the server refused the last join / watch / rejoin ("wrong password",
+    // Why the server refused the last join / watch / reconnect ("wrong password",
     // "spectators are not allowed in this game", ...); empty once a later request is
     // sent or one succeeds. The connection stays in the lobby, so the browser shows it.
     const std::string& joinError() const { return joinError_; }
     // Why the server refused this client's last START (MAP SCENARIO's missing seat, a map
     // without a scenario, setupMatch's refusal, maps not verified). Cleared by startGame().
     const std::string& startError() const { return startError_; }
-    // Ticks of HISTORY the server is replaying to us after a rejoin or spectate.
+    // Ticks of HISTORY the server is replaying to us after a spectate.
     // The authoritative end of the replay: local buffer depth cannot tell history
     // from a gap between chunks.
     uint32_t replayTicks() const { return replayTicks_; }
@@ -252,8 +252,9 @@ public:
     // own replay log, so a client-written .takrep is identical to a server-written
     // one. Filled only while recording (see startRecording).
     //
-    // A rejoining client is sent the whole backlog before the live stream, and a
-    // spectator likewise, so a recording that starts late still ends up complete.
+    // A spectator is sent the whole backlog before the live stream, so a recording
+    // that starts late still ends up complete; a reconnect continues it from the first
+    // bundle the old connection did not bring.
     const std::vector<std::vector<uint8_t>>& replayLog() const { return replayLog_; }
     // The (tick, hash) pairs this client reported while playing. Recorded alongside
     // the bundles so a replay can be checked against the game AS PLAYED: two
@@ -263,8 +264,7 @@ public:
     void startRecording() { recording_ = true; replayLog_.clear(); hashLog_.clear(); }
     // Called when a GameStarting is about to restart the recording, BEFORE the log is
     // cleared: the room and seed are already the new game's, the log still the old
-    // one's. A writer streaming the old game finishes it here (a rejoin of the same
-    // game re-sends the same log from tick 0, so that one it keeps).
+    // one's. A writer streaming the old game finishes it here.
     void setRecordingRestartHook(std::function<void()> hook) { recordingRestart_ = std::move(hook); }
     void stopRecording() { recording_ = false; replayLog_.clear(); hashLog_.clear(); }
     bool recording() const { return recording_; }
@@ -284,18 +284,44 @@ public:
     // data, so a game-mod mismatch is caught
     // before the game starts, not as a mid-game desync.
     void reportLoaded(uint64_t dataHash = 0);
-    // Reconnect to a held slot: connect() first, then rejoin() with the game id
-    // and the resume token saved from the original GameStarting.
-    void rejoin(uint32_t gameId, uint64_t token);
+    // ---- the disconnect wait (protocol 289) --------------------------------
+    // The seated players the server is waiting for, each with the local time its seat
+    // goes to an AI (Msg::Waiting). Empty while the game runs.
+    struct Wait { uint8_t slot = 0; uint64_t untilMs = 0; };   // untilMs on clockMs()
+    const std::vector<Wait>& waiting() const { return waiting_; }
+    static uint64_t clockMs();   // the monotonic clock the client paces by
+    // This seated player's link dropped mid-game (not a Reject, a Bye, a desync or a
+    // deliberate disconnect()), so reconnect() may get the seat back inside the wait.
+    bool canReconnect() const;
+    // A new connection to the same server for the same game: Hello, the login again
+    // (with the keys kept from the first one -- the password is long gone), then
+    // Rejoin from the first tick whose bundle has not arrived. The room, recording and
+    // received bundles stay. False if it could not even connect; poll() as usual, and
+    // state() is InGame again once the server reseats us (takeReseated). A refusal
+    // (the wait ran out and an AI has the seat) leaves state() Done, error() saying
+    // why, and canReconnect() false.
+    bool reconnect();
+    // One-shot: the server reseated us after a reconnect. `from` is the first tick it
+    // sends, `end` where the log stood (the history the view catches up through).
+    bool takeReseated(uint32_t& from, uint32_t& end) {
+        if (!reseated_) return false;
+        reseated_ = false; from = reseatFrom_; end = reseatEnd_; return true;
+    }
+    // A deliberate exit from a running game: tell the server it is a Leave (no wait,
+    // the units go inert) before the connection closes.
+    void leaveRunningGame();
+    // Close the socket with no Bye, as a failed link would (the debug harness's
+    // TAK_DROP_LINK_AT_TICK). The next poll() reports the connection lost.
+    void dropLink() { conn_.closeNow(); }
     // Watch a running game (no slot): connect() first, then spectate(). The server
     // replies with GameStarting (slot 0xFF -> mySlot -1) and the bundle log, then
     // streams live bundles. A spectator sends no commands or hashes.
     void spectate(uint32_t gameId, const std::string& password);
     bool isSpectator() const { return spectator_; }
-    // True when the last GameStarting was a REJOIN (the world must be rebuilt and
+    // True when the last GameStarting was a spectator's (the world must be rebuilt and
     // the bundle log replayed). Cleared once consumed.
-    bool isRejoin() const { return rejoin_; }
-    void clearRejoin() { rejoin_ = false; }
+    bool isCatchUp() const { return catchUp_; }
+    void clearCatchUp() { catchUp_ = false; }
     bool paused() const { return paused_; }
 
     // In game: is bundle `tick` available? If so, consume it (once).
@@ -315,7 +341,7 @@ public:
     // Flow-control progress (WE S3): the last tick processed and the smoothed RTT.
     void sendProgress(uint32_t tick);
 
-    // Set once the server flags us desynced (fatal in M3; reconnect is M5).
+    // Set once the server flags us desynced (fatal: the client cannot recover the state).
     bool desynced() const { return desynced_; }
     std::string desyncReason() const { return desyncReason_; }
 
@@ -426,12 +452,30 @@ private:
     bool recording_ = false;
     std::function<void()> recordingRestart_;
     SlotInfo startSlots_[kMaxSlots] = {};
-    uint32_t replayTicks_ = 0;   // history the server replays after a rejoin/spectate
+    uint32_t replayTicks_ = 0;   // history the server replays after a spectate
     std::array<bool, kMaxSlots> slotLoaded_{};   // per-slot "reported Loaded"
     uint64_t resumeToken_ = 0;
-    bool rejoin_ = false;
-    bool expectingRejoin_ = false;
+    bool catchUp_ = false;
     bool spectator_ = false;
+    // Reconnecting (the disconnect wait). host_/port_: where connect() went.
+    // nextBundleTick_: one past the newest bundle received (what Rejoin asks from).
+    // lostInGame_: the link went while seated in a game; reconnectRefused_: the server
+    // said no (or ended it), so there is nothing to retry. reconnecting_: a reconnect's
+    // handshake is under way; rejoinSent_: its Rejoin awaits the answer.
+    std::string host_;
+    uint16_t port_ = 0;
+    uint32_t nextBundleTick_ = 0;
+    std::vector<Wait> waiting_;
+    bool lostInGame_ = false, reconnectRefused_ = false, reconnecting_ = false, rejoinSent_ = false;
+    bool reseated_ = false;
+    uint32_t reseatFrom_ = 0, reseatEnd_ = 0;
+    // The login's keys, kept for a reconnect's sign-in (see onAuthResult); wiped by
+    // forgetResume (disconnect, the next connect, the destructor).
+    auth::Keys resumeKeys_;
+    std::vector<uint8_t> resumeSalt_;
+    uint32_t resumeIters_ = 0;
+    bool haveResumeKeys_ = false;
+    void forgetResume();
     bool expectingSpectate_ = false;
     bool paused_ = false;
     std::map<uint32_t, Bundle> bundles_;

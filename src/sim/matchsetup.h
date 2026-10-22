@@ -22,7 +22,8 @@ namespace tak::sim {
 void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command& c);
 
 // Apply one sequenced lifecycle event (Forfeit/Leave -> the player's units go
-// inert). Symmetric across peers so the sim stays in lockstep.
+// inert; AiTakeover -> the player becomes computer-owned). Symmetric across peers so
+// the sim stays in lockstep.
 void applyEvent(World& world, const tak::net::Event& e);
 
 

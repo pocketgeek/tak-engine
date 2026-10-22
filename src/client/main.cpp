@@ -542,7 +542,6 @@ int main(int argc, char** argv) {
         else if (a == "--mphost") mpHeadless = 1;   // create a game, start it, play
         else if (a == "--mpjoin") mpHeadless = 2;   // join the first game, play
         else if (a == "--mpai") mpHeadless = 4;     // host vs one server-run AI
-        else if (a == "--mprejoin") mpHeadless = 5; // rejoin a held slot (resume ticket)
         else if (a == "--mpspectate") mpHeadless = 6; // watch the first running game
         else if (a == "--mpmission" && i + 1 < argc) { mpHeadless = 8; missionStem = argv[++i]; }  // host a campaign mission
         else if (a == "--campaign" && i + 1 < argc) { cliCampaign = argv[++i]; mode = "game"; }    // play a mission interactively
@@ -1331,7 +1330,6 @@ int main(int argc, char** argv) {
                 else if (benchmarkLaunch) {   // menu Benchmark: all-AI watch run + metrics
                     gameView->setBenchmark(benchmarkLevel);
                 }
-                if (const char* rp = tak::devEnv("TAK_RESUME")) gameView->setResumePath(rp);
             }
             if (lobbyLoading) {
                 gameView->prepareLobbyMaps(*lobbyLoading);
@@ -2392,6 +2390,9 @@ int main(int argc, char** argv) {
         if (gameView && gameView->menuRequested()) running = false;
         // The in-game QUIT button exits the whole app.
         if (gameView && gameView->quitRequested()) { running = false; quitApp = true; }
+        // Leaving a running game on purpose is a Leave, not a dropped link: the server
+        // must not hold the game for the disconnect wait and then hand the seat to an AI.
+        if (!running && mp) mp->leaveRunningGame();
 
         if (!shot.empty()) {
             // Render a few frames so lazy content settles, then capture. For content

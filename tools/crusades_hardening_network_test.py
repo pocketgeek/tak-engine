@@ -281,7 +281,7 @@ def boundaries(binary, data, root):
 
 
 def rejoin(peer, room, token, expected):
-    peer.send('Rejoin', struct.pack('<IQ', room, token))
+    peer.send('Rejoin', struct.pack('<IQI', room, token, 0))
     reply = peer.receive('JoinResult')
     assert reply.num('<B') == 0
     reply.num('<B')
@@ -335,9 +335,11 @@ def reconnect(binary, data, root):
                 break
         rejoin(other, room, tokens[0], b'account does not match')
         resumed = stack.enter_context(contextlib.closing(login(port, fingerprint, 'ALICE')))
-        resumed.send('Rejoin', struct.pack('<IQ', room, tokens[0]))
-        restored_room, rotated = starting(resumed.receive('GameStarting'))
-        assert restored_room == room and rotated != tokens[0]
+        resumed.send('Rejoin', struct.pack('<IQI', room, tokens[0], 0))
+        reseated = resumed.receive('Reseated')
+        assert reseated.num('<B') == 0
+        rotated = reseated.num('<Q')
+        assert rotated and rotated != tokens[0]
         owner = stack.enter_context(contextlib.closing(login(port, fingerprint)))
         rejoin(owner, room, tokens[0], b'invalid or expired resume token')
         # A legitimate final resignation freezes the referee's outcome for its

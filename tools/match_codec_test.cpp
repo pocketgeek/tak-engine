@@ -248,6 +248,14 @@ static void bundles() {
     check(!decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind(0); }), x = {}), "event kind 0 accepted");
     check(!decode(mutated([](auto&, auto& e) { e[1].player = kMaxSlots; }), x = {}), "event player out of range accepted");
     check(!decode(w.b, x = {}, 220), "area command accepted under a protocol before 221");
+    // Event::Kind::AiTakeover (protocol 289): read from 289 on, refused in an older replay,
+    // and nothing past it is a known kind.
+    check(decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind::AiTakeover; }), x = {}) &&
+          x.events.size() == 2 && x.events[0].kind == Event::Kind::AiTakeover, "AI takeover event refused");
+    check(!decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind::AiTakeover; }), x = {}, kAiTakeoverProtocol - 1),
+          "AI takeover event accepted under a protocol before 289");
+    check(!decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind(uint8_t(Event::Kind::AiTakeover) + 1); }), x = {}),
+          "unknown event kind accepted");
     { auto t = w.b; t.push_back(0); check(!decode(t, x = {}), "trailing byte accepted"); }
     for (size_t cut = 0; cut < w.b.size(); ++cut) {
         std::vector<uint8_t> t(w.b.begin(), w.b.begin() + long(cut));

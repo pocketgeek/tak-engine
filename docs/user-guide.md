@@ -1638,8 +1638,8 @@ default). When it is off, the browser shows a red **No watch** button instead of
 **Watch**, and the server refuses any request to watch the game, including from a
 player who left it or whose connection dropped. Clicking **No watch** shows the
 reason under the game list: **Cannot join: spectators are not allowed in this
-game**. A player who drops out still gets their own slot back (see
-[Disconnects](#disconnects)). The setting is fixed once the game starts, so
+game**. A player whose connection drops can still reconnect to their own seat
+in time (see [Disconnects](#disconnects)). The setting is fixed once the game starts, so
 nobody who is already watching is removed.
 
 | Allow spectators | Browser shows | Asking to watch |
@@ -1652,8 +1652,26 @@ your own game.
 
 ### Disconnects
 
-If you drop out of a game, your slot is held and the game pauses for up to five
-minutes so you can reconnect and catch up. If you do not return, you forfeit.
+If a player stops responding in a multiplayer game (nothing heard from them for
+8 seconds, or their connection drops), the game pauses for everyone for **30
+seconds**, and every screen shows a countdown: **WAITING FOR** *name* **27**. If
+several players stop at once, each has a line and a countdown of their own.
+
+- **Back in time:** if their game catches up again (a long freeze, a network
+  hiccup) or reconnects, the countdown goes away and play goes on from where it
+  stopped. Reconnecting is automatic: a game that loses its connection shows
+  **CONNECTION LOST -- RECONNECTING** with the same countdown and tries again
+  every couple of seconds. Nothing is replayed from the start; only the moments
+  missed are caught up.
+- **Not back:** after 30 seconds the player is dropped and a computer player at
+  **Normal** takes over their seat: the same colour, units, buildings and mana,
+  playing on for the rest of the game. Everyone sees *name* **STOPPED
+  RESPONDING: AN AI (NORMAL) TAKES OVER**, and the player can no longer return
+  to that game.
+
+Leaving on purpose (**MAIN MENU** or **QUIT** from the in-game menu) is not a
+disconnect: you leave at once and your units stand idle, with no wait for the
+others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 

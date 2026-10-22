@@ -110,7 +110,7 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
         if(connected) {
             check(observer.poll(),observer.error().c_str());
             if(!spectating && observer.state()==net::MpClient::State::Lobby) {observer.spectate(host.room().id,"");spectating=true;}
-            if(!observerLoaded && (observer.starting() || observer.isRejoin())) {setup(observer,peerData,wo);observerLoaded=true;}
+            if(!observerLoaded && (observer.starting() || observer.isCatchUp())) {setup(observer,peerData,wo);observerLoaded=true;}
         }
         if(loaded && ht>30 && !sent) {
             net::Command command;command.player=7;command.unitId=1;command.kind=net::Cmd::Train;
@@ -298,7 +298,7 @@ int main(int argc, char** argv) try {
             if (late) {
                 check(spectator.poll(), spectator.error().c_str());
                 if (!spectateSent && spectator.state() == net::MpClient::State::Lobby) { spectator.spectate(host.room().id, ""); spectateSent = true; }
-                if (!spectatorLoaded && (spectator.starting() || spectator.isRejoin())) {
+                if (!spectatorLoaded && (spectator.starting() || spectator.isCatchUp())) {
                     setup(spectator,peerData,ws); spectatorLoaded = true;
 
                 }
