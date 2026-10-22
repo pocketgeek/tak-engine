@@ -190,22 +190,35 @@ TODO-LEAD: publication time and "latest release" check.
 
 ## Screenshots
 
-TODO-LEAD: from the screenshots agent. Expected retakes for this release's
-changes (images are not edited by the docs commit):
+Retaken on branch `task-release-089-shots` (by the 0.8.9 capture build,
+version set to 0.8.9 locally; capture-only patch in
+`~/tak-tmp/scratch/release-089/shots/capture-089.patch`, not committed), each
+opened and checked by eye:
 
-- `guide/chat-box.jpg` (the box above the build row / TRAINING line);
-- the create screen and room pictures whose layout changed: `lobby.jpg`,
-  `lobby-scenario.jpg`, `room.jpg`, `guide/random-map-lobby.jpg`,
-  `guide/room-mods-power-codes.jpg` (and `cartographer/test-lobby.jpg`,
-  `quick/lobby-move-here.jpg` if their rules or mods lines changed);
-- check `guide/options-interface.jpg` (no Options change expected);
-- `title.jpg` (VERSION 0.8.9), then the README title alt text and gallery
-  footnote, which still say 0.8.8;
-- new `guide/build-line.jpg` (a tight Shift-drag line with the GAP label),
-  placed in `docs/user-guide.md` under *Building*;
-- the per-release scenes if retaken (`battle.jpg`, `dragons.jpg`, `flyers.jpg`,
-  `hud.jpg`, `naval.jpg`), and `docs/img/README.md` rows and header updated to
-  match.
+- **Recaptured, gallery:** `title.jpg` (VERSION 0.8.9), `lobby.jpg` and
+  `lobby-scenario.jpg` (one option button width, one label size), `room.jpg`
+  (MAP SCENARIO: OFF as a rules line at the others' size; no GAME MODS
+  VERIFIED with no game pack ticked).
+- **Recaptured, guide:** `guide/chat-box.jpg` (the box above a Barracks'
+  build row and its TRAINING Horseman (10) line; from the `--testbuild`
+  selection still life, not a local-server game: the capture patch lets that
+  serverless fixture draw the chat box), `guide/room-mods-power-codes.jpg`
+  (Big Battles ticked, so GAME MODS VERIFIED still shows; MAP SCENARIO rules
+  line), `guide/random-map-lobby.jpg` (crop from x 100: the panel sits 50 px
+  further right); Cartographer `cartographer/test-lobby.jpg` (MAP SCENARIO: ON
+  (TEST MAP) as a rules line, details under both columns).
+- **New:** `guide/build-line.jpg` (a nine-site wall line with GAP 2, from the
+  debug `TAK_BUILDLINE_SHOT=560,0,2` fixture), under *Building* in the user
+  guide.
+- **Quick start** (branch `task-release-089-quick`): `quick/lobby-move-here.jpg`
+  recaptured (its 0.8.8 picture showed GAME MODS VERIFIED with no game pack);
+  new `quick/build-line.jpg` (a tight diagonal and a GAP 3 line).
+- **Re-rendered and kept:** `diplomacy.jpg`, `guide/options-interface.jpg`,
+  `guide/options-graphics.jpg` (nothing they show changed). Every other
+  picture, including the per-release scenes, keeps its earlier capture.
+- README title alt text and gallery footnote, the `chat-box.jpg` alt text and
+  the Cartographer guide's `test-lobby.jpg` alt text were updated to match;
+  `docs/img/README.md` header, rows and scratch list updated.
 
 ## Limits
 

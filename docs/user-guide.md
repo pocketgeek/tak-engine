@@ -530,7 +530,7 @@ A builder that can reclaim turns trees, rocks and wrecks into mana.
   about 32 pixels wide and 32 tall (at 100% UI scale); a smaller or thinner
   drag is an ordinary right-click order. The orange box and the broom cursor
   appear once the drag is big enough, and the box stays on the ground you
-  pressed if the view scrolls while you drag.
+  pressed if the view scrolls or zooms while you drag.
 
 ### Repairing and healing
 
@@ -2074,8 +2074,9 @@ installing it step by step. In short:
 See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
-**Upgrade the server and players together.** A server only accepts clients of
-the same protocol version (0.8.9 and 0.8.8 use protocol 288; 0.8.7 uses 284).
+**Upgrade the server and players together when the protocol changes.** A server
+only accepts clients of the same protocol version (0.8.9 and 0.8.8 use protocol
+288, so they mix freely; 0.8.7 uses 284).
 
 ---
 
