@@ -23,9 +23,10 @@ substrate underneath it is kept.
 - **Game browser:** the server lists joinable (lobby-state) games and live
   (running, unjoinable) games.
 - **Durable sessions:** a player the server stops hearing from holds the game
-  for 30 seconds (everyone sees the countdown); back in time -- the same
-  connection, or an automatic reconnect -- the game goes on, otherwise a
-  server AI (Normal) takes the seat over (§4, protocol 289).
+  for up to 30 seconds -- in all, per game, over all of their stalls --
+  (everyone sees the countdown); back in time -- the same connection, or an
+  automatic reconnect -- the game goes on, otherwise a server AI (Normal)
+  takes the seat over (§4, protocol 289).
 
 The current implementation supports spectators and [verified map transfer](map-transfer.md).
 
@@ -273,20 +274,33 @@ link `sim`, `tdf`, `net`, and the new `ai` module only.
 - **Disconnect policy (protocol 289).** The rule: if a player effectively
   stops communicating, the game waits 30 seconds for them, paused, with a
   countdown; if they are still not communicating after that, they are dropped
-  and an AI at Normal plays their units.
+  and an AI at Normal plays their units. The 30 seconds are a budget per seat
+  per game, not per stall, so nobody can hold a game indefinitely by going
+  quiet and answering just in time, again and again.
   - *Stopping.* A seated human in a running game (past tick 0, not defeated)
     stops communicating when the server has received nothing from it for
     `kStallMs` (8 s; a healthy client reports progress every few ticks and
     answers the server's 5 s keepalive ping, and the game client pings once a
     second), or at once when its connection closes without a `LeaveGame`. The
-    server then sets that seat's wait deadline (`kDropWaitMs`, 30 s) and closes
-    no tick while any seat is waiting -- every peer freezes on the same tick.
+    server then sets that seat's wait deadline to what is left of its budget
+    (`kDropWaitMs`, 30 s per seat per game) and closes no tick while any seat
+    is waiting -- every peer freezes on the same tick.
     `Msg::Waiting` (the seats and each one's milliseconds left) goes to the
     whole room whenever the set changes, and to a spectator or a reconnected
     player as it arrives; clients draw `WAITING FOR <name> 27`, one line and
     countdown per seat, so several stalls each run their own clock. A player
     alone in the room (single-player) gets no wait: nobody else is affected, and
     when its link goes the room ends as before.
+  - *The budget.* A wait that ends charges the seat's budget for its length in
+    whole seconds, rounded up (the countdown shows whole seconds: back while it
+    reads 1 spends the budget; a moment's stall costs a second). The next
+    stall's countdown starts from the rest -- after 20 s spent, from 10 -- and a
+    stall that begins with nothing left is taken over at once, with no wait and
+    no `Waiting` for it. The accounting is the server's alone and is not sim
+    state: peers see it only as the `ms left` in `Waiting` (which they count
+    down) and the `AiTakeover` tick, which the replay records like any event, so
+    clients, referee and replay agree without it crossing the wire. No message
+    changed for it (protocol 289 still).
   - *Coming back.* Talking again on the same connection inside the window (a
     frozen frame, a hitch, a Wi-Fi blip TCP rode out) ends that seat's wait. A
     client whose link actually dropped reconnects by itself: a new connection,

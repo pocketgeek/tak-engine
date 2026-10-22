@@ -1660,9 +1660,18 @@ your own game.
 ### Disconnects
 
 If a player stops responding in a multiplayer game (nothing heard from them for
-8 seconds, or their connection drops), the game pauses for everyone for **30
-seconds**, and every screen shows a countdown: **WAITING FOR** *name* **27**. If
+8 seconds, or their connection drops), the game pauses for everyone for up to
+**30 seconds**, and every screen shows a countdown: **WAITING FOR** *name* **27**. If
 several players stop at once, each has a line and a countdown of their own.
+
+The 30 seconds are each player's for the **whole game**, not for each stop: a
+player who stops for 20 seconds and comes back has 10 left, so the next time
+they stop the countdown starts at **10**. Each stop uses at least a second.
+Once a player's time is used up, the next time they stop responding the
+computer player takes over at once, without pausing the game.
+
+![The game paused on Inner Circle with a dark banner near the top of the view reading WAITING FOR Brannoc 24 in gold letters, the minimap, mana bar and bottom bar in place around it](img/guide/disconnect-wait.jpg)
+*Another player has stopped responding: the game waits for Brannoc, with 24 seconds of his time left.*
 
 - **Back in time:** if their game catches up again (a long freeze, a network
   hiccup) or reconnects, the countdown goes away and play goes on from where it
@@ -1670,7 +1679,7 @@ several players stop at once, each has a line and a countdown of their own.
   **CONNECTION LOST -- RECONNECTING** with the same countdown and tries again
   every couple of seconds. Nothing is replayed from the start; only the moments
   missed are caught up.
-- **Not back:** after 30 seconds the player is dropped and a computer player at
+- **Not back:** when the countdown runs out the player is dropped and a computer player at
   **Normal** takes over their seat: the same colour, units, buildings and mana,
   playing on for the rest of the game. Everyone sees *name* **STOPPED
   RESPONDING: AN AI (NORMAL) TAKES OVER**, and the player can no longer return

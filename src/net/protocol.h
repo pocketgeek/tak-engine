@@ -494,9 +494,11 @@ constexpr int kHashPeriod = 30;            // ticks between StateHash reports; t
 // The disconnect wait (protocol 289). The server stops the room when it has heard
 // nothing from a seated player for kStallMs (a healthy client is never that quiet: it
 // reports progress every few ticks and answers a ping within the ping interval), or at
-// once when the connection closes without a Leave, and waits kDropWaitMs for it to come
-// back before a server AI takes the seat. A test server may shorten both
-// (TAK_STALL_MS, TAK_DROP_WAIT_MS); the client reconnects within the same window.
+// once when the connection closes without a Leave, and waits for it to come back before
+// a server AI takes the seat. kDropWaitMs is each seat's wait for the whole game, spent
+// over all of its stalls (whole seconds per stall, rounded up): a stall waits only what
+// is left, and one with nothing left is taken over at once. A test server may shorten
+// both (TAK_STALL_MS, TAK_DROP_WAIT_MS); the client reconnects within the same window.
 constexpr uint32_t kStallMs = 8000;
 constexpr uint32_t kDropWaitMs = 30000;
 // Commands one client may land in one tick. The server enforces it as flood

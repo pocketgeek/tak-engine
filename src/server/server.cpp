@@ -170,8 +170,9 @@ constexpr uint64_t kFlowRetryMs = 5;
 // hold an unbounded queue on its behalf.
 constexpr size_t kCmdQueueMax = size_t(tak::net::kCmdQueueCap);
 // The disconnect wait (net/protocol.h): how long a seated player may be silent before
-// the room stops for it, and how long it then waits before a server AI takes the seat.
-// A test server shortens both (TAK_STALL_MS, TAK_DROP_WAIT_MS).
+// the room stops for it, and each human seat's total wait for the whole game (spent
+// over all of its stalls) before a server AI takes the seat. A test server shortens
+// both (TAK_STALL_MS, TAK_DROP_WAIT_MS).
 uint64_t gStallMs = tak::net::kStallMs;
 uint64_t gDropWaitMs = tak::net::kDropWaitMs;
 
@@ -394,6 +395,11 @@ struct Room {
     // not waiting). The seat's connection may still be open (silent past gStallMs) or
     // gone (slotClient -1, held for a reconnect). While any is set, no tick closes.
     uint64_t waitDeadline[kMaxSlots] = {};
+    // The wait budget (gDropWaitMs per seat per game): when the running wait began, and
+    // how much of the budget the seat's earlier waits spent. Server-only: what the room
+    // sees is the countdown (Msg::Waiting) and the takeover tick (Event::AiTakeover).
+    uint64_t waitBegan[kMaxSlots] = {};
+    uint64_t waitSpentMs[kMaxSlots] = {};
     // The token a seat had when an AI took it over, so a late reconnect is told why.
     uint64_t takenToken[kMaxSlots] = {};
     // Where each slot started (for an AI that takes a seat over mid-game: the enemy
@@ -2737,7 +2743,7 @@ void Server::tryStart(Client& c) {
     // GameStarting: final slot table + options + seed + a per-slot resume token
     // (used to reconnect to the seat inside the disconnect wait).
     for (int i = 0; i < kMaxSlots; ++i) {
-        r->waitDeadline[i] = r->takenToken[i] = 0;
+        r->waitDeadline[i] = r->waitSpentMs[i] = r->takenToken[i] = 0;
         if (r->slotClient[i] < 0) continue;
         r->slotToken[i] = randToken();
         auto it = clients_.find(uint32_t(r->slotClient[i]));
@@ -3376,20 +3382,37 @@ void Server::broadcastWaiting(Room& r) {
     }
 }
 
+// A seat waits out what is left of its budget: a player who keeps dropping and coming
+// back cannot hold the game for longer than gDropWaitMs in all. A seat with nothing
+// left is due at once (the deadline is now, and the caller's deadline check takes it
+// over) and the room is never told to wait for it.
 void Server::beginWait(Room& r, int slot, const char* why) {
     if (r.waitDeadline[slot]) return;
-    r.waitDeadline[slot] = nowMs() + gDropWaitMs;
+    const uint64_t now = nowMs(), left = gDropWaitMs - std::min(r.waitSpentMs[slot], gDropWaitMs);
+    r.waitBegan[slot] = now;
+    r.waitDeadline[slot] = now + left;
+    if (!left) {
+        std::fprintf(stderr, "game %u: slot %d %s -- its wait is spent, an AI takes over\n", r.id, slot, why);
+        return;
+    }
     broadcastWaiting(r);
-    std::fprintf(stderr, "game %u: slot %d %s -- waiting %llus for it, then an AI takes over\n",
-                 r.id, slot, why, (unsigned long long)(gDropWaitMs / 1000));
+    std::fprintf(stderr, "game %u: slot %d %s -- waiting %llus for it (of %llus), then an AI takes over\n",
+                 r.id, slot, why, (unsigned long long)((left + 999) / 1000),
+                 (unsigned long long)(gDropWaitMs / 1000));
 }
 
+// A wait that ends charges the seat's budget in whole seconds, rounded up: the
+// countdown on screen shows whole seconds, so a player back while it read 1 has
+// spent the budget, and a stall of a moment still costs a second.
 void Server::endWait(Room& r, int slot) {
     if (!r.waitDeadline[slot]) return;
+    const uint64_t waited = nowMs() - r.waitBegan[slot];
+    r.waitSpentMs[slot] = std::min(gDropWaitMs, r.waitSpentMs[slot] + (waited + 999) / 1000 * 1000);
     r.waitDeadline[slot] = 0;
     if (!r.held()) r.rebasePace(nowUs());   // rebase the tick clock (no burst)
     broadcastWaiting(r);
-    std::fprintf(stderr, "game %u: slot %d is back -- wait over\n", r.id, slot);
+    std::fprintf(stderr, "game %u: slot %d is back -- wait over, %llus of it left\n", r.id, slot,
+                 (unsigned long long)((gDropWaitMs - r.waitSpentMs[slot]) / 1000));
 }
 
 // The wait ran out. The seat's connection, if it is still open, is closed; the seat
@@ -3402,6 +3425,7 @@ void Server::endWait(Room& r, int slot) {
 void Server::takeOver(Room& r, int slot) {
     if (r.slots[slot].type != 1 || r.defeated[size_t(slot)]) { endWait(r, slot); return; }
     r.waitDeadline[slot] = 0;
+    r.waitSpentMs[slot] = gDropWaitMs;
     if (int cid = r.slotClient[slot]; cid >= 0) {
         auto it = clients_.find(uint32_t(cid));
         if (it != clients_.end()) unseat(*it->second, "you stopped responding: an AI took over your seat");

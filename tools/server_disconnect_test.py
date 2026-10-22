@@ -16,6 +16,11 @@ wait (TAK_STALL_MS / TAK_DROP_WAIT_MS) so nothing here waits the real 30 s:
              streamed the bundles from exactly that tick, identical to Alice's; the old
              token is spent.
   leave      an explicit LeaveGame is a Leave event at once, with no wait.
+  budget     the wait is a budget per seat per game, charged in whole seconds: Bob back
+             1.2 s into his first wait has spent 2 s of the 3, so his second wait counts
+             down from 1 s and he is taken over when it runs out, not 3 s later.
+  spent      Bob back in the last second of his wait has spent it all: his next stall
+             is taken over at once, without the room waiting for him.
 """
 import argparse
 import os
@@ -290,7 +295,53 @@ def scenario_leave(port, h):
         alice.close(); bob.close()
 
 
-SCENARIOS = [scenario_takeover, scenario_resume, scenario_reconnect, scenario_leave]
+def stall_and_return(alice, bob, after):
+    """Bob goes silent; `after` seconds into the wait Alice is shown, he talks again.
+    Returns once the wait is over and both have caught up a little."""
+    assert alice.pump(10, waiting_for(1)), 'the room never waited for the silent player'
+    began, waits = alice.waits[-1]
+    assert dict(waits)[1] > WAIT_MS - 1000, ('the first wait did not have the whole budget', waits)
+    alice.pump(after - (time.monotonic() - began))
+    bob.send('Ping')
+    assert pump_all((alice, bob), 5, lambda: not_waiting(alice)), 'the wait did not end when Bob came back'
+    before = alice.last_tick()
+    assert pump_all((alice, bob), 5, lambda: alice.last_tick() > before + 15), 'the game did not go on'
+    assert not events_of(alice, AI_TAKEOVER), 'a returning player was taken over'
+    return len(alice.waits)
+
+
+def scenario_budget(port, h):
+    _room, alice, bob = start(port, h, 'Alice', 'Bob')
+    try:
+        stall_and_return(alice, bob, 1.2)   # charged 2 s: 1 s of the budget left
+        # Bob goes silent again: the countdown starts from what is left, and runs out.
+        assert alice.pump(10, waiting_for(1)), 'the second stall did not make the room wait'
+        began, waits = alice.waits[-1]
+        assert 0 < dict(waits)[1] <= WAIT_MS - 2000, ('the second wait did not start from the rest of the budget', waits)
+        assert alice.pump(WAIT_MS / 1000 + 5, lambda p: events_of(p, AI_TAKEOVER)), 'no AI takeover on the second stall'
+        took = time.monotonic() - began
+        assert 0.5 <= took < (WAIT_MS - 1000) / 1000 + 0.6, ('the takeover did not come when the budget ran out', took)
+        assert events_of(alice, AI_TAKEOVER)[0][1] == (AI_TAKEOVER, 1)
+        assert not events_of(alice, LEAVE)
+    finally:
+        alice.close(); bob.close()
+
+
+def scenario_spent(port, h):
+    _room, alice, bob = start(port, h, 'Alice', 'Bob')
+    try:
+        seen = stall_and_return(alice, bob, (WAIT_MS - 500) / 1000)   # back in the last second
+        silent = time.monotonic()
+        assert alice.pump(STALL_MS / 1000 + 6, lambda p: events_of(p, AI_TAKEOVER)), 'no AI takeover with the budget spent'
+        took = time.monotonic() - silent
+        assert took < STALL_MS / 1000 + 1.5, ('the takeover waited', took)
+        assert not any(s == 1 for _, w in alice.waits[seen:] for s, _ in w), 'the room waited for a seat with no budget left'
+        assert events_of(alice, AI_TAKEOVER)[0][1] == (AI_TAKEOVER, 1)
+    finally:
+        alice.close(); bob.close()
+
+
+SCENARIOS = [scenario_takeover, scenario_resume, scenario_reconnect, scenario_leave, scenario_budget, scenario_spent]
 
 
 def main():
@@ -318,7 +369,8 @@ def main():
     if failed:
         raise SystemExit('FAIL: ' + ', '.join(failed))
     print('PASS: disconnect wait -- silent seat waited for then taken over by a Normal AI, resume inside the '
-          'wait, reconnect from the first missing tick, explicit leave without a wait')
+          'wait, reconnect from the first missing tick, explicit leave without a wait, one wait budget per seat '
+          'over all of its stalls')
 
 
 if __name__ == '__main__':
