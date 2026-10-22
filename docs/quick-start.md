@@ -28,10 +28,11 @@ sans-serif, as in these pictures) or *Classic* (the engine's old lettering).
 | Ctrl + click or drag | Remove from the selection. |
 | Right-click | The order for what is under the pointer (see below). |
 | Shift + right-click | Queue that order after the current ones. |
-| Right-drag (a reclaiming builder selected) | Reclaim every tree, rock and wreck in the box. A drag under about 32 pixels each way is a normal right-click. |
+| Right-drag (a reclaiming builder selected) | Reclaim every tree, rock and wreck in the box. The box must be at least about 32 pixels each way; anything smaller is a normal right-click where you pressed. |
+| Pan or zoom during a drag | A selection, reclaim or lodestone box stays on the ground where you pressed. |
 | Middle-drag | Scroll the map. |
 | Pointer at a screen edge | Scroll the map (Options → Edge Scrolling). |
-| Mouse wheel | Zoom in and out, towards the pointer. |
+| Mouse wheel | Zoom in and out, towards the pointer. During a Shift-drag build line it sets the line's gap instead. |
 | Minimap: left-click or drag | Move the camera there. With an order armed, give that order there instead. |
 | Minimap: right-click | Move the selection there (Shift queues). |
 | Portrait in the info bar (several types selected) | Left-click: keep only that type. Shift + left-click: drop that type. |
@@ -102,8 +103,8 @@ and cloakers a cloak button; units with several weapons get weapon buttons.*
 | Open the build menu | Select **one** builder (or one production building). Its icons appear along the bottom. |
 | Place a building | Click an icon, then left-click the map. The ghost shows the building where it would go. |
 | Cancel placement | Right-click or **Esc**. |
-| Queue several / a line | Hold **Shift**: Shift-click sites one by one, or Shift-drag a line of them. A line packs the buildings edge to edge; turn the mouse wheel during the drag to add a gap (it stays for the rest of the game). Release Shift to stop placing. |
-| Lodestones on many mana spots | Pick the lodestone, then drag a box: the builder takes every free mana spot in it. |
+| Queue several / a line | Hold **Shift**: Shift-click sites one by one, or Shift-drag a line of them. A line packs the buildings edge to edge (corner to corner on a diagonal). While dragging, turn the mouse wheel: up widens the gap one cell per notch (0–12, shown as **GAP** by the pointer), down tightens it. The gap stays for the rest of the game. Release Shift to stop placing. |
+| Lodestones on many mana spots | Pick the lodestone, then drag a box (at least about 32 pixels each way; smaller places one lodestone): the builder takes every free mana spot in it. |
 | Train at a production building | Left-click an icon: +1. Shift: +5. Ctrl+Shift: +10. Right-click (same modifiers) removes. |
 | Endless production | Ctrl + left-click an icon (again to stop). |
 | Rally point | With the building selected, right-click the ground or press **M** / **P** and click. |
@@ -112,6 +113,11 @@ and cloakers a cloak button; units with several weapons get weapon buttons.*
 
 *A builder's build menu along the bottom, and the Barracks ghost under the
 pointer.*
+
+![Two Shift-drag wall lines by a Monarch: a tight diagonal of ten walls corner to corner, and a straight line of five walls with the GAP 3 label at its end](img/quick/build-line.jpg)
+
+*Shift-drag lines: tight by default (left, a diagonal packs corner to corner);
+three wheel notches later, **GAP 3** (right).*
 
 ## Selecting
 
