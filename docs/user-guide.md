@@ -469,6 +469,9 @@ Select a builder and its build menu appears along the bottom of the screen.
   it does not wall itself in between sites. Lines chained one after another (an
   L, a U, a box) plan on from where the last one leaves it. A site that would
   sit half on top of one already queued for that builder is left out.
+
+  ![A Shift-drag wall line being laid: nine wall sites in a row, two cells apart, with the GAP 2 label by the pointer](img/guide/build-line.jpg)
+
 - **Lodestone areas**: choose a lodestone, then **drag a box** (at least about
   32 pixels each way; anything smaller places a single lodestone) over the map. The
   builder visits every free mana spot in the box, closest first: after each spot
