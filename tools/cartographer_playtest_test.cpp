@@ -39,8 +39,13 @@ static int runTest(int argc,char** argv) try {
         check(fails(top/"zip"/"TAK Cartographer.app"/"Contents"/"Resources"/""),"clientPath found a game in the wrong folder");
         touch(top/"zip"/"takclient");
         check(cart::Playtest::clientPath(top/"zip"/"TAK Cartographer.app"/"Contents"/"Resources"/"")==top/"zip"/"takclient","bare takclient beside the bundle not found");
-        touch(top/"zip"/"takclient");fs::create_directories(top/"plain");touch(top/"plain"/"takclient");
-        check(cart::Playtest::clientPath(top/"plain"/"")==top/"plain"/"takclient","sibling takclient lookup changed");
+#ifdef _WIN32
+        const fs::path plain="takclient.exe";
+#else
+        const fs::path plain="takclient";
+#endif
+        fs::create_directories(top/"plain");touch(top/"plain"/plain);
+        check(cart::Playtest::clientPath(top/"plain"/"")==top/"plain"/plain,"sibling takclient lookup changed");
         fs::remove_all(top,ec);
     }
     cart::Playtest test;
