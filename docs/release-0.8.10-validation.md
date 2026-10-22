@@ -25,8 +25,10 @@ TODO-LEAD: Tagged `v0.8.10` at `<sha>` (annotated tag object `<obj>`) and publis
 `src/video/stream.cpp`, `src/video/stream.h`; and
 `src/cartographer/playtest.cpp`. Nothing under `src/ai/`, `src/campaign/`,
 `src/tnt/`, `src/terrain/`, `src/cob/` or `src/crt/` changed.
-TODO-LEAD: commits that landed on main after `c73416f0` before the preparation
-commits (none expected), and the list of preparation commits.
+No commits landed on main after `c73416f0` before the preparation commits:
+`c2ec34ab` (0.8.10 screenshots: title, streaming panel, disconnect wait),
+`275319ef` (version 0.8.10, release notes, validation skeleton) and the commit
+that fills this report.
 
 The changes:
 
@@ -61,8 +63,9 @@ state until a takeover; the campaign seat changes hashed state for `takx22_mt`
 and `takx24_mt` only; the turn-rate change reaches only shooters on roads or
 water. `--mpai` Inner Circle seed 1 at 60 s is unchanged per `deb6a31b` and
 `e19580b9`: Retail `b353410003e98dd5`, Legion `0825aeb9e8139203`.
-TODO-LEAD: 300 s on the final main (0.8.9: Retail `a3d953803a064191`, Legion
-`ce5c4ba7562e53b9`); whether they moved and why.
+At 300 s they are unchanged as well: Retail `a3d953803a064191`, Legion
+`ce5c4ba7562e53b9`, the same as 0.8.9 (the turn-rate change evidently never
+changes a target score in this small scenario; see the local checks).
 TODO-LEAD: `--mpai` on Windows and macOS (optimized Debug builds of the tag).
 
 **Compatibility.** `kNetVersion` is **289** in `src/net/protocol.h` at
@@ -87,82 +90,263 @@ TODO-LEAD: `--mpai` on Windows and macOS (optimized Debug builds of the tag).
 
 ## Local preparation checks
 
-TODO-LEAD: worktree, commit, toolchains, cores, load.
+All checks ran from a clean detached worktree (`~/tak-tmp/wt/release-0810-local`) at `main`
+`c73416f0` (protocol **289**, replay format **14**), with `assets` and `third_party` links to the
+main checkout (`third_party/ffmpeg-bink` rebuilt with the mp4 muxer). Builds and tests ran on cores
+4-23; the owned retail install served as `--data` and `TAK_TEST_DATA`. The retail install's
+SHA-256 list (17 files) is identical before and after the run.
 
-**Result:** TODO-LEAD.
+**Result: no real regression. Every `--mpai` hash equals 0.8.9.** The one Release failure
+(`voice`) passed when rerun alone. The three Debug (`-O0`) failures are timing failures; all three
+passed in the full optimized (`-O2`) suite and when rerun alone in the Debug tree. The ASan
+suite was stopped early (at about 562 of 583 tests); no failure before the stop.
 
-- **Multiplayer and replays.** TODO-LEAD.
-- **Builds.** Release, Debug, optimized Debug (`-O2`), Clang Debug and
-  AddressSanitizer all-target builds: TODO-LEAD (steps; warning count vs 0.8.9's
-  950 lines).
-- **Full CTest.** TODO-LEAD (registered tests vs 0.8.9's 742 Debug / 698
-  Release; added and removed tests).
+- **Multiplayer and replays.** `kNetVersion` is **289** in `src/net/protocol.h` (288 in 0.8.9)
+  and `kReplayFormat` is **14** in `src/net/replayhdr.h` (unchanged). **0.8.10 is not multiplayer-
+  or replay-compatible with 0.8.9 or 0.8.8**: servers and every player must update together.
+  `supportedReplayProtocol()` accepts a replay only when its recorded protocol equals
+  `kNetVersion`, so replays recorded by 0.8.9 and earlier (protocol 288 and below) are refused,
+  even though their format number (14) is still known. `tools/replay_test.cpp` pins `kNetVersion == 289`
+  and `kReplayFormat == 14` and checks that `supportedReplayProtocol(14, 288)` is refused (no
+  real protocol-288 file was loaded).
+- **Builds.** Release, Debug, optimized Debug (`-O2`), Clang Debug and AddressSanitizer
+  all-target builds completed with exit code 0: 892 steps in Release, 893 in the other four
+  (890 / 891 in 0.8.9). ccache and mold. Warning lines: Release 951, `-O2` 928, Debug 918,
+  Clang 506, ASan 933 (0.8.9 Release: 950).
+- **Full CTest.** **745** registered tests in the Debug trees (742 in 0.8.9) and **700** in
+  Release (698). Each tree ran as `-LE nightly` (538 tests in Release, 583 in the others, which
+  include the `pref_guard` fixtures); the Release and optimized Debug trees also ran `-L nightly`
+  (164).
 
   | Tree | Selection | Result | Time | Failures |
   | --- | --- | --- | ---: | --- |
-  | Release | `-LE nightly` | TODO-LEAD | | |
-  | Release | `-L nightly` | TODO-LEAD | | |
-  | Optimized Debug | `-LE nightly` | TODO-LEAD | | |
-  | Optimized Debug | `-L nightly` | TODO-LEAD | | |
-  | Debug (`-O0`) | `-LE nightly` | TODO-LEAD | | |
-  | Clang Debug | `-LE nightly` | TODO-LEAD | | |
-  | ASan | `-LE nightly` | TODO-LEAD | | |
+  | Release | `-LE nightly`, 538 | 537/538, **538/538 after one rerun** | 567 s | `voice` (passes alone) |
+  | Release | `-L nightly`, 164 | **164/164** | 1,647 s | none |
+  | Optimized Debug | `-LE nightly`, 583 | **583/583** | 823 s | none |
+  | Optimized Debug | `-L nightly`, 164 | **164/164** | 1,424 s | none |
+  | Debug (`-O0`) | `-LE nightly`, 583 | 580/583 | 3,662 s | `cartographer_ui_smoke`, `mod_transfer`, `crusades_history_ui_network` (timing; each passed rerun alone; see below) |
+  | Clang Debug | `-LE nightly`, 583 | **583/583** | 2,988 s | none |
+  | ASan | `-LE nightly`, 583 | stopped at 562/583, **0 failures** | not completed | none before the stop |
 
-  - **Disconnect tests.** TODO-LEAD (`server_disconnect`, `disconnect_client`
-    in every tree).
-  - **Streaming local copy.** TODO-LEAD (`stream_test` with the MP4 muxer, not
-    skipped with 77).
-  - **The settings-leak guard.** TODO-LEAD (`pref_guard_setup`/`pref_guard_check`;
-    real profile's `settings.ini` SHA-256 and mtime before and after).
-- **`--mpai` golden hashes.** Optimized Debug build, Inner Circle, `takserver
-  --local --no-auth --seed 1`, an empty `XDG_DATA_HOME`, `TAK_LEGION=1` for
-  Legion.
+  - **`voice` (Release): `FAIL another player's VOLUME leaves this talker alone: 0.510864`,
+    `voice_test: 243 checks, 1 failed`, 20.8 s.** A load-sensitive audio-mix check (many tests
+    ran at once). Rerun once alone with the same `TAK_TEST_DATA` on cores 4-23: **passed**
+    (20.75 s). It passed in the optimized Debug, Debug, Clang and (before the stop) ASan trees.
+    0.8.8 saw `voice` fail under load in the optimized Debug tree; 0.8.9 had no `voice` failure.
+  - **Debug (`-O0`) timing failures.** All three passed in the full `-O2` suite, and each passed
+    when rerun alone in the Debug tree (`rerun-dbg-a.log`: `crusades_history_ui_network` 74.8 s,
+    `mod_transfer` 25.8 s; `rerun-dbg-b.log`: `cartographer_ui_smoke` 107.0 s). The unoptimized
+    tree was not run a second time in full (only needed when chasing a specific failure):
+    - `crusades_history_ui_network` (72.3 s): `subprocess.TimeoutExpired: Command
+      '.../build-dbg/takclient game "Frey River Plain" ... --user Carol ...' timed out after 60
+      seconds`.
+    - `cartographer_ui_smoke` (196.0 s): `FAIL: zhon map 'black heart jungle' smoke: stuck at
+      step 523 (modal 17 ...)` and `FAIL: creon blank map smoke: stuck at step 375 (modal 16
+      ...)`. The same test failed in 0.8.9's Debug tree (veruna map, step 487) and passed alone.
+    - `mod_transfer` (42.6 s): `AssertionError: GAME MODS VERIFIED; SAVE FAILED: filesystem
+      error: cannot create directories: Not a directory [.../tak-mod-net-m6p7f1vl/peer/ModCache]`
+      then `FAIL: peer closed`. Not seen in 0.8.9 or 0.8.8.
+    - All three are slow, load-sensitive UI or network tests that the unoptimized client runs
+      near their time limits while other suites share the machine. No source was changed in
+      response.
+  - **Comparison with 0.8.9 by name.** 0.8.9's only failure was `cartographer_ui_smoke` (Debug)
+    plus the 20 ASan leak-report tests; 0.8.10 repeats `cartographer_ui_smoke` and adds
+    `mod_transfer`, `crusades_history_ui_network` (Debug) and `voice` (Release), all
+    timing-sensitive and clean when run in isolation or on the optimized trees. 0.8.9's
+    ASan leak-report failures (the 20 SDL D-Bus tests, which need `ASAN_OPTIONS=detect_leaks=0`)
+    did not appear in the 562 tests that ran before the stop.
+  - **Unoptimized Legion tests passed under the existing limits** (Debug / Clang Debug / ASan):
+    `legion_sched_inflight` 963 s / 932 s / 421 s, `legion_scale_neutral` 954 s / 912 s / 429 s,
+    `legion_parallel` 3,225 s (Debug) / 2,687 s (Clang), `legion_route_paused` 1,250 s / 1,025 s,
+    `movement_orders_trolls` 322 s / 344 s / 110 s, `terrain_schedule` 85 s / 67 s / 38 s,
+    `voice_uplink` 49 s everywhere. `legion_parallel` in Debug is 60% of its 5400 s limit.
+  - **The settings-leak guard held.** `pref_guard_setup`/`pref_guard_check` passed in every
+    selection.
+- **Determinism.** `tools/check-detmath.sh`: OK (no direct libm transcendentals, no
+  `std::atomic_ref`). `tools/check-determinism.sh`: **DETERMINISM OK**, every x86_64 build
+  (g++ and clang++ at -O0/-O2/-O3) agrees on golden `dcef618cd2e4d558` (same as 0.8.9); the
+  aarch64 cross builds SKIP locally (no target libc), as before.
+- **`--mpai` golden hashes: all unchanged from 0.8.9.** Inner Circle, `takserver --local
+  --no-auth --seed 1`, scratch profile, optimized Debug binaries, `TAK_LEGION=1` for Legion. Run
+  twice (`mpai/` and `mpai1/`), identical both times. All eight games ended `err=none
+  end=timelimit`; no desync or referee-suspect line.
 
-  | Mode | Duration | `<final main>` (289) | 0.8.9 (288) |
-  | --- | ---: | --- | --- |
-  | Legion | 300 s | TODO-LEAD | `ce5c4ba7562e53b9` |
-  | Retail | 300 s | TODO-LEAD | `a3d953803a064191` |
-  | Legion | 60 s | TODO-LEAD | `0825aeb9e8139203` |
-  | Retail | 60 s | TODO-LEAD | `b353410003e98dd5` |
+  | Mode | Length | Hash (units) | 0.8.9 |
+  | --- | --- | --- | --- |
+  | Retail | 60 s | `b353410003e98dd5` (4) | `b353410003e98dd5` |
+  | Retail | 300 s | `a3d953803a064191` (13) | `a3d953803a064191` |
+  | Legion | 60 s | `0825aeb9e8139203` (4) | `0825aeb9e8139203` |
+  | Legion | 300 s | `ce5c4ba7562e53b9` (18) | `ce5c4ba7562e53b9` |
 
-- **Determinism.** TODO-LEAD (`tools/check-determinism.sh` golden; 0.8.9:
-  `dcef618cd2e4d558`; `tools/check-detmath.sh`).
-- **Legion scenario gate.** TODO-LEAD (145 files in 0.8.9; key counts vs 0.8.9's
-  `36522 keys checked, 0 failed, 4415 ratchets, 4705 licensed, 266 floor
-  exceptions, 864 report-only`).
-- **Retail group emulation check (formation-air).** TODO-LEAD.
-- **Python research suite.** TODO-LEAD (165 tests in 0.8.9; archive verifier 6
-  tests; retail SHA-256 before and after).
-- **Syntax checks.** TODO-LEAD (tracked Python files compile; `bash -n`).
+  The turn-penalty change (`e19580b9`, `src/sim/retailcost.h` and `sim.cpp`) does not move
+  hashed state in this scenario: it only changes the turn penalty in target scoring for shooters on
+  roads or water, which this small scenario evidently never exercises. The scenario gate keys
+  (same counts as 0.8.9) are the wider check.
+- **Legion scenario gate: PASS.** `gate/check.txt` and `gate/check-nightly.txt`: `PASS: 36522
+  keys checked, 0 failed, 4415 ratchets, 4705 licensed, 266 floor exceptions, 864 report-only`,
+  the same counts as 0.8.9. `gate/validate.txt`: `PASS: 0 problems`. Elapsed 5,605 s.
+- **Retail group emulation check** (`tools/re/check_retail_group.py`): `PASS: tick 400, query 4000, check 2000, formation 2000, vtolcheck 2000, vtolform 2000; notified 544, slowed 546, reform 1019, wait 232, cancel 102, vreform 367, vwait 48, vcancel 19, vf7 276, vf5 1357, vf0 206, vf1 161`.
+- **Python.** `tools` byte-compile: 469 compiled, 0 bad. Python suite: 165 tests OK.
 
-Logs: TODO-LEAD (`~/tak-tmp/scratch/release-0810/`).
+Logs: `~/tak-tmp/scratch/release-0810/` (`ctest-*.log`, `rerun-*.log`, `mpai/`, `mpai1/`, `gate/`,
+`rs/remote/`).
 
-**Final source.** TODO-LEAD (after the preparation commits, the optimized Debug
-tree rebuilt every target (version `0.8.10`) and passed `ctest -L quick`).
+**Final source.** After the preparation commits (`275319ef`), the main checkout's optimized Debug
+tree rebuilt every target (exit 0; `takclient --version`: `0.8.10 (build v0.8.9-20-g275319ef3fb3)`)
+and passed `ctest -L quick`: **478/478**.
 
 ## Remote multiplayer sweep
 
-TODO-LEAD: the 37-scenario table for Retail and Legion (date, commit, build id,
-hosts, retries, gates: build identity, planted desync, game mod transfer).
+The full 37-scenario table passed for both pathfinding modes, Retail and Legion, on **2026-10-22**
+(UTC), both on `main` at `c73416f0fffa` (protocol **289**, replay format **14**, build id
+`v0.8.9-18-gc73416f0fffa`; the version string still reads 0.8.9 until the 0.8.10 bump lands). Retail passed
+in a single pass. Legion passed after **one** retry of one case (`2h-stress`) that lost a seat to the new
+disconnect rule (details below); that retry and a repeat all agreed with the referee.
+
+- **Retail:** 18:33-18:52 UTC (18 minutes including the gates), single pass, no retries.
+- **Legion:** 18:52-19:21 UTC (30 minutes including the gates), then a single-case retry of `2h-stress`.
+
+Referees ran on `tak.pgnet.us` (24 runs, 10 at a time) and `vpn3.pgnet.us` (13 runs, 6 at a time), with
+optimized local clients pinned to CPUs 4-23. Each scenario allowed ten simulated minutes (18,000 ticks) or
+ended at an actual result for that seat. Real seated players provide the client/referee checksum coverage;
+the two all-AI spectator scenarios per mode (`w-allai-stress`, `w-allai-bench`) test flow control, not hashes.
+The mode is chosen through the hosting client's room options (`TAK_LEGION=1` creates a Legion room).
+`TAK_WALL_TIMEOUT=3600` was set for both modes. Every recorded referee replay header confirms the intended
+mode, replay format 14 and protocol 289: 37 headers per mode, seeds 2000-2036 each mapped to its case.
 
 | Mode | Completed scenarios | Completed seats | Client-pair checkpoints | Client-referee checkpoints |
 | --- | ---: | ---: | ---: | ---: |
-| Retail | TODO-LEAD | | | |
-| Legion | TODO-LEAD | | | |
+| Retail | 37/37 (single pass) | 52/52 | 10,557 across 22 seat pairs, 0 mismatched | 2,659 across 51 seat/referee comparisons, 0 mismatched |
+| Legion | 37/37 (36 first pass + `2h-stress` retry) | 52/52 | 10,633 across 22 seat pairs, 0 mismatched | 2,758 across 51 seat/referee comparisons, 0 mismatched |
+
+Each run passed all three `--validate` gates before its table started:
+
+- **Build identity:** `both at v0.8.9-18-gc73416f0fffa`.
+- **Planted desync:** the referee reported `game 1: client 1 DESYNCED at tick 900`.
+- **Game mod transfer:** `verified game mods transferred and incorrect loaded gameplay rejected`.
+
+The gate checks only `tak.pgnet.us`; the binary on `vpn3.pgnet.us` is the same file (SHA-256
+`fb1f06eff7f31231f0b0b5d50f699496a8c3f6d74b90fd0645df519baa978cf7`, `--version` build id identical). No natural
+`DESYNCED`, `REFEREE SUSPECT` or client-reported desync appeared in any case log; the only such line in each
+run is the planted one. The Retail sweep ended with "no desyncs reported (52 seats, all completed)"; the Legion
+sweep ended with "no desyncs in the 51 seat(s) that completed" plus the one failed seat described below, and the
+retry ended with "no desyncs reported (2 seats, all completed)". A state hash is compared at every checkpoint; the
+position digest is compared as well wherever both sides carry one. Every game wrote a referee replay (37 per
+mode, matched to cases by the seed in the replay header; the Legion `2h-stress` replay is the retry's).
+`tools/desync-hunt-remote.sh` is unchanged since 0.8.8 (SHA-256
+`df09e28844be1f399f9466a62e19c9cdf53298e5fdb9eb5dcefb5fca830ad56e`) and so is the checkpoint comparison script.
+The referee was rebuilt in the Ubuntu 24.04 container from this exact source.
+
+### Effect of the new disconnect rule on the harness
+
+The harness never relied on the old rejoin (a quit is not a stall, and no case reconnects on purpose), but its
+heavy cases do make a headless client go quiet, which the 0.8.10 server now sees and charges:
+
+- **Stalls pause the room and are counted.** The server logged `held the game` (a hold beyond 1 s, charged to
+  that seat) in only two Retail cases and one Legion case, all stress games: Retail `2h-stress` (28 holds; seat 1
+  charged 32.0 s of hold time, 7 s of its 30 s budget left, seat 0 14.8 s), Retail `2h-orders-stress` (19 holds;
+  seat 1 21.9 s), Legion `2h-orders-stress` (5 holds plus one "stopped responding" for 8 s that recovered, seat 0
+  ended with 14 s left). None ran out, and none changed the result.
+- **One seat was lost.** Legion `2h-stress` (about 11,700 units by tick 1,381): seat 0 went silent for 8 s twice
+  and held the game four times (6.5 s); its budget ran out and the server logged `slot 0 stopped responding --
+  its wait is spent, an AI takes over` and `player 0 stopped communicating -- AI (Normal) takes over`. The
+  client printed `connection lost (peer closed) -- reconnecting` and ended with `the wait ran out: an AI took
+  over your seat` at tick 1,381, and the harness counted it as `client-error`. The other seat played to tick
+  18,000 against the referee with no mismatch. Before 0.8.10 that stall would have been a silent reconnect or a
+  slow run (0.8.9 completed this case at tick 5,248); now it is a handover. The local machine was loaded
+  (load average ~20 from the release's parallel local checks on the same cores), so the cause is a starved
+  client, not an engine fault. Retried alone at the same load: `ok`, tick 5,248, hash `2467ac365aab5e5b`, units
+  8,427, identical to 0.8.9 and 0.8.8. A second, separate repeat reproduced it exactly.
+- **Consequence for readers of this table:** heavy Legion/stress rows on a loaded harness can lose a seat to the
+  30 s budget. That is the documented limit (a client that hitches counts as a hold), not a hash problem. The
+  end-of-game `slot N disconnected -- waiting` lines in every log are the headless clients quitting after the game
+  ended; they are not stalls.
 
 ### Reference ticks and hashes (0.8.10 candidate)
 
-TODO-LEAD: per-case table vs 0.8.9 (protocol 289 vs 288: same harness, hosts
-and seeds; the six `TAK_AUTOPLAY` cases and the load-sensitive `h-lake`,
-`h-stress`, `2h-stress`, `2h-gods`, `4h-gods`, `h-everything` are noise).
+Hash and units are the seated host's final line. "vs 0.8.9" compares tick and hash with the 0.8.9 table
+(protocol 288, same harness, hosts and seeds). The six `TAK_AUTOPLAY` cases never repeat a hash, and `h-lake`,
+`h-stress`, `2h-stress` and `2h-orders-stress` are load-sensitive (`4h-gods` is too: Retail matched 0.8.9 in the first pass but its repeat gave `ebad528a24b6e10f`), so "differs" in those rows is expected noise.
+Legion `2h-stress` is the retry row.
+
+| Case | Retail end | Retail tick | Retail hash | Retail units | vs 0.8.9 | Legion end | Legion tick | Legion hash | Legion units | vs 0.8.9 |
+| --- | --- | ---: | --- | ---: | --- | --- | ---: | --- | ---: | --- |
+| `h-baseline` | timelimit | 18,000 | `4a07030c0169e47c` | 210 | same | timelimit | 18,000 | `4b9217a4ffcd74c0` | 213 | same |
+| `h-gods` | concluded | 14,626 | `0ea0a1d96c1414af` | 104 | same | concluded | 15,383 | `3f26557d500cff5a` | 82 | same |
+| `h-crusades` | timelimit | 18,000 | `604de77d3fe53f3e` | 245 | same | timelimit | 18,000 | `e4036388d6f2e4df` | 230 | same |
+| `h-stress` | concluded | 4,899 | `074f7ea92d92d775` | 8,593 | differs (tick 4,903 -> 4,899) | concluded | 5,161 | `60a27ba49d34492e` | 7,301 | differs (tick 5,147 -> 5,161) |
+| `h-absurd` | timelimit | 18,000 | `1b0d79cb6583219d` | 454 | same | timelimit | 18,000 | `9125e38fec71fc29` | 469 | same |
+| `h-fog-explored` | timelimit | 18,000 | `00419b0edd6c9b06` | 188 | same | timelimit | 18,000 | `faafb450fc7005c7` | 142 | same |
+| `h-fog-full` | timelimit | 18,000 | `9896fd941b2aade9` | 216 | same | timelimit | 18,000 | `821e2ab5feef82d1` | 217 | same |
+| `h-unitcap` | concluded | 14,780 | `c382486eeb54fb3b` | 204 | same | timelimit | 18,000 | `715966bbb3c6a746` | 220 | same |
+| `h-cramped` | concluded | 1,307 | `45134591344a4d04` | 10 | same | timelimit | 18,000 | `57d4067d04331580` | 29 | same |
+| `h-naval` | timelimit | 18,000 | `5fb53d62d7a0b42c` | 58 | same | timelimit | 18,000 | `17b9ca802fb9a217` | 88 | same |
+| `h-naval-crus` | timelimit | 18,000 | `396f8de68f25c274` | 70 | same | timelimit | 18,000 | `4787a6c75fbb0d77` | 88 | same |
+| `h-lake` | concluded | 3,864 | `6a70462c1b10e88b` | 4,890 | differs (tick 3,945 -> 3,864) | concluded | 4,538 | `5ebbfdd3c26f5899` | 4,791 | differs (tick 4,108 -> 4,538) |
+| `h-random-starts` | concluded | 15,702 | `6e0395e042f734fe` | 228 | same | concluded | 12,289 | `0cba4154cf002db9` | 194 | same |
+| `h-monarch-exp` | concluded | 12,231 | `c646ef640c32a947` | 89 | same | concluded | 17,804 | `540592e154eafb24` | 82 | same |
+| `h-mods-all` | timelimit | 18,000 | `450038fec3e01ce5` | 209 | same | timelimit | 18,000 | `e3693d73ec08c60c` | 212 | same |
+| `h-everything` | timelimit | 18,000 | `e6fc7a26a6d0ef0c` | 4,237 | differs (tick 13,553 -> 18,000) | timelimit | 18,000 | `afc4b4a9bfcce80c` | 4,237 | differs (tick 10,300 -> 18,000) |
+| `h-speed-1x` | timelimit | 18,000 | `9b5694cceca37a11` | 236 | same | timelimit | 18,000 | `0c1cf293aa498699` | 246 | same |
+| `h-two-castles` | timelimit | 18,000 | `8e9dfa2311fc1ec4` | 23 | same | timelimit | 18,000 | `81b4f5bfafb359c0` | 4 | same |
+| `2h-baseline` | timelimit | 18,000 | `7b5850e128c0ff63` | 173 | same | timelimit | 18,000 | `638fa388b12be0c4` | 172 | same |
+| `2h-gods` | concluded | 12,423 | `bf5aaf973f862369` | 104 | same | concluded | 13,059 | `9283d91d154a8678` | 61 | same |
+| `2h-crusades` | timelimit | 18,000 | `4177d6f4374aad35` | 182 | same | timelimit | 18,000 | `e14b49adbbf76ebf` | 167 | same |
+| `2h-stress` | concluded | 5,074 | `cc893dee35637579` | 9,096 | differs (tick 5,051 -> 5,074) | concluded | 5,248 | `2467ac365aab5e5b` | 8,427 | same |
+| `2h-orders` | timelimit | 18,000 | `1b40e2c3ceeb0a66` | 179 | differs (autoplay) | timelimit | 18,000 | `a2d39db469bf9b9e` | 175 | differs (autoplay) |
+| `2h-orders-stress` | concluded | 13,590 | `c690f5cf79f7969e` | 7,562 | differs (tick 5,114 -> 13,590) (autoplay) | timelimit | 18,000 | `32a879dcd6d197cc` | 5,166 | differs (tick 5,074 -> 18,000) (autoplay) |
+| `4h-orders` | timelimit | 18,000 | `e447b3c6416db6e9` | 159 | differs (autoplay) | timelimit | 18,000 | `40e9ec2f6ecfd65b` | 155 | differs (autoplay) |
+| `3h-baseline` | timelimit | 18,000 | `1d59d944a244aef4` | 172 | same | timelimit | 18,000 | `beeeab4bb6ec584b` | 148 | same |
+| `4h-gods` | timelimit | 18,000 | `39e8fa7afa49b6f9` | 149 | same | timelimit | 18,000 | `0138eb2fd52d3de6` | 142 | differs |
+| `net-rtt50` | timelimit | 18,000 | `80dc6a72233bd05d` | 230 | same | timelimit | 18,000 | `03c521246aeadec2` | 227 | same |
+| `net-rtt100` | timelimit | 18,000 | `fcba4a56baf98c45` | 190 | same | timelimit | 18,000 | `c3167c3d271f43bc` | 204 | same |
+| `net-jitter` | timelimit | 18,000 | `6a0f640c3faf1de6` | 173 | same | timelimit | 18,000 | `ca07f9821f97109e` | 196 | same |
+| `net-rtt500` | timelimit | 18,000 | `8837809d723b6fc0` | 219 | same | timelimit | 18,000 | `af7b2fa90b652283` | 200 | same |
+| `net-loss1` | timelimit | 18,000 | `1adf2c3d366e9bef` | 192 | same | timelimit | 18,000 | `b69a197764ecdf5c` | 206 | same |
+| `net-loss3-orders` | timelimit | 18,000 | `ff46fd960aa71801` | 190 | differs (autoplay) | timelimit | 18,000 | `7e269b8810b6950c` | 222 | differs (tick 17,529 -> 18,000) (autoplay) |
+| `net-orders100` | timelimit | 18,000 | `4c1133050348eddb` | 183 | differs (autoplay) | timelimit | 18,000 | `91d8f23982d1be6d` | 187 | differs (autoplay) |
+| `net-2h-rtt100` | timelimit | 18,000 | `92399c1fe9e944cb` | 190 | differs (autoplay) | timelimit | 18,000 | `abe8a0935c0131cb` | 168 | differs (autoplay) |
+| `w-allai-stress` | timelimit | 18,000 | `06e78e00b732019a` | 5,392 | same | timelimit | 18,000 | `fc6dfe90da499b44` | 3,925 | same |
+| `w-allai-bench` | timelimit | 18,000 | `10a3a871daabf505` | 312 | same | timelimit | 18,000 | `8446871154cf8f79` | 344 | same |
 
 ### Comparison with 0.8.9
 
-TODO-LEAD. Expected: the disconnect changes are server wall-clock accounting
-and touch no hashed state while every seat stays connected; the campaign seat
-fix reaches only `takx22_mt`/`takx24_mt` (not in the sweep); the target-score
-turn rate can move cases where shooters stand on roads or water. Explain every
-deterministic case that differs from 0.8.9.
+0.8.10 changes the simulation (retail terrain-scaled turn rate in target scoring, `e19580b9`), the network
+protocol (289: the disconnect rule and the campaign seat rule) and the replay loader (288 replays are refused),
+so it is not multiplayer- or replay-compatible with 0.8.9, and some references were expected to move.
+
+**Retail: 27 of 37 cases reproduce 0.8.9 exactly (tick and hash)**; the 10 that differ:
+
+- The six `TAK_AUTOPLAY` cases (`2h-orders`, `2h-orders-stress`, `4h-orders`, `net-orders100`, `net-loss3-orders`,
+  `net-2h-rtt100`), which never repeat a hash.
+- Load-sensitive, same class as in 0.8.9: `h-stress` (4,903 -> 4,899; a repeat gave 4,891), `h-lake` (3,945 ->
+  3,864; a repeat gave 3,833) and `2h-stress` (5,051 -> 5,074; a repeat gave 5,049). Units are within 1% of
+  0.8.9 in each (8,593 / 4,890 / 9,096 vs 8,593 / 4,922 / 9,101); these cases ended by a concluded result a few
+  ticks apart, the same wobble 0.8.8 -> 0.8.9 showed.
+- **`h-everything` moved for real:** 0.8.9 concluded at tick 13,553 with 5,140 units; 0.8.10 runs to the time
+  limit at tick 18,000 with 4,237 units, hash `e6fc7a26a6d0ef0c`, and a repeat reproduced exactly that hash
+  (it is stable, not noise).
+
+**Legion: 27 of 37 cases reproduce 0.8.9 exactly.** The 10 that differ are the six autoplay cases plus
+`h-stress` (5,147 -> 5,161 in the first pass; the repeat gave 5,147 and hash `4efaa19f898d273d`, i.e. 0.8.9 exactly),
+`h-lake` (4,108 -> 4,538; a repeat gave 4,532), `4h-gods` (same 18,000 ticks; hash differs, as it already did between 0.8.8 and 0.8.9; a repeat gave yet another hash, `cac7daae4618b419`) and **`h-everything`**, which moved for real the same way as Retail: 0.8.9 concluded at tick 10,300 with
+4,782 units; 0.8.10 reaches the limit at 18,000 with 4,237 units, hash `afc4b4a9bfcce80c`, reproduced exactly on a
+repeat. `2h-stress` (the lost-seat case) reproduced 0.8.9 after the retry.
+
+**Why `h-everything` moved, and why only it.** The turn-rate change affects only a shooter's turn penalty in
+target scoring, and only for units whose movement class scales their turn rate on roads or water (retail's
+`roadmultiplier` / `watermultiplier`). `h-everything` is the one case that fields every unit type, so it is the
+case where such shooters change which targets they pick, and the whole battle diverges after that point (both
+modes, same direction: no conclusion before the time limit, about 900 fewer units). Every other deterministic case
+(27 of the 31 non-autoplay Retail cases are bit-identical, including the naval cases `h-naval` and
+`h-naval-crus`) evidently never reaches a differing score. This attribution rests on
+(a) the change being the only simulation delta since 0.8.9 and (b) two exact reproductions of the new
+references in each mode; I did not bisect `h-everything` against the pre-`e19580b9` commit, so say "consistent
+with" rather than "proven" if the notes quote it. The `--mpai` Inner Circle 60 s hashes are unchanged, as the
+commit says; the 300 s hashes are measured separately by the local checks.
+
+There is no desync anywhere: every seat agreed with the referee at every checkpoint in every case that
+completed, and the one case that lost its seat agrees with the referee on the seat that stayed.
 
 ## CI and packages
 
@@ -194,10 +378,16 @@ TODO-LEAD: Published `<date>` UTC with `gh release edit v0.8.10 --draft=false --
 
 ## Screenshots
 
-TODO-LEAD: retaken on the shots branch (title.jpg VERSION 0.8.10, the YouTube
-Streaming panel with SAVE A LOCAL COPY, the disconnect banner if retaken);
-README title alt text and gallery footnote, `docs/img/README.md` header, rows and
-scratch list.
+Retaken in `c2ec34ab` (cherry-picked from the shots branch's `b0359921`):
+`docs/img/title.jpg` (title menu reading VERSION 0.8.10, 0.8.9's crop),
+`docs/img/streaming.jpg` (YouTube Streaming panel with the new SAVE A LOCAL COPY
+row, off; key NOT SET from the test key store) and
+`docs/img/guide/disconnect-wait.jpg` (retaken at the normal 8 s stall threshold:
+"WAITING FOR Brannoc 18"; the user-guide caption says 18). README title alt
+text, streaming alt text and gallery footnote ("0.7.25 to 0.8.10 builds"),
+and `docs/img/README.md` (0.8.10 paragraph, `title.jpg`/`streaming.jpg` rows, new
+`guide/disconnect-wait.jpg` row, capture-script list) are updated. Campaign and
+Cartographer pictures show nothing 0.8.10 changed and were kept.
 
 ## Limits
 
@@ -216,4 +406,10 @@ scratch list.
 - New with the disconnect wait: a server-side upload stall longer than 1 s is
   charged to every seat it holds up; a reconnecting seat that hitches while
   catching up is charged as a hold.
-- TODO-LEAD: flakes seen in this release's runs.
+- Flakes seen in the preparation runs (none is a code fault, no source changed):
+  `voice` in the loaded Release suite (passed alone); `cartographer_ui_smoke`,
+  `mod_transfer` and `crusades_history_ui_network` in the loaded `-O0` Debug
+  suite (passed alone and at `-O2`); Legion `2h-stress` in the remote sweep lost
+  its seat to the 30 s budget on the loaded harness (the documented hitch
+  caveat; passed on retry, identical to 0.8.9).
+- TODO-LEAD: flakes seen in CI and tag CI.

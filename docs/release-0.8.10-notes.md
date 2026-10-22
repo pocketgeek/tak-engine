@@ -141,8 +141,11 @@ See [public server deployment](public-server.md).
   `retailEffectiveTurnRate`.
 - The `--mpai` Inner Circle seed 1 hashes at 60 s are unchanged from 0.8.9:
   Retail `b353410003e98dd5`, Legion `0825aeb9e8139203`. At 300 s:
-  <!-- TODO-LEAD: 300 s Retail / Legion hashes on the final main (0.8.9: Retail
-  a3d953803a064191, Legion ce5c4ba7562e53b9); say whether they moved and why. -->
+  also unchanged, Retail `a3d953803a064191`, Legion `ce5c4ba7562e53b9` (no
+  shooter in that small game gets a different target score). The remote sweep's
+  `h-everything` case, which fields every unit type, does move in both modes
+  (it now runs to the time limit), consistent with the turn-rate change; every
+  other deterministic sweep case is identical to 0.8.9.
 
 ## Known limits
 
