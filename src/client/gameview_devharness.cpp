@@ -874,9 +874,9 @@
             {
                 const auto* area=areaOrder();
                 check(area!=nullptr,"a 60x50 px box is an area clear");
-                const auto near=[](int32_t v,float f) {return std::fabs(tak::sim::Fixed::raw(v).toFloat()-f)<1.0f;};
-                check(near(area->minX,std::min(wx0,wx1)) && near(area->maxX,std::max(wx0,wx1)) &&
-                      near(area->minZ,std::min(wz0,wz1)) && near(area->maxZ,std::max(wz0,wz1)),
+                const auto closeTo=[](int32_t v,float f) {return std::fabs(tak::sim::Fixed::raw(v).toFloat()-f)<1.0f;};
+                check(closeTo(area->minX,std::min(wx0,wx1)) && closeTo(area->maxX,std::max(wx0,wx1)) &&
+                      closeTo(area->minZ,std::min(wz0,wz1)) && closeTo(area->maxZ,std::max(wz0,wz1)),
                       "the clear covers press to release on the ground");
             }
             uiScale_=2.0f;reset();rightDrag(px,py,px+50,py+50);
@@ -925,9 +925,9 @@
                 pickWorld(px+50,py+40,wx1,wz1);
                 const auto* area=areaOrder();
                 check(area!=nullptr,"the panned drag clears");
-                const auto near=[](int32_t v,float f) {return std::fabs(tak::sim::Fixed::raw(v).toFloat()-f)<1.0f;};
-                check(near(area->minX,std::min(wx0,wx1)) && near(area->minZ,std::min(wz0,wz1)) &&
-                      near(area->maxX,std::max(wx0,wx1)) && near(area->maxZ,std::max(wz0,wz1)),
+                const auto closeTo=[](int32_t v,float f) {return std::fabs(tak::sim::Fixed::raw(v).toFloat()-f)<1.0f;};
+                check(closeTo(area->minX,std::min(wx0,wx1)) && closeTo(area->minZ,std::min(wz0,wz1)) &&
+                      closeTo(area->maxX,std::max(wx0,wx1)) && closeTo(area->maxZ,std::max(wz0,wz1)),
                       "the panned clear covers what the box showed");
             }
             // A zoom mid-drag keeps the corner on its ground as well.
