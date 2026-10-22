@@ -1427,7 +1427,7 @@ changes**, and starts the game with it.
 
 The game opens a **private lobby** for the map, as for a single-player game:
 
-![The game's lobby, TA:KINGDOMS MULTIPLAYER, for map TEST followed by a number and a fingerprint, SINGLE PLAYER: seat 1 HUMAN PLAYER, seats 2 to 4 OPEN, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, seats 5 to 8 CLOSED, START greyed, the map preview with starts 1 to 4, and under the match options MAP SCENARIO: ON (TEST MAP), NEEDS SEATS 1-4, ENDS ONLY BY THE SCENARIO'S RULES, PLACED UNITS REPLACE MONARCHS and ONLY 6 UNIT TYPES CAN BE BUILT](img/cartographer/test-lobby.jpg)
+![The game's lobby, TA:KINGDOMS MULTIPLAYER, for map TEST followed by a number and a fingerprint, SINGLE PLAYER: seat 1 HUMAN PLAYER, seats 2 to 4 OPEN, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, seats 5 to 8 CLOSED, START greyed, the map preview with starts 1 to 4, and the match rules ending with MAP SCENARIO: ON (TEST MAP), followed under the two columns by PLACED UNITS REPLACE MONARCHS, NEEDS SEATS 1-4, ONLY 6 UNIT TYPES CAN BE BUILT and ENDS ONLY BY THE SCENARIO'S RULES](img/cartographer/test-lobby.jpg)
 
 *The game's lobby for a Test Map of King of the Hill. Its scenario needs four players, so seats 2 to 4 are tagged and START waits for them.*
 

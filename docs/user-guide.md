@@ -1535,7 +1535,7 @@ gives three times the 100% size; on a small window a very large box is shrunk
 until it fits, and a long line you are typing scrolls so its end stays in view. Both options take effect at once, also during a game. They are
 saved as `chatScale` and `chatAlign` (0 left, 1 centred) in `settings.ini`.
 
-![The in-game chat box centred over the battlefield on its dark panel: four messages, each starting with the sender's name in their player colour, and a line being typed after SAY:](img/guide/chat-box.jpg)
+![The in-game chat box centred on its dark panel just above a Barracks' build row and its TRAINING Horseman (10) line: four messages, each starting with the sender's name in their player colour, and a line being typed after SAY:](img/guide/chat-box.jpg)
 
 **UI Font** is saved as `uiFont = modern` or `uiFont = classic` in `settings.ini`; a
 file without it uses Modern. With Modern, names keep their own capitals (players, maps,

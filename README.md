@@ -12,7 +12,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
 [Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [Quick-start controls](docs/quick-start.md) · [User guide](docs/user-guide.md) · [Map editor guide](docs/cartographer-guide.md) · [Build from source](docs/development.md)
 
-<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.8"></a>
+<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.8.9"></a>
 
 <table>
   <tr>
@@ -40,7 +40,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.25 to 0.8.8 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
+<sub>Captured from the 0.7.25 to 0.8.9 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
 
 </div>
 
