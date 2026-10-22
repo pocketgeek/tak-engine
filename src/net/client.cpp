@@ -65,9 +65,12 @@ void MpClient::forgetResume() {
 
 uint64_t MpClient::clockMs() { return nowMs(); }
 
+// The server counts a seat's budget from its last contact, so what is left when the link
+// goes is short by the silence since we last heard from the server (the same outage, seen
+// from this end): a link that died quietly is not counted down afresh on detection.
 uint64_t MpClient::reconnectWindowMs() const {
-    if (!ownWaitRunning_) return ownWaitMs_;
-    const uint64_t spent = nowMs() - ownWaitAt_;
+    const uint64_t now = nowMs();
+    const uint64_t spent = ownWaitRunning_ ? now - ownWaitAt_ : now - std::min(lastRecvMs_, now);
     return spent < ownWaitMs_ ? ownWaitMs_ - spent : 0;
 }
 

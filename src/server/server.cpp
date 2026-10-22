@@ -3355,7 +3355,9 @@ void Server::dropClient(uint32_t id, const char* reason) {
         if(!r->campaignBattleId.empty() && s<2)r->campaignDisconnected[s]=true;
         dropPendingCommands(c, *r);   // the seat is HELD; its in-flight orders are not
         r->slotClient[s] = -1;
-        beginWait(*r, s, "disconnected", c.lastRecvMs);
+        // Silence counts as it does for a stall (the run loop): only once the game has
+        // ticked and the client has loaded, since loading has its own deadlines.
+        beginWait(*r, s, "disconnected", r->tick > 0 && c.loaded ? c.lastRecvMs : nowMs());
         Writer w; w.u8(uint8_t(s)); w.u8(1 /*dropped*/); w.u32(0);
         broadcastRoom(*r, Msg::PlayerStatus, w);
     } else if (r) {
@@ -3503,6 +3505,10 @@ void Server::endHold(Room& r, int slot, uint64_t heldMs) {
     chargeWait(r.waitSpentMs[slot], heldMs - kHoldGraceMs);
     std::fprintf(stderr, "game %u: slot %d held the game %.1fs -- %llus of its wait left\n", r.id, slot,
                  double(heldMs) / 1000.0, (unsigned long long)((gDropWaitMs - r.waitSpentMs[slot]) / 1000));
+    // The seat's client keeps its own budget (Msg::Waiting) for a reconnect window.
+    if (int cid = r.slotClient[slot]; cid >= 0)
+        if (auto it = clients_.find(uint32_t(cid)); it != clients_.end() && it->second->state == Client::InGame)
+            sendWaiting(*it->second, r);
 }
 
 // The wait ran out. The seat's connection, if it is still open, is closed; the seat

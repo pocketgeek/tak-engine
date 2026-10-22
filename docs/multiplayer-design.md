@@ -329,8 +329,13 @@ link `sim`, `tdf`, `net`, and the new `ai` module only.
     down) and the `AiTakeover` tick, which the replay records like any event, so
     clients, referee and replay agree. Each `Waiting` also ends with the
     recipient's own budget (`running`, `ms`: its running countdown, else what
-    its seat has left), so a client whose link drops counts down and retries
-    for as long as the server will really wait, not a fresh 30 s. `Waiting`
+    its seat has left, which the client shortens by its own silence since it
+    last heard from the server), so a client whose link drops counts down and
+    retries for as long as the server will really wait, not a fresh 30 s; a
+    hold that is charged sends the seat's client a fresh `Waiting` for this.
+    Silence before the first tick, or before the client has loaded, is not
+    charged (loading has its own deadlines): a connection that closes then
+    counts down from the close. `Waiting`
     is not recorded and no sim state changed, so protocol 289 still. Like the
     budget, the hold accounting is wall-clock time on the server alone.
   - *Coming back.* Talking again on the same connection inside the window (a
