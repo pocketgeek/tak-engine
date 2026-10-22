@@ -2016,7 +2016,26 @@ if(TAK_BUILD_CLIENT)
           XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/buildline-test-profile
           $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
           --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/buildline.png")
-      set_tests_properties(buildline_harness PROPERTIES TIMEOUT 300)
+      set_tests_properties(buildline_harness PROPERTIES TIMEOUT 300
+          PASS_REGULAR_EXPRESSION "PASS: [0-9]+ shift-drag lines")
+      # Chained shift-drags for one monarch (TAK_BUILDLINE_CHAIN=type/gap/builder/drags):
+      # a U with the builder between its arms, a closed box from outside, a tower V,
+      # and a line doubling back along the last. Every distinct site gets built.
+      foreach(_chain u=0/0/450,40/400,0/0,300/-400,0
+                     box=0/0/-60,-80/400,0/0,300/-400,0/0,-300
+                     tower_v=2/0/-60,-80/300,300/300,-300
+                     double_back=0/0/-60,-80/400,0/-400,64)
+        string(REGEX MATCH "^[a-z_]+" _name "${_chain}")
+        string(REGEX REPLACE "^[a-z_]+=" "" _spec "${_chain}")
+        add_test(NAME buildline_chain_${_name} COMMAND ${CMAKE_COMMAND} -E env
+            SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_BUILDLINE_CHAIN=${_spec}
+            XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/buildline-chain-${_name}
+            XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/buildline-chain-${_name}
+            $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+            --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/buildline-chain-${_name}.png")
+        set_tests_properties(buildline_chain_${_name} PROPERTIES TIMEOUT 300
+            PASS_REGULAR_EXPRESSION "PASS: build-line chain")
+      endforeach()
       add_test(NAME render_texture_reuse COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
           TAK_SHADOW_BENCH=16 TAK_SHADOW_BENCH_TYPE=arakeep TAK_PROFILE_ZOOM=0.5

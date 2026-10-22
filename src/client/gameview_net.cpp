@@ -164,6 +164,8 @@
         radarCode_ = false;   // power codes start off in every match
         buildLineGap_ = 0;    // so does the tight shift-drag line spacing
         buildLineWheel_ = 0;
+        buildLineWheelMs_ = 0;
+        buildLineTrail_ = {};
         poster_.reset();
         // A room field (SAY, a password) focused when the host started is let go: the game
         // has no such field, and its text input would otherwise hold push to talk off.

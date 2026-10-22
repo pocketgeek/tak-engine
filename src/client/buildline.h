@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <utility>
 #include <vector>
@@ -65,15 +66,26 @@ inline std::vector<std::pair<float, float>> buildLineSites(int footX, int footZ,
     return out;
 }
 
-// One wheel event's change to the line gap. SDL reports a notch as 1.0 and a
-// trackpad or high-resolution wheel as fractions, so fractions accumulate in
-// `carry` and each event moves the gap at most one step: a trackpad flick
-// (momentum deltas of many "lines" at once) cannot jump it by dozens.
-inline int buildLineWheelSteps(float delta, float& carry) {
+// One wheel event's change to the line gap. A mouse wheel reports whole notches
+// (1.0 each, 2.0 for two notches in one Windows WM_MOUSEWHEEL), and every notch
+// counts. A trackpad or high-resolution wheel reports fractions, and one trackpad
+// swipe sends dozens of them (macOS: 0.1 x scrollingDeltaY, so momentum events
+// are often 1 or more): that travel adds up in `carry` and steps at most once per
+// kBuildLineTrackpadMs (`lastMs` the event time of the last such step), so a swipe
+// moves the gap a few cells, not to the end stop.
+constexpr uint32_t kBuildLineTrackpadMs = 150;
+inline int buildLineWheelSteps(float delta, float& carry, uint32_t ms, uint32_t& lastMs) {
+    if (delta == std::trunc(delta)) {
+        carry = 0;
+        return std::clamp(int(delta), -kBuildLineMaxGap, kBuildLineMaxGap);
+    }
     carry += delta;
-    if (carry >= 1.0f) { carry = 0; return 1; }
-    if (carry <= -1.0f) { carry = 0; return -1; }
-    return 0;
+    if (std::abs(carry) < 1.0f) return 0;
+    const int step = carry > 0 ? 1 : -1;
+    carry = 0;
+    if (lastMs != 0 && ms - lastMs < kBuildLineTrackpadMs) return 0;   // the swipe's tail
+    lastMs = ms == 0 ? 1 : ms;
+    return step;
 }
 
 } // namespace tak::client

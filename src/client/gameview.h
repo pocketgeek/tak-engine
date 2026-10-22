@@ -2022,6 +2022,17 @@ private:
     int buildLineGap_ = 0;
     float buildLineWheel_ = 0;        // fractional wheel travel not yet a gap step
     float buildLineGapShown_ = 0;     // seconds left on the GAP label near the cursor
+    uint32_t buildLineWheelMs_ = 0;   // when a trackpad's fractional travel last stepped it
+    // The last line placeBuildLine queued: its builder, the cell its work leaves that
+    // builder on, and its sites. A second drag queued before those orders come back
+    // from the server chains on from here instead of from the builder's stale queue.
+    struct BuildLineTrail {
+        struct Site {int x, z, w, h;};   // footprint origin and size, in cells
+        int builder = -1;
+        int px = 0, pz = 0;
+        uint32_t tick = 0;
+        std::vector<Site> sites;
+    } buildLineTrail_;
     bool bdQueue_ = false;
     bool reclaimDrag_ = false;        // right-drag box: a builder clears the area
     float rdX0_ = 0, rdZ0_ = 0;       // reclaim-drag start (world)

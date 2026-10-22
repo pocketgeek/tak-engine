@@ -1,6 +1,9 @@
 #include "client/gameview.h"
 #include "client/buildline.h"
 
+#include <cstdint>
+#include <queue>
+
 // Out-of-line GameView method definitions (input concern), split from the
 // class body in gameview.h so editing a body recompiles only this translation
 // unit. Trivial getters, ctors, static, template, constexpr and default-arg
@@ -229,7 +232,8 @@
             float delta = float(e.wheel.y);
 #endif
             if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) delta = -delta;
-            buildLineGap_ = std::clamp(buildLineGap_ + tak::client::buildLineWheelSteps(delta, buildLineWheel_),
+            buildLineGap_ = std::clamp(buildLineGap_ + tak::client::buildLineWheelSteps(
+                                           delta, buildLineWheel_, e.wheel.timestamp, buildLineWheelMs_),
                                        0, tak::client::kBuildLineMaxGap);
             buildLineGapShown_ = 1.5f;
         } else if (e.type == SDL_MOUSEWHEEL) {
@@ -326,6 +330,7 @@
                 buildDrag_ = true;
                 bdX0_ = wx;
                 bdZ0_ = wz;
+                buildLineWheel_ = 0;   // no half notch left over from the last line
             } else if (!selection_.empty() && canPlaceLocked(placing_, wx, wz)) {
                 tak::net::Command c;
                 c.kind = tak::net::Cmd::Build;
@@ -706,27 +711,66 @@
         // site that nearest cell can lie inside the building it has just made -- when
         // it works along the line's axis or down a diagonal -- where it pushes for good
         // (the old one-cell gap trapped it the same way). So keep it on ONE side of the
-        // line: where that nearest cell would overlap the line or sit on the far side,
-        // a queued move first takes it to the nearest rectangle cell on its side that
-        // is clear of the whole line, and it builds from there. Consecutive side cells
-        // are a footprint apart along the line, so it never has to round a corner.
+        // line: where that nearest cell would overlap a queued site or sit on the far
+        // side, a queued move first takes it to the nearest rectangle cell on its side
+        // that is clear of every queued site, and it builds from there.
         const auto* b = live->unit(builderId);
         const auto* bt = b ? b->type : nullptr;
         const bool walks = bt && !bt->canFly && bt->footX > 0 && bt->footZ > 0;
         int px = 0, pz = 0;   // the builder's footprint origin when this line's work starts
-        if (walks) {
-            // Where its queue leaves it (a build order's point is its approach cell).
-            const auto at = b->orders.empty() ? std::pair{b->x, b->z}
-                                              : std::pair{b->orders.back().x, b->orders.back().z};
-            px = tak::sim::footprintOrigin(at.first, bt->footX);
-            pz = tak::sim::footprintOrigin(at.second, bt->footZ);
+        // Every site already queued for this builder (earlier lines and single sites),
+        // as footprint origin + size: a walk that clips one stalls just the same, and
+        // a chained line (an L, a U, a box) starts beside the last one.
+        struct Rect {int x, z, w, h;};
+        std::vector<Rect> queued;
+        if (b) {
+            // Where its queue leaves it, worked out as the sim will: each queued build
+            // computes its approach (navigationCell) only when it becomes active, from
+            // where the work before it left the builder (prepareBuildApproach).
+            if (walks) {
+                px = tak::sim::footprintOrigin(b->x, bt->footX);
+                pz = tak::sim::footprintOrigin(b->z, bt->footZ);
+            }
+            bool trailSeen = false;
+            const auto& t = buildLineTrail_;
+            for (size_t i = tak::sim::World::currentLeg(b->orders); i < b->orders.size(); ++i) {
+                const auto& o = b->orders[i];
+                if (!walks) {
+                } else if (o.buildRectangle && o.mission.stage == 0) {
+                    const auto [nx, nz] = o.buildRectangle->navigationCell(px, pz);
+                    px = nx; pz = nz;
+                } else {
+                    px = tak::sim::footprintOrigin(o.x, bt->footX);
+                    pz = tak::sim::footprintOrigin(o.z, bt->footZ);
+                }
+                if (o.buildType && o.buildType->isStructure()) {
+                    const Rect r{tak::sim::footprintOrigin(o.buildX, o.buildType->footX),
+                                 tak::sim::footprintOrigin(o.buildZ, o.buildType->footZ),
+                                 o.buildType->footX, o.buildType->footZ};
+                    queued.push_back(r);
+                    trailSeen |= !t.sites.empty() && r.x == t.sites.back().x && r.z == t.sites.back().z;
+                }
+            }
+            // The last line's orders still on their way through the server (a quick
+            // second drag): carry on from where that line was planned to leave it.
+            if (!trailSeen && t.builder == builderId && !t.sites.empty() &&
+                live->tickCount() - t.tick < 90u) {
+                if (walks) { px = t.px; pz = t.pz; }
+                for (const auto& s : t.sites) queued.push_back({s.x, s.z, s.w, s.h});
+            }
         }
         std::vector<std::pair<int, int>> line;   // site footprint origins
         for (const auto& [x, z] : sites)
             line.push_back({tak::sim::footprintOrigin(x, fx), tak::sim::footprintOrigin(z, fz)});
+        // Does the builder's footprint at cell (x,z) overlap this line, or a queued site?
         const auto overlaps = [&](const std::vector<std::pair<int, int>>& set, int x, int z) {
             for (const auto& [ox, oz] : set)
                 if (x < ox + fx && ox < x + bt->footX && z < oz + fz && oz < z + bt->footZ) return true;
+            return false;
+        };
+        const auto overlapsQueued = [&](int x, int z) {
+            for (const auto& r : queued)
+                if (x < r.x + r.w && r.x < x + bt->footX && z < r.z + r.h && r.z < z + bt->footZ) return true;
             return false;
         };
         // Which side of the line the builder works from: the one it starts on.
@@ -747,7 +791,6 @@
         };
         // A straight walk from cell (ax,az) to (bx,bz) that never clips a site already
         // queued: the mover does not round a building's corner it cuts, it stalls on it.
-        std::vector<std::pair<int, int>> queued;
         const auto clearWalk = [&](int ax, int az, int bx, int bz) {
             const int steps = 4 * std::max({std::abs(bx - ax), std::abs(bz - az), 1});
             for (int i = 0; i <= steps; ++i) {
@@ -755,8 +798,8 @@
                 const float cz = float(az) + float(bz - az) * float(i) / float(steps);
                 const int x0 = int(std::floor(cx)), z0 = int(std::floor(cz));
                 const int x1 = int(std::ceil(cx)), z1 = int(std::ceil(cz));
-                if (overlaps(queued, x0, z0) || overlaps(queued, x1, z0) ||
-                    overlaps(queued, x0, z1) || overlaps(queued, x1, z1)) return false;
+                if (overlapsQueued(x0, z0) || overlapsQueued(x1, z0) ||
+                    overlapsQueued(x0, z1) || overlapsQueued(x1, z1)) return false;
             }
             return true;
         };
@@ -769,8 +812,90 @@
             m.queue = true;
             issue(m);
         };
+        // When no clear cell on either side is a straight walk or one square corner
+        // away (round the far end of the last line of a chain, out of a V's apex): a
+        // shortest route over the cells near the site, around every queued site, to the
+        // nearest clear rectangle cell -- ours side first -- as the few moves (each a
+        // walk that clips nothing) that follow it. Empty when there is none.
+        const auto route = [&](const tak::sim::RetailRectGoal& rect, int& onSide) {
+            std::vector<std::pair<int, int>> moves;
+            constexpr int kMargin = 10, kMaxSpan = 160;
+            const int wx0 = std::min(px, rect.minX) - kMargin, wz0 = std::min(pz, rect.minZ) - kMargin;
+            const int w = std::max(px, rect.maxX) + kMargin - wx0 + 1;
+            const int h = std::max(pz, rect.maxZ) + kMargin - wz0 + 1;
+            if (w > kMaxSpan || h > kMaxSpan) return moves;
+            std::vector<Rect> inWindow;   // the queued sites inside the window
+            for (const auto& r : queued)
+                if (r.x + r.w > wx0 - bt->footX && r.x < wx0 + w && r.z + r.h > wz0 - bt->footZ && r.z < wz0 + h)
+                    inWindow.push_back(r);
+            std::vector<signed char> open(size_t(w * h));
+            for (int z = 0; z < h; ++z)
+                for (int x = 0; x < w; ++x) {
+                    const int cx = wx0 + x, cz = wz0 + z;
+                    bool ok = standable(cx, cz);
+                    for (const auto& r : inWindow)
+                        if (ok && cx < r.x + r.w && r.x < cx + bt->footX && cz < r.z + r.h && r.z < cz + bt->footZ) ok = false;
+                    open[size_t(z * w + x)] = ok;
+                }
+            const auto at = [&](int x, int z) {
+                return x >= 0 && z >= 0 && x < w && z < h && open[size_t(z * w + x)];
+            };
+            const int sx0 = px - wx0, sz0 = pz - wz0;
+            if (!at(sx0, sz0)) return moves;
+            std::vector<int> cost(size_t(w * h), INT32_MAX), from(size_t(w * h), -1);
+            using Q = std::pair<int, int>;   // cost, cell
+            std::priority_queue<Q, std::vector<Q>, std::greater<Q>> q;
+            cost[size_t(sz0 * w + sx0)] = 0;
+            q.push({0, sz0 * w + sx0});
+            while (!q.empty()) {
+                const auto [c, i] = q.top();
+                q.pop();
+                if (c != cost[size_t(i)]) continue;
+                const int x = i % w, z = i / w;
+                for (int dz = -1; dz <= 1; ++dz)
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        if ((!dx && !dz) || !at(x + dx, z + dz)) continue;
+                        if (dx && dz && (!at(x + dx, z) || !at(x, z + dz))) continue;   // no corner cutting
+                        const int j = (z + dz) * w + x + dx, nc = c + (dx && dz ? 14 : 10);
+                        if (nc < cost[size_t(j)]) { cost[size_t(j)] = nc; from[size_t(j)] = i; q.push({nc, j}); }
+                    }
+            }
+            int goal = -1;
+            for (int pass = 0; pass < 2 && goal < 0; ++pass) {
+                const int want = pass ? -onSide : onSide;
+                rect.enumerate([&](int x2, int z2) {
+                    if (overlaps(line, x2, z2) || sideOf(x2, z2) != want || !at(x2 - wx0, z2 - wz0)) return;
+                    const int i = (z2 - wz0) * w + (x2 - wx0);
+                    if (cost[size_t(i)] != INT32_MAX && (goal < 0 || cost[size_t(i)] < cost[size_t(goal)])) goal = i;
+                });
+                if (goal >= 0) onSide = want;
+            }
+            if (goal < 0) return moves;
+            std::vector<std::pair<int, int>> path;
+            for (int i = goal; i >= 0; i = from[size_t(i)]) path.push_back({wx0 + i % w, wz0 + i / w});
+            std::reverse(path.begin(), path.end());
+            // Pull the route tight: from each stop, the farthest cell a clear walk reaches.
+            for (size_t a = 0; a + 1 < path.size();) {
+                size_t b = path.size() - 1;
+                while (b > a + 1 && !clearWalk(path[a].first, path[a].second, path[b].first, path[b].second)) --b;
+                moves.push_back(path[b]);
+                a = b;
+            }
+            return moves;
+        };
+        std::vector<BuildLineTrail::Site> trail;
         for (size_t k = 0; k < sites.size(); ++k) {
             const auto [x, z] = sites[k];
+            // A site half on top of one already queued for this builder (a chained
+            // line doubling back over the last): once that one stands it can never be
+            // built, and the builder would wait at it for good. The very same site
+            // again (a chain's shared corner) is harmless, as before.
+            bool taken = false;
+            for (const auto& r : queued)
+                taken |= line[k].first < r.x + r.w && r.x < line[k].first + fx &&
+                         line[k].second < r.z + r.h && r.z < line[k].second + fz &&
+                         !(r.x == line[k].first && r.z == line[k].second && r.w == fx && r.h == fz);
+            if (taken) continue;
             std::vector<int> clearing;
             if (!live->canPlace(placing_,x,z,localPlayer_) &&
                 !live->clearableForPlacement(placing_,x,z,clearing,localPlayer_)) continue;
@@ -778,7 +903,8 @@
                 const auto [sx, sz] = line[k];
                 const tak::sim::RetailRectGoal rect{sx - bt->footX, sx + fx, sz - bt->footZ, sz + fz};
                 auto [tx, tz] = rect.navigationCell(px, pz);
-                if (overlaps(line, tx, tz) || sideOf(tx, tz) != side || !clearWalk(px, pz, tx, tz)) {
+                if (overlaps(line, tx, tz) || overlapsQueued(tx, tz) || sideOf(tx, tz) != side ||
+                    !clearWalk(px, pz, tx, tz)) {
                     // The nearest clear cell on our side, walked to directly or by one
                     // square corner (along one axis, then the other).
                     int best = -1, bx = 0, bz = 0, wx = 0, wz = 0;
@@ -787,7 +913,8 @@
                     // round its far end, so then the other side, and stay there.
                     for (int pass = 0; pass < 2 && best < 0; ++pass, side = -side)
                     rect.enumerate([&](int x2, int z2) {
-                        if (overlaps(line, x2, z2) || sideOf(x2, z2) != side || !standable(x2, z2)) return;
+                        if (overlaps(line, x2, z2) || overlapsQueued(x2, z2) || sideOf(x2, z2) != side ||
+                            !standable(x2, z2)) return;
                         const int dx = std::abs(x2 - px), dz = std::abs(z2 - pz);
                         int d = 16 * std::max(dx, dz) + 6 * std::min(dx, dz);
                         bool corner = false;
@@ -806,6 +933,9 @@
                         if (via) move(wx, wz);
                         move(bx, bz);
                         tx = bx; tz = bz;
+                    } else if (const auto moves = route(rect, side); !moves.empty()) {
+                        for (const auto& [mx, mz] : moves) move(mx, mz);
+                        tx = moves.back().first; tz = moves.back().second;
                     }
                 }
                 px = tx; pz = tz;
@@ -818,9 +948,12 @@
             c.queue = true;   // all queued; the first starts if the builder is free
             std::snprintf(c.type, sizeof c.type, "%s", placing_->id.c_str());
             issue(c);
-            queued.push_back(line[k]);
+            queued.push_back({line[k].first, line[k].second, fx, fz});
+            trail.push_back({line[k].first, line[k].second, fx, fz});
             placed=true;
         }
+        if (!trail.empty())
+            buildLineTrail_ = {builderId, px, pz, live->tickCount(), std::move(trail)};
         return placed;
     }
 

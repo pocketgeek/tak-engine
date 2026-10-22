@@ -466,7 +466,9 @@ Select a builder and its build menu appears along the bottom of the screen.
   for the rest of the game, for any building, and every new game starts tight.
   The builder works along the line from one side, first stepping round to
   that side when it needs to (you may see an extra waypoint in its queue), so
-  it never walls itself off from the next site.
+  it does not wall itself in between sites. Lines chained one after another (an
+  L, a U, a box) plan on from where the last one leaves it. A site that would
+  sit half on top of one already queued for that builder is left out.
 - **Lodestone areas**: choose a lodestone, then **drag a box** (at least about
   32 pixels each way; anything smaller places a single lodestone) over the map. The
   builder visits every free mana spot in the box, closest first: after each spot

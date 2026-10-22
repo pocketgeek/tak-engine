@@ -100,16 +100,23 @@ int main() try {
               buildLineSites(1, 1, kBuildLineMaxGap, 0, 0, 1000, 0).size(), "gap above the maximum is not clamped");
         check(buildLineSites(1, 1, -4, 0, 0, 160, 0).size() == 11, "negative gap is not clamped to touching");
     }
-    {   // The wheel: a notch (1.0) is a step, fractions add up, a big delta is still one.
+    {   // The wheel: every whole notch is a step; trackpad fractions add up, at most
+        // one step per kBuildLineTrackpadMs however much a swipe sends.
         float carry = 0;
-        check(buildLineWheelSteps(1.0f, carry) == 1 && buildLineWheelSteps(-1.0f, carry) == -1, "a notch is one step");
+        uint32_t last = 0;
+        check(buildLineWheelSteps(1.0f, carry, 10, last) == 1 && buildLineWheelSteps(-1.0f, carry, 11, last) == -1,
+              "a notch is one step");
+        check(buildLineWheelSteps(3.0f, carry, 12, last) == 3, "three notches in one event are not three steps");
         int sum = 0;
-        for (int i = 0; i < 10; ++i) sum += buildLineWheelSteps(0.1f, carry);
+        for (int i = 0; i < 10; ++i) sum += buildLineWheelSteps(0.1f, carry, 100 + i, last);
         check(sum == 1, "ten tenth-notches are not one step");
         carry = 0;
-        check(buildLineWheelSteps(37.5f, carry) == 1 && carry == 0, "a trackpad flick moved more than one step");
-        check(buildLineWheelSteps(0.4f, carry) == 0 && buildLineWheelSteps(0.4f, carry) == 0 &&
-              buildLineWheelSteps(0.4f, carry) == 1, "fractions do not accumulate");
+        sum = 0;   // a 600 ms swipe of big momentum deltas, one event per 10 ms
+        for (uint32_t t = 1000; t < 1600; t += 10) sum += buildLineWheelSteps(3.7f, carry, t, last);
+        check(sum == 4, "a trackpad swipe moved " + std::to_string(sum) + " steps, not one per 150 ms");
+        carry = 0;
+        check(buildLineWheelSteps(0.4f, carry, 5000, last) == 0 && buildLineWheelSteps(0.4f, carry, 5001, last) == 0 &&
+              buildLineWheelSteps(0.4f, carry, 5002, last) == 1, "fractions do not accumulate");
     }
     std::printf("PASS: %d build lines, %d sites: snapped, never sharing a cell, gap exact; wheel steps\n", lines, sites);
     return 0;

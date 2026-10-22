@@ -1093,7 +1093,8 @@
                 input(e,winW_,winH_);
             };
             const auto wheel=[&](float notches) {
-                SDL_Event e{};e.type=SDL_MOUSEWHEEL;e.wheel.y=notches>0?1:-1;
+                static uint32_t ms=1000;ms+=200;   // event times a notch apart, past the trackpad limit
+                SDL_Event e{};e.type=SDL_MOUSEWHEEL;e.wheel.y=notches>0?1:-1;e.wheel.timestamp=ms;
 #if SDL_VERSION_ATLEAST(2, 0, 18)
                 e.wheel.preciseY=notches;
 #endif
@@ -1213,13 +1214,6 @@
                         for (const auto& [sx2,sz2]:l.sites)
                             lineCells+=" "+std::to_string(tak::sim::footprintOrigin(sx2,l.type->footX))+","+
                                        std::to_string(tak::sim::footprintOrigin(sz2,l.type->footZ));
-                        if (b && !b->orders.empty()) {
-                            const auto& o=b->orders.front();
-                            std::fprintf(stderr,"DBG builder foot %dx%d origin %d,%d front order buildType %s build %.1f,%.1f goal %.1f,%.1f stage %d site %d canPlace %d path? reclaim %d wait %d\n",
-                                b->type->footX,b->type->footZ,tak::sim::footprintOrigin(b->x,b->type->footX),tak::sim::footprintOrigin(b->z,b->type->footZ),
-                                o.buildType?o.buildType->id.c_str():"-",o.buildX.toFloat()/16,o.buildZ.toFloat()/16,o.x.toFloat()/16,o.z.toFloat()/16,
-                                int(o.mission.stage),b->buildSiteId,int(world_.canPlace(l.type,x,z,localPlayer_)),o.reclaimFeat,int(o.wait));
-                        }
                         fail(l.name+": the site at cells "+std::to_string(ox)+","+std::to_string(oz)+
                              " was not built ("+std::to_string(ticks)+" ticks; line"+lineCells+"; builder "+
                              (b?std::to_string(b->x.toFloat()/16)+","+std::to_string(b->z.toFloat()/16)+" orders "+
@@ -1239,6 +1233,106 @@
             // --shot frames the first (tight, small, horizontal) line.
             mapView_.setZoom(1.5f);
             mapView_.setOffset(lines.front().sites.front().first-160,lines.front().sites.front().second-300);
+            publish();
+            return;
+        }
+        // TAK_BUILDLINE_CHAIN=type;gap;bx,bz;dx,dy;dx,dy... (';' or '/'): ONE monarch, (bx,bz) px from
+        // the first corner, lays a chain of shift-drags (each starting where the last
+        // ended: an L, a U, a box) of type 0 arawall, 1 arangate or 2 araat at that gap.
+        // Every distinct site must get built: chained lines plan their approach from
+        // where the earlier ones leave the builder. Exits 1 on a stranded site.
+        if (const char* spec=tak::devEnv("TAK_BUILDLINE_CHAIN")) {
+            noFog_=true;edgeScrollOn_=false;winW_=1280;winH_=960;mapView_.setZoom(1);
+            const auto publish=[&] {captureFrame();beginFrame();cosmeticStep(0);};
+            std::vector<std::string> parts;
+            {std::string s(spec);size_t p0=0;
+             for (size_t p;(p=s.find_first_of(";/",p0))!=std::string::npos;p0=p+1) parts.push_back(s.substr(p0,p-p0));
+             parts.push_back(s.substr(p0));}
+            if (parts.size()<4) {std::fprintf(stderr,"BUILDLINE_CHAIN bad spec\n");std::exit(2);}
+            const char* ids[]={"arawall","arangate","araat"};
+            const auto* type=registry_.find(ids[std::clamp(std::atoi(parts[0].c_str()),0,2)]);
+            const auto* small=registry_.find("arawall");
+            if (!type || !small) {std::fprintf(stderr,"BUILDLINE_CHAIN missing types\n");std::exit(2);}
+            buildLineGap_=std::atoi(parts[1].c_str());
+            float bx=0,bz=0;std::sscanf(parts[2].c_str(),"%f,%f",&bx,&bz);
+            std::vector<std::pair<int,int>> pts{{500,450}};   // screen corners at zoom 1
+            for (size_t i=3;i<parts.size();++i) {
+                int dx=0,dy=0;std::sscanf(parts[i].c_str(),"%d,%d",&dx,&dy);
+                pts.push_back({pts.back().first+dx,pts.back().second+dy});
+            }
+            int lx=500,hx=500,ly=450,hy=450;
+            for (const auto& [x,y]:pts) {lx=std::min(lx,x);hx=std::max(hx,x);ly=std::min(ly,y);hy=std::max(hy,y);}
+            // Open ground under the whole chain and round the monarch.
+            const float mw=float(mapView_.map().blocksX)*32.0f,mh=float(mapView_.map().blocksY)*32.0f;
+            bool open=false;float wx=0,wz=0;
+            for (int i=0;i<40000 && !open;++i) {
+                wx=300+float(i%200)*((mw-600)/200);wz=300+float(i/200)*((mh-600)/200);
+                if (wx+float(hx-500)+200>mw || wz+float(hy-450)+200>mh || wx+float(lx-500)<200 || wz+float(ly-450)<200) continue;
+                open=true;
+                for (float z=wz+float(ly-450)-96;open && z<=wz+float(hy-450)+96;z+=32)
+                    for (float x=wx+float(lx-500)-96;open && x<=wx+float(hx-500)+96;x+=32)
+                        if (!world_.canPlace(small,x,z,localPlayer_)) open=false;
+                for (float z=wz+bz-64;open && z<=wz+bz+64;z+=32)
+                    for (float x=wx+bx-64;open && x<=wx+bx+64;x+=32)
+                        if (!world_.canPlace(small,x,z,localPlayer_)) open=false;
+            }
+            if (!open) {std::fprintf(stderr,"BUILDLINE_CHAIN no open patch\n");std::exit(3);}
+            mapView_.setOffset(wx-500,wz-450);
+            const int builder=spawn("araking",wx+bx,wz+bz,0,localPlayer_);
+            publish();
+            const auto send=[&](uint32_t kind,int x,int y) {
+                SDL_Event e{};e.type=kind;
+                if (kind==SDL_MOUSEMOTION) {e.motion.x=x;e.motion.y=y;e.motion.state=SDL_BUTTON_LMASK;}
+                else {e.button.button=SDL_BUTTON_LEFT;e.button.x=x;e.button.y=y;}
+                input(e,winW_,winH_);
+            };
+            std::vector<std::pair<float,float>> all;
+            for (size_t i=0;i+1<pts.size();++i) {
+                SDL_SetModState(KMOD_LSHIFT);placing_=type;selection_={builder};
+                send(SDL_MOUSEBUTTONDOWN,pts[i].first,pts[i].second);
+                send(SDL_MOUSEMOTION,pts[i+1].first,pts[i+1].second);
+                float ex,ez;pickWorld(float(pts[i+1].first),float(pts[i+1].second),ex,ez);
+                for (const auto& q:buildLinePositions(bdX0_,bdZ0_,ex,ez)) all.push_back(q);
+                send(SDL_MOUSEBUTTONUP,pts[i+1].first,pts[i+1].second);
+            }
+            SDL_SetModState(KMOD_NONE);
+            {SDL_Event e{};e.type=SDL_KEYUP;e.key.keysym.sym=SDLK_LSHIFT;e.key.keysym.mod=KMOD_NONE;input(e,winW_,winH_);}
+            placing_=nullptr;selection_.clear();
+            size_t moves=0,builds=0;
+            for (const auto& o:world_.unit(builder)->orders) (o.buildType?builds:moves)+=1;
+            int ticks=0;
+            for (;ticks<54000;++ticks) {
+                if (ticks%15==0) {
+                    auto& pl=writableWorld().player(localPlayer_);pl.mana=std::max(pl.mana,50000.0);
+                    if (pl.retailResources) pl.retailResources->stored=float(pl.mana);
+                }
+                bool busy=!world_.unit(builder)->orders.empty();
+                for (const auto& u:world_.units()) if (u.alive() && u.underConstruction) busy=true;
+                if (!busy) break;
+                simStep(1.0f/30.0f);
+            }
+            // The chain's distinct sites (a corner is the end of one line and the start of the next).
+            std::vector<std::pair<int,int>> uniq;
+            for (const auto& [x,z]:all) {
+                const int ox=tak::sim::footprintOrigin(x,type->footX),oz=tak::sim::footprintOrigin(z,type->footZ);
+                bool dup=false;
+                for (const auto& [a,c]:uniq) if (std::abs(a-ox)<type->footX && std::abs(c-oz)<type->footZ) dup=true;
+                if (!dup) uniq.push_back({ox,oz});
+            }
+            int built=0;std::string miss;
+            for (const auto& [ox,oz]:uniq) {
+                bool found=false;
+                for (const auto& u:world_.units())
+                    if (u.alive() && u.type==type && !u.underConstruction &&
+                        tak::sim::footprintOrigin(u.x,type->footX)==ox && tak::sim::footprintOrigin(u.z,type->footZ)==oz) found=true;
+                if (found) ++built; else miss+=" "+std::to_string(ox)+","+std::to_string(oz);
+            }
+            const auto* b=world_.unit(builder);
+            std::fprintf(stderr,"BUILDLINE_CHAIN %s: unique=%zu built=%d builds=%zu moves=%zu left=%zu ticks=%d builder=%.1f,%.1f%s%s\n",
+                         spec,uniq.size(),built,builds,moves,b?b->orders.size():0,ticks,
+                         b?b->x.toFloat()/16:0.f,b?b->z.toFloat()/16:0.f,miss.empty()?"":" miss:",miss.c_str());
+            if (built!=int(uniq.size())) std::exit(1);
+            std::fprintf(stderr,"PASS: build-line chain, %d/%zu sites built\n",built,uniq.size());
             publish();
             return;
         }
