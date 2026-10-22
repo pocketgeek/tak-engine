@@ -469,7 +469,8 @@ std::optional<std::time_t> ariTime(const std::string& body,const std::string& id
         unsigned char hash[32];unsigned n=0;
         require(EVP_Digest(id.data(),id.size(),hash,&n,EVP_sha256(),nullptr)==1 && n==32,"window digest failed");
         uint64_t seed=0;for(int i=0;i<8;++i)seed=seed<<8|hash[i];
-        const auto span=uint64_t(*end-*start);
+        // A window running past expiry is cut at notAfter: never renew after it.
+        const auto span=uint64_t(std::min(*end,notAfter)-*start);
         const auto chosen=*start+std::time_t(seed%(span+1));
         return std::max(chosen,now);
     }catch(const std::exception&) {return std::nullopt;}
@@ -583,7 +584,6 @@ struct AcmeCertificates::Impl {
                 auto info=renewalInfo(options,certificateId,stop);
                 if(!info.advertised) {renewAt=fixedRenewAt;replaces.clear();ariPollAt=now+86400;}
                 else {
-                    replaces=certificateId;
                     const auto chosen=info.response.status==200?ariTime(info.response.body,certificateId,expiry(chain.first.get()),now):std::nullopt;
                     ariPollAt=now+std::clamp(retryAfter(info.response,chosen?6*3600:3600),60L,86400L);
                     if(chosen) {
@@ -598,7 +598,9 @@ struct AcmeCertificates::Impl {
                             std::string why;try {why=json(info.response.body).value("explanationURL",std::string{});}catch(const std::exception&) {}
                             std::fprintf(stderr,"ACME: renewal information schedules renewal at %s%s%s\n",when,why.empty()?"":"; CA explanation: ",why.c_str());
                         }
-                        ariChoice=*chosen;renewAt=*chosen;
+                        // Only a certificate the CA described is named in `replaces`;
+                        // a CA that does not know it (404) would reject the order.
+                        ariChoice=*chosen;renewAt=*chosen;replaces=certificateId;
                     } else std::fprintf(stderr,"ACME: renewal information unusable (HTTP %d); keeping current schedule\n",info.response.status);
                 }
             }catch(const std::exception& e) {

@@ -109,10 +109,11 @@ mis-issuance. The point within the window is derived from the certificate ID, so
 it is stable across restarts while different certificates still spread out. The
 worker polls again after the CA's `Retry-After` (limited to between one minute and
 one day; six hours without one) and logs the chosen time with any CA
-`explanationURL`. Renewal orders then carry `replaces` with the old certificate's
-ID; if the CA answers `alreadyReplaced`, the worker orders without it. A CA
-without `renewalInfo`, a malformed window, or a window past expiry keeps the
-fixed rule; a failed poll keeps the current schedule and retries within an hour.
+`explanationURL`. Once the CA has returned a usable window for the certificate,
+renewal orders carry `replaces` with its ID; if the CA answers `alreadyReplaced`,
+the worker orders without it. A window that runs past expiry is cut at expiry. A CA
+without `renewalInfo`, a malformed window, or a window starting after expiry keeps
+the fixed rule; a failed poll keeps the current schedule and retries within an hour.
 At each poll the worker also checks the current certificate against its CRL (see
 below) and renews immediately if the CA has revoked it. A successful
 renewal atomically saves the certificate/key bundle and switches new connections

@@ -116,6 +116,8 @@ int main() {
             check(chosen==ariRenewalTime(window("2025-01-02T04:00:00Z","2025-01-04T04:00:00Z"),id,notAfter,now),"window choice not stable per certificate");
             check(ariRenewalTime(window("2024-01-02T04:00:00Z","2024-01-04T04:00:00Z"),id,notAfter,now)==now,"past window must renew now");
             check(!ariRenewalTime(window("2025-01-04T04:00:00Z","2025-01-02T04:00:00Z"),id,notAfter,now),"inverted window accepted");
+            const auto clipped=ariRenewalTime(window("2025-01-02T04:00:00Z","2026-01-05T04:00:00Z"),id,notAfter,now);
+            check(clipped && *clipped>=start && *clipped<=notAfter,"window past expiry not clipped to notAfter");
             check(!ariRenewalTime(window("2026-01-04T04:00:00Z","2026-01-05T04:00:00Z"),id,notAfter,now),"window after expiry accepted");
             for(const char* bad:{"","{}","{\"suggestedWindow\":{\"start\":1}}","not json"})check(!ariRenewalTime(bad,id,notAfter,now),"malformed renewalInfo accepted");
         }
