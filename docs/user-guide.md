@@ -2,8 +2,8 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.8** (network protocol **288**, replay format
-**14**). It is written for three kinds of reader:
+This guide covers **TAK Engine 0.8.9** (network protocol **288**, replay format
+**14**, both the same as 0.8.8). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
   the game;
@@ -461,9 +461,11 @@ Select a builder and its build menu appears along the bottom of the screen.
   Shift-drag to lay a line of walls or towers. A line starts tight: each
   building touches the last, with no gap (corner to corner on a diagonal). Turn
   the **mouse wheel** while still holding Shift and the left button to space
-  them out, one empty cell per notch (wheel down tightens again); a small
-  **GAP** label by the pointer shows the spacing. The spacing you choose stays
-  for the rest of the game, for any building, and every new game starts tight.
+  them out, one empty cell per notch, up to 12 (wheel down tightens again; the
+  camera does not zoom meanwhile); a small **GAP** label by the pointer shows
+  the spacing. The spacing you choose stays
+  for the rest of the game, for any building, and every new game starts tight
+  (it is never saved).
   The builder works along the line from one side, first stepping round to
   that side when it needs to (you may see an extra waypoint in its queue), so
   it does not wall itself in between sites. Lines chained one after another (an
@@ -473,7 +475,9 @@ Select a builder and its build menu appears along the bottom of the screen.
   ![A Shift-drag wall line being laid: nine wall sites in a row, two cells apart, with the GAP 2 label by the pointer](img/guide/build-line.jpg)
 
 - **Lodestone areas**: choose a lodestone, then **drag a box** (at least about
-  32 pixels each way; anything smaller places a single lodestone) over the map. The
+  32 pixels each way at 100% UI Scale, more at larger UI Scales; anything
+  smaller places a single lodestone where you pressed) over the map. The box
+  stays on the ground you pressed if the view scrolls or zooms while you drag. The
   builder visits every free mana spot in the box, closest first: after each spot
   it moves on to the nearest one left, scouting unexplored spots on the way and
   preferring spots it can walk to. A Shift-queued area starts from where the
@@ -830,7 +834,7 @@ speed keys are fixed.
 | **Right-click** | The natural order for what is under the cursor: move, attack, guard, repair, load, reclaim and so on. |
 | **Right-click an enemy** | Attack it. As in the original, the pointer shows the attack cursor whenever a selected unit's active weapon can hurt that enemy; a unit that can move walks into range, however far away the enemy is. The "too far" cursor means no selected unit can attack it from where it is: the active weapon cannot hurt that enemy (it does no damage to it, the unit is never allowed to target that kind of unit, it is an anti-air weapon and the enemy is on the ground, a ground weapon and the enemy is flying, or a stoning or freezing weapon and the enemy is immune), or a tower or other building has the enemy out of range or inside its minimum range. A building still takes the order and fires once the enemy comes in range. A selected factory sends the units it builds after that enemy. |
 | **Shift + right-click** | Queue that order after the current ones. |
-| **Right-drag** with a reclaiming builder | Reclaim everything in the box. |
+| **Right-drag** with a reclaiming builder | Reclaim everything in the box (at least about 32 × 32 pixels; a smaller drag is an ordinary right-click). |
 | **Middle-drag**, or the cursor at a screen edge | Scroll the map. |
 | **Mouse wheel** | Zoom in and out, towards the cursor. Far out, **Options → Tactical Dots** can draw units as minimap-style dots. |
 | **Mouse wheel** during a Shift-drag build line | Space the buildings out (up) or pack them tighter (down), one cell per notch. The camera does not zoom. |
@@ -1516,8 +1520,8 @@ game time, the speed the game is actually running at (as a game-speed level: NOR
 +5, -3), client and server processor use and GPU use. It drops rows when there
 is not enough room.
 
-The **chat box** shows multiplayer chat during a game, just above the information
-bar; in single player it shows what you type, such as [power codes](#power-codes).
+The **chat box** shows multiplayer chat during a game, above the bottom of the
+screen's HUD (the information bar and any build row); in single player it shows what you type, such as [power codes](#power-codes).
 Each message starts with the sender's name in their player colour (notices
 from your own game, such as a cosmetic mod left out, are gold; power code and
 poster lines are gold with no name) and wraps onto further lines instead of running off the screen.
@@ -1583,8 +1587,10 @@ click in the room's rules to turn on or off until the game starts. It lights up
 under the host's pointer; for everyone else it is read-only. See
 [Match options](#match-options).
 
-Under the rules, the room says whether the game plays the map's scenario
-(**MAP SCENARIO: ON**) and, if so, what it changes and which seats it needs.
+The last line of the rules' right column (under **SPECTATE** in single player,
+**ALLOW SPECTATORS** in multiplayer) says whether the game plays the map's
+scenario (**MAP SCENARIO: ON** or **OFF**); if it does, the lines under the
+rules say what it changes and which seats it needs.
 Each empty seat it needs is tagged **NEEDED BY SCENARIO**, and **Start** stays
 greyed until they are all filled. A seated player whom the scenario gives no
 units is named in amber (*NO PLACED UNITS: PLAYER N*). If the server still
@@ -1652,10 +1658,11 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.8 uses network protocol **288**. It cannot play with 0.8.7 (protocol
-284) or any earlier version: the server turns away a client whose protocol
-differs from its own, so a server and all of its players must update to 0.8.8
-together.
+Version 0.8.9 uses network protocol **288**, the same as 0.8.8, so 0.8.9 and
+0.8.8 play together: a server and its players may run either. It cannot play
+with 0.8.7 (protocol 284) or any earlier version: the server turns away a client
+whose protocol differs from its own, so when updating from 0.8.7 or earlier a
+server and all of its players must update together.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
 This should not happen between matching versions with matching game data; if it
@@ -1894,8 +1901,9 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.8 plays protocol-288 recordings only, so replays recorded by
-  0.8.7 or earlier need the version that recorded them);
+  recorded it (0.8.9 and 0.8.8 both play protocol-288 recordings only, so each
+  plays the other's replays, while replays recorded by 0.8.7 or earlier need the
+  version that recorded them);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -1951,7 +1959,9 @@ then ticked cosmetic packs.
 - **Game packs** in multiplayer need **Game mods: On** on the setup screen. Only
   the host ticks them; they are sent to the server and to every player
   automatically, and everyone checks they have the same package before the game
-  starts. Transfers are limited to 256 MB.
+  starts; the room shows the transfer's progress, then **GAME MODS VERIFIED**
+  once the ticked packs check out (nothing when no game pack is ticked).
+  Transfers are limited to 256 MB.
 - **Campaigns** and **Crusades battles** use the original game data plus your
   always-on cosmetic archives only: no game packs and no ticked cosmetic packs.
 
@@ -2065,7 +2075,7 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together.** A server only accepts clients of
-the same protocol version (0.8.8 uses protocol 288; 0.8.7 uses 284).
+the same protocol version (0.8.9 and 0.8.8 use protocol 288; 0.8.7 uses 284).
 
 ---
 
@@ -2170,7 +2180,7 @@ the system's permission to use the microphone.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.8 uses protocol 288, 0.8.7 uses 284). See
+one that recorded them (0.8.9 and 0.8.8 use protocol 288, 0.8.7 uses 284). See
 [Replays](#replays).
 
 ### Where files are kept
