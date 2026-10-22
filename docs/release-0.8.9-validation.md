@@ -27,10 +27,12 @@ files are tests (`tools/area_drag_test.cpp`, `tools/buildline_test.cpp` (both
 new), `tools/chatbox_test.cpp`, `tools/mod_packs_test.cpp`), their CMake
 registration, and docs (`docs/retail-engine.md`, `docs/user-guide.md`,
 `docs/quick-start.md`).
-TODO-LEAD: list any commit that lands on main after `71757b75` before the tag
-(and whether it touches `src/sim`, `src/net`, `src/server` or `src/ai`), and the
-preparation commits (screenshots, docs with the CMake version bump to 0.8.9,
-this report).
+No commit landed on main after `71757b75` before the preparation commits. The
+preparation commits (docs and images only, plus the CMake version bump to 0.8.9)
+are the screenshots (`docs/img: 0.8.9 screenshots`, the user-guide build-line
+picture, README and guide alt text), the quick start (`Quick start for 0.8.9`),
+the docs (`0.8.9 docs: version 0.8.9, release notes, validation skeleton` and its
+follow-up) and this report. None touches `src/`.
 
 The changes, all client only:
 
@@ -56,9 +58,10 @@ Build lines are queued as the existing Build and Move commands, so **Retail and
 Legion are expected to be bit-identical to 0.8.8.** `--mpai` Inner Circle seed 1
 must equal 0.8.8: Retail 60 s `b353410003e98dd5`, 300 s `a3d953803a064191`;
 Legion 60 s `0825aeb9e8139203`, 300 s `ce5c4ba7562e53b9`.
-TODO-LEAD: Linux results from the local checks; `--mpai` on Windows and macOS
-(optimized Debug builds of the tag on oden-win and the arm64 MacBook, all eight
-games, `err=none end=timelimit`, no desync or referee-suspect line).
+On Linux (optimized Debug, `71757b75`) all four equal 0.8.8 (see the local checks).
+TODO-LEAD: `--mpai` on Windows and macOS (optimized Debug builds of the tag on
+oden-win and the arm64 MacBook, all eight games, `err=none end=timelimit`, no
+desync or referee-suspect line).
 
 **Compatibility.** `kNetVersion` is **288** in `src/net/protocol.h` at
 `71757b75`, as at `v0.8.8`. `kReplayFormat` is **14** in
@@ -79,96 +82,246 @@ games, `err=none end=timelimit`, no desync or referee-suspect line).
 - **Maps, mods and settings.** Saved `.kmp` maps, generator-8/9 recipes,
   `mods/` packs and `ModCache/*.takmods` carry over. No settings key was added
   or removed (the build-line gap is per game and never saved).
-- TODO-LEAD: was a mixed 0.8.8 / 0.8.9 game played? If not, say so (as 0.8.1
-  did): compatibility rests on the unchanged protocol, replay format and
-  simulation sources.
+- No mixed 0.8.8 / 0.8.9 game was played (as with 0.8.1): compatibility rests
+  on the unchanged protocol, replay format and simulation sources.
 
 ## Local preparation checks
 
-TODO-LEAD: from the local-checks agent. Shape as in 0.8.8: clean detached
-worktree (`~/tak-tmp/wt/release-089-local`) at `71757b75`, toolchains, cores
-4-23, owned retail install as `--data` and `TAK_TEST_DATA`; binaries call
-themselves `0.8.8 (build v0.8.8-11-g71757b75...)` until the version bump lands.
+All checks ran from a clean detached worktree (`~/tak-tmp/wt/release-089-local`) at
+`main` `71757b759693` (protocol **288**, replay format **14**, generator recipe **9**, campaign
+payload 4, database schema 9; none moved since 0.8.8), with `assets` and `third_party` links to
+the main checkout. Toolchains: GCC 16.2.1, Clang 22.1.8, CMake 4.3.0, Ninja 1.13.2, Python
+3.14.8. Builds and tests ran on cores 4-23 (other release-preparation work shared the machine,
+load average about 12-30); the owned retail install served as `--data` and `TAK_TEST_DATA`. The
+version bump is not in this commit, so binaries still call themselves `0.8.8 (build
+v0.8.8-11-g71757b759693)` (no `-dirty`).
 
-**Result:** TODO-LEAD.
+**Result: no real regression, and every `--mpai` hash equals 0.8.8.** One Debug (`-O0`)
+failure (`cartographer_ui_smoke`, load-sensitive) passed when rerun alone; the ASan suite
+again needs `detect_leaks=0` on this machine (SDL's own D-Bus start-up leaks, the same 20 tests
+by name as in 0.8.8). The Legion scenario gate passes in full with the same key counts as 0.8.8.
 
-- **Multiplayer and replays.** TODO-LEAD (288 / 14, unchanged from 0.8.8).
-- **Builds.** TODO-LEAD: Release, Debug, optimized Debug (`-O2`), Clang Debug
-  and ASan all-target builds; step counts against 0.8.8 (886 Release / 887
-  others); warning-line count and kinds against 0.8.8 (950).
-- **Full CTest.** TODO-LEAD: registered tests against 0.8.8 (734 Debug / 696
-  Release). Expected additions: `area_drag`, `buildline` (all trees), and in
-  the Debug trees with `TAK_TEST_DATA` `area_drag_input`, `buildline_harness`,
-  `buildline_chain_u`, `buildline_chain_box`, `buildline_chain_tower_v`,
-  `buildline_chain_double_back`.
+- **Multiplayer and replays.** `kNetVersion` is **288** in `src/net/protocol.h` and
+  `kReplayFormat` is **14** in `src/net/replayhdr.h`, both as at `v0.8.8`. `git diff
+  v0.8.8..71757b75 -- src/sim src/net src/server src/ai` is one header-only display helper in
+  `src/net/client.h` (`roomModStatus`, so a room says GAME MODS VERIFIED only when game packs are
+  in play); no simulation, protocol, server or AI file changed. 0.8.9 is therefore multiplayer-
+  and replay-compatible with 0.8.8. The map generator's `formatVer` (9), the campaign payload's
+  `kVersion` (4) and `kSchemaVersion` (9) are unchanged.
+- **Builds.** Release, Debug, optimized Debug (`-O2`), Clang Debug and AddressSanitizer
+  all-target builds completed with exit code 0: 890 steps in Release, 891 in the other four
+  (886 / 887 in 0.8.8). ccache and mold; static-deps and static Bink FFmpeg prefixes. Release
+  emits 950 warning lines, the same count and kinds as 0.8.8 (538
+  `-Wmissing-field-initializers`, 347 `-Wdeprecated-declarations`, 6 `-Wunused-parameter`, 6
+  `-Wmisleading-indentation`, 3 `-Wsign-compare`, 1 `-Wstringop-overread`, 1
+  `-Wignored-attributes`, the rest library-header `-Warray-bounds` notes); none from the new
+  files.
+- **Full CTest.** **742** registered tests in the Debug trees (734 in 0.8.8) and **698** in
+  Release (696); 8 added, none removed: `area_drag`, `area_drag_input`, `buildline`,
+  `buildline_harness`, `buildline_chain_box`, `buildline_chain_double_back`,
+  `buildline_chain_tower_v`, `buildline_chain_u`. Each tree ran as `-LE nightly` (536 tests in
+  Release, 580 in the others, which include the `pref_guard` fixtures) and the Release and
+  optimized Debug trees also ran `-L nightly` (164).
 
   | Tree | Selection | Result | Time | Failures |
   | --- | --- | --- | ---: | --- |
-  | Release | `-LE nightly`, TODO | TODO | TODO | TODO |
-  | Release | `-L nightly`, TODO | TODO | TODO | TODO |
-  | Optimized Debug | `-LE nightly`, TODO | TODO | TODO | TODO |
-  | Optimized Debug | `-L nightly`, TODO | TODO | TODO | TODO |
-  | Debug (`-O0`) | `-LE nightly`, TODO | TODO | TODO | TODO |
-  | Clang Debug | `-LE nightly`, TODO | TODO | TODO | TODO |
-  | ASan | `-LE nightly`, TODO | TODO | TODO | TODO (`ASAN_OPTIONS=detect_leaks=0` expected, SDL D-Bus) |
+  | Release | `-LE nightly`, 536 | **536/536** | 400 s | none |
+  | Release | `-L nightly`, 164 | **164/164** | 1,678 s | none |
+  | Optimized Debug | `-LE nightly`, 580 | **580/580** | 647 s | none |
+  | Optimized Debug | `-L nightly`, 164 | **164/164** | 1,386 s | none |
+  | Debug (`-O0`) | `-LE nightly`, 580 | 579/580 | 3,502 s | `cartographer_ui_smoke` (passes alone) |
+  | Clang Debug | `-LE nightly`, 580 | **580/580** | 2,788 s | none |
+  | ASan | `-LE nightly`, 580 | 560/580 | 1,500 s | 20 tests, all LeakSanitizer reports inside SDL's D-Bus init (see below); **580/580 with `ASAN_OPTIONS=detect_leaks=0`** (the 20 plus the two `pref_guard` fixtures rerun, 22/22) |
 
-  TODO-LEAD: notes on any failure (known flakes: `voice` at `-O2`,
-  `crusades_client_network` at `-O0`); the unoptimized Legion tests against
-  their limits; the settings-leak guard (`pref_guard_*`, real `settings.ini`
-  SHA-256 and mtime before and after).
-- **`--mpai` golden hashes.** TODO-LEAD: one run each on the optimized Debug
-  build, Inner Circle, `takserver --local --no-auth --seed 1`, an empty
-  `XDG_DATA_HOME`, `TAK_LEGION=1` for Legion.
+  The unoptimized trees ran at the same time as the optimized ones, the scenario gate and the
+  `--mpai` runs.
+  - **`cartographer_ui_smoke` (Debug `-O0`): `FAIL: veruna map 'Abnar's Terrace' smoke: stuck at
+    step 487` (modal 17, smoke stopped at step 487 of 557), 205.6 s.** The scripted UI smoke
+    stalled on one step while the machine was loaded. It passed alone (132.4 s, rerun) and in
+    the Release, optimized Debug, Clang Debug and ASan trees. Nothing under `src/cartographer`
+    changed since 0.8.8; load-sensitive, but not seen before, so a candidate for the flake list.
+  - **`voice` (optimized Debug) and `crusades_client_network` (Debug)** failed in 0.8.8 under
+    load and did not fail this time.
+  - **ASan: 20 tests fail only on leak reports.** `script_transient`, `script_transient_263`,
+    `creon_death_sound_peers`, `voice`, `streaming_capture`, `stream_key`,
+    `render_palette_indexed`, `render_native_pass`, `client_restart`, `shadow`, `fogupload`,
+    `menu_music`, `menu_music_roster`, `death_sound`, `screen_lifecycle`,
+    `campaign_presentation_roster`, `death_sound_roster` and the three `crusades_*_ui_network`
+    tests, the same 20 by name as in 0.8.8 and 0.8.7. Every leak report is an `SDL_DBus_Init`
+    allocation in the statically linked SDL; there is no `ERROR: AddressSanitizer` (no heap
+    overflow, use-after-free or stack error) anywhere in the log. With
+    `ASAN_OPTIONS=detect_leaks=0` all of them pass. The 560 other ASan tests passed with leak
+    detection on.
+  - **The unoptimized Legion tests passed under the existing limits.** `legion_sched_inflight`
+    763 s / 800 s / 429 s, `legion_scale_neutral` 768 s / 801 s / 414 s, `legion_route_paused`
+    1,340 s / 999 s / 499 s and `legion_parallel` 3,066 s / 2,482 s / 1,390 s (Debug / Clang
+    Debug / ASan); the largest use of a limit is `legion_parallel` in Debug, 57% of 5400 s.
+    `movement_orders_trolls` 338 s / 309 s / 108 s (limit 600 s: Debug at 56%).
+    `terrain_schedule` 60 s / 64 s / 38 s and `voice_uplink` 49 s passed everywhere.
+  - **The settings-leak guard held.** `pref_guard_setup`/`pref_guard_check` passed in every
+    selection. The real profile's `settings.ini` has the same SHA-256 and mtime before and
+    after (`real-profile-{before,after}.txt`), and no `settings.ini` appeared in `~/tak_data`.
+    `TAK_SETTINGS_FILE` was not exported.
+- **`--mpai` golden hashes: all unchanged from 0.8.8.** Each ran once on the optimized Debug
+  build, Inner Circle, `takserver --local --no-auth --seed 1`, an empty `XDG_DATA_HOME`, and
+  `TAK_LEGION=1` for Legion. No desync or referee-suspect line in any log. `end=timelimit`,
+  `err=none` in all four. The area-command, build-line, chat-box and room-layout changes are
+  client-side and change none of the Retail or the Legion 60/300 s state in this scenario.
 
   | Mode | Duration | `71757b75` (288) | 0.8.8 (288) |
   | --- | ---: | --- | --- |
-  | Legion | 300 s | TODO | `ce5c4ba7562e53b9` |
-  | Retail | 300 s | TODO | `a3d953803a064191` |
-  | Legion | 60 s | TODO | `0825aeb9e8139203` |
-  | Retail | 60 s | TODO | `b353410003e98dd5` |
+  | Legion | 300 s | `ce5c4ba7562e53b9` (18 units) | `ce5c4ba7562e53b9` |
+  | Retail | 300 s | `a3d953803a064191` (13 units) | `a3d953803a064191` |
+  | Legion | 60 s | `0825aeb9e8139203` (4 units) | `0825aeb9e8139203` |
+  | Retail | 60 s | `b353410003e98dd5` (4 units) | `b353410003e98dd5` |
 
-- **Determinism.** TODO-LEAD: `tools/check-determinism.sh` golden (0.8.8:
-  `dcef618cd2e4d558`); `tools/check-detmath.sh`.
-- **Legion scenario gate.** TODO-LEAD: 145 fixtures (unchanged since 0.8.8),
-  `legion_check.py check` and `validate` results.
-- **Retail group emulation check (formation-air).** TODO-LEAD.
-- **Python research suite.** TODO-LEAD (0.8.8: 165 tests; verifier 6 tests;
-  retail archive SHA-256 before and after).
-- **Syntax checks.** TODO-LEAD (tracked Python files compile; `bash -n` on the
-  shell scripts).
+  Optimized Debug binary SHA-256:
+  - client `51501ad566a11c4a51f4703ab73159acdc214cbf326359f2aa2e9a503d6ebf3c`
+  - server `b81bd4eccaac4fd0f3608fbd2a5bfefd2ea636c9be21f3a042eb7a4923e5c56c`
+- **Determinism.** In `tools/check-determinism.sh`, the GCC and Clang x86-64 builds at
+  O0/O2/O3 all agree on `dcef618cd2e4d558`, the same as 0.8.8. The aarch64 legs are skipped
+  (target headers missing). `tools/check-detmath.sh` passes, including the `std::atomic_ref` guard.
+- **Legion scenario gate: PASS.** The gate ran the way `tools/legion_nightly.sh` stage 2 does:
+  every `tools/scenarios/*.scn` (**145** files, as in 0.8.8), optimized Debug
+  `legion_scenario`, `--mode both --json --offsets gate --data <retail install>`, one file per
+  core on cores 4-11, then `legion_check.py check --baseline tools/scenarios/baseline.json`. All
+  145 files exited 0 (`problems.txt` empty); `legion_check.py validate --baseline
+  tools/scenarios/baseline.json` reports `PASS: 0 problems`. Run time 5,131 s (the machine was
+  loaded).
+  - **Result:** `PASS: 36522 keys checked, 0 failed, 4415 ratchets, 4705 licensed, 266 floor
+    exceptions, 864 report-only`, identical with and without `--cumulative` and identical to
+    0.8.8's counts (no Legion state changed). The floor exceptions are the same rows as in 0.8.8
+    (`taperbridge-*`, the gatehouse and fight-diag rows, `wall-4x50`).
+  - The 4,415 ratchets are improvements over the committed baseline; they do not fail the gate
+    and no baseline was regenerated.
+- **Retail group emulation check (formation-air).** `python3 -B tools/re/check_retail_group.py
+  --build build-rel` (400 cases) passed every section: tick 400, query 4000, check 2000,
+  formation 2000, vtolcheck 2000, vtolform 2000.
+- **Python research suite.** **165 tests** passed (`python3 -B -m unittest discover -s tools/re
+  -p '*_test.py'` with `TAK_AUTH_RETAIL_DIR` set and `build/` pointing at the Release tree), no
+  skip. The owned-retail archive verifier (`verify_official_hpi_test.py`) passed all **6
+  tests**. The SHA-256 sums of the 16 retail HPI archives and `Kingdoms.key` are identical
+  before and after the runs (`retail-sha-{before,after}.txt`).
+- **Syntax checks.** All **466** tracked Python files compile. All 22 `*.sh` scripts
+  (21 tracked plus `tools/tak-netem`) pass `bash -n`.
 
-Logs: TODO-LEAD (`~/tak-tmp/scratch/release-089/`).
+Logs: `~/tak-tmp/scratch/release-089/` (`cfg-*.log`, `make-*.log`, `build-status.txt`,
+`ctest-*.log`, `rerun-{dbg,asan-noleak}.log`, `mpai/`, `mpai.sh`, `gate/`
+(`scenarios.jsonl`, `check.txt`, `check-nightly.txt`, `validate.txt`), `check-determinism.log`,
+`check-detmath.log`, `check_retail_group.log`, `python-suite.log`, `verifier.log`,
+`pycompile.log`, `bashn.log`, `retail-sha-{before,after}.txt`,
+`real-profile-{before,after}.txt`).
 
-**Final source.** TODO-LEAD: after the preparation commits, the optimized
-Debug tree rebuilt every target (version `0.8.9`) and passed `ctest -L quick`
-TODO/TODO.
+**Final source.** After the preparation commits, the optimized Debug tree rebuilt every
+target (version `0.8.9`) and passed `ctest -L quick` 477/477.
 
 ## Remote multiplayer sweep
 
-TODO-LEAD: the 37-scenario table for Retail and Legion (`tools/desync-hunt-remote.sh`,
-referees on `tak.pgnet.us` and `vpn3.pgnet.us` with isolated binaries and ports, never
-the public takserver), date and UTC times, build id, the three `--validate` gates
-(build identity, planted desync, game mod transfer), referee binary SHA-256, replay
-headers (protocol 288, format 14, seeds 2000-2036), and any retries
-(`TAK_WALL_TIMEOUT=3600`).
+The full 37-scenario table passed for both pathfinding modes, Retail and Legion, on **2026-10-22**
+(UTC), both on `main` at `71757b759693` (protocol **288**, replay format **14**, build id
+`v0.8.8-11-g71757b759693`; the version string still reads 0.8.8 until the 0.8.9 bump lands):
+
+- **Retail:** 02:45-03:03 UTC (18 minutes including the gates), single pass, no retries.
+- **Legion:** 03:03-03:31 UTC (29 minutes including the gates), single pass, no retries.
+
+Referees ran on `tak.pgnet.us` (24 runs, 10 at a time) and `vpn3.pgnet.us` (13 runs, 6 at a time), with
+optimized local clients pinned to CPUs 4-23. Each scenario allowed ten simulated minutes (18,000 ticks) or
+ended at an actual result for that seat. Real seated players provide the client/referee checksum coverage;
+the two all-AI spectator scenarios per mode (`w-allai-stress`, `w-allai-bench`) test flow control, not hashes.
+The mode is chosen through the hosting client's room options (`TAK_LEGION=1` creates a Legion room).
+`TAK_WALL_TIMEOUT=3600` was set for both modes from the start, so the wall-clock retry that 0.8.8's Retail pass
+needed (`2h-stress`, `2h-orders-stress`) did not recur. Every recorded referee replay header confirms the
+intended mode, replay format 14 and protocol 288: 37 headers per mode, seeds 2000-2036 each mapped to its case.
 
 | Mode | Completed scenarios | Completed seats | Client-pair checkpoints | Client-referee checkpoints |
 | --- | ---: | ---: | ---: | ---: |
-| Retail | TODO | TODO | TODO | TODO |
-| Legion | TODO | TODO | TODO | TODO |
+| Retail | 37/37 (single pass) | 52/52 | 10,274 across 22 seat pairs, 0 mismatched | 2,626 across 51 seat/referee comparisons, 0 mismatched |
+| Legion | 37/37 (single pass) | 52/52 | 10,213 across 22 seat pairs, 0 mismatched | 2,687 across 51 seat/referee comparisons, 0 mismatched |
+
+Each run passed all three `--validate` gates before its table started:
+
+- **Build identity:** `both at v0.8.8-11-g71757b759693`.
+- **Planted desync:** the referee reported `game 1: client 1 DESYNCED at tick 900`.
+- **Game mod transfer:** `verified game mods transferred and incorrect loaded gameplay rejected`.
+
+The gate checks only `tak.pgnet.us`; the binary on `vpn3.pgnet.us` has the same SHA-256
+(`f5621d4ffc1f6083de28d35d8cd0e7ecea6d8b26de97286200cc941afc5552cd`) and the same `--version` build id. No
+natural `DESYNCED`, `REFEREE SUSPECT` or client-reported desync appeared in any case log; the only such line
+in each run is the planted one. Both sweeps ended with "no desyncs reported (52 seats, all completed)".
+A state hash is compared at every checkpoint; the position digest is compared as well wherever both sides
+carry one. Every game wrote a referee replay: 37 per mode, matched to cases by the seed in the replay header.
+The checkpoint comparison script is the 0.8.8 one, unchanged, and `tools/desync-hunt-remote.sh` is unchanged
+since 0.8.8 (SHA-256 `df09e28844be1f399f9466a62e19c9cdf53298e5fdb9eb5dcefb5fca830ad56e`). The referee was
+rebuilt in the Ubuntu 24.04 container from this exact source.
 
 ### Reference ticks and hashes (0.8.9 candidate)
 
-TODO-LEAD: the per-case table in the 0.8.8 shape (end, tick, hash, units, "vs 0.8.8"
-for each mode). With no simulation change every deterministic case should be
-bit-identical to 0.8.8; the six `TAK_AUTOPLAY` cases never repeat a hash, and
-`h-lake`, `h-stress`, `2h-stress`, `2h-gods`, `4h-gods` and `h-everything` are
-load-sensitive.
+Hash and units are the seated host's final line. "vs 0.8.8" compares tick and hash with the 0.8.8 table
+(protocol 288; same harness, hosts and seeds). The six `TAK_AUTOPLAY` cases never repeat a hash, and `h-lake`,
+`h-stress`, `2h-stress`, `2h-gods`, `4h-gods`, `h-everything` are load-sensitive, so "differs" in those
+rows is expected noise. The machine carried a load average of about 25 from other release work during both runs.
+
+| Case | Retail end | Retail tick | Retail hash | Retail units | vs 0.8.8 | Legion end | Legion tick | Legion hash | Legion units | vs 0.8.8 |
+| --- | --- | ---: | --- | ---: | --- | --- | ---: | --- | ---: | --- |
+| `h-baseline` | timelimit | 18,000 | `4a07030c0169e47c` | 210 | same | timelimit | 18,000 | `4b9217a4ffcd74c0` | 213 | same |
+| `h-gods` | concluded | 14,626 | `0ea0a1d96c1414af` | 104 | same | concluded | 15,383 | `3f26557d500cff5a` | 82 | same |
+| `h-crusades` | timelimit | 18,000 | `604de77d3fe53f3e` | 245 | same | timelimit | 18,000 | `e4036388d6f2e4df` | 230 | same |
+| `h-stress` | concluded | 4,903 | `67ad340e719d474e` | 8,593 | differs (tick 4,896 -> 4,903) | concluded | 5,147 | `4efaa19f898d273d` | 7,305 | same |
+| `h-absurd` | timelimit | 18,000 | `1b0d79cb6583219d` | 454 | same | timelimit | 18,000 | `9125e38fec71fc29` | 469 | same |
+| `h-fog-explored` | timelimit | 18,000 | `00419b0edd6c9b06` | 188 | same | timelimit | 18,000 | `faafb450fc7005c7` | 142 | same |
+| `h-fog-full` | timelimit | 18,000 | `9896fd941b2aade9` | 216 | same | timelimit | 18,000 | `821e2ab5feef82d1` | 217 | same |
+| `h-unitcap` | concluded | 14,780 | `c382486eeb54fb3b` | 204 | same | timelimit | 18,000 | `715966bbb3c6a746` | 220 | same |
+| `h-cramped` | concluded | 1,307 | `45134591344a4d04` | 10 | same | timelimit | 18,000 | `57d4067d04331580` | 29 | same |
+| `h-naval` | timelimit | 18,000 | `5fb53d62d7a0b42c` | 58 | same | timelimit | 18,000 | `17b9ca802fb9a217` | 88 | same |
+| `h-naval-crus` | timelimit | 18,000 | `396f8de68f25c274` | 70 | same | timelimit | 18,000 | `4787a6c75fbb0d77` | 88 | same |
+| `h-lake` | concluded | 3,945 | `fe64c8f45a404f6c` | 4,922 | differs (tick 3,948 -> 3,945) | concluded | 4,108 | `0b1069698f25511e` | 4,836 | differs (tick 4,139 -> 4,108) |
+| `h-random-starts` | concluded | 15,702 | `6e0395e042f734fe` | 228 | same | concluded | 12,289 | `0cba4154cf002db9` | 194 | same |
+| `h-monarch-exp` | concluded | 12,231 | `c646ef640c32a947` | 89 | same | concluded | 17,804 | `540592e154eafb24` | 82 | same |
+| `h-mods-all` | timelimit | 18,000 | `450038fec3e01ce5` | 209 | same | timelimit | 18,000 | `e3693d73ec08c60c` | 212 | same |
+| `h-everything` | concluded | 13,553 | `c8a3b86655f699f1` | 5,140 | differs (tick 13,549 -> 13,553) | concluded | 10,300 | `13ca94202d9d0533` | 4,782 | same |
+| `h-speed-1x` | timelimit | 18,000 | `9b5694cceca37a11` | 236 | same | timelimit | 18,000 | `0c1cf293aa498699` | 246 | same |
+| `h-two-castles` | timelimit | 18,000 | `8e9dfa2311fc1ec4` | 23 | same | timelimit | 18,000 | `81b4f5bfafb359c0` | 4 | same |
+| `2h-baseline` | timelimit | 18,000 | `7b5850e128c0ff63` | 173 | same | timelimit | 18,000 | `638fa388b12be0c4` | 172 | same |
+| `2h-gods` | concluded | 12,423 | `bf5aaf973f862369` | 104 | same | concluded | 13,059 | `9283d91d154a8678` | 61 | same |
+| `2h-crusades` | timelimit | 18,000 | `4177d6f4374aad35` | 182 | same | timelimit | 18,000 | `e14b49adbbf76ebf` | 167 | same |
+| `2h-stress` | concluded | 5,051 | `9cbca5e70ece9898` | 9,101 | differs (tick 5,048 -> 5,051) | concluded | 5,248 | `2467ac365aab5e5b` | 8,427 | differs (tick 5,265 -> 5,248) |
+| `2h-orders` | timelimit | 18,000 | `6179769dbd0a466b` | 187 | differs (autoplay) | timelimit | 18,000 | `bbd77f0ada3375f1` | 158 | differs (autoplay) |
+| `2h-orders-stress` | concluded | 5,114 | `69f982d90677705f` | 8,984 | differs (tick 5,709 -> 5,114) (autoplay) | concluded | 5,074 | `a9e4035b35b53077` | 8,307 | differs (tick 4,894 -> 5,074) (autoplay) |
+| `4h-orders` | timelimit | 18,000 | `2a1d7913b0beaa9d` | 156 | differs (autoplay) | timelimit | 18,000 | `899a57b3b6ab1e0c` | 157 | differs (autoplay) |
+| `3h-baseline` | timelimit | 18,000 | `1d59d944a244aef4` | 172 | same | timelimit | 18,000 | `beeeab4bb6ec584b` | 148 | same |
+| `4h-gods` | timelimit | 18,000 | `39e8fa7afa49b6f9` | 149 | differs | timelimit | 18,000 | `01629df7129fa319` | 152 | differs |
+| `net-rtt50` | timelimit | 18,000 | `80dc6a72233bd05d` | 230 | same | timelimit | 18,000 | `03c521246aeadec2` | 227 | same |
+| `net-rtt100` | timelimit | 18,000 | `fcba4a56baf98c45` | 190 | same | timelimit | 18,000 | `c3167c3d271f43bc` | 204 | same |
+| `net-jitter` | timelimit | 18,000 | `6a0f640c3faf1de6` | 173 | same | timelimit | 18,000 | `ca07f9821f97109e` | 196 | same |
+| `net-rtt500` | timelimit | 18,000 | `8837809d723b6fc0` | 219 | same | timelimit | 18,000 | `af7b2fa90b652283` | 200 | same |
+| `net-loss1` | timelimit | 18,000 | `1adf2c3d366e9bef` | 192 | same | timelimit | 18,000 | `b69a197764ecdf5c` | 206 | same |
+| `net-loss3-orders` | timelimit | 18,000 | `5bb89190055f4386` | 199 | differs (autoplay) | concluded | 17,529 | `a2ead6daac4a0719` | 204 | differs (tick 16,878 -> 17,529) (autoplay) |
+| `net-orders100` | timelimit | 18,000 | `40acbbae96f8a5e0` | 193 | differs (autoplay) | timelimit | 18,000 | `0a2f77d3fe3edd46` | 188 | differs (autoplay) |
+| `net-2h-rtt100` | timelimit | 18,000 | `6e1a627c2887571a` | 182 | differs (autoplay) | timelimit | 18,000 | `b19dd6f6f94f8d83` | 173 | differs (autoplay) |
+| `w-allai-stress` | timelimit | 18,000 | `06e78e00b732019a` | 5,392 | same | timelimit | 18,000 | `fc6dfe90da499b44` | 3,925 | same |
+| `w-allai-bench` | timelimit | 18,000 | `10a3a871daabf505` | 312 | same | timelimit | 18,000 | `8446871154cf8f79` | 344 | same |
 
 ### Comparison with 0.8.8
 
-TODO-LEAD: which cases are bit-identical to 0.8.8 in each mode and why any
-others differ (expected: only the autoplay and load-sensitive cases).
+0.8.9 changes no simulation, network, server or AI code (`git diff v0.8.8..HEAD -- src/sim src/net src/server src/ai`
+shows only a 10-line header-only display helper in `src/net/client.h`; `kNetVersion` is still 288 and the replay
+format 14), so 0.8.9 is multiplayer- and replay-compatible with 0.8.8, and every deterministic case should
+reproduce 0.8.8 exactly.
+
+**Retail: 26 of 37 cases are bit-identical to 0.8.8 (tick and hash).** The 11 that differ are exactly the known unstable ones:
+
+- The six `TAK_AUTOPLAY` cases (`2h-orders`, `2h-orders-stress`, `4h-orders`, `net-orders100`, `net-loss3-orders`, `net-2h-rtt100`), which never repeat a hash.
+- Five load-sensitive cases: `h-stress` (4,896 -> 4,903), `h-lake` (3,948 -> 3,945), `2h-stress` (5,048 -> 5,051), `h-everything` (13,549 -> 13,553; 5,140 units both times) and `4h-gods` (18,000 ticks both times, 149 units vs 102).
+
+**Legion: 28 of 37 cases are bit-identical to 0.8.8.** The 9 that differ are the six autoplay cases plus `h-lake`
+(4,139 -> 4,108), `2h-stress` (5,265 -> 5,248) and `4h-gods`, the same load-sensitive set. Every case that
+0.8.8 flagged as moved by rounds 5/6 and that is not load-sensitive (`h-mods-all`, `net-rtt50`, `net-rtt500`,
+`net-loss1`, `w-allai-stress`, `w-allai-bench`, `h-stress`, `h-everything`) reproduced 0.8.8 exactly.
+
+Caveat: the differing rows were not re-run in isolation. They are explained by the documented load sensitivity
+(very large games and cases where a wall-clock-driven client pacing decision shifts command arrival ticks),
+not by a code change: the source delta contains no simulation code, and every seat agreed with the referee at
+every checkpoint in every case.
 
 ## CI and packages
 
@@ -222,8 +375,8 @@ opened and checked by eye:
 
 ## Limits
 
-- TODO-LEAD: whether a game mixing 0.8.8 and 0.8.9 builds was played (it can
-  be: same protocol and replay format).
+- No game mixing 0.8.8 and 0.8.9 builds was played (it can be: same protocol
+  and replay format).
 - All of 0.8.8's limits carry over unchanged (the simulation is 0.8.8's):
   Legion units stand and wait more than Retail's; Legion attackers through a
   narrow gate deal more damage than Retail's; power codes are lockstep (retail
@@ -237,4 +390,7 @@ opened and checked by eye:
   (retail-equivalent: the retail lettering boxes overlap).
 - The area-command test deliberately differs from retail's (`0x527bf0`): 32 px
   on both axes of the box and a real pointer movement, no held-time rule.
-- TODO-LEAD: flakes seen in this release's runs.
+- Flakes seen in this release's runs: `cartographer_ui_smoke` stalled once at
+  step 487 in the loaded Debug (`-O0`) tree and passed alone (new candidate for
+  the flake list); ASan's 20 SDL D-Bus leak reports (known, `detect_leaks=0`).
+  The remote sweep needed no retries.
