@@ -2,8 +2,9 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.9** (network protocol **288**, replay format
-**14**, both the same as 0.8.8). It is written for three kinds of reader:
+This guide covers **TAK Engine 0.8.10** (network protocol **289**, replay format
+**14**; 0.8.10 does not play with 0.8.9 or earlier, nor their replays). It is
+written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
   the game;
@@ -1383,7 +1384,7 @@ heard only where you can see them, and never while they are cloaked or carried
 in a transport. A few units are silent by design: the Automaton makes no sound
 when an explosive weapon kills it, as its original script says, and the
 original data has no sound for two death cries (`cregatldie1` and
-`zonbardie1`). After a rejoin, or when
+`zonbardie1`). When
 you start spectating a game in progress, the deaths of the part of the game you
 missed are silent while the game catches up.
 
@@ -1677,7 +1678,9 @@ than 8 seconds starts no countdown, but if the game stands still waiting for the
 for more than a second, everything past that first second comes off their 30
 (rounded up to whole seconds). An ordinary network hiccup of a second or less costs
 nothing. Once a player's time is used up, the next time they hold the game up the
-computer player takes over at once, without pausing the game.
+computer player takes over at once, without pausing the game. While a game is still
+loading nobody's time is used, however long a slow computer takes; a player whose
+connection closes before the game starts is counted down from that moment.
 
 ![The game paused on Inner Circle with a dark banner near the top of the view reading WAITING FOR Brannoc 18 in gold letters, the minimap, mana bar and bottom bar in place around it](img/guide/disconnect-wait.jpg)
 *Another player has stopped responding: the game waits for Brannoc, with 18 seconds of his time left.*
@@ -1701,13 +1704,10 @@ others. In single-player there is nobody to wait for, so none of this applies.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.9 uses network protocol **288**, the same as 0.8.8, so 0.8.9 and
-0.8.8 play together: a server and its players may run either. It cannot play
-with 0.8.7 (protocol 284) or any earlier version: the server turns away a client
-whose protocol differs from its own, so when updating from 0.8.7 or earlier a
-server and all of its players must update together. Builds from the source after
-0.8.9 use protocol **289** and play with neither 0.8.9 nor 0.8.8, nor their
-replays.
+Version 0.8.10 uses network protocol **289**. It cannot play with 0.8.9 or
+0.8.8 (protocol 288) or any earlier version: the server turns away a client whose
+protocol differs from its own, so a server and all of its players must update to
+0.8.10 together.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
 This should not happen between matching versions with matching game data; if it
@@ -1909,7 +1909,10 @@ mission. The mouse wheel and **Up/Down** scroll long briefings. During play,
 When you win, **Next** goes to the next chapter and **Retry** replays this one.
 Campaigns always use Retail pathfinding.
 
-Mission scripting is reproduced from the original game, but individual missions
+You always play the mission's first player, as in the original game, even where
+the mission file describes that player as a computer opponent (*The Iron Plague*
+missions 22 and 24, where you hold off the Aramon invaders). Mission scripting
+is reproduced from the original game, but individual missions
 may still have problems. See the [campaign notes](campaign-design.md).
 
 ---
@@ -1946,9 +1949,8 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.9 and 0.8.8 both play protocol-288 recordings only, so each
-  plays the other's replays, while replays recorded by 0.8.7 or earlier need the
-  version that recorded them);
+  recorded it (0.8.10 plays protocol-289 recordings only, so replays recorded by
+  0.8.9, 0.8.8 or earlier need the version that recorded them);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -2120,8 +2122,8 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together when the protocol changes.** A server
-only accepts clients of the same protocol version (0.8.9 and 0.8.8 use protocol
-288, so they mix freely; 0.8.7 uses 284).
+only accepts clients of the same protocol version (0.8.10 uses protocol 289; 0.8.9
+and 0.8.8 use 288, 0.8.7 uses 284).
 
 ---
 
@@ -2226,7 +2228,8 @@ the system's permission to use the microphone.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.9 and 0.8.8 use protocol 288, 0.8.7 uses 284). See
+one that recorded them (0.8.10 uses protocol 289, 0.8.9 and 0.8.8 use 288, 0.8.7
+uses 284). See
 [Replays](#replays).
 
 ### Where files are kept

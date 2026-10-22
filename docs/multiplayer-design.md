@@ -859,7 +859,11 @@ the option off the simulation is 287's; 0.8.8 ships protocol 288, and so does 0.
 (client-only changes; it plays with 0.8.8 and its replays).
 Protocol 289 replaces the disconnect hold and the log-replay rejoin with the 30 s
 disconnect wait and the AI takeover (§4): `Waiting`, `Reseated`, `Rejoin` with its
-`fromTick`, and `Event::AiTakeover`; the simulation is 288's until a takeover.
+`fromTick`, and `Event::AiTakeover`; the simulation is 288's until a takeover,
+except that 289 also seats the campaign human at the mission's Player1 (world slot 0,
+as retail does) and scales the target score's turn penalty by the shooter's terrain
+turn rate (roads and water, as retail does). 0.8.10 ships protocol 289; it plays
+with neither 0.8.9 nor 0.8.8, nor their replays.
 Game options
 and every lobby/start/spectate snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
@@ -1150,6 +1154,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.8.9 (peers and server) requires protocol 288, as 0.8.8 does; 0.8.7 required 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.8.10 (peers and server) requires protocol 289; 0.8.9 and 0.8.8 required 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

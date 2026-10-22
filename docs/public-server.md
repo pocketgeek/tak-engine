@@ -46,10 +46,9 @@ enter `tcp://hostname` (and an optional `:port`). Bare menu hostnames always use
 TLS, with no plaintext fallback. Automatically launched single-player servers
 keep their private loopback connection. Debug command-line harness connections
 retain their explicit transport behavior. Old clients cannot connect to a TLS
-listener. Version 0.8.9 uses gameplay protocol 288, the same as 0.8.8, so 0.8.9 and 0.8.8
-clients and servers mix freely. 0.8.7 clients (protocol 284) and older cannot join a 0.8.9 or
-0.8.8 server, nor 0.8.9 or 0.8.8 clients an older one; when updating from 0.8.7 or earlier, update the
-server and all clients together.
+listener. Version 0.8.10 uses gameplay protocol 289. 0.8.9 and 0.8.8 clients (protocol 288)
+and older cannot join a 0.8.10 server, nor 0.8.10 clients an older one; update the server and
+all clients together.
 
 The login exchange alone is not session encryption. Do not expose the old
 plaintext port alongside TLS as a compatibility fallback.
@@ -248,11 +247,18 @@ keeps that seat. Crusades battle rooms never allow spectators.
 `server_spectators_test.py` checks each of these against a real server.
 
 A seated player the server stops hearing from (nothing for 8 seconds, or a
-connection closed without leaving) stops the game for everyone for 30 seconds,
-with a countdown on every screen. A player back in time, on the same connection
-or by the client's automatic reconnect (`Rejoin`, which streams only the ticks it
-missed), carries on; otherwise the server closes that connection and its own AI,
-at Normal, plays the seat for the rest of the game. A player who quits the game
+connection closed without leaving) stops the game for everyone, with a countdown on
+every screen. Each human seat has one 30-second budget for the whole game, spent from
+the player's last contact (so the 8 silent seconds count) in whole seconds; a shorter
+silence that still holds the game up is charged for everything past its first second.
+Silence before the first tick or while the client is still loading is not charged
+(a connection that closes then is counted down from the close). A player back
+within the budget, on the same connection or by the client's automatic reconnect
+(`Rejoin`, which streams only the ticks it missed), carries on; otherwise the server
+closes that connection and its own AI, at Normal, plays the seat for the rest of the
+game (`Event::AiTakeover`, recorded in the replay). The accounting is wall-clock time
+on the server, so a server whose own upload stalls for more than a second charges
+every seat it holds up. A player who quits the game
 deliberately leaves at once, without a wait. In an issued Crusades battle the
 absent participant forfeits instead. The two times can be shortened for tests
 with `TAK_STALL_MS` and `TAK_DROP_WAIT_MS` (milliseconds) in the server's
