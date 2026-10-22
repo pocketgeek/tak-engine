@@ -13,6 +13,8 @@ server with a short stall threshold and wait (TAK_STALL_MS / TAK_DROP_WAIT_MS):
   reconnect  the joiner loses its link mid-game (TAK_DROP_LINK_AT_TICK): it reconnects inside
              the wait, catches up from the first tick it lacked, and both clients finish on
              the same state hash; its own replay, recorded across the reconnect, verifies.
+  reconnect-login  the same on a server that requires accounts: the reconnect signs in again
+             with the keys kept from the first login (the password is gone by then).
 
 POSIX only (SIGSTOP); the harness flags are debug builds' only.
 """
@@ -32,6 +34,7 @@ from replay_always_test import complete_ticks, replays
 
 MAP = 'Inner Circle'
 STALL_MS, WAIT_MS = 1500, 3000
+PASSWORD = 'local synthetic disconnect test password'
 TIME = 30                      # game seconds each client plays
 DONE = re.compile(r'mp-headless done: tick=(\d+) hash=(\w+) units=(\d+) err=(\S+)')
 
@@ -52,14 +55,15 @@ def environment(root, name):
 
 
 class Match:
-    def __init__(self, args, root, joiner_env=None):
-        self.args, self.root = args, root
+    def __init__(self, args, root, joiner_env=None, login=False):
+        self.args, self.root, self.login = args, root, login
         self.port = free_port()
         env = environment(root, 'server')
         env.update(TAK_STALL_MS=str(STALL_MS), TAK_DROP_WAIT_MS=str(WAIT_MS))
         self.server_log = open(root / 'server.log', 'w')
         self.server = subprocess.Popen(
-            [args.server, '--port', str(self.port), '--data', args.data, '--no-auth', '--local', '--seed', '1'],
+            [args.server, '--port', str(self.port), '--data', args.data, '--local', '--seed', '1',
+             *(['--accounts', str(root / 'accounts.conf')] if login else ['--no-auth'])],
             stdout=self.server_log, stderr=subprocess.STDOUT, env=env)
         self.wait_log('listening', 90)
         self.host = self.client('host', ['--mphost'], {'TAK_SPEED': '40'})
@@ -73,7 +77,8 @@ class Match:
         log = open(self.root / (name + '.log'), 'w')
         return subprocess.Popen(
             [self.args.client, 'game', MAP, '--data', self.args.data, '--server', '127.0.0.1',
-             '--serverport', str(self.port), *mode, '--time', str(TIME)],
+             '--serverport', str(self.port), *mode, '--time', str(TIME),
+             *(['--user', name, '--pass', PASSWORD] if self.login else [])],
             stdout=log, stderr=subprocess.STDOUT, env=env)
 
     def log(self, name='server'):
@@ -174,8 +179,8 @@ def case_resume(args, root):
         m.close()
 
 
-def case_reconnect(args, root):
-    m = Match(args, root, {'TAK_DROP_LINK_AT_TICK': '300'})
+def case_reconnect(args, root, login=False):
+    m = Match(args, root, {'TAK_DROP_LINK_AT_TICK': '300'}, login)
     try:
         m.wait_log('RESEATED', 60)
         host, joiner = m.finish(m.host, 'host'), m.finish(m.joiner, 'joiner')
@@ -189,7 +194,8 @@ def case_reconnect(args, root):
         m.close()
 
 
-CASES = {'takeover': case_takeover, 'resume': case_resume, 'reconnect': case_reconnect}
+CASES = {'takeover': case_takeover, 'resume': case_resume, 'reconnect': case_reconnect,
+         'reconnect-login': lambda args, root: case_reconnect(args, root, login=True)}
 
 
 def main():
@@ -221,7 +227,8 @@ def main():
     if failed:
         raise SystemExit('FAIL: ' + ', '.join(failed))
     print('PASS: disconnect wait end to end -- AI takeover with no desync and a replay that verifies, '
-          'resume inside the wait, reconnect inside the wait (same final hash on both peers)')
+          'resume inside the wait, reconnect inside the wait (same final hash on both peers), '
+          'with and without an account login')
 
 
 if __name__ == '__main__':

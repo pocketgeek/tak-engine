@@ -3797,15 +3797,17 @@ int Server::run() {
         // The disconnect wait. A seated player the room has heard nothing from for
         // gStallMs stops the game (the same as a closed connection, see dropClient); one
         // that talks again, on the same connection, lets it go on; one still away when
-        // its countdown runs out has its seat taken over by an AI. Only once the game
-        // has ticked (loading has its own deadlines) and only with someone else still
-        // connected to wait with: a player alone in the room (single-player) keeps the
-        // plain timeout below, and the room ends when it goes.
+        // its countdown runs out has its seat taken over by an AI. Silence counts only
+        // once the game has ticked (loading has its own deadlines) and only with someone
+        // else still connected to wait with: a player alone in the room (single-player)
+        // keeps the plain timeout below, and the room ends when it goes. The countdown
+        // itself runs out whatever the tick: a seat that closed before the first tick
+        // (dropClient) would otherwise hold the room forever.
         now = nowMs();
         for (auto& [rid, r] : rooms_) {
             (void)rid;
-            if (!r.running || r.tick == 0) continue;
-            for (int i = 0; i < kMaxSlots; ++i) {
+            if (!r.running) continue;
+            for (int i = 0; i < kMaxSlots && r.tick > 0; ++i) {
                 if (r.slots[i].type != 1 || r.defeated[size_t(i)] || r.slotClient[i] < 0) continue;
                 auto it = clients_.find(uint32_t(r.slotClient[i]));
                 if (it == clients_.end() || !it->second->loaded || !it->second->conn.ok()) continue;

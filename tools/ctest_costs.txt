@@ -18,7 +18,7 @@ legion_gen1_route_65845_om1 56
 render_unit_index 52
 legion_situation_r10-104540_retail 50
 mapgen_roster 50
-disconnect_client 50
+disconnect_client 71
 crusades_hardening_network 49
 legion_gen1_route_61923_om1 49
 legion_situation_r10-87332_legion 48
