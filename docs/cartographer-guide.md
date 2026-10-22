@@ -1795,9 +1795,8 @@ seats *NEEDED BY SCENARIO* and keeps **START** greyed until they are filled.
 
 **Test Map says "Cannot find takclient beside Cartographer".**
 Cartographer starts the game from its own folder. Install the game and
-Cartographer from the same package and keep them together. On macOS the apps
-from the disk image currently show this message even when they are side by side
-(see [Known limits](#known-limits)). In every case you can save the map and
+Cartographer from the same package and keep them together. On macOS keep
+the two apps in one folder. In every case you can save the map and
 open it with `takclient --play-map` (see
 [Sharing a scenario](#sharing-a-scenario)).
 
