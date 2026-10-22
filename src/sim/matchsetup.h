@@ -146,7 +146,8 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
 // Build the world for a campaign mission: terrain + features (reusing setupMatch), the
 // placed units and player slots from the mission `.ota`, and the in-sim MissionScript
 // (attached + started). Returns false if the mission bundle isn't found; sets humanOut
-// to the human player index. See docs/campaign-design.md.
+// to the human player index -- always 0, the .ota's Player1, as in retail. See
+// docs/campaign-design.md.
 // What a mission needs beyond the world itself: which player slots the server
 // should run a skirmish AI for, where each slot's forces are, and which build
 // profile to give them. EVERY shipped mission marks at least one player

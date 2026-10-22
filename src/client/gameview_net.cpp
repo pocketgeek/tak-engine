@@ -251,8 +251,10 @@
             }
             missionObjectives_ = tak::loadObjectives(vfs_, room.mission);   // in-game panel
             showObjectives_ = true;
-            // The player commands the mission's human player; for the common case its
-            // index equals our room slot (TODO: seat the client at `human` otherwise).
+            // The player commands the mission's human player: always the .ota's
+            // Player1, world slot 0, as in retail (setupMission). A campaign room
+            // seats its host at slot 0 and refuses seat moves, so the server's
+            // command stamping (the sender's seat) and this view name the same player.
             localPlayer_ = human;
             writableWorld().setVisPlayer(localPlayer_);
             for (auto& u : world_.units())

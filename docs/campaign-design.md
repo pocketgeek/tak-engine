@@ -66,7 +66,14 @@ A **mission** is a bundle keyed by the stem:
   the campaign marker.
 - `lineofsight=` (fog on/off), `mapping=` (minimap pre-revealed), `maxunits=`.
 - `Player<N>=[control] [role] logo <C> [kingdom] [massattack <T>]` — slot defs:
-  - `control` — `strategic` (full AI economy+attack) | `passive` (inert NPC/wildlife) | *absent* = human/interactive. Slot 1 is normally the human.
+  - `control` — `strategic` (full AI economy+attack) | `passive` (inert NPC/wildlife) | *absent* (in the shipped missions only `Player1`, the human).
+  - **`Player1` is always the human**, whatever its keywords: retail's campaign
+    start (`0x4d290c`) makes game player 0 the local human from the first record
+    and takes only its logo (`0x4d292a`); computer players come from records 2..10
+    (the `0x4d2957` loop). `takx22_mt` and `takx24_mt` declare
+    `Player1=strategic opponent logo 6 creon` for the city the player defends;
+    those keywords are ignored for Player1. An `.ota` without `Player1` still
+    reserves world slot 0 for the human.
   - `role` — `opponent` | `ally` | `neutral` (diplomacy toward the human).
   - `logo <C>` — colour/team index; the trailing kingdom word sets the faction (omitted for neutral owners). Units in `[Map Data]` reference the slot via their `Player=` field.
 - **Header-embedded victory/defeat conditions** — see §3.
@@ -179,8 +186,13 @@ reinforcements can revive otherwise empty factions. Strategic opponents use this
 project's AI with mission tuning; this is not a port of retail strategic AI.
 
 The mission `.tdf` restricts the player's build menu. Server-side enforcement of
-that restriction and a general mapping between arbitrary room seats and mission
-human slots are separate limitations. The obsolete client-only mission runner is
+that restriction is a separate limitation. The player is seated as retail seats
+them: `Player1` is world slot 0, the campaign room seats its host at slot 0 and
+refuses seat moves, so the server's command stamping, the referee's world and
+the client's view all name the same player. Before this, a "first non-AI player"
+guess left `takx22_mt`/`takx24_mt` (Player1 marked `strategic opponent`) with an
+AI driving the player's units and the player teamed with the Aramon invaders;
+fixing it changes those two missions' hashed state and no other. The obsolete client-only mission runner is
 gone. Campaign progress remains local portable settings, not retail's Windows
 registry/profile format.
 

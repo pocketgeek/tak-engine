@@ -1283,29 +1283,37 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     // kMaxPlayers slots. The SAME map applies to the placed units and to the script's
     // Create player refs (passed to MissionScript). Diplomacy from each player's role:
     // opponents fight the human (team 1); the human, allies and neutrals share team 0,
-    // so the human never auto-attacks them. Human = the first interactive (non-AI) slot.
+    // so the human never auto-attacks them.
+    //
+    // The human is ALWAYS Player1, world slot 0. Retail's campaign start (0x4d290c)
+    // creates game player 0 as the local human from the .ota's first player record
+    // and takes only its logo (0x4d292a); the computer players come from records
+    // 2..10 (the 0x4d2957 loop starts at record 1). Player1's own keywords are never
+    // read: takx22_mt and takx24_mt declare `Player1=strategic opponent ... creon`,
+    // and that is the city the player defends (the briefing: hold off the Aramon
+    // invaders), not a second enemy. The old "first non-AI player" guess found no
+    // human there, put an AI on the player's own units, and teamed them with Aramon.
     std::vector<int> otaToWorld(17, -1);   // [.ota player 1..16] -> world slot
     std::vector<MatchSlot> slots;
-    int human = 0;
-    bool foundHuman = false;
+    const int human = 0;
     uint32_t budgetClasses = 0;
     const char* kingdoms[5] = {"aramon", "taros", "veruna", "zhon", "creon"};
     for (int n = 1; n <= 16 && int(slots.size()) < kMaxPlayers; ++n) {
         const std::string* v = gh->value("player" + std::to_string(n));
-        if (!v) continue;
-        std::string def = *v;
+        // Retail keeps record 0 for the human even when an .ota omits Player1.
+        if (!v && n != 1) continue;
+        std::string def = v ? *v : std::string();
         std::transform(def.begin(), def.end(), def.begin(), ::tolower);
         int slot = int(slots.size());
         otaToWorld[n] = slot;
         MatchSlot s;
         s.used = false;   // no monarch spawn -- units come from [Map Data][units]
-        s.team = def.find("opponent") != std::string::npos ? 1 : 0;
         for (int f = 0; f < 5; ++f) if (def.find(kingdoms[f]) != std::string::npos) s.faction = f;
+        if (slot == human) { slots.push_back(s); continue; }   // team 0, no AI, manual gates
+        s.team = def.find("opponent") != std::string::npos ? 1 : 0;
         bool strategic = def.find("strategic") != std::string::npos;
         s.automaticGates=strategic;
         slots.push_back(s);
-        bool ai = strategic || def.find("passive") != std::string::npos;
-        if (!ai && !foundHuman) { human = slot; foundHuman = true; }
         // Only a STRATEGIC player gets a brain. A "passive neutral" is scenery --
         // villagers, wildlife, props -- and must stay inert.
         if (strategic && out) out->aiSlots.push_back(slot);
@@ -1315,7 +1323,6 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     // when "strategic" (0x4c83fb; a later "passive" match clears it again at
     // 0x4c8419) and 0x4d2a12 stores it; the human keeps 0x4f6379's 1.
     budgetClasses |= 1u << human;
-    if (slots.empty()) { slots.push_back(MatchSlot{}); otaToWorld[1] = 0; }   // at least the human
     auto mapPlayer = [&](int otaP) {
         if (otaP >= 1 && otaP <= 16 && otaToWorld[size_t(otaP)] >= 0) return otaToWorld[size_t(otaP)];
         return std::clamp(otaP - 1, 0, int(slots.size()) - 1);
