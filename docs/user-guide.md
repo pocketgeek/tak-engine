@@ -1679,8 +1679,8 @@ for more than a second, everything past that first second comes off their 30
 nothing. Once a player's time is used up, the next time they hold the game up the
 computer player takes over at once, without pausing the game.
 
-![The game paused on Inner Circle with a dark banner near the top of the view reading WAITING FOR Brannoc 24 in gold letters, the minimap, mana bar and bottom bar in place around it](img/guide/disconnect-wait.jpg)
-*Another player has stopped responding: the game waits for Brannoc, with 24 seconds of his time left.*
+![The game paused on Inner Circle with a dark banner near the top of the view reading WAITING FOR Brannoc 18 in gold letters, the minimap, mana bar and bottom bar in place around it](img/guide/disconnect-wait.jpg)
+*Another player has stopped responding: the game waits for Brannoc, with 18 seconds of his time left.*
 
 - **Back in time:** if their game catches up again (a long freeze, a network
   hiccup) or reconnects, the countdown goes away and play goes on from where it

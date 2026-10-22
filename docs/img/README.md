@@ -1,18 +1,27 @@
 # README and user-guide screenshots
 
-Refreshed on 2026-10-21 for **0.8.9**. 0.8.9 changed the create screen's option
+Refreshed on 2026-10-22 for **0.8.10**. 0.8.10 added the **SAVE A LOCAL COPY**
+row to the YouTube Streaming panel and changed the disconnect wait (each seat has
+one 30 s budget per game, counted from the player's last contact, so a first stop
+shows 22 when the banner appears). The 0.8.10 build (version set to 0.8.10
+locally, ahead of the release commit; no capture patch was needed) retook
+`title.jpg` (VERSION 0.8.10), `streaming.jpg` and `guide/disconnect-wait.jpg`.
+No other picture shows what 0.8.10 changed: the campaign pictures show chapter 1,
+whose human player was already Player1, and the Cartographer Test Map fix is in
+the macOS app bundle only. Every other picture keeps the release named below.
+
+0.8.9 changed the create screen's option
 column (one button width and one label size), the room's rules (MAP SCENARIO is
 a normal rules line; GAME MODS VERIFIED shows only when game packs are in play)
 and the in-game chat box (always above the build row and its TRAINING or status
 line), and added Shift-drag build lines with a wheel-set gap. The 0.8.9 build
 (version set to 0.8.9 locally, ahead of the release commit) retook every picture
-that shows them: `title.jpg` (VERSION 0.8.9), `lobby.jpg`, `lobby-scenario.jpg`,
+that shows them: `title.jpg` (since retaken for 0.8.10), `lobby.jpg`, `lobby-scenario.jpg`,
 `room.jpg`, `cartographer/test-lobby.jpg`, `guide/random-map-lobby.jpg`,
 `guide/room-mods-power-codes.jpg` and `guide/chat-box.jpg`, and added
 `guide/build-line.jpg`. `diplomacy.jpg`, `guide/options-interface.jpg` and
 `guide/options-graphics.jpg` were re-rendered and compared with their 0.8.8
-captures: nothing they show changed, so they stay the 0.8.8 files. Every other
-picture keeps the release named below.
+captures: nothing they show changed, so they stay the 0.8.8 files.
 
 Every image below is actual engine output from a release-preparation build
 (Debug with `-O2`, OpenGL renderer) and was inspected by eye. 0.8.8 draws all plain interface text in Noto Sans Bold
@@ -100,7 +109,7 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.8.9 (0.8.9 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
+| `title.jpg` | Title menu showing version 0.8.10 (0.8.10 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
 | `battle.jpg` | **Benchmark** run (Settings → Benchmark, Absurd intensity) on Ulasem Arena, 55 game seconds in. Eight server AIs fight, all five sides. The camera, at 1.3× zoom, shows Aramon (magenta) and Taros (yellow) armies, with Black Dragons, clashing at a sandy arena; damaged units of every side show health bars. A real feature with no fixture; spectator view, so no fog. Rendered by the 0.8.8 build |
 | `dragons.jpg` | **Development scene.** Five server AIs, one per side, from a stress-test start (300-unit cap) with gods on, 90 game seconds in. Creon Neo Dragons breathe fire on an Aramon siege column; health bars show for every side. Spectator view, 1.4× zoom. Rendered by the 0.8.8 build |
 | `flyers.jpg` | **Development scene, spawned.** Legion pathfinding, 22 s after one move order east-south-east. A 44-unit Zhon formation: Trolls, Stone Giants and Jungle Orcs, with Gryphons, Harpies and Drakes holding rows of stations over the front of the ground (new in 0.8.0, protocol 254; before, over its middle). `1F`, solid green, marks members of formation 1. Nothing is selected, so the information bar is empty (0.8.1). Fog off, 1.45× zoom. Rendered by the 0.8.8 build (protocol 288) |
@@ -112,7 +121,7 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 | `room.jpg` | Single-player room on Ulasem Arena with three Normal AIs (Taros, Veruna, Zhon) added by clicks, Crusades and Double Sight on, Legion pathfinding and both example cosmetic packs ticked (empty folders in the scratch install); under the COSMETIC MODS heading ALWAYS ON: click.hpi, then the pack names at the column's text size, the GAME MODS list below (no game pack ticked, so no GAME MODS VERIFIED line, new in 0.8.9). The open rows 5 to 8 each have a **MOVE HERE** button. The match rules end with MAP SCENARIO: OFF at the others' size (0.8.9). The map at the top of the right column marks starts 1 to 4 in the colours of the four seated players. The AI names are the lobby's own random picks. Rendered by the 0.8.9 build, 1600 × 1000; the CREATE screen's toggles, slot types, sides and pack boxes were clicked with `TAK_SHOT_CLICKS`, then the pointer moved off the panel |
 | `campaign.jpg` | Book of Darien campaign picker with a fresh profile, chapter 1. The CHAPTER heading and numeral are retail lettering in both UI fonts; the chapter title and the always-on mods note (click.hpi, in dark ink on the parchment) are in the UI font. Rendered by the 0.8.8 build, 1600 × 1000, with `TAK_SHOT_CAMPAIGN=0` |
 | `crusades.jpg` | Imported Darien Crusades definition (`crusades_import` from the retail `Darien.def`) on an authenticated local server, account *Gallery*; Torcairn selected in the territory list after joining Honor, so the territory panel lists its details and the map marks it. No authored battle maps or ownership. Rendered by the 0.8.8 build, 1600 × 1000 |
-| `streaming.jpg` | Streaming setup with no key or broadcast, showing the **Remember Key** row (off; the Secret Service is available). Rendered by the 0.8.8 build at 1600 × 1000, with the debug `TAK_CREDSTORE=test` store so no real key could appear |
+| `streaming.jpg` | Streaming setup with no key or broadcast, showing the **Remember Key** row (off; the Secret Service is available) and the **Save a Local Copy** row (off, the default; MP4 IN THE VIDEOS FOLDER), new in 0.8.10. Rendered by the 0.8.10 build at 1600 × 1000, with the debug `TAK_CREDSTORE=test` store so no real key could appear |
 | `diplomacy.jpg` | Built-in input-test fixture (the debug `TAK_DIPLOMACY_TEST` harness, `--testbuild`) after gifting, 1600 × 1000, in a profile with voice chat on. The VOICE column ticks every other player (your own box is shown, greyed); VOLUME has sliders for the two other humans, left by the fixture at 50% (ALLY) and 25% (DEFEATED), and none for the computer player (ENEMY). Elsin stays selected, so the bar shows her portrait, name and health and mana only. Rendered by the 0.8.8 build |
 | `results.jpg` | Built-in five-player **sample statistics** (`TAK_SHOT_RESULT`), not a finished match. Rendered by the 0.8.8 build |
 | `cartographer.png` | Cartographer Units tab on Ulasem Arena, from the 0.8.3 build: the toolbar has five tools (BLOCKED is new) and the browser a scrollbar. A fresh editor profile, `--shot --shot-tool units`, 30% zoom |
@@ -145,6 +154,7 @@ replace them. The unchanged views contain no version text.
 | `options-interface.jpg` | New in 0.8.8. Options screen in a 1600 × 1100 window scrolled to the Interface section, cropped to it: UI FONT MODERN, F4 SCORECARD SCALE and UI SCALE 100%, HEALTH BARS DAMAGED, STATS PANEL ON, BUILD MENU CENTER, BUILD MENU SCALE 100%, CHAT POSITION CENTERED and CHAT SCALE 100%; a fresh profile, all defaults |
 | `room-mods-power-codes.jpg` | Recaptured by the 0.8.9 build. Single-player room on Ulasem Arena, 1600 × 1000: POWER CODES clicked on in the create screen, two Normal AIs; under the COSMETIC MODS heading ALWAYS ON: click.hpi, then the packs at the column's text size (Classic Sounds ticked, Alternate Cursors not) and the GAME MODS list (Big Battles ticked, so GAME MODS VERIFIED shows); the match rules read POWER CODES: ON, and MAP SCENARIO: OFF is a rules line at the others' size. Clicked with `TAK_SHOT_CLICKS` |
 | `build-line.jpg` | New in 0.8.9. A Shift-drag wall line in progress: the committed debug `TAK_BUILDLINE_SHOT=560,0,2` fixture (`--testbuild`, Ulasem Arena) selects Elsin, chooses the Aramon wall, holds Shift, presses the left button, drags 560 px east and turns the mouse wheel up two notches, so the preview shows nine wall sites two cells apart and the **GAP 2** label by the pointer. 1.5× zoom, fog off; 1600 × 900, scaled |
+| `disconnect-wait.jpg` | Recaptured by the 0.8.10 build (first taken during 0.8.10 development). Two humans on Inner Circle through a local `takserver --local --no-auth --seed 1` at the default 8 s stall threshold (data: a copy of the retail archives); the second client (Brannoc, headless) was stopped with `SIGSTOP` 40 s in, and the first (Aldric, 1600 × 900, scaled) was captured about 4 s after the banner appeared: the game is paused and reads WAITING FOR Brannoc 18 (a first stop's countdown starts at 22, as the 8 silent seconds are already spent). Nothing is selected. Capture script `~/tak-tmp/scratch/release-0810/shots/dw.sh` |
 
 The guide also uses `title.jpg`, `lobby.jpg`, `room.jpg`, `campaign.jpg`,
 `diplomacy.jpg`, `generated.jpg` and `cartographer.png` from the gallery, and
@@ -299,7 +309,7 @@ Capture scripts, job lists and the encoder are in the release-preparation
 scratch directories, `$SCR/shared/release-0.7.26/shots`,
 `$SCR/shared/release-0.7.27/shots`, `$SCR/shared/release-0.7.28/shots`,
 `$SCR/shared/release-0.8.0/shots`, `$SCR/shared/release-0.8.1/shots`,
-`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots`, `~/tak-tmp/scratch/release-086/shots`, `~/tak-tmp/scratch/release-087/shots`, `~/tak-tmp/scratch/release-088/shots` and `~/tak-tmp/scratch/release-089/shots`. Raw PNGs, logs, profiles
+`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots`, `~/tak-tmp/scratch/release-086/shots`, `~/tak-tmp/scratch/release-087/shots`, `~/tak-tmp/scratch/release-088/shots`, `~/tak-tmp/scratch/release-089/shots` and `~/tak-tmp/scratch/release-0810/shots`. Raw PNGs, logs, profiles
 and the SHA-256 manifest are kept locally in the worktree's ignored
 `build-o2/capture` folder. Keep retail archives, extracted assets and temporary
 capture files out of Git. When refreshing, rerender and inspect every view, then
