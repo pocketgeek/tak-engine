@@ -1855,10 +1855,13 @@ Start Cartographer from its shortcut and choose **Recover**. See
   objectives and simply play with the units they are given; a computer player
   in a seat that has no units does nothing. The lobby warns about such a seat
   (*NO PLACED UNITS: PLAYER N*).
-- **You always play seat 1.** The player who creates the game takes seat 1, and
-  players who join take the lowest open seat; nobody can pick a seat. Close the
-  seats your scenario does not need before others join, so that they land in
-  seats that have units.
+- **You start in seat 1, but can move.** The player who creates the game takes
+  seat 1, and players who join take the lowest open seat. In the lobby of an
+  ordinary game, any seated player (the host too) can press **MOVE HERE** on an
+  open seat to take it; the seat moves with the player's side, colour, team and
+  ready state. Moving is refused once the game is running, in Crusades battles
+  and in campaign missions. Close the seats your scenario does not need before
+  others join, so that they land in seats that have units.
 - **Test Map on macOS.** Started from **TAK Cartographer.app**, Test Map looks
   for the game in the wrong place and reports *Cannot find takclient beside
   Cartographer*, even with both apps in the same folder. Save the map and open

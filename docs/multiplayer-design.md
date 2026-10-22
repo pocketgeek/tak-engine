@@ -201,11 +201,11 @@ agreed:
 Lockstep at 8 players lives or dies on bit-identical simulation, so the
 contract is stated, enforced, and narrow:
 
-- **Identical binary required.** The `Hello` build id identifies the exact
-  binary (content hash), not a version string. Cross-platform / cross-build
-  play is **unsupported** until the sim's floating-point math is made
-  implementation-independent. The practical deployment is: everyone runs the
-  same release build for their platform *and* the sim is hardened as below.
+- **Same protocol version, not the same binary.** The `Hello` carries a build
+  id, but the server only logs it; it refuses a client whose `kNetVersion`
+  differs. Linux, Windows and macOS builds with the same `kNetVersion` play
+  together (the sim's math is implementation-independent, as below, and a
+  cross-build golden hash is checked in CI). The sim is hardened as below.
 - The sim (and anything it calls) is compiled without `-ffast-math` and with
   `-ffp-contract=off` pinned in CMake for EVERY target (a directory-wide
   `add_compile_options`, so the server's AI and any sim header inlined into
@@ -213,8 +213,8 @@ contract is stated, enforced, and narrow:
 - The sim's transcendentals (`sin`/`cos`/`atan2`/`sqrt` in movement/turning)
   route through a small deterministic math shim (`sim/detmath`) rather than
   raw libm — libm results differ across implementations and versions even on
-  the same architecture. Until the shim lands, same-binary-same-libm is the
-  requirement and the doc says so honestly.
+  the same architecture. The shim has landed (`tools/check-detmath.sh`
+  enforces it), so builds need not share a libm.
 - Data gate: `Hello` carries a checksum over the loaded unit registry + build
   tree + map; the server refuses mixed-data games with a readable error.
 - The AI's RNG is outside the sim and cannot desync the world — only its
@@ -606,8 +606,8 @@ design and none block v1:
   bundle Event *and* `team` entering `stateHash` (reserved in the Event enum
   now precisely so the wire format doesn't break later).
 - **God-game chance:** retail rolled a 10% chance a multiplayer game is
-  god-enabled (`gods.tdf GameChance=0.1`) — ours is a lobby toggle with an
-  optional "retail random" mode.
+  god-enabled (`gods.tdf GameChance=0.1`). Ours deliberately does not: gods do
+  not appear in multiplayer (see `src/sim/matchsetup.cpp`).
 - **Rejoin snapshots:** referee-written World snapshots to cut rejoin time for
   long games (the log header/format anticipates them).
 - Host migration is a non-issue by construction (the server owns the game; the

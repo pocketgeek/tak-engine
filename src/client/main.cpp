@@ -1021,7 +1021,7 @@ int main(int argc, char** argv) {
         // A replay picked from the menu already set mode/args above, and must not be
         // overwritten with "game" here.
         if (choice != tak::MainMenu::Choice::Replay) mode = "game";
-        if (args.empty()) args.push_back("athri cay");   // TODO: map picker (SP battle menu)
+        if (args.empty()) args.push_back("athri cay");   // fallback map; the lobby has its own map list
         if (choice == tak::MainMenu::Choice::Multiplayer) {
             std::string sv = menuServer.empty() ? std::string("127.0.0.1") : menuServer;
             rememberServer = sv;   // remembered (as picked/typed) if the connect succeeds

@@ -700,8 +700,9 @@ remain readable.
 The CRT runner's control-count conditions had the count/type operands reversed.
 They now follow the authored table and shipped CRT operand order, including
 `Any Unit` control counts. Flag messages now include the numeric value and suffix.
-This does not yet attach CRT scenarios to normal skirmish setup: the production
-Test Map launch and shared scenario initialization are still outstanding.
+This did not yet attach CRT scenarios to normal skirmish setup. That landed
+later (1f50d405): Test Map and `takclient --play-map` launch snapshots through
+the shared client/server scenario setup.
 
 Malformed CRT input now returns the documented invalid version instead of a
 valid-looking empty scenario. NaN/infinite versions are rejected. Cartographer

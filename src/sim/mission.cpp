@@ -240,8 +240,8 @@ int32_t MissionScript::doCreate(World& w, const std::string& type, const std::ve
 
 // SetMission order-queue mini-language (see docs/campaign-design.md). Implements
 // m/ma/a/p/s/d/w/o/v (move, move-attack, attack, patrol-loop, give, destroy, timed
-// wait, stance, scalar); the timed reinforcement drop (b) and wait-for-attack (wa)
-// event hold are still TODO.
+// wait, stance, scalar), plus the wait-for-attack hold (wa) and the timed
+// reinforcement drop (b).
 void MissionScript::applyOrders(World& w, int unitId, const std::string& orders) {
     Unit* u = w.unit(unitId);
     if (!u) return;
