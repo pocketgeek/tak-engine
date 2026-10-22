@@ -23,8 +23,8 @@ substrate underneath it is kept.
 - **Game browser:** the server lists joinable (lobby-state) games and live
   (running, unjoinable) games.
 - **Durable sessions:** a player the server stops hearing from holds the game
-  for up to 30 seconds -- in all, per game, over all of their stalls --
-  (everyone sees the countdown); back in time -- the same connection, or an
+  for up to 30 seconds -- in all, per game, over all of their stalls, counted
+  from when they went quiet -- (everyone sees the countdown); back in time -- the same connection, or an
   automatic reconnect -- the game goes on, otherwise a server AI (Normal)
   takes the seat over (§4, protocol 289).
 
@@ -275,35 +275,64 @@ link `sim`, `tdf`, `net`, and the new `ai` module only.
   stops communicating, the game waits 30 seconds for them, paused, with a
   countdown; if they are still not communicating after that, they are dropped
   and an AI at Normal plays their units. The 30 seconds are a budget per seat
-  per game, not per stall, so nobody can hold a game indefinitely by going
-  quiet and answering just in time, again and again.
+  per game, not per stall, spent from the player's last contact (not from when
+  the countdown appears), so nobody can hold a game indefinitely by going
+  quiet and answering just in time, again and again -- not even with silences
+  too short to start a wait.
   - *Stopping.* A seated human in a running game (past tick 0, not defeated)
     stops communicating when the server has received nothing from it for
     `kStallMs` (8 s; a healthy client reports progress every few ticks and
     answers the server's 5 s keepalive ping, and the game client pings once a
     second), or at once when its connection closes without a `LeaveGame`. The
-    server then sets that seat's wait deadline to what is left of its budget
-    (`kDropWaitMs`, 30 s per seat per game) and closes no tick while any seat
-    is waiting -- every peer freezes on the same tick.
+    server then sets that seat's wait deadline to its last contact plus what
+    is left of its budget (`kDropWaitMs`, 30 s per seat per game) -- the
+    silence before the wait is already spent, so a first full stall counts
+    down from 22 and is taken over 30 s after the player went quiet -- and
+    closes no tick while any seat is waiting: every peer freezes on the same
+    tick. A silence that has already used what was left is taken over at once,
+    with no `Waiting`.
     `Msg::Waiting` (the seats and each one's milliseconds left) goes to the
     whole room whenever the set changes, and to a spectator or a reconnected
     player as it arrives; clients draw `WAITING FOR <name> 27`, one line and
     countdown per seat, so several stalls each run their own clock. A player
     alone in the room (single-player) gets no wait: nobody else is affected, and
     when its link goes the room ends as before.
-  - *The budget.* A wait that ends charges the seat's budget for its length in
-    whole seconds, rounded up (the countdown shows whole seconds: back while it
-    reads 1 spends the budget; a moment's stall costs a second). The next
-    stall's countdown starts from the rest -- after 20 s spent, from 10 -- and a
-    stall that begins with nothing left is taken over at once, with no wait and
-    no `Waiting` for it. The accounting is the server's alone and is not sim
+  - *The budget.* A wait that ends charges the seat's budget for the whole
+    silence, from its last contact to its return, in whole seconds, rounded up
+    and never past what is left (the countdown shows whole seconds: back while
+    it reads 1 spends the budget). The next stall's countdown starts from the
+    rest less that stall's own silence -- after 20 s spent, from 2 -- and a
+    stall whose silence has used what was left is taken over at once, with no
+    wait and no `Waiting` for it.
+  - *Short holds.* A silence shorter than `kStallMs` starts no wait but can
+    still stop the game: flow control (`canAdvance`) will not run the room more
+    than the seat's lead past its last acknowledged tick, so after the lead
+    (under a second at a normal ping) the room stands until the seat speaks
+    again. The server measures that directly: wherever a tick would close, a
+    seat is *holding* the game while the room is past `ackTick + leadTicks`
+    for it. The rule: each hold is timed from when the server first finds the
+    room stopped on the seat to when it no longer is (a pause or another seat's
+    wait suspends the clock; only time the game really stood for this seat
+    counts), and a hold that ends is charged its length minus a 1 s grace
+    (`kHoldGraceMs`), in whole seconds rounded up, never past what is left; one
+    of 1 s or less costs nothing, so ordinary network jitter is free. A hold
+    that reaches the grace plus what the budget has left is taken over then and
+    there, as a wait that runs out. The same applies to a seat that talks but
+    does not acknowledge (a stuck client still answering pings) and to a
+    reconnected seat catching up its missed ticks. A hold that turns into a
+    wait (the silence reaches `kStallMs`) is not charged twice: the wait
+    charges the silence from the last contact, and only what the hold held
+    before that contact (a seat that talked without keeping up, then went
+    quiet) is charged as a hold. Holds count only where a wait would (someone
+    else to wait with, past tick 0). The accounting is the server's alone and is not sim
     state: peers see it only as the `ms left` in `Waiting` (which they count
     down) and the `AiTakeover` tick, which the replay records like any event, so
     clients, referee and replay agree. Each `Waiting` also ends with the
     recipient's own budget (`running`, `ms`: its running countdown, else what
     its seat has left), so a client whose link drops counts down and retries
     for as long as the server will really wait, not a fresh 30 s. `Waiting`
-    is not recorded and no sim state changed, so protocol 289 still.
+    is not recorded and no sim state changed, so protocol 289 still. Like the
+    budget, the hold accounting is wall-clock time on the server alone.
   - *Coming back.* Talking again on the same connection inside the window (a
     frozen frame, a hitch, a Wi-Fi blip TCP rode out) ends that seat's wait. A
     client whose link actually dropped reconnects by itself: a new connection,

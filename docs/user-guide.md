@@ -1664,10 +1664,19 @@ If a player stops responding in a multiplayer game (nothing heard from them for
 **30 seconds**, and every screen shows a countdown: **WAITING FOR** *name* **27**. If
 several players stop at once, each has a line and a countdown of their own.
 
+The 30 seconds count from the moment the player **went quiet**, not from when the
+countdown appears: the 8 seconds before it are already spent, so a player's first
+stop counts down from **22**, and the computer takes over 30 seconds after they
+stopped responding.
+
 The 30 seconds are each player's for the **whole game**, not for each stop: a
-player who stops for 20 seconds and comes back has 10 left, so the next time
-they stop the countdown starts at **10**. Each stop uses at least a second.
-Once a player's time is used up, the next time they stop responding the
+player who is quiet for 20 seconds and comes back has 10 left, so the next time
+they stop their 8 quiet seconds use up most of it and the countdown starts at **2**.
+Each stop uses at least a second. Shorter stops count too: a player quiet for less
+than 8 seconds starts no countdown, but if the game stands still waiting for them
+for more than a second, everything past that first second comes off their 30
+(rounded up to whole seconds). An ordinary network hiccup of a second or less costs
+nothing. Once a player's time is used up, the next time they hold the game up the
 computer player takes over at once, without pausing the game.
 
 ![The game paused on Inner Circle with a dark banner near the top of the view reading WAITING FOR Brannoc 24 in gold letters, the minimap, mana bar and bottom bar in place around it](img/guide/disconnect-wait.jpg)

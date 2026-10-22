@@ -172,9 +172,14 @@ constexpr size_t kCmdQueueMax = size_t(tak::net::kCmdQueueCap);
 // The disconnect wait (net/protocol.h): how long a seated player may be silent before
 // the room stops for it, and each human seat's total wait for the whole game (spent
 // over all of its stalls) before a server AI takes the seat. A test server shortens
-// both (TAK_STALL_MS, TAK_DROP_WAIT_MS).
+// both (TAK_STALL_MS, TAK_DROP_WAIT_MS). The budget is spent from the player's last
+// contact, so the silence before a wait begins counts, and so does a shorter silence (or
+// any other stop) that holds the game: the room lead-limited on the seat's
+// acknowledgements (canAdvance) for longer than kHoldGraceMs, which ordinary network
+// jitter never is.
 uint64_t gStallMs = tak::net::kStallMs;
 uint64_t gDropWaitMs = tak::net::kDropWaitMs;
+constexpr uint64_t kHoldGraceMs = 1000;
 
 // A resume token (unguessable per session; not sim state, so no determinism or
 // cross-platform concern). std::random_device is entropy where available; mix in
@@ -398,8 +403,15 @@ struct Room {
     // The wait budget (gDropWaitMs per seat per game): when the running wait began, and
     // how much of the budget the seat's earlier waits spent. Server-only: what the room
     // sees is the countdown (Msg::Waiting) and the takeover tick (Event::AiTakeover).
+    // waitBegan is the seat's last contact (the silence before the wait is spent too).
     uint64_t waitBegan[kMaxSlots] = {};
     uint64_t waitSpentMs[kMaxSlots] = {};
+    // A hold without a wait (trackHolds): when the room was first found lead-limited on
+    // the seat (0 = not holding), how long it has been since (not counting a pause or
+    // another seat's wait), and when that was last seen (0 = suspended).
+    uint64_t holdBegan[kMaxSlots] = {};
+    uint64_t holdMs[kMaxSlots] = {};
+    uint64_t holdSeen[kMaxSlots] = {};
     // The token a seat had when an AI took it over, so a late reconnect is told why.
     uint64_t takenToken[kMaxSlots] = {};
     // Where each slot started (for an AI that takes a seat over mid-game: the enemy
@@ -721,12 +733,16 @@ private:
     bool canAdvance(const Room& r) const;   // false = wait for a lagging player (flow control)
     void checkHashes(Room& r, uint32_t tick);
     void dropClient(uint32_t id, const char* reason);
-    // The disconnect wait (protocol 289). beginWait stops the room for a seat it no
-    // longer hears from (kept if it is already waiting: the countdown never restarts);
-    // endWait lets it go on; takeOver hands the seat to a server Normal AI once the wait
-    // runs out. Each tells the room (Msg::Waiting).
-    void beginWait(Room& r, int slot, const char* why);
+    // The disconnect wait (protocol 289). beginWait stops the room for a seat it has not
+    // heard from since `since` (kept if it is already waiting: the countdown never
+    // restarts); endWait lets it go on; takeOver hands the seat to a server Normal AI once
+    // the wait runs out. Each tells the room (Msg::Waiting). trackHolds charges the seats
+    // that hold the game without a wait (flow control), endHold settles one such hold.
+    void beginWait(Room& r, int slot, const char* why, uint64_t since);
     void endWait(Room& r, int slot);
+    bool waitedWith(const Room& r, int slot) const;
+    void trackHolds(Room& r, uint64_t now);
+    void endHold(Room& r, int slot, uint64_t heldMs);
     void takeOver(Room& r, int slot);
     void sendWaiting(Client& c, const Room& r);
     void broadcastWaiting(Room& r);
@@ -3339,7 +3355,7 @@ void Server::dropClient(uint32_t id, const char* reason) {
         if(!r->campaignBattleId.empty() && s<2)r->campaignDisconnected[s]=true;
         dropPendingCommands(c, *r);   // the seat is HELD; its in-flight orders are not
         r->slotClient[s] = -1;
-        beginWait(*r, s, "disconnected");
+        beginWait(*r, s, "disconnected", c.lastRecvMs);
         Writer w; w.u8(uint8_t(s)); w.u8(1 /*dropped*/); w.u32(0);
         broadcastRoom(*r, Msg::PlayerStatus, w);
     } else if (r) {
@@ -3392,37 +3408,101 @@ void Server::broadcastWaiting(Room& r) {
     }
 }
 
-// A seat waits out what is left of its budget: a player who keeps dropping and coming
-// back cannot hold the game for longer than gDropWaitMs in all. A seat with nothing
-// left is due at once (the deadline is now, and the caller's deadline check takes it
-// over) and the room is never told to wait for it.
-void Server::beginWait(Room& r, int slot, const char* why) {
+// A seat's budget is charged in whole seconds, rounded up, never past the budget: the
+// countdown on screen shows whole seconds, so a player back while it read 1 has spent
+// the budget, and a stall of a moment still costs a second.
+static void chargeWait(uint64_t& spent, uint64_t ms) {
+    spent = std::min(gDropWaitMs, spent + (ms + 999) / 1000 * 1000);
+}
+
+// A seat waits out what is left of its budget, counted from its last contact (`since`):
+// the silence that made the room stop is already spent, so a player who keeps dropping
+// and coming back cannot hold the game for longer than gDropWaitMs in all. A seat whose
+// silence has used what was left is due at once (the deadline is now, and the caller's
+// deadline check takes it over) and the room is never told to wait for it.
+void Server::beginWait(Room& r, int slot, const char* why, uint64_t since) {
     if (r.waitDeadline[slot]) return;
-    const uint64_t now = nowMs(), left = gDropWaitMs - std::min(r.waitSpentMs[slot], gDropWaitMs);
-    r.waitBegan[slot] = now;
-    r.waitDeadline[slot] = now + left;
-    if (!left) {
+    const uint64_t now = nowMs();
+    since = std::min(since, now);
+    // A hold already running is the silence's from the last contact on; what it held
+    // before (a seat that talked but did not keep up, then went quiet) is charged now.
+    if (r.holdBegan[slot]) endHold(r, slot, since > r.holdBegan[slot] ? std::min(r.holdMs[slot], since - r.holdBegan[slot]) : 0);
+    const uint64_t left = gDropWaitMs - std::min(r.waitSpentMs[slot], gDropWaitMs);
+    r.waitBegan[slot] = since;
+    r.waitDeadline[slot] = std::max(since + left, now);
+    if (since + left <= now) {
         std::fprintf(stderr, "game %u: slot %d %s -- its wait is spent, an AI takes over\n", r.id, slot, why);
         return;
     }
     broadcastWaiting(r);
-    std::fprintf(stderr, "game %u: slot %d %s -- waiting %llus for it (of %llus), then an AI takes over\n",
-                 r.id, slot, why, (unsigned long long)((left + 999) / 1000),
+    std::fprintf(stderr, "game %u: slot %d %s -- waiting %llus for it (silent %.1fs, of %llus), then an AI takes over\n",
+                 r.id, slot, why, (unsigned long long)((since + left - now + 999) / 1000), double(now - since) / 1000.0,
                  (unsigned long long)(gDropWaitMs / 1000));
 }
 
-// A wait that ends charges the seat's budget in whole seconds, rounded up: the
-// countdown on screen shows whole seconds, so a player back while it read 1 has
-// spent the budget, and a stall of a moment still costs a second.
+// A wait that ends charges the seat's budget for the whole silence, from its last contact
+// to now (chargeWait).
 void Server::endWait(Room& r, int slot) {
     if (!r.waitDeadline[slot]) return;
-    const uint64_t waited = nowMs() - r.waitBegan[slot];
-    r.waitSpentMs[slot] = std::min(gDropWaitMs, r.waitSpentMs[slot] + (waited + 999) / 1000 * 1000);
+    chargeWait(r.waitSpentMs[slot], nowMs() - r.waitBegan[slot]);
     r.waitDeadline[slot] = 0;
     if (!r.held()) r.rebasePace(nowUs());   // rebase the tick clock (no burst)
     broadcastWaiting(r);
     std::fprintf(stderr, "game %u: slot %d is back -- wait over, %llus of it left\n", r.id, slot,
                  (unsigned long long)((gDropWaitMs - r.waitSpentMs[slot]) / 1000));
+}
+
+// The room waits for a seat only with someone else to wait with: another seated player
+// still connected, or a spectator. A player alone in the room (single-player) keeps the
+// plain timeout, and the room ends when it goes.
+bool Server::waitedWith(const Room& r, int slot) const {
+    if (!r.spectators.empty()) return true;
+    for (int j = 0; j < kMaxSlots; ++j)
+        if (j != slot && r.slotClient[j] >= 0) return true;
+    return false;
+}
+
+// A hold without a wait: a seated player's silence shorter than gStallMs (or a client
+// that talks but does not keep up, or one catching up after a reconnect) still stops the
+// game once the room has run its lead past the seat's last acknowledged tick (canAdvance).
+// Called where a tick would close, so only time the game was really held counts (not a
+// pause or another seat's wait, which suspend it). A hold that ends is charged for what
+// it lasted past kHoldGraceMs (endHold); one that lasts past the grace plus what the
+// budget has left is taken over at once, as a wait that runs out. Only called with no
+// tick job in flight (takeOver).
+void Server::trackHolds(Room& r, uint64_t now) {
+    for (int i = 0; i < kMaxSlots; ++i) {
+        bool holding = false;
+        if (r.tick > 0 && r.slots[i].type == 1 && !r.defeated[size_t(i)] && r.slotClient[i] >= 0 && waitedWith(r, i)) {
+            auto it = clients_.find(uint32_t(r.slotClient[i]));
+            holding = it != clients_.end() && it->second->loaded &&
+                      r.tick > it->second->ackTick + it->second->leadTicks;
+        }
+        if (!holding) {
+            if (r.holdBegan[i]) endHold(r, i, r.holdMs[i]);
+            continue;
+        }
+        if (!r.holdBegan[i]) r.holdBegan[i] = now;
+        else if (r.holdSeen[i]) r.holdMs[i] += now - r.holdSeen[i];
+        r.holdSeen[i] = now;
+        const uint64_t left = gDropWaitMs - std::min(r.waitSpentMs[i], gDropWaitMs);
+        if (r.holdMs[i] >= kHoldGraceMs + left) {
+            std::fprintf(stderr, "game %u: slot %d held the game %.1fs -- its wait is spent\n", r.id, i,
+                         double(r.holdMs[i]) / 1000.0);
+            takeOver(r, i);
+        }
+    }
+}
+
+// A hold over: what it held the game past kHoldGraceMs is charged (chargeWait), so an
+// occasional hitch of a second costs nothing and repeated short silences cannot hold the
+// game for longer than the budget.
+void Server::endHold(Room& r, int slot, uint64_t heldMs) {
+    r.holdBegan[slot] = r.holdMs[slot] = r.holdSeen[slot] = 0;
+    if (heldMs <= kHoldGraceMs) return;
+    chargeWait(r.waitSpentMs[slot], heldMs - kHoldGraceMs);
+    std::fprintf(stderr, "game %u: slot %d held the game %.1fs -- %llus of its wait left\n", r.id, slot,
+                 double(heldMs) / 1000.0, (unsigned long long)((gDropWaitMs - r.waitSpentMs[slot]) / 1000));
 }
 
 // The wait ran out. The seat's connection, if it is still open, is closed; the seat
@@ -3436,6 +3516,7 @@ void Server::takeOver(Room& r, int slot) {
     if (r.slots[slot].type != 1 || r.defeated[size_t(slot)]) { endWait(r, slot); return; }
     r.waitDeadline[slot] = 0;
     r.waitSpentMs[slot] = gDropWaitMs;
+    r.holdBegan[slot] = r.holdMs[slot] = r.holdSeen[slot] = 0;
     if (int cid = r.slotClient[slot]; cid >= 0) {
         auto it = clients_.find(uint32_t(cid));
         if (it != clients_.end()) unseat(*it->second, "you stopped responding: an AI took over your seat");
@@ -3829,12 +3910,12 @@ int Server::run() {
             for(auto& [id,peer]:clients_) {(void)id;refreshCampaignSnapshot(*peer);refreshCampaignMatchmaking(*peer);}
         }
         // The disconnect wait. A seated player the room has heard nothing from for
-        // gStallMs stops the game (the same as a closed connection, see dropClient); one
-        // that talks again, on the same connection, lets it go on; one still away when
-        // its countdown runs out has its seat taken over by an AI. Silence counts only
-        // once the game has ticked (loading has its own deadlines) and only with someone
-        // else still connected to wait with: a player alone in the room (single-player)
-        // keeps the plain timeout below, and the room ends when it goes. The countdown
+        // gStallMs stops the game (the same as a closed connection, see dropClient), the
+        // countdown already short by that silence; one that talks again, on the same
+        // connection, lets it go on; one still away when its countdown runs out has its
+        // seat taken over by an AI. Silence counts only once the game has ticked (loading
+        // has its own deadlines) and only with someone else still connected to wait with
+        // (waitedWith). The countdown
         // itself runs out whatever the tick: a seat that closed before the first tick
         // (dropClient) would otherwise hold the room forever.
         now = nowMs();
@@ -3848,10 +3929,7 @@ int Server::run() {
                 const bool silent = now - it->second->lastRecvMs >= gStallMs;
                 if (!silent) { endWait(r, i); continue; }
                 if (r.waitDeadline[i]) continue;
-                bool others = !r.spectators.empty();
-                for (int j = 0; j < kMaxSlots && !others; ++j)
-                    others = j != i && r.slotClient[j] >= 0;
-                if (others) beginWait(r, i, "stopped responding");
+                if (waitedWith(r, i)) beginWait(r, i, "stopped responding", it->second->lastRecvMs);
             }
             if (r.tickJob.valid()) continue;   // r.ai belongs to the worker until it lands
             for (int i = 0; i < kMaxSlots; ++i)
@@ -3898,9 +3976,12 @@ int Server::run() {
         size_t running=0;for(const auto& [id,room]:rooms_) {(void)id;running+=room.running;}
         for(auto& [id,room]:rooms_) {
             (void)id;
+            // A pause or a wait is not a seat's hold: suspend those running (trackHolds).
+            if(room.running && room.held())for(auto& seen:room.holdSeen)seen=0;
             if(!room.running || room.held() || room.tickJob.valid() || room.campaignResult ||
                room.campaignFault || room.resourceLimited || !room.simulationError.empty() ||
                !roomOccupied(room) || !roomActive(room) || room.nextTickUs()>nowTickUs)continue;
+            trackHolds(room,now);
             if(!canAdvance(room)) {room.rebasePace(nowTickUs+kFlowRetryMs*1000);continue;}
             try {closeTick(room,running>1);}
             catch(const std::exception& e) {

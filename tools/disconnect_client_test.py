@@ -33,7 +33,7 @@ import traceback
 from replay_always_test import complete_ticks, replays
 
 MAP = 'Inner Circle'
-STALL_MS, WAIT_MS = 1500, 3000
+STALL_MS, WAIT_MS = 1500, 5000   # the budget counts from the last contact: the stall spends 1.5 s
 PASSWORD = 'local synthetic disconnect test password'
 TIME = 30                      # game seconds each client plays
 DONE = re.compile(r'mp-headless done: tick=(\d+) hash=(\w+) units=(\d+) err=(\S+)')

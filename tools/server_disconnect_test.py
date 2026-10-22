@@ -2,10 +2,12 @@
 """The disconnect wait (protocol 289) on a real server, at protocol level.
 
 Two seated players on a generated map; the server runs with a short stall threshold and
-wait (TAK_STALL_MS / TAK_DROP_WAIT_MS) so nothing here waits the real 30 s:
+wait (TAK_STALL_MS / TAK_DROP_WAIT_MS) so nothing here waits the real 8 s and 30 s. The
+budget counts from a player's last contact, so the silence before a wait is spent too:
 
-  takeover   Bob goes silent: Alice is told the room is WAITING for him with a countdown,
-             no tick closes during it, and when it runs out a bundle carries
+  takeover   Bob goes silent: Alice is told the room is WAITING for him with a countdown of
+             the budget less the stall threshold already spent, no tick closes during it,
+             and when it runs out (the whole budget after his last contact) a bundle carries
              Event::AiTakeover for his seat, the game goes on and his seat issues
              commands (the server's Normal AI). His connection is closed, and a late
              reconnect is told an AI has the seat.
@@ -16,12 +18,20 @@ wait (TAK_STALL_MS / TAK_DROP_WAIT_MS) so nothing here waits the real 30 s:
              streamed the bundles from exactly that tick, identical to Alice's; the old
              token is spent.
   leave      an explicit LeaveGame is a Leave event at once, with no wait.
-  budget     the wait is a budget per seat per game, charged in whole seconds: Bob back
-             1.2 s into his first wait has spent 2 s of the 3, so his second wait counts
-             down from 1 s (his own client is told so) and he is taken over when it
-             runs out, not 3 s later.
-  spent      Bob back in the last second of his wait has spent it all: his next stall
-             is taken over at once, without the room waiting for him.
+  budget     the wait is a budget per seat per game, charged in whole seconds for the
+             whole silence: Bob back 0.5 s into his first wait, 3.5 s after he went quiet,
+             has spent 4 s of the 8, so his second wait counts down from the 1 s his
+             silence has not used (his own client is told the 4 s) and he is taken over
+             when it runs out, not 8 s later.
+  spent      Bob back in the last second of his wait has spent it all: his next silence
+             is taken over as soon as it holds the game past the 1 s grace, without the
+             room waiting for him.
+  hold       silences shorter than the stall threshold never show a wait, but each holds
+             the game (the room runs its lead past Bob's last acknowledged tick, then
+             stops) for longer than the 1 s grace, and that is charged: repeated, they
+             spend the budget and an AI takes the seat over.
+  jitter     silences of a second hold the game for less than the grace: however many,
+             they cost nothing, and a stall after them still has the whole budget.
 """
 import argparse
 import os
@@ -36,7 +46,8 @@ import crusades_auth_network_test as auth
 from crusades_battle_network_test import lobby
 from server_public_test import login, options, server
 
-STALL_MS, WAIT_MS = 1500, 3000
+STALL_MS, WAIT_MS = 3000, 8000
+HOLD_S, JITTER_S = 2.4, 1.0        # Bob's silences under the threshold (the hold is ~0.7 s less)
 AI_TAKEOVER, LEAVE = 4, 2          # net::Event::Kind
 WIDE = (23, 26)                    # ReclaimArea, BuildManaArea carry x2/z2 (43 bytes)
 
@@ -204,17 +215,20 @@ def same_bundles(a, b, first):
 def scenario_takeover(port, h):
     room, alice, bob = start(port, h, 'Alice', 'Bob')
     try:
-        # Bob stops reading and sending. The room stops for him with a countdown.
+        # Bob stops reading and sending. The room stops for him with a countdown, short by
+        # the silence the stall threshold has already spent.
+        silent = time.monotonic()
         assert alice.pump(10, waiting_for(1)), 'Alice was never told the room waits for Bob'
         began, waits = alice.waits[-1]
         ms = dict(waits)[1]
-        assert 0 < ms <= WAIT_MS, ms
+        assert WAIT_MS - STALL_MS - 700 <= ms <= WAIT_MS - STALL_MS, ('the countdown was not the budget less the silence', ms)
         frozen = alice.last_tick()
         alice.pump(1.0)
         assert alice.last_tick() <= frozen + 1, ('ticks closed during the wait', frozen, alice.last_tick())
         # The wait runs out: the countdown clears and the seat is taken over in a bundle.
         assert alice.pump(WAIT_MS / 1000 + 8, lambda p: events_of(p, AI_TAKEOVER)), 'no AI takeover event'
-        assert time.monotonic() - began >= WAIT_MS / 1000 - 0.5, 'the takeover came before the wait ran out'
+        took = time.monotonic() - silent
+        assert WAIT_MS / 1000 - 0.7 <= took <= WAIT_MS / 1000 + 1.0, ('the takeover did not come a budget after the last contact', took)
         assert any(not w for _, w in alice.waits), 'the countdown never cleared'
         tick, event = events_of(alice, AI_TAKEOVER)[0]
         assert event == (AI_TAKEOVER, 1)
@@ -302,7 +316,7 @@ def stall_and_return(alice, bob, after):
     Returns once the wait is over and both have caught up a little."""
     assert alice.pump(10, waiting_for(1)), 'the room never waited for the silent player'
     began, waits = alice.waits[-1]
-    assert dict(waits)[1] > WAIT_MS - 1000, ('the first wait did not have the whole budget', waits)
+    assert dict(waits)[1] > WAIT_MS - STALL_MS - 700, ('the first wait did not have the whole budget', waits)
     alice.pump(after - (time.monotonic() - began))
     bob.send('Ping')
     assert pump_all((alice, bob), 5, lambda: not_waiting(alice)), 'the wait did not end when Bob came back'
@@ -315,16 +329,17 @@ def stall_and_return(alice, bob, after):
 def scenario_budget(port, h):
     _room, alice, bob = start(port, h, 'Alice', 'Bob')
     try:
-        stall_and_return(alice, bob, 1.2)   # charged 2 s: 1 s of the budget left
+        stall_and_return(alice, bob, 0.5)   # silent ~3.5 s, charged 4 s: 4 s of the budget left
         # Bob's own client is told what is left, the window it would reconnect within.
-        assert getattr(bob, 'own', None) == (0, WAIT_MS - 2000), ('Bob was not told his budget', getattr(bob, 'own', None))
-        # Bob goes silent again: the countdown starts from what is left, and runs out.
+        assert getattr(bob, 'own', None) == (0, WAIT_MS - 4000), ('Bob was not told his budget', getattr(bob, 'own', None))
+        # Bob goes silent again: the countdown starts from what is left less this silence,
+        # and runs out.
         assert alice.pump(10, waiting_for(1)), 'the second stall did not make the room wait'
         began, waits = alice.waits[-1]
-        assert 0 < dict(waits)[1] <= WAIT_MS - 2000, ('the second wait did not start from the rest of the budget', waits)
+        assert 0 < dict(waits)[1] <= WAIT_MS - 4000 - STALL_MS, ('the second wait did not start from the rest of the budget', waits)
         assert alice.pump(WAIT_MS / 1000 + 5, lambda p: events_of(p, AI_TAKEOVER)), 'no AI takeover on the second stall'
         took = time.monotonic() - began
-        assert 0.5 <= took < (WAIT_MS - 1000) / 1000 + 0.6, ('the takeover did not come when the budget ran out', took)
+        assert 0.4 <= took < (WAIT_MS - 4000 - STALL_MS) / 1000 + 0.6, ('the takeover did not come when the budget ran out', took)
         assert events_of(alice, AI_TAKEOVER)[0][1] == (AI_TAKEOVER, 1)
         assert not events_of(alice, LEAVE)
     finally:
@@ -334,7 +349,7 @@ def scenario_budget(port, h):
 def scenario_spent(port, h):
     _room, alice, bob = start(port, h, 'Alice', 'Bob')
     try:
-        seen = stall_and_return(alice, bob, (WAIT_MS - 500) / 1000)   # back in the last second
+        seen = stall_and_return(alice, bob, (WAIT_MS - STALL_MS - 500) / 1000)   # back in the last second
         silent = time.monotonic()
         assert alice.pump(STALL_MS / 1000 + 6, lambda p: events_of(p, AI_TAKEOVER)), 'no AI takeover with the budget spent'
         took = time.monotonic() - silent
@@ -345,7 +360,49 @@ def scenario_spent(port, h):
         alice.close(); bob.close()
 
 
-SCENARIOS = [scenario_takeover, scenario_resume, scenario_reconnect, scenario_leave, scenario_budget, scenario_spent]
+def short_silences(alice, bob, seconds, times):
+    """Bob goes quiet for `seconds` (under the stall threshold), then keeps up for a
+    moment, up to `times` over or until his seat is taken over. Returns how many."""
+    n = 0
+    while n < times and not events_of(alice, AI_TAKEOVER):
+        n += 1
+        alice.pump(seconds, lambda p: events_of(p, AI_TAKEOVER))
+        before = alice.last_tick()
+        pump_all((alice, bob), 0.8, lambda: events_of(alice, AI_TAKEOVER) or alice.last_tick() > before + 18)
+    return n
+
+
+def scenario_hold(port, h):
+    _room, alice, bob = start(port, h, 'Alice', 'Bob')
+    try:
+        # Each silence holds the game ~1.7 s, charged 1 s past the grace: eight spend the 8 s
+        # budget and the ninth is taken over a second into its hold.
+        n = short_silences(alice, bob, HOLD_S, 16)
+        assert events_of(alice, AI_TAKEOVER), 'repeated short holds never spent the budget'
+        assert events_of(alice, AI_TAKEOVER)[0][1] == (AI_TAKEOVER, 1)
+        assert WAIT_MS // 2000 + 1 <= n <= WAIT_MS // 1000 + 2, ('the budget was not spent by the holds beyond the grace', n)
+        assert not any(s == 1 for _, w in alice.waits for s, _ in w), 'a silence under the threshold made the room wait'
+    finally:
+        alice.close(); bob.close()
+
+
+def scenario_jitter(port, h):
+    _room, alice, bob = start(port, h, 'Alice', 'Bob')
+    try:
+        # Charged a rounded-up second each without the grace, these would spend it all.
+        n = short_silences(alice, bob, JITTER_S, WAIT_MS // 1000 + 2)
+        assert not events_of(alice, AI_TAKEOVER), ('ordinary jitter was charged', n)
+        assert not any(s == 1 for _, w in alice.waits for s, _ in w), 'jitter made the room wait'
+        # A real stall afterwards still has the whole budget.
+        assert alice.pump(10, waiting_for(1)), 'the stall after the jitter did not make the room wait'
+        ms = dict(alice.waits[-1][1])[1]
+        assert ms > WAIT_MS - STALL_MS - 700, ('jitter spent the budget', ms)
+    finally:
+        alice.close(); bob.close()
+
+
+SCENARIOS = [scenario_takeover, scenario_resume, scenario_reconnect, scenario_leave, scenario_budget, scenario_spent,
+             scenario_hold, scenario_jitter]
 
 
 def main():
@@ -374,7 +431,7 @@ def main():
         raise SystemExit('FAIL: ' + ', '.join(failed))
     print('PASS: disconnect wait -- silent seat waited for then taken over by a Normal AI, resume inside the '
           'wait, reconnect from the first missing tick, explicit leave without a wait, one wait budget per seat '
-          'over all of its stalls')
+          'over all of its stalls, counted from the last contact, short holds past a 1 s grace charged, jitter free')
 
 
 if __name__ == '__main__':
