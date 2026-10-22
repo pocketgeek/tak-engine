@@ -105,7 +105,6 @@ mix; 0.8.7 or earlier still cannot play with either.
 - The `--mpai` Inner Circle seed 1 hashes are unchanged from 0.8.8: Retail
   60 s `b353410003e98dd5`, 300 s `a3d953803a064191`; Legion 60 s
   `0825aeb9e8139203`, 300 s `ce5c4ba7562e53b9`.
-  <!-- LEAD: confirm on the tagged source on Linux, Windows and macOS. -->
 
 ## Known limits
 

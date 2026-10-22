@@ -9,7 +9,7 @@ payload **4**, database schema **9**: all unchanged from 0.8.8.
      Replays, troubleshooting), docs/public-server.md,
      docs/random-map-generation.md and docs/multiplayer-design.md. -->
 
-TODO-LEAD: Tagged `v0.8.9` at `<sha>` (annotated tag object `<obj>`) and published on `<date> <time> UTC`.
+Tagged `v0.8.9` at `e170e226` (annotated tag object `93bbdf28`) and published on 2026-10-22 06:18 UTC.
 
 ## Scope and compatibility
 
@@ -59,9 +59,7 @@ Legion are expected to be bit-identical to 0.8.8.** `--mpai` Inner Circle seed 1
 must equal 0.8.8: Retail 60 s `b353410003e98dd5`, 300 s `a3d953803a064191`;
 Legion 60 s `0825aeb9e8139203`, 300 s `ce5c4ba7562e53b9`.
 On Linux (optimized Debug, `71757b75`) all four equal 0.8.8 (see the local checks).
-TODO-LEAD: `--mpai` on Windows and macOS (optimized Debug builds of the tag on
-oden-win and the arm64 MacBook, all eight games, `err=none end=timelimit`, no
-desync or referee-suspect line).
+`--mpai` on Windows and macOS was run on optimized Debug builds (`-O2`) of the tag `e170e226`, built on oden-win (MSYS2 MINGW64, GCC) and on the arm64 MacBook (Apple Clang). The release binaries reject the harness flags, so Debug builds were needed. The settings were Inner Circle, `takserver --local --no-auth --seed 1`, a scratch profile, and `TAK_LEGION=1` for Legion. All eight games ended `err=none end=timelimit` and match Linux and 0.8.8: Retail 60 s `b353410003e98dd5` (4 units), 300 s `a3d953803a064191` (13 units); Legion 60 s `0825aeb9e8139203` (4 units), 300 s `ce5c4ba7562e53b9` (18 units), on both hosts. Neither host logged a desync or referee-suspect line. The tag's dispatched Determinism run (39726695130) runs no `--mpai` game. Its cross-build check agrees on golden `dcef618cd2e4d558`.
 
 **Compatibility.** `kNetVersion` is **288** in `src/net/protocol.h` at
 `71757b75`, as at `v0.8.8`. `kReplayFormat` is **14** in
@@ -325,21 +323,45 @@ every checkpoint in every case.
 
 ## CI and packages
 
-TODO-LEAD: main CI on the final source (Windows, Linux packages, macOS); tag CI
-(Determinism dispatched with `gh workflow run determinism.yml --ref v0.8.9`,
-Linux, Windows, macOS incl. Sign + notarize) with run links and any reruns
-(known flakes: macOS `stream_test` timing, "Upload CI artifact: ENOTFOUND",
-macOS x64 `hdiutil` "Resource busy", Slackware mirror md5sum error).
+Main CI on the final source `e170e226`: [Determinism](https://github.com/pocketgeek/tak-engine/actions/runs/39723733377), [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/39723733426), [Linux packages](https://github.com/pocketgeek/tak-engine/actions/runs/39723733393) and [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/39723733422) all passed on the first attempt.
 
-TODO-LEAD: the 29 assets (expected the same set as 0.8.8 with the version
-swapped): SHA-256 digests and sizes, build ids `0.8.9 (build v0.8.9)` on Linux,
-Windows and macOS, 9 Authenticode Valid files on oden-win, both DMGs and apps
-notarized and stapled, `NSHighResolutionCapable`, the microphone entitlement,
-Opus static with `OPUS-LICENSE.txt`, `CHAT-FONT-LICENSE.txt` everywhere, no
-libsecret/GLib `NEEDED`, no `mods/` or `click.hpi` in any package, and
-`docs/release-0.8.9-notes.md` plus this report in the source tree at the tag.
+On the exact tag (`e170e226`, annotated tag object `93bbdf28`), all four workflows passed. Linux packages needed one rerun for a known network flake: on the first attempt the Ubuntu 22.04 x64 job failed in "Configure + build" because `https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz` could not be downloaded, so "Attach to release" was skipped. `gh run rerun --failed` passed on attempt 2. No other job failed, so none of the other known flakes appeared: macOS `stream_test` timing (x64 and arm64), "Upload CI artifact: ENOTFOUND", macOS x64 `hdiutil` "Resource busy", the Fedora openh264 mirror, the Slackware mirror `md5sum` error, `gitlab.freedesktop.org` connect failures, and the Ubuntu 22.04 `crusades_client_network_test` "complete replay not published".
 
-TODO-LEAD: publication time and "latest release" check.
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/39726695130): started manually on the tag because the workflow is path-filtered. `unit-tests`, `detmath` and `sim-equiv` passed. The GCC and Clang x86-64 builds at O0/O2/O3 all agree on golden `dcef618cd2e4d558` (aarch64 skipped), the same as 0.8.8. This workflow runs no `--mpai` game.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/39726687160): all 16 native package jobs and the release attachment (attempt 2).
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/39726687269): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/39726687304): both builds plus the **Sign + notarize** job for each architecture. That job replaced the unsigned macOS ZIPs and DMGs in the draft with signed, notarized and stapled ones.
+
+The release was created as a draft with these notes, and tagged CI attached the packages. All **29 assets** were downloaded after the macOS signing finished. They are the same set as 0.8.8 with the version swapped, and none has size 0 or an upload state other than "uploaded". Each one matched GitHub's SHA-256 digest and byte size before publication. Every release asset is between 0.03% and 0.12% larger than its 0.8.8 counterpart (ratios 1.0003 to 1.0012, 7-32 KB). The debug archives grew 0.20% to 0.26%. The release `takclient` changed by -16 KB to +68 KB across platforms, and every `takserver` is exactly the same size as in 0.8.8. That fits a client-only release with no new dependencies. Each package, installer and ZIP ships the same file list as its 0.8.8 counterpart.
+
+- **Build ids.** The client and server in every Linux package carry `v0.8.9`. That covers Debian 12 and 13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44 and openSUSE Leap 16.0 (each for both architectures), plus Arch, Slackware and both Linux debug tarballs.
+  - On Linux, the x86-64 `takclient` and `takserver` report `0.8.9 (build v0.8.9)`. That holds for Debian 12 and 13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44, openSUSE Leap 16.0, Slackware and the x64 debug tarball. So does the Arch `takserver`. The Arch `takclient` needs glibc 2.44, newer than the checking host's 2.43, so only its build string was checked. For the arm64 binaries, only the build string `v0.8.9` was checked.
+  - On Windows 11, the x64 Windows ZIP's `takclient.exe` and `takserver.exe` report `0.8.9 (build v0.8.9)`. For the ARM64 `takclient.exe` and `takserver.exe`, and for the installer's, only the build string `v0.8.9` was checked.
+  - On the arm64 MacBook (macOS 26.6.2), `takclient` and `takserver` report `0.8.9 (build v0.8.9)` for both architectures. This holds for the bare programs from the ZIPs and for the copies inside the game app from each DMG and each ZIP. The x64 copies ran under Rosetta.
+- **Windows signatures.** `Get-AuthenticodeSignature` on oden-win reports **Valid** (CN=Curtis Edge, timestamped) for 9 signed files, the same count as 0.8.8. They are the setup `.exe`, plus `takclient.exe`, `takserver.exe`, `cartographer.exe` and `crusades_admin.exe` in both the x64 and ARM64 ZIPs. The debug ZIPs were not checked.
+- **macOS notarization.** On the MacBook, both DMGs pass `xcrun stapler validate` and `spctl` (open, primary signature) as **accepted, source=Notarized Developer ID, origin=Developer ID Application: Curtis Edge (L479Y59RN8)**.
+  - Both apps (the game and TAK Cartographer) pass both checks the same way, from each DMG and from each ZIP.
+  - Every bundled and bare `takclient`, `takserver`, `cartographer` and `crusades_admin` passes `codesign --verify --strict` (TeamIdentifier L479Y59RN8).
+  - `spctl` says the bare command-line programs do not seem to be an app. That is expected for unstapled command-line tools.
+- **Opus is static.**
+  - No packaged Linux `takclient` or `takserver` has a `NEEDED` entry beyond libc, libm and the loader (Slackware also lists libdl and libpthread), so none needs libopus. The Debian and Ubuntu packages depend only on `libc6`, and the RPMs require only libc, libm and the loader.
+  - No Windows `.exe` imports or names an Opus DLL, and the ZIPs ship no DLLs. The x64 import tables list only system DLLs.
+  - No macOS binary links a libopus dylib (`otool -L`).
+  - `OPUS-LICENSE.txt` is in every Debian, RPM, Arch and Slackware package, in both Linux debug tarballs, in the Windows installer, in all four release ZIPs (inside the game app's Resources on macOS) and in the four debug ZIPs.
+- **Font licences.** `CHAT-FONT-LICENSE.txt` sits beside `EDITOR-FONT-LICENSE.txt` in every place the game ships:
+  - every Debian, RPM, Arch and Slackware package (`share/licenses/tak-engine`) and both Linux debug tarballs;
+  - the Windows installer, both Windows release ZIPs and both Windows debug ZIPs;
+  - both macOS debug ZIPs;
+  - the game app's `Contents/Resources` from both DMGs and both ZIPs.
+
+  As in 0.8.8, TAK Cartographer's app has only `EDITOR-FONT-LICENSE.txt`, which covers its Noto Sans Mono editor font.
+- **Mods folder.** No package, installer, ZIP or DMG contains an `overrides/` or `mods/` directory, and none contains `click.hpi`. This is the same as 0.8.8: `mods/cosmetic/click.hpi` exists only in the repository.
+- **macOS microphone.** The game app's `Info.plist` carries `NSMicrophoneUsageDescription` in both DMGs and both ZIPs. The `com.apple.security.device.audio-input` entitlement is on the game app's `takclient` (DMG and ZIP, both architectures) and on the bare ZIP `takclient`. It is absent from `takserver`, `crusades_admin` and `cartographer`.
+- **macOS Retina.** `NSHighResolutionCapable` is `true` in the `Info.plist` of both apps (the game and TAK Cartographer), from both DMGs and both ZIPs.
+- As in 0.8.1 to 0.8.8, no packaged Linux `takclient` has a `NEEDED` entry for libsecret, GLib, GIO or GObject.
+- `docs/quick-start.md`, `docs/release-0.8.9-notes.md`, this report and the build-line pictures `docs/img/guide/build-line.jpg` and `docs/img/quick/build-line.jpg` are in the source tree at the tag. `kNetVersion` there is 288.
+
+Published 2026-10-22 06:18 UTC with `gh release edit v0.8.9 --draft=false --latest`; the API's latest release is `v0.8.9`, with 29 assets.
 
 ## Screenshots
 
