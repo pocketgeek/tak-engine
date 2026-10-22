@@ -5938,10 +5938,10 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
             if (w.melee) { score+=fireRand(q);score+=fireRand(q);score+=fireRand(q); }
         }
         if (mobile) {
-            // Turn penalty. 412a77..412ae2 also scale turnrate by two type
-            // words under the mover's terrain bits 11/12; not ported (TODO),
-            // the unscaled rate is used.
-            int32_t tr=u.type->turnRate&0xffff;
+            // Turn penalty, on the turn rate the mover's terrain bits scale
+            // (412a77..412ae2: road, else water multiplier).
+            int32_t tr=retailEffectiveTurnRate(uint16_t(u.type->turnRate),u.type->roadMult.v,
+                                               u.type->waterMult.v,u.groundTerrainFlags);
             if (tr<1000) {
                 if (tr<=0) tr=1;
                 const int32_t d=std::abs(int32_t(int16_t(uint16_t(

@@ -1,8 +1,10 @@
 // The fire-at-will sweep's companions: deterministic per-player vision (icd
 // 4f7210 / 4c6800 / 411700), AI weapon switching (40f411..40fb92) and the
-// idle retaliation mission (409a50 part a, 4d7de0). One ctest per part:
-//   fire_sweep_test vision | switch | retaliation
+// idle retaliation mission (409a50 part a, 4d7de0), and the target score's
+// terrain-scaled turn rate (412a77..412ae2). One ctest per part:
+//   fire_sweep_test vision | switch | retaliation | turnrate
 #include "sim/sim.h"
+#include "sim/retailcost.h"
 #include "sim/retailexploration.h"
 #include <cstdio>
 #include <cstring>
@@ -114,6 +116,7 @@ void shootMe() {
 
 void weaponSwitch();
 void retaliation();
+void turnRate();
 
 int main(int argc,char** argv) {
     const std::string part=argc>1 ? argv[1] : "all";
@@ -121,6 +124,7 @@ int main(int argc,char** argv) {
     if(part=="vision" || part=="all")shootMe();
     if(part=="switch" || part=="all")weaponSwitch();
     if(part=="retaliation" || part=="all")retaliation();
+    if(part=="turnrate" || part=="all")turnRate();
     return failures?1:0;
 }
 void weaponSwitch() {
@@ -253,4 +257,45 @@ void retaliation() {
         firstHit(w,h,400);
         check(h.hit && w.unit(h.victim)->orders.empty(),"retaliation: an attacker beyond 0.9 x leash + range gets no mission");
     }
+}
+
+// 412a77..412ae2 on a synthetic unit (UnitDef +0x18e turnrate, +0x16e/+0x172
+// water/road multiplier, mover +0x36 flags), emulated in the retail binary.
+void turnRate() {
+    struct Case { uint16_t turn; int32_t road,water; uint16_t flags; uint16_t want; const char* label; };
+    const Case cases[]={
+        {300,0x13333,0x10000,0,     300,"turnrate: off-road dry ground keeps the type's rate"},
+        {300,0x13333,0x10000,0x800, 359,"turnrate: road bit scales by roadmultiplier, truncated"},
+        {300,0x13333,0x8000, 0x1000,150,"turnrate: water bit scales by watermultiplier"},
+        {300,0x13333,0x8000, 0x1800,359,"turnrate: road wins over water"},
+        {455,0x18000,0x6666, 0x800, 682,"turnrate: 1.5 road"},
+        {455,0x18000,0x6666, 0x1000,181,"turnrate: 0.4 water truncates toward zero"},
+        {333,0x15555,0xaaaa, 0x1000,221,"turnrate: 2/3 water"},
+        {999,0x10001,0,      0x800, 999,"turnrate: just over 1.0 road"},
+        {1,  0x8000, 0,      0x800, 0,  "turnrate: a product under 1 truncates to 0"},
+        {0,  0x13333,0,      0x800, 0,  "turnrate: zero stays zero"},
+        {700,-0x8000,0x10000,0x800, 65186,"turnrate: a negative multiplier wraps in 16 bits"},
+        {900,0x640000,0,     0x800, 24464,"turnrate: an overflowing product keeps the low 16 bits"},
+        {65535,0x20000,0,    0x1000,0,"turnrate: a zero water multiplier gives 0"},
+    };
+    for(const Case& c:cases)
+        check(sim::retailEffectiveTurnRate(c.turn,c.road,c.water,c.flags)==c.want,c.label);
+    // In the sweep: a 600 turnrate pays the two penalty draws; on a 2.0 road
+    // it turns at 1200 and pays none, in water at 0.5 it still pays them.
+    auto draws=[](int32_t road,int32_t water,uint16_t flags) {
+        auto g=gunner(400);g.roadMult=sim::Fixed::raw(road);g.waterMult=sim::Fixed::raw(water);
+        const auto d=dummy();
+        sim::World w;setup(w,2);
+        const int shooter=w.spawn(&g,400,1000,0,0);w.spawn(&d,400,800,0,1);
+        w.unit(shooter)->fireState=0;
+        int picked=0;
+        for(int i=0;i<8 && !picked;++i){ticks(w,1);picked=w.retailSelectTarget(*w.unit(shooter),0,true);}
+        if(!picked)return -1;
+        int n=0;w.setRngObserver([&](const sim::World::RngObservation&){++n;});
+        w.unit(shooter)->groundTerrainFlags=flags;
+        return w.retailSelectTarget(*w.unit(shooter),0,true) ? n : -1;
+    };
+    const int base=draws(0x20000,0x8000,0);
+    check(base>0 && draws(0x20000,0x8000,0x800)==base-2,"turnrate: a 2.0 road lifts the sweep's rate past the penalty");
+    check(base>0 && draws(0x20000,0x8000,0x1000)==base,"turnrate: 0.5 water keeps the penalty draws");
 }

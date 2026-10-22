@@ -148,9 +148,21 @@ weapon slots is **auto** or **manual**:
   weapons (`51a8b0`) and sweep `commandfire` weapons; human owners do not.
 
 Deviations: auto slots of ranged, non-lobbing ground weapons keep our 2D
-clear-shot test (retail has none); turn-rate terrain multipliers and parts of
-the stone/freeze/paralyze immunity checks are not modelled. `shootme` is: a
-human-owned shooter never auto-picks a type without it (protocol 253).
+clear-shot test (retail has none); parts of the stone/freeze/paralyze
+immunity checks are not modelled. `shootme` is: a human-owned shooter never
+auto-picks a type without it (protocol 253).
+
+**Turn penalty's turn rate (emulated 2026-10-22, protocol 289).** The score's
+turn penalty (`412a77..412ae2`) does not use the raw `turnrate` (UnitDef
+`+0x18e`, a word). With mover `+0x36` bit 11 (on road) set it uses
+`turnrate x roadmultiplier` (`+0x172`), else with bit 12 (in water)
+`turnrate x watermultiplier` (`+0x16e`); both are 16.16, scaled by the rdata
+1/65536 at `0x5eba78`, cut by `_ftol` (chop) and masked to 16 bits before the
+`< 1000` test -- so a negative multiplier wraps to a large rate and drops the
+penalty. Emulating the snippet on synthetic units gives 300 -> 359 on a 1.2
+road, 150 in 0.5 water, road over water when both bits are set, 700 x -0.5 ->
+65186. It is the same scaling the cost search applies (`4151ef`); both now
+share `retailEffectiveTurnRate` (pinned by `fire_sweep_turnrate`).
 
 ## Blocked shots: retail fires on, the engine walks to a clear shot (2026-10-19)
 

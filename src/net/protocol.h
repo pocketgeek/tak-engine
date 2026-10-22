@@ -21,7 +21,9 @@ namespace tak::net {
 
 constexpr uint32_t kNetVersion = 289;      // 289: campaign human seat: the .ota's Player1 is always world slot 0 and its keywords are ignored
                                            //      (retail 0x4d290c), so takx22_mt/takx24_mt no longer give the player an AI and an Aramon team;
-                                           //      hashed state changes for those two missions only (skirmish unchanged)
+                                           //      hashed state changes for those two missions only (skirmish unchanged).
+                                           //      Target-score turn penalty uses the terrain-scaled turn rate (412a77: road, else water
+                                           //      multiplier under mover bits 11/12); hashed sim changes, 288 replays refused
                                            // 288: power codes: GameOptions powerCodes byte (appended after mapScenario, creation-only, forced 0 in
                                            //      campaigns and Crusades battles); Cmd::PowerCode = 28 (server-validated, dropped while off); replay
                                            //      format 14 adds the POWER CODES byte (bit0 on, bit1 map started revealed). Sim unchanged with power

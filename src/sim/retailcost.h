@@ -268,6 +268,20 @@ private:
     }
 };
 
+// A mover's turn rate under its terrain bits (mover +0x36): bit 11 (road)
+// scales by roadmultiplier, else bit 12 (water) by watermultiplier. The
+// multipliers are signed 16.16; retail truncates toward zero (_ftol) and keeps
+// the low 16 bits, so a negative product wraps to a large rate. Shared by the
+// cost search (0x4151ef..) and the target score's turn penalty (412a77..412ae2).
+inline uint16_t retailEffectiveTurnRate(uint16_t turnRate, int32_t roadMultiplier,
+                                        int32_t waterMultiplier, uint16_t movementFlags) {
+    if (movementFlags & 0x800)
+        return uint16_t(int64_t(turnRate) * roadMultiplier / 65536);
+    if (movementFlags & 0x1000)
+        return uint16_t(int64_t(turnRate) * waterMultiplier / 65536);
+    return turnRate;
+}
+
 // Initialization at 0x4151ef..0x4159a5. Multipliers are signed 16.16;
 // retail truncates before narrowing the effective turn rate to uint16.
 inline RetailCostSearch::Costs retailPathCosts(uint16_t turnRate, int footprint,
@@ -281,11 +295,8 @@ inline RetailCostSearch::Costs retailPathCosts(uint16_t turnRate, int footprint,
         costs.slope = int(int64_t(costs.slope) * roadMultiplier / 65536);
         costs.traffic = int(int64_t(80) * roadMultiplier / 65536);
     }
-    uint16_t effectiveTurn = turnRate;
-    if (movementFlags & 0x800)
-        effectiveTurn = uint16_t(int64_t(turnRate) * roadMultiplier / 65536);
-    else if (movementFlags & 0x1000)
-        effectiveTurn = uint16_t(int64_t(turnRate) * waterMultiplier / 65536);
+    const uint16_t effectiveTurn = retailEffectiveTurnRate(turnRate, roadMultiplier, waterMultiplier,
+                                                           movementFlags);
     costs.minStraight = footprint + 3;
     if (effectiveTurn >= 1000) {
         costs.turn.fill(0); costs.shortTurn = 16; costs.minStraight = footprint;
